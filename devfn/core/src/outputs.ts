@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { link, lstat, mkdir, open, readdir, readFile, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { link, lstat, mkdir, open, readdir, readFile, realpath, rename, rmdir, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { processBirthSignature, processIdentityStatus, resolveContainedPath, type DevFnConfig } from "@devfn/config";
@@ -485,19 +485,32 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
       runtimeDirectory: (await canonicalTarget(runtimeDirectory(config, root, identity.instanceId))).canonical, pid: process.pid, ...await processBirthSignature(process.pid).then((value) => value ? { birthSignature: value } : {}), createdAt: new Date().toISOString() };
     await writeClaim(root, claim);
   };
-  const targets = await selectedTargets(config, root, runtime, stateDir);
-  if (targets.length) {
-    // The lock lives among the claims under the receipts, which are never
-    // task inputs, and so do the directories it is retired to on release.
-    const directory = await claimDirectory(root);
-    await mkdir(directory, { recursive: true, mode: 0o700 });
-    await withFileLock(path.join(directory, CLAIMS_LOCK), async () => {
-      const locked = await selectedTargets(config, root, runtime, stateDir);
-      await assertTargetsAvailable(config, root, identity, locked, await readClaims(root));
-      await record(locked);
-      await removeOrphanedStaging(locked);
-    }, { timeoutMs: CLAIMS_LOCK_TIMEOUT_MS, staleMs: CLAIMS_LOCK_STALE_MS });
-  } else await assertTargetsAvailable(config, root, identity, targets, await readClaims(root));
+  // Every start, also one without outputs, claims its runtime directory
+  // under the lock, atomically with the check against its siblings and
+  // before any lease or generated file, so an output claim and a
+  // runtime-directory claim that overlap never both succeed. The lock lives
+  // among the claims under the receipts, which are never task inputs, and so
+  // do the directories it is retired to on release.
+  const directory = await claimDirectory(root);
+  const lock = path.join(directory, CLAIMS_LOCK);
+  // The first directory this start created, which a start that never began removes again while empty.
+  let created: string | undefined;
+  for (;;) {
+    created = await mkdir(directory, { recursive: true, mode: 0o700 }) ?? created;
+    try {
+      await withFileLock(lock, async () => {
+        const targets = await selectedTargets(config, root, runtime, stateDir);
+        await assertTargetsAvailable(config, root, identity, targets, await readClaims(root));
+        await record(targets);
+        await removeOrphanedStaging(targets);
+      }, { timeoutMs: CLAIMS_LOCK_TIMEOUT_MS, staleMs: CLAIMS_LOCK_STALE_MS });
+      break;
+    } catch (error) {
+      // A sibling's failed first start removed the empty directory before the lock was created in it.
+      const failure = error as NodeJS.ErrnoException;
+      if (failure.code !== "ENOENT" || failure.path !== lock) throw error;
+    }
+  }
   const update = async (change: (current: OutputClaim) => OutputClaim) => {
     claim = change(claim);
     await writeClaim(root, claim);
@@ -513,20 +526,24 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
   });
   let committed = false;
   return {
-    // Every committed start records a claim, also of no file, so a live
-    // receipt without one is known to come from an earlier release.
+    // Every start recorded a claim, also of no file, so a live receipt
+    // without one is known to come from an earlier release.
     commit: async () => {
-      if (!targets.length) await record([]);
       committed = true;
     },
     restore: async () => {
-      if (committed || !targets.length) return;
-      // Nor does a start that never began hold its runtime directory.
+      if (committed) return;
+      // A start that never began holds neither its outputs nor its runtime
+      // directory; a claim it created is removed.
       const { pending: _stale, runtimeDirectory: _directory, ...base } = previous ?? claim;
       const kept: OutputClaim = { ...base, targets: previous?.targets ?? [], written: claim.written, ...(claim.pending?.length ? { pending: claim.pending } : {}),
         ...(previous?.runtimeDirectory ? { runtimeDirectory: previous.runtimeDirectory } : {}) };
-      if (!hadPrevious && !kept.written.length && !kept.pending?.length) await removeClaim(root, identity.instanceId);
-      else await writeClaim(root, kept);
+      if (hadPrevious || kept.written.length || kept.pending?.length) return await writeClaim(root, kept);
+      await removeClaim(root, identity.instanceId);
+      // Nor does it leave DevFn state in a checkout that had none: only the
+      // empty directories it created go, so a sibling's claim, lock or
+      // receipt there keeps them.
+      if (created) await removeEmptyDirectories(directory, created);
     },
     write: async (target, content, mode) => {
       // Every runtime writes only the canonical file it claimed: a target a
@@ -595,6 +612,15 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
       }
     },
   };
+}
+
+/** Remove directory and its parents up to and including top while each is empty. */
+async function removeEmptyDirectories(directory: string, top: string): Promise<void> {
+  if (directory !== top && !directory.startsWith(top + path.sep)) return;
+  for (let current = directory; ; current = path.dirname(current)) {
+    try { await rmdir(current); } catch { return; }
+    if (current === top || path.dirname(current) === current) return;
+  }
 }
 
 /** Release a stopped instance's claim and runtime directory; the files it wrote stay its own. */

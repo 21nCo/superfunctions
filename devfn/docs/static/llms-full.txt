@@ -92,7 +92,7 @@ Preserve existing scripts and Compose data. Run `devfn init`, inspect confirmed 
 
 Back up any pre-existing path named by `environmentOutputs[].path`; DevFn overwrites configured outputs and does not restore previous contents. Inspect the resolved Compose configuration as well: DevFn derives the Compose project name from the project prefix and worktree owner, so a project-scoped named volume can resolve to a new, empty volume. Back up existing database contents before the first start. Start with a minimal profile, compare behavior against manual startup, then add full, OAuth, test, or docs profiles. Verify that `devfn down` preserves databases and volumes before making it the daily workflow.
 
-To roll back, run `down`, inspect the configured runtime directory and output paths, and remove only DevFn-generated files that did not replace user content. Then remove the manifest and resume the preserved scripts. The [source migration guide](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/reference/migration.md) gives the complete checklist.
+To roll back, run `down` (and `down --runtime <name>` for each runtime `runtimes` lists), inspect the configured runtime directory and output paths, and remove only DevFn-generated files that did not replace user content. Then remove the manifest and resume the preserved scripts. The [source migration guide](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/reference/migration.md) gives the complete checklist.
 
 ---
 
@@ -403,7 +403,7 @@ Keep source and site copies aligned when changing a public contract.
 7. Add full, OAuth, test, or docs profiles incrementally. Public tunnels must remain explicit.
 8. Verify `devfn down` preserves databases and volumes before adopting it as the daily command.
 
-Rollback by running `devfn down`, then inspect `runtimeDir` and every `environmentOutputs[].path` in the manifest before removing generated files. The default generated location is `.devfn/`, but custom paths may live elsewhere. Preserve any target that existed before DevFn adoption; cleanup does not know whether a configured output replaced user-owned content. Finally remove the DevFn manifest and continue using the preserved original scripts. Docker volumes and source configuration are not deleted.
+Rollback by running `devfn down` (and `devfn down --runtime <name>` for each runtime `devfn runtimes` lists), then inspect `runtimeDir` and every `environmentOutputs[].path` in the manifest before removing generated files. The default generated location is `.devfn/`, but custom paths may live elsewhere. Preserve any target that existed before DevFn adoption; cleanup does not know whether a configured output replaced user-owned content. Finally remove the DevFn manifest and continue using the preserved original scripts. Docker volumes and source configuration are not deleted.
 
 ---
 

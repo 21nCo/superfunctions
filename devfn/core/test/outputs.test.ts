@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { execFile } from "node:child_process";
-import { link, mkdir, mkdtemp, readFile, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { access, link, mkdir, mkdtemp, readFile, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -169,6 +169,40 @@ describe("environment-output claims", () => {
       await releaseEnvironmentOutputs(root, review.instanceId);
       await expect(assertEnvironmentOutputsAvailable(moved, root, fallback)).resolves.toBeUndefined();
       await (await claimEnvironmentOutputs(moved, root, fallback)).commit();
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("holds a start's runtime directory from its claim, with or without outputs, so an overlapping claim is refused in either order", async () => {
+    const root = await checkout();
+    const review = await resolveInstanceIdentity("fixture", root, "review");
+    const fallback = await resolveInstanceIdentity("fixture", root);
+    const withDir = (runtimeDir: string, outputs: string[]) => validateDevFnConfig({ ...JSON.parse(JSON.stringify(config)), runtimeDir, environmentOutputs: outputs.map((output) => ({ path: output })) });
+    const claimFile = (id: string) => path.join(root, ".devfn", "receipts", "outputs", `${id}.json`);
+    const intoReview = withDir("old-run", [path.join("new-run", "instances", review.instanceId, "runtime.env")]);
+    try {
+      // review, declaring no output, has claimed but not yet committed (it would be writing runtime.env now).
+      const starting = await claimEnvironmentOutputs(withDir("new-run", []), root, review);
+      expect(JSON.parse(await readFile(claimFile(review.instanceId), "utf8")))
+        .toMatchObject({ runtime: "review", targets: [], runtimeDirectory: path.join(root, "new-run", "instances", review.instanceId) });
+      // An output in that directory is refused at once, before the uncommitted start finishes.
+      await expect(claimEnvironmentOutputs(intoReview, root, fallback))
+        .rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("the runtime directory of runtime review") });
+      // A failed start gives its directory back and removes the claim it created.
+      await starting.restore();
+      await expect(readFile(claimFile(review.instanceId), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+      // In a checkout that had no DevFn state, it leaves none behind.
+      await expect(access(path.join(root, ".devfn"))).rejects.toMatchObject({ code: "ENOENT" });
+      const sibling = await claimEnvironmentOutputs(intoReview, root, fallback);
+      // The reverse order: review's no-output start is refused while the default's claim lies in its directory.
+      await expect(claimEnvironmentOutputs(withDir("new-run", []), root, review))
+        .rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("keeps its logs and runtime.env in") });
+      await expect(readFile(claimFile(review.instanceId), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+      // A failed start removes only empty directories: another file there keeps them.
+      const keptFile = path.join(root, ".devfn", "receipts", "keep.json");
+      await writeFile(keptFile, "{}");
+      await sibling.restore();
+      await expect(readFile(claimFile(fallback.instanceId), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await readFile(keptFile, "utf8")).toBe("{}");
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
