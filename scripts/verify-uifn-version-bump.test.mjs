@@ -425,7 +425,11 @@ test("shellWords reads a command's words as the shell does", () => {
     ["a; b\nc && d || e | f & g", ["a", "b", "c", "d", "e", "f", "g"]], [String.raw`a 'x;y' "x|y" x\;y x\&\&y`, [String.raw`a 'x;y' "x|y" x\;y x\&\&y`]], ["sh -c 'a\nb'", ["sh -c 'a\nb'"]],
     [String.raw`a dist\>| b`, [String.raw`a dist\>`, "b"]], ['a ">"| b', ['a ">"', "b"]], ["a >| log b", ["a >| log b"]], ["a 2>&1 b &>log c <&3 d >&2", ["a 2>&1 b &>log c <&3 d >&2"]], ["a |& b", ["a", "b"]],
     ["#!/bin/sh\n# don't\na 'x' # it's; b\nc#d $# \\#e '#f';#g\nh", ["a 'x'", "c#d $# \\#e '#f'", "h"]],
+    // A backslash-newline outside single quotes is deleted (a # after it still starts a word), and escape parity comes from the same pass.
+    ["a \\\n# don't\nb", ["a", "b"]], [String.raw`echo foo\\ # tsc -p mylib`, [String.raw`echo foo\\`]], ["a &\\\n>log b", ["a &>log b"]], ["a\\\n#b", ["a#b"]],
   ]) assert.deepEqual(shellCommands(script).map((command) => command.trim()), commands, script);
+  assert.equal(tscProjects(shellCommands(String.raw`echo foo\\ # tsc -p mylib`)[0]), null);
+  for (const [command, words] of [['"a\\\nb"', ["ab"]], ["'a\\\nb'", ["a\\\nb"]], [String.raw`echo foo\ # x`, ["echo", "foo #", "x"]], ["tsc -p \\\n mylib", ["tsc", "-p", "mylib"]]]) assert.deepEqual(shellWords(command), words, command);
 });
 
 // A lifecycle command reads its words as the shell does: a quoted project path with a space or a > is one word, the last --noEmit decides emission
@@ -447,6 +451,8 @@ for (const [command, compiled, emits, sh] of [
   // A quoted or escaped separator, or a | after an escaped >, does not end the command (a lifecycle script and a .sh build file alike).
   ...["tsc --noEmit -p mylib --outDir 'a;b' --noEmit false", 'tsc --noEmit -p mylib --outDir "a|b" --noEmit false', String.raw`tsc --noEmit -p mylib --outDir a\;b --noEmit false`, String.raw`tsc --noEmit --outDir dist\>| tsc -p mylib`,
     "tsc --noEmit -p mylib --outDir ab --noEmit false", "tsc -p mylib >| build.log", "tsc --noEmit | tsc -p mylib", "tsc --noEmit --outDir dist >| out.log; tsc -p mylib", String.raw`tsc --noEmit --outDir dist\> | tsc -p mylib`, "tsc --noEmit & tsc -p mylib",
+    // A line continuation is deleted, never a word or an escaped character, so a later comment's quote opens nothing (controls: no continuation, no quote).
+    "tsc --noEmit \\\n# don't forget\ntsc -p mylib", "tsc --noEmit --outDir foo\\\\ # don't\ntsc -p mylib", "tsc -p \\\n mylib", "# don't\ntsc -p mylib", "tsc --noEmit \\\n# forget\ntsc -p mylib", "tsc --noEmit \\\n&& tsc -p mylib",
   ].flatMap((command) => [[command, "mylib", true], [command, "mylib", true, "build.sh"]]),
 ]) {
   test(`a lifecycle command compiles what its shell words name: ${command} (${compiled || "no tsconfig"} compiles test/)${sh ? " in a .sh build file" : ""}`, (t) => {
