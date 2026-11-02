@@ -1,10 +1,11 @@
+import { readFileSync } from "node:fs";
 import { access, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { FilePortRegistry, isPortAvailable } from "@devfn/ports";
-import { processBirthSignature, validateDevFnConfig } from "@devfn/config";
+import { processBirthSignature, processExists, validateDevFnConfig } from "@devfn/config";
 import { DevFnOrchestrator, readReceipt, resolveInstanceIdentity, writeReceipt } from "@devfn/core";
 import { runCli } from "../src/index.js";
 
@@ -78,6 +79,85 @@ describe("devfn CLI", () => {
       await expect(access(path.join(stateDir, "domains.json"))).rejects.toMatchObject({ code: "ENOENT" });
     } finally { await rm(cwd, { recursive: true, force: true }); await rm(stateDir, { recursive: true, force: true }); }
   });
+
+  it("accepts --rerun-task only for starts and rejects an unknown task before any state exists", async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), "devfn-rerun-cli-"));
+    const stateDir = path.join(cwd, "state");
+    try {
+      await writeFile(path.join(cwd, "devfn.config.json"), JSON.stringify({ version: 1, project: { id: "fixture" },
+        processes: { setup: { adapter: "command", command: ["node", "-e", "0"], task: {} } }, profiles: { default: { processes: ["setup"] } } }));
+      const run = async (args: string[]) => {
+        let stdout = "";
+        const code = await runCli([...args, "--trust", "--json", "--state-dir", stateDir], { cwd, stdout: (text) => { stdout += text; }, stderr: () => undefined });
+        return { code, value: JSON.parse(stdout) as { error?: { code: string; message: string } } };
+      };
+      // Commands dispatched before the manifest loads reject it as well.
+      for (const command of [["status"], ["help"], ["init"], ["domains", "list"], ["oauth-relay", "status"]]) {
+        expect(await run([...command, "--rerun-task", "setup"])).toMatchObject({ code: 1, value: { error: { code: "DEVFN_RUNTIME_INVALID", message: "--rerun-task applies only to up and restart." } } });
+      }
+      expect(await run(["up", "--rerun-task"])).toMatchObject({ code: 1, value: { error: { code: "DEVFN_RUNTIME_INVALID", message: "--rerun-task requires a value." } } });
+      expect(await run(["up", "--rerun-task", "other"])).toMatchObject({ code: 1, value: { error: { code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("names no task") } } });
+      // Trust is recorded, but no lifecycle, lease or task state.
+      for (const created of ["registry.json", "tasks", "runtime-id"]) await expect(access(path.join(stateDir, created))).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(access(path.join(cwd, ".devfn"))).rejects.toMatchObject({ code: "ENOENT" });
+    } finally { await rm(cwd, { recursive: true, force: true }); }
+  });
+
+  it("intercepts SIGINT and SIGTERM only while a task runs and keeps their default behavior in every other start phase", async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), "devfn-signal-cli-"));
+    const stateDir = path.join(cwd, "state");
+    const baseline = { SIGINT: process.listeners("SIGINT"), SIGTERM: process.listeners("SIGTERM") };
+    const added = (signal: "SIGINT" | "SIGTERM") => process.listeners(signal).filter((listener) => !baseline[signal].includes(listener));
+    // Samples the listeners DevFn added while a start runs.
+    const watch = () => {
+      const seen = { max: 0 };
+      const timer = setInterval(() => { seen.max = Math.max(seen.max, added("SIGINT").length + added("SIGTERM").length); }, 5);
+      return { seen, stop: () => clearInterval(timer) };
+    };
+    const run = async (args: string[]) => {
+      let stdout = "";
+      const code = await runCli([...args, "--trust", "--json", "--state-dir", stateDir], { cwd, stdout: (text) => { stdout += text; }, stderr: () => undefined });
+      return { code, value: JSON.parse(stdout) as { state?: string; error?: { code: string; details?: { causeCode?: string } } } };
+    };
+    try {
+      // The daemon becomes ready only after a delay, so readiness is a long start phase.
+      const server = "setTimeout(() => require('http').createServer((q, r) => r.end('ok')).listen(Number(process.env.DEVFN_PORT_WEB), '127.0.0.1'), 1500)";
+      const task = "require('fs').writeFileSync('task.pid', String(process.pid)); setTimeout(() => {}, 60000)";
+      await writeFile(path.join(cwd, "devfn.config.json"), JSON.stringify({ version: 1, project: { id: "signal-fixture" }, ports: { web: {} },
+        processes: {
+          setup: { adapter: "command", command: [process.execPath, "-e", task], task: {} },
+          web: { adapter: "command", command: [process.execPath, "-e", server], ports: ["web"], health: { type: "http", port: "web", timeoutMs: 10_000 } },
+          gated: { adapter: "command", command: [process.execPath, "-e", "setTimeout(() => {}, 60000)"], dependsOn: ["setup"] },
+        },
+        profiles: { default: { processes: ["web"] }, tasks: { processes: ["gated"] } } }));
+      const plain = watch();
+      try { expect(await run(["up"])).toMatchObject({ code: 0, value: { state: "ready" } }); }
+      finally { plain.stop(); }
+      expect(plain.seen.max).toBe(0);
+      expect(await run(["down"])).toMatchObject({ code: 0 });
+
+      const tasked = watch();
+      const started = run(["up", "--profile", "tasks"]);
+      while (!await access(path.join(cwd, "task.pid")).then(() => true, () => false)) await new Promise((resolve) => setTimeout(resolve, 20));
+      // While the task runs, one listener per signal routes it to cancellation.
+      expect(added("SIGINT")).toHaveLength(1);
+      expect(added("SIGTERM")).toHaveLength(1);
+      for (const listener of added("SIGINT")) (listener as (signal: NodeJS.Signals) => void)("SIGINT");
+      // The first signal releases both, so a following SIGTERM ends DevFn at once while the task is being stopped.
+      expect(added("SIGINT")).toHaveLength(0);
+      expect(added("SIGTERM")).toHaveLength(0);
+      const cancelled = await started;
+      tasked.stop();
+      expect(cancelled).toMatchObject({ code: 1, value: { error: { code: "DEVFN_START_FAILED", details: { causeCode: "DEVFN_CANCELLED" } } } });
+      expect(added("SIGINT")).toHaveLength(0);
+      expect(added("SIGTERM")).toHaveLength(0);
+      // A cancelled child that exited but is not reaped yet (a zombie) runs nothing.
+      expect(processExists(Number(readFileSync(path.join(cwd, "task.pid"), "utf8")))).toBe(false);
+    } finally {
+      await runCli(["down", "--trust", "--json", "--state-dir", stateDir], { cwd, stdout: () => undefined, stderr: () => undefined }).catch(() => undefined);
+      await rm(cwd, { recursive: true, force: true });
+    }
+  }, 60_000);
 
   it("rejects invalid tail counts before command dispatch", async () => {
     for (const value of ["nope", "-1", "1.5", "9007199254740992"]) {

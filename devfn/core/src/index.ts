@@ -8,4 +8,5 @@ export { ephemeralOriginDomain, readTunnelBindings, recoverTunnel, registerTunne
 export { resolveEndpointTemplates, resolveLocalHostname, type EndpointResolution, type EndpointResolutionInput, type ResolvedNodeStartup } from "./endpoints.js";
 export { planResources, type PlannedResource, type ResourcePlan, type ResourcePlanInput, type ResourceValue, type ResourceValueSource, type UnreachableResourceValue } from "./resources.js";
 export { readReceipt, receiptPath, runtimeDirectory, writeEnvironmentOutputs, writeReceipt } from "./runtime.js";
+export { readTaskJournal, taskInputRevision, taskScope, type TaskAttempt, type TaskEffects, type TaskJournal, type TaskReceipt } from "./tasks.js";
 export * from "./types.js";

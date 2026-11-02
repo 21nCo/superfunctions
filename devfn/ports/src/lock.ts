@@ -57,12 +57,14 @@ function parseOwnerRecord(text: string): LockOwner | undefined {
  * releases: recovery replaces a dead holder's record in place (recoverLock),
  * and only a lock recording this holder is removed.
  */
-export async function withFileLock<T>(lockPath: string, action: () => Promise<T>, options: { timeoutMs?: number; staleMs?: number } = {}): Promise<T> {
+export async function withFileLock<T>(lockPath: string, action: () => Promise<T>, options: { timeoutMs?: number; staleMs?: number; signal?: AbortSignal } = {}): Promise<T> {
   const timeoutMs = options.timeoutMs ?? 10_000;
   const staleMs = options.staleMs ?? 300_000;
   const token = randomUUID();
   const ownerRecord = JSON.stringify({ token, pid: process.pid, birthSignature: await processBirthSignature(process.pid), createdAt: new Date().toISOString() });
   const deadline = Date.now() + timeoutMs;
+  // A cancelled caller never acquires the lock or runs the action.
+  options.signal?.throwIfAborted();
   while (!await claimLock(lockPath, token, ownerRecord)) {
     const observed = await readFile(`${lockPath}/owner.json`, "utf8").catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return undefined;
@@ -70,8 +72,11 @@ export async function withFileLock<T>(lockPath: string, action: () => Promise<T>
     });
     if (await recoverable(lockPath, observed, staleMs) && await recoverLock(lockPath, observed, token, ownerRecord, deadline)) break;
     if (Date.now() >= deadline) throw new PortRegistryError("DEVFN_REGISTRY_LOCK_TIMEOUT", `Timed out acquiring registry lock ${lockPath}.`);
+    options.signal?.throwIfAborted();
     await delay(20 + Math.floor(Math.random() * 20));
   }
+  // Cancelled while the lock was being acquired: release it without running the action.
+  if (options.signal?.aborted) { await releaseLock(lockPath, token); options.signal.throwIfAborted(); }
   try { return await action(); }
   finally { await releaseLock(lockPath, token); }
 }

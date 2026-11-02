@@ -15,6 +15,10 @@ export interface ComposeSourceInventory {
   serviceDirectory: string;
   interpolationEnvFiles: string[];
   interpolationScopes: Array<{ directory: string; envFiles: string[] }>;
+  /** The definitions merged into the selected service, in merge order: each one's file and the directory its relative paths resolve against. */
+  serviceOrigins: Array<{ file: string; directory: string }>;
+  /** Every model file visited (root, then each include): its interpolation scope chain and its own parsed declarations. */
+  modelDocuments?: Array<{ scopes: ComposeSourceInventory["interpolationScopes"]; data: Record<string, unknown> }>;
 }
 
 /** Explicit interpolation inputs in Compose precedence order (lowest first). */
@@ -232,10 +236,12 @@ export async function assertComposeSourceGraphBounded(
   const activeServices = new Set<string>();
   const serviceCache = new Map<string, Record<string, unknown> | null>();
   const deviceCandidates = new WeakMap<Record<string, unknown>, unknown[]>();
+  const origins = new WeakMap<Record<string, unknown>, Array<{ file: string; directory: string }>>();
   let selectedService: Record<string, unknown> | null = null;
   let selectedDirectory = path.dirname(sourceFile);
   let selectedEnvFiles: string[] = [];
   let selectedScopes: ComposeSourceInventory["interpolationScopes"] = [{ directory: selectedDirectory, envFiles: [] }];
+  const modelDocuments: NonNullable<ComposeSourceInventory["modelDocuments"]> = [];
   let totalBytes = 0;
   let materializedBytes = 0;
   let interpolations = 0;
@@ -338,6 +344,7 @@ export async function assertComposeSourceGraphBounded(
     if (!replace.has("devices") && base) inherited = deviceCandidates.get(base) ?? [];
     const own = Array.isArray(service.devices) ? service.devices : [];
     deviceCandidates.set(merged, [...inherited, ...own]);
+    origins.set(merged, [...(base ? origins.get(base) ?? [] : []), { file, directory }]);
     return merged;
   }
 
@@ -353,7 +360,10 @@ export async function assertComposeSourceGraphBounded(
       let service = rawService ? normalizeComposeRawService(rawService) : null;
       if (service?.env_file !== undefined) service.env_file = absoluteEnvFiles(service.env_file, directory, scopes);
       if (service?.extends) service = await resolveExtendedService(file, service, directory, envFiles, scopes, loaded.tags.get(name) ?? new Set());
-      else if (service) deviceCandidates.set(service, Array.isArray(service.devices) ? service.devices : []);
+      else if (service) {
+        deviceCandidates.set(service, Array.isArray(service.devices) ? service.devices : []);
+        origins.set(service, [{ file, directory }]);
+      }
       cacheService(key, service);
       return service;
     } finally { activeServices.delete(key); }
@@ -394,6 +404,7 @@ export async function assertComposeSourceGraphBounded(
         const next = mergeService(merged ?? {}, item, loaded.tags.get(serviceName) ?? new Set());
         deviceCandidates.set(next, [...(replaced || !merged ? [] : deviceCandidates.get(merged) ?? []),
           ...(deviceCandidates.get(item) ?? [])]);
+        origins.set(next, [...(merged ? origins.get(merged) ?? [] : []), ...origins.get(item) ?? []]);
         merged = next;
       }
     }
@@ -404,6 +415,7 @@ export async function assertComposeSourceGraphBounded(
     if (!mark(`document\0${file}\0${directory}\0${envFiles.join("\0")}`)) return;
     await checkInterpolationFiles(directory, envFiles);
     const { data } = await load(file);
+    modelDocuments.push({ scopes, data });
     const candidate = await visitService(file, serviceName, directory, await composeInterpolationEnvFiles(scopes), scopes);
     if (candidate) {
       selectedService = candidate;
@@ -437,5 +449,6 @@ export async function assertComposeSourceGraphBounded(
   }
   return { service: selectedService, deviceCandidates: selectedService ? deviceCandidates.get(selectedService) ?? [] : [],
     resources, serviceDirectory: selectedDirectory, interpolationEnvFiles: selectedEnvFiles,
-    interpolationScopes: selectedScopes };
+    interpolationScopes: selectedScopes, serviceOrigins: selectedService ? origins.get(selectedService) ?? [] : [],
+    modelDocuments };
 }
