@@ -234,7 +234,7 @@ describe("named runtimes", () => {
     const read = async (file: string) => await readFile(path.join(cwd, file), "utf8");
     const leased = async (instanceId: string) => (await new FilePortRegistry(path.join(stateDir, "registry.json")).read().catch(() => ({ allocations: [] as Array<{ instanceId: string; state: string }> })))
       .allocations.some((item) => item.instanceId === instanceId && item.state !== "released");
-    const claimFile = async (runtime?: string) => path.join(cwd, ".devfn", "outputs", `${await id(runtime)}.json`);
+    const claimFile = async (runtime?: string) => path.join(cwd, ".devfn", "receipts", "outputs", `${await id(runtime)}.json`);
     try {
       // (a) A user's .env.local is never a named runtime's .env.{runtime}: refused before any lease, receipt or claim, and doctor says so.
       await writeFile(path.join(cwd, ".env.local"), "SECRET=user-owned\n");
@@ -354,7 +354,7 @@ describe("named runtimes", () => {
     const exists = async (file: string) => await access(file).then(() => true, () => false);
     const leased = async (instanceId: string) => (await new FilePortRegistry(path.join(stateDir, "registry.json")).read().catch(() => ({ allocations: [] as Array<{ instanceId: string; state: string }> })))
       .allocations.some((item) => item.instanceId === instanceId && item.state !== "released");
-    const claimFile = async (runtime?: string) => path.join(cwd, ".devfn", "outputs", `${await id(runtime)}.json`);
+    const claimFile = async (runtime?: string) => path.join(cwd, ".devfn", "receipts", "outputs", `${await id(runtime)}.json`);
     const receiptFile = async (runtime?: string, projectId?: string) => path.join(cwd, ".devfn", "receipts", `${await id(runtime, projectId)}.json`);
     // Starts a runtime (review unless named) while the routing lock is held, so it waits after claiming its outputs; meanwhile plant() changes the checkout.
     const raceAfterClaim = async (plant: () => Promise<void>, runtime: string | null = "review") => {

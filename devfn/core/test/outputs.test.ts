@@ -8,8 +8,8 @@ import { promisify } from "node:util";
 import { processBirthSignature, validateDevFnConfig } from "@devfn/config";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { resolveInstanceIdentity } from "../src/index.js";
-import { assertEnvironmentOutputsAvailable, claimEnvironmentOutputs } from "../src/outputs.js";
+import { DevFnOrchestrator, resolveInstanceIdentity } from "../src/index.js";
+import { assertEnvironmentOutputsAvailable, claimEnvironmentOutputs, releaseEnvironmentOutputs } from "../src/outputs.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -115,12 +115,15 @@ describe("environment-output claims", () => {
 
   it("refuses an output whose file lands in DevFn's own state through a runtime name, a symlinked directory or a state directory in the checkout", async () => {
     const root = await checkout();
-    const at = (output: string) => validateDevFnConfig({ ...JSON.parse(JSON.stringify(config)), environmentOutputs: [{ path: output }] });
+    const at = (output: string, extra: Record<string, unknown> = {}) => validateDevFnConfig({ ...JSON.parse(JSON.stringify(config)), environmentOutputs: [{ path: output }], ...extra });
     try {
       await mkdir(path.join(root, ".devfn", "receipts"), { recursive: true });
       await symlink(path.join(root, ".devfn", "receipts"), path.join(root, "alias"));
+      // The manifest loads (at() validates it); the start and doctor refuse it.
       for (const [output, runtime, stateDir] of [
-        [".devfn/{runtime}", "outputs", undefined], // the claims directory itself
+        [".devfn/receipts/{runtime}", "outputs", undefined], // the claims directory itself
+        [".devfn/receipts/{runtime}.json", "b", undefined],
+        [".devfn/instances/{runtime}.env", "b", undefined],
         [".devfn/{runtime}", "instances", undefined],
         ["alias/{runtime}.json", "b", undefined],
         ["state/{runtime}.env", "b", path.join(root, "state")],
@@ -129,14 +132,67 @@ describe("environment-output claims", () => {
         await expect(assertEnvironmentOutputsAvailable(at(output), root, identity, stateDir), output).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("inside DevFn's own state") });
         await expect(claimEnvironmentOutputs(at(output), root, identity, stateDir), output).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID" });
       }
+      await expect(assertEnvironmentOutputsAvailable(at("run/instances/{runtime}.env", { runtimeDir: "run" }), root, await resolveInstanceIdentity("fixture", root, "b"))).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID" });
       // A state directory outside the checkout reserves nothing in it.
       await expect(assertEnvironmentOutputsAvailable(at("state/{runtime}.env"), root, await resolveInstanceIdentity("fixture", root, "b"), path.join(os.tmpdir(), "devfn-state"))).resolves.toBeUndefined();
+      // .devfn/outputs is no DevFn state: a DevFn v0.1 default-runtime output there is claimed and written.
+      const v01 = at(".devfn/outputs/app.env");
+      const claim = await claimEnvironmentOutputs(v01, root, await resolveInstanceIdentity("fixture", root));
+      await claim.write(path.join(root, ".devfn", "outputs", "app.env"), "A=1\n", 0o600);
+      await claim.commit();
+      expect(await readFile(path.join(root, ".devfn", "outputs", "app.env"), "utf8")).toBe("A=1\n");
     } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("holds another runtime's recorded runtime directory, wherever runtimeDir put it, until it stops", async () => {
+    const root = await checkout();
+    const review = await resolveInstanceIdentity("fixture", root, "review");
+    const fallback = await resolveInstanceIdentity("fixture", root);
+    const withDir = (runtimeDir: string, output: string) => validateDevFnConfig({ ...JSON.parse(JSON.stringify(config)), runtimeDir, environmentOutputs: [{ path: output }] });
+    try {
+      // review starts under runtimeDir old-run; its claimant (this process) runs.
+      const held = await claimEnvironmentOutputs(withDir("old-run", ".env.{runtime}"), root, review);
+      await held.commit();
+      // The manifest moves to new-run; an output in review's old runtime directory is refused, naming review.
+      const log = path.join("old-run", "instances", review.instanceId, "logs", "app.log");
+      const moved = withDir("new-run", log);
+      for (const check of [() => assertEnvironmentOutputsAvailable(moved, root, fallback), () => claimEnvironmentOutputs(moved, root, fallback)]) {
+        await expect(check()).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("the runtime directory of runtime review"), details: { owner: { runtime: "review" } } });
+      }
+      // Conversely, a runtime whose own runtime directory holds a file another runtime writes is refused, whatever it declares.
+      const intruder = await claimEnvironmentOutputs(withDir("old-run", path.join("new-run", "instances", review.instanceId, "x.env")), root, fallback);
+      await intruder.commit();
+      await expect(assertEnvironmentOutputsAvailable(validateDevFnConfig({ ...JSON.parse(JSON.stringify(config)), runtimeDir: "new-run", environmentOutputs: [] }), root, review))
+        .rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("keeps its logs and runtime.env in"), details: { owner: { runtime: "default" } } });
+      await releaseEnvironmentOutputs(root, fallback.instanceId);
+      // Once review stops, its former location is free.
+      await releaseEnvironmentOutputs(root, review.instanceId);
+      await expect(assertEnvironmentOutputsAvailable(moved, root, fallback)).resolves.toBeUndefined();
+      await (await claimEnvironmentOutputs(moved, root, fallback)).commit();
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("reports an output that escapes the checkout as a doctor diagnostic alongside the others", async () => {
+    const root = await checkout();
+    const outside = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-outside-")));
+    const stateDir = await mkdtemp(path.join(os.tmpdir(), "devfn-doctor-state-"));
+    try {
+      await symlink(outside, path.join(root, "ext"));
+      const escaping = validateDevFnConfig({ ...JSON.parse(JSON.stringify(config)), environmentOutputs: [{ path: "ext/app.env" }] });
+      const result = await new DevFnOrchestrator().doctor({ config: escaping, root, stateDir });
+      expect(result.ok).toBe(false);
+      expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: "DEVFN_CONFIG_PATH_ESCAPE", severity: "error" }));
+      expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: "DEVFN_NODE_VERSION" }));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+      await rm(stateDir, { recursive: true, force: true });
+    }
   });
 
   it("recovers the checkout's claim lock from a holder verified dead without waiting out a live one", { timeout: 60_000 }, async () => {
     const root = await checkout();
-    const lock = path.join(root, ".devfn", "outputs", "claims.lock");
+    const lock = path.join(root, ".devfn", "receipts", "outputs", "claims.lock");
     const holder = spawn(process.execPath, ["-e", "setInterval(() => undefined, 1000)"], { stdio: "ignore" });
     try {
       await new Promise((resolve) => holder.once("spawn", resolve));
@@ -153,7 +209,7 @@ describe("environment-output claims", () => {
       const started = Date.now();
       await (await claiming).commit();
       expect(Date.now() - started).toBeLessThan(10_000);
-      expect(JSON.parse(await readFile(path.join(root, ".devfn", "outputs", `${(await resolveInstanceIdentity("fixture", root, "b")).instanceId}.json`), "utf8")))
+      expect(JSON.parse(await readFile(path.join(root, ".devfn", "receipts", "outputs", `${(await resolveInstanceIdentity("fixture", root, "b")).instanceId}.json`), "utf8")))
         .toMatchObject({ runtime: "b", targets: [path.join(root, ".env.b")] });
     } finally {
       holder.kill("SIGKILL");

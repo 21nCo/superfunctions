@@ -3,11 +3,12 @@ import { lstat, mkdir, opendir, readFile, readlink, realpath, rename, stat, writ
 import path from "node:path";
 
 import { ComposeController, composeTaskSourceDigest, createComposeEnvironment, type ComposeLaunch } from "@devfn/compose";
-import { devfnStateDirectories, resolveContainedPath, type DevFnConfig, type TaskSpec } from "@devfn/config";
+import { resolveContainedPath, type DevFnConfig, type TaskSpec } from "@devfn/config";
 import { FilePortRegistry, withFileLock } from "@devfn/ports";
 import { createProcessEnvironment, resolveAdapterCommand, ProcessSupervisor, stopGatedLauncher, type ProcessRunResult } from "@devfn/processes";
 
 import { stagedOutputName } from "./outputs.js";
+import { devfnStateDirectories } from "./runtime.js";
 import type { ResourcePlan } from "./resources.js";
 import { DevFnError, type LifecyclePlan } from "./types.js";
 

@@ -135,7 +135,7 @@ describe("named runtime isolation", () => {
         processes: { migrate: { adapter: "command", command: ["node", "migrate.mjs"], task: { inputs: ["."] } } }, profiles: { default: { processes: ["migrate"] } } });
       const revision = async () => await taskInputRevision(config, root, { name: "migrate", kind: "process" }, "default");
       const before = await revision();
-      const claims = path.join(root, ".devfn", "outputs");
+      const claims = path.join(root, ".devfn", "receipts", "outputs");
       // A held lock, one a killed holder left retired, a claim and its temporary file, and a staging file of an output.
       for (const lock of ["claims.lock", "claims.lock.released.0123456789abcdef"]) {
         await mkdir(path.join(claims, lock), { recursive: true });
@@ -158,9 +158,13 @@ describe("named runtime isolation", () => {
       })();
       try { for (let walk = 0; walk < 20; walk += 1) expect(await revision()).toBe(before); }
       finally { churning = false; await churn; }
-      // Other files under .devfn stay inputs.
+      // Other files under .devfn stay inputs, .devfn/outputs included: DevFn does not keep its state there.
+      await mkdir(path.join(root, ".devfn", "outputs"), { recursive: true });
+      await writeFile(path.join(root, ".devfn", "outputs", "notes.txt"), "user notes");
+      const withOutputsNotes = await revision();
+      expect(withOutputsNotes).not.toBe(before);
       await writeFile(path.join(root, ".devfn", "notes.txt"), "user notes");
-      expect(await revision()).not.toBe(before);
+      expect(await revision()).not.toBe(withOutputsNotes);
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 });

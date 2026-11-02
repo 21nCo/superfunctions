@@ -6,6 +6,13 @@ import { resolveContainedPath, type DevFnConfig, type EnvironmentOutput } from "
 import { DEFAULT_RUNTIME, isNamedRuntime, resolveInstanceIdentity } from "./identity.js";
 import { DevFnError, type LifecycleReceipt } from "./types.js";
 
+/**
+ * The checkout directories that hold DevFn's own state: instance runtime
+ * directories and the receipts, among which the environment-output claims
+ * live. Both were DevFn's in every release.
+ */
+export const devfnStateDirectories = (runtimeDir: string | undefined): string[] => [path.join(runtimeDir ?? ".devfn", "instances"), path.join(".devfn", "receipts")];
+
 export function runtimeDirectory(config: DevFnConfig, root: string, instanceId: string): string {
   return path.join(root, config.runtimeDir ?? ".devfn", "instances", instanceId);
 }

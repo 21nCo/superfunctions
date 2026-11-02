@@ -1222,8 +1222,10 @@ export class DevFnOrchestrator {
       assertRuntimeIsolation(options.config, plan, identity);
       await assertEnvironmentOutputsAvailable(options.config, options.root, identity, stateDir);
     } catch (error) {
-      if (!(error instanceof DevFnError) || error.code !== "DEVFN_RUNTIME_INVALID") throw error;
-      diagnostics.push({ code: error.code, severity: "error", message: error.message, ...(error.details === undefined ? {} : { details: error.details }) });
+      // A path escape or file-system error is reported with the other diagnostics, never instead of them.
+      const failure = error as { code?: unknown; message?: unknown; details?: unknown };
+      diagnostics.push({ code: typeof failure.code === "string" && failure.code.startsWith("DEVFN_") ? failure.code : "DEVFN_RUNTIME_INVALID", severity: "error",
+        message: error instanceof Error ? error.message : String(error), ...(failure.details === undefined ? {} : { details: failure.details }) });
     }
     const registry = await new FilePortRegistry(path.join(stateDir, "registry.json")).reconcile();
     const scan = await scanListenerState(plan.nodes.some((node) => node.kind === "service"));
