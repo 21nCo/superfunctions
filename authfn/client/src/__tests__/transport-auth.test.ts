@@ -144,13 +144,13 @@ describe('createAuthFnTransportAuth', () => {
       'x-authfn-csrf': 'from-client'
     });
   });
-  it('sends the CSRF token for same-origin cookie requests', async () => {
+  it('does not add the CSRF header automatically for same-origin credentials', async () => {
     const auth = createAuthFnSessionTransportAuth({
       credentials: 'same-origin',
       cookieAccessor: () => 'authfn.csrf=same-origin-token'
     });
 
-    expect(await auth.getRequestHeaders?.()).toEqual({ 'x-authfn-csrf': 'same-origin-token' });
+    expect(await auth.getRequestHeaders?.()).toEqual({});
   });
 
   it('keeps the client cookie prefix when a transport passes undefined', async () => {

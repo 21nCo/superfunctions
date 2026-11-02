@@ -12,11 +12,12 @@ interface AuthFnSessionTransportAuthOptions extends AuthFnTransportAuthOptions {
 
 /**
  * Creates an AuthFn transport auth provider from resolved session material.
- * When requests can send cookies (`credentials` is `'include'` or
- * `'same-origin'`) and a readable AuthFn CSRF cookie is present, its token is
- * sent as `x-authfn-csrf` so cookie-session mutations pass the server CSRF
- * check. Requests with `credentials: 'omit'` never get the header, so
- * bearer-only cross-origin requests keep their CORS preflight unchanged.
+ * When requests send cookies with `credentials: 'include'` and a readable
+ * AuthFn CSRF cookie is present, its token is sent as `x-authfn-csrf` so
+ * cookie-session mutations pass the server CSRF check. The provider cannot see
+ * the request URL, so the header is not added automatically for
+ * `'same-origin'` (it would also reach cross-origin targets) or `'omit'`;
+ * same-origin callers can pass the header through `headers`.
  */
 export function createAuthFnSessionTransportAuth(
   options: AuthFnSessionTransportAuthOptions = {},
@@ -31,7 +32,7 @@ export function createAuthFnSessionTransportAuth(
       if (bearerToken) {
         headers.authorization = `Bearer ${bearerToken}`;
       }
-      const csrfToken = credentials !== 'omit'
+      const csrfToken = credentials === 'include'
         ? readCsrfToken(options.cookieAccessor ?? defaultCookieAccessor, options.cookiePrefix)
         : undefined;
       if (csrfToken) {
