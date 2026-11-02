@@ -17,6 +17,7 @@ import { resolveEndpointTemplates, resolveLocalHostname, type EndpointResolution
 import { createPlan } from "./planner.js";
 import { planResources, resourcePlanFingerprint, resourcesNeedComposeNetworks } from "./resources.js";
 import { livePublicUrls, profileTunnel, publicTemplateInputs, publishLifecycleTunnel, selectedPublicRoutes, selectionTemplateInputs, withdrawLifecycleTunnel, type PublicSelection, type TunnelOverrides } from "./tunnel.js";
+import { assertEnvironmentOutputsAvailable, claimEnvironmentOutputs, releaseEnvironmentOutputs, type EnvironmentOutputClaim } from "./outputs.js";
 import { listRuntimeReceipts, newRuntimeId, readReceipt, readRuntimeId, recordRuntimeId, secureRuntimeDirectory, sharedEnvironmentOutputs, writeEnvironmentOutputs, writeReceipt } from "./runtime.js";
 import { preflightTasks, runTask, taskInputRevision, type TaskReceipt } from "./tasks.js";
 import { DevFnError, type CleanupResult, type InstanceIdentity, type RoutingIdentity, type LifecyclePlan, type LifecycleReceipt, type UpOptions } from "./types.js";
@@ -647,6 +648,7 @@ export class DevFnOrchestrator {
     const runtimeId = options.config.resources ? await readRuntimeId(requestedStateDir) ?? newRuntimeId() : undefined;
     const identity: RoutingIdentity = { ...await resolveInstanceIdentity(options.config.project.id, options.root, options.runtime), ...(runtimeId ? { runtimeId } : {}) };
     assertRuntimeIsolation(options.config, plan, identity);
+    await assertEnvironmentOutputsAvailable(options.config, options.root, identity);
     identity.runtimeDir = await secureRuntimeDirectory(options.config, options.root, identity.instanceId);
     const loadedPolicy = await loadDevFnPolicy(options.root, options.config.policy);
     // Effective network evidence must reject unreachable sibling references
@@ -676,27 +678,39 @@ export class DevFnOrchestrator {
       }
     }
     return await withFileLock(path.join(stateDir, `lifecycle-${identity.instanceId}.lock`), async () => {
-      // Concurrent starts may have ended task attempts since the preflight,
-      // and a dead DevFn may have left one: tasks are settled and decided
-      // again from their journals before any lease, replacement or node.
-      await decideTasks(stateDir, { ...(options.signal ? { signal: options.signal } : {}) });
-      // Health and teardown may wait for minutes. The instance lock protects
-      // this lifecycle while sibling route/lease transitions use the short
-      // shared routing lock below.
-      const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
-      const oldReady = await this.prepareExisting(options, stateDir, identity, loadedPolicy, registry, true);
-      // Unless a ready lifecycle is kept for replacement, public exposure this
-      // owner still has, also without a receipt, ends before any lease or
-      // node start; a public profile republishes once it is ready.
-      if (!oldReady) await withdrawLifecycleTunnel(stateDir, identity.instanceId, this.tunnelOverrides).catch((error: unknown) => {
-        throw new DevFnError("DEVFN_RUNTIME_INVALID", `Public routes of this lifecycle could not be withdrawn before startup: ${error instanceof Error ? error.message : String(error)}`);
-      });
-      const start = await this.prepareUpLocked(options, stateDir, identity, loadedPolicy, oldReady);
-      return await start();
+      // Environment-output files are claimed checkout-wide before anything
+      // else changes; a start that never records its receipt gives them back.
+      const claim = await claimEnvironmentOutputs(options.config, options.root, identity);
+      try { return await this.upLocked(options, stateDir, identity, loadedPolicy, decideTasks, claim); }
+      catch (error) {
+        await claim.restore().catch(() => undefined);
+        throw error;
+      }
     }, { timeoutMs: 30_000 });
   }
 
-  private async prepareUpLocked(options: UpOptions, stateDir: string, identity: RoutingIdentity, loadedPolicy: Awaited<ReturnType<typeof loadDevFnPolicy>>, oldReady?: LifecycleReceipt): Promise<() => Promise<LifecycleReceipt>> {
+  private async upLocked(options: UpOptions, stateDir: string, identity: RoutingIdentity, loadedPolicy: Awaited<ReturnType<typeof loadDevFnPolicy>>,
+    decideTasks: (stateDir: string, locked?: { signal?: AbortSignal }) => Promise<unknown>, claim: EnvironmentOutputClaim): Promise<LifecycleReceipt> {
+    // Concurrent starts may have ended task attempts since the preflight,
+    // and a dead DevFn may have left one: tasks are settled and decided
+    // again from their journals before any lease, replacement or node.
+    await decideTasks(stateDir, { ...(options.signal ? { signal: options.signal } : {}) });
+    // Health and teardown may wait for minutes. The instance lock protects
+    // this lifecycle while sibling route/lease transitions use the short
+    // shared routing lock below.
+    const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
+    const oldReady = await this.prepareExisting(options, stateDir, identity, loadedPolicy, registry, true);
+    // Unless a ready lifecycle is kept for replacement, public exposure this
+    // owner still has, also without a receipt, ends before any lease or
+    // node start; a public profile republishes once it is ready.
+    if (!oldReady) await withdrawLifecycleTunnel(stateDir, identity.instanceId, this.tunnelOverrides).catch((error: unknown) => {
+      throw new DevFnError("DEVFN_RUNTIME_INVALID", `Public routes of this lifecycle could not be withdrawn before startup: ${error instanceof Error ? error.message : String(error)}`);
+    });
+    const start = await this.prepareUpLocked(options, stateDir, identity, loadedPolicy, claim, oldReady);
+    return await start();
+  }
+
+  private async prepareUpLocked(options: UpOptions, stateDir: string, identity: RoutingIdentity, loadedPolicy: Awaited<ReturnType<typeof loadDevFnPolicy>>, claim: EnvironmentOutputClaim, oldReady?: LifecycleReceipt): Promise<() => Promise<LifecycleReceipt>> {
     const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
     const plan = createPlan(options.config, options.profile);
     const profileHostnames = Object.entries(options.config.hostnames ?? {}).filter(([, spec]) => !spec.profiles || spec.profiles.includes(plan.profile));
@@ -855,8 +869,11 @@ export class DevFnOrchestrator {
         // already cover every port it reuses, so the prior leases end here,
         // before its receipt is superseded.
         if (oldReady) await registry.release({ invocationId: oldReady.invocationId });
+        // From here this receipt holds the output claim until down.
+        await claim.commit();
         await writeReceipt(receipt);
         receipt.environmentOutputs = await writeEnvironmentOutputs(options.root, runtimeDir, options.config.environmentOutputs ?? [], environment, runtimeOf(identity));
+        await claim.recordWritten(receipt.environmentOutputs);
         for (const node of plan.nodes) {
           if (options.signal?.aborted) throw new DevFnError("DEVFN_CANCELLED", `DevFn startup was cancelled before ${node.name} started.`);
           await this.startSelectedNode(node, { options, identity, receipt, resolved, ports, allocations, supervisor, compose, registry });
@@ -1121,6 +1138,8 @@ export class DevFnOrchestrator {
     receipt.state = cleanup.errors.length || cleanup.publicOutstanding?.length ? "degraded" : "stopped";
     receipt.updatedAt = new Date().toISOString();
     await writeReceipt(receipt);
+    // A stopped runtime no longer holds its environment-output files.
+    if (receipt.state === "stopped") await releaseEnvironmentOutputs(options.root, identity.instanceId);
     return receipt;
   }
 
@@ -1187,8 +1206,10 @@ export class DevFnOrchestrator {
     if (plan.proxy && !await new CaddyProxyController(stateDir).available()) diagnostics.push({ code: "DEVFN_CADDY_UNAVAILABLE", severity: "error", message: "Caddy is required by this profile but unavailable." });
     const identity = await resolveInstanceIdentity(options.config.project.id, options.root, options.runtime);
     // What up refuses for this runtime before any mutation, doctor reports.
-    try { assertRuntimeIsolation(options.config, plan, identity); }
-    catch (error) {
+    try {
+      assertRuntimeIsolation(options.config, plan, identity);
+      await assertEnvironmentOutputsAvailable(options.config, options.root, identity);
+    } catch (error) {
       if (!(error instanceof DevFnError) || error.code !== "DEVFN_RUNTIME_INVALID") throw error;
       diagnostics.push({ code: error.code, severity: "error", message: error.message, ...(error.details === undefined ? {} : { details: error.details }) });
     }

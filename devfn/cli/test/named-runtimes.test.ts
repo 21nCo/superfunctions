@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -216,4 +216,121 @@ describe("named runtimes", () => {
       expect((await diagnosed()).refusals).toEqual([]);
     } finally { await rm(cwd, { recursive: true, force: true }); }
   });
+
+  it("claims environment-output files so no runtime overwrites another runtime's or a user's file", async () => {
+    const parent = await realpath(await mkdtemp(path.join(tmpdir(), "devfn-output-claims-")));
+    const cwd = path.join(parent, "checkout");
+    const stateDir = path.join(parent, "state");
+    await mkdir(cwd);
+    await execFileAsync("git", ["init", cwd]);
+    await writeFile(path.join(cwd, "server.mjs"), SERVER);
+    const manifest = async (...outputs: string[]) => await writeFile(path.join(cwd, "devfn.config.json"), JSON.stringify({ ...MANIFEST, environmentOutputs: outputs.map((item) => ({ path: item })) }));
+    const run = async (...args: string[]) => {
+      let output = "";
+      const code = await runCli([...args, "--trust", "--json", "--state-dir", stateDir], { cwd, stdout: (text) => { output += text; }, stderr: () => undefined });
+      return { code, value: JSON.parse(output) as Receipt & Failure & { diagnostics?: Array<{ code: string; severity: string; details?: Record<string, unknown> }> } };
+    };
+    const id = async (runtime?: string) => (await resolveInstanceIdentity("runtimes-fixture", cwd, runtime)).instanceId;
+    const read = async (file: string) => await readFile(path.join(cwd, file), "utf8");
+    const leased = async (instanceId: string) => (await new FilePortRegistry(path.join(stateDir, "registry.json")).read().catch(() => ({ allocations: [] as Array<{ instanceId: string; state: string }> })))
+      .allocations.some((item) => item.instanceId === instanceId && item.state !== "released");
+    const claimFile = async (runtime?: string) => path.join(cwd, ".devfn", "outputs", `${await id(runtime)}.json`);
+    try {
+      // (a) A user's .env.local is never a named runtime's .env.{runtime}: refused before any lease, receipt or claim, and doctor says so.
+      await writeFile(path.join(cwd, ".env.local"), "SECRET=user-owned\n");
+      await manifest(".env.{runtime}");
+      const userFile = await run("up", "--runtime", "local");
+      expect(userFile.value.error).toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("already exists"), details: { runtime: "local", target: path.join(cwd, ".env.local") } });
+      expect(await read(".env.local")).toBe("SECRET=user-owned\n");
+      await expect(access(path.join(cwd, ".devfn", "receipts", `${await id("local")}.json`))).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(access(await claimFile("local"))).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await leased(await id("local"))).toBe(false);
+      const doctor = await run("doctor", "--runtime", "local");
+      expect(doctor.code).toBe(1);
+      expect(doctor.value.diagnostics).toContainEqual(expect.objectContaining({ code: "DEVFN_RUNTIME_INVALID", severity: "error", details: expect.objectContaining({ target: path.join(cwd, ".env.local") }) }));
+      // A named runtime never writes through a symlink.
+      await symlink(".env.local", path.join(cwd, ".env.link"));
+      expect((await run("up", "--runtime", "link")).value.error).toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("symlink") });
+      await unlink(path.join(cwd, ".env.link"));
+
+      // (e) The default runtime keeps v0.1 literal outputs, also over an existing file. Started by an earlier release, it has no claim record:
+      // its live receipt still holds what it wrote, and a live receipt that records nothing holds every file.
+      await manifest(".env.local");
+      const base = (await run("up")).value;
+      expect(base.state).toBe("ready");
+      expect(await read(".env.local")).toContain(`DEVFN_INSTANCE_ID=${base.instanceId}`);
+      await rm(await claimFile());
+      await manifest(".env.{runtime}");
+      expect((await run("up", "--runtime", "local")).value.error).toMatchObject({ code: "DEVFN_RUNTIME_INVALID", details: { target: path.join(cwd, ".env.local"), owner: { runtime: "default", instanceId: base.instanceId } } });
+      const baseReceipt = path.join(cwd, ".devfn", "receipts", `${base.instanceId}.json`);
+      const recorded = await readFile(baseReceipt, "utf8");
+      await writeFile(baseReceipt, JSON.stringify({ ...JSON.parse(recorded), environmentOutputs: [] }));
+      expect((await run("up", "--runtime", "x")).value.error).toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("records no environment outputs"), details: { owner: { runtime: "default" } } });
+      await expect(access(path.join(cwd, ".env.x"))).rejects.toMatchObject({ code: "ENOENT" });
+      await writeFile(baseReceipt, recorded);
+      expect(await served(base.allocations[0].port)).toMatchObject({ instance: base.instanceId });
+      expect((await run("down")).value.state).toBe("stopped");
+      // Stopped, the default runtime's .env.local is still not runtime local's to overwrite.
+      expect((await run("up", "--runtime", "local")).value.error).toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("did not write it") });
+      await rm(path.join(cwd, ".env.local"));
+
+      // (b) A later manifest cannot point runtime b at running runtime a-b's file.
+      const ab = (await run("up", "--runtime", "a-b")).value;
+      expect(ab.state).toBe("ready");
+      const abFile = await read(".env.a-b");
+      await manifest(".env.a-{runtime}");
+      expect((await run("up", "--runtime", "b")).value.error).toMatchObject({ code: "DEVFN_RUNTIME_INVALID", details: { target: path.join(cwd, ".env.a-b"), owner: { runtime: "a-b", instanceId: ab.instanceId } } });
+      expect(await read(".env.a-b")).toBe(abFile);
+      expect(await served(ab.allocations[0].port)).toMatchObject({ instance: ab.instanceId });
+      await expect(access(path.join(cwd, ".devfn", "receipts", `${await id("b")}.json`))).rejects.toMatchObject({ code: "ENOENT" });
+
+      // (c) A symlinked directory is the directory it names: a restart of a-b takes the new outputs, b may not reach them through the alias.
+      await mkdir(path.join(cwd, "config"));
+      await symlink("config", path.join(cwd, "alias"));
+      await manifest("config/app.{runtime}.env", "alias/app.a-{runtime}.env");
+      const restarted = (await run("restart", "--runtime", "a-b")).value;
+      expect(restarted).toMatchObject({ state: "ready", instanceId: ab.instanceId });
+      const configFile = await read("config/app.a-b.env");
+      expect(configFile).toContain(`DEVFN_PORT_APP=${restarted.allocations[0].port}`);
+      expect((await run("up", "--runtime", "b")).value.error).toMatchObject({ code: "DEVFN_RUNTIME_INVALID", details: { target: path.join(cwd, "config", "app.a-b.env"), owner: { runtime: "a-b" } } });
+      expect(await read("config/app.a-b.env")).toBe(configFile);
+      expect((await run("down", "--runtime", "a-b")).value.state).toBe("stopped");
+
+      // (d) Started concurrently, runtimes whose outputs coincide get exactly one winner, which owns the file.
+      for (const file of ["app.a-b.env", "app.a-a-b.env"]) await rm(path.join(cwd, "config", file));
+      const raced = await Promise.all(["a-b", "b"].map(async (runtime) => ({ runtime, ...await run("up", "--runtime", runtime) })));
+      const winners = raced.filter((item) => item.code === 0);
+      expect(winners, JSON.stringify(raced.map((item) => item.value.error ?? item.value.state))).toHaveLength(1);
+      const loser = raced.find((item) => item.code !== 0)!;
+      expect(loser.value.error).toMatchObject({ code: "DEVFN_RUNTIME_INVALID", details: { owner: { runtime: winners[0].runtime } } });
+      expect(await read("config/app.a-b.env")).toContain(`DEVFN_INSTANCE_ID=${winners[0].value.instanceId}`);
+      expect(await leased(await id(loser.runtime))).toBe(false);
+
+      // (f) The winner rewrites its own files on a profile switch and after down and up; down releases only its claim.
+      const winner = winners[0].runtime;
+      const switched = (await run("up", "--runtime", winner, "--profile", "alt")).value;
+      expect(switched).toMatchObject({ state: "ready", profile: "alt" });
+      expect(await read("config/app.a-b.env")).toContain(`DEVFN_PORT_APP=${switched.allocations[0].port}`);
+      expect((await run("down", "--runtime", winner)).value.state).toBe("stopped");
+      expect(JSON.parse(await readFile(await claimFile(winner), "utf8"))).toMatchObject({ targets: [] });
+      const again = (await run("up", "--runtime", winner)).value;
+      expect(again.state).toBe("ready");
+      expect(await read("config/app.a-b.env")).toContain(`DEVFN_PORT_APP=${again.allocations[0].port}`);
+      expect((await run("down", "--runtime", winner)).value.state).toBe("stopped");
+
+      // A claim holds while the DevFn that made it runs or its receipt is live: a dead claimant without a receipt holds nothing.
+      await manifest(".env.{runtime}");
+      const exited = spawn(process.execPath, ["-e", ""]);
+      await new Promise((resolve) => exited.on("exit", resolve));
+      const forged = async (pid: number) => await writeFile(await claimFile("q"), JSON.stringify({ version: 1, instanceId: await id("q"), runtime: "q", targets: [path.join(cwd, ".env.r")], written: [], pid, createdAt: new Date().toISOString() }));
+      await forged(process.pid);
+      expect((await run("up", "--runtime", "r")).value.error).toMatchObject({ code: "DEVFN_RUNTIME_INVALID", details: { owner: { runtime: "q" } } });
+      await forged(exited.pid!);
+      expect((await run("up", "--runtime", "r")).value.state).toBe("ready");
+      expect((await run("down", "--runtime", "r")).value.state).toBe("stopped");
+    } finally {
+      for (const runtime of [[], ["--runtime", "a-b"], ["--runtime", "b"], ["--runtime", "r"], ["--runtime", "local"]]) await run("down", ...runtime).catch(() => undefined);
+      await rm(parent, { recursive: true, force: true });
+    }
+  }, 180_000);
 });

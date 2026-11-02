@@ -84,6 +84,33 @@ export async function listRuntimeReceipts(config: DevFnConfig, root: string): Pr
   return runtimes.sort((a, b) => a.runtime < b.runtime ? -1 : a.runtime > b.runtime ? 1 : 0);
 }
 
+/**
+ * Every receipt of this manifest root by instance, whatever its project or
+ * runtime: the stable receipts, then receipts that exist only under the
+ * configured runtime directory (earlier releases).
+ */
+export async function checkoutReceipts(config: DevFnConfig, root: string): Promise<Map<string, LifecycleReceipt>> {
+  const found = new Map<string, LifecycleReceipt>();
+  const directories = [
+    { directory: await resolveContainedPath(root, path.join(".devfn", "receipts"), "receipt").catch(() => undefined), file: (name: string) => name, id: (name: string) => /^[0-9a-f]{12}\.json$/.test(name) ? name.slice(0, -5) : undefined },
+    { directory: await resolveContainedPath(root, path.join(config.runtimeDir ?? ".devfn", "instances"), "runtimeDir").catch(() => undefined), file: (name: string) => path.join(name, "receipt.json"), id: (name: string) => /^[0-9a-f]{12}$/.test(name) ? name : undefined },
+  ];
+  for (const { directory, file, id } of directories) {
+    if (!directory) continue;
+    const names = await readdir(directory).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT" || error.code === "ENOTDIR") return [] as string[];
+      throw error;
+    });
+    for (const name of names.sort()) {
+      const instanceId = id(name);
+      if (!instanceId || found.has(instanceId)) continue;
+      const value = await parseReceipt(path.join(directory, file(name)), root, instanceId);
+      if (value) found.set(instanceId, value);
+    }
+  }
+  return found;
+}
+
 /** An environment output path for one runtime: its `{runtime}` token is the runtime name. */
 export const runtimeOutputPath = (output: string, runtime: string = DEFAULT_RUNTIME): string => output.replaceAll("{runtime}", runtime);
 
