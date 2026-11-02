@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { link, lstat, mkdir, open, readdir, readFile, realpath, rename, rmdir, stat, unlink, writeFile } from "node:fs/promises";
+import { link, lstat, mkdir, open, readdir, readFile, readlink, realpath, rename, rmdir, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { processBirthSignature, processIdentityStatus, resolveContainedPath, type DevFnConfig } from "@devfn/config";
@@ -67,14 +67,18 @@ const stagingPath = (target: string): string => path.join(path.dirname(target), 
  * The file a write to target reaches: a symlink's target, otherwise the
  * realpath of its nearest existing directory joined with the rest.
  */
-async function canonicalTarget(target: string): Promise<{ canonical: string; exists: boolean; symlink: boolean }> {
+async function canonicalTarget(target: string, depth = 0): Promise<{ canonical: string; exists: boolean; symlink: boolean }> {
   const stat = await lstat(target).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT" || error.code === "ENOTDIR") return undefined;
     throw error;
   });
   if (stat?.isSymbolicLink()) {
     const resolved = await realpath(target).catch(() => undefined);
-    return { canonical: resolved ?? path.resolve(target), exists: resolved !== undefined, symlink: true };
+    if (resolved !== undefined) return { canonical: resolved, exists: true, symlink: true };
+    // A dangling link reaches the path its text names once that is created.
+    const text = depth < 32 ? await readlink(target).catch(() => undefined) : undefined;
+    const reached = text === undefined ? undefined : await canonicalTarget(path.resolve(path.dirname(target), text), depth + 1).catch(() => undefined);
+    return { canonical: reached?.canonical ?? path.resolve(target), exists: false, symlink: true };
   }
   const rest = [path.basename(target)];
   let directory = path.dirname(target);
@@ -311,8 +315,9 @@ async function ownerRemedy(config: DevFnConfig, root: string, instanceId: string
  * existing file this instance never wrote. The default runtime keeps writing
  * its own outputs over existing files as earlier releases did. Whatever it
  * declares, an instance whose own runtime directory holds another's file
- * (written there under another runtimeDir) is refused: its logs and
- * runtime.env would overwrite it.
+ * (written there under another runtimeDir), or is, contains or lies in
+ * another instance's runtime directory, is refused: its logs, receipt and
+ * runtime.env would overwrite them.
  */
 async function assertTargetsAvailable(config: DevFnConfig, root: string, identity: InstanceIdentity, targets: readonly Target[],
   claims: Map<string, { claim: OutputClaim; text: string }>): Promise<void> {
@@ -322,6 +327,15 @@ async function assertTargetsAvailable(config: DevFnConfig, root: string, identit
   const ownDirectory = runtimeDirectory(config, root, identity.instanceId);
   const ownKey = await canonicalKey(ownDirectory);
   for (const holder of holders) {
+    // Two runtime directories are disjoint: neither is the other, by a
+    // symlink or a runtimeDir, nor lies inside it, or their logs, receipts
+    // and runtime.env would overwrite each other.
+    const other = holder.runtimeDirectory;
+    if (other && (within(ownKey, other.key) || within(other.key, ownKey))) {
+      const relation = ownKey === other.key ? "is" : within(ownKey, other.key) ? "lies in" : "contains";
+      throw new DevFnError("DEVFN_RUNTIME_INVALID", `Runtime ${runtime} keeps its logs and runtime.env in ${relativeName(root, ownDirectory)}, which ${relation} ${relativeName(root, other.path)}, the runtime directory of runtime ${holder.owner.runtime} (instance ${holder.instanceId}); DevFn left it untouched. Remove the symlink or change runtimeDir, or ${await ownerRemedy(config, root, holder.instanceId, holder.entry, holder.owner.runtime)}.`,
+        { runtime, target: other.path, owner: holder.owner });
+    }
     const file = [...holder.files].find(([key]) => within(key, ownKey))?.[1];
     if (file === undefined) continue;
     throw new DevFnError("DEVFN_RUNTIME_INVALID", `Runtime ${runtime} keeps its logs and runtime.env in ${relativeName(root, ownDirectory)}, where runtime ${holder.owner.runtime} (instance ${holder.instanceId}) writes ${relativeName(root, file)}; DevFn left it untouched. Move that output elsewhere, or ${await ownerRemedy(config, root, holder.instanceId, holder.entry, holder.owner.runtime)}.`,
@@ -508,7 +522,10 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
     } catch (error) {
       // A sibling's failed first start removed the empty directory before the lock was created in it.
       const failure = error as NodeJS.ErrnoException;
-      if (failure.code !== "ENOENT" || failure.path !== lock) throw error;
+      if (failure.code === "ENOENT" && failure.path === lock) continue;
+      // A refused start leaves no DevFn state in a checkout that had none.
+      if (created) await removeEmptyDirectories(directory, created);
+      throw error;
     }
   }
   const update = async (change: (current: OutputClaim) => OutputClaim) => {

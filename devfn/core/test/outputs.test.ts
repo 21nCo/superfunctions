@@ -39,7 +39,7 @@ async function checkout(): Promise<string> {
 const config = validateDevFnConfig({ version: 1, project: { id: "fixture" }, environmentOutputs: [{ path: ".env.{runtime}" }],
   processes: { app: { adapter: "command", command: ["node", "app.mjs"] } }, profiles: { default: { processes: ["app"] } } });
 
-describe("environment-output claims", () => {
+describe("environment-output claims", { timeout: 30_000 }, () => {
   it("recovers a named runtime's own file after a replacement interrupted before or after its rename, and refuses any other content", async () => {
     const root = await checkout();
     const file = path.join(root, ".env.p");
@@ -203,6 +203,44 @@ describe("environment-output claims", () => {
       await sibling.restore();
       await expect(readFile(claimFile(fallback.instanceId), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
       expect(await readFile(keptFile, "utf8")).toBe("{}");
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("keeps every start's runtime directory disjoint from another's: not equal through a symlink, not nested either way", async () => {
+    const root = await checkout();
+    const a = await resolveInstanceIdentity("fixture", root, "a");
+    const b = await resolveInstanceIdentity("fixture", root, "b");
+    const withDir = (runtimeDir: string, outputs: string[]) => validateDevFnConfig({ ...JSON.parse(JSON.stringify(config)), runtimeDir, environmentOutputs: outputs.map((output) => ({ path: output })) });
+    const claimFile = (id: string) => path.join(root, ".devfn", "receipts", "outputs", `${id}.json`);
+    const refused = (relation: string) => ({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringMatching(new RegExp(`which ${relation} .*the runtime directory of runtime a`)) });
+    try {
+      // A claim refused under the lock in a checkout without DevFn state leaves none behind.
+      await expect(claimEnvironmentOutputs(withDir(".devfn", [".devfn/receipts/app.env"]), root, a)).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID" });
+      await expect(access(path.join(root, ".devfn"))).rejects.toMatchObject({ code: "ENOENT" });
+
+      // a holds run/instances/<a>, with and without an output.
+      for (const outputs of [[], [".env.{runtime}"]]) {
+        const started = await claimEnvironmentOutputs(withDir("run", outputs), root, a);
+        // Equal: b's directory is a symlink to a's.
+        await mkdir(path.join(root, "run", "instances"), { recursive: true });
+        const alias = path.join(root, "run", "instances", b.instanceId);
+        await symlink(a.instanceId, alias);
+        await expect(assertEnvironmentOutputsAvailable(withDir("run", outputs), root, b)).rejects.toMatchObject(refused("is"));
+        await expect(claimEnvironmentOutputs(withDir("run", outputs), root, b)).rejects.toMatchObject(refused("is"));
+        await rm(alias);
+        // Nested inside a's directory through runtimeDir.
+        const nested = path.join("run", "instances", a.instanceId);
+        await expect(claimEnvironmentOutputs(withDir(nested, outputs), root, b)).rejects.toMatchObject(refused("lies in"));
+        await expect(readFile(claimFile(b.instanceId), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+        await started.restore();
+        await rm(path.join(root, "run"), { recursive: true, force: true });
+      }
+      // Containing it: a lives under run/instances/<b>, and b's own directory is that.
+      const inner = await claimEnvironmentOutputs(withDir(path.join("run", "instances", b.instanceId), []), root, a);
+      await expect(claimEnvironmentOutputs(withDir("run", []), root, b)).rejects.toMatchObject(refused("contains"));
+      // Once a's start is over, its directory is free.
+      await inner.restore();
+      await (await claimEnvironmentOutputs(withDir("run", []), root, b)).restore();
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 

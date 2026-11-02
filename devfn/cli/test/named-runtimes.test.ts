@@ -488,6 +488,20 @@ describe("named runtimes", () => {
       expect(await exists(await receiptFile())).toBe(false);
       await unlink(path.join(cwd, "cfg"));
       await manifest([".env.{runtime}"]);
+      // Nor can another runtime whose runtime directory is a symlink to review's: its logs, receipt and runtime.env would land in review's.
+      const reviewDir = path.join(cwd, ".devfn", "instances", live.instanceId);
+      const snapshot = async () => await Promise.all(["receipt.json", "runtime.env", path.join("logs", "app.log")].map(async (file) => await readFile(path.join(reviewDir, file), "utf8").catch(() => null)));
+      const before = await snapshot();
+      await symlink(live.instanceId, path.join(cwd, ".devfn", "instances", await id("b")));
+      const sharedDir = await run("up", "--runtime", "b");
+      expect(sharedDir.code).toBe(1);
+      expect(sharedDir.value.error).toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("the runtime directory of runtime review"), details: { runtime: "b", owner: { runtime: "review", instanceId: live.instanceId } } });
+      expect(await snapshot()).toEqual(before);
+      expect(await served(live.allocations[0].port)).toMatchObject({ instance: live.instanceId });
+      expect(await exists(await receiptFile("b"))).toBe(false);
+      expect(await exists(await claimFile("b"))).toBe(false);
+      expect(await leased(await id("b"))).toBe(false);
+      await unlink(path.join(cwd, ".devfn", "instances", await id("b")));
       expect((await run("down", "--runtime", "review")).value.state).toBe("stopped");
 
       // v0.1 compatibility: the default runtime writes through a symlink that existed before up and over a user's file.
