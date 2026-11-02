@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { link, mkdir, mkdtemp, readFile, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -79,6 +79,58 @@ describe("environment-output claims", () => {
       await expect(assertEnvironmentOutputsAvailable(config, root, identity)).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("changed since runtime p wrote it") });
       await expect(claimEnvironmentOutputs(config, root, identity)).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID" });
       expect(await readFile(file, "utf8")).toBe("USER=edit\n");
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("refuses an output that is a hard link to another runtime's held file, at the claim and at the default runtime's in-place write", async () => {
+    const root = await checkout();
+    const review = path.join(root, ".env.review"), fallback = path.join(root, ".env.default");
+    const reviewIdentity = await resolveInstanceIdentity("fixture", root, "review");
+    const defaultIdentity = await resolveInstanceIdentity("fixture", root);
+    try {
+      // review holds its file: its claimant (this process) runs.
+      const held = await claimEnvironmentOutputs(config, root, reviewIdentity);
+      await held.write(review, "DEVFN_INSTANCE_ID=review\n", 0o600);
+      await held.commit();
+      await link(review, fallback);
+      await expect(assertEnvironmentOutputsAvailable(config, root, defaultIdentity)).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("same file (a hard link) as .env.review"), details: { owner: { runtime: "review" } } });
+      await expect(claimEnvironmentOutputs(config, root, defaultIdentity)).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID" });
+      await unlink(fallback);
+      // A link made after the default claimed its absent file is refused at the write, before any byte changes.
+      const claim = await claimEnvironmentOutputs(config, root, defaultIdentity);
+      await link(review, fallback);
+      await expect(claim.write(fallback, "DEVFN_INSTANCE_ID=default\n", 0o600)).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("hard link") });
+      expect(await readFile(review, "utf8")).toBe("DEVFN_INSTANCE_ID=review\n");
+      await claim.restore();
+      // A hard link to a file no runtime holds is overwritten in place, as DevFn v0.1 did.
+      await unlink(fallback);
+      await writeFile(path.join(root, "user.env"), "USER=1\n");
+      await link(path.join(root, "user.env"), fallback);
+      const own = await claimEnvironmentOutputs(config, root, defaultIdentity);
+      await own.write(fallback, "DEVFN_INSTANCE_ID=default\n", 0o600);
+      await own.commit();
+      expect(await readFile(path.join(root, "user.env"), "utf8")).toBe("DEVFN_INSTANCE_ID=default\n");
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("refuses an output whose file lands in DevFn's own state through a runtime name, a symlinked directory or a state directory in the checkout", async () => {
+    const root = await checkout();
+    const at = (output: string) => validateDevFnConfig({ ...JSON.parse(JSON.stringify(config)), environmentOutputs: [{ path: output }] });
+    try {
+      await mkdir(path.join(root, ".devfn", "receipts"), { recursive: true });
+      await symlink(path.join(root, ".devfn", "receipts"), path.join(root, "alias"));
+      for (const [output, runtime, stateDir] of [
+        [".devfn/{runtime}", "outputs", undefined], // the claims directory itself
+        [".devfn/{runtime}", "instances", undefined],
+        ["alias/{runtime}.json", "b", undefined],
+        ["state/{runtime}.env", "b", path.join(root, "state")],
+      ] as const) {
+        const identity = await resolveInstanceIdentity("fixture", root, runtime);
+        await expect(assertEnvironmentOutputsAvailable(at(output), root, identity, stateDir), output).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("inside DevFn's own state") });
+        await expect(claimEnvironmentOutputs(at(output), root, identity, stateDir), output).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID" });
+      }
+      // A state directory outside the checkout reserves nothing in it.
+      await expect(assertEnvironmentOutputsAvailable(at("state/{runtime}.env"), root, await resolveInstanceIdentity("fixture", root, "b"), path.join(os.tmpdir(), "devfn-state"))).resolves.toBeUndefined();
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 

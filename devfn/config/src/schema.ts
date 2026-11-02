@@ -626,6 +626,28 @@ function assertDisjointEnvironmentOutputs(outputs: readonly EnvironmentOutput[])
   }
 }
 
+const pathSegments = (value: string): string[] => path.normalize(value).split(/[\\/]+/).filter((segment) => segment !== "" && segment !== ".").map((segment) => segment.toLowerCase());
+
+/**
+ * DevFn's own state under the repository: instance runtime directories,
+ * receipts and output claims. No environment output may name a file there,
+ * or one runtime could overwrite another's receipt, claim or runtime.env.
+ * Compared case-folded, as on the default macOS and Windows filesystems; the
+ * start also refuses an output whose canonical file lands there through a
+ * symlink, or in a state directory inside the repository.
+ */
+export const devfnStateDirectories = (runtimeDir: string | undefined): string[] =>
+  [path.join(runtimeDir ?? ".devfn", "instances"), path.join(".devfn", "receipts"), path.join(".devfn", "outputs")];
+
+function assertOutputsOutsideDevFnState(config: DevFnConfig): void {
+  const reserved = devfnStateDirectories(config.runtimeDir).map(pathSegments);
+  for (const [index, output] of (config.environmentOutputs ?? []).entries()) {
+    const segments = pathSegments(output.path);
+    const inside = reserved.find((directory) => directory.length <= segments.length && directory.every((segment, position) => segments[position] === segment));
+    if (inside) fail(`environmentOutputs[${index}].path ${output.path} is inside ${inside.join("/")}, where DevFn keeps its own state; write the output elsewhere.`, `environmentOutputs[${index}].path`);
+  }
+}
+
 function environmentOutputs(value: unknown): EnvironmentOutput[] | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) fail("environmentOutputs must be an array.", "environmentOutputs");
@@ -763,6 +785,7 @@ export function validateDevFnConfig(value: unknown): DevFnConfig {
   if (!config.defaultProfile && !config.profiles.default) {
     fail("profiles.default is required when defaultProfile is omitted.", "profiles.default");
   }
+  assertOutputsOutsideDevFnState(config);
   validateReferences(config);
   return config;
 }

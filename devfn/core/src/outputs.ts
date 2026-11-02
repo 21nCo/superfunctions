@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { link, lstat, mkdir, open, readdir, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
+import { link, lstat, mkdir, open, readdir, readFile, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { processBirthSignature, processIdentityStatus, resolveContainedPath, type DevFnConfig } from "@devfn/config";
+import { devfnStateDirectories, processBirthSignature, processIdentityStatus, resolveContainedPath, type DevFnConfig } from "@devfn/config";
 import { withFileLock } from "@devfn/ports";
 
 import { DEFAULT_RUNTIME, isNamedRuntime, resolveInstanceIdentity } from "./identity.js";
@@ -149,10 +149,21 @@ async function removeClaim(root: string, instanceId: string): Promise<void> {
   await unlink(path.join(await claimDirectory(root), `${instanceId}.json`)).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; });
 }
 
-async function canonicalKeys(paths: readonly string[] | undefined): Promise<Set<string>> {
-  const keys = new Set<string>();
-  for (const item of paths ?? []) keys.add(pathKey((await canonicalTarget(item)).canonical));
-  return keys;
+/** Canonical files by comparison key. */
+async function addCanonical(files: Map<string, string>, paths: readonly string[] | undefined): Promise<void> {
+  for (const item of paths ?? []) {
+    const { canonical } = await canonicalTarget(item);
+    files.set(pathKey(canonical), canonical);
+  }
+}
+
+/**
+ * The identity of an existing regular file (device and inode, following a
+ * link), which every hard link to it shares; undefined for anything else.
+ */
+async function fileIdentity(file: string): Promise<string | undefined> {
+  const info = await stat(file, { bigint: true }).catch(() => undefined);
+  return info?.isFile() ? `${info.dev}:${info.ino}` : undefined;
 }
 
 const digest = (content: string | Buffer): string => createHash("sha256").update(content).digest("hex");
@@ -185,15 +196,82 @@ async function claimantRuns(claim: OutputClaim): Promise<boolean> {
 
 interface Target { output: string; target: string; canonical: string; key: string; exists: boolean; symlink: boolean }
 
-async function selectedTargets(config: DevFnConfig, root: string, runtime: string): Promise<Target[]> {
+/**
+ * DevFn's own state as canonical directories: the instance runtime
+ * directories, receipts and output claims of the checkout, and the state
+ * directory when it lies inside the checkout.
+ */
+async function stateDirectoryKeys(config: DevFnConfig, root: string, stateDir: string | undefined): Promise<string[]> {
+  const keys = await Promise.all(devfnStateDirectories(config.runtimeDir).map(async (item) => pathKey((await canonicalTarget(path.resolve(root, item))).canonical)));
+  if (stateDir) {
+    const rootKey = pathKey(await realpath(root).catch(() => path.resolve(root)));
+    const stateKey = pathKey((await canonicalTarget(path.resolve(stateDir))).canonical);
+    if (stateKey.startsWith(rootKey + path.sep)) keys.push(stateKey);
+  }
+  return keys;
+}
+
+/** The selected runtime's declared outputs; one whose file lands in DevFn's own state is refused. */
+async function selectedTargets(config: DevFnConfig, root: string, runtime: string, stateDir: string | undefined): Promise<Target[]> {
   const targets: Target[] = [];
+  let reserved: string[] | undefined;
   for (const output of config.environmentOutputs ?? []) {
     const target = await resolveContainedPath(root, runtimeOutputPath(output.path, runtime), "environmentOutputs.path");
     const resolved = await canonicalTarget(target);
-    targets.push({ output: output.path, target, ...resolved, key: pathKey(resolved.canonical) });
+    const key = pathKey(resolved.canonical);
+    reserved ??= await stateDirectoryKeys(config, root, stateDir);
+    if (reserved.some((directory) => key === directory || key.startsWith(directory + path.sep))) {
+      throw new DevFnError("DEVFN_RUNTIME_INVALID", `Environment output ${relativeName(root, target)} of runtime ${runtime} resolves to ${resolved.canonical}, inside DevFn's own state (runtime directories, receipts, output claims or the state directory); write it elsewhere.`,
+        { runtime, target: resolved.canonical });
+    }
+    targets.push({ output: output.path, target, ...resolved, key });
   }
   return targets;
 }
+
+interface Holder {
+  instanceId: string;
+  owner: { runtime: string; instanceId: string; receipt?: string; projectId?: string };
+  entry: { receipt: LifecycleReceipt; file: string } | undefined;
+  /** The canonical files it holds, by comparison key. */
+  files: Map<string, string>;
+  /** A live receipt of an earlier release that records no files and has no claim: what it holds cannot be known. */
+  unknown: boolean;
+}
+
+/**
+ * Every other instance of the checkout and the files it holds: its claimed
+ * targets while its claimant runs or its receipt is not stopped, and the
+ * files a live receipt records (its runtime.env included).
+ */
+async function otherHolders(config: DevFnConfig, root: string, identity: InstanceIdentity, claims: Map<string, { claim: OutputClaim; text: string }>): Promise<Holder[]> {
+  const receipts = await checkoutReceipts(config, root);
+  const holders: Holder[] = [];
+  for (const instanceId of new Set([...claims.keys(), ...receipts.keys()])) {
+    if (instanceId === identity.instanceId) continue;
+    const claim = claims.get(instanceId)?.claim;
+    const entry = receipts.get(instanceId);
+    const receipt = entry?.receipt;
+    const files = new Map<string, string>();
+    if (claim?.targets.length && (live(receipt) || await claimantRuns(claim))) await addCanonical(files, claim.targets);
+    if (live(receipt)) await addCanonical(files, receipt!.environmentOutputs);
+    holders.push({ instanceId, entry, files, unknown: live(receipt) && !claim && !receipt!.environmentOutputs?.length,
+      owner: { runtime: claim?.runtime ?? String(receipt?.runtime ?? DEFAULT_RUNTIME), instanceId, ...(entry ? { receipt: entry.file, projectId: String(entry.receipt.projectId) } : {}) } });
+  }
+  return holders;
+}
+
+/** The other instance holding the file with this identity (a hard link to its file), if any. */
+async function holderOfIdentity(holders: readonly Holder[], identity: string): Promise<{ holder: Holder; file: string } | undefined> {
+  for (const holder of holders) {
+    for (const file of holder.files.values()) if (await fileIdentity(file) === identity) return { holder, file };
+  }
+  return undefined;
+}
+
+const aliasRefusal = async (config: DevFnConfig, root: string, runtime: string, target: string, canonical: string, found: { holder: Holder; file: string }) => new DevFnError("DEVFN_RUNTIME_INVALID",
+  `Environment output ${relativeName(root, target)} of runtime ${runtime} is the same file (a hard link) as ${relativeName(root, found.file)}, which runtime ${found.holder.owner.runtime} (instance ${found.holder.instanceId}) writes; DevFn left it untouched. Remove the link, or ${await ownerRemedy(config, root, found.holder.instanceId, found.holder.entry, found.holder.owner.runtime)}.`,
+  { runtime, target: canonical, owner: found.holder.owner });
 
 /**
  * How to stop the owner of a receipt. A receipt this manifest cannot select
@@ -212,39 +290,36 @@ async function ownerRemedy(config: DevFnConfig, root: string, instanceId: string
 
 /**
  * Refuse environment outputs this instance may not write: a file another
- * instance of the checkout holds, any file while another instance's claims
- * cannot be known, and for a named runtime a symlink or an existing file this
- * instance never wrote. The default runtime keeps writing its own outputs
- * over existing files as earlier releases did.
+ * instance of the checkout holds, by path or as a hard link to it, any file
+ * while another instance's claims cannot be known, and for a named runtime a
+ * symlink or an existing file this instance never wrote. The default runtime
+ * keeps writing its own outputs over existing files as earlier releases did.
  */
 async function assertTargetsAvailable(config: DevFnConfig, root: string, identity: InstanceIdentity, targets: readonly Target[],
   claims: Map<string, { claim: OutputClaim; text: string }>): Promise<void> {
   if (!targets.length) return;
   const runtime = identity.runtime ?? DEFAULT_RUNTIME;
-  const receipts = await checkoutReceipts(config, root);
   const wanted = new Map(targets.map((item) => [item.key, item]));
-  for (const instanceId of new Set([...claims.keys(), ...receipts.keys()])) {
-    if (instanceId === identity.instanceId) continue;
-    const claim = claims.get(instanceId)?.claim;
-    const entry = receipts.get(instanceId);
-    const receipt = entry?.receipt;
-    const owner = { runtime: claim?.runtime ?? String(receipt?.runtime ?? DEFAULT_RUNTIME), instanceId, ...(entry ? { receipt: entry.file, projectId: String(entry.receipt.projectId) } : {}) };
-    const held = new Set<string>();
-    if (claim?.targets.length && (live(receipt) || await claimantRuns(claim))) for (const key of await canonicalKeys(claim.targets)) held.add(key);
-    if (live(receipt)) {
+  const holders = await otherHolders(config, root, identity, claims);
+  for (const holder of holders) {
+    const { instanceId, owner, entry } = holder;
+    if (holder.unknown) {
       // A live receipt of an earlier release records what it wrote only once
       // it wrote it; without that or a claim its files cannot be known.
-      if (!claim && !receipt!.environmentOutputs?.length) {
-        throw new DevFnError("DEVFN_RUNTIME_INVALID", `Runtime ${owner.runtime} (instance ${instanceId}) has a ${receipt!.state} receipt that records no environment outputs, so DevFn cannot tell whether it owns ${targets.map((item) => relativeName(root, item.target)).join(", ")}; ${await ownerRemedy(config, root, instanceId, entry, owner.runtime)}.`,
-          { runtime, owner });
-      }
-      for (const key of await canonicalKeys(receipt!.environmentOutputs)) held.add(key);
+      throw new DevFnError("DEVFN_RUNTIME_INVALID", `Runtime ${owner.runtime} (instance ${instanceId}) has a ${entry!.receipt.state} receipt that records no environment outputs, so DevFn cannot tell whether it owns ${targets.map((item) => relativeName(root, item.target)).join(", ")}; ${await ownerRemedy(config, root, instanceId, entry, owner.runtime)}.`,
+        { runtime, owner });
     }
-    const taken = [...held].map((key) => wanted.get(key)).find((item) => item !== undefined);
+    const taken = [...holder.files.keys()].map((key) => wanted.get(key)).find((item) => item !== undefined);
     if (taken) {
       throw new DevFnError("DEVFN_RUNTIME_INVALID", `Environment output ${relativeName(root, taken.target)} of runtime ${runtime} is the file runtime ${owner.runtime} (instance ${instanceId}) writes; give the outputs distinct names, or ${await ownerRemedy(config, root, instanceId, entry, owner.runtime)}.`,
         { runtime, target: taken.canonical, owner });
     }
+  }
+  // An existing output that is another name of a held file is that file.
+  for (const item of targets) {
+    const id = item.exists ? await fileIdentity(item.canonical) : undefined;
+    const found = id === undefined ? undefined : await holderOfIdentity(holders, id);
+    if (found) throw await aliasRefusal(config, root, runtime, item.target, item.canonical, found);
   }
   if (!isNamedRuntime(identity.runtime)) return;
   // Its claim record is the only attribution: every named runtime has one, and a write records each file in it.
@@ -269,8 +344,8 @@ const symlinkRefusal = (root: string, runtime: string, target: string) => new De
   `Environment output ${relativeName(root, target)} of runtime ${runtime} is a symlink; a named runtime writes only its own regular files.`, { runtime, target });
 
 /** What up refuses for this runtime's environment outputs, checked without claiming them (preflight and doctor). */
-export async function assertEnvironmentOutputsAvailable(config: DevFnConfig, root: string, identity: InstanceIdentity): Promise<void> {
-  const targets = await selectedTargets(config, root, identity.runtime ?? DEFAULT_RUNTIME);
+export async function assertEnvironmentOutputsAvailable(config: DevFnConfig, root: string, identity: InstanceIdentity, stateDir?: string): Promise<void> {
+  const targets = await selectedTargets(config, root, identity.runtime ?? DEFAULT_RUNTIME, stateDir);
   if (targets.length) await assertTargetsAvailable(config, root, identity, targets, await readClaims(root));
 }
 
@@ -326,16 +401,25 @@ async function replaceRegular(target: string, content: string, mode: number): Pr
 /**
  * Write a file in place as DevFn v0.1 did (truncate, keep its inode, apply
  * the mode), without following a link at its name: a symlink there fails.
+ * The file is opened without truncation first, so a file with other hard
+ * links that `held` reports as another runtime's is left untouched.
  */
-async function overwriteInPlace(target: string, content: string, mode: number): Promise<"written" | "symlink"> {
+async function overwriteInPlace<T>(target: string, content: string, mode: number, held: (identity: string) => Promise<T | undefined>): Promise<"written" | "symlink" | { aliased: T }> {
   let file;
-  try { file = await open(target, constants.O_CREAT | constants.O_TRUNC | constants.O_WRONLY | (constants.O_NOFOLLOW ?? 0), mode); }
+  try { file = await open(target, constants.O_CREAT | constants.O_WRONLY | (constants.O_NOFOLLOW ?? 0), mode); }
   catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "ELOOP" || code === "EMLINK") return "symlink";
     throw error;
   }
-  try { await file.writeFile(content, "utf8"); await file.chmod(mode); } finally { await file.close(); }
+  try {
+    const info = await file.stat({ bigint: true });
+    const owner = info.nlink > 1n ? await held(`${info.dev}:${info.ino}`) : undefined;
+    if (owner !== undefined) return { aliased: owner };
+    await file.truncate(0);
+    await file.writeFile(content, "utf8");
+    await file.chmod(mode);
+  } finally { await file.close(); }
   return "written";
 }
 
@@ -355,7 +439,7 @@ async function removeOrphanedStaging(targets: readonly Target[]): Promise<void> 
  * lock, before any lease, receipt or process exists, so concurrent starts of
  * runtimes whose outputs coincide are arbitrated: the first claim wins.
  */
-export async function claimEnvironmentOutputs(config: DevFnConfig, root: string, identity: InstanceIdentity): Promise<EnvironmentOutputClaim> {
+export async function claimEnvironmentOutputs(config: DevFnConfig, root: string, identity: InstanceIdentity, stateDir?: string): Promise<EnvironmentOutputClaim> {
   const runtime = identity.runtime ?? DEFAULT_RUNTIME;
   let previous: OutputClaim | undefined;
   let hadPrevious = false;
@@ -369,14 +453,14 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
       pid: process.pid, ...await processBirthSignature(process.pid).then((value) => value ? { birthSignature: value } : {}), createdAt: new Date().toISOString() };
     await writeClaim(root, claim);
   };
-  const targets = await selectedTargets(config, root, runtime);
+  const targets = await selectedTargets(config, root, runtime, stateDir);
   if (targets.length) {
     // The lock lives among the claims, which are never task inputs, and so
     // do the directories it is retired to on release.
     const directory = await claimDirectory(root);
     await mkdir(directory, { recursive: true, mode: 0o700 });
     await withFileLock(path.join(directory, CLAIMS_LOCK), async () => {
-      const locked = await selectedTargets(config, root, runtime);
+      const locked = await selectedTargets(config, root, runtime, stateDir);
       await assertTargetsAvailable(config, root, identity, locked, await readClaims(root));
       await record(locked);
       await removeOrphanedStaging(locked);
@@ -434,10 +518,14 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
         await mkdir(path.dirname(canonical), { recursive: true, mode: 0o700 });
         canonical = await claimedPath();
         if (!named) {
-          // The default runtime overwrites its claimed file in place as DevFn v0.1 did.
-          if (await overwriteInPlace(canonical, content, mode) === "symlink") {
+          // The default runtime overwrites its claimed file in place as DevFn
+          // v0.1 did, unless it is now a hard link to another runtime's file.
+          const outcome = await overwriteInPlace(canonical, content, mode,
+            async (id) => await holderOfIdentity(await otherHolders(config, root, identity, await readClaims(root)), id));
+          if (outcome === "symlink") {
             throw new DevFnError("DEVFN_RUNTIME_INVALID", `Environment output ${relativeName(root, target)} of runtime ${runtime} became a symlink after DevFn claimed it; DevFn left it untouched.`, { runtime, target: canonical });
           }
+          if (outcome !== "written") throw await aliasRefusal(config, root, runtime, target, canonical, outcome.aliased);
           await update((current) => ({ ...current, written: withWritten(current.written, { target: canonical, sha256 }) }));
           return;
         }

@@ -55,4 +55,17 @@ describe("runtime isolation declarations", () => {
     expect(outputs("config/{runtime}.json")).toEqual([{ path: "config/{runtime}.json", format: "dotenv" }]);
     expect(() => outputs("env/{runtime}/app.env")).toThrow(/only in its file name/);
   });
+
+  it("rejects an environment output inside DevFn's own state, where a runtime could overwrite another's receipt, claim or runtime.env", () => {
+    const outputs = (output: string, extra: Record<string, unknown> = {}) =>
+      validateDevFnConfig(manifest({ adapter: "command", command: ["node"] }, { environmentOutputs: [{ path: output }], ...extra })).environmentOutputs;
+    for (const output of [".devfn/receipts/{runtime}.json", ".devfn/outputs/{runtime}.json", ".devfn/instances/{runtime}.env", ".devfn/instances/0123456789ab/{runtime}.env",
+      "./.devfn/outputs/x.env", ".DEVFN/Receipts/x.json", ".devfn/instances"]) expect(() => outputs(output), output).toThrow(/where DevFn keeps its own state/);
+    // A custom runtime directory moves the instances, not the receipts or claims.
+    expect(() => outputs("run/instances/{runtime}.env", { runtimeDir: "run" })).toThrow(/inside run\/instances/);
+    expect(() => outputs(".devfn/outputs/{runtime}.env", { runtimeDir: "run" })).toThrow(/inside .devfn\/outputs/);
+    expect(outputs(".devfn/instances/{runtime}.env", { runtimeDir: "run" })).toHaveLength(1);
+    // The file devfn init declares, and names that merely start alike, stay accepted.
+    for (const output of [".devfn/runtime.env", ".devfn/{runtime}.env", ".devfn/outputs.env", ".devfn/receipts-{runtime}.json"]) expect(outputs(output), output).toHaveLength(1);
+  });
 });

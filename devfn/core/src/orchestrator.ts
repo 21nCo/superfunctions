@@ -648,7 +648,7 @@ export class DevFnOrchestrator {
     const runtimeId = options.config.resources ? await readRuntimeId(requestedStateDir) ?? newRuntimeId() : undefined;
     const identity: RoutingIdentity = { ...await resolveInstanceIdentity(options.config.project.id, options.root, options.runtime), ...(runtimeId ? { runtimeId } : {}) };
     assertRuntimeIsolation(options.config, plan, identity);
-    await assertEnvironmentOutputsAvailable(options.config, options.root, identity);
+    await assertEnvironmentOutputsAvailable(options.config, options.root, identity, requestedStateDir);
     identity.runtimeDir = await secureRuntimeDirectory(options.config, options.root, identity.instanceId);
     const loadedPolicy = await loadDevFnPolicy(options.root, options.config.policy);
     // Effective network evidence must reject unreachable sibling references
@@ -680,7 +680,7 @@ export class DevFnOrchestrator {
     return await withFileLock(path.join(stateDir, `lifecycle-${identity.instanceId}.lock`), async () => {
       // Environment-output files are claimed checkout-wide before anything
       // else changes; a start that never records its receipt gives them back.
-      const claim = await claimEnvironmentOutputs(options.config, options.root, identity);
+      const claim = await claimEnvironmentOutputs(options.config, options.root, identity, stateDir);
       try { return await this.upLocked(options, stateDir, identity, loadedPolicy, decideTasks, claim); }
       catch (error) {
         await claim.restore().catch(() => undefined);
@@ -1220,7 +1220,7 @@ export class DevFnOrchestrator {
     // What up refuses for this runtime before any mutation, doctor reports.
     try {
       assertRuntimeIsolation(options.config, plan, identity);
-      await assertEnvironmentOutputsAvailable(options.config, options.root, identity);
+      await assertEnvironmentOutputsAvailable(options.config, options.root, identity, stateDir);
     } catch (error) {
       if (!(error instanceof DevFnError) || error.code !== "DEVFN_RUNTIME_INVALID") throw error;
       diagnostics.push({ code: error.code, severity: "error", message: error.message, ...(error.details === undefined ? {} : { details: error.details }) });

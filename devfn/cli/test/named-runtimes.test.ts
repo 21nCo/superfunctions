@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
+import { access, chmod, link, lstat, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -458,6 +458,22 @@ describe("named runtimes", () => {
       const reviewFile = await read(".env.review");
       const redirected = await raceAfterClaim(async () => await symlink(".env.review", path.join(cwd, ".env.default")), null);
       expect(redirected.value.error).toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("not the file it claimed"), details: { runtime: "default", target: path.join(cwd, ".env.review") } });
+      expect(await read(".env.review")).toBe(reviewFile);
+      expect(await served(live.allocations[0].port)).toMatchObject({ instance: live.instanceId });
+      expect(await exists(await receiptFile())).toBe(false);
+      expect(await leased(await id())).toBe(false);
+      await unlink(path.join(cwd, ".env.default"));
+      // Nor can a hard link to review's file, present before up (refused by up and doctor) or made after the claim (refused at the write).
+      await link(path.join(cwd, ".env.review"), path.join(cwd, ".env.default"));
+      const aliased = await run("up");
+      expect(aliased.value.error).toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("hard link"), details: { runtime: "default", owner: { runtime: "review", instanceId: live.instanceId } } });
+      const aliasDoctor = await run("doctor");
+      expect(aliasDoctor.code).toBe(1);
+      expect(aliasDoctor.value.diagnostics).toContainEqual(expect.objectContaining({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("hard link") }));
+      await unlink(path.join(cwd, ".env.default"));
+      const linkedLater = await raceAfterClaim(async () => await link(path.join(cwd, ".env.review"), path.join(cwd, ".env.default")), null);
+      expect(linkedLater.value.error).toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("hard link"), details: { runtime: "default" } });
+      for (const outcome of [aliased, linkedLater]) expect(outcome.code).toBe(1);
       expect(await read(".env.review")).toBe(reviewFile);
       expect(await served(live.allocations[0].port)).toMatchObject({ instance: live.instanceId });
       expect(await exists(await receiptFile())).toBe(false);

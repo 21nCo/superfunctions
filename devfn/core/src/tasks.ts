@@ -3,7 +3,7 @@ import { lstat, mkdir, opendir, readFile, readlink, realpath, rename, stat, writ
 import path from "node:path";
 
 import { ComposeController, composeTaskSourceDigest, createComposeEnvironment, type ComposeLaunch } from "@devfn/compose";
-import { resolveContainedPath, type DevFnConfig, type TaskSpec } from "@devfn/config";
+import { devfnStateDirectories, resolveContainedPath, type DevFnConfig, type TaskSpec } from "@devfn/config";
 import { FilePortRegistry, withFileLock } from "@devfn/ports";
 import { createProcessEnvironment, resolveAdapterCommand, ProcessSupervisor, stopGatedLauncher, type ProcessRunResult } from "@devfn/processes";
 
@@ -208,7 +208,7 @@ export async function taskInputRevision(config: DevFnConfig, root: string, node:
   });
   const inputs: Array<[string, string]> = [];
   // What DevFn writes under the repository (runtime, receipts, environment outputs of every runtime and their claims, a state dir; canonical before it exists) is never an input, nor is a directory holding it beyond its other entries.
-  const excluded = await Promise.all([...[path.join(config.runtimeDir ?? ".devfn", "instances"), path.join(".devfn", "receipts"), path.join(".devfn", "outputs"), ...(config.environmentOutputs ?? []).map((output) => output.path)]
+  const excluded = await Promise.all([...[...devfnStateDirectories(config.runtimeDir), ...(config.environmentOutputs ?? []).map((output) => output.path)]
     .map((item) => path.resolve(root, item)), ...(stateDir ? [stateDir] : [])].map((item) => canonical(path.resolve(item))));
   for (const [index, input] of (task.inputs ?? []).entries()) inputs.push([input, await digestInput(root, input, `${field}.task.inputs[${index}]`, excluded)]);
   return sha256(JSON.stringify({ version: 1, kind: node.kind, settings, env: entries(spec.env), profileEnv: entries(config.profiles[profile]?.environment),
