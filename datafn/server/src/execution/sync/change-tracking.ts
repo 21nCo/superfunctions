@@ -169,7 +169,11 @@ export class ChangeTrackingService {
       return;
     }
     let prepared = preparedNamespaces.get(this.db);
-    if (prepared?.has(this.namespace)) {
+    if (!prepared) {
+      prepared = new Set<string>();
+      preparedNamespaces.set(this.db, prepared);
+    }
+    if (prepared.has(this.namespace)) {
       this.namespaceMetaEnsured = true;
       return;
     }
@@ -186,10 +190,6 @@ export class ChangeTrackingService {
           throw error;
         }
       }
-    }
-    if (!prepared) {
-      prepared = new Set<string>();
-      preparedNamespaces.set(this.db, prepared);
     }
     prepared.add(this.namespace);
     this.namespaceMetaEnsured = true;

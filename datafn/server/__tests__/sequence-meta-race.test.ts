@@ -170,4 +170,25 @@ describe("first writes for a new namespace", () => {
     expect(findOneCalls).toBe(1);
     expect(createCalls).toBe(1);
   });
+  it("keeps every namespace prepared concurrently on a fresh adapter", async () => {
+    const store = createPostgresLikeMetaStore();
+    const lookups: Record<string, number> = {};
+    const { findOne } = store.base.internal;
+    store.base.internal.findOne = async (table, where) => {
+      const namespace = String(where.find((w) => w.field === "namespace")?.value);
+      lookups[namespace] = (lookups[namespace] ?? 0) + 1;
+      return findOne(table, where);
+    };
+
+    await Promise.all([
+      new ChangeTrackingService(store.base as any, "user:a").ensureReady(),
+      new ChangeTrackingService(store.base as any, "user:b").ensureReady(),
+    ]);
+    await Promise.all([
+      new ChangeTrackingService(store.base as any, "user:a").ensureReady(),
+      new ChangeTrackingService(store.base as any, "user:b").ensureReady(),
+    ]);
+
+    expect(lookups).toEqual({ "user:a": 1, "user:b": 1 });
+  });
 });
