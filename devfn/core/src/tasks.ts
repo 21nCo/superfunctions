@@ -8,7 +8,8 @@ import { FilePortRegistry, withFileLock } from "@devfn/ports";
 import { createProcessEnvironment, resolveAdapterCommand, ProcessSupervisor, stopGatedLauncher, type ProcessRunResult } from "@devfn/processes";
 
 import { stagedOutputName } from "./outputs.js";
-import { devfnStateDirectories } from "./runtime.js";
+import { DEFAULT_RUNTIME } from "./identity.js";
+import { devfnStateDirectories, runtimeOutputPath } from "./runtime.js";
 import type { ResourcePlan } from "./resources.js";
 import { DevFnError, type LifecyclePlan } from "./types.js";
 
@@ -209,7 +210,8 @@ export async function taskInputRevision(config: DevFnConfig, root: string, node:
   });
   const inputs: Array<[string, string]> = [];
   // What DevFn writes under the repository (runtime, receipts, environment outputs of every runtime and their claims, a state dir; canonical before it exists) is never an input, nor is a directory holding it beyond its other entries.
-  const excluded = await Promise.all([...[...devfnStateDirectories(config.runtimeDir), ...(config.environmentOutputs ?? []).map((output) => output.path)]
+  // The default runtime writes through a symlink at its output name (a named runtime refuses one), so its file's destination is excluded too, for a `{runtime}` output as for a literal one.
+  const excluded = await Promise.all([...[...devfnStateDirectories(config.runtimeDir), ...(config.environmentOutputs ?? []).flatMap((output) => output.path.includes("{runtime}") ? [output.path, runtimeOutputPath(output.path, DEFAULT_RUNTIME)] : [output.path])]
     .map((item) => path.resolve(root, item)), ...(stateDir ? [stateDir] : [])].map((item) => canonical(path.resolve(item))));
   for (const [index, input] of (task.inputs ?? []).entries()) inputs.push([input, await digestInput(root, input, `${field}.task.inputs[${index}]`, excluded)]);
   return sha256(JSON.stringify({ version: 1, kind: node.kind, settings, env: entries(spec.env), profileEnv: entries(config.profiles[profile]?.environment),

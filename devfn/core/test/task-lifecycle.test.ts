@@ -19,7 +19,7 @@ const execFileAsync = promisify(execFile);
 const receiptWrites = vi.hoisted(() => ({ after: undefined as ((receipt: { state: string }) => void) | undefined }));
 vi.mock("../src/runtime.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/runtime.js")>();
-  return { ...actual, writeReceipt: async (receipt: Parameters<typeof actual.writeReceipt>[0]) => { await actual.writeReceipt(receipt); receiptWrites.after?.(receipt); } };
+  return { ...actual, writeReceipt: async (...args: Parameters<typeof actual.writeReceipt>) => { await actual.writeReceipt(...args); receiptWrites.after?.(args[0]); } };
 });
 const exists = async (file: string) => await stat(file).then(() => true, () => false);
 // An exited child its parent has not reaped yet (a zombie) runs nothing, so it is not alive.

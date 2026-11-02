@@ -128,6 +128,28 @@ describe("named runtime isolation", () => {
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
+  it("keeps the file a default runtime's {runtime} output links to out of a task's input revision, as for a literal output", async () => {
+    const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-runtime-output-link-")));
+    try {
+      await mkdir(path.join(root, "config"));
+      await writeFile(path.join(root, "config", "schema.sql"), "create table t();");
+      await writeFile(path.join(root, "config", "generated.env"), "PORT=1\n");
+      // The default runtime writes through a symlink at its output name, so the linked file holds its generated values.
+      await symlink(path.join("config", "generated.env"), path.join(root, ".env.default"));
+      const config = validateDevFnConfig({ version: 1, project: { id: "fixture" }, environmentOutputs: [{ path: ".env.{runtime}" }],
+        processes: { migrate: { adapter: "command", command: ["node", "migrate.mjs"], task: { inputs: ["config"] } } }, profiles: { default: { processes: ["migrate"] } } });
+      const revision = async () => await taskInputRevision(config, root, { name: "migrate", kind: "process" }, "default");
+      const before = await revision();
+      await writeFile(path.join(root, "config", "generated.env"), "PORT=2\n");
+      expect(await revision()).toBe(before);
+      // Only that file is excluded: a neighbouring source edit is still an input change.
+      await writeFile(path.join(root, "config", "schema.sql"), "create table u();");
+      expect(await revision()).not.toBe(before);
+      await expect(taskInputRevision(validateDevFnConfig({ ...config, processes: { migrate: { ...config.processes!.migrate, task: { inputs: ["config/generated.env"] } } } }),
+        root, { name: "migrate", kind: "process" }, "default")).rejects.toThrow(/DevFn runtime state/);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
   it("keeps output-ownership state, its lock and the lock's retired directories out of a task's input revision", async () => {
     const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-runtime-claims-")));
     try {
