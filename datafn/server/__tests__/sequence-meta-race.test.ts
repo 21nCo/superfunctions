@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { ChangeTrackingService } from "../src/execution/sync/change-tracking.js";
 import { DatabaseSequenceStore } from "../src/execution/sync/sequence-store.js";
+import type { Adapter } from "@superfunctions/db";
 
 type Row = Record<string, unknown>;
+
+/** The model only implements `internal`, which is all these code paths use. */
+const asAdapter = (model: unknown) => model as Adapter;
 type Where = { field: string; op: string; value: unknown }[];
 
 /**
@@ -118,12 +122,12 @@ async function firstWrite(
   namespace: string,
   withSequenceStore: boolean,
 ) {
-  const sequenceStore = withSequenceStore ? new DatabaseSequenceStore(store.base as any) : undefined;
-  const service = new ChangeTrackingService(store.base as any, namespace, sequenceStore);
+  const sequenceStore = withSequenceStore ? new DatabaseSequenceStore(asAdapter(store.base)) : undefined;
+  const service = new ChangeTrackingService(asAdapter(store.base), namespace, sequenceStore);
   await service.ensureReady();
   const tx = store.begin();
   try {
-    const seqs = await service.withDb(tx.adapter as any).getNextServerSeqBatch(1);
+    const seqs = await service.withDb(asAdapter(tx.adapter)).getNextServerSeqBatch(1);
     tx.commit();
     return seqs;
   } catch (error) {
@@ -163,8 +167,8 @@ describe("first writes for a new namespace", () => {
       return create(...args);
     };
 
-    await new ChangeTrackingService(store.base as any, "user:once").ensureReady();
-    await new ChangeTrackingService(store.base as any, "user:once").ensureReady();
+    await new ChangeTrackingService(asAdapter(store.base), "user:once").ensureReady();
+    await new ChangeTrackingService(asAdapter(store.base), "user:once").ensureReady();
 
     expect(store.committed.get("user:once")).toMatchObject({ namespace: "user:once", next_server_seq: 1 });
     expect(findOneCalls).toBe(1);
@@ -181,12 +185,12 @@ describe("first writes for a new namespace", () => {
     };
 
     await Promise.all([
-      new ChangeTrackingService(store.base as any, "user:a").ensureReady(),
-      new ChangeTrackingService(store.base as any, "user:b").ensureReady(),
+      new ChangeTrackingService(asAdapter(store.base), "user:a").ensureReady(),
+      new ChangeTrackingService(asAdapter(store.base), "user:b").ensureReady(),
     ]);
     await Promise.all([
-      new ChangeTrackingService(store.base as any, "user:a").ensureReady(),
-      new ChangeTrackingService(store.base as any, "user:b").ensureReady(),
+      new ChangeTrackingService(asAdapter(store.base), "user:a").ensureReady(),
+      new ChangeTrackingService(asAdapter(store.base), "user:b").ensureReady(),
     ]);
 
     expect(lookups).toEqual({ "user:a": 1, "user:b": 1 });
