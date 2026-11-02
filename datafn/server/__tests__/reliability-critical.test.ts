@@ -88,7 +88,9 @@ describe("REL-001: Transaction atomicity — no silent fallthrough", () => {
       internal: {
         ensureTable: vi.fn(async (tableName: string) => {
           order.push(`table:${tableName}`);
-        })
+        }),
+        findOne: vi.fn(async () => null),
+        create: vi.fn(async (_tableName: string, data: Record<string, unknown>) => data),
       },
       transaction: async () => {
         order.push("transaction");

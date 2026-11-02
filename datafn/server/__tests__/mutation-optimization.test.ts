@@ -389,7 +389,11 @@ describe("Phase 05: Mutation Optimization", () => {
       expect(body.ok).toBe(true);
 
       // Verify __datafn_meta modified exactly once (batch allocation for 2 join deltas)
-      const metaCreateCalls = (metaCreateSpy.mock.calls as any[]).filter((c) => c[0] === "__datafn_meta");
+      // The namespace's meta row is prepared once before the transaction
+      // (next_server_seq: 1); only sequence allocation writes are counted.
+      const metaCreateCalls = (metaCreateSpy.mock.calls as any[]).filter(
+        (c) => c[0] === "__datafn_meta" && c[1]?.next_server_seq !== 1,
+      );
       const metaUpdateCalls = (metaUpdateSpy.mock.calls as any[]).filter((c) => c[0] === "__datafn_meta");
       const metaInteractionCount = metaCreateCalls.length + metaUpdateCalls.length;
       expect(metaInteractionCount).toBe(1);
@@ -437,7 +441,11 @@ describe("Phase 05: Mutation Optimization", () => {
       expect(body.ok).toBe(true);
 
       // Regular mutation: also 1 meta interaction, but increments by 1 (not batched)
-      const metaCreateCalls = (metaCreateSpy.mock.calls as any[]).filter((c) => c[0] === "__datafn_meta");
+      // The namespace's meta row is prepared once before the transaction
+      // (next_server_seq: 1); only sequence allocation writes are counted.
+      const metaCreateCalls = (metaCreateSpy.mock.calls as any[]).filter(
+        (c) => c[0] === "__datafn_meta" && c[1]?.next_server_seq !== 1,
+      );
       const metaUpdateCalls = (metaUpdateSpy.mock.calls as any[]).filter((c) => c[0] === "__datafn_meta");
       const metaInteractionCount = metaCreateCalls.length + metaUpdateCalls.length;
       expect(metaInteractionCount).toBe(1);
