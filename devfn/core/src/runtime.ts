@@ -1,8 +1,9 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { chmod, link, mkdir, open, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, open, readdir, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { resolveContainedPath, type DevFnConfig, type EnvironmentOutput } from "@devfn/config";
+import { DEFAULT_RUNTIME, isNamedRuntime, resolveInstanceIdentity } from "./identity.js";
 import { DevFnError, type LifecycleReceipt } from "./types.js";
 
 export function runtimeDirectory(config: DevFnConfig, root: string, instanceId: string): string {
@@ -21,18 +22,78 @@ async function stableReceiptPath(root: string, instanceId: string): Promise<stri
   return await resolveContainedPath(root, path.join(".devfn", "receipts", `${instanceId}.json`), "receipt");
 }
 
-export async function readReceipt(config: DevFnConfig, root: string, instanceId: string): Promise<LifecycleReceipt | null> {
+/** A parsed receipt of this root and instance, or undefined when the file is missing, malformed or another's. */
+async function parseReceipt(candidate: string, root: string, instanceId?: string): Promise<LifecycleReceipt | undefined> {
+  try {
+    const value = JSON.parse(await readFile(candidate, "utf8")) as LifecycleReceipt;
+    const [canonicalRoot, receiptRoot, canonicalRuntime] = await Promise.all([realpath(root), realpath(value.root), realpath(value.runtimeDir)]);
+    const relativeRuntime = path.relative(canonicalRoot, canonicalRuntime);
+    if (value.version === 1 && typeof value.instanceId === "string" && (instanceId === undefined || value.instanceId === instanceId) && receiptRoot === canonicalRoot && relativeRuntime !== "" &&
+      !relativeRuntime.startsWith(`..${path.sep}`) && relativeRuntime !== ".." && !path.isAbsolute(relativeRuntime)) return value;
+  } catch { /* Not a receipt of this root. */ }
+  return undefined;
+}
+
+/**
+ * The receipt of one runtime's instance. Receipts of earlier releases record
+ * no runtime and belong to the default runtime. A receipt at this instance's
+ * paths that records another runtime cannot be attributed to either, so it
+ * is refused rather than adopted or cleaned up.
+ */
+export async function readReceipt(config: DevFnConfig, root: string, instanceId: string, runtime: string = DEFAULT_RUNTIME): Promise<LifecycleReceipt | null> {
   const configuredDirectory = await secureRuntimeDirectory(config, root, instanceId).catch(() => undefined);
   const stable = await stableReceiptPath(root, instanceId).catch(() => undefined);
   for (const candidate of [...(stable ? [stable] : []), ...(configuredDirectory ? [path.join(configuredDirectory, "receipt.json")] : [])]) {
-    try {
-      const value = JSON.parse(await readFile(candidate, "utf8")) as LifecycleReceipt;
-      const [canonicalRoot, receiptRoot, canonicalRuntime] = await Promise.all([realpath(root), realpath(value.root), realpath(value.runtimeDir)]);
-      const relativeRuntime = path.relative(canonicalRoot, canonicalRuntime);
-      if (value.version === 1 && value.instanceId === instanceId && receiptRoot === canonicalRoot && relativeRuntime !== "" && !relativeRuntime.startsWith(`..${path.sep}`) && relativeRuntime !== ".." && !path.isAbsolute(relativeRuntime)) return value;
-    } catch { /* Try the configured legacy receipt next. */ }
+    const value = await parseReceipt(candidate, root, instanceId);
+    if (!value) continue; // Try the configured legacy receipt next.
+    if ((value.runtime ?? DEFAULT_RUNTIME) !== runtime) {
+      throw new DevFnError("DEVFN_RUNTIME_INVALID", `Receipt ${candidate} of instance ${instanceId} records runtime ${JSON.stringify(String(value.runtime).slice(0, 64))}, not ${runtime}; DevFn will not guess which runtime owns it. Inspect it, stop what it lists, then remove it.`,
+        { instanceId, runtime, recordedRuntime: value.runtime });
+    }
+    return value;
   }
   return null;
+}
+
+/**
+ * A runtime of this checkout as its receipt records it. `attributed` is false
+ * when the recorded runtime name does not derive the receipt's instance ID:
+ * no command selecting that name reaches it, and DevFn will not guess.
+ */
+export interface RuntimeSummary { runtime: string; instanceId: string; state: LifecycleReceipt["state"]; profile: string; updatedAt: string; attributed: boolean }
+
+/**
+ * The runtimes of this manifest root that have a receipt, by runtime name.
+ * Only stable receipts are listed (every release since receipts moved there
+ * writes one); receipts of another project are skipped.
+ */
+export async function listRuntimeReceipts(config: DevFnConfig, root: string): Promise<RuntimeSummary[]> {
+  const directory = await resolveContainedPath(root, path.join(".devfn", "receipts"), "receipt").catch(() => undefined);
+  const names = directory ? await readdir(directory).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return [] as string[];
+    throw error;
+  }) : [];
+  const runtimes: RuntimeSummary[] = [];
+  for (const name of names.filter((item) => /^[0-9a-f]{12}\.json$/.test(item)).sort()) {
+    const value = await parseReceipt(path.join(directory!, name), root, name.slice(0, -".json".length));
+    if (!value || value.projectId !== config.project.id) continue;
+    const runtime = value.runtime ?? DEFAULT_RUNTIME;
+    const derived = typeof runtime === "string" ? await resolveInstanceIdentity(config.project.id, root, runtime).then((identity) => identity.instanceId, () => undefined) : undefined;
+    runtimes.push({ runtime: String(runtime), instanceId: value.instanceId, state: value.state, profile: value.profile, updatedAt: value.updatedAt, attributed: derived === value.instanceId });
+  }
+  return runtimes.sort((a, b) => a.runtime < b.runtime ? -1 : a.runtime > b.runtime ? 1 : 0);
+}
+
+/** An environment output path for one runtime: its `{runtime}` token is the runtime name. */
+export const runtimeOutputPath = (output: string, runtime: string = DEFAULT_RUNTIME): string => output.replaceAll("{runtime}", runtime);
+
+/**
+ * Environment outputs every runtime of the checkout would write to the same
+ * file. A named runtime refuses them before any mutation; the default runtime
+ * keeps writing them as earlier releases did.
+ */
+export function sharedEnvironmentOutputs(config: DevFnConfig, runtime: string | undefined): string[] {
+  return isNamedRuntime(runtime) ? (config.environmentOutputs ?? []).map((output) => output.path).filter((item) => !item.includes("{runtime}")) : [];
 }
 
 async function writeAtomicReceipt(target: string, receipt: LifecycleReceipt): Promise<void> {
@@ -112,9 +173,9 @@ export async function writeReceipt(receipt: LifecycleReceipt): Promise<void> {
 
 function dotenv(value: string): string { return /^[A-Za-z0-9_./:@-]*$/.test(value) ? value : JSON.stringify(value); }
 
-export async function writeEnvironmentOutputs(root: string, runtimeDir: string, outputs: readonly EnvironmentOutput[], environment: Record<string, string>): Promise<string[]> {
+export async function writeEnvironmentOutputs(root: string, runtimeDir: string, outputs: readonly EnvironmentOutput[], environment: Record<string, string>, runtime: string = DEFAULT_RUNTIME): Promise<string[]> {
   const effective = outputs.length
-    ? await Promise.all(outputs.map(async (output) => ({ output, target: await resolveContainedPath(root, output.path, "environmentOutputs.path") })))
+    ? await Promise.all(outputs.map(async (output) => ({ output, target: await resolveContainedPath(root, runtimeOutputPath(output.path, runtime), "environmentOutputs.path") })))
     : [{ output: { path: "runtime.env", format: "dotenv" as const, mode: 0o600 }, target: path.join(runtimeDir, "runtime.env") }];
   const written: string[] = [];
   for (const { output, target } of effective) {

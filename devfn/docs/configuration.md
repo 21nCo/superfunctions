@@ -18,7 +18,7 @@ DevFn discovers `devfn.config.ts`, `.js`, `.mjs`, `.cjs`, or `.json` while walki
 | `hostnames` | no | Explicit local hostname routes to named ports. |
 | `resources` | no | Named backends and data stores with local or credential-free remote targets; see [resource targets and namespaces](#resource-targets-and-namespaces). |
 | `prerequisites` | no | Required command/version diagnostics, optionally profile-scoped. |
-| `environmentOutputs` | no | Repository-relative dotenv or JSON runtime files and owner-only permission modes. |
+| `environmentOutputs` | no | Repository-relative dotenv or JSON runtime files and owner-only permission modes. A `{runtime}` token in the file name becomes the [runtime name](#named-runtimes). |
 | `policy` | no | Repository-relative organization policy JSON path. |
 
 Every repository-relative path rejects absolute paths, `..` escape, and runtime symlink escape. References to ports, processes, services, profiles, dependencies, and hostname targets must resolve during validation. An explicitly configured but missing policy is an error; only the conventional unconfigured policy path is optional.
@@ -34,13 +34,28 @@ A port can specify `protocol` (`tcp` or `udp`), `preferred`, `range: [start, end
 
 ## Native processes
 
-`adapter` is one of `command`, `npm`, `pnpm`, `turbo`, `wrangler`, `xcode`, or `extfn`. A process can specify `command`, package-manager `script`, repository-relative `cwd`, non-secret literal `env`, inherited `envAllowlist`, redacted `secretEnv`, named `ports`, `dependsOn`, `health`, `shutdownTimeoutMs`, `exposure` (`local` or `public`), and `task`.
+`adapter` is one of `command`, `npm`, `pnpm`, `turbo`, `wrangler`, `xcode`, or `extfn`. A process can specify `command`, package-manager `script`, repository-relative `cwd`, non-secret literal `env`, inherited `envAllowlist`, redacted `secretEnv`, named `ports`, `dependsOn`, `health`, `shutdownTimeoutMs`, `exposure` (`local` or `public`), `task`, and `artifacts` (see [named runtimes](#named-runtimes)).
 
 Turbo, Wrangler, and ExtFn resolve project-local binaries with offline npm execution; pnpm runs through Corepack so the repository's `packageManager` pin is honored. Adapters never download a missing tool during startup. `doctor` reports the missing prerequisite instead. Discovery marks Yarn and Bun as proposed and emits no guessed npm process; add an explicit command adapter after review.
 
 Local-process exposure verification requires `lsof` on macOS and Linux; Windows uses `netstat`. Run `devfn doctor` before startup to detect a missing listener-inspection tool.
 
 Sensitive-looking keys cannot be literal manifest values. Numbered keys such as `API_TOKEN2` and compact names ending in an unambiguous credential word such as `MYPASSWORD`, `GITHUBTOKEN`, `MYAPIKEY`, or `MYACCESSKEY` follow the same rule. They must be inherited by name in `envAllowlist` and repeated in `secretEnv`, which activates streaming redaction before logs are persisted. PostgreSQL `PGPASSWORD` and qualified `pg_pass`/`pg_pwd` casing variants follow this rule. URL userinfo and credential-bearing headers such as `Authorization: Bearer` are rejected in resolved literals and argv, including when assembled from templates. Curl short-option clusters and cookie assignments receive the same validation; ordinary `--cookie theme=dark` and `--cookie=theme=dark` values are allowed. Public processes require `--allow-public`.
+
+## Named runtimes
+
+One checkout can run several lifecycles at once. `--runtime <name>` selects one on `up`, `down`, `restart`, `status`, `logs`, `doctor`, `url` and `tunnel urls`; without it a command selects the default runtime, which is the lifecycle of DevFn v0.1. A name is 1 to 24 lowercase letters, digits and inner hyphens, and `default` names the default runtime. `devfn runtimes` lists the runtimes of the checkout that have a receipt.
+
+The default runtime keeps the v0.1 instance ID, receipt, worktree label and canonical domain alias, so existing receipts, leases, locks and routes stay valid; its receipts still record no runtime name. A named runtime is another opaque lifecycle owner: its instance ID and readable worktree label also digest its name, so its lifecycle lock, receipt, runtime directory, logs, leases, `.localhost` routes, registered-domain and public tunnel hostnames, Compose project and labels, per-instance task journals and isolated resource namespaces are its own. Only the default runtime of the primary worktree receives a registered domain's canonical alias. Same-named runtimes of different worktrees are different owners. A profile is still only a selection: any runtime can start any profile, and switching a runtime's profile replaces that runtime alone.
+
+Some state lives at fixed checkout paths that DevFn does not own, and a named runtime refuses to share it implicitly, before any lease, receipt or process exists:
+
+- An environment output whose path has no `{runtime}` token is written by every runtime of the checkout; a named runtime fails with `DEVFN_RUNTIME_INVALID` until its file name carries the token (for example `.env.{runtime}`, which the default runtime writes as `.env.default`). The token may appear only in the file name. Task input revisions exclude every runtime's file of such an output.
+- Wrangler keeps local persistence under `.wrangler/` and Xcode a build database per project, so a named runtime starts a `wrangler` or `xcode` process only with an explicit `artifacts` choice. `artifacts: "runtime"` gives the process a DevFn-owned, owner-only directory per runtime, `<runtimeDir>/instances/<instance>/artifacts/<process>`, received as `DEVFN_ARTIFACT_DIR` in its environment and `{{env.DEVFN_ARTIFACT_DIR}}` templates; DevFn never rewrites adapter flags, so for these two adapters the command must pass it (`--persist-to`, `-derivedDataPath`). `artifacts: "shared"` explicitly keeps one location for every runtime. Any other adapter may declare `artifacts: "runtime"` to receive the directory for its build output or caches.
+
+Compose named volumes belong to the runtime's Compose project; bind mounts and external volumes are shared exactly as the Compose file declares them. Machine state (trust records, the port registry, domain and tunnel bindings, the proxy and OAuth relay) stays shared and keeps arbitrating between all runtimes.
+
+A receipt found at one runtime's paths that records another runtime's name is never adopted, stopped or cleaned up: commands for that runtime fail with `DEVFN_RUNTIME_INVALID`, and `devfn runtimes` lists it with `attributed: false`. `down` of a runtime that is not running fails with `DEVFN_NOT_RUNNING` and names the other runtimes of the checkout with live receipts instead of stopping one of them.
 
 ## Compose services
 

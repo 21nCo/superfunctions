@@ -6,7 +6,7 @@
 
 ## Identity and state
 
-The instance key hashes canonical repository identity, real worktree path, and project ID. Machine state lives under `$XDG_STATE_HOME/devfn` or the platform user's local state directory. Project runtime receipts and logs default to ignored `.devfn/instances/<instance>/` paths.
+The instance key hashes canonical repository identity, real worktree path, and project ID; a named runtime (`--runtime <name>`) adds its name, so one checkout can run several lifecycles whose locks, receipts, leases, routes, Compose projects and namespaces stay apart, while the default runtime keeps the v0.1 key. A named runtime refuses environment outputs without a `{runtime}` file-name token and Wrangler or Xcode processes without an explicit `artifacts` choice, and a receipt recording another runtime is refused rather than adopted. Machine state lives under `$XDG_STATE_HOME/devfn` or the platform user's local state directory. Project runtime receipts and logs default to ignored `.devfn/instances/<instance>/` paths.
 
 Registry mutations use an exclusive lock plus atomic rename. Allocations distinguish planned, active, stale, released, and externally occupied state. Exact ports fail closed; preferred/range/fallback ports reallocate; explicitly ephemeral requirements ask the OS for a temporary port. Cohesive `block` requirements receive contiguous ports.
 

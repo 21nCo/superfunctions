@@ -32,6 +32,8 @@ export interface EndpointResolutionInput {
    * same ports and Compose networks. Their values join the generated values.
    */
   resources?: ResourcePlan;
+  /** The DevFn-owned directory of each selected `artifacts: "runtime"` process, which it receives as DEVFN_ARTIFACT_DIR. */
+  artifactDirectories?: Readonly<Record<string, string>>;
 }
 
 export interface ResolvedNodeStartup {
@@ -1056,7 +1058,12 @@ function resolveNodeStartup(node: LifecyclePlan["nodes"][number], context: NodeR
   const profile = config.profiles[input.plan.profile];
   assertNodeEnvironmentCasing(spec, profile, field);
   const processSpec = node.kind === "process" ? config.processes![node.name] : undefined;
-  const nativeBind: Record<string, string> = processSpec && processSpec.exposure !== "public" ? { HOST: "127.0.0.1", DEVFN_HOST: "127.0.0.1" } : {};
+  const artifactDirectory = processSpec?.artifacts === "runtime" ? input.artifactDirectories?.[node.name] : undefined;
+  if (processSpec?.artifacts === "runtime" && !artifactDirectory) invalid(`${field}.artifacts`, "needs the runtime directory of its lifecycle instance.");
+  const nativeBind: Record<string, string> = {
+    ...(processSpec && processSpec.exposure !== "public" ? { HOST: "127.0.0.1", DEVFN_HOST: "127.0.0.1" } : {}),
+    ...(artifactDirectory ? { DEVFN_ARTIFACT_DIR: artifactDirectory } : {}),
+  };
   const nodeGenerated = serviceGeneratedValues(node, context, field);
   // A Compose service sees its container-side values, and a task only its declared resources, so each resolves the profile environment from its own.
   const profileEnvironment = node.kind === "service" || spec.task ? resolveValues(profile.environment ?? {}, nodeGenerated, nodeGenerated, `profiles.${input.plan.profile}.environment`, budget) : environment;

@@ -222,6 +222,12 @@ function processSpec(value: unknown, field: string): ProcessSpec {
   const parsedHealth = health(input.health, `${field}.health`);
   const task = taskSpec(input.task, `${field}.task`);
   if (task) assertFiniteTask(input, field, ["ports", "health"]);
+  const artifacts = optionalString(input.artifacts, `${field}.artifacts`);
+  if (artifacts !== undefined && artifacts !== "runtime" && artifacts !== "shared") fail(`${field}.artifacts must be runtime or shared.`, `${field}.artifacts`);
+  // DevFn never rewrites adapter flags: a per-runtime directory isolates these adapters only when their command passes it.
+  if (artifacts === "runtime" && (adapter === "wrangler" || adapter === "xcode") && !command?.some((part) => part.includes("{{env.DEVFN_ARTIFACT_DIR}}"))) {
+    fail(`${field}.artifacts "runtime" requires its ${adapter} command to pass {{env.DEVFN_ARTIFACT_DIR}} (for example ${adapter === "wrangler" ? "--persist-to" : "-derivedDataPath"}).`, `${field}.artifacts`);
+  }
   if (task && exposure === "public") fail(`${field}.exposure cannot be public for a task; a task serves nothing.`, `${field}.exposure`);
   return {
     adapter,
@@ -236,6 +242,7 @@ function processSpec(value: unknown, field: string): ProcessSpec {
     ...(parsedHealth ? { health: parsedHealth } : {}),
     ...(input.shutdownTimeoutMs === undefined ? {} : { shutdownTimeoutMs: integer(input.shutdownTimeoutMs, `${field}.shutdownTimeoutMs`, 1, 3_600_000) }),
     ...(task ? { task } : {}),
+    ...(artifacts ? { artifacts } : {}),
   };
 }
 
@@ -539,8 +546,11 @@ function environmentOutputs(value: unknown): EnvironmentOutput[] | undefined {
     const input = record(item, `environmentOutputs[${index}]`);
     const format = input.format === undefined ? "dotenv" : string(input.format, `environmentOutputs[${index}].format`);
     if (format !== "dotenv" && format !== "json") fail("Environment output format must be dotenv or json.");
+    const outputPath = relativePath(input.path, `environmentOutputs[${index}].path`);
+    // Each runtime's file sits next to the others; only its name varies.
+    if (path.dirname(outputPath).includes("{runtime}")) fail(`environmentOutputs[${index}].path may carry {runtime} only in its file name.`, `environmentOutputs[${index}].path`);
     return {
-      path: relativePath(input.path, `environmentOutputs[${index}].path`),
+      path: outputPath,
       format,
       ...(input.mode === undefined ? {} : { mode: (() => {
         const mode = integer(input.mode, `environmentOutputs[${index}].mode`, 0, 0o777);

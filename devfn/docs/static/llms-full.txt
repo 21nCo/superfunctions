@@ -76,6 +76,8 @@ DevFn does not replace HostFn deployment, browser evidence, ExtFn extension sema
 
 There is no background daemon in version 0.1. Receipts, process logs, and generated runtime outputs live under the configured runtime directory (`.devfn/` by default). Configured `environmentOutputs[].path` files can live elsewhere within the repository. Machine-wide trust records, port registry, lifecycle locks, and proxy state instead use `$XDG_STATE_HOME/devfn`, falling back to `~/.local/state/devfn`. Account for both locations when inspecting or cleaning up state. Process ownership uses a PID birth signature where the host supplies one and judges each recorded process with its whole process group, so cleanup refuses a reused PID. When a live process's identity cannot be verified, teardown reports a cleanup error, leaves the receipt `degraded`, and keeps its leases and routes until a later `down` can verify or stop it. `devfn ports gc` reconciles leases and removes the routes of instances whose recorded owners are all verified dead, such as a deleted worktree.
 
+Several named runtimes of one checkout can run side by side: `--runtime <name>` selects one, `devfn runtimes` lists them, and each has its own receipt, lock, logs, leases, routes and Compose project, so stopping, restarting or reconfiguring one never touches another. Without `--runtime`, commands act on the default runtime exactly as before. The [configuration reference](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/reference/configuration.md#named-runtimes) describes what a named runtime refuses to share.
+
 Ordinary `down` does not delete persistent Docker volumes. It is also not a general reset command. Explicit configured environment outputs may have overwritten files that existed before adoption; inspect them before manual cleanup. The [core package](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/reference/core.md), [process supervisor](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/reference/processes.md), and [migration guide](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/reference/migration.md) describe lifecycle boundaries.
 
 ---
@@ -161,6 +163,9 @@ npx @devfn/cli up --profile default
 npx @devfn/cli status --json
 npx @devfn/cli logs app
 npx @devfn/cli down
+npx @devfn/cli up --runtime review --profile default
+npx @devfn/cli runtimes --json
+npx @devfn/cli down --runtime review
 npx @devfn/cli domains register dev.example.test --tls internal
 npx @devfn/cli domains list
 ```
@@ -168,6 +173,8 @@ npx @devfn/cli domains list
 Registering a domain requires it to resolve already, and only to loopback addresses (`127.0.0.1`, or `::1` where available). A reserved name such as `dev.example.test` does not resolve until you configure local DNS for it yourself; DevFn never edits resolver, hosts or trust-store configuration.
 
 Profiles that declare public processes or ports require `--allow-public` on every start.
+
+`--runtime <name>` selects a named runtime of the checkout for `up`, `down`, `restart`, `status`, `logs`, `doctor`, `url` and `tunnel urls`; any other command rejects it. Without it a command selects the default runtime. `devfn runtimes` lists every runtime of the checkout that has a receipt, with its instance ID, state and profile.
 `devfn ports gc` reconciles leases and retires listener claims with conclusive evidence. It removes the proxy routes of an instance only when its recorded process and container owners, including those of failed or interrupted starts, are all verified dead (for example a deleted worktree); an owner whose identity cannot be read counts as running. Finally, gc collects released records.
 `devfn restart` validates the selected profile and registered domains, then reserves replacement ports before stopping a ready instance. A rejected domain, route, or port selection leaves that instance running. After those checks it stops the instance and starts it again from the current working tree. If that start fails, the previous processes are not relaunched and the error says so. Cleanup of the failed start can itself fail and leave some of its new processes or containers running; when the error reports cleanup errors, run `devfn down` again.
 
@@ -248,6 +255,21 @@ Turbo, Wrangler, and ExtFn resolve project-local binaries with offline npm execu
 Local-process exposure verification requires `lsof` on macOS and Linux; Windows uses `netstat`. Run `devfn doctor` before startup to detect a missing listener-inspection tool.
 
 Sensitive-looking keys cannot be literal manifest values. Numbered keys such as `API_TOKEN2` and compact names ending in an unambiguous credential word such as `MYPASSWORD`, `GITHUBTOKEN`, `MYAPIKEY`, or `MYACCESSKEY` follow the same rule. They must be inherited by name in `envAllowlist` and repeated in `secretEnv`, which activates streaming redaction before logs are persisted. PostgreSQL `PGPASSWORD` and qualified `pg_pass`/`pg_pwd` casing variants follow this rule. URL userinfo and credential-bearing headers such as `Authorization: Bearer` are rejected in resolved literals and argv, including when assembled from templates. Curl short-option clusters and cookie assignments receive the same validation; ordinary `--cookie theme=dark` and `--cookie=theme=dark` values are allowed. Public processes require `--allow-public`.
+
+## Named runtimes
+
+One checkout can run several lifecycles at once. `--runtime <name>` selects one on `up`, `down`, `restart`, `status`, `logs`, `doctor`, `url` and `tunnel urls`; without it a command selects the default runtime, which is the lifecycle of DevFn v0.1. A name is 1 to 24 lowercase letters, digits and inner hyphens, and `default` names the default runtime. `devfn runtimes` lists the runtimes of the checkout that have a receipt.
+
+The default runtime keeps the v0.1 instance ID, receipt, worktree label and canonical domain alias, so existing receipts, leases, locks and routes stay valid; its receipts still record no runtime name. A named runtime is another opaque lifecycle owner: its instance ID and readable worktree label also digest its name, so its lifecycle lock, receipt, runtime directory, logs, leases, `.localhost` routes, registered-domain and public tunnel hostnames, Compose project and labels, per-instance task journals and isolated resource namespaces are its own. Only the default runtime of the primary worktree receives a registered domain's canonical alias. Same-named runtimes of different worktrees are different owners. A profile is still only a selection: any runtime can start any profile, and switching a runtime's profile replaces that runtime alone.
+
+Some state lives at fixed checkout paths that DevFn does not own, and a named runtime refuses to share it implicitly, before any lease, receipt or process exists:
+
+- An environment output whose path has no `{runtime}` token is written by every runtime of the checkout; a named runtime fails with `DEVFN_RUNTIME_INVALID` until its file name carries the token (for example `.env.{runtime}`, which the default runtime writes as `.env.default`). The token may appear only in the file name. Task input revisions exclude every runtime's file of such an output.
+- Wrangler keeps local persistence under `.wrangler/` and Xcode a build database per project, so a named runtime starts a `wrangler` or `xcode` process only with an explicit `artifacts` choice. `artifacts: "runtime"` gives the process a DevFn-owned, owner-only directory per runtime, `<runtimeDir>/instances/<instance>/artifacts/<process>`, received as `DEVFN_ARTIFACT_DIR` in its environment and `{{env.DEVFN_ARTIFACT_DIR}}` templates; DevFn never rewrites adapter flags, so for these two adapters the command must pass it (`--persist-to`, `-derivedDataPath`). `artifacts: "shared"` explicitly keeps one location for every runtime. Any other adapter may declare `artifacts: "runtime"` to receive the directory for its build output or caches.
+
+Compose named volumes belong to the runtime's Compose project; bind mounts and external volumes are shared exactly as the Compose file declares them. Machine state (trust records, the port registry, domain and tunnel bindings, the proxy and OAuth relay) stays shared and keeps arbitrating between all runtimes.
+
+A receipt found at one runtime's paths that records another runtime's name is never adopted, stopped or cleaned up: commands for that runtime fail with `DEVFN_RUNTIME_INVALID`, and `devfn runtimes` lists it with `attributed: false`. `down` of a runtime that is not running fails with `DEVFN_NOT_RUNNING` and names the other runtimes of the checkout with live receipts instead of stopping one of them.
 
 ## Compose services
 

@@ -86,16 +86,27 @@ function taskNode(config: DevFnConfig, node: { name: string; kind: "process" | "
   return { spec, task: spec.task!, field: `${node.kind === "process" ? "processes" : "services"}.${node.name}` };
 }
 
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^$(){}|[\]\\]/g, String.raw`\$&`);
+/** Every runtime's file name of a `{runtime}` environment output; runtime names are those selectRuntime accepts. */
+const runtimeFileName = (template: string): RegExp =>
+  new RegExp("^" + template.split("{runtime}").map(escapeRegExp).join("[a-z0-9](?:[a-z0-9-]{0,22}[a-z0-9])?") + "$");
+
+/** Whether a canonical path is excluded DevFn state: an excluded path itself, or any runtime's file of an excluded `{runtime}` output. */
+function isExcluded(excluded: readonly string[], absolute: string): boolean {
+  return excluded.some((item) => item === absolute || (path.basename(item).includes("{runtime}") && path.dirname(item) === path.dirname(absolute) &&
+    runtimeFileName(path.basename(item)).test(path.basename(absolute))));
+}
+
 /** Content digest of a repository file or directory, walked under its canonical spelling (realpath of its parent) so excluded state matches however it is named; symlinks in it are hashed as links, never followed. A directory's entries are read one at a time within what remains of the entry budget, before any is sorted or visited. */
 async function digestInput(root: string, relative: string, field: string, excluded: readonly string[]): Promise<string> {
   const target = await resolveContainedPath(root, relative, field).then(async (item) => path.join(await canonical(path.dirname(item)), path.basename(item))).catch((error: unknown) => {
     throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field}: ${error instanceof Error ? error.message : String(error)}`);
   });
-  if (await realpath(target).catch(() => target).then((real) => excluded.some((item) => real === item || real.startsWith(`${item}${path.sep}`)))) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} ${relative} is DevFn runtime state, not a task input.`);
+  if (await realpath(target).catch(() => target).then((real) => isExcluded(excluded, real) || excluded.some((item) => real.startsWith(`${item}${path.sep}`)))) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} ${relative} is DevFn runtime state, not a task input.`);
   const hash = createHash("sha256");
   const budget = { entries: 0, bytes: 0 };
   const visit = async (absolute: string, name: string): Promise<void> => {
-    if (excluded.includes(absolute)) return;
+    if (isExcluded(excluded, absolute)) return;
     if (++budget.entries > MAX_INPUT_ENTRIES) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} lists more than ${MAX_INPUT_ENTRIES} entries.`);
     const stats = await lstat(absolute).catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} ${relative} does not exist.`);
@@ -104,7 +115,7 @@ async function digestInput(root: string, relative: string, field: string, exclud
     if (stats.isSymbolicLink()) hash.update(`l\0${name}\0${await readlink(absolute)}\0`);
     else if (stats.isDirectory()) {
       if (!excluded.some((item) => item.startsWith(`${absolute}${path.sep}`))) hash.update(`d\0${name}\0`);
-      const entries: string[] = []; for await (const { name: entry } of await opendir(absolute)) if (!excluded.includes(path.join(absolute, entry)) && entries.push(entry) > MAX_INPUT_ENTRIES - budget.entries) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} lists more than ${MAX_INPUT_ENTRIES} entries.`);
+      const entries: string[] = []; for await (const { name: entry } of await opendir(absolute)) if (!isExcluded(excluded, path.join(absolute, entry)) && entries.push(entry) > MAX_INPUT_ENTRIES - budget.entries) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} lists more than ${MAX_INPUT_ENTRIES} entries.`);
       for (const entry of entries.sort(compare)) await visit(path.join(absolute, entry), `${name}/${entry}`);
     } else if (stats.isFile()) {
       budget.bytes += stats.size;
@@ -176,7 +187,7 @@ export async function taskInputRevision(config: DevFnConfig, root: string, node:
       provider: planned.provider ? [planned.provider.node, planned.provider.port] : null, namespace: planned.namespace?.prefix ?? null, values }];
   });
   const inputs: Array<[string, string]> = [];
-  // What DevFn writes under the repository (runtime, receipts, environment outputs, a state dir; canonical before it exists) is never an input, nor is a directory holding it beyond its other entries.
+  // What DevFn writes under the repository (runtime, receipts, environment outputs of every runtime, a state dir; canonical before it exists) is never an input, nor is a directory holding it beyond its other entries.
   const excluded = await Promise.all([...[path.join(config.runtimeDir ?? ".devfn", "instances"), path.join(".devfn", "receipts"), ...(config.environmentOutputs ?? []).map((output) => output.path)]
     .map((item) => path.resolve(root, item)), ...(stateDir ? [stateDir] : [])].map((item) => canonical(path.resolve(item))));
   for (const [index, input] of (task.inputs ?? []).entries()) inputs.push([input, await digestInput(root, input, `${field}.task.inputs[${index}]`, excluded)]);
