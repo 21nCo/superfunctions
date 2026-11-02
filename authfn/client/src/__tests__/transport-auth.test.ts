@@ -82,9 +82,10 @@ describe('createAuthFnTransportAuth', () => {
     expect(await auth.getRequestHeaders?.()).toEqual({});
   });
 
-  it('sends the CSRF token alongside a bearer token when the cookie is present', async () => {
+  it('sends the CSRF token alongside a bearer token when cookies are included', async () => {
     const auth = createAuthFnSessionTransportAuth({
       bearerToken: 'session-token',
+      credentials: 'include',
       cookiePrefix: 'nucleus_local',
       cookieAccessor: () => 'nucleus_local.csrf=csrf-token'
     });
@@ -93,6 +94,44 @@ describe('createAuthFnTransportAuth', () => {
       authorization: 'Bearer session-token',
       'x-authfn-csrf': 'csrf-token'
     });
+  });
+
+  it('omits the CSRF header when requests do not send cookies', async () => {
+    const auth = createAuthFnSessionTransportAuth({
+      bearerToken: 'session-token',
+      cookiePrefix: 'nucleus_local',
+      cookieAccessor: () => 'nucleus_local.csrf=csrf-token'
+    });
+
+    expect(await auth.getCredentials?.()).toBe('omit');
+    expect(await auth.getRequestHeaders?.()).toEqual({
+      authorization: 'Bearer session-token'
+    });
+  });
+
+  it('infers the prefix from the readable CSRF cookie when the session cookie is HttpOnly', async () => {
+    const auth = createAuthFnSessionTransportAuth({
+      cookieAccessor: () => 'other=1; app.csrf=from-csrf-cookie'
+    });
+
+    expect(await auth.getRequestHeaders?.()).toEqual({ 'x-authfn-csrf': 'from-csrf-cookie' });
+  });
+
+  it('omits the CSRF header when several unknown cookie prefixes are visible', async () => {
+    const auth = createAuthFnSessionTransportAuth({
+      cookieAccessor: () => 'one.csrf=first; two.csrf=second'
+    });
+
+    expect(await auth.getRequestHeaders?.()).toEqual({});
+  });
+
+  it('accepts cookie options on the exported transport auth factory', async () => {
+    const auth = createAuthFnTransportAuth({
+      cookiePrefix: 'two',
+      cookieAccessor: () => 'one.csrf=first; two.csrf=second'
+    });
+
+    expect(await auth.getRequestHeaders?.()).toEqual({ 'x-authfn-csrf': 'second' });
   });
 
   it('passes client cookie options into transport auth', async () => {

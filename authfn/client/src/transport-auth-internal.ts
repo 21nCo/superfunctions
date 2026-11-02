@@ -8,31 +8,32 @@ export type AuthFnBearerTokenProvider =
 interface AuthFnSessionTransportAuthOptions extends AuthFnTransportAuthOptions {
   bearerToken?: AuthFnBearerTokenProvider;
   credentials?: RequestCredentials;
-  cookieAccessor?: () => string | undefined;
-  cookiePrefix?: string;
 }
 
 /**
  * Creates an AuthFn transport auth provider from resolved session material.
- * When a readable AuthFn CSRF cookie is present, its token is sent as
- * `x-authfn-csrf` so cookie-session mutations pass the server CSRF check.
+ * When requests send cookies (`credentials: 'include'`) and a readable AuthFn
+ * CSRF cookie is present, its token is sent as `x-authfn-csrf` so
+ * cookie-session mutations pass the server CSRF check. Requests that omit
+ * cookies never get the header, so bearer-only cross-origin requests keep
+ * their CORS preflight unchanged.
  */
 export function createAuthFnSessionTransportAuth(
   options: AuthFnSessionTransportAuthOptions = {},
 ): HttpTransportAuthProvider {
+  const credentials: RequestCredentials =
+    options.credentials ?? (options.bearerToken === undefined ? 'include' : 'omit');
   return {
-    getCredentials: () =>
-      options.credentials ?? (options.bearerToken === undefined ? 'include' : 'omit'),
+    getCredentials: () => credentials,
     getRequestHeaders: async () => {
       const headers: Record<string, string> = {};
       const bearerToken = await resolveToken(options.bearerToken);
       if (bearerToken) {
         headers.authorization = `Bearer ${bearerToken}`;
       }
-      const csrfToken = readCsrfToken(
-        options.cookieAccessor ?? defaultCookieAccessor,
-        options.cookiePrefix,
-      );
+      const csrfToken = credentials === 'include'
+        ? readCsrfToken(options.cookieAccessor ?? defaultCookieAccessor, options.cookiePrefix)
+        : undefined;
       if (csrfToken) {
         headers['x-authfn-csrf'] = csrfToken;
       }

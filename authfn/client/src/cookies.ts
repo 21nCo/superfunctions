@@ -7,25 +7,30 @@ export function defaultCookieAccessor(): string | undefined {
 }
 
 /**
- * Infers the AuthFn cookie prefix from a readable session cookie name, falling
- * back to the default `authfn` prefix.
+ * Infers the AuthFn cookie prefix from readable cookie names. The session
+ * cookie is usually HttpOnly, so the `<prefix>.csrf` cookie is also used.
+ * Returns the single prefix found, `authfn` when no AuthFn cookie is visible
+ * or when `authfn` is among several, and undefined when several other prefixes
+ * are visible and the right one cannot be told apart.
  */
-export function readCookiePrefix(cookieHeader: string | undefined): string {
-  if (!cookieHeader) {
+export function readCookiePrefix(cookieHeader: string | undefined): string | undefined {
+  const prefixes = new Set<string>();
+  for (const part of (cookieHeader ?? '').split(';')) {
+    const [rawName] = part.trim().split('=');
+    const name = rawName.startsWith('__Secure-') ? rawName.slice('__Secure-'.length) : rawName;
+    for (const suffix of ['.session', '.csrf']) {
+      if (name.endsWith(suffix) && name.length > suffix.length) {
+        prefixes.add(name.slice(0, -suffix.length));
+      }
+    }
+  }
+  if (prefixes.size === 0) {
     return 'authfn';
   }
-
-  for (const part of cookieHeader.split(';')) {
-    const [rawName] = part.trim().split('=');
-    if (rawName.startsWith('__Secure-') && rawName.endsWith('.session')) {
-      return rawName.slice('__Secure-'.length, -'.session'.length);
-    }
-    if (rawName.endsWith('.session')) {
-      return rawName.slice(0, -'.session'.length);
-    }
+  if (prefixes.size === 1) {
+    return [...prefixes][0];
   }
-
-  return 'authfn';
+  return prefixes.has('authfn') ? 'authfn' : undefined;
 }
 
 /**
@@ -60,5 +65,8 @@ export function readCsrfToken(
 ): string | undefined {
   const cookieHeader = cookieAccessor();
   const prefix = cookiePrefix?.trim() || readCookiePrefix(cookieHeader);
+  if (!prefix) {
+    return undefined;
+  }
   return readCookieValue(cookieHeader, `${prefix}.csrf`) || undefined;
 }
