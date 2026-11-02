@@ -333,6 +333,15 @@ describe("environment-output claims", { timeout: 30_000 }, () => {
       await writeEnvironmentOutputs(root, dir(b.instanceId), [], { DEVFN_INSTANCE_ID: b.instanceId }, "b", { runtimePath: claim.runtimePath });
       expect(await readFile(path.join(dir(b.instanceId), "runtime.env"), "utf8")).toBe(`DEVFN_INSTANCE_ID=${b.instanceId}\n`);
       expect(await aFiles()).toEqual(before);
+      // A generated file hard-linked to a's (a Compose override) loses only b's name, so its writer creates b's own file.
+      await mkdir(path.join(dir(a.instanceId), "compose"));
+      await writeFile(path.join(dir(a.instanceId), "compose", "api.override.yaml"), `# ${a.instanceId}\n`);
+      await mkdir(path.join(dir(b.instanceId), "compose"));
+      await link(path.join(dir(a.instanceId), "compose", "api.override.yaml"), path.join(dir(b.instanceId), "compose", "api.override.yaml"));
+      await writeFile(await claim.runtimePath(path.join("compose", "api.override.yaml")), `# ${b.instanceId}\n`);
+      expect(await readFile(path.join(dir(a.instanceId), "compose", "api.override.yaml"), "utf8")).toBe(`# ${a.instanceId}\n`);
+      expect((await lstat(path.join(dir(a.instanceId), "compose", "api.override.yaml"))).nlink).toBe(1);
+      expect(await readFile(path.join(dir(b.instanceId), "compose", "api.override.yaml"), "utf8")).toBe(`# ${b.instanceId}\n`);
       // A child link out of b's directory is refused; one that stays inside it is b's own.
       await rm(path.join(dir(b.instanceId), "runtime.env"));
       await symlink(path.join(dir(a.instanceId), "runtime.env"), path.join(dir(b.instanceId), "runtime.env"));

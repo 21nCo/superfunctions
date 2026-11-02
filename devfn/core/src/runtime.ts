@@ -208,12 +208,14 @@ export type RuntimePath = (relative: string) => Promise<string>;
 /**
  * Write the stable receipt, then its copy in the runtime directory: none when
  * runtimeCopy is false, and at the checked path when a start gives its
- * runtimePath, which refuses after the stable receipt is written.
+ * runtimePath, which refuses after the stable receipt is written (onStable
+ * has then been called, so the start records its failure there).
  */
-export async function writeReceipt(receipt: LifecycleReceipt, options: { runtimeCopy?: false | RuntimePath } = {}): Promise<void> {
+export async function writeReceipt(receipt: LifecycleReceipt, options: { runtimeCopy?: false | RuntimePath; onStable?: () => void } = {}): Promise<void> {
   const runtimeTarget = path.join(receipt.runtimeDir, "receipt.json");
   const stableTarget = await stableReceiptPath(receipt.root, receipt.instanceId);
   await writeAtomicReceipt(stableTarget, receipt);
+  options.onStable?.();
   if (stableTarget === runtimeTarget || options.runtimeCopy === false) return;
   const target = options.runtimeCopy ? await options.runtimeCopy("receipt.json") : runtimeTarget;
   // A copy there of another instance's receipt means its directory is

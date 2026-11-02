@@ -840,7 +840,9 @@ export class DevFnOrchestrator {
     }
     return async () => {
       let receiptWritten = false;
-      const save = async () => await writeReceipt(receipt, { runtimeCopy: claim.runtimePath });
+      // Once the stable receipt has landed, a failure, also later in the same
+      // save, is recorded there as failed rather than left starting.
+      const save = async () => await writeReceipt(receipt, { runtimeCopy: claim.runtimePath, onStable: () => { receiptWritten = true; } });
       const heartbeat = setInterval(() => { void registry.updateInvocation(invocationId, {}).catch(() => undefined); }, 60_000);
       heartbeat.unref();
       const supervisor = new ProcessSupervisor();
@@ -1022,15 +1024,18 @@ export class DevFnOrchestrator {
     // The node's logs, Compose files and artifacts go to the directory the
     // claim bound, given to its writers as that real directory, with no link
     // out of it on their paths.
-    await runtimePath(node.kind === "service" ? path.join("compose", `${node.name}.override.yaml`) : path.join("logs", `${node.name}.log`));
-    const runtimeDir = await runtimePath(".");
-    // The directory a process receives as DEVFN_ARTIFACT_DIR exists, owner-only, before it starts.
-    if (node.kind === "process" && options.config.processes![node.name].artifacts === "runtime") {
-      await mkdir(await runtimePath(path.join("artifacts", node.name)), { recursive: true, mode: 0o700 });
-    }
+    const checkedRuntimeDir = async () => {
+      await runtimePath(node.kind === "service" ? path.join("compose", `${node.name}.override.yaml`) : path.join("logs", `${node.name}.log`));
+      // The directory a process receives as DEVFN_ARTIFACT_DIR exists, owner-only, before it starts.
+      if (node.kind === "process" && options.config.processes![node.name].artifacts === "runtime") {
+        await mkdir(await runtimePath(path.join("artifacts", node.name)), { recursive: true, mode: 0o700 });
+      }
+      return await runtimePath(".");
+    };
     if (node.task) {
       // A task is never a running owner: it is not in startedNodes, and teardown has nothing of it to stop once it ended.
-      const run = async () => await runTask({ config: options.config, root: options.root, stateDir: receipt.stateDir ?? defaultStateDir(), runtimeDir,
+      // Its paths are checked once the hand-off to whileTaskRuns lets it run.
+      const run = async () => await runTask({ config: options.config, root: options.root, stateDir: receipt.stateDir ?? defaultStateDir(), runtimeDir: await checkedRuntimeDir(),
         instanceId: identity.instanceId, invocationId: receipt.invocationId, node, profile: receipt.profile, environment: resolved.nodes[node.name].environment,
         command: resolved.nodes[node.name].command, script: resolved.nodes[node.name].script, generated: lifecycleGeneratedEnvironment(receipt, resolved.nodes[node.name].generated ?? resolved.generated),
         ...(resolved.resources ? { resources: resolved.resources } : {}), rerunRequested: options.rerunTasks?.includes(node.name) ?? false,
@@ -1045,6 +1050,7 @@ export class DevFnOrchestrator {
       await (options.whileTaskRuns ? options.whileTaskRuns(run) : run());
       return;
     }
+    const runtimeDir = await checkedRuntimeDir();
     // Routes may already target this lifecycle's ports. Its owner identities
     // are journaled in the registry, which outlives the worktree, so orphan
     // recovery can tell a running interrupted start from a dead one. Each

@@ -619,6 +619,10 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
           throw error;
         });
         if (!info) break;
+        // A generated file with another name elsewhere (a hard link) loses
+        // only this name, so its writer creates a new file and the other
+        // links keep their content.
+        if (current === target && info.isFile() && info.nlink > 1) await unlink(current);
         if (!info.isSymbolicLink()) continue;
         const reached = await realpath(current).catch(() => undefined);
         if (reached === undefined || !within(pathKey(reached), boundKey)) {

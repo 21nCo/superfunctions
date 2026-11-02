@@ -566,6 +566,17 @@ describe("named runtimes", () => {
       expect(await served(sibling.allocations[0].port)).toMatchObject({ instance: sibling.instanceId });
       expect(await leased(await id("c"))).toBe(false);
       await unlink(cDir);
+      // c's receipt copy is a link out of its directory: the first save lands the stable receipt and refuses the copy, and the stable receipt records the failure.
+      await mkdir(cDir);
+      await symlink(path.join(bDir, "receipt.json"), path.join(cDir, "receipt.json"));
+      const copyRefused = await run("up", "--runtime", "c");
+      expect(copyRefused.value.error).toMatchObject({ code: "DEVFN_START_FAILED", message: expect.stringContaining("symlink to") });
+      expect(JSON.parse(await readFile(await receiptFile("c"), "utf8"))).toMatchObject({ state: "failed", error: { code: "DEVFN_RUNTIME_INVALID" } });
+      expect(await bFiles()).toEqual(bBefore);
+      expect(await leased(await id("c"))).toBe(false);
+      await unlink(path.join(cDir, "receipt.json"));
+      expect((await run("up", "--runtime", "c")).value.state).toBe("ready");
+      expect((await run("down", "--runtime", "c")).value.state).toBe("stopped");
       expect((await run("down", "--runtime", "b")).value.state).toBe("stopped");
       await manifest([".env.{runtime}"]);
 
