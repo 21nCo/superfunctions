@@ -673,6 +673,30 @@ describe("finite setup tasks gate dependents (real local processes)", () => {
     } finally { await env.cleanup(); }
   }, 90_000);
 
+  it("reruns an on-change task and blocks a run-once task when its artifact directory moves", async () => {
+    for (const rerun of ["on-change", "once"] as const) {
+      const env = await fixture(`artifacts-${rerun}`, { rerun });
+      const moved = (artifacts: "runtime" | "shared", runtimeDir?: string) => validateDevFnConfig({ ...env.config, ...(runtimeDir ? { runtimeDir } : {}),
+        processes: { ...env.config.processes, migrate: { ...env.config.processes!.migrate, artifacts } } });
+      try {
+        await env.orchestrator.up({ config: env.config, root: env.root, stateDir: env.stateDir });
+        await env.orchestrator.down({ config: env.config, root: env.root, stateDir: env.stateDir });
+        for (const [index, config] of [moved("runtime"), moved("runtime", ".devfn-moved")].entries()) {
+          if (rerun === "once") {
+            await expect(env.orchestrator.up({ config, root: env.root, stateDir: env.stateDir })).rejects.toMatchObject({ code: "DEVFN_TASK_INPUT_CHANGED" });
+            expect(await env.runs()).toHaveLength(1);
+            continue;
+          }
+          // Its earlier success wrote somewhere else, so it runs for the directory it now receives.
+          const started = await env.orchestrator.up({ config, root: env.root, stateDir: env.stateDir });
+          expect(started.tasks).toMatchObject([{ status: "succeeded" }]);
+          expect(await env.runs()).toHaveLength(index + 2);
+          await env.orchestrator.down({ config, root: env.root, stateDir: env.stateDir });
+        }
+      } finally { await env.cleanup(); }
+    }
+  }, 120_000);
+
   it("records an interrupted attempt as of unknown effect and never as reverted", async () => {
     const env = await fixture("interrupted");
     try {
@@ -981,6 +1005,15 @@ describe("tasks consuming targets shared across worktrees (real local processes)
       expect(await env.runs()).toHaveLength(1);
     } finally { await env.cleanup(); }
   }, 90_000);
+
+  it("rejects per-runtime artifacts for a task that runs once for every worktree, before any mutation", async () => {
+    const env = await worktrees("shared-artifacts", { api: { kind: "service", defaultTarget: "remote", targets: { remote: { url: "https://api.example.test" } } } }, ["api"], {}, { migrate: { artifacts: "runtime" } });
+    try {
+      await expect(env.orchestrator.up({ config: env.config, root: env.roots[0], stateDir: env.stateDir })).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID", details: { task: "migrate", shared: ["api"] } });
+      expect(await env.runs()).toHaveLength(0);
+      expect(await exists(env.stateDir)).toBe(false);
+    } finally { await env.cleanup(); }
+  }, 60_000);
 
   it("rejects a task mixing shared and per-instance targets in every worktree before any mutation", async () => {
     const resources = {

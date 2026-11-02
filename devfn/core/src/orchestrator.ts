@@ -5,7 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import { ComposeController, composeProjectName, createComposeEnvironment, createComposeReadinessEnvironment, effectiveComposeServiceNetworks, fingerprintComposeSource, selectedComposeEndpointReferences, type ComposeServiceDnsNames, type ManagedComposeService } from "@devfn/compose";
-import { defaultStateDir, isCredentialKey, loadDevFnPolicy, resolveContainedPath, validateDevFnConfig, type DevFnConfig, type HealthCheck } from "@devfn/config";
+import { CHECKOUT_STATE_ADAPTERS, defaultStateDir, isCredentialKey, loadDevFnPolicy, resolveContainedPath, validateDevFnConfig, type DevFnConfig, type HealthCheck } from "@devfn/config";
 import { FilePortRegistry, inspectContainerRunning, isPortAvailable, resolvePolicy, scanListenerState, withFileLock, withRoutingLock, type ListenerInfo, type ListenerScanResult, type PortAllocation, type RegistryInvocation } from "@devfn/ports";
 import { checkReadinessNow, createProcessEnvironment, resolveAdapterCommand, ProcessSupervisor, processExists, type ManagedProcess } from "@devfn/processes";
 import { CaddyProxyController, PUBLIC_ORIGIN_PORT, proxyListenerPorts, readRegisteredDomains, renderCaddyfile, verifyCertificate, verifyLocalDns, type ProxyRoute, type ProxyRouteSnapshot } from "@devfn/proxy";
@@ -28,13 +28,10 @@ const runtimeOf = (identity: Pick<InstanceIdentity, "runtime">): string => ident
 const describeInstance = (identity: Pick<InstanceIdentity, "runtime" | "instanceId">): string =>
   isNamedRuntime(identity.runtime) ? `DevFn runtime ${identity.runtime} (instance ${identity.instanceId})` : `DevFn instance ${identity.instanceId}`;
 
-/** Adapters that keep build output and local state at fixed checkout paths, which every runtime of the checkout would share. */
-const CHECKOUT_STATE_ADAPTERS = new Set(["wrangler", "xcode"]);
-
 /**
  * What would make a named runtime share state with the other runtimes of its
  * checkout fails before anything is read or started: an environment output
- * without `{runtime}` in its name, and a selected Wrangler or Xcode process
+ * without `{runtime}` in its name, and a selected Wrangler, Xcode or extfn process
  * whose artifacts are neither isolated per runtime nor explicitly shared.
  * The default runtime keeps the behavior of earlier releases.
  */
@@ -1189,6 +1186,12 @@ export class DevFnOrchestrator {
     if (plan.nodes.some((node) => node.kind === "service") && !await new ComposeController().available()) diagnostics.push({ code: "DEVFN_DOCKER_UNAVAILABLE", severity: "error", message: "Docker Compose 2.24.4 or newer is required by this profile." });
     if (plan.proxy && !await new CaddyProxyController(stateDir).available()) diagnostics.push({ code: "DEVFN_CADDY_UNAVAILABLE", severity: "error", message: "Caddy is required by this profile but unavailable." });
     const identity = await resolveInstanceIdentity(options.config.project.id, options.root, options.runtime);
+    // What up refuses for this runtime before any mutation, doctor reports.
+    try { assertRuntimeIsolation(options.config, plan, identity); }
+    catch (error) {
+      if (!(error instanceof DevFnError) || error.code !== "DEVFN_RUNTIME_INVALID") throw error;
+      diagnostics.push({ code: error.code, severity: "error", message: error.message, ...(error.details === undefined ? {} : { details: error.details }) });
+    }
     const registry = await new FilePortRegistry(path.join(stateDir, "registry.json")).reconcile();
     const scan = await scanListenerState(plan.nodes.some((node) => node.kind === "service"));
     const listeners = scan.listeners;

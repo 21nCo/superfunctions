@@ -15,11 +15,38 @@ describe("runtime isolation declarations", () => {
     }
   });
 
-  it("requires a Wrangler or Xcode command to pass its per-runtime directory, since DevFn never rewrites adapter flags", () => {
+  it("requires a Wrangler, Xcode or extfn command to pass its per-runtime directory, since DevFn never rewrites adapter flags", () => {
     expect(() => validateDevFnConfig(manifest({ adapter: "wrangler", command: ["dev"], artifacts: "runtime" }))).toThrow(/--persist-to/);
     expect(() => validateDevFnConfig(manifest({ adapter: "xcode", command: ["build"], artifacts: "runtime" }))).toThrow(/-derivedDataPath/);
     expect(validateDevFnConfig(manifest({ adapter: "wrangler", command: ["dev", "--persist-to", "{{env.DEVFN_ARTIFACT_DIR}}"], artifacts: "runtime" })).processes!.app.artifacts).toBe("runtime");
     expect(validateDevFnConfig(manifest({ adapter: "xcode", command: ["-derivedDataPath", "{{env.DEVFN_ARTIFACT_DIR}}/derived"], artifacts: "runtime" })).processes!.app.artifacts).toBe("runtime");
+    // extfn dev writes dist/<target>-dev and has no output-directory option: isolating it needs a command that passes the directory.
+    expect(() => validateDevFnConfig(manifest({ adapter: "extfn", artifacts: "runtime" }))).toThrow(/extfn dev has no output-directory option/);
+    expect(validateDevFnConfig(manifest({ adapter: "extfn", artifacts: "shared" })).processes!.app.artifacts).toBe("shared");
+  });
+
+  it("rejects environment outputs that two runtimes could resolve to one file", () => {
+    const outputs = (...paths: string[]) => validateDevFnConfig(manifest({ adapter: "command", command: ["node"] }, { environmentOutputs: paths.map((item) => ({ path: item })) })).environmentOutputs;
+    for (const pair of [
+      [".env.{runtime}", ".env.a-{runtime}"], // runtime b's second file is runtime a-b's first: .env.a-b
+      ["env/{runtime}.env", "env/x-{runtime}.env"],
+      ["app-{runtime}.env", "app-{runtime}-x.env"],
+      ["a.{runtime}", "{runtime}.b"], // a.b for runtimes b and a
+      ["A.{runtime}", "{runtime}.b"], // one file on a case-insensitive file system
+      [".env.{runtime}", "./.env.{runtime}"],
+      [".env.{runtime}", ".env.default"], // the default runtime's own file
+    ]) expect(() => outputs(...pair), pair.join(" + ")).toThrow(/can name one file/);
+    expect(() => outputs(".env.{runtime}.{runtime}")).toThrow(/once/);
+    // Names a runtime name cannot bridge, separate directories, and a literal file the default runtime alone writes beside its own are distinct.
+    for (const pair of [
+      [".env.{runtime}", ".env.{runtime}.json"],
+      ["app-{runtime}.env", "api-{runtime}.env"],
+      ["config/{runtime}.env", "other/{runtime}.env"],
+      [".env.{runtime}", ".env.local"],
+      ["{runtime}.a.env", "{runtime}.b.env"],
+    ]) expect(outputs(...pair), pair.join(" + ")).toHaveLength(2);
+    // Outputs without the token keep the behavior of earlier releases.
+    expect(outputs(".env", ".env")).toHaveLength(2);
   });
 
   it("accepts the {runtime} output token only in a file name", () => {

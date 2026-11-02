@@ -74,7 +74,7 @@ export interface ProcessSpec {
    * to the other runtimes of the checkout. "runtime" gives every runtime its
    * own DevFn-owned directory, received as DEVFN_ARTIFACT_DIR (environment
    * and `{{env.DEVFN_ARTIFACT_DIR}}` templates); "shared" explicitly keeps one
-   * location for all of them. Wrangler and Xcode keep checkout-wide state by
+   * location for all of them. Wrangler, Xcode and extfn keep checkout-wide state by
    * default, so a named runtime starts them only with one of these, and
    * "runtime" requires their command to pass the directory. Omitted, nothing
    * changes for the default runtime.
@@ -164,7 +164,8 @@ export interface EnvironmentOutput {
   /**
    * Repository-relative file. A `{runtime}` token in its file name is the
    * runtime name ("default" for the unnamed runtime); a named runtime writes
-   * only outputs whose path carries it, so runtimes never share one file.
+   * only outputs whose path carries it, and no two outputs may name one file
+   * for two runtimes, so runtimes never share one file.
    */
   path: string;
   format?: "dotenv" | "json";

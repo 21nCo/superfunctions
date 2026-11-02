@@ -195,11 +195,25 @@ describe("named runtimes", () => {
       expect((await run("up", "--runtime", "review")).value.error).toMatchObject({ code: "DEVFN_RUNTIME_INVALID", details: { environmentOutputs: [".env.local"] } });
       await writeFile(path.join(cwd, "devfn.config.json"), JSON.stringify({ ...MANIFEST, processes: { worker: { adapter: "wrangler", command: ["dev"] } }, profiles: { default: { processes: ["worker"] } } }));
       expect((await run("up", "--runtime", "review")).value.error).toMatchObject({ code: "DEVFN_RUNTIME_INVALID", details: { processes: ["worker"] } });
+      // extfn dev writes dist/<target>-dev in the checkout too.
+      await writeFile(path.join(cwd, "devfn.config.json"), JSON.stringify({ ...MANIFEST, processes: { extension: { adapter: "extfn" } }, profiles: { default: { processes: ["extension"] } } }));
+      expect((await run("up", "--runtime", "review")).value.error).toMatchObject({ code: "DEVFN_RUNTIME_INVALID", details: { processes: ["extension"] } });
+      // Outputs that two runtimes could resolve to one file never load: runtime b's .env.a-b would be runtime a-b's .env.a-b.
+      await writeFile(path.join(cwd, "devfn.config.json"), JSON.stringify({ ...MANIFEST, environmentOutputs: [{ path: ".env.{runtime}" }, { path: ".env.a-{runtime}" }] }));
+      for (const runtime of ["b", "a-b"]) expect((await run("up", "--runtime", runtime)).value.error).toMatchObject({ code: "DEVFN_CONFIG_INVALID", message: expect.stringContaining("can name one file") });
       for (const name of ["Review", "-x", "a".repeat(25), "a_b"]) expect((await run("status", "--runtime", name)).value.error.code).toBe("DEVFN_RUNTIME_INVALID");
       expect((await run("ports", "--runtime", "review")).value.error.message).toContain("--runtime applies only to");
       expect((await run("tunnel", "list", "--runtime", "review")).value.error.message).toContain("--runtime applies only to");
       await expect(access(path.join(cwd, ".devfn"))).rejects.toMatchObject({ code: "ENOENT" });
       await expect(access(path.join(stateDir, "registry.json"))).rejects.toMatchObject({ code: "ENOENT" });
+      // doctor reports what up refuses for the selected runtime, and nothing of it for the default runtime.
+      await writeFile(path.join(cwd, "devfn.config.json"), JSON.stringify({ ...MANIFEST, environmentOutputs: [{ path: ".env.local" }] }));
+      const diagnosed = async (...args: string[]) => {
+        const { code, value } = await run("doctor", ...args);
+        return { code, refusals: (value as unknown as { diagnostics: Array<{ code: string; severity: string; details?: unknown }> }).diagnostics.filter((item) => item.code === "DEVFN_RUNTIME_INVALID") };
+      };
+      expect(await diagnosed("--runtime", "review")).toEqual({ code: 1, refusals: [expect.objectContaining({ severity: "error", details: { runtime: "review", environmentOutputs: [".env.local"] } })] });
+      expect((await diagnosed()).refusals).toEqual([]);
     } finally { await rm(cwd, { recursive: true, force: true }); }
   });
 });

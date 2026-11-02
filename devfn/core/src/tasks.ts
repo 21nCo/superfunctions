@@ -157,6 +157,18 @@ function leaseStable(config: DevFnConfig, node: string, profile: string, resourc
 }
 
 /**
+ * Where a task's artifacts go, when it declares them: a task's completion is
+ * valid only for the destination it wrote, so a changed mode or runtime
+ * directory changes its revision. The per-instance part is the journal's own
+ * scope. Undeclared, nothing is added and earlier revisions stay valid.
+ */
+function artifactSettings(config: DevFnConfig, name: string): { artifacts?: { mode: "runtime" | "shared"; directory?: string } } {
+  const mode = config.processes![name].artifacts;
+  if (!mode) return {};
+  return { artifacts: mode === "runtime" ? { mode, directory: path.join(config.runtimeDir ?? ".devfn", "instances", "{instance}", "artifacts", name) } : { mode } };
+}
+
+/**
  * The input revision of a task: its declared command and settings, its
  * manifest and selected profile environment as written (secret channels by
  * name only), the targets, namespaces and values of the resources it consumes
@@ -174,7 +186,7 @@ export async function taskInputRevision(config: DevFnConfig, root: string, node:
   const secrets = new Set(spec.secretEnv ?? []);
   const entries = (values: Record<string, string> | undefined) => Object.entries(values ?? {}).map(([key, value]): [string, string | null] => [key, secrets.has(key) ? null : value]).sort(([a], [b]) => compare(a, b));
   const settings = node.kind === "process"
-    ? { adapter: config.processes![node.name].adapter, command: config.processes![node.name].command ?? [], script: config.processes![node.name].script ?? null, cwd: config.processes![node.name].cwd ?? "." }
+    ? { adapter: config.processes![node.name].adapter, command: config.processes![node.name].command ?? [], script: config.processes![node.name].script ?? null, cwd: config.processes![node.name].cwd ?? ".", ...artifactSettings(config, node.name) }
     : { file: config.services![node.name].file ?? "compose.yaml", service: config.services![node.name].service, projectName: config.services![node.name].projectName ?? "devfn",
       source: await digestComposeSource(root, config.services![node.name], `${field}.file`, leaseStable(config, node.name, profile, resources, environment ?? { ...config.profiles[profile]?.environment, ...spec.env }), taskScope(config, "", node, resources).scope === "shared") };
   const consumed = sorted(spec.resources).map((name) => {
@@ -223,6 +235,11 @@ export function taskScope(config: DevFnConfig, instanceId: string, node: { name:
   if (shared.length > 0 && instance.length > 0) {
     throw new DevFnError("DEVFN_RUNTIME_INVALID", `Task ${node.name} consumes resources shared across worktrees (${shared.map(([name]) => name).join(", ")}) and per-instance resources (${instance.join(", ")}). Its completion cannot be recorded once for the shared targets and once per instance; split it into tasks that each consume only one kind.`,
       { task: node.name, shared: shared.map(([name]) => name), instance });
+  }
+  if (shared.length > 0 && node.kind === "process" && config.processes![node.name].artifacts === "runtime") {
+    // One completion for every worktree and runtime would leave each other runtime's own artifact directory empty.
+    throw new DevFnError("DEVFN_RUNTIME_INVALID", `Task ${node.name} consumes resources shared across worktrees (${shared.map(([name]) => name).join(", ")}), so it runs once for all of them, but declares artifacts "runtime", which each runtime needs written; declare artifacts "shared" or split it.`,
+      { task: node.name, shared: shared.map(([name]) => name) });
   }
   const identity = shared.length > 0
     ? { project: config.project.id, task: node.name, targets: shared.map(([name, planned]) => [name, planned.remote!.url, planned.namespace?.prefix ?? null]).sort((a, b) => compare(a[0]!, b[0]!)) }

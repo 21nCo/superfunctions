@@ -44,6 +44,10 @@ describe("named runtime identity", () => {
       expect(review.readableWorktreeLabel).toMatch(/^review-checkout-[0-9a-f]{20}$/);
       // Opaque owners keep .localhost routes and registered-domain aliases apart; only the default runtime of the primary worktree takes the canonical alias.
       expect(new Set([base, review, preview, otherReview].map((item) => resolveLocalHostname(undefined, "app", "fixture", item.instanceId))).size).toBe(4);
+      // A fixed hostname is labelled per owner too, so no runtime routes the bare name.
+      const fixed = [base, review, preview, otherReview].map((item) => resolveLocalHostname("app.localhost", "app", "fixture", item.instanceId));
+      expect(new Set(fixed).size).toBe(4);
+      expect(fixed).not.toContain("app.localhost");
       expect(domainAliases("app", "dev.example.test", base)).toContain("app.dev.example.test");
       const named = [review, preview, otherReview].map((item) => domainAliases("app", "dev.example.test", item));
       for (const aliases of named) expect(aliases).toHaveLength(1);
@@ -75,6 +79,20 @@ describe("named runtime isolation", () => {
     // A process that did not declare a runtime directory cannot reference one.
     const undeclared = validateDevFnConfig({ ...config, processes: { app: { adapter: "command", command: ["node", "{{env.DEVFN_ARTIFACT_DIR}}"] } }, profiles: { default: { processes: ["app"] } } });
     expect(() => resolveEndpointTemplates({ config: undeclared, plan: createPlan(undeclared), ownerId: "owner", ports: {}, artifactDirectories: { app: "/x" } })).toThrow(/missing reference DEVFN_ARTIFACT_DIR/);
+  });
+
+  it("records a task's artifacts choice and directory in its input revision, leaving an undeclared task's revision as it was", async () => {
+    const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-runtime-artifacts-")));
+    try {
+      const task = (artifacts?: string, runtimeDir?: string) => validateDevFnConfig({ version: 1, project: { id: "fixture" }, ...(runtimeDir ? { runtimeDir } : {}),
+        processes: { build: { adapter: "command", command: ["node", "build.mjs"], task: {}, ...(artifacts ? { artifacts } : {}) } }, profiles: { default: { processes: ["build"] } } });
+      const revision = async (config: DevFnConfig) => await taskInputRevision(config, root, { name: "build", kind: "process" }, "default");
+      const revisions = await Promise.all([revision(task()), revision(task("shared")), revision(task("runtime")), revision(task("runtime", ".state"))]);
+      expect(new Set(revisions).size).toBe(4);
+      // The runtime directory reaches an undeclared task through nothing it reads, so its revision does not move with it.
+      expect(await revision(task(undefined, ".state"))).toBe(revisions[0]);
+      expect(await revision(task("runtime", ".devfn"))).toBe(revisions[2]);
+    } finally { await rm(root, { recursive: true, force: true }); }
   });
 
   it("keeps every runtime's environment output out of a task's input revision", async () => {
