@@ -1,3 +1,5 @@
+import { isBrowserScope } from "./runtime.js";
+
 export type ObservationStatus = "ok" | "error";
 export type ObservationSeverity = "debug" | "info" | "warn" | "error";
 
@@ -620,6 +622,9 @@ function createDefaultRequestContext<
 }
 
 async function loadNodeAsyncLocalStorage(): Promise<AsyncLocalStorageConstructor | undefined> {
+  if (isBrowserScope()) {
+    return undefined;
+  }
   try {
     // Keep the specifier dynamic so browser and edge bundlers can retain the
     // synchronous fallback without resolving a Node-only built-in.

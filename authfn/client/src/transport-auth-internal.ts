@@ -1,4 +1,5 @@
 import type { HttpTransportAuthProvider } from '@superfunctions/http';
+import { defaultCookieAccessor, readCsrfToken } from './cookies.js';
 import type { AuthFnTransportAuthOptions } from './transport-auth.js';
 
 export type AuthFnBearerTokenProvider =
@@ -11,18 +12,31 @@ interface AuthFnSessionTransportAuthOptions extends AuthFnTransportAuthOptions {
 
 /**
  * Creates an AuthFn transport auth provider from resolved session material.
+ * When requests send cookies with `credentials: 'include'` and a readable
+ * AuthFn CSRF cookie is present, its token is sent as `x-authfn-csrf` so
+ * cookie-session mutations pass the server CSRF check. The provider cannot see
+ * the request URL, so the header is not added automatically for
+ * `'same-origin'` (it would also reach cross-origin targets) or `'omit'`;
+ * same-origin callers can pass the header through `headers`.
  */
 export function createAuthFnSessionTransportAuth(
   options: AuthFnSessionTransportAuthOptions = {},
 ): HttpTransportAuthProvider {
+  const credentials: RequestCredentials =
+    options.credentials ?? (options.bearerToken === undefined ? 'include' : 'omit');
   return {
-    getCredentials: () =>
-      options.credentials ?? (options.bearerToken === undefined ? 'include' : 'omit'),
+    getCredentials: () => credentials,
     getRequestHeaders: async () => {
       const headers: Record<string, string> = {};
       const bearerToken = await resolveToken(options.bearerToken);
       if (bearerToken) {
         headers.authorization = `Bearer ${bearerToken}`;
+      }
+      const csrfToken = credentials === 'include'
+        ? readCsrfToken(options.cookieAccessor ?? defaultCookieAccessor, options.cookiePrefix)
+        : undefined;
+      if (csrfToken) {
+        headers['x-authfn-csrf'] = csrfToken;
       }
       new Headers((await resolveHeaders(options.headers)) ?? undefined).forEach((value, key) => {
         headers[key] = value;

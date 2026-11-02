@@ -4,6 +4,7 @@ import {
   createAuthFnTransportAuth
 } from '../transport-auth.js';
 import { createAuthFnSessionTransportAuth } from '../transport-auth-internal.js';
+import { createAuthFnClient } from '../client.js';
 
 describe('createAuthFnTransportAuth', () => {
   it('returns cookie credentials by default', async () => {
@@ -53,5 +54,121 @@ describe('createAuthFnTransportAuth', () => {
 
     expect(await auth.onUnauthorized?.(event)).toBe('retry');
     expect(onUnauthorized).toHaveBeenCalledWith(event);
+  });
+  it('sends the CSRF token from the configured cookie prefix for cookie sessions', async () => {
+    const auth = createAuthFnSessionTransportAuth({
+      cookiePrefix: 'nucleus_local',
+      cookieAccessor: () => 'other=1; nucleus_local.csrf=csrf%2Dtoken; authfn.csrf=wrong'
+    });
+
+    expect(await auth.getRequestHeaders?.()).toEqual({ 'x-authfn-csrf': 'csrf-token' });
+    expect(await auth.getCredentials?.()).toBe('include');
+  });
+
+  it('infers the cookie prefix when none is configured', async () => {
+    const auth = createAuthFnSessionTransportAuth({
+      cookieAccessor: () => 'app.session=s; app.csrf=inferred'
+    });
+
+    expect(await auth.getRequestHeaders?.()).toEqual({ 'x-authfn-csrf': 'inferred' });
+  });
+
+  it('omits the CSRF header when no CSRF cookie is readable', async () => {
+    const auth = createAuthFnSessionTransportAuth({
+      cookiePrefix: 'nucleus_local',
+      cookieAccessor: () => 'other=1'
+    });
+
+    expect(await auth.getRequestHeaders?.()).toEqual({});
+  });
+
+  it('sends the CSRF token alongside a bearer token when cookies are included', async () => {
+    const auth = createAuthFnSessionTransportAuth({
+      bearerToken: 'session-token',
+      credentials: 'include',
+      cookiePrefix: 'nucleus_local',
+      cookieAccessor: () => 'nucleus_local.csrf=csrf-token'
+    });
+
+    expect(await auth.getRequestHeaders?.()).toEqual({
+      authorization: 'Bearer session-token',
+      'x-authfn-csrf': 'csrf-token'
+    });
+  });
+
+  it('omits the CSRF header when requests do not send cookies', async () => {
+    const auth = createAuthFnSessionTransportAuth({
+      bearerToken: 'session-token',
+      cookiePrefix: 'nucleus_local',
+      cookieAccessor: () => 'nucleus_local.csrf=csrf-token'
+    });
+
+    expect(await auth.getCredentials?.()).toBe('omit');
+    expect(await auth.getRequestHeaders?.()).toEqual({
+      authorization: 'Bearer session-token'
+    });
+  });
+
+  it('infers the prefix from the readable CSRF cookie when the session cookie is HttpOnly', async () => {
+    const auth = createAuthFnSessionTransportAuth({
+      cookieAccessor: () => 'other=1; app.csrf=from-csrf-cookie'
+    });
+
+    expect(await auth.getRequestHeaders?.()).toEqual({ 'x-authfn-csrf': 'from-csrf-cookie' });
+  });
+
+  it('omits the CSRF header when several unknown cookie prefixes are visible', async () => {
+    const auth = createAuthFnSessionTransportAuth({
+      cookieAccessor: () => 'one.csrf=first; two.csrf=second'
+    });
+
+    expect(await auth.getRequestHeaders?.()).toEqual({});
+  });
+
+  it('accepts cookie options on the exported transport auth factory', async () => {
+    const auth = createAuthFnTransportAuth({
+      cookiePrefix: 'two',
+      cookieAccessor: () => 'one.csrf=first; two.csrf=second'
+    });
+
+    expect(await auth.getRequestHeaders?.()).toEqual({ 'x-authfn-csrf': 'second' });
+  });
+
+  it('passes client cookie options into transport auth', async () => {
+    const client = createAuthFnClient({
+      cookiePrefix: 'nucleus_local',
+      cookieAccessor: () => 'nucleus_local.csrf=from-client'
+    });
+
+    expect(await client.createTransportAuth().getRequestHeaders?.()).toEqual({
+      'x-authfn-csrf': 'from-client'
+    });
+  });
+  it('does not add the CSRF header automatically for same-origin credentials', async () => {
+    const auth = createAuthFnSessionTransportAuth({
+      credentials: 'same-origin',
+      cookieAccessor: () => 'authfn.csrf=same-origin-token'
+    });
+
+    expect(await auth.getRequestHeaders?.()).toEqual({});
+  });
+
+  it('keeps the client cookie prefix when a transport passes undefined', async () => {
+    const client = createAuthFnClient({
+      cookiePrefix: 'two',
+      cookieAccessor: () => 'one.csrf=first; two.csrf=second'
+    });
+
+    expect(
+      await client.createTransportAuth({ cookiePrefix: undefined, cookieAccessor: undefined }).getRequestHeaders?.()
+    ).toEqual({ 'x-authfn-csrf': 'second' });
+  });
+
+  it('reads a CSRF cookie whose configured prefix starts with __Secure-', async () => {
+    const auth = createAuthFnSessionTransportAuth({
+      cookieAccessor: () => '__Secure-app.csrf=secure-prefixed'
+    });
+
+    expect(await auth.getRequestHeaders?.()).toEqual({ 'x-authfn-csrf': 'secure-prefixed' });
   });
 });
