@@ -8,7 +8,9 @@ export function defaultCookieAccessor(): string | undefined {
 
 /**
  * Infers the AuthFn cookie prefix from readable cookie names. The session
- * cookie is usually HttpOnly, so the `<prefix>.csrf` cookie is also used.
+ * cookie is usually HttpOnly, so the `<prefix>.csrf` cookie is also used. Only
+ * session cookie names carry the `__Secure-` marker, so it is stripped from
+ * those alone.
  * Returns the single prefix found, `authfn` when no AuthFn cookie is visible
  * or when `authfn` is among several, and undefined when several other prefixes
  * are visible and the right one cannot be told apart.
@@ -17,11 +19,11 @@ export function readCookiePrefix(cookieHeader: string | undefined): string | und
   const prefixes = new Set<string>();
   for (const part of (cookieHeader ?? '').split(';')) {
     const [rawName] = part.trim().split('=');
-    const name = rawName.startsWith('__Secure-') ? rawName.slice('__Secure-'.length) : rawName;
-    for (const suffix of ['.session', '.csrf']) {
-      if (name.endsWith(suffix) && name.length > suffix.length) {
-        prefixes.add(name.slice(0, -suffix.length));
-      }
+    if (rawName.endsWith('.session')) {
+      const name = rawName.startsWith('__Secure-') ? rawName.slice('__Secure-'.length) : rawName;
+      if (name.length > '.session'.length) prefixes.add(name.slice(0, -'.session'.length));
+    } else if (rawName.endsWith('.csrf') && rawName.length > '.csrf'.length) {
+      prefixes.add(rawName.slice(0, -'.csrf'.length));
     }
   }
   if (prefixes.size === 0) {

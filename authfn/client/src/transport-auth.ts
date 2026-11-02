@@ -10,7 +10,11 @@ export type AuthFnTransportAuthOptions = Pick<
 > & {
   /** Reads the cookies visible to the client; defaults to `document.cookie`. */
   cookieAccessor?: () => string | undefined;
-  /** AuthFn cookie prefix used to find the `<prefix>.csrf` cookie; inferred when omitted. */
+  /**
+   * AuthFn cookie prefix used to find the `<prefix>.csrf` cookie. Inferred when
+   * omitted; set it explicitly when several other AuthFn-style cookie prefixes
+   * are visible, otherwise no CSRF header is sent.
+   */
   cookiePrefix?: string;
 };
 

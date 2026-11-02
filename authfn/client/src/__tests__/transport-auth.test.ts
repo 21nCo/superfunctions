@@ -144,4 +144,31 @@ describe('createAuthFnTransportAuth', () => {
       'x-authfn-csrf': 'from-client'
     });
   });
+  it('sends the CSRF token for same-origin cookie requests', async () => {
+    const auth = createAuthFnSessionTransportAuth({
+      credentials: 'same-origin',
+      cookieAccessor: () => 'authfn.csrf=same-origin-token'
+    });
+
+    expect(await auth.getRequestHeaders?.()).toEqual({ 'x-authfn-csrf': 'same-origin-token' });
+  });
+
+  it('keeps the client cookie prefix when a transport passes undefined', async () => {
+    const client = createAuthFnClient({
+      cookiePrefix: 'two',
+      cookieAccessor: () => 'one.csrf=first; two.csrf=second'
+    });
+
+    expect(
+      await client.createTransportAuth({ cookiePrefix: undefined, cookieAccessor: undefined }).getRequestHeaders?.()
+    ).toEqual({ 'x-authfn-csrf': 'second' });
+  });
+
+  it('reads a CSRF cookie whose configured prefix starts with __Secure-', async () => {
+    const auth = createAuthFnSessionTransportAuth({
+      cookieAccessor: () => '__Secure-app.csrf=secure-prefixed'
+    });
+
+    expect(await auth.getRequestHeaders?.()).toEqual({ 'x-authfn-csrf': 'secure-prefixed' });
+  });
 });
