@@ -410,23 +410,24 @@ test("shellWords reads a command's words as the shell does", () => {
   assert.deepEqual(shellWords(String.raw`tsc -p my\'lib "a\"b" 'c\d' e\ f`), ["tsc", "-p", "my'lib", 'a"b', "c\\d", "e f"]);
   assert.deepEqual(shellWords(`sh -c 'tsc -p x' "" "open y`), ["sh", "-c", "tsc -p x", "", "open y"]);
   assert.deepEqual(shellWords('tsc --project=x>log "a>b"', /[\s=<>]/), ["tsc", "--project", "x", "\uE002", "log", "a>b"]);
-  assert.deepEqual(tscProjects('tsc -p "my>lib/tsconfig.json" --noEmit false'), { projects: ["my>lib/tsconfig.json"], emit: true });
-  assert.deepEqual(tscProjects("tsc -b x > log.txt 2>&1 <in.txt"), { projects: ["x/tsconfig.json"], emit: undefined });
-  for (const command of [`tsc -p "my'lib/tsconfig.json"`, `tsc -b "my'lib"`, String.raw`tsc -p my\'lib/tsconfig.json`]) assert.deepEqual(tscProjects(command).projects, ["my'lib/tsconfig.json"], command);
+  assert.deepEqual(tscProjects('tsc -p "my>lib/tsconfig.json" --noEmit false'), [{ projects: ["my>lib/tsconfig.json"], emit: true }]);
+  assert.deepEqual(tscProjects("tsc -b x > log.txt 2>&1 <in.txt"), [{ projects: ["x/tsconfig.json"], emit: undefined }]);
+  for (const command of [`tsc -p "my'lib/tsconfig.json"`, `tsc -b "my'lib"`, String.raw`tsc -p my\'lib/tsconfig.json`]) assert.deepEqual(tscProjects(command), [{ projects: ["my'lib/tsconfig.json"], emit: undefined }], command);
   // A redirection is one marker word with its IO number, only unquoted digits right before the operator; the marker drops exactly its target.
   assert.deepEqual(shellWords(`a 2>&1 b&>c '2'>d 3 <e`, /[\s&<>()]/), ["a", "\uE002", "1", "b", "\uE002", "c", "2", "\uE002", "d", "3", "\uE002", "e"]);
   for (const [command, projects] of [
     ...["tsc -p 2026 > build.log", 'tsc -p "2026" > build.log', "tsc -p '2026' >log", 'tsc -p "20"26>log', "tsc -p 2026 2>&1", "tsc --project=2026>log"].map((command) => [command, ["2026"]]),
     ["tsc -b 2 > build.log", ["2"]], ["tsc -b 2 2> e.log", ["2"]], ["tsc -b mylib &>log", ["mylib"]], ["tsc -b mylib &>>log", ["mylib"]], ["tsc -b a 1>out 2>err b", ["a", "b"]], ["tsc -p 2026>build.log", ["."]],
-  ]) assert.deepEqual(tscProjects(command).projects, projects.map((project) => path.posix.join(project, "tsconfig.json")), command);
+  ]) assert.deepEqual(tscProjects(command).map((run) => run.projects), [projects.map((project) => path.posix.join(project, "tsconfig.json"))], command);
   assert.deepEqual(scriptReferences({ build: "tsc -b a >| log b | tee x" }, "p").filter(({ target }) => target.endsWith("tsconfig.json")).map(({ target }) => target), ["p/a/tsconfig.json", "p/b/tsconfig.json"]);
-  // Only an unquoted, unescaped ;, newline, &&, ||, | or & ends a command; a | or & that is part of a redirection does not, and a comment's quote is no quote.
+  // Only an unquoted, unescaped ;, newline, &&, ||, | or & ends a command; a | or & that is part of a redirection (>|, <&, >&) does not, an & before > is read
+  // both ways, cut as dash does and joined as bash's &> (macOS sh), and a comment's quote is no quote.
   for (const [script, commands] of [
     ["a; b\nc && d || e | f & g", ["a", "b", "c", "d", "e", "f", "g"]], [String.raw`a 'x;y' "x|y" x\;y x\&\&y`, [String.raw`a 'x;y' "x|y" x\;y x\&\&y`]], ["sh -c 'a\nb'", ["sh -c 'a\nb'"]],
-    [String.raw`a dist\>| b`, [String.raw`a dist\>`, "b"]], ['a ">"| b', ['a ">"', "b"]], ["a >| log b", ["a >| log b"]], ["a 2>&1 b &>log c <&3 d >&2", ["a 2>&1 b &>log c <&3 d >&2"]], ["a |& b", ["a", "b"]],
+    [String.raw`a dist\>| b`, [String.raw`a dist\>`, "b"]], ['a ">"| b', ['a ">"', "b"]], ["a >| log b", ["a >| log b"]], ["a 2>&1 b <&3 c >&2 d", ["a 2>&1 b <&3 c >&2 d"]], ["a &>log b", ["a", ">log b", "a &>log b"]], ["a |& b", ["a", "b"]],
     ["#!/bin/sh\n# don't\na 'x' # it's; b\nc#d $# \\#e '#f';#g\nh", ["a 'x'", "c#d $# \\#e '#f'", "h"]],
     // A backslash-newline outside single quotes is deleted (a # after it still starts a word), and escape parity comes from the same pass.
-    ["a \\\n# don't\nb", ["a", "b"]], [String.raw`echo foo\\ # tsc -p mylib`, [String.raw`echo foo\\`]], ["a &\\\n>log b", ["a &>log b"]], ["a\\\n#b", ["a#b"]],
+    ["a \\\n# don't\nb", ["a", "b"]], [String.raw`echo foo\\ # tsc -p mylib`, [String.raw`echo foo\\`]], ["a &\\\n>log b", ["a", ">log b", "a &>log b"]], ["a\\\n#b", ["a#b"]],
   ]) assert.deepEqual(shellCommands(script).map((command) => command.trim()), commands, script);
   assert.equal(tscProjects(shellCommands(String.raw`echo foo\\ # tsc -p mylib`)[0]), null);
   for (const [command, words] of [['"a\\\nb"', ["ab"]], ["'a\\\nb'", ["a\\\nb"]], [String.raw`echo foo\ # x`, ["echo", "foo #", "x"]], ["tsc -p \\\n mylib", ["tsc", "-p", "mylib"]]]) assert.deepEqual(shellWords(command), words, command);
@@ -453,7 +454,13 @@ for (const [command, compiled, emits, sh] of [
     "tsc --noEmit -p mylib --outDir ab --noEmit false", "tsc -p mylib >| build.log", "tsc --noEmit | tsc -p mylib", "tsc --noEmit --outDir dist >| out.log; tsc -p mylib", String.raw`tsc --noEmit --outDir dist\> | tsc -p mylib`, "tsc --noEmit & tsc -p mylib",
     // A line continuation is deleted, never a word or an escaped character, so a later comment's quote opens nothing (controls: no continuation, no quote).
     "tsc --noEmit \\\n# don't forget\ntsc -p mylib", "tsc --noEmit --outDir foo\\\\ # don't\ntsc -p mylib", "tsc -p \\\n mylib", "# don't\ntsc -p mylib", "tsc --noEmit \\\n# forget\ntsc -p mylib", "tsc --noEmit \\\n&& tsc -p mylib",
+    // npm runs scripts with /bin/sh: dash cuts at an & before >, bash (macOS sh) reads &>; either reading that emits counts, and each tsc word is its own run.
+    "tsc -p mylib &>/dev/null --noEmit", "tsc --noEmit -p mylib &>/dev/null --noEmit false", "tsc --noEmit -p mylib &\\\n>/dev/null --noEmit false", "tsc --noEmit &> /dev/null tsc -p mylib; wait", "tsc --noEmit &>/dev/null tsc -p mylib; wait", "tsc --noEmit &\\\n> /dev/null tsc -p mylib; wait", "tsc --noEmit tsc -p mylib", "tsc -p mylib tsc --noEmit",
+    "tsc --noEmit & > /dev/null tsc -p mylib", "tsc -p mylib &>build.log", "tsc -b mylib &>log", "tsc --noEmit >& /dev/null; tsc -p mylib",
   ].flatMap((command) => [[command, "mylib", true], [command, "mylib", true, "build.sh"]]),
+  ...["tsc --noEmit &>/dev/null", "tsc --noEmit 2>&1 | tee log", "tsc --noEmit false --noEmit", "tsc --noEmit tsc --noEmit"].map((command) => [command, ".", false]),
+  // A command's words are quiet only when every tsc run in it is: here the second run emits, so test/fixture.ts is named.
+  ["tsc --noEmit tsc -p mylib test/fixture.ts", "", true],
 ]) {
   test(`a lifecycle command compiles what its shell words name: ${command} (${compiled || "no tsconfig"} compiles test/)${sh ? " in a .sh build file" : ""}`, (t) => {
     const repo = fixtureRepo(t);
@@ -472,6 +479,32 @@ for (const [command, compiled, emits, sh] of [
     assert.ok(changed.output.includes("@uifn/core: shipped code changed (test/fixture.ts) but version is still 1.0.0"), changed.output);
     repo.edit("uifn/core/package.json", (text) => text.replace('"1.0.0"', '"1.0.1"'));
     repo.edit("uifn/core/CHANGELOG.md", (text) => text.replace("## 1.0.0", "## 1.0.1\n\n- Rebuild the fixtures.\n\n## 1.0.0"));
+    repo.commit("bump core");
+    const bumped = check(repo.root);
+    assert.equal(bumped.status, 0, bumped.output);
+  });
+}
+
+// A shipped stylesheet's url() names a file whether or not it is quoted (CSS treats url(x) and url("x") alike); data:, absolute and fragment URLs name none.
+for (const [form, names] of [["url(../fixtures/icon.svg)", true], ["url( ../fixtures/icon.svg )", true], ['url("../fixtures/icon.svg")', true], ["url('../fixtures/icon.svg')", true],
+  ["url(data:image/svg+xml;base64,PHN2Zz4=)", false], ["url(https://example.invalid/icon.svg)", false], ["url(#icon)", false], ["url(/fixtures/icon.svg)", false]]) {
+  test(`a shipped stylesheet's ${form} ${names ? "names" : "does not name"} the file it loads`, (t) => {
+    const repo = fixtureRepo(t);
+    repo.edit("uifn/core/package.json", (text) => text.replace('"files": [', '"files": [\n    "src/styles.css",'));
+    repo.write("uifn/core/src/styles.css", `.a { background: ${form}; }\n`);
+    repo.write("uifn/core/fixtures/icon.svg", "<svg>1</svg>\n");
+    repo.commit("stylesheet loading a fixture");
+    repo.git("branch", "-f", "base");
+    repo.write("uifn/core/fixtures/icon.svg", "<svg>2</svg>\n");
+    repo.commit("change the fixture");
+    const changed = check(repo.root);
+    assert.equal(changed.status, names ? 1 : 0, changed.output);
+    if (!names) return;
+    assert.ok(changed.output.includes("@uifn/core: shipped code changed (fixtures/icon.svg) but version is still 1.0.0"), changed.output);
+    repo.edit("uifn/core/package.json", (text) => text.replace('"1.0.0"', '"1.0.1"'));
+    repo.commit("bump core without a changelog entry");
+    assert.match(check(repo.root).output, /CHANGELOG/);
+    repo.edit("uifn/core/CHANGELOG.md", (text) => text.replace("## 1.0.0", "## 1.0.1\n\n- Update the icon.\n\n## 1.0.0"));
     repo.commit("bump core");
     const bumped = check(repo.root);
     assert.equal(bumped.status, 0, bumped.output);
@@ -1077,17 +1110,21 @@ for (const [cell, build, tsconfigs, expected] of [
 }
 
 test("tscProjects maps every tsc spelling to the tsconfigs it emits from", () => {
-  for (const command of ["tsc", "npx tsc --emitDeclarationOnly", "tsc -b", "tsc --build --verbose", "tsc -p .", "tsc --project ./", "tsc -b .", "tsc -p tsconfig.json"]) assert.deepEqual(tscProjects(command), { projects: ["tsconfig.json"], emit: undefined }, command);
-  assert.deepEqual(tscProjects("tsc -p config/tsconfig.build.json").projects, ["config/tsconfig.build.json"]);
-  assert.deepEqual(tscProjects("tsc --project=packages/a").projects, ["packages/a/tsconfig.json"]);
-  assert.deepEqual(tscProjects("tsc -b packages/a tsconfig.types.json --force").projects, ["packages/a/tsconfig.json", "tsconfig.types.json"]);
-  for (const command of ["tsc --noEmit -p tsconfig.json", "tsc --noEmit false -p tsconfig.json --noEmit", "tsc -b . --noEmit", "tsc --noEmit=false --noEmit"]) assert.deepEqual(tscProjects(command), { projects: ["tsconfig.json"], emit: false }, command);
-  for (const command of ["tsc --noEmit -p tsconfig.json --noEmit false", "tsc -b --noEmit false", "tsc -p tsconfig.json --noEmit=false", "tsc '--noEmit' 'false'"]) assert.deepEqual(tscProjects(command), { projects: ["tsconfig.json"], emit: true }, command);
-  assert.deepEqual(tscProjects("tsc -b > build.log 2>&1"), { projects: ["tsconfig.json"], emit: undefined });
-  assert.deepEqual(tscProjects("tsc --noEmitOnError"), { projects: ["tsconfig.json"], emit: undefined });
-  for (const command of ['tsc -p "my lib/tsconfig.json"', "tsc -p 'my lib/tsconfig.json'", 'tsc -b "my lib"', "tsc --project='my lib'"]) assert.deepEqual(tscProjects(command).projects, ["my lib/tsconfig.json"], command);
-  assert.deepEqual(tscProjects('tsc -b "../shared lib" "a b/tsconfig.x.json"').projects, ["../shared lib/tsconfig.json", "a b/tsconfig.x.json"]);
+  for (const command of ["tsc", "npx tsc --emitDeclarationOnly", "tsc -b", "tsc --build --verbose", "tsc -p .", "tsc --project ./", "tsc -b .", "tsc -p tsconfig.json"]) assert.deepEqual(tscProjects(command), [{ projects: ["tsconfig.json"], emit: undefined }], command);
+  assert.deepEqual(tscProjects("tsc -p config/tsconfig.build.json")[0].projects, ["config/tsconfig.build.json"]);
+  assert.deepEqual(tscProjects("tsc --project=packages/a")[0].projects, ["packages/a/tsconfig.json"]);
+  assert.deepEqual(tscProjects("tsc -b packages/a tsconfig.types.json --force")[0].projects, ["packages/a/tsconfig.json", "tsconfig.types.json"]);
+  for (const command of ["tsc --noEmit -p tsconfig.json", "tsc --noEmit false -p tsconfig.json --noEmit", "tsc -b . --noEmit", "tsc --noEmit=false --noEmit"]) assert.deepEqual(tscProjects(command), [{ projects: ["tsconfig.json"], emit: false }], command);
+  for (const command of ["tsc --noEmit -p tsconfig.json --noEmit false", "tsc -b --noEmit false", "tsc -p tsconfig.json --noEmit=false", "tsc '--noEmit' 'false'"]) assert.deepEqual(tscProjects(command), [{ projects: ["tsconfig.json"], emit: true }], command);
+  assert.deepEqual(tscProjects("tsc -b > build.log 2>&1"), [{ projects: ["tsconfig.json"], emit: undefined }]);
+  assert.deepEqual(tscProjects("tsc --noEmitOnError"), [{ projects: ["tsconfig.json"], emit: undefined }]);
+  for (const command of ['tsc -p "my lib/tsconfig.json"', "tsc -p 'my lib/tsconfig.json'", 'tsc -b "my lib"', "tsc --project='my lib'"]) assert.deepEqual(tscProjects(command)[0].projects, ["my lib/tsconfig.json"], command);
+  assert.deepEqual(tscProjects('tsc -b "../shared lib" "a b/tsconfig.x.json"')[0].projects, ["../shared lib/tsconfig.json", "a b/tsconfig.x.json"]);
   assert.equal(tscProjects("tsup src/index.ts"), null);
+  // Every tsc word starts its own run with its own project and last --noEmit, and keeps the next tsc word as a possible operand.
+  assert.deepEqual(tscProjects("tsc --noEmit tsc -p mylib"), [{ projects: ["tsconfig.json"], emit: false }, { projects: ["mylib/tsconfig.json"], emit: undefined }]);
+  assert.deepEqual(tscProjects("tsc -p mylib npx tsc --noEmit"), [{ projects: ["mylib/tsconfig.json"], emit: undefined }, { projects: ["tsconfig.json"], emit: false }]);
+  assert.deepEqual(tscProjects("tsc -p tsc ./node_modules/.bin/tsc -b a --noEmit false").map((run) => run.projects), [["tsc/tsconfig.json"], ["tsconfig.json"], ["a/tsconfig.json"]]);
 });
 
 // tsc emits the default-include fixtures in each spelling, from a script or a build file; a script's --noEmit emits nothing.

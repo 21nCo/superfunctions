@@ -53,7 +53,7 @@ const SEMVER = new RegExp(`^(${NUMBER})\\.(${NUMBER})\\.(${NUMBER})(?:-(${IDENTI
 // data. Runtime reads through computed paths are not detected. A file a shipped script runs, and a local module a
 // build file imports, is a build file too, wherever it lives; a shell build file is read like a lifecycle script.
 const SCANNED_FILE = /(?:\.(?:[cm]?[jt]sx?|svelte|css)|(?:^|\/)[tj]sconfig[^/]*\.json)$/;
-const SPECIFIER = /(['"`])(\.\.?(?:\/[^'"`\n]*?)?)(?:\1|\$\{)/g;
+const SPECIFIER = /(?:(['"`])|(?<=\burl\(\s*))(\.\.?(?:\/[^'"`\n]*?)?)(?:\1(?<=['"`])|\$\{|(?<=\burl\(\s*[^'"`\s()]*)(?=\s*\)))/g;
 const LITERAL_ARGUMENT = /\s*,\s*(['"`])([^'"`\n]*)\1/y;
 // A specifier in module position (import, export from, import(), require(), CSS @import or url()), which a bundler inlines.
 const MODULE_CONTEXT = /(?:\bfrom|\bimport|\bimport\s*\(|\brequire\s*\(|@import(?:\s+url\()?|\burl\()\s*$/;
@@ -377,44 +377,43 @@ export function fileReferences(file, text, { root = path.posix.dirname(file), ba
 }
 
 const SHELL_PART = /\\([^])|'([^']*)'?|(["`])((?:\\[^]|(?!\3)[^\\])*)\3?|([^])/g;
-/** A command's words as the shell reads them, part by part (an escaped character, a quoted span, where an unclosed quote runs to the end, or another character): an unquoted separator ends a word and only delimiting quotes are removed, so a quote of the other kind stays (\uE001 marks a quoted or escaped character, so "" is a word). When < and > separate words, an unquoted redirection operator (<, >, >>, >|, <>, <&, >&, &>, &>>) with its IO number, only unquoted digits right before it that start a shell word (an = separator splits no shell word), is the one word \uE002; quoted characters never join it. shellCommands cuts a script, in the same pass, at each unquoted, unescaped ;, newline, &&, ||, | or & that is not part of a redirection (>|, <&, >&, &>). Both read one stateful pass, shellScan: a backslash-newline outside single quotes continues the line (deleted, never a character or boundary; transparent to word starts), and an unquoted # that starts a word (at the start or after an unquoted, unescaped blank, ;, &, |, (, ), < or >) is a comment to the next newline whose quotes are not quotes. */
-const shellScan = (text, visit) => { let [out, wordStart, match] = ["", true, null]; const part = new RegExp(SHELL_PART); while ((match = part.exec(text))) if (wordStart && match[5] === "#") part.lastIndex = text.includes("\n", match.index) ? text.indexOf("\n", match.index) : text.length; else if (match[1] !== "\n") [out, wordStart] = [out + visit(match), /^[\s;&|()<>]$/.test(match[5] ?? "")]; return out; };
+/** A command's words as the shell reads them, part by part (an escaped character, a quoted span, where an unclosed quote runs to the end, or another character): an unquoted separator ends a word and only delimiting quotes are removed, so a quote of the other kind stays (\uE001 marks a quoted or escaped character, so "" is a word). When < and > separate words, an unquoted redirection operator (<, >, >>, >|, <>, <&, >&, &>, &>>) with its IO number, only unquoted digits right before it that start a shell word (an = separator splits no shell word), is the one word \uE002; quoted characters never join it. shellCommands cuts a script, in the same pass, at each unquoted, unescaped ;, newline, &&, ||, | or & that is not part of a redirection (>|, <&, >&); npm runs scripts with /bin/sh, which cuts at an & before > (dash) or reads it as &> (bash, macOS sh), so that command is read both ways. Both read one stateful pass, shellScan: a backslash-newline outside single quotes continues the line (deleted, never a character or boundary; transparent to word starts), and an unquoted # that starts a word (at the start or after an unquoted, unescaped blank, ;, &, |, (, ), < or >) is a comment to the next newline whose quotes are not quotes. */
+const shellScan = (text, visit) => { let [out, wordStart, match] = ["", true]; const part = new RegExp(SHELL_PART); while ((match = part.exec(text))) if (wordStart && match[5] === "#") part.lastIndex = text.includes("\n", match.index) ? text.indexOf("\n", match.index) : text.length; else if (match[1] !== "\n") [out, wordStart] = [out + visit(match), /^[\s;&|()<>]$/.test(match[5] ?? "")]; return out; };
 export function shellWords(command, separator = /\s/) {
   const text = shellScan(command, ([, escaped, single, , quoted, char]) => (char === undefined ? `\uE001${escaped ?? single ?? quoted.replaceAll(/\\(?:([$`"\\])|\n)/g, "$1")}` : separator.test("<") && /[<>&]/.test(char) ? `\uE002${char}` : separator.test(char) ? (char === "=" ? "\uE003" : "\uE000") : char));
   return text.replaceAll(/(?:(?<=^|\uE000|\uE002&)\d+)?(?:\uE002&)?(?:\uE002[<>])+(?:\uE002&|\|)?/g, "\uE000\uE002\uE000").replaceAll("\uE002&", separator.test("&") ? "\uE000" : "&").replaceAll("\uE003", "\uE000").split("\uE000").filter(Boolean).map((word) => word.replaceAll("\uE001", "")); }
-export function shellCommands(script) { let previous = ""; return shellScan(script, ({ 0: part, 5: char, index }) => { const cut = /^[;\n]$/.test(char ?? "") || (char === "|" && previous !== ">") || (char === "&" && !/^[<>]$/.test(previous) && !/^(?:\\\n)*>/.test(script.slice(index + 1))); previous = char ?? ""; return cut ? "\uE000" : part; }).split("\uE000").filter((command) => command.trim()); }
+export function shellCommands(script) { let previous = ""; return shellScan(script, ({ 0: part, 5: char, index }) => { const cut = /^[;\n]$/.test(char ?? "") || (char === "|" && previous !== ">") || (char === "&" && !/^[<>]$/.test(previous)); previous = char ?? ""; return cut && char === "&" && /^(?:\\\n)*>/.test(script.slice(index + 1)) ? "\uE004" : cut ? "\uE000" : part; }).split("\uE000").flatMap((command) => (command.includes("\uE004") ? [...command.split("\uE004"), command.replaceAll("\uE004", "&")] : [command])).filter((command) => command.trim()); }
 
 const nestedCommand = (words, index) => !words.slice(0, index).some((word) => /(?:^|\/)tsc$/.test(word)) && ((words[index - 1] === "-c" && /^(?:sh|bash|zsh|dash)$/.test(path.posix.basename(words[index - 2] ?? ""))) || (/\s/.test(words[index]) && (/\btsc\b/.test(words[index]) || RUNNER.test(path.posix.basename(shellWords(words[index])[0] ?? "")))));
 
-/** The tsconfigs a tsc command emits from (the -p/--project path, every -b/--build path, or ./tsconfig.json; a directory holds tsconfig.json), or null without tsc. `emit` follows the last --noEmit (bare: false; false: true; none: undefined). */
+/** Each tsc run of a command, or null without tsc: every tsc word starts a run whose arguments reach the next tsc word (kept as a possible operand), so one run's --noEmit never overrides another's project. A run emits from its -p/--project path, every -b/--build path, or ./tsconfig.json (a directory holds tsconfig.json); its `emit` follows its own last --noEmit (bare: false; false: true; none: undefined). */
 export function tscProjects(command) {
   const words = shellWords(command, /[\s()<>=]/).filter((word, index, all) => word !== "\uE002" && all[index - 1] !== "\uE002");
-  const start = words.findIndex((word) => /(?:^|\/)tsc$/.test(word));
-  if (start < 0) return null;
-  const args = words.slice(start + 1);
-  const [flag, noEmit] = [args.findIndex((word) => TSC_PROJECT_FLAG.test(word)), args.findLastIndex((word) => word === "--noEmit")];
-  const projects = flag < 0 ? [] : /^--?b/.test(args[flag]) ? args.slice(flag + 1).filter((word) => !/^(?:-|true$|false$)/.test(word)) : args.slice(flag + 1, flag + 2);
-  return { projects: (projects.length > 0 ? projects : ["."]).map((project) => (project.endsWith(".json") ? project : path.posix.join(project, "tsconfig.json"))), emit: noEmit < 0 ? undefined : args[noEmit + 1] === "false" };
+  const runs = words.flatMap((word, index) => (/(?:^|\/)tsc$/.test(word) ? [words.slice(index + 1, words.findIndex((next, at) => at > index && /(?:^|\/)tsc$/.test(next)) + 1 || words.length)] : []));
+  return runs.length === 0 ? null : runs.map((args) => {
+    const [flag, noEmit] = [args.findIndex((word) => TSC_PROJECT_FLAG.test(word)), args.findLastIndex((word) => word === "--noEmit")];
+    const projects = flag < 0 ? [] : /^--?b/.test(args[flag]) ? args.slice(flag + 1).filter((word) => !/^(?:-|true$|false$)/.test(word)) : args.slice(flag + 1, flag + 2);
+    return { projects: (projects.length > 0 ? projects : ["."]).map((project) => (project.endsWith(".json") ? project : path.posix.join(project, "tsconfig.json"))), emit: noEmit < 0 ? undefined : args[noEmit + 1] === "false" };
+  });
 }
 
 /** Paths shipped lifecycle scripts name: each shell word from the package root (globs kept, `!` globs negated; outside tsc a `tree`, as `svelte-package -i lib` reads all of lib; after a runner, a leading `./x` or a loaded config `-c x`/`--config=x`/*.config.*, it `runs`) and each tsc command's projects.
- * A bare last --noEmit emits nothing: its projects are overridden and its words `quiet`, named only to be declared. A nested command (a shell's -c argument, or a word outside a tsc run's arguments holding whitespace that runs tsc or a runner, as `concurrently "tsc -p x"`) is read like a script; a tsc word that no reading places sweeps every tsconfig. */
+ * A run's bare last --noEmit emits nothing from that run: its projects are overridden, and a command's words are `quiet`, named only to be declared, when every run is so. A nested command (a shell's -c argument, or a word outside a tsc run's arguments holding whitespace that runs tsc or a runner, as `concurrently "tsc -p x"`) is read like a script; a tsc word that no reading places sweeps every tsconfig. */
 export function scriptReferences(scripts, packagePath) {
   const found = [];
   for (const name of shippedScriptNames(scripts ?? {})) {
     const from = `package.json scripts.${name}`;
     for (const [list, command] of shellCommands(scripts[name]).entries()) {
-      const { projects, emit } = tscProjects(command) ?? {};
-      for (const project of projects ?? []) found.push({ from, target: path.posix.join(packagePath, project), soft: false, emit: emit === true, ...(emit === false ? { overridden: true } : {}) });
-      const words = shellWords(command, /[\s&<>()]/).filter((word) => word !== "\uE002");
+      const [tscRuns, words] = [tscProjects(command), shellWords(command, /[\s&<>()]/).filter((word) => word !== "\uE002")];
+      for (const { projects, emit } of tscRuns ?? []) for (const project of projects) found.push({ from, target: path.posix.join(packagePath, project), soft: false, emit: emit === true, ...(emit === false ? { overridden: true } : {}) });
       const nested = words.filter((_, index) => nestedCommand(words, index));
       for (const [index, word] of nested.entries()) found.push(...scriptReferences({ build: word }, packagePath).map((reference) => ({ ...reference, from, list: `${list}:${index}:${reference.list}` })));
-      if (!projects && words.some((word) => /\btsc\b/.test(word) && !nested.includes(word))) found.push({ from, target: path.posix.join(packagePath, "**/tsconfig*.json"), soft: false, emit: EMIT_OVERRIDE.test(command), tsc: true });
+      if (!tscRuns && words.some((word) => /\btsc\b/.test(word) && !nested.includes(word))) found.push({ from, target: path.posix.join(packagePath, "**/tsconfig*.json"), soft: false, emit: EMIT_OVERRIDE.test(command), tsc: true });
       let [runs, config] = [false, false];
       for (const [index, token] of words.entries()) {
         const value = nested.includes(token) ? "" : token.replace(/^-{1,2}[\w-]+=/, "");
         const negated = /^!./.test(value);
-        if (value) found.push({ from, target: path.posix.join(packagePath, value.slice(Number(negated))).replace(/\/+$/, ""), soft: negated, list, ...(negated ? { negated } : emit === false ? { quiet: true } : projects ? {} : { tree: true }), ...(runs || config || /(?:^--config=)|\.config\./.test(token) || (index === 0 && value.startsWith("./")) ? { runs: true } : {}) });
+        if (value) found.push({ from, target: path.posix.join(packagePath, value.slice(Number(negated))).replace(/\/+$/, ""), soft: negated, list, ...(negated ? { negated } : tscRuns?.every(({ emit }) => emit === false) ? { quiet: true } : tscRuns ? {} : { tree: true }), ...(runs || config || /(?:^--config=)|\.config\./.test(token) || (index === 0 && value.startsWith("./")) ? { runs: true } : {}) });
         runs ||= RUNNER.test(path.posix.basename(value));
         config = /^(?:-c|--config)$/.test(value);
       }
