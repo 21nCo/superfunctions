@@ -47,7 +47,7 @@
   },
   "publishConfig": { "access": "public" },
   "dependencies": {
-    "@superfunctions/observability": "0.0.1",
+    "@superfunctions/observability": "0.0.2",
     "@aws-sdk/client-s3": "^3.600.0",
     "@aws-sdk/s3-request-presigner": "^3.600.0"
   },

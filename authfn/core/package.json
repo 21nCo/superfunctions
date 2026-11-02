@@ -72,7 +72,7 @@
     "@superfunctions/http": "0.2.0",
     "@superfunctions/http-openapi": "0.1.0",
     "@superfunctions/oauth-storage": "0.1.0",
-    "@superfunctions/observability": "0.0.1"
+    "@superfunctions/observability": "0.0.2"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.10.4",
