@@ -43,7 +43,8 @@
     "directory": "datafn/server"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "tag": "maint"
   },
   "sideEffects": false,
   "dependencies": {

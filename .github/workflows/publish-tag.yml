@@ -58,6 +58,6 @@ jobs:
 
       - name: Publish package
         working-directory: ${{ steps.resolve.outputs.pkg_path }}
-        run: npm publish --access public
+        run: npm publish --access public --tag "$(node -p "require('./package.json').publishConfig?.tag || 'latest'")"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
