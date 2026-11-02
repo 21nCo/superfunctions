@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { gitBinary } from "./verify-package-lockfiles.mjs";
-import { changelogHasEntry, classifyPath, compareSemver, entryReferences, evaluatePackage, fileInventory, fileReferences, findConsumedExclusions, findUndeclaredReferences, globToRegExp, invokedScripts, parseInputDeclarations, reportSincePublished, resolveReference, scriptReferences, shellWords, shippedClosure, shippedScriptNames, tscProjects, tsconfigEntries, tsconfigRoots } from "./verify-uifn-version-bump.mjs";
+import { changelogHasEntry, classifyPath, compareSemver, entryReferences, evaluatePackage, fileInventory, fileReferences, findConsumedExclusions, findUndeclaredReferences, globToRegExp, invokedScripts, parseInputDeclarations, reportSincePublished, resolveReference, scriptReferences, shellCommands, shellWords, shippedClosure, shippedScriptNames, tscProjects, tsconfigEntries, tsconfigRoots } from "./verify-uifn-version-bump.mjs";
 
 const script = fileURLToPath(new URL("./verify-uifn-version-bump.mjs", import.meta.url));
 
@@ -409,24 +409,30 @@ test("shellWords reads a command's words as the shell does", () => {
   assert.deepEqual(shellWords(`tsc -p "my'lib/tsconfig.json"`), ["tsc", "-p", "my'lib/tsconfig.json"]);
   assert.deepEqual(shellWords(String.raw`tsc -p my\'lib "a\"b" 'c\d' e\ f`), ["tsc", "-p", "my'lib", 'a"b', "c\\d", "e f"]);
   assert.deepEqual(shellWords(`sh -c 'tsc -p x' "" "open y`), ["sh", "-c", "tsc -p x", "", "open y"]);
-  assert.deepEqual(shellWords('tsc --project=x>log "a>b"', /[\s=<>]/), ["tsc", "--project", "x", "\u0002", "log", "a>b"]);
+  assert.deepEqual(shellWords('tsc --project=x>log "a>b"', /[\s=<>]/), ["tsc", "--project", "x", "\uE002", "log", "a>b"]);
   assert.deepEqual(tscProjects('tsc -p "my>lib/tsconfig.json" --noEmit false'), { projects: ["my>lib/tsconfig.json"], emit: true });
   assert.deepEqual(tscProjects("tsc -b x > log.txt 2>&1 <in.txt"), { projects: ["x/tsconfig.json"], emit: undefined });
   for (const command of [`tsc -p "my'lib/tsconfig.json"`, `tsc -b "my'lib"`, String.raw`tsc -p my\'lib/tsconfig.json`]) assert.deepEqual(tscProjects(command).projects, ["my'lib/tsconfig.json"], command);
   // A redirection is one marker word with its IO number, only unquoted digits right before the operator; the marker drops exactly its target.
-  assert.deepEqual(shellWords(`a 2>&1 b&>c '2'>d 3 <e`, /[\s&<>()]/), ["a", "\u0002", "1", "b", "\u0002", "c", "2", "\u0002", "d", "3", "\u0002", "e"]);
+  assert.deepEqual(shellWords(`a 2>&1 b&>c '2'>d 3 <e`, /[\s&<>()]/), ["a", "\uE002", "1", "b", "\uE002", "c", "2", "\uE002", "d", "3", "\uE002", "e"]);
   for (const [command, projects] of [
     ...["tsc -p 2026 > build.log", 'tsc -p "2026" > build.log', "tsc -p '2026' >log", 'tsc -p "20"26>log', "tsc -p 2026 2>&1", "tsc --project=2026>log"].map((command) => [command, ["2026"]]),
     ["tsc -b 2 > build.log", ["2"]], ["tsc -b 2 2> e.log", ["2"]], ["tsc -b mylib &>log", ["mylib"]], ["tsc -b mylib &>>log", ["mylib"]], ["tsc -b a 1>out 2>err b", ["a", "b"]], ["tsc -p 2026>build.log", ["."]],
   ]) assert.deepEqual(tscProjects(command).projects, projects.map((project) => path.posix.join(project, "tsconfig.json")), command);
   assert.deepEqual(scriptReferences({ build: "tsc -b a >| log b | tee x" }, "p").filter(({ target }) => target.endsWith("tsconfig.json")).map(({ target }) => target), ["p/a/tsconfig.json", "p/b/tsconfig.json"]);
+  // Only an unquoted, unescaped ;, newline, &&, ||, | or & ends a command; a | or & that is part of a redirection does not, and a comment's quote is no quote.
+  for (const [script, commands] of [
+    ["a; b\nc && d || e | f & g", ["a", "b", "c", "d", "e", "f", "g"]], [String.raw`a 'x;y' "x|y" x\;y x\&\&y`, [String.raw`a 'x;y' "x|y" x\;y x\&\&y`]], ["sh -c 'a\nb'", ["sh -c 'a\nb'"]],
+    [String.raw`a dist\>| b`, [String.raw`a dist\>`, "b"]], ['a ">"| b', ['a ">"', "b"]], ["a >| log b", ["a >| log b"]], ["a 2>&1 b &>log c <&3 d >&2", ["a 2>&1 b &>log c <&3 d >&2"]], ["a |& b", ["a", "b"]],
+    ["#!/bin/sh\n# don't\na 'x' # it's; b\nc#d $# \\#e '#f';#g\nh", ["a 'x'", "c#d $# \\#e '#f'", "h"]],
+  ]) assert.deepEqual(shellCommands(script).map((command) => command.trim()), commands, script);
 });
 
 // A lifecycle command reads its words as the shell does: a quoted project path with a space or a > is one word, the last --noEmit decides emission
 // (bare: none; --noEmit false: emit), a command nested in a shell's -c argument or a runner's quoted word (concurrently, npm-run-all) is read like a
 // script, a quote of the other kind in a quoted path stays literal ("my'lib" names my'lib, never mylib), a tsc word no reading places sweeps every
 // tsconfig, and a ! glob drops only its own command's matches, never another nested command's.
-for (const [command, compiled, emits] of [
+for (const [command, compiled, emits, sh] of [
   ...['tsc -p "my lib/tsconfig.json"', "tsc -p 'my lib/tsconfig.json'", 'tsc -b "my lib"', "tsc --noEmit --noEmit false -p 'my lib'"].map((command) => [command, "my lib", true]),
   ["tsc --noEmit false --noEmit -p 'my lib'", "my lib", false],
   ...['tsc -p "my>lib/tsconfig.json" --noEmit false', "tsc -b 'my>lib' > build.log"].map((command) => [command, "my>lib", true]),
@@ -438,13 +444,18 @@ for (const [command, compiled, emits] of [
   ["tsc --noEmit test/fixture.ts && tsup", ".", false],
   ...['node scripts/a.mjs test/*.ts "node scripts/b.mjs !test/fixture.ts"', 'concurrently "node scripts/a.mjs test/*.ts" "node scripts/b.mjs !test/fixture.ts"', "node scripts/a.mjs test/*.ts && node scripts/b.mjs !test/fixture.ts", "sh -c 'node scripts/a.mjs test/*.ts && node scripts/b.mjs !test/fixture.ts'"].map((command) => [command, "", true]),
   ["node scripts/a.mjs test/*.ts !test/fixture.ts", "", false],
+  // A quoted or escaped separator, or a | after an escaped >, does not end the command (a lifecycle script and a .sh build file alike).
+  ...["tsc --noEmit -p mylib --outDir 'a;b' --noEmit false", 'tsc --noEmit -p mylib --outDir "a|b" --noEmit false', String.raw`tsc --noEmit -p mylib --outDir a\;b --noEmit false`, String.raw`tsc --noEmit --outDir dist\>| tsc -p mylib`,
+    "tsc --noEmit -p mylib --outDir ab --noEmit false", "tsc -p mylib >| build.log", "tsc --noEmit | tsc -p mylib", "tsc --noEmit --outDir dist >| out.log; tsc -p mylib", String.raw`tsc --noEmit --outDir dist\> | tsc -p mylib`, "tsc --noEmit & tsc -p mylib",
+  ].flatMap((command) => [[command, "mylib", true], [command, "mylib", true, "build.sh"]]),
 ]) {
-  test(`a lifecycle command compiles what its shell words name: ${command} (${compiled || "no tsconfig"} compiles test/)`, (t) => {
+  test(`a lifecycle command compiles what its shell words name: ${command} (${compiled || "no tsconfig"} compiles test/)${sh ? " in a .sh build file" : ""}`, (t) => {
     const repo = fixtureRepo(t);
+    if (sh) repo.write("uifn/core/scripts/build.sh", `#!/bin/sh\n${command}\n`);
     for (const dir of ["mylib", "my'lib", "my lib", "my>lib", "2026", "2", "."]) repo.write(`uifn/core/${dir}/tsconfig.json`, `{ "compilerOptions": { "outDir": "${dir === "." ? "" : "../"}dist/fixtures" }, "include": ["${dir === "." ? "" : "../"}${dir === compiled ? "test" : "src"}"] }`);
     for (const name of ["a", "b"]) repo.write(`uifn/core/scripts/${name}.mjs`, "// reads its arguments\n");
     repo.write("uifn/core/test/fixture.ts", "export const fixture = 1;\n");
-    repo.edit("uifn/core/package.json", (text) => text.replace('"build": "tsup"', `"build": ${JSON.stringify(command)}`));
+    repo.edit("uifn/core/package.json", (text) => text.replace('"build": "tsup"', `"build": ${JSON.stringify(sh ? "sh scripts/build.sh" : command)}`));
     repo.commit("tsconfigs compiling test/ or src/");
     repo.git("branch", "-f", "base");
     repo.write("uifn/core/test/fixture.ts", "export const fixture = 2;\n");
@@ -462,9 +473,9 @@ for (const [command, compiled, emits] of [
 }
 
 // A quiet tsc run (last --noEmit bare) still names every word, so an external source operand must be declared, and so must a shell -c command's
-// path; a build file's tsc run names its `..` source operands too, in its command string or in later elements of its argv array, whatever lies between.
+// path or a .sh path after a comment holding a quote; a build file's tsc run names its `..` source operands too, in its command string or in later elements of its argv array, whatever lies between.
 for (const [kind, command] of [
-  ["script", "tsc --noEmit ../sharedlib/src/a.ts"], ["build.sh", "tsc --noEmit ../sharedlib/src/a.ts"], ["script", "sh -c 'cp ../sharedlib/src/a.ts dist'"],
+  ["script", "tsc --noEmit ../sharedlib/src/a.ts"], ["build.sh", "tsc --noEmit ../sharedlib/src/a.ts"], ["script", "sh -c 'cp ../sharedlib/src/a.ts dist'"], ["build.sh", "# don't forget\ncp ../sharedlib/src/a.ts dist\n# that's it"],
   ...['execSync("tsc --noEmit ../sharedlib/src/a.ts");', 'execSync("tsc ../sharedlib/src/a.ts");', "execFileSync('tsc', ['../sharedlib/src/a.ts']);", "execFileSync('npx', ['tsc', '../sharedlib/src/a.ts']);", "spawnSync('tsc', ['--noEmit', '../sharedlib/src/a.ts']);",
     "const flags = ['--pretty'];\nexecFileSync('tsc', [...flags, '../sharedlib/src/a.ts']);", "const flags = ['--pretty'];\nexecFileSync('npx', ['tsc', ...flags, '../sharedlib/src/a.ts']);", "const out = 'dist';\nexecFileSync('tsc', ['--outDir', out, '../sharedlib/src/a.ts']);"].map((code) => ["build.mjs", code]),
 ]) {

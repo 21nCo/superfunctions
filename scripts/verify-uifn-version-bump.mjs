@@ -65,7 +65,6 @@ const GLOB = /[*?[{]/;
 const TSC_PROJECT_FLAG = /^(?:-p|--project|-b|--build)$/;
 // Any build-file tsc word is a tsc run (`npx -p typescript tsc`, a message) naming every tsconfig in its package; `--noEmit false`, `--noEmit=false` or `"--noEmit", "false"` emits.
 const EMIT_OVERRIDE = /--noEmit['"`\s,=]+false\b/;
-const COMMAND_SEPARATOR = /&&|\|\||(?<!>)\||[;\n]/;
 // Commands that run a file with the package root as the working directory, which makes the file a build file.
 const RUNNER = /^(?:node|tsx|ts-node(?:-esm)?|esno|vite-node|jiti|bun|deno|sh|bash|zsh|dash|zx)$/;
 const RUNNABLE = /\.(?:[cm]?[jt]sx?|sh)$/;
@@ -378,17 +377,18 @@ export function fileReferences(file, text, { root = path.posix.dirname(file), ba
 }
 
 const SHELL_PART = /\\([^])|'([^']*)'?|(["`])((?:\\[^]|(?!\3)[^\\])*)\3?|([^])/g;
-/** A command's words as the shell reads them, part by part (an escaped character, a quoted span, where an unclosed quote runs to the end, or another character): an unquoted separator ends a word and only delimiting quotes are removed, so a quote of the other kind stays (\u0001 marks a quoted or escaped character, so "" is a word). When < and > separate words, an unquoted redirection operator (<, >, >>, >|, <>, <&, >&, &>, &>>) with its IO number, only unquoted digits right before it that start a shell word (an = separator splits no shell word), is the one word \u0002; quoted characters never join it. */
+/** A command's words as the shell reads them, part by part (an escaped character, a quoted span, where an unclosed quote runs to the end, or another character): an unquoted separator ends a word and only delimiting quotes are removed, so a quote of the other kind stays (\uE001 marks a quoted or escaped character, so "" is a word). When < and > separate words, an unquoted redirection operator (<, >, >>, >|, <>, <&, >&, &>, &>>) with its IO number, only unquoted digits right before it that start a shell word (an = separator splits no shell word), is the one word \uE002; quoted characters never join it. shellCommands cuts a script, in the same pass, at each unquoted, unescaped ;, newline, &&, ||, | or & that is not part of a redirection (>|, <&, >&, &>), and drops a comment (an unquoted # that starts a word, to the end of its line). */
 export function shellWords(command, separator = /\s/) {
-  const text = command.replaceAll(SHELL_PART, (_, escaped, single, quote, quoted, char) => (char === undefined ? `\u0001${escaped ?? single ?? quoted.replaceAll(/\\([$`"\\])/g, "$1")}` : separator.test("<") && /[<>&]/.test(char) ? `\u0002${char}` : separator.test(char) ? (char === "=" ? "\u0003" : "\0") : char));
-  return text.replaceAll(/(?:(?<=^|\0|\u0002&)\d+)?(?:\u0002&)?(?:\u0002[<>])+(?:\u0002&|\|)?/g, "\0\u0002\0").replaceAll("\u0002&", separator.test("&") ? "\0" : "&").replaceAll("\u0003", "\0").split("\0").filter(Boolean).map((word) => word.replaceAll("\u0001", ""));
+  const text = command.replaceAll(SHELL_PART, (_, escaped, single, quote, quoted, char) => (char === undefined ? `\uE001${escaped ?? single ?? quoted.replaceAll(/\\([$`"\\])/g, "$1")}` : separator.test("<") && /[<>&]/.test(char) ? `\uE002${char}` : separator.test(char) ? (char === "=" ? "\uE003" : "\uE000") : char));
+  return text.replaceAll(/(?:(?<=^|\uE000|\uE002&)\d+)?(?:\uE002&)?(?:\uE002[<>])+(?:\uE002&|\|)?/g, "\uE000\uE002\uE000").replaceAll("\uE002&", separator.test("&") ? "\uE000" : "&").replaceAll("\uE003", "\uE000").split("\uE000").filter(Boolean).map((word) => word.replaceAll("\uE001", ""));
 }
+export function shellCommands(script) { let previous = ""; return script.replaceAll(new RegExp(String.raw`(?<=^|(?<!\\)[\s;&|()<>])#[^\n]*|${SHELL_PART.source}`, "g"), (part, escaped, single, quote, quoted, char, offset) => { const cut = /^[;\n]$/.test(char ?? "") || (char === "|" && previous !== ">") || (char === "&" && !/^[<>]$/.test(previous) && script[offset + 1] !== ">"); previous = char ?? ""; return cut ? "\uE000" : char === undefined && part.startsWith("#") ? "" : part; }).split("\uE000").filter((command) => command.trim()); }
 
 const nestedCommand = (words, index) => !words.slice(0, index).some((word) => /(?:^|\/)tsc$/.test(word)) && ((words[index - 1] === "-c" && /^(?:sh|bash|zsh|dash)$/.test(path.posix.basename(words[index - 2] ?? ""))) || (/\s/.test(words[index]) && (/\btsc\b/.test(words[index]) || RUNNER.test(path.posix.basename(shellWords(words[index])[0] ?? "")))));
 
 /** The tsconfigs a tsc command emits from (the -p/--project path, every -b/--build path, or ./tsconfig.json; a directory holds tsconfig.json), or null without tsc. `emit` follows the last --noEmit (bare: false; false: true; none: undefined). */
 export function tscProjects(command) {
-  const words = shellWords(command, /[\s()<>=]/).filter((word, index, all) => word !== "\u0002" && all[index - 1] !== "\u0002");
+  const words = shellWords(command, /[\s()<>=]/).filter((word, index, all) => word !== "\uE002" && all[index - 1] !== "\uE002");
   const start = words.findIndex((word) => /(?:^|\/)tsc$/.test(word));
   if (start < 0) return null;
   const args = words.slice(start + 1);
@@ -403,10 +403,10 @@ export function scriptReferences(scripts, packagePath) {
   const found = [];
   for (const name of shippedScriptNames(scripts ?? {})) {
     const from = `package.json scripts.${name}`;
-    for (const [list, command] of scripts[name].split(COMMAND_SEPARATOR).entries()) {
+    for (const [list, command] of shellCommands(scripts[name]).entries()) {
       const { projects, emit } = tscProjects(command) ?? {};
       for (const project of projects ?? []) found.push({ from, target: path.posix.join(packagePath, project), soft: false, emit: emit === true, ...(emit === false ? { overridden: true } : {}) });
-      const words = shellWords(command, /[\s&<>()]/).filter((word) => word !== "\u0002");
+      const words = shellWords(command, /[\s&<>()]/).filter((word) => word !== "\uE002");
       const nested = words.filter((_, index) => nestedCommand(words, index));
       for (const [index, word] of nested.entries()) found.push(...scriptReferences({ build: word }, packagePath).map((reference) => ({ ...reference, from, list: `${list}:${index}:${reference.list}` })));
       if (!projects && words.some((word) => /\btsc\b/.test(word) && !nested.includes(word))) found.push({ from, target: path.posix.join(packagePath, "**/tsconfig*.json"), soft: false, emit: EMIT_OVERRIDE.test(command), tsc: true });
