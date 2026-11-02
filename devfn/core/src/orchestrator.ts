@@ -1025,7 +1025,9 @@ export class DevFnOrchestrator {
     // claim bound, given to its writers as that real directory, with no link
     // out of it on their paths.
     const checkedRuntimeDir = async () => {
-      await runtimePath(node.kind === "service" ? path.join("compose", `${node.name}.override.yaml`) : path.join("logs", `${node.name}.log`));
+      // A task of either kind also writes its launcher's log.
+      if (node.kind === "service") await runtimePath(path.join("compose", `${node.name}.override.yaml`));
+      if (node.kind === "process" || node.task) await runtimePath(path.join("logs", `${node.name}.log`));
       // The directory a process receives as DEVFN_ARTIFACT_DIR exists, owner-only, before it starts.
       if (node.kind === "process" && options.config.processes![node.name].artifacts === "runtime") {
         await mkdir(await runtimePath(path.join("artifacts", node.name)), { recursive: true, mode: 0o700 });
@@ -1034,8 +1036,8 @@ export class DevFnOrchestrator {
     };
     if (node.task) {
       // A task is never a running owner: it is not in startedNodes, and teardown has nothing of it to stop once it ended.
-      // Its paths are checked once the hand-off to whileTaskRuns lets it run.
-      const run = async () => await runTask({ config: options.config, root: options.root, stateDir: receipt.stateDir ?? defaultStateDir(), runtimeDir: await checkedRuntimeDir(),
+      // Its paths are checked once the hand-off to whileTaskRuns lets it run, and again before each attempt.
+      const run = async () => await runTask({ config: options.config, root: options.root, stateDir: receipt.stateDir ?? defaultStateDir(), runtimeDir: await checkedRuntimeDir(), attemptRuntimeDir: checkedRuntimeDir,
         instanceId: identity.instanceId, invocationId: receipt.invocationId, node, profile: receipt.profile, environment: resolved.nodes[node.name].environment,
         command: resolved.nodes[node.name].command, script: resolved.nodes[node.name].script, generated: lifecycleGeneratedEnvironment(receipt, resolved.nodes[node.name].generated ?? resolved.generated),
         ...(resolved.resources ? { resources: resolved.resources } : {}), rerunRequested: options.rerunTasks?.includes(node.name) ?? false,

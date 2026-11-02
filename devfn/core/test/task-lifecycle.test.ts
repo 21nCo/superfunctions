@@ -1,4 +1,5 @@
 import { execFile, spawn } from "node:child_process";
+import { renameSync, symlinkSync } from "node:fs";
 import { cp, mkdtemp, mkdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -10,7 +11,7 @@ import { FilePortRegistry, withFileLock } from "@devfn/ports";
 import { processBirthSignature, ProcessError, processExists, ProcessSupervisor, type ProcessRunResult, type RunProcessInput } from "@devfn/processes";
 import { describe, expect, it, vi } from "vitest";
 
-import { createPlan, DevFnOrchestrator, planResources, readReceipt, readTaskJournal, resolveEndpointTemplates, resolveInstanceIdentity, taskInputRevision, taskScope, type TaskJournal } from "../src/index.js";
+import { createPlan, DevFnOrchestrator, planResources, readReceipt, readTaskJournal, resolveEndpointTemplates, resolveInstanceIdentity, runtimeDirectory, taskInputRevision, taskScope, type TaskJournal } from "../src/index.js";
 import { preflightTasks, runTask, type RunTaskContext } from "../src/tasks.js";
 
 const execFileAsync = promisify(execFile);
@@ -580,6 +581,28 @@ describe("finite setup tasks gate dependents (real local processes)", () => {
       expect((await env.runs()).at(-1)?.migrations).toBe("create table two;");
     } finally { await env.cleanup(); }
   }, 90_000);
+
+  it("checks a retried task's log path again before each attempt, refusing a link put there after the first", async () => {
+    const env = await fixture("relinked", { idempotent: true, retries: 1 }, { failTimes: 1 });
+    const victim = await mkdtemp(path.join(os.tmpdir(), "devfn-task-victim-"));
+    try {
+      await writeFile(path.join(victim, "migrate.log"), "another runtime's log\n");
+      const logs = path.join(runtimeDirectory(env.config, env.root, env.identity.instanceId), "logs");
+      // Between the attempts, the task's logs directory becomes a link out of its runtime directory.
+      receiptWrites.after = (receipt) => {
+        const tasks = (receipt as { tasks?: Array<{ attempts: Array<{ outcome: string }> }> }).tasks;
+        if (tasks?.[0]?.attempts.length !== 1 || tasks[0].attempts[0].outcome !== "failed") return;
+        receiptWrites.after = undefined;
+        renameSync(logs, `${logs}.first`);
+        symlinkSync(victim, logs);
+      };
+      await expect(env.orchestrator.up({ config: env.config, root: env.root, stateDir: env.stateDir })).rejects.toMatchObject({ code: "DEVFN_START_FAILED",
+        details: { causeCode: "DEVFN_RUNTIME_INVALID" }, message: expect.stringContaining("symlink to") });
+      expect(await readFile(path.join(victim, "migrate.log"), "utf8")).toBe("another runtime's log\n");
+      expect(await env.runs()).toHaveLength(1);
+      expect(await exists(path.join(env.root, "web-started"))).toBe(false);
+    } finally { receiptWrites.after = undefined; await env.cleanup(); await rm(victim, { recursive: true, force: true }); }
+  }, 60_000);
 
   it("reruns an on-change task and blocks a run-once task when the selected profile environment changes", async () => {
     for (const rerun of ["on-change", "once"] as const) {

@@ -566,7 +566,8 @@ type OutputState = { index: number; read: number; hyphen: boolean };
  */
 function outputNamesOverlap(first: string, second: string): boolean {
   const patterns = [first, second].map((name) => {
-    const [prefix, suffix] = name.toLowerCase().split("{runtime}");
+    // Only the exact token is the slot; a literal {RUNTIME} folds like any other text.
+    const [prefix, suffix] = name.split("{runtime}").map((segment) => segment.toLowerCase());
     return suffix === undefined ? [...prefix] : [...prefix, null, ...suffix];
   });
   const closure = (pattern: Array<string | null>, state: OutputState): OutputState[] =>

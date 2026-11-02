@@ -426,6 +426,12 @@ export interface RunTaskContext {
   root: string;
   stateDir: string;
   runtimeDir: string;
+  /**
+   * The runtime directory checked again immediately before each attempt
+   * writes its log and Compose override, so a link put on those paths after
+   * an earlier check or attempt is refused before any byte is written.
+   */
+  attemptRuntimeDir?: () => Promise<string>;
   instanceId: string;
   invocationId: string;
   node: { name: string; kind: "process" | "service" };
@@ -535,7 +541,8 @@ async function runAttempt(context: RunTaskContext, spec: ReturnType<typeof taskN
   journal: (launcher: { pid: number; birthSignature?: string }, compose?: TaskAttempt["compose"]) => Promise<void>): Promise<ProcessRunResult> {
   const supervisor = context.supervisor ?? new ProcessSupervisor();
   const { node, registry, invocationId } = context;
-  const common = { name: node.name, root: context.root, runtimeDir: context.runtimeDir, timeoutMs, redactKeys: spec.secretEnv ?? [], ...(context.signal ? { signal: context.signal } : {}) };
+  const runtimeDir = context.attemptRuntimeDir ? await context.attemptRuntimeDir() : context.runtimeDir;
+  const common = { name: node.name, root: context.root, runtimeDir, timeoutMs, redactKeys: spec.secretEnv ?? [], ...(context.signal ? { signal: context.signal } : {}) };
   if (node.kind === "process") {
     const processSpec = { ...context.config.processes![node.name], env: context.environment, command: context.command, script: context.script };
     return await supervisor.run({ ...common, command: resolveAdapterCommand(processSpec), cwd: processSpec.cwd, environment: createProcessEnvironment(processSpec, context.generated),
@@ -553,7 +560,7 @@ async function runAttempt(context: RunTaskContext, spec: ReturnType<typeof taskN
   // a task with secret channels keeps none of its output, as a started
   // service with them logs nothing.
   const discardOutput = (spec.secretEnv?.length ?? 0) > 0;
-  const prepared = await compose.prepareTask({ name: node.name, spec: serviceSpec, root: context.root, runtimeDir: context.runtimeDir, instanceId: context.instanceId, environment: context.environment,
+  const prepared = await compose.prepareTask({ name: node.name, spec: serviceSpec, root: context.root, runtimeDir, instanceId: context.instanceId, environment: context.environment,
     attempt: `${invocationId}.${number}` });
   let launcher: { pid: number; birthSignature?: string } | undefined;
   const result = await supervisor.run({ ...common, command: prepared.command, environment: prepared.environment, ...(discardOutput ? { discardOutput } : {}),

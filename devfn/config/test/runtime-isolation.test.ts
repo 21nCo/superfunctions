@@ -35,6 +35,7 @@ describe("runtime isolation declarations", () => {
       ["A.{runtime}", "{runtime}.b"], // one file on a case-insensitive file system
       [".env.{runtime}", "./.env.{runtime}"],
       [".env.{runtime}", ".env.default"], // the default runtime's own file
+      [".env.{RUNTIME}.{runtime}", ".env.{RUNTIME}.a-{runtime}"], // a literal {RUNTIME} is text: .env.{RUNTIME}.a-b for runtimes a-b and b
     ]) expect(() => outputs(...pair), pair.join(" + ")).toThrow(/can name one file/);
     expect(() => outputs(".env.{runtime}.{runtime}")).toThrow(/once/);
     // Names a runtime name cannot bridge, separate directories, and a literal file the default runtime alone writes beside its own are distinct.

@@ -1,17 +1,18 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import http from "node:http";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
+import { composeProjectName } from "@devfn/compose";
 import { validateDevFnConfig, type DevFnConfig } from "@devfn/config";
 import { withFileLock } from "@devfn/ports";
 import { proxyListenerPorts, proxyOwnerStatus } from "@devfn/proxy";
 import { describe, expect, it } from "vitest";
 
-import { createPlan, DevFnOrchestrator, domainAliases, resolveEndpointTemplates, resolveInstanceIdentity, resolveLocalHostname, selectRuntime, taskInputRevision } from "../src/index.js";
+import { createPlan, DevFnOrchestrator, domainAliases, resolveEndpointTemplates, resolveInstanceIdentity, resolveLocalHostname, runtimeDirectory, selectRuntime, taskInputRevision } from "../src/index.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -236,6 +237,39 @@ it.skipIf(process.env.DEVFN_REAL_COMPOSE !== "1")("runs one Compose service per 
   } finally {
     for (const runtime of ["one", "two"]) await orchestrator.down({ config, root: primary, stateDir, runtime }).catch(() => undefined);
     for (const project of projects) await execFileAsync("docker", ["network", "rm", `${project}_default`]).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 180_000);
+
+it.skipIf(process.env.DEVFN_REAL_COMPOSE !== "1")("never lets a Compose task write its log through a link to another runtime's logs, on its first attempt or a retry", async () => {
+  const { parent, primary } = await repository();
+  const stateDir = path.join(parent, "state");
+  const config: DevFnConfig = validateDevFnConfig({ version: 1, project: { id: "compose-task-logs" },
+    services: { seed: { adapter: "compose", service: "seed", task: { idempotent: true, retries: 1 } } }, profiles: { default: { services: ["seed"] } } });
+  const orchestrator = new DevFnOrchestrator();
+  const instance = async (runtime: string) => runtimeDirectory(config, primary, (await resolveInstanceIdentity("compose-task-logs", primary, runtime)).instanceId);
+  try {
+    // An attempt sources plant.sh when it exists, which can fail it after linking its own logs elsewhere.
+    await writeFile(path.join(primary, "compose.yaml"), "services:\n  seed:\n    image: busybox\n    volumes: ['./:/m']\n    command: [sh, -c, 'if [ -f /m/plant.sh ]; then . /m/plant.sh; fi; echo seeded']\n");
+    const a = await orchestrator.up({ config, root: primary, stateDir, runtime: "a" });
+    const aLog = path.join(a.runtimeDir, "logs", "seed.log");
+    await writeFile(aLog, "runtime a's log\n");
+    // Runtime b's logs directory is a link to a's before it starts.
+    await mkdir(await instance("b"), { recursive: true, mode: 0o700 });
+    await symlink(path.join(a.runtimeDir, "logs"), path.join(await instance("b"), "logs"));
+    await expect(orchestrator.up({ config, root: primary, stateDir, runtime: "b" })).rejects.toMatchObject({ details: { causeCode: "DEVFN_RUNTIME_INVALID" } });
+    expect(await readFile(aLog, "utf8")).toBe("runtime a's log\n");
+    // Runtime c's first attempt links its logs to a's and fails; the retry is refused before it writes.
+    const cLogs = path.relative(primary, path.join(await instance("c"), "logs"));
+    await writeFile(path.join(primary, "plant.sh"), `rm /m/plant.sh; rm -rf '/m/${cLogs}'; ln -s '${path.join(a.runtimeDir, "logs")}' '/m/${cLogs}'; exit 7\n`);
+    await expect(orchestrator.up({ config, root: primary, stateDir, runtime: "c" })).rejects.toMatchObject({ details: { causeCode: "DEVFN_RUNTIME_INVALID" } });
+    expect(await readFile(aLog, "utf8")).toBe("runtime a's log\n");
+  } finally {
+    for (const runtime of ["a", "b", "c"]) {
+      await orchestrator.down({ config, root: primary, stateDir, runtime }).catch(() => undefined);
+      const { instanceId } = await resolveInstanceIdentity("compose-task-logs", primary, runtime);
+      await execFileAsync("docker", ["network", "rm", `${composeProjectName("devfn", instanceId)}_default`]).catch(() => undefined);
+    }
     await rm(parent, { recursive: true, force: true });
   }
 }, 180_000);
