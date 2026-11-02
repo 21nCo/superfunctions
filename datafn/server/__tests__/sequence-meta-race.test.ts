@@ -149,13 +149,25 @@ describe("first writes for a new namespace", () => {
     });
   }
 
-  it("prepares the namespace meta row once, outside the transaction", async () => {
+  it("prepares a namespace's meta row once per adapter, outside the transaction", async () => {
     const store = createPostgresLikeMetaStore();
-    const service = new ChangeTrackingService(store.base as any, "user:once");
+    let findOneCalls = 0;
+    let createCalls = 0;
+    const { findOne, create } = store.base.internal;
+    store.base.internal.findOne = async (...args) => {
+      findOneCalls += 1;
+      return findOne(...args);
+    };
+    store.base.internal.create = async (...args) => {
+      createCalls += 1;
+      return create(...args);
+    };
 
-    await service.ensureReady();
-    await service.ensureReady();
+    await new ChangeTrackingService(store.base as any, "user:once").ensureReady();
+    await new ChangeTrackingService(store.base as any, "user:once").ensureReady();
 
     expect(store.committed.get("user:once")).toMatchObject({ namespace: "user:once", next_server_seq: 1 });
+    expect(findOneCalls).toBe(1);
+    expect(createCalls).toBe(1);
   });
 });

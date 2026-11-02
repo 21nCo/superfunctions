@@ -99,6 +99,15 @@ export interface ChangeEntryInput {
 }
 
 /**
+ * Namespaces whose `__datafn_meta` row is known to exist, per base adapter.
+ * Services are created per request, so the cache lives with the adapter rather
+ * than the service; after a namespace's first write, preparing it costs no
+ * query. A stale entry (for example after the row is deleted) is harmless:
+ * allocation falls back to creating the row itself.
+ */
+const preparedNamespaces = new WeakMap<object, Set<string>>();
+
+/**
  * Service for managing serverSeq and change tracking
  *
  * When a sequenceStore is provided, serverSeq generation uses that store
@@ -159,6 +168,11 @@ export class ChangeTrackingService {
     if (this.namespaceMetaEnsured) {
       return;
     }
+    let prepared = preparedNamespaces.get(this.db);
+    if (prepared?.has(this.namespace)) {
+      this.namespaceMetaEnsured = true;
+      return;
+    }
     const where = [{ field: "namespace", op: "eq" as const, value: this.namespace }];
     if (!(await this.db.internal.findOne("__datafn_meta", where))) {
       try {
@@ -173,6 +187,11 @@ export class ChangeTrackingService {
         }
       }
     }
+    if (!prepared) {
+      prepared = new Set<string>();
+      preparedNamespaces.set(this.db, prepared);
+    }
+    prepared.add(this.namespace);
     this.namespaceMetaEnsured = true;
   }
 
