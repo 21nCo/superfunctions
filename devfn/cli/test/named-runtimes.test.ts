@@ -1,12 +1,12 @@
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
-import { FilePortRegistry } from "@devfn/ports";
+import { FilePortRegistry, withRoutingLock } from "@devfn/ports";
 import { processExists } from "@devfn/config";
 import { resolveInstanceIdentity } from "@devfn/core";
 import { runCli } from "../src/index.js";
@@ -330,6 +330,132 @@ describe("named runtimes", () => {
       expect((await run("down", "--runtime", "r")).value.state).toBe("stopped");
     } finally {
       for (const runtime of [[], ["--runtime", "a-b"], ["--runtime", "b"], ["--runtime", "r"], ["--runtime", "local"]]) await run("down", ...runtime).catch(() => undefined);
+      await rm(parent, { recursive: true, force: true });
+    }
+  }, 180_000);
+
+  it("creates a named runtime's output files only where nothing else appeared, attributing each as it is written", async () => {
+    const parent = await realpath(await mkdtemp(path.join(tmpdir(), "devfn-output-writes-")));
+    const cwd = path.join(parent, "checkout");
+    const stateDir = path.join(parent, "state");
+    await mkdir(cwd);
+    await mkdir(stateDir);
+    await execFileAsync("git", ["init", cwd]);
+    await writeFile(path.join(cwd, "server.mjs"), SERVER);
+    const manifest = async (outputs: string[], projectId = "runtimes-fixture") => await writeFile(path.join(cwd, "devfn.config.json"),
+      JSON.stringify({ ...MANIFEST, project: { id: projectId }, environmentOutputs: outputs.map((item) => ({ path: item })) }));
+    const run = async (...args: string[]) => {
+      let output = "";
+      const code = await runCli([...args, "--trust", "--json", "--state-dir", stateDir], { cwd, stdout: (text) => { output += text; }, stderr: () => undefined });
+      return { code, value: JSON.parse(output) as Receipt & Failure & { diagnostics?: Array<{ code: string; severity: string; message: string; details?: Record<string, unknown> }> } };
+    };
+    const id = async (runtime?: string, projectId = "runtimes-fixture") => (await resolveInstanceIdentity(projectId, cwd, runtime)).instanceId;
+    const read = async (file: string) => await readFile(path.join(cwd, file), "utf8");
+    const exists = async (file: string) => await access(file).then(() => true, () => false);
+    const leased = async (instanceId: string) => (await new FilePortRegistry(path.join(stateDir, "registry.json")).read().catch(() => ({ allocations: [] as Array<{ instanceId: string; state: string }> })))
+      .allocations.some((item) => item.instanceId === instanceId && item.state !== "released");
+    const claimFile = async (runtime?: string) => path.join(cwd, ".devfn", "outputs", `${await id(runtime)}.json`);
+    const receiptFile = async (runtime?: string, projectId?: string) => path.join(cwd, ".devfn", "receipts", `${await id(runtime, projectId)}.json`);
+    // Starts runtime review while the routing lock is held, so it waits after claiming its outputs; meanwhile plant() changes the checkout.
+    const raceAfterClaim = async (plant: () => Promise<void>) => {
+      const claim = await claimFile("review");
+      let release!: () => void;
+      let locked!: () => void;
+      const lockedNow = new Promise<void>((resolve) => { locked = resolve; });
+      const holder = withRoutingLock(stateDir, async () => { locked(); await new Promise<void>((resolve) => { release = resolve; }); });
+      await lockedNow;
+      const started = run("up", "--runtime", "review");
+      for (let attempt = 0; attempt < 400 && !await exists(claim); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(await exists(claim)).toBe(true);
+      await plant();
+      release();
+      await holder;
+      return await started;
+    };
+    try {
+      // A write that fails partway leaves the files it wrote attributed: the runtime recovers them, with and without down.
+      await mkdir(path.join(cwd, "ro"));
+      await chmod(path.join(cwd, "ro"), 0o555);
+      await manifest([".env.{runtime}", "ro/app.{runtime}.env"]);
+      const partial = await run("up", "--runtime", "p");
+      expect(partial.value.error).toMatchObject({ code: "DEVFN_START_FAILED", details: { causeCode: "EACCES" } });
+      expect(await read(".env.p")).toContain(`DEVFN_INSTANCE_ID=${await id("p")}`);
+      expect(JSON.parse(await readFile(await claimFile("p"), "utf8"))).toMatchObject({ targets: [], written: [path.join(cwd, ".env.p")] });
+      expect(await exists(await receiptFile("p"))).toBe(false);
+      expect(await leased(await id("p"))).toBe(false);
+      await chmod(path.join(cwd, "ro"), 0o755);
+      const recovered = (await run("up", "--runtime", "p")).value;
+      expect(recovered.state).toBe("ready");
+      expect(await read(".env.p")).toContain(`DEVFN_PORT_APP=${recovered.allocations[0].port}`);
+      expect(await read("ro/app.p.env")).toContain(`DEVFN_INSTANCE_ID=${recovered.instanceId}`);
+      expect((await run("down", "--runtime", "p")).value.state).toBe("stopped");
+      await rm(path.join(cwd, "ro", "app.p.env"));
+      await chmod(path.join(cwd, "ro"), 0o555);
+      expect((await run("up", "--runtime", "p")).value.error).toMatchObject({ code: "DEVFN_START_FAILED" });
+      await chmod(path.join(cwd, "ro"), 0o755);
+      expect((await run("down", "--runtime", "p")).value.error).toMatchObject({ code: "DEVFN_NOT_RUNNING" });
+      expect((await run("up", "--runtime", "p")).value.state).toBe("ready");
+      expect((await run("down", "--runtime", "p")).value.state).toBe("stopped");
+
+      // A file created between the claim and the write is left as it is, and the start leaves no receipt and no lease.
+      await manifest([".env.{runtime}"]);
+      const userCreated = await raceAfterClaim(async () => await writeFile(path.join(cwd, ".env.review"), "USER=data\n"));
+      expect(userCreated.value.error).toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("created by someone else"), details: { runtime: "review", target: path.join(cwd, ".env.review") } });
+      expect(await read(".env.review")).toBe("USER=data\n");
+      expect(await exists(await receiptFile("review"))).toBe(false);
+      expect(await leased(await id("review"))).toBe(false);
+      expect(await exists(await claimFile("review"))).toBe(false);
+      // A symlink planted in that window is not followed.
+      await rm(path.join(cwd, ".env.review"));
+      await writeFile(path.join(cwd, "victim.txt"), "VICTIM=1\n");
+      const linked = await raceAfterClaim(async () => await symlink("victim.txt", path.join(cwd, ".env.review")));
+      expect(linked.value.error).toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("symlink") });
+      expect(await read("victim.txt")).toBe("VICTIM=1\n");
+      expect(await exists(await receiptFile("review"))).toBe(false);
+      await unlink(path.join(cwd, ".env.review"));
+
+      // Interrupted between creating a file and recording it: the file is adopted only if it holds the content recorded before it was created.
+      const review = (await run("up", "--runtime", "review")).value;
+      expect(review.state).toBe("ready");
+      expect((await run("down", "--runtime", "review")).value.state).toBe("stopped");
+      const interrupted = async () => {
+        const claim = JSON.parse(await readFile(await claimFile("review"), "utf8")) as { written: string[] };
+        const content = await readFile(path.join(cwd, ".env.review"));
+        await writeFile(await claimFile("review"), JSON.stringify({ ...claim, written: [], pending: [{ target: path.join(cwd, ".env.review"), sha256: createHash("sha256").update(content).digest("hex") }] }));
+      };
+      await interrupted();
+      const adopted = (await run("up", "--runtime", "review")).value;
+      expect(adopted.state).toBe("ready");
+      expect(await read(".env.review")).toContain(`DEVFN_PORT_APP=${adopted.allocations[0].port}`);
+      expect((await run("down", "--runtime", "review")).value.state).toBe("stopped");
+      await interrupted();
+      await writeFile(path.join(cwd, ".env.review"), "USER=replaced\n");
+      expect((await run("up", "--runtime", "review")).value.error).toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("did not write it") });
+      expect(await read(".env.review")).toBe("USER=replaced\n");
+
+      // A live receipt this manifest cannot select (its project ID changed) is named with a remedy that reaches it.
+      await manifest([".env.shared"], "renamed-a");
+      expect((await run("up")).value.state).toBe("ready");
+      await manifest([".env.shared"], "renamed-b");
+      const unreachable = await run("up");
+      const ownerReceipt = await receiptFile(undefined, "renamed-a");
+      expect(unreachable.value.error).toMatchObject({ code: "DEVFN_RUNTIME_INVALID", details: { owner: { instanceId: await id(undefined, "renamed-a"), projectId: "renamed-a", receipt: ownerReceipt } } });
+      expect(unreachable.value.error.message).toContain(`${ownerReceipt} records project "renamed-a"`);
+      expect(unreachable.value.error.message).toContain('set project.id back to "renamed-a" and run devfn down');
+      const doctor = await run("doctor");
+      expect(doctor.code).toBe(1);
+      expect(doctor.value.diagnostics).toContainEqual(expect.objectContaining({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining(ownerReceipt) }));
+      await manifest([".env.shared"], "renamed-a");
+      expect((await run("down")).value.state).toBe("stopped");
+      await manifest([".env.shared"], "renamed-b");
+      expect((await run("up")).value.state).toBe("ready");
+      expect((await run("down")).value.state).toBe("stopped");
+    } finally {
+      await chmod(path.join(cwd, "ro"), 0o755).catch(() => undefined);
+      for (const [projectId, runtime] of [["runtimes-fixture", "p"], ["runtimes-fixture", "review"], ["renamed-a"], ["renamed-b"]]) {
+        await manifest([".env.{runtime}"], projectId).catch(() => undefined);
+        await run("down", ...runtime ? ["--runtime", runtime] : []).catch(() => undefined);
+      }
       await rm(parent, { recursive: true, force: true });
     }
   }, 180_000);

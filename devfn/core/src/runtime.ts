@@ -85,12 +85,12 @@ export async function listRuntimeReceipts(config: DevFnConfig, root: string): Pr
 }
 
 /**
- * Every receipt of this manifest root by instance, whatever its project or
- * runtime: the stable receipts, then receipts that exist only under the
- * configured runtime directory (earlier releases).
+ * Every receipt of this manifest root by instance with its file, whatever
+ * its project or runtime: the stable receipts, then receipts that exist only
+ * under the configured runtime directory (earlier releases).
  */
-export async function checkoutReceipts(config: DevFnConfig, root: string): Promise<Map<string, LifecycleReceipt>> {
-  const found = new Map<string, LifecycleReceipt>();
+export async function checkoutReceipts(config: DevFnConfig, root: string): Promise<Map<string, { receipt: LifecycleReceipt; file: string }>> {
+  const found = new Map<string, { receipt: LifecycleReceipt; file: string }>();
   const directories = [
     { directory: await resolveContainedPath(root, path.join(".devfn", "receipts"), "receipt").catch(() => undefined), file: (name: string) => name, id: (name: string) => /^[0-9a-f]{12}\.json$/.test(name) ? name.slice(0, -5) : undefined },
     { directory: await resolveContainedPath(root, path.join(config.runtimeDir ?? ".devfn", "instances"), "runtimeDir").catch(() => undefined), file: (name: string) => path.join(name, "receipt.json"), id: (name: string) => /^[0-9a-f]{12}$/.test(name) ? name : undefined },
@@ -104,8 +104,9 @@ export async function checkoutReceipts(config: DevFnConfig, root: string): Promi
     for (const name of names.sort()) {
       const instanceId = id(name);
       if (!instanceId || found.has(instanceId)) continue;
-      const value = await parseReceipt(path.join(directory, file(name)), root, instanceId);
-      if (value) found.set(instanceId, value);
+      const candidate = path.join(directory, file(name));
+      const value = await parseReceipt(candidate, root, instanceId);
+      if (value) found.set(instanceId, { receipt: value, file: candidate });
     }
   }
   return found;
@@ -200,23 +201,34 @@ export async function writeReceipt(receipt: LifecycleReceipt): Promise<void> {
 
 function dotenv(value: string): string { return /^[A-Za-z0-9_./:@-]*$/.test(value) ? value : JSON.stringify(value); }
 
-export async function writeEnvironmentOutputs(root: string, runtimeDir: string, outputs: readonly EnvironmentOutput[], environment: Record<string, string>, runtime: string = DEFAULT_RUNTIME): Promise<string[]> {
+/**
+ * Write the environment outputs, or runtime.env in the instance's runtime
+ * directory when none are declared. `write` writes a declared output (the
+ * output claim attributes it); `written` collects each path as soon as it is
+ * written, so a failure partway still records the files that exist.
+ */
+export async function writeEnvironmentOutputs(root: string, runtimeDir: string, outputs: readonly EnvironmentOutput[], environment: Record<string, string>, runtime: string = DEFAULT_RUNTIME,
+  options: { write?: (target: string, content: string, mode: number) => Promise<void>; written?: string[] } = {}): Promise<string[]> {
   const effective = outputs.length
-    ? await Promise.all(outputs.map(async (output) => ({ output, target: await resolveContainedPath(root, runtimeOutputPath(output.path, runtime), "environmentOutputs.path") })))
-    : [{ output: { path: "runtime.env", format: "dotenv" as const, mode: 0o600 }, target: path.join(runtimeDir, "runtime.env") }];
-  const written: string[] = [];
-  for (const { output, target } of effective) {
-    await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
-    const ordered = Object.entries(environment).sort(([a], [b]) => {
-      if (a < b) return -1;
-      if (a > b) return 1;
-      return 0;
-    });
+    ? await Promise.all(outputs.map(async (output) => ({ output, target: await resolveContainedPath(root, runtimeOutputPath(output.path, runtime), "environmentOutputs.path"), declared: true })))
+    : [{ output: { path: "runtime.env", format: "dotenv" as const, mode: 0o600 }, target: path.join(runtimeDir, "runtime.env"), declared: false }];
+  const written = options.written ?? [];
+  const ordered = Object.entries(environment).sort(([a], [b]) => {
+    if (a < b) return -1;
+    if (a > b) return 1;
+    return 0;
+  });
+  for (const { output, target, declared } of effective) {
     const content = output.format === "json"
       ? JSON.stringify(Object.fromEntries(ordered), null, 2) + "\n"
       : ordered.map(([key, value]) => `${key}=${dotenv(value)}`).join("\n") + "\n";
-    await writeFile(target, content, { encoding: "utf8", mode: output.mode ?? 0o600 });
-    await chmod(target, output.mode ?? 0o600);
+    const mode = output.mode ?? 0o600;
+    if (declared && options.write) await options.write(target, content, mode);
+    else {
+      await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
+      await writeFile(target, content, { encoding: "utf8", mode });
+      await chmod(target, mode);
+    }
     written.push(target);
   }
   return written;

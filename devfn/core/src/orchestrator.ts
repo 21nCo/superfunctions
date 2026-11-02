@@ -839,6 +839,7 @@ export class DevFnOrchestrator {
       throw error;
     }
     return async () => {
+      let receiptWritten = false;
       const heartbeat = setInterval(() => { void registry.updateInvocation(invocationId, {}).catch(() => undefined); }, 60_000);
       heartbeat.unref();
       const supervisor = new ProcessSupervisor();
@@ -869,11 +870,15 @@ export class DevFnOrchestrator {
         // already cover every port it reuses, so the prior leases end here,
         // before its receipt is superseded.
         if (oldReady) await registry.release({ invocationId: oldReady.invocationId });
+        // Outputs are written before this start has a receipt: each is
+        // attributed in the output claim as it is written, and a named
+        // runtime refuses a file that appeared since the claim.
+        await writeEnvironmentOutputs(options.root, runtimeDir, options.config.environmentOutputs ?? [], environment, runtimeOf(identity),
+          { write: claim.write, written: receipt.environmentOutputs });
         // From here this receipt holds the output claim until down.
         await claim.commit();
         await writeReceipt(receipt);
-        receipt.environmentOutputs = await writeEnvironmentOutputs(options.root, runtimeDir, options.config.environmentOutputs ?? [], environment, runtimeOf(identity));
-        await claim.recordWritten(receipt.environmentOutputs);
+        receiptWritten = true;
         for (const node of plan.nodes) {
           if (options.signal?.aborted) throw new DevFnError("DEVFN_CANCELLED", `DevFn startup was cancelled before ${node.name} started.`);
           await this.startSelectedNode(node, { options, identity, receipt, resolved, ports, allocations, supervisor, compose, registry });
@@ -907,6 +912,13 @@ export class DevFnOrchestrator {
         return receipt;
       } catch (error) {
         const cleanup = await this.cleanup(receipt, registry, supervisor, compose, proxy, true);
+        if (!receiptWritten && !oldReady && !cleanup.errors.length) {
+          // Nothing started and no receipt recorded this start; its leases
+          // and routes are released, and earlier state stays as it was.
+          if (error instanceof DevFnError && error.code === "DEVFN_RUNTIME_INVALID") throw new DevFnError(error.code, error.message, { ...error.details, cleanup });
+          const code = error && typeof error === "object" && "code" in error ? String(error.code) : "DEVFN_START_FAILED";
+          throw new DevFnError("DEVFN_START_FAILED", `DevFn startup failed: ${error instanceof Error ? error.message : String(error)}`, { cleanup, causeCode: code });
+        }
         receipt.state = "failed";
         receipt.cleanup = cleanup;
         receipt.error = { code: error && typeof error === "object" && "code" in error ? String(error.code) : "DEVFN_START_FAILED", message: error instanceof Error ? error.message : String(error) };
