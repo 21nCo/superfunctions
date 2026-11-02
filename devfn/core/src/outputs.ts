@@ -179,8 +179,13 @@ async function addCanonical(files: Map<string, string>, paths: readonly string[]
  * link), which every hard link to it shares; undefined for anything else.
  */
 async function fileIdentity(file: string): Promise<string | undefined> {
+  return (await linkedIdentity(file))?.id;
+}
+
+/** A regular file's identity and whether it has more than one name. */
+async function linkedIdentity(file: string): Promise<{ id: string; linked: boolean } | undefined> {
   const info = await stat(file, { bigint: true }).catch(() => undefined);
-  return info?.isFile() ? `${info.dev}:${info.ino}` : undefined;
+  return info?.isFile() ? { id: `${info.dev}:${info.ino}`, linked: info.nlink > 1n } : undefined;
 }
 
 const digest = (content: string | Buffer): string => createHash("sha256").update(content).digest("hex");
@@ -259,6 +264,8 @@ interface Holder {
    * claimed. A replacement under a changed runtimeDir holds both.
    */
   runtimeDirectories: { key: string; path: string }[];
+  /** Its stable receipt and claim record, which are its state whether or not it is live. */
+  stateFiles: string[];
   /** A live receipt of an earlier release that records no files and has no claim: what it holds cannot be known. */
   unknown: boolean;
 }
@@ -272,6 +279,7 @@ interface Holder {
  */
 async function otherHolders(config: DevFnConfig, root: string, identity: InstanceIdentity, claims: Map<string, { claim: OutputClaim; text: string }>): Promise<Holder[]> {
   const receipts = await checkoutReceipts(config, root);
+  const claimsDirectory = await claimDirectory(root);
   const holders: Holder[] = [];
   for (const instanceId of new Set([...claims.keys(), ...receipts.keys()])) {
     if (instanceId === identity.instanceId) continue;
@@ -290,16 +298,41 @@ async function otherHolders(config: DevFnConfig, root: string, identity: Instanc
       const { canonical } = await canonicalTarget(directory);
       if (!runtimeDirectories.some((item) => item.key === pathKey(canonical))) runtimeDirectories.push({ key: pathKey(canonical), path: canonical });
     }
-    holders.push({ instanceId, entry, files, runtimeDirectories, unknown: live(receipt) && !claim && !receipt!.environmentOutputs?.length,
+    const stateFiles = [...(entry ? [entry.file] : []), ...(claims.has(instanceId) ? [path.join(claimsDirectory, `${instanceId}.json`)] : [])];
+    holders.push({ instanceId, entry, files, runtimeDirectories, stateFiles, unknown: live(receipt) && !claim && !receipt!.environmentOutputs?.length,
       owner: { runtime: claim?.runtime ?? String(receipt?.runtime ?? DEFAULT_RUNTIME), instanceId, ...(entry ? { receipt: entry.file, projectId: String(entry.receipt.projectId) } : {}) } });
   }
   return holders;
 }
 
-/** The other instance holding the file with this identity (a hard link to its file), if any. */
-async function holderOfIdentity(holders: readonly Holder[], identity: string): Promise<{ holder: Holder; file: string } | undefined> {
+/** The regular files under a directory, never following a link. */
+async function* regularFiles(directory: string): AsyncGenerator<string> {
+  const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    const item = path.join(directory, entry.name);
+    if (entry.isDirectory()) yield* regularFiles(item);
+    else if (entry.isFile()) yield item;
+  }
+}
+
+/**
+ * The other instance holding the file with this identity (a hard link to its
+ * file), if any: a file it holds, its receipt or claim record, or, for a file
+ * with more than one link, any file it generated in its runtime directories
+ * (logs, receipt copy, runtime.env, Compose files, artifacts).
+ */
+async function holderOfIdentity(holders: readonly Holder[], identity: string, linked: boolean): Promise<{ holder: Holder; file: string } | undefined> {
   for (const holder of holders) {
-    for (const file of holder.files.values()) if (await fileIdentity(file) === identity) return { holder, file };
+    for (const file of [...holder.files.values(), ...holder.stateFiles]) if (await fileIdentity(file) === identity) return { holder, file };
+  }
+  if (!linked) return undefined;
+  for (const holder of holders) {
+    for (const directory of holder.runtimeDirectories) {
+      for await (const file of regularFiles(directory.path)) {
+        const info = await lstat(file, { bigint: true }).catch(() => undefined);
+        if (info?.isFile() && info.nlink > 1n && `${info.dev}:${info.ino}` === identity) return { holder, file };
+      }
+    }
   }
   return undefined;
 }
@@ -380,8 +413,8 @@ async function assertTargetsAvailable(config: DevFnConfig, root: string, identit
   }
   // An existing output that is another name of a held file is that file.
   for (const item of targets) {
-    const id = item.exists ? await fileIdentity(item.canonical) : undefined;
-    const found = id === undefined ? undefined : await holderOfIdentity(holders, id);
+    const id = item.exists ? await linkedIdentity(item.canonical) : undefined;
+    const found = id === undefined ? undefined : await holderOfIdentity(holders, id.id, id.linked);
     if (found) throw await aliasRefusal(config, root, runtime, item.target, item.canonical, found);
   }
   if (!isNamedRuntime(identity.runtime)) return;
@@ -461,7 +494,14 @@ async function createExclusive(target: string, content: string, mode: number): P
     if ((error as NodeJS.ErrnoException).code === "EEXIST") return "exists";
     throw error;
   }
-  try { await file.writeFile(content, "utf8"); await file.chmod(mode); await file.sync(); } finally { await file.close(); }
+  try { await file.writeFile(content, "utf8"); await file.chmod(mode); await file.sync(); }
+  catch (error) {
+    // A write that failed leaves no partial file this instance cannot attribute.
+    await file.close().catch(() => undefined);
+    file = undefined;
+    await unlink(target).catch(() => undefined);
+    throw error;
+  } finally { await file?.close(); }
   return "created";
 }
 
@@ -622,12 +662,19 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
         // A generated file with another name elsewhere (a hard link) loses
         // only this name, so its writer creates a new file and the other
         // links keep their content.
-        if (current === target && info.isFile() && info.nlink > 1) await unlink(current);
+        if (current === target && info.isFile() && info.nlink > 1) await detach(current);
         if (!info.isSymbolicLink()) continue;
         const reached = await realpath(current).catch(() => undefined);
         if (reached === undefined || !within(pathKey(reached), boundKey)) {
           throw new DevFnError("DEVFN_RUNTIME_INVALID", `Runtime ${runtime} would write ${relativeName(root, current)} in its runtime directory, but it is a symlink to ${reached ?? "a missing path"} outside that directory; DevFn wrote nothing there. Remove the symlink.`,
             { runtime, target: current, ...(reached ? { reached } : {}) });
+        }
+        // A link at the name itself that stays inside reaches a file a writer
+        // would write through; when that file has another name (a hard link,
+        // perhaps to another runtime's file) the link goes, as above.
+        if (current === target) {
+          const reachedInfo = await stat(reached).catch(() => undefined);
+          if (reachedInfo?.isFile() && reachedInfo.nlink > 1) await detach(current);
         }
       }
       return target;
@@ -677,7 +724,7 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
           // The default runtime overwrites its claimed file in place as DevFn
           // v0.1 did, unless it is now a hard link to another runtime's file.
           const outcome = await overwriteInPlace(canonical, content, mode,
-            async (id) => await holderOfIdentity(await otherHolders(config, root, identity, await readClaims(root)), id));
+            async (id) => await holderOfIdentity(await otherHolders(config, root, identity, await readClaims(root)), id, true));
           if (outcome === "symlink") {
             throw new DevFnError("DEVFN_RUNTIME_INVALID", `Environment output ${relativeName(root, target)} of runtime ${runtime} became a symlink after DevFn claimed it; DevFn left it untouched.`, { runtime, target: canonical });
           }
@@ -717,6 +764,11 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
       }
     },
   };
+}
+
+/** Remove one name of a file; a name already gone is fine. */
+async function detach(name: string): Promise<void> {
+  await unlink(name).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; });
 }
 
 /**

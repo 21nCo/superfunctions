@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import http from "node:http";
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { link, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -268,6 +268,43 @@ it.skipIf(process.env.DEVFN_REAL_COMPOSE !== "1")("never lets a Compose task wri
     for (const runtime of ["a", "b", "c"]) {
       await orchestrator.down({ config, root: primary, stateDir, runtime }).catch(() => undefined);
       const { instanceId } = await resolveInstanceIdentity("compose-task-logs", primary, runtime);
+      await execFileAsync("docker", ["network", "rm", `${composeProjectName("devfn", instanceId)}_default`]).catch(() => undefined);
+    }
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 180_000);
+
+it.skipIf(process.env.DEVFN_REAL_COMPOSE !== "1")("never rewrites another runtime's Compose override through a link inside its own runtime directory, for a service or a task", async () => {
+  const { parent, primary } = await repository();
+  const stateDir = path.join(parent, "state");
+  const config: DevFnConfig = validateDevFnConfig({ version: 1, project: { id: "compose-overrides" },
+    services: { api: { adapter: "compose", service: "api", health: { type: "command", command: ["sh", "-c", "exit 0"], timeoutMs: 5000 } }, seed: { adapter: "compose", service: "seed", task: {} } },
+    profiles: { default: { services: ["api", "seed"] } } });
+  const orchestrator = new DevFnOrchestrator();
+  try {
+    await writeFile(path.join(primary, "compose.yaml"), "services:\n  api:\n    image: busybox\n    command: [sleep, '3600']\n  seed:\n    image: busybox\n    command: [sh, -c, 'echo seeded']\n");
+    const a = await orchestrator.up({ config, root: primary, stateDir, runtime: "a" });
+    const b = await resolveInstanceIdentity("compose-overrides", primary, "b");
+    const bDir = runtimeDirectory(config, primary, b.instanceId);
+    await mkdir(path.join(bDir, "compose"), { recursive: true, mode: 0o700 });
+    await mkdir(path.join(bDir, "kept"), { recursive: true, mode: 0o700 });
+    const before: Record<string, string> = {};
+    for (const name of ["api", "seed"]) {
+      // b's override is a link to a file of b's own directory, which is a hard link to a's override.
+      const aOverride = path.join(a.runtimeDir, "compose", `${name}.override.yaml`);
+      before[name] = await readFile(aOverride, "utf8");
+      await link(aOverride, path.join(bDir, "kept", `${name}.yaml`));
+      await symlink(path.join("..", "kept", `${name}.yaml`), path.join(bDir, "compose", `${name}.override.yaml`));
+    }
+    expect((await orchestrator.up({ config, root: primary, stateDir, runtime: "b" })).state).toBe("ready");
+    for (const name of ["api", "seed"]) {
+      expect(await readFile(path.join(a.runtimeDir, "compose", `${name}.override.yaml`), "utf8")).toBe(before[name]);
+      expect(await readFile(path.join(bDir, "compose", `${name}.override.yaml`), "utf8")).toContain(b.instanceId);
+    }
+  } finally {
+    for (const runtime of ["a", "b"]) {
+      await orchestrator.down({ config, root: primary, stateDir, runtime }).catch(() => undefined);
+      const { instanceId } = await resolveInstanceIdentity("compose-overrides", primary, runtime);
       await execFileAsync("docker", ["network", "rm", `${composeProjectName("devfn", instanceId)}_default`]).catch(() => undefined);
     }
     await rm(parent, { recursive: true, force: true });

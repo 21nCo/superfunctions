@@ -313,6 +313,77 @@ describe("environment-output claims", { timeout: 30_000 }, () => {
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
+  it("detaches a generated name that reaches another runtime's file through a link inside its own directory", async () => {
+    const root = await checkout();
+    const a = await resolveInstanceIdentity("fixture", root, "a");
+    const b = await resolveInstanceIdentity("fixture", root, "b");
+    const noOutputs = validateDevFnConfig({ ...JSON.parse(JSON.stringify(config)), environmentOutputs: [] });
+    const dir = (id: string) => path.join(root, ".devfn", "instances", id);
+    const generated = [path.join("compose", "api.override.yaml"), path.join("logs", "app.log"), "runtime.env", "receipt.json"];
+    try {
+      const held = await claimEnvironmentOutputs(noOutputs, root, a);
+      await held.commit();
+      for (const file of generated) {
+        await mkdir(path.dirname(path.join(dir(a.instanceId), file)), { recursive: true });
+        await writeFile(path.join(dir(a.instanceId), file), `${a.instanceId} ${file}\n`);
+      }
+      const claim = await claimEnvironmentOutputs(noOutputs, root, b);
+      await mkdir(path.join(dir(b.instanceId), "kept"), { recursive: true });
+      for (const [index, file] of generated.entries()) {
+        // b's name is a link to a file of b's own directory, which is a hard link to a's.
+        const kept = path.join(dir(b.instanceId), "kept", `shared-${index}`);
+        await link(path.join(dir(a.instanceId), file), kept);
+        await mkdir(path.dirname(path.join(dir(b.instanceId), file)), { recursive: true });
+        await symlink(path.relative(path.dirname(path.join(dir(b.instanceId), file)), kept), path.join(dir(b.instanceId), file));
+        const target = await claim.runtimePath(file);
+        expect((await lstat(target).catch(() => undefined))?.isSymbolicLink() ?? false).toBe(false);
+        await writeFile(target, `${b.instanceId} ${file}\n`);
+        expect(await readFile(path.join(dir(a.instanceId), file), "utf8")).toBe(`${a.instanceId} ${file}\n`);
+        expect(await readFile(path.join(dir(b.instanceId), file), "utf8")).toBe(`${b.instanceId} ${file}\n`);
+      }
+      // A link inside to a file with one name is b's own, and is kept.
+      await writeFile(path.join(dir(b.instanceId), "kept", "own.log"), "own\n");
+      await rm(path.join(dir(b.instanceId), "logs", "app.log"));
+      await symlink(path.join("..", "kept", "own.log"), path.join(dir(b.instanceId), "logs", "app.log"));
+      await claim.runtimePath(path.join("logs", "app.log"));
+      expect((await lstat(path.join(dir(b.instanceId), "logs", "app.log"))).isSymbolicLink()).toBe(true);
+      await claim.restore();
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("refuses a default output that is a hard link to another runtime's log, receipt or claim, at the claim and at the in-place write", async () => {
+    const root = await checkout();
+    const fallback = path.join(root, ".env.default");
+    const review = await resolveInstanceIdentity("fixture", root, "review");
+    const defaultIdentity = await resolveInstanceIdentity("fixture", root);
+    const reviewDir = path.join(root, ".devfn", "instances", review.instanceId);
+    try {
+      const held = await claimEnvironmentOutputs(config, root, review);
+      await held.write(path.join(root, ".env.review"), "DEVFN_INSTANCE_ID=review\n", 0o600);
+      const receipt = { version: 1, projectId: "fixture", instanceId: review.instanceId, runtime: "review", invocationId: "i", profile: "default", state: "ready", root, runtimeDir: reviewDir,
+        stateDir: path.join(root, "state"), startedAt: "", updatedAt: "", allocations: [], processes: [], services: [], routes: [], urls: {}, environmentOutputs: [path.join(root, ".env.review")] } as unknown as Parameters<typeof writeReceipt>[0];
+      await writeReceipt(receipt, { runtimeCopy: held.runtimePath });
+      await held.commit();
+      await mkdir(path.join(reviewDir, "logs"), { recursive: true });
+      await writeFile(path.join(reviewDir, "logs", "app.log"), "REVIEW-LOG\n");
+      const victims = [path.join(reviewDir, "logs", "app.log"), path.join(reviewDir, "receipt.json"),
+        path.join(root, ".devfn", "receipts", `${review.instanceId}.json`), path.join(root, ".devfn", "receipts", "outputs", `${review.instanceId}.json`)];
+      for (const victim of victims) {
+        const before = await readFile(victim, "utf8");
+        await link(victim, fallback);
+        await expect(assertEnvironmentOutputsAvailable(config, root, defaultIdentity)).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("same file (a hard link)"), details: { owner: { runtime: "review" } } });
+        await unlink(fallback);
+        // A link made after the default claimed its absent file is refused at the write, before any byte changes.
+        const claim = await claimEnvironmentOutputs(config, root, defaultIdentity);
+        await link(victim, fallback);
+        await expect(claim.write(fallback, "DEVFN_INSTANCE_ID=default\n", 0o600)).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("hard link") });
+        await claim.restore();
+        await unlink(fallback);
+        expect(await readFile(victim, "utf8")).toBe(before);
+      }
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
   it("checks every generated path of a start against the directory it bound, through readiness", async () => {
     const root = await checkout();
     const a = await resolveInstanceIdentity("fixture", root, "a");
