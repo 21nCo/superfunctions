@@ -5,21 +5,66 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import { ComposeController, composeProjectName, createComposeEnvironment, createComposeReadinessEnvironment, effectiveComposeServiceNetworks, fingerprintComposeSource, selectedComposeEndpointReferences, type ComposeServiceDnsNames, type ManagedComposeService } from "@devfn/compose";
-import { defaultStateDir, isCredentialKey, loadDevFnPolicy, validateDevFnConfig, type DevFnConfig, type HealthCheck } from "@devfn/config";
+import { CHECKOUT_STATE_ADAPTERS, defaultStateDir, isCredentialKey, loadDevFnPolicy, validateDevFnConfig, type DevFnConfig, type HealthCheck } from "@devfn/config";
 import { FilePortRegistry, inspectContainerRunning, isPortAvailable, resolvePolicy, scanListenerState, withFileLock, withRoutingLock, type ListenerInfo, type ListenerScanResult, type PortAllocation, type RegistryInvocation } from "@devfn/ports";
 import { checkReadinessNow, createProcessEnvironment, resolveAdapterCommand, ProcessSupervisor, processExists, type ManagedProcess } from "@devfn/processes";
 import { CaddyProxyController, PUBLIC_ORIGIN_PORT, proxyListenerPorts, readRegisteredDomains, renderCaddyfile, verifyCertificate, verifyLocalDns, type ProxyRoute, type ProxyRouteSnapshot } from "@devfn/proxy";
 import { OAUTH_RELAY_OWNER_ID, recoverOAuthRelayRoute, relayPaths, STATE_DIR_ENV } from "@devfn/proxy/oauth-relay";
 import { compareNames, tunnelOwners } from "@devfn/proxy/tunnel";
 
-import { domainAliases, resolveInstanceIdentity } from "./identity.js";
+import { DEFAULT_RUNTIME, domainAliases, isNamedRuntime, resolveInstanceIdentity } from "./identity.js";
 import { resolveEndpointTemplates, resolveLocalHostname, type EndpointResolution, type EndpointResolutionInput } from "./endpoints.js";
 import { createPlan } from "./planner.js";
 import { planResources, resourcePlanFingerprint, resourcesNeedComposeNetworks } from "./resources.js";
 import { livePublicUrls, profileTunnel, publicTemplateInputs, publishLifecycleTunnel, selectedPublicRoutes, selectionTemplateInputs, withdrawLifecycleTunnel, type PublicSelection, type TunnelOverrides } from "./tunnel.js";
-import { newRuntimeId, readReceipt, readRuntimeId, recordRuntimeId, secureRuntimeDirectory, writeEnvironmentOutputs, writeReceipt } from "./runtime.js";
+import { assertEnvironmentOutputsAvailable, claimEnvironmentOutputs, releaseEnvironmentOutputs, type EnvironmentOutputClaim } from "./outputs.js";
+import { listRuntimeReceipts, newRuntimeId, readReceipt, readRuntimeId, recordRuntimeId, secureRuntimeDirectory, sharedEnvironmentOutputs, writeEnvironmentOutputs, writeReceipt, type RuntimePath } from "./runtime.js";
 import { preflightTasks, runTask, taskInputRevision, type TaskReceipt } from "./tasks.js";
 import { DevFnError, type CleanupResult, type InstanceIdentity, type RoutingIdentity, type LifecyclePlan, type LifecycleReceipt, type UpOptions } from "./types.js";
+
+/** The runtime name of an identity; the default runtime records none. */
+const runtimeOf = (identity: Pick<InstanceIdentity, "runtime">): string => identity.runtime ?? DEFAULT_RUNTIME;
+
+/** How messages name an instance: the default runtime as earlier releases did, a named runtime by its name too. */
+const describeInstance = (identity: Pick<InstanceIdentity, "runtime" | "instanceId">): string =>
+  isNamedRuntime(identity.runtime) ? `DevFn runtime ${identity.runtime} (instance ${identity.instanceId})` : `DevFn instance ${identity.instanceId}`;
+
+/**
+ * What would make a named runtime share state with the other runtimes of its
+ * checkout fails before anything is read or started: an environment output
+ * without `{runtime}` in its name, and a selected Wrangler, Xcode or extfn process
+ * whose artifacts are neither isolated per runtime nor explicitly shared.
+ * The default runtime keeps the behavior of earlier releases.
+ */
+function assertRuntimeIsolation(config: DevFnConfig, plan: LifecyclePlan, identity: InstanceIdentity): void {
+  if (!isNamedRuntime(identity.runtime)) return;
+  const shared = sharedEnvironmentOutputs(config, identity.runtime);
+  if (shared.length) {
+    throw new DevFnError("DEVFN_RUNTIME_INVALID", `Runtime ${identity.runtime} would overwrite environment outputs every runtime of this checkout writes (${shared.join(", ")}); add {runtime} to their file names.`,
+      { runtime: identity.runtime, environmentOutputs: shared });
+  }
+  const undeclared = plan.nodes.filter((node) => node.kind === "process" && CHECKOUT_STATE_ADAPTERS.has(config.processes![node.name].adapter) && !config.processes![node.name].artifacts).map((node) => node.name);
+  if (undeclared.length) {
+    throw new DevFnError("DEVFN_RUNTIME_INVALID", `Processes ${undeclared.join(", ")} keep build output and local state in the checkout, which every runtime shares; declare artifacts: "runtime" (passing {{env.DEVFN_ARTIFACT_DIR}} to the command) or artifacts: "shared" to start runtime ${identity.runtime}.`,
+      { runtime: identity.runtime, processes: undeclared });
+  }
+}
+
+/** The directory of each selected `artifacts: "runtime"` process under its instance's runtime directory. */
+function artifactDirectories(config: DevFnConfig, plan: LifecyclePlan, runtimeDir: string | undefined): Record<string, string> | undefined {
+  const names = plan.nodes.filter((node) => node.kind === "process" && config.processes![node.name].artifacts === "runtime").map((node) => node.name);
+  if (!runtimeDir || !names.length) return undefined;
+  const unsafe = names.find((name) => name === "." || name === ".." || /[\\/\0]/.test(name));
+  if (unsafe !== undefined) throw new DevFnError("DEVFN_RUNTIME_INVALID", `processes.${unsafe}.artifacts needs a process name that is one path segment.`);
+  return Object.fromEntries(names.map((name) => [name, path.join(runtimeDir, "artifacts", name)]));
+}
+
+/** A not-running error naming the other runtimes of the checkout that have receipts, so cleanup never guesses which one was meant. */
+async function notRunning(config: DevFnConfig, root: string, identity: InstanceIdentity): Promise<DevFnError> {
+  const others = (await listRuntimeReceipts(config, root).catch(() => [])).filter((item) => item.instanceId !== identity.instanceId && item.state !== "stopped").map((item) => item.runtime);
+  return new DevFnError("DEVFN_NOT_RUNNING", `${describeInstance(identity)} is not running.${others.length ? ` Other runtimes of this checkout have live receipts (${others.join(", ")}); select one with --runtime.` : ""}`,
+    others.length ? { runtime: runtimeOf(identity), otherRuntimes: others } : undefined);
+}
 
 const execFileAsync = promisify(execFile);
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -77,8 +122,10 @@ interface ProvisionalInputs { ports?: boolean; networks?: boolean }
  * listeners; with provisional networks Compose service-name listeners are
  * unknown, and their collisions wait for a pass with effective networks.
  */
-function resolveEndpoints({ composeNames, ...input }: Omit<EndpointResolutionInput, "resources"> & { composeNames?: Record<string, ComposeServiceDnsNames> },
+function resolveEndpoints({ composeNames, ...requested }: Omit<EndpointResolutionInput, "resources"> & { composeNames?: Record<string, ComposeServiceDnsNames> },
   provisional: ProvisionalInputs = {}): EndpointResolution {
+  const artifacts = artifactDirectories(requested.config, requested.plan, requested.routingIdentity?.runtimeDir);
+  const input = artifacts ? { ...requested, artifactDirectories: artifacts } : requested;
   if (!input.config.resources) return resolveEndpointTemplates(input);
   const runtimeId = input.routingIdentity?.runtimeId;
   // Only resource planning reads the other Docker DNS names; the endpoint resolver's network input is unchanged.
@@ -386,7 +433,8 @@ async function receiptIsReady(config: DevFnConfig, root: string, receipt: Lifecy
     const loadedPolicy = await loadDevFnPolicy(root, config.policy);
     // Without the runtime identity it started with, the resource plan differs and the lifecycle is not reused.
     const runtimeId = config.resources ? await readRuntimeId(receipt.stateDir ?? defaultStateDir()) : undefined;
-    const identity: RoutingIdentity = { ...await resolveInstanceIdentity(config.project.id, root), ...(runtimeId ? { runtimeId } : {}) };
+    const identity: RoutingIdentity = { ...await resolveInstanceIdentity(config.project.id, root, receipt.runtime), ...(runtimeId ? { runtimeId } : {}) };
+    identity.runtimeDir = await secureRuntimeDirectory(config, root, identity.instanceId);
     resolved = await resolveWithComposeNetworks(config, plan, root, identity, ports, loadedPolicy?.policy.hostnameSuffix,
       await publicTemplateInputs(config, plan, identity, receipt.stateDir ?? defaultStateDir()));
     if (!receiptRoutesMatch(receipt, await selectedProxyRoutes(config, plan, identity, ports,
@@ -598,7 +646,10 @@ export class DevFnOrchestrator {
     // with the recorded one, or a new one recorded only with the state
     // directory once preflight passed.
     const runtimeId = options.config.resources ? await readRuntimeId(requestedStateDir) ?? newRuntimeId() : undefined;
-    const identity: RoutingIdentity = { ...await resolveInstanceIdentity(options.config.project.id, options.root), ...(runtimeId ? { runtimeId } : {}) };
+    const identity: RoutingIdentity = { ...await resolveInstanceIdentity(options.config.project.id, options.root, options.runtime), ...(runtimeId ? { runtimeId } : {}) };
+    assertRuntimeIsolation(options.config, plan, identity);
+    await assertEnvironmentOutputsAvailable(options.config, options.root, identity, requestedStateDir);
+    identity.runtimeDir = await secureRuntimeDirectory(options.config, options.root, identity.instanceId);
     const loadedPolicy = await loadDevFnPolicy(options.root, options.config.policy);
     // Effective network evidence must reject unreachable sibling references
     // before state creation. Re-read it under the lifecycle lock after ports
@@ -627,27 +678,39 @@ export class DevFnOrchestrator {
       }
     }
     return await withFileLock(path.join(stateDir, `lifecycle-${identity.instanceId}.lock`), async () => {
-      // Concurrent starts may have ended task attempts since the preflight,
-      // and a dead DevFn may have left one: tasks are settled and decided
-      // again from their journals before any lease, replacement or node.
-      await decideTasks(stateDir, { ...(options.signal ? { signal: options.signal } : {}) });
-      // Health and teardown may wait for minutes. The instance lock protects
-      // this lifecycle while sibling route/lease transitions use the short
-      // shared routing lock below.
-      const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
-      const oldReady = await this.prepareExisting(options, stateDir, identity, loadedPolicy, registry, true);
-      // Unless a ready lifecycle is kept for replacement, public exposure this
-      // owner still has, also without a receipt, ends before any lease or
-      // node start; a public profile republishes once it is ready.
-      if (!oldReady) await withdrawLifecycleTunnel(stateDir, identity.instanceId, this.tunnelOverrides).catch((error: unknown) => {
-        throw new DevFnError("DEVFN_RUNTIME_INVALID", `Public routes of this lifecycle could not be withdrawn before startup: ${error instanceof Error ? error.message : String(error)}`);
-      });
-      const start = await this.prepareUpLocked(options, stateDir, identity, loadedPolicy, oldReady);
-      return await start();
+      // Environment-output files are claimed checkout-wide before anything
+      // else changes; a start that never records its receipt gives them back.
+      const claim = await claimEnvironmentOutputs(options.config, options.root, identity, stateDir);
+      try { return await this.upLocked(options, stateDir, identity, loadedPolicy, decideTasks, claim); }
+      catch (error) {
+        await claim.restore().catch(() => undefined);
+        throw error;
+      }
     }, { timeoutMs: 30_000 });
   }
 
-  private async prepareUpLocked(options: UpOptions, stateDir: string, identity: RoutingIdentity, loadedPolicy: Awaited<ReturnType<typeof loadDevFnPolicy>>, oldReady?: LifecycleReceipt): Promise<() => Promise<LifecycleReceipt>> {
+  private async upLocked(options: UpOptions, stateDir: string, identity: RoutingIdentity, loadedPolicy: Awaited<ReturnType<typeof loadDevFnPolicy>>,
+    decideTasks: (stateDir: string, locked?: { signal?: AbortSignal }) => Promise<unknown>, claim: EnvironmentOutputClaim): Promise<LifecycleReceipt> {
+    // Concurrent starts may have ended task attempts since the preflight,
+    // and a dead DevFn may have left one: tasks are settled and decided
+    // again from their journals before any lease, replacement or node.
+    await decideTasks(stateDir, { ...(options.signal ? { signal: options.signal } : {}) });
+    // Health and teardown may wait for minutes. The instance lock protects
+    // this lifecycle while sibling route/lease transitions use the short
+    // shared routing lock below.
+    const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
+    const oldReady = await this.prepareExisting(options, stateDir, identity, loadedPolicy, registry, true);
+    // Unless a ready lifecycle is kept for replacement, public exposure this
+    // owner still has, also without a receipt, ends before any lease or
+    // node start; a public profile republishes once it is ready.
+    if (!oldReady) await withdrawLifecycleTunnel(stateDir, identity.instanceId, this.tunnelOverrides).catch((error: unknown) => {
+      throw new DevFnError("DEVFN_RUNTIME_INVALID", `Public routes of this lifecycle could not be withdrawn before startup: ${error instanceof Error ? error.message : String(error)}`);
+    });
+    const start = await this.prepareUpLocked(options, stateDir, identity, loadedPolicy, claim, oldReady);
+    return await start();
+  }
+
+  private async prepareUpLocked(options: UpOptions, stateDir: string, identity: RoutingIdentity, loadedPolicy: Awaited<ReturnType<typeof loadDevFnPolicy>>, claim: EnvironmentOutputClaim, oldReady?: LifecycleReceipt): Promise<() => Promise<LifecycleReceipt>> {
     const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
     const plan = createPlan(options.config, options.profile);
     const profileHostnames = Object.entries(options.config.hostnames ?? {}).filter(([, spec]) => !spec.profiles || spec.profiles.includes(plan.profile));
@@ -669,7 +732,7 @@ export class DevFnOrchestrator {
     const suffix = loadedPolicy?.policy.hostnameSuffix ?? ".localhost";
     const configuredHostnames = Object.fromEntries(profileHostnames.filter(([, spec]) => !spec.domain).map(([name, spec]) => [spec.target, resolveLocalHostname(spec.hostname, name, options.config.project.id, identity.instanceId, suffix)]));
     const allocations = await withRoutingLock(stateDir, async () => {
-      const prior = await readReceipt(options.config, options.root, identity.instanceId);
+      const prior = await readReceipt(options.config, options.root, identity.instanceId, runtimeOf(identity));
       if (prior && prior.state !== "stopped") assertReceiptStateDir(prior, stateDir);
       const replacingInvocationId = prior?.state === "ready" ? prior.invocationId : undefined;
       await registry.assertReplacementAvailable(listenerPorts, identity.instanceId,
@@ -757,7 +820,7 @@ export class DevFnOrchestrator {
       }
     }
     const receipt: LifecycleReceipt = {
-      version: 1, projectId: options.config.project.id, instanceId: identity.instanceId, invocationId, profile: plan.profile,
+      version: 1, projectId: options.config.project.id, instanceId: identity.instanceId, ...(identity.runtime ? { runtime: identity.runtime } : {}), invocationId, profile: plan.profile,
       state: "starting", root: options.root, runtimeDir, stateDir: path.resolve(stateDir), startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       allocations, processes: [], services: [], startedNodes: [], routes: activatedRoutes ?? [], urls: {}, environmentOutputs: [],
       startupFingerprints: fingerprints,
@@ -776,6 +839,10 @@ export class DevFnOrchestrator {
       throw error;
     }
     return async () => {
+      let receiptWritten = false;
+      // Once the stable receipt has landed, a failure, also later in the same
+      // save, is recorded there as failed rather than left starting.
+      const save = async () => await writeReceipt(receipt, { runtimeCopy: claim.runtimePath, onStable: () => { receiptWritten = true; } });
       const heartbeat = setInterval(() => { void registry.updateInvocation(invocationId, {}).catch(() => undefined); }, 60_000);
       heartbeat.unref();
       const supervisor = new ProcessSupervisor();
@@ -806,13 +873,24 @@ export class DevFnOrchestrator {
         // already cover every port it reuses, so the prior leases end here,
         // before its receipt is superseded.
         if (oldReady) await registry.release({ invocationId: oldReady.invocationId });
-        await writeReceipt(receipt);
-        receipt.environmentOutputs = await writeEnvironmentOutputs(options.root, runtimeDir, options.config.environmentOutputs ?? [], environment);
+        // Outputs are written before this start has a receipt: each is
+        // attributed in the output claim as it is written, and a named
+        // runtime refuses a file that appeared since the claim. Every
+        // generated write of the start (runtime.env, each receipt copy, logs,
+        // Compose files, artifacts) is checked as it happens to land in the
+        // runtime directory the claim bound (claim.runtimePath).
+        await claim.assertRuntimeDirectory();
+        await writeEnvironmentOutputs(options.root, runtimeDir, options.config.environmentOutputs ?? [], environment, runtimeOf(identity),
+          { write: claim.write, runtimePath: claim.runtimePath, written: receipt.environmentOutputs });
+        await save();
+        // From here this receipt holds the output claim until down.
+        await claim.commit();
+        receiptWritten = true;
         for (const node of plan.nodes) {
           if (options.signal?.aborted) throw new DevFnError("DEVFN_CANCELLED", `DevFn startup was cancelled before ${node.name} started.`);
-          await this.startSelectedNode(node, { options, identity, receipt, resolved, ports, allocations, supervisor, compose, registry });
+          await this.startSelectedNode(node, { options, identity, receipt, resolved, ports, allocations, supervisor, compose, registry, runtimePath: claim.runtimePath, save });
           receipt.updatedAt = new Date().toISOString();
-          await writeReceipt(receipt);
+          await save();
         }
         // A cancellation observed as the last task ended still never ends ready.
         if (options.signal?.aborted) throw new DevFnError("DEVFN_CANCELLED", "DevFn startup was cancelled.");
@@ -825,7 +903,7 @@ export class DevFnOrchestrator {
         // public origin routes are active; a profile without a tunnel
         // withdraws any this owner still publishes.
         if (publicSelection) {
-          await writeReceipt(receipt);
+          await save();
           const { hostnames, urls, outstanding } = await publishLifecycleTunnel(stateDir, identity.instanceId, publicSelection, options.config, this.tunnelOverrides);
           receipt.tunnel = { binding: publicSelection.binding.name, hostnames, urlTiming: publicSelection.timing, ...(outstanding.length ? { outstanding } : {}) };
           receipt.publicUrls = urls;
@@ -836,16 +914,25 @@ export class DevFnOrchestrator {
         await registry.markActive(invocationId, startupOwners(options.config, receipt));
         receipt.state = "ready";
         receipt.updatedAt = new Date().toISOString();
-        await writeReceipt(receipt);
+        await save();
         if (options.signal?.aborted) throw new DevFnError("DEVFN_CANCELLED", "DevFn startup was cancelled."); // An abort during activation or the ready write rolls back: no await follows.
         return receipt;
       } catch (error) {
         const cleanup = await this.cleanup(receipt, registry, supervisor, compose, proxy, true);
+        if (!receiptWritten && !oldReady && !cleanup.errors.length) {
+          // Nothing started and no receipt recorded this start; its leases
+          // and routes are released, and earlier state stays as it was.
+          if (error instanceof DevFnError && error.code === "DEVFN_RUNTIME_INVALID") throw new DevFnError(error.code, error.message, { ...error.details, cleanup });
+          const code = error && typeof error === "object" && "code" in error ? String(error.code) : "DEVFN_START_FAILED";
+          throw new DevFnError("DEVFN_START_FAILED", `DevFn startup failed: ${error instanceof Error ? error.message : String(error)}`, { cleanup, causeCode: code });
+        }
         receipt.state = "failed";
         receipt.cleanup = cleanup;
         receipt.error = { code: error && typeof error === "object" && "code" in error ? String(error.code) : "DEVFN_START_FAILED", message: error instanceof Error ? error.message : String(error) };
         receipt.updatedAt = new Date().toISOString();
-        await writeReceipt(receipt).catch(() => undefined);
+        // The stable receipt records the failure; a runtime directory
+        // redirected since the claim gets no copy.
+        await save().catch(() => undefined);
         if (oldReady) {
           throw new DevFnError("DEVFN_START_FAILED", `DevFn replacement failed after prior invocation ${oldReady.invocationId} was stopped; it was not restarted: ${receipt.error.message}`,
             { cleanup, causeCode: receipt.error.code, priorInvocationId: oldReady.invocationId, priorStopped: true });
@@ -858,7 +945,7 @@ export class DevFnOrchestrator {
   }
 
   private async prepareExisting(options: UpOptions, stateDir: string, identity: RoutingIdentity, loadedPolicy: Awaited<ReturnType<typeof loadDevFnPolicy>>, registry: FilePortRegistry, deferReadyCleanup = false): Promise<LifecycleReceipt | undefined> {
-    const existing = await readReceipt(options.config, options.root, identity.instanceId);
+    const existing = await readReceipt(options.config, options.root, identity.instanceId, runtimeOf(identity));
     if (existing && existing.state !== "stopped") {
       assertReceiptStateDir(existing, stateDir);
       // down holds this instance lock for its whole run, so a stopping
@@ -884,7 +971,7 @@ export class DevFnOrchestrator {
           existing.updatedAt = new Date().toISOString();
           await writeReceipt(existing);
         }
-        throw new DevFnError("DEVFN_ALREADY_RUNNING", `DevFn instance ${identity.instanceId} is already running.${options.rerunTasks?.length
+        throw new DevFnError("DEVFN_ALREADY_RUNNING", `${describeInstance(identity)} is already running.${options.rerunTasks?.length
           ? ` A task reruns on a start; replace this lifecycle with devfn restart ${options.rerunTasks.map((name) => `--rerun-task ${name}`).join(" ")}.` : ""}`);
       }
       // Validate the replacement while the old lifecycle still owns its ports
@@ -928,11 +1015,27 @@ export class DevFnOrchestrator {
     supervisor: ProcessSupervisor;
     compose: ComposeController;
     registry: FilePortRegistry;
+    /** The start's checked path in the runtime directory its claim bound. */
+    runtimePath: RuntimePath;
+    /** Write the start's receipt, its runtime copy at the checked path. */
+    save: () => Promise<void>;
   }): Promise<void> {
-    const { options, identity, receipt, resolved, ports, allocations, supervisor, compose, registry } = context;
+    const { options, identity, receipt, resolved, ports, allocations, supervisor, compose, registry, runtimePath, save } = context;
+    // The node's logs, Compose files and artifacts go to the directory the
+    // claim bound, given to its writers as that real directory, with no link
+    // out of it on their paths.
+    const checkedRuntimeDir = async () => {
+      await runtimePath(node.kind === "service" ? path.join("compose", `${node.name}.override.yaml`) : path.join("logs", `${node.name}.log`));
+      // The directory a process receives as DEVFN_ARTIFACT_DIR exists, owner-only, before it starts.
+      if (node.kind === "process" && options.config.processes![node.name].artifacts === "runtime") {
+        await mkdir(await runtimePath(path.join("artifacts", node.name)), { recursive: true, mode: 0o700 });
+      }
+      return await runtimePath(".");
+    };
     if (node.task) {
       // A task is never a running owner: it is not in startedNodes, and teardown has nothing of it to stop once it ended.
-      const run = async () => await runTask({ config: options.config, root: options.root, stateDir: receipt.stateDir ?? defaultStateDir(), runtimeDir: receipt.runtimeDir,
+      // Its paths are checked once the hand-off to whileTaskRuns lets it run.
+      const run = async () => await runTask({ config: options.config, root: options.root, stateDir: receipt.stateDir ?? defaultStateDir(), runtimeDir: await checkedRuntimeDir(),
         instanceId: identity.instanceId, invocationId: receipt.invocationId, node, profile: receipt.profile, environment: resolved.nodes[node.name].environment,
         command: resolved.nodes[node.name].command, script: resolved.nodes[node.name].script, generated: lifecycleGeneratedEnvironment(receipt, resolved.nodes[node.name].generated ?? resolved.generated),
         ...(resolved.resources ? { resources: resolved.resources } : {}), rerunRequested: options.rerunTasks?.includes(node.name) ?? false,
@@ -942,11 +1045,12 @@ export class DevFnOrchestrator {
           const index = tasks.findIndex((item) => item.name === entry.name);
           if (index < 0) tasks.push(entry); else tasks[index] = entry;
           receipt.updatedAt = new Date().toISOString();
-          await writeReceipt(receipt);
+          await save();
         } });
       await (options.whileTaskRuns ? options.whileTaskRuns(run) : run());
       return;
     }
+    const runtimeDir = await checkedRuntimeDir();
     // Routes may already target this lifecycle's ports. Its owner identities
     // are journaled in the registry, which outlives the worktree, so orphan
     // recovery can tell a running interrupted start from a dead one. Each
@@ -957,7 +1061,7 @@ export class DevFnOrchestrator {
     if (node.kind === "service") {
       const spec = options.config.services![node.name];
       await compose.start({
-        name: node.name, spec: { ...spec, env: resolved.nodes[node.name].environment, health: resolvedHealth(spec.health, resolved.nodes[node.name].healthCommand, resolved.nodes[node.name].healthUrl) }, root: options.root, runtimeDir: receipt.runtimeDir, instanceId: identity.instanceId, ports,
+        name: node.name, spec: { ...spec, env: resolved.nodes[node.name].environment, health: resolvedHealth(spec.health, resolved.nodes[node.name].healthCommand, resolved.nodes[node.name].healthUrl) }, root: options.root, runtimeDir, instanceId: identity.instanceId, ports,
         portHosts: Object.fromEntries(allocations.map((item) => [item.service, item.host])),
         portProtocols: Object.fromEntries(allocations.map((item) => [item.service, item.protocol])), environment: resolved.nodes[node.name].environment, readinessEnvironment: resolved.nodes[node.name].readinessEnvironment,
         onLaunch: async ({ name: _name, ...launch }) => await registry.beginLaunch(receipt.invocationId, node.name, launch),
@@ -965,7 +1069,7 @@ export class DevFnOrchestrator {
           receipt.services.push(managed);
           receipt.startedNodes?.push({ name: node.name, kind: node.kind });
           receipt.updatedAt = new Date().toISOString();
-          await writeReceipt(receipt);
+          await save();
           await registry.recordOwners(receipt.invocationId, node.name, managed.containerIds.map((id) => ({ container: { id, name: managed.composeService,
             ...(managed.dockerEnvironment !== undefined ? { dockerEnvironment: managed.dockerEnvironment } : {}) } })));
         },
@@ -974,13 +1078,13 @@ export class DevFnOrchestrator {
     }
     const spec = options.config.processes![node.name];
     const managed = await supervisor.start({
-      name: node.name, spec: { ...spec, env: resolved.nodes[node.name].environment, command: resolved.nodes[node.name].command, script: resolved.nodes[node.name].script, health: resolvedHealth(spec.health, resolved.nodes[node.name].healthCommand, resolved.nodes[node.name].healthUrl) }, root: options.root, runtimeDir: receipt.runtimeDir, ports,
+      name: node.name, spec: { ...spec, env: resolved.nodes[node.name].environment, command: resolved.nodes[node.name].command, script: resolved.nodes[node.name].script, health: resolvedHealth(spec.health, resolved.nodes[node.name].healthCommand, resolved.nodes[node.name].healthUrl) }, root: options.root, runtimeDir, ports,
       environment: lifecycleGeneratedEnvironment(receipt, resolved.generated),
       onStarted: async (started) => {
         receipt.processes.push(started);
         receipt.startedNodes?.push({ name: node.name, kind: node.kind });
         receipt.updatedAt = new Date().toISOString();
-        await writeReceipt(receipt);
+        await save();
         await registry.recordOwners(receipt.invocationId, node.name, [{ process: { pid: started.pid, ...(started.birthSignature ? { birthSignature: started.birthSignature } : {}) } }]);
       },
     });
@@ -1031,17 +1135,17 @@ export class DevFnOrchestrator {
     return result;
   }
 
-  public async down(options: { config: DevFnConfig; root: string; stateDir?: string }): Promise<LifecycleReceipt> {
+  public async down(options: { config: DevFnConfig; root: string; stateDir?: string; runtime?: string }): Promise<LifecycleReceipt> {
     const requestedStateDir = options.stateDir ?? defaultStateDir();
-    const identity = await resolveInstanceIdentity(options.config.project.id, options.root);
+    const identity = await resolveInstanceIdentity(options.config.project.id, options.root, options.runtime);
     await mkdir(requestedStateDir, { recursive: true, mode: 0o700 });
     const stateDir = await realpath(requestedStateDir);
     return await withFileLock(path.join(stateDir, `lifecycle-${identity.instanceId}.lock`), async () => {
       // Coordinate the destructive decision with sibling route/lease changes,
       // then let long process and Compose stops run under the instance lock.
       await withRoutingLock(stateDir, async () => {
-        const receipt = await readReceipt(options.config, options.root, identity.instanceId);
-        if (!receipt || receipt.state === "stopped") throw new DevFnError("DEVFN_NOT_RUNNING", `DevFn instance ${identity.instanceId} is not running.`);
+        const receipt = await readReceipt(options.config, options.root, identity.instanceId, runtimeOf(identity));
+        if (!receipt || receipt.state === "stopped") throw await notRunning(options.config, options.root, identity);
         assertReceiptStateDir(receipt, stateDir);
         await new FilePortRegistry(path.join(stateDir, "registry.json")).updateInvocation(receipt.invocationId, { state: "stopping" });
       });
@@ -1050,8 +1154,8 @@ export class DevFnOrchestrator {
   }
 
   private async downLocked(options: { config: DevFnConfig; root: string; stateDir?: string }, stateDir: string, identity: InstanceIdentity): Promise<LifecycleReceipt> {
-    const receipt = await readReceipt(options.config, options.root, identity.instanceId);
-    if (!receipt || receipt.state === "stopped") throw new DevFnError("DEVFN_NOT_RUNNING", `DevFn instance ${identity.instanceId} is not running.`);
+    const receipt = await readReceipt(options.config, options.root, identity.instanceId, runtimeOf(identity));
+    if (!receipt || receipt.state === "stopped") throw await notRunning(options.config, options.root, identity);
     assertReceiptStateDir(receipt, stateDir);
     const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
     // Siblings honour a stopping claim only while it is refreshed; an
@@ -1068,13 +1172,15 @@ export class DevFnOrchestrator {
     receipt.state = cleanup.errors.length || cleanup.publicOutstanding?.length ? "degraded" : "stopped";
     receipt.updatedAt = new Date().toISOString();
     await writeReceipt(receipt);
+    // A stopped runtime no longer holds its environment-output files.
+    if (receipt.state === "stopped") await releaseEnvironmentOutputs(options.root, identity.instanceId);
     return receipt;
   }
 
-  public async status(options: { config: DevFnConfig; root: string }): Promise<Record<string, unknown>> {
-    const identity = await resolveInstanceIdentity(options.config.project.id, options.root);
-    const receipt = await readReceipt(options.config, options.root, identity.instanceId);
-    if (!receipt) return { ok: true, state: "stopped", instanceId: identity.instanceId, processes: [], services: [], urls: {} };
+  public async status(options: { config: DevFnConfig; root: string; runtime?: string }): Promise<Record<string, unknown>> {
+    const identity = await resolveInstanceIdentity(options.config.project.id, options.root, options.runtime);
+    const receipt = await readReceipt(options.config, options.root, identity.instanceId, runtimeOf(identity));
+    if (!receipt) return { ok: true, state: "stopped", instanceId: identity.instanceId, runtime: runtimeOf(identity), processes: [], services: [], urls: {} };
     const supervisor = new ProcessSupervisor();
     const processes = await Promise.all(receipt.processes.map(async (managed) => ({ name: managed.name, pid: managed.pid, state: await supervisor.status(managed), logPath: managed.logPath })));
     const compose = new ComposeController();
@@ -1086,10 +1192,10 @@ export class DevFnOrchestrator {
     // Public URLs are the ones served now; publicUrlsChanged marks those reassigned since the receipt recorded them.
     const publicUrls = state === "ready" && live.publicUrls ? { publicUrls: live.publicUrls, ...(sameUrls(live.publicUrls, receipt.publicUrls) ? {} : { publicUrlsChanged: true }) } : {};
     const tasks = receipt.tasks?.map(({ name, kind, status, reason, inputRevision, attempts }) => ({ name, kind, status, reason, inputRevision, attempts: attempts.length }));
-    return { ok: state !== "failed" && state !== "degraded", state, instanceId: identity.instanceId, profile: receipt.profile, processes, services, ...(tasks ? { tasks } : {}), allocations: receipt.allocations, urls: state === "ready" ? receipt.urls : {}, ...publicUrls };
+    return { ok: state !== "failed" && state !== "degraded", state, instanceId: identity.instanceId, runtime: runtimeOf(identity), profile: receipt.profile, processes, services, ...(tasks ? { tasks } : {}), allocations: receipt.allocations, urls: state === "ready" ? receipt.urls : {}, ...publicUrls };
   }
 
-  public async doctor(options: { config: DevFnConfig; root: string; profile?: string; stateDir?: string }): Promise<{ ok: boolean; diagnostics: Array<{ code: string; severity: "error" | "warning" | "info"; message: string; details?: unknown }> }> {
+  public async doctor(options: { config: DevFnConfig; root: string; profile?: string; stateDir?: string; runtime?: string }): Promise<{ ok: boolean; diagnostics: Array<{ code: string; severity: "error" | "warning" | "info"; message: string; details?: unknown }> }> {
     const diagnostics: Array<{ code: string; severity: "error" | "warning" | "info"; message: string; details?: unknown }> = [];
     const stateDir = options.stateDir ?? defaultStateDir();
     const plan = createPlan(options.config, options.profile);
@@ -1132,7 +1238,17 @@ export class DevFnOrchestrator {
     }
     if (plan.nodes.some((node) => node.kind === "service") && !await new ComposeController().available()) diagnostics.push({ code: "DEVFN_DOCKER_UNAVAILABLE", severity: "error", message: "Docker Compose 2.24.4 or newer is required by this profile." });
     if (plan.proxy && !await new CaddyProxyController(stateDir).available()) diagnostics.push({ code: "DEVFN_CADDY_UNAVAILABLE", severity: "error", message: "Caddy is required by this profile but unavailable." });
-    const identity = await resolveInstanceIdentity(options.config.project.id, options.root);
+    const identity = await resolveInstanceIdentity(options.config.project.id, options.root, options.runtime);
+    // What up refuses for this runtime before any mutation, doctor reports.
+    try {
+      assertRuntimeIsolation(options.config, plan, identity);
+      await assertEnvironmentOutputsAvailable(options.config, options.root, identity, stateDir);
+    } catch (error) {
+      // A path escape or file-system error is reported with the other diagnostics, never instead of them.
+      const failure = error as { code?: unknown; message?: unknown; details?: unknown };
+      diagnostics.push({ code: typeof failure.code === "string" && failure.code.startsWith("DEVFN_") ? failure.code : "DEVFN_RUNTIME_INVALID", severity: "error",
+        message: error instanceof Error ? error.message : String(error), ...(failure.details === undefined ? {} : { details: failure.details }) });
+    }
     const registry = await new FilePortRegistry(path.join(stateDir, "registry.json")).reconcile();
     const scan = await scanListenerState(plan.nodes.some((node) => node.kind === "service"));
     const listeners = scan.listeners;
@@ -1197,10 +1313,10 @@ export class DevFnOrchestrator {
     return { ok: diagnostics.every((item) => item.severity !== "error"), diagnostics };
   }
 
-  public async logs(options: { config: DevFnConfig; root: string; name?: string; tail?: number }): Promise<Record<string, string>> {
-    const identity = await resolveInstanceIdentity(options.config.project.id, options.root);
-    const receipt = await readReceipt(options.config, options.root, identity.instanceId);
-    if (!receipt) throw new DevFnError("DEVFN_NOT_RUNNING", "No runtime receipt exists for this worktree.");
+  public async logs(options: { config: DevFnConfig; root: string; name?: string; tail?: number; runtime?: string }): Promise<Record<string, string>> {
+    const identity = await resolveInstanceIdentity(options.config.project.id, options.root, options.runtime);
+    const receipt = await readReceipt(options.config, options.root, identity.instanceId, runtimeOf(identity));
+    if (!receipt) throw new DevFnError("DEVFN_NOT_RUNNING", `No runtime receipt exists for ${isNamedRuntime(identity.runtime) ? `runtime ${identity.runtime} of ` : ""}this worktree.`);
     const output: Record<string, string> = {};
     const redact = (value: string, keys: readonly string[] = []) => keys.reduce((result, key) => process.env[key] ? result.split(process.env[key]!).join("[REDACTED]") : result, value);
     for (const managed of receipt.processes.filter((item) => !options.name || item.name === options.name)) {

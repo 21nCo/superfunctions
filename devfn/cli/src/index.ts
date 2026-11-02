@@ -14,7 +14,7 @@ import {
   trustProject,
 } from "@devfn/config";
 import {
-  DevFnError, DevFnOrchestrator, lifecycleOwnerMayRun, oauthRelayStatus, planPublicUrls, readRegisteredDomains, readTunnelBindings, recoverOrphanedProxyRoutes, recoverTunnel, registerDomain, registerTunnelBinding,
+  DevFnError, DevFnOrchestrator, lifecycleOwnerMayRun, listRuntimeReceipts, oauthRelayStatus, selectRuntime, planPublicUrls, readRegisteredDomains, readTunnelBindings, recoverOrphanedProxyRoutes, recoverTunnel, registerDomain, registerTunnelBinding,
   ephemeralOriginDomain, resolveInstanceIdentity, resolveTunnelBinding, startOAuthRelay, stopOAuthRelay, tunnelStatus, unregisterDomain, unregisterTunnelBinding, type TunnelBindingInput,
 } from "@devfn/core";
 import { FilePortRegistry, renderPortInventory } from "@devfn/ports";
@@ -28,6 +28,7 @@ interface ParsedArgs {
   trust: boolean;
   configPath?: string;
   profile?: string;
+  runtime?: string;
   stateDir?: string;
   output?: string;
   tail?: number;
@@ -51,9 +52,10 @@ Usage: devfn <command> [options]
 Commands:
   init                 Inspect a repository and preview or write devfn.config.ts
   up                   Reserve ports and start the selected profile
-  down                 Stop only this worktree instance
-  restart              Restart this worktree instance
+  down                 Stop only the selected runtime of this worktree
+  restart              Restart the selected runtime of this worktree
   status               Show processes, services, ports, and health
+  runtimes             List the runtimes of this checkout that have receipts
   logs [name]          Show process or Compose logs
   doctor               Diagnose runtimes, Docker, ports, leases, and proxy
   ports [gc|report]    Inspect, reconcile, collect (incl. orphaned routes), or report port state
@@ -65,6 +67,8 @@ Commands:
 
 Options:
   --profile <name>     Select a named profile
+  --runtime <name>     Select a named runtime of this checkout (up, down, restart, status,
+                       logs, doctor, url, tunnel urls); omitted selects the default runtime
   --config <path>      Use an explicit manifest
   --json               Emit one machine-readable JSON value
   --trust              Trust the current manifest digest before loading it
@@ -94,7 +98,7 @@ function parse(argv: readonly string[]): ParsedArgs {
   const positionals: string[] = [];
   const values: Record<string, string | boolean> = {};
   const rerunTasks: string[] = [];
-  const takesValue = new Set(["--profile", "--config", "--state-dir", "--output", "--tail", "--tls", "--cert", "--key", "--host", ...Object.keys(TUNNEL_OPTIONS)]);
+  const takesValue = new Set(["--profile", "--runtime", "--config", "--state-dir", "--output", "--tail", "--tls", "--cert", "--key", "--host", ...Object.keys(TUNNEL_OPTIONS)]);
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
     if (!token.startsWith("--")) { positionals.push(token); continue; }
@@ -123,6 +127,7 @@ function parse(argv: readonly string[]): ParsedArgs {
     trust: values["--trust"] === true,
     allowPublic: values["--allow-public"] === true,
     ...(typeof values["--profile"] === "string" ? { profile: values["--profile"] } : {}),
+    ...(typeof values["--runtime"] === "string" ? { runtime: values["--runtime"] } : {}),
     ...(typeof values["--config"] === "string" ? { configPath: values["--config"] } : {}),
     ...(typeof values["--state-dir"] === "string" ? { stateDir: values["--state-dir"] } : {}),
     ...(typeof values["--output"] === "string" ? { output: values["--output"] } : {}),
@@ -213,7 +218,7 @@ async function portsCommand(args: ParsedArgs, cwd: string, stateDir: string, loa
 }
 
 async function urlCommand(args: ParsedArgs, orchestrator: DevFnOrchestrator, loaded: LoadedConfig): Promise<unknown> {
-  const status = await orchestrator.status({ config: loaded.config, root: loaded.root }) as { urls?: Record<string, string> };
+  const status = await orchestrator.status({ config: loaded.config, root: loaded.root, ...(args.runtime ? { runtime: args.runtime } : {}) }) as { urls?: Record<string, string> };
   const name = args.positionals[0];
   if (!name) return { ok: true, urls: status.urls ?? {} };
   const url = status.urls?.[name];
@@ -285,7 +290,7 @@ async function tunnelCommand(args: ParsedArgs, cwd: string, stateDir: string, lo
   if (extra.length || (["list", "urls"].includes(action) ? name !== undefined : !name)) throw new DevFnError("DEVFN_RUNTIME_INVALID", `tunnel ${action} ${["list", "urls"].includes(action) ? "takes no binding name" : "requires exactly one binding name"}.`);
   if (action !== "register" && (Object.keys(args.tunnel).length || args.nonproduction || args.ephemeral)) throw new DevFnError("DEVFN_RUNTIME_INVALID", `tunnel ${action} takes no binding fields.`);
   if (action === "list") return { ok: true, bindings: (await readTunnelBindings(stateDir)).filter((item) => item.projectId === identity.projectId && item.repositoryIdentity === identity.repositoryIdentity) };
-  if (action === "urls") return { ok: true, ...await planPublicUrls({ config: loaded.config, root: loaded.root, profile: args.profile, stateDir }) };
+  if (action === "urls") return { ok: true, ...await planPublicUrls({ config: loaded.config, root: loaded.root, profile: args.profile, stateDir, ...(args.runtime ? { runtime: args.runtime } : {}) }) };
   if (action === "register") return { ok: true, binding: await registerTunnelBinding(stateDir, tunnelBindingInput(args, cwd, name!, identity)) };
   if (action === "unregister") { await unregisterTunnelBinding(stateDir, name!, identity.projectId, identity.repositoryIdentity); return { ok: true, binding: name, removed: true }; }
   const binding = await resolveTunnelBinding(stateDir, name!, identity.projectId, identity.repositoryIdentity);
@@ -329,7 +334,7 @@ async function executeCommand(args: ParsedArgs, cwd: string, stateDir: string, l
   if (args.command === "domains") return await domainsCommand(args, cwd, stateDir, loaded);
   if (args.command === "tunnel") return await tunnelCommand(args, cwd, stateDir, loaded);
   const orchestrator = new DevFnOrchestrator();
-  const lifecycle = { config: loaded.config, root: loaded.root, stateDir };
+  const lifecycle = { config: loaded.config, root: loaded.root, stateDir, ...(args.runtime ? { runtime: args.runtime } : {}) };
   const start = async (replace: boolean) => await orchestrator.up({ ...lifecycle, profile: args.profile, allowPublic: args.allowPublic,
     ...(replace ? { replace } : {}), ...(args.rerunTasks.length ? { rerunTasks: args.rerunTasks } : {}), ...taskCancellation() });
   const handlers: Record<string, () => Promise<unknown>> = {
@@ -338,7 +343,11 @@ async function executeCommand(args: ParsedArgs, cwd: string, stateDir: string, l
     restart: async () => await start(true),
     status: async () => await orchestrator.status(lifecycle),
     doctor: async () => await orchestrator.doctor({ ...lifecycle, profile: args.profile }),
-    logs: async () => await orchestrator.logs({ config: loaded.config, root: loaded.root, name: args.positionals[0], tail: args.tail }),
+    logs: async () => await orchestrator.logs({ config: loaded.config, root: loaded.root, name: args.positionals[0], tail: args.tail, ...(args.runtime ? { runtime: args.runtime } : {}) }),
+    runtimes: async () => {
+      if (args.positionals.length) throw new DevFnError("DEVFN_RUNTIME_INVALID", "runtimes takes no arguments.");
+      return { ok: true, runtimes: await listRuntimeReceipts(loaded.config, loaded.root) };
+    },
     ports: async () => await portsCommand(args, cwd, stateDir, loaded),
     url: async () => await urlCommand(args, orchestrator, loaded),
   };
@@ -346,6 +355,9 @@ async function executeCommand(args: ParsedArgs, cwd: string, stateDir: string, l
   if (!handler) throw new DevFnError("DEVFN_RUNTIME_INVALID", `Unknown command ${args.command}.`);
   return await handler();
 }
+
+/** Commands that act on one runtime of the checkout. */
+const RUNTIME_COMMANDS = new Set(["up", "down", "restart", "status", "logs", "doctor", "url"]);
 
 /** Tunnel binding fields that name the environment variable holding a credential, never the credential. */
 const CREDENTIAL_REFERENCES = new Set(["apiTokenEnv", "authtokenEnv", "apiKeyEnv"]);
@@ -416,6 +428,13 @@ export async function runCli(argv: readonly string[], options: CliOptions = {}):
   try {
     // Before any command dispatches, so none silently ignores it.
     if (args.rerunTasks.length && args.command !== "up" && args.command !== "restart") throw new DevFnError("DEVFN_RUNTIME_INVALID", "--rerun-task applies only to up and restart.");
+    if (args.runtime !== undefined) {
+      // Machine-wide commands act on every runtime alike; selecting one there would be ignored.
+      if (!RUNTIME_COMMANDS.has(args.command) && !(args.command === "tunnel" && args.positionals[0] === "urls")) {
+        throw new DevFnError("DEVFN_RUNTIME_INVALID", "--runtime applies only to up, down, restart, status, logs, doctor, url and tunnel urls.");
+      }
+      selectRuntime(args.runtime);
+    }
     if (args.command === "help") { if (args.json) output.json({ ok: true, help: HELP }); else options.stdout ? options.stdout(HELP) : process.stdout.write(HELP); return 0; }
     if (args.command === "init") {
       const result = await initCommand(args, cwd); if (args.json) output.json(result); else { if (!result.written) output.info(String(result.preview)); output.success(result.written ? `Created ${result.manifest}` : String(result.confirmationRequired)); } return 0;

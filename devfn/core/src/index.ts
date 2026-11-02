@@ -1,4 +1,4 @@
-export { domainAliases, resolveInstanceIdentity } from "./identity.js";
+export { DEFAULT_RUNTIME, domainAliases, isNamedRuntime, resolveInstanceIdentity, selectRuntime } from "./identity.js";
 export { registerDomain, unregisterDomain, readRegisteredDomains, verifyLocalDns, type RegisteredDomain } from "@devfn/proxy";
 export { oauthRelayStatus, startOAuthRelay, stopOAuthRelay, type OAuthRelayStatus } from "@devfn/proxy/oauth-relay";
 export { DevFnOrchestrator, hasRecordedProcessOwner, recoverOrphanedProxyRoutes, resolveAllocationUrls, selectOwnershipListeners, verifyOwnedLoopbackListeners } from "./orchestrator.js";
@@ -7,6 +7,6 @@ export { lifecycleOwnerMayRun, planPublicUrls, withdrawLifecycleTunnel, type Tun
 export { ephemeralOriginDomain, readTunnelBindings, recoverTunnel, registerTunnelBinding, resolveTunnelBinding, tunnelCapabilities, tunnelStatus, unregisterTunnelBinding, type TunnelBinding, type TunnelBindingInput, type TunnelCapabilities } from "@devfn/proxy/tunnel";
 export { resolveEndpointTemplates, resolveLocalHostname, type EndpointResolution, type EndpointResolutionInput, type ResolvedNodeStartup } from "./endpoints.js";
 export { planResources, type PlannedResource, type ResourcePlan, type ResourcePlanInput, type ResourceValue, type ResourceValueSource, type UnreachableResourceValue } from "./resources.js";
-export { readReceipt, receiptPath, runtimeDirectory, writeEnvironmentOutputs, writeReceipt } from "./runtime.js";
+export { listRuntimeReceipts, readReceipt, receiptPath, runtimeDirectory, runtimeOutputPath, writeEnvironmentOutputs, writeReceipt, type RuntimeSummary } from "./runtime.js";
 export { readTaskJournal, taskInputRevision, taskScope, type TaskAttempt, type TaskEffects, type TaskJournal, type TaskReceipt } from "./tasks.js";
 export * from "./types.js";

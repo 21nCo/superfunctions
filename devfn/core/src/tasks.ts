@@ -7,6 +7,8 @@ import { resolveContainedPath, type DevFnConfig, type TaskSpec } from "@devfn/co
 import { FilePortRegistry, withFileLock } from "@devfn/ports";
 import { createProcessEnvironment, resolveAdapterCommand, ProcessSupervisor, stopGatedLauncher, type ProcessRunResult } from "@devfn/processes";
 
+import { stagedOutputName } from "./outputs.js";
+import { devfnStateDirectories } from "./runtime.js";
 import type { ResourcePlan } from "./resources.js";
 import { DevFnError, type LifecyclePlan } from "./types.js";
 
@@ -86,16 +88,34 @@ function taskNode(config: DevFnConfig, node: { name: string; kind: "process" | "
   return { spec, task: spec.task!, field: `${node.kind === "process" ? "processes" : "services"}.${node.name}` };
 }
 
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^$(){}|[\]\\]/g, String.raw`\$&`);
+/** Every runtime's file name of a `{runtime}` environment output; runtime names are those selectRuntime accepts. */
+const runtimeFileName = (template: string): RegExp =>
+  new RegExp("^" + template.split("{runtime}").map(escapeRegExp).join("[a-z0-9](?:[a-z0-9-]{0,22}[a-z0-9])?") + "$");
+
+/**
+ * Whether a canonical path is excluded DevFn state: an excluded path itself,
+ * any runtime's file of an excluded `{runtime}` output, or a staging file
+ * DevFn writes beside one of those (present during a write, or left by an
+ * interrupted one), decided by name before it is read.
+ */
+function isExcluded(excluded: readonly string[], absolute: string): boolean {
+  const matches = (candidate: string) => excluded.some((item) => item === candidate || (path.basename(item).includes("{runtime}") && path.dirname(item) === path.dirname(candidate) &&
+    runtimeFileName(path.basename(item)).test(path.basename(candidate))));
+  const staged = stagedOutputName(path.basename(absolute));
+  return matches(absolute) || (staged !== undefined && matches(path.join(path.dirname(absolute), staged)));
+}
+
 /** Content digest of a repository file or directory, walked under its canonical spelling (realpath of its parent) so excluded state matches however it is named; symlinks in it are hashed as links, never followed. A directory's entries are read one at a time within what remains of the entry budget, before any is sorted or visited. */
 async function digestInput(root: string, relative: string, field: string, excluded: readonly string[]): Promise<string> {
   const target = await resolveContainedPath(root, relative, field).then(async (item) => path.join(await canonical(path.dirname(item)), path.basename(item))).catch((error: unknown) => {
     throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field}: ${error instanceof Error ? error.message : String(error)}`);
   });
-  if (await realpath(target).catch(() => target).then((real) => excluded.some((item) => real === item || real.startsWith(`${item}${path.sep}`)))) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} ${relative} is DevFn runtime state, not a task input.`);
+  if (await realpath(target).catch(() => target).then((real) => isExcluded(excluded, real) || excluded.some((item) => real.startsWith(`${item}${path.sep}`)))) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} ${relative} is DevFn runtime state, not a task input.`);
   const hash = createHash("sha256");
   const budget = { entries: 0, bytes: 0 };
   const visit = async (absolute: string, name: string): Promise<void> => {
-    if (excluded.includes(absolute)) return;
+    if (isExcluded(excluded, absolute)) return;
     if (++budget.entries > MAX_INPUT_ENTRIES) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} lists more than ${MAX_INPUT_ENTRIES} entries.`);
     const stats = await lstat(absolute).catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} ${relative} does not exist.`);
@@ -104,7 +124,7 @@ async function digestInput(root: string, relative: string, field: string, exclud
     if (stats.isSymbolicLink()) hash.update(`l\0${name}\0${await readlink(absolute)}\0`);
     else if (stats.isDirectory()) {
       if (!excluded.some((item) => item.startsWith(`${absolute}${path.sep}`))) hash.update(`d\0${name}\0`);
-      const entries: string[] = []; for await (const { name: entry } of await opendir(absolute)) if (!excluded.includes(path.join(absolute, entry)) && entries.push(entry) > MAX_INPUT_ENTRIES - budget.entries) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} lists more than ${MAX_INPUT_ENTRIES} entries.`);
+      const entries: string[] = []; for await (const { name: entry } of await opendir(absolute)) if (!isExcluded(excluded, path.join(absolute, entry)) && entries.push(entry) > MAX_INPUT_ENTRIES - budget.entries) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} lists more than ${MAX_INPUT_ENTRIES} entries.`);
       for (const entry of entries.sort(compare)) await visit(path.join(absolute, entry), `${name}/${entry}`);
     } else if (stats.isFile()) {
       budget.bytes += stats.size;
@@ -146,6 +166,18 @@ function leaseStable(config: DevFnConfig, node: string, profile: string, resourc
 }
 
 /**
+ * Where a task's artifacts go, when it declares them: a task's completion is
+ * valid only for the destination it wrote, so a changed mode or runtime
+ * directory changes its revision. The per-instance part is the journal's own
+ * scope. Undeclared, nothing is added and earlier revisions stay valid.
+ */
+function artifactSettings(config: DevFnConfig, name: string): { artifacts?: { mode: "runtime" | "shared"; directory?: string } } {
+  const mode = config.processes![name].artifacts;
+  if (!mode) return {};
+  return { artifacts: mode === "runtime" ? { mode, directory: path.join(config.runtimeDir ?? ".devfn", "instances", "{instance}", "artifacts", name) } : { mode } };
+}
+
+/**
  * The input revision of a task: its declared command and settings, its
  * manifest and selected profile environment as written (secret channels by
  * name only), the targets, namespaces and values of the resources it consumes
@@ -163,7 +195,7 @@ export async function taskInputRevision(config: DevFnConfig, root: string, node:
   const secrets = new Set(spec.secretEnv ?? []);
   const entries = (values: Record<string, string> | undefined) => Object.entries(values ?? {}).map(([key, value]): [string, string | null] => [key, secrets.has(key) ? null : value]).sort(([a], [b]) => compare(a, b));
   const settings = node.kind === "process"
-    ? { adapter: config.processes![node.name].adapter, command: config.processes![node.name].command ?? [], script: config.processes![node.name].script ?? null, cwd: config.processes![node.name].cwd ?? "." }
+    ? { adapter: config.processes![node.name].adapter, command: config.processes![node.name].command ?? [], script: config.processes![node.name].script ?? null, cwd: config.processes![node.name].cwd ?? ".", ...artifactSettings(config, node.name) }
     : { file: config.services![node.name].file ?? "compose.yaml", service: config.services![node.name].service, projectName: config.services![node.name].projectName ?? "devfn",
       source: await digestComposeSource(root, config.services![node.name], `${field}.file`, leaseStable(config, node.name, profile, resources, environment ?? { ...config.profiles[profile]?.environment, ...spec.env }), taskScope(config, "", node, resources).scope === "shared") };
   const consumed = sorted(spec.resources).map((name) => {
@@ -176,8 +208,8 @@ export async function taskInputRevision(config: DevFnConfig, root: string, node:
       provider: planned.provider ? [planned.provider.node, planned.provider.port] : null, namespace: planned.namespace?.prefix ?? null, values }];
   });
   const inputs: Array<[string, string]> = [];
-  // What DevFn writes under the repository (runtime, receipts, environment outputs, a state dir; canonical before it exists) is never an input, nor is a directory holding it beyond its other entries.
-  const excluded = await Promise.all([...[path.join(config.runtimeDir ?? ".devfn", "instances"), path.join(".devfn", "receipts"), ...(config.environmentOutputs ?? []).map((output) => output.path)]
+  // What DevFn writes under the repository (runtime, receipts, environment outputs of every runtime and their claims, a state dir; canonical before it exists) is never an input, nor is a directory holding it beyond its other entries.
+  const excluded = await Promise.all([...[...devfnStateDirectories(config.runtimeDir), ...(config.environmentOutputs ?? []).map((output) => output.path)]
     .map((item) => path.resolve(root, item)), ...(stateDir ? [stateDir] : [])].map((item) => canonical(path.resolve(item))));
   for (const [index, input] of (task.inputs ?? []).entries()) inputs.push([input, await digestInput(root, input, `${field}.task.inputs[${index}]`, excluded)]);
   return sha256(JSON.stringify({ version: 1, kind: node.kind, settings, env: entries(spec.env), profileEnv: entries(config.profiles[profile]?.environment),
@@ -212,6 +244,11 @@ export function taskScope(config: DevFnConfig, instanceId: string, node: { name:
   if (shared.length > 0 && instance.length > 0) {
     throw new DevFnError("DEVFN_RUNTIME_INVALID", `Task ${node.name} consumes resources shared across worktrees (${shared.map(([name]) => name).join(", ")}) and per-instance resources (${instance.join(", ")}). Its completion cannot be recorded once for the shared targets and once per instance; split it into tasks that each consume only one kind.`,
       { task: node.name, shared: shared.map(([name]) => name), instance });
+  }
+  if (shared.length > 0 && node.kind === "process" && config.processes![node.name].artifacts === "runtime") {
+    // One completion for every worktree and runtime would leave each other runtime's own artifact directory empty.
+    throw new DevFnError("DEVFN_RUNTIME_INVALID", `Task ${node.name} consumes resources shared across worktrees (${shared.map(([name]) => name).join(", ")}), so it runs once for all of them, but declares artifacts "runtime", which each runtime needs written; declare artifacts "shared" or split it.`,
+      { task: node.name, shared: shared.map(([name]) => name) });
   }
   const identity = shared.length > 0
     ? { project: config.project.id, task: node.name, targets: shared.map(([name, planned]) => [name, planned.remote!.url, planned.namespace?.prefix ?? null]).sort((a, b) => compare(a[0]!, b[0]!)) }

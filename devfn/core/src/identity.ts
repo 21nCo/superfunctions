@@ -4,7 +4,7 @@ import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import type { RoutingIdentity } from "./types.js";
+import { DevFnError, type RoutingIdentity } from "./types.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -21,7 +21,39 @@ function trimHyphens(value: string): string {
   return value.slice(start, end);
 }
 
-export async function resolveInstanceIdentity(projectId: string, root: string): Promise<RoutingIdentity> {
+/** The runtime a command selects when it names none: the identity of every DevFn v0.1 lifecycle. */
+export const DEFAULT_RUNTIME = "default";
+
+const RUNTIME_NAME = /^[a-z0-9](?:[a-z0-9-]{0,22}[a-z0-9])?$/;
+
+/**
+ * The validated runtime name a command selects; omitted selects the default
+ * runtime. A name is one to 24 lowercase letters, digits and inner hyphens,
+ * so it fits a DNS label next to the worktree name.
+ */
+export function selectRuntime(requested?: string): string {
+  const name = requested ?? DEFAULT_RUNTIME;
+  if (!RUNTIME_NAME.test(name)) {
+    throw new DevFnError("DEVFN_RUNTIME_INVALID", `Runtime name ${JSON.stringify(name.slice(0, 64))} must be 1 to 24 lowercase letters, digits or inner hyphens.`);
+  }
+  return name;
+}
+
+/** Whether an identity or receipt belongs to a named runtime; one without a recorded name is the default runtime. */
+export const isNamedRuntime = (runtime: string | undefined): boolean => (runtime ?? DEFAULT_RUNTIME) !== DEFAULT_RUNTIME;
+
+/**
+ * The identity of one runtime of a checkout. The default runtime keeps the
+ * instance ID, worktree label and canonical domain alias of DevFn v0.1, so
+ * its receipts, locks, leases and routes stay its own. A named runtime is
+ * another opaque owner of the same checkout: its instance ID and worktree
+ * label also digest its name, so every lock, receipt, lease, route, Compose
+ * project and namespace keyed by them is separate, and it never takes the
+ * canonical alias.
+ */
+export async function resolveInstanceIdentity(projectId: string, root: string, requestedRuntime?: string): Promise<RoutingIdentity> {
+  const runtime = selectRuntime(requestedRuntime);
+  const named = isNamedRuntime(runtime);
   const manifestPath = await realpath(root);
   const topLevel = await git(root, ["rev-parse", "--show-toplevel"]);
   const worktreePath = topLevel ? await realpath(topLevel) : manifestPath;
@@ -29,7 +61,7 @@ export async function resolveInstanceIdentity(projectId: string, root: string): 
   const repositoryIdentity = commonDirectory ? await realpath(path.resolve(root, commonDirectory)) : manifestPath;
   // Instance IDs predate readable domain aliases and remain tied to the
   // manifest root. Routing names instead describe the Git worktree itself.
-  const instanceId = createHash("sha256").update(`${repositoryIdentity}\0${manifestPath}\0${projectId}`).digest("hex").slice(0, 12);
+  const instanceId = createHash("sha256").update(`${repositoryIdentity}\0${manifestPath}\0${projectId}${named ? `\0runtime\0${runtime}` : ""}`).digest("hex").slice(0, 12);
   // NUL-delimited records (Git 2.36+) keep a path that contains a newline
   // intact. Older Git lists lines; a path cut at a newline then fails the
   // comparison below, so it only withholds the alias.
@@ -44,17 +76,19 @@ export async function resolveInstanceIdentity(projectId: string, root: string): 
   const primaryPath = firstField?.startsWith("worktree ") ? firstField.slice("worktree ".length) : undefined;
   // A failed or incomplete Git inventory cannot authorize the canonical alias.
   const isPrimaryWorktree = primaryPath !== undefined && await realpath(primaryPath).then((resolved) => resolved === worktreePath).catch(() => false);
-  const readable = trimHyphens(path.basename(worktreePath).toLowerCase().replace(/[^a-z0-9-]+/g, "-")) || "worktree";
+  const worktreeName = trimHyphens(path.basename(worktreePath).toLowerCase().replace(/[^a-z0-9-]+/g, "-")) || "worktree";
+  const readable = named ? trimHyphens(`${runtime}-${worktreeName}`.slice(0, 42)) : worktreeName.slice(0, 42);
   // Keep enough of the path digest to make same-named worktrees practically
   // collision resistant, including paths that share the old six-hex prefix.
-  const suffix = createHash("sha256").update(worktreePath).digest("hex").slice(0, 20);
-  const readableWorktreeLabel = `${readable.slice(0, 42)}-${suffix}`;
+  const suffix = createHash("sha256").update(named ? `${worktreePath}\0runtime\0${runtime}` : worktreePath).digest("hex").slice(0, 20);
+  const readableWorktreeLabel = `${readable}-${suffix}`;
   return {
     projectId,
     repositoryRoot: root,
     repositoryIdentity,
     worktreePath,
     instanceId,
+    ...(named ? { runtime } : {}),
     isPrimaryWorktree,
     readableWorktreeLabel,
     ...(await git(root, ["rev-parse", "HEAD"]) ? { revision: await git(root, ["rev-parse", "HEAD"]) } : {}),
@@ -68,7 +102,8 @@ export function domainAliases(label: string, domain: string, identity: RoutingId
   if (available < 22) throw new Error("Registered route has no room for a readable worktree label.");
   const readable = trimHyphens(identity.readableWorktreeLabel.slice(0, -21).slice(0, available - 21)) + identity.readableWorktreeLabel.slice(-21);
   const aliases = [`${label}-${readable}.${domain}`];
-  if (identity.isPrimaryWorktree) aliases.push(`${label}.${domain}`);
+  // The canonical alias belongs to the default runtime of the primary worktree only.
+  if (identity.isPrimaryWorktree && !isNamedRuntime(identity.runtime)) aliases.push(`${label}.${domain}`);
   if (aliases.some((hostname) => hostname.length > 253)) throw new Error("Registered route exceeds the DNS hostname length limit.");
   return aliases;
 }
