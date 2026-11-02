@@ -7,8 +7,7 @@ import ts from "typescript";
 
 import { DevFnConfigError } from "./errors.js";
 import { resolveContainedPath } from "./paths.js";
-import { validateDevFnPolicy } from "./schema.js";
-import { validateDevFnConfig } from "./task-guard.js";
+import { validateDevFnConfig, validateDevFnPolicy } from "./schema.js";
 import { defaultStateDir, readTrustedManifest } from "./trust.js";
 import type { DevFnConfig, DevFnPolicy } from "./types.js";
 
