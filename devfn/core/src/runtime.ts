@@ -199,11 +199,12 @@ export async function recordRuntimeId(stateDir: string, candidate: string): Prom
   return recorded;
 }
 
-export async function writeReceipt(receipt: LifecycleReceipt): Promise<void> {
+/** Write the stable receipt and, unless runtimeCopy is false, its copy in the runtime directory. */
+export async function writeReceipt(receipt: LifecycleReceipt, options: { runtimeCopy?: boolean } = {}): Promise<void> {
   const runtimeTarget = path.join(receipt.runtimeDir, "receipt.json");
   const stableTarget = await stableReceiptPath(receipt.root, receipt.instanceId);
   await writeAtomicReceipt(stableTarget, receipt);
-  if (stableTarget !== runtimeTarget) await writeAtomicReceipt(runtimeTarget, receipt);
+  if (stableTarget !== runtimeTarget && options.runtimeCopy !== false) await writeAtomicReceipt(runtimeTarget, receipt);
 }
 
 function dotenv(value: string): string { return /^[A-Za-z0-9_./:@-]*$/.test(value) ? value : JSON.stringify(value); }

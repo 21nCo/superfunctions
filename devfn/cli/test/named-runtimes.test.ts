@@ -502,6 +502,19 @@ describe("named runtimes", () => {
       expect(await exists(await claimFile("b"))).toBe(false);
       expect(await leased(await id("b"))).toBe(false);
       await unlink(path.join(cwd, ".devfn", "instances", await id("b")));
+      // Nor when that symlink replaces b's runtime directory after b claimed it: b refuses before its first generated write.
+      const redirectedDir = await raceAfterClaim(async () => {
+        await rm(path.join(cwd, ".devfn", "instances", await id("b")), { recursive: true, force: true });
+        await symlink(live.instanceId, path.join(cwd, ".devfn", "instances", await id("b")));
+      }, "b");
+      expect(redirectedDir.code).toBe(1);
+      expect(redirectedDir.value.error).toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("changed during startup"), details: { runtime: "b" } });
+      expect(await snapshot()).toEqual(before);
+      expect(await served(live.allocations[0].port)).toMatchObject({ instance: live.instanceId });
+      expect(await exists(await receiptFile("b"))).toBe(false);
+      expect(await exists(await claimFile("b"))).toBe(false);
+      expect(await leased(await id("b"))).toBe(false);
+      await unlink(path.join(cwd, ".devfn", "instances", await id("b")));
       expect((await run("down", "--runtime", "review")).value.state).toBe("stopped");
 
       // v0.1 compatibility: the default runtime writes through a symlink that existed before up and over a user's file.

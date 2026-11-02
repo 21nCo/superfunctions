@@ -248,8 +248,12 @@ interface Holder {
   entry: { receipt: LifecycleReceipt; file: string } | undefined;
   /** The canonical files it holds, by comparison key. */
   files: Map<string, string>;
-  /** The canonical runtime directory it writes logs, runtime.env and artifacts to, while it is live or its claimant runs. */
-  runtimeDirectory?: { key: string; path: string };
+  /**
+   * The canonical runtime directories it writes logs, runtime.env and
+   * artifacts to: its live receipt's, and the one its running claimant
+   * claimed. A replacement under a changed runtimeDir holds both.
+   */
+  runtimeDirectories: { key: string; path: string }[];
   /** A live receipt of an earlier release that records no files and has no claim: what it holds cannot be known. */
   unknown: boolean;
 }
@@ -257,8 +261,9 @@ interface Holder {
 /**
  * Every other instance of the checkout and the files it holds: its claimed
  * targets while its claimant runs or its receipt is not stopped, the files a
- * live receipt records (its runtime.env included), and the runtime directory
- * its live receipt or running claimant records, wherever a runtimeDir put it.
+ * live receipt records (its runtime.env included), and every runtime
+ * directory its live receipt or running claimant records, wherever a
+ * runtimeDir put it.
  */
 async function otherHolders(config: DevFnConfig, root: string, identity: InstanceIdentity, claims: Map<string, { claim: OutputClaim; text: string }>): Promise<Holder[]> {
   const receipts = await checkoutReceipts(config, root);
@@ -269,12 +274,18 @@ async function otherHolders(config: DevFnConfig, root: string, identity: Instanc
     const entry = receipts.get(instanceId);
     const receipt = entry?.receipt;
     const files = new Map<string, string>();
-    const running = claim !== undefined && !live(receipt) && (claim.targets.length > 0 || claim.runtimeDirectory !== undefined) && await claimantRuns(claim);
+    // A running claimant holds what it claimed whether or not a receipt of
+    // the instance is live: a replacement holds both its old and new state.
+    const running = claim !== undefined && (claim.targets.length > 0 || claim.runtimeDirectory !== undefined) && await claimantRuns(claim);
     if (claim?.targets.length && (live(receipt) || running)) await addCanonical(files, claim.targets);
     if (live(receipt)) await addCanonical(files, receipt!.environmentOutputs);
-    const directory = live(receipt) ? receipt!.runtimeDir : running ? claim!.runtimeDirectory : undefined;
-    const runtimeDirectory = directory === undefined ? undefined : await canonicalTarget(directory).then(({ canonical }) => ({ key: pathKey(canonical), path: canonical }));
-    holders.push({ instanceId, entry, files, ...(runtimeDirectory ? { runtimeDirectory } : {}), unknown: live(receipt) && !claim && !receipt!.environmentOutputs?.length,
+    const runtimeDirectories: { key: string; path: string }[] = [];
+    for (const directory of [live(receipt) ? receipt!.runtimeDir : undefined, running ? claim!.runtimeDirectory : undefined]) {
+      if (directory === undefined) continue;
+      const { canonical } = await canonicalTarget(directory);
+      if (!runtimeDirectories.some((item) => item.key === pathKey(canonical))) runtimeDirectories.push({ key: pathKey(canonical), path: canonical });
+    }
+    holders.push({ instanceId, entry, files, runtimeDirectories, unknown: live(receipt) && !claim && !receipt!.environmentOutputs?.length,
       owner: { runtime: claim?.runtime ?? String(receipt?.runtime ?? DEFAULT_RUNTIME), instanceId, ...(entry ? { receipt: entry.file, projectId: String(entry.receipt.projectId) } : {}) } });
   }
   return holders;
@@ -330,8 +341,8 @@ async function assertTargetsAvailable(config: DevFnConfig, root: string, identit
     // Two runtime directories are disjoint: neither is the other, by a
     // symlink or a runtimeDir, nor lies inside it, or their logs, receipts
     // and runtime.env would overwrite each other.
-    const other = holder.runtimeDirectory;
-    if (other && (within(ownKey, other.key) || within(other.key, ownKey))) {
+    const other = holder.runtimeDirectories.find((item) => within(ownKey, item.key) || within(item.key, ownKey));
+    if (other) {
       const relation = ownKey === other.key ? "is" : within(ownKey, other.key) ? "lies in" : "contains";
       throw new DevFnError("DEVFN_RUNTIME_INVALID", `Runtime ${runtime} keeps its logs and runtime.env in ${relativeName(root, ownDirectory)}, which ${relation} ${relativeName(root, other.path)}, the runtime directory of runtime ${holder.owner.runtime} (instance ${holder.instanceId}); DevFn left it untouched. Remove the symlink or change runtimeDir, or ${await ownerRemedy(config, root, holder.instanceId, holder.entry, holder.owner.runtime)}.`,
         { runtime, target: other.path, owner: holder.owner });
@@ -350,9 +361,10 @@ async function assertTargetsAvailable(config: DevFnConfig, root: string, identit
       throw new DevFnError("DEVFN_RUNTIME_INVALID", `Runtime ${owner.runtime} (instance ${instanceId}) has a ${entry!.receipt.state} receipt that records no environment outputs, so DevFn cannot tell whether it owns ${targets.map((item) => relativeName(root, item.target)).join(", ")}; ${await ownerRemedy(config, root, instanceId, entry, owner.runtime)}.`,
         { runtime, owner });
     }
-    const inside = holder.runtimeDirectory && targets.find((item) => within(item.key, holder.runtimeDirectory!.key));
-    if (inside) {
-      throw new DevFnError("DEVFN_RUNTIME_INVALID", `Environment output ${relativeName(root, inside.target)} of runtime ${runtime} lies in ${relativeName(root, holder.runtimeDirectory!.path)}, the runtime directory of runtime ${owner.runtime} (instance ${instanceId}), which holds its logs and runtime.env; write it elsewhere, or ${await ownerRemedy(config, root, instanceId, entry, owner.runtime)}.`,
+    const directory = holder.runtimeDirectories.find((item) => targets.some((target) => within(target.key, item.key)));
+    const inside = directory && targets.find((item) => within(item.key, directory.key));
+    if (directory && inside) {
+      throw new DevFnError("DEVFN_RUNTIME_INVALID", `Environment output ${relativeName(root, inside.target)} of runtime ${runtime} lies in ${relativeName(root, directory.path)}, the runtime directory of runtime ${owner.runtime} (instance ${instanceId}), which holds its logs and runtime.env; write it elsewhere, or ${await ownerRemedy(config, root, instanceId, entry, owner.runtime)}.`,
         { runtime, target: inside.canonical, owner });
     }
     const taken = [...holder.files.keys()].map((key) => wanted.get(key)).find((item) => item !== undefined);
@@ -396,8 +408,15 @@ export async function assertEnvironmentOutputsAvailable(config: DevFnConfig, roo
 }
 
 export interface EnvironmentOutputClaim {
-  /** Hand the claim to the lifecycle receipt about to be written; restore() then keeps it. */
+  /** Hand the claim to the lifecycle receipt just written; restore() then keeps it. */
   commit(): Promise<void>;
+  /**
+   * Refuse unless the runtime directory path still reaches the real
+   * directory the claim created or found there: called before each generated
+   * write (runtime.env, receipt, logs, Compose files, artifacts), so none is
+   * redirected by a symlink or directory swapped in after the claim.
+   */
+  assertRuntimeDirectory(): Promise<void>;
   /** Give back the targets of a claim no receipt took over; the files written stay this instance's. */
   restore(): Promise<void>;
   /** Write one claimed environment output, attributing it to this instance no later than it exists. */
@@ -490,13 +509,16 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
   let previous: OutputClaim | undefined;
   let hadPrevious = false;
   let claim!: OutputClaim;
+  const ownDirectory = runtimeDirectory(config, root, identity.instanceId);
+  // The real directory the claim holds: its canonical path and identity.
+  let bound!: { canonical: string; id: string };
   const record = async (targets: readonly Target[]) => {
     const text = await readOwnClaim(root, identity.instanceId);
     hadPrevious = text !== undefined;
     previous = text === undefined ? undefined : parseClaim(text, identity.instanceId);
     // An interrupted creation is this instance's only if it left exactly the content it recorded.
     claim = { version: 1, instanceId: identity.instanceId, runtime, targets: targets.map((item) => item.canonical), written: await writtenByClaim(previous),
-      runtimeDirectory: (await canonicalTarget(runtimeDirectory(config, root, identity.instanceId))).canonical, pid: process.pid, ...await processBirthSignature(process.pid).then((value) => value ? { birthSignature: value } : {}), createdAt: new Date().toISOString() };
+      runtimeDirectory: bound.canonical, pid: process.pid, ...await processBirthSignature(process.pid).then((value) => value ? { birthSignature: value } : {}), createdAt: new Date().toISOString() };
     await writeClaim(root, claim);
   };
   // Every start, also one without outputs, claims its runtime directory
@@ -507,14 +529,25 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
   // do the directories it is retired to on release.
   const directory = await claimDirectory(root);
   const lock = path.join(directory, CLAIMS_LOCK);
-  // The first directory this start created, which a start that never began removes again while empty.
+  // The first directories this start created for the claims and for its
+  // runtime directory, which a start that never began removes while empty.
   let created: string | undefined;
+  let createdRuntime: string | undefined;
+  const removeCreated = async () => {
+    if (createdRuntime) await removeEmptyDirectories(ownDirectory, createdRuntime);
+    if (created) await removeEmptyDirectories(directory, created);
+  };
   for (;;) {
     created = await mkdir(directory, { recursive: true, mode: 0o700 }) ?? created;
     try {
       await withFileLock(lock, async () => {
         const targets = await selectedTargets(config, root, runtime, stateDir);
         await assertTargetsAvailable(config, root, identity, targets, await readClaims(root));
+        // The runtime directory exists as a real directory from the claim on,
+        // and its identity is recorded: a symlink created at its path later
+        // cannot redirect this start's writes into another runtime's state.
+        createdRuntime = await makeDirectory(ownDirectory) ?? createdRuntime;
+        bound = await directoryBinding(ownDirectory);
         await record(targets);
         await removeOrphanedStaging(targets);
       }, { timeoutMs: CLAIMS_LOCK_TIMEOUT_MS, staleMs: CLAIMS_LOCK_STALE_MS });
@@ -524,7 +557,7 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
       const failure = error as NodeJS.ErrnoException;
       if (failure.code === "ENOENT" && failure.path === lock) continue;
       // A refused start leaves no DevFn state in a checkout that had none.
-      if (created) await removeEmptyDirectories(directory, created);
+      await removeCreated();
       throw error;
     }
   }
@@ -548,6 +581,12 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
     commit: async () => {
       committed = true;
     },
+    assertRuntimeDirectory: async () => {
+      const now = await directoryBinding(ownDirectory).catch(() => undefined);
+      if (now && pathKey(now.canonical) === pathKey(bound.canonical) && now.id === bound.id) return;
+      throw new DevFnError("DEVFN_RUNTIME_INVALID", `Runtime ${runtime} keeps its logs and runtime.env in ${relativeName(root, ownDirectory)}, which ${now ? `now reaches ${now.canonical}` : "is gone or no longer a directory"}, not the directory ${bound.canonical} it claimed; a symlink or directory on its path changed during startup, and DevFn wrote nothing there.`,
+        { runtime, target: now?.canonical ?? ownDirectory, claimed: bound.canonical });
+    },
     restore: async () => {
       if (committed) return;
       // A start that never began holds neither its outputs nor its runtime
@@ -555,12 +594,16 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
       const { pending: _stale, runtimeDirectory: _directory, ...base } = previous ?? claim;
       const kept: OutputClaim = { ...base, targets: previous?.targets ?? [], written: claim.written, ...(claim.pending?.length ? { pending: claim.pending } : {}),
         ...(previous?.runtimeDirectory ? { runtimeDirectory: previous.runtimeDirectory } : {}) };
-      if (hadPrevious || kept.written.length || kept.pending?.length) return await writeClaim(root, kept);
+      if (hadPrevious || kept.written.length || kept.pending?.length) {
+        await writeClaim(root, kept);
+        if (createdRuntime) await removeEmptyDirectories(ownDirectory, createdRuntime);
+        return;
+      }
       await removeClaim(root, identity.instanceId);
       // Nor does it leave DevFn state in a checkout that had none: only the
       // empty directories it created go, so a sibling's claim, lock or
       // receipt there keeps them.
-      if (created) await removeEmptyDirectories(directory, created);
+      await removeCreated();
     },
     write: async (target, content, mode) => {
       // Every runtime writes only the canonical file it claimed: a target a
@@ -629,6 +672,27 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
       }
     },
   };
+}
+
+/**
+ * Create a directory and its missing parents (0700), returning the first one
+ * created; a parent a sibling's cleanup removed in between is created again.
+ */
+async function makeDirectory(target: string): Promise<string | undefined> {
+  for (let attempt = 0; ; attempt += 1) {
+    try { return await mkdir(target, { recursive: true, mode: 0o700 }); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT" || attempt >= 4) throw error;
+    }
+  }
+}
+
+/** A directory's canonical path and identity (device and inode); it must be a directory. */
+async function directoryBinding(target: string): Promise<{ canonical: string; id: string }> {
+  const canonical = await realpath(target);
+  const info = await stat(canonical, { bigint: true });
+  if (!info.isDirectory()) throw Object.assign(new Error(`${target} is not a directory`), { code: "ENOTDIR" });
+  return { canonical, id: `${info.dev}:${info.ino}` };
 }
 
 /** Remove directory and its parents up to and including top while each is empty. */

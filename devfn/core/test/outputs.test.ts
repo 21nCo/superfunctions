@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { execFile } from "node:child_process";
-import { access, link, mkdir, mkdtemp, readFile, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { access, link, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -241,6 +241,68 @@ describe("environment-output claims", { timeout: 30_000 }, () => {
       // Once a's start is over, its directory is free.
       await inner.restore();
       await (await claimEnvironmentOutputs(withDir("run", []), root, b)).restore();
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("holds both runtime directories of a replacement under a changed runtimeDir, in either order", async () => {
+    const root = await checkout();
+    const a = await resolveInstanceIdentity("fixture", root, "a");
+    const fallback = await resolveInstanceIdentity("fixture", root);
+    const withDir = (runtimeDir: string, outputs: string[]) => validateDevFnConfig({ ...JSON.parse(JSON.stringify(config)), runtimeDir, environmentOutputs: outputs.map((output) => ({ path: output })) });
+    const into = (runtimeDir: string) => withDir("other-run", [path.join(runtimeDir, "instances", a.instanceId, "runtime.env")]);
+    const refused = { code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("the runtime directory of runtime a"), details: { owner: { runtime: "a" } } };
+    try {
+      // a is ready under runtimeDir old-run: its receipt is live and records that directory.
+      await (await claimEnvironmentOutputs(withDir("old-run", []), root, a)).commit();
+      await mkdir(path.join(root, ".devfn", "receipts"), { recursive: true });
+      await writeFile(path.join(root, ".devfn", "receipts", `${a.instanceId}.json`), JSON.stringify({ version: 1, projectId: "fixture", instanceId: a.instanceId, runtime: "a", invocationId: "fixture",
+        profile: "default", state: "ready", root, runtimeDir: path.join(root, "old-run", "instances", a.instanceId), startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+        allocations: [], processes: [], services: [], startedNodes: [], routes: [], urls: {}, environmentOutputs: [] }));
+      // The manifest moves to new-run and a restarts: its new start has claimed new-run/instances/<a>, its receipt still records old-run.
+      const replacing = await claimEnvironmentOutputs(withDir("new-run", []), root, a);
+      // An output in either directory is refused, naming a, before any write.
+      for (const runtimeDir of ["old-run", "new-run"]) {
+        await expect(assertEnvironmentOutputsAvailable(into(runtimeDir), root, fallback), runtimeDir).rejects.toMatchObject(refused);
+        await expect(claimEnvironmentOutputs(into(runtimeDir), root, fallback), runtimeDir).rejects.toMatchObject(refused);
+      }
+      await expect(access(path.join(root, "new-run", "instances", a.instanceId, "runtime.env"))).rejects.toMatchObject({ code: "ENOENT" });
+      // Once the replacement gives up, only the live receipt's directory stays held.
+      await replacing.restore();
+      await expect(assertEnvironmentOutputsAvailable(into("old-run"), root, fallback)).rejects.toMatchObject(refused);
+      const first = await claimEnvironmentOutputs(into("new-run"), root, fallback);
+      // The reverse order: with the default's claim there held first, a's replacement under new-run is refused.
+      await expect(claimEnvironmentOutputs(withDir("new-run", []), root, a)).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("keeps its logs and runtime.env in") });
+      await first.restore();
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("binds a start to the real runtime directory it claimed, so a symlink swapped in afterwards redirects no write", async () => {
+    const root = await checkout();
+    const a = await resolveInstanceIdentity("fixture", root, "a");
+    const b = await resolveInstanceIdentity("fixture", root, "b");
+    const noOutputs = validateDevFnConfig({ ...JSON.parse(JSON.stringify(config)), environmentOutputs: [] });
+    const directory = (id: string) => path.join(root, ".devfn", "instances", id);
+    try {
+      await (await claimEnvironmentOutputs(noOutputs, root, a)).commit();
+      await writeFile(path.join(directory(a.instanceId), "runtime.env"), "OWNER=a\n");
+      // The claim creates b's runtime directory as a real directory.
+      const started = await claimEnvironmentOutputs(noOutputs, root, b);
+      expect((await lstat(directory(b.instanceId))).isDirectory()).toBe(true);
+      await expect(started.assertRuntimeDirectory()).resolves.toBeUndefined();
+      // It is replaced by a symlink to a's directory after the claim: the start refuses before any write.
+      await rm(directory(b.instanceId), { recursive: true });
+      await symlink(a.instanceId, directory(b.instanceId));
+      await expect(started.assertRuntimeDirectory()).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("changed during startup"), details: { claimed: directory(b.instanceId) } });
+      await started.restore();
+      expect(await readFile(path.join(directory(a.instanceId), "runtime.env"), "utf8")).toBe("OWNER=a\n");
+      await expect(access(path.join(root, ".devfn", "receipts", "outputs", `${b.instanceId}.json`))).rejects.toMatchObject({ code: "ENOENT" });
+      // A directory recreated in its place is another directory, also refused.
+      await unlink(directory(b.instanceId));
+      const again = await claimEnvironmentOutputs(noOutputs, root, b);
+      await rm(directory(b.instanceId), { recursive: true });
+      await mkdir(directory(b.instanceId));
+      await expect(again.assertRuntimeDirectory()).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID" });
+      await again.restore();
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 

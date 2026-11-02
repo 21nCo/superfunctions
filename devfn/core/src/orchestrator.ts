@@ -872,15 +872,20 @@ export class DevFnOrchestrator {
         if (oldReady) await registry.release({ invocationId: oldReady.invocationId });
         // Outputs are written before this start has a receipt: each is
         // attributed in the output claim as it is written, and a named
-        // runtime refuses a file that appeared since the claim.
+        // runtime refuses a file that appeared since the claim. Every
+        // generated write lands in the runtime directory the claim holds.
+        await claim.assertRuntimeDirectory();
         await writeEnvironmentOutputs(options.root, runtimeDir, options.config.environmentOutputs ?? [], environment, runtimeOf(identity),
           { write: claim.write, written: receipt.environmentOutputs });
+        await claim.assertRuntimeDirectory();
+        await writeReceipt(receipt);
         // From here this receipt holds the output claim until down.
         await claim.commit();
-        await writeReceipt(receipt);
         receiptWritten = true;
         for (const node of plan.nodes) {
           if (options.signal?.aborted) throw new DevFnError("DEVFN_CANCELLED", `DevFn startup was cancelled before ${node.name} started.`);
+          // Its logs, Compose files and artifacts go to the claimed directory too.
+          await claim.assertRuntimeDirectory();
           await this.startSelectedNode(node, { options, identity, receipt, resolved, ports, allocations, supervisor, compose, registry });
           receipt.updatedAt = new Date().toISOString();
           await writeReceipt(receipt);
@@ -923,7 +928,9 @@ export class DevFnOrchestrator {
         receipt.cleanup = cleanup;
         receipt.error = { code: error && typeof error === "object" && "code" in error ? String(error.code) : "DEVFN_START_FAILED", message: error instanceof Error ? error.message : String(error) };
         receipt.updatedAt = new Date().toISOString();
-        await writeReceipt(receipt).catch(() => undefined);
+        // A runtime directory redirected since the claim gets no copy.
+        const bound = await claim.assertRuntimeDirectory().then(() => true, () => false);
+        await writeReceipt(receipt, { runtimeCopy: bound }).catch(() => undefined);
         if (oldReady) {
           throw new DevFnError("DEVFN_START_FAILED", `DevFn replacement failed after prior invocation ${oldReady.invocationId} was stopped; it was not restarted: ${receipt.error.message}`,
             { cleanup, causeCode: receipt.error.code, priorInvocationId: oldReady.invocationId, priorStopped: true });
