@@ -23,6 +23,25 @@ const schema: DatafnSchema = {
   relations: [],
 };
 
+/**
+ * Returns the sequence-allocation writes to `__datafn_meta`, as the data each
+ * create or update wrote. The namespace's meta row is prepared once before the
+ * transaction (`next_server_seq: 1`), so that create is not included.
+ */
+function sequenceMetaWrites(
+  createSpy: { mock: { calls: unknown[][] } },
+  updateSpy: { mock: { calls: unknown[][] } },
+): { next_server_seq?: number }[] {
+  type MetaData = { next_server_seq?: number };
+  const isMeta = (call: unknown[]) => call[0] === "__datafn_meta";
+  const creates = createSpy.mock.calls
+    .filter(isMeta)
+    .map((call) => call[1] as MetaData)
+    .filter((data) => data?.next_server_seq !== 1);
+  const updates = updateSpy.mock.calls.filter(isMeta).map((call) => call[2] as MetaData);
+  return [...creates, ...updates];
+}
+
 describe("Phase 05: Mutation Optimization", () => {
   let server: any;
   let db: any;
@@ -389,13 +408,11 @@ describe("Phase 05: Mutation Optimization", () => {
       expect(body.ok).toBe(true);
 
       // Verify __datafn_meta modified exactly once (batch allocation for 2 join deltas)
-      const metaCreateCalls = (metaCreateSpy.mock.calls as any[]).filter((c) => c[0] === "__datafn_meta");
-      const metaUpdateCalls = (metaUpdateSpy.mock.calls as any[]).filter((c) => c[0] === "__datafn_meta");
-      const metaInteractionCount = metaCreateCalls.length + metaUpdateCalls.length;
-      expect(metaInteractionCount).toBe(1);
+      const metaWrites = sequenceMetaWrites(metaCreateSpy, metaUpdateSpy);
+      expect(metaWrites).toHaveLength(1);
 
       // The single interaction must allocate 2 sequences (next_server_seq = 1 + 2 = 3)
-      const metaData = (metaCreateCalls[0]?.[1] ?? metaUpdateCalls[0]?.[2]) as any;
+      const metaData = metaWrites[0];
       expect(metaData.next_server_seq).toBe(3);
 
       // Verify 2 changes recorded with contiguous serverSeq values
@@ -437,12 +454,10 @@ describe("Phase 05: Mutation Optimization", () => {
       expect(body.ok).toBe(true);
 
       // Regular mutation: also 1 meta interaction, but increments by 1 (not batched)
-      const metaCreateCalls = (metaCreateSpy.mock.calls as any[]).filter((c) => c[0] === "__datafn_meta");
-      const metaUpdateCalls = (metaUpdateSpy.mock.calls as any[]).filter((c) => c[0] === "__datafn_meta");
-      const metaInteractionCount = metaCreateCalls.length + metaUpdateCalls.length;
-      expect(metaInteractionCount).toBe(1);
+      const metaWrites = sequenceMetaWrites(metaCreateSpy, metaUpdateSpy);
+      expect(metaWrites).toHaveLength(1);
 
-      const metaData = (metaCreateCalls[0]?.[1] ?? metaUpdateCalls[0]?.[2]) as any;
+      const metaData = metaWrites[0];
       expect(metaData.next_server_seq).toBe(2); // 1 (start) + 1 = 2
 
       // Verify 1 change recorded

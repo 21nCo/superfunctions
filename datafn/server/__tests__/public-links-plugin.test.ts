@@ -594,7 +594,12 @@ describe("DataFn public-links plugin", () => {
     });
     const originalCreate = db.create.bind(db);
     const originalTransaction = db.transaction.bind(db);
-    const originalInternalUpdate = db.internal.update.bind(db.internal);
+    // Use the adapter's unqueued update: calling the queued wrapper from the
+    // patched function (which the adapter queues too) would wait on itself.
+    const originalInternalUpdate = Object.getOwnPropertyDescriptor(
+      db.internal,
+      "update",
+    )!.value as typeof db.internal.update;
     let failCompensation = true;
     let lostOriginalTask = false;
     db.internal.update = async (table, where, data) => {

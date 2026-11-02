@@ -88,7 +88,12 @@ describe("REL-001: Transaction atomicity — no silent fallthrough", () => {
       internal: {
         ensureTable: vi.fn(async (tableName: string) => {
           order.push(`table:${tableName}`);
-        })
+        }),
+        findOne: vi.fn(async () => null),
+        create: vi.fn(async (tableName: string, data: Record<string, unknown>) => {
+          order.push(`create:${tableName}`);
+          return data;
+        }),
       },
       transaction: async () => {
         order.push("transaction");
@@ -126,6 +131,7 @@ describe("REL-001: Transaction atomicity — no silent fallthrough", () => {
       "idempotency-ready",
       "table:__datafn_changes",
       "table:__datafn_meta",
+      "create:__datafn_meta",
       "transaction"
     ]);
   });

@@ -99,6 +99,15 @@ export interface ChangeEntryInput {
 }
 
 /**
+ * Namespaces whose `__datafn_meta` row is known to exist, per base adapter.
+ * Services are created per request, so the cache lives with the adapter rather
+ * than the service; after a namespace's first write, preparing it costs no
+ * query. A stale entry (for example after the row is deleted) is harmless:
+ * allocation falls back to creating the row itself.
+ */
+const preparedNamespaces = new WeakMap<object, Set<string>>();
+
+/**
  * Service for managing serverSeq and change tracking
  *
  * When a sequenceStore is provided, serverSeq generation uses that store
@@ -108,6 +117,7 @@ export interface ChangeEntryInput {
 export class ChangeTrackingService {
   private metaEnsured = false;
   private changesEnsured = false;
+  private namespaceMetaEnsured = false;
 
   constructor(
     private db: Adapter,
@@ -117,9 +127,11 @@ export class ChangeTrackingService {
     private logger?: DatafnLogger,
     metaEnsured = false,
     changesEnsured = false,
+    namespaceMetaEnsured = false,
   ) {
     this.metaEnsured = metaEnsured;
     this.changesEnsured = changesEnsured;
+    this.namespaceMetaEnsured = namespaceMetaEnsured;
   }
 
   /** Initialize every durable table before an enclosing transaction begins. */
@@ -138,6 +150,49 @@ export class ChangeTrackingService {
       await ensureInternalTable(this.db, "__datafn_meta");
       this.metaEnsured = true;
     }
+    await this.ensureNamespaceMeta();
+  }
+
+  /**
+   * Creates this namespace's `__datafn_meta` row before an enclosing
+   * transaction begins. Sequence allocation otherwise creates the row inside
+   * the transaction on a namespace's first write, and when two first writes
+   * race, the losing INSERT fails with a unique-key conflict. On PostgreSQL that
+   * aborts the whole transaction, so the recovery read that follows fails with
+   * "current transaction is aborted". Outside a transaction the conflict is
+   * harmless: the row exists either way, and later allocations only read and
+   * CAS-update it. Transaction-bound instances (from `withDb`) never prepare
+   * the row; the base instance does so before the transaction opens.
+   */
+  private async ensureNamespaceMeta(): Promise<void> {
+    if (this.namespaceMetaEnsured) {
+      return;
+    }
+    let prepared = preparedNamespaces.get(this.db);
+    if (!prepared) {
+      prepared = new Set<string>();
+      preparedNamespaces.set(this.db, prepared);
+    }
+    if (prepared.has(this.namespace)) {
+      this.namespaceMetaEnsured = true;
+      return;
+    }
+    const where = [{ field: "namespace", op: "eq" as const, value: this.namespace }];
+    if (!(await this.db.internal.findOne("__datafn_meta", where))) {
+      try {
+        await this.db.internal.create("__datafn_meta", {
+          id: `meta:${this.namespace}`,
+          namespace: this.namespace,
+          next_server_seq: 1,
+        });
+      } catch (error) {
+        if (!(await this.db.internal.findOne("__datafn_meta", where))) {
+          throw error;
+        }
+      }
+    }
+    prepared.add(this.namespace);
+    this.namespaceMetaEnsured = true;
   }
 
   /**
@@ -155,6 +210,7 @@ export class ChangeTrackingService {
       this.logger,
       this.metaEnsured,
       this.changesEnsured,
+      true,
     );
   }
 
