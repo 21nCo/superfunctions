@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { closeSync, constants, fchmodSync, mkdirSync, openSync } from "node:fs";
-import { lstat, mkdir } from "node:fs/promises";
+import { closeSync, constants, fchmodSync, fstatSync, ftruncateSync, mkdirSync, openSync } from "node:fs";
+import { lstat, mkdir, unlink } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -27,22 +27,35 @@ async function openLaunchGate(child: ChildProcess): Promise<void> {
 }
 
 export async function prepareProcessLog(logPath: string, resetSensitiveHistory: boolean): Promise<{ logFd: number; logOffset: number }> {
-  const existing = await lstat(logPath).catch((error) => {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  });
-  if (existing?.isSymbolicLink()) throw new ProcessError("DEVFN_PROCESS_START_FAILED", `Refusing symlinked process log ${logPath}.`);
-  const logOffset = resetSensitiveHistory ? 0 : existing?.size ?? 0;
-  const flags = constants.O_WRONLY | constants.O_CREAT | (resetSensitiveHistory ? constants.O_TRUNC : constants.O_APPEND) | (constants.O_NOFOLLOW ?? 0);
-  let logFd: number | undefined;
-  try {
-    logFd = openSync(logPath, flags, 0o600);
-    fchmodSync(logFd, 0o600);
-    return { logFd, logOffset };
-  } catch (error) {
-    if (logFd !== undefined) closeSync(logFd);
-    if (error instanceof ProcessError) throw error;
-    throw new ProcessError("DEVFN_PROCESS_START_FAILED", `Unable to open process log ${logPath} safely.`, { cause: error instanceof Error ? error.message : String(error) });
+  const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | (constants.O_NOFOLLOW ?? 0);
+  // A log with another name (a hard link, perhaps to another runtime's log)
+  // is never written through: its name here is removed and a new log begins,
+  // and the other name keeps everything it holds.
+  for (let attempt = 0; ; attempt += 1) {
+    const existing = await lstat(logPath).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    });
+    if (existing?.isSymbolicLink()) throw new ProcessError("DEVFN_PROCESS_START_FAILED", `Refusing symlinked process log ${logPath}.`);
+    let logFd: number | undefined;
+    try {
+      logFd = openSync(logPath, flags, 0o600);
+      const opened = fstatSync(logFd);
+      if (opened.nlink > 1 && attempt < 3) {
+        closeSync(logFd);
+        logFd = undefined;
+        await unlink(logPath).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; });
+        continue;
+      }
+      if (opened.nlink > 1) throw new ProcessError("DEVFN_PROCESS_START_FAILED", `Refusing process log ${logPath}, which keeps gaining other hard links.`);
+      if (resetSensitiveHistory) ftruncateSync(logFd, 0);
+      fchmodSync(logFd, 0o600);
+      return { logFd, logOffset: resetSensitiveHistory ? 0 : opened.size };
+    } catch (error) {
+      if (logFd !== undefined) closeSync(logFd);
+      if (error instanceof ProcessError) throw error;
+      throw new ProcessError("DEVFN_PROCESS_START_FAILED", `Unable to open process log ${logPath} safely.`, { cause: error instanceof Error ? error.message : String(error) });
+    }
   }
 }
 
@@ -183,7 +196,12 @@ export class ProcessSupervisor {
     const cwd = await resolveContainedPath(input.root, input.cwd ?? ".", `processes.${input.name}.cwd`).catch((error) => {
       throw new ProcessError("DEVFN_PROCESS_START_FAILED", `Process cwd escapes repository: ${input.cwd ?? "."}`, { cause: error instanceof Error ? error.message : String(error) });
     });
-    const logsDir = path.join(input.runtimeDir, "logs");
+    // The logs directory stays inside the runtime directory: one linked out
+    // of it (to another runtime's logs) is refused.
+    await mkdir(input.runtimeDir, { recursive: true, mode: 0o700 });
+    const logsDir = await resolveContainedPath(input.runtimeDir, "logs", `processes.${input.name}.logs`).catch((error) => {
+      throw new ProcessError("DEVFN_PROCESS_START_FAILED", `Process logs directory of ${input.name} leaves its runtime directory ${input.runtimeDir}.`, { cause: error instanceof Error ? error.message : String(error) });
+    });
     await mkdir(logsDir, { recursive: true, mode: 0o700 });
     if (!/^[A-Za-z0-9_.-]+$/.test(input.name) || input.name !== input.name.trim()) throw new ProcessError("DEVFN_PROCESS_START_FAILED", `Invalid process name ${input.name}.`);
     const logPath = path.join(logsDir, `${input.name}.log`);

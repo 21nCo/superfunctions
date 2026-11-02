@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { execFile } from "node:child_process";
-import { access, link, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { access, link, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -8,18 +8,25 @@ import { promisify } from "node:util";
 import { processBirthSignature, validateDevFnConfig } from "@devfn/config";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { DevFnOrchestrator, resolveInstanceIdentity } from "../src/index.js";
+import { DevFnOrchestrator, resolveInstanceIdentity, writeEnvironmentOutputs, writeReceipt } from "../src/index.js";
 import { assertEnvironmentOutputsAvailable, claimEnvironmentOutputs, releaseEnvironmentOutputs } from "../src/outputs.js";
 
 const execFileAsync = promisify(execFile);
 
 /** Interrupts an output replacement at its rename, before or after the new content lands, as a killed DevFn would. */
 const renameFault = vi.hoisted(() => ({ target: undefined as string | undefined, land: false }));
+/** Fails mkdir of one directory with each queued code in turn, as a sibling removing the empty claims directories in between would. */
+const mkdirFault = vi.hoisted(() => ({ target: undefined as string | undefined, codes: [] as string[] }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...actual,
+    mkdir: async (target: string, options?: Parameters<typeof actual.mkdir>[1]) => {
+      const code = target === mkdirFault.target ? mkdirFault.codes.shift() : undefined;
+      if (code) throw Object.assign(new Error(`${code}: injected, mkdir '${target}'`), { code, path: target });
+      return await actual.mkdir(target, options);
+    },
     rename: async (from: string, to: string) => {
       if (renameFault.target === undefined || to !== renameFault.target) return await actual.rename(from, to);
       if (renameFault.land) await actual.rename(from, to);
@@ -28,7 +35,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-afterEach(() => { renameFault.target = undefined; renameFault.land = false; });
+afterEach(() => { renameFault.target = undefined; renameFault.land = false; mkdirFault.target = undefined; mkdirFault.codes = []; });
 
 async function checkout(): Promise<string> {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-outputs-")));
@@ -303,6 +310,69 @@ describe("environment-output claims", { timeout: 30_000 }, () => {
       await mkdir(directory(b.instanceId));
       await expect(again.assertRuntimeDirectory()).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID" });
       await again.restore();
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("checks every generated path of a start against the directory it bound, through readiness", async () => {
+    const root = await checkout();
+    const a = await resolveInstanceIdentity("fixture", root, "a");
+    const b = await resolveInstanceIdentity("fixture", root, "b");
+    const noOutputs = validateDevFnConfig({ ...JSON.parse(JSON.stringify(config)), environmentOutputs: [] });
+    const dir = (id: string) => path.join(root, ".devfn", "instances", id);
+    try {
+      const held = await claimEnvironmentOutputs(noOutputs, root, a);
+      await writeEnvironmentOutputs(root, dir(a.instanceId), [], { DEVFN_INSTANCE_ID: a.instanceId }, "a", { runtimePath: held.runtimePath });
+      await writeFile(path.join(dir(a.instanceId), "receipt.json"), `${JSON.stringify({ instanceId: a.instanceId })}\n`);
+      await held.commit();
+      const aFiles = async () => await Promise.all(["runtime.env", "receipt.json"].map(async (file) => await readFile(path.join(dir(a.instanceId), file), "utf8")));
+      const before = await aFiles();
+      // b's runtime.env is a hard link to a's: b writes a new file of its own.
+      await mkdir(dir(b.instanceId), { recursive: true });
+      await link(path.join(dir(a.instanceId), "runtime.env"), path.join(dir(b.instanceId), "runtime.env"));
+      const claim = await claimEnvironmentOutputs(noOutputs, root, b);
+      await writeEnvironmentOutputs(root, dir(b.instanceId), [], { DEVFN_INSTANCE_ID: b.instanceId }, "b", { runtimePath: claim.runtimePath });
+      expect(await readFile(path.join(dir(b.instanceId), "runtime.env"), "utf8")).toBe(`DEVFN_INSTANCE_ID=${b.instanceId}\n`);
+      expect(await aFiles()).toEqual(before);
+      // A child link out of b's directory is refused; one that stays inside it is b's own.
+      await rm(path.join(dir(b.instanceId), "runtime.env"));
+      await symlink(path.join(dir(a.instanceId), "runtime.env"), path.join(dir(b.instanceId), "runtime.env"));
+      await expect(claim.runtimePath("runtime.env")).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("symlink to") });
+      await symlink(dir(a.instanceId), path.join(dir(b.instanceId), "logs"));
+      await expect(claim.runtimePath(path.join("logs", "app.log"))).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID" });
+      await rm(path.join(dir(b.instanceId), "logs"));
+      await mkdir(path.join(dir(b.instanceId), "kept"));
+      await symlink("kept", path.join(dir(b.instanceId), "logs"));
+      expect(await claim.runtimePath(path.join("logs", "app.log"))).toBe(path.join(await realpath(dir(b.instanceId)), "logs", "app.log"));
+      // After its first writes, b's directory becomes a link to a's: each later receipt write records b's state stably and refuses the copy.
+      const receipt = { version: 1, projectId: "fixture", instanceId: b.instanceId, runtime: "b", invocationId: "i", profile: "default", state: "ready", root, runtimeDir: dir(b.instanceId),
+        stateDir: path.join(root, "state"), startedAt: "", updatedAt: "", allocations: [], processes: [], services: [], routes: [], urls: {}, environmentOutputs: [] } as unknown as Parameters<typeof writeReceipt>[0];
+      await writeReceipt(receipt, { runtimeCopy: claim.runtimePath });
+      await rename(dir(b.instanceId), `${dir(b.instanceId)}.moved`);
+      await symlink(a.instanceId, dir(b.instanceId));
+      await expect(writeReceipt(receipt, { runtimeCopy: claim.runtimePath })).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("changed during startup") });
+      await expect(writeEnvironmentOutputs(root, dir(b.instanceId), [], { DEVFN_INSTANCE_ID: b.instanceId }, "b", { runtimePath: claim.runtimePath })).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID" });
+      expect(JSON.parse(await readFile(path.join(root, ".devfn", "receipts", `${b.instanceId}.json`), "utf8"))).toMatchObject({ instanceId: b.instanceId });
+      // A later write without the claim (down) never replaces the copy of a's receipt it now reaches.
+      await writeReceipt({ ...receipt, state: "stopped" });
+      expect(await aFiles()).toEqual(before);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("retries creating the claims directory and its lock while a sibling removes the empty directories it created", async () => {
+    const root = await checkout();
+    const identity = await resolveInstanceIdentity("fixture", root, "a");
+    try {
+      // The claims directory vanishes under mkdir, and a mkdir there reports EINVAL while it is being removed (macOS).
+      mkdirFault.target = path.join(root, ".devfn", "receipts", "outputs");
+      mkdirFault.codes = ["ENOENT", "EINVAL", "ENOENT"];
+      const claim = await claimEnvironmentOutputs(config, root, identity);
+      expect(mkdirFault.codes).toEqual([]);
+      expect(JSON.parse(await readFile(path.join(root, ".devfn", "receipts", "outputs", `${identity.instanceId}.json`), "utf8"))).toMatchObject({ instanceId: identity.instanceId });
+      await claim.restore();
+      // A failure that is not that race is not retried.
+      mkdirFault.target = path.join(root, ".devfn", "receipts", "outputs");
+      mkdirFault.codes = ["EACCES"];
+      await expect(claimEnvironmentOutputs(config, root, identity)).rejects.toMatchObject({ code: "EACCES" });
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 

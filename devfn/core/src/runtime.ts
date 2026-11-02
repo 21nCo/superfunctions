@@ -199,12 +199,34 @@ export async function recordRuntimeId(stateDir: string, candidate: string): Prom
   return recorded;
 }
 
-/** Write the stable receipt and, unless runtimeCopy is false, its copy in the runtime directory. */
-export async function writeReceipt(receipt: LifecycleReceipt, options: { runtimeCopy?: boolean } = {}): Promise<void> {
+/**
+ * Where a start writes a generated file of its runtime directory: the path a
+ * claim checked against the directory it bound (EnvironmentOutputClaim.runtimePath).
+ */
+export type RuntimePath = (relative: string) => Promise<string>;
+
+/**
+ * Write the stable receipt, then its copy in the runtime directory: none when
+ * runtimeCopy is false, and at the checked path when a start gives its
+ * runtimePath, which refuses after the stable receipt is written.
+ */
+export async function writeReceipt(receipt: LifecycleReceipt, options: { runtimeCopy?: false | RuntimePath } = {}): Promise<void> {
   const runtimeTarget = path.join(receipt.runtimeDir, "receipt.json");
   const stableTarget = await stableReceiptPath(receipt.root, receipt.instanceId);
   await writeAtomicReceipt(stableTarget, receipt);
-  if (stableTarget !== runtimeTarget && options.runtimeCopy !== false) await writeAtomicReceipt(runtimeTarget, receipt);
+  if (stableTarget === runtimeTarget || options.runtimeCopy === false) return;
+  const target = options.runtimeCopy ? await options.runtimeCopy("receipt.json") : runtimeTarget;
+  // A copy there of another instance's receipt means its directory is
+  // reached through a link: that receipt is never replaced.
+  if (await recordsAnotherInstance(target, receipt.instanceId)) return;
+  await writeAtomicReceipt(target, receipt);
+}
+
+async function recordsAnotherInstance(file: string, instanceId: string): Promise<boolean> {
+  try {
+    const value = JSON.parse(await readFile(file, "utf8")) as { instanceId?: unknown };
+    return typeof value?.instanceId === "string" && value.instanceId !== instanceId;
+  } catch { return false; }
 }
 
 function dotenv(value: string): string { return /^[A-Za-z0-9_./:@-]*$/.test(value) ? value : JSON.stringify(value); }
@@ -212,14 +234,17 @@ function dotenv(value: string): string { return /^[A-Za-z0-9_./:@-]*$/.test(valu
 /**
  * Write the environment outputs, or runtime.env in the instance's runtime
  * directory when none are declared. `write` writes a declared output (the
- * output claim attributes it); `written` collects each path as soon as it is
- * written, so a failure partway still records the files that exist.
+ * output claim attributes it); `runtimePath` gives a start's checked path of
+ * runtime.env. runtime.env is written as a new file renamed into place, so a
+ * link left at its name (to another runtime's file) is replaced, never
+ * written through. `written` collects each path as soon as it is written, so
+ * a failure partway still records the files that exist.
  */
 export async function writeEnvironmentOutputs(root: string, runtimeDir: string, outputs: readonly EnvironmentOutput[], environment: Record<string, string>, runtime: string = DEFAULT_RUNTIME,
-  options: { write?: (target: string, content: string, mode: number) => Promise<void>; written?: string[] } = {}): Promise<string[]> {
+  options: { write?: (target: string, content: string, mode: number) => Promise<void>; runtimePath?: RuntimePath; written?: string[] } = {}): Promise<string[]> {
   const effective = outputs.length
     ? await Promise.all(outputs.map(async (output) => ({ output, target: await resolveContainedPath(root, runtimeOutputPath(output.path, runtime), "environmentOutputs.path"), declared: true })))
-    : [{ output: { path: "runtime.env", format: "dotenv" as const, mode: 0o600 }, target: path.join(runtimeDir, "runtime.env"), declared: false }];
+    : [{ output: { path: "runtime.env", format: "dotenv" as const, mode: 0o600 }, target: options.runtimePath ? await options.runtimePath("runtime.env") : path.join(runtimeDir, "runtime.env"), declared: false }];
   const written = options.written ?? [];
   const ordered = Object.entries(environment).sort(([a], [b]) => {
     if (a < b) return -1;
@@ -232,10 +257,18 @@ export async function writeEnvironmentOutputs(root: string, runtimeDir: string, 
       : ordered.map(([key, value]) => `${key}=${dotenv(value)}`).join("\n") + "\n";
     const mode = output.mode ?? 0o600;
     if (declared && options.write) await options.write(target, content, mode);
-    else {
+    else if (declared) {
       await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
       await writeFile(target, content, { encoding: "utf8", mode });
       await chmod(target, mode);
+    } else {
+      await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
+      const temp = `${target}.${randomUUID()}.tmp`;
+      try {
+        await writeFile(temp, content, { encoding: "utf8", mode, flag: "wx" });
+        await chmod(temp, mode);
+        await rename(temp, target);
+      } finally { await unlink(temp).catch(() => undefined); }
     }
     written.push(target);
   }

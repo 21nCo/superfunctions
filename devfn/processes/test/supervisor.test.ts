@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
-import { closeSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { closeSync, writeSync } from "node:fs";
+import { link, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -43,6 +43,43 @@ describe("process supervision", () => {
       await symlink(target, logPath);
       await expect(prepareProcessLog(logPath, true)).rejects.toThrow(/symlinked process log/);
       expect(await readFile(target, "utf8")).toBe("preserve-me\n");
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("never writes through a log with another hard link: its name gets a new log and the other file is left as it was", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "devfn-linked-log-"));
+    try {
+      const other = path.join(root, "other.log");
+      const logPath = path.join(root, "app.log");
+      await writeFile(other, "another runtime's log\n", "utf8");
+      await link(other, logPath);
+      for (const reset of [false, true]) {
+        const { logFd, logOffset } = await prepareProcessLog(logPath, reset);
+        writeSync(logFd, `this runtime ${reset}\n`);
+        closeSync(logFd);
+        expect(logOffset).toBe(0);
+        expect(await readFile(other, "utf8")).toBe("another runtime's log\n");
+        expect(await readFile(logPath, "utf8")).toBe(`this runtime ${reset}\n`);
+        expect((await stat(logPath)).nlink).toBe(1);
+        await rm(logPath);
+        await link(other, logPath);
+      }
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("refuses a logs directory linked out of the runtime directory before starting anything", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "devfn-linked-logs-"));
+    try {
+      const runtimeDir = path.join(root, "runtime");
+      const elsewhere = path.join(root, "elsewhere");
+      await mkdir(runtimeDir, { recursive: true });
+      await mkdir(elsewhere);
+      await writeFile(path.join(elsewhere, "app.log"), "kept\n", "utf8");
+      await symlink(elsewhere, path.join(runtimeDir, "logs"));
+      await expect(new ProcessSupervisor().start({ name: "app", root, runtimeDir, ports: {}, environment: {},
+        spec: { adapter: "command", command: [process.execPath, "-e", "require('fs').writeFileSync('ran', '1')"] } })).rejects.toThrow(/leaves its runtime directory/);
+      expect(await readFile(path.join(elsewhere, "app.log"), "utf8")).toBe("kept\n");
+      await expect(readFile(path.join(root, "ran"))).rejects.toMatchObject({ code: "ENOENT" });
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 });

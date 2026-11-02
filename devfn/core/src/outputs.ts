@@ -49,6 +49,11 @@ const CLAIMS_LOCK = "claims.lock";
 const CLAIMS_LOCK_TIMEOUT_MS = 30_000;
 const CLAIMS_LOCK_STALE_MS = 5_000;
 const INSTANCE_ID = /^[0-9a-f]{12}$/;
+// What creating the claims directory and its lock reports while a sibling
+// removes the empty directories it created (macOS reports EINVAL for a mkdir
+// in a directory being removed), and how often that is retried.
+const CLAIMS_SETUP_RACES = new Set(["ENOENT", "EINVAL", "ENOTDIR"]);
+const CLAIMS_SETUP_ATTEMPTS = 50;
 
 /** Paths compare case-folded where the default filesystems fold case. */
 const pathKey = (value: string): string => process.platform === "darwin" || process.platform === "win32" ? value.toLowerCase() : value;
@@ -417,6 +422,13 @@ export interface EnvironmentOutputClaim {
    * redirected by a symlink or directory swapped in after the claim.
    */
   assertRuntimeDirectory(): Promise<void>;
+  /**
+   * The path of a file or directory DevFn generates in the claimed runtime
+   * directory (runtime.env, receipt.json, logs, compose, artifacts), checked
+   * as each write is about to happen: the directory is still the one the
+   * claim bound, and no child symlink on the path leads out of it.
+   */
+  runtimePath(relative: string): Promise<string>;
   /** Give back the targets of a claim no receipt took over; the files written stay this instance's. */
   restore(): Promise<void>;
   /** Write one claimed environment output, attributing it to this instance no later than it exists. */
@@ -527,8 +539,7 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
   // runtime-directory claim that overlap never both succeed. The lock lives
   // among the claims under the receipts, which are never task inputs, and so
   // do the directories it is retired to on release.
-  const directory = await claimDirectory(root);
-  const lock = path.join(directory, CLAIMS_LOCK);
+  let directory = path.join(root, CLAIMS);
   // The first directories this start created for the claims and for its
   // runtime directory, which a start that never began removes while empty.
   let created: string | undefined;
@@ -537,10 +548,16 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
     if (createdRuntime) await removeEmptyDirectories(ownDirectory, createdRuntime);
     if (created) await removeEmptyDirectories(directory, created);
   };
-  for (;;) {
-    created = await mkdir(directory, { recursive: true, mode: 0o700 }) ?? created;
+  for (let attempt = 1; ; attempt += 1) {
+    // Until the lock is held, a sibling's failed first start may remove the
+    // empty claims directories it created while this start resolves or
+    // creates them, or creates the lock in them; that is retried.
+    let locked = false;
     try {
-      await withFileLock(lock, async () => {
+      directory = await claimDirectory(root);
+      created = await mkdir(directory, { recursive: true, mode: 0o700 }) ?? created;
+      await withFileLock(path.join(directory, CLAIMS_LOCK), async () => {
+        locked = true;
         const targets = await selectedTargets(config, root, runtime, stateDir);
         await assertTargetsAvailable(config, root, identity, targets, await readClaims(root));
         // The runtime directory exists as a real directory from the claim on,
@@ -553,9 +570,8 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
       }, { timeoutMs: CLAIMS_LOCK_TIMEOUT_MS, staleMs: CLAIMS_LOCK_STALE_MS });
       break;
     } catch (error) {
-      // A sibling's failed first start removed the empty directory before the lock was created in it.
-      const failure = error as NodeJS.ErrnoException;
-      if (failure.code === "ENOENT" && failure.path === lock) continue;
+      const code = (error as NodeJS.ErrnoException).code;
+      if (!locked && CLAIMS_SETUP_RACES.has(code ?? "") && attempt < CLAIMS_SETUP_ATTEMPTS) continue;
       // A refused start leaves no DevFn state in a checkout that had none.
       await removeCreated();
       throw error;
@@ -575,17 +591,42 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
     return { ...rest, ...(pending.length ? { pending } : {}), written: landed ? withWritten(current.written, intent) : current.written };
   });
   let committed = false;
+  const assertRuntimeDirectory = async () => {
+    const now = await directoryBinding(ownDirectory).catch(() => undefined);
+    if (now && pathKey(now.canonical) === pathKey(bound.canonical) && now.id === bound.id) return;
+    throw new DevFnError("DEVFN_RUNTIME_INVALID", `Runtime ${runtime} keeps its logs and runtime.env in ${relativeName(root, ownDirectory)}, which ${now ? `now reaches ${now.canonical}` : "is gone or no longer a directory"}, not the directory ${bound.canonical} it claimed; a symlink or directory on its path changed during startup, and DevFn wrote nothing more there.`,
+      { runtime, target: now?.canonical ?? ownDirectory, claimed: bound.canonical });
+  };
   return {
     // Every start recorded a claim, also of no file, so a live receipt
     // without one is known to come from an earlier release.
     commit: async () => {
       committed = true;
     },
-    assertRuntimeDirectory: async () => {
-      const now = await directoryBinding(ownDirectory).catch(() => undefined);
-      if (now && pathKey(now.canonical) === pathKey(bound.canonical) && now.id === bound.id) return;
-      throw new DevFnError("DEVFN_RUNTIME_INVALID", `Runtime ${runtime} keeps its logs and runtime.env in ${relativeName(root, ownDirectory)}, which ${now ? `now reaches ${now.canonical}` : "is gone or no longer a directory"}, not the directory ${bound.canonical} it claimed; a symlink or directory on its path changed during startup, and DevFn wrote nothing there.`,
-        { runtime, target: now?.canonical ?? ownDirectory, claimed: bound.canonical });
+    assertRuntimeDirectory,
+    runtimePath: async (relative) => {
+      await assertRuntimeDirectory();
+      const target = path.resolve(bound.canonical, relative);
+      const boundKey = pathKey(bound.canonical);
+      if (!within(pathKey(target), boundKey)) throw new Error(`${relative} is not inside the runtime directory`);
+      // Each existing step is a real directory or file of the bound directory,
+      // or a link that stays inside it: never one into another's state.
+      let current = bound.canonical;
+      for (const part of path.relative(bound.canonical, target).split(path.sep).filter(Boolean)) {
+        current = path.join(current, part);
+        const info = await lstat(current).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return undefined;
+          throw error;
+        });
+        if (!info) break;
+        if (!info.isSymbolicLink()) continue;
+        const reached = await realpath(current).catch(() => undefined);
+        if (reached === undefined || !within(pathKey(reached), boundKey)) {
+          throw new DevFnError("DEVFN_RUNTIME_INVALID", `Runtime ${runtime} would write ${relativeName(root, current)} in its runtime directory, but it is a symlink to ${reached ?? "a missing path"} outside that directory; DevFn wrote nothing there. Remove the symlink.`,
+            { runtime, target: current, ...(reached ? { reached } : {}) });
+        }
+      }
+      return target;
     },
     restore: async () => {
       if (committed) return;
@@ -682,7 +723,7 @@ async function makeDirectory(target: string): Promise<string | undefined> {
   for (let attempt = 0; ; attempt += 1) {
     try { return await mkdir(target, { recursive: true, mode: 0o700 }); }
     catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT" || attempt >= 4) throw error;
+      if (!CLAIMS_SETUP_RACES.has((error as NodeJS.ErrnoException).code ?? "") || attempt >= CLAIMS_SETUP_ATTEMPTS) throw error;
     }
   }
 }

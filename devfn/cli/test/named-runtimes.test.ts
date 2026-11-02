@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, chmod, link, lstat, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
+import { access, chmod, link, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -517,6 +517,58 @@ describe("named runtimes", () => {
       await unlink(path.join(cwd, ".devfn", "instances", await id("b")));
       expect((await run("down", "--runtime", "review")).value.state).toBe("stopped");
 
+      // Every file a start generates in its runtime directory is its own, in
+      // the directory it claimed, through readiness: b's runtime.env, receipt
+      // and log survive c's runtime.env linked to b's, c's logs linked to b's
+      // logs, and c's runtime directory redirected to b's mid-start.
+      await manifest([]);
+      const sibling = (await run("up", "--runtime", "b")).value;
+      expect(sibling.state).toBe("ready");
+      const bDir = path.join(cwd, ".devfn", "instances", sibling.instanceId);
+      const cDir = path.join(cwd, ".devfn", "instances", await id("c"));
+      const bFiles = async () => await Promise.all(["receipt.json", "runtime.env", path.join("logs", "app.log")].map(async (file) => await readFile(path.join(bDir, file), "utf8")));
+      const bBefore = await bFiles();
+      expect(bBefore[1]).toContain(`DEVFN_INSTANCE_ID=${sibling.instanceId}`);
+      await mkdir(cDir, { recursive: true });
+      await link(path.join(bDir, "runtime.env"), path.join(cDir, "runtime.env"));
+      const hardLinked = (await run("up", "--runtime", "c")).value;
+      expect(hardLinked.state).toBe("ready");
+      expect(await readFile(path.join(cDir, "runtime.env"), "utf8")).toContain(`DEVFN_INSTANCE_ID=${hardLinked.instanceId}`);
+      expect((await stat(path.join(bDir, "runtime.env"))).nlink).toBe(1);
+      expect(await bFiles()).toEqual(bBefore);
+      expect((await run("down", "--runtime", "c")).value.state).toBe("stopped");
+      await rm(path.join(cDir, "runtime.env"));
+      await symlink(path.join(bDir, "runtime.env"), path.join(cDir, "runtime.env"));
+      const envLinked = await run("up", "--runtime", "c");
+      expect(envLinked.value.error).toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining(`symlink to ${await realpath(path.join(bDir, "runtime.env"))}`) });
+      expect(await bFiles()).toEqual(bBefore);
+      await unlink(path.join(cDir, "runtime.env"));
+      await rm(path.join(cDir, "logs"), { recursive: true, force: true });
+      await symlink(path.join(bDir, "logs"), path.join(cDir, "logs"));
+      const logsLinked = await run("up", "--runtime", "c");
+      expect(logsLinked.code).toBe(1);
+      expect(logsLinked.value.error.message).toContain("is a symlink to");
+      expect(await bFiles()).toEqual(bBefore);
+      await unlink(path.join(cDir, "logs"));
+      // c is held in its readiness wait, after its runtime.env, receipt and log are written, while its runtime directory becomes a link to b's.
+      await writeFile(path.join(cwd, "hold"), "");
+      const midStart = run("up", "--runtime", "c");
+      for (let attempt = 0; attempt < 400 && !await exists(path.join(cDir, "logs", "app.log")); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 25));
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      await rename(cDir, `${cDir}.moved`);
+      await symlink(sibling.instanceId, cDir);
+      await unlink(path.join(cwd, "hold"));
+      const redirectedMidStart = await midStart;
+      expect(redirectedMidStart.code).toBe(1);
+      expect(redirectedMidStart.value.error).toMatchObject({ code: "DEVFN_START_FAILED", message: expect.stringContaining("changed during startup") });
+      expect(await bFiles()).toEqual(bBefore);
+      expect(JSON.parse(await readFile(await receiptFile("c"), "utf8"))).toMatchObject({ state: "failed", instanceId: await id("c") });
+      expect(await served(sibling.allocations[0].port)).toMatchObject({ instance: sibling.instanceId });
+      expect(await leased(await id("c"))).toBe(false);
+      await unlink(cDir);
+      expect((await run("down", "--runtime", "b")).value.state).toBe("stopped");
+      await manifest([".env.{runtime}"]);
+
       // v0.1 compatibility: the default runtime writes through a symlink that existed before up and over a user's file.
       await writeFile(path.join(cwd, "shared.env"), "USER=owned\n");
       await symlink("shared.env", path.join(cwd, ".env.linked"));
@@ -547,7 +599,7 @@ describe("named runtimes", () => {
       expect((await run("down")).value.state).toBe("stopped");
     } finally {
       await chmod(path.join(cwd, "ro"), 0o755).catch(() => undefined);
-      for (const [projectId, runtime] of [["runtimes-fixture", "p"], ["runtimes-fixture", "review"], ["runtimes-fixture"], ["renamed-a"], ["renamed-b"]]) {
+      for (const [projectId, runtime] of [["runtimes-fixture", "p"], ["runtimes-fixture", "review"], ["runtimes-fixture", "b"], ["runtimes-fixture", "c"], ["runtimes-fixture"], ["renamed-a"], ["renamed-b"]]) {
         await manifest([".env.{runtime}"], projectId).catch(() => undefined);
         await run("down", ...runtime ? ["--runtime", runtime] : []).catch(() => undefined);
       }
