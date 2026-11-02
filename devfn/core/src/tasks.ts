@@ -72,6 +72,7 @@ const MAX_INPUT_ENTRIES = 10_000;
 const MAX_INPUT_BYTES = 256 * 1024 * 1024;
 /** Wait, or less once the signal aborts. */
 const delay = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve) => {
+  if (signal?.aborted) return resolve();
   const done = () => { clearTimeout(timer); signal?.removeEventListener("abort", done); resolve(); };
   const timer = setTimeout(done, ms);
   signal?.addEventListener("abort", done, { once: true });
@@ -139,8 +140,7 @@ const LEASED_SOURCES = new Set(["lease", "host-gateway"]);
 /** The Compose environment with each per-lease value (a port, its URL or alias, a leased resource value) and each written env value built from one as a stable sentinel, so a decision before the lease and the run agree; one pass per written value reaches a value built from one however indirectly. */
 function leaseStable(config: DevFnConfig, node: string, profile: string, resources: ResourcePlan | undefined, environment: Record<string, string>): Record<string, string> {
   const lease = new Set([...Object.values(config.ports ?? {}).flatMap((port) => port.env ? [port.env] : []), ...Object.values(resources?.resources ?? {}).flatMap((planned) => Object.entries(planned.services[node] ?? {}).flatMap(([key, value]) => "unreachable" in value || !LEASED_SOURCES.has(value.source) ? [] : [key]))]);
-  const leased = (name: string) => lease.has(name) || /^DEVFN_(PORT|URL|PUBLIC_URL)_/.test(name);
-  const written = Object.entries({ ...config.profiles[profile]?.environment, ...config.services![node].env });
+  const leased = (name: string) => lease.has(name) || /^DEVFN_(PORT|URL|PUBLIC_URL)_/.test(name), written = Object.entries({ ...config.profiles[profile]?.environment, ...config.services![node].env });
   for (let pass = 0; pass < written.length; pass++) for (const [key, value] of written) if ([...value.matchAll(/\{\{env\.(\w+)\}\}/g)].some(([, name]) => leased(name))) lease.add(key);
   return Object.fromEntries(Object.entries(environment).map(([key, value]) => [key, leased(key) ? "1" : value]));
 }

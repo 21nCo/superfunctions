@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 
 import { ComposeController, composeProjectName } from "@devfn/compose";
 import { validateDevFnConfig, type TaskSpec } from "@devfn/config";
-import { withFileLock, type FilePortRegistry } from "@devfn/ports";
+import { FilePortRegistry, withFileLock } from "@devfn/ports";
 import { processBirthSignature, ProcessError, processExists, ProcessSupervisor, type ProcessRunResult, type RunProcessInput } from "@devfn/processes";
 import { describe, expect, it, vi } from "vitest";
 
@@ -14,6 +14,12 @@ import { createPlan, DevFnOrchestrator, planResources, readReceipt, readTaskJour
 import { preflightTasks, runTask, type RunTaskContext } from "../src/tasks.js";
 
 const execFileAsync = promisify(execFile);
+// Lets a test act right after a receipt write, as a signal arriving during that write would.
+const receiptWrites = vi.hoisted(() => ({ after: undefined as ((receipt: { state: string }) => void) | undefined }));
+vi.mock("../src/runtime.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/runtime.js")>();
+  return { ...actual, writeReceipt: async (receipt: Parameters<typeof actual.writeReceipt>[0]) => { await actual.writeReceipt(receipt); receiptWrites.after?.(receipt); } };
+});
 const exists = async (file: string) => await stat(file).then(() => true, () => false);
 // An exited child its parent has not reaped yet (a zombie) runs nothing, so it is not alive.
 const alive = (pid: number) => processExists(pid);
@@ -523,6 +529,39 @@ describe("finite setup tasks gate dependents (real local processes)", () => {
         attempts: [{ outcome: "cancelled", effects: "unknown" }] }] });
     } finally { await env.cleanup(); }
   }, 60_000);
+
+  it("rolls back a startup cancelled while it marks itself active or writes its ready receipt, and keeps an uncancelled one ready", async () => {
+    const markActive = FilePortRegistry.prototype.markActive;
+    for (const during of ["activation", "ready-receipt", "none"] as const) {
+      const env = await fixture(`commit-${during}`);
+      const controller = new AbortController();
+      try {
+        if (during === "activation") FilePortRegistry.prototype.markActive = async function (...args) { controller.abort(); return await markActive.apply(this, args); };
+        if (during === "ready-receipt") receiptWrites.after = (receipt) => { if (receipt.state === "ready") controller.abort(); };
+        const outcome = await env.orchestrator.up({ config: env.config, root: env.root, stateDir: env.stateDir, signal: controller.signal }).catch((error: unknown) => error);
+        FilePortRegistry.prototype.markActive = markActive;
+        receiptWrites.after = undefined;
+        const receipt = await readReceipt(env.config, env.root, env.identity.instanceId);
+        const invocations = (await new FilePortRegistry(path.join(env.stateDir, "registry.json")).read()).invocations.filter((item) => item.id === receipt?.invocationId);
+        expect(receipt?.processes.map((item) => item.name)).toEqual(["web"]);
+        if (during === "none") {
+          expect(outcome).toMatchObject({ state: "ready" });
+          expect(receipt?.state).toBe("ready");
+          expect(invocations).toMatchObject([{ state: "ready" }]);
+          expect(alive(receipt!.processes[0].pid)).toBe(true);
+          continue;
+        }
+        expect(outcome).toMatchObject({ code: "DEVFN_START_FAILED", details: { causeCode: "DEVFN_CANCELLED", cleanup: { releasedPorts: true, errors: [] } } });
+        expect(receipt).toMatchObject({ state: "failed", error: { code: "DEVFN_CANCELLED" } });
+        expect(invocations.map((item) => item.state)).not.toContainEqual(expect.stringMatching(/^(planning|starting|ready|stopping)$/));
+        expect(alive(receipt!.processes[0].pid)).toBe(false);
+      } finally {
+        FilePortRegistry.prototype.markActive = markActive;
+        receiptWrites.after = undefined;
+        await env.cleanup();
+      }
+    }
+  }, 90_000);
 
   it("skips a task whose input revision succeeded, reruns it when an input changes, and retries an idempotent task", async () => {
     const env = await fixture("rerun", { idempotent: true, retries: 1 }, { failTimes: 1 });
@@ -1469,6 +1508,29 @@ describe("task attempt boundaries (stub launchers)", () => {
       expect(stub.runs).toHaveLength(1);
       expect((await env.journal())?.attempts).toMatchObject([{ outcome: "failed", effects: "unknown", error: expect.stringContaining("still alive") }]);
     } finally { await rm(env.root, { recursive: true, force: true }); }
+  });
+
+  it("ends a retry backoff at once when cancelled while the failed attempt was being recorded, as when cancelled during the wait", async () => {
+    for (const when of ["recording", "waiting"] as const) {
+      const stub = failing({});
+      const controller = new AbortController();
+      let abortedAt = 0;
+      const abort = () => { abortedAt = Date.now(); controller.abort(); };
+      const env = await context(`backoff-${when}`, { node: { name: "migrate", kind: "process" }, supervisor: stub.supervisor, signal: controller.signal,
+        record: async (receipt) => {
+          if (receipt.status !== "failed" || abortedAt) return;
+          if (when === "recording") abort();
+          else setTimeout(abort, 100);
+        } });
+      try {
+        await expect(runTask(env.value)).rejects.toMatchObject({ code: "DEVFN_CANCELLED" });
+        // The first backoff is 1000 ms; neither cancellation waits it out or starts another attempt.
+        expect(abortedAt).toBeGreaterThan(0);
+        expect(Date.now() - abortedAt).toBeLessThan(900);
+        expect(stub.runs).toHaveLength(1);
+        expect((await env.journal())?.attempts).toMatchObject([{ outcome: "failed", effects: "unknown" }]);
+      } finally { await rm(env.root, { recursive: true, force: true }); }
+    }
   });
 
   it("keeps a launcher its closed launch gate could not stop unresolved, so every later start settles it first or blocks", async () => {

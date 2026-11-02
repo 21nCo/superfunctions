@@ -837,6 +837,7 @@ export class DevFnOrchestrator {
         receipt.state = "ready";
         receipt.updatedAt = new Date().toISOString();
         await writeReceipt(receipt);
+        if (options.signal?.aborted) throw new DevFnError("DEVFN_CANCELLED", "DevFn startup was cancelled."); // An abort during activation or the ready write rolls back: no await follows.
         return receipt;
       } catch (error) {
         const cleanup = await this.cleanup(receipt, registry, supervisor, compose, proxy, true);
