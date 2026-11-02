@@ -1,4 +1,5 @@
 import type { HttpTransportAuthProvider } from '@superfunctions/http';
+import { defaultCookieAccessor, readCsrfToken } from './cookies.js';
 import type { AuthFnTransportAuthOptions } from './transport-auth.js';
 
 export type AuthFnBearerTokenProvider =
@@ -7,10 +8,14 @@ export type AuthFnBearerTokenProvider =
 interface AuthFnSessionTransportAuthOptions extends AuthFnTransportAuthOptions {
   bearerToken?: AuthFnBearerTokenProvider;
   credentials?: RequestCredentials;
+  cookieAccessor?: () => string | undefined;
+  cookiePrefix?: string;
 }
 
 /**
  * Creates an AuthFn transport auth provider from resolved session material.
+ * When a readable AuthFn CSRF cookie is present, its token is sent as
+ * `x-authfn-csrf` so cookie-session mutations pass the server CSRF check.
  */
 export function createAuthFnSessionTransportAuth(
   options: AuthFnSessionTransportAuthOptions = {},
@@ -23,6 +28,13 @@ export function createAuthFnSessionTransportAuth(
       const bearerToken = await resolveToken(options.bearerToken);
       if (bearerToken) {
         headers.authorization = `Bearer ${bearerToken}`;
+      }
+      const csrfToken = readCsrfToken(
+        options.cookieAccessor ?? defaultCookieAccessor,
+        options.cookiePrefix,
+      );
+      if (csrfToken) {
+        headers['x-authfn-csrf'] = csrfToken;
       }
       new Headers((await resolveHeaders(options.headers)) ?? undefined).forEach((value, key) => {
         headers[key] = value;

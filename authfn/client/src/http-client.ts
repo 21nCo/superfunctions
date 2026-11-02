@@ -1,3 +1,4 @@
+import { defaultCookieAccessor, readCsrfToken } from './cookies.js';
 import type { AuthFnClientOptions, AuthFnErrorEnvelope } from './types.js';
 
 interface RequestOptions {
@@ -62,11 +63,7 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
         }
 
         if (request.csrf) {
-          const cookieHeader = cookieAccessor();
-          const csrfToken = readCookieValue(
-            cookieHeader,
-            `${cookiePrefix || readCookiePrefix(cookieHeader)}.csrf`
-          );
+          const csrfToken = readCsrfToken(cookieAccessor, cookiePrefix);
           if (csrfToken) {
             headers.set('x-authfn-csrf', csrfToken);
           }
@@ -224,47 +221,4 @@ function isAuthFnEnvelope(value: unknown): value is { ok: boolean; requestId: st
     && typeof envelopeError.message === 'string'
     && typeof envelopeError.retryable === 'boolean'
   );
-}
-
-function defaultCookieAccessor(): string | undefined {
-  const documentLike = globalThis.document as { cookie?: string } | undefined;
-  return documentLike?.cookie;
-}
-
-function readCookiePrefix(cookieHeader: string | undefined): string {
-  if (!cookieHeader) {
-    return 'authfn';
-  }
-
-  for (const part of cookieHeader.split(';')) {
-    const [rawName] = part.trim().split('=');
-    if (rawName.startsWith('__Secure-') && rawName.endsWith('.session')) {
-      return rawName.slice('__Secure-'.length, -'.session'.length);
-    }
-    if (rawName.endsWith('.session')) {
-      return rawName.slice(0, -'.session'.length);
-    }
-  }
-
-  return 'authfn';
-}
-
-function readCookieValue(cookieHeader: string | undefined, name: string): string | undefined {
-  if (!cookieHeader) {
-    return undefined;
-  }
-
-  for (const part of cookieHeader.split(';')) {
-    const [rawName, ...valueParts] = part.trim().split('=');
-    if (rawName === name) {
-      const rawValue = valueParts.join('=');
-      try {
-        return decodeURIComponent(rawValue);
-      } catch {
-        return rawValue;
-      }
-    }
-  }
-
-  return undefined;
 }

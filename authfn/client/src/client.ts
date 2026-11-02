@@ -13,6 +13,8 @@ export function createAuthFnClient(options: AuthFnClientOptions = {}): AuthFnCli
       createAuthFnSessionTransportAuth({
         credentials: options.credentials,
         bearerToken: options.bearerToken,
+        cookieAccessor: options.cookieAccessor,
+        cookiePrefix: options.cookiePrefix,
         ...input
       }),
     getSession: () =>
