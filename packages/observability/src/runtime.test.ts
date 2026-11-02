@@ -24,6 +24,16 @@ describe("isBrowserScope", () => {
     ).toBe(false);
   });
 
+  it("keeps navigator-less Cloudflare Workers on the server path", () => {
+    expect(
+      isBrowserScope({
+        WebSocketPair: function WebSocketPair() {},
+        WorkerGlobalScope: function WorkerGlobalScope() {},
+        importScripts: () => undefined
+      })
+    ).toBe(false);
+  });
+
   it("keeps Deno and Bun on the server path", () => {
     expect(isBrowserScope({ Deno: {}, window: {} })).toBe(false);
     expect(isBrowserScope({ Bun: {} })).toBe(false);
