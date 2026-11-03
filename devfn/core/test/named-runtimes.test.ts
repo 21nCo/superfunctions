@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import http from "node:http";
-import { access, link, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, link, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -12,6 +12,7 @@ import { withFileLock } from "@devfn/ports";
 import { proxyListenerPorts, proxyOwnerStatus } from "@devfn/proxy";
 import { describe, expect, it } from "vitest";
 
+import { assertEnvironmentOutputsAvailable, claimEnvironmentOutputs } from "../src/outputs.js";
 import { createPlan, DevFnOrchestrator, domainAliases, resolveEndpointTemplates, resolveInstanceIdentity, resolveLocalHostname, runtimeDirectory, selectRuntime, taskInputRevision } from "../src/index.js";
 
 const execFileAsync = promisify(execFile);
@@ -238,6 +239,53 @@ async function stopFixtureProxy(stateDir: string): Promise<void> {
   try { process.kill(owner.pid, "SIGTERM"); } catch { /* stopped */ }
   for (let attempt = 0; attempt < 40 && await proxyOwnerStatus(owner) === "active"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 50));
 }
+
+// Root writes through a read-only directory, so the failed release cannot be provoked there.
+it.skipIf(process.getuid?.() === 0)("releases a stopped runtime's output claim on a retried down when the first release failed, keeping its history and other runtimes' claims", async () => {
+  const { parent, primary } = await repository();
+  const stateDir = path.join(parent, "state");
+  const config = validateDevFnConfig({ version: 1, project: { id: "release-fixture" }, runtimeDir: "old-run", ports: { web: { env: "PORT" } }, environmentOutputs: [{ path: ".env.{runtime}" }],
+    processes: { web: { adapter: "command", command: [process.execPath, "server.mjs"], ports: ["web"], health: { type: "http", port: "web", timeoutMs: 10_000 } } },
+    profiles: { default: { processes: ["web"] } } });
+  const orchestrator = new DevFnOrchestrator();
+  const claims = path.join(primary, ".devfn", "receipts", "outputs");
+  const claimOf = async (instanceId: string) => JSON.parse(await readFile(path.join(claims, `${instanceId}.json`), "utf8")) as { targets: string[]; runtimeDirectory?: string; written: Array<{ target: string }> };
+  try {
+    await writeFile(path.join(primary, "server.mjs"), SERVER);
+    // This process ran both starts, so it is their running claimant until it exits.
+    const a = await orchestrator.up({ config, root: primary, stateDir, runtime: "a" });
+    const c = await orchestrator.up({ config, root: primary, stateDir, runtime: "c" });
+    const cClaim = await readFile(path.join(claims, `${c.instanceId}.json`), "utf8");
+    // Runtime b, under another runtimeDir, would write its output in a's runtime directory.
+    const b = await resolveInstanceIdentity("release-fixture", primary, "b");
+    const sibling = validateDevFnConfig({ ...JSON.parse(JSON.stringify(config)), runtimeDir: "new-run", environmentOutputs: [{ path: path.join("old-run", "instances", a.instanceId, "b.env") }] });
+    // The first down stops a but cannot write its claim: its receipt stays live (degraded) instead of saying stopped.
+    await chmod(claims, 0o555);
+    const failed = await orchestrator.down({ config, root: primary, stateDir, runtime: "a" });
+    await chmod(claims, 0o700);
+    expect(failed.state).toBe("degraded");
+    expect(failed.cleanup?.errors.join(" ")).toMatch(/not released.*run devfn down again/);
+    expect((await claimOf(a.instanceId)).targets).toHaveLength(1);
+    await expect(assertEnvironmentOutputsAvailable(sibling, primary, b)).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("the runtime directory of runtime a") });
+    // The retried down releases it; the files a wrote stay recorded as its own, and c's claim is untouched.
+    expect((await orchestrator.down({ config, root: primary, stateDir, runtime: "a" })).state).toBe("stopped");
+    const released = await claimOf(a.instanceId);
+    expect(released.targets).toEqual([]);
+    expect(released.runtimeDirectory).toBeUndefined();
+    expect(released.written.map((item) => path.basename(item.target))).toEqual([".env.a"]);
+    expect(await readFile(path.join(claims, `${c.instanceId}.json`), "utf8")).toBe(cClaim);
+    await expect(orchestrator.down({ config, root: primary, stateDir, runtime: "a" })).rejects.toMatchObject({ code: "DEVFN_NOT_RUNNING" });
+    // The sibling now takes the released location, while c still holds its own.
+    await expect(assertEnvironmentOutputsAvailable(sibling, primary, b)).resolves.toBeUndefined();
+    await (await claimEnvironmentOutputs(sibling, primary, b)).commit();
+    await expect(assertEnvironmentOutputsAvailable(validateDevFnConfig({ ...JSON.parse(JSON.stringify(sibling)), environmentOutputs: [{ path: path.join("old-run", "instances", c.instanceId, "b.env") }] }), primary, b))
+      .rejects.toMatchObject({ message: expect.stringContaining("the runtime directory of runtime c") });
+  } finally {
+    await chmod(claims, 0o700).catch(() => undefined);
+    for (const runtime of ["a", "c"]) await orchestrator.down({ config, root: primary, stateDir, runtime }).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 60_000);
 
 it.skipIf(process.env.DEVFN_REAL_PROXY !== "1")("routes two named runtimes of one checkout through the real proxy and removes only the stopped one's routes", async () => await withFileLock(
   path.join(os.tmpdir(), "devfn-test-caddy-admin.lock"), async () => {

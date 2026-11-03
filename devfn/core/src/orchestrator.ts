@@ -1172,10 +1172,19 @@ export class DevFnOrchestrator {
     if (cleanup.errors.length === 0) await registry.recoverInterrupted(identity.instanceId);
     receipt.cleanup = cleanup;
     receipt.state = cleanup.errors.length || cleanup.publicOutstanding?.length ? "degraded" : "stopped";
+    // A stopped runtime no longer holds its environment-output files or its
+    // runtime directory. They are released before its receipt says stopped,
+    // so a failed release, or a down that dies before the receipt is written,
+    // leaves a live receipt that a retried down releases again.
+    if (receipt.state === "stopped") {
+      try { await releaseEnvironmentOutputs(options.root, identity.instanceId); }
+      catch (error) {
+        cleanup.errors.push(`Environment-output claim of ${describeInstance(identity)} was not released, so its files and runtime directory stay held; run devfn down again: ${error instanceof Error ? error.message : String(error)}`);
+        receipt.state = "degraded";
+      }
+    }
     receipt.updatedAt = new Date().toISOString();
     await writeReceipt(receipt);
-    // A stopped runtime no longer holds its environment-output files.
-    if (receipt.state === "stopped") await releaseEnvironmentOutputs(options.root, identity.instanceId);
     return receipt;
   }
 
