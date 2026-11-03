@@ -877,3 +877,28 @@ it("keeps a task's input revision when a sibling runtime publishes its claim and
     await rm(parent, { recursive: true, force: true });
   }
 }, 120_000);
+
+it("never removes a staging-shaped output that only a replaced claimless receipt recorded, now kept in its claim's history", async () => {
+  const { parent, primary } = await repository();
+  const stateDir = path.join(parent, "state");
+  const declaredName = "..env.x.00000000-0000-4000-8000-000000000000.devfn-tmp";
+  const configWith = (paths: string[]) => validateDevFnConfig({ version: 1, project: { id: "staging-history" }, ports: { web: { env: "PORT" } }, environmentOutputs: paths.map((item) => ({ path: item })),
+    processes: { web: { adapter: "command", command: [process.execPath, "server.mjs"], ports: ["web"], health: { type: "http", port: "web", timeoutMs: 10_000 } } },
+    profiles: { default: { processes: ["web"] } } });
+  const orchestrator = new DevFnOrchestrator();
+  const claims = path.join(primary, ".devfn", "receipts", "outputs");
+  try {
+    await writeFile(path.join(primary, "server.mjs"), SERVER);
+    await orchestrator.up({ config: configWith([".env", declaredName]), root: primary, stateDir });
+    const declared = await readFile(path.join(primary, declaredName), "utf8");
+    // An earlier release's receipt has no claim; the next start replaces that receipt, so only the new claim's history records the output.
+    for (const name of await readdir(claims)) if (name.endsWith(".json")) await rm(path.join(claims, name));
+    await orchestrator.down({ config: configWith([".env"]), root: primary, stateDir });
+    await orchestrator.up({ config: configWith([".env"]), root: primary, stateDir });
+    await orchestrator.up({ config: configWith([".env.{runtime}"]), root: primary, stateDir, runtime: "x" });
+    expect(await readFile(path.join(primary, declaredName), "utf8")).toBe(declared);
+  } finally {
+    for (const runtime of [undefined, "x"]) await orchestrator.down({ config: configWith([".env"]), root: primary, stateDir, ...(runtime ? { runtime } : {}) }).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 120_000);

@@ -541,9 +541,9 @@ async function overwriteInPlace<T>(target: string, content: string, mode: number
   return "written";
 }
 
-/** Remove staging files an interrupted write left beside claimed targets, never a file a claim or any checkout receipt records as an output. */
+/** Remove staging files an interrupted write left beside claimed targets, never a file a claim (also as recorded history) or any checkout receipt records as an output. */
 async function removeOrphanedStaging(targets: readonly Target[], claims: Map<string, { claim: OutputClaim }>, receipts: Map<string, { receipt: LifecycleReceipt }>): Promise<void> {
-  const outputs = new Set([...targets.map((item) => item.key), ...[...claims.values()].flatMap(({ claim }) => [...claim.targets, ...claim.written.map((item) => item.target)].map(pathKey)), ...await Promise.all([...receipts.values()].flatMap(({ receipt }) => receipt.environmentOutputs ?? []).map(async (item) => pathKey((await canonicalTarget(item)).canonical)))]);
+  const outputs = new Set([...targets.map((item) => item.key), ...[...claims.values()].flatMap(({ claim }) => [...claim.targets, ...claim.written.map((item) => item.target)].map(pathKey)), ...await Promise.all([...[...receipts.values()].flatMap(({ receipt }) => receipt.environmentOutputs ?? []), ...[...claims.values()].flatMap(({ claim }) => claim.recorded ?? [])].map(async (item) => pathKey((await canonicalTarget(item)).canonical)))]);
   for (const item of targets) {
     const names = await readdir(path.dirname(item.canonical)).catch(() => [] as string[]);
     for (const name of names) {
