@@ -110,12 +110,8 @@ function isExcluded(excluded: readonly string[], absolute: string): boolean {
 }
 
 /**
- * isExcluded, also for a name that spells a runtime's file of a `{runtime}`
- * output (or its staging file) in another case. Such a name is excluded only
- * when it is the same file as DevFn's own spelling (the template's literal
- * segments as declared, the runtime segment lower-cased), as after a
- * case-only rename on a case-insensitive volume; a distinct file on a
- * case-sensitive volume stays an input. Links are never followed.
+ * isExcluded, also for a name that spells a runtime's file of a `{runtime}` output (or its staging file) in another case. Such a name is excluded only when it is the same file as DevFn's own spelling (the template's literal segments as declared,
+ * the runtime segment lower-cased), as after a case-only rename on a case-insensitive volume; a distinct file on a case-sensitive volume stays an input. Links are never followed.
  */
 async function isExcludedEntry(excluded: readonly string[], absolute: string): Promise<boolean> {
   if (isExcluded(excluded, absolute)) return true;
@@ -247,10 +243,17 @@ export async function taskInputRevision(config: DevFnConfig, root: string, node:
   });
   const inputs: Array<[string, string]> = [];
   // What DevFn writes under the repository (runtime, receipts, environment outputs of every runtime and their claims, a state dir; canonical before it exists) is never an input, nor is a directory holding it beyond its other entries.
-  // So is what any instance's receipt (any state) or claim records: its runtime directory, outputs and claimed or written files, under an earlier runtimeDir or outputs too. The default runtime's output is a symlink (its destination excluded), `{runtime}` or literal.
-  const excluded = await Promise.all([...[...devfnStateDirectories(config.runtimeDir), ...(config.environmentOutputs ?? []).flatMap((output) => output.path.includes("{runtime}") ? [output.path, runtimeOutputPath(output.path)] : [output.path]), ...[...(await checkoutReceipts(config, root)).values()].flatMap(({ receipt }) => [receipt.runtimeDir, ...receipt.environmentOutputs ?? []]), ...[...(await readClaims(root).catch(() => new Map<string, never>())).values()].flatMap(({ claim }) => [...claim.runtimeDirectory ? [claim.runtimeDirectory] : [], ...claim.targets, ...claim.written.map((item) => item.target)])]
+  // So is what any instance's receipt (any state) or claim records: its runtime directory, outputs and claimed or written files, under an earlier runtimeDir or outputs too, also what it recorded before its receipt was replaced. The default runtime's output is a symlink (its destination excluded), `{runtime}` or literal.
+  const discover = async () => await Promise.all([...[...devfnStateDirectories(config.runtimeDir), ...(config.environmentOutputs ?? []).flatMap((output) => output.path.includes("{runtime}") ? [output.path, runtimeOutputPath(output.path)] : [output.path]), ...[...(await checkoutReceipts(config, root)).values()].flatMap(({ receipt }) => [receipt.runtimeDir, ...receipt.environmentOutputs ?? []]), ...[...(await readClaims(root).catch(() => new Map<string, never>())).values()].flatMap(({ claim }) => [...claim.runtimeDirectory ? [claim.runtimeDirectory] : [], ...claim.targets, ...claim.written.map((item) => item.target), ...claim.recorded ?? []])]
     .map((item) => path.resolve(root, item)), ...(stateDir ? [stateDir] : [])].map((item) => canonical(path.resolve(item))));
-  for (const [index, input] of (task.inputs ?? []).entries()) inputs.push([input, await digestInput(root, input, `${field}.task.inputs[${index}]`, excluded)]);
+  // A sibling records its claim before it writes, so attribution read again after the walk covers all the walk saw; the walk is repeated (bounded) while it grew.
+  for (let excluded = await discover(), pass = 1; ; pass += 1, inputs.length = 0) {
+    for (const [index, input] of (task.inputs ?? []).entries()) inputs.push([input, await digestInput(root, input, `${field}.task.inputs[${index}]`, excluded)]);
+    const grown = (await discover()).filter((item) => !excluded.includes(item));
+    if (!grown.length) break;
+    if (pass === 3) throw new DevFnError("DEVFN_RUNTIME_INVALID", `Other runtimes of this checkout kept starting while DevFn computed the input revision of task ${node.name}; start again.`, { task: node.name });
+    excluded = [...excluded, ...grown];
+  }
   return sha256(JSON.stringify({ version: 1, kind: node.kind, settings, env: entries(spec.env), profileEnv: entries(config.profiles[profile]?.environment),
     envAllowlist: sorted(spec.envAllowlist), secretEnv: sorted(spec.secretEnv), resources: consumed, inputs, profile: JSON.stringify([settings, spec.env, config.profiles[profile]?.environment]).includes("DEVFN_PROFILE") ? profile : undefined }));
 }
@@ -465,11 +468,7 @@ export interface RunTaskContext {
   root: string;
   stateDir: string;
   runtimeDir: string;
-  /**
-   * The runtime directory checked again immediately before each attempt
-   * writes its log and Compose override, so a link put on those paths after
-   * an earlier check or attempt is refused before any byte is written.
-   */
+  /** The runtime directory checked again immediately before each attempt writes its log and Compose override, so a link put on those paths after an earlier check or attempt is refused before any byte is written. */
   attemptRuntimeDir?: () => Promise<string>;
   instanceId: string;
   invocationId: string;

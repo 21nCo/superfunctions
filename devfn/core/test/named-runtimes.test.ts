@@ -19,6 +19,7 @@ import { createPlan, DevFnOrchestrator, domainAliases, resolveEndpointTemplates,
 const execFileAsync = promisify(execFile);
 // Lets a test act right after down releases a claim, as a sibling start in another process could.
 const releases = vi.hoisted(() => ({ after: undefined as (() => Promise<void>) | undefined }));
+const claimReads = vi.hoisted(() => ({ after: undefined as (() => Promise<void>) | undefined }));
 vi.mock("../src/outputs.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/outputs.js")>();
   return { ...actual, releaseEnvironmentOutputs: async (...args: Parameters<typeof actual.releaseEnvironmentOutputs>) => {
@@ -26,6 +27,13 @@ vi.mock("../src/outputs.js", async (importOriginal) => {
     const after = releases.after;
     releases.after = undefined;
     await after?.();
+  }, readClaims: async (...args: Parameters<typeof actual.readClaims>) => {
+    // Lets a test publish a sibling right after a task-input revision read the claims, before its walk.
+    const result = await actual.readClaims(...args);
+    const after = claimReads.after;
+    claimReads.after = undefined;
+    await after?.();
+    return result;
   } };
 });
 
@@ -798,3 +806,74 @@ it("keeps a task's completion while a sibling runtime stops under an earlier run
     await rm(parent, { recursive: true, force: true });
   }
 }, 240_000);
+
+it("keeps a once task's completion when its own runtime moves to another runtimeDir, also from an earlier release's claimless receipt, and still refuses a real input change before stopping anything", async () => {
+  for (const [runtime, claimless] of [[undefined, false], ["r", false], [undefined, true]] as const) {
+    const { parent, primary } = await repository();
+    const stateDir = path.join(parent, "state");
+    const log = path.join(parent, "runs.log");
+    const configOf = (runtimeDir: string, wait: number) => validateDevFnConfig({ version: 1, project: { id: "relocate-task" }, runtimeDir,
+      processes: {
+        seed: { adapter: "command", command: [process.execPath, "-e", `require("node:fs").appendFileSync(${JSON.stringify(log)}, "x\\n")`], task: { rerun: "once", inputs: ["."] } },
+        web: { adapter: "command", command: [process.execPath, "-e", `setTimeout(() => {}, ${wait})`], dependsOn: ["seed"] } },
+      profiles: { default: { processes: ["seed", "web"] } } });
+    const orchestrator = new DevFnOrchestrator();
+    const runs = async () => (await readFile(log, "utf8").catch(() => "")).split("\n").filter(Boolean).length;
+    const options = (config: DevFnConfig) => ({ config, root: primary, stateDir, ...(runtime ? { runtime } : {}) });
+    const web = async (config: DevFnConfig) => (await orchestrator.status(options(config))).processes.find((item) => item.name === "web")?.state;
+    try {
+      await writeFile(path.join(primary, "schema.sql"), "create table t();");
+      await orchestrator.up(options(configOf("old-run", 60_000)));
+      // An earlier release's receipt has no output claim.
+      if (claimless) for (const name of await readdir(path.join(primary, ".devfn", "receipts", "outputs"))) if (name.endsWith(".json")) await rm(path.join(primary, ".devfn", "receipts", "outputs", name));
+      // A ready lifecycle replaced under a new runtimeDir (and a changed web command) keeps the completion and runs web.
+      await orchestrator.up(options(configOf("new-run", 60_001)));
+      expect(await web(configOf("new-run", 60_001))).toBe("running");
+      expect(await runs()).toBe(1);
+      // So does a later start after down, reading the moved runtime's earlier directory as its own state.
+      await orchestrator.down(options(configOf("new-run", 60_001)));
+      await orchestrator.up(options(configOf("new-run", 60_002)));
+      expect(await runs()).toBe(1);
+      // A real input change is still refused, before the ready lifecycle is stopped.
+      await writeFile(path.join(primary, "schema.sql"), "create table u();");
+      await expect(orchestrator.up(options(configOf("new-run", 60_003)))).rejects.toMatchObject({ code: "DEVFN_TASK_INPUT_CHANGED" });
+      expect(await web(configOf("new-run", 60_002))).toBe("running");
+      expect(await runs()).toBe(1);
+    } finally {
+      for (const runtimeDir of ["old-run", "new-run"]) await orchestrator.down(options(configOf(runtimeDir, 60_000))).catch(() => undefined);
+      await rm(parent, { recursive: true, force: true });
+    }
+  }
+}, 240_000);
+
+it("keeps a task's input revision when a sibling runtime publishes its claim and files after the revision read the claims, before its walk", async () => {
+  const { parent, primary } = await repository();
+  const stateDir = path.join(parent, "state");
+  const configOf = (runtimeDir: string, output: string, processes: string[]) => validateDevFnConfig({ version: 1, project: { id: "sibling-window" }, runtimeDir, environmentOutputs: [{ path: output }],
+    processes: {
+      seed: { adapter: "command", command: [process.execPath, "-e", "0"], task: { rerun: "on-change", inputs: ["."] } },
+      web: { adapter: "command", command: [process.execPath, "-e", "setTimeout(() => {}, 60000)"] } },
+    profiles: { default: { processes } } });
+  const orchestrator = new DevFnOrchestrator();
+  const current = configOf("new-run", ".out.{runtime}", ["seed"]);
+  const sibling = configOf("old-run", ".env.{runtime}", ["web"]);
+  const revision = async () => await taskInputRevision(current, primary, { name: "seed", kind: "process" }, "default", undefined, undefined, stateDir);
+  try {
+    await writeFile(path.join(primary, "schema.sql"), "create table t();");
+    const before = await revision();
+    // Sibling b starts under an earlier runtimeDir and another output between the claims read and the walk.
+    claimReads.after = async () => { await orchestrator.up({ config: sibling, root: primary, stateDir, runtime: "b" }); };
+    const during = await revision();
+    expect(claimReads.after).toBeUndefined();
+    expect(await readdir(primary)).toEqual(expect.arrayContaining([".env.b", "old-run"]));
+    expect(during).toBe(before);
+    expect(await revision()).toBe(before);
+    // A real input change still changes it.
+    await writeFile(path.join(primary, "schema.sql"), "create table u();");
+    expect(await revision()).not.toBe(before);
+  } finally {
+    claimReads.after = undefined;
+    await orchestrator.down({ config: sibling, root: primary, stateDir, runtime: "b" }).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 120_000);

@@ -22,6 +22,7 @@ import { DevFnError, type InstanceIdentity, type LifecycleReceipt } from "./type
  * the content it last wrote or the content it intended (both its own), or
  * someone else's file. `runtimeDirectory` is the canonical runtime directory
  * the claimant writes its logs and runtime.env to, held like its targets.
+ * `recorded` keeps, like `written`, every runtime directory it claimed and what its receipt recorded when this claim replaced it (task-input attribution).
  */
 interface WrittenOutput { target: string; sha256: string }
 
@@ -32,7 +33,7 @@ interface OutputClaim {
   targets: string[];
   written: WrittenOutput[];
   pending?: WrittenOutput[];
-  runtimeDirectory?: string;
+  runtimeDirectory?: string; recorded?: string[];
   pid: number;
   birthSignature?: string;
   createdAt: string;
@@ -110,7 +111,7 @@ function parseClaim(text: string, instanceId: string): OutputClaim | undefined {
     const files = (items: unknown) => Array.isArray(items) &&
       items.every((item: WrittenOutput) => typeof item?.target === "string" && typeof item.sha256 === "string" && /^[0-9a-f]{64}$/.test(item.sha256));
     if (value.version === 1 && value.instanceId === instanceId && typeof value.runtime === "string" && strings(value.targets) && files(value.written) &&
-      (value.pending === undefined || files(value.pending)) && (value.runtimeDirectory === undefined || typeof value.runtimeDirectory === "string") &&
+      (value.pending === undefined || files(value.pending)) && (value.runtimeDirectory === undefined || typeof value.runtimeDirectory === "string") && (value.recorded === undefined || strings(value.recorded)) &&
       Number.isSafeInteger(value.pid) && value.pid > 0 && typeof value.createdAt === "string") return value;
   } catch { /* Malformed below. */ }
   return undefined;
@@ -316,10 +317,8 @@ async function* regularFiles(directory: string): AsyncGenerator<string> {
 }
 
 /**
- * The other instance holding the file with this identity (a hard link to its
- * file), if any: a file it holds, its receipt or claim record, or, for a file
- * with more than one link, any file it generated in its runtime directories
- * (logs, receipt copy, runtime.env, Compose files, artifacts).
+ * The other instance holding the file with this identity (a hard link to its file), if any: a file it holds, its receipt or claim record, or, for a file
+ * with more than one link, any file it generated in its runtime directories (logs, receipt copy, runtime.env, Compose files, artifacts).
  */
 async function holderOfIdentity(holders: readonly Holder[], identity: string, linked: boolean): Promise<{ holder: Holder; file: string } | undefined> {
   for (const holder of holders) {
@@ -464,11 +463,7 @@ export interface EnvironmentOutputClaim {
   runtimePath(relative: string): Promise<string>;
   /** Give back the targets of a claim no receipt took over; the files written stay this instance's. */
   restore(): Promise<void>;
-  /**
-   * The receipt that held this instance's previous claim now says stopped:
-   * restore() then gives back its targets and runtime directory too, as down
-   * releases them, and keeps only the files written.
-   */
+  /** The receipt that held this instance's previous claim now says stopped: restore() then gives back its targets and runtime directory too, as down releases them, and keeps only the files written. */
   previousStopped(): void;
   /** Write one claimed environment output, attributing it to this instance no later than it exists. */
   write(target: string, content: string, mode: number): Promise<void>;
@@ -577,7 +572,7 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
     previous = text === undefined ? undefined : parseClaim(text, identity.instanceId);
     // An interrupted creation is this instance's only if it left exactly the content it recorded.
     claim = { version: 1, instanceId: identity.instanceId, runtime, targets: targets.map((item) => item.canonical), written: await writtenByClaim(previous),
-      runtimeDirectory: bound.canonical, pid: process.pid, ...await processBirthSignature(process.pid).then((value) => value ? { birthSignature: value } : {}), createdAt: new Date().toISOString() };
+      runtimeDirectory: bound.canonical, recorded: [...new Set([...previous?.recorded ?? [], bound.canonical, ...[(await checkoutReceipts(config, root)).get(identity.instanceId)?.receipt].flatMap((receipt) => receipt ? [receipt.runtimeDir, ...receipt.environmentOutputs ?? []] : [])])], pid: process.pid, ...await processBirthSignature(process.pid).then((value) => value ? { birthSignature: value } : {}), createdAt: new Date().toISOString() };
     await writeClaim(root, claim);
   };
   // Every start, also one without outputs, claims its runtime directory
@@ -676,9 +671,7 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
           throw new DevFnError("DEVFN_RUNTIME_INVALID", `Runtime ${runtime} would write ${relativeName(root, current)} in its runtime directory, but it is a symlink to ${reached ?? "a missing path"} outside that directory; DevFn wrote nothing there. Remove the symlink.`,
             { runtime, target: current, ...(reached ? { reached } : {}) });
         }
-        // A link at the name itself that stays inside reaches a file a writer
-        // would write through; when that file has another name (a hard link,
-        // perhaps to another runtime's file) the link goes, as above.
+        // A link at the name itself that stays inside reaches a file a writer would write through; when that file has another name (a hard link, perhaps to another runtime's file) the link goes, as above.
         if (current === target) {
           const reachedInfo = await stat(reached).catch(() => undefined);
           if (reachedInfo?.isFile() && reachedInfo.nlink > 1) await detach(current);
@@ -696,7 +689,7 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
       // A start that never began holds neither its outputs nor its runtime
       // directory; a claim it created is removed.
       const { pending: _stale, runtimeDirectory: _directory, ...base } = previous ?? claim;
-      const kept: OutputClaim = { ...base, targets: previous?.targets ?? [], written: claim.written, ...(claim.pending?.length ? { pending: claim.pending } : {}),
+      const kept: OutputClaim = { ...base, targets: previous?.targets ?? [], written: claim.written, recorded: claim.recorded, ...(claim.pending?.length ? { pending: claim.pending } : {}),
         ...(previous?.runtimeDirectory ? { runtimeDirectory: previous.runtimeDirectory } : {}) };
       if (hadPrevious || kept.written.length || kept.pending?.length) {
         await writeClaim(root, kept);
