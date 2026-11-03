@@ -22,7 +22,7 @@ import { DevFnError, type InstanceIdentity, type LifecycleReceipt } from "./type
  * the content it last wrote or the content it intended (both its own), or
  * someone else's file. `runtimeDirectory` is the canonical runtime directory
  * the claimant writes its logs and runtime.env to, held like its targets.
- * `recorded` keeps, like `written`, every runtime directory it claimed and what its receipt recorded when this claim replaced it (task-input attribution).
+ * `recorded` keeps, like `written`, every runtime directory it claimed (task-input attribution); `replaced`, the outputs its receipt recorded when this claim replaced it (staging cleanup).
  */
 interface WrittenOutput { target: string; sha256: string }
 
@@ -33,7 +33,7 @@ interface OutputClaim {
   targets: string[];
   written: WrittenOutput[];
   pending?: WrittenOutput[];
-  runtimeDirectory?: string; recorded?: string[];
+  runtimeDirectory?: string; recorded?: string[]; replaced?: string[];
   pid: number;
   birthSignature?: string;
   createdAt: string;
@@ -111,7 +111,7 @@ function parseClaim(text: string, instanceId: string): OutputClaim | undefined {
     const files = (items: unknown) => Array.isArray(items) &&
       items.every((item: WrittenOutput) => typeof item?.target === "string" && typeof item.sha256 === "string" && /^[0-9a-f]{64}$/.test(item.sha256));
     if (value.version === 1 && value.instanceId === instanceId && typeof value.runtime === "string" && strings(value.targets) && files(value.written) &&
-      (value.pending === undefined || files(value.pending)) && (value.runtimeDirectory === undefined || typeof value.runtimeDirectory === "string") && (value.recorded === undefined || strings(value.recorded)) &&
+      (value.pending === undefined || files(value.pending)) && (value.runtimeDirectory === undefined || typeof value.runtimeDirectory === "string") && (value.recorded === undefined || strings(value.recorded)) && (value.replaced === undefined || strings(value.replaced)) &&
       Number.isSafeInteger(value.pid) && value.pid > 0 && typeof value.createdAt === "string") return value;
   } catch { /* Malformed below. */ }
   return undefined;
@@ -215,6 +215,13 @@ const live = (receipt: LifecycleReceipt | undefined): boolean => receipt !== und
 async function claimantRuns(claim: OutputClaim): Promise<boolean> {
   const status = await processIdentityStatus(claim.pid, claim.birthSignature, claim.createdAt);
   return status !== "exited" && status !== "identity-mismatch";
+}
+
+/** Task-input attribution of the checkout's instances (`own` starts now, so its earlier outputs are released): `held` are every runtime directory a receipt or claim records and another's outputs while its live receipt, running claimant or pending write holds them; `released`, every file an instance wrote while it holds what it last wrote there. */
+export async function taskAttribution(config: DevFnConfig, root: string, claims: () => Promise<Map<string, { claim: OutputClaim }>>, own?: string): Promise<{ held: string[]; released: string[] }> {
+  const held = [...await checkoutReceipts(config, root)].flatMap(([id, { receipt }]) => [receipt.runtimeDir, ...id !== own && live(receipt) ? receipt.environmentOutputs ?? [] : []]), released: string[] = [];
+  for (const [id, { claim }] of await claims()) { held.push(...claim.runtimeDirectory ? [claim.runtimeDirectory] : [], ...claim.recorded ?? [], ...id === own ? [] : [...(claim.pending ?? []).map((item) => item.target), ...claim.targets.length && await claimantRuns(claim) ? claim.targets : []]); for (const item of await writtenByClaim(claim)) if (await holdsRecorded(item)) released.push(item.target); }
+  return { held, released };
 }
 
 interface Target { output: string; target: string; canonical: string; key: string; exists: boolean; symlink: boolean }
@@ -543,7 +550,7 @@ async function overwriteInPlace<T>(target: string, content: string, mode: number
 
 /** Remove staging files an interrupted write left beside claimed targets, never a file a claim (also as recorded history) or any checkout receipt records as an output. */
 async function removeOrphanedStaging(targets: readonly Target[], claims: Map<string, { claim: OutputClaim }>, receipts: Map<string, { receipt: LifecycleReceipt }>): Promise<void> {
-  const outputs = new Set([...targets.map((item) => item.key), ...[...claims.values()].flatMap(({ claim }) => [...claim.targets, ...claim.written.map((item) => item.target)].map(pathKey)), ...await Promise.all([...[...receipts.values()].flatMap(({ receipt }) => receipt.environmentOutputs ?? []), ...[...claims.values()].flatMap(({ claim }) => claim.recorded ?? [])].map(async (item) => pathKey((await canonicalTarget(item)).canonical)))]);
+  const outputs = new Set([...targets.map((item) => item.key), ...[...claims.values()].flatMap(({ claim }) => [...claim.targets, ...claim.written.map((item) => item.target)].map(pathKey)), ...await Promise.all([...[...receipts.values()].flatMap(({ receipt }) => receipt.environmentOutputs ?? []), ...[...claims.values()].flatMap(({ claim }) => claim.replaced ?? [])].map(async (item) => pathKey((await canonicalTarget(item)).canonical)))]);
   for (const item of targets) {
     const names = await readdir(path.dirname(item.canonical)).catch(() => [] as string[]);
     for (const name of names) {
@@ -569,7 +576,7 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
   const record = async (targets: readonly Target[]) => {
     // An interrupted creation is this instance's only if it left exactly the content it recorded.
     claim = { version: 1, instanceId: identity.instanceId, runtime, targets: targets.map((item) => item.canonical), written: await writtenByClaim(previous),
-      runtimeDirectory: bound.canonical, recorded: [...new Set([...previous?.recorded ?? [], bound.canonical, ...[(await checkoutReceipts(config, root)).get(identity.instanceId)?.receipt].flatMap((receipt) => receipt ? [receipt.runtimeDir, ...receipt.environmentOutputs ?? []] : [])])], pid: process.pid, ...await processBirthSignature(process.pid).then((value) => value ? { birthSignature: value } : {}), createdAt: new Date().toISOString() };
+      runtimeDirectory: bound.canonical, ...await checkoutReceipts(config, root).then((receipts) => receipts.get(identity.instanceId)?.receipt).then((receipt) => ({ recorded: [...new Set([...previous?.recorded ?? [], bound.canonical, ...receipt ? [receipt.runtimeDir] : []])], replaced: [...new Set([...previous?.replaced ?? [], ...receipt?.environmentOutputs ?? []])] })), pid: process.pid, ...await processBirthSignature(process.pid).then((value) => value ? { birthSignature: value } : {}), createdAt: new Date().toISOString() };
     await writeClaim(root, claim);
   };
   // Every start, also one without outputs, claims its runtime directory
@@ -587,7 +594,7 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
     if (createdRuntime) await removeEmptyDirectories(ownDirectory, createdRuntime);
     if (claim) {
       const { pending: _stale, runtimeDirectory: _directory, ...base } = previous ?? claim;
-      const kept: OutputClaim = { ...base, targets: previous?.targets ?? [], written: claim.written, recorded: claim.recorded, ...(claim.pending?.length ? { pending: claim.pending } : {}),
+      const kept: OutputClaim = { ...base, targets: previous?.targets ?? [], written: claim.written, recorded: claim.recorded, replaced: claim.replaced, ...(claim.pending?.length ? { pending: claim.pending } : {}),
         ...(previous?.runtimeDirectory ? { runtimeDirectory: previous.runtimeDirectory } : {}) };
       if (hadPrevious || kept.written.length || kept.pending?.length) return await writeClaim(root, kept);
       await removeClaim(root, identity.instanceId);
@@ -767,10 +774,7 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
   };
 }
 
-/** Remove one name of a file; a name already gone is fine. */
-async function detach(name: string): Promise<void> {
-  await unlink(name).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; });
-}
+/** Remove one name of a file; a name already gone is fine. */ async function detach(name: string): Promise<void> { await unlink(name).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; }); }
 
 /**
  * Create a directory and its missing parents (0700), returning the first one

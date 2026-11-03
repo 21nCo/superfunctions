@@ -1053,3 +1053,51 @@ it("never removes a staging-shaped output that only a replaced claimless receipt
     await rm(parent, { recursive: true, force: true });
   }
 }, 120_000);
+
+it("releases an output a runtime wrote, stopped and then dropped from its config: a direct input naming it is accepted, and once its content changes a walk hashes it, so edits rerun an on-change task", async () => {
+  for (const runtime of [undefined, "r"]) {
+    const { parent, primary } = await repository();
+    const stateDir = path.join(parent, "state");
+    const log = path.join(parent, "runs.log");
+    const output = runtime ? "config/app.{runtime}.json" : "config/app.json", file = runtime ? "config/app.r.json" : "config/app.json";
+    const configOf = (inputs: string[], outputs: string[]) => validateDevFnConfig({ version: 1, project: { id: "dropped-output" }, environmentOutputs: outputs.map((item) => ({ path: item })),
+      processes: { seed: { adapter: "command", command: [process.execPath, "-e", `require("node:fs").appendFileSync(${JSON.stringify(log)}, "x\\n")`], task: { rerun: "on-change", inputs } } },
+      profiles: { default: { processes: ["seed"] } } });
+    const orchestrator = new DevFnOrchestrator();
+    const runs = async () => (await readFile(log, "utf8").catch(() => "")).split("\n").filter(Boolean).length;
+    const direct = configOf([file], []), directory = configOf(["config"], []);
+    const cycle = async (config: DevFnConfig) => { await orchestrator.up({ config, root: primary, stateDir, ...(runtime ? { runtime } : {}) }); await orchestrator.down({ config, root: primary, stateDir, ...(runtime ? { runtime } : {}) }); };
+    const revision = async (config: DevFnConfig) => await taskInputRevision(config, primary, { name: "seed", kind: "process" }, "default", undefined, undefined, stateDir, (await resolveInstanceIdentity("dropped-output", primary, runtime)).instanceId);
+    try {
+      await writeFile(path.join(primary, "schema.sql"), "create table t();");
+      await mkdir(path.join(primary, "config"));
+      await writeFile(path.join(primary, "config", "other.yml"), "a: 1\n");
+      await cycle(configOf(["schema.sql"], [output]));
+      const written = await readFile(path.join(primary, file), "utf8");
+      expect(await runs()).toBe(1);
+      // Still holding what DevFn wrote, the dropped output is accepted as a direct input and only a walk leaves it out.
+      await cycle(direct);
+      expect(await runs()).toBe(2);
+      const unchanged = await revision(directory);
+      await rm(path.join(primary, file));
+      expect(await revision(directory)).toBe(unchanged);
+      // Once the user's own file is there, it is an input like any other.
+      await writeFile(path.join(primary, file), written);
+      const before = await revision(direct);
+      await writeFile(path.join(primary, file), "{\"user\":1}\n");
+      expect(await revision(direct)).not.toBe(before);
+      await cycle(direct);
+      expect(await runs()).toBe(3);
+      await cycle(directory);
+      expect(await runs()).toBe(4);
+      await writeFile(path.join(primary, file), "{\"user\":2}\n");
+      await cycle(directory);
+      expect(await runs()).toBe(5);
+      await cycle(directory);
+      expect(await runs()).toBe(5);
+    } finally {
+      await orchestrator.down({ config: directory, root: primary, stateDir, ...(runtime ? { runtime } : {}) }).catch(() => undefined);
+      await rm(parent, { recursive: true, force: true });
+    }
+  }
+}, 240_000);
