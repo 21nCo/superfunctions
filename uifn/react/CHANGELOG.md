@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.4 - 2026-11-03
+
+- Imports `@uifn/core` types from the subpath that owns them (`controller`, `environment`, `parts`, `primitives`) instead of the root entry.
+- An app that imports one primitive no longer bundles unrelated primitives such as the QR-code generator (Tabs fixture: 72,307 to 57,146 gzip bytes).
+- Depends on `@uifn/core` 0.0.3, `@uifn/dom` 0.0.2 and `@uifn/adapter-kit` 0.0.2.
+
 ## 0.0.1 - 2026-03-20
 
 - Marked `@uifn/react` as GA in the initial release contract.

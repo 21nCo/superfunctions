@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.4 - 2026-11-03
+
+- Imports `@uifn/core` types from the subpath that owns them (`controller`, `environment`, `parts`, `primitives`) instead of the root entry.
+- An app that imports one primitive no longer bundles unrelated primitives such as the QR-code generator (Tabs fixture: 70,367 to 58,339 gzip bytes).
+- Depends on `@uifn/core` 0.0.3, `@uifn/dom` 0.0.2 and `@uifn/adapter-kit` 0.0.2.
+
 ## Unreleased - 2026-07-18
 
 - Replaced the partial handwritten adapter with generated Svelte 5 compounds for all 69 stable primitives and 465 anatomy parts.

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.3 - 2026-11-03
+
+- Declared `"sideEffects": false`. Every module only declares bindings when imported, and a new test rejects module-level statements that could run code, so bundlers can drop primitives an app does not import.
+- Each per-primitive entry no longer bundles the QR-code contract and its generator. Before this, a top-level contract call counted as a side effect, so every app that imported one primitive shipped them.
+
 ## Unreleased
 
 - Added the uniform public controller, typed part-composition, and explicit environment/scope contracts.
