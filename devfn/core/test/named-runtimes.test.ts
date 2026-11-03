@@ -317,6 +317,48 @@ it("never removes a declared output that has the shape of another output's stagi
   }
 }, 120_000);
 
+it("never removes a staging-shaped output that only a checkout receipt records, live or stopped, but still removes a real leftover staging file", async () => {
+  const { parent, primary } = await repository();
+  const stateDir = path.join(parent, "state");
+  const uuid = "00000000-0000-4000-8000-000000000000";
+  const configWith = (paths: string[]) => validateDevFnConfig({ version: 1, project: { id: "staging-receipt" }, ports: { web: { env: "PORT" } }, environmentOutputs: paths.map((item) => ({ path: item })),
+    processes: { web: { adapter: "command", command: [process.execPath, "server.mjs"], ports: ["web"], health: { type: "http", port: "web", timeoutMs: 10_000 } } },
+    profiles: { default: { processes: ["web"] } } });
+  const orchestrator = new DevFnOrchestrator();
+  const legacy = configWith([".env", `..env.x.${uuid}.devfn-tmp`]);
+  const named = configWith([".env.{runtime}"]);
+  const declaredName = `..env.x.${uuid}.devfn-tmp`;
+  const claims = path.join(primary, ".devfn", "receipts", "outputs");
+  const read = async (name: string) => await readFile(path.join(primary, name), "utf8").catch(() => undefined);
+  // An earlier release's receipt has no output claim: only the receipt records its outputs.
+  const removeClaims = async (keep: readonly string[] = []) => {
+    for (const name of await readdir(claims).catch(() => [] as string[])) if (name.endsWith(".json") && !keep.includes(name)) await rm(path.join(claims, name));
+  };
+  try {
+    await writeFile(path.join(primary, "server.mjs"), SERVER);
+    await orchestrator.up({ config: legacy, root: primary, stateDir });
+    const declared = await read(declaredName);
+    expect(declared).toContain("DEVFN_INSTANCE_ID=");
+    await removeClaims();
+    const leftover = "..env.x.11111111-1111-4111-8111-111111111111.devfn-tmp";
+    await writeFile(path.join(primary, leftover), "PARTIAL=1\n");
+    await orchestrator.up({ config: named, root: primary, stateDir, runtime: "x" });
+    expect(await read(declaredName)).toBe(declared);
+    expect(await read(leftover)).toBeUndefined();
+    const xClaims = (await readdir(claims)).filter((name) => name.endsWith(".json"));
+    await orchestrator.down({ config: named, root: primary, stateDir, runtime: "x" });
+    await orchestrator.down({ config: legacy, root: primary, stateDir });
+    // The default runtime's receipt is now stopped and, again, the only record of its outputs.
+    await removeClaims(xClaims);
+    await orchestrator.up({ config: named, root: primary, stateDir, runtime: "x" });
+    expect(await read(declaredName)).toBe(declared);
+  } finally {
+    await orchestrator.down({ config: named, root: primary, stateDir, runtime: "x" }).catch(() => undefined);
+    await orchestrator.down({ config: legacy, root: primary, stateDir }).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 120_000);
+
 // Root writes through a read-only directory, so the failed release cannot be provoked there.
 it.skipIf(process.getuid?.() === 0)("releases a stopped runtime's output claim on a retried down when the first release failed, keeping its history and other runtimes' claims", async () => {
   const { parent, primary } = await repository();
