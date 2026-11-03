@@ -144,22 +144,28 @@ async function digestInput(root: string, relative: string, field: string, exclud
   if (await realpath(target).catch(() => target).then(async (real) => await isExcludedEntry(excluded, real) || excluded.some((item) => real.startsWith(`${item}${path.sep}`)))) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} ${relative} is DevFn runtime state, not a task input.`);
   const hash = createHash("sha256");
   const budget = { entries: 0, bytes: 0 };
+  // An entry below the input that vanished while it was read is named; the revision retries the walk if attribution grew meanwhile (a sibling's own write).
+  const gone = (entry: string) => (error: NodeJS.ErrnoException): never => {
+    if (error.code === "ENOENT" || error.code === "ENOTDIR") throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} entry ${entry} vanished while DevFn read it.`, { vanished: entry });
+    throw error;
+  };
   const visit = async (absolute: string, name: string): Promise<void> => {
     if (await isExcludedEntry(excluded, absolute)) return;
     if (++budget.entries > MAX_INPUT_ENTRIES) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} lists more than ${MAX_INPUT_ENTRIES} entries.`);
-    const stats = await lstat(absolute).catch((error: NodeJS.ErrnoException) => {
+    const shown = path.join(relative, name);
+    const stats = await lstat(absolute).catch(absolute !== target ? gone(shown) : (error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} ${relative} does not exist.`);
       throw error;
     });
-    if (stats.isSymbolicLink()) hash.update(`l\0${name}\0${await readlink(absolute)}\0`);
+    if (stats.isSymbolicLink()) hash.update(`l\0${name}\0${await readlink(absolute).catch(gone(shown))}\0`);
     else if (stats.isDirectory()) {
       if (!excluded.some((item) => item.startsWith(`${absolute}${path.sep}`))) hash.update(`d\0${name}\0`);
-      const entries: string[] = []; for await (const { name: entry } of await opendir(absolute)) if (!await isExcludedEntry(excluded, path.join(absolute, entry)) && entries.push(entry) > MAX_INPUT_ENTRIES - budget.entries) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} lists more than ${MAX_INPUT_ENTRIES} entries.`);
+      const entries: string[] = []; for await (const { name: entry } of await opendir(absolute).catch(gone(shown))) if (!await isExcludedEntry(excluded, path.join(absolute, entry)) && entries.push(entry) > MAX_INPUT_ENTRIES - budget.entries) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} lists more than ${MAX_INPUT_ENTRIES} entries.`);
       for (const entry of entries.sort(compare)) await visit(path.join(absolute, entry), `${name}/${entry}`);
     } else if (stats.isFile()) {
       budget.bytes += stats.size;
       if (budget.bytes > MAX_INPUT_BYTES) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} exceeds ${MAX_INPUT_BYTES} bytes.`);
-      hash.update(`f\0${name}\0${sha256(await readFile(absolute))}\0`);
+      hash.update(`f\0${name}\0${sha256(await readFile(absolute).catch(gone(shown)))}\0`);
     } else hash.update(`o\0${name}\0`);
   };
   await visit(target, ".");
@@ -246,11 +252,12 @@ export async function taskInputRevision(config: DevFnConfig, root: string, node:
   // So is what any instance's receipt (any state) or claim records: its runtime directory, outputs and claimed or written files, under an earlier runtimeDir or outputs too, also what it recorded before its receipt was replaced. The default runtime's output is a symlink (its destination excluded), `{runtime}` or literal.
   const discover = async () => await Promise.all([...[...devfnStateDirectories(config.runtimeDir), ...(config.environmentOutputs ?? []).flatMap((output) => output.path.includes("{runtime}") ? [output.path, runtimeOutputPath(output.path)] : [output.path]), ...[...(await checkoutReceipts(config, root)).values()].flatMap(({ receipt }) => [receipt.runtimeDir, ...receipt.environmentOutputs ?? []]), ...[...(await readClaims(root).catch(() => new Map<string, never>())).values()].flatMap(({ claim }) => [...claim.runtimeDirectory ? [claim.runtimeDirectory] : [], ...claim.targets, ...claim.written.map((item) => item.target), ...claim.recorded ?? []])]
     .map((item) => path.resolve(root, item)), ...(stateDir ? [stateDir] : [])].map((item) => canonical(path.resolve(item))));
-  // A sibling records its claim before it writes, so attribution read again after the walk covers all the walk saw; the walk is repeated (bounded) while it grew.
+  // A sibling records its claim before it writes, so attribution read again after the walk, or after an entry vanished during it, covers all the walk saw; the walk is repeated (bounded) while it grew.
   for (let excluded = await discover(), pass = 1; ; pass += 1, inputs.length = 0) {
-    for (const [index, input] of (task.inputs ?? []).entries()) inputs.push([input, await digestInput(root, input, `${field}.task.inputs[${index}]`, excluded)]);
+    const vanished = await (async () => { for (const [index, input] of (task.inputs ?? []).entries()) inputs.push([input, await digestInput(root, input, `${field}.task.inputs[${index}]`, excluded)]); })()
+      .catch((error: unknown) => { if (error instanceof DevFnError && error.details?.vanished !== undefined) return error; throw error; });
     const grown = (await discover()).filter((item) => !excluded.includes(item));
-    if (!grown.length) break;
+    if (!grown.length) { if (vanished) throw vanished; break; }
     if (pass === 3) throw new DevFnError("DEVFN_RUNTIME_INVALID", `Other runtimes of this checkout kept starting while DevFn computed the input revision of task ${node.name}; start again.`, { task: node.name });
     excluded = [...excluded, ...grown];
   }

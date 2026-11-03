@@ -37,6 +37,14 @@ vi.mock("../src/outputs.js", async (importOriginal) => {
   } };
 });
 
+// Lets a test act right before the task-input walk reads a file, as a concurrent writer could.
+const reads = vi.hoisted(() => ({ before: undefined as ((operation: "lstat" | "readFile", file: string) => Promise<void>) | undefined }));
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, lstat: async (...args: Parameters<typeof actual.lstat>) => { await reads.before?.("lstat", String(args[0])); return await actual.lstat(...args); },
+    readFile: async (...args: Parameters<typeof actual.readFile>) => { await reads.before?.("readFile", String(args[0])); return await actual.readFile(...args); } };
+});
+
 // Lets a test act as soon as a stopped receipt's stable copy is written: at the first point writeReceipt yields after it, or once it returns.
 const stops = vi.hoisted(() => ({ onStopped: undefined as ((copyAfterStable: boolean) => Promise<void>) | undefined }));
 vi.mock("../src/runtime.js", async (importOriginal) => {
@@ -874,6 +882,61 @@ it("keeps a task's input revision when a sibling runtime publishes its claim and
   } finally {
     claimReads.after = undefined;
     await orchestrator.down({ config: sibling, root: primary, stateDir, runtime: "b" }).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 120_000);
+
+it("keeps a task's input revision when a sibling's file, attributed only by a claim published after the first claims read, vanishes mid-walk, and names an unattributed source file that vanishes", async () => {
+  const { parent, primary } = await repository();
+  const stateDir = path.join(parent, "state");
+  const configOf = (runtimeDir: string, output: string, processes: string[]) => validateDevFnConfig({ version: 1, project: { id: "sibling-vanish" }, runtimeDir, environmentOutputs: [{ path: output }],
+    processes: {
+      seed: { adapter: "command", command: [process.execPath, "-e", "0"], task: { rerun: "on-change", inputs: ["."] } },
+      web: { adapter: "command", command: [process.execPath, "-e", "setTimeout(() => {}, 60000)"] } },
+    profiles: { default: { processes } } });
+  const orchestrator = new DevFnOrchestrator();
+  const current = configOf("new-run", ".out.{runtime}", ["seed"]);
+  const sibling = (operation: string) => configOf(`old-${operation}`, ".env.{runtime}", ["web"]);
+  const revision = async () => await taskInputRevision(current, primary, { name: "seed", kind: "process" }, "default", undefined, undefined, stateDir);
+  // Runs once, right before the walk's `operation` on `file`.
+  const once = (operation: "lstat" | "readFile", file: () => string | undefined, action: (file: string) => Promise<void>) => {
+    reads.before = async (called, target) => { const wanted = file(); if (called === operation && wanted !== undefined && target === wanted) { reads.before = undefined; await action(target); } };
+  };
+  try {
+    await writeFile(path.join(primary, "schema.sql"), "create table t();");
+    const before = await revision();
+    for (const operation of ["lstat", "readFile"] as const) {
+      let temp: string | undefined;
+      // Sibling b starts under an earlier runtimeDir after the first claims read; its next atomic receipt write's temporary file is enumerated, then renamed onto receipt.json before the walk reads it.
+      claimReads.after = async () => {
+        await orchestrator.up({ config: sibling(operation), root: primary, stateDir, runtime: "b" });
+        const instances = path.join(primary, `old-${operation}`, "instances");
+        const [id] = await readdir(instances);
+        const file = path.join(await realpath(path.join(instances, id!)), "receipt.json.tmp");
+        await writeFile(file, await readFile(path.join(instances, id!, "receipt.json")));
+        temp = file;
+        once(operation, () => temp, async (from) => { temp = undefined; await rename(from, path.join(path.dirname(from), "receipt.json")); });
+      };
+      expect(await revision()).toBe(before);
+      expect(claimReads.after).toBeUndefined();
+      expect(temp).toBeUndefined();
+      expect(await revision()).toBe(before);
+      await orchestrator.down({ config: sibling(operation), root: primary, stateDir, runtime: "b" });
+    }
+    // An unattributed source file that vanishes mid-walk is a real input change: it is named, not taken for a missing input root.
+    for (const operation of ["lstat", "readFile"] as const) {
+      await writeFile(path.join(primary, "notes.txt"), "draft");
+      once(operation, () => path.join(primary, "notes.txt"), async (file) => { await rm(file); });
+      await expect(revision()).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: "processes.seed.task.inputs[0] entry notes.txt vanished while DevFn read it." });
+      expect(reads.before).toBeUndefined();
+    }
+    expect(await revision()).toBe(before);
+    // A real input change still changes it.
+    await writeFile(path.join(primary, "schema.sql"), "create table u();");
+    expect(await revision()).not.toBe(before);
+  } finally {
+    claimReads.after = undefined; reads.before = undefined;
+    for (const operation of ["lstat", "readFile"]) await orchestrator.down({ config: sibling(operation), root: primary, stateDir, runtime: "b" }).catch(() => undefined);
     await rm(parent, { recursive: true, force: true });
   }
 }, 120_000);
