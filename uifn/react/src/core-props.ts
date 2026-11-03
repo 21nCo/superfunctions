@@ -3,7 +3,7 @@ import {
   normalizeAriaAttributes,
   normalizeDataAttributes,
 } from '@uifn/adapter-kit';
-import type { UIFnPartEvent, UIFnPartProps } from '@uifn/core';
+import type { UIFnPartEvent, UIFnPartProps } from '@uifn/core/parts';
 
 type AnyReactProps = Record<string, unknown>;
 type ReactEventHandler = (event: React.SyntheticEvent<HTMLElement>) => void;

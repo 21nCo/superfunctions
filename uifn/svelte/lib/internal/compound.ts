@@ -1,11 +1,7 @@
-import {
-  type UIFnController,
-  type UIFnEnvironment,
-  type UIFnPartProps,
-  type UIFnSnapshot,
-  type UIFnStaticPrimitiveContract,
-} from '@uifn/core';
-import { mergePartProps } from '@uifn/core/parts';
+import type { UIFnController, UIFnSnapshot } from '@uifn/core/controller';
+import type { UIFnEnvironment } from '@uifn/core/environment';
+import { mergePartProps, type UIFnPartProps } from '@uifn/core/parts';
+import type { UIFnStaticPrimitiveContract } from '@uifn/core/primitives';
 import {
   acquireUIFnDomPlatform,
   createUIFnMenuDomBinding,

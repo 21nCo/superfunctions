@@ -4,7 +4,7 @@ import {
   toCssStyleEntries,
   toCssStyleString,
 } from '@uifn/adapter-kit';
-import type { UIFnPartEvent, UIFnPartProps, UIFnPartRef } from '@uifn/core';
+import type { UIFnPartEvent, UIFnPartProps, UIFnPartRef } from '@uifn/core/parts';
 
 type DomEventHandler = (event: Event) => void;
 type NativePartEvent = UIFnPartEvent & { readonly nativeEvent: Event };

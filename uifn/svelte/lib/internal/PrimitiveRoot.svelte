@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, setContext, untrack } from 'svelte';
-  import type { UIFnEnvironment } from '@uifn/core';
+  import type { UIFnEnvironment } from '@uifn/core/environment';
   import {
     SveltePrimitiveBridge,
     splitSvelteRootProps,

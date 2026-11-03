@@ -1,18 +1,15 @@
 'use client';
 
 import * as React from 'react';
-import type {
-  UIFnController,
-  UIFnEnvironment,
-  UIFnPartProps,
-  UIFnSnapshot,
-  UIFnStaticPrimitiveContract,
-} from '@uifn/core';
+import type { UIFnController, UIFnSnapshot } from '@uifn/core/controller';
+import type { UIFnEnvironment } from '@uifn/core/environment';
 import {
   mergePartProps,
   resolveUIFnDefaultPartContent,
   type UIFnDefaultPartContent,
+  type UIFnPartProps,
 } from '@uifn/core/parts';
+import type { UIFnStaticPrimitiveContract } from '@uifn/core/primitives';
 import {
   acquireUIFnDomPlatform,
   createUIFnMenuDomBinding,

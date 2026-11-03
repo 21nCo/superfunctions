@@ -13,19 +13,16 @@ import {
   type JSX,
 } from 'solid-js';
 import { Dynamic } from 'solid-js/web';
-import {
-  type UIFnController,
-  type UIFnEnvironment,
-  type UIFnPartProps,
-  type UIFnPartRef,
-  type UIFnSnapshot,
-  type UIFnStaticPrimitiveContract,
-} from '@uifn/core';
+import type { UIFnController, UIFnSnapshot } from '@uifn/core/controller';
+import type { UIFnEnvironment } from '@uifn/core/environment';
 import {
   mergePartProps,
   resolveUIFnDefaultPartContent,
   type UIFnDefaultPartContent,
+  type UIFnPartProps,
+  type UIFnPartRef,
 } from '@uifn/core/parts';
+import type { UIFnStaticPrimitiveContract } from '@uifn/core/primitives';
 import {
   acquireUIFnDomPlatform,
   createUIFnMenuDomBinding,
