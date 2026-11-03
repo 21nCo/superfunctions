@@ -93,6 +93,9 @@ const escapeRegExp = (text: string): string => text.replace(/[.*+?^$(){}|[\]\\]/
 /** Every runtime's file name of a `{runtime}` environment output; runtime names are those selectRuntime accepts. */
 const runtimeFileName = (template: string): RegExp =>
   new RegExp("^" + template.split("{runtime}").map(escapeRegExp).join("[a-z0-9](?:[a-z0-9-]{0,22}[a-z0-9])?") + "$");
+/** The same pattern ignoring case, capturing each runtime segment. */
+const runtimeFileNameFolded = (template: string): RegExp =>
+  new RegExp("^" + template.split("{runtime}").map(escapeRegExp).join("([a-z0-9](?:[a-z0-9-]{0,22}[a-z0-9])?)") + "$", "i");
 
 /**
  * Whether a canonical path is excluded DevFn state: an excluded path itself,
@@ -107,16 +110,47 @@ function isExcluded(excluded: readonly string[], absolute: string): boolean {
   return matches(absolute) || (staged !== undefined && matches(path.join(path.dirname(absolute), staged)));
 }
 
+/**
+ * isExcluded, also for a name that spells a runtime's file of a `{runtime}`
+ * output (or its staging file) in another case. Such a name is excluded only
+ * when it is the same file as DevFn's own spelling (the template's literal
+ * segments as declared, the runtime segment lower-cased), as after a
+ * case-only rename on a case-insensitive volume; a distinct file on a
+ * case-sensitive volume stays an input. Links are never followed.
+ */
+async function isExcludedEntry(excluded: readonly string[], absolute: string): Promise<boolean> {
+  if (isExcluded(excluded, absolute)) return true;
+  const directory = path.dirname(absolute), name = path.basename(absolute), staged = stagedOutputName(name);
+  const spellings = excluded.filter((item) => path.basename(item).includes("{runtime}") && path.dirname(item) === directory).flatMap((item) => {
+    const template = path.basename(item), segments = template.split("{runtime}"), folded = runtimeFileNameFolded(template);
+    const written = (candidate: string) => {
+      const match = folded.exec(candidate);
+      return match ? segments.reduce((spelled, segment, index) => spelled + (index > 0 ? match[index]!.toLowerCase() : "") + segment, "") : undefined;
+    };
+    const direct = written(name), stagedName = staged === undefined ? undefined : written(staged);
+    return [...(direct === undefined ? [] : [direct]), ...(stagedName === undefined ? [] : [`.${stagedName}${name.slice(1 + staged!.length)}`])];
+  }).filter((spelling) => spelling !== name);
+  if (spellings.length === 0) return false;
+  const entry = await lstat(absolute).catch(() => undefined);
+  // A name of such a file that vanished during the walk has nothing left to hash.
+  if (!entry) return true;
+  for (const spelling of spellings) {
+    const own = await lstat(path.join(directory, spelling)).catch(() => undefined);
+    if (own && own.dev === entry.dev && own.ino === entry.ino) return true;
+  }
+  return false;
+}
+
 /** Content digest of a repository file or directory, walked under its canonical spelling (realpath of its parent) so excluded state matches however it is named; symlinks in it are hashed as links, never followed. A directory's entries are read one at a time within what remains of the entry budget, before any is sorted or visited. */
 async function digestInput(root: string, relative: string, field: string, excluded: readonly string[]): Promise<string> {
   const target = await resolveContainedPath(root, relative, field).then(async (item) => path.join(await canonical(path.dirname(item)), path.basename(item))).catch((error: unknown) => {
     throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field}: ${error instanceof Error ? error.message : String(error)}`);
   });
-  if (await realpath(target).catch(() => target).then((real) => isExcluded(excluded, real) || excluded.some((item) => real.startsWith(`${item}${path.sep}`)))) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} ${relative} is DevFn runtime state, not a task input.`);
+  if (await realpath(target).catch(() => target).then(async (real) => await isExcludedEntry(excluded, real) || excluded.some((item) => real.startsWith(`${item}${path.sep}`)))) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} ${relative} is DevFn runtime state, not a task input.`);
   const hash = createHash("sha256");
   const budget = { entries: 0, bytes: 0 };
   const visit = async (absolute: string, name: string): Promise<void> => {
-    if (isExcluded(excluded, absolute)) return;
+    if (await isExcludedEntry(excluded, absolute)) return;
     if (++budget.entries > MAX_INPUT_ENTRIES) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} lists more than ${MAX_INPUT_ENTRIES} entries.`);
     const stats = await lstat(absolute).catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} ${relative} does not exist.`);
@@ -125,7 +159,7 @@ async function digestInput(root: string, relative: string, field: string, exclud
     if (stats.isSymbolicLink()) hash.update(`l\0${name}\0${await readlink(absolute)}\0`);
     else if (stats.isDirectory()) {
       if (!excluded.some((item) => item.startsWith(`${absolute}${path.sep}`))) hash.update(`d\0${name}\0`);
-      const entries: string[] = []; for await (const { name: entry } of await opendir(absolute)) if (!isExcluded(excluded, path.join(absolute, entry)) && entries.push(entry) > MAX_INPUT_ENTRIES - budget.entries) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} lists more than ${MAX_INPUT_ENTRIES} entries.`);
+      const entries: string[] = []; for await (const { name: entry } of await opendir(absolute)) if (!await isExcludedEntry(excluded, path.join(absolute, entry)) && entries.push(entry) > MAX_INPUT_ENTRIES - budget.entries) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} lists more than ${MAX_INPUT_ENTRIES} entries.`);
       for (const entry of entries.sort(compare)) await visit(path.join(absolute, entry), `${name}/${entry}`);
     } else if (stats.isFile()) {
       budget.bytes += stats.size;

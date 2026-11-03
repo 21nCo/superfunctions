@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import http from "node:http";
-import { link, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { access, link, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -147,6 +147,42 @@ describe("named runtime isolation", () => {
       expect(await revision()).not.toBe(before);
       await expect(taskInputRevision(validateDevFnConfig({ ...config, processes: { migrate: { ...config.processes!.migrate, task: { inputs: ["config/generated.env"] } } } }),
         root, { name: "migrate", kind: "process" }, "default")).rejects.toThrow(/DevFn runtime state/);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("keeps a named runtime's output out of a task's input revision under a case-only rename, but not a distinct file differing only in case", async () => {
+    const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-runtime-output-case-")));
+    try {
+      await writeFile(path.join(root, "schema.sql"), "create table t();");
+      await writeFile(path.join(root, "case-probe"), "");
+      const caseInsensitive = await access(path.join(root, "CASE-PROBE")).then(() => true, () => false);
+      await rm(path.join(root, "case-probe"));
+      const config = validateDevFnConfig({ version: 1, project: { id: "fixture" }, environmentOutputs: [{ path: ".env.{runtime}" }],
+        processes: { migrate: { adapter: "command", command: ["node", "migrate.mjs"], task: { inputs: ["."] } } }, profiles: { default: { processes: ["migrate"] } } });
+      const revision = async () => await taskInputRevision(config, root, { name: "migrate", kind: "process" }, "default");
+      const staging = "..env.review.00000000-0000-4000-8000-000000000000.devfn-tmp";
+      await writeFile(path.join(root, ".env.review"), "PORT=1\n");
+      await writeFile(path.join(root, staging), "PORT=2\n");
+      const before = await revision();
+      if (caseInsensitive) {
+        // The same files under another spelling: DevFn keeps writing them by its own.
+        await rename(path.join(root, ".env.review"), path.join(root, ".ENV.review"));
+        await rename(path.join(root, staging), path.join(root, staging.replace(".env.review", ".ENV.REVIEW")));
+        expect(await revision()).toBe(before);
+        await writeFile(path.join(root, ".env.review"), "PORT=3\n");
+        expect(await revision()).toBe(before);
+      } else {
+        // Distinct files that differ only in case are the user's, so they stay inputs.
+        await writeFile(path.join(root, ".ENV.review"), "A=1\n");
+        const withVariant = await revision();
+        expect(withVariant).not.toBe(before);
+        await writeFile(path.join(root, staging.replace(".env.review", ".ENV.REVIEW")), "A=2\n");
+        expect(await revision()).not.toBe(withVariant);
+      }
+      // Only those files are excluded: a neighbouring source edit is still an input change.
+      const current = await revision();
+      await writeFile(path.join(root, "schema.sql"), "create table u();");
+      expect(await revision()).not.toBe(current);
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
