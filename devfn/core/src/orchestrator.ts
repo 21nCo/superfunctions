@@ -699,7 +699,8 @@ export class DevFnOrchestrator {
     // this lifecycle while sibling route/lease transitions use the short
     // shared routing lock below.
     const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
-    const oldReady = await this.prepareExisting(options, stateDir, identity, loadedPolicy, registry, true);
+    // A prior invocation stopped here no longer holds its outputs, also when this start fails.
+    const oldReady = await this.prepareExisting(options, stateDir, identity, loadedPolicy, registry, true, () => claim.previousStopped());
     // Unless a ready lifecycle is kept for replacement, public exposure this
     // owner still has, also without a receipt, ends before any lease or
     // node start; a public profile republishes once it is ready.
@@ -944,7 +945,8 @@ export class DevFnOrchestrator {
     };
   }
 
-  private async prepareExisting(options: UpOptions, stateDir: string, identity: RoutingIdentity, loadedPolicy: Awaited<ReturnType<typeof loadDevFnPolicy>>, registry: FilePortRegistry, deferReadyCleanup = false): Promise<LifecycleReceipt | undefined> {
+  private async prepareExisting(options: UpOptions, stateDir: string, identity: RoutingIdentity, loadedPolicy: Awaited<ReturnType<typeof loadDevFnPolicy>>, registry: FilePortRegistry, deferReadyCleanup = false,
+    onStopped?: () => void): Promise<LifecycleReceipt | undefined> {
     const existing = await readReceipt(options.config, options.root, identity.instanceId, runtimeOf(identity));
     if (existing && existing.state !== "stopped") {
       assertReceiptStateDir(existing, stateDir);
@@ -953,7 +955,7 @@ export class DevFnOrchestrator {
       // receipt is replaceable only while its registry invocation is ready.
       const registered = (await registry.read()).invocations.find((item) => item.id === existing.invocationId)?.state;
       if (registered === "stopping") {
-        await this.stopExisting(existing, stateDir, registry);
+        if (await this.stopExisting(existing, stateDir, registry) === "stopped") onStopped?.();
         return undefined;
       }
       const processStates = await Promise.all(existing.processes.map((item) => new ProcessSupervisor().status(item)));
@@ -984,11 +986,11 @@ export class DevFnOrchestrator {
         await publicTemplateInputs(options.config, replacementPlan, identity, stateDir), true);
       await startupFingerprints(options.config, options.root, replacement);
       if (existing.state === "ready" && allRunning && deferReadyCleanup && registered === "ready") return existing;
-      await this.stopExisting(existing, stateDir, registry);
+      if (await this.stopExisting(existing, stateDir, registry) === "stopped") onStopped?.();
     }
   }
 
-  private async stopExisting(existing: LifecycleReceipt, stateDir: string, registry: FilePortRegistry, preserveRoutes = false): Promise<void> {
+  private async stopExisting(existing: LifecycleReceipt, stateDir: string, registry: FilePortRegistry, preserveRoutes = false): Promise<LifecycleReceipt["state"]> {
     const recovered = await this.cleanup(existing, registry, new ProcessSupervisor(), new ComposeController(), new CaddyProxyController(stateDir), existing.state !== "ready", preserveRoutes);
     if (recovered.errors.length) {
       // Part of it may still run: it keeps its receipt, leases and routes
@@ -1003,6 +1005,7 @@ export class DevFnOrchestrator {
     existing.state = recovered.publicOutstanding?.length ? "degraded" : "stopped";
     existing.updatedAt = new Date().toISOString();
     await writeReceipt(existing);
+    return existing.state;
   }
 
   private async startSelectedNode(node: LifecyclePlan["nodes"][number], context: {
@@ -1172,19 +1175,25 @@ export class DevFnOrchestrator {
     if (cleanup.errors.length === 0) await registry.recoverInterrupted(identity.instanceId);
     receipt.cleanup = cleanup;
     receipt.state = cleanup.errors.length || cleanup.publicOutstanding?.length ? "degraded" : "stopped";
+    receipt.updatedAt = new Date().toISOString();
     // A stopped runtime no longer holds its environment-output files or its
-    // runtime directory. They are released before its receipt says stopped,
-    // so a failed release, or a down that dies before the receipt is written,
-    // leaves a live receipt that a retried down releases again.
+    // runtime directory. Its last write there, the receipt copy, lands while
+    // the claim still holds the directory; the claim is released before the
+    // stable receipt says stopped, so a failed release, or a down that dies
+    // before that write, leaves a live receipt that a retried down releases.
+    let released = false;
     if (receipt.state === "stopped") {
-      try { await releaseEnvironmentOutputs(options.root, identity.instanceId); }
-      catch (error) {
+      await writeReceipt(receipt, { stable: false });
+      try {
+        await releaseEnvironmentOutputs(options.root, identity.instanceId);
+        released = true;
+      } catch (error) {
         cleanup.errors.push(`Environment-output claim of ${describeInstance(identity)} was not released, so its files and runtime directory stay held; run devfn down again: ${error instanceof Error ? error.message : String(error)}`);
         receipt.state = "degraded";
       }
     }
-    receipt.updatedAt = new Date().toISOString();
-    await writeReceipt(receipt);
+    // Nothing is written in a released runtime directory.
+    await writeReceipt(receipt, released ? { runtimeCopy: false } : {});
     return receipt;
   }
 

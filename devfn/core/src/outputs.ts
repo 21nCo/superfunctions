@@ -464,6 +464,12 @@ export interface EnvironmentOutputClaim {
   runtimePath(relative: string): Promise<string>;
   /** Give back the targets of a claim no receipt took over; the files written stay this instance's. */
   restore(): Promise<void>;
+  /**
+   * The receipt that held this instance's previous claim now says stopped:
+   * restore() then gives back its targets and runtime directory too, as down
+   * releases them, and keeps only the files written.
+   */
+  previousStopped(): void;
   /** Write one claimed environment output, attributing it to this instance no later than it exists. */
   write(target: string, content: string, mode: number): Promise<void>;
 }
@@ -678,6 +684,11 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
         }
       }
       return target;
+    },
+    previousStopped: () => {
+      if (!previous) return;
+      const { runtimeDirectory: _released, ...rest } = previous;
+      previous = { ...rest, targets: [] };
     },
     restore: async () => {
       if (committed) return;

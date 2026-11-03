@@ -1,21 +1,33 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import http from "node:http";
-import { access, chmod, link, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import net from "node:net";
+import { access, chmod, link, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
 import { composeProjectName } from "@devfn/compose";
 import { validateDevFnConfig, type DevFnConfig } from "@devfn/config";
-import { withFileLock } from "@devfn/ports";
+import { FilePortRegistry, withFileLock } from "@devfn/ports";
 import { proxyListenerPorts, proxyOwnerStatus } from "@devfn/proxy";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { assertEnvironmentOutputsAvailable, claimEnvironmentOutputs } from "../src/outputs.js";
 import { createPlan, DevFnOrchestrator, domainAliases, resolveEndpointTemplates, resolveInstanceIdentity, resolveLocalHostname, runtimeDirectory, selectRuntime, taskInputRevision } from "../src/index.js";
 
 const execFileAsync = promisify(execFile);
+// Lets a test act right after down releases a claim, as a sibling start in another process could.
+const releases = vi.hoisted(() => ({ after: undefined as (() => Promise<void>) | undefined }));
+vi.mock("../src/outputs.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/outputs.js")>();
+  return { ...actual, releaseEnvironmentOutputs: async (...args: Parameters<typeof actual.releaseEnvironmentOutputs>) => {
+    await actual.releaseEnvironmentOutputs(...args);
+    const after = releases.after;
+    releases.after = undefined;
+    await after?.();
+  } };
+});
 
 async function repository(): Promise<{ parent: string; primary: string; second: string }> {
   const parent = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-named-runtime-")));
@@ -284,6 +296,140 @@ it.skipIf(process.getuid?.() === 0)("releases a stopped runtime's output claim o
     await chmod(claims, 0o700).catch(() => undefined);
     for (const runtime of ["a", "c"]) await orchestrator.down({ config, root: primary, stateDir, runtime }).catch(() => undefined);
     await rm(parent, { recursive: true, force: true });
+  }
+}, 60_000);
+
+it("writes nothing into a stopped runtime's runtime directory once down released it, so a sibling can then write there", async () => {
+  const { parent, primary } = await repository();
+  const stateDir = path.join(parent, "state");
+  const config = validateDevFnConfig({ version: 1, project: { id: "release-order" }, runtimeDir: "old-run", ports: { web: { env: "PORT" } }, environmentOutputs: [{ path: ".env.{runtime}" }],
+    processes: { web: { adapter: "command", command: [process.execPath, "server.mjs"], ports: ["web"], health: { type: "http", port: "web", timeoutMs: 10_000 } } },
+    profiles: { default: { processes: ["web"] } } });
+  const orchestrator = new DevFnOrchestrator();
+  const snapshot = async (directory: string): Promise<Record<string, string>> => {
+    const files: Record<string, string> = {};
+    for (const entry of await readdir(directory, { recursive: true, withFileTypes: true })) {
+      if (entry.isFile()) files[path.relative(directory, path.join(entry.parentPath, entry.name))] = await readFile(path.join(entry.parentPath, entry.name), "utf8");
+    }
+    return files;
+  };
+  try {
+    await writeFile(path.join(primary, "server.mjs"), SERVER);
+    const a = await orchestrator.up({ config, root: primary, stateDir, runtime: "a" });
+    const runtimeDir = path.join(primary, "old-run", "instances", a.instanceId);
+    let atRelease: Record<string, string> | undefined;
+    releases.after = async () => { atRelease = await snapshot(runtimeDir); };
+    const stopped = await orchestrator.down({ config, root: primary, stateDir, runtime: "a" });
+    expect(stopped.state).toBe("stopped");
+    // Its receipt copy already said stopped when the claim was released, and nothing there changed afterwards.
+    expect(JSON.parse(atRelease!["receipt.json"]!)).toMatchObject({ instanceId: a.instanceId, state: "stopped" });
+    expect(await snapshot(runtimeDir)).toEqual(atRelease);
+    // The default runtime, under another runtimeDir, may now write where a kept its receipt copy, and a stays stopped.
+    const copy = path.join("old-run", "instances", a.instanceId, "receipt.json");
+    const sibling = validateDevFnConfig({ ...JSON.parse(JSON.stringify(config)), runtimeDir: "new-run", environmentOutputs: [{ path: copy }] });
+    const claim = await claimEnvironmentOutputs(sibling, primary, await resolveInstanceIdentity("release-order", primary));
+    await claim.write(path.join(primary, copy), "SIBLING=1\n", 0o600);
+    await claim.commit();
+    expect((await orchestrator.status({ config, root: primary, runtime: "a" })).state).toBe("stopped");
+    await expect(orchestrator.down({ config, root: primary, stateDir, runtime: "a" })).rejects.toMatchObject({ code: "DEVFN_NOT_RUNNING" });
+    expect(await readFile(path.join(primary, copy), "utf8")).toBe("SIBLING=1\n");
+  } finally {
+    releases.after = undefined;
+    await orchestrator.down({ config, root: primary, stateDir, runtime: "a" }).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 60_000);
+
+it("gives back a stopped prior invocation's outputs and runtime directory when the start that stopped it fails", async () => {
+  const { parent, primary } = await repository();
+  const stateDir = path.join(parent, "state");
+  const raw = { version: 1, project: { id: "restore-fixture" }, runtimeDir: "old-run", ports: { web: { env: "PORT" } }, environmentOutputs: [{ path: ".env.{runtime}" }],
+    processes: { web: { adapter: "command", command: [process.execPath, "server.mjs"], ports: ["web"], health: { type: "http", port: "web", timeoutMs: 10_000 } } },
+    profiles: { default: { processes: ["web"] } } };
+  const config = validateDevFnConfig(raw);
+  const orchestrator = new DevFnOrchestrator();
+  const claims = path.join(primary, ".devfn", "receipts", "outputs");
+  const claimOf = async (instanceId: string) => JSON.parse(await readFile(path.join(claims, `${instanceId}.json`), "utf8")) as { targets: string[]; runtimeDirectory?: string; written: Array<{ target: string }> };
+  const blocker = net.createServer();
+  try {
+    await writeFile(path.join(primary, "server.mjs"), SERVER);
+    const a = await orchestrator.up({ config, root: primary, stateDir, runtime: "a" });
+    const c = await orchestrator.up({ config, root: primary, stateDir, runtime: "c" });
+    const cClaim = await readFile(path.join(claims, `${c.instanceId}.json`), "utf8");
+    const b = await resolveInstanceIdentity("restore-fixture", primary, "b");
+    const sibling = validateDevFnConfig({ ...JSON.parse(JSON.stringify(raw)), runtimeDir: "new-run", environmentOutputs: [{ path: path.join("old-run", "instances", a.instanceId, "b.env") }] });
+    await expect(assertEnvironmentOutputsAvailable(sibling, primary, b)).rejects.toMatchObject({ message: expect.stringContaining("the runtime directory of runtime a") });
+    // A down of a was interrupted, and the next start of a, which completes that stop, fails on an occupied exact port before its receipt.
+    await new FilePortRegistry(path.join(stateDir, "registry.json")).updateInvocation(a.invocationId, { state: "stopping" });
+    await new Promise<void>((resolve) => blocker.listen(0, "127.0.0.1", resolve));
+    const busy = (blocker.address() as net.AddressInfo).port;
+    const failing = validateDevFnConfig({ ...JSON.parse(JSON.stringify(raw)), ports: { web: { env: "PORT", preferred: busy, exact: true } } });
+    await expect(orchestrator.up({ config: failing, root: primary, stateDir, runtime: "a" })).rejects.toMatchObject({ code: "DEVFN_PORT_CONFLICT" });
+    // a is stopped, so its claim holds nothing; the files it wrote stay its own, and c's claim is untouched.
+    expect((await orchestrator.status({ config, root: primary, runtime: "a" })).state).toBe("stopped");
+    const restored = await claimOf(a.instanceId);
+    expect(restored.targets).toEqual([]);
+    expect(restored.runtimeDirectory).toBeUndefined();
+    expect(restored.written.map((item) => path.basename(item.target))).toEqual([".env.a"]);
+    expect(await readFile(path.join(claims, `${c.instanceId}.json`), "utf8")).toBe(cClaim);
+    await expect(assertEnvironmentOutputsAvailable(sibling, primary, b)).resolves.toBeUndefined();
+  } finally {
+    blocker.close();
+    for (const runtime of ["a", "c"]) await orchestrator.down({ config, root: primary, stateDir, runtime }).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 60_000);
+
+it("reruns an artifacts task whose runtime directory a symlink now redirects, and keeps its completion while the destination is unchanged", async () => {
+  // Not resolved: on macOS the temporary directory is itself reached through a symlink.
+  const root = await mkdtemp(path.join(os.tmpdir(), "devfn-artifact-destination-"));
+  const stateDir = path.join(root, ".state");
+  const build = `import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+appendFileSync("runs.log", process.env.DEVFN_ARTIFACT_DIR + "\\n");
+mkdirSync(process.env.DEVFN_ARTIFACT_DIR, { recursive: true });
+writeFileSync(process.env.DEVFN_ARTIFACT_DIR + "/out", "built");
+`;
+  const configOf = (rerun: "on-change" | "once") => validateDevFnConfig({ version: 1, project: { id: "artifact-destination" }, runtimeDir: "run",
+    processes: { build: { adapter: "command", command: [process.execPath, "build.mjs"], artifacts: "runtime", task: { rerun } } },
+    profiles: { default: { processes: ["build"] } } });
+  const orchestrator = new DevFnOrchestrator();
+  const runs = async () => (await readFile(path.join(root, "runs.log"), "utf8").catch(() => "")).split("\n").filter(Boolean).length;
+  const cycle = async (config: DevFnConfig, rerunTasks?: string[]) => {
+    await orchestrator.up({ config, root, stateDir, ...(rerunTasks ? { rerunTasks } : {}) });
+    await orchestrator.down({ config, root, stateDir });
+  };
+  try {
+    await writeFile(path.join(root, "build.mjs"), build);
+    await mkdir(path.join(root, "first"));
+    await mkdir(path.join(root, "second"));
+    await symlink("first", path.join(root, "run"));
+    const onChange = configOf("on-change");
+    const node = { name: "build", kind: "process" as const };
+    // The first start creates the runtime directory; the second sees the same destination and keeps the completion.
+    await cycle(onChange);
+    await cycle(onChange);
+    expect(await runs()).toBe(1);
+    const toFirst = await taskInputRevision(onChange, root, node, "default");
+    expect(toFirst).toBe(await taskInputRevision(onChange, await realpath(root), node, "default"));
+    await rm(path.join(root, "run"));
+    await symlink("second", path.join(root, "run"));
+    expect(await taskInputRevision(onChange, root, node, "default")).not.toBe(toFirst);
+    // The redirected destination has none of its artifacts: an on-change task runs again there.
+    await cycle(onChange);
+    expect(await runs()).toBe(2);
+    await rm(path.join(root, "run"));
+    await symlink("first", path.join(root, "run"));
+    // A once task blocks instead, until it is rerun explicitly.
+    const once = configOf("once");
+    await expect(orchestrator.up({ config: once, root, stateDir })).rejects.toMatchObject({ code: "DEVFN_TASK_INPUT_CHANGED" });
+    expect(await runs()).toBe(2);
+    await cycle(once, ["build"]);
+    expect(await runs()).toBe(3);
+    await cycle(once);
+    expect(await runs()).toBe(3);
+  } finally {
+    await orchestrator.down({ config: configOf("once"), root, stateDir }).catch(() => undefined);
+    await rm(root, { recursive: true, force: true });
   }
 }, 60_000);
 

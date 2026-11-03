@@ -203,13 +203,21 @@ function leaseStable(config: DevFnConfig, node: string, profile: string, resourc
 /**
  * Where a task's artifacts go, when it declares them: a task's completion is
  * valid only for the destination it wrote, so a changed mode or runtime
- * directory changes its revision. The per-instance part is the journal's own
- * scope. Undeclared, nothing is added and earlier revisions stay valid.
+ * directory, also one a symlink redirects, changes its revision. The runtime
+ * directory counts as the directory it reaches (its deepest existing
+ * ancestor resolved), relative to the real checkout when inside it, so
+ * creating it or a link above the checkout changes nothing. The per-instance
+ * part is the journal's own scope. Undeclared, nothing is added and earlier
+ * revisions stay valid.
  */
-function artifactSettings(config: DevFnConfig, name: string): { artifacts?: { mode: "runtime" | "shared"; directory?: string } } {
+async function artifactSettings(config: DevFnConfig, root: string, name: string): Promise<{ artifacts?: { mode: "runtime" | "shared"; directory?: string } }> {
   const mode = config.processes![name].artifacts;
   if (!mode) return {};
-  return { artifacts: mode === "runtime" ? { mode, directory: path.join(config.runtimeDir ?? ".devfn", "instances", "{instance}", "artifacts", name) } : { mode } };
+  if (mode === "shared") return { artifacts: { mode } };
+  const [checkout, reached] = await Promise.all([canonical(path.resolve(root)), canonical(path.resolve(root, config.runtimeDir ?? ".devfn"))]);
+  const relative = path.relative(checkout, reached);
+  const runtimeDir = relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) ? reached : relative;
+  return { artifacts: { mode, directory: path.join(runtimeDir, "instances", "{instance}", "artifacts", name) } };
 }
 
 /**
@@ -230,7 +238,7 @@ export async function taskInputRevision(config: DevFnConfig, root: string, node:
   const secrets = new Set(spec.secretEnv ?? []);
   const entries = (values: Record<string, string> | undefined) => Object.entries(values ?? {}).map(([key, value]): [string, string | null] => [key, secrets.has(key) ? null : value]).sort(([a], [b]) => compare(a, b));
   const settings = node.kind === "process"
-    ? { adapter: config.processes![node.name].adapter, command: config.processes![node.name].command ?? [], script: config.processes![node.name].script ?? null, cwd: config.processes![node.name].cwd ?? ".", ...artifactSettings(config, node.name) }
+    ? { adapter: config.processes![node.name].adapter, command: config.processes![node.name].command ?? [], script: config.processes![node.name].script ?? null, cwd: config.processes![node.name].cwd ?? ".", ...await artifactSettings(config, root, node.name) }
     : { file: config.services![node.name].file ?? "compose.yaml", service: config.services![node.name].service, projectName: config.services![node.name].projectName ?? "devfn",
       source: await digestComposeSource(root, config.services![node.name], `${field}.file`, leaseStable(config, node.name, profile, resources, environment ?? { ...config.profiles[profile]?.environment, ...spec.env }), taskScope(config, "", node, resources).scope === "shared") };
   const consumed = sorted(spec.resources).map((name) => {
