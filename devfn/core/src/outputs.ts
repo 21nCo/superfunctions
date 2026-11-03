@@ -547,12 +547,13 @@ async function overwriteInPlace<T>(target: string, content: string, mode: number
 }
 
 /** Remove staging files an interrupted write left beside claimed targets; only the claimant writes there. */
-async function removeOrphanedStaging(targets: readonly Target[]): Promise<void> {
+async function removeOrphanedStaging(targets: readonly Target[], claims: Map<string, { claim: OutputClaim }>): Promise<void> {
+  const outputs = new Set([...targets.map((item) => item.key), ...[...claims.values()].flatMap(({ claim }) => [...claim.targets, ...claim.written.map((item) => item.target)].map(pathKey))]);
   for (const item of targets) {
     const names = await readdir(path.dirname(item.canonical)).catch(() => [] as string[]);
     for (const name of names) {
       const staged = stagedOutputName(name);
-      if (staged !== undefined && pathKey(staged) === pathKey(path.basename(item.canonical))) await unlink(path.join(path.dirname(item.canonical), name)).catch(() => undefined);
+      if (staged !== undefined && pathKey(staged) === pathKey(path.basename(item.canonical)) && !outputs.has(pathKey(path.join(path.dirname(item.canonical), name)))) await unlink(path.join(path.dirname(item.canonical), name)).catch(() => undefined);
     }
   }
 }
@@ -612,7 +613,7 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
         createdRuntime = await makeDirectory(ownDirectory) ?? createdRuntime;
         bound = await directoryBinding(ownDirectory);
         await record(targets);
-        await removeOrphanedStaging(targets);
+        await removeOrphanedStaging(targets, await readClaims(root));
       }, { timeoutMs: CLAIMS_LOCK_TIMEOUT_MS, staleMs: CLAIMS_LOCK_STALE_MS });
       break;
     } catch (error) {

@@ -212,6 +212,7 @@ export type RuntimePath = (relative: string) => Promise<string>;
  * has then been called, so the start records its failure there). With
  * stable false only the copy is written: down writes it while its claim
  * still holds the runtime directory, and the stable receipt after the release.
+ * Any other stopped receipt's copy is also written first, so the stable stopped write is the last.
  */
 export async function writeReceipt(receipt: LifecycleReceipt, options: { runtimeCopy?: false | RuntimePath; stable?: false; onStable?: () => void } = {}): Promise<void> {
   const runtimeTarget = path.join(receipt.runtimeDir, "receipt.json");

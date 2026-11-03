@@ -271,6 +271,52 @@ async function stopFixtureProxy(stateDir: string): Promise<void> {
   for (let attempt = 0; attempt < 40 && await proxyOwnerStatus(owner) === "active"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 50));
 }
 
+it("never removes a declared output that has the shape of another output's staging file, but still removes a real leftover staging file", async () => {
+  const { parent, primary } = await repository();
+  const stateDir = path.join(parent, "state");
+  const uuid = "00000000-0000-4000-8000-000000000000";
+  const configWith = (paths: string[]) => validateDevFnConfig({ version: 1, project: { id: "staging-shape" }, ports: { web: { env: "PORT" } }, environmentOutputs: paths.map((item) => ({ path: item })),
+    processes: { web: { adapter: "command", command: [process.execPath, "server.mjs"], ports: ["web"], health: { type: "http", port: "web", timeoutMs: 10_000 } } },
+    profiles: { default: { processes: ["web"] } } });
+  const orchestrator = new DevFnOrchestrator();
+  const started: Array<[DevFnConfig, string | undefined]> = [];
+  const up = async (config: DevFnConfig, runtime?: string) => {
+    started.push([config, runtime]);
+    return await orchestrator.up({ config, root: primary, stateDir, ...(runtime ? { runtime } : {}) });
+  };
+  const read = async (name: string) => await readFile(path.join(primary, name), "utf8").catch(() => undefined);
+  try {
+    await writeFile(path.join(primary, "server.mjs"), SERVER);
+    // A named runtime's pair and the v0.1 literal pair: a repeated up claims again before it is refused, and keeps the second output.
+    for (const [paths, runtime, declared] of [[[".env.{runtime}", `..env.{runtime}.${uuid}.devfn-tmp`], "review", `..env.review.${uuid}.devfn-tmp`],
+      [[".env", `..env.${uuid}.devfn-tmp`], undefined, `..env.${uuid}.devfn-tmp`]] as const) {
+      const config = configWith([...paths]);
+      await up(config, runtime);
+      const content = await read(declared);
+      expect(content).toContain("DEVFN_INSTANCE_ID=");
+      await expect(up(config, runtime)).rejects.toMatchObject({ code: "DEVFN_ALREADY_RUNNING" });
+      expect(await read(declared)).toBe(content);
+    }
+    // Runtime devfn-tmp's output is staging-shaped for runtime x's .env.x: x's start leaves it, while running and once stopped.
+    const shared = configWith([".env.{runtime}", `..env.x.${uuid}.{runtime}`]);
+    await up(shared, "devfn-tmp");
+    const declared = await read(`..env.x.${uuid}.devfn-tmp`);
+    expect(declared).toContain("DEVFN_INSTANCE_ID=");
+    const leftover = "..env.x.11111111-1111-4111-8111-111111111111.devfn-tmp";
+    await writeFile(path.join(primary, leftover), "PARTIAL=1\n");
+    await up(shared, "x");
+    expect(await read(`..env.x.${uuid}.devfn-tmp`)).toBe(declared);
+    expect(await read(leftover)).toBeUndefined();
+    await orchestrator.down({ config: shared, root: primary, stateDir, runtime: "devfn-tmp" });
+    await orchestrator.down({ config: shared, root: primary, stateDir, runtime: "x" });
+    await up(shared, "x");
+    expect(await read(`..env.x.${uuid}.devfn-tmp`)).toBe(declared);
+  } finally {
+    for (const [config, runtime] of started) await orchestrator.down({ config, root: primary, stateDir, ...(runtime ? { runtime } : {}) }).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 60_000);
+
 // Root writes through a read-only directory, so the failed release cannot be provoked there.
 it.skipIf(process.getuid?.() === 0)("releases a stopped runtime's output claim on a retried down when the first release failed, keeping its history and other runtimes' claims", async () => {
   const { parent, primary } = await repository();
