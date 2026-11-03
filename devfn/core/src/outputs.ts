@@ -567,9 +567,6 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
   // The real directory the claim holds: its canonical path and identity.
   let bound!: { canonical: string; id: string };
   const record = async (targets: readonly Target[]) => {
-    const text = await readOwnClaim(root, identity.instanceId);
-    hadPrevious = text !== undefined;
-    previous = text === undefined ? undefined : parseClaim(text, identity.instanceId);
     // An interrupted creation is this instance's only if it left exactly the content it recorded.
     claim = { version: 1, instanceId: identity.instanceId, runtime, targets: targets.map((item) => item.canonical), written: await writtenByClaim(previous),
       runtimeDirectory: bound.canonical, recorded: [...new Set([...previous?.recorded ?? [], bound.canonical, ...[(await checkoutReceipts(config, root)).get(identity.instanceId)?.receipt].flatMap((receipt) => receipt ? [receipt.runtimeDir, ...receipt.environmentOutputs ?? []] : [])])], pid: process.pid, ...await processBirthSignature(process.pid).then((value) => value ? { birthSignature: value } : {}), createdAt: new Date().toISOString() };
@@ -586,8 +583,18 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
   // runtime directory, which a start that never began removes while empty.
   let created: string | undefined;
   let createdRuntime: string | undefined;
-  const removeCreated = async () => {
+  const removeCreated = async () => { // Its runtime directories go before the attribution its claim published, then a claim it created.
     if (createdRuntime) await removeEmptyDirectories(ownDirectory, createdRuntime);
+    if (claim) {
+      const { pending: _stale, runtimeDirectory: _directory, ...base } = previous ?? claim;
+      const kept: OutputClaim = { ...base, targets: previous?.targets ?? [], written: claim.written, recorded: claim.recorded, ...(claim.pending?.length ? { pending: claim.pending } : {}),
+        ...(previous?.runtimeDirectory ? { runtimeDirectory: previous.runtimeDirectory } : {}) };
+      if (hadPrevious || kept.written.length || kept.pending?.length) return await writeClaim(root, kept);
+      await removeClaim(root, identity.instanceId);
+    }
+    // Nor does it leave DevFn state in a checkout that had none: only the
+    // empty directories it created go, so a sibling's claim, lock or
+    // receipt there keeps them.
     if (created) await removeEmptyDirectories(directory, created);
   };
   for (let attempt = 1; ; attempt += 1) {
@@ -602,6 +609,7 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
         locked = true;
         const targets = await selectedTargets(config, root, runtime, stateDir);
         await assertTargetsAvailable(config, root, identity, targets, await readClaims(root));
+        const text = await readOwnClaim(root, identity.instanceId); [hadPrevious, previous] = [text !== undefined, text === undefined ? undefined : parseClaim(text, identity.instanceId)]; bound = { canonical: (await canonicalTarget(ownDirectory)).canonical, id: "" }; await record(targets); // The claim records the runtime directory before any part of it is created (task-input attribution), then binds it.
         // The runtime directory exists as a real directory from the claim on,
         // and its identity is recorded: a symlink created at its path later
         // cannot redirect this start's writes into another runtime's state.
@@ -688,18 +696,6 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
       if (committed) return;
       // A start that never began holds neither its outputs nor its runtime
       // directory; a claim it created is removed.
-      const { pending: _stale, runtimeDirectory: _directory, ...base } = previous ?? claim;
-      const kept: OutputClaim = { ...base, targets: previous?.targets ?? [], written: claim.written, recorded: claim.recorded, ...(claim.pending?.length ? { pending: claim.pending } : {}),
-        ...(previous?.runtimeDirectory ? { runtimeDirectory: previous.runtimeDirectory } : {}) };
-      if (hadPrevious || kept.written.length || kept.pending?.length) {
-        await writeClaim(root, kept);
-        if (createdRuntime) await removeEmptyDirectories(ownDirectory, createdRuntime);
-        return;
-      }
-      await removeClaim(root, identity.instanceId);
-      // Nor does it leave DevFn state in a checkout that had none: only the
-      // empty directories it created go, so a sibling's claim, lock or
-      // receipt there keeps them.
       await removeCreated();
     },
     write: async (target, content, mode) => {

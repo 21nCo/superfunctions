@@ -19,7 +19,7 @@ import { createPlan, DevFnOrchestrator, domainAliases, resolveEndpointTemplates,
 const execFileAsync = promisify(execFile);
 // Lets a test act right after down releases a claim, as a sibling start in another process could.
 const releases = vi.hoisted(() => ({ after: undefined as (() => Promise<void>) | undefined }));
-const claimReads = vi.hoisted(() => ({ after: undefined as (() => Promise<void>) | undefined }));
+const claimReads = vi.hoisted(() => ({ root: undefined as string | undefined, after: undefined as (() => Promise<void>) | undefined }));
 vi.mock("../src/outputs.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/outputs.js")>();
   return { ...actual, releaseEnvironmentOutputs: async (...args: Parameters<typeof actual.releaseEnvironmentOutputs>) => {
@@ -29,19 +29,22 @@ vi.mock("../src/outputs.js", async (importOriginal) => {
     await after?.();
   }, readClaims: async (...args: Parameters<typeof actual.readClaims>) => {
     // Lets a test publish a sibling right after a task-input revision read the claims, before its walk.
+    // Only the test's own checkout consumes it, never a read from an earlier test's lingering work.
     const result = await actual.readClaims(...args);
-    const after = claimReads.after;
-    claimReads.after = undefined;
+    const after = args[0] === claimReads.root ? claimReads.after : undefined;
+    if (after) claimReads.after = undefined;
     await after?.();
     return result;
   } };
 });
 
-// Lets a test act right before the task-input walk reads a file, as a concurrent writer could.
+// Lets a test act right before the task-input walk reads a file, as a concurrent writer could, or right after a start creates a directory.
 const reads = vi.hoisted(() => ({ before: undefined as ((operation: "lstat" | "readFile", file: string) => Promise<void>) | undefined }));
+const made = vi.hoisted(() => ({ after: undefined as ((directory: string) => Promise<void>) | undefined }));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
-  return { ...actual, lstat: async (...args: Parameters<typeof actual.lstat>) => { await reads.before?.("lstat", String(args[0])); return await actual.lstat(...args); },
+  return { ...actual, mkdir: async (...args: Parameters<typeof actual.mkdir>) => { const created = await actual.mkdir(...args); await made.after?.(String(args[0])); return created; },
+    lstat: async (...args: Parameters<typeof actual.lstat>) => { await reads.before?.("lstat", String(args[0])); return await actual.lstat(...args); },
     readFile: async (...args: Parameters<typeof actual.readFile>) => { await reads.before?.("readFile", String(args[0])); return await actual.readFile(...args); } };
 });
 
@@ -870,6 +873,7 @@ it("keeps a task's input revision when a sibling runtime publishes its claim and
     await writeFile(path.join(primary, "schema.sql"), "create table t();");
     const before = await revision();
     // Sibling b starts under an earlier runtimeDir and another output between the claims read and the walk.
+    claimReads.root = primary;
     claimReads.after = async () => { await orchestrator.up({ config: sibling, root: primary, stateDir, runtime: "b" }); };
     const during = await revision();
     expect(claimReads.after).toBeUndefined();
@@ -880,7 +884,7 @@ it("keeps a task's input revision when a sibling runtime publishes its claim and
     await writeFile(path.join(primary, "schema.sql"), "create table u();");
     expect(await revision()).not.toBe(before);
   } finally {
-    claimReads.after = undefined;
+    claimReads.after = undefined; claimReads.root = undefined;
     await orchestrator.down({ config: sibling, root: primary, stateDir, runtime: "b" }).catch(() => undefined);
     await rm(parent, { recursive: true, force: true });
   }
@@ -908,6 +912,7 @@ it("keeps a task's input revision when a sibling's file, attributed only by a cl
     for (const operation of ["lstat", "readFile"] as const) {
       let temp: string | undefined;
       // Sibling b starts under an earlier runtimeDir after the first claims read; its next atomic receipt write's temporary file is enumerated, then renamed onto receipt.json before the walk reads it.
+      claimReads.root = primary;
       claimReads.after = async () => {
         await orchestrator.up({ config: sibling(operation), root: primary, stateDir, runtime: "b" });
         const instances = path.join(primary, `old-${operation}`, "instances");
@@ -935,11 +940,94 @@ it("keeps a task's input revision when a sibling's file, attributed only by a cl
     await writeFile(path.join(primary, "schema.sql"), "create table u();");
     expect(await revision()).not.toBe(before);
   } finally {
-    claimReads.after = undefined; reads.before = undefined;
+    claimReads.after = undefined; claimReads.root = undefined; reads.before = undefined;
     for (const operation of ["lstat", "readFile"]) await orchestrator.down({ config: sibling(operation), root: primary, stateDir, runtime: "b" }).catch(() => undefined);
     await rm(parent, { recursive: true, force: true });
   }
 }, 120_000);
+
+it("keeps once and on-change tasks' input revisions while a sibling's start creates its runtime directory, and while its refused start removes it under a walk", async () => {
+  const { parent, primary } = await repository();
+  const stateDir = path.join(parent, "state");
+  const configOf = (runtimeDir: string, output: string) => validateDevFnConfig({ version: 1, project: { id: "sibling-directories" }, runtimeDir, environmentOutputs: [{ path: output }],
+    processes: {
+      seed: { adapter: "command", command: [process.execPath, "-e", "0"], task: { rerun: "on-change", inputs: ["."] } },
+      init: { adapter: "command", command: [process.execPath, "-e", "0"], task: { rerun: "once", inputs: ["."] } } },
+    profiles: { default: { processes: ["seed", "init"] } } });
+  const current = configOf("new-run", ".out.{runtime}");
+  const revisions = async () => {
+    const result: string[] = [];
+    for (const name of ["seed", "init"]) result.push(await taskInputRevision(current, primary, { name, kind: "process" }, "default", undefined, undefined, stateDir));
+    return result;
+  };
+  const b = await resolveInstanceIdentity("sibling-directories", primary, "b");
+  const created = path.join(primary, "old-run", "instances", b.instanceId);
+  try {
+    await writeFile(path.join(primary, "schema.sql"), "create table t();");
+    const before = await revisions();
+    // Sibling b's start creates its runtime directory, and the parents it lacks, under an earlier runtimeDir; both revisions are read right then, before it binds that directory.
+    let during: string[] | undefined;
+    made.after = async (directory) => { if (directory === created) { made.after = undefined; during = await revisions(); } };
+    const started = await claimEnvironmentOutputs(configOf("old-run", ".env.{runtime}"), primary, b, stateDir);
+    expect(made.after).toBeUndefined();
+    expect(during).toEqual(before);
+    expect(await revisions()).toEqual(before);
+    // Its start is refused and removes what it created after a walk listed old-run, before the walk visits old-run/instances: nothing vanished is named and the revision is unchanged.
+    reads.before = async (operation, target) => { if (operation === "lstat" && target === path.join(primary, "old-run", "instances")) { reads.before = undefined; await started.restore(); } };
+    expect(await revisions()).toEqual(before);
+    expect(reads.before).toBeUndefined();
+    await expect(access(path.join(primary, "old-run"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(access(path.join(primary, ".devfn", "receipts", "outputs", `${b.instanceId}.json`))).rejects.toMatchObject({ code: "ENOENT" });
+    // A real input change still changes both.
+    await writeFile(path.join(primary, "schema.sql"), "create table u();");
+    const after = await revisions();
+    expect(after[0]).not.toBe(before[0]);
+    expect(after[1]).not.toBe(before[1]);
+  } finally {
+    made.after = undefined; reads.before = undefined;
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 120_000);
+
+it("gives an input directory the same marker with or without a sibling's output in it, so an on-change task does not rerun for the sibling", async () => {
+  const { parent, primary } = await repository();
+  const stateDir = path.join(parent, "state");
+  const log = path.join(parent, "runs.log");
+  const configOf = (output: string) => validateDevFnConfig({ version: 1, project: { id: "marker-task" }, runtimeDir: "new-run", environmentOutputs: [{ path: output }],
+    processes: { seed: { adapter: "command", command: [process.execPath, "-e", `require("node:fs").appendFileSync(${JSON.stringify(log)}, "x\\n")`], task: { rerun: "on-change", inputs: ["."] } } },
+    profiles: { default: { processes: ["seed"] } } });
+  const orchestrator = new DevFnOrchestrator();
+  const runs = async () => (await readFile(log, "utf8").catch(() => "")).split("\n").filter(Boolean).length;
+  const current = configOf(".out.{runtime}");
+  const sibling = configOf("config/.env.{runtime}");
+  const revision = async () => await taskInputRevision(current, primary, { name: "seed", kind: "process" }, "default", undefined, undefined, stateDir);
+  const cycle = async () => { await orchestrator.up({ config: current, root: primary, stateDir, runtime: "d" }); await orchestrator.down({ config: current, root: primary, stateDir, runtime: "d" }); };
+  try {
+    await mkdir(path.join(primary, "config"));
+    await writeFile(path.join(primary, "config", "app.yml"), "a: 1\n");
+    await cycle();
+    const before = await revision();
+    expect(await runs()).toBe(1);
+    // Sibling c writes its output into config/, beside the repository's own file.
+    await orchestrator.up({ config: sibling, root: primary, stateDir, runtime: "c" });
+    expect(await readdir(path.join(primary, "config"))).toEqual(expect.arrayContaining([".env.c", "app.yml"]));
+    expect(await revision()).toBe(before);
+    await cycle();
+    expect(await runs()).toBe(2);
+    await orchestrator.down({ config: sibling, root: primary, stateDir, runtime: "c" });
+    expect(await revision()).toBe(before);
+    await cycle();
+    expect(await runs()).toBe(2);
+    // A real change in that directory still reruns it.
+    await writeFile(path.join(primary, "config", "app.yml"), "a: 2\n");
+    expect(await revision()).not.toBe(before);
+    await cycle();
+    expect(await runs()).toBe(3);
+  } finally {
+    for (const runtime of ["c", "d"]) await orchestrator.down({ config: runtime === "c" ? sibling : current, root: primary, stateDir, runtime }).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 240_000);
 
 it("never removes a staging-shaped output that only a replaced claimless receipt recorded, now kept in its claim's history", async () => {
   const { parent, primary } = await repository();
