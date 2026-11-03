@@ -281,8 +281,8 @@ function menuCss(preset: UIFnPresetV1, scope: string): string {
 function frameworkPackages(preset: UIFnPresetV1): Array<{ name: string; version: string; relationship: 'runtime' | 'peer' }> {
   if (preset.framework === 'svelte') {
     return [
-      { name: '@uifn/components-svelte', version: '0.0.1', relationship: 'runtime' },
-      { name: '@uifn/svelte', version: '0.0.1', relationship: 'runtime' },
+      { name: '@uifn/components-svelte', version: '0.0.2', relationship: 'runtime' },
+      { name: '@uifn/svelte', version: '0.0.4', relationship: 'runtime' },
       { name: '@uifn/recipes', version: '0.0.1', relationship: 'runtime' },
       { name: '@uifn/theme', version: '0.0.1', relationship: 'runtime' },
       { name: 'svelte', version: '5.46.4', relationship: 'peer' },
@@ -290,17 +290,17 @@ function frameworkPackages(preset: UIFnPresetV1): Array<{ name: string; version:
   }
   if (preset.framework === 'solid') {
     return [
-      { name: '@uifn/components-solid', version: '0.0.1', relationship: 'runtime' },
-      { name: '@uifn/solid', version: '0.0.1', relationship: 'runtime' },
+      { name: '@uifn/components-solid', version: '0.0.2', relationship: 'runtime' },
+      { name: '@uifn/solid', version: '0.0.2', relationship: 'runtime' },
       { name: '@uifn/recipes', version: '0.0.1', relationship: 'runtime' },
       { name: '@uifn/theme', version: '0.0.1', relationship: 'runtime' },
       { name: 'solid-js', version: '1.9.13', relationship: 'peer' },
     ];
   }
   return [
-    ...(preset.installMode === 'package' ? [{ name: '@uifn/components-react', version: '0.0.1', relationship: 'runtime' as const }] : []),
+    ...(preset.installMode === 'package' ? [{ name: '@uifn/components-react', version: '0.0.2', relationship: 'runtime' as const }] : []),
     { name: '@uifn/components', version: '0.0.1', relationship: 'runtime' },
-    { name: '@uifn/react', version: '0.0.3', relationship: 'runtime' },
+    { name: '@uifn/react', version: '0.0.4', relationship: 'runtime' },
     { name: '@uifn/recipes', version: '0.0.1', relationship: 'runtime' },
     { name: '@uifn/theme', version: '0.0.1', relationship: 'runtime' },
     { name: 'react', version: '18.3.1', relationship: 'peer' },
