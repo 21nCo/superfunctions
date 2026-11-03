@@ -22,7 +22,7 @@ import { DevFnError, type InstanceIdentity, type LifecycleReceipt } from "./type
  * the content it last wrote or the content it intended (both its own), or
  * someone else's file. `runtimeDirectory` is the canonical runtime directory
  * the claimant writes its logs and runtime.env to, held like its targets.
- * `recorded` keeps, like `written`, every runtime directory it claimed (task-input attribution); `replaced`, the outputs its receipt recorded when this claim replaced it (staging cleanup).
+ * `recorded` keeps, like `written`, every runtime directory it claimed (task-input attribution); `made`, every directory DevFn created for it, recorded before creation (a task input only beyond attributed state); `replaced`, the outputs its receipt recorded when this claim replaced it (staging cleanup).
  */
 interface WrittenOutput { target: string; sha256: string }
 
@@ -33,7 +33,7 @@ interface OutputClaim {
   targets: string[];
   written: WrittenOutput[];
   pending?: WrittenOutput[];
-  runtimeDirectory?: string; recorded?: string[]; replaced?: string[];
+  runtimeDirectory?: string; recorded?: string[]; made?: string[]; replaced?: string[];
   pid: number;
   birthSignature?: string;
   createdAt: string;
@@ -111,7 +111,7 @@ function parseClaim(text: string, instanceId: string): OutputClaim | undefined {
     const files = (items: unknown) => Array.isArray(items) &&
       items.every((item: WrittenOutput) => typeof item?.target === "string" && typeof item.sha256 === "string" && /^[0-9a-f]{64}$/.test(item.sha256));
     if (value.version === 1 && value.instanceId === instanceId && typeof value.runtime === "string" && strings(value.targets) && files(value.written) &&
-      (value.pending === undefined || files(value.pending)) && (value.runtimeDirectory === undefined || typeof value.runtimeDirectory === "string") && (value.recorded === undefined || strings(value.recorded)) && (value.replaced === undefined || strings(value.replaced)) &&
+      (value.pending === undefined || files(value.pending)) && (value.runtimeDirectory === undefined || typeof value.runtimeDirectory === "string") && (value.recorded === undefined || strings(value.recorded)) && (value.made === undefined || strings(value.made)) && (value.replaced === undefined || strings(value.replaced)) &&
       Number.isSafeInteger(value.pid) && value.pid > 0 && typeof value.createdAt === "string") return value;
   } catch { /* Malformed below. */ }
   return undefined;
@@ -218,11 +218,15 @@ async function claimantRuns(claim: OutputClaim): Promise<boolean> {
 }
 
 /** Task-input attribution of the checkout's instances (`own` starts now, so its earlier outputs are released): `held` are every runtime directory a receipt or claim records and another's outputs while its live receipt, running claimant or pending write holds them; `released`, every file an instance wrote while it holds what it last wrote there. */
-export async function taskAttribution(config: DevFnConfig, root: string, claims: () => Promise<Map<string, { claim: OutputClaim }>>, own?: string): Promise<{ held: string[]; released: string[] }> {
-  const held = [...await checkoutReceipts(config, root)].flatMap(([id, { receipt }]) => [receipt.runtimeDir, ...id !== own && live(receipt) ? receipt.environmentOutputs ?? [] : []]), released: string[] = [];
-  for (const [id, { claim }] of await claims()) { held.push(...claim.runtimeDirectory ? [claim.runtimeDirectory] : [], ...claim.recorded ?? [], ...id === own ? [] : [...(claim.pending ?? []).map((item) => item.target), ...claim.targets.length && await claimantRuns(claim) ? claim.targets : []]); for (const item of await writtenByClaim(claim)) if (await holdsRecorded(item)) released.push(item.target); }
-  return { held, released };
+export async function taskAttribution(config: DevFnConfig, root: string, claims: () => Promise<Map<string, { claim: OutputClaim }>>, own?: string): Promise<{ held: string[]; released: string[]; made: string[] }> {
+  const receipts = await checkoutReceipts(config, root), held = [...receipts].flatMap(([id, { receipt }]) => [receipt.runtimeDir, ...id !== own && live(receipt) ? receipt.environmentOutputs ?? [] : []]), released: string[] = [], read = await claims();
+  const made = [...receipts].flatMap(([id, { receipt }]) => read.has(id) ? [] : madeByRelease(receipt)); // An earlier release's claimless receipt: its runtime directory's parents, as a claim replacing it records them.
+  for (const [id, { claim }] of read) { made.push(...claim.made ?? []); held.push(...claim.runtimeDirectory ? [claim.runtimeDirectory] : [], ...claim.recorded ?? [], ...id === own ? [] : [...(claim.pending ?? []).map((item) => item.target), ...claim.targets.length && await claimantRuns(claim) ? claim.targets : []]); for (const item of await writtenByClaim(claim)) if (await holdsRecorded(item)) released.push(item.target); }
+  return { held, released, made };
 }
+
+const madeByRelease = (receipt: LifecycleReceipt): string[] => [path.dirname(receipt.runtimeDir), path.dirname(path.dirname(receipt.runtimeDir))];
+/** A directory and its ancestors that do not exist yet: what creating it would create. */ async function missingDirectories(target: string): Promise<string[]> { const missing: string[] = []; for (let current = target; current !== path.dirname(current) && !await lstat(current).then(() => true, () => false); current = path.dirname(current)) missing.push(current); return missing; }
 
 interface Target { output: string; target: string; canonical: string; key: string; exists: boolean; symlink: boolean }
 
@@ -572,11 +576,11 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
   let claim!: OutputClaim;
   const ownDirectory = runtimeDirectory(config, root, identity.instanceId);
   // The real directory the claim holds: its canonical path and identity.
-  let bound!: { canonical: string; id: string };
+  let bound!: { canonical: string; id: string }; let making: string[] = [];
   const record = async (targets: readonly Target[]) => {
     // An interrupted creation is this instance's only if it left exactly the content it recorded.
     claim = { version: 1, instanceId: identity.instanceId, runtime, targets: targets.map((item) => item.canonical), written: await writtenByClaim(previous),
-      runtimeDirectory: bound.canonical, ...await checkoutReceipts(config, root).then((receipts) => receipts.get(identity.instanceId)?.receipt).then((receipt) => ({ recorded: [...new Set([...previous?.recorded ?? [], bound.canonical, ...receipt ? [receipt.runtimeDir] : []])], replaced: [...new Set([...previous?.replaced ?? [], ...receipt?.environmentOutputs ?? []])] })), pid: process.pid, ...await processBirthSignature(process.pid).then((value) => value ? { birthSignature: value } : {}), createdAt: new Date().toISOString() };
+      runtimeDirectory: bound.canonical, ...await checkoutReceipts(config, root).then((receipts) => receipts.get(identity.instanceId)?.receipt).then((receipt) => ({ recorded: [...new Set([...previous?.recorded ?? [], bound.canonical, ...receipt ? [receipt.runtimeDir] : []])], made: [...new Set([...previous?.made ?? [], ...claim?.made ?? [], ...making, ...receipt && !previous ? madeByRelease(receipt) : []])], replaced: [...new Set([...previous?.replaced ?? [], ...receipt?.environmentOutputs ?? []])] })), pid: process.pid, ...await processBirthSignature(process.pid).then((value) => value ? { birthSignature: value } : {}), createdAt: new Date().toISOString() };
     await writeClaim(root, claim);
   };
   // Every start, also one without outputs, claims its runtime directory
@@ -594,7 +598,7 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
     if (createdRuntime) await removeEmptyDirectories(ownDirectory, createdRuntime);
     if (claim) {
       const { pending: _stale, runtimeDirectory: _directory, ...base } = previous ?? claim;
-      const kept: OutputClaim = { ...base, targets: previous?.targets ?? [], written: claim.written, recorded: claim.recorded, replaced: claim.replaced, ...(claim.pending?.length ? { pending: claim.pending } : {}),
+      const kept: OutputClaim = { ...base, targets: previous?.targets ?? [], written: claim.written, recorded: claim.recorded, made: claim.made, replaced: claim.replaced, ...(claim.pending?.length ? { pending: claim.pending } : {}),
         ...(previous?.runtimeDirectory ? { runtimeDirectory: previous.runtimeDirectory } : {}) };
       if (hadPrevious || kept.written.length || kept.pending?.length) return await writeClaim(root, kept);
       await removeClaim(root, identity.instanceId);
@@ -616,7 +620,7 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
         locked = true;
         const targets = await selectedTargets(config, root, runtime, stateDir);
         await assertTargetsAvailable(config, root, identity, targets, await readClaims(root));
-        const text = await readOwnClaim(root, identity.instanceId); [hadPrevious, previous] = [text !== undefined, text === undefined ? undefined : parseClaim(text, identity.instanceId)]; bound = { canonical: (await canonicalTarget(ownDirectory)).canonical, id: "" }; await record(targets); // The claim records the runtime directory before any part of it is created (task-input attribution), then binds it.
+        const text = await readOwnClaim(root, identity.instanceId); [hadPrevious, previous] = [text !== undefined, text === undefined ? undefined : parseClaim(text, identity.instanceId)]; bound = { canonical: (await canonicalTarget(ownDirectory)).canonical, id: "" }; making = await missingDirectories(ownDirectory); await record(targets); // The claim records the runtime directory before any part of it is created (task-input attribution), then binds it.
         // The runtime directory exists as a real directory from the claim on,
         // and its identity is recorded: a symlink created at its path later
         // cannot redirect this start's writes into another runtime's state.
@@ -726,7 +730,7 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
       };
       let canonical = await claimedPath();
       try {
-        await mkdir(path.dirname(canonical), { recursive: true, mode: 0o700 });
+        const parents = await missingDirectories(path.dirname(canonical)); if (parents.length) await update((current) => ({ ...current, made: [...new Set([...current.made ?? [], ...parents])] })); await mkdir(path.dirname(canonical), { recursive: true, mode: 0o700 }); // Recorded before created, as task-input provenance.
         canonical = await claimedPath();
         if (!named) {
           // The default runtime overwrites its claimed file in place as DevFn
