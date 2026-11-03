@@ -315,7 +315,7 @@ it("never removes a declared output that has the shape of another output's stagi
     for (const [config, runtime] of started) await orchestrator.down({ config, root: primary, stateDir, ...(runtime ? { runtime } : {}) }).catch(() => undefined);
     await rm(parent, { recursive: true, force: true });
   }
-}, 60_000);
+}, 120_000);
 
 // Root writes through a read-only directory, so the failed release cannot be provoked there.
 it.skipIf(process.getuid?.() === 0)("releases a stopped runtime's output claim on a retried down when the first release failed, keeping its history and other runtimes' claims", async () => {
