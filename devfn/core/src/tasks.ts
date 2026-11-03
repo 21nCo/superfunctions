@@ -9,7 +9,7 @@ import { createProcessEnvironment, resolveAdapterCommand, ProcessSupervisor, sto
 
 import { stagedOutputName } from "./outputs.js";
 import { DEFAULT_RUNTIME } from "./identity.js";
-import { devfnStateDirectories, runtimeOutputPath } from "./runtime.js";
+import { devfnStateDirectories, runtimeDirectory, runtimeOutputPath } from "./runtime.js";
 import type { ResourcePlan } from "./resources.js";
 import { DevFnError, type LifecyclePlan } from "./types.js";
 
@@ -203,21 +203,17 @@ function leaseStable(config: DevFnConfig, node: string, profile: string, resourc
 /**
  * Where a task's artifacts go, when it declares them: a task's completion is
  * valid only for the destination it wrote, so a changed mode or runtime
- * directory, also one a symlink redirects, changes its revision. The runtime
- * directory counts as the directory it reaches (its deepest existing
- * ancestor resolved), relative to the real checkout when inside it, so
- * creating it or a link above the checkout changes nothing. The per-instance
- * part is the journal's own scope. Undeclared, nothing is added and earlier
- * revisions stay valid.
+ * directory, or a symlink anywhere on the instance's artifact directory, changes its revision: that directory
+ * counts as the one it reaches (deepest existing ancestor resolved, relative to the real checkout when inside it).
+ * Undeclared, nothing is added and earlier revisions stay valid.
  */
-async function artifactSettings(config: DevFnConfig, root: string, name: string): Promise<{ artifacts?: { mode: "runtime" | "shared"; directory?: string } }> {
+async function artifactSettings(config: DevFnConfig, root: string, name: string, instanceId = "{instance}"): Promise<{ artifacts?: { mode: "runtime" | "shared"; directory?: string } }> {
   const mode = config.processes![name].artifacts;
   if (!mode) return {};
   if (mode === "shared") return { artifacts: { mode } };
-  const [checkout, reached] = await Promise.all([canonical(path.resolve(root)), canonical(path.resolve(root, config.runtimeDir ?? ".devfn"))]);
+  const [checkout, reached] = await Promise.all([canonical(path.resolve(root)), canonical(path.join(runtimeDirectory(config, path.resolve(root), instanceId), "artifacts", name))]);
   const relative = path.relative(checkout, reached);
-  const runtimeDir = relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) ? reached : relative;
-  return { artifacts: { mode, directory: path.join(runtimeDir, "instances", "{instance}", "artifacts", name) } };
+  return { artifacts: { mode, directory: relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) ? reached : relative } };
 }
 
 /**
@@ -232,13 +228,13 @@ async function artifactSettings(config: DevFnConfig, root: string, name: string)
  * environment as written) only selects the Compose sources, as at startup; any value changing the effective Compose resource the task uses counts, and its profile's name where a written value names DEVFN_PROFILE.
  */
 export async function taskInputRevision(config: DevFnConfig, root: string, node: { name: string; kind: "process" | "service" }, profile: string, resources?: ResourcePlan,
-  environment?: Record<string, string>, stateDir?: string): Promise<string> {
+  environment?: Record<string, string>, stateDir?: string, instanceId?: string): Promise<string> {
   const { spec, task, field } = taskNode(config, node);
   const sorted = (values: readonly string[] | undefined) => [...(values ?? [])].sort(compare);
   const secrets = new Set(spec.secretEnv ?? []);
   const entries = (values: Record<string, string> | undefined) => Object.entries(values ?? {}).map(([key, value]): [string, string | null] => [key, secrets.has(key) ? null : value]).sort(([a], [b]) => compare(a, b));
   const settings = node.kind === "process"
-    ? { adapter: config.processes![node.name].adapter, command: config.processes![node.name].command ?? [], script: config.processes![node.name].script ?? null, cwd: config.processes![node.name].cwd ?? ".", ...await artifactSettings(config, root, node.name) }
+    ? { adapter: config.processes![node.name].adapter, command: config.processes![node.name].command ?? [], script: config.processes![node.name].script ?? null, cwd: config.processes![node.name].cwd ?? ".", ...await artifactSettings(config, root, node.name, instanceId) }
     : { file: config.services![node.name].file ?? "compose.yaml", service: config.services![node.name].service, projectName: config.services![node.name].projectName ?? "devfn",
       source: await digestComposeSource(root, config.services![node.name], `${field}.file`, leaseStable(config, node.name, profile, resources, environment ?? { ...config.profiles[profile]?.environment, ...spec.env }), taskScope(config, "", node, resources).scope === "shared") };
   const consumed = sorted(spec.resources).map((name) => {
@@ -444,7 +440,7 @@ export async function preflightTasks(input: { config: DevFnConfig; plan: Lifecyc
     if (!tasks.some((node) => node.name === name)) throw new DevFnError("DEVFN_RUNTIME_INVALID", `--rerun-task ${name} names no task of profile ${input.plan.profile}.`);
   }
   for (const node of tasks) {
-    const revision = async () => await taskInputRevision(input.config, input.root, node, input.plan.profile, input.resources, input.environments?.[node.name]?.environment, input.stateDir);
+    const revision = async () => await taskInputRevision(input.config, input.root, node, input.plan.profile, input.resources, input.environments?.[node.name]?.environment, input.stateDir, input.instanceId);
     const { key } = taskScope(input.config, input.instanceId, node, input.resources);
     const { task } = taskNode(input.config, node);
     const rerunRequested = input.rerunTasks?.includes(node.name) ?? false;
@@ -514,7 +510,7 @@ export async function runTask(context: RunTaskContext): Promise<TaskReceipt> {
     locked = true;
     const journal: TaskJournal = await readTaskJournal(stateDir, key) ?? { version: 1, task: node.name, scope, attempts: [] };
     await settleAttempts(journal, node.name, () => context.compose ?? new ComposeController(), async () => await writeTaskJournal(stateDir, key, journal));
-    const revision = await taskInputRevision(config, context.root, node, context.profile, context.resources, context.environment, stateDir);
+    const revision = await taskInputRevision(config, context.root, node, context.profile, context.resources, context.environment, stateDir, context.instanceId);
     const decision = decide(journal, revision, task, node.name, context.rerunRequested);
     const receipt: TaskReceipt = { name: node.name, kind: node.kind, rerun: task.rerun ?? "on-change", idempotent: task.idempotent ?? false, inputRevision: revision,
       status: "skipped", reason: decision.reason, attempts: [], ...(journal.lastSuccess ? { lastSuccess: journal.lastSuccess } : {}) };

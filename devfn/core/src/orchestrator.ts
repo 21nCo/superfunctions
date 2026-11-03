@@ -460,7 +460,7 @@ async function receiptIsReady(config: DevFnConfig, root: string, receipt: Lifecy
     for (const node of plan.nodes.filter((item) => item.task)) {
       const completed = receipt.tasks?.find((item) => item.name === node.name);
       if (!completed || (completed.status !== "succeeded" && completed.status !== "skipped") ||
-        completed.inputRevision !== await taskInputRevision(config, root, node, plan.profile, resolved.resources, resolved.nodes[node.name]?.environment, receipt.stateDir ?? defaultStateDir())) return false;
+        completed.inputRevision !== await taskInputRevision(config, root, node, plan.profile, resolved.resources, resolved.nodes[node.name]?.environment, receipt.stateDir ?? defaultStateDir(), receipt.instanceId)) return false;
     }
     if (receipt.startupFingerprints) {
       const current = await startupFingerprints(config, root, resolved);

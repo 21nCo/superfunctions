@@ -216,16 +216,23 @@ export type RuntimePath = (relative: string) => Promise<string>;
 export async function writeReceipt(receipt: LifecycleReceipt, options: { runtimeCopy?: false | RuntimePath; stable?: false; onStable?: () => void } = {}): Promise<void> {
   const runtimeTarget = path.join(receipt.runtimeDir, "receipt.json");
   const stableTarget = await stableReceiptPath(receipt.root, receipt.instanceId);
-  if (options.stable !== false) {
-    await writeAtomicReceipt(stableTarget, receipt);
-    options.onStable?.();
+  // A live stable receipt holds its runtime directory; once it says stopped
+  // nothing does, so a stopped receipt's copy is written first.
+  const stopped = receipt.state === "stopped";
+  if (!stopped) await writeStable(stableTarget, receipt, options);
+  if (stableTarget !== runtimeTarget && options.runtimeCopy !== false) {
+    const target = options.runtimeCopy ? await options.runtimeCopy("receipt.json") : runtimeTarget;
+    // A copy there of another instance's receipt means its directory is
+    // reached through a link: that receipt is never replaced.
+    if (!await recordsAnotherInstance(target, receipt.instanceId)) await writeAtomicReceipt(target, receipt);
   }
-  if (stableTarget === runtimeTarget || options.runtimeCopy === false) return;
-  const target = options.runtimeCopy ? await options.runtimeCopy("receipt.json") : runtimeTarget;
-  // A copy there of another instance's receipt means its directory is
-  // reached through a link: that receipt is never replaced.
-  if (await recordsAnotherInstance(target, receipt.instanceId)) return;
+  if (stopped) await writeStable(stableTarget, receipt, options);
+}
+
+async function writeStable(target: string, receipt: LifecycleReceipt, options: { stable?: false; onStable?: () => void }): Promise<void> {
+  if (options.stable === false) return;
   await writeAtomicReceipt(target, receipt);
+  options.onStable?.();
 }
 
 async function recordsAnotherInstance(file: string, instanceId: string): Promise<boolean> {

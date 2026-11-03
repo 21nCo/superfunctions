@@ -29,6 +29,25 @@ vi.mock("../src/outputs.js", async (importOriginal) => {
   } };
 });
 
+// Lets a test act as soon as a stopped receipt's stable copy is written: at the first point writeReceipt yields after it, or once it returns.
+const stops = vi.hoisted(() => ({ onStopped: undefined as ((copyAfterStable: boolean) => Promise<void>) | undefined }));
+vi.mock("../src/runtime.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/runtime.js")>();
+  return { ...actual, writeReceipt: async (receipt: Parameters<typeof actual.writeReceipt>[0], options: Parameters<typeof actual.writeReceipt>[1] = {}) => {
+    const onStopped = stops.onStopped;
+    if (!onStopped || receipt.state !== "stopped" || options.runtimeCopy !== undefined || options.stable === false) return await actual.writeReceipt(receipt, options);
+    stops.onStopped = undefined;
+    const stable = path.join(receipt.root, ".devfn", "receipts", `${receipt.instanceId}.json`);
+    let ran = false;
+    const said = async () => (JSON.parse(await readFile(stable, "utf8")) as { state: string }).state === "stopped";
+    await actual.writeReceipt(receipt, { ...options, runtimeCopy: async (relative) => {
+      if (await said()) { ran = true; await onStopped(true); }
+      return path.join(receipt.runtimeDir, relative);
+    } });
+    if (!ran && await said()) await onStopped(false);
+  } };
+});
+
 async function repository(): Promise<{ parent: string; primary: string; second: string }> {
   const parent = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-named-runtime-")));
   const primary = path.join(parent, "checkout");
@@ -340,6 +359,41 @@ it("writes nothing into a stopped runtime's runtime directory once down released
   }
 }, 60_000);
 
+it("writes a stopped prior's receipt copy before its stable receipt, so a sibling that then takes its old runtime directory keeps its file", async () => {
+  const { parent, primary } = await repository();
+  const stateDir = path.join(parent, "state");
+  const raw = { version: 1, project: { id: "stop-existing-order" }, runtimeDir: "old-run", ports: { web: { env: "PORT" } }, environmentOutputs: [{ path: ".env.{runtime}" }],
+    processes: { web: { adapter: "command", command: [process.execPath, "server.mjs"], ports: ["web"], health: { type: "http", port: "web", timeoutMs: 10_000 } } },
+    profiles: { default: { processes: ["web"] } } };
+  const config = validateDevFnConfig(raw);
+  const moved = validateDevFnConfig({ ...JSON.parse(JSON.stringify(raw)), runtimeDir: "new-run" });
+  const orchestrator = new DevFnOrchestrator();
+  try {
+    await writeFile(path.join(primary, "server.mjs"), SERVER);
+    const a = await orchestrator.up({ config, root: primary, stateDir, runtime: "a" });
+    const copy = path.join("old-run", "instances", a.instanceId, "receipt.json");
+    // A down of a was interrupted; the next start of a, under another runtimeDir, completes that stop.
+    await new FilePortRegistry(path.join(stateDir, "registry.json")).updateInvocation(a.invocationId, { state: "stopping" });
+    let observed: { copyAfterStable: boolean; copyState: string } | undefined;
+    stops.onStopped = async (copyAfterStable) => {
+      observed = { copyAfterStable, copyState: (JSON.parse(await readFile(path.join(primary, copy), "utf8")) as { state: string }).state };
+      // Nothing holds a's old runtime directory once its stable receipt says stopped: the default runtime takes its receipt copy's name.
+      const sibling = validateDevFnConfig({ ...JSON.parse(JSON.stringify(raw)), runtimeDir: "third-run", environmentOutputs: [{ path: copy }] });
+      const claim = await claimEnvironmentOutputs(sibling, primary, await resolveInstanceIdentity("stop-existing-order", primary));
+      await claim.write(path.join(primary, copy), "SIBLING=1\n", 0o600);
+      await claim.commit();
+    };
+    const restarted = await orchestrator.up({ config: moved, root: primary, stateDir, runtime: "a" });
+    expect(restarted.state).toBe("ready");
+    expect(observed).toEqual({ copyAfterStable: false, copyState: "stopped" });
+    expect(await readFile(path.join(primary, copy), "utf8")).toBe("SIBLING=1\n");
+  } finally {
+    stops.onStopped = undefined;
+    await orchestrator.down({ config: moved, root: primary, stateDir, runtime: "a" }).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 60_000);
+
 it("gives back a stopped prior invocation's outputs and runtime directory when the start that stopped it fails", async () => {
   const { parent, primary } = await repository();
   const stateDir = path.join(parent, "state");
@@ -427,6 +481,61 @@ writeFileSync(process.env.DEVFN_ARTIFACT_DIR + "/out", "built");
     expect(await runs()).toBe(3);
     await cycle(once);
     expect(await runs()).toBe(3);
+  } finally {
+    await orchestrator.down({ config: configOf("once"), root, stateDir }).catch(() => undefined);
+    await rm(root, { recursive: true, force: true });
+  }
+}, 60_000);
+
+it("reruns an artifacts task whose instance or artifact directory a symlink below runtimeDir now redirects, and keeps its completion while it is unchanged", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "devfn-artifact-instance-"));
+  const stateDir = path.join(root, ".state");
+  const configOf = (rerun: "on-change" | "once") => validateDevFnConfig({ version: 1, project: { id: "artifact-instance" }, runtimeDir: "run",
+    processes: { build: { adapter: "command", command: [process.execPath, "-e", "require('node:fs').appendFileSync('runs.log', 'run\\n')"], artifacts: "runtime", task: { rerun } } },
+    profiles: { default: { processes: ["build"] } } });
+  const orchestrator = new DevFnOrchestrator();
+  const runs = async () => (await readFile(path.join(root, "runs.log"), "utf8").catch(() => "")).split("\n").filter(Boolean).length;
+  const cycle = async (config: DevFnConfig, rerunTasks?: string[]) => {
+    const started = await orchestrator.up({ config, root, stateDir, ...(rerunTasks ? { rerunTasks } : {}) });
+    await orchestrator.down({ config, root, stateDir });
+    return started.instanceId;
+  };
+  const redirect = async (relative: string, to: string) => {
+    await mkdir(path.join(root, to), { recursive: true });
+    await rm(path.join(root, relative), { recursive: true, force: true });
+    await symlink(path.join(root, to), path.join(root, relative));
+  };
+  const onChange = configOf("on-change");
+  const node = { name: "build", kind: "process" as const };
+  try {
+    // The first start creates the instance's artifact directory; an unchanged destination keeps the completion.
+    const instanceId = await cycle(onChange);
+    await cycle(onChange);
+    expect(await runs()).toBe(1);
+    const created = await taskInputRevision(onChange, root, node, "default", undefined, undefined, stateDir, instanceId);
+    expect(created).toBe(await taskInputRevision(onChange, await realpath(root), node, "default", undefined, undefined, stateDir, instanceId));
+    // run/instances now reaches an empty directory: an on-change task runs again.
+    await redirect(path.join("run", "instances"), "elsewhere");
+    expect(await taskInputRevision(onChange, root, node, "default", undefined, undefined, stateDir, instanceId)).not.toBe(created);
+    await cycle(onChange);
+    await cycle(onChange);
+    expect(await runs()).toBe(2);
+    // So does a link at the instance's own directory, and at its artifact directory.
+    await redirect(path.join("run", "instances", instanceId), "third");
+    await cycle(onChange);
+    expect(await runs()).toBe(3);
+    // (A link out of the runtime directory is refused at the start; one inside it is followed.)
+    await redirect(path.join("run", "instances", instanceId, "artifacts", "build"), path.join("third", "moved"));
+    await cycle(onChange);
+    expect(await runs()).toBe(4);
+    // A once task blocks instead, until it is rerun explicitly.
+    await redirect(path.join("run", "instances", instanceId), "fifth");
+    const once = configOf("once");
+    await expect(orchestrator.up({ config: once, root, stateDir })).rejects.toMatchObject({ code: "DEVFN_TASK_INPUT_CHANGED" });
+    expect(await runs()).toBe(4);
+    await cycle(once, ["build"]);
+    await cycle(once);
+    expect(await runs()).toBe(5);
   } finally {
     await orchestrator.down({ config: configOf("once"), root, stateDir }).catch(() => undefined);
     await rm(root, { recursive: true, force: true });
