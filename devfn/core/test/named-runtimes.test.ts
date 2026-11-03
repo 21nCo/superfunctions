@@ -1171,3 +1171,38 @@ it("repeats a task-input walk that listed a directory a sibling published, creat
     await rm(parent, { recursive: true, force: true });
   }
 }, 120_000);
+
+it("refuses an output in a sibling runtime's state directory inside the checkout while its claimant runs or its receipt is live, before any lease or write, and frees it once that runtime is down", async () => {
+  const { parent, primary } = await repository();
+  const [stateA, stateB] = [path.join(primary, "state-a"), path.join(primary, "state-b")];
+  const base = { version: 1, project: { id: "sibling-state" }, ports: { web: { env: "PORT" } },
+    processes: { web: { adapter: "command", command: [process.execPath, "server.mjs"], ports: ["web"], health: { type: "http", port: "web", timeoutMs: 10_000 } } },
+    profiles: { default: { processes: ["web"] } } };
+  const a = validateDevFnConfig(base as never);
+  const intruder = validateDevFnConfig({ ...base, environmentOutputs: [{ path: "state-a/registry.json" }] } as never);
+  const orchestrator = new DevFnOrchestrator();
+  const defaultIdentity = await resolveInstanceIdentity("sibling-state", primary);
+  try {
+    await writeFile(path.join(primary, "server.mjs"), SERVER);
+    // A claim records its state directory before any lease there: a sibling's output is refused while that claimant runs.
+    await mkdir(stateA);
+    const starting = await claimEnvironmentOutputs(a, primary, await resolveInstanceIdentity("sibling-state", primary, "a"), stateA);
+    await expect(assertEnvironmentOutputsAvailable(intruder, primary, defaultIdentity, stateB))
+      .rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining("the state directory of runtime a") });
+    await starting.restore();
+    await assertEnvironmentOutputsAvailable(intruder, primary, defaultIdentity, stateB);
+
+    const upA = await orchestrator.up({ config: a, root: primary, stateDir: stateA, runtime: "a" });
+    const registry = path.join(stateA, "registry.json");
+    const before = await readFile(registry);
+    await expect(orchestrator.up({ config: intruder, root: primary, stateDir: stateB }))
+      .rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining(`the state directory of runtime a (instance ${upA.instanceId})`) });
+    expect(await readFile(registry)).toEqual(before);
+    expect((await orchestrator.down({ config: a, root: primary, stateDir: stateA, runtime: "a" })).state).toBe("stopped");
+    // A stopped runtime holds no state directory, as it holds no runtime directory.
+    await assertEnvironmentOutputsAvailable(intruder, primary, defaultIdentity, stateB);
+  } finally {
+    for (const [runtime, stateDir] of [["a", stateA], [undefined, stateB]] as const) await orchestrator.down({ config: a, root: primary, stateDir, ...(runtime ? { runtime } : {}) }).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 120_000);

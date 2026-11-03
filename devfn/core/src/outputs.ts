@@ -34,6 +34,8 @@ interface OutputClaim {
   written: WrittenOutput[];
   pending?: WrittenOutput[];
   runtimeDirectory?: string; recorded?: string[]; made?: string[]; replaced?: string[];
+  /** The canonical state directory of the start, recorded before any lease there and held like its runtime directory. */
+  stateDir?: string;
   pid: number;
   birthSignature?: string;
   createdAt: string;
@@ -111,7 +113,7 @@ function parseClaim(text: string, instanceId: string): OutputClaim | undefined {
     const files = (items: unknown) => Array.isArray(items) &&
       items.every((item: WrittenOutput) => typeof item?.target === "string" && typeof item.sha256 === "string" && /^[0-9a-f]{64}$/.test(item.sha256));
     if (value.version === 1 && value.instanceId === instanceId && typeof value.runtime === "string" && strings(value.targets) && files(value.written) &&
-      (value.pending === undefined || files(value.pending)) && (value.runtimeDirectory === undefined || typeof value.runtimeDirectory === "string") && (value.recorded === undefined || strings(value.recorded)) && (value.made === undefined || strings(value.made)) && (value.replaced === undefined || strings(value.replaced)) &&
+      (value.pending === undefined || files(value.pending)) && (value.runtimeDirectory === undefined || typeof value.runtimeDirectory === "string") && (value.stateDir === undefined || typeof value.stateDir === "string") && (value.recorded === undefined || strings(value.recorded)) && (value.made === undefined || strings(value.made)) && (value.replaced === undefined || strings(value.replaced)) &&
       Number.isSafeInteger(value.pid) && value.pid > 0 && typeof value.createdAt === "string") return value;
   } catch { /* Malformed below. */ }
   return undefined;
@@ -276,6 +278,8 @@ interface Holder {
    * claimed. A replacement under a changed runtimeDir holds both.
    */
   runtimeDirectories: { key: string; path: string }[];
+  /** The canonical state directories (registry, leases, locks) its live receipt and running claimant record. */
+  stateDirectories: { key: string; path: string }[];
   /** Its stable receipt and claim record, which are its state whether or not it is live. */
   stateFiles: string[];
   /** A live receipt of an earlier release that records no files and has no claim: what it holds cannot be known. */
@@ -304,14 +308,19 @@ async function otherHolders(config: DevFnConfig, root: string, identity: Instanc
     const running = claim !== undefined && (claim.targets.length > 0 || claim.runtimeDirectory !== undefined) && await claimantRuns(claim);
     if (claim?.targets.length && (live(receipt) || running)) await addCanonical(files, claim.targets);
     if (live(receipt)) await addCanonical(files, receipt!.environmentOutputs);
-    const runtimeDirectories: { key: string; path: string }[] = [];
-    for (const directory of [live(receipt) ? receipt!.runtimeDir : undefined, running ? claim!.runtimeDirectory : undefined]) {
-      if (directory === undefined) continue;
-      const { canonical } = await canonicalTarget(directory);
-      if (!runtimeDirectories.some((item) => item.key === pathKey(canonical))) runtimeDirectories.push({ key: pathKey(canonical), path: canonical });
-    }
+    const directories = async (...items: (string | undefined)[]) => {
+      const found: { key: string; path: string }[] = [];
+      for (const directory of items) {
+        if (directory === undefined) continue;
+        const { canonical } = await canonicalTarget(directory);
+        if (!found.some((item) => item.key === pathKey(canonical))) found.push({ key: pathKey(canonical), path: canonical });
+      }
+      return found;
+    };
+    const runtimeDirectories = await directories(live(receipt) ? receipt!.runtimeDir : undefined, running ? claim!.runtimeDirectory : undefined);
+    const stateDirectories = await directories(live(receipt) ? receipt!.stateDir : undefined, running ? claim!.stateDir : undefined);
     const stateFiles = [...(entry ? [entry.file] : []), ...(claims.has(instanceId) ? [path.join(claimsDirectory, `${instanceId}.json`)] : [])];
-    holders.push({ instanceId, entry, files, runtimeDirectories, stateFiles, unknown: live(receipt) && !claim && !receipt!.environmentOutputs?.length,
+    holders.push({ instanceId, entry, files, runtimeDirectories, stateDirectories, stateFiles, unknown: live(receipt) && !claim && !receipt!.environmentOutputs?.length,
       owner: { runtime: claim?.runtime ?? String(receipt?.runtime ?? DEFAULT_RUNTIME), instanceId, ...(entry ? { receipt: entry.file, projectId: String(entry.receipt.projectId) } : {}) } });
   }
   return holders;
@@ -414,6 +423,12 @@ async function assertTargetsAvailable(config: DevFnConfig, root: string, identit
     if (directory && inside) {
       throw new DevFnError("DEVFN_RUNTIME_INVALID", `Environment output ${relativeName(root, inside.target)} of runtime ${runtime} lies in ${relativeName(root, directory.path)}, the runtime directory of runtime ${owner.runtime} (instance ${instanceId}), which holds its logs and runtime.env; write it elsewhere, or ${await ownerRemedy(config, root, instanceId, entry, owner.runtime)}.`,
         { runtime, target: inside.canonical, owner });
+    }
+    const state = holder.stateDirectories.find((item) => targets.some((target) => within(target.key, item.key)));
+    const stateTarget = state && targets.find((item) => within(item.key, state.key));
+    if (state && stateTarget) {
+      throw new DevFnError("DEVFN_RUNTIME_INVALID", `Environment output ${relativeName(root, stateTarget.target)} of runtime ${runtime} resolves to ${stateTarget.canonical}, inside ${relativeName(root, state.path)}, the state directory of runtime ${owner.runtime} (instance ${instanceId}), which holds its port registry, leases and locks; write it elsewhere, or ${await ownerRemedy(config, root, instanceId, entry, owner.runtime)}.`,
+        { runtime, target: stateTarget.canonical, owner });
     }
     const taken = [...holder.files.keys()].map((key) => wanted.get(key)).find((item) => item !== undefined);
     if (taken) {
@@ -580,7 +595,7 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
   const record = async (targets: readonly Target[]) => {
     // An interrupted creation is this instance's only if it left exactly the content it recorded.
     claim = { version: 1, instanceId: identity.instanceId, runtime, targets: targets.map((item) => item.canonical), written: await writtenByClaim(previous),
-      runtimeDirectory: bound.canonical, ...await checkoutReceipts(config, root).then((receipts) => receipts.get(identity.instanceId)?.receipt).then((receipt) => ({ recorded: [...new Set([...previous?.recorded ?? [], bound.canonical, ...receipt ? [receipt.runtimeDir] : []])], made: [...new Set([...previous?.made ?? [], ...claim?.made ?? [], ...making, ...receipt && !previous ? madeByRelease(receipt) : []])], replaced: [...new Set([...previous?.replaced ?? [], ...receipt?.environmentOutputs ?? []])] })), pid: process.pid, ...await processBirthSignature(process.pid).then((value) => value ? { birthSignature: value } : {}), createdAt: new Date().toISOString() };
+      runtimeDirectory: bound.canonical, ...stateDir ? { stateDir: (await canonicalTarget(path.resolve(stateDir))).canonical } : {}, ...await checkoutReceipts(config, root).then((receipts) => receipts.get(identity.instanceId)?.receipt).then((receipt) => ({ recorded: [...new Set([...previous?.recorded ?? [], bound.canonical, ...receipt ? [receipt.runtimeDir] : []])], made: [...new Set([...previous?.made ?? [], ...claim?.made ?? [], ...making, ...receipt && !previous ? madeByRelease(receipt) : []])], replaced: [...new Set([...previous?.replaced ?? [], ...receipt?.environmentOutputs ?? []])] })), pid: process.pid, ...await processBirthSignature(process.pid).then((value) => value ? { birthSignature: value } : {}), createdAt: new Date().toISOString() };
     await writeClaim(root, claim);
   };
   // Every start, also one without outputs, claims its runtime directory
