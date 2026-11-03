@@ -759,3 +759,42 @@ it.skipIf(process.env.DEVFN_REAL_COMPOSE !== "1")("never rewrites another runtim
     await rm(parent, { recursive: true, force: true });
   }
 }, 180_000);
+
+it("keeps a task's completion while a sibling runtime stops under an earlier runtimeDir or environment outputs its receipt records, and reruns it for a real input change", async () => {
+  const { parent, primary } = await repository();
+  const stateDir = path.join(parent, "state");
+  const log = path.join(parent, "runs.log");
+  const configOf = (runtimeDir: string, output: string) => validateDevFnConfig({ version: 1, project: { id: "sibling-task" }, runtimeDir, environmentOutputs: [{ path: output }],
+    processes: { seed: { adapter: "command", command: [process.execPath, "-e", `require("node:fs").appendFileSync(${JSON.stringify(log)}, "x\\n")`], task: { rerun: "on-change", inputs: ["."] } } },
+    profiles: { default: { processes: ["seed"], environment: { APP: "1" } } } });
+  const orchestrator = new DevFnOrchestrator();
+  const runs = async () => (await readFile(log, "utf8").catch(() => "")).split("\n").filter(Boolean).length;
+  const current = configOf("new-run", ".out.{runtime}");
+  try {
+    await writeFile(path.join(primary, "schema.sql"), "create table t();");
+    const cycle = async (config: DevFnConfig, runtime: string) => {
+      await orchestrator.up({ config, root: primary, stateDir, runtime });
+      await orchestrator.down({ config, root: primary, stateDir, runtime });
+    };
+    await cycle(current, "d");
+    // Siblings start under an earlier runtimeDir (a), output (c) or both (b): d's on-change task keeps its completion while each runs, after it stops and when it starts again.
+    for (const [runtime, earlier] of [["a", configOf("old-run", ".out.{runtime}")], ["b", configOf("old-run", ".env.{runtime}")], ["c", configOf("new-run", ".env.{runtime}")]] as const) {
+      await orchestrator.up({ config: earlier, root: primary, stateDir, runtime });
+      await cycle(current, "d");
+      await orchestrator.down({ config: current, root: primary, stateDir, runtime });
+      await cycle(current, "d");
+      await cycle(earlier, runtime);
+      await cycle(current, "d");
+    }
+    expect(await readdir(primary)).toEqual(expect.arrayContaining([".env.b", ".env.c", ".out.a"]));
+    // Each sibling's task ran once in its own instance, d's once.
+    expect(await runs()).toBe(4);
+    // A real input change still reruns it.
+    await writeFile(path.join(primary, "schema.sql"), "create table u();");
+    await cycle(current, "d");
+    expect(await runs()).toBe(5);
+  } finally {
+    for (const runtime of ["a", "b", "c", "d"]) await orchestrator.down({ config: current, root: primary, stateDir, runtime }).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 240_000);

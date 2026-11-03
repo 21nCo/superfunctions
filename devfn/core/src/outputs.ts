@@ -117,7 +117,7 @@ function parseClaim(text: string, instanceId: string): OutputClaim | undefined {
 }
 
 /** Claim records of the checkout by instance; a malformed record cannot be attributed and is refused. */
-async function readClaims(root: string): Promise<Map<string, { claim: OutputClaim; text: string }>> {
+export async function readClaims(root: string): Promise<Map<string, { claim: OutputClaim; text: string }>> {
   const directory = await claimDirectory(root);
   const names = await readdir(directory).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return [] as string[];
