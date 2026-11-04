@@ -611,3 +611,57 @@ describe("[memory-fixture] async callbacks", () => {
     await watch.stop();
   });
 });
+
+describe("[memory-fixture] storage calls that do not return a native promise", () => {
+  /** Resolves true once `promise` settles within `ticks` microtask turns, without relying on timers. */
+  async function settlesWithin(promise: Promise<unknown>, ticks = 1000): Promise<boolean> {
+    let settled = false;
+    promise.then(
+      () => (settled = true),
+      () => (settled = true),
+    );
+    for (let tick = 0; tick < ticks && !settled; tick += 1) await Promise.resolve();
+    return settled;
+  }
+
+  const stored = { id: "e1", type: "t", timestamp: new Date(0).toISOString(), receivedAt: new Date(0).toISOString(), attributes: {} };
+  const queryResults: Array<[string, () => unknown, { events: unknown[] } | "storage_failed"]> = [
+    ["a synchronous array", () => [stored], { events: [stored] }],
+    ["undefined", () => undefined, "storage_failed"],
+    ["a plain thenable", () => ({ then: (resolve: (value: unknown) => void) => resolve([stored]) }), { events: [stored] }],
+    ["a thenable that rejects", () => ({ then: (_: unknown, reject: (error: unknown) => void) => reject(new Error("no")) }), "storage_failed"],
+    ["a thenable whose then getter throws", () => ({ get then(): never { throw new Error("getter"); } }), "storage_failed"],
+    ["a thenable whose then() throws", () => ({ then(): never { throw new Error("then"); } }), "storage_failed"],
+    ["a synchronous throw", () => { throw new Error("sync"); }, "storage_failed"],
+  ];
+
+  it.each(queryResults)("query handles %s and a later stop() resolves", async (_label, result, expected) => {
+    const memory = createMemoryStorage();
+    const storage = { ...memory, query: result as unknown as typeof memory.query };
+    const watch = createWatch({ storage });
+    await watch.start();
+    if (expected === "storage_failed") {
+      await expect(watch.query({})).rejects.toMatchObject({ name: "WatchError", code: "storage_failed" });
+    } else {
+      expect(await watch.query({})).toEqual({ ...expected, truncated: false });
+    }
+    expect(await settlesWithin(watch.stop())).toBe(true);
+    expect(watch.state).toBe("stopped");
+  });
+
+  it.each([
+    ["undefined synchronously", () => undefined, true],
+    ["a plain thenable", () => ({ then: (resolve: (value: unknown) => void) => resolve(undefined) }), true],
+    ["a thenable that rejects", () => ({ then: (_: unknown, reject: (error: unknown) => void) => reject(new Error("no")) }), false],
+    ["a synchronous throw", () => { throw new Error("sync"); }, false],
+  ] as Array<[string, () => unknown, boolean]>)("ingest handles a write returning %s and a later stop() resolves", async (_label, result, ok) => {
+    const memory = createMemoryStorage();
+    const storage = { ...memory, write: result as unknown as typeof memory.write };
+    const watch = createWatch({ storage });
+    await watch.start();
+    expect(await watch.ingest({ type: "t" })).toMatchObject(ok ? { ok: true } : { ok: false, error: { code: "storage_failed" } });
+    expect(await watch.ingestBatch([{ type: "t" }])).toMatchObject(ok ? { ok: true } : { ok: false, error: { code: "storage_failed" } });
+    expect(await settlesWithin(watch.stop())).toBe(true);
+    expect(watch.state).toBe("stopped");
+  });
+});

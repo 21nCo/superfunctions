@@ -165,10 +165,21 @@ export function createWatch(config: WatchConfig): Watch {
     }
   }
 
-  function track<T>(promise: Promise<T>): Promise<T> {
-    inFlight.add(promise);
-    void promise.finally(() => inFlight.delete(promise)).catch(() => undefined);
-    return promise;
+  /**
+   * Runs a storage call as tracked in-flight work, so stop() can wait for it.
+   * The call's return value may be anything a buggy or hostile adapter returns
+   * (a plain value, undefined, a foreign thenable, or a synchronous throw); it is
+   * always adopted into a native promise, and that promise always leaves
+   * `inFlight` once it settles, so drain() and stop() always terminate.
+   */
+  function track<T>(task: () => Promise<T>): Promise<T> {
+    const run = (async () => task())();
+    inFlight.add(run);
+    const done = (): void => {
+      inFlight.delete(run);
+    };
+    run.then(done, done);
+    return run;
   }
 
   function notStarted(): WatchErrorInfo {
@@ -243,7 +254,7 @@ export function createWatch(config: WatchConfig): Watch {
     if (!normalized.ok) return { ok: false, error: errorInfo("invalid_event", "the event is invalid", normalized.issues) };
     const stamped = stamp([normalized.value]);
     if (!Array.isArray(stamped)) return { ok: false, error: stamped };
-    const failure = await track(write(stamped));
+    const failure = await track(() => write(stamped));
     if (failure) return { ok: false, error: failure };
     return { ok: true, event: structuredClone(stamped[0]), storage: storage.kind, durable: storage.durable };
   }
@@ -271,7 +282,7 @@ export function createWatch(config: WatchConfig): Watch {
     if (issues.length > 0) return { ok: false, error: errorInfo("invalid_event", "the batch is invalid; nothing was written", issues) };
     const stamped = stamp(normalized);
     if (!Array.isArray(stamped)) return { ok: false, error: stamped };
-    const failure = await track(write(stamped));
+    const failure = await track(() => write(stamped));
     if (failure) return { ok: false, error: failure };
     return { ok: true, events: structuredClone(stamped), storage: storage.kind, durable: storage.durable };
   }
@@ -288,7 +299,7 @@ export function createWatch(config: WatchConfig): Watch {
     const limit = normalized.value.limit;
     let events: StoredEvent[];
     try {
-      events = await track(storage.query({ ...normalized.value, limit: limit + 1 }));
+      events = await track(() => storage.query({ ...normalized.value, limit: limit + 1 }));
     } catch (error) {
       throw new WatchError("storage_failed", `storage ${storage.kind} failed the query: ${describe(error)}`, { cause: error });
     }

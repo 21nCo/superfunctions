@@ -155,6 +155,52 @@ export function describeStorageContract(evidence: ContractEvidence, create: () =
       expect((await watch.query({ attributes: { v: "42" } })).events).toEqual([]);
     });
 
+    it(`[${evidence}] matches every accepted string attribute exactly, including lone surrogates, NUL, quotes and backslashes`, async () => {
+      const values = [
+        "\uD800",
+        "\uDBFF",
+        "\uDC00",
+        "x\uDC00y",
+        "\uDC00\uD800",
+        "\uD83D\uDE00",
+        "\uFFFD",
+        "😀 ok",
+        "a\u0000b",
+        "a",
+        "\u0000",
+        '"quoted"',
+        "back\\slash",
+        "\\u0041",
+        "A",
+        "\u2028\u007f\n\t",
+        "",
+        "Ä",
+        "A\u0308",
+      ];
+      await watch.ingestBatch(values.map((s, index) => ({ type: "str", timestamp: at(index), attributes: { s, index } })));
+      for (const [index, s] of values.entries()) {
+        const { events } = await watch.query({ attributes: { s }, order: "asc" });
+        expect({ s, matched: events.map((item) => item.attributes.index) }).toEqual({ s, matched: [index] });
+        expect(events[0]?.attributes.s === s).toBe(true);
+      }
+      expect((await watch.query({ attributes: { s: "\uDFFF" } })).events).toEqual([]);
+      expect((await watch.query({ attributes: { s: "x\uFFFDy" } })).events).toEqual([]);
+    });
+
+    it(`[${evidence}] filters string, number and boolean attributes on names containing . : and -`, async () => {
+      const attributes = (n: number) => ({ "a.b": `s${n}`, "x:y-z": n, "flag.on:off-x": n % 2 === 0, a: "decoy", b: n });
+      await watch.ingestBatch([0, 1, 2].map((n) => ({ type: "keys", timestamp: at(n), attributes: attributes(n) })));
+      const matched = async (filter: StoredEvent["attributes"]) =>
+        (await watch.query({ attributes: filter, order: "asc" })).events.map((item) => item.attributes.b);
+      expect(await matched({ "a.b": "s1" })).toEqual([1]);
+      expect(await matched({ "x:y-z": 2 })).toEqual([2]);
+      expect(await matched({ "flag.on:off-x": true })).toEqual([0, 2]);
+      expect(await matched({ "flag.on:off-x": false, "a.b": "s1", "x:y-z": 1 })).toEqual([1]);
+      expect(await matched({ "a.b": "decoy" })).toEqual([]);
+      expect(await matched({ "x:y-z": "2" })).toEqual([]);
+      expect(await matched({ "flag.on:off-x": "true" })).toEqual([]);
+    });
+
     it(`[${evidence}] orders by timestamp; desc is the exact reverse of asc, including ties`, async () => {
       await watch.ingest({ type: "tie", timestamp: at(5), attributes: { n: 1 } });
       await watch.ingest({ type: "tie", timestamp: at(4), attributes: { n: 2 } });

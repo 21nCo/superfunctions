@@ -163,22 +163,17 @@ export function buildSqliteQuery(query: StorageQuery): { sql: string; params: Ra
   }
   for (const [key, value] of query.attributes) {
     // json_each keeps the key a bound value, so attribute names never become JSON paths or SQL.
-    if (typeof value === "boolean") {
-      where.push("EXISTS (SELECT 1 FROM json_each(e.attributes) AS a WHERE a.key = ? AND a.type = ?)");
-      params.push(key, value ? "true" : "false");
-    } else if (typeof value === "number") {
-      // SQLite parses JSON numbers lossily (integer literals become exact int64s, and extreme exponents
-      // round differently from JavaScript), so numbers are compared as their stored JSON text. The
-      // attributes column is always JSON.stringify output, which writes every double in one canonical
-      // form (and +0 and -0 both as "0"), so text equality is exactly JavaScript's ===.
-      where.push(
-        "EXISTS (SELECT 1 FROM json_each(e.attributes) AS a WHERE a.key = ? AND a.type IN ('integer', 'real') AND (e.attributes -> a.fullkey) = ?)",
-      );
-      params.push(key, JSON.stringify(value));
-    } else {
-      where.push("EXISTS (SELECT 1 FROM json_each(e.attributes) AS a WHERE a.key = ? AND a.type = 'text' AND a.value = ?)");
-      params.push(key, value);
-    }
+    // Values are compared as their stored JSON text, never as SQLite's decoded a.value: SQLite decodes
+    // JSON lossily (integer literals become exact int64s, extreme exponents round differently from
+    // JavaScript, and an escaped lone surrogate such as "\ud800" does not survive decoding). The
+    // attributes column is always JSON.stringify output, which is one canonical text per value
+    // (+0 and -0 both "0"; lone surrogates escaped), and SQLite returns that text unchanged from ->,
+    // so text equality is exactly JavaScript's === for strings, numbers and booleans alike.
+    const types = typeof value === "boolean" ? "'true', 'false'" : typeof value === "number" ? "'integer', 'real'" : "'text'";
+    where.push(
+      `EXISTS (SELECT 1 FROM json_each(e.attributes) AS a WHERE a.key = ? AND a.type IN (${types}) AND (e.attributes -> a.fullkey) = ?)`,
+    );
+    params.push(key, JSON.stringify(value));
   }
   const direction = query.order === "asc" ? "ASC" : "DESC";
   const sql =
