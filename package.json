@@ -43,6 +43,7 @@
     "sendfn/*",
     "langfn/typescript",
     "logfn/typescript",
+    "watchfn/typescript",
     "langfn/docs",
     "memoryfn/typescript",
     "memoryfn/docs",
