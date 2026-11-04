@@ -104,6 +104,15 @@ describe("[memory-fixture] lifecycle", () => {
     expect((await watch.ingest({ type: "x" })).ok).toBe(false);
   });
 
+  it("rolls back a failed start on an adapter whose close() is synchronous", async () => {
+    const close = vi.fn();
+    const storage = { ...createMemoryStorage(), close } as unknown as ReturnType<typeof createMemoryStorage>;
+    const watch = createWatch({ storage, collectors: [recordingCollector("broken", [], { failStart: true })] });
+    await expect(watch.start()).rejects.toMatchObject({ code: "start_failed" });
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(watch.state).toBe("stopped");
+  });
+
   it("fails start when storage cannot open and leaves no collector running", async () => {
     const log: string[] = [];
     const storage = { ...createMemoryStorage(), open: async () => Promise.reject(new Error("disk missing")) };
@@ -308,5 +317,6 @@ describe("configuration", () => {
   it("requires an explicit storage adapter", () => {
     expect(() => createWatch({} as never)).toThrow(/config.storage/);
     expect(() => createWatch(undefined as never)).toThrow(/config is required/);
+    expect(() => createWatch({ storage: createMemoryStorage(), now: 5 } as never)).toThrow(/config.now must be a function/);
   });
 });

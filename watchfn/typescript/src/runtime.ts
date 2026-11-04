@@ -36,6 +36,11 @@ function validateConfig(config: WatchConfig): void {
   if (config.collectors !== undefined && !Array.isArray(config.collectors)) {
     throw new WatchError("invalid_config", "createWatch: config.collectors must be an array");
   }
+  for (const hook of ["onError", "now", "generateId"] as const) {
+    if (config[hook] !== undefined && typeof config[hook] !== "function") {
+      throw new WatchError("invalid_config", `createWatch: config.${hook} must be a function`);
+    }
+  }
 }
 
 /**
@@ -123,7 +128,11 @@ export function createWatch(config: WatchConfig): Watch {
         }
       }
       await drain();
-      await storage.close?.().catch((closeError: unknown) => report(closeError, { source: "storage", name: storage.kind }));
+      try {
+        await storage.close?.();
+      } catch (closeError) {
+        report(closeError, { source: "storage", name: storage.kind });
+      }
       state = "stopped";
       throw new WatchError("start_failed", `collector ${failed?.name ?? "?"} failed to start: ${describe(error)}`, { cause: error });
     }

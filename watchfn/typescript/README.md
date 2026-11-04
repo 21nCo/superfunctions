@@ -70,7 +70,7 @@ Each write, whether one event or a batch, is a single `INSERT` statement, so it 
   - `not_started`: the runtime is stopped or stopping.
   - `storage_failed`: the adapter rejected the write. Treat the event as not stored.
 - `ingestBatch(events)` takes 1 to 100 events. It validates all of them first and then writes them in one atomic write, so either every event is stored or none is.
-- `durable` is `false` for the memory adapter. Its events disappear with the process.
+- `durable` is `false` for the memory adapter. Its events disappear with the process, and it keeps at most `maxEvents` events (10 000 by default), dropping the oldest first.
 
 An event has these fields:
 
