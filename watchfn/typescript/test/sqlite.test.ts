@@ -102,7 +102,7 @@ describe("[durable-sqlite] SQLite storage on @superfunctions/db", () => {
     });
     expect(sql).not.toContain("OR 1=1");
     expect(sql.split("?").length - 1).toBe(params.length);
-    expect(params).toEqual([1, 2, "a", "b", "k", "' OR 1=1 --", "n", 5, "b", "false", 11]);
+    expect(params).toEqual([1, 2, "a", "b", "k", "' OR 1=1 --", "n", "5", "b", "false", 11]);
     expect(sql).toContain("ORDER BY e.ts ASC, e.seq ASC LIMIT ?");
   });
 });

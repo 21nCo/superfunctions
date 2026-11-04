@@ -167,8 +167,14 @@ export function buildSqliteQuery(query: StorageQuery): { sql: string; params: Ra
       where.push("EXISTS (SELECT 1 FROM json_each(e.attributes) AS a WHERE a.key = ? AND a.type = ?)");
       params.push(key, value ? "true" : "false");
     } else if (typeof value === "number") {
-      where.push("EXISTS (SELECT 1 FROM json_each(e.attributes) AS a WHERE a.key = ? AND a.type IN ('integer', 'real') AND a.value = ?)");
-      params.push(key, value);
+      // SQLite parses JSON numbers lossily (integer literals become exact int64s, and extreme exponents
+      // round differently from JavaScript), so numbers are compared as their stored JSON text. The
+      // attributes column is always JSON.stringify output, which writes every double in one canonical
+      // form (and +0 and -0 both as "0"), so text equality is exactly JavaScript's ===.
+      where.push(
+        "EXISTS (SELECT 1 FROM json_each(e.attributes) AS a WHERE a.key = ? AND a.type IN ('integer', 'real') AND (e.attributes -> a.fullkey) = ?)",
+      );
+      params.push(key, JSON.stringify(value));
     } else {
       where.push("EXISTS (SELECT 1 FROM json_each(e.attributes) AS a WHERE a.key = ? AND a.type = 'text' AND a.value = ?)");
       params.push(key, value);

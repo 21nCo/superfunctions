@@ -96,9 +96,9 @@ Unknown fields are rejected. Stored events carry an `id`, an ISO `timestamp` and
 
 - `from` is inclusive and `to` is exclusive.
 - `type` is one type or a list of up to 20 types.
-- Every attribute filter must match by value and type. For example, `{ status: 503 }` does not match `"503"`.
+- Every attribute filter must match by value and type. For example, `{ status: 503 }` does not match `"503"`. Numbers match when they are the same JavaScript number (`===`) on both adapters, including integers beyond `Number.MAX_SAFE_INTEGER`.
 - `limit` defaults to 100, with a maximum of 1000. `truncated` is `true` when more events matched than the limit allowed.
-- `order` defaults to `desc`, so the newest events come first. Events with the same timestamp keep their ingestion order.
+- `order` defaults to `desc`, so the newest events come first. `asc` returns events with the same timestamp in ingestion order, and `desc` is the exact reverse of `asc`, so its ties come newest-ingested first.
 
 `query` rejects with a `WatchError`. Its `code` is `invalid_query` (with `issues`), `not_started` or `storage_failed`.
 

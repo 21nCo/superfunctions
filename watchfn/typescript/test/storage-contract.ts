@@ -113,7 +113,49 @@ export function describeStorageContract(evidence: ContractEvidence, create: () =
       expect(await minutes({ missing: "x" })).toEqual([]);
     });
 
-    it(`[${evidence}] orders by timestamp and keeps ingestion order for ties`, async () => {
+    it(`[${evidence}] matches every finite number attribute exactly, including unsafe integers and fractions`, async () => {
+      const values = [
+        0,
+        -1,
+        42,
+        2 ** 53 - 1,
+        2 ** 53 + 2,
+        -(2 ** 53 + 2),
+        6211250849822136000,
+        9223372036854775807,
+        -9223372036854775808,
+        1e19,
+        1e21,
+        -1e21,
+        1.7976931348623157e308,
+        5e-324,
+        12.345678901234567,
+        0.1 + 0.2,
+        0.3,
+        -2.5,
+        // Doubles SQLite's own JSON number parser rounds differently from JavaScript.
+        1.4384785101172959e-305,
+        3.1048720994651723e-229,
+        4.6113222607176895e256,
+        -4.6817947788043094e-226,
+      ];
+      await watch.ingestBatch(values.map((v, index) => ({ type: "num", timestamp: at(index), attributes: { v, index } })));
+      for (const [index, v] of values.entries()) {
+        const { events } = await watch.query({ attributes: { v }, order: "asc" });
+        // 9223372036854775807 and 2**63 are the same double, so both events match either query.
+        const expected = values.flatMap((other, i) => (other === v ? [i] : []));
+        expect({ v, matched: events.map((item) => item.attributes.index) }).toEqual({ v, matched: expected });
+        expect(events.every((item) => item.attributes.v === v)).toBe(true);
+        expect(expected).toContain(index);
+      }
+      expect((await watch.query({ attributes: { v: 0.30000000000000004 } })).events.map((item) => item.attributes.index)).toEqual([15]);
+      expect((await watch.query({ attributes: { v: -0 } })).events.map((item) => item.attributes.index)).toEqual([0]);
+      expect((await watch.query({ attributes: { v: 6211250849822136001 } })).events.map((item) => item.attributes.index)).toEqual([6]);
+      expect((await watch.query({ attributes: { v: 6211250849822137000 } })).events).toEqual([]);
+      expect((await watch.query({ attributes: { v: "42" } })).events).toEqual([]);
+    });
+
+    it(`[${evidence}] orders by timestamp; desc is the exact reverse of asc, including ties`, async () => {
       await watch.ingest({ type: "tie", timestamp: at(5), attributes: { n: 1 } });
       await watch.ingest({ type: "tie", timestamp: at(4), attributes: { n: 2 } });
       await watch.ingest({ type: "tie", timestamp: at(5), attributes: { n: 3 } });

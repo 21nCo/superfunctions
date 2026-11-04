@@ -77,7 +77,10 @@ export interface EventQuery {
   attributes?: Attributes;
   /** Maximum events returned, 1 to 1000. Defaults to 100. */
   limit?: number;
-  /** Timestamp order; ties keep ingestion order. Defaults to `desc` (newest first). */
+  /**
+   * Timestamp order. `asc` returns ties in ingestion order; `desc` is the exact
+   * reverse of `asc`. Defaults to `desc` (newest first).
+   */
   order?: QueryOrder;
 }
 
@@ -106,7 +109,7 @@ export interface StorageQuery {
  * Storage adapter contract. `write` is atomic for the whole batch and resolves
  * only once the adapter has persisted every event; it rejects otherwise.
  * `query` returns at most `query.limit` matching events in timestamp order,
- * breaking ties by write order.
+ * breaking ties by write order; `desc` is the exact reverse of `asc`.
  */
 export interface StorageAdapter {
   /** Short adapter name reported on receipts, for example `memory` or `sqlite`. */
