@@ -42,7 +42,9 @@ export type WatchErrorCode =
   /** The runtime is not started (or is stopping); nothing was written. */
   | "not_started"
   /** Storage rejected the write or query; the write may not be assumed persisted. */
-  | "storage_failed";
+  | "storage_failed"
+  /** The input could not be read or a runtime hook (`now`, `generateId`) threw; nothing was written. */
+  | "ingest_failed";
 
 export interface WatchErrorInfo {
   code: WatchErrorCode;

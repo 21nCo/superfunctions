@@ -97,3 +97,16 @@ describe("[memory-fixture] HTTP routes", () => {
     expect((await query.json()).error.code).toBe("not_started");
   });
 });
+
+describe("[memory-fixture] HTTP hook failures", () => {
+  it("answers an ingest_failed receipt with 500 without leaking hook details", async () => {
+    watch = createWatch({ storage: createMemoryStorage(), generateId: () => { throw new Error("secret detail"); } });
+    await watch.start();
+    const router = createWatchRouter(watch, { authorize: () => true, basePath: "/watch" });
+    const response = await router.handle(post("/ingest", { type: "t" }));
+    expect(response.status).toBe(500);
+    const text = await response.text();
+    expect(text).not.toContain("secret detail");
+    expect(JSON.parse(text)).toEqual({ error: { code: "ingest_failed", message: "ingestion failed" } });
+  });
+});

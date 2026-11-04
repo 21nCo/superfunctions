@@ -40,7 +40,7 @@ await watch.stop();
 
 ### Durable SQLite storage
 
-`createSqliteStorage` writes through the `rawSql` executor of a `@superfunctions/db` SQL adapter on SQLite. That can be Drizzle or Kysely on better-sqlite3, libSQL or D1. The SQLite build must include JSON support, which all of these do.
+`createSqliteStorage` writes through the `rawSql` executor of a `@superfunctions/db` SQL adapter on SQLite. It is tested with the Drizzle adapter on better-sqlite3. Other SQLite drivers (libSQL, or Kysely as the adapter) are untested. Cloudflare D1 is not supported, because D1 rejects `BEGIN`. The SQLite build must include JSON support.
 
 ```ts
 import Database from "better-sqlite3";
@@ -58,7 +58,13 @@ await watch.start(); // creates the watchfn_events table and its indexes if they
 
 By default, `open()` runs `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` for the `watchfn_events` table. To manage the schema yourself, pass `ensureSchema: false` and apply the statements exported as `SQLITE_SCHEMA`.
 
-Each write, whether one event or a batch, is a single `INSERT` statement, so it commits atomically. The receipt arrives after SQLite reports the commit. How durable the commit is depends on the connection's `journal_mode` and `synchronous` settings. With the better-sqlite3 defaults, a commit is synced to disk.
+Each write, whether one event or a batch, runs in a transaction the storage begins (`BEGIN IMMEDIATE`) and commits itself. The receipt arrives only after `COMMIT` succeeds. If the insert or the commit fails, the storage rolls back its own transaction and the receipt is `storage_failed`. How durable the commit is depends on the connection's `journal_mode` and `synchronous` settings. With the better-sqlite3 defaults, a commit is synced to disk.
+
+The storage borrows your connection, so it guards your work:
+
+- If the connection is already inside a transaction you started, the write fails with `storage_failed`. The storage never writes into your transaction, because you could still roll it back after the receipt. It also never commits or rolls back your transaction.
+- Writes, queries and schema setup from every storage on the same adapter run one at a time, so concurrent ingests never interleave their transactions.
+- Do not run your own statements on the same connection while ingestion is in flight. They could land inside the storage's open transaction.
 
 ## Behaviour
 
@@ -69,8 +75,9 @@ Each write, whether one event or a batch, is a single `INSERT` statement, so it 
   - `invalid_event`: the event failed validation, with one entry in `issues` per problem. Nothing was written.
   - `not_started`: the runtime is stopped or stopping.
   - `storage_failed`: the adapter rejected the write. Treat the event as not stored.
-- `ingestBatch(events)` takes 1 to 100 events. It validates all of them first and then writes them in one atomic write, so either every event is stored or none is.
-- `durable` is `false` for the memory adapter. Its events disappear with the process, and it keeps at most `maxEvents` events (10 000 by default), dropping the oldest first.
+  - `ingest_failed`: reading the input threw (for example a getter or a proxy), or a `now` or `generateId` hook threw or returned an invalid value. Nothing was written.
+- `ingestBatch(events)` takes 1 to 100 events. It validates every index first, so a hole in a sparse array is an `invalid_event`. Then it writes them in one atomic write, so either every event is stored or none is.
+- `durable` is `false` for the memory adapter. Its events disappear with the process, and it keeps at most `maxEvents` events (10 000 by default), dropping the oldest first. A single write larger than `maxEvents` is refused with `storage_failed`, because it would evict part of itself.
 
 An event has these fields:
 
@@ -97,11 +104,11 @@ Unknown fields are rejected. Stored events carry an `id`, an ISO `timestamp` and
 
 ### Lifecycle and ownership
 
-- `start()` opens the storage session and then starts the registered collectors in order. It is idempotent, and concurrent calls share one start. If a collector fails to start, `start()` rolls back: it stops the collectors it already started, closes the storage session and rejects with `start_failed`.
+- `start()` opens the storage session and then starts the registered collectors in order. It is idempotent. Concurrent calls share one start and its outcome: if it fails, every waiting caller gets the same rejection, and the next call tries again. If a collector fails to start, `start()` rolls back: it stops the collectors it already started, closes the storage session and rejects with `start_failed`.
 - `stop()` stops the collectors in reverse order, waits for in-flight writes and queries, and then closes the storage session. It is idempotent. Once stopping begins, new ingestion gets `not_started`. You can call `start()` again later.
 - `stop()` releases only what the runtime created: the collector run and the storage session. The SQLite storage never closes the adapter or the connection you passed in. Your own process listeners and timers are untouched. Listeners added with `subscribe()` stay subscribed until you call the returned unsubscribe function.
 - `subscribe(listener)` calls the listener with each stored event after its write succeeded. If a listener throws, the error goes to `onError`, which defaults to `console.warn`. It never affects the receipt.
-- Collectors are only the ones you pass in `collectors` or add with `registerCollector()`, and you can only register them while the runtime is stopped. `processMetricsCollector({ intervalMs })` samples memory and CPU usage of the current process. Its interval is at least one second and its timer is unref'd, so it never keeps the process alive.
+- Collectors are only the ones you pass in `collectors` or add with `registerCollector()`, and you can only register them while the runtime is stopped. `processMetricsCollector({ intervalMs })` samples memory and CPU usage of the current process. Its interval is from one second up to 2147483647 ms, the largest delay a timer accepts. Its timer is unref'd, so it never keeps the process alive.
 
 ### HTTP routes
 
@@ -118,10 +125,10 @@ const router = createWatchRouter(watch, {
 | Route | Purpose | Responses |
 | --- | --- | --- |
 | `GET /health` | Runtime health | 200 when started, 503 otherwise |
-| `POST /ingest` | Ingest one event, or a JSON array as a batch | 201 with the stored event(s); 400 invalid; 415 not JSON; 413 too large; 503 stopped or storage failure |
+| `POST /ingest` | Ingest one event, or a JSON array as a batch | 201 with the stored event(s); 400 invalid; 415 not JSON; 413 too large; 500 runtime hook failure; 503 stopped or storage failure |
 | `POST /query` | Run a query | 200 with `{ events, truncated }` (persisted events); 400 invalid; 503 stopped or storage failure |
 
-`authorize` is required. If it returns anything other than `true`, or throws, the request gets 401. Responses never include storage error details. Request bodies are limited to 1 MiB by default (`maxBodyBytes`).
+`authorize` is required. If it returns anything other than `true`, or throws, the request gets 401. Responses never include storage or hook error details. Request bodies are limited to 1 MiB by default (`maxBodyBytes`).
 
 ## Provenance and versions
 

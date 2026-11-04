@@ -25,6 +25,10 @@ function failure(error: WatchErrorInfo): Response {
     // Storage details stay in the server; clients get a retryable status.
     return json({ error: { code: error.code, message: "storage failed; retry later" } }, 503);
   }
+  if (error.code === "ingest_failed") {
+    // Hook failures are server faults; their details stay in the server too.
+    return json({ error: { code: error.code, message: "ingestion failed" } }, 500);
+  }
   const status = error.code === "invalid_event" || error.code === "invalid_query" ? 400 : 503;
   return json({ error }, status);
 }

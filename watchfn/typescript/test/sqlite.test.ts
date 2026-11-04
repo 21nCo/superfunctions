@@ -106,3 +106,68 @@ describe("[durable-sqlite] SQLite storage on @superfunctions/db", () => {
     expect(sql).toContain("ORDER BY e.ts ASC, e.seq ASC LIMIT ?");
   });
 });
+
+describe("[durable-sqlite] the storage owns every write transaction", () => {
+  const count = (sqlite: Database.Database) => (sqlite.prepare(`SELECT count(*) AS n FROM ${SQLITE_EVENTS_TABLE}`).get() as { n: number }).n;
+
+  it("refuses to write inside a caller's transaction and leaves that transaction alone", async () => {
+    db = sqliteFile();
+    const { sqlite, adapter } = db.connect();
+    const listener = vi.fn();
+    const watch = createWatch({ storage: createSqliteStorage({ adapter }) });
+    watch.subscribe(listener);
+    await watch.start();
+
+    sqlite.exec("CREATE TABLE caller_work (v TEXT)");
+    sqlite.exec("BEGIN");
+    sqlite.exec("INSERT INTO caller_work VALUES ('pending')");
+    const single = await watch.ingest({ type: "inside" });
+    const batch = await watch.ingestBatch([{ type: "inside" }, { type: "inside" }]);
+    expect(single).toMatchObject({ ok: false, error: { code: "storage_failed", message: expect.stringContaining("could not begin its own transaction") } });
+    expect(batch).toMatchObject({ ok: false, error: { code: "storage_failed" } });
+    expect(listener).not.toHaveBeenCalled();
+    // The caller's transaction is still open with its own work intact: nothing was committed or rolled back for it.
+    expect(sqlite.inTransaction).toBe(true);
+    expect(sqlite.prepare("SELECT v FROM caller_work").all()).toEqual([{ v: "pending" }]);
+    sqlite.exec("ROLLBACK");
+    expect(count(sqlite)).toBe(0);
+    expect(sqlite.prepare("SELECT count(*) AS n FROM caller_work").get()).toEqual({ n: 0 });
+
+    expect(await watch.ingest({ type: "after" })).toMatchObject({ ok: true });
+    expect(count(sqlite)).toBe(1);
+    await watch.stop();
+  });
+
+  it("rolls back its own transaction when the insert fails and leaves the connection outside any transaction", async () => {
+    db = sqliteFile();
+    const { sqlite, adapter } = db.connect();
+    const storage = createSqliteStorage({ adapter });
+    await storage.open();
+    const at = new Date(0).toISOString();
+    const event = { id: "dup", type: "t", timestamp: at, receivedAt: at, attributes: {} };
+    await expect(storage.write([event, { ...event, type: "x" }, event])).rejects.toThrow();
+    expect(sqlite.inTransaction).toBe(false);
+    expect(count(sqlite)).toBe(0);
+    await storage.write([event]);
+    expect(count(sqlite)).toBe(1);
+  });
+
+  it("serializes concurrent ingests, including from two storages on one connection", async () => {
+    db = sqliteFile();
+    const { sqlite, adapter } = db.connect();
+    const first = createWatch({ storage: createSqliteStorage({ adapter }) });
+    const second = createWatch({ storage: createSqliteStorage({ adapter }) });
+    await Promise.all([first.start(), second.start()]);
+    const receipts = await Promise.all([
+      ...Array.from({ length: 20 }, (_, index) => (index % 2 ? first : second).ingest({ type: "concurrent", attributes: { index } })),
+      first.ingestBatch([{ type: "concurrent" }, { type: "concurrent" }]),
+      second.ingestBatch([{ type: "concurrent" }, { type: "concurrent" }]),
+    ]);
+    expect(receipts.every((receipt) => receipt.ok)).toBe(true);
+    expect(sqlite.inTransaction).toBe(false);
+    const reader = new Database(db.file, { readonly: true });
+    expect(reader.prepare(`SELECT count(*) AS n FROM ${SQLITE_EVENTS_TABLE}`).get()).toEqual({ n: 24 });
+    reader.close();
+    await Promise.all([first.stop(), second.stop()]);
+  });
+});

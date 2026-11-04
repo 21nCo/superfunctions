@@ -139,45 +139,63 @@ export function validateAttributes(value: unknown, path: string, issues: string[
   return result;
 }
 
-function checkJson(value: unknown, path: string, depth: number, issues: string[]): void {
-  if (issues.length > 0) return;
-  if (value === null || typeof value === "string" || typeof value === "boolean") return;
+/**
+ * Checks a strict JSON value and builds a detached copy in the same pass, so
+ * each property is read once and the copy is exactly what was checked.
+ * Returns undefined after pushing at least one issue.
+ */
+function copyJson(value: unknown, path: string, depth: number, issues: string[]): JsonValue | undefined {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
   if (typeof value === "number") {
-    if (!Number.isFinite(value)) issues.push(`${path}: must be a finite number`);
-    return;
+    if (Number.isFinite(value)) return value;
+    issues.push(`${path}: must be a finite number`);
+    return undefined;
   }
   if (depth >= LIMITS.maxDataDepth) {
     issues.push(`${path}: nested deeper than ${LIMITS.maxDataDepth} levels`);
-    return;
+    return undefined;
   }
   if (Array.isArray(value)) {
+    const copy: JsonValue[] = [];
     for (let index = 0; index < value.length; index += 1) {
       if (!(index in value)) {
         issues.push(`${path}[${index}]: sparse arrays are not JSON`);
-        return;
+        return undefined;
       }
-      checkJson(value[index], `${path}[${index}]`, depth + 1, issues);
+      const item = copyJson(value[index], `${path}[${index}]`, depth + 1, issues);
+      if (item === undefined) return undefined;
+      copy.push(item);
     }
-    return;
+    return copy;
   }
   if (isPlainObject(value)) {
-    for (const key of Object.keys(value)) checkJson(value[key], `${path}.${key}`, depth + 1, issues);
-    return;
+    const copy: Record<string, JsonValue> = {};
+    for (const key of Object.keys(value)) {
+      const item = copyJson(value[key], `${path}.${key}`, depth + 1, issues);
+      if (item === undefined) return undefined;
+      // defineProperty keeps a "__proto__" key as data instead of changing the prototype.
+      Object.defineProperty(copy, key, { value: item, enumerable: true, writable: true, configurable: true });
+    }
+    return copy;
   }
   issues.push(`${path}: must be JSON (null, boolean, finite number, string, array or plain object)`);
+  return undefined;
 }
 
 /** Validates a strict JSON payload within the size limit and returns a detached copy. */
 export function validateData(value: unknown, path: string, issues: string[]): JsonValue | undefined {
-  const before = issues.length;
-  checkJson(value, path, 0, issues);
-  if (issues.length > before) return undefined;
-  const serialized = JSON.stringify(value);
-  if (new TextEncoder().encode(serialized).byteLength > LIMITS.maxDataBytes) {
+  // Own issue list: earlier problems elsewhere in the event must not skip this check.
+  const own: string[] = [];
+  const copy = copyJson(value, path, 0, own);
+  if (copy === undefined) {
+    issues.push(...own);
+    return undefined;
+  }
+  if (new TextEncoder().encode(JSON.stringify(copy)).byteLength > LIMITS.maxDataBytes) {
     issues.push(`${path}: larger than ${LIMITS.maxDataBytes} bytes as JSON`);
     return undefined;
   }
-  return JSON.parse(serialized) as JsonValue;
+  return copy;
 }
 
 /** Validates an event input without touching storage. */
@@ -222,12 +240,18 @@ export function normalizeQuery(input: unknown): Validated<StorageQuery> {
   }
 
   if (input.type !== undefined) {
-    const types = Array.isArray(input.type) ? input.type : [input.type];
+    const list = Array.isArray(input.type);
+    const types: unknown[] = list ? (input.type as unknown[]) : [input.type];
     if (types.length === 0 || types.length > LIMITS.maxQueryTypes) {
       issues.push(`query.type: must list 1 to ${LIMITS.maxQueryTypes} types`);
     } else {
-      types.forEach((type, index) => validateType(type, Array.isArray(input.type) ? `query.type[${index}]` : "query.type", issues));
-      query.types = [...new Set(types as string[])];
+      // Index every slot: forEach would skip the holes of a sparse array.
+      const checked: string[] = [];
+      for (let index = 0; index < types.length; index += 1) {
+        const type = types[index];
+        if (validateType(type, list ? `query.type[${index}]` : "query.type", issues)) checked.push(type);
+      }
+      query.types = [...new Set(checked)];
     }
   }
 

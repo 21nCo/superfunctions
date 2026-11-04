@@ -59,6 +59,8 @@ export function createWatch(config: WatchConfig): Watch {
   let state: WatchState = "stopped";
   let accepting = false;
   let lifecycle: Promise<void> = Promise.resolve();
+  /** The most recently requested lifecycle step, so a repeated start() can join a pending one. */
+  let latest: { kind: "start" | "stop"; run: Promise<void>; settled: boolean } | undefined;
 
   function addCollector(collector: Collector): void {
     if (!collector || typeof collector.name !== "string" || typeof collector.start !== "function" || typeof collector.stop !== "function") {
@@ -79,10 +81,25 @@ export function createWatch(config: WatchConfig): Watch {
     }
   }
 
-  /** Serializes lifecycle transitions so concurrent start/stop calls never interleave. */
-  function enqueue(step: () => Promise<void>): Promise<void> {
+  /**
+   * Serializes lifecycle transitions so concurrent start/stop calls never interleave.
+   * A call that repeats the latest, still pending step joins it and shares its outcome,
+   * so concurrent start() calls open storage once and all see the same failure.
+   * Once that step settles, a new call runs again (for example a retry after a failed start).
+   */
+  function enqueue(kind: "start" | "stop", step: () => Promise<void>): Promise<void> {
+    if (latest && latest.kind === kind && !latest.settled) return latest.run;
     const run = lifecycle.then(step);
-    lifecycle = run.catch(() => undefined);
+    const entry = { kind, run, settled: false };
+    latest = entry;
+    lifecycle = run.then(
+      () => {
+        entry.settled = true;
+      },
+      () => {
+        entry.settled = true;
+      },
+    );
     return run;
   }
 
@@ -198,39 +215,80 @@ export function createWatch(config: WatchConfig): Watch {
     return undefined;
   }
 
+  /** Reading caller input can run getters or proxy traps; a throw becomes a failed result. */
+  function readEvent(input: unknown, path?: string): ReturnType<typeof normalizeEvent> | WatchErrorInfo {
+    try {
+      return normalizeEvent(input, path);
+    } catch (error) {
+      return errorInfo("ingest_failed", `${path ?? "the event"} could not be read: ${describe(error)}`);
+    }
+  }
+
+  /** Runs the `now` and `generateId` hooks; a throwing or invalid hook fails the ingestion. */
+  function stamp(events: NormalizedEvent[]): StoredEvent[] | WatchErrorInfo {
+    try {
+      const receivedMs = now();
+      if (!Number.isSafeInteger(receivedMs) || receivedMs < 0 || receivedMs > LIMITS.maxTimestampMs) {
+        return errorInfo("ingest_failed", "config.now() did not return valid epoch milliseconds");
+      }
+      const stored = events.map((event) => toStored(event, receivedMs));
+      if (stored.some((event) => typeof event.id !== "string" || event.id.length === 0 || event.id.length > 200)) {
+        return errorInfo("ingest_failed", "config.generateId() did not return a non-empty string of at most 200 characters");
+      }
+      return stored;
+    } catch (error) {
+      return errorInfo("ingest_failed", `a runtime hook failed: ${describe(error)}`);
+    }
+  }
+
   async function ingest(input: unknown): Promise<IngestReceipt> {
     if (!accepting) return { ok: false, error: notStarted() };
-    const normalized = normalizeEvent(input);
+    const normalized = readEvent(input);
+    if ("code" in normalized) return { ok: false, error: normalized };
     if (!normalized.ok) return { ok: false, error: errorInfo("invalid_event", "the event is invalid", normalized.issues) };
-    const event = toStored(normalized.value, now());
-    const failure = await track(write([event]));
+    const stamped = stamp([normalized.value]);
+    if (!Array.isArray(stamped)) return { ok: false, error: stamped };
+    const failure = await track(write(stamped));
     if (failure) return { ok: false, error: failure };
-    return { ok: true, event: structuredClone(event), storage: storage.kind, durable: storage.durable };
+    return { ok: true, event: structuredClone(stamped[0]), storage: storage.kind, durable: storage.durable };
   }
 
   async function ingestBatch(input: unknown): Promise<BatchIngestReceipt> {
     if (!accepting) return { ok: false, error: notStarted() };
-    if (!Array.isArray(input) || input.length === 0 || input.length > LIMITS.maxBatchSize) {
-      return { ok: false, error: errorInfo("invalid_event", `a batch must be an array of 1 to ${LIMITS.maxBatchSize} events`) };
+    let items: unknown[];
+    try {
+      if (!Array.isArray(input) || input.length === 0 || input.length > LIMITS.maxBatchSize) {
+        return { ok: false, error: errorInfo("invalid_event", `a batch must be an array of 1 to ${LIMITS.maxBatchSize} events`) };
+      }
+      // Copy by index: holes in a sparse array become undefined and fail validation instead of being skipped.
+      items = Array.from({ length: input.length }, (_, index) => (input as unknown[])[index]);
+    } catch (error) {
+      return { ok: false, error: errorInfo("ingest_failed", `the batch could not be read: ${describe(error)}`) };
     }
     const issues: string[] = [];
     const normalized: NormalizedEvent[] = [];
-    input.forEach((item, index) => {
-      const result = normalizeEvent(item, `events[${index}]`);
+    for (let index = 0; index < items.length; index += 1) {
+      const result = readEvent(items[index], `events[${index}]`);
+      if ("code" in result) return { ok: false, error: result };
       if (result.ok) normalized.push(result.value);
       else issues.push(...result.issues);
-    });
+    }
     if (issues.length > 0) return { ok: false, error: errorInfo("invalid_event", "the batch is invalid; nothing was written", issues) };
-    const receivedMs = now();
-    const events = normalized.map((event) => toStored(event, receivedMs));
-    const failure = await track(write(events));
+    const stamped = stamp(normalized);
+    if (!Array.isArray(stamped)) return { ok: false, error: stamped };
+    const failure = await track(write(stamped));
     if (failure) return { ok: false, error: failure };
-    return { ok: true, events: structuredClone(events), storage: storage.kind, durable: storage.durable };
+    return { ok: true, events: structuredClone(stamped), storage: storage.kind, durable: storage.durable };
   }
 
   async function query(input?: EventQuery): Promise<EventQueryResult> {
     if (!accepting) throw new WatchError("not_started", notStarted().message);
-    const normalized = normalizeQuery(input);
+    let normalized: ReturnType<typeof normalizeQuery>;
+    try {
+      normalized = normalizeQuery(input);
+    } catch (error) {
+      throw new WatchError("invalid_query", `the query could not be read: ${describe(error)}`, { cause: error });
+    }
     if (!normalized.ok) throw new WatchError("invalid_query", "the query is invalid", { issues: normalized.issues });
     const limit = normalized.value.limit;
     let events: StoredEvent[];
@@ -248,8 +306,8 @@ export function createWatch(config: WatchConfig): Watch {
     get state() {
       return state;
     },
-    start: () => enqueue(async () => (state === "started" ? undefined : doStart())),
-    stop: () => enqueue(async () => (state === "started" ? doStop() : undefined)),
+    start: () => enqueue("start", async () => (state === "started" ? undefined : doStart())),
+    stop: () => enqueue("stop", async () => (state === "started" ? doStop() : undefined)),
     ingest,
     ingestBatch,
     query,

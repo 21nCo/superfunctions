@@ -36,6 +36,10 @@ export function createMemoryStorage(options: MemoryStorageOptions = {}): MemoryS
     kind: "memory",
     durable: false,
     async write(events) {
+      // A larger batch would evict part of itself, so its receipt would claim events that are gone.
+      if (events.length > maxEvents) {
+        throw new RangeError(`memory storage: a write of ${events.length} events exceeds maxEvents (${maxEvents})`);
+      }
       // Check and copy everything before mutating, so a rejected batch leaves storage unchanged.
       const batchIds = new Set<string>();
       const added = events.map((event) => {

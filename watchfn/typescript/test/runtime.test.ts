@@ -320,3 +320,146 @@ describe("configuration", () => {
     expect(() => createWatch({ storage: createMemoryStorage(), now: 5 } as never)).toThrow(/config.now must be a function/);
   });
 });
+
+describe("[memory-fixture] concurrent start() shares one outcome", () => {
+  it("gives every joiner of a pending start the same failure with one open, then lets a later start retry", async () => {
+    const memory = createMemoryStorage();
+    let opens = 0;
+    const storage = {
+      ...memory,
+      kind: memory.kind,
+      durable: memory.durable,
+      write: memory.write,
+      query: memory.query,
+      async open() {
+        opens += 1;
+        if (opens === 1) throw new Error("disk busy");
+      },
+    };
+    const watch = createWatch({ storage });
+    const results = await Promise.allSettled([watch.start(), watch.start(), watch.start()]);
+    expect(results.map((result) => result.status)).toEqual(["rejected", "rejected", "rejected"]);
+    expect(new Set(results.map((result) => (result as PromiseRejectedResult).reason)).size).toBe(1);
+    expect(opens).toBe(1);
+    expect(watch.state).toBe("stopped");
+
+    await watch.start();
+    expect(opens).toBe(2);
+    expect(watch.state).toBe("started");
+    await watch.stop();
+  });
+
+  it("does not let a start() requested after a stop() join the earlier start", async () => {
+    const { storage, calls } = instrument(createMemoryStorage());
+    const watch = createWatch({ storage });
+    await Promise.all([watch.start(), watch.stop(), watch.start()]);
+    expect(watch.state).toBe("started");
+    expect(calls).toMatchObject({ open: 2, close: 1 });
+    await watch.stop();
+  });
+});
+
+describe("[memory-fixture] ingestion never throws", () => {
+  async function started(config: Partial<Parameters<typeof createWatch>[0]> = {}) {
+    const { storage, calls } = instrument(createMemoryStorage());
+    const watch = createWatch({ storage, ...config });
+    await watch.start();
+    return { watch, calls };
+  }
+
+  it("validates data even when an earlier field is invalid (BigInt, cycles)", async () => {
+    const { watch, calls } = await started();
+    const bigint = await watch.ingest({ type: "", data: { x: 1n } });
+    expect(bigint).toMatchObject({ ok: false, error: { code: "invalid_event" } });
+    expect(!bigint.ok && bigint.error.issues).toEqual(["event.type: must be a non-empty string", expect.stringContaining("event.data.x: must be JSON")]);
+
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    const cycle = await watch.ingest({ type: "ok", nope: true, data: cyclic });
+    expect(cycle).toMatchObject({ ok: false, error: { code: "invalid_event" } });
+    expect(!cycle.ok && cycle.error.issues).toEqual(["event.nope: unknown field", expect.stringContaining("nested deeper than")]);
+
+    const batch = await watch.ingestBatch([{ type: "" , data: { x: 1n } }, { type: "fine" }]);
+    expect(batch).toMatchObject({ ok: false, error: { code: "invalid_event" } });
+    expect(calls.write).toBe(0);
+    await watch.stop();
+  });
+
+  it("turns throwing getters into ingest_failed receipts for single events and batches", async () => {
+    const { watch, calls } = await started();
+    const trap = { type: "t", get data(): unknown { throw new Error("getter exploded"); } };
+    expect(await watch.ingest(trap)).toMatchObject({ ok: false, error: { code: "ingest_failed", message: expect.stringContaining("getter exploded") } });
+    expect(await watch.ingestBatch([{ type: "ok" }, trap])).toMatchObject({ ok: false, error: { code: "ingest_failed" } });
+    const hostileArray = new Proxy([{ type: "ok" }], { get(target, key) { if (key === "0") throw new Error("index trap"); return Reflect.get(target, key); } });
+    expect(await watch.ingestBatch(hostileArray)).toMatchObject({ ok: false, error: { code: "ingest_failed" } });
+    expect(calls.write).toBe(0);
+    await watch.stop();
+  });
+
+  it("stores the data it validated, even if a getter would return something else on a second read", async () => {
+    const { watch } = await started();
+    let reads = 0;
+    const data = { get value(): unknown { reads += 1; return reads === 1 ? "checked" : { bad: 1n }; } };
+    const receipt = await watch.ingest({ type: "t", data });
+    expect(receipt).toMatchObject({ ok: true, event: { data: { value: "checked" } } });
+    expect(reads).toBe(1);
+    await watch.stop();
+  });
+
+  it("turns failing now() and generateId() hooks into ingest_failed receipts and writes nothing", async () => {
+    for (const config of [
+      { now: () => { throw new Error("clock down"); } },
+      { now: () => Number.NaN },
+      { generateId: (): string => { throw new Error("no entropy"); } },
+      { generateId: () => "" },
+    ]) {
+      const { watch, calls } = await started(config);
+      expect(await watch.ingest({ type: "t" })).toMatchObject({ ok: false, error: { code: "ingest_failed" } });
+      expect(await watch.ingestBatch([{ type: "t" }])).toMatchObject({ ok: false, error: { code: "ingest_failed" } });
+      expect(calls.write).toBe(0);
+      await watch.stop();
+    }
+  });
+});
+
+describe("[memory-fixture] sparse arrays", () => {
+  it("rejects holes in a batch and writes nothing", async () => {
+    const { storage, calls } = instrument(createMemoryStorage());
+    const watch = createWatch({ storage });
+    await watch.start();
+    for (const batch of [new Array(1), [, { type: "v" }], [{ type: "v" }, ,]]) {
+      const receipt = await watch.ingestBatch(batch);
+      expect(receipt).toMatchObject({ ok: false, error: { code: "invalid_event", issues: [expect.stringMatching(/^events\[\d\]: must be a plain object$/)] } });
+    }
+    expect(calls.write).toBe(0);
+    await watch.stop();
+  });
+
+  it("rejects holes in a query's type list", async () => {
+    const watch = createWatch({ storage: createMemoryStorage() });
+    await watch.start();
+    await expect(watch.query({ type: new Array(1) })).rejects.toMatchObject({ code: "invalid_query", issues: ["query.type[0]: must be a non-empty string"] });
+    await expect(watch.query({ type: ["a", , "b"] as string[] })).rejects.toMatchObject({ code: "invalid_query" });
+    await watch.stop();
+  });
+});
+
+describe("[memory-fixture] memory storage capacity", () => {
+  it("refuses a batch larger than maxEvents instead of acknowledging events it would evict", async () => {
+    const memory = createMemoryStorage({ maxEvents: 2 });
+    const watch = createWatch({ storage: memory });
+    await watch.start();
+    expect(await watch.ingestBatch([{ type: "a" }, { type: "b" }, { type: "c" }])).toMatchObject({ ok: false, error: { code: "storage_failed" } });
+    expect(memory.size()).toBe(0);
+    expect(await watch.ingestBatch([{ type: "a" }, { type: "b" }])).toMatchObject({ ok: true });
+    await watch.stop();
+  });
+});
+
+describe("process metrics collector interval bounds", () => {
+  it("accepts the largest timer delay and rejects anything above it", () => {
+    expect(() => processMetricsCollector({ intervalMs: 2_147_483_647 })).not.toThrow();
+    expect(() => processMetricsCollector({ intervalMs: 2_147_483_648 })).toThrow(RangeError);
+    expect(() => processMetricsCollector({ intervalMs: 999 })).toThrow(RangeError);
+  });
+});

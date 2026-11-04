@@ -101,6 +101,50 @@ function eventParams(event: StoredEvent): RawSqlValue[] {
   ];
 }
 
+/**
+ * One statement queue per borrowed executor. Every storage on the same
+ * connection shares it, so their transactions and queries never interleave.
+ */
+const queues = new WeakMap<RawSqlExecutor, Promise<unknown>>();
+
+function serialize<T>(sql: RawSqlExecutor, task: () => Promise<T>): Promise<T> {
+  const run = (queues.get(sql) ?? Promise.resolve()).then(task);
+  queues.set(
+    sql,
+    run.catch(() => undefined),
+  );
+  return run;
+}
+
+/**
+ * Runs `work` in a transaction this storage begins and commits itself.
+ * `BEGIN IMMEDIATE` fails when the connection is already inside a transaction,
+ * so the storage refuses to write into a caller's transaction (where the
+ * caller could still roll the events back) and never commits or rolls back
+ * work it did not start.
+ */
+async function ownTransaction(sql: RawSqlExecutor, work: () => Promise<void>): Promise<void> {
+  try {
+    await sql.execute("BEGIN IMMEDIATE");
+  } catch (error) {
+    throw new Error(
+      "sqlite storage: could not begin its own transaction (it does not write inside a transaction it did not start)",
+      { cause: error },
+    );
+  }
+  try {
+    await work();
+    await sql.execute("COMMIT");
+  } catch (error) {
+    try {
+      await sql.execute("ROLLBACK");
+    } catch {
+      // SQLite already rolled this transaction back (for example after an I/O error).
+    }
+    throw error;
+  }
+}
+
 /** Builds the SELECT for a storage query; every value is a bound parameter. */
 export function buildSqliteQuery(query: StorageQuery): { sql: string; params: RawSqlValue[] } {
   const where: string[] = [];
@@ -140,10 +184,15 @@ export function buildSqliteQuery(query: StorageQuery): { sql: string; params: Ra
 }
 
 /**
- * Durable event storage on a `@superfunctions/db` SQLite adapter (better-sqlite3,
- * libSQL or D1 through Drizzle or Kysely). A batch is one INSERT statement, so
- * it commits atomically; `write` resolves after SQLite reports the commit.
- * Durability follows the connection's journal and `synchronous` settings.
+ * Durable event storage on a `@superfunctions/db` SQLite adapter. Tested with
+ * the Drizzle adapter on better-sqlite3; other SQLite drivers are untested
+ * (D1 rejects `BEGIN`, so it is not supported).
+ *
+ * Each write runs in its own `BEGIN IMMEDIATE ... COMMIT`, and `write`
+ * resolves only after `COMMIT` succeeded. A write while the connection is
+ * inside a transaction the storage did not start fails without touching that
+ * transaction. Durability follows the connection's journal and `synchronous`
+ * settings.
  */
 export function createSqliteStorage(options: SqliteStorageOptions): SqliteStorage {
   const sql = sqliteExecutor(options?.adapter);
@@ -162,7 +211,11 @@ export function createSqliteStorage(options: SqliteStorageOptions): SqliteStorag
       const [probe] = await sql.query("SELECT json_valid('{}') AS ok");
       if (!probe || Number(probe.ok) !== 1) throw new Error("sqlite storage: the SQLite build lacks JSON support");
       if (ensureSchema) {
-        for (const statement of SQLITE_SCHEMA) await sql.execute(statement);
+        await serialize(sql, () =>
+          ownTransaction(sql, async () => {
+            for (const statement of SQLITE_SCHEMA) await sql.execute(statement);
+          }),
+        );
       }
       open = true;
     },
@@ -176,12 +229,15 @@ export function createSqliteStorage(options: SqliteStorageOptions): SqliteStorag
       if (events.length > LIMITS.maxBatchSize) throw new RangeError(`sqlite storage: at most ${LIMITS.maxBatchSize} events per write`);
       const params = events.flatMap(eventParams);
       const values = events.map(() => "(?, ?, ?, ?, ?, ?)").join(", ");
-      await sql.execute(`INSERT INTO ${SQLITE_EVENTS_TABLE} (${COLUMNS}) VALUES ${values}`, params);
+      await serialize(sql, () =>
+        ownTransaction(sql, () => sql.execute(`INSERT INTO ${SQLITE_EVENTS_TABLE} (${COLUMNS}) VALUES ${values}`, params)),
+      );
     },
     async query(query) {
       requireOpen();
       const { sql: text, params } = buildSqliteQuery(query);
-      const rows = await sql.query(text, params);
+      // Queued behind pending writes, so a query never sees a write that has not committed yet.
+      const rows = await serialize(sql, () => sql.query(text, params));
       return rows.map(toEvent);
     },
   };

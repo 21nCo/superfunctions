@@ -1,7 +1,10 @@
 import type { Collector, CollectorContext } from "../types.js";
 
+/** Largest delay Node and browsers accept for a timer; larger values fire after 1 ms. */
+const MAX_INTERVAL_MS = 2_147_483_647;
+
 export interface ProcessMetricsCollectorOptions {
-  /** Sampling interval in milliseconds, at least 1000. Defaults to 30 000. */
+  /** Sampling interval in milliseconds, from 1000 to 2147483647 (about 24.8 days). Defaults to 30 000. */
   intervalMs?: number;
   /** Event type. Defaults to `infra.process`. */
   type?: string;
@@ -14,8 +17,9 @@ export interface ProcessMetricsCollectorOptions {
  */
 export function processMetricsCollector(options: ProcessMetricsCollectorOptions = {}): Collector {
   const intervalMs = options.intervalMs ?? 30_000;
-  if (!Number.isSafeInteger(intervalMs) || intervalMs < 1000) {
-    throw new RangeError("processMetricsCollector: intervalMs must be an integer of at least 1000");
+  // Timers clamp delays above 2^31 - 1 ms to 1 ms, so a larger interval would sample continuously.
+  if (!Number.isSafeInteger(intervalMs) || intervalMs < 1000 || intervalMs > MAX_INTERVAL_MS) {
+    throw new RangeError(`processMetricsCollector: intervalMs must be an integer from 1000 to ${MAX_INTERVAL_MS}`);
   }
   const type = options.type ?? "infra.process";
   let timer: ReturnType<typeof setInterval> | undefined;
