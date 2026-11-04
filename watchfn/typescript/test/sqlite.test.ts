@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createWatch } from "../src/index.js";
 import { SQLITE_EVENTS_TABLE, buildSqliteQuery, createSqliteStorage } from "../src/sqlite.js";
-import { sqliteFile, type SqliteFile } from "./helpers.js";
+import { deferred, sqliteFile, type SqliteFile } from "./helpers.js";
 
 let db: SqliteFile;
 afterEach(() => db?.cleanup());
@@ -169,5 +169,43 @@ describe("[durable-sqlite] the storage owns every write transaction", () => {
     expect(reader.prepare(`SELECT count(*) AS n FROM ${SQLITE_EVENTS_TABLE}`).get()).toEqual({ n: 24 });
     reader.close();
     await Promise.all([first.stop(), second.stop()]);
+  });
+
+  it("runs open()'s probe in the connection's queue, never inside another storage's pending transaction", async () => {
+    db = sqliteFile();
+    const { sqlite, adapter } = db.connect();
+    const real = adapter.rawSql!;
+    const log: string[] = [];
+    const insertGate = deferred();
+    let gateInserts = false;
+    const shared = {
+      rawSql: {
+        dialect: "sqlite" as const,
+        async query(text: string, params?: readonly unknown[]) {
+          log.push(`${text.split(" ")[0]}:${sqlite.inTransaction}`);
+          return real.query(text, params as never);
+        },
+        async execute(text: string, params?: readonly unknown[]) {
+          log.push(`${text.split(" ")[0]}:${sqlite.inTransaction}`);
+          if (gateInserts && text.startsWith("INSERT")) await insertGate.promise;
+          return real.execute(text, params as never);
+        },
+      },
+    };
+    const writer = createSqliteStorage({ adapter: shared });
+    await writer.open();
+    log.length = 0;
+    gateInserts = true;
+    const at = new Date(0).toISOString();
+    const writing = writer.write([{ id: "held", type: "t", timestamp: at, receivedAt: at, attributes: {} }]);
+    await vi.waitFor(() => expect(log).toContain("INSERT:true"));
+    const opening = createSqliteStorage({ adapter: shared }).open();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // The writer's transaction is still open, so the second storage has not run anything yet.
+    expect(log).toEqual(["BEGIN:false", "INSERT:true"]);
+    insertGate.resolve();
+    await Promise.all([writing, opening]);
+    expect(log.slice(0, 5)).toEqual(["BEGIN:false", "INSERT:true", "COMMIT:true", "SELECT:false", "BEGIN:false"]);
+    expect(sqlite.inTransaction).toBe(false);
   });
 });

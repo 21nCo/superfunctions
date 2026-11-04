@@ -1,5 +1,5 @@
 import type { StorageAdapter, StorageQuery, StoredEvent } from "../types.js";
-import { matchesQuery } from "../validation.js";
+import { matchesQuery, storedTimestampMs } from "../validation.js";
 
 export interface MemoryStorageOptions {
   /** Keep at most this many events; the oldest are evicted first. Defaults to 10 000. */
@@ -43,8 +43,8 @@ export function createMemoryStorage(options: MemoryStorageOptions = {}): MemoryS
       // Check and copy everything before mutating, so a rejected batch leaves storage unchanged.
       const batchIds = new Set<string>();
       const added = events.map((event) => {
-        const timestampMs = Date.parse(event.timestamp);
-        if (!Number.isFinite(timestampMs)) throw new TypeError(`memory storage: invalid timestamp on ${event.id}`);
+        const timestampMs = storedTimestampMs(event.timestamp, "timestamp", "memory");
+        storedTimestampMs(event.receivedAt, "receivedAt", "memory");
         if (ids.has(event.id) || batchIds.has(event.id)) throw new Error(`memory storage: duplicate event id ${event.id}`);
         batchIds.add(event.id);
         return { seq: 0, timestampMs, event: structuredClone(event) };

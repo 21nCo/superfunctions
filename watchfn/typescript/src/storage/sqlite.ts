@@ -1,6 +1,6 @@
 import type { Adapter, RawSqlExecutor, RawSqlValue } from "@superfunctions/db";
 import type { Attributes, JsonValue, StorageAdapter, StorageQuery, StoredEvent } from "../types.js";
-import { LIMITS, isPlainObject } from "../validation.js";
+import { LIMITS, isPlainObject, isTimestampMs, storedTimestampMs } from "../validation.js";
 
 /** Table created by `createSqliteStorage`. */
 export const SQLITE_EVENTS_TABLE = "watchfn_events";
@@ -54,7 +54,7 @@ function sqliteExecutor(adapter: SqliteStorageOptions["adapter"] | undefined): R
 
 function toMs(value: unknown, column: string): number {
   const ms = typeof value === "bigint" ? Number(value) : value;
-  if (typeof ms !== "number" || !Number.isSafeInteger(ms) || ms < 0 || ms > LIMITS.maxTimestampMs) {
+  if (!isTimestampMs(ms)) {
     throw new TypeError(`sqlite storage: row has an invalid ${column}`);
   }
   return ms;
@@ -87,15 +87,13 @@ function toEvent(row: Record<string, unknown>): StoredEvent {
   return event;
 }
 
+/** Bind values for one event. Timestamps outside the range `toEvent` reads back are rejected before any SQL runs. */
 function eventParams(event: StoredEvent): RawSqlValue[] {
-  const ts = Date.parse(event.timestamp);
-  const receivedAt = Date.parse(event.receivedAt);
-  if (!Number.isFinite(ts) || !Number.isFinite(receivedAt)) throw new TypeError(`sqlite storage: invalid timestamps on ${event.id}`);
   return [
     event.id,
     event.type,
-    ts,
-    receivedAt,
+    storedTimestampMs(event.timestamp, "timestamp", "sqlite"),
+    storedTimestampMs(event.receivedAt, "receivedAt", "sqlite"),
     JSON.stringify(event.attributes),
     event.data === undefined ? null : JSON.stringify(event.data),
   ];
@@ -209,15 +207,17 @@ export function createSqliteStorage(options: SqliteStorageOptions): SqliteStorag
     durable: true,
     async open() {
       if (open) return;
-      const [probe] = await sql.query("SELECT json_valid('{}') AS ok");
-      if (!probe || Number(probe.ok) !== 1) throw new Error("sqlite storage: the SQLite build lacks JSON support");
-      if (ensureSchema) {
-        await serialize(sql, () =>
-          ownTransaction(sql, async () => {
+      // The probe and the schema run in the connection's queue, so they never interleave with
+      // another storage's transaction on the same connection.
+      await serialize(sql, async () => {
+        const [probe] = await sql.query("SELECT json_valid('{}') AS ok");
+        if (!probe || Number(probe.ok) !== 1) throw new Error("sqlite storage: the SQLite build lacks JSON support");
+        if (ensureSchema) {
+          await ownTransaction(sql, async () => {
             for (const statement of SQLITE_SCHEMA) await sql.execute(statement);
-          }),
-        );
-      }
+          });
+        }
+      });
       open = true;
     },
     async close() {

@@ -122,7 +122,7 @@ export function describeStorageContract(evidence: ContractEvidence, create: () =
         2 ** 53 + 2,
         -(2 ** 53 + 2),
         6211250849822136000,
-        9223372036854775807,
+        Number("9223372036854775807"), // 2**63 as a double
         -9223372036854775808,
         1e19,
         1e21,
@@ -150,7 +150,7 @@ export function describeStorageContract(evidence: ContractEvidence, create: () =
       }
       expect((await watch.query({ attributes: { v: 0.30000000000000004 } })).events.map((item) => item.attributes.index)).toEqual([15]);
       expect((await watch.query({ attributes: { v: -0 } })).events.map((item) => item.attributes.index)).toEqual([0]);
-      expect((await watch.query({ attributes: { v: 6211250849822136001 } })).events.map((item) => item.attributes.index)).toEqual([6]);
+      expect((await watch.query({ attributes: { v: Number("6211250849822136001") } })).events.map((item) => item.attributes.index)).toEqual([6]);
       expect((await watch.query({ attributes: { v: 6211250849822137000 } })).events).toEqual([]);
       expect((await watch.query({ attributes: { v: "42" } })).events).toEqual([]);
     });
@@ -225,6 +225,23 @@ export function describeStorageContract(evidence: ContractEvidence, create: () =
       await expect(harness.storage.write([event("twin", 2), event("twin", 3)])).rejects.toThrow();
       const stored = await harness.storage.query({ attributes: [], limit: 10, order: "asc" });
       expect(stored.map((item) => item.id)).toEqual(["dup"]);
+    });
+
+    it(`[${evidence}] refuses a direct write with a timestamp it could not return, atomically`, async () => {
+      const first = "1970-01-01T00:00:00.000Z";
+      const last = "9999-12-31T23:59:59.999Z";
+      await harness.storage.write([{ ...event("first", 0), timestamp: first, receivedAt: first }]);
+      await harness.storage.write([{ ...event("last", 0), timestamp: last, receivedAt: last }]);
+      const invalid = ["1969-12-31T23:59:59.999Z", "-000001-01-01T00:00:00.000Z", "+010000-01-01T00:00:00.000Z", "not a date"];
+      for (const bad of invalid) {
+        await expect(harness.storage.write([event("ok", 1), { ...event("bad", 2), timestamp: bad }])).rejects.toThrow(RangeError);
+        await expect(harness.storage.write([event("ok", 1), { ...event("bad", 2), receivedAt: bad }])).rejects.toThrow(RangeError);
+      }
+      const stored = await harness.storage.query({ attributes: [], limit: 10, order: "asc" });
+      expect(stored.map((item) => [item.id, item.timestamp])).toEqual([
+        ["first", first],
+        ["last", last],
+      ]);
     });
 
     it(`[${evidence}] returns detached copies that callers cannot use to change storage`, async () => {

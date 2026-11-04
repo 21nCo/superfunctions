@@ -37,6 +37,14 @@ export function isPlainObject(value: unknown): value is Record<string, unknown> 
   return proto === Object.prototype || proto === null;
 }
 
+/**
+ * Reads a field only when the object owns it, so a polluted `Object.prototype`
+ * (or `Array.prototype` for a sparse array's holes) never supplies input.
+ */
+export function ownField(value: object, key: PropertyKey): unknown {
+  return Object.hasOwn(value, key) ? (value as Record<PropertyKey, unknown>)[key] : undefined;
+}
+
 function unknownKeys(value: Record<string, unknown>, allowed: readonly string[], path: string, issues: string[]): void {
   for (const key of Object.keys(value)) {
     if (!allowed.includes(key)) issues.push(`${path}${key}: unknown field`);
@@ -45,6 +53,18 @@ function unknownKeys(value: Record<string, unknown>, allowed: readonly string[],
 
 function daysInMonth(year: number, month: number): number {
   return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+/** True for integer epoch milliseconds from 1970-01-01 to 9999-12-31, the range every adapter stores and returns. */
+export function isTimestampMs(ms: unknown): ms is number {
+  return typeof ms === "number" && Number.isSafeInteger(ms) && ms >= 0 && ms <= LIMITS.maxTimestampMs;
+}
+
+/** Parses a stored event's ISO timestamp for an adapter write, or throws when it is outside the stored range. */
+export function storedTimestampMs(value: unknown, field: string, adapter: string): number {
+  const ms = typeof value === "string" ? Date.parse(value) : Number.NaN;
+  if (!isTimestampMs(ms)) throw new RangeError(`${adapter} storage: ${field} must be an ISO date-time from 1970-01-01 to 9999-12-31`);
+  return ms;
 }
 
 /** Parses a timestamp to epoch milliseconds, or returns an issue. */
@@ -80,7 +100,7 @@ export function parseTimestamp(value: unknown, path: string): number | string {
   } else {
     return `${path}: must be a Date, epoch milliseconds or an ISO 8601 string`;
   }
-  if (ms < 0 || ms > LIMITS.maxTimestampMs) return `${path}: must be between 1970-01-01 and 9999-12-31`;
+  if (!isTimestampMs(ms)) return `${path}: must be between 1970-01-01 and 9999-12-31`;
   return ms;
 }
 
@@ -139,45 +159,81 @@ export function validateAttributes(value: unknown, path: string, issues: string[
   return result;
 }
 
+/** Serialized JSON bytes still allowed for the payload being copied. */
+interface DataBudget {
+  remaining: number;
+  exceeded: boolean;
+}
+
+const encoder = new TextEncoder();
+
+/** Charges `bytes` against the budget; false once the payload is too large. */
+function charge(budget: DataBudget, bytes: number): boolean {
+  budget.remaining -= bytes;
+  if (budget.remaining < 0) budget.exceeded = true;
+  return !budget.exceeded;
+}
+
+/** Charges a string as JSON.stringify writes it: quotes, escapes and UTF-8 bytes. */
+function chargeString(budget: DataBudget, value: string): boolean {
+  // Each UTF-16 unit takes at least one byte, so an oversized string fails before it is encoded.
+  if (value.length + 2 > budget.remaining) return charge(budget, value.length + 2);
+  return charge(budget, encoder.encode(JSON.stringify(value)).byteLength);
+}
+
+function copyArray(value: unknown[], path: string, depth: number, issues: string[], budget: DataBudget): JsonValue[] | undefined {
+  const copy: JsonValue[] = [];
+  if (!charge(budget, value.length > 0 ? value.length + 1 : 2)) return undefined; // brackets and commas
+  for (let index = 0; index < value.length; index += 1) {
+    if (!Object.hasOwn(value, index)) {
+      issues.push(`${path}[${index}]: sparse arrays are not JSON`);
+      return undefined;
+    }
+    const item = copyJson(value[index], `${path}[${index}]`, depth + 1, issues, budget);
+    if (item === undefined) return undefined;
+    copy.push(item);
+  }
+  return copy;
+}
+
+function copyObject(value: Record<string, unknown>, path: string, depth: number, issues: string[], budget: DataBudget): JsonValue | undefined {
+  const copy: Record<string, JsonValue> = {};
+  const keys = Object.keys(value);
+  if (!charge(budget, keys.length > 0 ? keys.length + 1 : 2)) return undefined; // braces and commas
+  for (const key of keys) {
+    if (!chargeString(budget, key) || !charge(budget, 1)) return undefined; // key and colon
+    const item = copyJson(value[key], `${path}.${key}`, depth + 1, issues, budget);
+    if (item === undefined) return undefined;
+    // defineProperty keeps a "__proto__" key as data instead of changing the prototype.
+    Object.defineProperty(copy, key, { value: item, enumerable: true, writable: true, configurable: true });
+  }
+  return copy;
+}
+
 /**
  * Checks a strict JSON value and builds a detached copy in the same pass, so
- * each property is read once and the copy is exactly what was checked.
- * Returns undefined after pushing at least one issue.
+ * each property is read once and the copy is exactly what was checked. It
+ * charges every value's JSON.stringify bytes against `budget` as it goes and
+ * stops once they exceed it, so a graph that shares references is rejected
+ * before its expansion is copied. Returns undefined after pushing an issue or
+ * exhausting the budget.
  */
-function copyJson(value: unknown, path: string, depth: number, issues: string[]): JsonValue | undefined {
-  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+function copyJson(value: unknown, path: string, depth: number, issues: string[], budget: DataBudget): JsonValue | undefined {
+  if (value === null || typeof value === "boolean") return charge(budget, String(value).length) ? value : undefined;
+  if (typeof value === "string") return chargeString(budget, value) ? value : undefined;
   if (typeof value === "number") {
-    if (Number.isFinite(value)) return value;
-    issues.push(`${path}: must be a finite number`);
-    return undefined;
+    if (!Number.isFinite(value)) {
+      issues.push(`${path}: must be a finite number`);
+      return undefined;
+    }
+    return charge(budget, JSON.stringify(value).length) ? value : undefined;
   }
   if (depth >= LIMITS.maxDataDepth) {
     issues.push(`${path}: nested deeper than ${LIMITS.maxDataDepth} levels`);
     return undefined;
   }
-  if (Array.isArray(value)) {
-    const copy: JsonValue[] = [];
-    for (let index = 0; index < value.length; index += 1) {
-      if (!(index in value)) {
-        issues.push(`${path}[${index}]: sparse arrays are not JSON`);
-        return undefined;
-      }
-      const item = copyJson(value[index], `${path}[${index}]`, depth + 1, issues);
-      if (item === undefined) return undefined;
-      copy.push(item);
-    }
-    return copy;
-  }
-  if (isPlainObject(value)) {
-    const copy: Record<string, JsonValue> = {};
-    for (const key of Object.keys(value)) {
-      const item = copyJson(value[key], `${path}.${key}`, depth + 1, issues);
-      if (item === undefined) return undefined;
-      // defineProperty keeps a "__proto__" key as data instead of changing the prototype.
-      Object.defineProperty(copy, key, { value: item, enumerable: true, writable: true, configurable: true });
-    }
-    return copy;
-  }
+  if (Array.isArray(value)) return copyArray(value, path, depth, issues, budget);
+  if (isPlainObject(value)) return copyObject(value, path, depth, issues, budget);
   issues.push(`${path}: must be JSON (null, boolean, finite number, string, array or plain object)`);
   return undefined;
 }
@@ -186,15 +242,13 @@ function copyJson(value: unknown, path: string, depth: number, issues: string[])
 export function validateData(value: unknown, path: string, issues: string[]): JsonValue | undefined {
   // Own issue list: earlier problems elsewhere in the event must not skip this check.
   const own: string[] = [];
-  const copy = copyJson(value, path, 0, own);
-  if (copy === undefined) {
-    issues.push(...own);
-    return undefined;
-  }
-  if (new TextEncoder().encode(JSON.stringify(copy)).byteLength > LIMITS.maxDataBytes) {
+  const budget: DataBudget = { remaining: LIMITS.maxDataBytes, exceeded: false };
+  const copy = copyJson(value, path, 0, own, budget);
+  if (budget.exceeded) {
     issues.push(`${path}: larger than ${LIMITS.maxDataBytes} bytes as JSON`);
     return undefined;
   }
+  if (copy === undefined) issues.push(...own);
   return copy;
 }
 
@@ -203,16 +257,19 @@ export function normalizeEvent(input: unknown, path = "event"): Validated<Normal
   const issues: string[] = [];
   if (!isPlainObject(input)) return { ok: false, issues: [`${path}: must be a plain object`] };
   unknownKeys(input, ["type", "timestamp", "attributes", "data"], `${path}.`, issues);
-  const type = input.type;
+  const type = ownField(input, "type");
   validateType(type, `${path}.type`, issues);
   let timestampMs: number | undefined;
-  if (input.timestamp !== undefined) {
-    const parsed = parseTimestamp(input.timestamp, `${path}.timestamp`);
+  const timestamp = ownField(input, "timestamp");
+  if (timestamp !== undefined) {
+    const parsed = parseTimestamp(timestamp, `${path}.timestamp`);
     if (typeof parsed === "string") issues.push(parsed);
     else timestampMs = parsed;
   }
-  const attributes = input.attributes === undefined ? {} : validateAttributes(input.attributes, `${path}.attributes`, issues);
-  const data = "data" in input && input.data !== undefined ? validateData(input.data, `${path}.data`, issues) : undefined;
+  const rawAttributes = ownField(input, "attributes");
+  const attributes = rawAttributes === undefined ? {} : validateAttributes(rawAttributes, `${path}.attributes`, issues);
+  const rawData = ownField(input, "data");
+  const data = rawData === undefined ? undefined : validateData(rawData, `${path}.data`, issues);
   if (issues.length > 0) return { ok: false, issues };
   const event: NormalizedEvent = { type: type as string, attributes: attributes ?? {} };
   if (timestampMs !== undefined) event.timestampMs = timestampMs;
@@ -229,8 +286,9 @@ export function normalizeQuery(input: unknown): Validated<StorageQuery> {
 
   const query: StorageQuery = { attributes: [], limit: LIMITS.defaultQueryLimit, order: "desc" };
   for (const bound of ["from", "to"] as const) {
-    if (input[bound] === undefined) continue;
-    const parsed = parseTimestamp(input[bound], `query.${bound}`);
+    const value = ownField(input, bound);
+    if (value === undefined) continue;
+    const parsed = parseTimestamp(value, `query.${bound}`);
     if (typeof parsed === "string") issues.push(parsed);
     else if (bound === "from") query.fromMs = parsed;
     else query.toMs = parsed;
@@ -239,29 +297,31 @@ export function normalizeQuery(input: unknown): Validated<StorageQuery> {
     issues.push("query.from: must not be after query.to");
   }
 
-  if (input.type !== undefined) {
-    const list = Array.isArray(input.type);
-    const types: unknown[] = list ? (input.type as unknown[]) : [input.type];
+  const type = ownField(input, "type");
+  if (type !== undefined) {
+    const list = Array.isArray(type);
+    const types: unknown[] = list ? type : [type];
     if (types.length === 0 || types.length > LIMITS.maxQueryTypes) {
       issues.push(`query.type: must list 1 to ${LIMITS.maxQueryTypes} types`);
     } else {
       // Index every slot: forEach would skip the holes of a sparse array.
       const checked: string[] = [];
       for (let index = 0; index < types.length; index += 1) {
-        const type = types[index];
-        if (validateType(type, list ? `query.type[${index}]` : "query.type", issues)) checked.push(type);
+        const item = ownField(types, index);
+        if (validateType(item, list ? `query.type[${index}]` : "query.type", issues)) checked.push(item);
       }
       query.types = [...new Set(checked)];
     }
   }
 
-  if (input.attributes !== undefined) {
-    const attributes = validateAttributes(input.attributes, "query.attributes", issues);
+  const rawAttributes = ownField(input, "attributes");
+  if (rawAttributes !== undefined) {
+    const attributes = validateAttributes(rawAttributes, "query.attributes", issues);
     if (attributes) query.attributes = Object.entries(attributes);
   }
 
-  if (input.limit !== undefined) {
-    const limit = input.limit;
+  const limit = ownField(input, "limit");
+  if (limit !== undefined) {
     if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1 || limit > LIMITS.maxQueryLimit) {
       issues.push(`query.limit: must be an integer from 1 to ${LIMITS.maxQueryLimit}`);
     } else {
@@ -269,9 +329,10 @@ export function normalizeQuery(input: unknown): Validated<StorageQuery> {
     }
   }
 
-  if (input.order !== undefined) {
-    if (input.order !== "asc" && input.order !== "desc") issues.push('query.order: must be "asc" or "desc"');
-    else query.order = input.order as QueryOrder;
+  const order = ownField(input, "order");
+  if (order !== undefined) {
+    if (order !== "asc" && order !== "desc") issues.push('query.order: must be "asc" or "desc"');
+    else query.order = order as QueryOrder;
   }
 
   return issues.length > 0 ? { ok: false, issues } : { ok: true, value: query };
@@ -283,7 +344,7 @@ export function matchesQuery(event: { type: string; timestampMs: number; attribu
   if (query.toMs !== undefined && event.timestampMs >= query.toMs) return false;
   if (query.types && !query.types.includes(event.type)) return false;
   for (const [key, value] of query.attributes) {
-    if (!Object.prototype.hasOwnProperty.call(event.attributes, key)) return false;
+    if (!Object.hasOwn(event.attributes, key)) return false;
     const actual = event.attributes[key];
     if (typeof actual !== typeof value || actual !== value) return false;
   }

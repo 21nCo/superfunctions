@@ -64,7 +64,7 @@ export function instrument(inner: StorageAdapter) {
     },
     async write(events) {
       calls.write += 1;
-      if (control.gate) await control.gate;
+      if (control.gate !== undefined) await control.gate;
       if (control.failWrites) throw control.failWrites;
       if (control.throwOnWrite) throw control.throwOnWrite.thrown;
       await inner.write(events);

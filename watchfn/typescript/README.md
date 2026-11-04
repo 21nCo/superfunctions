@@ -88,7 +88,7 @@ An event has these fields:
 | `attributes` | no | A flat object with up to 64 entries. Names match `[A-Za-z_][A-Za-z0-9_.:-]*` and are at most 128 characters. Values are strings (at most 1024 characters), finite numbers or booleans. |
 | `data` | no | Strict JSON, at most 64 KiB serialized and 32 levels deep. Returned with the event but never filtered on. |
 
-Unknown fields are rejected. Stored events carry an `id`, an ISO `timestamp` and an ISO `receivedAt`.
+Unknown fields are rejected, and only the event's own fields are read: a field inherited through the prototype chain counts as absent. The `data` size is counted while it is copied, so a payload that shares references is rejected once its serialized size passes 64 KiB, before it is expanded further. Stored events carry an `id`, an ISO `timestamp` and an ISO `receivedAt`. A storage adapter's `durable` must be a boolean, and both adapters refuse a direct write whose timestamps fall outside 1970-01-01 to 9999-12-31.
 
 ### Queries
 
@@ -108,15 +108,25 @@ Unknown fields are rejected. Stored events carry an `id`, an ISO `timestamp` and
 - `stop()` stops the collectors in reverse order, waits for in-flight writes and queries, and then closes the storage session. It is idempotent. Once stopping begins, new ingestion gets `not_started`. You can call `start()` again later.
 - `stop()` releases only what the runtime created: the collector run and the storage session. The SQLite storage never closes the adapter or the connection you passed in. Your own process listeners and timers are untouched. Listeners added with `subscribe()` stay subscribed until you call the returned unsubscribe function.
 - `subscribe(listener)` calls the listener with each stored event after its write succeeded. If a listener throws or returns a promise that rejects, the error goes to `onError` (source `listener`), which defaults to `console.warn`. It never affects the receipt, and the runtime does not wait for async listeners. A throw or rejection from `onError` itself is swallowed, so neither causes an unhandled rejection.
-- Collectors are only the ones you pass in `collectors` or add with `registerCollector()`, and you can only register them while the runtime is stopped. `processMetricsCollector({ intervalMs })` samples memory and CPU usage of the current process. Its interval is from one second up to 2147483647 ms, the largest delay a timer accepts. Its timer is unref'd, so it never keeps the process alive.
+- Collectors are only the ones you pass in `collectors` or add with `registerCollector()`, and you can only register them while the runtime is stopped. If an event a collector ingests gets a failed receipt (for example a storage failure), the collector still gets that receipt, and `onError` also receives a `WatchError` with the receipt's `code` (source `collector`, with the collector's name). `processMetricsCollector({ intervalMs, type })` samples memory and CPU usage of the current process. Its interval is from one second up to 2147483647 ms, the largest delay a timer accepts. An invalid interval or event type throws when the collector is created. Its timer is unref'd, so it never keeps the process alive.
 
 ### HTTP routes
 
 ```ts
+import { timingSafeEqual } from "node:crypto";
 import { createWatchRouter } from "@watchfn/core/http";
 
+// Fail closed: never serve with a missing or empty secret ("Bearer undefined" must not authorize).
+const token = process.env.WATCH_TOKEN;
+if (!token) throw new Error("WATCH_TOKEN must be set to a non-empty secret");
+const expected = Buffer.from(`Bearer ${token}`);
+
 const router = createWatchRouter(watch, {
-  authorize: (request) => request.headers.get("authorization") === `Bearer ${process.env.WATCH_TOKEN}`,
+  authorize: (request) => {
+    const given = Buffer.from(request.headers.get("authorization") ?? "");
+    // timingSafeEqual needs equal lengths; the comparison itself takes constant time.
+    return given.length === expected.length && timingSafeEqual(given, expected);
+  },
   basePath: "/watch",
 });
 // router.handle(request) takes a Web Request and returns a Response.

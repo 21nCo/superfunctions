@@ -2,7 +2,7 @@ import type { WatchErrorCode, WatchErrorInfo } from "./types.js";
 
 /** Error thrown by `query`, `start` and `registerCollector`. */
 export class WatchError extends Error {
-  readonly code: WatchErrorCode | "start_failed" | "invalid_config" | "invalid_state";
+  readonly code: WatchErrorCode;
   readonly issues?: string[];
 
   constructor(code: WatchError["code"], message: string, options?: { issues?: string[]; cause?: unknown }) {

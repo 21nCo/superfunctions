@@ -3,6 +3,7 @@ import { WatchError, describeError as describe, errorInfo, observeResult } from 
 import type {
   BatchIngestReceipt,
   Collector,
+  CollectorContext,
   EventListener,
   EventQuery,
   EventQueryResult,
@@ -14,7 +15,7 @@ import type {
   WatchErrorInfo,
   WatchState,
 } from "./types.js";
-import { LIMITS, normalizeEvent, normalizeQuery, type NormalizedEvent } from "./validation.js";
+import { LIMITS, normalizeEvent, normalizeQuery, ownField, type NormalizedEvent } from "./validation.js";
 
 function defaultOnError(error: unknown, context: WatchErrorContext): void {
   console.warn(`[watchfn] ${context.source}${context.name ? ` ${context.name}` : ""} failed:`, error);
@@ -23,8 +24,14 @@ function defaultOnError(error: unknown, context: WatchErrorContext): void {
 function validateConfig(config: WatchConfig): void {
   if (config === null || typeof config !== "object") throw new WatchError("invalid_config", "createWatch: config is required");
   const storage = config.storage as Partial<WatchConfig["storage"]> | undefined;
-  if (!storage || typeof storage.write !== "function" || typeof storage.query !== "function" || typeof storage.kind !== "string") {
-    throw new WatchError("invalid_config", "createWatch: config.storage must be a storage adapter with kind, write and query");
+  if (
+    !storage ||
+    typeof storage.write !== "function" ||
+    typeof storage.query !== "function" ||
+    typeof storage.kind !== "string" ||
+    typeof storage.durable !== "boolean"
+  ) {
+    throw new WatchError("invalid_config", "createWatch: config.storage must be a storage adapter with kind, durable, write and query");
   }
   if (config.collectors !== undefined && !Array.isArray(config.collectors)) {
     throw new WatchError("invalid_config", "createWatch: config.collectors must be an array");
@@ -123,7 +130,7 @@ export function createWatch(config: WatchConfig): Watch {
     accepting = true;
     try {
       for (const collector of collectors) {
-        await collector.start(context);
+        await collector.start(contextFor(collector));
         started.push(collector);
       }
     } catch (error) {
@@ -187,14 +194,17 @@ export function createWatch(config: WatchConfig): Watch {
   }
 
   function toStored(event: NormalizedEvent, receivedMs: number): StoredEvent {
+    // Optional fields are read as own fields too, so an inherited `data` or `timestampMs` never reaches storage.
+    const timestampMs = ownField(event, "timestampMs") as number | undefined;
+    const data = ownField(event, "data") as NormalizedEvent["data"];
     const stored: StoredEvent = {
       id: generateId(),
       type: event.type,
-      timestamp: new Date(event.timestampMs ?? receivedMs).toISOString(),
+      timestamp: new Date(timestampMs ?? receivedMs).toISOString(),
       receivedAt: new Date(receivedMs).toISOString(),
       attributes: event.attributes,
     };
-    if (event.data !== undefined) stored.data = event.data;
+    if (data !== undefined) stored.data = data;
     return stored;
   }
 
@@ -266,8 +276,9 @@ export function createWatch(config: WatchConfig): Watch {
       if (!Array.isArray(input) || input.length === 0 || input.length > LIMITS.maxBatchSize) {
         return { ok: false, error: errorInfo("invalid_event", `a batch must be an array of 1 to ${LIMITS.maxBatchSize} events`) };
       }
-      // Copy by index: holes in a sparse array become undefined and fail validation instead of being skipped.
-      items = Array.from({ length: input.length }, (_, index) => (input as unknown[])[index]);
+      // Copy own slots by index: holes become undefined and fail validation instead of being skipped
+      // or read through a polluted Array.prototype.
+      items = Array.from({ length: input.length }, (_, index) => ownField(input, index));
     } catch (error) {
       return { ok: false, error: errorInfo("ingest_failed", `the batch could not be read: ${describe(error)}`) };
     }
@@ -307,7 +318,23 @@ export function createWatch(config: WatchConfig): Watch {
     return { events: events.slice(0, limit), truncated: events.length > limit };
   }
 
-  const context = { ingest: (event: unknown) => ingest(event) };
+  /**
+   * A collector's ingestion runs unattended, so a failed receipt (for example a storage
+   * failure) also goes to `onError` with source `collector`; the collector still gets it.
+   */
+  function contextFor(collector: Collector): CollectorContext {
+    return {
+      async ingest(event) {
+        const receipt = await ingest(event);
+        if (!receipt.ok) {
+          const { code, message, issues } = receipt.error;
+          const error = new WatchError(code, `collector ${collector.name} could not ingest an event: ${message}`, { issues });
+          report(error, { source: "collector", name: collector.name });
+        }
+        return receipt;
+      },
+    };
+  }
 
   return {
     get state() {

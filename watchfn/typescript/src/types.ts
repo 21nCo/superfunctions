@@ -44,7 +44,13 @@ export type WatchErrorCode =
   /** Storage rejected the write or query; the write may not be assumed persisted. */
   | "storage_failed"
   /** The input could not be read or a runtime hook (`now`, `generateId`) threw; nothing was written. */
-  | "ingest_failed";
+  | "ingest_failed"
+  /** Thrown by `start()`: storage failed to open or a collector failed to start; the start was rolled back. */
+  | "start_failed"
+  /** Thrown by `createWatch`, `subscribe` and `registerCollector` for an invalid argument. */
+  | "invalid_config"
+  /** Thrown by `registerCollector` unless the runtime is stopped. */
+  | "invalid_state";
 
 export interface WatchErrorInfo {
   code: WatchErrorCode;
@@ -156,7 +162,8 @@ export interface WatchConfig {
   /** Collectors started with the runtime. None run by default. */
   collectors?: Collector[];
   /**
-   * Receives listener errors (including async listener rejections), collector stop errors
+   * Receives listener errors (including async listener rejections), a `WatchError` for each
+   * failed receipt of an event a collector ingested (source `collector`), collector stop errors
    * and storage close errors after a failed start. Defaults to `console.warn`. Its own
    * throw or rejection is swallowed.
    */
