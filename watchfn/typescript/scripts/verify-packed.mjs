@@ -103,7 +103,8 @@ const assert = require("node:assert/strict");
 const before = new Set(Object.keys(require.cache));
 const core = require("@watchfn/core");
 const loaded = Object.keys(require.cache).filter((file) => !before.has(file));
-assert.deepEqual(loaded.map((file) => file.split("node_modules/").pop()), ["@watchfn/core/dist/index.cjs"]);
+// Normalise Windows separators so the check is platform-neutral.
+assert.deepEqual(loaded.map((file) => file.replace(/\\\\/g, "/").split("node_modules/").pop()), ["@watchfn/core/dist/index.cjs"]);
 assert.equal(typeof core.createWatch, "function");
 assert.equal(typeof require("@watchfn/core/sqlite").createSqliteStorage, "function");
 // The HTTP routes are ESM only, like @superfunctions/http.
@@ -170,6 +171,8 @@ try {
     "npm",
     [
       "install",
+      // No dependency's install script runs; only better-sqlite3 is rebuilt below, explicitly.
+      "--ignore-scripts",
       "--prefer-offline",
       "--no-audit",
       "--no-fund",
@@ -180,6 +183,7 @@ try {
     ],
     consumer
   );
+  run("npm", ["rebuild", "better-sqlite3", "--foreground-scripts"], consumer);
 
   for (const name of ["@watchfn/core", "@superfunctions/db", "@superfunctions/http", "better-sqlite3"]) {
     const installed = realpathSync(path.join(consumer, "node_modules", name));

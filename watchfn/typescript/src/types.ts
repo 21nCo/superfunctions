@@ -135,6 +135,11 @@ export interface Collector {
 
 export type WatchState = "stopped" | "starting" | "started" | "stopping";
 
+/**
+ * Called with each event after it was written. It may be async: a rejection is
+ * reported to `onError` with source `listener`, like a synchronous throw. It
+ * never changes the receipt, and the runtime does not wait for it.
+ */
 export type EventListener = (event: StoredEvent) => void;
 
 export interface WatchErrorContext {
@@ -147,7 +152,11 @@ export interface WatchConfig {
   storage: StorageAdapter;
   /** Collectors started with the runtime. None run by default. */
   collectors?: Collector[];
-  /** Receives listener errors, collector stop errors and storage close errors after a failed start. Defaults to `console.warn`. */
+  /**
+   * Receives listener errors (including async listener rejections), collector stop errors
+   * and storage close errors after a failed start. Defaults to `console.warn`. Its own
+   * throw or rejection is swallowed.
+   */
   onError?: (error: unknown, context: WatchErrorContext) => void;
   /** Clock in epoch milliseconds, for tests. */
   now?: () => number;

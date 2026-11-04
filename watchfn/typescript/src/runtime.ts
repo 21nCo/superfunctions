@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { WatchError, errorInfo } from "./errors.js";
+import { WatchError, describeError as describe, errorInfo, observeResult } from "./errors.js";
 import type {
   BatchIngestReceipt,
   Collector,
@@ -18,13 +18,6 @@ import { LIMITS, normalizeEvent, normalizeQuery, type NormalizedEvent } from "./
 
 function defaultOnError(error: unknown, context: WatchErrorContext): void {
   console.warn(`[watchfn] ${context.source}${context.name ? ` ${context.name}` : ""} failed:`, error);
-}
-
-/** Error message plus its direct cause, which drivers wrapped by ORMs often carry. */
-function describe(error: unknown): string {
-  if (!(error instanceof Error)) return String(error);
-  const cause = error.cause instanceof Error ? error.cause.message : undefined;
-  return cause && !error.message.includes(cause) ? `${error.message}: ${cause}` : error.message;
 }
 
 function validateConfig(config: WatchConfig): void {
@@ -75,9 +68,10 @@ export function createWatch(config: WatchConfig): Watch {
 
   function report(error: unknown, context: WatchErrorContext): void {
     try {
-      onError(error, context);
+      // A failing error hook, sync or async, must not break ingestion or shutdown.
+      observeResult(onError(error, context), () => undefined);
     } catch {
-      // A failing error hook must not break ingestion or shutdown.
+      // Same for a hook that throws synchronously.
     }
   }
 
@@ -197,7 +191,8 @@ export function createWatch(config: WatchConfig): Watch {
     for (const event of events) {
       for (const listener of [...listeners]) {
         try {
-          listener(structuredClone(event));
+          // An async listener's rejection is reported like a synchronous throw.
+          observeResult(listener(structuredClone(event)), (error) => report(error, { source: "listener" }));
         } catch (error) {
           report(error, { source: "listener" });
         }
@@ -297,6 +292,7 @@ export function createWatch(config: WatchConfig): Watch {
     } catch (error) {
       throw new WatchError("storage_failed", `storage ${storage.kind} failed the query: ${describe(error)}`, { cause: error });
     }
+    if (!Array.isArray(events)) throw new WatchError("storage_failed", `storage ${storage.kind} returned a query result that is not an array`);
     return { events: events.slice(0, limit), truncated: events.length > limit };
   }
 

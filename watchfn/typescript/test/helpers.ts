@@ -50,7 +50,7 @@ export function deferred(): Deferred {
 /** Wraps a storage adapter so tests can count calls and inject failures. */
 export function instrument(inner: StorageAdapter) {
   const calls = { open: 0, close: 0, write: 0, query: 0 };
-  const control: { failWrites?: Error; gate?: Promise<void>; written: StoredEvent[][] } = { written: [] };
+  const control: { failWrites?: Error; throwOnWrite?: { thrown: unknown }; gate?: Promise<void>; written: StoredEvent[][] } = { written: [] };
   const storage: StorageAdapter = {
     kind: inner.kind,
     durable: inner.durable,
@@ -66,6 +66,7 @@ export function instrument(inner: StorageAdapter) {
       calls.write += 1;
       if (control.gate) await control.gate;
       if (control.failWrites) throw control.failWrites;
+      if (control.throwOnWrite) throw control.throwOnWrite.thrown;
       await inner.write(events);
       control.written.push([...events]);
     },

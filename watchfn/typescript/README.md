@@ -64,14 +64,14 @@ The storage borrows your connection, so it guards your work:
 
 - If the connection is already inside a transaction you started, the write fails with `storage_failed`. The storage never writes into your transaction, because you could still roll it back after the receipt. It also never commits or rolls back your transaction.
 - Writes, queries and schema setup from every storage on the same adapter run one at a time, so concurrent ingests never interleave their transactions.
-- Do not run your own statements on the same connection while ingestion is in flight. They could land inside the storage's open transaction.
+- A statement you run on the same connection while a storage write is open joins the storage's transaction: it commits or rolls back with that write. For example, if the write then fails, your insert is rolled back too, and a `sqlite.transaction()` you start in that window nests as a savepoint inside it. Use a dedicated connection for the storage, or do not run your own statements on its connection while ingestion is in flight.
 
 ## Behaviour
 
 ### Ingestion
 
 - `ingest(event)` returns `{ ok: true, event, storage, durable }` only after the storage adapter confirmed the write.
-- Every failure comes back as an `ok: false` receipt with a `code`. `ingest` never throws:
+- Every failure comes back as an `ok: false` receipt with a `code`. `ingest` and `ingestBatch` never throw, whatever value a getter, hook or storage adapter throws (including values that cannot be converted to a string). A receipt's `message` includes at most 500 characters of the underlying error:
   - `invalid_event`: the event failed validation, with one entry in `issues` per problem. Nothing was written.
   - `not_started`: the runtime is stopped or stopping.
   - `storage_failed`: the adapter rejected the write. Treat the event as not stored.
@@ -107,7 +107,7 @@ Unknown fields are rejected. Stored events carry an `id`, an ISO `timestamp` and
 - `start()` opens the storage session and then starts the registered collectors in order. It is idempotent. Concurrent calls share one start and its outcome: if it fails, every waiting caller gets the same rejection, and the next call tries again. If a collector fails to start, `start()` rolls back: it stops the collectors it already started, closes the storage session and rejects with `start_failed`.
 - `stop()` stops the collectors in reverse order, waits for in-flight writes and queries, and then closes the storage session. It is idempotent. Once stopping begins, new ingestion gets `not_started`. You can call `start()` again later.
 - `stop()` releases only what the runtime created: the collector run and the storage session. The SQLite storage never closes the adapter or the connection you passed in. Your own process listeners and timers are untouched. Listeners added with `subscribe()` stay subscribed until you call the returned unsubscribe function.
-- `subscribe(listener)` calls the listener with each stored event after its write succeeded. If a listener throws, the error goes to `onError`, which defaults to `console.warn`. It never affects the receipt.
+- `subscribe(listener)` calls the listener with each stored event after its write succeeded. If a listener throws or returns a promise that rejects, the error goes to `onError` (source `listener`), which defaults to `console.warn`. It never affects the receipt, and the runtime does not wait for async listeners. A throw or rejection from `onError` itself is swallowed, so neither causes an unhandled rejection.
 - Collectors are only the ones you pass in `collectors` or add with `registerCollector()`, and you can only register them while the runtime is stopped. `processMetricsCollector({ intervalMs })` samples memory and CPU usage of the current process. Its interval is from one second up to 2147483647 ms, the largest delay a timer accepts. Its timer is unref'd, so it never keeps the process alive.
 
 ### HTTP routes

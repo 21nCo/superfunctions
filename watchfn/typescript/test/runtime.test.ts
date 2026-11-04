@@ -463,3 +463,151 @@ describe("process metrics collector interval bounds", () => {
     expect(() => processMetricsCollector({ intervalMs: 999 })).toThrow(RangeError);
   });
 });
+
+/** Values a getter, hook or adapter may throw that cannot be safely stringified or whose fields throw when read. */
+function hostileThrownValues(): Array<[string, unknown]> {
+  const throwingMessage = new Error("unused");
+  Object.defineProperty(throwingMessage, "message", { get() { throw new Error("message getter"); } });
+  const throwingCause = new Error("outer");
+  Object.defineProperty(throwingCause, "cause", { get() { throw new Error("cause getter"); } });
+  const throwingName = new Error("named");
+  Object.defineProperty(throwingName, "name", { get() { throw new Error("name getter"); } });
+  const revoked = Proxy.revocable({}, {});
+  revoked.revoke();
+  return [
+    ["a null-prototype object", Object.create(null)],
+    ["an object whose toString throws", { toString() { throw new Error("toString"); } }],
+    ["an object whose Symbol.toPrimitive throws", { [Symbol.toPrimitive]() { throw new Error("toPrimitive"); } }],
+    ["an Error whose message getter throws", throwingMessage],
+    ["an Error whose cause getter throws", throwingCause],
+    ["an Error whose name getter throws", throwingName],
+    ["a revoked proxy", revoked.proxy],
+    ["undefined", undefined],
+    ["a symbol", Symbol("thrown")],
+  ];
+}
+
+describe("[memory-fixture] hostile thrown values never escape as non-receipts", () => {
+  it.each(hostileThrownValues())("ingest and ingestBatch return failed receipts when %s is thrown", async (_label, thrown) => {
+    const sites: Array<{ code: string; config: (storage: ReturnType<typeof instrument>) => Partial<Parameters<typeof createWatch>[0]>; event: () => unknown }> = [
+      { code: "ingest_failed", config: () => ({}), event: () => ({ type: "t", get data(): unknown { throw thrown; } }) },
+      { code: "ingest_failed", config: () => ({ now: () => { throw thrown; } }), event: () => ({ type: "t" }) },
+      { code: "ingest_failed", config: () => ({ generateId: (): string => { throw thrown; } }), event: () => ({ type: "t" }) },
+      { code: "storage_failed", config: (instrumented) => { instrumented.control.throwOnWrite = { thrown }; return {}; }, event: () => ({ type: "t" }) },
+    ];
+    for (const site of sites) {
+      const instrumented = instrument(createMemoryStorage());
+      const watch = createWatch({ storage: instrumented.storage, ...site.config(instrumented) });
+      await watch.start();
+      const single = await watch.ingest(site.event());
+      expect(single).toMatchObject({ ok: false, error: { code: site.code, message: expect.any(String) } });
+      const batch = await watch.ingestBatch([{ type: "ok" }, site.event()]);
+      expect(batch).toMatchObject({ ok: false, error: { code: site.code, message: expect.any(String) } });
+      expect(instrumented.control.written).toEqual([]);
+      await watch.stop();
+    }
+  });
+
+  it.each(hostileThrownValues())("query, start and a collector start reject only with WatchError when %s is thrown", async (_label, thrown) => {
+    const failingQuery = instrument(createMemoryStorage());
+    failingQuery.storage.query = async () => { throw thrown; };
+    const queried = createWatch({ storage: failingQuery.storage });
+    await queried.start();
+    const queryError = await queried.query({}).catch((error: unknown) => error);
+    expect(queryError).toBeInstanceOf(WatchError);
+    expect(queryError).toMatchObject({ code: "storage_failed" });
+    const unreadableQuery = { get limit(): number { throw thrown; } };
+    await expect(queried.query(unreadableQuery)).rejects.toMatchObject({ name: "WatchError", code: "invalid_query" });
+    await queried.stop();
+
+    const failingOpen = instrument(createMemoryStorage());
+    failingOpen.storage.open = async () => { throw thrown; };
+    const opened = createWatch({ storage: failingOpen.storage });
+    const openError = await opened.start().catch((error: unknown) => error);
+    expect(openError).toBeInstanceOf(WatchError);
+    expect(openError).toMatchObject({ code: "start_failed" });
+    expect(opened.state).toBe("stopped");
+
+    const collector: Collector = { name: "hostile", start() { throw thrown; }, stop() {} };
+    const collected = createWatch({ storage: createMemoryStorage(), collectors: [collector], onError: () => undefined });
+    const collectorError = await collected.start().catch((error: unknown) => error);
+    expect(collectorError).toBeInstanceOf(WatchError);
+    expect(collectorError).toMatchObject({ code: "start_failed", message: expect.stringContaining("hostile") });
+    expect(collected.state).toBe("stopped");
+  });
+
+  it("caps the error description copied into a receipt", async () => {
+    const instrumented = instrument(createMemoryStorage());
+    instrumented.control.failWrites = new Error("x".repeat(10_000));
+    const watch = createWatch({ storage: instrumented.storage });
+    await watch.start();
+    const receipt = await watch.ingest({ type: "t" });
+    expect(!receipt.ok && receipt.error.message.length).toBeLessThan(700);
+    await watch.stop();
+  });
+});
+
+describe("[memory-fixture] async callbacks", () => {
+  async function collectUnhandled(run: () => Promise<void>): Promise<unknown[]> {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      await run();
+      // Let rejected thenables settle and Node's unhandled-rejection check run.
+      for (let turn = 0; turn < 5; turn += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+    return unhandled;
+  }
+
+  it("reports an async listener's rejection to onError without an unhandled rejection or a changed receipt", async () => {
+    const reported: Array<[unknown, unknown]> = [];
+    const watch = createWatch({ storage: createMemoryStorage(), onError: (error, context) => void reported.push([error, context]) });
+    await watch.start();
+    const failure = new Error("async listener failed");
+    watch.subscribe(async () => {
+      throw failure;
+    });
+    watch.subscribe((() => ({ then() { throw new Error("hostile then"); } })) as () => void);
+    let receipt: Awaited<ReturnType<typeof watch.ingest>> | undefined;
+    const unhandled = await collectUnhandled(async () => {
+      receipt = await watch.ingest({ type: "t" });
+    });
+    expect(receipt).toMatchObject({ ok: true });
+    expect(unhandled).toEqual([]);
+    expect(reported).toHaveLength(2);
+    expect(reported).toEqual(expect.arrayContaining([
+      [failure, { source: "listener" }],
+      [expect.objectContaining({ message: "hostile then" }), { source: "listener" }],
+    ]));
+    await watch.stop();
+  });
+
+  it("swallows an async onError rejection without an unhandled rejection", async () => {
+    let onErrorCalls = 0;
+    const watch = createWatch({
+      storage: createMemoryStorage(),
+      onError: async () => {
+        onErrorCalls += 1;
+        throw new Error("onError failed");
+      },
+    });
+    await watch.start();
+    watch.subscribe(() => {
+      throw new Error("sync listener failed");
+    });
+    watch.subscribe(async () => {
+      throw new Error("async listener failed");
+    });
+    let receipt: Awaited<ReturnType<typeof watch.ingest>> | undefined;
+    const unhandled = await collectUnhandled(async () => {
+      receipt = await watch.ingest({ type: "t" });
+    });
+    expect(receipt).toMatchObject({ ok: true });
+    expect(onErrorCalls).toBe(2);
+    expect(unhandled).toEqual([]);
+    await watch.stop();
+  });
+});
