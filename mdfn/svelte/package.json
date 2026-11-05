@@ -21,7 +21,7 @@
   "files": ["dist", "README.md"],
   "license": "MIT",
   "engines": { "node": ">=20 <25" },
-  "repository": { "type": "git", "url": "git+https://github.com/21nCo/super-functions.git", "directory": "mdfn/svelte" },
+  "repository": { "type": "git", "url": "git+https://github.com/21nCo/superfunctions.git", "directory": "mdfn/svelte" },
   "publishConfig": { "access": "public" },
   "sideEffects": ["**/*.svelte"],
   "mdfn": { "status": "stable-candidate", "layer": "adapter", "framework": "svelte", "schemaVersion": 1 }

@@ -26,12 +26,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish:
+  build:
     runs-on: ubuntu-latest
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
     outputs:
       dist_tag: ${{ steps.resolve.outputs.dist_tag }}
+      pkg_name: ${{ steps.resolve.outputs.pkg_name }}
+      pkg_version: ${{ steps.resolve.outputs.pkg_version }}
+      release_commit: ${{ steps.ref.outputs.release_commit }}
 
     steps:
       - name: Checkout
@@ -47,7 +50,19 @@ jobs:
           registry-url: https://registry.npmjs.org
 
 
+      - name: Require the run to belong to the release tag commit
+        if: '!inputs.channel_only'
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_commit="$(git rev-parse --verify "${GITHUB_SHA}^{commit}")"
+          if [[ "${GITHUB_REF}" != "refs/tags/${RELEASE_TAG}" || "${run_commit}" != "$(git rev-parse HEAD)" ]]; then
+            echo "This run's ref/commit (${GITHUB_REF} at ${run_commit}) is not the checked-out release tag ${RELEASE_TAG}. Dispatch on the tag (gh workflow run publish-tag.yml --ref ${RELEASE_TAG} -f release_tag=${RELEASE_TAG}) or push the tag again, so npm provenance records the commit that is published." >&2
+            exit 1
+          fi
+
       - name: Require immutable release tag
+        id: ref
         run: node ./scripts/assert-release-ref.mjs "${RELEASE_TAG}"
       - name: Resolve publish target
         id: resolve
@@ -70,26 +85,100 @@ jobs:
         run: node ./scripts/pack-release-package.mjs "${RELEASE_TAG}"
 
       - name: Recheck immutable release tag
-        run: node ./scripts/assert-release-ref.mjs "${RELEASE_TAG}"
+        run: node ./scripts/assert-release-ref.mjs "${RELEASE_TAG}" "${{ steps.ref.outputs.release_commit }}"
+
+      - name: Hand the packed artifact to the publish job
+        if: '!inputs.channel_only'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: npm-package
+          path: ${{ steps.pack.outputs.tarball }}
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+
+  publish:
+    needs: build
+    if: '!inputs.channel_only'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+
+    steps:
+      - name: Checkout the commit the build job verified
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ needs.build.outputs.release_commit }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Setup npm with trusted publishing
+        run: npm install --global npm@11.21.0 --ignore-scripts --registry=https://registry.npmjs.org
+
+      - name: Recheck immutable release tag
+        run: node ./scripts/assert-release-ref.mjs "${RELEASE_TAG}" "${{ needs.build.outputs.release_commit }}"
+
+      - name: Download the packed artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: npm-package
+          path: ${{ runner.temp }}/npm-package
 
       - name: Publish package
-        if: '!inputs.channel_only'
-        run: npm publish "${TARBALL}" --access public --tag "${DIST_TAG}" --ignore-scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t tarballs < <(find "${RUNNER_TEMP}/npm-package" -maxdepth 1 -type f -name '*.tgz')
+          if [[ ${#tarballs[@]} -ne 1 ]]; then
+            echo "Expected exactly one packed artifact, found ${#tarballs[@]}" >&2
+            exit 1
+          fi
+          npm publish "${tarballs[0]}" --access public --tag "${DIST_TAG}" --ignore-scripts
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          TARBALL: ${{ steps.pack.outputs.tarball }}
-          DIST_TAG: ${{ steps.resolve.outputs.dist_tag }}
+          DIST_TAG: ${{ needs.build.outputs.dist_tag }}
 
+  verify-registry:
+    needs: [build, publish]
+    if: needs.build.outputs.pkg_name == '@mcpfn/testing' || needs.build.outputs.pkg_name == '@mcpfn/cli'
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+
+    steps:
+      - name: Checkout immutable release tag
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
 
       - name: Verify published McpFn consumer from configured registry
-        if: '!inputs.channel_only && (steps.resolve.outputs.pkg_name == ''@mcpfn/testing'' || steps.resolve.outputs.pkg_name == ''@mcpfn/cli'')'
-        run: node ./scripts/test-mcpfn-registry-install.mjs "${{ steps.resolve.outputs.pkg_name }}" "${{ steps.resolve.outputs.pkg_version }}" "${NPM_CONFIG_REGISTRY}"
+        run: node ./scripts/test-mcpfn-registry-install.mjs "${{ needs.build.outputs.pkg_name }}" "${{ needs.build.outputs.pkg_version }}" "${NPM_CONFIG_REGISTRY}"
         env:
           NPM_CONFIG_REGISTRY: https://registry.npmjs.org
 
   reconcile-channel:
-    needs: publish
-    if: needs.publish.outputs.dist_tag != 'latest'
+    needs: [build, publish]
+    if: >-
+      always() &&
+      needs.build.result == 'success' &&
+      (needs.publish.result == 'success' || (inputs.channel_only && needs.publish.result == 'skipped')) &&
+      needs.build.outputs.dist_tag != 'latest'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -105,7 +194,7 @@ jobs:
           ref: refs/tags/${{ env.RELEASE_TAG }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org

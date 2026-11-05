@@ -2,6 +2,11 @@
   "name": "@authfn/email-otp",
   "version": "0.1.2",
   "description": "Email OTP authentication plugin for AuthFn",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "authfn/email-otp"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

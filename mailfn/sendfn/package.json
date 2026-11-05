@@ -11,7 +11,7 @@
   "keywords": ["mailfn", "sendfn", "email", "reply"],
   "author": "21n",
   "license": "MIT",
-  "repository": { "type": "git", "url": "git+https://github.com/21nCo/super-functions.git", "directory": "mailfn/sendfn" },
+  "repository": { "type": "git", "url": "git+https://github.com/21nCo/superfunctions.git", "directory": "mailfn/sendfn" },
   "publishConfig": { "access": "public" },
   "sideEffects": false,
   "dependencies": { "@mailfn/core": "0.1.0" },

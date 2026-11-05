@@ -2,6 +2,11 @@
   "name": "@extfn/admin",
   "version": "0.1.0",
   "description": "Truthful Super Console capability declaration for ExtFn",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "extfn/admin"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

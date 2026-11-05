@@ -43,7 +43,7 @@
   "author": "21n",
   "license": "MIT",
   "engines": { "node": ">=20 <25" },
-  "repository": { "type": "git", "url": "git+https://github.com/21nCo/super-functions.git", "directory": "uifn/dom" },
+  "repository": { "type": "git", "url": "git+https://github.com/21nCo/superfunctions.git", "directory": "uifn/dom" },
   "publishConfig": { "access": "public" },
   "uifn": { "status": "ga-candidate", "layer": "dom", "schemaVersion": 1, "sourcePolicy": "clean-room" }
 }

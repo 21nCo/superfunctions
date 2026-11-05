@@ -2,6 +2,11 @@
   "name": "@searchfn/server",
   "version": "0.1.0",
   "description": "Server SDK for SearchFn - Thin HTTP transport over SearchAdapter",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "searchfn/server"
+  },
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
