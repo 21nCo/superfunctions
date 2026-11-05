@@ -15,7 +15,8 @@ import { FilePortRegistry, withFileLock } from "@devfn/ports";
 import { CaddyProxyController, proxyListenerPorts, proxyOwnerStatus } from "@devfn/proxy";
 import { describe, expect, it, vi } from "vitest";
 
-import { assertEnvironmentOutputsAvailable, claimEnvironmentOutputs, releaseEnvironmentOutputs, within } from "../src/outputs.js";
+import { assertEnvironmentOutputsAvailable, claimEnvironmentOutputs, makeStateDirectory, releaseEnvironmentOutputs, within } from "../src/outputs.js";
+import { newRuntimeId, recordRuntimeId } from "../src/runtime.js";
 import { createPlan, DevFnOrchestrator, domainAliases, recoverOrphanedProxyRoutes, resolveEndpointTemplates, resolveInstanceIdentity, resolveLocalHostname, runtimeDirectory, selectRuntime, taskInputRevision } from "../src/index.js";
 
 const execFileAsync = promisify(execFile);
@@ -56,9 +57,13 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 // Lets a test act as soon as a stopped receipt's stable copy is written: at the first point writeReceipt yields after it, or once it returns.
 const stops = vi.hoisted(() => ({ onStopped: undefined as ((copyAfterStable: boolean) => Promise<void>) | undefined }));
+// Lets a test act once a start recorded its runtime identity, or once a lifecycle command read a receipt under its locks.
+const lifecycle = vi.hoisted(() => ({ recorded: undefined as (() => Promise<void>) | undefined, read: undefined as (() => Promise<void>) | undefined }));
 vi.mock("../src/runtime.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/runtime.js")>();
-  return { ...actual, writeReceipt: async (receipt: Parameters<typeof actual.writeReceipt>[0], options: Parameters<typeof actual.writeReceipt>[1] = {}) => {
+  const once = async (name: "recorded" | "read") => { const hook = lifecycle[name]; lifecycle[name] = undefined; await hook?.(); };
+  return { ...actual, recordRuntimeId: async (...args: Parameters<typeof actual.recordRuntimeId>) => { const recorded = await actual.recordRuntimeId(...args); await once("recorded"); return recorded; },
+    readReceipt: async (...args: Parameters<typeof actual.readReceipt>) => { const receipt = await actual.readReceipt(...args); await once("read"); return receipt; }, writeReceipt: async (receipt: Parameters<typeof actual.writeReceipt>[0], options: Parameters<typeof actual.writeReceipt>[1] = {}) => {
     const onStopped = stops.onStopped;
     if (!onStopped || receipt.state !== "stopped" || options.runtimeCopy !== undefined || options.stable === false) return await actual.writeReceipt(receipt, options);
     stops.onStopped = undefined;
@@ -1664,6 +1669,101 @@ it("keeps refusing outputs a live claimless receipt may own after a refused star
     await expect(assertEnvironmentOutputsAvailable(writer, primary, e)).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID" });
   } finally {
     await orchestrator.down({ config: plain, root: primary, stateDir: outside, runtime: "d" }).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 120_000);
+
+it("keeps a task's input revision through every DevFn write of a failed, retried and stopped sibling in an existing state directory inside the checkout, holding only DevFn's entries there", async () => {
+  const { parent, primary } = await repository();
+  const config = (inputs: string[]) => validateDevFnConfig({ version: 1, project: { id: "existing-state-input" },
+    processes: { seed: { adapter: "command", command: [process.execPath, "-e", "0"], task: { rerun: "on-change", inputs } } }, profiles: { default: { processes: ["seed"] } } });
+  const idle = [process.execPath, "-e", "setInterval(() => undefined, 1_000)"];
+  const listen = [process.execPath, "-e", "require('node:net').createServer().listen(Number(process.env.PORT), '127.0.0.1')"];
+  const sibling = validateDevFnConfig({ version: 1, project: { id: "existing-state-input" }, ports: { r: { env: "PORT" } },
+    processes: { redis: { adapter: "command", command: listen, ports: ["r"] }, worker: { adapter: "command", command: idle, resources: ["cache"] } },
+    resources: { cache: { kind: "cache", defaultTarget: "local", targets: { local: { node: "redis", port: "r", scheme: "redis" } } } }, profiles: { default: { processes: ["worker", "redis"] } } } as never);
+  const orchestrator = new DevFnOrchestrator();
+  const revision = async () => await taskInputRevision(config(["."]), primary, { name: "seed", kind: "process" }, "default");
+  const reserve = FilePortRegistry.prototype.reserve;
+  const states: Array<[string, string]> = [];
+  try {
+    await writeFile(path.join(primary, "schema.sql"), "create table t();");
+    for (const [variant, runtime] of [["existing", "b"], ["made-by-refused-down", "c"]] as const) {
+      const stateDir = path.join(primary, `${variant}-cache`, "state");
+      states.push([stateDir, runtime]);
+      if (variant === "existing") {
+        await mkdir(stateDir, { recursive: true });
+        await writeFile(path.join(stateDir, "notes.sql"), "-- mine");
+      }
+      const before = await revision();
+      const seen: string[] = [];
+      const sample = async () => { seen.push(await revision()); };
+      if (variant === "made-by-refused-down") {
+        lifecycle.read = sample;
+        await expect(orchestrator.down({ config: sibling, root: primary, stateDir, runtime })).rejects.toMatchObject({ code: "DEVFN_NOT_RUNNING" });
+      }
+      // A first start that fails at port reservation, after runtime-id, its locks and registry.json were written.
+      lifecycle.recorded = sample;
+      const failing = vi.spyOn(FilePortRegistry.prototype, "reserve").mockImplementation(async function (this: FilePortRegistry, ...args: Parameters<FilePortRegistry["reserve"]>) {
+        await reserve.apply(this, args);
+        await sample();
+        throw new Error("stopped at port reservation");
+      });
+      try { await expect(orchestrator.up({ config: sibling, root: primary, stateDir, runtime })).rejects.toThrow("stopped at port reservation"); } finally { failing.mockRestore(); }
+      expect(await readdir(stateDir)).toEqual(expect.arrayContaining(["registry.json", "runtime-id"]));
+      expect(await revision()).toBe(before);
+      // Retried, it starts; stopped, and stopped again, it keeps every DevFn write out.
+      const retried = vi.spyOn(FilePortRegistry.prototype, "reserve").mockImplementation(async function (this: FilePortRegistry, ...args: Parameters<FilePortRegistry["reserve"]>) {
+        const reserved = await reserve.apply(this, args);
+        await sample();
+        return reserved;
+      });
+      try { expect((await orchestrator.up({ config: sibling, root: primary, stateDir, runtime })).state).toBe("ready"); } finally { retried.mockRestore(); }
+      expect(await revision()).toBe(before);
+      lifecycle.read = sample;
+      expect((await orchestrator.down({ config: sibling, root: primary, stateDir, runtime })).state).toBe("stopped");
+      lifecycle.read = sample;
+      await expect(orchestrator.down({ config: sibling, root: primary, stateDir, runtime })).rejects.toMatchObject({ code: "DEVFN_NOT_RUNNING" });
+      expect(seen).toEqual(Array.from({ length: variant === "existing" ? 5 : 6 }, () => before));
+      expect(await revision()).toBe(before);
+      // Only DevFn's entries are held: a user's file in the state directory is an input, and a DevFn file there is no input.
+      await writeFile(path.join(stateDir, "notes.sql"), "-- changed");
+      expect(await revision()).not.toBe(before);
+      await expect(taskInputRevision(config([path.relative(primary, path.join(stateDir, "registry.json"))]), primary, { name: "seed", kind: "process" }, "default")).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID" });
+      await rm(path.join(stateDir, "notes.sql"));
+      if (variant === "existing") expect(await revision()).not.toBe(before);
+    }
+  } finally {
+    lifecycle.recorded = undefined; lifecycle.read = undefined;
+    for (const [stateDir, runtime] of states) await orchestrator.down({ config: sibling, root: primary, stateDir, runtime }).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 180_000);
+
+it("keeps a task's input revision when a start into an existing state directory inside the checkout is killed after recording its runtime identity, and a later start and stop succeed", async () => {
+  const { parent, primary } = await repository();
+  const config = validateDevFnConfig({ version: 1, project: { id: "killed-state-input" },
+    processes: { seed: { adapter: "command", command: [process.execPath, "-e", "0"], task: { rerun: "on-change", inputs: ["."] } } }, profiles: { default: { processes: ["seed"] } } });
+  const sibling = validateDevFnConfig({ version: 1, project: { id: "killed-state-input" }, processes: {}, profiles: { default: { processes: [] } } });
+  const orchestrator = new DevFnOrchestrator();
+  const revision = async () => await taskInputRevision(config, primary, { name: "seed", kind: "process" }, "default");
+  const stateDir = path.join(primary, "cache", "state");
+  try {
+    await mkdir(stateDir, { recursive: true });
+    const before = await revision();
+    // What a start killed before its claim binds leaves on disk: the state directory's record, then runtime-id, and no cleanup.
+    await makeStateDirectory(sibling, primary, await resolveInstanceIdentity("killed-state-input", primary, "b"), stateDir, true);
+    await recordRuntimeId(stateDir, newRuntimeId());
+    expect(await revision()).toBe(before);
+    expect((await orchestrator.up({ config: sibling, root: primary, stateDir, runtime: "b" })).state).toBe("ready");
+    expect((await orchestrator.down({ config: sibling, root: primary, stateDir, runtime: "b" })).state).toBe("stopped");
+    expect(await revision()).toBe(before);
+    // Moved to a state directory elsewhere, it still holds what it left in this one.
+    expect((await orchestrator.up({ config: sibling, root: primary, stateDir: path.join(parent, "elsewhere"), runtime: "b" })).state).toBe("ready");
+    expect((await orchestrator.down({ config: sibling, root: primary, stateDir: path.join(parent, "elsewhere"), runtime: "b" })).state).toBe("stopped");
+    expect(await revision()).toBe(before);
+  } finally {
+    await orchestrator.down({ config: sibling, root: primary, stateDir, runtime: "b" }).catch(() => undefined);
     await rm(parent, { recursive: true, force: true });
   }
 }, 120_000);

@@ -669,16 +669,14 @@ export class DevFnOrchestrator {
     await decideTasks(requestedStateDir);
     await makeStateDirectory(options.config, options.root, identity, requestedStateDir, true);
     const stateDir = await realpath(requestedStateDir);
-    // A concurrent first start may have recorded another; the locked pass plans with the recorded one.
-    if (identity.runtimeId) {
-      const recorded = await recordRuntimeId(stateDir, identity.runtimeId);
-      if (recorded !== identity.runtimeId) {
+    // The instance's checkout-wide lock first: its claim spans state directories.
+    return await withInstanceLifecycleLock(options.root, identity.instanceId, async () => await withFileLock(path.join(stateDir, `lifecycle-${identity.instanceId}.lock`), async () => {
+      // A concurrent first start may have recorded another; the locked pass plans with the recorded one.
+      const recorded = identity.runtimeId ? await recordRuntimeId(stateDir, identity.runtimeId) : undefined;
+      if (recorded && recorded !== identity.runtimeId) {
         identity.runtimeId = recorded;
         preflight = await resolvePreflight();
       }
-    }
-    // The instance's checkout-wide lock first: its claim spans state directories.
-    return await withInstanceLifecycleLock(options.root, identity.instanceId, async () => await withFileLock(path.join(stateDir, `lifecycle-${identity.instanceId}.lock`), async () => {
       // Environment-output files are claimed checkout-wide before anything
       // else changes; a start that never records its receipt gives them back.
       const claim = await claimEnvironmentOutputs(options.config, options.root, identity, stateDir);

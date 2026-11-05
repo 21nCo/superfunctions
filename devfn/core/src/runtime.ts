@@ -141,6 +141,13 @@ async function writeAtomicReceipt(target: string, receipt: LifecycleReceipt): Pr
 const RUNTIME_ID = /^[0-9a-f]{32}$/;
 
 /**
+ * An entry DevFn creates in a state directory: this package's runtime-id, port registry, lifecycle locks and task journals,
+ * the routing lock of @devfn/ports and the route, certificate, domain, tunnel and OAuth relay state of @devfn/proxy, each also
+ * as the lock, temp file or retired lock beside it. Only these are held in a state directory that existed before DevFn used it.
+ */
+export const STATE_DIRECTORY_ENTRY = /^(?:runtime-id|registry\.json|routing|lifecycle-[0-9a-f]{12}|tasks|proxy|proxy-owner\.json|proxy-routes(?:\.pending)?\.json|proxy-routes\.pending\.uncertain|Caddyfile|certificates|domains\.json|tunnels(?:\.json)?|tunnel-owners|oauth-relay)(?:\.lock)?(?:\..+\.tmp|\.released\..+)?$/;
+
+/**
  * The random identity of the runtime that owns a DevFn state directory, or
  * undefined before a start first records one. It keeps isolated resource
  * namespaces of runtimes with identical checkout paths (devcontainers, CI

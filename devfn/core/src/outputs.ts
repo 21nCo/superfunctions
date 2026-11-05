@@ -34,8 +34,10 @@ interface OutputClaim {
   written: WrittenOutput[];
   pending?: WrittenOutput[];
   runtimeDirectory?: string; recorded?: string[]; made?: string[]; replaced?: string[];
-  /** The canonical state directory of the start, recorded before any lease there and held like its runtime directory. */
+  /** The canonical state directory of the start, recorded before any lease there; only DevFn's entries in it are held unless DevFn made it. */
   stateDir?: string;
+  /** In-checkout state directories it uses that a start did not create, recorded before DevFn writes there: their DevFn entries are held by name, kept like `recorded`. */
+  shared?: string[];
   pid: number;
   birthSignature?: string;
   createdAt: string;
@@ -115,7 +117,7 @@ function parseClaim(text: string, instanceId: string): OutputClaim | undefined {
     const files = (items: unknown) => Array.isArray(items) &&
       items.every((item: WrittenOutput) => typeof item?.target === "string" && typeof item.sha256 === "string" && /^[0-9a-f]{64}$/.test(item.sha256));
     if (value.version === 1 && value.instanceId === instanceId && typeof value.runtime === "string" && strings(value.targets) && files(value.written) &&
-      (value.pending === undefined || files(value.pending)) && (value.runtimeDirectory === undefined || typeof value.runtimeDirectory === "string") && (value.stateDir === undefined || typeof value.stateDir === "string") && (value.recorded === undefined || strings(value.recorded)) && (value.made === undefined || strings(value.made)) && (value.replaced === undefined || strings(value.replaced)) &&
+      (value.pending === undefined || files(value.pending)) && (value.runtimeDirectory === undefined || typeof value.runtimeDirectory === "string") && (value.stateDir === undefined || typeof value.stateDir === "string") && (value.recorded === undefined || strings(value.recorded)) && (value.made === undefined || strings(value.made)) && (value.replaced === undefined || strings(value.replaced)) && (value.shared === undefined || strings(value.shared)) &&
       Number.isSafeInteger(value.pid) && value.pid > 0 && typeof value.createdAt === "string") return value;
   } catch { /* Malformed below. */ }
   return undefined;
@@ -221,19 +223,76 @@ async function claimantRuns(claim: OutputClaim): Promise<boolean> {
   return status !== "exited" && status !== "identity-mismatch";
 }
 
-/** Task-input attribution of the checkout's instances (`own` starts now, so its earlier outputs are released): `held` are every runtime directory and state directory inside the checkout a receipt or claim records and another's outputs while its live receipt, running claimant or pending write holds them; `released`, every file an instance wrote while it holds what it last wrote there. */
-export async function taskAttribution(config: DevFnConfig, root: string, claims: () => Promise<Map<string, { claim: OutputClaim }>>, own?: string): Promise<{ held: string[]; released: string[]; made: string[] }> {
+/** Task-input attribution of the checkout's instances (`own` starts now, so its earlier outputs are released): `held` are every runtime directory and state directory a start made inside the checkout a receipt or claim records and another's outputs while its live receipt, running claimant or pending write holds them; `released`, every file an instance wrote while it holds what it last wrote there; `shared`, every other state directory inside the checkout they record, of which only DevFn's entries (STATE_DIRECTORY_ENTRY) are held. */
+export async function taskAttribution(config: DevFnConfig, root: string, claims: () => Promise<Map<string, { claim: OutputClaim }>>, own?: string): Promise<{ held: string[]; released: string[]; made: string[]; shared: string[] }> {
   const receipts = await checkoutReceipts(config, root), held = [...receipts].flatMap(([id, { receipt }]) => [receipt.runtimeDir, ...id !== own && live(receipt) ? receipt.environmentOutputs ?? [] : []]), released: string[] = [], read = await claims();
   const made = [...receipts].flatMap(([id, { receipt }]) => madeByRelease(receipt, read.get(id)?.claim)); // An earlier release's claimless receipt: its runtime directory's parents, as a claim replacing it records them.
   for (const [id, { claim }] of read) { made.push(...claim.made ?? []); held.push(...claim.runtimeDirectory ? [claim.runtimeDirectory] : [], ...claim.recorded ?? [], ...id === own ? [] : [...(claim.pending ?? []).map((item) => item.target), ...claim.targets.length && await claimantRuns(claim) ? claim.targets : []]); for (const item of await writtenByClaim(claim)) if (await holdsRecorded(item)) released.push(item.target); }
-  // Every recorded state directory inside the checkout is DevFn's own state, as runtime directories are; one equal to or containing the checkout never hides it.
-  const rootKey = pathKey(await realpath(root).catch(() => path.resolve(root)));
-  for (const stateDir of [...[...receipts.values()].map(({ receipt }) => receipt.stateDir), ...[...read.values()].map(({ claim }) => claim.stateDir)]) if (stateDir && await canonicalKey(path.resolve(root, stateDir)).then((key) => key !== rootKey && within(key, rootKey))) held.push(stateDir);
-  return { held, released, made };
+  // A recorded state directory inside the checkout keeps DevFn's entries out, so a user's file there stays an input; one equal to or containing the checkout never hides it.
+  const rootKey = pathKey(await realpath(root).catch(() => path.resolve(root))), shared: string[] = [];
+  const recordedStateDirs = [...[...receipts.values()].map(({ receipt }) => receipt.stateDir), ...[...read.values()].flatMap(({ claim }) => [claim.stateDir, ...claim.shared ?? []])];
+  for (const stateDir of recordedStateDirs) if (stateDir && await canonicalKey(path.resolve(root, stateDir)).then((key) => key !== rootKey && within(key, rootKey))) shared.push(stateDir);
+  return { held, released, made, shared };
 }
 
 /** What an earlier release made for an instance whose receipt has no claim (its runtime directory's parents): the provenance every first claim of it starts from. */ const madeByRelease = (receipt: LifecycleReceipt | undefined, claim: OutputClaim | undefined): string[] => receipt && !claim ? [path.dirname(receipt.runtimeDir), path.dirname(path.dirname(receipt.runtimeDir))] : [];
-/** Create a start's or stop's state directory under the instance's lifecycle lock, first recording in its claim, under the claims lock, the directories inside the checkout this creates and, for a start that creates its state directory there, that directory itself (held: DevFn writes there before its claim binds it, and keeps it on a failed start), kept with the claim; a state path that is or lies below something other than a directory, or claims that cannot be read, refuse it before any write, and a failed creation keeps provenance only for the directories it left. */ export async function makeStateDirectory(config: DevFnConfig, root: string, identity: InstanceIdentity, stateDir: string, starting = false): Promise<void> { await withInstanceLifecycleLock(root, identity.instanceId, async () => { let next: OutputClaim | undefined, current: OutputClaim | undefined; const lock = path.join(await claimDirectory(root), CLAIMS_LOCK), options = { timeoutMs: CLAIMS_LOCK_TIMEOUT_MS, staleMs: CLAIMS_LOCK_STALE_MS }; const rootKey = pathKey(await realpath(root).catch(() => path.resolve(root))), inside = (item: string) => pathKey(item) !== rootKey && within(pathKey(item), rootKey), { canonical } = await canonicalTarget(path.resolve(stateDir)), missing = await missingDirectories(canonical), making = missing.filter(inside), holding = starting && making.includes(canonical) ? [canonical] : []; if (!(await stat(missing.length ? path.dirname(missing.at(-1)!) : canonical).catch(() => undefined))?.isDirectory()) throw Object.assign(new Error(`State directory ${stateDir} is, or lies below, something other than a directory`), { code: "ENOTDIR" }); if (making.length) await withFileLock(lock, async () => { current = (await readClaims(root)).get(identity.instanceId)?.claim; const receipt = (await checkoutReceipts(config, root)).get(identity.instanceId)?.receipt; next = { ...current ?? { version: 1, instanceId: identity.instanceId, runtime: identity.runtime ?? DEFAULT_RUNTIME, targets: [], written: [], pid: process.pid, createdAt: new Date().toISOString() }, recorded: [...new Set([...current?.recorded ?? [], ...holding])], made: [...new Set([...current?.made ?? [], ...madeByRelease(receipt, current), ...making])] }; await writeClaim(root, next); }, options); await mkdir(stateDir, { recursive: true, mode: 0o700 }).catch(async (error: unknown) => { const claim = next; if (claim) await withFileLock(lock, async () => { const left = (await Promise.all(making.map(async (item) => await lstat(item).then(() => [item], () => [])))).flat(); return current || left.length ? await writeClaim(root, { ...claim, recorded: current?.recorded ?? [], made: claim.made!.filter((item) => !making.includes(item) || left.includes(item)) }) : await removeClaim(root, identity.instanceId); }, options); throw error; }); }); }
+/** A union of path lists, in first-seen order. */
+const union = (...lists: (readonly string[] | undefined)[]): string[] => [...new Set(lists.flatMap((list) => list ?? []))];
+
+/**
+ * Create a start's or stop's state directory under the instance's lifecycle lock. A state directory inside the checkout is
+ * first recorded in the instance's claim, under the claims lock and before DevFn writes anything there: the directories this
+ * creates as made; the state directory itself, when a start creates it, as held whole (`recorded`), and otherwise, also when it
+ * existed before, as shared, whose DevFn entries are held by name. The record stays with the claim through a failed or
+ * interrupted start and a refused stop. A state path that is or lies below something other than a directory, or claims that
+ * cannot be read, refuse it before any write; a failed creation keeps provenance only for the directories it left.
+ */
+export async function makeStateDirectory(config: DevFnConfig, root: string, identity: InstanceIdentity, stateDir: string, starting = false): Promise<void> {
+  await withInstanceLifecycleLock(root, identity.instanceId, async () => {
+    const rootKey = pathKey(await realpath(root).catch(() => path.resolve(root)));
+    const inside = (item: string) => pathKey(item) !== rootKey && within(pathKey(item), rootKey);
+    const { canonical } = await canonicalTarget(path.resolve(stateDir));
+    const missing = await missingDirectories(canonical);
+    const parent = missing.length ? path.dirname(missing.at(-1)!) : canonical;
+    if (!(await stat(parent).catch(() => undefined))?.isDirectory()) {
+      throw Object.assign(new Error(`State directory ${stateDir} is, or lies below, something other than a directory`), { code: "ENOTDIR" });
+    }
+    // A state directory outside the checkout, and so every directory created for it, is never a task input.
+    if (!inside(canonical)) {
+      await mkdir(stateDir, { recursive: true, mode: 0o700 });
+      return;
+    }
+    const making = missing.filter(inside);
+    const field = starting && missing.includes(canonical) ? "recorded" : "shared";
+    const lock = path.join(await claimDirectory(root), CLAIMS_LOCK), options = { timeoutMs: CLAIMS_LOCK_TIMEOUT_MS, staleMs: CLAIMS_LOCK_STALE_MS };
+    let current: OutputClaim | undefined, next: OutputClaim | undefined;
+    await withFileLock(lock, async () => {
+      current = (await readClaims(root)).get(identity.instanceId)?.claim;
+      const attributed = [...current?.recorded ?? [], ...current?.shared ?? []].some((item) => pathKey(item) === pathKey(canonical));
+      if (attributed && !making.length) return;
+      const receipt = (await checkoutReceipts(config, root)).get(identity.instanceId)?.receipt;
+      next = { ...current ?? { version: 1, instanceId: identity.instanceId, runtime: identity.runtime ?? DEFAULT_RUNTIME, targets: [], written: [], pid: process.pid, createdAt: new Date().toISOString() } };
+      next.made = union(current?.made, madeByRelease(receipt, current), making);
+      next[field] = union(current?.[field], [canonical]);
+      await writeClaim(root, next);
+    }, options);
+    await mkdir(stateDir, { recursive: true, mode: 0o700 }).catch(async (error: unknown) => {
+      const published = next;
+      if (published) await withFileLock(lock, async () => await restoreStateClaim(root, current, published, making), options);
+      throw error;
+    });
+  });
+}
+
+/** After a failed creation, the claim before it keeps provenance only for the directories the creation left; a claim it created goes when it left none. */
+async function restoreStateClaim(root: string, current: OutputClaim | undefined, published: OutputClaim, making: readonly string[]): Promise<void> {
+  const left: string[] = [];
+  for (const item of making) if (await lstat(item).then(() => true, () => false)) left.push(item);
+  if (!current && !left.length) return await removeClaim(root, published.instanceId);
+  const made = published.made!.filter((item) => !making.includes(item) || left.includes(item));
+  const { shared: _published, ...rest } = published;
+  await writeClaim(root, { ...rest, recorded: current?.recorded ?? [], ...current?.shared ? { shared: current.shared } : {}, made });
+}
 /** A directory and its ancestors that do not exist yet: what creating it would create. */ async function missingDirectories(target: string): Promise<string[]> { const missing: string[] = []; for (let current = target; current !== path.dirname(current) && !await lstat(current).then(() => true, () => false); current = path.dirname(current)) missing.push(current); return missing; }
 
 interface Target { output: string; target: string; canonical: string; key: string; exists: boolean; symlink: boolean }
@@ -601,7 +660,7 @@ export async function claimEnvironmentOutputs(config: DevFnConfig, root: string,
   const record = async (targets: readonly Target[]) => {
     // An interrupted creation is this instance's only if it left exactly the content it recorded.
     claim = { version: 1, instanceId: identity.instanceId, runtime, targets: targets.map((item) => item.canonical), written: await writtenByClaim(previous),
-      runtimeDirectory: bound.canonical, ...stateDir ? { stateDir: (await canonicalTarget(path.resolve(stateDir))).canonical } : {}, ...await checkoutReceipts(config, root).then((receipts) => receipts.get(identity.instanceId)?.receipt).then((receipt) => ({ recorded: [...new Set([...previous?.recorded ?? [], bound.canonical, ...receipt ? [receipt.runtimeDir] : []])], made: [...new Set([...previous?.made ?? [], ...claim?.made ?? [], ...making, ...madeByRelease(receipt, previous)])], replaced: [...new Set([...previous?.replaced ?? [], ...receipt?.environmentOutputs ?? []])] })), pid: process.pid, ...await processBirthSignature(process.pid).then((value) => value ? { birthSignature: value } : {}), createdAt: new Date().toISOString() };
+      runtimeDirectory: bound.canonical, ...previous?.shared ? { shared: previous.shared } : {}, ...stateDir ? { stateDir: (await canonicalTarget(path.resolve(stateDir))).canonical } : {}, ...await checkoutReceipts(config, root).then((receipts) => receipts.get(identity.instanceId)?.receipt).then((receipt) => ({ recorded: [...new Set([...previous?.recorded ?? [], bound.canonical, ...receipt ? [receipt.runtimeDir] : []])], made: [...new Set([...previous?.made ?? [], ...claim?.made ?? [], ...making, ...madeByRelease(receipt, previous)])], replaced: [...new Set([...previous?.replaced ?? [], ...receipt?.environmentOutputs ?? []])] })), pid: process.pid, ...await processBirthSignature(process.pid).then((value) => value ? { birthSignature: value } : {}), createdAt: new Date().toISOString() };
     await writeClaim(root, claim);
   };
   // Every start, also one without outputs, claims its runtime directory
