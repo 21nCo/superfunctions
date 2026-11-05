@@ -667,6 +667,7 @@ export class DevFnOrchestrator {
       ...(preflight.resources ? { resources: preflight.resources } : {}), environments: preflight.nodes, ...(options.rerunTasks ? { rerunTasks: options.rerunTasks } : {}), ...(locked ? { locked } : {}) });
     // Unknown reruns, missing task inputs and blocked tasks fail here; the locked start decides again from the journals.
     await decideTasks(requestedStateDir);
+    await this.assertStateDirOfReceipt(options, identity, requestedStateDir, false);
     const withdraw = await makeStateDirectory(options.config, options.root, identity, requestedStateDir, true);
     const stateDir = await realpath(requestedStateDir);
     // The instance's checkout-wide lock first: its claim spans state directories.
@@ -675,6 +676,19 @@ export class DevFnOrchestrator {
       await withdraw().catch(() => undefined);
       throw error;
     }
+  }
+
+  /**
+   * After any start or stop of the instance in flight (its lifecycle lock), refuse before anything is created, recorded or
+   * written in the requested state directory a start or stop its live receipt says ran in another one, and a stop of a runtime
+   * that is not running; the locked checks still decide later.
+   */
+  private async assertStateDirOfReceipt(options: { config: DevFnConfig; root: string }, identity: InstanceIdentity, requestedStateDir: string, stopping: boolean): Promise<void> {
+    await withInstanceLifecycleLock(options.root, identity.instanceId, async () => {
+      const receipt = await readReceipt(options.config, options.root, identity.instanceId, runtimeOf(identity));
+      if (receipt && receipt.state !== "stopped") return assertReceiptStateDir(receipt, await realpath(requestedStateDir).catch(() => path.resolve(requestedStateDir)));
+      if (stopping) throw await notRunning(options.config, options.root, identity);
+    });
   }
 
   private async upInstance(options: UpOptions, stateDir: string, identity: RoutingIdentity, loadedPolicy: Awaited<ReturnType<typeof loadDevFnPolicy>>,
@@ -1151,9 +1165,7 @@ export class DevFnOrchestrator {
   public async down(options: { config: DevFnConfig; root: string; stateDir?: string; runtime?: string }): Promise<LifecycleReceipt> {
     const requestedStateDir = options.stateDir ?? defaultStateDir();
     const identity = await resolveInstanceIdentity(options.config.project.id, options.root, options.runtime);
-    // A stop of a runtime that is not running creates, records and writes nothing in its state directory; the locked check below decides a race.
-    const running = await readReceipt(options.config, options.root, identity.instanceId, runtimeOf(identity));
-    if (!running || running.state === "stopped") throw await notRunning(options.config, options.root, identity);
+    await this.assertStateDirOfReceipt(options, identity, requestedStateDir, true);
     await makeStateDirectory(options.config, options.root, identity, requestedStateDir);
     const stateDir = await realpath(requestedStateDir);
     return await withInstanceLifecycleLock(options.root, identity.instanceId, async () => await withFileLock(path.join(stateDir, `lifecycle-${identity.instanceId}.lock`), async () => {

@@ -150,7 +150,7 @@ export const STATE_DIRECTORY_ENTRY = new RegExp([
   String.raw`^(?:runtime-id|registry\.json|trust\.json|proxy-owner\.json|proxy-routes(?:\.pending)?\.json|proxy-routes\.pending\.uncertain|domains\.json|tunnels\.json|Caddyfile(?:\.candidate|\.preflight\..+)?)(?:\..+\.tmp)?$`,
   String.raw`^(?:registry\.json|routing|proxy|trust|tunnels|lifecycle-[0-9a-f]{12})\.lock(?:\.released\..+)?$`,
   "^(?:tasks|certificates|tunnels|tunnel-owners|oauth-relay)$",
-].join("|"));
+].join("|"), process.platform === "darwin" || process.platform === "win32" ? "i" : ""); // Where the filesystem folds case, any spelling names DevFn's entry.
 
 /**
  * The random identity of the runtime that owns a DevFn state directory, or

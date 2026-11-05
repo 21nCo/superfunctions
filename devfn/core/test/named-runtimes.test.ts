@@ -1744,6 +1744,13 @@ it("keeps a task's input revision through every DevFn write of a failed, retried
       expect(await revision()).not.toBe(before);
       await rm(path.join(stateDir, "proxy"), { recursive: true });
       expect(await revision()).toBe(before);
+      // Where the filesystem folds case, DevFn's task journals land in an existing directory of any spelling.
+      if (process.platform === "darwin" || process.platform === "win32") {
+        await mkdir(path.join(stateDir, "Tasks"));
+        await writeFile(path.join(stateDir, "tasks", "journal.json"), "{}");
+        expect(await revision()).toBe(before);
+        await rm(path.join(stateDir, "Tasks"), { recursive: true });
+      }
       // A user's file in it is an input, and a DevFn file there is no input.
       await writeFile(path.join(stateDir, "notes.sql"), "-- changed");
       expect(await revision()).not.toBe(before);
@@ -1808,8 +1815,44 @@ it("keeps a task's input revision when a start into an existing state directory 
     const withSrc = await revision();
     await writeFile(path.join(primary, "src", "tasks", "seed.sql"), "select 2;");
     expect(await revision()).not.toBe(withSrc);
+    // Nor does a start or stop naming it while the runtime runs with another state directory.
+    expect((await orchestrator.up({ config: sibling, root: primary, stateDir: path.join(parent, "f-state"), runtime: "f" })).state).toBe("ready");
+    for (const command of [() => orchestrator.up({ config: sibling, root: primary, stateDir: path.join(primary, "src"), runtime: "f" }), () => orchestrator.down({ config: sibling, root: primary, stateDir: path.join(primary, "src"), runtime: "f" })]) {
+      await expect(command()).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID" });
+    }
+    expect((await orchestrator.down({ config: sibling, root: primary, stateDir: path.join(parent, "f-state"), runtime: "f" })).state).toBe("stopped");
+    const afterMismatch = await revision();
+    await writeFile(path.join(primary, "src", "tasks", "seed.sql"), "select 3;");
+    expect(await revision()).not.toBe(afterMismatch);
   } finally {
     await orchestrator.down({ config: sibling, root: primary, stateDir, runtime: "b" }).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 120_000);
+
+it("makes a stop wait for a start of its runtime in flight, then stop what it started, rather than report it not running", async () => {
+  const { parent, primary } = await repository();
+  const listen = [process.execPath, "-e", "require('node:net').createServer().listen(Number(process.env.PORT), '127.0.0.1')"];
+  const config = validateDevFnConfig({ version: 1, project: { id: "racing-stop" }, ports: { r: { env: "PORT" } },
+    processes: { app: { adapter: "command", command: listen, ports: ["r"] } }, profiles: { default: { processes: ["app"] } } } as never);
+  const orchestrator = new DevFnOrchestrator();
+  const stateDir = path.join(parent, "state");
+  const reserve = FilePortRegistry.prototype.reserve;
+  let stopping: Promise<{ state: string }> | undefined;
+  const spy = vi.spyOn(FilePortRegistry.prototype, "reserve").mockImplementation(async function (this: FilePortRegistry, ...args: Parameters<FilePortRegistry["reserve"]>) {
+    // The start holds its lifecycle lock and has written no receipt yet.
+    stopping ??= orchestrator.down({ config, root: primary, stateDir, runtime: "b" });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    return await reserve.apply(this, args);
+  });
+  try {
+    expect((await orchestrator.up({ config, root: primary, stateDir, runtime: "b" })).state).toBe("ready");
+    spy.mockRestore();
+    expect((await stopping!).state).toBe("stopped");
+  } finally {
+    spy.mockRestore();
+    await stopping?.catch(() => undefined);
+    await orchestrator.down({ config, root: primary, stateDir, runtime: "b" }).catch(() => undefined);
     await rm(parent, { recursive: true, force: true });
   }
 }, 120_000);
