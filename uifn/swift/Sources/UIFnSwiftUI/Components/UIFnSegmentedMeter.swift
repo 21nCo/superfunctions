@@ -15,6 +15,9 @@ import SwiftUI
 /// meter's value as a whole percentage of its range, such as “40%”. Like the
 /// lit segments, a value strictly inside the range reads from 1% to 99%,
 /// never 0% or 100%.
+///
+/// A meter has from 1 to 100 segments: a count below 1 draws one segment and
+/// a count above 100 draws 100.
 public struct UIFnSegmentedMeter<Label: View, CurrentValueLabel: View>: View {
     private let fraction: Double
     private let segments: Int
@@ -22,7 +25,7 @@ public struct UIFnSegmentedMeter<Label: View, CurrentValueLabel: View>: View {
     private let label: Label
     private let currentValueLabel: CurrentValueLabel?
 
-    /// A meter of `segments` segments, at least one, showing `value` within `bounds`.
+    /// A meter of `segments` segments, from 1 to 100, showing `value` within `bounds`.
     public init<Value: BinaryFloatingPoint>(
         value: Value,
         in bounds: ClosedRange<Value> = 0...1,
@@ -42,7 +45,7 @@ public struct UIFnSegmentedMeter<Label: View, CurrentValueLabel: View>: View {
 
     fileprivate init(fraction: Double, segments: Int, tone: UIFnTone, label: Label, currentValueLabel: CurrentValueLabel?) {
         self.fraction = fraction
-        self.segments = max(segments, 1)
+        self.segments = UIFnMeterValue.segmentCount(segments)
         self.tone = tone
         self.label = label
         self.currentValueLabel = currentValueLabel
@@ -82,7 +85,7 @@ struct UIFnSegmentedMeterAccessibility<Label: View>: View {
 }
 
 public extension UIFnSegmentedMeter where CurrentValueLabel == EmptyView {
-    /// A meter of `segments` segments, at least one, showing `value` within `bounds`.
+    /// A meter of `segments` segments, from 1 to 100, showing `value` within `bounds`.
     init<Value: BinaryFloatingPoint>(
         value: Value,
         in bounds: ClosedRange<Value> = 0...1,
@@ -119,6 +122,15 @@ public extension UIFnSegmentedMeter where Label == Text, CurrentValueLabel == Em
 
 /// How a segmented meter turns its value into lit segments and a percentage.
 enum UIFnMeterValue {
+    /// The most segments a meter draws.
+    static let maximumSegments = 100
+
+    /// The segments a meter asked for `segments` draws: from 1 to
+    /// ``maximumSegments``.
+    static func segmentCount(_ segments: Int) -> Int {
+        min(max(segments, 1), maximumSegments)
+    }
+
     /// How far `value` is through `bounds`, from 0 to 1: the nearer end for a
     /// value outside them, and 0 for a value that is not a number or bounds
     /// with no finite, positive width.
@@ -132,7 +144,7 @@ enum UIFnMeterValue {
     /// the nearest segment, at least one above 0 and at most all but one below 1.
     static func litSegments(_ fraction: Double, of segments: Int) -> Int {
         let fraction = UIFnProgress.clamped(fraction)
-        let segments = max(segments, 1)
+        let segments = segmentCount(segments)
         if fraction <= 0 { return 0 }
         if fraction >= 1 { return segments }
         let nearest = Int((fraction * Double(segments)).rounded())
@@ -194,7 +206,7 @@ struct UIFnSegmentedMeterAppearance<Label: View, CurrentValueLabel: View>: View 
 }
 
 /// Some of `count` equal segments side by side across the width, left to
-/// right, `gap` apart.
+/// right, `gap` apart. A count above the meter's maximum draws the maximum.
 ///
 /// The gap shrinks when the segments would be narrower than it, so every
 /// segment keeps some width.
@@ -207,7 +219,8 @@ struct UIFnMeterSegments: Shape {
     func path(in rect: CGRect) -> Path {
         var path = Path()
         guard count > 0, rect.width > 0 else { return path }
-        let gap = min(gap, rect.width / CGFloat(count * 2))
+        let count = UIFnMeterValue.segmentCount(count)
+        let gap = min(gap, rect.width / (CGFloat(count) * 2))
         let width = (rect.width - gap * CGFloat(count - 1)) / CGFloat(count)
         let radius = min(cornerRadius, width / 2, rect.height / 2)
         for index in lit.clamped(to: 0..<count) {

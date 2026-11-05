@@ -122,6 +122,30 @@ struct UIFnToastTests {
         #expect(model.toast == replacement)
     }
 
+    /// A timed toast that replaces another gets its own whole duration: the
+    /// replaced toast's timer does not dismiss it early, and its own timer
+    /// dismisses it once its duration has passed since it appeared.
+    @Test
+    func aTimedReplacementShowsForItsOwnWholeDuration() async {
+        let model = Model()
+        let announcements = Announcements()
+        let host = show(model, announcements: announcements)
+        defer { host.close() }
+        model.toast = UIFnToast("Uploading", duration: 0.4)
+        await host.wait { announcements.posted.count == 1 }
+        let replacement = UIFnToast("Uploaded", duration: 1.5)
+        let clock = ContinuousClock()
+        let replaced = clock.now
+        model.toast = replacement
+        // The replaced toast's 0.4 seconds have long passed.
+        try? await Task.sleep(nanoseconds: 800_000_000)
+        #expect(model.toast == replacement)
+        await host.wait(upTo: 6) { model.toast == nil }
+        let shown = clock.now - replaced
+        #expect(model.toast == nil)
+        #expect(shown >= .seconds(1.5), "\(shown)")
+    }
+
     /// Without a duration, or with one that never passes, a toast shows until
     /// it is dismissed.
     @Test(arguments: [nil, 0, -1, .infinity, .nan] as [TimeInterval?])

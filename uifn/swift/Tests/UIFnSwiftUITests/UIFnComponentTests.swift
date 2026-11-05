@@ -14,6 +14,9 @@ struct UIFnComponentTests {
         (0, 5, 0), (0.001, 5, 1), (0.09, 5, 1), (0.3, 5, 2), (0.5, 5, 3), (0.6, 5, 3), (0.7, 5, 4),
         (0.95, 5, 4), (0.999, 5, 4), (1, 5, 5), (1.5, 5, 5), (-1, 5, 0), (.nan, 5, 0),
         (0.5, 1, 0), (1, 1, 1), (0.5, 2, 1), (0.01, 100, 1), (0.5, 0, 0), (1, 0, 1),
+        // Counts above the maximum light as 100 segments.
+        (0.5, 1_000, 50), (0.999, 1_000, 99), (1, 1_000, 100), (0.001, Int.max, 1),
+        (0.5, Int.max, 50), (0.999, Int.max, 99), (1, Int.max, 100), (0.5, Int.min, 0),
     ] as [(Double, Int, Int)])
     func aMeterLightsItsShareOfSegments(_ fraction: Double, _ segments: Int, _ lit: Int) {
         #expect(UIFnMeterValue.litSegments(fraction, of: segments) == lit)
@@ -74,6 +77,44 @@ struct UIFnComponentTests {
             let drawn = try #require(await UIFnSnapshot.render { Self.meter(value, segments: segments) })
             let one = try #require(await UIFnSnapshot.render { Self.meter(value, segments: 1) })
             #expect(drawn.differingFraction(from: one, tolerance: 0) == 0, "\(value)")
+        }
+    }
+
+    /// A meter has from 1 to 100 segments, whatever count it is given.
+    @Test(arguments: [
+        (Int.min, 1), (-3, 1), (0, 1), (1, 1), (5, 5), (100, 100), (101, 100), (1_000, 100), (Int.max, 100),
+    ])
+    func aMetersSegmentCountIsFromOneToTheMaximum(_ segments: Int, _ count: Int) {
+        #expect(UIFnMeterValue.segmentCount(segments) == count)
+    }
+
+    /// Segments past the maximum are not drawn, and drawing as many segments
+    /// as an `Int` holds does not overflow.
+    @Test
+    func aMetersSegmentsStopAtTheMaximum() {
+        let rect = CGRect(x: 0, y: 0, width: 400, height: 8)
+        func rects(_ count: Int, lit: Range<Int>) -> Int {
+            var moves = 0
+            UIFnMeterSegments(count: count, lit: lit, gap: 2, cornerRadius: 2).path(in: rect).forEach {
+                if case .move = $0 { moves += 1 }
+            }
+            return moves
+        }
+        #expect(rects(100, lit: 0..<100) == 100)
+        #expect(rects(Int.max, lit: 0..<Int.max) == 100)
+        #expect(rects(1_000, lit: 50..<1_000) == 50)
+        let drawn = UIFnMeterSegments(count: Int.max, lit: 0..<Int.max, gap: 2, cornerRadius: 2).path(in: rect)
+        let most = UIFnMeterSegments(count: 100, lit: 0..<100, gap: 2, cornerRadius: 2).path(in: rect)
+        #expect(drawn.boundingRect == most.boundingRect)
+    }
+
+    /// A meter of more than 100 segments draws 100.
+    @Test(arguments: [1_000, Int.max])
+    func aMeterHasAtMostTheMaximumSegments(_ segments: Int) async throws {
+        for value in [0.5, 0.999] {
+            let drawn = try #require(await UIFnSnapshot.render { Self.meter(value, segments: segments) })
+            let most = try #require(await UIFnSnapshot.render { Self.meter(value, segments: 100) })
+            #expect(drawn.differingFraction(from: most, tolerance: 0) == 0, "\(value)")
         }
     }
 
