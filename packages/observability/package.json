@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/observability",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Shared observability runtime for Superfunctions packages",
   "type": "module",
   "main": "./dist/index.js",

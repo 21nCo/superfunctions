@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/docs-theme",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Shared Fumadocs theme primitives for Superfunctions docs apps",
   "type": "module",
   "main": "./dist/index.js",

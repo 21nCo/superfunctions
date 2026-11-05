@@ -1,6 +1,6 @@
 {
   "name": "@datafn/swift-bridge",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "WKWebView bridge primitives for native-backed DataFn clients",
   "repository": {
@@ -23,8 +23,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@datafn/client": "0.1.1",
-    "@datafn/core": "0.1.1"
+    "@datafn/client": "0.1.2",
+    "@datafn/core": "0.1.2"
   },
   "files": [
     "dist"

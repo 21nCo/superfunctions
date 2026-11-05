@@ -1,6 +1,6 @@
 {
   "name": "@billfn/admin",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Function-owned Super Console administration capability for BillFn",
   "type": "module",
   "main": "./dist/index.js",
@@ -38,7 +38,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@billfn/core": "0.0.1"
+    "@billfn/core": "0.0.2"
   },
   "peerDependencies": {
     "@superfunctions/admin": "^0.1.4"

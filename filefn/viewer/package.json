@@ -1,6 +1,6 @@
 {
   "name": "@filefn/viewer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Framework-agnostic viewer resolution helpers for FileFn",
   "type": "module",
   "main": "./dist/index.js",

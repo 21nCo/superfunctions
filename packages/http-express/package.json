@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/http-express",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Express adapter for @superfunctions/http",
   "type": "module",
   "main": "./dist/index.js",

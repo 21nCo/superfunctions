@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/config",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Typed env loading helpers for Superfunctions",
   "type": "module",
   "main": "./dist/index.js",
