@@ -25,18 +25,29 @@ test("CI changes cannot silently disable Python coverage", () => {
     put("docsfn/docs/content.md", "# Docs\n");
     put(".github/workflows/ci.yml", "jobs: {}\n");
     put("README.md", "# Fixture\n");
+    for (const file of ["package.json", "package-lock.json", "turbo.json"]) put(file, "{}\n");
+    put("scripts/run-owned-step.mjs", "// fixture\n");
+    for (const directory of ["packages/oauth-core", "packages/oauth-storage", "packages/auth", "packages/admin", "packages/db", "packages/http", "packages/observability", "datafn/core", "datafn/server", "mcpfn/core"]) {
+      put(`${directory}/package.json`, JSON.stringify({name:directory.replaceAll("/", "-"),scripts:{test:"echo test"}}));
+      put(`${directory}/src/index.ts`, "// fixture\n");
+    }
     git("init", "--quiet", "--initial-branch=dev");
     git("add", "."); git("commit", "--quiet", "-m", "base");
     const base = git("rev-parse", "HEAD");
-    for (const [file, python, js] of [
-      [".github/workflows/ci.yml", true, true],
-      ["scripts/ci-plan.mjs", true, true],
+    for (const [file, python, js, mcp = false, mcpOnly = false] of [
+      [".github/workflows/ci.yml", true, true, true],
+      ["scripts/ci-plan.mjs", true, true, true],
       ["README.md", false, false],
+      ...["package.json", "package-lock.json", "turbo.json", "scripts/run-owned-step.mjs"].map(file => [file, false, true, true]),
+      ...["oauth-core", "oauth-storage", "auth", "admin", "db", "http", "observability"].map(name => [`packages/${name}/src/index.ts`, false, true, true]),
+      ["datafn/core/src/index.ts", false, true, true],
+      ["datafn/server/src/index.ts", false, true, true, true],
+      ["mcpfn/core/src/index.ts", false, true, true, true],
       ["docsfn/docs/content.md", false, true],
     ]) {
       git("reset", "--hard", base);
       const prior = readFileSync(path.join(root, file), "utf8");
-      put(file, prior + (file.endsWith(".mjs") ? "\n// changed\n" : "\n# changed\n"));
+      put(file, prior + (file.endsWith(".json") ? "\n " : file.endsWith(".mjs") ? "\n// changed\n" : "\n# changed\n"));
       git("add", file); git("commit", "--quiet", "-m", "change");
       put(".git/event.json", JSON.stringify({ before: base }));
       const outputFile = path.join(root, ".git/outputs");
@@ -45,6 +56,8 @@ test("CI changes cannot silently disable Python coverage", () => {
       const outputs = readFileSync(outputFile, "utf8");
       assert.match(outputs, new RegExp(`^run_python<<__CI_EOF__\n${python}\n__CI_EOF__$`, "m"), file);
       assert.match(outputs, new RegExp(`^run_js<<__CI_EOF__\n${js}\n__CI_EOF__$`, "m"), file);
+      assert.match(outputs, new RegExp(`^run_mcpfn<<__CI_EOF__\n${mcp}\n__CI_EOF__$`, "m"), file);
+      assert.match(outputs, new RegExp(`^mcpfn_only<<__CI_EOF__\n${mcpOnly}\n__CI_EOF__$`, "m"), file);
       assert.doesNotMatch(outputs, /run_docs(?:=|<<)/);
     }
   } finally { rmSync(root, { recursive: true, force: true }); }

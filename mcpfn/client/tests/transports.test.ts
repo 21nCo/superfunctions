@@ -3,6 +3,7 @@ import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { McpFnRegistry, createMcpFnServer, structuredResult } from "@mcpfn/core";
@@ -112,6 +113,48 @@ describe("McpFn first-class transports", () => {
     );
     expect(invalidatePendingAuthorization).toHaveBeenCalledOnce();
     await handle.close?.();
+  });
+
+  it.each([false, true])("requires state validation unless the host explicitly owns it (external=%s)", async externallyValidated => {
+    const exchange = vi.spyOn(StreamableHTTPClientTransport.prototype, "finishAuth").mockResolvedValue(undefined);
+    try {
+      const provider: OAuthClientProvider = {
+        redirectUrl: "https://client.example.com/callback", clientMetadata: { redirect_uris: ["https://client.example.com/callback"] },
+        clientInformation: () => ({ client_id: "client" }), tokens: () => undefined,
+        redirectToAuthorization: () => {}, saveCodeVerifier: () => {}, codeVerifier: () => "v".repeat(43),
+      };
+      const handle = await streamableHttpTarget("https://mcp.example.com/mcp", {
+        authProvider: provider, ...(externallyValidated ? { authorizationStateValidatedExternally: true } : {}),
+      }).open({ requestId: "callback", signal: new AbortController().signal, diagnostic: async () => {} });
+      closeables.push(async () => { await handle.close?.(); });
+      if (externallyValidated) {
+        await expect(handle.finishAuthorization!("code")).resolves.toBeUndefined();
+        expect(exchange).toHaveBeenCalledOnce();
+      } else {
+        await expect(handle.finishAuthorization!("code", "unverified-state")).rejects.toThrow("requires a state validator");
+        expect(exchange).not.toHaveBeenCalled();
+      }
+    } finally { exchange.mockRestore(); }
+  });
+
+  it("rejects missing state before even an accepting provider validator or token exchange", async () => {
+    const exchange = vi.spyOn(StreamableHTTPClientTransport.prototype, "finishAuth").mockResolvedValue(undefined);
+    try {
+      const validate = vi.fn(async () => {});
+      const provider = {
+        redirectUrl: "https://client.example.com/callback", clientMetadata: { redirect_uris: ["https://client.example.com/callback"] },
+        clientInformation: () => ({ client_id: "client" }), tokens: () => undefined,
+        redirectToAuthorization: () => {}, saveCodeVerifier: () => {}, codeVerifier: () => "v".repeat(43),
+        validateAuthorizationState: validate,
+      };
+      const handle = await streamableHttpTarget("https://mcp.example.com/mcp", { authProvider: provider })
+        .open({ requestId: "callback", signal: new AbortController().signal, diagnostic: async () => {} });
+      closeables.push(async () => { await handle.close?.(); });
+      await expect(handle.finishAuthorization!("code")).rejects.toThrow("state is required");
+      expect(validate).not.toHaveBeenCalled(); expect(exchange).not.toHaveBeenCalled();
+      await handle.finishAuthorization!("code", "validated-state");
+      expect(validate).toHaveBeenCalledWith("validated-state"); expect(exchange).toHaveBeenCalledOnce();
+    } finally { exchange.mockRestore(); }
   });
 
   it("redacts HTTP descriptor userinfo and closes one-shot custom transports", async () => {

@@ -221,8 +221,15 @@ export class McpFnOAuthClientProvider implements OAuthClientProvider {
     return value;
   }
 
-  clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
-    return this.store.getClientInformation();
+  async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
+    const client = await this.store.getClientInformation();
+    if (client && !hasIssuerBinding(client)) {
+      // Older SDKs stored credentials without their authorization-server origin.
+      // Never let fresh discovery choose where those secrets are sent.
+      await this.store.clear("all");
+      return undefined;
+    }
+    return client;
   }
 
   async saveClientInformation(value: OAuthClientInformationMixed): Promise<void> {
@@ -231,6 +238,9 @@ export class McpFnOAuthClientProvider implements OAuthClientProvider {
     });
     try {
       await this.store.setClientInformation(value);
+      if (hasIssuerBinding(value) && (await this.store.getClientInformation())?.issuer !== value.issuer) {
+        throw issuerStorageError();
+      }
       await this.emit("client-registration", "succeeded", undefined, {
         clientId: value.client_id,
         storage: this.store.security,
@@ -244,8 +254,13 @@ export class McpFnOAuthClientProvider implements OAuthClientProvider {
     }
   }
 
-  tokens(): Promise<OAuthTokens | undefined> {
-    return this.store.getTokens();
+  async tokens(): Promise<OAuthTokens | undefined> {
+    const tokens = await this.store.getTokens();
+    if (tokens && !hasIssuerBinding(tokens)) {
+      await this.store.clear("tokens");
+      return undefined;
+    }
+    return tokens;
   }
 
   async saveTokens(value: OAuthTokens): Promise<void> {
@@ -262,6 +277,9 @@ export class McpFnOAuthClientProvider implements OAuthClientProvider {
         : "token-exchange";
       await this.emit(phase, "started", undefined, { storage: this.store.security });
       await this.store.setTokens(value);
+      if (hasIssuerBinding(value) && (await this.store.getTokens())?.issuer !== value.issuer) {
+        throw issuerStorageError();
+      }
       if (completesAuthorizationCodeExchange) {
         await this.store.clear("verifier");
       }
@@ -346,6 +364,11 @@ export class McpFnOAuthClientProvider implements OAuthClientProvider {
       });
       return;
     }
+    if (!hasIssuerBinding(tokens)) {
+      await this.store.clear("tokens");
+      await this.emit("token-revocation", "succeeded", "MCPFN_LEGACY_TOKEN_CLEARED", { remote: false });
+      return;
+    }
     await this.emit("token-revocation", "started");
     try {
       if (!this.options.revoke) {
@@ -390,6 +413,18 @@ export function createMcpFnOAuthClientProvider(
   options: McpFnOAuthClientProviderOptions,
 ): McpFnOAuthClientProvider {
   return new McpFnOAuthClientProvider(options);
+}
+
+function issuerStorageError(): Error {
+  return Object.assign(new Error("OAuth session store must preserve the issuer binding unchanged"), {
+    code: "MCPFN_OAUTH_STORE_DROPPED_ISSUER",
+  });
+}
+
+function hasIssuerBinding(value: { issuer?: unknown }): boolean {
+  // SDK 1.32+ adds this field and compares it to the discovered issuer. Keep it
+  // unchanged; do not manufacture a binding for pre-upgrade persisted secrets.
+  return typeof value.issuer === "string" && value.issuer.length > 0;
 }
 
 function readCode(error: unknown): string | undefined {

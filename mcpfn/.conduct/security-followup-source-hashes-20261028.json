@@ -1,0 +1,22 @@
+{
+  ".github/workflows/publish-tag.yml": "cc7cca41a97d296c04264cb59be453b18eeec90d57fc148d296d7d2d98923428",
+  "mcpfn/.conduct/http-session-security-limits-20261028.md": "c786118046108758b85b453b12fce8960479ddd916ebd917df41a78c9be234a9",
+  "mcpfn/TESTING.md": "594b2879998ce059941f40b059ac114a043fbca8342e9a4ccfce80e55376bc53",
+  "mcpfn/auth/README.md": "b9f6ad0094d46bb024aab0da77000fadd27654f51939bedfafc5ce941ba5c466",
+  "mcpfn/auth/src/provider-adapter.ts": "911310126fce52065adc3d4a8257749eea1876059f27648d883efae0d01fb875",
+  "mcpfn/auth/tests/provider-boundary.test.ts": "39e4acaaba7f4a2618b20395db10a8240525495390511cc77e8c28ba1c72cd98",
+  "mcpfn/core/README.md": "a5a52fd1c47f0f127fce4c4737e5f8ae9cd9e5a71f586423e3fa80a6a8c53a64",
+  "mcpfn/core/scripts/bundled-inputs.test.mjs": "d72161cb8b05ef44a3a3c8f39d4f71989f82d7a6efd637a2211aa8b397b263dc",
+  "mcpfn/core/scripts/packed-http-lifecycle.mjs": "e15bd008b1c293717e1a0fa5cda06e5c553b84c97353afd8d27c16260929af2a",
+  "mcpfn/core/scripts/verify-bundled-inputs.mjs": "8b140a9b875daacdae3f6a9d95bae349af24c1b303f67749b0f1988a6640c887",
+  "mcpfn/core/scripts/verify-bundled-inputs.test.mjs": "1e34d3027edf9dbcfee872ac8910c4f3d5eb5fc8552b6669dad510bc6eba3e34",
+  "mcpfn/core/src/server.ts": "06560573e2b89687ce79b43ab1060618209162f899cc7817f5af54f5a9be02a7",
+  "mcpfn/core/tests/http-session-limits.test.ts": "d7e8d0a17232d61bd6bcf1e3b85f132eb02b4dae781bdeeb47c70fca5088276e",
+  "mcpfn/core/tests/protocol-error-boundaries.test.ts": "2ac967f4b5622afcd9c9423290ae96c9767fad0eb1e06d21fcbc788e56f5a6da",
+  "mcpfn/core/tests/server.test.ts": "8b2b168fd44d569992a1ab8d908c65f4037da792a0fe198dc6015dca95e1437d",
+  "mcpfn/testing/src/conformance.ts": "af8141121808e16822ba59436d531b257ed1bddeb28674e9cecf602e44768b34",
+  "scripts/assert-mcpfn-release-ready.mjs": "ba29ab30a789250553c9d7328d0727786a97b609ab0db9a98310c07982715592",
+  "scripts/assert-mcpfn-release-ready.test.mjs": "b7a0da9acd702119afd3a48d405cd08dfb071c3db740e25d58e2095f8350670a",
+  "scripts/gate-mcpfn-release.mjs": "f77e20277c4fd4d6f163559e793403169f167ebe215905dba7049a9414f66dc8",
+  "scripts/pack-release-package.mjs": "8439285fd488a0c7504291682dcef9bf2089f3a4b99b5da798ae8c76de8a172a"
+}

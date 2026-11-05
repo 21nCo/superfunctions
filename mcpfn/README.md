@@ -105,7 +105,28 @@ provider, refuse credential-bearing redirects, and emit bounded redacted JSON
 or JUnit evidence. No `McpFnServer` or `McpFnRegistry` is required on the server
 side.
 
-Run `npm run gate:mcpfn-release` from this repository for the complete package, example, migration, and packability gate.
+Set `NODE18` and `NODE20` to exact Node 18.18.0 and 20.0.0 executable paths, then run
+`npm run gate:mcpfn-release` under Node 22 for the package, example, migration,
+packability, and minimum-runtime gates. CI provisions all three runtimes.
+
+Apply runtime security updates to the MCP package set together. This release uses
+SDK 1.32.1 across core, client, auth, testing, inspector, and CLI, and updates the
+testing, DataFn adapter, and CLI dependencies to core 0.0.6. Updating only a
+top-level core installation leaves older exact nested dependencies in place.
+The release gate installs the actual package tarballs with normal peer resolution
+and audits the installed production dependency graph without consumer overrides.
+That audit does not inspect dependencies embedded inside JavaScript bundles.
+
+Core and Auth bundle the SDK and Zod for Workers compatibility. Both builds pin
+Zod 4.6.6. Their build plugin checks the SDK/Zod versions and package roots of
+the actual inputs supplied to esbuild, records their hashes, and ships an inventory
+with a hash of each final ESM/CommonJS bundle. The packed-consumer gate checks
+those inventories and output hashes. A separate check compares retained Zod
+source-map content with the pinned build inputs. These checks establish build
+provenance and artifact consistency; dependency installation integrity remains
+`npm ci`'s responsibility.
+A consumer dependency override cannot replace code already embedded in an older
+bundle; upgrade the package containing that bundle.
 
 The examples include a declaration-backed calculator server, stdio entrypoint,
 Streamable HTTP entrypoint, production client, semantic scenarios, and committed

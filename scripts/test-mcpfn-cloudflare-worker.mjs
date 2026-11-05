@@ -18,7 +18,8 @@
 
 import assert from "node:assert/strict";
 import { build } from "esbuild";
-import { builtinModules } from "node:module";
+import { builtinModules, createRequire } from "node:module";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Miniflare } from "miniflare";
@@ -164,6 +165,7 @@ const protectedHandlerPromise = handlerPromise.then((handler) =>
         return {
           token,
           clientId: "cloudflare-regression-client",
+          extra: { subject: "cloudflare-regression-service" },
           scopes: ["tools:call"],
           resource,
         };
@@ -190,10 +192,20 @@ export default {
 };
 `;
 
-async function bundleWorker() {
+function consumerZod(manifest, version) {
+  const require = createRequire(path.resolve(repoRoot, manifest));
+  const packagePath = require.resolve("zod/package.json");
+  const metadata = JSON.parse(readFileSync(packagePath, "utf8"));
+  assert.equal(metadata.version, version, "Unexpected consumer Zod fixture version");
+  return { version, entry: path.resolve(path.dirname(packagePath), metadata.exports["."].import) };
+}
+
+async function bundleWorker(consumer) {
   const result = await build({
     stdin: {
-      contents: workerSource,
+      // Resolve only the consumer's root import; do not alias or mask imports
+      // leaking from the MCP outputs. Both fixture copies are already installed.
+      contents: workerSource.replace('from "zod";', `from ${JSON.stringify(consumer.entry)};`),
       resolveDir: repoRoot,
       sourcefile: "cloudflare-regression-worker.ts",
       loader: "ts",
@@ -212,31 +224,34 @@ async function bundleWorker() {
 
 function assertSelfContainedZod(metafile) {
   const inputs = Object.keys(metafile.inputs);
+  const packageOutputs = inputs.filter(input =>
+    /(?:^|\/)mcpfn\/(?:core|auth)\/dist\//.test(input) ||
+    /(?:^|\/)node_modules\/@mcpfn\/(?:core|auth)\/dist\//.test(input));
+  for (const name of ["core", "auth"]) {
+    assert(packageOutputs.some(input => input.includes(`/${name}/dist/`)),
+      `Worker did not consume the built @mcpfn/${name} output`);
+  }
 
-  // The published @mcpfn/core inlines the MCP SDK and its Zod runtime, so the
-  // Worker graph must never pull in the SDK's `zod/v4` entry point. If it did,
-  // the consumer's root `zod` and the SDK's `zod/v4` would be two entry points
-  // over the same package — the ordering hazard that throws
-  // `Class2 is not a constructor` at workerd startup.
-  const zodV4Inputs = inputs.filter((input) => /(^|\/)zod\/v4\//.test(input));
-  assert.deepEqual(
-    zodV4Inputs,
-    [],
-    `Worker graph leaked a separate zod/v4 entry point: ${zodV4Inputs.join(", ")}`,
-  );
-
-  // The SDK itself must be inlined into the built package, not resolved from the
-  // consumer's node_modules at bundle time.
-  const sdkInputs = inputs.filter((input) => /@modelcontextprotocol\/sdk\//.test(input));
-  assert.deepEqual(
-    sdkInputs,
-    [],
-    `Worker graph pulled the MCP SDK directly instead of the inlined bundle: ${sdkInputs.join(", ")}`,
-  );
+  // A consumer's Zod 4 root legitimately imports zod/v4. Only dependency
+  // edges reachable from MCP's built outputs must remain self-contained.
+  const pending = [...packageOutputs];
+  const visited = new Set();
+  while (pending.length) {
+    const origin = pending.pop();
+    if (visited.has(origin)) continue;
+    visited.add(origin);
+    for (const edge of metafile.inputs[origin]?.imports ?? []) {
+      for (const specifier of [edge.path, edge.original].filter(Boolean)) {
+        assert(!/(?:^|\/)(?:zod|@modelcontextprotocol\/sdk)(?:\/|$)/.test(specifier),
+          `Built MCP dependency escaped its bundle: ${origin} -> ${specifier}`);
+      }
+      if (!edge.external && metafile.inputs[edge.path]) pending.push(edge.path);
+    }
+  }
 }
 
-async function main() {
-  const { code, metafile } = await bundleWorker();
+async function checkConsumer(consumer) {
+  const { code, metafile } = await bundleWorker(consumer);
   assertSelfContainedZod(metafile);
 
   const mf = new Miniflare({
@@ -246,6 +261,7 @@ async function main() {
     modules: [{ type: "ESModule", path: "worker.js", contents: code }],
   });
 
+  let client;
   try {
     const url = await mf.ready; // workerd is up and the module has been evaluated.
     const endpoint = new URL("/mcp", url);
@@ -275,7 +291,7 @@ async function main() {
       bearer_methods_supported: ["header"],
     });
 
-    const client = new Client({ name: "cloudflare-regression-client", version: "1.0.0" });
+    client = new Client({ name: "cloudflare-regression-client", version: "1.0.0" });
     const transport = new StreamableHTTPClientTransport(endpoint, {
       requestInit: { headers: { authorization: "Bearer worker-test-token" } },
     });
@@ -322,12 +338,12 @@ async function main() {
     const fragmentInvalid = await client.callTool({ name: "fragment", arguments: { value: 42 } });
     assert.equal(fragmentInvalid.isError, true, "Worker accepted an invalid named-fragment value");
 
-    await client.close();
     process.stdout.write(
       JSON.stringify({
         ok: true,
         gate: "mcpfn cloudflare worker startup",
         runtime: "workerd",
+        consumerZod: consumer.version,
         schemaEngine: diagnostics.schemaEngine,
         auth: "@mcpfn/auth",
         tool: "add",
@@ -339,12 +355,17 @@ async function main() {
       }) + "\n",
     );
   } finally {
-    await mf.dispose();
+    try { await client?.close(); } finally { await mf.dispose(); }
   }
 }
 
 try {
-  await main();
+  for (const consumer of [
+    consumerZod("package.json", "3.25.76"),
+    consumerZod("mcpfn/core/package.json", "4.6.6"),
+  ]) {
+    await checkConsumer(consumer);
+  }
 } catch (error) {
   console.error(
     JSON.stringify({

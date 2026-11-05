@@ -23,6 +23,8 @@ export interface McpFnStdioTargetOptions extends Omit<StdioServerParameters, "co
 export interface McpFnStreamableHttpTargetOptions
   extends Omit<StreamableHTTPClientTransportOptions, "authProvider"> {
   authProvider?: OAuthClientProvider;
+  /** The host validates OAuth callback state before calling completeAuthorization. */
+  authorizationStateValidatedExternally?: boolean;
 }
 
 interface StateValidatingOAuthProvider extends OAuthClientProvider {
@@ -104,13 +106,19 @@ export function streamableHttpTarget(
     kind: "streamable-http",
     descriptor: { url: descriptorUrl.toString() },
     open: () => {
-      const transport = new StreamableHTTPClientTransport(targetUrl, options);
+      const { authorizationStateValidatedExternally, ...transportOptions } = options;
+      const transport = new StreamableHTTPClientTransport(targetUrl, transportOptions);
       return {
         transport,
         finishAuthorization: async (authorizationCode, state) => {
           const provider = options.authProvider as StateValidatingOAuthProvider | undefined;
           try {
-            await provider?.validateAuthorizationState?.(state);
+            if (provider?.validateAuthorizationState) {
+              if (!state) throw new Error("OAuth callback state is required");
+              await provider.validateAuthorizationState(state);
+            } else if (authorizationStateValidatedExternally !== true) {
+              throw new Error("OAuth callback requires a state validator or explicit authorizationStateValidatedExternally opt-in");
+            }
             await transport.finishAuth(authorizationCode);
           } catch (error) {
             await provider?.invalidatePendingAuthorization?.();

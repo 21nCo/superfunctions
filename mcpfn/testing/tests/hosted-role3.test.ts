@@ -221,7 +221,7 @@ describe("hosted-server role-3 transport-neutral harness", () => {
         },
       });
       if (authCase.registration.source === "pre-registered") {
-        await provider.saveClientInformation({ client_id: authCase.registration.clientId });
+        await provider.saveClientInformation({ issuer: fixture.origin, client_id: authCase.registration.clientId });
       }
       const client = createMcpFnClient({
         target: streamableHttpTarget(fixture.resource, { authProvider: provider }),

@@ -80,7 +80,7 @@ describe("named host production OAuth lifecycle", () => {
         },
       });
       if (host.id === "chatgpt") {
-        await provider.saveClientInformation({ client_id: clientId });
+        await provider.saveClientInformation({ issuer: fixture.origin, client_id: clientId });
       }
       const client = createMcpFnClient({
         target: streamableHttpTarget(resource, { authProvider: provider }),

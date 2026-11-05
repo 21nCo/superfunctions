@@ -1,5 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import Ajv from "ajv";
 import Ajv2020 from "ajv/dist/2020.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -23,6 +24,32 @@ interface RequestContext {
 }
 
 describe("McpFn client profiles", () => {
+  it("reuses schema validation only for identical projection dependency graphs", async () => {
+    const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
+    const compile = vi.spyOn(Ajv.prototype, "compile");
+    const tool = { name: "cache_graph", inputSchema: { type: "object" as const, $id: "https://cache.invalid/unique", properties: { value: { type: "string" } } } };
+    const input = { canonicalTools: [tool], resolved: { context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" }, profile: { id: "cache", version: "1", matches: () => true } } };
+    try {
+      await buildMcpFnEffectiveCatalog(input);
+      expect(compile.mock.calls.length).toBeGreaterThan(0);
+      compile.mockClear();
+      await buildMcpFnEffectiveCatalog(input);
+      expect(compile).not.toHaveBeenCalled();
+      tool.inputSchema.properties.value.type = "not-a-json-schema-type";
+      await expect(buildMcpFnEffectiveCatalog(input)).rejects.toThrow("Projected schema must be valid JSON Schema");
+    } finally { compile.mockRestore(); }
+  });
+
+  it("retains registered external schemas in profiled list and call validation", async () => {
+    const registry = new McpFnRegistry<RequestContext>()
+      .register({ name: "z_provider", description: "Provides a shared schema", inputSchema: { type: "object", $id: "https://profile.invalid/shared", properties: { value: { type: "string" } }, required: ["value"] }, handler: async () => structuredResult({ ok: true }) })
+      .register({ name: "a_consumer", description: "Uses shared schema", inputSchema: { type: "object", properties: { nested: { $ref: "https://profile.invalid/shared" } }, required: ["nested"] }, handler: async () => structuredResult({ ok: true }) });
+    const { client } = await connect({ subject: "authenticated-client" }, { id: "external", version: "1", matches: () => true, projectCatalog: ({ tools }) => tools.filter(tool => tool.name === "a_consumer") }, registry);
+    expect((await client.listTools()).tools.map(tool => tool.name)).toEqual(["a_consumer"]);
+    expect((await client.callTool({ name: "a_consumer", arguments: { nested: { value: "valid" } } })).isError).not.toBe(true);
+    expect((await client.callTool({ name: "a_consumer", arguments: { nested: { value: 42 } } })).isError).toBe(true);
+  });
+
   const closeables: Array<{ close(): Promise<void> }> = [];
 
   afterEach(async () => {
@@ -1113,4 +1140,22 @@ it.each(["resolver", "projector"])("preserves framework fallback evidence from a
     await expect(client.listTools()).rejects.toThrow();
     expect(evidence).toContainEqual(expect.objectContaining({ outcome: "failed", code: hook === "resolver" ? "MCPFN_PROFILE_RESOLUTION_FAILED" : "MCPFN_CATALOG_PROJECTION_FAILED" }));
   } finally { await client.close(); await server.close(); }
+});
+
+it("resolves embedded external resources in edge profile validation", async () => {
+  vi.stubGlobal("WebSocketPair", class {});
+  vi.resetModules();
+  try {
+    const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
+    const dependency = { type: "object" as const, $defs: { shared: { $id: "https://edge-profile.invalid/shared", type: "string" } } };
+    const tool = { name: "edge_external", inputSchema: { type: "object" as const, properties: { value: { $ref: "https://edge-profile.invalid/shared" } } } };
+    const result = await buildMcpFnEffectiveCatalog({ canonicalTools: [tool], schemaResources: [dependency, tool.inputSchema], resolved: {
+      context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" },
+      profile: { id: "edge", version: "1", matches: () => true },
+    } });
+    expect(result.tools).toEqual([tool]);
+  } finally {
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  }
 });
