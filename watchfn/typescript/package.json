@@ -1,0 +1,103 @@
+{
+  "name": "@watchfn/core",
+  "version": "0.0.3",
+  "description": "WatchFn event runtime: explicit ingestion, memory and SQLite storage, queries by time range and attributes",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./sqlite": {
+      "import": {
+        "types": "./dist/sqlite.d.ts",
+        "default": "./dist/sqlite.js"
+      },
+      "require": {
+        "types": "./dist/sqlite.d.cts",
+        "default": "./dist/sqlite.cjs"
+      }
+    },
+    "./http": {
+      "types": "./dist/http.d.ts",
+      "import": "./dist/http.js"
+    },
+    "./collectors": {
+      "import": {
+        "types": "./dist/collectors.d.ts",
+        "default": "./dist/collectors.js"
+      },
+      "require": {
+        "types": "./dist/collectors.d.cts",
+        "default": "./dist/collectors.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsup",
+    "test": "vitest run && node scripts/verify-packed.mjs",
+    "test:watch": "vitest --watch",
+    "lint": "tsc --noEmit -p tsconfig.check.json",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.check.json",
+    "clean": "rm -rf dist",
+    "verify:packed": "node scripts/verify-packed.mjs"
+  },
+  "dependencies": {
+    "@superfunctions/http": "0.3.0"
+  },
+  "peerDependencies": {
+    "@superfunctions/db": "^0.3.2"
+  },
+  "peerDependenciesMeta": {
+    "@superfunctions/db": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@superfunctions/db": "0.3.2",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^20.0.0",
+    "better-sqlite3": "^12.5.0",
+    "drizzle-orm": "^0.45.4",
+    "tsup": "^8.0.0",
+    "typescript": "^5.3.0",
+    "vitest": "^4.1.12"
+  },
+  "keywords": [
+    "observability",
+    "telemetry",
+    "events",
+    "superfunctions"
+  ],
+  "author": "21n",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/21nCo/super-functions/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "watchfn/typescript"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18.17.0"
+  }
+}
