@@ -153,6 +153,15 @@ test("reordering manifest keys needs no bump, while reordering export conditions
   assert.equal(changed({ ...base, exports: { ".": { import: "./dist/index.js", types: "./dist/index.d.ts", default: "./dist/index.cjs" } } }), true);
 });
 
+test("changing only the repository metadata needs no bump", () => {
+  const base = { name: "@uifn/core", version: "1.0.0", main: "dist/index.js", repository: { type: "git", url: "git+https://github.com/21nCo/super-functions.git", directory: "uifn/core" } };
+  const changed = (headManifest) => evaluatePackage({ name: "@uifn/core", packagePath: "uifn/core", baseManifest: base, headManifest, shippedFiles: [] }).manifestChanged;
+  assert.equal(changed({ ...base, repository: { ...base.repository, url: "git+https://github.com/21nCo/superfunctions.git" } }), false);
+  const { repository: _repository, ...withoutRepository } = base;
+  assert.equal(changed(withoutRepository), false);
+  assert.equal(changed({ ...base, main: "dist/main.js" }), true);
+});
+
 test("a dependency-only bump in a dependent package needs its own bump", (t) => {
   const repo = fixtureRepo(t);
   repo.edit("uifn/react/package.json", (text) => text.replace('"@uifn/core": "1.0.0"', '"@uifn/core": "1.0.1"'));

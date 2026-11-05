@@ -145,9 +145,9 @@ export function shippedScriptNames(scripts = {}) {
   return names;
 }
 
-/** Returns the manifest fields that reach consumers, without the version itself. */
+/** Returns the manifest fields that reach consumers, without the version itself or source-repository metadata. */
 export function publishedManifest(manifest) {
-  const { version: _version, devDependencies: _devDependencies, scripts, ...published } = manifest;
+  const { version: _version, devDependencies: _devDependencies, repository: _repository, scripts, ...published } = manifest;
   const names = [...shippedScriptNames(scripts ?? {})].sort(byCodeUnit);
   if (names.length > 0) published.scripts = Object.fromEntries(names.map((name) => [name, scripts[name]]));
   return published;
