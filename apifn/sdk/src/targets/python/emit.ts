@@ -526,7 +526,7 @@ asyncio.run(main())
 
 - Requests go only to \`base_url\` (${options.baseUrl === null ? "required" : `default \`${options.baseUrl}\``}); spec servers are never used and redirects are not followed.
 - Non-2xx responses, including documented redirects, raise \`ApiHttpError\`; \`is_declared_error(error, operation_id)\` narrows its body to the documented types. Timeouts raise \`ApiTimeoutError\`; cancelling the calling task cancels the call.
-- Reads are retried up to ${options.retry.maxAttempts} attempts on network errors, timeouts and HTTP 408, 429, 500, 502, 503 and 504; writes are never retried.
+- Reads are retried up to ${options.retry.maxAttempts} attempts on network errors, timeouts and HTTP 408, 429, 500, 502, 503 and 504. A write is retried the same way only when the API's catalog declares that its server makes repeated calls safe; when that declaration names a key header, only calls that send it with a non-empty value are retried, and every attempt sends the same value. Other writes, and calls with a body given as an async iterable (a stream), are never retried.
 - \`transport\` replaces the default httpx transport; \`on_failure\` receives an apifn.client-failure/v1 observation per failed call, and nothing is observed unless it is set.
 
 Requires Python 3.10 or later. Provenance is in \`apifn.sdk-manifest.json\`, which the wheel installs inside the package.

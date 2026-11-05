@@ -252,6 +252,28 @@ describe("shared retry vectors", () => {
     expect(server.requests).toHaveLength(2);
   });
 
+  it("replays the bytes the call was given even when the caller changes its buffer between attempts", async () => {
+    const sources: Array<[string, () => { body: Uint8Array | ArrayBuffer; change: () => void }]> = [
+      ["a Uint8Array", () => { const body = new Uint8Array([1, 2]); return { body, change: () => body.fill(9) }; }],
+      ["a Uint8Array view of a larger buffer", () => { const whole = new Uint8Array([7, 1, 2, 7]); return { body: whole.subarray(1, 3), change: () => whole.fill(9) }; }],
+      ["a Buffer", () => { const body = Buffer.from([1, 2]); return { body, change: () => body.fill(9) }; }],
+      ["an ArrayBuffer", () => { const body = new Uint8Array([1, 2]).buffer; return { body, change: () => new Uint8Array(body).fill(9) }; }],
+    ];
+    for (const [name, source] of sources) {
+      const { body, change } = source();
+      let calls = 0;
+      // The caller rewrites its buffer once the first attempt has gone out; the retry must still send [1, 2].
+      const fetch = async (input: string | URL | Request, init?: RequestInit) => {
+        const response = await globalThis.fetch(input, init);
+        if (++calls === 1) change();
+        return response;
+      };
+      server.reset([{ status: 503 }, { status: 200, headers: { "content-type": "application/json" }, body: '{"size":2}' }]);
+      await expect(directRuntime({ fetch }).request(operationSpec(), { body }), name).resolves.toEqual({ size: 2 });
+      expect(server.requests.map((request) => [...request.body]), name).toEqual([[1, 2], [1, 2]]);
+    }
+  });
+
   it("never retries a stream body, even for a declared-idempotent write", async () => {
     server.reset([{ status: 503 }, { status: 200, headers: { "content-type": "application/json" }, body: "{}" }]);
     const body = new ReadableStream<Uint8Array>({

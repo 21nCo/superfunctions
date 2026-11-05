@@ -410,7 +410,7 @@ ${first ? `const result = await client.${first.name}(/* params */);\n` : ""}\`\`
 
 - Requests go only to \`baseUrl\` (${options.baseUrl === null ? "required" : `default \`${options.baseUrl}\``}); spec servers are never used and redirects are not followed.
 - Non-2xx responses, including documented redirects, throw \`ApiHttpError\`; use \`isOperationError(error, operationId)\` for typed bodies. Timeouts throw \`ApiTimeoutError\`, aborted calls \`ApiAbortError\`.
-- Reads are retried up to ${options.retry.maxAttempts} attempts on network errors, timeouts and HTTP 408, 429, 500, 502, 503 and 504; writes are never retried.
+- Reads are retried up to ${options.retry.maxAttempts} attempts on network errors, timeouts and HTTP 408, 429, 500, 502, 503 and 504. A write is retried the same way only when the API's catalog declares that its server makes repeated calls safe; when that declaration names a key header, only calls that send it with a non-empty value are retried, and every attempt sends the same value. Other writes, and calls with a \`ReadableStream\` body (a stream), are never retried.
 - \`onFailure\` receives an apifn.client-failure/v1 observation per failed call; nothing is observed unless it is set.
 
 Provenance is in \`apifn.sdk-manifest.json\`.

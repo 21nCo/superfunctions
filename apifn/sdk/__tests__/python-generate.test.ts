@@ -106,6 +106,11 @@ describe("python target: provenance", () => {
       "tasks.replace never",
       "tasks.search never",
     ]);
+    const readme = fileOf(result, "README.md");
+    expect(readme).not.toContain("writes are never retried");
+    expect(readme).toContain("A write is retried the same way only when the API's catalog declares that its server makes repeated calls safe");
+    expect(readme).toContain("only calls that send it with a non-empty value are retried");
+    expect(readme).toContain("calls with a body given as an async iterable (a stream), are never retried");
   });
 });
 

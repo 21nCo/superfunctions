@@ -118,7 +118,8 @@ describe("generateSdk", () => {
 
   it("reports operations fetch cannot send: forbidden methods and bodies on GET or HEAD", () => {
     const catalog = fixtureCatalog();
-    const create = catalog.operations.find((operation: any) => operation.id === "tasks.create");
+    // A clone of the write without its idempotency declaration, which a safe method may not carry.
+    const { idempotency: _declared, ...create } = catalog.operations.find((operation: any) => operation.id === "tasks.create")!;
     catalog.operations.push(
       { ...clone(catalog.operations.find((operation: any) => operation.id === "tasks.get")), id: "tasks.trace", name: "traceTask", method: "trace" },
       { ...clone(create), id: "tasks.query", name: "queryTasks", method: "get", parameters: [] },
@@ -159,6 +160,21 @@ describe("generateSdk", () => {
     const undeclared = fixtureCatalog();
     for (const operation of undeclared.operations) delete operation.idempotency;
     expect(writes(undeclared).every((entry) => entry.split(" ")[2] === "never")).toBe(true);
+  });
+
+  it("accepts a direct catalog whose idempotency key is a non-credential header parameter, in any ASCII case", () => {
+    const catalog = fixtureCatalog();
+    const replace = catalog.operations.find((operation: any) => operation.id === "tasks.replace")!;
+    replace.idempotency = { semantics: "server", key: { in: "header", name: "IDEMPOTENCY-KEY" } };
+    expect(generate(catalog).diagnostics.filter((diagnostic) => diagnostic.severity === "error")).toEqual([]);
+  });
+
+  it("documents catalog-declared write retries, their key and the stream exclusion in the README", () => {
+    const readme = generate().files.find((file) => file.path === "README.md")!.contents;
+    expect(readme).not.toContain("writes are never retried");
+    expect(readme).toContain("A write is retried the same way only when the API's catalog declares that its server makes repeated calls safe");
+    expect(readme).toContain("only calls that send it with a non-empty value are retried");
+    expect(readme).toContain("calls with a `ReadableStream` body (a stream), are never retried");
   });
 
   it("warns that spec servers are ignored for an operation with its own servers", () => {
@@ -240,6 +256,50 @@ describe("name collisions", () => {
   }
 });
 
+/**
+ * Catalogs read directly (not built from a manifest) whose idempotency declaration the builder would refuse:
+ * each would make generated clients retry writes, or every credentialed call, that the server never made safe.
+ */
+function idempotencyCases(): Array<[string, () => [unknown, unknown], string, string?]> {
+  const edit = (id: string, change: (operation: any, catalog: any) => void): (() => [unknown, unknown]) => () => {
+    const catalog = fixtureCatalog();
+    const operation = catalog.operations.find((candidate: any) => candidate.id === id)!;
+    change(operation, catalog);
+    return [catalog, fixtureConfig()];
+  };
+  const pointer = (id: string, suffix = "") => `/operations/${fixtureCatalog().operations.findIndex((candidate: any) => candidate.id === id)}/idempotency${suffix}`;
+  return [
+    ["an idempotency declaration on a GET", edit("tasks.get", (operation) => (operation.idempotency = { semantics: "server", key: null })), "SDK_INVALID_CATALOG", pointer("tasks.get")],
+    [
+      "an idempotency key that is not a header parameter of the operation",
+      edit("tasks.replace", (operation) => (operation.idempotency = { semantics: "server", key: { in: "header", name: "X-Request-Id" } })),
+      "SDK_INVALID_CATALOG",
+      pointer("tasks.replace", "/key/name"),
+    ],
+    [
+      "an Authorization idempotency key",
+      edit("tasks.replace", (operation) => {
+        operation.parameters.push({ ...clone(operation.parameters.find((parameter: any) => parameter.in === "header")), name: "Authorization" });
+        operation.idempotency = { semantics: "server", key: { in: "header", name: "authorization" } };
+      }),
+      "SDK_INVALID_CATALOG",
+      pointer("tasks.replace", "/key/name"),
+    ],
+    [
+      "an idempotency key that is an apiKey scheme's header",
+      edit("tasks.replace", (operation, catalog) => {
+        const parameter = operation.parameters.find((candidate: any) => candidate.in === "header");
+        catalog.securitySchemes.apiKeyHeader.name = parameter.name.toUpperCase();
+        // tasks.create declares the same header as its key; only this operation's declaration is under test.
+        for (const other of catalog.operations) if (other !== operation) delete other.idempotency;
+        operation.idempotency = { semantics: "server", key: { in: "header", name: parameter.name } };
+      }),
+      "SDK_INVALID_CATALOG",
+      pointer("tasks.replace", "/key/name"),
+    ],
+  ];
+}
+
 describe("input validation", () => {
   const cases: Array<[string, () => [unknown, unknown], string, string?]> = [
     ["a non-object catalog", () => [null, fixtureConfig()], "SDK_INVALID_CATALOG"],
@@ -254,6 +314,7 @@ describe("input validation", () => {
       },
       "SDK_INVALID_CATALOG",
     ],
+    ...idempotencyCases(),
     ["an unknown config field", () => [fixtureCatalog(), { ...fixtureConfig(), extra: 1 }], "SDK_INVALID_CONFIG", "/extra"],
     ["an unknown target", () => [fixtureCatalog(), { ...fixtureConfig(), target: "go" }], "SDK_INVALID_CONFIG", "/target"],
     ["an unknown unsupported policy", () => [fixtureCatalog(), { ...fixtureConfig(), unsupported: "skip" }], "SDK_INVALID_CONFIG", "/unsupported"],

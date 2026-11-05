@@ -556,7 +556,11 @@ export class ApiRuntime<Credentials> {
       } else {
         const binary = input instanceof Uint8Array || input instanceof ArrayBuffer || (typeof Blob !== "undefined" && input instanceof Blob) || (typeof ReadableStream !== "undefined" && input instanceof ReadableStream);
         if (!binary) throw new InputError("Parameter body must be a Uint8Array, ArrayBuffer, Blob or ReadableStream.");
-        body = input as BodyInit;
+        // Bytes are copied once per call, so every attempt sends what the call was given even if the caller
+        // changes its buffer meanwhile; a retried write must repeat the same request. Blobs are immutable.
+        if (input instanceof Uint8Array) body = new Uint8Array(input);
+        else if (input instanceof ArrayBuffer) body = new Uint8Array(new Uint8Array(input));
+        else body = input as BodyInit;
       }
       if (body !== undefined) headers.set("content-type", op.body.mediaType);
     }
