@@ -50,12 +50,14 @@ jobs:
           registry-url: https://registry.npmjs.org
 
 
-      - name: Require a publishing dispatch to run on its release tag
-        if: github.event_name == 'workflow_dispatch' && !inputs.channel_only
+      - name: Require the run to belong to the release tag commit
+        if: '!inputs.channel_only'
         shell: bash
         run: |
-          if [[ "${GITHUB_REF}" != "refs/tags/${RELEASE_TAG}" || "${GITHUB_SHA}" != "$(git rev-parse HEAD)" ]]; then
-            echo "Dispatch this workflow on the release tag (gh workflow run publish-tag.yml --ref ${RELEASE_TAG} ...) so npm provenance records the commit that is published." >&2
+          set -euo pipefail
+          run_commit="$(git rev-parse --verify "${GITHUB_SHA}^{commit}")"
+          if [[ "${GITHUB_REF}" != "refs/tags/${RELEASE_TAG}" || "${run_commit}" != "$(git rev-parse HEAD)" ]]; then
+            echo "This run's ref/commit (${GITHUB_REF} at ${run_commit}) is not the checked-out release tag ${RELEASE_TAG}. Dispatch on the tag (gh workflow run publish-tag.yml --ref ${RELEASE_TAG} -f release_tag=${RELEASE_TAG}) or push the tag again, so npm provenance records the commit that is published." >&2
             exit 1
           fi
 
