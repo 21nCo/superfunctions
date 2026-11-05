@@ -169,7 +169,7 @@ async function removeClaim(root: string, instanceId: string): Promise<void> {
 
 const canonicalKey = async (item: string): Promise<string> => pathKey((await canonicalTarget(item)).canonical);
 /** Whether a comparison key is a directory's or lies inside it. */
-const within = (key: string, directory: string): boolean => key === directory || key.startsWith(directory + path.sep);
+export const within = (key: string, directory: string): boolean => key === directory || key.startsWith(directory.endsWith(path.sep) ? directory : directory + path.sep); // A filesystem root already ends in a separator.
 
 /** Canonical files by comparison key. */
 async function addCanonical(files: Map<string, string>, paths: readonly string[] | undefined): Promise<void> {
@@ -228,11 +228,12 @@ export async function taskAttribution(config: DevFnConfig, root: string, claims:
   for (const [id, { claim }] of read) { made.push(...claim.made ?? []); held.push(...claim.runtimeDirectory ? [claim.runtimeDirectory] : [], ...claim.recorded ?? [], ...id === own ? [] : [...(claim.pending ?? []).map((item) => item.target), ...claim.targets.length && await claimantRuns(claim) ? claim.targets : []]); for (const item of await writtenByClaim(claim)) if (await holdsRecorded(item)) released.push(item.target); }
   // Every recorded state directory inside the checkout is DevFn's own state, as runtime directories are; one equal to or containing the checkout never hides it.
   const rootKey = pathKey(await realpath(root).catch(() => path.resolve(root)));
-  for (const stateDir of [...[...receipts.values()].map(({ receipt }) => receipt.stateDir), ...[...read.values()].map(({ claim }) => claim.stateDir)]) if (stateDir && (await canonicalKey(path.resolve(root, stateDir))).startsWith(rootKey + path.sep)) held.push(stateDir);
+  for (const stateDir of [...[...receipts.values()].map(({ receipt }) => receipt.stateDir), ...[...read.values()].map(({ claim }) => claim.stateDir)]) if (stateDir && await canonicalKey(path.resolve(root, stateDir)).then((key) => key !== rootKey && within(key, rootKey))) held.push(stateDir);
   return { held, released, made };
 }
 
 const madeByRelease = (receipt: LifecycleReceipt): string[] => [path.dirname(receipt.runtimeDir), path.dirname(path.dirname(receipt.runtimeDir))];
+/** Create a start's or stop's state directory under the instance's lifecycle lock, first recording in its claim, under the claims lock, the directories inside the checkout this creates (task-input provenance, kept with the claim). */ export async function makeStateDirectory(root: string, identity: InstanceIdentity, stateDir: string): Promise<void> { await withInstanceLifecycleLock(root, identity.instanceId, async () => { const rootKey = pathKey(await realpath(root).catch(() => path.resolve(root))), making = (await missingDirectories((await canonicalTarget(path.resolve(stateDir))).canonical)).filter((item) => pathKey(item) !== rootKey && within(pathKey(item), rootKey)); if (making.length) await withFileLock(path.join(await claimDirectory(root), CLAIMS_LOCK), async () => { const text = await readOwnClaim(root, identity.instanceId), current = text === undefined ? undefined : parseClaim(text, identity.instanceId); await writeClaim(root, { ...current ?? { version: 1, instanceId: identity.instanceId, runtime: identity.runtime ?? DEFAULT_RUNTIME, targets: [], written: [], pid: process.pid, createdAt: new Date().toISOString() }, made: [...new Set([...current?.made ?? [], ...making])] }); }, { timeoutMs: CLAIMS_LOCK_TIMEOUT_MS, staleMs: CLAIMS_LOCK_STALE_MS }); await mkdir(stateDir, { recursive: true, mode: 0o700 }); }); }
 /** A directory and its ancestors that do not exist yet: what creating it would create. */ async function missingDirectories(target: string): Promise<string[]> { const missing: string[] = []; for (let current = target; current !== path.dirname(current) && !await lstat(current).then(() => true, () => false); current = path.dirname(current)) missing.push(current); return missing; }
 
 interface Target { output: string; target: string; canonical: string; key: string; exists: boolean; symlink: boolean }
@@ -248,7 +249,7 @@ async function stateDirectoryKeys(config: DevFnConfig, root: string, stateDir: s
   if (stateDir) {
     const rootKey = pathKey(await realpath(root).catch(() => path.resolve(root)));
     const stateKey = await canonicalKey(path.resolve(stateDir));
-    if (stateKey.startsWith(rootKey + path.sep)) keys.push(stateKey);
+    if (stateKey !== rootKey && within(stateKey, rootKey)) keys.push(stateKey);
   }
   return keys;
 }

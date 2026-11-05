@@ -14,7 +14,7 @@ import { FilePortRegistry, withFileLock } from "@devfn/ports";
 import { CaddyProxyController, proxyListenerPorts, proxyOwnerStatus } from "@devfn/proxy";
 import { describe, expect, it, vi } from "vitest";
 
-import { assertEnvironmentOutputsAvailable, claimEnvironmentOutputs, releaseEnvironmentOutputs } from "../src/outputs.js";
+import { assertEnvironmentOutputsAvailable, claimEnvironmentOutputs, releaseEnvironmentOutputs, within } from "../src/outputs.js";
 import { createPlan, DevFnOrchestrator, domainAliases, recoverOrphanedProxyRoutes, resolveEndpointTemplates, resolveInstanceIdentity, resolveLocalHostname, runtimeDirectory, selectRuntime, taskInputRevision } from "../src/index.js";
 
 const execFileAsync = promisify(execFile);
@@ -1439,3 +1439,63 @@ it("keeps a task's input revision while a sibling runtime's state directory insi
     await rm(parent, { recursive: true, force: true });
   }
 }, 120_000);
+
+it("keeps a task's input revision while DevFn creates and uses a sibling's nested state directory inside the checkout, recorded before it is created, but not once a directory it made holds anything else, nor for a directory that existed before", async () => {
+  const { parent, primary } = await repository();
+  const config = validateDevFnConfig({ version: 1, project: { id: "nested-state-input" },
+    processes: { seed: { adapter: "command", command: [process.execPath, "-e", "0"], task: { rerun: "on-change", inputs: ["."] } } }, profiles: { default: { processes: ["seed"] } } });
+  const sibling = validateDevFnConfig({ version: 1, project: { id: "nested-state-input" }, processes: {}, profiles: { default: { processes: [] } } });
+  const orchestrator = new DevFnOrchestrator();
+  const revision = async () => await taskInputRevision(config, primary, { name: "seed", kind: "process" }, "default");
+  const [nested, deeper, kept] = [["cache", "review-state"], ["x", "y", "state"], ["kept", "state"]].map((parts) => path.join(primary, ...parts));
+  // A registry rewrite that the sibling's own later stop still reads.
+  const touch = async (stateDir: string) => await writeFile(path.join(stateDir, "registry.json"), `${await readFile(path.join(stateDir, "registry.json"), "utf8")}\n`);
+  try {
+    await writeFile(path.join(primary, "schema.sql"), "create table t();");
+    const before = await revision();
+    // The directories a start creates for its state directory are DevFn's from the moment they exist.
+    const atCreation: string[] = [];
+    made.after = async (directory) => { if (path.resolve(directory) === nested) { made.after = undefined; atCreation.push(await revision()); } };
+    expect((await orchestrator.up({ config: sibling, root: primary, stateDir: nested, runtime: "b" })).state).toBe("ready");
+    expect(atCreation).toEqual([before]);
+    expect(await revision()).toBe(before);
+    await touch(nested);
+    expect(await revision()).toBe(before);
+    expect((await orchestrator.up({ config: sibling, root: primary, stateDir: deeper, runtime: "c" })).state).toBe("ready");
+    await touch(deeper);
+    expect(await revision()).toBe(before);
+    // Stopped, their receipts still record the state directories.
+    expect((await orchestrator.down({ config: sibling, root: primary, stateDir: nested, runtime: "b" })).state).toBe("stopped");
+    expect((await orchestrator.down({ config: sibling, root: primary, stateDir: deeper, runtime: "c" })).state).toBe("stopped");
+    await touch(nested);
+    expect(await revision()).toBe(before);
+    // A stop with a state directory that never existed refuses, and what it created is DevFn's too.
+    await expect(orchestrator.down({ config: sibling, root: primary, stateDir: path.join(primary, "gone", "state"), runtime: "d" })).rejects.toMatchObject({ code: "DEVFN_NOT_RUNNING" });
+    expect(await revision()).toBe(before);
+    // A user's file in a directory DevFn made is an input.
+    await writeFile(path.join(primary, "cache", "user.txt"), "mine");
+    expect(await revision()).not.toBe(before);
+    await rm(path.join(primary, "cache", "user.txt"));
+    expect(await revision()).toBe(before);
+    // A directory that existed before the start is never DevFn's, so it stays an input once it holds a state directory.
+    await mkdir(path.dirname(kept));
+    const withKept = await revision();
+    expect(withKept).not.toBe(before);
+    expect((await orchestrator.up({ config: sibling, root: primary, stateDir: kept, runtime: "e" })).state).toBe("ready");
+    expect(await revision()).toBe(withKept);
+    await writeFile(path.join(path.dirname(kept), "user.txt"), "mine");
+    expect(await revision()).not.toBe(withKept);
+  } finally {
+    made.after = undefined;
+    for (const [stateDir, runtime] of [[nested, "b"], [deeper, "c"], [kept, "e"]] as const) await orchestrator.down({ config: sibling, root: primary, stateDir, runtime }).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 120_000);
+
+it("treats every path below a filesystem root as inside it", () => {
+  const root = path.parse(process.cwd()).root;
+  expect(within(path.join(root, "checkout", "state"), root)).toBe(true);
+  expect(within(root, root)).toBe(true);
+  expect(within(path.join(root, "checkout-other"), path.join(root, "checkout"))).toBe(false);
+  expect(within(path.join(root, "checkout", "state"), path.join(root, "checkout"))).toBe(true);
+});

@@ -17,7 +17,7 @@ import { resolveEndpointTemplates, resolveLocalHostname, type EndpointResolution
 import { createPlan } from "./planner.js";
 import { planResources, resourcePlanFingerprint, resourcesNeedComposeNetworks } from "./resources.js";
 import { livePublicUrls, profileTunnel, publicTemplateInputs, publishLifecycleTunnel, selectedPublicRoutes, selectionTemplateInputs, withdrawLifecycleTunnel, type PublicSelection, type TunnelOverrides } from "./tunnel.js";
-import { assertEnvironmentOutputsAvailable, claimEnvironmentOutputs, LIFECYCLE_LOCK, releaseEnvironmentOutputs, withInstanceLifecycleLock, type EnvironmentOutputClaim } from "./outputs.js";
+import { assertEnvironmentOutputsAvailable, claimEnvironmentOutputs, LIFECYCLE_LOCK, makeStateDirectory, releaseEnvironmentOutputs, withInstanceLifecycleLock, type EnvironmentOutputClaim } from "./outputs.js";
 import { listRuntimeReceipts, newRuntimeId, readReceipt, readRuntimeId, recordRuntimeId, secureRuntimeDirectory, sharedEnvironmentOutputs, writeEnvironmentOutputs, writeReceipt, type RuntimePath } from "./runtime.js";
 import { preflightTasks, runTask, taskInputRevision, type TaskReceipt } from "./tasks.js";
 import { DevFnError, type CleanupResult, type InstanceIdentity, type RoutingIdentity, type LifecyclePlan, type LifecycleReceipt, type UpOptions } from "./types.js";
@@ -667,7 +667,7 @@ export class DevFnOrchestrator {
       ...(preflight.resources ? { resources: preflight.resources } : {}), environments: preflight.nodes, ...(options.rerunTasks ? { rerunTasks: options.rerunTasks } : {}), ...(locked ? { locked } : {}) });
     // Unknown reruns, missing task inputs and blocked tasks fail here; the locked start decides again from the journals.
     await decideTasks(requestedStateDir);
-    await mkdir(requestedStateDir, { recursive: true, mode: 0o700 });
+    await makeStateDirectory(options.root, identity, requestedStateDir);
     const stateDir = await realpath(requestedStateDir);
     // A concurrent first start may have recorded another; the locked pass plans with the recorded one.
     if (identity.runtimeId) {
@@ -1144,7 +1144,7 @@ export class DevFnOrchestrator {
   public async down(options: { config: DevFnConfig; root: string; stateDir?: string; runtime?: string }): Promise<LifecycleReceipt> {
     const requestedStateDir = options.stateDir ?? defaultStateDir();
     const identity = await resolveInstanceIdentity(options.config.project.id, options.root, options.runtime);
-    await mkdir(requestedStateDir, { recursive: true, mode: 0o700 });
+    await makeStateDirectory(options.root, identity, requestedStateDir);
     const stateDir = await realpath(requestedStateDir);
     return await withInstanceLifecycleLock(options.root, identity.instanceId, async () => await withFileLock(path.join(stateDir, `lifecycle-${identity.instanceId}.lock`), async () => {
       // Coordinate the destructive decision with sibling route/lease changes,
