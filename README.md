@@ -107,10 +107,10 @@ organization/user `21nCo`, repository `superfunctions`, workflow filename
 `NPM_TOKEN` as a fallback, which npm uses only when the OIDC exchange fails, so a
 package's first publish (before a trusted publisher can be added) keeps working.
 Add the trusted publisher right after a new package's first release.
-Publishes pass `--provenance=false`: npm would otherwise attach provenance to
-every OIDC publish from this public repository, and the registry rejects that
-attestation unless the package's `repository.url` names
-`github.com/21nCo/superfunctions`, which most release manifests do not yet do.
+npm attaches a provenance attestation to every OIDC publish from this public
+repository. The registry accepts it only when the packed `package.json`
+`repository.url` is `git+https://github.com/21nCo/superfunctions.git`, so every
+release target must declare that URL with its own `directory`.
 Prerelease tag reconciliation runs in a separate job that also uses OIDC and
 does not receive `NPM_TOKEN`; it needs **Allow npm dist-tag** enabled on the
 package's trusted publisher.

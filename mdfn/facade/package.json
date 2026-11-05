@@ -19,7 +19,7 @@
   "files": ["dist", "README.md"],
   "license": "MIT",
   "engines": { "node": ">=20 <25" },
-  "repository": { "type": "git", "url": "git+https://github.com/21nCo/super-functions.git", "directory": "mdfn/facade" },
+  "repository": { "type": "git", "url": "git+https://github.com/21nCo/superfunctions.git", "directory": "mdfn/facade" },
   "publishConfig": { "access": "public" },
   "sideEffects": false,
   "mdfn": { "status": "stable-candidate", "layer": "facade", "schemaVersion": 1 }

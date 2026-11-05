@@ -11,7 +11,7 @@
   "keywords": ["mailfn", "email", "inbox"],
   "author": "21n",
   "license": "MIT",
-  "repository": { "type": "git", "url": "git+https://github.com/21nCo/super-functions.git", "directory": "mailfn/facade" },
+  "repository": { "type": "git", "url": "git+https://github.com/21nCo/superfunctions.git", "directory": "mailfn/facade" },
   "publishConfig": { "access": "public" },
   "sideEffects": false,
   "dependencies": { "@mailfn/client": "0.1.0", "@mailfn/core": "0.1.0" },

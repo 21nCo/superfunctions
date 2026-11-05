@@ -2,6 +2,11 @@
   "name": "@devfn/cli",
   "version": "0.1.0",
   "description": "Portable local development environments and worktree-aware port orchestration",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "devfn/cli"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

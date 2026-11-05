@@ -2,6 +2,11 @@
   "name": "@devfn/core",
   "version": "0.1.0",
   "description": "Planning, lifecycle, receipts, rollback, and diagnostics for DevFn",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "devfn/core"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

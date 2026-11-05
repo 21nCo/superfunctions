@@ -20,7 +20,7 @@
   "files": ["dist", "README.md"],
   "license": "MIT",
   "engines": { "node": ">=20 <25" },
-  "repository": { "type": "git", "url": "git+https://github.com/21nCo/super-functions.git", "directory": "mdfn/react" },
+  "repository": { "type": "git", "url": "git+https://github.com/21nCo/superfunctions.git", "directory": "mdfn/react" },
   "publishConfig": { "access": "public" },
   "sideEffects": false,
   "mdfn": { "status": "stable-candidate", "layer": "adapter", "framework": "react", "schemaVersion": 1 }

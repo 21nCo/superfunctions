@@ -24,7 +24,7 @@
   "bugs": { "url": "https://github.com/21nCo/super-functions/issues" },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
     "directory": "packages/storage-s3"
   },
   "publishConfig": { "access": "public" },

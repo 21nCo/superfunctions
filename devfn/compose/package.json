@@ -2,6 +2,11 @@
   "name": "@devfn/compose",
   "version": "0.1.0",
   "description": "Non-destructive Docker Compose lifecycle adapter for DevFn",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "devfn/compose"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
