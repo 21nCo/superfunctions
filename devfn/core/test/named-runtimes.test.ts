@@ -1664,8 +1664,11 @@ it("keeps refusing outputs a live claimless receipt may own after a refused star
     await writeFile(receiptFile, JSON.stringify(legacy, null, 2));
     const e = await resolveInstanceIdentity("hollow-claim", primary, "e");
     await expect(assertEnvironmentOutputsAvailable(writer, primary, e)).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID" });
-    // A start of d into a new state directory inside the checkout is refused, leaving a claim of provenance alone.
-    await expect(orchestrator.up({ config: plain, root: primary, stateDir: path.join(primary, "new", "state"), runtime: "d" })).rejects.toBeDefined();
+    // A start of d into a new state directory inside the checkout while it runs elsewhere is refused before it records or creates anything.
+    await expect(orchestrator.up({ config: plain, root: primary, stateDir: path.join(primary, "new", "state"), runtime: "d" })).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID" });
+    await expect(access(path.join(primary, "new"))).rejects.toMatchObject({ code: "ENOENT" });
+    // One killed right after it recorded that state directory leaves a claim of provenance alone.
+    await makeStateDirectory(plain, primary, d, path.join(primary, "new", "state"), true);
     await access(path.join(primary, ".devfn", "receipts", "outputs", `${d.instanceId}.json`));
     await expect(assertEnvironmentOutputsAvailable(writer, primary, e)).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID" });
   } finally {
@@ -1824,7 +1827,20 @@ it("keeps a task's input revision when a start into an existing state directory 
     const afterMismatch = await revision();
     await writeFile(path.join(primary, "src", "tasks", "seed.sql"), "select 3;");
     expect(await revision()).not.toBe(afterMismatch);
+    // A start refused after it recorded an existing directory but before it wrote there takes that record back, also from a claim it had before.
+    await mkdir(path.join(primary, "src2", "tasks"), { recursive: true });
+    await writeFile(path.join(primary, "src2", "tasks", "seed.sql"), "select 1;");
+    const withSrc2 = await revision();
+    // Its start's claim of outputs fails creating its runtime directory, before it writes in src2.
+    const fDirectory = path.resolve(runtimeDirectory(sibling, primary, (await resolveInstanceIdentity("killed-state-input", primary, "f")).instanceId));
+    made.fail = (directory) => path.resolve(directory) === fDirectory ? Object.assign(new Error("injected runtime directory failure"), { code: "EACCES" }) : undefined;
+    await expect(orchestrator.up({ config: sibling, root: primary, stateDir: path.join(primary, "src2"), runtime: "f" })).rejects.toThrow("injected runtime directory failure");
+    made.fail = undefined;
+    expect(await revision()).toBe(withSrc2);
+    await writeFile(path.join(primary, "src2", "tasks", "seed.sql"), "select 2;");
+    expect(await revision()).not.toBe(withSrc2);
   } finally {
+    made.fail = undefined;
     await orchestrator.down({ config: sibling, root: primary, stateDir, runtime: "b" }).catch(() => undefined);
     await rm(parent, { recursive: true, force: true });
   }

@@ -249,8 +249,8 @@ const union = (...lists: (readonly string[] | undefined)[]): string[] => [...new
  * existed before, as shared, whose DevFn entries are held by name. The record stays with the claim through a failed or
  * interrupted start and a refused stop. A state path that is or lies below something other than a directory, or claims that
  * cannot be read, refuse it before any write; a failed creation keeps provenance only for the directories it left. It returns
- * the withdrawal of a refused start: a record of an existing state directory in a claim it created goes again, with the claim
- * directories, when the start left that directory's DevFn entries as they were, so a refused start leaves no DevFn state.
+ * the withdrawal of a refused start: the record it added for an existing state directory goes again when the start left that
+ * directory's DevFn entries as they were, and so does a claim then left attributing nothing, with its claim directories.
  */
 export async function makeStateDirectory(config: DevFnConfig, root: string, identity: InstanceIdentity, stateDir: string, starting = false): Promise<() => Promise<void>> {
   let withdraw: () => Promise<void> = async () => undefined;
@@ -287,7 +287,7 @@ export async function makeStateDirectory(config: DevFnConfig, root: string, iden
       const ours = names.length && names.every((name) => TRUST_STATE.test(name)) ? [canonical] : [];
       next.made = union(current?.made, madeByRelease(receipt, current), making, ours);
       next[field] = union(current?.[field], [canonical]);
-      if (!current && field === "shared" && !making.length) {
+      if (field === "shared" && !making.length) {
         const before = await stateEntries(canonical);
         withdraw = async () => await withdrawStateRecord(root, identity.instanceId, canonical, before, fresh);
       }
@@ -308,12 +308,16 @@ async function stateEntries(directory: string): Promise<string> {
   return JSON.stringify(await Promise.all(names.map(async (name) => [name, (await lstat(path.join(directory, name)).catch(() => undefined))?.mtimeMs ?? null])));
 }
 
-/** Remove the record a refused start published for an existing state directory while its claim records nothing else and the start changed no DevFn entry there. */
+/** Remove the record a refused start added for an existing state directory where it changed no DevFn entry; a claim then holding nothing, whose every recorded path is gone, goes too. */
 async function withdrawStateRecord(root: string, instanceId: string, stateDir: string, before: string, fresh: string | undefined): Promise<void> {
   await withInstanceLifecycleLock(root, instanceId, async () => await withFileLock(path.join(await claimDirectory(root), CLAIMS_LOCK), async () => {
     const text = await readOwnClaim(root, instanceId), claim = text === undefined ? undefined : parseClaim(text, instanceId);
-    if (!claim || claim.targets.length || claim.written.length || claim.pending?.length || claim.runtimeDirectory !== undefined) return;
-    if (await stateEntries(stateDir) === before) await removeClaim(root, instanceId);
+    if (!claim?.shared?.some((item) => pathKey(item) === pathKey(stateDir)) || await stateEntries(stateDir) !== before) return;
+    const rest: OutputClaim = { ...claim, shared: claim.shared.filter((item) => pathKey(item) !== pathKey(stateDir)) };
+    const holds = claim.targets.length || claim.written.length || claim.pending?.length || claim.runtimeDirectory !== undefined || claim.stateDir !== undefined;
+    const provenance = [...rest.recorded ?? [], ...rest.made ?? [], ...rest.shared ?? [], ...rest.replaced ?? []];
+    const remains = (await Promise.all(provenance.map(async (item) => await lstat(item).then(() => true, () => false)))).some(Boolean);
+    await (holds || remains ? writeClaim(root, rest) : removeClaim(root, instanceId));
   }, { timeoutMs: CLAIMS_LOCK_TIMEOUT_MS, staleMs: CLAIMS_LOCK_STALE_MS }));
   if (fresh) await removeEmptyDirectories(path.join(root, CLAIMS), fresh);
 }
