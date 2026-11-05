@@ -12,7 +12,9 @@ import SwiftUI
 /// and a value that is not a number, or a range with no width, as empty.
 ///
 /// Accessibility sees a progress indicator with the label, whose value is the
-/// meter's value as a percentage of its range, such as “40%”.
+/// meter's value as a whole percentage of its range, such as “40%”. Like the
+/// lit segments, a value strictly inside the range reads from 1% to 99%,
+/// never 0% or 100%.
 public struct UIFnSegmentedMeter<Label: View, CurrentValueLabel: View>: View {
     private let fraction: Double
     private let segments: Int
@@ -55,8 +57,26 @@ public struct UIFnSegmentedMeter<Label: View, CurrentValueLabel: View>: View {
             currentValueLabel: currentValueLabel
         )
         .accessibilityRepresentation {
-            ProgressView(value: fraction) { label }
-                .accessibilityValue(UIFnMeterValue.percentText(fraction))
+            UIFnSegmentedMeterAccessibility(fraction: fraction, label: label)
+        }
+    }
+}
+
+/// What accessibility sees in place of a segmented meter: a progress
+/// indicator with the meter's label, whose value is its percentage.
+struct UIFnSegmentedMeterAccessibility<Label: View>: View {
+    let fraction: Double
+    let label: Label
+
+    var body: some View {
+        let indicator = ProgressView(value: fraction) { label }
+            .accessibilityValue(UIFnMeterValue.percentText(fraction))
+        // UIKit does not always take the indicator's label from its label
+        // view, so where SwiftUI can, the label is set on it as well.
+        if #available(iOS 18, macOS 15, *) {
+            indicator.accessibilityLabel { _ in label }
+        } else {
+            indicator
         }
     }
 }
@@ -81,19 +101,11 @@ public extension UIFnSegmentedMeter where CurrentValueLabel == EmptyView {
 }
 
 public extension UIFnSegmentedMeter where Label == Text, CurrentValueLabel == EmptyView {
-    /// A meter labeled with a localized title.
-    init<Value: BinaryFloatingPoint>(
-        _ titleKey: LocalizedStringKey,
-        value: Value,
-        in bounds: ClosedRange<Value> = 0...1,
-        segments: Int = 5,
-        tone: UIFnTone = .accent
-    ) {
-        self.init(value: value, in: bounds, segments: segments, tone: tone) { Text(titleKey) }
-    }
-
-    /// A meter labeled with a string, shown as it is.
-    @_disfavoredOverload
+    /// A meter labeled with a title already localized, shown as it is.
+    ///
+    /// Like the other UIFn components, the meter does not look the title up
+    /// in a strings table; to label it with a localized key, pass the label
+    /// as a view, such as `Text("storage.title")`.
     init<Title: StringProtocol, Value: BinaryFloatingPoint>(
         _ title: Title,
         value: Value,
@@ -101,7 +113,7 @@ public extension UIFnSegmentedMeter where Label == Text, CurrentValueLabel == Em
         segments: Int = 5,
         tone: UIFnTone = .accent
     ) {
-        self.init(value: value, in: bounds, segments: segments, tone: tone) { Text(title) }
+        self.init(value: value, in: bounds, segments: segments, tone: tone) { Text(verbatim: String(title)) }
     }
 }
 
@@ -127,9 +139,19 @@ enum UIFnMeterValue {
         return min(max(nearest, 1), segments - 1)
     }
 
+    /// The whole percentage a fraction reads as: its share of 100, rounded,
+    /// except that a fraction above 0 reads at least 1 and one below 1 at
+    /// most 99, as the lit segments never show such a value empty or full.
+    static func percent(_ fraction: Double) -> Int {
+        let fraction = UIFnProgress.clamped(fraction)
+        if fraction <= 0 { return 0 }
+        if fraction >= 1 { return 100 }
+        return min(max(Int((fraction * 100).rounded()), 1), 99)
+    }
+
     /// The fraction as a whole percentage in the environment's locale, such as “40%”.
     static func percentText(_ fraction: Double) -> Text {
-        Text(fraction, format: .percent.precision(.fractionLength(0)))
+        Text(Double(percent(fraction)) / 100, format: .percent.precision(.fractionLength(0)))
     }
 }
 

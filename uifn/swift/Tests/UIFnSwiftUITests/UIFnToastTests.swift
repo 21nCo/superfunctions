@@ -141,7 +141,7 @@ struct UIFnToastTests {
         let model = Model(UIFnToast("Copied", message: "The link is on the clipboard.", duration: nil))
         let host = show(model)
         defer { host.close() }
-        let elements = host.elements()
+        let elements = await host.elements { $0.count == 2 && $0.allSatisfy { $0.label != nil } }
         #expect(elements.count == 2, "\(elements)")
         let text = try #require(elements.first)
         #expect(text.is(.staticText) && text.label == "Copied" && text.value == "The link is on the clipboard.", "\(text)")
@@ -153,10 +153,10 @@ struct UIFnToastTests {
     }
 
     @Test
-    func withoutADismissLabelTheToastHasNoDismissButton() {
+    func withoutADismissLabelTheToastHasNoDismissButton() async {
         let host = show(Model(UIFnToast("Copied", duration: nil)), dismissLabel: nil)
         defer { host.close() }
-        let elements = host.elements()
+        let elements = await host.elements { $0.first?.label != nil }
         #expect(elements.count == 1, "\(elements)")
         #expect(elements.first?.is(.staticText) == true && elements.first?.label == "Copied", "\(elements)")
     }
@@ -190,6 +190,82 @@ struct UIFnToastTests {
         #expect(resolved.moves == !reduceMotion)
         #expect(resolved.duration == (reduceMotion ? normal.reducedMotionSeconds : normal.seconds))
         #expect(UIFnTheme.uifn.motion.duration.normal.reducedMotionSeconds == 0)
+    }
+
+    /// The toast comes in with the theme's entrance easing and goes with its
+    /// exit easing, at the same duration.
+    @Test(arguments: [false, true])
+    func aToastComesInWithEntranceEasingAndGoesWithExitEasing(_ reduceMotion: Bool) async throws {
+        var motion: UIFnToastMotion?
+        _ = try #require(await UIFnSnapshot.render {
+            MotionReader(edge: .top) { motion = $0 }
+                .environment(\._accessibilityReduceMotion, reduceMotion)
+        })
+        let resolved = try #require(motion)
+        let theme = UIFnTheme.uifn.motion
+        #expect(theme.easing.entrance != theme.easing.exit)
+        #expect(resolved.insertionAnimation == theme.easing.entrance.animation(theme.duration.normal, reduceMotion: reduceMotion))
+        #expect(resolved.removalAnimation == theme.easing.exit.animation(theme.duration.normal, reduceMotion: reduceMotion))
+    }
+
+    // MARK: - Timer
+
+    /// Records each sleep the timer asks for, failing the one at `failingAt`
+    /// as a cancelled sleep does.
+    private final class Sleeps: @unchecked Sendable {
+        var nanoseconds: [UInt64] = []
+        var failingAt: Int?
+
+        func sleep(_ nanoseconds: UInt64) throws {
+            self.nanoseconds.append(nanoseconds)
+            if self.nanoseconds.count - 1 == failingAt { throw CancellationError() }
+        }
+    }
+
+    /// A duration longer than one sleep passes in full, a day at a time, then
+    /// the rest.
+    @Test(arguments: [
+        (0.25, [250_000_000]),
+        (86_400, [86_400_000_000_000]),
+        (172_800, [86_400_000_000_000, 86_400_000_000_000]),
+        (86_400.5, [86_400_000_000_000, 500_000_000]),
+        (259_200, [86_400_000_000_000, 86_400_000_000_000, 86_400_000_000_000]),
+    ] as [(TimeInterval, [UInt64])])
+    func aToastsTimerWaitsOutItsWholeDuration(_ duration: TimeInterval, _ expected: [UInt64]) async {
+        let sleeps = Sleeps()
+        #expect(await UIFnToastTimer.wait(duration) { try sleeps.sleep($0) })
+        #expect(sleeps.nanoseconds == expected)
+    }
+
+    /// A duration that is not positive and finite never passes, without sleeping.
+    @Test(arguments: [0, -1, .infinity, -.infinity, .nan] as [TimeInterval])
+    func aToastsTimerDoesNotWaitOutADurationThatNeverPasses(_ duration: TimeInterval) async {
+        let sleeps = Sleeps()
+        #expect(await UIFnToastTimer.wait(duration) { try sleeps.sleep($0) } == false)
+        #expect(sleeps.nanoseconds.isEmpty)
+    }
+
+    /// A cancelled sleep stops the timer without its duration passing.
+    @Test
+    func aCancelledToastTimerStopsWaiting() async {
+        let sleeps = Sleeps()
+        sleeps.failingAt = 1
+        #expect(await UIFnToastTimer.wait(259_200) { try sleeps.sleep($0) } == false)
+        #expect(sleeps.nanoseconds.count == 2)
+    }
+
+    /// Cancelling the task between sleeps stops the timer too.
+    @Test
+    func aToastTimerInACancelledTaskStopsWaiting() async {
+        let sleeps = Sleeps()
+        let task = Task {
+            await UIFnToastTimer.wait(172_800) { nanoseconds in
+                try sleeps.sleep(nanoseconds)
+                withUnsafeCurrentTask { $0?.cancel() }
+            }
+        }
+        #expect(await task.value == false)
+        #expect(sleeps.nanoseconds.count == 1)
     }
 
     @Test

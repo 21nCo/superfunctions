@@ -231,7 +231,9 @@ struct UIFnToastPresenter: ViewModifier {
                         .transition(motion.transition)
                     }
                 }
-                .animation(motion.animation, value: toast?.id)
+                // Animates the change of toast; the transition sets how each
+                // banner comes in and goes.
+                .animation(motion.insertionAnimation, value: toast?.id)
             }
             .task(id: toast?.id) { await present(toast) }
     }
@@ -242,9 +244,8 @@ struct UIFnToastPresenter: ViewModifier {
     private func present(_ shown: UIFnToast?) async {
         guard let shown else { return }
         announcer.announce(shown.announcement, shown.tone)
-        guard let duration = shown.duration, duration.isFinite, duration > 0 else { return }
-        try? await Task.sleep(nanoseconds: UInt64(min(duration, 86_400) * 1_000_000_000))
-        guard !Task.isCancelled else { return }
+        guard let duration = shown.duration else { return }
+        guard await UIFnToastTimer.wait(duration) else { return }
         dismiss(shown.id)
     }
 
@@ -256,8 +257,9 @@ struct UIFnToastPresenter: ViewModifier {
 }
 
 /// How a toast moves in and out: from its edge with a fade, or under Reduce
-/// Motion a fade in place, with the theme's entrance and exit easing at its
-/// normal duration (or its reduced-motion duration).
+/// Motion a fade in place, at the theme's normal duration (or its
+/// reduced-motion duration), coming in with the theme's entrance easing and
+/// going with its exit easing.
 struct UIFnToastMotion {
     let reduceMotion: Bool
     let edge: VerticalEdge
@@ -274,8 +276,11 @@ struct UIFnToastMotion {
 
     var transition: AnyTransition {
         let fade = AnyTransition.opacity
-        guard moves else { return fade }
-        return .move(edge: edge == .top ? .top : .bottom).combined(with: fade)
+        let movement = moves ? AnyTransition.move(edge: edge == .top ? .top : .bottom).combined(with: fade) : fade
+        return .asymmetric(
+            insertion: movement.animation(insertionAnimation),
+            removal: movement.animation(removalAnimation)
+        )
     }
 
     /// Seconds the toast takes to come in or go.
@@ -283,8 +288,44 @@ struct UIFnToastMotion {
         theme.motion.duration.normal.seconds(reduceMotion: reduceMotion)
     }
 
-    var animation: Animation {
+    /// How the toast comes in: with the theme's entrance easing.
+    var insertionAnimation: Animation {
         theme.motion.easing.entrance.animation(theme.motion.duration.normal, reduceMotion: reduceMotion)
+    }
+
+    /// How the toast goes: with the theme's exit easing.
+    var removalAnimation: Animation {
+        theme.motion.easing.exit.animation(theme.motion.duration.normal, reduceMotion: reduceMotion)
+    }
+}
+
+/// Waits out a toast's duration.
+enum UIFnToastTimer {
+    /// The longest single sleep, in seconds: a day, whose nanoseconds fit in
+    /// a `UInt64` with room to spare.
+    static let longestSleep: TimeInterval = 86_400
+
+    /// Sleeps until `duration` seconds have passed, one sleep of at most
+    /// ``longestSleep`` seconds at a time, so a duration of any length passes
+    /// in full. Returns whether it did: false at once for a duration that is
+    /// not positive and finite, and false as soon as the task is cancelled.
+    static func wait(
+        _ duration: TimeInterval,
+        sleep: (_ nanoseconds: UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0) }
+    ) async -> Bool {
+        guard duration.isFinite, duration > 0 else { return false }
+        var remaining = duration
+        while remaining > 0 {
+            let seconds = min(remaining, longestSleep)
+            do {
+                try await sleep(UInt64((seconds * 1_000_000_000).rounded(.up)))
+            } catch {
+                return false
+            }
+            if Task.isCancelled { return false }
+            remaining -= seconds
+        }
+        return true
     }
 }
 

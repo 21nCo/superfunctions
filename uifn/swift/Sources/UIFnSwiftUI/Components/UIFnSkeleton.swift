@@ -20,7 +20,11 @@ public struct UIFnSkeleton<Placeholder: View>: View {
     public var body: some View {
         UIFnSkeletonBody(placeholder: placeholder)
             .accessibilityRepresentation {
+                // The label is set on the indicator too: UIKit does not
+                // always take an indeterminate indicator's label from its
+                // label view.
                 ProgressView { Text(verbatim: label) }
+                    .accessibilityLabel(Text(verbatim: label))
             }
     }
 }

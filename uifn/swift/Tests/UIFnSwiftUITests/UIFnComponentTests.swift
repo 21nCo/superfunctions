@@ -19,6 +19,16 @@ struct UIFnComponentTests {
         #expect(UIFnMeterValue.litSegments(fraction, of: segments) == lit)
     }
 
+    /// A whole percentage, except that only the minimum reads 0 and only the
+    /// maximum reads 100, matching the lit segments.
+    @Test(arguments: [
+        (0, 0), (0.004, 1), (0.005, 1), (0.014, 1), (0.016, 2), (0.4, 40), (0.984, 98),
+        (0.995, 99), (0.996, 99), (0.9999, 99), (1, 100), (-1, 0), (2, 100), (.nan, 0),
+    ] as [(Double, Int)])
+    func aMeterReadsAsTheWholePercentageItsSegmentsShow(_ fraction: Double, _ percent: Int) {
+        #expect(UIFnMeterValue.percent(fraction) == percent)
+    }
+
     @Test(arguments: [
         (5, 0...10, 0.5), (15, 0...10, 1), (-5, 0...10, 0), (.nan, 0...10, 0), (.infinity, 0...10, 1),
         (5, 5...5, 0), (5, -Double.infinity...Double.infinity, 0), (-.infinity, 0...1, 0),

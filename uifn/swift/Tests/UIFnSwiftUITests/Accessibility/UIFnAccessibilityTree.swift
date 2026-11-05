@@ -75,10 +75,12 @@ struct UIFnAccessibilityElement: CustomStringConvertible {
 /// makes for it.
 ///
 /// SwiftUI builds its accessibility tree only for assistive technologies, so
-/// the tree reads it as one: on macOS by turning on the app's enhanced user
+/// the host reads it as one: on macOS by turning on the app's enhanced user
 /// interface, as VoiceOver does, and on iOS by turning on accessibility
-/// automation, as UI tests do. Each read turns it on, reads the elements and
-/// turns it off again in one main-actor turn, so other tests never run with it.
+/// automation, as UI tests do.
+///
+/// Each read turns it on, reads the elements and turns it off again in one
+/// main-actor turn, so other tests never run with it.
 @MainActor
 final class UIFnAccessibilityHost<Content: View> {
     #if os(macOS)
@@ -135,6 +137,27 @@ final class UIFnAccessibilityHost<Content: View> {
         controller.view.layoutIfNeeded()
         return Self.elements(of: controller.view)
         #endif
+    }
+
+    /// The elements, read again on the main actor while the view updates, for
+    /// up to `seconds`, until `complete` holds for them; the last read when
+    /// it never does.
+    ///
+    /// A tree SwiftUI is still updating, as on a loaded machine, then does not
+    /// fail a test on its first read; one that never holds what the test
+    /// expects fails it with the last read. Each read still turns the tree on
+    /// and off in one main-actor turn.
+    func elements(
+        upTo seconds: Double = 2,
+        until complete: ([UIFnAccessibilityElement]) -> Bool
+    ) async -> [UIFnAccessibilityElement] {
+        var read = elements()
+        let deadline = Date().addingTimeInterval(seconds)
+        while !complete(read), Date() < deadline {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+            read = elements()
+        }
+        return read
     }
 
     /// Waits on the main actor while the view updates, for up to `seconds`,
