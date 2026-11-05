@@ -7,7 +7,7 @@ import { processBirthSignature, processIdentityStatus, resolveContainedPath, typ
 import { withFileLock } from "@devfn/ports";
 
 import { DEFAULT_RUNTIME, isNamedRuntime, resolveInstanceIdentity } from "./identity.js";
-import { checkoutReceipts, devfnStateDirectories, runtimeDirectory, runtimeOutputPath, STATE_DIRECTORY_ENTRY } from "./runtime.js";
+import { checkoutReceipts, devfnStateDirectories, runtimeDirectory, runtimeOutputPath } from "./runtime.js";
 import { DevFnError, type InstanceIdentity, type LifecycleReceipt } from "./types.js";
 
 /**
@@ -236,6 +236,9 @@ export async function taskAttribution(config: DevFnConfig, root: string, claims:
 }
 
 /** What an earlier release made for an instance whose receipt has no claim (its runtime directory's parents): the provenance every first claim of it starts from. */ const madeByRelease = (receipt: LifecycleReceipt | undefined, claim: OutputClaim | undefined): string[] => receipt && !claim ? [path.dirname(receipt.runtimeDir), path.dirname(path.dirname(receipt.runtimeDir))] : [];
+/** The trust state @devfn/config writes in a state directory: its record, the record's temp files and its lock. */
+const TRUST_STATE = /^trust\.(?:json(?:\..+\.tmp)?|lock)$/;
+
 /** A union of path lists, in first-seen order. */
 const union = (...lists: (readonly string[] | undefined)[]): string[] => [...new Set(lists.flatMap((list) => list ?? []))];
 
@@ -267,14 +270,17 @@ export async function makeStateDirectory(config: DevFnConfig, root: string, iden
     const lock = path.join(await claimDirectory(root), CLAIMS_LOCK), options = { timeoutMs: CLAIMS_LOCK_TIMEOUT_MS, staleMs: CLAIMS_LOCK_STALE_MS };
     let current: OutputClaim | undefined, next: OutputClaim | undefined;
     await withFileLock(lock, async () => {
-      current = (await readClaims(root)).get(identity.instanceId)?.claim;
+      const claims = await readClaims(root);
+      current = claims.get(identity.instanceId)?.claim;
       const attributed = [...current?.recorded ?? [], ...current?.shared ?? []].some((item) => pathKey(item) === pathKey(canonical));
       if (attributed && !making.length) return;
-      const receipt = (await checkoutReceipts(config, root)).get(identity.instanceId)?.receipt;
+      const receipts = await checkoutReceipts(config, root), receipt = receipts.get(identity.instanceId)?.receipt;
       next = { ...current ?? { version: 1, instanceId: identity.instanceId, runtime: identity.runtime ?? DEFAULT_RUNTIME, targets: [], written: [], pid: process.pid, createdAt: new Date().toISOString() } };
-      // An existing one holding only DevFn's entries, as `--trust` creates it, is DevFn's too: transparent while it holds nothing else.
-      const names = missing.includes(canonical) ? [] : await readdir(canonical).catch(() => [] as string[]);
-      const ours = names.length && names.every((name) => STATE_DIRECTORY_ENTRY.test(name)) ? [canonical] : [];
+      // One no instance records that holds only trust state, as `--trust` creates it just before, is DevFn's too: transparent while it holds nothing else.
+      const recorders = [...[...receipts.values()].map((entry) => entry.receipt.stateDir), ...[...claims.values()].flatMap((entry) => [entry.claim.stateDir, ...entry.claim.shared ?? [], ...entry.claim.recorded ?? []])];
+      const recordedAnywhere = (await Promise.all(recorders.map(async (item) => item !== undefined && await canonicalKey(path.resolve(root, item)) === pathKey(canonical)))).some(Boolean);
+      const names = missing.includes(canonical) || recordedAnywhere ? [] : await readdir(canonical).catch(() => [] as string[]);
+      const ours = names.length && names.every((name) => TRUST_STATE.test(name)) ? [canonical] : [];
       next.made = union(current?.made, madeByRelease(receipt, current), making, ours);
       next[field] = union(current?.[field], [canonical]);
       await writeClaim(root, next);
