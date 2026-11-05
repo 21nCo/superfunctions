@@ -6,10 +6,12 @@ import SwiftUI
 /// current value label, when there is one, at the label's trailing end.
 ///
 /// The value lights its share of the segments, rounded to the nearest one,
-/// except that a value above the range's minimum always lights one and a
-/// value below its maximum always leaves one unlit, so neither reads as empty
-/// or full when it is not. Values outside the range draw as the nearer end,
-/// and a value that is not a number, or a range with no width, as empty.
+/// except that a value strictly inside the range always lights one and leaves
+/// one unlit, so it reads as neither empty nor full. Values outside the range
+/// draw as the nearer end, and a value that is not a number, or a range with
+/// no width or an infinite bound, as empty. Any range with finite bounds and
+/// some width works, even one wider than the largest `Double`, such as
+/// `-Double.greatestFiniteMagnitude...Double.greatestFiniteMagnitude`.
 ///
 /// Accessibility sees a progress indicator with the label, whose value is the
 /// meter's value as a whole percentage of its range, such as “40%”. Like the
@@ -36,7 +38,7 @@ public struct UIFnSegmentedMeter<Label: View, CurrentValueLabel: View>: View {
         @ViewBuilder currentValueLabel: () -> CurrentValueLabel
     ) {
         self.init(
-            fraction: UIFnMeterValue.fraction(Double(value), in: Double(bounds.lowerBound)...Double(bounds.upperBound)),
+            fraction: UIFnMeterValue.fraction(value, in: bounds),
             segments: segments,
             tone: tone,
             label: label(),
@@ -95,7 +97,7 @@ public extension UIFnSegmentedMeter where CurrentValueLabel == EmptyView {
         @ViewBuilder label: () -> Label
     ) {
         self.init(
-            fraction: UIFnMeterValue.fraction(Double(value), in: Double(bounds.lowerBound)...Double(bounds.upperBound)),
+            fraction: UIFnMeterValue.fraction(value, in: bounds),
             segments: segments,
             tone: tone,
             label: label(),
@@ -138,11 +140,23 @@ enum UIFnMeterValue {
 
     /// How far `value` is through `bounds`, from 0 to 1: the nearer end for a
     /// value outside them, and 0 for a value that is not a number or bounds
-    /// with no finite, positive width.
-    static func fraction(_ value: Double, in bounds: ClosedRange<Double>) -> Double {
-        let width = bounds.upperBound - bounds.lowerBound
-        guard width > 0, width.isFinite, !value.isNaN else { return 0 }
-        return UIFnProgress.clamped((value - bounds.lowerBound) / width)
+    /// that are infinite or have no width.
+    ///
+    /// Finite bounds too far apart for their difference to be finite, such
+    /// as `-greatestFiniteMagnitude...greatestFiniteMagnitude`, are halved,
+    /// with the value, before subtracting, which keeps the difference finite
+    /// and the share the same.
+    static func fraction<Value: BinaryFloatingPoint>(_ value: Value, in bounds: ClosedRange<Value>) -> Double {
+        let lower = bounds.lowerBound
+        let upper = bounds.upperBound
+        guard lower.isFinite, upper.isFinite, lower < upper, !value.isNaN else { return 0 }
+        var offset = value - lower
+        var width = upper - lower
+        if !width.isFinite {
+            offset = value / 2 - lower / 2
+            width = upper / 2 - lower / 2
+        }
+        return UIFnProgress.clamped(Double(offset / width))
     }
 
     /// How many of `segments` segments a fraction lights: its share rounded to

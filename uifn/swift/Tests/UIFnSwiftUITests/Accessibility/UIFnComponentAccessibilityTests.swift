@@ -59,6 +59,9 @@ struct UIFnComponentAccessibilityTests {
         (0.996, 0...1, "99%"),
         (0.2, 0...1000, "1%"),
         (999.8, 0...1000, "99%"),
+        (0, -Double.greatestFiniteMagnitude...Double.greatestFiniteMagnitude, "50%"),
+        (-Double.greatestFiniteMagnitude, -Double.greatestFiniteMagnitude...Double.greatestFiniteMagnitude, "0%"),
+        (Double.greatestFiniteMagnitude, -Double.greatestFiniteMagnitude...Double.greatestFiniteMagnitude, "100%"),
     ] as [(Double, ClosedRange<Double>, String)])
     func segmentedMeterIsAProgressIndicatorWithItsValueAsAPercentage(_ value: Double, _ bounds: ClosedRange<Double>, _ percent: String) async {
         await expectElements(

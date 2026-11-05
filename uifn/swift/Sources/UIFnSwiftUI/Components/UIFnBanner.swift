@@ -166,8 +166,10 @@ public struct UIFnToast: Identifiable, Equatable, Sendable {
     public var title: String
     public var message: String?
     public var tone: UIFnTone
-    /// Seconds the toast shows before it dismisses itself, or nil to show it
-    /// until it is dismissed.
+    /// Seconds the toast shows before it dismisses itself, up to 365 days, or
+    /// nil to show it until it is dismissed. A duration that is not positive
+    /// and finite, or is longer than 365 days, also shows it until it is
+    /// dismissed.
     public var duration: TimeInterval?
 
     public init(
@@ -305,25 +307,33 @@ enum UIFnToastTimer {
     /// a `UInt64` with room to spare.
     static let longestSleep: TimeInterval = 86_400
 
-    /// Sleeps until `duration` seconds have passed, one sleep of at most
-    /// ``longestSleep`` seconds at a time, so a duration of any length passes
-    /// in full. Returns whether it did: false at once for a duration that is
-    /// not positive and finite, and false as soon as the task is cancelled.
+    /// The longest duration the timer waits out, in seconds: 365 days. A
+    /// longer duration never passes, as an infinite one does not.
+    static let longestDuration: TimeInterval = 365 * longestSleep
+
+    /// Sleeps until `duration` seconds have passed: a whole number of sleeps
+    /// of ``longestSleep`` seconds, then one for the rest, so a duration up to
+    /// ``longestDuration`` passes in full. Returns whether it did: false at
+    /// once, without sleeping, for a duration that is not positive and finite
+    /// or is longer than ``longestDuration``, and false as soon as the task is
+    /// cancelled.
     static func wait(
         _ duration: TimeInterval,
         sleep: (_ nanoseconds: UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0) }
     ) async -> Bool {
-        guard duration.isFinite, duration > 0 else { return false }
-        var remaining = duration
-        while remaining > 0 {
-            let seconds = min(remaining, longestSleep)
+        guard duration.isFinite, duration > 0, duration <= longestDuration else { return false }
+        // Counting whole sleeps, rather than subtracting each from what is
+        // left, ends after a known number of them.
+        let wholeSleeps = Int(duration / longestSleep)
+        let rest = duration - Double(wholeSleeps) * longestSleep
+        let sleeps = Array(repeating: longestSleep, count: wholeSleeps) + (rest > 0 ? [rest] : [])
+        for seconds in sleeps {
             do {
                 try await sleep(UInt64((seconds * 1_000_000_000).rounded(.up)))
             } catch {
                 return false
             }
             if Task.isCancelled { return false }
-            remaining -= seconds
         }
         return true
     }
@@ -357,7 +367,8 @@ private struct UIFnAnnouncerKey: EnvironmentKey {
 }
 
 extension EnvironmentValues {
-    /// Where UIFn components post announcements. The platform's unless a test sets it.
+    /// Where UIFn components post announcements: the platform's announcer,
+    /// ``UIFnAnnouncer/system``, unless a test sets another.
     var uifnAnnouncer: UIFnAnnouncer {
         get { self[UIFnAnnouncerKey.self] }
         set { self[UIFnAnnouncerKey.self] = newValue }

@@ -146,9 +146,9 @@ struct UIFnToastTests {
         #expect(shown >= .seconds(1.5), "\(shown)")
     }
 
-    /// Without a duration, or with one that never passes, a toast shows until
-    /// it is dismissed.
-    @Test(arguments: [nil, 0, -1, .infinity, .nan] as [TimeInterval?])
+    /// Without a duration, or with one that never passes, such as one longer
+    /// than 365 days, a toast shows until it is dismissed.
+    @Test(arguments: [nil, 0, -1, .infinity, .nan, 1e22, .greatestFiniteMagnitude] as [TimeInterval?])
     func aToastWithoutAPositiveFiniteDurationStays(_ duration: TimeInterval?) async {
         let toast = UIFnToast("Offline", duration: duration)
         let model = Model(toast)
@@ -261,8 +261,26 @@ struct UIFnToastTests {
         #expect(sleeps.nanoseconds == expected)
     }
 
-    /// A duration that is not positive and finite never passes, without sleeping.
-    @Test(arguments: [0, -1, .infinity, -.infinity, .nan] as [TimeInterval])
+    /// The longest duration, 365 days, passes in full: 365 sleeps of a day,
+    /// and just under it a last, shorter sleep.
+    @Test
+    func aToastsTimerWaitsOutTheLongestDuration() async {
+        let day: UInt64 = 86_400_000_000_000
+        let longest = Sleeps()
+        #expect(UIFnToastTimer.longestDuration == 365 * 86_400)
+        #expect(await UIFnToastTimer.wait(UIFnToastTimer.longestDuration) { try longest.sleep($0) })
+        #expect(longest.nanoseconds == Array(repeating: day, count: 365))
+        let justUnder = Sleeps()
+        #expect(await UIFnToastTimer.wait(UIFnToastTimer.longestDuration - 0.5) { try justUnder.sleep($0) })
+        #expect(justUnder.nanoseconds == Array(repeating: day, count: 364) + [day - 500_000_000])
+    }
+
+    /// A duration that is not positive and finite, or longer than the longest,
+    /// never passes, without sleeping, even one so long that subtracting a day
+    /// from it leaves it the same.
+    @Test(arguments: [
+        0, -1, .infinity, -.infinity, .nan, UIFnToastTimer.longestDuration + 0.5, 1e22, .greatestFiniteMagnitude,
+    ] as [TimeInterval])
     func aToastsTimerDoesNotWaitOutADurationThatNeverPasses(_ duration: TimeInterval) async {
         let sleeps = Sleeps()
         #expect(await UIFnToastTimer.wait(duration) { try sleeps.sleep($0) } == false)

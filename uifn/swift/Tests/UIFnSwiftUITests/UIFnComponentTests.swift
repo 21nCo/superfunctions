@@ -43,6 +43,35 @@ struct UIFnComponentTests {
         #expect(UIFnMeterValue.fraction(value, in: bounds) == fraction)
     }
 
+    /// Finite bounds too far apart to subtract still give a value its share:
+    /// the midpoint of the widest range lights half the segments and reads 50%.
+    @Test(arguments: [
+        (0, -Double.greatestFiniteMagnitude...Double.greatestFiniteMagnitude, 0.5, 2, 50),
+        (Double.greatestFiniteMagnitude / 2, -Double.greatestFiniteMagnitude...Double.greatestFiniteMagnitude, 0.75, 3, 75),
+        (-Double.greatestFiniteMagnitude, -Double.greatestFiniteMagnitude...Double.greatestFiniteMagnitude, 0, 0, 0),
+        (Double.greatestFiniteMagnitude, -Double.greatestFiniteMagnitude...Double.greatestFiniteMagnitude, 1, 4, 100),
+        (.infinity, -Double.greatestFiniteMagnitude...Double.greatestFiniteMagnitude, 1, 4, 100),
+        (-.infinity, -Double.greatestFiniteMagnitude...Double.greatestFiniteMagnitude, 0, 0, 0),
+        (.nan, -Double.greatestFiniteMagnitude...Double.greatestFiniteMagnitude, 0, 0, 0),
+        (0, -Double.greatestFiniteMagnitude...0, 1, 4, 100),
+        (Double.greatestFiniteMagnitude, -Double.greatestFiniteMagnitude / 2...Double.greatestFiniteMagnitude, 1, 4, 100),
+    ] as [(Double, ClosedRange<Double>, Double, Int, Int)])
+    func aMeterOverTheWidestRangeLightsAndReadsItsShare(
+        _ value: Double, _ bounds: ClosedRange<Double>, _ fraction: Double, _ lit: Int, _ percent: Int
+    ) {
+        let share = UIFnMeterValue.fraction(value, in: bounds)
+        #expect(share == fraction)
+        #expect(UIFnMeterValue.litSegments(share, of: 4) == lit)
+        #expect(UIFnMeterValue.percent(share) == percent)
+    }
+
+    /// Any floating-point type's widest range works too.
+    @Test
+    func aMeterOverAFloatTypesWidestRangeReadsItsShare() {
+        #expect(UIFnMeterValue.fraction(Float(0), in: -Float.greatestFiniteMagnitude...Float.greatestFiniteMagnitude) == 0.5)
+        #expect(UIFnMeterValue.fraction(Float(1), in: 0...4) == 0.25)
+    }
+
     @MainActor
     private static func meter(_ value: Double, segments: Int, _ direction: LayoutDirection = .leftToRight) -> some View {
         UIFnSegmentedMeter(value: value, segments: segments) { EmptyView() }
