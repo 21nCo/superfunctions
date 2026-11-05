@@ -1492,6 +1492,85 @@ it("keeps a task's input revision while DevFn creates and uses a sibling's neste
   }
 }, 120_000);
 
+it("keeps a task's input revision when a start into a new nested state directory inside the checkout fails after DevFn wrote there, and keeps an earlier release's provenance when a later start or stop records a claim", async () => {
+  const { parent, primary } = await repository();
+  const seed = (rerun: "on-change" | "once") => validateDevFnConfig({ version: 1, project: { id: "failed-state-input" },
+    processes: { seed: { adapter: "command", command: [process.execPath, "-e", "0"], task: { rerun, inputs: ["."] } } }, profiles: { default: { processes: ["seed"] } } });
+  const idle = [process.execPath, "-e", "setInterval(() => undefined, 1_000)"];
+  const withResources = validateDevFnConfig({ version: 1, project: { id: "failed-state-input" }, ports: { r: {} },
+    processes: { redis: { adapter: "command", command: idle, ports: ["r"] }, worker: { adapter: "command", command: idle, resources: ["cache"] } },
+    resources: { cache: { kind: "cache", defaultTarget: "local", targets: { local: { node: "redis", port: "r", scheme: "redis" } } } }, profiles: { default: { processes: ["worker", "redis"] } } } as never);
+  const plain = validateDevFnConfig({ version: 1, project: { id: "failed-state-input" }, ports: { r: {} }, processes: { app: { adapter: "command", command: idle, ports: ["r"] } }, profiles: { default: { processes: ["app"] } } } as never);
+  const legacy = validateDevFnConfig({ version: 1, project: { id: "failed-state-input" }, runtimeDir: "old-run", processes: {}, profiles: { default: { processes: [] } } } as never);
+  const orchestrator = new DevFnOrchestrator();
+  const revision = async () => await taskInputRevision(seed("on-change"), primary, { name: "seed", kind: "process" }, "default");
+  const outside = (name: string) => path.join(parent, name);
+  const reserve = FilePortRegistry.prototype.reserve;
+  try {
+    await writeFile(path.join(primary, "schema.sql"), "create table t();");
+    const before = await revision();
+    // A first start whose port reservation fails leaves runtime-id and registry.json in the state directory it created: DevFn's, while written and after.
+    for (const [config, runtime, state] of [[withResources, "b", ["cache", "state"]], [plain, "c", ["cache2", "state"]]] as const) {
+      const stateDir = path.join(primary, ...state), atWrite: string[] = [];
+      const spy = vi.spyOn(FilePortRegistry.prototype, "reserve").mockImplementation(async function (this: FilePortRegistry, ...args: Parameters<FilePortRegistry["reserve"]>) {
+        await reserve.apply(this, args);
+        atWrite.push(await revision());
+        throw new Error("stopped at port reservation");
+      });
+      try { await expect(orchestrator.up({ config, root: primary, stateDir, runtime })).rejects.toThrow("stopped at port reservation"); } finally { spy.mockRestore(); }
+      expect((await readdir(stateDir)).filter((name) => !name.endsWith(".lock"))).toEqual(expect.arrayContaining(runtime === "b" ? ["registry.json", "runtime-id"] : ["registry.json"]));
+      expect(atWrite).toEqual([before]);
+      expect(await revision()).toBe(before);
+    }
+    // Runtime d left a claimless stopped receipt, as an earlier release did, with its runtime directory in old-run.
+    const d = await resolveInstanceIdentity("failed-state-input", primary, "d");
+    expect((await orchestrator.up({ config: legacy, root: primary, stateDir: outside("d-state"), runtime: "d" })).state).toBe("ready");
+    expect((await orchestrator.down({ config: legacy, root: primary, stateDir: outside("d-state"), runtime: "d" })).state).toBe("stopped");
+    await rm(path.join(primary, ".devfn", "receipts", "outputs", `${d.instanceId}.json`));
+    // A run-once task of the default runtime completes with that receipt in place.
+    expect((await orchestrator.up({ config: seed("once"), root: primary, stateDir: outside("a-state") })).state).toBe("ready");
+    expect((await orchestrator.down({ config: seed("once"), root: primary, stateDir: outside("a-state") })).state).toBe("stopped");
+    const legacyBefore = await revision();
+    // A stop of d with a new state directory records a claim, which keeps the earlier release's provenance.
+    await expect(orchestrator.down({ config: legacy, root: primary, stateDir: path.join(primary, "fresh", "state"), runtime: "d" })).rejects.toMatchObject({ code: "DEVFN_NOT_RUNNING" });
+    expect(await revision()).toBe(legacyBefore);
+    expect((await orchestrator.up({ config: seed("once"), root: primary, stateDir: outside("a-state") })).state).toBe("ready");
+    expect((await orchestrator.down({ config: seed("once"), root: primary, stateDir: outside("a-state") })).state).toBe("stopped");
+    // So does a start of a claimless instance with a new state directory.
+    const e = await resolveInstanceIdentity("failed-state-input", primary, "e");
+    expect((await orchestrator.up({ config: legacy, root: primary, stateDir: outside("e-state"), runtime: "e" })).state).toBe("ready");
+    expect((await orchestrator.down({ config: legacy, root: primary, stateDir: outside("e-state"), runtime: "e" })).state).toBe("stopped");
+    await rm(path.join(primary, ".devfn", "receipts", "outputs", `${e.instanceId}.json`));
+    const withE = await revision();
+    expect((await orchestrator.up({ config: legacy, root: primary, stateDir: path.join(primary, "later", "state"), runtime: "e" })).state).toBe("ready");
+    expect(await revision()).toBe(withE);
+    expect((await orchestrator.down({ config: legacy, root: primary, stateDir: path.join(primary, "later", "state"), runtime: "e" })).state).toBe("stopped");
+    expect(await revision()).toBe(withE);
+  } finally {
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 180_000);
+
+it("refuses a start or stop that would create state directories when its own claim cannot be read, leaving the claim as it was and creating nothing", async () => {
+  const { parent, primary } = await repository();
+  const config = validateDevFnConfig({ version: 1, project: { id: "malformed-own-claim" }, processes: {}, profiles: { default: { processes: [] } } });
+  const orchestrator = new DevFnOrchestrator();
+  try {
+    const { instanceId } = await resolveInstanceIdentity("malformed-own-claim", primary, "b");
+    const claimFile = path.join(primary, ".devfn", "receipts", "outputs", `${instanceId}.json`);
+    const malformed = `{"version":1,"instanceId":"${instanceId}","targets":["/owned/thing"],"truncated":`;
+    await mkdir(path.dirname(claimFile), { recursive: true });
+    await writeFile(claimFile, malformed);
+    for (const command of [() => orchestrator.down({ config, root: primary, stateDir: path.join(primary, "fresh", "state"), runtime: "b" }), () => orchestrator.up({ config, root: primary, stateDir: path.join(primary, "fresh", "state"), runtime: "b" })]) {
+      await expect(command()).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID" });
+      expect(await readFile(claimFile, "utf8")).toBe(malformed);
+      await expect(access(path.join(primary, "fresh"))).rejects.toMatchObject({ code: "ENOENT" });
+    }
+  } finally {
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 120_000);
+
 it("treats every path below a filesystem root as inside it", () => {
   const root = path.parse(process.cwd()).root;
   expect(within(path.join(root, "checkout", "state"), root)).toBe(true);
