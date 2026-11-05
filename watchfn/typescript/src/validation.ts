@@ -45,10 +45,17 @@ export function ownField(value: object, key: PropertyKey): unknown {
   return Object.hasOwn(value, key) ? (value as Record<PropertyKey, unknown>)[key] : undefined;
 }
 
+/** Unknown field names reported by name; the rest are counted in one issue. */
+const MAX_REPORTED_UNKNOWN_FIELDS = 10;
+
 function unknownKeys(value: Record<string, unknown>, allowed: readonly string[], path: string, issues: string[]): void {
+  let unknown = 0;
   for (const key of Object.keys(value)) {
-    if (!allowed.includes(key)) issues.push(`${path}${key}: unknown field`);
+    if (allowed.includes(key)) continue;
+    unknown += 1;
+    if (unknown <= MAX_REPORTED_UNKNOWN_FIELDS) issues.push(`${path}.${key}: unknown field`);
   }
+  if (unknown > MAX_REPORTED_UNKNOWN_FIELDS) issues.push(`${path}: ${unknown - MAX_REPORTED_UNKNOWN_FIELDS} more unknown fields`);
 }
 
 function daysInMonth(year: number, month: number): number {
@@ -153,6 +160,10 @@ export function validateAttributes(value: unknown, path: string, issues: string[
       issues.push(`${path}.${key.slice(0, 40)}: invalid attribute name`);
       continue;
     }
+    if (!Object.hasOwn(value, key)) {
+      issues.push(`${path}.${key.slice(0, 40)}: changed while it was read`);
+      continue;
+    }
     const item = value[key];
     if (validateAttributeValue(item, `${path}.${key}`, issues)) result[key] = item;
   }
@@ -181,11 +192,23 @@ function chargeString(budget: DataBudget, value: string): boolean {
   return charge(budget, encoder.encode(JSON.stringify(value)).byteLength);
 }
 
+function changed(path: string, issues: string[]): undefined {
+  issues.push(`${path}: changed while it was read`);
+  return undefined;
+}
+
+/**
+ * Copies an array from one read of its length: brackets and commas are charged
+ * for exactly the items copied, and a getter that grows, shrinks or empties the
+ * array while it is read rejects it.
+ */
 function copyArray(value: unknown[], path: string, depth: number, issues: string[], budget: DataBudget): JsonValue[] | undefined {
+  const length = value.length;
+  if (!charge(budget, length > 0 ? length + 1 : 2)) return undefined; // brackets and commas
   const copy: JsonValue[] = [];
-  if (!charge(budget, value.length > 0 ? value.length + 1 : 2)) return undefined; // brackets and commas
-  for (let index = 0; index < value.length; index += 1) {
+  for (let index = 0; index < length; index += 1) {
     if (!Object.hasOwn(value, index)) {
+      if (value.length !== length) return changed(path, issues);
       issues.push(`${path}[${index}]: sparse arrays are not JSON`);
       return undefined;
     }
@@ -193,21 +216,28 @@ function copyArray(value: unknown[], path: string, depth: number, issues: string
     if (item === undefined) return undefined;
     copy.push(item);
   }
-  return copy;
+  return value.length === length ? copy : changed(path, issues);
 }
 
+/**
+ * Copies an object from one snapshot of its own enumerable keys. Listing the
+ * keys is linear in the caller's own object and reads no values; a wide object
+ * fails the comma charge before any value is read. Removing a key before it
+ * is read, or changing the key count while values are read, rejects the object.
+ */
 function copyObject(value: Record<string, unknown>, path: string, depth: number, issues: string[], budget: DataBudget): JsonValue | undefined {
-  const copy: Record<string, JsonValue> = {};
   const keys = Object.keys(value);
   if (!charge(budget, keys.length > 0 ? keys.length + 1 : 2)) return undefined; // braces and commas
+  const copy: Record<string, JsonValue> = {};
   for (const key of keys) {
     if (!chargeString(budget, key) || !charge(budget, 1)) return undefined; // key and colon
+    if (!Object.hasOwn(value, key)) return changed(path, issues);
     const item = copyJson(value[key], `${path}.${key}`, depth + 1, issues, budget);
     if (item === undefined) return undefined;
     // defineProperty keeps a "__proto__" key as data instead of changing the prototype.
     Object.defineProperty(copy, key, { value: item, enumerable: true, writable: true, configurable: true });
   }
-  return copy;
+  return Object.keys(value).length === keys.length ? copy : changed(path, issues);
 }
 
 /**
@@ -238,25 +268,40 @@ function copyJson(value: unknown, path: string, depth: number, issues: string[],
   return undefined;
 }
 
-/** Validates a strict JSON payload within the size limit and returns a detached copy. */
-export function validateData(value: unknown, path: string, issues: string[]): JsonValue | undefined {
+/** Result of {@link copyData}: the detached copy, or the issues that rejected it, and the JSON bytes charged. */
+export interface DataCopy {
+  copy: JsonValue | undefined;
+  issues: string[];
+  /** Serialized UTF-8 bytes charged; equals the copy's JSON.stringify size when a copy is returned. */
+  chargedBytes: number;
+}
+
+/**
+ * Copies a strict JSON payload within `maxBytes` of serialized JSON. Internal:
+ * exported so tests can check that the bytes charged match the copy.
+ */
+export function copyData(value: unknown, path: string, maxBytes: number = LIMITS.maxDataBytes): DataCopy {
   // Own issue list: earlier problems elsewhere in the event must not skip this check.
   const own: string[] = [];
-  const budget: DataBudget = { remaining: LIMITS.maxDataBytes, exceeded: false };
+  const budget: DataBudget = { remaining: maxBytes, exceeded: false };
   const copy = copyJson(value, path, 0, own, budget);
-  if (budget.exceeded) {
-    issues.push(`${path}: larger than ${LIMITS.maxDataBytes} bytes as JSON`);
-    return undefined;
-  }
-  if (copy === undefined) issues.push(...own);
-  return copy;
+  const chargedBytes = maxBytes - budget.remaining;
+  if (budget.exceeded) return { copy: undefined, issues: [`${path}: larger than ${maxBytes} bytes as JSON`], chargedBytes };
+  return { copy, issues: copy === undefined ? own : [], chargedBytes };
+}
+
+/** Validates a strict JSON payload within the size limit and returns a detached copy. */
+export function validateData(value: unknown, path: string, issues: string[]): JsonValue | undefined {
+  const result = copyData(value, path);
+  issues.push(...result.issues);
+  return result.copy;
 }
 
 /** Validates an event input without touching storage. */
 export function normalizeEvent(input: unknown, path = "event"): Validated<NormalizedEvent> {
   const issues: string[] = [];
   if (!isPlainObject(input)) return { ok: false, issues: [`${path}: must be a plain object`] };
-  unknownKeys(input, ["type", "timestamp", "attributes", "data"], `${path}.`, issues);
+  unknownKeys(input, ["type", "timestamp", "attributes", "data"], path, issues);
   const type = ownField(input, "type");
   validateType(type, `${path}.type`, issues);
   let timestampMs: number | undefined;
@@ -282,7 +327,7 @@ export function normalizeQuery(input: unknown): Validated<StorageQuery> {
   const issues: string[] = [];
   if (input === undefined) input = {};
   if (!isPlainObject(input)) return { ok: false, issues: ["query: must be a plain object"] };
-  unknownKeys(input, ["from", "to", "type", "attributes", "limit", "order"], "query.", issues);
+  unknownKeys(input, ["from", "to", "type", "attributes", "limit", "order"], "query", issues);
 
   const query: StorageQuery = { attributes: [], limit: LIMITS.defaultQueryLimit, order: "desc" };
   for (const bound of ["from", "to"] as const) {
