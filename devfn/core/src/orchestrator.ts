@@ -667,15 +667,24 @@ export class DevFnOrchestrator {
       ...(preflight.resources ? { resources: preflight.resources } : {}), environments: preflight.nodes, ...(options.rerunTasks ? { rerunTasks: options.rerunTasks } : {}), ...(locked ? { locked } : {}) });
     // Unknown reruns, missing task inputs and blocked tasks fail here; the locked start decides again from the journals.
     await decideTasks(requestedStateDir);
-    await makeStateDirectory(options.config, options.root, identity, requestedStateDir, true);
+    const withdraw = await makeStateDirectory(options.config, options.root, identity, requestedStateDir, true);
     const stateDir = await realpath(requestedStateDir);
     // The instance's checkout-wide lock first: its claim spans state directories.
+    try { return await this.upInstance(options, stateDir, identity, loadedPolicy, decideTasks, async () => { preflight = await resolvePreflight(); }); }
+    catch (error) {
+      await withdraw().catch(() => undefined);
+      throw error;
+    }
+  }
+
+  private async upInstance(options: UpOptions, stateDir: string, identity: RoutingIdentity, loadedPolicy: Awaited<ReturnType<typeof loadDevFnPolicy>>,
+    decideTasks: (stateDir: string, locked?: { signal?: AbortSignal }) => Promise<unknown>, replan: () => Promise<void>): Promise<LifecycleReceipt> {
     return await withInstanceLifecycleLock(options.root, identity.instanceId, async () => await withFileLock(path.join(stateDir, `lifecycle-${identity.instanceId}.lock`), async () => {
       // A concurrent first start may have recorded another; the locked pass plans with the recorded one.
       const recorded = identity.runtimeId ? await recordRuntimeId(stateDir, identity.runtimeId) : undefined;
       if (recorded && recorded !== identity.runtimeId) {
         identity.runtimeId = recorded;
-        preflight = await resolvePreflight();
+        await replan();
       }
       // Environment-output files are claimed checkout-wide before anything
       // else changes; a start that never records its receipt gives them back.

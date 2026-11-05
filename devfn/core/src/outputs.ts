@@ -7,7 +7,7 @@ import { processBirthSignature, processIdentityStatus, resolveContainedPath, typ
 import { withFileLock } from "@devfn/ports";
 
 import { DEFAULT_RUNTIME, isNamedRuntime, resolveInstanceIdentity } from "./identity.js";
-import { checkoutReceipts, devfnStateDirectories, runtimeDirectory, runtimeOutputPath } from "./runtime.js";
+import { checkoutReceipts, devfnStateDirectories, runtimeDirectory, runtimeOutputPath, STATE_DIRECTORY_ENTRY } from "./runtime.js";
 import { DevFnError, type InstanceIdentity, type LifecycleReceipt } from "./types.js";
 
 /**
@@ -248,9 +248,13 @@ const union = (...lists: (readonly string[] | undefined)[]): string[] => [...new
  * creates as made; the state directory itself, when a start creates it, as held whole (`recorded`), and otherwise, also when it
  * existed before, as shared, whose DevFn entries are held by name. The record stays with the claim through a failed or
  * interrupted start and a refused stop. A state path that is or lies below something other than a directory, or claims that
- * cannot be read, refuse it before any write; a failed creation keeps provenance only for the directories it left.
+ * cannot be read, refuse it before any write; a failed creation keeps provenance only for the directories it left. It returns
+ * the withdrawal of a refused start: a record of an existing state directory in a claim it created goes again, with the claim
+ * directories, when the start left that directory's DevFn entries as they were, so a refused start leaves no DevFn state.
  */
-export async function makeStateDirectory(config: DevFnConfig, root: string, identity: InstanceIdentity, stateDir: string, starting = false): Promise<void> {
+export async function makeStateDirectory(config: DevFnConfig, root: string, identity: InstanceIdentity, stateDir: string, starting = false): Promise<() => Promise<void>> {
+  let withdraw: () => Promise<void> = async () => undefined;
+  const fresh = (await missingDirectories(path.join(root, CLAIMS))).at(-1);
   await withInstanceLifecycleLock(root, identity.instanceId, async () => {
     const rootKey = pathKey(await realpath(root).catch(() => path.resolve(root)));
     const inside = (item: string) => pathKey(item) !== rootKey && within(pathKey(item), rootKey);
@@ -283,6 +287,10 @@ export async function makeStateDirectory(config: DevFnConfig, root: string, iden
       const ours = names.length && names.every((name) => TRUST_STATE.test(name)) ? [canonical] : [];
       next.made = union(current?.made, madeByRelease(receipt, current), making, ours);
       next[field] = union(current?.[field], [canonical]);
+      if (!current && field === "shared" && !making.length) {
+        const before = await stateEntries(canonical);
+        withdraw = async () => await withdrawStateRecord(root, identity.instanceId, canonical, before, fresh);
+      }
       await writeClaim(root, next);
     }, options);
     await mkdir(stateDir, { recursive: true, mode: 0o700 }).catch(async (error: unknown) => {
@@ -291,6 +299,23 @@ export async function makeStateDirectory(config: DevFnConfig, root: string, iden
       throw error;
     });
   });
+  return withdraw;
+}
+
+/** A state directory's DevFn entries other than locks, with their modification times. */
+async function stateEntries(directory: string): Promise<string> {
+  const names = (await readdir(directory).catch(() => [] as string[])).filter((name) => STATE_DIRECTORY_ENTRY.test(name) && !/\.lock(?:\.released\..+)?$/.test(name)).sort();
+  return JSON.stringify(await Promise.all(names.map(async (name) => [name, (await lstat(path.join(directory, name)).catch(() => undefined))?.mtimeMs ?? null])));
+}
+
+/** Remove the record a refused start published for an existing state directory while its claim records nothing else and the start changed no DevFn entry there. */
+async function withdrawStateRecord(root: string, instanceId: string, stateDir: string, before: string, fresh: string | undefined): Promise<void> {
+  await withInstanceLifecycleLock(root, instanceId, async () => await withFileLock(path.join(await claimDirectory(root), CLAIMS_LOCK), async () => {
+    const text = await readOwnClaim(root, instanceId), claim = text === undefined ? undefined : parseClaim(text, instanceId);
+    if (!claim || claim.targets.length || claim.written.length || claim.pending?.length || claim.runtimeDirectory !== undefined) return;
+    if (await stateEntries(stateDir) === before) await removeClaim(root, instanceId);
+  }, { timeoutMs: CLAIMS_LOCK_TIMEOUT_MS, staleMs: CLAIMS_LOCK_STALE_MS }));
+  if (fresh) await removeEmptyDirectories(path.join(root, CLAIMS), fresh);
 }
 
 /** After a failed creation, the claim before it keeps provenance only for the directories the creation left; a claim it created goes when it left none. */
