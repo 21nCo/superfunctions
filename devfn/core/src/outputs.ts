@@ -7,7 +7,7 @@ import { processBirthSignature, processIdentityStatus, resolveContainedPath, typ
 import { withFileLock } from "@devfn/ports";
 
 import { DEFAULT_RUNTIME, isNamedRuntime, resolveInstanceIdentity } from "./identity.js";
-import { checkoutReceipts, devfnStateDirectories, runtimeDirectory, runtimeOutputPath } from "./runtime.js";
+import { checkoutReceipts, devfnStateDirectories, runtimeDirectory, runtimeOutputPath, STATE_DIRECTORY_ENTRY } from "./runtime.js";
 import { DevFnError, type InstanceIdentity, type LifecycleReceipt } from "./types.js";
 
 /**
@@ -272,7 +272,10 @@ export async function makeStateDirectory(config: DevFnConfig, root: string, iden
       if (attributed && !making.length) return;
       const receipt = (await checkoutReceipts(config, root)).get(identity.instanceId)?.receipt;
       next = { ...current ?? { version: 1, instanceId: identity.instanceId, runtime: identity.runtime ?? DEFAULT_RUNTIME, targets: [], written: [], pid: process.pid, createdAt: new Date().toISOString() } };
-      next.made = union(current?.made, madeByRelease(receipt, current), making);
+      // An existing one holding only DevFn's entries, as `--trust` creates it, is DevFn's too: transparent while it holds nothing else.
+      const names = missing.includes(canonical) ? [] : await readdir(canonical).catch(() => [] as string[]);
+      const ours = names.length && names.every((name) => STATE_DIRECTORY_ENTRY.test(name)) ? [canonical] : [];
+      next.made = union(current?.made, madeByRelease(receipt, current), making, ours);
       next[field] = union(current?.[field], [canonical]);
       await writeClaim(root, next);
     }, options);

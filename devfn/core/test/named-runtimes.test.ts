@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import { composeProjectName } from "@devfn/compose";
-import { validateDevFnConfig, type DevFnConfig } from "@devfn/config";
+import { trustProject, validateDevFnConfig, type DevFnConfig } from "@devfn/config";
 import { FilePortRegistry, withFileLock } from "@devfn/ports";
 import { CaddyProxyController, proxyListenerPorts, proxyOwnerStatus } from "@devfn/proxy";
 import { describe, expect, it, vi } from "vitest";
@@ -1726,6 +1726,20 @@ it("keeps a task's input revision through every DevFn write of a failed, retried
       await expect(orchestrator.down({ config: sibling, root: primary, stateDir, runtime })).rejects.toMatchObject({ code: "DEVFN_NOT_RUNNING" });
       expect(seen).toEqual(Array.from({ length: variant === "existing" ? 5 : 6 }, () => before));
       expect(await revision()).toBe(before);
+      // So do the other writers' files there: trust state, Caddy's candidate and preflight configurations, also renamed away during a walk.
+      await mkdir(path.join(stateDir, "trust.lock"));
+      await writeFile(path.join(stateDir, "trust.lock", "a.ticket"), "{}");
+      for (const name of ["trust.json", "trust.json.1.a.tmp", "Caddyfile.candidate", `Caddyfile.preflight.${process.pid}.a`]) await writeFile(path.join(stateDir, name), "generated");
+      const candidate = path.join(stateDir, "Caddyfile.candidate");
+      reads.before = async (_operation, file) => { if (file === candidate) await rename(candidate, path.join(stateDir, "Caddyfile")); };
+      expect(await revision()).toBe(before);
+      reads.before = undefined;
+      // A user's directory that only resembles a DevFn name stays an input.
+      await mkdir(path.join(stateDir, "proxy"));
+      await writeFile(path.join(stateDir, "proxy", "schema.sql"), "-- mine");
+      expect(await revision()).not.toBe(before);
+      await rm(path.join(stateDir, "proxy"), { recursive: true });
+      expect(await revision()).toBe(before);
       // Only DevFn's entries are held: a user's file in the state directory is an input, and a DevFn file there is no input.
       await writeFile(path.join(stateDir, "notes.sql"), "-- changed");
       expect(await revision()).not.toBe(before);
@@ -1734,13 +1748,13 @@ it("keeps a task's input revision through every DevFn write of a failed, retried
       if (variant === "existing") expect(await revision()).not.toBe(before);
     }
   } finally {
-    lifecycle.recorded = undefined; lifecycle.read = undefined;
+    lifecycle.recorded = undefined; lifecycle.read = undefined; reads.before = undefined;
     for (const [stateDir, runtime] of states) await orchestrator.down({ config: sibling, root: primary, stateDir, runtime }).catch(() => undefined);
     await rm(parent, { recursive: true, force: true });
   }
 }, 180_000);
 
-it("keeps a task's input revision when a start into an existing state directory inside the checkout is killed after recording its runtime identity, and a later start and stop succeed", async () => {
+it("keeps a task's input revision when a start into an existing state directory inside the checkout is killed after recording its runtime identity, and a later start and stop succeed, also in one --trust created", async () => {
   const { parent, primary } = await repository();
   const config = validateDevFnConfig({ version: 1, project: { id: "killed-state-input" },
     processes: { seed: { adapter: "command", command: [process.execPath, "-e", "0"], task: { rerun: "on-change", inputs: ["."] } } }, profiles: { default: { processes: ["seed"] } } });
@@ -1757,6 +1771,15 @@ it("keeps a task's input revision when a start into an existing state directory 
     expect(await revision()).toBe(before);
     expect((await orchestrator.up({ config: sibling, root: primary, stateDir, runtime: "b" })).state).toBe("ready");
     expect((await orchestrator.down({ config: sibling, root: primary, stateDir, runtime: "b" })).state).toBe("stopped");
+    expect(await revision()).toBe(before);
+    // A state directory `--trust` created holds only DevFn's entries when a start first records it, so it is DevFn's, also after trust is refreshed.
+    const trusted = path.join(primary, ".state");
+    await writeFile(path.join(parent, "devfn.json"), "{}");
+    await trustProject(primary, path.join(parent, "devfn.json"), trusted);
+    expect((await orchestrator.up({ config: sibling, root: primary, stateDir: trusted, runtime: "c" })).state).toBe("ready");
+    expect(await revision()).toBe(before);
+    await trustProject(primary, path.join(parent, "devfn.json"), trusted);
+    expect((await orchestrator.down({ config: sibling, root: primary, stateDir: trusted, runtime: "c" })).state).toBe("stopped");
     expect(await revision()).toBe(before);
     // Moved to a state directory elsewhere, it still holds what it left in this one.
     expect((await orchestrator.up({ config: sibling, root: primary, stateDir: path.join(parent, "elsewhere"), runtime: "b" })).state).toBe("ready");

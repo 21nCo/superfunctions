@@ -161,7 +161,7 @@ async function digestInput(root: string, relative: string, field: string, exclud
     if (!stats) return; if (stats.isSymbolicLink()) hash.update(`l\0${name}\0${await readlink(absolute).catch(gone(shown, absolute)) ?? ""}\0`);
     else if (stats.isDirectory()) {
       const marker = hash.update(below(fixed, absolute) ? "" : `d\0${name}\0`) - 1, listing = await opendir(absolute).catch(gone(shown, absolute)); listed.push(absolute); // Its marker depends on the config's own state below it, as in DevFn v0.1, and on provenance, never on recorded state below it: only a directory DevFn made, holding nothing else, is transparent.
-      const entries: string[] = []; for await (const { name: entry } of listing ?? []) if (!await isExcludedEntry(excluded, path.join(absolute, entry)) && entries.push(entry) > MAX_INPUT_ENTRIES - budget.entries) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} lists more than ${MAX_INPUT_ENTRIES} entries.`);
+      const entries: string[] = []; for await (const { name: entry } of listing ?? []) if (!await isExcludedEntry(excluded, path.join(absolute, entry)) && !ownEntry(path.join(absolute, entry)) && entries.push(entry) > MAX_INPUT_ENTRIES - budget.entries) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} lists more than ${MAX_INPUT_ENTRIES} entries.`);
       for (const entry of entries.sort(compare)) await visit(path.join(absolute, entry), `${name}/${entry}`);
       if (hash.parts.length === marker + 1 && made.includes(absolute)) hash.parts.length = marker;
     } else if (stats.isFile()) {
