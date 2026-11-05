@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/envelope",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Canonical response envelope constructors and compatibility helpers",
   "type": "module",
   "main": "./dist/index.js",

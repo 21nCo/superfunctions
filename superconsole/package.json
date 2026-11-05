@@ -24,13 +24,13 @@
     "verify:function-agnostic": "node scripts/verify-function-agnostic.mjs"
   },
   "dependencies": {
-    "@mcpfn/core": "0.0.5",
-    "@superfunctions/admin": "0.1.4",
+    "@mcpfn/core": "0.0.6",
+    "@superfunctions/admin": "0.1.5",
     "@sveltejs/kit": "2.69.3",
-    "@uifn/components": "0.0.1",
-    "@uifn/components-svelte": "0.0.1",
-    "@uifn/theme": "0.0.1",
-    "@uifn/theme-tailwind": "0.0.1",
+    "@uifn/components": "0.0.2",
+    "@uifn/components-svelte": "0.0.2",
+    "@uifn/theme": "0.0.2",
+    "@uifn/theme-tailwind": "0.0.2",
     "svelte": "5.46.4"
   },
   "devDependencies": {

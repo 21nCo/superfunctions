@@ -1,6 +1,6 @@
 {
   "name": "@datafn/extfn",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "DataFn integration plugin and proxy client surface for extfn consumers",
   "type": "module",
   "main": "./dist/index.js",
@@ -33,7 +33,7 @@
   "dependencies": {
     "@datafn/client": "0.1.0",
     "@datafn/core": "0.1.0",
-    "@extfn/core": "0.1.0"
+    "@extfn/core": "0.1.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

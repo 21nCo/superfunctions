@@ -1,6 +1,6 @@
 {
   "name": "@searchfn/core-wasm",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Experimental WASM engine wrapper for SearchFn.",
   "license": "MIT",
   "repository": {
@@ -33,7 +33,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@searchfn/core": "0.3.0"
+    "@searchfn/core": "0.3.1"
   },
   "devDependencies": {
     "@types/node": "^24.9.1",

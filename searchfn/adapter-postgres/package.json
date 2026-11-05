@@ -34,8 +34,8 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json"
   },
   "dependencies": {
-    "@searchfn/adapter-contracts": "0.4.0",
-    "@superfunctions/observability": "0.0.2",
+    "@searchfn/adapter-contracts": "0.4.1",
+    "@superfunctions/observability": "0.0.3",
     "pg": "^8.17.2"
   },
   "devDependencies": {

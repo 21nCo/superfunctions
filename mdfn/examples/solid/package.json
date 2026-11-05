@@ -10,10 +10,10 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@mdfn/components": "0.1.0",
-    "@mdfn/components-solid": "0.1.0",
-    "@uifn/components": "0.0.1",
-    "@mdfn/facade": "0.1.0",
+    "@mdfn/components": "0.1.1",
+    "@mdfn/components-solid": "0.1.1",
+    "@uifn/components": "0.0.2",
+    "@mdfn/facade": "0.1.1",
     "solid-js": "^1.9.13"
   },
   "devDependencies": {

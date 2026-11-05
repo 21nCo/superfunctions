@@ -88,4 +88,4 @@ export function compareAdapterTraces(reference: AdapterTrace, traces: readonly A
   return traces.filter((trace) => normalized(trace) !== normalized(reference)).map((trace) => trace.framework);
 }
 
-export const MDFN_ADAPTER_KIT_VERSION = "0.1.0" as const;
+export const MDFN_ADAPTER_KIT_VERSION = "0.1.1" as const;

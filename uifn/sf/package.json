@@ -21,7 +21,7 @@
     "prepack": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
-    "@uifn/patterns": "0.2.0-experimental.0"
+    "@uifn/patterns": "0.2.0-experimental.1"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

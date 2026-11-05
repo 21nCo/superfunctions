@@ -1,6 +1,6 @@
 {
   "name": "@uifn/theme-tailwind",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Tailwind preset and plugin generation for uifn themes and recipes",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -21,9 +21,9 @@
     "prepack": "npm run build"
   },
   "dependencies": {
-    "@uifn/recipes": "0.0.1",
-    "@uifn/theme": "0.0.1",
-    "@uifn/tokens": "0.0.1"
+    "@uifn/recipes": "0.0.2",
+    "@uifn/theme": "0.0.2",
+    "@uifn/tokens": "0.0.2"
   },
   "peerDependencies": {
     "tailwindcss": ">=3 <5"

@@ -179,4 +179,4 @@ export const MdfnEditor: Component<MdfnEditorProps> = (props) => {
   );
 };
 
-export const MDFN_SOLID_VERSION = "0.1.0" as const;
+export const MDFN_SOLID_VERSION = "0.1.1" as const;

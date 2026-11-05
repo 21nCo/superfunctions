@@ -224,4 +224,4 @@ export function MdfnDiagnostics({ controller }: { readonly controller: EditorCon
 }
 
 export { MdfnEditor } from "@mdfn/react";
-export const MDFN_COMPONENTS_REACT_VERSION = "0.1.0" as const;
+export const MDFN_COMPONENTS_REACT_VERSION = "0.1.1" as const;

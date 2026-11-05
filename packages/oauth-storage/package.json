@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/oauth-storage",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "OAuth state and token storage contracts for Superfunctions",
   "type": "module",
   "main": "./dist/index.js",

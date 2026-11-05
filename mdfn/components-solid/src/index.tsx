@@ -123,4 +123,4 @@ export const MdfnAuthoringChrome: Component<MdfnAuthoringChromeProps> = (props) 
 };
 
 export { MdfnEditor } from "@mdfn/solid";
-export const MDFN_COMPONENTS_SOLID_VERSION = "0.1.0" as const;
+export const MDFN_COMPONENTS_SOLID_VERSION = "0.1.1" as const;

@@ -10,11 +10,11 @@
     "typecheck": "svelte-check --tsconfig ./tsconfig.json"
   },
   "dependencies": {
-    "@mdfn/components": "0.1.0",
-    "@mdfn/components-svelte": "0.1.0",
-    "@mdfn/svelte": "0.1.0",
-    "@uifn/components": "0.0.1",
-    "@mdfn/facade": "0.1.0",
+    "@mdfn/components": "0.1.1",
+    "@mdfn/components-svelte": "0.1.1",
+    "@mdfn/svelte": "0.1.1",
+    "@uifn/components": "0.0.2",
+    "@mdfn/facade": "0.1.1",
     "svelte": "^5.46.4"
   },
   "devDependencies": {

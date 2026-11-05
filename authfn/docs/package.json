@@ -20,7 +20,7 @@
     "@docsfn/svelte": "0.0.3",
     "@docsfn/sveltekit": "0.0.2",
     "gray-matter": "^4.0.3",
-    "@searchfn/client": "0.3.0"
+    "@searchfn/client": "0.3.1"
   },
   "devDependencies": {
     "@authfn/api-keys": "0.1.1",
@@ -32,8 +32,8 @@
     "@authfn/two-factor": "0.1.1",
     "@docsfn/cli": "0.0.2",
     "@superfunctions/db": "0.2.0",
-    "@superfunctions/oauth-flow": "0.1.0",
-    "@superfunctions/observability": "0.0.2",
+    "@superfunctions/oauth-flow": "0.1.1",
+    "@superfunctions/observability": "0.0.3",
     "@sveltejs/adapter-auto": "^3.0.0",
     "@sveltejs/adapter-cloudflare": "^7.0.0",
     "@sveltejs/kit": "^2.0.0",

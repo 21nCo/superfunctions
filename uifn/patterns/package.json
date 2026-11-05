@@ -1,6 +1,6 @@
 {
   "name": "@uifn/patterns",
-  "version": "0.2.0-experimental.0",
+  "version": "0.2.0-experimental.1",
   "description": "Backend-agnostic product patterns for uifn",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -21,7 +21,7 @@
     "prepack": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
-    "@uifn/components": "0.0.1"
+    "@uifn/components": "0.0.2"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

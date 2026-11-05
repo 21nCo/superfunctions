@@ -1,7 +1,6 @@
 # Changelog
 
-## Unreleased
-
+## 0.2.0-experimental.1 - 2026-11-05
 - Make package-local release packing run typecheck, model/story tests, and build.
 - Declare Node test types and resolve story fixtures relative to the package.
 

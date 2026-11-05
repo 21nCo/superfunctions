@@ -100,4 +100,4 @@ export function createMdfnClient(options: MdfnClientOptions = {}): MdfnClient {
   };
 }
 
-export const MDFN_CLIENT_VERSION = "0.1.0" as const;
+export const MDFN_CLIENT_VERSION = "0.1.1" as const;

@@ -33,4 +33,4 @@ export function applyAiEdit(controller: EditorController, edit: ProposedEdit, po
   controller.dispatch(transactionFromAiEdit(controller, edit, policy));
 }
 
-export const MDFN_AI_VERSION = "0.1.0" as const;
+export const MDFN_AI_VERSION = "0.1.1" as const;

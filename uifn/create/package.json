@@ -23,11 +23,11 @@
     "sourcePolicy": "clean-room"
   },
   "dependencies": {
-    "@uifn/registry": "0.0.1",
-    "@uifn/components-react": "0.0.1",
-    "@uifn/components": "0.0.1",
+    "@uifn/registry": "0.0.2",
+    "@uifn/components-react": "0.0.2",
+    "@uifn/components": "0.0.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "@uifn/react": "0.0.3"
+    "@uifn/react": "0.0.4"
   }
 }

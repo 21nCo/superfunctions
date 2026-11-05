@@ -21,4 +21,4 @@ export function createSearchRecords(documentId: string, document: MdfnDocument, 
   ];
 }
 
-export const MDFN_SEARCHFN_VERSION = "0.1.0" as const;
+export const MDFN_SEARCHFN_VERSION = "0.1.1" as const;

@@ -190,6 +190,6 @@ export function createModeController(initial: EditorMode = "visual"): ModeContro
   };
 }
 
-export const MDFN_SOURCE_VERSION = "0.1.0" as const;
+export const MDFN_SOURCE_VERSION = "0.1.1" as const;
 
 export const sourceInternals = Object.freeze({ smallestSourceChange });

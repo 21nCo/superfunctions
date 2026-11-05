@@ -404,4 +404,4 @@ export function createDomEditor(options: DomEditorOptions): DomEditor {
 }
 
 export { mdfnSchema, documentToProseMirror, proseMirrorToDocument } from "./schema";
-export const MDFN_DOM_VERSION = "0.1.0" as const;
+export const MDFN_DOM_VERSION = "0.1.1" as const;

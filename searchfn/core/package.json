@@ -1,6 +1,6 @@
 {
   "name": "@searchfn/core",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Storage-neutral SearchFn algorithms for pipelines, indexing, scoring, querying, and posting codecs.",
   "license": "MIT",
   "type": "module",

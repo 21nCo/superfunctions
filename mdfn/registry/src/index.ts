@@ -61,4 +61,4 @@ export function createRegistry(input: { readonly extensions?: readonly MdfnExten
   };
 }
 
-export const MDFN_REGISTRY_VERSION = "0.1.0" as const;
+export const MDFN_REGISTRY_VERSION = "0.1.1" as const;

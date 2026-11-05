@@ -1,6 +1,6 @@
 {
   "name": "@plugfn/cli",
-  "version": "0.0.1",
+  "version": "0.0.4",
   "description": "CLI for PlugFn scaffolding and runtime diagnostics",
   "bin": {
     "plugfn": "./dist/index.js"
@@ -33,7 +33,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@clifn/core": "0.1.0",
+    "@clifn/core": "0.1.1",
     "commander": "^11.1.0",
     "chalk": "^5.3.0",
     "ora": "^8.0.1",

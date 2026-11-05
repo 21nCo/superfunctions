@@ -1,6 +1,6 @@
 {
   "name": "@uifn/tokens",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Semantic design token schema, validation and Swift token generation for uifn",
   "main": "dist/index.js",
   "module": "dist/index.mjs",

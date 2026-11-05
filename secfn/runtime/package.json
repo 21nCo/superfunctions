@@ -1,6 +1,6 @@
 {
   "name": "@secfn/runtime",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Read-only runtime client and env materialization helpers for SecFn",
   "type": "module",
   "main": "./dist/index.js",
@@ -30,7 +30,7 @@
   "author": "21n",
   "license": "MIT",
   "dependencies": {
-    "@secfn/core": "0.0.3"
+    "@secfn/core": "0.0.4"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

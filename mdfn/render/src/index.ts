@@ -446,4 +446,4 @@ export function extractDocument(document: MdfnDocument, options: { readonly maxC
   return { plainText: extractPlainText(document), headings, links, chunks };
 }
 
-export const MDFN_RENDER_VERSION = "0.1.0" as const;
+export const MDFN_RENDER_VERSION = "0.1.1" as const;

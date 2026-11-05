@@ -815,4 +815,4 @@ export function createMdfnServer(config: MdfnServerConfig): { readonly service: 
   return { service, router: createMdfnRouter(config, service), schema: getSchema() };
 }
 
-export const MDFN_SERVER_VERSION = "0.1.0" as const;
+export const MDFN_SERVER_VERSION = "0.1.1" as const;

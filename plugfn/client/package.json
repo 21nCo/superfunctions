@@ -1,6 +1,6 @@
 {
   "name": "@plugfn/client",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Browser-safe client for PlugFn integrations",
   "type": "module",
   "main": "./dist/index.js",
@@ -28,7 +28,7 @@
     "directory": "plugfn/client"
   },
   "dependencies": {
-    "plugfn": "0.2.0"
+    "plugfn": "0.2.1"
   },
   "publishConfig": {
     "access": "public"

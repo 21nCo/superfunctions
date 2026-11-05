@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/botfn-persistence-service",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Persistence service for bot data using tRPC, Hono, Postgres, and Drizzle",
   "main": "./dist/index.cloudflare.js",
   "types": "./dist/index.cloudflare.d.ts",

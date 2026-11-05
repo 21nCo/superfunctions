@@ -135,4 +135,4 @@ export const diagramExtension = createDirectiveExtension({ name: "diagram", labe
 export const defaultExtensions = Object.freeze([commonmarkExtension, gfmExtension]);
 export const authoringExtensions = Object.freeze([commonmarkExtension, gfmExtension, calloutExtension, diagramExtension]);
 
-export const MDFN_EXTENSIONS_VERSION = "0.1.0" as const;
+export const MDFN_EXTENSIONS_VERSION = "0.1.1" as const;

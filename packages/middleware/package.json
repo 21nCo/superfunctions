@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/middleware",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Shared middleware utilities for Superfunctions",
   "type": "module",
   "main": "./dist/index.js",
@@ -40,7 +40,7 @@
     "@superfunctions/db": { "optional": true }
   },
   "dependencies": {
-    "@superfunctions/observability": "0.0.2"
+    "@superfunctions/observability": "0.0.3"
   },
   "devDependencies": {
     "@superfunctions/db": "0.3.2",
