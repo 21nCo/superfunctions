@@ -2,6 +2,7 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import http from "node:http";
 import net from "node:net";
+import { mkdirSync } from "node:fs";
 import { access, link, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -1608,8 +1609,61 @@ it("refuses a start whose state path is a checkout file or lies below one before
     expect(await readFile(claimFile, "utf8")).toBe(claimed);
     expect(await revision()).toBe(withClaim);
     expect(withClaim).toBe(changed);
+    // A recursive creation that fails after it created a parent keeps that parent's provenance, with or without an earlier claim, and holds nothing.
+    const claimOf = async () => JSON.parse(await readFile(claimFile, "utf8")) as { made?: string[]; recorded?: string[] };
+    const partly = (leaf: string) => { made.fail = (directory) => { if (path.resolve(directory) !== leaf) return undefined; mkdirSync(path.dirname(leaf)); return Object.assign(new Error("injected partial mkdir failure"), { code: "ENOSPC" }); }; };
+    const previous = await claimOf();
+    partly(path.join(primary, "partial", "state"));
+    await expect(orchestrator.up({ config: sibling, root: primary, stateDir: path.join(primary, "partial", "state"), runtime: "b" })).rejects.toThrow("injected partial mkdir failure");
+    expect(await revision()).toBe(withClaim);
+    expect((await claimOf()).recorded).toEqual(previous.recorded);
+    expect((await claimOf()).made).toEqual([...previous.made ?? [], path.join(primary, "partial")]);
+    const fresh = await resolveInstanceIdentity("file-state-input", primary, "c");
+    partly(path.join(primary, "partial-c", "state"));
+    await expect(orchestrator.up({ config: sibling, root: primary, stateDir: path.join(primary, "partial-c", "state"), runtime: "c" })).rejects.toThrow("injected partial mkdir failure");
+    expect(await revision()).toBe(withClaim);
+    expect(JSON.parse(await readFile(path.join(path.dirname(claimFile), `${fresh.instanceId}.json`), "utf8"))).toMatchObject({ recorded: [], made: [path.join(primary, "partial-c")] });
+    made.fail = undefined;
+    // A start refused for an existing source directory as its state directory records nothing: it stays an input.
+    await mkdir(path.join(primary, "src"));
+    await writeFile(path.join(primary, "src", "app.sql"), "select 1;");
+    const withSrc = await revision();
+    expect((await orchestrator.up({ config: sibling, root: primary, stateDir: path.join(parent, "b-state"), runtime: "b" })).state).toBe("ready");
+    await expect(orchestrator.up({ config: sibling, root: primary, stateDir: path.join(primary, "src"), runtime: "b" })).rejects.toBeDefined();
+    expect((await orchestrator.down({ config: sibling, root: primary, stateDir: path.join(parent, "b-state"), runtime: "b" })).state).toBe("stopped");
+    expect(await revision()).toBe(withSrc);
+    const directSrc = await revision(["src/app.sql"]);
+    await writeFile(path.join(primary, "src", "app.sql"), "select 2;");
+    expect(await revision()).not.toBe(withSrc);
+    expect(await revision(["src/app.sql"])).not.toBe(directSrc);
   } finally {
     made.fail = undefined;
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 120_000);
+
+it("keeps refusing outputs a live claimless receipt may own after a refused start of it recorded only state-directory provenance", async () => {
+  const { parent, primary } = await repository();
+  const plain = validateDevFnConfig({ version: 1, project: { id: "hollow-claim" }, processes: {}, profiles: { default: { processes: [] } } });
+  const writer = validateDevFnConfig({ version: 1, project: { id: "hollow-claim" }, environmentOutputs: [{ path: ".written.{runtime}" }], processes: {}, profiles: { default: { processes: [] } } } as never);
+  const orchestrator = new DevFnOrchestrator();
+  const outside = path.join(parent, "d-state");
+  try {
+    // Runtime d runs with a receipt that records no outputs and no claim, as an earlier release left it.
+    const d = await resolveInstanceIdentity("hollow-claim", primary, "d");
+    expect((await orchestrator.up({ config: plain, root: primary, stateDir: outside, runtime: "d" })).state).toBe("ready");
+    await rm(path.join(primary, ".devfn", "receipts", "outputs", `${d.instanceId}.json`));
+    const receiptFile = path.join(primary, ".devfn", "receipts", `${d.instanceId}.json`);
+    const { environmentOutputs: _recorded, ...legacy } = JSON.parse(await readFile(receiptFile, "utf8")) as Record<string, unknown>;
+    await writeFile(receiptFile, JSON.stringify(legacy, null, 2));
+    const e = await resolveInstanceIdentity("hollow-claim", primary, "e");
+    await expect(assertEnvironmentOutputsAvailable(writer, primary, e)).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID" });
+    // A start of d into a new state directory inside the checkout is refused, leaving a claim of provenance alone.
+    await expect(orchestrator.up({ config: plain, root: primary, stateDir: path.join(primary, "new", "state"), runtime: "d" })).rejects.toBeDefined();
+    await access(path.join(primary, ".devfn", "receipts", "outputs", `${d.instanceId}.json`));
+    await expect(assertEnvironmentOutputsAvailable(writer, primary, e)).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID" });
+  } finally {
+    await orchestrator.down({ config: plain, root: primary, stateDir: outside, runtime: "d" }).catch(() => undefined);
     await rm(parent, { recursive: true, force: true });
   }
 }, 120_000);
