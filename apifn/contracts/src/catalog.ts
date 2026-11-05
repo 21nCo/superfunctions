@@ -63,7 +63,15 @@ function isOneOf<T extends string>(list: readonly T[], value: string): value is 
   return (list as readonly string[]).includes(value);
 }
 /** OpenAPI ignores header parameters with these names (OAS 3.1 §4.8.12.1). */
-const IGNORED_HEADERS = new Set(["accept", "content-type", "authorization"]);
+const IGNORED_HEADERS: ReadonlySet<string> = new Set(["accept", "content-type", "authorization"]);
+/**
+ * Whether OpenAPI ignores a header parameter of this name (OAS 3.1 §4.8.12.1): `Accept`, `Content-Type` and
+ * `Authorization` in any ASCII case. The catalog never publishes one; the request's media types and security
+ * schemes own those headers, so a client sets them itself.
+ */
+export function isIgnoredHeaderParameter(name: string): boolean {
+  return IGNORED_HEADERS.has(name.replace(/[A-Z]/g, (letter) => letter.toLowerCase()));
+}
 /** Request media types whose properties can carry an Encoding Object. */
 const FORM_MEDIA_TYPES = new Set(["application/x-www-form-urlencoded", "multipart/form-data"]);
 const RESPONSE_STATUS = /^(?:[1-5](?:\d\d|XX)|default)$/;
@@ -1532,7 +1540,7 @@ class CatalogBuilder {
       const { value, pointer } = resolved;
       const location = value.in as CatalogParameter["in"];
       const name = value.name as string;
-      if (location === "header" && IGNORED_HEADERS.has(name.toLowerCase())) continue;
+      if (location === "header" && isIgnoredHeaderParameter(name)) continue;
       // Every REQUIRED member and value first, so a parameter skipped below still reports each problem. A parameter
       // lacking schema and content is still declared, so the path template check does not report it again.
       this.schemaOrContent(value, pointer, `Parameter ${quote(name)} of operation ${quote(id)}`, id);

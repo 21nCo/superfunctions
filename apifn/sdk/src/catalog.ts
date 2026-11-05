@@ -2,7 +2,7 @@
 // before any target reads them, so targets can rely on its shape.
 
 import Ajv2020 from "ajv/dist/2020.js";
-import { canonicalJson, isCredentialKey, type CatalogOperation, type OperationCatalog } from "@apifn/contracts";
+import { canonicalJson, isCredentialKey, isIgnoredHeaderParameter, type CatalogOperation, type OperationCatalog } from "@apifn/contracts";
 import catalogSchema from "@apifn/contracts/schemas/operation-catalog.v1.schema.json";
 import type { SdkDiagnostic } from "./types.js";
 
@@ -67,7 +67,9 @@ function asciiLower(text: string): string {
  * The checks the catalog builder makes on an idempotency declaration, repeated for a catalog read directly:
  * the schema cannot relate the declaration to the operation's method, parameters or security schemes. Only a
  * write takes one, and a key must be a non-credential header parameter of the operation; a credential header
- * is the same on every call, so treating it as the key would make every credentialed call retryable.
+ * is the same on every call, so treating it as the key would make every credentialed call retryable. Nor may
+ * the key be `Accept`, `Content-Type` or `Authorization`: the builder never publishes them, and the runtimes set
+ * them on every call, so such a key would make every call of the write retryable without a caller key.
  */
 function idempotencyProblem(operation: CatalogOperation, apiKeyHeaders: Set<string>): { message: string; pointer: string } | null {
   const declaration = operation.idempotency;
@@ -78,6 +80,9 @@ function idempotencyProblem(operation: CatalogOperation, apiKeyHeaders: Set<stri
   if (declaration.key === null) return null;
   const wanted = asciiLower(declaration.key.name);
   const parameter = operation.parameters.find((candidate) => candidate.in === "header" && asciiLower(candidate.name) === wanted);
+  if (isIgnoredHeaderParameter(declaration.key.name)) {
+    return { pointer: "/key/name", message: `Operation "${operation.id}" declares idempotency key header "${declaration.key.name}", which OpenAPI ignores as a parameter and the client sets itself; the key must be a per-call header parameter.` };
+  }
   if (!parameter) {
     return { pointer: "/key/name", message: `Operation "${operation.id}" declares idempotency key header "${declaration.key.name}", which is not one of its header parameters.` };
   }

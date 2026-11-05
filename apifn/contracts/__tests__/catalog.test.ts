@@ -9,6 +9,7 @@ import {
   canonicalJson,
   createReleaseDescriptor,
   type Diagnostic,
+  isIgnoredHeaderParameter,
   type OperationCatalog,
   validateClientFailureEvent,
   validateManifest,
@@ -399,6 +400,11 @@ describe("idempotency declarations", () => {
     const result = build((nextSpec, nextManifest) => mutate(nextManifest, nextSpec));
     expect(result.catalog).toBeNull();
     expect(only(result.diagnostics, "INVALID_MANIFEST")).toEqual([expect.objectContaining({ pointer, source: "manifest", message: expect.stringMatching(message) })]);
+  });
+
+  it("shares the header parameters OpenAPI ignores, matched in ASCII case only, so direct-catalog readers refuse them as keys", () => {
+    for (const name of ["Accept", "content-TYPE", "AUTHORIZATION"]) expect(isIgnoredHeaderParameter(name), name).toBe(true);
+    for (const name of ["Idempotency-Key", "X-Accept", "Content-Type-Options", "Accept ", "\u212Aey"]) expect(isIgnoredHeaderParameter(name), name).toBe(false);
   });
 
   it.each<[string, unknown, string]>([

@@ -285,6 +285,17 @@ function idempotencyCases(): Array<[string, () => [unknown, unknown], string, st
       "SDK_INVALID_CATALOG",
       pointer("tasks.replace", "/key/name"),
     ],
+    // OpenAPI ignores these header parameters and the runtimes set them on every call, so as a key they would make
+    // every call of the write retryable; a direct catalog can still list one as a parameter.
+    ...(["aCCept", "Content-TYPE"] as const).map((name): [string, () => [unknown, unknown], string, string] => [
+      `a runtime-owned ${name} idempotency key`,
+      edit("tasks.replace", (operation) => {
+        operation.parameters.push({ ...clone(operation.parameters.find((parameter: any) => parameter.in === "header")), name });
+        operation.idempotency = { semantics: "server", key: { in: "header", name } };
+      }),
+      "SDK_INVALID_CATALOG",
+      pointer("tasks.replace", "/key/name"),
+    ]),
     [
       "an idempotency key that is an apiKey scheme's header",
       edit("tasks.replace", (operation, catalog) => {
