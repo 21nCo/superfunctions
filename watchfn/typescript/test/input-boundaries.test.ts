@@ -13,6 +13,7 @@ import {
 } from "../src/index.js";
 import { processMetricsCollector } from "../src/collectors.js";
 import { createSqliteStorage } from "../src/sqlite.js";
+import { MAX_ISSUE_LENGTH, MAX_ISSUES, limitIssues } from "../src/errors.js";
 import { copyData } from "../src/validation.js";
 import { instrument, sqliteFile } from "./helpers.js";
 
@@ -454,5 +455,129 @@ describe("[memory-fixture] collector ingestion failures reach onError", () => {
       expect(() => processMetricsCollector({ type: type as string })).toThrow(TypeError);
     }
     expect(() => processMetricsCollector({ type: "infra.custom:process/v1" })).not.toThrow();
+  });
+});
+
+/** True when `text` has no lone surrogate, so it encodes to UTF-8 without replacement characters. */
+const wellFormed = (text: string) => !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(text);
+/** Upper bound on a receipt's issues as UTF-8: every kept issue at its longest, all 3-byte units, plus JSON quoting. */
+const MAX_ISSUES_BYTES = (MAX_ISSUES + 1) * ((MAX_ISSUE_LENGTH + 1) * 3 + 3) + 2;
+const issueBytes = (issues: string[] | undefined) => jsonBytes(issues ?? []);
+const long = (char: string) => char.repeat(1_000_000);
+const shown = (char: string) => `${char.repeat(40)}…`;
+
+describe.each(adapters)("[%s] diagnostics echo bounded caller-supplied names", (label, create) => {
+  let harness: ReturnType<typeof create>;
+  let watch: Watch;
+  let calls: { write: number };
+
+  beforeEach(async () => {
+    harness = create();
+    const instrumented = instrument(harness.storage);
+    calls = instrumented.calls;
+    watch = createWatch({ storage: instrumented.storage });
+    await watch.start();
+  });
+
+  afterEach(async () => {
+    await watch.stop();
+    harness.cleanup();
+  });
+
+  it(`[${label}] names a long unknown field, and many, by their first 40 characters on ingest, writing nothing`, async () => {
+    const one = await watch.ingest({ type: "x", [long("u")]: 1 });
+    expect(one).toMatchObject({ ok: false, error: { code: "invalid_event" } });
+    expect(!one.ok && one.error.issues).toEqual([`event.${shown("u")}: unknown field`]);
+    expect(!one.ok && issueBytes(one.error.issues)).toBe(68);
+
+    const letters = "abcdefghijkl".split("");
+    const many = await watch.ingest(Object.fromEntries([["type", "x"], ...letters.map((char) => [long(char), 1])]));
+    const expected = [...letters.slice(0, 10).map((char) => `event.${shown(char)}: unknown field`), "event: 2 more unknown fields"];
+    expect(!many.ok && many.error.issues).toEqual(expected);
+    expect(!many.ok && issueBytes(many.error.issues)).toBe(702);
+    expect(calls.write).toBe(0);
+  });
+
+  it(`[${label}] bounds a batch of 100 events with long unknown, attribute and data names to ${MAX_ISSUES} issues plus a count, writing nothing`, async () => {
+    const letters = "abcdefghijk".split("");
+    const event = () => ({
+      ...Object.fromEntries(letters.map((char) => [long(char), 1])),
+      type: "x",
+      attributes: { [long("z")]: 1 },
+      data: { [long("d").slice(0, 30_000)]: { [long("e").slice(0, 30_000)]: Number.NaN } },
+    });
+    const receipt = await watch.ingestBatch(Array.from({ length: LIMITS.maxBatchSize }, event));
+    expect(receipt).toMatchObject({ ok: false, error: { code: "invalid_event", message: "the batch is invalid; nothing was written" } });
+    const issues = (!receipt.ok && receipt.error.issues) || [];
+    // Each event has 10 named unknown fields, a count, an attribute and a data issue: 1300 in all.
+    expect(issues).toHaveLength(MAX_ISSUES + 1);
+    expect(issues.slice(0, 13)).toEqual([
+      ...letters.slice(0, 10).map((char) => `events[0].${shown(char)}: unknown field`),
+      "events[0]: 1 more unknown fields",
+      `events[0].attributes.${shown("z")}: invalid attribute name`,
+      `events[0].data.${shown("d")}.${shown("e")}: must be a finite number`,
+    ]);
+    expect(issues.at(-1)).toBe(`${LIMITS.maxBatchSize * 13 - MAX_ISSUES} more issues`);
+    expect(issueBytes(issues)).toBe(1483);
+    expect(calls.write).toBe(0);
+  });
+
+  it(`[${label}] keeps a deep data path's start and reason within ${MAX_ISSUE_LENGTH} characters`, async () => {
+    let data: unknown = Number.POSITIVE_INFINITY;
+    // Keys of 1000 characters, outermost "0", then "9", "8" and so on down to "0" innermost.
+    for (let level = 0; level < 31; level += 1) data = { [String(level % 10).repeat(1000)]: data };
+    const receipt = await watch.ingest({ type: "deep", data });
+    const issue = (!receipt.ok && receipt.error.issues?.[0]) || "";
+    expect(issue.length).toBe(MAX_ISSUE_LENGTH + 1);
+    expect(issue.startsWith(`event.data.${shown("0")}.${shown("9")}.`)).toBe(true);
+    expect(issue.endsWith(`.${shown("0")}: must be a finite number`)).toBe(true);
+    expect(calls.write).toBe(0);
+  });
+
+  it(`[${label}] keeps a surrogate pair whole when it cuts a name`, async () => {
+    const receipt = await watch.ingest({ type: "x", [`${"a".repeat(39)}\u{1F600}${long("b")}`]: 1, attributes: { [`${"c".repeat(38)}\u{1F600}${long("c")}`]: 1 } });
+    expect(!receipt.ok && receipt.error.issues).toEqual([
+      `event.${"a".repeat(39)}…: unknown field`,
+      `event.attributes.${"c".repeat(38)}\u{1F600}…: invalid attribute name`,
+    ]);
+    expect(calls.write).toBe(0);
+  });
+});
+
+describe("[memory-fixture] query diagnostics echo bounded caller-supplied names", () => {
+  it("bounds a long unknown field, long attribute names and many issues in a WatchError", async () => {
+    const watch = createWatch({ storage: createMemoryStorage() });
+    await watch.start();
+    const attributes = Object.fromEntries("abcdefghijklmnopqrstuvwxyz".split("").slice(0, 25).map((char) => [`${long(char)}`, 1]));
+    const error = await watch.query({ [long("q")]: 1, attributes } as never).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(WatchError);
+    const { issues } = error as WatchError;
+    expect(issues).toHaveLength(MAX_ISSUES + 1);
+    expect(issues?.[0]).toBe(`query.${shown("q")}: unknown field`);
+    expect(issues?.[1]).toBe(`query.attributes.${shown("a")}: invalid attribute name`);
+    expect(issues?.at(-1)).toBe("6 more issues");
+    expect(issueBytes(issues)).toBeLessThanOrEqual(MAX_ISSUES_BYTES);
+    expect(issueBytes(issues)).toBe(1737);
+    await watch.stop();
+  });
+
+  it("cuts long issues in the middle without splitting surrogate pairs and counts the issues left out", () => {
+    const issue = `a${"\u{1F600}".repeat(400)}b`;
+    const [cut] = limitIssues([issue]);
+    // Both 150-unit cuts would split a pair, so each keeps 149 units.
+    expect(cut).toHaveLength(MAX_ISSUE_LENGTH - 1);
+    expect(wellFormed(cut!)).toBe(true);
+    expect(cut!.startsWith("a\u{1F600}")).toBe(true);
+    expect(cut!.endsWith("\u{1F600}b")).toBe(true);
+    expect(limitIssues(Array.from({ length: 25 }, (_, index) => `i${index}`))).toEqual([...Array.from({ length: MAX_ISSUES }, (_, index) => `i${index}`), "5 more issues"]);
+    expect(limitIssues(["short"])).toEqual(["short"]);
+    const exactlyOneOver = Array.from({ length: MAX_ISSUES + 1 }, (_, index) => `i${index}`);
+    expect(limitIssues(exactlyOneOver)).toEqual(exactlyOneOver);
+    // A collector's failed receipt is limited again when it becomes a WatchError: the count must survive.
+    const once = limitIssues([...Array.from({ length: 1300 }, (_, index) => `${index}`), issue]);
+    expect(once.at(-1)).toBe("1281 more issues");
+    expect(limitIssues(once)).toEqual(once);
+    expect(new WatchError("ingest_failed", "m", { issues: once }).issues).toEqual(once);
+    expect(new WatchError("invalid_query", "m", { issues: [issue] }).issues).toEqual([cut]);
   });
 });

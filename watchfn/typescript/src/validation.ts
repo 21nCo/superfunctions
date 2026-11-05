@@ -1,3 +1,4 @@
+import { clip } from "./errors.js";
 import type { AttributeValue, Attributes, JsonValue, QueryOrder, StorageQuery } from "./types.js";
 
 /** Validation limits shared by ingestion, queries and storage adapters. */
@@ -47,13 +48,20 @@ export function ownField(value: object, key: PropertyKey): unknown {
 
 /** Unknown field names reported by name; the rest are counted in one issue. */
 const MAX_REPORTED_UNKNOWN_FIELDS = 10;
+/** Longest caller-supplied field name echoed in an issue, in UTF-16 units plus one ellipsis. */
+const MAX_REPORTED_NAME_LENGTH = 40;
+
+/** A caller-supplied field name as an issue path shows it: cut to 40 units, surrogate pairs kept whole. */
+function fieldName(key: string): string {
+  return clip(key, MAX_REPORTED_NAME_LENGTH);
+}
 
 function unknownKeys(value: Record<string, unknown>, allowed: readonly string[], path: string, issues: string[]): void {
   let unknown = 0;
   for (const key of Object.keys(value)) {
     if (allowed.includes(key)) continue;
     unknown += 1;
-    if (unknown <= MAX_REPORTED_UNKNOWN_FIELDS) issues.push(`${path}.${key}: unknown field`);
+    if (unknown <= MAX_REPORTED_UNKNOWN_FIELDS) issues.push(`${path}.${fieldName(key)}: unknown field`);
   }
   if (unknown > MAX_REPORTED_UNKNOWN_FIELDS) issues.push(`${path}: ${unknown - MAX_REPORTED_UNKNOWN_FIELDS} more unknown fields`);
 }
@@ -157,11 +165,11 @@ export function validateAttributes(value: unknown, path: string, issues: string[
   const result: Attributes = {};
   for (const key of keys) {
     if (key.length > LIMITS.maxAttributeKeyLength || !ATTRIBUTE_KEY_PATTERN.test(key) || RESERVED_KEYS.has(key)) {
-      issues.push(`${path}.${key.slice(0, 40)}: invalid attribute name`);
+      issues.push(`${path}.${fieldName(key)}: invalid attribute name`);
       continue;
     }
     if (!Object.hasOwn(value, key)) {
-      issues.push(`${path}.${key.slice(0, 40)}: changed while it was read`);
+      issues.push(`${path}.${fieldName(key)}: changed while it was read`);
       continue;
     }
     const item = value[key];
@@ -232,7 +240,7 @@ function copyObject(value: Record<string, unknown>, path: string, depth: number,
   for (const key of keys) {
     if (!chargeString(budget, key) || !charge(budget, 1)) return undefined; // key and colon
     if (!Object.hasOwn(value, key)) return changed(path, issues);
-    const item = copyJson(value[key], `${path}.${key}`, depth + 1, issues, budget);
+    const item = copyJson(value[key], `${path}.${fieldName(key)}`, depth + 1, issues, budget);
     if (item === undefined) return undefined;
     // defineProperty keeps a "__proto__" key as data instead of changing the prototype.
     Object.defineProperty(copy, key, { value: item, enumerable: true, writable: true, configurable: true });
