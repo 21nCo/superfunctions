@@ -85,6 +85,19 @@ struct UIFnComponentAccessibilityTests {
         )
     }
 
+    #if (arch(i386) || arch(x86_64)) && !(os(Windows) || os(Android))
+    /// A `Float80` value halfway through a range narrower than a `Double` can
+    /// tell apart reads 50%.
+    @Test
+    func aFloat80SegmentedMeterReadsItsShareAsAPercentage() async {
+        let step = Float80(Double.ulpOfOne)
+        await expectElements(
+            UIFnSegmentedMeter("Storage", value: 1 + step / 2, in: 1...1 + step, segments: 5),
+            [(.progressIndicator, "Storage", "50%")]
+        )
+    }
+    #endif
+
     /// A title string is shown as it is, as the other components' text is,
     /// not looked up or parsed as Markdown as a localized key would be.
     @Test

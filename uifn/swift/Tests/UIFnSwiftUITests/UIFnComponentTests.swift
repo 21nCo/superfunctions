@@ -101,6 +101,29 @@ struct UIFnComponentTests {
         #expect(UIFnMeterValue.fraction(Float(70), in: 0...100) == UIFnMeterValue.fraction(70.0, in: 0...100))
     }
 
+    #if (arch(i386) || arch(x86_64)) && !(os(Windows) || os(Android))
+    /// A type wider than `Double` keeps its precision: a `Float80` value
+    /// halfway through a range narrower than a `Double` can tell apart reads
+    /// as halfway, not as an end.
+    @Test
+    func aFloat80MeterKeepsItsPrecision() {
+        let step = Float80(Double.ulpOfOne)
+        let rows: [(String, Double, Int, Int)] = [
+            ("1 + step/2 in 1...1+step", UIFnMeterValue.fraction(1 + step / 2, in: 1...1 + step), 3, 50),
+            ("1 + step/4 in 1...1+step", UIFnMeterValue.fraction(1 + step / 4, in: 1...1 + step), 1, 25),
+            ("-1 - step/2 in -1-step...-1", UIFnMeterValue.fraction(-1 - step / 2, in: -1 - step...(-1)), 3, 50),
+            (
+                "least/2 in 0...least",
+                UIFnMeterValue.fraction(Float80(Double.leastNonzeroMagnitude) / 2, in: 0...Float80(Double.leastNonzeroMagnitude)), 3, 50
+            ),
+        ]
+        for (name, share, lit, percent) in rows {
+            #expect(UIFnMeterValue.litSegments(share, of: 5) == lit, "\(name): \(share)")
+            #expect(UIFnMeterValue.percent(share) == percent, "\(name): \(share)")
+        }
+    }
+    #endif
+
     /// A `Float` meter just below its maximum draws as a `Double` meter at
     /// 0.75, four of five segments lit, not as a full one.
     @Test

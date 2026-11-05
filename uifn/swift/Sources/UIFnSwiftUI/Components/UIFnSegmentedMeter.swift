@@ -144,9 +144,9 @@ enum UIFnMeterValue {
     /// bounds that are infinite or have no width.
     ///
     /// A value strictly inside the bounds is never read as an end, however
-    /// close to one it is: its share is worked out in `Double`, or in `Value`
-    /// when that is wider and its bounds do not fit in a `Double`, and kept
-    /// above 0 and below 1. Bounds too far apart for their difference to be
+    /// close to one it is: its share is worked out in `Double`, which holds
+    /// every narrower value exactly, or in `Value` when that is wider, such as
+    /// `Float80`, and kept above 0 and below 1. Bounds too far apart for their difference to be
     /// finite, such as `-greatestFiniteMagnitude...greatestFiniteMagnitude`,
     /// are halved, with the value, before subtracting, which keeps the
     /// difference finite and the share the same.
@@ -156,10 +156,10 @@ enum UIFnMeterValue {
         guard lower.isFinite, upper.isFinite, lower < upper, !value.isNaN else { return 0 }
         if value <= lower { return 0 }
         if value >= upper { return 1 }
-        let wideLower = Double(lower)
-        let wideUpper = Double(upper)
-        let share = wideLower.isFinite && wideUpper.isFinite && wideLower < wideUpper
-            ? interiorShare(Double(value), from: wideLower, to: wideUpper)
+        let fitsInDouble = Value.significandBitCount <= Double.significandBitCount
+            && Value.exponentBitCount <= Double.exponentBitCount
+        let share = fitsInDouble
+            ? interiorShare(Double(value), from: Double(lower), to: Double(upper))
             : Double(interiorShare(value, from: lower, to: upper))
         return min(max(share, .leastNonzeroMagnitude), Double(1).nextDown)
     }
