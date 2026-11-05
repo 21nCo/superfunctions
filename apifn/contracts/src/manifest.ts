@@ -11,6 +11,8 @@ export const POLICY_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
 /** An HTTP field name: an RFC 9110 token. */
 export const HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 const METHODS = new Set(["get", "put", "post", "delete", "options", "head", "patch", "trace"]);
+/** Safe methods (RFC 9110 section 9.2.1), which take no idempotency declaration: only writes do. */
+const SAFE_METHODS = new Set(["get", "head", "options", "trace"]);
 
 /** Media types the catalog can describe for generated clients. */
 export function isSupportedMediaType(mediaType: string): boolean {
@@ -161,6 +163,10 @@ function checkBinding(check: ManifestChecker, binding: unknown, pointer: string)
       const key = idempotency.key as Record<string, unknown>;
       if (key.in !== undefined && key.in !== "header") check.fail(`${pointer}/idempotency/key/in`, `Unsupported idempotency key location; the only value is "header".`);
       check.string(key.name, `${pointer}/idempotency/key/name`, HEADER_NAME_PATTERN, 128);
+    }
+    // A route binding names its method here; an operationId binding's method is checked when the catalog is built.
+    if (typeof value.method === "string" && SAFE_METHODS.has(value.method.toLowerCase())) {
+      check.fail(`${pointer}/idempotency`, `Operation binding ${quote(value.id)} is a ${value.method.toUpperCase()}, which HTTP defines as safe; idempotency is declared only for POST, PUT, PATCH and DELETE.`);
     }
   }
 }

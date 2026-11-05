@@ -296,6 +296,23 @@ function idempotencyCases(): Array<[string, () => [unknown, unknown], string, st
       "SDK_INVALID_CATALOG",
       pointer("tasks.replace", "/key/name"),
     ]),
+    // Fetch drops or overwrites these (Node sends Sec-Fetch-Mode: cors whatever the caller set), so the server would
+    // not see the caller's key; matched in any ASCII case.
+    ...(["sEc-Fetch-Mode", "PROXY-Request-Id", "Host", "content-LENGTH"] as const).map((name): [string, () => [unknown, unknown], string, string] => [
+      `a Fetch-controlled ${name} idempotency key`,
+      edit("tasks.replace", (operation) => {
+        operation.parameters.push({ ...clone(operation.parameters.find((parameter: any) => parameter.in === "header")), name });
+        operation.idempotency = { semantics: "server", key: { in: "header", name } };
+      }),
+      "SDK_INVALID_CATALOG",
+      pointer("tasks.replace", "/key/name"),
+    ]),
+    [
+      "a declared write moved to a HEAD",
+      edit("tasks.create", (operation) => (operation.method = "head")),
+      "SDK_INVALID_CATALOG",
+      pointer("tasks.create"),
+    ],
     [
       "an idempotency key that is an apiKey scheme's header",
       edit("tasks.replace", (operation, catalog) => {

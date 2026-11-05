@@ -173,8 +173,8 @@ export interface CatalogOperation {
   executionPolicyRef: string | null;
   /**
    * Present only when the manifest declares that the server makes repeated calls of this write
-   * (POST, PUT, PATCH or DELETE) safe; absent, the operation is not idempotent and clients never
-   * retry it. With a `key`, a call is safe to repeat only when it sends that header parameter
+   * (POST, PUT, PATCH or DELETE) safe; absent from a write, clients never retry that write (reads
+   * are retried without one). With a `key`, a call is safe to repeat only when it sends that header parameter
    * (`name` as the spec spells it). Method, schema and parameters never imply it.
    */
   idempotency?: CatalogIdempotency;

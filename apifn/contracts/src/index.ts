@@ -1,7 +1,7 @@
 // @apifn/contracts — versioned API operation, release and client-failure contracts
 
 export * from "./types.js";
-export { buildOperationCatalog, isIgnoredHeaderParameter } from "./catalog.js";
+export { buildOperationCatalog, isFetchControlledHeader, isIgnoredHeaderParameter } from "./catalog.js";
 export {
   validateManifest,
   isSupportedMediaType,

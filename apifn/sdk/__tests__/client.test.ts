@@ -239,6 +239,34 @@ describe("shared retry vectors", () => {
     expect(server.requests).toHaveLength(1);
   });
 
+  it("delivers each call's own key on every attempt through the default fetch", async () => {
+    // Separate calls of a keyed write must reach the server under separate keys, retries included; a key the
+    // transport rewrote (Sec-Fetch-Mode) would collapse them, so generation refuses such keys.
+    const created = { status: 201, headers: { "content-type": "application/json" }, body: "{}" };
+    server.reset([{ status: 503 }, created, { status: 503 }, created]);
+    for (const key of ["call-1", "call-2"]) await client().createTask({ projectId: "p", idempotencyKey: key, body: { title: "x" } });
+    expect(server.requests.map((request) => request.headers["idempotency-key"])).toEqual(["call-1", "call-1", "call-2", "call-2"]);
+  });
+
+  it("copies byte bodies only for calls that may be retried", async () => {
+    const sent: unknown[] = [];
+    const fetch = (input: string | URL | Request, init?: RequestInit) => {
+      sent.push(init?.body);
+      return globalThis.fetch(input, init);
+    };
+    for (const input of [new Uint8Array([1, 2]), new Uint8Array([1, 2]).buffer]) {
+      server.reset([{ status: 200, headers: { "content-type": "application/json" }, body: "{}" }]);
+      sent.length = 0;
+      await directRuntime({ fetch }).request(operationSpec({ retry: "never" }), { body: input });
+      expect(sent[0]).toBe(input);
+      server.reset([{ status: 200, headers: { "content-type": "application/json" }, body: "{}" }]);
+      sent.length = 0;
+      await directRuntime({ fetch }).request(operationSpec(), { body: input });
+      expect(sent[0]).not.toBe(input);
+      expect([...new Uint8Array(sent[0] as Uint8Array)]).toEqual([1, 2]);
+    }
+  });
+
   it("retries a declared-idempotent write within the budget, replaying its byte body", async () => {
     server.reset([{ status: 503 }, { status: 500 }, { status: 503 }, { status: 200 }]);
     const error = await directRuntime()

@@ -60,7 +60,7 @@
       "expect": { "attempts": 1, "outcome": "error", "status": 503 }
     },
     {
-      "name": "a declared-idempotent write retries within the budget, replaying its bytes",
+      "name": "a declared-idempotent byte-body write retries within the budget",
       "operation": "tasks.attachment.upload",
       "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
       "bodyBytes": [1, 2],

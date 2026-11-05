@@ -72,6 +72,23 @@ const IGNORED_HEADERS: ReadonlySet<string> = new Set(["accept", "content-type", 
 export function isIgnoredHeaderParameter(name: string): boolean {
   return IGNORED_HEADERS.has(name.replace(/[A-Z]/g, (letter) => letter.toLowerCase()));
 }
+/** Fetch's forbidden request-header names (Fetch Standard, "forbidden request-header"), lowercase. */
+const FETCH_FORBIDDEN_HEADERS: ReadonlySet<string> = new Set([
+  "accept-charset", "accept-encoding", "access-control-request-headers", "access-control-request-method", "connection",
+  "content-length", "cookie", "cookie2", "date", "dnt", "expect", "host", "keep-alive", "origin", "referer", "set-cookie",
+  "te", "trailer", "transfer-encoding", "upgrade", "via",
+  // Forbidden only for some values (a CONNECT, TRACE or TRACK method); a per-call key could be any value.
+  "x-http-method", "x-http-method-override", "x-method-override",
+]);
+/**
+ * Whether Fetch controls a request header of this name, in any ASCII case: a forbidden request-header name, or one
+ * starting `Sec-` or `Proxy-`. Browsers drop such a header and Node's fetch may overwrite it (`Sec-Fetch-Mode`), so
+ * the server need not receive the value a client set; it can never be a per-call idempotency key.
+ */
+export function isFetchControlledHeader(name: string): boolean {
+  const lower = name.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+  return FETCH_FORBIDDEN_HEADERS.has(lower) || lower.startsWith("sec-") || lower.startsWith("proxy-");
+}
 /** Request media types whose properties can carry an Encoding Object. */
 const FORM_MEDIA_TYPES = new Set(["application/x-www-form-urlencoded", "multipart/form-data"]);
 const RESPONSE_STATUS = /^(?:[1-5](?:\d\d|XX)|default)$/;
@@ -1765,6 +1782,16 @@ class CatalogBuilder {
       return null;
     }
     if (declaration.key === undefined) return { semantics: "server", key: null };
+    // The client sets these itself, so no caller value could tell calls apart.
+    if (isIgnoredHeaderParameter(declaration.key.name)) {
+      this.report("INVALID_MANIFEST", `${pointer}/key/name`, `Operation ${quote(binding.id)} declares idempotency key header ${quote(declaration.key.name)}, which OpenAPI ignores as a parameter and clients set themselves; it is never published as a key.`, { source: "manifest", operation: binding.id });
+      return null;
+    }
+    // The transport may drop or overwrite these, so the server would not see the caller's key.
+    if (isFetchControlledHeader(declaration.key.name)) {
+      this.report("INVALID_MANIFEST", `${pointer}/key/name`, `Operation ${quote(binding.id)} declares idempotency key header ${quote(declaration.key.name)}, which Fetch forbids or overwrites, so a client cannot send it as a per-call key.`, { source: "manifest", operation: binding.id });
+      return null;
+    }
     // HTTP field names ignore ASCII case only, so a non-token spelling (a Kelvin sign for "K") never matches.
     const asciiLower = (text: string) => text.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
     const wanted = asciiLower(declaration.key.name);

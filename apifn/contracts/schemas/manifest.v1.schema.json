@@ -132,7 +132,10 @@
           "not": {"anyOf": [{"required": ["method"]}, {"required": ["path"]}]}
         },
         {"required": ["method", "path"], "not": {"required": ["operationId"]}}
-      ]
+      ],
+      "if": {"type": "object", "properties": {"method": {"type": "string", "pattern": "^(?:[Gg][Ee][Tt]|[Hh][Ee][Aa][Dd]|[Oo][Pp][Tt][Ii][Oo][Nn][Ss]|[Tt][Rr][Aa][Cc][Ee])$"}}, "required": ["method"]},
+      "then": {"properties": {"idempotency": false}},
+      "$comment": "A route binding to a safe method (GET, HEAD, OPTIONS or TRACE, in any ASCII case) takes no idempotency declaration; an operationId binding's method is checked when the catalog is built."
     }
   }
 }

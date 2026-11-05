@@ -260,8 +260,9 @@ def test_never_retries_a_stream_body_of_a_declared_idempotent_write(server: Fixt
 
     async def main() -> None:
         async with client(server, credentials={"bearerAuth": "t"}) as tasks:
+            stream = body()
             with pytest.raises(pkg.ApiHttpError) as caught:
-                await tasks.upload_attachment(project_id="p", task_id="t", body=body())
+                await tasks.upload_attachment(project_id="p", task_id="t", body=stream)
             assert caught.value.attempts == 1
             assert len(server.requests) == 1
             # The same write with a byte body is retried, so only the stream stopped it.

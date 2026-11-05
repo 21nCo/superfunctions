@@ -331,6 +331,13 @@
       ],
       "if": {"type": "object", "properties": {"agent": {"type": "object", "properties": {"expose": {"const": true}}}}},
       "then": {"type": "object", "properties": {"executionPolicyRef": {"type": "string"}}},
+      "allOf": [
+        {
+          "$comment": "GET, HEAD, OPTIONS and TRACE are safe methods (RFC 9110 section 9.2.1); only writes take an idempotency declaration.",
+          "if": {"type": "object", "properties": {"method": {"enum": ["get", "head", "options", "trace"]}}, "required": ["method"]},
+          "then": {"properties": {"idempotency": false}}
+        }
+      ],
       "$comment": "An operation exposed to agents always names an execution policy (AGENT_POLICY_REQUIRED); HTTP method and schema never imply authorization or idempotency, which only the optional idempotency declaration states."
     },
     "content": {

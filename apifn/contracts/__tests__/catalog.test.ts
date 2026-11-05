@@ -9,6 +9,7 @@ import {
   canonicalJson,
   createReleaseDescriptor,
   type Diagnostic,
+  isFetchControlledHeader,
   isIgnoredHeaderParameter,
   type OperationCatalog,
   validateClientFailureEvent,
@@ -360,7 +361,8 @@ describe("idempotency declarations", () => {
     const create = get(undeclared, "projects.create");
     expect(create.parameters.map((parameter) => parameter.name)).toContain("Idempotency-Key");
     expect(undeclared.catalog!.operations.some((operation) => Object.hasOwn(operation, "idempotency"))).toBe(false);
-    // Without declarations nothing new is emitted, so catalogs built before the field existed keep their digest.
+    // Without declarations nothing new is emitted: apart from the manifest's own digest, the catalog is the declared
+    // one with the member removed. (This compares two builds; it does not pin a historical digest.)
     const declared = build();
     const stripped = clone(declared.catalog!);
     stripped.source.manifestDigest = undeclared.catalog!.source.manifestDigest;
@@ -396,6 +398,23 @@ describe("idempotency declarations", () => {
       "/operations/1/idempotency/key/name",
       /not one of its header parameters/,
     ],
+    // Clients set these themselves, so the spec cannot publish them and the message says so.
+    [
+      "a key OpenAPI ignores as a parameter",
+      (nextManifest) => (ids(nextManifest, "projects.create").idempotency.key.name = "aCCept"),
+      "/operations/1/idempotency/key/name",
+      /OpenAPI ignores as a parameter and clients set themselves; it is never published as a key/,
+    ],
+    // Fetch drops or overwrites these, so distinct calls could reach the server under one key; even as a spec parameter.
+    ...(["sEc-Fetch-Mode", "PROXY-Request-Id", "cookie2", "Keep-ALIVE"] as const).map((name): [string, (manifest: any, spec: any) => void, string, RegExp] => [
+      `a Fetch-controlled ${name} key`,
+      (nextManifest, nextSpec) => {
+        nextSpec.paths[LIST_ROUTE].post.parameters[0].name = name;
+        ids(nextManifest, "projects.create").idempotency.key.name = name;
+      },
+      "/operations/1/idempotency/key/name",
+      /which Fetch forbids or overwrites/,
+    ]),
   ])("INVALID_MANIFEST: %s", (_name, mutate, pointer, message) => {
     const result = build((nextSpec, nextManifest) => mutate(nextManifest, nextSpec));
     expect(result.catalog).toBeNull();
@@ -405,6 +424,14 @@ describe("idempotency declarations", () => {
   it("shares the header parameters OpenAPI ignores, matched in ASCII case only, so direct-catalog readers refuse them as keys", () => {
     for (const name of ["Accept", "content-TYPE", "AUTHORIZATION"]) expect(isIgnoredHeaderParameter(name), name).toBe(true);
     for (const name of ["Idempotency-Key", "X-Accept", "Content-Type-Options", "Accept ", "\u212Aey"]) expect(isIgnoredHeaderParameter(name), name).toBe(false);
+  });
+
+  it("shares the header names Fetch controls, matched in ASCII case only, so no layer accepts them as keys", () => {
+    for (const name of ["Sec-Fetch-Mode", "sec-idempotency-key", "PROXY-Key", "Cookie", "HOST", "Content-Length", "x-http-method-override", "Accept-Encoding"]) {
+      expect(isFetchControlledHeader(name), name).toBe(true);
+    }
+    // A long s (U+017F) uppercases to "S" but is not an HTTP token letter, so "\u017Fec-" is not a Sec- prefix.
+    for (const name of ["Idempotency-Key", "X-Sec-Key", "Secret-Key", "Proxied-Key", "Hosts", "Host ", "\u017Fec-Fetch-Mode"]) expect(isFetchControlledHeader(name), name).toBe(false);
   });
 
   it.each<[string, unknown, string]>([

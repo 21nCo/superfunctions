@@ -26,7 +26,7 @@
       "post": {
         "operationId": "createTask",
         "summary": "Create a task",
-        "description": "The server recognizes repeated calls by their Idempotency-Key header; the manifest declares it, so clients retry calls that send one.",
+        "description": "The server recognizes repeated calls by their Idempotency-Key header, so clients retry calls that send one.",
         "security": [{ "bearerAuth": [] }],
         "parameters": [{ "name": "Idempotency-Key", "in": "header", "schema": { "type": "string", "maxLength": 64 } }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskInput" } } } },
