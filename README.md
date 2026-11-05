@@ -109,7 +109,10 @@ organization/user `21nCo`, repository `superfunctions`, workflow filename
 `publish-tag.yml` and no environment name. The publish step still passes
 `NPM_TOKEN` as a fallback, which npm uses only when the OIDC exchange fails, so a
 package's first publish (before a trusted publisher can be added) keeps working.
-Add the trusted publisher right after a new package's first release.
+After a new package's first release, add its trusted publisher with **Allow npm
+publish** enabled (npm defaults new connections to staged publishing only) and
+release it again within 2 days: npm expires a trusted publisher configuration
+that has not completed a successful publish within 2 days of creation.
 npm attaches a provenance attestation to every OIDC publish from this public
 repository. The registry accepts it only when the packed `package.json`
 `repository.url` is `git+https://github.com/21nCo/superfunctions.git`, so every
