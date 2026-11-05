@@ -45,10 +45,10 @@ vi.mock("../src/outputs.js", async (importOriginal) => {
 
 // Lets a test act right before the task-input walk reads a file, as a concurrent writer could, or right after a start creates a directory.
 const reads = vi.hoisted(() => ({ before: undefined as ((operation: "lstat" | "readFile", file: string) => Promise<void>) | undefined }));
-const made = vi.hoisted(() => ({ after: undefined as ((directory: string) => Promise<void>) | undefined }));
+const made = vi.hoisted(() => ({ after: undefined as ((directory: string) => Promise<void>) | undefined, fail: undefined as ((directory: string) => Error | undefined) | undefined }));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
-  return { ...actual, mkdir: async (...args: Parameters<typeof actual.mkdir>) => { const created = await actual.mkdir(...args); await made.after?.(String(args[0])); return created; },
+  return { ...actual, mkdir: async (...args: Parameters<typeof actual.mkdir>) => { const failure = made.fail?.(String(args[0])); if (failure) throw failure; const created = await actual.mkdir(...args); await made.after?.(String(args[0])); return created; },
     lstat: async (...args: Parameters<typeof actual.lstat>) => { await reads.before?.("lstat", String(args[0])); return await actual.lstat(...args); },
     readFile: async (...args: Parameters<typeof actual.readFile>) => { await reads.before?.("readFile", String(args[0])); return await actual.readFile(...args); } };
 });
@@ -1567,6 +1567,49 @@ it("refuses a start or stop that would create state directories when its own cla
       await expect(access(path.join(primary, "fresh"))).rejects.toMatchObject({ code: "ENOENT" });
     }
   } finally {
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 120_000);
+
+it("refuses a start whose state path is a checkout file or lies below one before recording anything, and restores the claim when creating its state directory fails", async () => {
+  const { parent, primary } = await repository();
+  const seed = (inputs: string[]) => validateDevFnConfig({ version: 1, project: { id: "file-state-input" },
+    processes: { seed: { adapter: "command", command: [process.execPath, "-e", "0"], task: { rerun: "on-change", inputs } } }, profiles: { default: { processes: ["seed"] } } });
+  const sibling = validateDevFnConfig({ version: 1, project: { id: "file-state-input" }, processes: {}, profiles: { default: { processes: [] } } });
+  const orchestrator = new DevFnOrchestrator();
+  const revision = async (inputs = ["."]) => await taskInputRevision(seed(inputs), primary, { name: "seed", kind: "process" }, "default");
+  const { instanceId } = await resolveInstanceIdentity("file-state-input", primary, "b");
+  const claimFile = path.join(primary, ".devfn", "receipts", "outputs", `${instanceId}.json`);
+  try {
+    await writeFile(path.join(primary, "schema.sql"), "create table t();");
+    const before = await revision();
+    for (const stateDir of [path.join(primary, "schema.sql"), path.join(primary, "schema.sql", "state")]) {
+      await expect(orchestrator.up({ config: sibling, root: primary, stateDir, runtime: "b" })).rejects.toMatchObject({ code: "ENOTDIR" });
+      await expect(access(claimFile)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await revision()).toBe(before);
+    }
+    // The file is still an input, directly and below the checkout.
+    const direct = await revision(["schema.sql"]);
+    await writeFile(path.join(primary, "schema.sql"), "create table u();");
+    expect(await revision()).not.toBe(before);
+    expect(await revision(["schema.sql"])).not.toBe(direct);
+    // A creation that fails once the claim recorded it leaves the claim as it was, or none.
+    const blocked = path.join(primary, "blocked", "state");
+    const changed = await revision();
+    made.fail = (directory) => path.resolve(directory) === blocked ? Object.assign(new Error("injected mkdir failure"), { code: "EACCES" }) : undefined;
+    await expect(orchestrator.up({ config: sibling, root: primary, stateDir: blocked, runtime: "b" })).rejects.toThrow("injected mkdir failure");
+    await expect(access(claimFile)).rejects.toMatchObject({ code: "ENOENT" });
+    made.fail = undefined;
+    expect((await orchestrator.up({ config: sibling, root: primary, stateDir: path.join(parent, "b-state"), runtime: "b" })).state).toBe("ready");
+    expect((await orchestrator.down({ config: sibling, root: primary, stateDir: path.join(parent, "b-state"), runtime: "b" })).state).toBe("stopped");
+    const claimed = await readFile(claimFile, "utf8"), withClaim = await revision();
+    made.fail = (directory) => path.resolve(directory) === blocked ? Object.assign(new Error("injected mkdir failure"), { code: "EACCES" }) : undefined;
+    await expect(orchestrator.up({ config: sibling, root: primary, stateDir: blocked, runtime: "b" })).rejects.toThrow("injected mkdir failure");
+    expect(await readFile(claimFile, "utf8")).toBe(claimed);
+    expect(await revision()).toBe(withClaim);
+    expect(withClaim).toBe(changed);
+  } finally {
+    made.fail = undefined;
     await rm(parent, { recursive: true, force: true });
   }
 }, 120_000);
