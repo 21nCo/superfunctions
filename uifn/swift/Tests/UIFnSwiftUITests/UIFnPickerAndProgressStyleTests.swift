@@ -49,6 +49,26 @@ struct UIFnPickerAndProgressStyleTests {
         )
     }
 
+    /// The segments share a fixed width, so at accessibility text sizes the
+    /// drawn picker stays as it is at the largest other size instead of
+    /// growing until its labels truncate. macOS has no Dynamic Type, so there
+    /// every size draws alike anyway.
+    @Test(arguments: UIFnSegmentedPickerVariant.allCases, [DynamicTypeSize.accessibility1, .accessibility5])
+    func segmentedPickerStopsGrowingAtTheLargestNonAccessibilityTextSize(
+        _ variant: UIFnSegmentedPickerVariant,
+        _ size: DynamicTypeSize
+    ) async throws {
+        let picker = { @MainActor in
+            UIFnSegmentedPicker("Range", selection: .constant("Week"), options: Self.labels, variant: variant) { Text($0) }
+                .fixedSize()
+                .isolated()
+        }
+        let largest = try #require(await UIFnSnapshot.render(dynamicTypeSize: .xxxLarge, picker))
+        let rendered = try #require(await UIFnSnapshot.render(dynamicTypeSize: size, picker))
+        #expect(rendered.width == largest.width && rendered.height == largest.height)
+        #expect(rendered.differingFraction(from: largest) == 0)
+    }
+
     /// The selection a picker's system `Picker` gets: the selection when it
     /// is an option, otherwise nil, so it always matches an option's tag or is
     /// none. Choosing an option sets the selection; nil leaves it as it is.

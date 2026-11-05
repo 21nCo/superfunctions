@@ -34,9 +34,11 @@ public enum UIFnSegmentedPickerVariant: String, CaseIterable, Sendable {
 /// selection in its place, so the label is read but not drawn.
 ///
 /// The segments share the width offered equally, like an iOS segmented
-/// control; under `fixedSize()` each is as wide as the widest. Options that
-/// repeat an earlier option are left out, and a selection that is not among
-/// the options selects no segment.
+/// control; under `fixedSize()` each is as wide as the widest. The segments
+/// follow Dynamic Type only up to `.xxxLarge`, as the system segmented control
+/// stops growing, and a label wider than its segment shrinks, to half its size
+/// at most, before it truncates. Options that repeat an earlier option are
+/// left out, and a selection that is not among the options selects no segment.
 public struct UIFnSegmentedPicker<Label: View, SelectionValue: Hashable, Segment: View>: View {
     private let selection: Binding<SelectionValue>
     private let options: [SelectionValue]
@@ -72,6 +74,9 @@ public struct UIFnSegmentedPicker<Label: View, SelectionValue: Hashable, Segment
                 segmentButton(index, selected: selected)
             }
         }
+        // Segments share a fixed width, so like the system segmented control
+        // they stop growing at the largest non-accessibility text size.
+        .dynamicTypeSize(...UIFnSegmentedTrack<EmptyView>.largestTextSize)
         // The selected segment draws the ring; with none, the whole picker does.
         .uifnFocusRing(
             drawsFocusRing && isEnabled && selected == nil,
@@ -337,6 +342,12 @@ struct UIFnSegmentedTrack<Content: View>: View {
         .opacity(isEnabled ? 1 : UIFnStyleContext.disabledOpacity)
     }
 
+    /// The largest Dynamic Type size the segments draw at.
+    static var largestTextSize: DynamicTypeSize { .xxxLarge }
+
+    /// How far a segment's label shrinks to fit its segment before it truncates.
+    static var minimumLabelScale: CGFloat { 0.5 }
+
     /// The space between a segmented track's border and its segments.
     static func inset(_ context: UIFnStyleContext) -> CGFloat {
         context.scaled(2)
@@ -363,6 +374,8 @@ struct UIFnSegmentAppearance<Label: View>: View {
             .uifnFont(context.typography.size.md, weight: context.typography.weight.medium)
             .foregroundColor(context.color(isSelected ? colors.text.primary : colors.text.secondary))
             .lineLimit(1)
+            // A label wider than its segment shrinks rather than truncating.
+            .minimumScaleFactor(UIFnSegmentedTrack<EmptyView>.minimumLabelScale)
             .padding(.horizontal, context.scaled(context.spacing.space3))
             .padding(.vertical, variant == .segmented ? context.scaled(context.spacing.space2) - inset : context.scaled(context.spacing.space2))
             .frame(maxWidth: .infinity)

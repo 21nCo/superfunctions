@@ -1,0 +1,192 @@
+import SwiftUI
+import UIFnSwiftUI
+
+/// One screen of the workbench. The raw value is the screen's launch argument
+/// and the suffix of its accessibility identifiers.
+enum WorkbenchScreen: String, CaseIterable, Identifiable, Hashable {
+    case buttons
+    case toggles
+    case textFields = "text-fields"
+    case menus
+    case segmentedPickers = "segmented-pickers"
+    case progress
+    case segmentedMeters = "segmented-meters"
+    case banners
+    case toasts
+    case emptyStates = "empty-states"
+    case skeletons
+
+    enum Group: String, CaseIterable {
+        case styles = "Styles"
+        case components = "Components"
+    }
+
+    var id: String { rawValue }
+
+    var group: Group {
+        switch self {
+        case .buttons, .toggles, .textFields, .menus, .segmentedPickers, .progress: .styles
+        case .segmentedMeters, .banners, .toasts, .emptyStates, .skeletons: .components
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .buttons: "Buttons"
+        case .toggles: "Toggles"
+        case .textFields: "Text fields"
+        case .menus: "Group boxes and menus"
+        case .segmentedPickers: "Segmented pickers"
+        case .progress: "Progress and gauges"
+        case .segmentedMeters: "Segmented meters"
+        case .banners: "Banners"
+        case .toasts: "Toasts"
+        case .emptyStates: "Empty states"
+        case .skeletons: "Skeletons"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .buttons: "rectangle.and.hand.point.up.left"
+        case .toggles: "switch.2"
+        case .textFields: "character.cursor.ibeam"
+        case .menus: "filemenu.and.selection"
+        case .segmentedPickers: "rectangle.split.3x1"
+        case .progress: "hourglass"
+        case .segmentedMeters: "chart.bar"
+        case .banners: "text.bubble"
+        case .toasts: "bubble.left.and.exclamationmark.bubble.right"
+        case .emptyStates: "tray"
+        case .skeletons: "rectangle.dashed"
+        }
+    }
+
+    @ViewBuilder
+    var content: some View {
+        switch self {
+        case .buttons: ButtonsScreen()
+        case .toggles: TogglesScreen()
+        case .textFields: TextFieldsScreen()
+        case .menus: MenusScreen()
+        case .segmentedPickers: SegmentedPickersScreen()
+        case .progress: ProgressScreen()
+        case .segmentedMeters: SegmentedMetersScreen()
+        case .banners: BannersScreen()
+        case .toasts: ToastsScreen()
+        case .emptyStates: EmptyStatesScreen()
+        case .skeletons: SkeletonsScreen()
+        }
+    }
+}
+
+/// The list of screens beside, or on iPhone before, the selected screen.
+struct WorkbenchRoot: View {
+    @State private var selection: WorkbenchScreen?
+    @State private var compactColumn: NavigationSplitViewColumn
+
+    init(initialScreen: WorkbenchScreen?) {
+        _selection = State(initialValue: initialScreen)
+        _compactColumn = State(initialValue: initialScreen == nil ? .sidebar : .detail)
+    }
+
+    var body: some View {
+        NavigationSplitView(preferredCompactColumn: $compactColumn) {
+            List(selection: $selection) {
+                ForEach(WorkbenchScreen.Group.allCases, id: \.self) { group in
+                    Section {
+                        ForEach(WorkbenchScreen.allCases.filter { $0.group == group }) { screen in
+                            NavigationLink(value: screen) {
+                                Label(screen.title, systemImage: screen.systemImage)
+                            }
+                            .accessibilityIdentifier("workbench.sidebar.\(screen.rawValue)")
+                        }
+                    } header: {
+                        // The list's own header color is too faint on iOS for
+                        // the contrast audit.
+                        Text(group.rawValue)
+                            .foregroundStyle(Color.primary)
+                            .accessibilityAddTraits(.isHeader)
+                    }
+                }
+            }
+            .navigationTitle("UIFn Workbench")
+            #if os(macOS)
+            .navigationSplitViewColumnWidth(min: 200, ideal: 240)
+            #else
+            // Keeps the whole list on an iPhone's screen, where the audit
+            // can see it.
+            .listSectionSpacing(.compact)
+            #endif
+        } detail: {
+            if let selection {
+                WorkbenchPage(screen: selection)
+            } else {
+                Text("Choose a screen")
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("workbench.placeholder")
+            }
+        }
+        #if os(macOS)
+        .frame(minWidth: 760, minHeight: 560)
+        #endif
+    }
+}
+
+/// A screen's content, scrolling on the theme's canvas, with the toasts the
+/// screen shows over it.
+struct WorkbenchPage: View {
+    let screen: WorkbenchScreen
+    @State private var toast: UIFnToast?
+    @Environment(\.uifnTheme) private var theme
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 28) {
+                screen.content
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .accessibilityIdentifier("workbench.screen.\(screen.rawValue)")
+        .background(theme.colors.surface.canvas.color)
+        .uifnToast($toast, dismissLabel: "Dismiss notification", edge: .bottom)
+        .environment(\.workbenchShowToast) { toast = $0 }
+        .navigationTitle(screen.title)
+        // A new screen starts without the last one's toast.
+        .onChange(of: screen) { toast = nil }
+    }
+}
+
+private struct WorkbenchShowToastKey: EnvironmentKey {
+    static let defaultValue: (UIFnToast) -> Void = { _ in }
+}
+
+extension EnvironmentValues {
+    /// Shows a toast over the current screen.
+    var workbenchShowToast: (UIFnToast) -> Void {
+        get { self[WorkbenchShowToastKey.self] }
+        set { self[WorkbenchShowToastKey.self] = newValue }
+    }
+}
+
+/// A titled group of examples on a screen.
+struct WorkbenchSection<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: Content
+
+    init(_ title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.headline)
+                .accessibilityAddTraits(.isHeader)
+            content
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
