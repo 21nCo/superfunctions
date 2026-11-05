@@ -51,6 +51,8 @@ const CLAIMS_LOCK = "claims.lock";
 // taken over however long it holds the lock.
 const CLAIMS_LOCK_TIMEOUT_MS = 30_000;
 const CLAIMS_LOCK_STALE_MS = 5_000;
+// So are an instance's lifecycle locks, checkout-wide and per state directory.
+export const LIFECYCLE_LOCK = { timeoutMs: 30_000, staleMs: CLAIMS_LOCK_STALE_MS };
 const INSTANCE_ID = /^[0-9a-f]{12}$/;
 // What creating the claims directory and its lock reports while a sibling
 // removes the empty directories it created (macOS reports EINVAL for a mkdir
@@ -851,7 +853,7 @@ export async function withInstanceLifecycleLock<T>(root: string, instanceId: str
     try {
       directory = await claimDirectory(root);
       created = await makeDirectory(directory);
-      return await withFileLock(path.join(directory, `lifecycle-${instanceId}.lock`), async () => { entered = true; return await action(); }, { timeoutMs: 30_000 });
+      return await withFileLock(path.join(directory, `lifecycle-${instanceId}.lock`), async () => { entered = true; return await action(); }, LIFECYCLE_LOCK);
     } catch (error) { // A sibling removing the empty directories before the lock is held is retried.
       if (entered || !CLAIMS_SETUP_RACES.has((error as NodeJS.ErrnoException).code ?? "") || attempt >= CLAIMS_SETUP_ATTEMPTS) throw error;
     } finally {

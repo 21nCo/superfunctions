@@ -1,10 +1,11 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import http from "node:http";
 import net from "node:net";
 import { access, link, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import { composeProjectName } from "@devfn/compose";
@@ -1301,3 +1302,60 @@ it("refuses a task-input revision when the claims cannot be read, rather than ha
     await rm(parent, { recursive: true, force: true });
   }
 }, 60_000);
+
+it("recovers either lifecycle lock of a killed start or stop within the lock timeout, in its own and another state directory, while a live holder still excludes", async () => {
+  const { parent, primary } = await repository();
+  const [s1, s2] = [path.join(parent, "s1"), path.join(parent, "s2")];
+  const config = validateDevFnConfig({ version: 1, project: { id: "dead-lock" }, environmentOutputs: [{ path: ".b" }], processes: {}, profiles: { default: { processes: [] } } } as never);
+  const orchestrator = new DevFnOrchestrator();
+  const identity = await resolveInstanceIdentity("dead-lock", primary);
+  const outputs = path.join(primary, ".devfn", "receipts", "outputs");
+  const instanceLock = path.join(outputs, `lifecycle-${identity.instanceId}.lock`);
+  const children: number[] = [];
+  // A real DevFn process takes the locks as up and down do, and is killed while holding them: no record is aged.
+  const killHolder = async (...locks: string[]) => {
+    const child = spawn(process.execPath, ["--input-type=module", "-e", `
+      import { withFileLock } from "@devfn/ports";
+      const locks = process.argv.slice(1);
+      const hold = async (index) => index === locks.length ? await new Promise(() => setInterval(() => undefined, 1_000)) : await withFileLock(locks[index], async () => await hold(index + 1));
+      await hold(0);`, ...locks], { cwd: fileURLToPath(new URL("..", import.meta.url)), stdio: "ignore" });
+    children.push(child.pid!);
+    const exited = new Promise((resolve) => child.once("exit", resolve));
+    for (const lock of locks) await expect.poll(async () => await readFile(path.join(lock, "owner.json"), "utf8").then((text) => (JSON.parse(text) as { pid: number }).pid, () => 0), { timeout: 20_000 }).toBe(child.pid);
+    child.kill("SIGKILL");
+    await exited;
+  };
+  const timed = async <T>(action: () => Promise<T>) => { const started = Date.now(); const value = await action(); return { value, ms: Date.now() - started }; };
+  try {
+    for (const directory of [outputs, s1, s2]) await mkdir(directory, { recursive: true });
+    const lockIn = async (stateDir: string) => path.join(await realpath(stateDir), `lifecycle-${identity.instanceId}.lock`);
+    // A start killed in s1 holds the instance lock and s1's: a start in s2 takes over the instance lock at once.
+    await killHolder(instanceLock, await lockIn(s1));
+    const moved = await timed(async () => await orchestrator.up({ config, root: primary, stateDir: s2 }));
+    expect(moved.value.state).toBe("ready");
+    expect(moved.ms).toBeLessThan(20_000);
+    expect((await orchestrator.down({ config, root: primary, stateDir: s2 })).state).toBe("stopped");
+    // A start in s1 then takes over s1's lock too.
+    const same = await timed(async () => await orchestrator.up({ config, root: primary, stateDir: s1 }));
+    expect(same.value.state).toBe("ready");
+    expect(same.ms).toBeLessThan(20_000);
+    // A stop killed in s1 leaves both locks too; the next stop takes both over.
+    await killHolder(instanceLock, await lockIn(s1));
+    const stopped = await timed(async () => await orchestrator.down({ config, root: primary, stateDir: s1 }));
+    expect(stopped.value.state).toBe("stopped");
+    expect(stopped.ms).toBeLessThan(20_000);
+    // A live holder is never taken over, however long past the stale window it holds the lock.
+    let waiting: Promise<string> | undefined;
+    await withFileLock(instanceLock, async () => {
+      waiting = orchestrator.up({ config, root: primary, stateDir: s2 }).then((receipt) => receipt.state, (error: { code?: string }) => error.code ?? String(error));
+      await new Promise((resolve) => setTimeout(resolve, 7_000));
+      expect(await Promise.race([waiting, Promise.resolve("pending")])).toBe("pending");
+      expect(JSON.parse(await readFile(path.join(outputs, `${identity.instanceId}.json`), "utf8"))).toMatchObject({ targets: [] });
+    });
+    expect(await waiting).toBe("ready");
+  } finally {
+    for (const pid of children) { try { process.kill(pid, "SIGKILL"); } catch { /* Already gone. */ } }
+    for (const stateDir of [s1, s2]) await orchestrator.down({ config, root: primary, stateDir }).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 180_000);

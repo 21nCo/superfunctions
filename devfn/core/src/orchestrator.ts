@@ -17,7 +17,7 @@ import { resolveEndpointTemplates, resolveLocalHostname, type EndpointResolution
 import { createPlan } from "./planner.js";
 import { planResources, resourcePlanFingerprint, resourcesNeedComposeNetworks } from "./resources.js";
 import { livePublicUrls, profileTunnel, publicTemplateInputs, publishLifecycleTunnel, selectedPublicRoutes, selectionTemplateInputs, withdrawLifecycleTunnel, type PublicSelection, type TunnelOverrides } from "./tunnel.js";
-import { assertEnvironmentOutputsAvailable, claimEnvironmentOutputs, releaseEnvironmentOutputs, withInstanceLifecycleLock, type EnvironmentOutputClaim } from "./outputs.js";
+import { assertEnvironmentOutputsAvailable, claimEnvironmentOutputs, LIFECYCLE_LOCK, releaseEnvironmentOutputs, withInstanceLifecycleLock, type EnvironmentOutputClaim } from "./outputs.js";
 import { listRuntimeReceipts, newRuntimeId, readReceipt, readRuntimeId, recordRuntimeId, secureRuntimeDirectory, sharedEnvironmentOutputs, writeEnvironmentOutputs, writeReceipt, type RuntimePath } from "./runtime.js";
 import { preflightTasks, runTask, taskInputRevision, type TaskReceipt } from "./tasks.js";
 import { DevFnError, type CleanupResult, type InstanceIdentity, type RoutingIdentity, type LifecyclePlan, type LifecycleReceipt, type UpOptions } from "./types.js";
@@ -687,7 +687,7 @@ export class DevFnOrchestrator {
         await claim.restore().catch(() => undefined);
         throw error;
       }
-    }, { timeoutMs: 30_000 }));
+    }, LIFECYCLE_LOCK));
   }
 
   private async upLocked(options: UpOptions, stateDir: string, identity: RoutingIdentity, loadedPolicy: Awaited<ReturnType<typeof loadDevFnPolicy>>,
@@ -1156,7 +1156,7 @@ export class DevFnOrchestrator {
         await new FilePortRegistry(path.join(stateDir, "registry.json")).updateInvocation(receipt.invocationId, { state: "stopping" });
       });
       return await this.downLocked(options, stateDir, identity);
-    }, { timeoutMs: 30_000 }));
+    }, LIFECYCLE_LOCK));
   }
 
   private async downLocked(options: { config: DevFnConfig; root: string; stateDir?: string }, stateDir: string, identity: InstanceIdentity): Promise<LifecycleReceipt> {

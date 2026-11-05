@@ -150,12 +150,8 @@ describe("named runtimes", () => {
       expect((await run(primary, "down", "--runtime", "a")).value.state).toBe("stopped");
       expect((await run(primary, "up", "--runtime", "a")).value.state).toBe("ready");
       expect((await run(primary, "status", "--runtime", "c")).value).toMatchObject({ runtime: "c", state: "starting" });
-      // Once the dead holder's lock is past its stale window (aged here instead of waited for), recovering c,
-      // which takes over that lock, stops the orphan and starts again, runs concurrently with stopping a.
-      for (const owner of [lockOwner, instanceLockOwner]) {
-        const aged = JSON.parse(await readFile(owner, "utf8")) as Record<string, unknown>;
-        await writeFile(owner, JSON.stringify({ ...aged, createdAt: new Date(Date.now() - 600_000).toISOString() }));
-      }
+      // Recovering c takes over both of the dead holder's locks within the lock timeout (nothing is aged),
+      // stops the orphan and starts again, concurrently with stopping a.
       const [recoveredC, stoppedA, baseStatus] = await Promise.all([run(primary, "up", "--runtime", "c"), run(primary, "down", "--runtime", "a"), run(primary, "status")]);
       expect(recoveredC.value, JSON.stringify(recoveredC.value)).toMatchObject({ state: "ready", runtime: "c", instanceId: c.instanceId });
       expect(processExists(orphan)).toBe(false);
