@@ -129,6 +129,17 @@ struct UIFnComponentAccessibilityTests {
         )
     }
 
+    /// A single trailing closure is the icon, so a text in it is not read;
+    /// actions passed labeled are read after the title.
+    @Test
+    func anEmptyStatesSingleTrailingClosureIsAHiddenIcon() async {
+        await expectElements(UIFnEmptyState("No files") { Text("Decoration") }, [(.heading, "No files", nil)])
+        await expectElements(
+            UIFnEmptyState("No files", actions: { Button("Add a file") {} }),
+            [(.heading, "No files", nil), (.button, "Add a file", nil)]
+        )
+    }
+
     @Test
     func anEmptyStateWithOnlyATitleIsOneHeading() async {
         await expectElements(UIFnEmptyState("No files"), [(.heading, "No files", nil)])

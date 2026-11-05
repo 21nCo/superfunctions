@@ -13,10 +13,13 @@ struct UIFnComponentTests {
     @Test(arguments: [
         (0, 5, 0), (0.001, 5, 1), (0.09, 5, 1), (0.3, 5, 2), (0.5, 5, 3), (0.6, 5, 3), (0.7, 5, 4),
         (0.95, 5, 4), (0.999, 5, 4), (1, 5, 5), (1.5, 5, 5), (-1, 5, 0), (.nan, 5, 0),
-        (0.5, 1, 0), (1, 1, 1), (0.5, 2, 1), (0.01, 100, 1), (0.5, 0, 0), (1, 0, 1),
+        (0.01, 100, 1),
+        // Counts below the minimum light as 2 segments: an interior value lights 1.
+        (0.5, 2, 1), (0.001, 2, 1), (0.999, 2, 1), (1, 2, 2), (0, 2, 0),
+        (0.5, 1, 1), (1, 1, 2), (0, 1, 0), (0.5, 0, 1), (1, 0, 2), (0.5, -3, 1),
         // Counts above the maximum light as 100 segments.
         (0.5, 1_000, 50), (0.999, 1_000, 99), (1, 1_000, 100), (0.001, Int.max, 1),
-        (0.5, Int.max, 50), (0.999, Int.max, 99), (1, Int.max, 100), (0.5, Int.min, 0),
+        (0.5, Int.max, 50), (0.999, Int.max, 99), (1, Int.max, 100), (0.5, Int.min, 1), (1, Int.min, 2),
     ] as [(Double, Int, Int)])
     func aMeterLightsItsShareOfSegments(_ fraction: Double, _ segments: Int, _ lit: Int) {
         #expect(UIFnMeterValue.litSegments(fraction, of: segments) == lit)
@@ -70,21 +73,28 @@ struct UIFnComponentTests {
         #expect(Self.barPixel(rtl, at: 0.1) == unlit)
     }
 
-    /// A meter of fewer than one segment draws one.
-    @Test(arguments: [0, -3])
-    func aMeterHasAtLeastOneSegment(_ segments: Int) async throws {
-        for value in [0.5, 1] {
+    /// A meter of fewer than two segments draws two, so a value inside the
+    /// range lights the first and leaves the second unlit.
+    @Test(arguments: [1, 0, -3, Int.min])
+    func aMeterHasAtLeastTwoSegments(_ segments: Int) async throws {
+        for value in [0.001, 0.5, 0.999, 1] {
             let drawn = try #require(await UIFnSnapshot.render { Self.meter(value, segments: segments) })
-            let one = try #require(await UIFnSnapshot.render { Self.meter(value, segments: 1) })
-            #expect(drawn.differingFraction(from: one, tolerance: 0) == 0, "\(value)")
+            let two = try #require(await UIFnSnapshot.render { Self.meter(value, segments: 2) })
+            #expect(drawn.differingFraction(from: two, tolerance: 0) == 0, "\(value)")
         }
+        let half = try #require(await UIFnSnapshot.render { Self.meter(0.5, segments: segments) })
+        let full = try #require(await UIFnSnapshot.render { Self.meter(1, segments: segments) })
+        let empty = try #require(await UIFnSnapshot.render { Self.meter(0, segments: segments) })
+        #expect(Self.barPixel(half, at: 0.25) == Self.barPixel(full, at: 0.25))
+        #expect(Self.barPixel(half, at: 0.75) == Self.barPixel(empty, at: 0.75))
+        #expect(Self.barPixel(half, at: 0.25) != Self.barPixel(half, at: 0.75))
     }
 
-    /// A meter has from 1 to 100 segments, whatever count it is given.
+    /// A meter has from 2 to 100 segments, whatever count it is given.
     @Test(arguments: [
-        (Int.min, 1), (-3, 1), (0, 1), (1, 1), (5, 5), (100, 100), (101, 100), (1_000, 100), (Int.max, 100),
+        (Int.min, 2), (-3, 2), (0, 2), (1, 2), (2, 2), (5, 5), (100, 100), (101, 100), (1_000, 100), (Int.max, 100),
     ])
-    func aMetersSegmentCountIsFromOneToTheMaximum(_ segments: Int, _ count: Int) {
+    func aMetersSegmentCountIsFromTheMinimumToTheMaximum(_ segments: Int, _ count: Int) {
         #expect(UIFnMeterValue.segmentCount(segments) == count)
     }
 
@@ -103,6 +113,8 @@ struct UIFnComponentTests {
         #expect(rects(100, lit: 0..<100) == 100)
         #expect(rects(Int.max, lit: 0..<Int.max) == 100)
         #expect(rects(1_000, lit: 50..<1_000) == 50)
+        #expect(rects(1, lit: 0..<1) == 1)
+        #expect(rects(0, lit: 0..<Int.max) == 2)
         let drawn = UIFnMeterSegments(count: Int.max, lit: 0..<Int.max, gap: 2, cornerRadius: 2).path(in: rect)
         let most = UIFnMeterSegments(count: 100, lit: 0..<100, gap: 2, cornerRadius: 2).path(in: rect)
         #expect(drawn.boundingRect == most.boundingRect)
@@ -116,6 +128,25 @@ struct UIFnComponentTests {
             let most = try #require(await UIFnSnapshot.render { Self.meter(value, segments: 100) })
             #expect(drawn.differingFraction(from: most, tolerance: 0) == 0, "\(value)")
         }
+    }
+
+    // MARK: - Empty state
+
+    /// A single trailing closure fills the icon slot, as the first of two
+    /// trailing closures does; actions alone are passed labeled.
+    @Test
+    @MainActor
+    func anEmptyStatesSingleTrailingClosureIsItsIcon() async throws {
+        let icon: UIFnEmptyState<Image, EmptyView> = UIFnEmptyState("No files") { Image(systemName: "tray") }
+        let labeledIcon = UIFnEmptyState("No files", icon: { Image(systemName: "tray") })
+        let actions: UIFnEmptyState<EmptyView, Button<Text>> = UIFnEmptyState("No files", actions: { Button("Add") {} })
+        let titled = try #require(await UIFnSnapshot.render { UIFnEmptyState("No files").frame(width: 200) })
+        let drawnIcon = try #require(await UIFnSnapshot.render { icon.frame(width: 200) })
+        let drawnLabeledIcon = try #require(await UIFnSnapshot.render { labeledIcon.frame(width: 200) })
+        let drawnActions = try #require(await UIFnSnapshot.render { actions.frame(width: 200) })
+        #expect(drawnIcon.differingFraction(from: drawnLabeledIcon, tolerance: 0) == 0)
+        #expect(drawnIcon.height > titled.height)
+        #expect(drawnActions.height > titled.height)
     }
 
     // MARK: - Skeleton

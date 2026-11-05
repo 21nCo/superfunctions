@@ -16,8 +16,9 @@ import SwiftUI
 /// lit segments, a value strictly inside the range reads from 1% to 99%,
 /// never 0% or 100%.
 ///
-/// A meter has from 1 to 100 segments: a count below 1 draws one segment and
-/// a count above 100 draws 100.
+/// A meter has from 2 to 100 segments: a count below 2 draws two segments, so
+/// a value inside the range can light some and leave some unlit, and a count
+/// above 100 draws 100.
 public struct UIFnSegmentedMeter<Label: View, CurrentValueLabel: View>: View {
     private let fraction: Double
     private let segments: Int
@@ -25,7 +26,7 @@ public struct UIFnSegmentedMeter<Label: View, CurrentValueLabel: View>: View {
     private let label: Label
     private let currentValueLabel: CurrentValueLabel?
 
-    /// A meter of `segments` segments, from 1 to 100, showing `value` within `bounds`.
+    /// A meter of `segments` segments, from 2 to 100, showing `value` within `bounds`.
     public init<Value: BinaryFloatingPoint>(
         value: Value,
         in bounds: ClosedRange<Value> = 0...1,
@@ -85,7 +86,7 @@ struct UIFnSegmentedMeterAccessibility<Label: View>: View {
 }
 
 public extension UIFnSegmentedMeter where CurrentValueLabel == EmptyView {
-    /// A meter of `segments` segments, from 1 to 100, showing `value` within `bounds`.
+    /// A meter of `segments` segments, from 2 to 100, showing `value` within `bounds`.
     init<Value: BinaryFloatingPoint>(
         value: Value,
         in bounds: ClosedRange<Value> = 0...1,
@@ -122,13 +123,17 @@ public extension UIFnSegmentedMeter where Label == Text, CurrentValueLabel == Em
 
 /// How a segmented meter turns its value into lit segments and a percentage.
 enum UIFnMeterValue {
+    /// The fewest segments a meter draws: with fewer, a value inside the
+    /// range would have to show as empty or full.
+    static let minimumSegments = 2
+
     /// The most segments a meter draws.
     static let maximumSegments = 100
 
-    /// The segments a meter asked for `segments` draws: from 1 to
-    /// ``maximumSegments``.
+    /// The segments a meter asked for `segments` draws: from
+    /// ``minimumSegments`` to ``maximumSegments``.
     static func segmentCount(_ segments: Int) -> Int {
-        min(max(segments, 1), maximumSegments)
+        min(max(segments, minimumSegments), maximumSegments)
     }
 
     /// How far `value` is through `bounds`, from 0 to 1: the nearer end for a
@@ -206,7 +211,8 @@ struct UIFnSegmentedMeterAppearance<Label: View, CurrentValueLabel: View>: View 
 }
 
 /// Some of `count` equal segments side by side across the width, left to
-/// right, `gap` apart. A count above the meter's maximum draws the maximum.
+/// right, `gap` apart. Like the meter, a count below its minimum draws the
+/// minimum and one above its maximum draws the maximum.
 ///
 /// The gap shrinks when the segments would be narrower than it, so every
 /// segment keeps some width.
@@ -218,7 +224,7 @@ struct UIFnMeterSegments: Shape {
 
     func path(in rect: CGRect) -> Path {
         var path = Path()
-        guard count > 0, rect.width > 0 else { return path }
+        guard rect.width > 0 else { return path }
         let count = UIFnMeterValue.segmentCount(count)
         let gap = min(gap, rect.width / (CGFloat(count) * 2))
         let width = (rect.width - gap * CGFloat(count - 1)) / CGFloat(count)

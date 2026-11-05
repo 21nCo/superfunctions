@@ -7,6 +7,11 @@ import SwiftUI
 /// Pass text already localized; the empty state shows it as it is.
 /// Accessibility reads the title as a heading, then the message and the
 /// actions. The icon is decoration, hidden from accessibility.
+///
+/// A single trailing closure is the icon, as the first of two trailing
+/// closures is, so `UIFnEmptyState("No files") { Image(systemName: "tray") }`
+/// shows an icon. For actions without an icon, label them:
+/// `UIFnEmptyState("No files", actions: { Button("Add a file") { add() } })`.
 public struct UIFnEmptyState<Icon: View, Actions: View>: View {
     let title: String
     let message: String?
@@ -31,12 +36,19 @@ public struct UIFnEmptyState<Icon: View, Actions: View>: View {
 }
 
 public extension UIFnEmptyState where Icon == EmptyView {
+    /// An empty state with actions and no icon.
+    ///
+    /// Pass the actions labeled `actions:`; a single trailing closure is the
+    /// icon instead.
+    @_disfavoredOverload
     init(_ title: String, message: String? = nil, @ViewBuilder actions: () -> Actions) {
         self.init(title, message: message, icon: { EmptyView() }, actions: actions)
     }
 }
 
 public extension UIFnEmptyState where Actions == EmptyView {
+    /// An empty state with an icon and no actions. The icon can be a single
+    /// trailing closure.
     init(_ title: String, message: String? = nil, @ViewBuilder icon: () -> Icon) {
         self.init(title, message: message, icon: icon, actions: { EmptyView() })
     }
