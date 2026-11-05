@@ -54,7 +54,10 @@
 Release tags must point to the reviewed commit containing the exact package
 version and all prerequisite fixes. Manual dispatch requires an **existing tag**:
 the workflows check out `refs/tags/<release_tag>`, not the dispatching branch,
-and reject a deleted or moved tag before publication. Do not retag releases.
+and reject a deleted or moved tag before publication. A dispatch that publishes
+an npm package must also run on that tag (`gh workflow run publish-tag.yml
+--ref <release_tag> -f release_tag=<release_tag>`), because npm provenance
+records the commit the run was dispatched from. Do not retag releases.
 The commands below validate/build locally; they do not publish.
 
 ### npm libraries
