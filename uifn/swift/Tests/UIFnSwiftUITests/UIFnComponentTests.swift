@@ -72,6 +72,48 @@ struct UIFnComponentTests {
         #expect(UIFnMeterValue.fraction(Float(1), in: 0...4) == 0.25)
     }
 
+    /// A value strictly inside the range, however close to an end, lights
+    /// at least one of five segments and leaves one unlit, and reads from 1%
+    /// to 99%; a `Float` value lights what the same `Double` value does.
+    @Test
+    func aMeterNeverShowsAValueInsideItsRangeAsAnEnd() {
+        let widest = -Double.greatestFiniteMagnitude...Double.greatestFiniteMagnitude
+        let rows: [(String, Double, Int, Int)] = [
+            ("Float 70 in 0...100", UIFnMeterValue.fraction(Float(70), in: 0...100), 4, 70),
+            ("Float 1.nextDown in -1...1", UIFnMeterValue.fraction(Float(1).nextDown, in: -1...1), 4, 99),
+            ("Float -1.nextUp in -1...1", UIFnMeterValue.fraction(Float(-1).nextUp, in: -1...1), 1, 1),
+            ("Float 100.nextDown in 0...100", UIFnMeterValue.fraction(Float(100).nextDown, in: 0...100), 4, 99),
+            ("Float 1 in -1...1", UIFnMeterValue.fraction(Float(1), in: -1...1), 5, 100),
+            ("Float -1 in -1...1", UIFnMeterValue.fraction(Float(-1), in: -1...1), 0, 0),
+            ("Double 1.nextDown in -1...1", UIFnMeterValue.fraction(Double(1).nextDown, in: -1...1), 4, 99),
+            ("Double -1.nextUp in -1...1", UIFnMeterValue.fraction(Double(-1).nextUp, in: -1...1), 1, 1),
+            (
+                "Double leastNonzero in 0...max",
+                UIFnMeterValue.fraction(Double.leastNonzeroMagnitude, in: 0...Double.greatestFiniteMagnitude), 1, 1
+            ),
+            ("Double max.nextDown in widest", UIFnMeterValue.fraction(Double.greatestFiniteMagnitude.nextDown, in: widest), 4, 99),
+            ("Double -max.nextUp in widest", UIFnMeterValue.fraction((-Double.greatestFiniteMagnitude).nextUp, in: widest), 1, 1),
+        ]
+        for (name, share, lit, percent) in rows {
+            #expect(UIFnMeterValue.litSegments(share, of: 5) == lit, "\(name): \(share)")
+            #expect(UIFnMeterValue.percent(share) == percent, "\(name): \(share)")
+        }
+        #expect(UIFnMeterValue.fraction(Float(70), in: 0...100) == UIFnMeterValue.fraction(70.0, in: 0...100))
+    }
+
+    /// A `Float` meter just below its maximum draws as a `Double` meter at
+    /// 0.75, four of five segments lit, not as a full one.
+    @Test
+    func aFloatMeterJustBelowItsMaximumIsNotDrawnFull() async throws {
+        let nearTop = try #require(await UIFnSnapshot.render {
+            UIFnSegmentedMeter(value: Float(1).nextDown, in: -1...1, segments: 5) { EmptyView() }.frame(width: 100)
+        })
+        let fourLit = try #require(await UIFnSnapshot.render { Self.meter(0.75, segments: 5) })
+        let full = try #require(await UIFnSnapshot.render { Self.meter(1, segments: 5) })
+        #expect(nearTop.differingFraction(from: fourLit, tolerance: 0) == 0)
+        #expect(nearTop.differingFraction(from: full, tolerance: 0) > 0)
+    }
+
     @MainActor
     private static func meter(_ value: Double, segments: Int, _ direction: LayoutDirection = .leftToRight) -> some View {
         UIFnSegmentedMeter(value: value, segments: segments) { EmptyView() }

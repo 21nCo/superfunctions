@@ -70,6 +70,21 @@ struct UIFnComponentAccessibilityTests {
         )
     }
 
+    /// A `Float` meter reads what the same `Double` meter does, and a value
+    /// just inside either end of its range reads 1% or 99%, not 0% or 100%.
+    @Test(arguments: [
+        (Float(70), Float(0)...Float(100), "70%"),
+        (Float(1).nextDown, Float(-1)...Float(1), "99%"),
+        (Float(-1).nextUp, Float(-1)...Float(1), "1%"),
+        (Float(1), Float(-1)...Float(1), "100%"),
+    ] as [(Float, ClosedRange<Float>, String)])
+    func aFloatSegmentedMeterReadsItsShareAsAPercentage(_ value: Float, _ bounds: ClosedRange<Float>, _ percent: String) async {
+        await expectElements(
+            UIFnSegmentedMeter("Storage", value: value, in: bounds, segments: 5),
+            [(.progressIndicator, "Storage", percent)]
+        )
+    }
+
     /// A title string is shown as it is, as the other components' text is,
     /// not looked up or parsed as Markdown as a localized key would be.
     @Test

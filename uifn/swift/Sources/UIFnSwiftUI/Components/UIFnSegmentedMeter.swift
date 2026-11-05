@@ -6,11 +6,12 @@ import SwiftUI
 /// current value label, when there is one, at the label's trailing end.
 ///
 /// The value lights its share of the segments, rounded to the nearest one,
-/// except that a value strictly inside the range always lights one and leaves
-/// one unlit, so it reads as neither empty nor full. Values outside the range
-/// draw as the nearer end, and a value that is not a number, or a range with
-/// no width or an infinite bound, as empty. Any range with finite bounds and
-/// some width works, even one wider than the largest `Double`, such as
+/// except that a value strictly inside the range, however close to an end,
+/// always lights one and leaves one unlit, so it reads as neither empty nor
+/// full. Values outside the range draw as the nearer end, and a value that is
+/// not a number, or a range with no width or an infinite bound, as empty. Any
+/// range with finite bounds and some width works, even one wider than the
+/// largest `Double`, such as
 /// `-Double.greatestFiniteMagnitude...Double.greatestFiniteMagnitude`.
 ///
 /// Accessibility sees a progress indicator with the label, whose value is the
@@ -139,24 +140,39 @@ enum UIFnMeterValue {
     }
 
     /// How far `value` is through `bounds`, from 0 to 1: the nearer end for a
-    /// value outside them, and 0 for a value that is not a number or bounds
-    /// that are infinite or have no width.
+    /// value at or outside them, and 0 for a value that is not a number or
+    /// bounds that are infinite or have no width.
     ///
-    /// Finite bounds too far apart for their difference to be finite, such
-    /// as `-greatestFiniteMagnitude...greatestFiniteMagnitude`, are halved,
-    /// with the value, before subtracting, which keeps the difference finite
-    /// and the share the same.
+    /// A value strictly inside the bounds is never read as an end, however
+    /// close to one it is: its share is worked out in `Double`, or in `Value`
+    /// when that is wider and its bounds do not fit in a `Double`, and kept
+    /// above 0 and below 1. Bounds too far apart for their difference to be
+    /// finite, such as `-greatestFiniteMagnitude...greatestFiniteMagnitude`,
+    /// are halved, with the value, before subtracting, which keeps the
+    /// difference finite and the share the same.
     static func fraction<Value: BinaryFloatingPoint>(_ value: Value, in bounds: ClosedRange<Value>) -> Double {
         let lower = bounds.lowerBound
         let upper = bounds.upperBound
         guard lower.isFinite, upper.isFinite, lower < upper, !value.isNaN else { return 0 }
-        var offset = value - lower
-        var width = upper - lower
-        if !width.isFinite {
-            offset = value / 2 - lower / 2
-            width = upper / 2 - lower / 2
-        }
-        return UIFnProgress.clamped(Double(offset / width))
+        if value <= lower { return 0 }
+        if value >= upper { return 1 }
+        let wideLower = Double(lower)
+        let wideUpper = Double(upper)
+        let share = wideLower.isFinite && wideUpper.isFinite && wideLower < wideUpper
+            ? interiorShare(Double(value), from: wideLower, to: wideUpper)
+            : Double(interiorShare(value, from: lower, to: upper))
+        return min(max(share, .leastNonzeroMagnitude), Double(1).nextDown)
+    }
+
+    /// How far `value` is from `lower` to `upper`, finite bounds with
+    /// `lower < upper`, halving them and the value when their difference
+    /// would not be finite.
+    private static func interiorShare<Number: BinaryFloatingPoint>(
+        _ value: Number, from lower: Number, to upper: Number
+    ) -> Number {
+        let width = upper - lower
+        if width.isFinite { return (value - lower) / width }
+        return (value / 2 - lower / 2) / (upper / 2 - lower / 2)
     }
 
     /// How many of `segments` segments a fraction lights: its share rounded to
