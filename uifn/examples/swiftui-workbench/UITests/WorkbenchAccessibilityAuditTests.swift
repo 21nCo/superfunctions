@@ -61,7 +61,10 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
         }
     }
 
-    /// The README's waiver table lists each waiver by id with its reason.
+    /// The README's waiver table lists each waiver by id with its reason. A
+    /// runner that cannot read the README skips the test, unless
+    /// `UIFN_WORKBENCH_REQUIRE_README` is set, as CI sets it through
+    /// `TEST_RUNNER_UIFN_WORKBENCH_REQUIRE_README`.
     func testTheReadmeListsEveryWaiver() throws {
         let readme = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -71,7 +74,12 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
         do {
             text = try String(contentsOf: readme, encoding: .utf8)
         } catch {
-            throw XCTSkip("The test runner cannot read \(readme.path): \(error)")
+            let message = "The test runner cannot read \(readme.path): \(error)"
+            if ProcessInfo.processInfo.environment["UIFN_WORKBENCH_REQUIRE_README"] == "1" {
+                XCTFail(message)
+                return
+            }
+            throw XCTSkip(message)
         }
         var listed: [String: String] = [:]
         for row in text.split(separator: "\n") where row.hasPrefix("| `") {

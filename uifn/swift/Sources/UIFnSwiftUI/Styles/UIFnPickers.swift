@@ -37,7 +37,8 @@ public enum UIFnSegmentedPickerVariant: String, CaseIterable, Sendable {
 /// control; under `fixedSize()` each is as wide as the widest. The segments
 /// follow Dynamic Type only up to `.xxxLarge`, as the system segmented control
 /// stops growing, and a label wider than its segment shrinks, to half its size
-/// at most, before it truncates. Options that repeat an earlier option are
+/// at most, before it truncates. On iOS a long press on a segment at an
+/// accessibility text size shows its label in the Large Content Viewer. Options that repeat an earlier option are
 /// left out, and a selection that is not among the options selects no segment.
 public struct UIFnSegmentedPicker<Label: View, SelectionValue: Hashable, Segment: View>: View {
     private let selection: Binding<SelectionValue>
@@ -111,6 +112,13 @@ public struct UIFnSegmentedPicker<Label: View, SelectionValue: Hashable, Segment
         #if os(macOS)
         // The picker takes focus as one control, not one per segment.
         .focusable(false)
+        #else
+        // The segments stop growing at the accessibility text sizes, so, like
+        // the system segmented control, a long press on one shows its label
+        // in the Large Content Viewer.
+        .accessibilityShowsLargeContentViewer {
+            segment(options[index])
+        }
         #endif
     }
 

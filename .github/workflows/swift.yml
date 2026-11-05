@@ -199,6 +199,9 @@ jobs:
         env:
           DESTINATION: ${{ steps.destination.outputs.destination }}
           RESULT: ${{ runner.temp }}/swiftui-workbench-${{ matrix.platform }}.xcresult
+          # xcodebuild passes it to the test runner without the prefix, so the
+          # README waiver table test fails instead of skipping.
+          TEST_RUNNER_UIFN_WORKBENCH_REQUIRE_README: "1"
         run: |
           xcodebuild test -project SwiftUIWorkbench.xcodeproj -scheme SwiftUIWorkbench \
             -destination "$DESTINATION" -resultBundlePath "$RESULT" -disableAutomaticPackageResolution

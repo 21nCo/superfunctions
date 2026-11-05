@@ -37,11 +37,13 @@ xcodebuild test -project SwiftUIWorkbench.xcodeproj -scheme SwiftUIWorkbench -de
 
 Use any iPhone simulator with iOS 17 or later; `xcrun simctl list devices available` lists them.
 
+On CI, `TEST_RUNNER_UIFN_WORKBENCH_REQUIRE_README=1` makes the waiver table test fail, rather than skip, if the test runner cannot read this README.
+
 macOS UI tests need Automation Mode. Xcode asks for it the first time; from the command line, run `sudo automationmodetool enable-automationmode-without-authentication` once. The `workbench` job of the Swift workflow (`.github/workflows/swift.yml`) runs both commands, on the newest iPhone simulator with iOS 17 or later, and uploads each result bundle.
 
 ### Waivers
 
-The waivers are in `UITests/WorkbenchAuditWaiver.swift`, and a test checks that this table lists the same ids and reasons. Each waived issue is attached to its test's result. The segmented picker's clipping was real when the audit first found it: at accessibility text sizes `UIFnSegmentedPicker` truncated every segment label to an ellipsis. Its segments now stop growing at `.xxxLarge` (see the UIFnSwiftUI README), and the waiver covers only the audit's prediction, which does not change.
+The waivers are in `UITests/WorkbenchAuditWaiver.swift`, and a test checks that this table lists the same ids and reasons. Each waived issue is attached to its test's result. The segmented picker's clipping was real when the audit first found it: at accessibility text sizes `UIFnSegmentedPicker` truncated every segment label to an ellipsis. Its segments now stop growing at `.xxxLarge` and, on iOS, show their label in the Large Content Viewer on a long press, as the system segmented control does (see the UIFnSwiftUI README). The waiver covers only the audit's prediction, which does not change.
 
 | Waiver | Screens | Platform | Audit type | Elements | Reason |
 | --- | --- | --- | --- | --- | --- |
@@ -53,6 +55,6 @@ The waivers are in `UITests/WorkbenchAuditWaiver.swift`, and a test checks that 
 
 ### Not covered
 
-The audit's findings depend on the OS version. CI audits on the runner's macOS and its newest iOS simulator (macOS 26 and iOS 26 on the current `macos-latest` image). An iOS 18 simulator reports issues that iOS 26 does not, chiefly toggle and segmented picker labels whose accessibility frames differ from what is drawn; those are tracked separately and not waived here, so an iOS 17 or 18 run is expected to fail until they are resolved.
+The audit's findings depend on the OS version. CI audits on the runner's macOS and its newest iOS simulator (macOS 26 and iOS 26 on the current `macos-latest` image). An iOS 18 simulator reports issues that iOS 26 does not, chiefly toggle and segmented picker labels whose accessibility frames differ from what is drawn. They are not waived here, so an iOS 17 or 18 run is expected to fail. Passing the audits on iOS 17 and 18 is deferred to [UIF-45](https://linear.app/21n/issue/UIF-45), which tracks fixing those frames and adding an iOS 18 simulator to the CI job; these tests do not show that iOS 17 and 18 pass.
 
-The audit checks what Xcode can check automatically. It does not replace using the screens with VoiceOver, Voice Control or Full Keyboard Access, or under Increase Contrast, Reduce Motion, Reduce Transparency and larger text sizes; those checks are tracked separately and are not part of these tests.
+The audit checks what Xcode can check automatically. It does not replace using the screens with VoiceOver, Voice Control or Full Keyboard Access, or under Increase Contrast, Reduce Motion, Reduce Transparency and larger text sizes. Those checks are deferred to [UIF-29](https://linear.app/21n/issue/UIF-29) and are not part of these tests.
