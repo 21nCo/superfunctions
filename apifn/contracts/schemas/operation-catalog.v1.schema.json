@@ -285,6 +285,29 @@
             },
             {"type": "null"}
           ]
+        },
+        "idempotency": {
+          "description": "Present only when the manifest declares that the server makes repeated calls of this write (POST, PUT, PATCH or DELETE) safe; absent, clients never retry the write. With a key, a call is safe to repeat only when it sends that header parameter (name as the spec spells it).",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "semantics": {"const": "server"},
+            "key": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "in": {"const": "header"},
+                    "name": {"type": "string", "minLength": 1, "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"}
+                  },
+                  "required": ["in", "name"]
+                },
+                {"type": "null"}
+              ]
+            }
+          },
+          "required": ["semantics", "key"]
         }
       },
       "required": [
@@ -308,7 +331,14 @@
       ],
       "if": {"type": "object", "properties": {"agent": {"type": "object", "properties": {"expose": {"const": true}}}}},
       "then": {"type": "object", "properties": {"executionPolicyRef": {"type": "string"}}},
-      "$comment": "An operation exposed to agents always names an execution policy (AGENT_POLICY_REQUIRED); HTTP method and schema never imply authorization or idempotency."
+      "allOf": [
+        {
+          "$comment": "GET, HEAD, OPTIONS and TRACE are safe methods (RFC 9110 section 9.2.1); only writes take an idempotency declaration.",
+          "if": {"type": "object", "properties": {"method": {"enum": ["get", "head", "options", "trace"]}}, "required": ["method"]},
+          "then": {"properties": {"idempotency": false}}
+        }
+      ],
+      "$comment": "An operation exposed to agents always names an execution policy (AGENT_POLICY_REQUIRED); HTTP method and schema never imply authorization or idempotency, which only the optional idempotency declaration states."
     },
     "content": {
       "type": "object",

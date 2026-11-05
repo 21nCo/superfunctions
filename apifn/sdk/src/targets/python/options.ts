@@ -51,8 +51,8 @@ export function resolvePythonOptions(input: unknown, catalog: OperationCatalog):
     }
     for (const key of Object.keys(value)) {
       if (pointer === "/retry" && key === "idempotentOperations") {
-        // Only the catalog can declare that a server makes a write safe to repeat; catalog v1 cannot yet.
-        fail("/retry/idempotentOperations", "Write retries come only from catalog idempotency declarations, which catalog v1 does not have; the SDK config cannot make a write retryable.");
+        // Only the catalog can declare that a server makes a write safe to repeat.
+        fail("/retry/idempotentOperations", "Write retries come only from the catalog's per-operation idempotency declarations (the manifest's idempotency field); the SDK config cannot make a write retryable.");
       } else if (!FIELDS[pointer]?.includes(key)) fail(`${pointer}/${key}`, `Unknown option "${key}".`);
     }
     return value;

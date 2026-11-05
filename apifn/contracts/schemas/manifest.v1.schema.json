@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:apifn:schema:manifest:v1",
   "title": "ApiFn companion manifest v1",
-  "description": "Stable API and operation identity, naming, target exclusions, deprecation, serialization, provenance and execution-policy references for an OpenAPI document. validateManifest is authoritative and additionally checks HTTP methods and supported media types.",
+  "description": "Stable API and operation identity, naming, target exclusions, deprecation, serialization, provenance, execution-policy references and idempotency declarations for an OpenAPI document. validateManifest is authoritative and additionally checks HTTP methods and supported media types.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -105,6 +105,24 @@
           "minLength": 1,
           "maxLength": 128,
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+        },
+        "idempotency": {
+          "description": "Reviewed declaration that the server makes repeated calls of this write (POST, PUT, PATCH or DELETE) safe, so generated clients may retry it. With key, only calls that send that header parameter are safe to repeat. HTTP method, schema and an Idempotency-Key parameter never imply it.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "semantics": {"const": "server"},
+            "key": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "in": {"const": "header"},
+                "name": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"}
+              },
+              "required": ["in", "name"]
+            }
+          },
+          "required": ["semantics"]
         }
       },
       "required": ["id"],
@@ -114,7 +132,10 @@
           "not": {"anyOf": [{"required": ["method"]}, {"required": ["path"]}]}
         },
         {"required": ["method", "path"], "not": {"required": ["operationId"]}}
-      ]
+      ],
+      "if": {"type": "object", "properties": {"method": {"type": "string", "pattern": "^(?:[Gg][Ee][Tt]|[Hh][Ee][Aa][Dd]|[Oo][Pp][Tt][Ii][Oo][Nn][Ss]|[Tt][Rr][Aa][Cc][Ee])$"}}, "required": ["method"]},
+      "then": {"properties": {"idempotency": false}},
+      "$comment": "A route binding to a safe method (GET, HEAD, OPTIONS or TRACE, in any ASCII case) takes no idempotency declaration; an operationId binding's method is checked when the catalog is built."
     }
   }
 }

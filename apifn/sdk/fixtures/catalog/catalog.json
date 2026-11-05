@@ -540,6 +540,10 @@
       "description": null,
       "executionPolicyRef": null,
       "id": "tasks.attachment.upload",
+      "idempotency": {
+        "key": null,
+        "semantics": "server"
+      },
       "method": "put",
       "name": "uploadAttachment",
       "openapiOperationId": "uploadAttachment",
@@ -629,9 +633,16 @@
         "replacement": null,
         "since": null
       },
-      "description": "Accepts an Idempotency-Key header, which does not by itself make retries safe.",
+      "description": "The server recognizes repeated calls by their Idempotency-Key header, so clients retry calls that send one.",
       "executionPolicyRef": null,
       "id": "tasks.create",
+      "idempotency": {
+        "key": {
+          "in": "header",
+          "name": "Idempotency-Key"
+        },
+        "semantics": "server"
+      },
       "method": "post",
       "name": "createTask",
       "openapiOperationId": "createTask",
@@ -1532,7 +1543,7 @@
         "replacement": null,
         "since": null
       },
-      "description": null,
+      "description": "Accepts an Idempotency-Key header, which does not by itself make retries safe.",
       "executionPolicyRef": null,
       "id": "tasks.replace",
       "method": "put",
@@ -1561,6 +1572,20 @@
           "name": "taskId",
           "required": true,
           "schema": {
+            "type": "string"
+          },
+          "style": "simple"
+        },
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": false,
+          "in": "header",
+          "name": "Idempotency-Key",
+          "required": false,
+          "schema": {
+            "maxLength": 64,
             "type": "string"
           },
           "style": "simple"
@@ -1904,12 +1929,12 @@
     }
   ],
   "source": {
-    "manifestDigest": "sha256:a11e77f77fe6dc27dccbd3fcb6ded850dfd20bb2aaefdf6a6477730cd3f7335e",
+    "manifestDigest": "sha256:73b0c8045c27138497736840267ec51b9ad062af1eb01ec25ece87329c19341d",
     "provenance": {
       "exporter": "hand-authored",
       "revision": null,
       "source": "apifn/sdk/fixtures/catalog/openapi.json"
     },
-    "specDigest": "sha256:d9104023ca480e71b1ccbb5b1b8b430137de2f9ef8a64ad2c74af36b87442fa3"
+    "specDigest": "sha256:abafe27d9f935f7b33791e25770bd723ad9648113fd9cc3a17673d80a3fb6027"
   }
 }

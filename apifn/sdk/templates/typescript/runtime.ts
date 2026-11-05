@@ -171,6 +171,11 @@ export interface OperationSpec {
   security: readonly (readonly SecurityTerm[])[];
   /** "read": safe method; "idempotent": a write the catalog declares idempotent; "never": not retried. */
   retry: "read" | "idempotent" | "never";
+  /**
+   * For an "idempotent" write whose declaration names a key: the request header the server recognizes
+   * repeated calls by. Only a call that sends it is retried; without one, every call of the write is.
+   */
+  idempotencyKey?: string;
 }
 
 /** @internal */
@@ -357,6 +362,13 @@ function isReplayable(body: BodyInit | null | undefined): boolean {
   return body === undefined || body === null || typeof body === "string" || body instanceof Uint8Array || body instanceof ArrayBuffer || (typeof Blob !== "undefined" && body instanceof Blob);
 }
 
+/** Whether a call may be repeated: a read, or a declared-idempotent write that sends its declared key, if any. */
+function isRepeatable(op: OperationSpec, headers: HeadersInit | undefined): boolean {
+  if (op.retry === "read") return true;
+  if (op.retry !== "idempotent") return false;
+  return op.idempotencyKey === undefined || (new Headers(headers).get(op.idempotencyKey) ?? "") !== "";
+}
+
 let eventCount = 0;
 
 /** A random event ID; without Web Crypto (Node 18 without the global), one unique to this runtime instead. */
@@ -452,8 +464,9 @@ export class ApiRuntime<Credentials> {
       const retry = resolveRetry(this.#retry, options.retry);
       const timeoutMs = options.timeoutMs ?? this.#timeoutMs;
       const prepared = await this.#guard(op, timeoutMs, options.signal, attempts, (signal) => this.#prepare(op, values, signal));
-      // Only reads and declared-idempotent writes are retried, and never with a body that cannot be sent twice (a stream).
-      const eligible = op.retry !== "never" && isReplayable(prepared.init.body);
+      // Only reads and declared-idempotent writes (with their key, when one is declared) are retried, and never
+      // with a body that cannot be sent twice (a stream). Every attempt sends the same prepared headers and key.
+      const eligible = isRepeatable(op, prepared.init.headers) && isReplayable(prepared.init.body);
       const budget = eligible ? retry.maxAttempts : 1;
       for (;;) {
         attempts += 1;
@@ -543,7 +556,12 @@ export class ApiRuntime<Credentials> {
       } else {
         const binary = input instanceof Uint8Array || input instanceof ArrayBuffer || (typeof Blob !== "undefined" && input instanceof Blob) || (typeof ReadableStream !== "undefined" && input instanceof ReadableStream);
         if (!binary) throw new InputError("Parameter body must be a Uint8Array, ArrayBuffer, Blob or ReadableStream.");
-        body = input as BodyInit;
+        // When the call may be retried, bytes are copied once, so every attempt sends what the call was given even
+        // if the caller changes its buffer meanwhile. A call sent once needs no copy. Blobs are immutable.
+        const replayed = op.retry !== "never";
+        if (replayed && input instanceof Uint8Array) body = new Uint8Array(input);
+        else if (replayed && input instanceof ArrayBuffer) body = new Uint8Array(new Uint8Array(input));
+        else body = input as BodyInit;
       }
       if (body !== undefined) headers.set("content-type", op.body.mediaType);
     }

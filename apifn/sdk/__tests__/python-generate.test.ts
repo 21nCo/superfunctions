@@ -82,7 +82,7 @@ describe("python target: provenance", () => {
     expect(client).toContain(`release_id="${python.releaseId}"`);
   });
 
-  it("lists the same exclusions as the TypeScript target, marks deprecation and keeps writes unretried", () => {
+  it("lists the same exclusions as the TypeScript target, marks deprecation and retries only declared writes", () => {
     const result = generatePython();
     const manifest = result.manifest!;
     expect(manifest.complete).toBe(false);
@@ -95,8 +95,22 @@ describe("python target: provenance", () => {
     ]);
     const client = fileOf(result, "src/example_tasks_sdk/client.py");
     expect(client).toContain('@_te.deprecated("Close tasks instead of deleting them. Use replace_task instead.")\n    async def delete_task(');
-    expect(client.match(/retry="(?:read|idempotent|never)"/g)!.filter((entry) => entry !== 'retry="read"')).toEqual(Array(6).fill('retry="never"'));
-    expect(client).not.toContain('retry="idempotent"');
+    const writes = [...client.matchAll(/ {8}id="([^"]+)",[\s\S]*?retry="(\w+)",\n(?: {8}idempotency_key="([^"]+)",\n)?/g)]
+      .filter(([, , retry]) => retry !== "read")
+      .map(([, id, retry, key]) => [id, retry, key ?? ""].join(" ").trim());
+    expect(writes.sort()).toEqual([
+      "tasks.archive never",
+      "tasks.attachment.upload idempotent",
+      "tasks.create idempotent Idempotency-Key",
+      "tasks.delete never",
+      "tasks.replace never",
+      "tasks.search never",
+    ]);
+    const readme = fileOf(result, "README.md");
+    expect(readme).not.toContain("writes are never retried");
+    expect(readme).toContain("A write is retried the same way only when the API's catalog declares that its server makes repeated calls safe");
+    expect(readme).toContain("only calls that send it with a non-empty value are retried");
+    expect(readme).toContain("calls with a body given as an async iterable (a stream), are never retried");
   });
 });
 

@@ -70,6 +70,21 @@ interface OperationBindingFields {
   deprecation?: { replacement?: string; since?: string; message?: string };
   /** Reference to an execution policy owned by the runtime (e.g. MCP tools). */
   executionPolicy?: string;
+  /**
+   * Reviewed declaration that the server makes repeated calls of this write safe, so generated
+   * clients may retry it. HTTP method, schema and an `Idempotency-Key` parameter grant nothing.
+   */
+  idempotency?: IdempotencyDeclaration;
+}
+
+/**
+ * The server makes repeated calls safe (`semantics: "server"`). With `key`, only repeated calls that
+ * send the same value in that request header are safe; the header must be a header parameter of the
+ * operation, and clients retry only calls that send it.
+ */
+export interface IdempotencyDeclaration {
+  semantics: "server";
+  key?: { in: "header"; name: string };
 }
 
 // ---------------------------------------------------------------------------
@@ -156,6 +171,18 @@ export interface CatalogOperation {
     message: string | null;
   };
   executionPolicyRef: string | null;
+  /**
+   * Present only when the manifest declares that the server makes repeated calls of this write
+   * (POST, PUT, PATCH or DELETE) safe; absent from a write, clients never retry that write (reads
+   * are retried without one). With a `key`, a call is safe to repeat only when it sends that header parameter
+   * (`name` as the spec spells it). Method, schema and parameters never imply it.
+   */
+  idempotency?: CatalogIdempotency;
+}
+
+export interface CatalogIdempotency {
+  semantics: "server";
+  key: { in: "header"; name: string } | null;
 }
 
 /** Every type-specific security scheme member. Each belongs to one type, as in OpenAPI 3.0/3.1. */

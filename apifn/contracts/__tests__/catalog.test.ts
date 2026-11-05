@@ -9,6 +9,8 @@ import {
   canonicalJson,
   createReleaseDescriptor,
   type Diagnostic,
+  isFetchControlledHeader,
+  isIgnoredHeaderParameter,
   type OperationCatalog,
   validateClientFailureEvent,
   validateManifest,
@@ -146,7 +148,9 @@ describe("buildOperationCatalog", () => {
     const { operations } = build().catalog!;
     const byId = Object.fromEntries(operations.map((operation) => [operation.id, operation]));
     const keys = Object.keys(byId["projects.get"]).sort();
-    for (const operation of operations) expect(Object.keys(operation).sort()).toEqual(keys);
+    // Only the operations the manifest declares idempotent carry the (otherwise absent) idempotency member.
+    const declared = new Set(["projects.create", "projects.archive"]);
+    for (const operation of operations) expect(Object.keys(operation).sort()).toEqual(declared.has(operation.id) ? [...keys, "idempotency"].sort() : keys);
     expect(keys.some((key) => /idempot|authoriz|safe|readOnly/i.test(key))).toBe(false);
 
     // A GET with schemas and default SDK inclusion is still not agent-exposed and has no policy.
@@ -331,6 +335,119 @@ describe("catalog diagnostics", () => {
     expect(only(result.diagnostics, "AGENT_POLICY_REQUIRED")).toEqual([
       expect.objectContaining({ pointer: "/operations/0/agent/expose", operation: "projects.list" }),
     ]);
+  });
+});
+
+describe("idempotency declarations", () => {
+  const ids = (nextManifest: any, id: string) => nextManifest.operations.find((binding: any) => binding.id === id);
+  const get = (result: ReturnType<typeof build>, id: string) => result.catalog!.operations.find((operation) => operation.id === id)!;
+
+  it("publishes only declared writes as idempotent, with a key named as the spec spells it", () => {
+    const result = build((_spec, nextManifest) => {
+      ids(nextManifest, "projects.create").idempotency.key.name = "IDEMPOTENCY-key";
+    });
+    expect(result.diagnostics).toEqual([]);
+    expect(get(result, "projects.create").idempotency).toEqual({ semantics: "server", key: { in: "header", name: "Idempotency-Key" } });
+    expect(get(result, "projects.archive").idempotency).toEqual({ semantics: "server", key: null });
+    // An undeclared write (DELETE) and the reads have no member at all.
+    for (const id of ["projects.delete", "projects.get", "projects.list", "system.health"]) expect(Object.hasOwn(get(result, id), "idempotency"), id).toBe(false);
+  });
+
+  it("grants nothing for an Idempotency-Key parameter or a write method without a declaration, and keeps such catalogs byte-identical", () => {
+    const undeclared = build((_spec, nextManifest) => {
+      for (const binding of nextManifest.operations) delete binding.idempotency;
+    });
+    expect(undeclared.diagnostics).toEqual([]);
+    const create = get(undeclared, "projects.create");
+    expect(create.parameters.map((parameter) => parameter.name)).toContain("Idempotency-Key");
+    expect(undeclared.catalog!.operations.some((operation) => Object.hasOwn(operation, "idempotency"))).toBe(false);
+    // Without declarations nothing new is emitted: apart from the manifest's own digest, the catalog is the declared
+    // one with the member removed. (This compares two builds; it does not pin a historical digest.)
+    const declared = build();
+    const stripped = clone(declared.catalog!);
+    stripped.source.manifestDigest = undeclared.catalog!.source.manifestDigest;
+    for (const operation of stripped.operations) delete operation.idempotency;
+    expect(canonicalJson(stripped)).toBe(canonicalJson(undeclared.catalog));
+  });
+
+  it.each<[string, (manifest: any, spec: any) => void, string, RegExp]>([
+    ["a safe method", (nextManifest) => (ids(nextManifest, "projects.get").idempotency = { semantics: "server" }), "/operations/2/idempotency", /is a GET, which HTTP defines as safe/],
+    ["a key that is not a header parameter", (nextManifest) => (ids(nextManifest, "projects.archive").idempotency = { semantics: "server", key: { in: "header", name: "Idempotency-Key" } }), "/operations/4/idempotency/key/name", /not one of its header parameters/],
+    [
+      "a key whose parameter is in the query",
+      (nextManifest, nextSpec) => {
+        nextSpec.paths[LIST_ROUTE].post.parameters[0].in = "query";
+      },
+      "/operations/1/idempotency/key/name",
+      /not one of its header parameters/,
+    ],
+    [
+      "a key that is an apiKey credential header",
+      (_nextManifest, nextSpec) => {
+        nextSpec.components.securitySchemes.apiKeyAuth = { type: "apiKey", in: "header", name: "idempotency-key" };
+      },
+      "/operations/1/idempotency/key/name",
+      /is a credential field/,
+    ],
+    [
+      // HTTP field names ignore ASCII case only; a KELVIN SIGN lowercases to "k" but is not an HTTP token.
+      "a key that matches only by Unicode case folding",
+      (_nextManifest, nextSpec) => {
+        nextSpec.paths[LIST_ROUTE].post.parameters[0].name = "Idempotency-\u212Aey";
+      },
+      "/operations/1/idempotency/key/name",
+      /not one of its header parameters/,
+    ],
+    // Clients set these themselves, so the spec cannot publish them and the message says so.
+    [
+      "a key OpenAPI ignores as a parameter",
+      (nextManifest) => (ids(nextManifest, "projects.create").idempotency.key.name = "aCCept"),
+      "/operations/1/idempotency/key/name",
+      /OpenAPI ignores as a parameter and clients set themselves; it is never published as a key/,
+    ],
+    // Fetch drops or overwrites these, so distinct calls could reach the server under one key; even as a spec parameter.
+    ...(["sEc-Fetch-Mode", "PROXY-Request-Id", "cookie2", "Keep-ALIVE"] as const).map((name): [string, (manifest: any, spec: any) => void, string, RegExp] => [
+      `a Fetch-controlled ${name} key`,
+      (nextManifest, nextSpec) => {
+        nextSpec.paths[LIST_ROUTE].post.parameters[0].name = name;
+        ids(nextManifest, "projects.create").idempotency.key.name = name;
+      },
+      "/operations/1/idempotency/key/name",
+      /which Fetch forbids or overwrites/,
+    ]),
+  ])("INVALID_MANIFEST: %s", (_name, mutate, pointer, message) => {
+    const result = build((nextSpec, nextManifest) => mutate(nextManifest, nextSpec));
+    expect(result.catalog).toBeNull();
+    expect(only(result.diagnostics, "INVALID_MANIFEST")).toEqual([expect.objectContaining({ pointer, source: "manifest", message: expect.stringMatching(message) })]);
+  });
+
+  it("shares the header parameters OpenAPI ignores, matched in ASCII case only, so direct-catalog readers refuse them as keys", () => {
+    for (const name of ["Accept", "content-TYPE", "AUTHORIZATION"]) expect(isIgnoredHeaderParameter(name), name).toBe(true);
+    for (const name of ["Idempotency-Key", "X-Accept", "Content-Type-Options", "Accept ", "\u212Aey"]) expect(isIgnoredHeaderParameter(name), name).toBe(false);
+  });
+
+  it("shares the header names Fetch controls, matched in ASCII case only, so no layer accepts them as keys", () => {
+    for (const name of ["Sec-Fetch-Mode", "sec-idempotency-key", "PROXY-Key", "Cookie", "HOST", "Content-Length", "x-http-method-override", "Accept-Encoding"]) {
+      expect(isFetchControlledHeader(name), name).toBe(true);
+    }
+    // A long s (U+017F) uppercases to "S" but is not an HTTP token letter, so "\u017Fec-" is not a Sec- prefix.
+    for (const name of ["Idempotency-Key", "X-Sec-Key", "Secret-Key", "Proxied-Key", "Hosts", "Host ", "\u017Fec-Fetch-Mode"]) expect(isFetchControlledHeader(name), name).toBe(false);
+  });
+
+  it.each<[string, unknown, string]>([
+    ["an unknown semantics", { semantics: "client" }, "/operations/4/idempotency/semantics"],
+    ["a missing semantics", {}, "/operations/4/idempotency/semantics"],
+    ["a boolean shorthand", true, "/operations/4/idempotency"],
+    ["an unknown field", { semantics: "server", retries: 3 }, "/operations/4/idempotency/retries"],
+    ["a key outside a header", { semantics: "server", key: { in: "query", name: "key" } }, "/operations/4/idempotency/key/in"],
+    ["a key without a name", { semantics: "server", key: { in: "header" } }, "/operations/4/idempotency/key/name"],
+    ["a key name that is not an HTTP token", { semantics: "server", key: { in: "header", name: "Idempotency Key" } }, "/operations/4/idempotency/key/name"],
+  ])("INVALID_MANIFEST: rejects %s", (_name, idempotency, pointer) => {
+    const result = build((_spec, nextManifest) => {
+      ids(nextManifest, "projects.archive").idempotency = idempotency;
+    });
+    expect(result.catalog).toBeNull();
+    expect(only(result.diagnostics, "INVALID_MANIFEST").map((diagnostic) => diagnostic.pointer)).toContain(pointer);
   });
 });
 
