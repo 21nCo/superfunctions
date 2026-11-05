@@ -325,6 +325,9 @@ class OperationSpec:
     """OR of ANDs; an empty alternative is anonymous."""
     retry: Literal["read", "idempotent", "never"]
     """read: safe method; idempotent: a write the catalog declares idempotent; never: not retried."""
+    idempotency_key: str | None = None
+    """For an idempotent write whose declaration names a key: the request header the server recognizes repeated
+    calls by. Only a call that sends it is retried; without one, every call of the write is."""
 
 
 @dataclass(frozen=True)
@@ -768,6 +771,18 @@ class _Prepared:
     replayable: bool
 
 
+def _is_repeatable(op: OperationSpec, headers: tuple[tuple[str, str], ...]) -> bool:
+    """Whether a call may be repeated: a read, or a declared-idempotent write that sends its declared key, if any."""
+    if op.retry == "read":
+        return True
+    if op.retry != "idempotent":
+        return False
+    if op.idempotency_key is None:
+        return True
+    wanted = op.idempotency_key.lower()
+    return any(name.lower() == wanted and value != "" for name, value in headers)
+
+
 @dataclass
 class _Outcome:
     value: object = None
@@ -848,8 +863,9 @@ class ApiRuntime:
                 prepared = await _bounded(lambda state: self._prepare(op, values), timeout)
             except _TimedOut:
                 raise ApiTimeoutError(op.id, f"{op.method} {op.path} timed out after {timeout:g} s.", attempts) from None
-            # Only reads and declared-idempotent writes are retried, and never with a body sent as a stream.
-            eligible = op.retry != "never" and prepared.replayable
+            # Only reads and declared-idempotent writes (with their key, when one is declared) are retried, and never
+            # with a body sent as a stream. Every attempt sends the same prepared headers and key.
+            eligible = _is_repeatable(op, prepared.headers) and prepared.replayable
             budget = retry.max_attempts if eligible else 1
             while True:
                 attempts += 1

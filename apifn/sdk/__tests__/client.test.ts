@@ -15,7 +15,7 @@ import { buildFixtureSdk, cleanupTemp, compile, fixtureCatalog, fixtureConfig, F
 const catalog = fixtureCatalog();
 const server = new FixtureServer();
 let sdk: any;
-/** The generated package's runtime module, for operation specs catalog v1 cannot produce. */
+/** The generated package's runtime module, for operation specs the fixture catalog does not produce. */
 let runtime: any;
 
 beforeAll(async () => {
@@ -47,7 +47,7 @@ const META = {
   defaultRetry: { maxAttempts: 3, baseDelayMs: 0, maxDelayMs: 0 },
 };
 
-/** A runtime operation spec; `retry: "idempotent"` stands for a write a future catalog declares idempotent. */
+/** A runtime operation spec for a write the catalog declares idempotent (`retry: "idempotent"`), without a key unless overridden. */
 function operationSpec(overrides: Record<string, unknown> = {}) {
   return {
     id: "files.put",
@@ -203,12 +203,39 @@ describe("shared retry vectors", () => {
     expect(server.requests).toHaveLength(2);
   });
 
-  it("never retries a write under catalog v1, whatever its method or body", async () => {
+  it("never retries a stream body of a write the catalog declares idempotent", async () => {
     server.reset([{ status: 503 }, { status: 200, headers: { "content-type": "application/json" }, body: '{"size":2}' }]);
-    const error = await client()
-      .uploadAttachment({ projectId: "p", taskId: "t", body: new Uint8Array([1, 2]) })
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1, 2]));
+        controller.close();
+      },
+    });
+    const error = await client({ credentials: { bearerAuth: "t" } })
+      .uploadAttachment({ projectId: "p", taskId: "t", body })
       .catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(sdk.ApiHttpError);
+    expect(error.attempts).toBe(1);
+    expect(server.requests).toHaveLength(1);
+    // The same write with a byte body is retried, so only the stream stopped it.
+    server.reset([{ status: 503 }, { status: 200, headers: { "content-type": "application/json" }, body: '{"size":2}' }]);
+    await expect(client({ credentials: { bearerAuth: "t" } }).uploadAttachment({ projectId: "p", taskId: "t", body: new Uint8Array([1, 2]) })).resolves.toEqual({ size: 2 });
+    expect(server.requests).toHaveLength(2);
+  });
+
+  it("retries a write declared with a key only while the call sends the key, matching its name in any case", async () => {
+    const keyed = operationSpec({
+      parameters: [{ key: "idempotencyKey", name: "Idempotency-Key", in: "header", required: false, style: "simple", explode: false, allowReserved: false }],
+      idempotencyKey: "idempotency-key",
+    });
+    server.reset([{ status: 503 }, { status: 503 }, { status: 200, headers: { "content-type": "application/json" }, body: "{}" }]);
+    await expect(directRuntime().request(keyed, { body: new Uint8Array([1]), idempotencyKey: "k-1" })).resolves.toEqual({});
+    expect(server.requests.map((request) => request.headers["idempotency-key"])).toEqual(["k-1", "k-1", "k-1"]);
+    server.reset([{ status: 503 }, { status: 200 }]);
+    const error = await directRuntime()
+      .request(keyed, { body: new Uint8Array([1]) })
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(runtime.ApiHttpError);
     expect(server.requests).toHaveLength(1);
   });
 

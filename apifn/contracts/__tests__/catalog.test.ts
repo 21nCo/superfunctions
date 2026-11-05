@@ -146,7 +146,9 @@ describe("buildOperationCatalog", () => {
     const { operations } = build().catalog!;
     const byId = Object.fromEntries(operations.map((operation) => [operation.id, operation]));
     const keys = Object.keys(byId["projects.get"]).sort();
-    for (const operation of operations) expect(Object.keys(operation).sort()).toEqual(keys);
+    // Only the operations the manifest declares idempotent carry the (otherwise absent) idempotency member.
+    const declared = new Set(["projects.create", "projects.archive"]);
+    for (const operation of operations) expect(Object.keys(operation).sort()).toEqual(declared.has(operation.id) ? [...keys, "idempotency"].sort() : keys);
     expect(keys.some((key) => /idempot|authoriz|safe|readOnly/i.test(key))).toBe(false);
 
     // A GET with schemas and default SDK inclusion is still not agent-exposed and has no policy.
@@ -331,6 +333,88 @@ describe("catalog diagnostics", () => {
     expect(only(result.diagnostics, "AGENT_POLICY_REQUIRED")).toEqual([
       expect.objectContaining({ pointer: "/operations/0/agent/expose", operation: "projects.list" }),
     ]);
+  });
+});
+
+describe("idempotency declarations", () => {
+  const ids = (nextManifest: any, id: string) => nextManifest.operations.find((binding: any) => binding.id === id);
+  const get = (result: ReturnType<typeof build>, id: string) => result.catalog!.operations.find((operation) => operation.id === id)!;
+
+  it("publishes only declared writes as idempotent, with a key named as the spec spells it", () => {
+    const result = build((_spec, nextManifest) => {
+      ids(nextManifest, "projects.create").idempotency.key.name = "IDEMPOTENCY-key";
+    });
+    expect(result.diagnostics).toEqual([]);
+    expect(get(result, "projects.create").idempotency).toEqual({ semantics: "server", key: { in: "header", name: "Idempotency-Key" } });
+    expect(get(result, "projects.archive").idempotency).toEqual({ semantics: "server", key: null });
+    // An undeclared write (DELETE) and the reads have no member at all.
+    for (const id of ["projects.delete", "projects.get", "projects.list", "system.health"]) expect(Object.hasOwn(get(result, id), "idempotency"), id).toBe(false);
+  });
+
+  it("grants nothing for an Idempotency-Key parameter or a write method without a declaration, and keeps such catalogs byte-identical", () => {
+    const undeclared = build((_spec, nextManifest) => {
+      for (const binding of nextManifest.operations) delete binding.idempotency;
+    });
+    expect(undeclared.diagnostics).toEqual([]);
+    const create = get(undeclared, "projects.create");
+    expect(create.parameters.map((parameter) => parameter.name)).toContain("Idempotency-Key");
+    expect(undeclared.catalog!.operations.some((operation) => Object.hasOwn(operation, "idempotency"))).toBe(false);
+    // Without declarations nothing new is emitted, so catalogs built before the field existed keep their digest.
+    const declared = build();
+    const stripped = clone(declared.catalog!);
+    stripped.source.manifestDigest = undeclared.catalog!.source.manifestDigest;
+    for (const operation of stripped.operations) delete operation.idempotency;
+    expect(canonicalJson(stripped)).toBe(canonicalJson(undeclared.catalog));
+  });
+
+  it.each<[string, (manifest: any, spec: any) => void, string, RegExp]>([
+    ["a safe method", (nextManifest) => (ids(nextManifest, "projects.get").idempotency = { semantics: "server" }), "/operations/2/idempotency", /is a GET, which HTTP defines as safe/],
+    ["a key that is not a header parameter", (nextManifest) => (ids(nextManifest, "projects.archive").idempotency = { semantics: "server", key: { in: "header", name: "Idempotency-Key" } }), "/operations/4/idempotency/key/name", /not one of its header parameters/],
+    [
+      "a key whose parameter is in the query",
+      (nextManifest, nextSpec) => {
+        nextSpec.paths[LIST_ROUTE].post.parameters[0].in = "query";
+      },
+      "/operations/1/idempotency/key/name",
+      /not one of its header parameters/,
+    ],
+    [
+      "a key that is an apiKey credential header",
+      (_nextManifest, nextSpec) => {
+        nextSpec.components.securitySchemes.apiKeyAuth = { type: "apiKey", in: "header", name: "idempotency-key" };
+      },
+      "/operations/1/idempotency/key/name",
+      /is a credential field/,
+    ],
+    [
+      // HTTP field names ignore ASCII case only; a KELVIN SIGN lowercases to "k" but is not an HTTP token.
+      "a key that matches only by Unicode case folding",
+      (_nextManifest, nextSpec) => {
+        nextSpec.paths[LIST_ROUTE].post.parameters[0].name = "Idempotency-\u212Aey";
+      },
+      "/operations/1/idempotency/key/name",
+      /not one of its header parameters/,
+    ],
+  ])("INVALID_MANIFEST: %s", (_name, mutate, pointer, message) => {
+    const result = build((nextSpec, nextManifest) => mutate(nextManifest, nextSpec));
+    expect(result.catalog).toBeNull();
+    expect(only(result.diagnostics, "INVALID_MANIFEST")).toEqual([expect.objectContaining({ pointer, source: "manifest", message: expect.stringMatching(message) })]);
+  });
+
+  it.each<[string, unknown, string]>([
+    ["an unknown semantics", { semantics: "client" }, "/operations/4/idempotency/semantics"],
+    ["a missing semantics", {}, "/operations/4/idempotency/semantics"],
+    ["a boolean shorthand", true, "/operations/4/idempotency"],
+    ["an unknown field", { semantics: "server", retries: 3 }, "/operations/4/idempotency/retries"],
+    ["a key outside a header", { semantics: "server", key: { in: "query", name: "key" } }, "/operations/4/idempotency/key/in"],
+    ["a key without a name", { semantics: "server", key: { in: "header" } }, "/operations/4/idempotency/key/name"],
+    ["a key name that is not an HTTP token", { semantics: "server", key: { in: "header", name: "Idempotency Key" } }, "/operations/4/idempotency/key/name"],
+  ])("INVALID_MANIFEST: rejects %s", (_name, idempotency, pointer) => {
+    const result = build((_spec, nextManifest) => {
+      ids(nextManifest, "projects.archive").idempotency = idempotency;
+    });
+    expect(result.catalog).toBeNull();
+    expect(only(result.diagnostics, "INVALID_MANIFEST").map((diagnostic) => diagnostic.pointer)).toContain(pointer);
   });
 });
 

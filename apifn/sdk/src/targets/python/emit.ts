@@ -55,12 +55,12 @@ const CLIENT_MEMBERS = new Map<string, string>([["aclose", "the method that clos
 const ANNOTATION_BUILTINS = new Set(["bool", "bytearray", "bytes", "dict", "float", "int", "list", "memoryview", "object", "str"]);
 
 /**
- * Whether the catalog declares that the server makes repeated calls of a write operation safe. Catalog v1
- * has no such field (method, schema and an `Idempotency-Key` parameter grant none), so no write is
- * retried; a later catalog version supplies the declaration here, not the SDK config.
+ * Whether the catalog declares that the server makes repeated calls of a write operation safe: only its
+ * reviewed `idempotency` member does. Method, schema, an `Idempotency-Key` parameter and the SDK config grant
+ * nothing. With a declared key, the runtime retries only calls that send that header.
  */
-function declaresIdempotency(_operation: CatalogOperation): boolean {
-  return false;
+function declaresIdempotency(operation: CatalogOperation): boolean {
+  return operation.idempotency?.semantics === "server";
 }
 
 function header(context: SdkTargetContext<PythonOptions>): string {
@@ -282,6 +282,7 @@ export function emitPython(context: SdkTargetContext<PythonOptions>): SdkTargetO
         `        errors=${tuple(shape.errors.map((entry) => `_ErrorSpec(status=${pyString(entry.status)}, kinds=${kinds(entry.shape)})`), "        ")},`,
         `        security=${tuple(terms, "        ")},`,
         `        retry=${pyString(retry)},`,
+        ...(retry === "idempotent" && operation.idempotency?.key ? [`        idempotency_key=${pyString(operation.idempotency.key.name)},`] : []),
         `    ),`,
       ].join("\n")
     );

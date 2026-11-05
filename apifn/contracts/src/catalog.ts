@@ -27,6 +27,7 @@ import {
   type CatalogOAuthFlow,
   type CatalogOperation,
   type CatalogEncoding,
+  type CatalogIdempotency,
   type CatalogParameter,
   type CatalogResponse,
   type CatalogSecurityScheme,
@@ -46,6 +47,8 @@ type SecuritySchemeDraft = { type: CatalogSecurityScheme["type"]; description: s
 };
 
 const METHODS: HttpMethod[] = ["get", "put", "post", "delete", "options", "head", "patch", "trace"];
+/** Methods an idempotency declaration may cover: the writes. The others are safe methods (RFC 9110 section 9.2.1). */
+const IDEMPOTENT_METHODS = new Set<HttpMethod>(["post", "put", "patch", "delete"]);
 const PARAMETER_LOCATIONS = ["path", "query", "header", "cookie"] as const;
 const PARAMETER_STYLES: Record<CatalogParameter["in"], Array<CatalogParameter["style"]>> = {
   path: ["simple"],
@@ -1697,7 +1700,8 @@ class CatalogBuilder {
     tags.forEach((tag, index) => {
       if (typeof tag !== "string") this.report("INVALID_SPEC", `${entry.pointer}/tags/${index}`, `Tag ${index} of operation ${quote(binding.id)} must be a string.`, { operation: binding.id });
     });
-    return {
+    const parameters = this.parameters(entry, binding.id);
+    const operation: CatalogOperation = {
       id: binding.id,
       name,
       openapiOperationId: entry.operationId,
@@ -1706,7 +1710,7 @@ class CatalogBuilder {
       summary: this.text(own(op, "summary"), `${entry.pointer}/summary`),
       description: this.text(own(op, "description"), `${entry.pointer}/description`),
       tags: sortStrings(tags.flatMap((tag, index) => (typeof tag === "string" ? [this.text(tag, `${entry.pointer}/tags/${index}`) as string] : []))),
-      parameters: this.parameters(entry, binding.id),
+      parameters,
       requestBody: requestBody
         ? {
             // once reported a non-boolean.
@@ -1734,6 +1738,39 @@ class CatalogBuilder {
       },
       executionPolicyRef: binding.executionPolicy ?? null,
     };
+    const idempotency = this.idempotency(entry, binding, parameters, `${bindingPointer}/idempotency`);
+    // Absent unless declared, so a catalog without declarations keeps its bytes and digest.
+    if (idempotency) operation.idempotency = idempotency;
+    return operation;
+  }
+
+  /**
+   * The manifest's reviewed idempotency declaration, checked against the operation. Only writes take one
+   * (GET, HEAD, OPTIONS and TRACE are safe methods, which clients already retry), and a key must be a header
+   * parameter the catalog publishes for the operation, emitted with the spec's spelling of its name.
+   */
+  private idempotency(entry: SpecOperation, binding: OperationBinding, parameters: CatalogParameter[], pointer: string): CatalogIdempotency | null {
+    const declaration = binding.idempotency;
+    if (declaration === undefined) return null;
+    if (!IDEMPOTENT_METHODS.has(entry.method)) {
+      this.report("INVALID_MANIFEST", pointer, `Operation ${quote(binding.id)} is a ${entry.method.toUpperCase()}, which HTTP defines as safe; idempotency is declared only for POST, PUT, PATCH and DELETE.`, { source: "manifest", operation: binding.id });
+      return null;
+    }
+    if (declaration.key === undefined) return { semantics: "server", key: null };
+    // HTTP field names ignore ASCII case only, so a non-token spelling (a Kelvin sign for "K") never matches.
+    const asciiLower = (text: string) => text.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+    const wanted = asciiLower(declaration.key.name);
+    const parameter = parameters.find((candidate) => candidate.in === "header" && asciiLower(candidate.name) === wanted);
+    if (!parameter) {
+      this.report("INVALID_MANIFEST", `${pointer}/key/name`, `Operation ${quote(binding.id)} declares idempotency key header ${quote(declaration.key.name)}, which is not one of its header parameters; declare the parameter in the spec.`, { source: "manifest", operation: binding.id });
+      return null;
+    }
+    // A credential header (an apiKey scheme's, or a credential-like name) is the same on every call, so it never tells calls apart.
+    if (this.isCredentialParameter("header", parameter.name)) {
+      this.report("INVALID_MANIFEST", `${pointer}/key/name`, `Operation ${quote(binding.id)} declares idempotency key header ${quote(declaration.key.name)}, which is a credential field; the key must be a per-call header parameter.`, { source: "manifest", operation: binding.id });
+      return null;
+    }
+    return { semantics: "server", key: { in: "header", name: parameter.name } };
   }
 
   securitySchemes(): Record<string, CatalogSecurityScheme> {

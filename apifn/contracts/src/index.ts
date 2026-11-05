@@ -10,6 +10,7 @@ export {
   NAME_PATTERN,
   TARGET_PATTERN,
   VERSION_PATTERN,
+  HEADER_NAME_PATTERN,
 } from "./manifest.js";
 export { createReleaseDescriptor, PACKAGE_NAME_PATTERN, RELEASE_ID_PATTERN, SEMVER_PATTERN } from "./release.js";
 export { canonicalJson, canonicalDigest, sha256Hex } from "./canonical.js";

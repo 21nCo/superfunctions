@@ -19,6 +19,10 @@
       "description": null,
       "executionPolicyRef": null,
       "id": "projects.archive",
+      "idempotency": {
+        "key": null,
+        "semantics": "server"
+      },
       "method": "post",
       "name": "archiveProject",
       "openapiOperationId": "archiveProject",
@@ -124,6 +128,13 @@
       "description": null,
       "executionPolicyRef": "policy.requires-idempotency-key",
       "id": "projects.create",
+      "idempotency": {
+        "key": {
+          "in": "header",
+          "name": "Idempotency-Key"
+        },
+        "semantics": "server"
+      },
       "method": "post",
       "name": "createProject",
       "openapiOperationId": "createProject",
@@ -764,7 +775,7 @@
     }
   ],
   "source": {
-    "manifestDigest": "sha256:398125844426680a3bb83d343356606be36edf9f08c195ed3b61f5797d5aa060",
+    "manifestDigest": "sha256:ac5f5599cdaee0d631388cd33228b9a5b593a3fe36dc8e71b6a2add574ec50da",
     "provenance": {
       "exporter": "hand-authored",
       "revision": null,

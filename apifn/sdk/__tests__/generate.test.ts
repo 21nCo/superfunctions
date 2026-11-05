@@ -139,10 +139,26 @@ describe("generateSdk", () => {
     expect(client).toMatch(/"projects\.summary\.get": \{[\s\S]*?success: \["json"\],\n {4}errors: \[\{ status: "302", kinds: \["json"\] \}\],/);
   });
 
-  it("emits no write retry under catalog v1", () => {
-    const client = generate().files.find((file) => file.path === "src/client.ts")!.contents;
-    const retries = [...client.matchAll(/method: "(\w+)",[\s\S]*?retry: "(\w+)",/g)].map(([, method, retry]) => `${method}:${retry}`);
-    expect(new Set(retries)).toEqual(new Set(["GET:read", "POST:never", "PUT:never", "DELETE:never"]));
+  it("retries exactly the writes the catalog declares idempotent, with their keys", () => {
+    /** Each write's retry policy as emitted: `id METHOD retry [key]`. */
+    const writes = (catalog: unknown) => {
+      const client = generate(catalog).files.find((file) => file.path === "src/client.ts")!.contents;
+      return [...client.matchAll(/ {4}id: "([^"]+)",[\s\S]*?method: "(\w+)",[\s\S]*?retry: "(\w+)",\n(?: {4}idempotencyKey: "([^"]+)",\n)?/g)]
+        .filter(([, , , retry]) => retry !== "read")
+        .map(([, id, method, retry, key]) => [id, method, retry, key ?? null].join(" ").trim());
+    };
+    expect(writes(fixtureCatalog()).sort()).toEqual([
+      "tasks.archive POST never",
+      "tasks.attachment.upload PUT idempotent",
+      "tasks.create POST idempotent Idempotency-Key",
+      "tasks.delete DELETE never",
+      "tasks.replace PUT never",
+      "tasks.search POST never",
+    ]);
+    // Without the declarations the same writes, Idempotency-Key parameters included, are never retried.
+    const undeclared = fixtureCatalog();
+    for (const operation of undeclared.operations) delete operation.idempotency;
+    expect(writes(undeclared).every((entry) => entry.split(" ")[2] === "never")).toBe(true);
   });
 
   it("warns that spec servers are ignored for an operation with its own servers", () => {

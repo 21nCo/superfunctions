@@ -38,12 +38,12 @@ const CLIENT_BINDINGS = ["ApiRuntime", "DeepObjectValue", "OperationSpec", "Para
 const CLIENT_GLOBALS = ["ArrayBuffer", "Blob", "Promise", "ReadableStream", "Record", "Uint8Array"];
 
 /**
- * Whether the catalog declares that the server makes repeated calls of a write operation safe. Catalog v1
- * has no such field (method, schema and an `Idempotency-Key` parameter grant none), so no write is
- * retried; a later catalog version supplies the declaration here, not the SDK config.
+ * Whether the catalog declares that the server makes repeated calls of a write operation safe: only its
+ * reviewed `idempotency` member does. Method, schema, an `Idempotency-Key` parameter and the SDK config grant
+ * nothing. With a declared key, the runtime retries only calls that send that header.
  */
-function declaresIdempotency(_operation: CatalogOperation): boolean {
-  return false;
+function declaresIdempotency(operation: CatalogOperation): boolean {
+  return operation.idempotency?.semantics === "server";
 }
 
 function header(context: SdkTargetContext<TypeScriptOptions>): string {
@@ -255,6 +255,7 @@ export function emitTypeScript(context: SdkTargetContext<TypeScriptOptions>): Sd
         `    errors: [${shape.errors.map((entry) => `{ status: ${JSON.stringify(entry.status)}, kinds: ${kinds(entry.shape)} }`).join(", ")}],`,
         `    security: [${terms.join(", ")}],`,
         `    retry: ${JSON.stringify(retry)},`,
+        ...(retry === "idempotent" && operation.idempotency?.key ? [`    idempotencyKey: ${JSON.stringify(operation.idempotency.key.name)},`] : []),
         `  },`,
       ].join("\n")
     );
