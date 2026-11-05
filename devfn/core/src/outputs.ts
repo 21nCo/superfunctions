@@ -827,10 +827,35 @@ async function removeEmptyDirectories(directory: string, top: string): Promise<v
 
 /** Release a stopped instance's claim and runtime directory; the files it wrote stay its own. */
 export async function releaseEnvironmentOutputs(root: string, instanceId: string): Promise<void> {
-  const text = await readOwnClaim(root, instanceId);
-  const current = text === undefined ? undefined : parseClaim(text, instanceId);
-  if (!current || (!current.targets.length && current.runtimeDirectory === undefined)) return;
-  // Its runtime directory is free again too, even while the command that started it still runs.
-  const { runtimeDirectory: _released, ...rest } = current;
-  await writeClaim(root, { ...rest, targets: [] });
+  if (await readOwnClaim(root, instanceId) === undefined) return;
+  // Under the claims lock, as every claim is checked and published, so a claim published meanwhile is never lost.
+  await withFileLock(path.join(await claimDirectory(root), CLAIMS_LOCK), async () => {
+    const text = await readOwnClaim(root, instanceId);
+    const current = text === undefined ? undefined : parseClaim(text, instanceId);
+    if (!current || (!current.targets.length && current.runtimeDirectory === undefined)) return;
+    // Its runtime directory is free again too, even while the command that started it still runs.
+    const { runtimeDirectory: _released, ...rest } = current;
+    await writeClaim(root, { ...rest, targets: [] });
+  }, { timeoutMs: CLAIMS_LOCK_TIMEOUT_MS, staleMs: CLAIMS_LOCK_STALE_MS });
+}
+
+/**
+ * Hold an instance's checkout-wide lifecycle lock, beside the claims lock,
+ * for a start or stop: its claim is the instance's in every state directory,
+ * so one in another state directory waits rather than taking it over.
+ * Directories created for the lock go again while empty.
+ */
+export async function withInstanceLifecycleLock<T>(root: string, instanceId: string, action: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt += 1) {
+    let [entered, directory, created] = [false, path.join(root, CLAIMS), undefined as string | undefined];
+    try {
+      directory = await claimDirectory(root);
+      created = await makeDirectory(directory);
+      return await withFileLock(path.join(directory, `lifecycle-${instanceId}.lock`), async () => { entered = true; return await action(); }, { timeoutMs: 30_000 });
+    } catch (error) { // A sibling removing the empty directories before the lock is held is retried.
+      if (entered || !CLAIMS_SETUP_RACES.has((error as NodeJS.ErrnoException).code ?? "") || attempt >= CLAIMS_SETUP_ATTEMPTS) throw error;
+    } finally {
+      if (created) await removeEmptyDirectories(directory, created);
+    }
+  }
 }

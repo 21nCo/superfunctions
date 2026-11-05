@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import http from "node:http";
 import net from "node:net";
-import { access, chmod, link, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { access, link, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -13,16 +13,20 @@ import { FilePortRegistry, withFileLock } from "@devfn/ports";
 import { proxyListenerPorts, proxyOwnerStatus } from "@devfn/proxy";
 import { describe, expect, it, vi } from "vitest";
 
-import { assertEnvironmentOutputsAvailable, claimEnvironmentOutputs } from "../src/outputs.js";
+import { assertEnvironmentOutputsAvailable, claimEnvironmentOutputs, releaseEnvironmentOutputs } from "../src/outputs.js";
 import { createPlan, DevFnOrchestrator, domainAliases, resolveEndpointTemplates, resolveInstanceIdentity, resolveLocalHostname, runtimeDirectory, selectRuntime, taskInputRevision } from "../src/index.js";
 
 const execFileAsync = promisify(execFile);
 // Lets a test act right after down releases a claim, as a sibling start in another process could.
-const releases = vi.hoisted(() => ({ after: undefined as (() => Promise<void>) | undefined }));
+const releases = vi.hoisted(() => ({ after: undefined as (() => Promise<void>) | undefined, fail: undefined as Error | undefined }));
 const claimReads = vi.hoisted(() => ({ root: undefined as string | undefined, after: undefined as (() => Promise<void>) | undefined }));
 vi.mock("../src/outputs.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/outputs.js")>();
   return { ...actual, releaseEnvironmentOutputs: async (...args: Parameters<typeof actual.releaseEnvironmentOutputs>) => {
+    // Lets a test fail one release, as an unwritable claim store would.
+    const fail = releases.fail;
+    releases.fail = undefined;
+    if (fail) throw fail;
     await actual.releaseEnvironmentOutputs(...args);
     const after = releases.after;
     releases.after = undefined;
@@ -251,7 +255,7 @@ describe("named runtime isolation", () => {
         await mkdir(path.join(claims, lock), { recursive: true });
         await writeFile(path.join(claims, lock, "owner.json"), JSON.stringify({ token: "x", pid: 999_999, createdAt: new Date().toISOString() }), { mode: 0o000 });
       }
-      await writeFile(path.join(claims, "0123456789ab.json"), "{}");
+      await writeFile(path.join(claims, "0123456789ab.json"), JSON.stringify({ version: 1, instanceId: "0123456789ab", runtime: "review", targets: [], written: [], pid: 999_999, createdAt: new Date().toISOString() }));
       await writeFile(path.join(claims, "0123456789ab.json.00000000-0000-4000-8000-000000000000.tmp"), "{");
       await writeFile(path.join(root, ".env.review"), "A=1\n");
       await writeFile(path.join(root, "..env.review.00000000-0000-4000-8000-000000000000.devfn-tmp"), "A=2\n");
@@ -379,7 +383,7 @@ it("never removes a staging-shaped output that only a checkout receipt records, 
 }, 120_000);
 
 // Root writes through a read-only directory, so the failed release cannot be provoked there.
-it.skipIf(process.getuid?.() === 0)("releases a stopped runtime's output claim on a retried down when the first release failed, keeping its history and other runtimes' claims", async () => {
+it("releases a stopped runtime's output claim on a retried down when the first release failed, keeping its history and other runtimes' claims", async () => {
   const { parent, primary } = await repository();
   const stateDir = path.join(parent, "state");
   const config = validateDevFnConfig({ version: 1, project: { id: "release-fixture" }, runtimeDir: "old-run", ports: { web: { env: "PORT" } }, environmentOutputs: [{ path: ".env.{runtime}" }],
@@ -398,9 +402,8 @@ it.skipIf(process.getuid?.() === 0)("releases a stopped runtime's output claim o
     const b = await resolveInstanceIdentity("release-fixture", primary, "b");
     const sibling = validateDevFnConfig({ ...JSON.parse(JSON.stringify(config)), runtimeDir: "new-run", environmentOutputs: [{ path: path.join("old-run", "instances", a.instanceId, "b.env") }] });
     // The first down stops a but cannot write its claim: its receipt stays live (degraded) instead of saying stopped.
-    await chmod(claims, 0o555);
+    releases.fail = Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
     const failed = await orchestrator.down({ config, root: primary, stateDir, runtime: "a" });
-    await chmod(claims, 0o700);
     expect(failed.state).toBe("degraded");
     expect(failed.cleanup?.errors.join(" ")).toMatch(/not released.*run devfn down again/);
     expect((await claimOf(a.instanceId)).targets).toHaveLength(1);
@@ -419,7 +422,7 @@ it.skipIf(process.getuid?.() === 0)("releases a stopped runtime's output claim o
     await expect(assertEnvironmentOutputsAvailable(validateDevFnConfig({ ...JSON.parse(JSON.stringify(sibling)), environmentOutputs: [{ path: path.join("old-run", "instances", c.instanceId, "b.env") }] }), primary, b))
       .rejects.toMatchObject({ message: expect.stringContaining("the runtime directory of runtime c") });
   } finally {
-    await chmod(claims, 0o700).catch(() => undefined);
+    releases.fail = undefined;
     for (const runtime of ["a", "c"]) await orchestrator.down({ config, root: primary, stateDir, runtime }).catch(() => undefined);
     await rm(parent, { recursive: true, force: true });
   }
@@ -1206,3 +1209,95 @@ it("refuses an output in a sibling runtime's state directory inside the checkout
     await rm(parent, { recursive: true, force: true });
   }
 }, 120_000);
+
+it("serializes one instance's starts and stops across state directories: a start elsewhere waits instead of taking over an in-flight claim a sibling could then receive, and a later move still works", async () => {
+  const { parent, primary } = await repository();
+  const [s1, s2, s3] = [path.join(parent, "s1"), path.join(parent, "s2"), path.join(parent, "s3")];
+  const base = { version: 1, project: { id: "instance-lock" }, processes: {}, profiles: { default: { processes: [] } } };
+  const literal = validateDevFnConfig({ ...base, environmentOutputs: [{ path: ".b" }] } as never);
+  const other = validateDevFnConfig({ ...base, environmentOutputs: [{ path: ".other" }] } as never);
+  const template = validateDevFnConfig({ ...base, environmentOutputs: [{ path: ".{runtime}" }] } as never);
+  const orchestrator = new DevFnOrchestrator();
+  const identity = await resolveInstanceIdentity("instance-lock", primary);
+  const claimFile = path.join(primary, ".devfn", "receipts", "outputs", `${identity.instanceId}.json`);
+  const claimOf = async () => JSON.parse(await readFile(claimFile, "utf8").catch(() => "{}")) as { targets?: string[]; stateDir?: string };
+  const code = (error: { code?: string }) => error.code ?? String(error);
+  let second: Promise<string> | undefined;
+  let observed: Record<string, unknown> | undefined;
+  try {
+    await mkdir(s3);
+    // Once the default runtime's start in s1 holds .b and is about to write it, the same runtime starts in s2.
+    made.after = async (directory) => {
+      if (second || directory !== primary || !(await claimOf()).targets?.some((item) => path.basename(item) === ".b")) return;
+      made.after = undefined;
+      second = orchestrator.up({ config: other, root: primary, stateDir: s2 }).then(() => "ok", code);
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      const claim = await claimOf();
+      const named = await claimEnvironmentOutputs(template, primary, await resolveInstanceIdentity("instance-lock", primary, "b"), s3)
+        .then(async (held) => { await held.restore(); return "ok"; }, code);
+      observed = { targets: claim.targets?.map((item) => path.basename(item)), stateDir: claim.stateDir, named };
+    };
+    expect((await orchestrator.up({ config: literal, root: primary, stateDir: s1 })).state).toBe("ready");
+    // The start in s2 never took over the claim while the one in s1 ran, so runtime b could not take .b.
+    expect(observed).toEqual({ targets: [".b"], stateDir: await realpath(s1), named: "DEVFN_RUNTIME_INVALID" });
+    // It then ran, and was refused for the runtime s1 still runs; the claim is still s1's.
+    expect(await second).toBe("DEVFN_RUNTIME_INVALID");
+    expect(await claimOf()).toMatchObject({ targets: [expect.stringMatching(/\.b$/)], stateDir: await realpath(s1) });
+    expect(await readFile(path.join(primary, ".b"), "utf8")).toContain("DEVFN_INSTANCE_ID");
+    // Stopped in s1, the runtime starts and stops in s2.
+    expect((await orchestrator.down({ config: literal, root: primary, stateDir: s1 })).state).toBe("stopped");
+    expect((await orchestrator.up({ config: literal, root: primary, stateDir: s2 })).state).toBe("ready");
+    expect((await orchestrator.down({ config: literal, root: primary, stateDir: s2 })).state).toBe("stopped");
+    expect((await claimOf()).targets).toEqual([]);
+  } finally {
+    made.after = undefined;
+    await second;
+    for (const stateDir of [s1, s2]) await orchestrator.down({ config: literal, root: primary, stateDir }).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 120_000);
+
+it("releases a stopped claim under the claims lock, so it never rewrites the claim while a claim is checked or published", async () => {
+  const { parent, primary } = await repository();
+  const config = validateDevFnConfig({ version: 1, project: { id: "locked-release" }, environmentOutputs: [{ path: ".env" }], processes: {}, profiles: { default: { processes: [] } } } as never);
+  const identity = await resolveInstanceIdentity("locked-release", primary);
+  const claimFile = path.join(primary, ".devfn", "receipts", "outputs", `${identity.instanceId}.json`);
+  try {
+    const claim = await claimEnvironmentOutputs(config, primary, identity);
+    await claim.write(path.join(primary, ".env"), "A=1\n", 0o600);
+    await claim.commit();
+    const held = await readFile(claimFile, "utf8");
+    let release: Promise<void> | undefined;
+    await withFileLock(path.join(primary, ".devfn", "receipts", "outputs", "claims.lock"), async () => {
+      release = releaseEnvironmentOutputs(primary, identity.instanceId);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(await readFile(claimFile, "utf8")).toBe(held);
+    });
+    await release;
+    expect(JSON.parse(await readFile(claimFile, "utf8"))).toMatchObject({ targets: [], written: [expect.objectContaining({ target: expect.stringMatching(/\.env$/) })] });
+  } finally { await rm(parent, { recursive: true, force: true }); }
+}, 60_000);
+
+it("refuses a task-input revision when the claims cannot be read, rather than hashing a sibling's output its claim attributes", async () => {
+  const { parent, primary } = await repository();
+  const config = validateDevFnConfig({ version: 1, project: { id: "claims-read" },
+    processes: { seed: { adapter: "command", command: [process.execPath, "-e", "0"], task: { rerun: "on-change", inputs: ["."] } } }, profiles: { default: { processes: ["seed"] } } });
+  const sibling = validateDevFnConfig({ version: 1, project: { id: "claims-read" }, environmentOutputs: [{ path: ".sibling.{runtime}" }], processes: {}, profiles: { default: { processes: [] } } } as never);
+  const revision = async () => await taskInputRevision(config, primary, { name: "seed", kind: "process" }, "default");
+  try {
+    await writeFile(path.join(primary, "schema.sql"), "create table t();");
+    const before = await revision();
+    // Runtime b holds .sibling.b only through its claim.
+    const claim = await claimEnvironmentOutputs(sibling, primary, await resolveInstanceIdentity("claims-read", primary, "b"));
+    await claim.write(path.join(primary, ".sibling.b"), "B=1\n", 0o600);
+    await claim.commit();
+    expect(await revision()).toBe(before);
+    claimReads.root = primary;
+    claimReads.after = async () => { throw Object.assign(new Error("injected claims read failure"), { code: "EIO" }); };
+    await expect(revision()).rejects.toMatchObject({ code: "EIO" });
+    expect(await revision()).toBe(before);
+  } finally {
+    claimReads.after = undefined; claimReads.root = undefined;
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 60_000);

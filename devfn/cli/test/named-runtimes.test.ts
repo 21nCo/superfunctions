@@ -144,14 +144,18 @@ describe("named runtimes", () => {
       expect(processExists(orphan)).toBe(true);
       // While the dead DevFn's lock still holds runtime c, every other runtime keeps changing.
       const lockOwner = path.join(stateDir, `lifecycle-${c.instanceId}.lock`, "owner.json");
-      expect(JSON.parse(await readFile(lockOwner, "utf8"))).toMatchObject({ pid: child.pid });
+      // So does its checkout-wide instance lock.
+      const instanceLockOwner = path.join(primary, ".devfn", "receipts", "outputs", `lifecycle-${c.instanceId}.lock`, "owner.json");
+      for (const owner of [lockOwner, instanceLockOwner]) expect(JSON.parse(await readFile(owner, "utf8"))).toMatchObject({ pid: child.pid });
       expect((await run(primary, "down", "--runtime", "a")).value.state).toBe("stopped");
       expect((await run(primary, "up", "--runtime", "a")).value.state).toBe("ready");
       expect((await run(primary, "status", "--runtime", "c")).value).toMatchObject({ runtime: "c", state: "starting" });
       // Once the dead holder's lock is past its stale window (aged here instead of waited for), recovering c,
       // which takes over that lock, stops the orphan and starts again, runs concurrently with stopping a.
-      const aged = JSON.parse(await readFile(lockOwner, "utf8")) as Record<string, unknown>;
-      await writeFile(lockOwner, JSON.stringify({ ...aged, createdAt: new Date(Date.now() - 600_000).toISOString() }));
+      for (const owner of [lockOwner, instanceLockOwner]) {
+        const aged = JSON.parse(await readFile(owner, "utf8")) as Record<string, unknown>;
+        await writeFile(owner, JSON.stringify({ ...aged, createdAt: new Date(Date.now() - 600_000).toISOString() }));
+      }
       const [recoveredC, stoppedA, baseStatus] = await Promise.all([run(primary, "up", "--runtime", "c"), run(primary, "down", "--runtime", "a"), run(primary, "status")]);
       expect(recoveredC.value, JSON.stringify(recoveredC.value)).toMatchObject({ state: "ready", runtime: "c", instanceId: c.instanceId });
       expect(processExists(orphan)).toBe(false);

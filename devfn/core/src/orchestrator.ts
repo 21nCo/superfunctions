@@ -17,7 +17,7 @@ import { resolveEndpointTemplates, resolveLocalHostname, type EndpointResolution
 import { createPlan } from "./planner.js";
 import { planResources, resourcePlanFingerprint, resourcesNeedComposeNetworks } from "./resources.js";
 import { livePublicUrls, profileTunnel, publicTemplateInputs, publishLifecycleTunnel, selectedPublicRoutes, selectionTemplateInputs, withdrawLifecycleTunnel, type PublicSelection, type TunnelOverrides } from "./tunnel.js";
-import { assertEnvironmentOutputsAvailable, claimEnvironmentOutputs, releaseEnvironmentOutputs, type EnvironmentOutputClaim } from "./outputs.js";
+import { assertEnvironmentOutputsAvailable, claimEnvironmentOutputs, releaseEnvironmentOutputs, withInstanceLifecycleLock, type EnvironmentOutputClaim } from "./outputs.js";
 import { listRuntimeReceipts, newRuntimeId, readReceipt, readRuntimeId, recordRuntimeId, secureRuntimeDirectory, sharedEnvironmentOutputs, writeEnvironmentOutputs, writeReceipt, type RuntimePath } from "./runtime.js";
 import { preflightTasks, runTask, taskInputRevision, type TaskReceipt } from "./tasks.js";
 import { DevFnError, type CleanupResult, type InstanceIdentity, type RoutingIdentity, type LifecyclePlan, type LifecycleReceipt, type UpOptions } from "./types.js";
@@ -677,7 +677,8 @@ export class DevFnOrchestrator {
         preflight = await resolvePreflight();
       }
     }
-    return await withFileLock(path.join(stateDir, `lifecycle-${identity.instanceId}.lock`), async () => {
+    // The instance's checkout-wide lock first: its claim spans state directories.
+    return await withInstanceLifecycleLock(options.root, identity.instanceId, async () => await withFileLock(path.join(stateDir, `lifecycle-${identity.instanceId}.lock`), async () => {
       // Environment-output files are claimed checkout-wide before anything
       // else changes; a start that never records its receipt gives them back.
       const claim = await claimEnvironmentOutputs(options.config, options.root, identity, stateDir);
@@ -686,7 +687,7 @@ export class DevFnOrchestrator {
         await claim.restore().catch(() => undefined);
         throw error;
       }
-    }, { timeoutMs: 30_000 });
+    }, { timeoutMs: 30_000 }));
   }
 
   private async upLocked(options: UpOptions, stateDir: string, identity: RoutingIdentity, loadedPolicy: Awaited<ReturnType<typeof loadDevFnPolicy>>,
@@ -1145,7 +1146,7 @@ export class DevFnOrchestrator {
     const identity = await resolveInstanceIdentity(options.config.project.id, options.root, options.runtime);
     await mkdir(requestedStateDir, { recursive: true, mode: 0o700 });
     const stateDir = await realpath(requestedStateDir);
-    return await withFileLock(path.join(stateDir, `lifecycle-${identity.instanceId}.lock`), async () => {
+    return await withInstanceLifecycleLock(options.root, identity.instanceId, async () => await withFileLock(path.join(stateDir, `lifecycle-${identity.instanceId}.lock`), async () => {
       // Coordinate the destructive decision with sibling route/lease changes,
       // then let long process and Compose stops run under the instance lock.
       await withRoutingLock(stateDir, async () => {
@@ -1155,7 +1156,7 @@ export class DevFnOrchestrator {
         await new FilePortRegistry(path.join(stateDir, "registry.json")).updateInvocation(receipt.invocationId, { state: "stopping" });
       });
       return await this.downLocked(options, stateDir, identity);
-    }, { timeoutMs: 30_000 });
+    }, { timeoutMs: 30_000 }));
   }
 
   private async downLocked(options: { config: DevFnConfig; root: string; stateDir?: string }, stateDir: string, identity: InstanceIdentity): Promise<LifecycleReceipt> {
