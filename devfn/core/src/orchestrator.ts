@@ -549,7 +549,7 @@ export async function recoverOrphanedProxyRoutes(requestedStateDir: string, tunn
         catch (error) { failures.push(`${instanceId}: ${error instanceof Error ? error.message : String(error)}`); return; }
         await withRoutingLock(stateDir, async () => await proxy.removeInstance(instanceId));
         recovered.push(instanceId);
-      }, { timeoutMs: 1_000 });
+      }, { timeoutMs: 1_000, staleMs: LIFECYCLE_LOCK.staleMs }); // A killed lifecycle's lock is recovered as up and down recover it.
     } catch (error) {
       // A lifecycle command of this instance is running; it owns its routes.
       if (!entered && error && typeof error === "object" && "code" in error && error.code === "DEVFN_REGISTRY_LOCK_TIMEOUT") continue;

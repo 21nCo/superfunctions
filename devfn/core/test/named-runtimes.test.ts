@@ -1,4 +1,4 @@
-import { execFile, spawn } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import http from "node:http";
 import net from "node:net";
@@ -11,11 +11,11 @@ import { promisify } from "node:util";
 import { composeProjectName } from "@devfn/compose";
 import { validateDevFnConfig, type DevFnConfig } from "@devfn/config";
 import { FilePortRegistry, withFileLock } from "@devfn/ports";
-import { proxyListenerPorts, proxyOwnerStatus } from "@devfn/proxy";
+import { CaddyProxyController, proxyListenerPorts, proxyOwnerStatus } from "@devfn/proxy";
 import { describe, expect, it, vi } from "vitest";
 
 import { assertEnvironmentOutputsAvailable, claimEnvironmentOutputs, releaseEnvironmentOutputs } from "../src/outputs.js";
-import { createPlan, DevFnOrchestrator, domainAliases, resolveEndpointTemplates, resolveInstanceIdentity, resolveLocalHostname, runtimeDirectory, selectRuntime, taskInputRevision } from "../src/index.js";
+import { createPlan, DevFnOrchestrator, domainAliases, recoverOrphanedProxyRoutes, resolveEndpointTemplates, resolveInstanceIdentity, resolveLocalHostname, runtimeDirectory, selectRuntime, taskInputRevision } from "../src/index.js";
 
 const execFileAsync = promisify(execFile);
 // Lets a test act right after down releases a claim, as a sibling start in another process could.
@@ -82,6 +82,23 @@ async function repository(): Promise<{ parent: string; primary: string; second: 
   await execFileAsync("git", ["-C", primary, "worktree", "add", "-q", "--detach", second]);
   return { parent, primary, second };
 }
+
+/** A real DevFn process takes the locks as a lifecycle command does and is SIGKILLed holding them: no record is aged. A child leaves `children` once it exited, so cleanup never signals a PID it no longer owns. */
+async function killLockHolder(children: Set<ChildProcess>, ...locks: string[]): Promise<void> {
+  const child = spawn(process.execPath, ["--input-type=module", "-e", `
+    import { withFileLock } from "@devfn/ports";
+    const locks = process.argv.slice(1);
+    const hold = async (index) => index === locks.length ? await new Promise(() => setInterval(() => undefined, 1_000)) : await withFileLock(locks[index], async () => await hold(index + 1));
+    await hold(0);`, ...locks], { cwd: fileURLToPath(new URL("..", import.meta.url)), stdio: "ignore" });
+  children.add(child);
+  const exited = new Promise((resolve) => child.once("exit", () => { children.delete(child); resolve(undefined); }));
+  for (const lock of locks) await expect.poll(async () => await readFile(path.join(lock, "owner.json"), "utf8").then((text) => (JSON.parse(text) as { pid: number }).pid, () => 0), { timeout: 20_000 }).toBe(child.pid);
+  child.kill("SIGKILL");
+  await exited;
+}
+
+/** Kill only the children a test still owns and that still run. */
+const killRunning = (children: Set<ChildProcess>) => { for (const child of children) if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); };
 
 describe("named runtime identity", () => {
   it("keeps the default runtime's v0.1 identity and gives each named runtime and worktree its own owner", async () => {
@@ -1311,20 +1328,9 @@ it("recovers either lifecycle lock of a killed start or stop within the lock tim
   const identity = await resolveInstanceIdentity("dead-lock", primary);
   const outputs = path.join(primary, ".devfn", "receipts", "outputs");
   const instanceLock = path.join(outputs, `lifecycle-${identity.instanceId}.lock`);
-  const children: number[] = [];
+  const children = new Set<ChildProcess>();
   // A real DevFn process takes the locks as up and down do, and is killed while holding them: no record is aged.
-  const killHolder = async (...locks: string[]) => {
-    const child = spawn(process.execPath, ["--input-type=module", "-e", `
-      import { withFileLock } from "@devfn/ports";
-      const locks = process.argv.slice(1);
-      const hold = async (index) => index === locks.length ? await new Promise(() => setInterval(() => undefined, 1_000)) : await withFileLock(locks[index], async () => await hold(index + 1));
-      await hold(0);`, ...locks], { cwd: fileURLToPath(new URL("..", import.meta.url)), stdio: "ignore" });
-    children.push(child.pid!);
-    const exited = new Promise((resolve) => child.once("exit", resolve));
-    for (const lock of locks) await expect.poll(async () => await readFile(path.join(lock, "owner.json"), "utf8").then((text) => (JSON.parse(text) as { pid: number }).pid, () => 0), { timeout: 20_000 }).toBe(child.pid);
-    child.kill("SIGKILL");
-    await exited;
-  };
+  const killHolder = async (...locks: string[]) => await killLockHolder(children, ...locks);
   const timed = async <T>(action: () => Promise<T>) => { const started = Date.now(); const value = await action(); return { value, ms: Date.now() - started }; };
   try {
     for (const directory of [outputs, s1, s2]) await mkdir(directory, { recursive: true });
@@ -1354,8 +1360,82 @@ it("recovers either lifecycle lock of a killed start or stop within the lock tim
     });
     expect(await waiting).toBe("ready");
   } finally {
-    for (const pid of children) { try { process.kill(pid, "SIGKILL"); } catch { /* Already gone. */ } }
+    killRunning(children);
     for (const stateDir of [s1, s2]) await orchestrator.down({ config, root: primary, stateDir }).catch(() => undefined);
     await rm(parent, { recursive: true, force: true });
   }
 }, 180_000);
+
+it("recovers a killed lifecycle's orphaned proxy routes once its lock is past the lifecycle stale window, and skips an instance whose live command holds it", async () => {
+  const stateDir = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-gc-lock-")));
+  const lock = path.join(stateDir, "lifecycle-gone-owner.lock");
+  const children = new Set<ChildProcess>();
+  // Route removal itself is the proxy's concern; this checks which instances gc may recover.
+  const removed = vi.spyOn(CaddyProxyController.prototype, "removeInstance").mockResolvedValue();
+  try {
+    await writeFile(path.join(stateDir, "proxy-routes.json"), JSON.stringify({ version: 1, routes: [{ id: "gone-owner:web", instanceId: "gone-owner", hostname: "gone.localhost", targetHost: "127.0.0.1", targetPort: 41003, tls: "off", updatedAt: new Date().toISOString() }] }));
+    // A live command holds the lock past the stale window: gc skips its instance.
+    await withFileLock(lock, async () => {
+      await new Promise((resolve) => setTimeout(resolve, 6_000));
+      expect(await recoverOrphanedProxyRoutes(stateDir)).toEqual([]);
+    });
+    expect(removed).not.toHaveBeenCalled();
+    // A command killed holding it: gc takes it over once past the same stale window up and down use, not five minutes later.
+    await killLockHolder(children, lock);
+    const createdAt = Date.parse((JSON.parse(await readFile(path.join(lock, "owner.json"), "utf8")) as { createdAt: string }).createdAt);
+    await new Promise((resolve) => setTimeout(resolve, Math.max(0, createdAt + 5_500 - Date.now())));
+    expect(await recoverOrphanedProxyRoutes(stateDir)).toEqual(["gone-owner"]);
+    expect(removed).toHaveBeenCalledWith("gone-owner");
+  } finally {
+    removed.mockRestore();
+    killRunning(children);
+    await rm(stateDir, { recursive: true, force: true });
+  }
+}, 60_000);
+
+it("keeps a task's input revision while a sibling runtime's state directory inside the checkout changes, whether a live receipt, a claim alone or a stopped receipt records it, but never hides the checkout behind a state directory containing it", async () => {
+  const { parent, primary } = await repository();
+  const config = validateDevFnConfig({ version: 1, project: { id: "sibling-state-input" },
+    processes: { seed: { adapter: "command", command: [process.execPath, "-e", "0"], task: { rerun: "on-change", inputs: ["."] } } }, profiles: { default: { processes: ["seed"] } } });
+  const sibling = validateDevFnConfig({ version: 1, project: { id: "sibling-state-input" }, environmentOutputs: [{ path: ".sibling.{runtime}" }], processes: {}, profiles: { default: { processes: [] } } } as never);
+  const orchestrator = new DevFnOrchestrator();
+  const revision = async () => await taskInputRevision(config, primary, { name: "seed", kind: "process" }, "default");
+  const [live, claimed, stopped] = ["review-state", "claim-state", "stopped-state"].map((name) => path.join(primary, name));
+  const touch = async (stateDir: string) => await writeFile(path.join(stateDir, "registry.json"), JSON.stringify({ version: 1, invocations: [], touched: Date.now() }));
+  try {
+    await writeFile(path.join(primary, "schema.sql"), "create table t();");
+    // Runtime b runs with its state directory inside the checkout.
+    expect((await orchestrator.up({ config: sibling, root: primary, stateDir: live, runtime: "b" })).state).toBe("ready");
+    const before = await revision();
+    await touch(live);
+    expect(await revision()).toBe(before);
+    // Runtime c only claimed, with its own state directory there.
+    await mkdir(claimed);
+    const claim = await claimEnvironmentOutputs(sibling, primary, await resolveInstanceIdentity("sibling-state-input", primary, "c"), claimed);
+    await claim.commit();
+    const withClaim = await revision();
+    await touch(claimed);
+    expect(await revision()).toBe(withClaim);
+    // Runtime d stopped and its claim is gone: its stopped receipt still records the state directory.
+    expect((await orchestrator.up({ config: sibling, root: primary, stateDir: stopped, runtime: "d" })).state).toBe("ready");
+    expect((await orchestrator.down({ config: sibling, root: primary, stateDir: stopped, runtime: "d" })).state).toBe("stopped");
+    await rm(path.join(primary, ".devfn", "receipts", "outputs", `${(await resolveInstanceIdentity("sibling-state-input", primary, "d")).instanceId}.json`));
+    const withStopped = await revision();
+    await touch(stopped);
+    expect(await revision()).toBe(withStopped);
+    // A state directory equal to the checkout is recorded too, yet a source edit still changes the revision.
+    const rooted = await claimEnvironmentOutputs(sibling, primary, await resolveInstanceIdentity("sibling-state-input", primary, "e"), primary);
+    await rooted.commit();
+    const withRoot = await revision();
+    await writeFile(path.join(primary, "schema.sql"), "create table u();");
+    expect(await revision()).not.toBe(withRoot);
+    // A claim store that cannot be read still refuses the revision.
+    claimReads.root = primary;
+    claimReads.after = async () => { throw Object.assign(new Error("injected claims read failure"), { code: "EIO" }); };
+    await expect(revision()).rejects.toMatchObject({ code: "EIO" });
+  } finally {
+    claimReads.after = undefined; claimReads.root = undefined;
+    await orchestrator.down({ config: sibling, root: primary, stateDir: live, runtime: "b" }).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 120_000);

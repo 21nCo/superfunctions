@@ -221,11 +221,14 @@ async function claimantRuns(claim: OutputClaim): Promise<boolean> {
   return status !== "exited" && status !== "identity-mismatch";
 }
 
-/** Task-input attribution of the checkout's instances (`own` starts now, so its earlier outputs are released): `held` are every runtime directory a receipt or claim records and another's outputs while its live receipt, running claimant or pending write holds them; `released`, every file an instance wrote while it holds what it last wrote there. */
+/** Task-input attribution of the checkout's instances (`own` starts now, so its earlier outputs are released): `held` are every runtime directory and state directory inside the checkout a receipt or claim records and another's outputs while its live receipt, running claimant or pending write holds them; `released`, every file an instance wrote while it holds what it last wrote there. */
 export async function taskAttribution(config: DevFnConfig, root: string, claims: () => Promise<Map<string, { claim: OutputClaim }>>, own?: string): Promise<{ held: string[]; released: string[]; made: string[] }> {
   const receipts = await checkoutReceipts(config, root), held = [...receipts].flatMap(([id, { receipt }]) => [receipt.runtimeDir, ...id !== own && live(receipt) ? receipt.environmentOutputs ?? [] : []]), released: string[] = [], read = await claims();
   const made = [...receipts].flatMap(([id, { receipt }]) => read.has(id) ? [] : madeByRelease(receipt)); // An earlier release's claimless receipt: its runtime directory's parents, as a claim replacing it records them.
   for (const [id, { claim }] of read) { made.push(...claim.made ?? []); held.push(...claim.runtimeDirectory ? [claim.runtimeDirectory] : [], ...claim.recorded ?? [], ...id === own ? [] : [...(claim.pending ?? []).map((item) => item.target), ...claim.targets.length && await claimantRuns(claim) ? claim.targets : []]); for (const item of await writtenByClaim(claim)) if (await holdsRecorded(item)) released.push(item.target); }
+  // Every recorded state directory inside the checkout is DevFn's own state, as runtime directories are; one equal to or containing the checkout never hides it.
+  const rootKey = pathKey(await realpath(root).catch(() => path.resolve(root)));
+  for (const stateDir of [...[...receipts.values()].map(({ receipt }) => receipt.stateDir), ...[...read.values()].map(({ claim }) => claim.stateDir)]) if (stateDir && (await canonicalKey(path.resolve(root, stateDir))).startsWith(rootKey + path.sep)) held.push(stateDir);
   return { held, released, made };
 }
 
