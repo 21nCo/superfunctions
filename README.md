@@ -97,15 +97,19 @@ channels fail rather than overwriting stable installations. The workflow removes
 existing stable `latest`. For an already-published prerelease, dispatch its
 immutable release tag with `channel_only=true`: this verifies registry identity
 and reconciles tags without installing, packing or republishing the artifact.
-`@uifn/patterns` and `@uifn/sf` remain experimental. Publication retains the
-existing `NPM_TOKEN`/`NODE_AUTH_TOKEN` mechanism for direct publication.
-Prerelease tag reconciliation runs in a separate job using npm 11.21.0 and
-`id-token: write`; package install/build/test steps receive no OIDC permission.
-The channel job does not receive `NPM_TOKEN`. For each prerelease package, enroll
-a GitHub Actions trusted publisher on npm with organization/user `21nCo`,
-repository `super-functions`, workflow filename `publish-tag.yml`, no environment
-name, and **Allow npm dist-tag** enabled. Direct `npm publish` permission is not
-needed for this connection; preserve the existing token publishing policy.
+`@uifn/patterns` and `@uifn/sf` remain experimental. Packages publish through
+npm trusted publishing (OIDC). The `build` job installs, builds, tests and packs
+the artifact without `id-token` permission; a separate `publish` job downloads
+that exact tarball and runs `npm publish` with npm 11.21.0 and `id-token: write`.
+Every published package has a GitHub Actions trusted publisher on npm with
+organization/user `21nCo`, repository `superfunctions`, workflow filename
+`publish-tag.yml` and no environment name. The publish step still passes
+`NPM_TOKEN` as a fallback, which npm uses only when the OIDC exchange fails, so a
+package's first publish (before a trusted publisher can be added) keeps working.
+Add the trusted publisher right after a new package's first release.
+Prerelease tag reconciliation runs in a separate job that also uses OIDC and
+does not receive `NPM_TOKEN`; it needs **Allow npm dist-tag** enabled on the
+package's trusted publisher.
 See [npm's dist-tag OIDC requirements](https://docs.npmjs.com/trusted-publishers#managing-dist-tags-with-trusted-publishing).
 Publish authorization does not imply dist-tag authorization. A denied cleanup
 fails the workflow even if the artifact was published; verify its registry
