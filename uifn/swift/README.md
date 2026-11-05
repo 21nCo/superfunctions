@@ -34,12 +34,40 @@ VStack {
 - SwiftUI has no public way to write a picker style, so the pickers are views. `UIFnMenuPicker` is a `.uifn` menu around a system `Picker` of the options; its label shows the selected option, or the picker's label in the muted color when nothing is selected. `UIFnSegmentedPicker` draws one segment per option, raised in a sunken track (`.segmented`) or underlined over a rule (`.tabs`, for a tab switcher), and accessibility sees a system segmented `Picker` in its place. Its segments share the width offered equally; under `fixedSize()` each is as wide as the widest. On macOS it takes focus as one control, with the accent ring around the selected segment (on macOS 13, which cannot hide the system focus ring, the system ring around the picker instead), and the left and right arrows select the neighboring option in the layout's reading direction, stopping at the ends. Both pickers leave out options that repeat an earlier one.
 - Progress views and gauges fill with the accent color over its subtle tone, as a bar (`.uifnLinear`) or a ring (`.uifnCircular`); values outside the range draw as the nearer end. Indeterminate progress runs a segment along the bar or spins an arc; under Reduce Motion it fades in place instead. Accessibility sees a system progress view or gauge with the same value and labels.
 
+## Components
+
+```swift
+VStack {
+    UIFnSegmentedMeter("Signal", value: Double(bars), in: 0...4, segments: 4, tone: .success)
+    UIFnBanner("Sync paused", message: "Reconnect to keep your changes.", tone: .warning, dismiss: UIFnBannerDismiss("Dismiss") { paused = false }) {
+        Button("Reconnect") { reconnect() }
+    }
+    UIFnEmptyState("No files", message: "Files you add appear here.") {
+        Image(systemName: "tray")
+    } actions: {
+        Button("Add a file") { add() }.buttonStyle(.uifnPrimary)
+    }
+    UIFnSkeleton("Loading messages") {
+        UIFnSkeletonBlock(.capsule).frame(width: 160, height: 12)
+    }
+}
+.uifnToast($toast, dismissLabel: "Dismiss") // toast = UIFnToast("Copied", message: "The link is on the clipboard.")
+```
+
+- The components take text already localized and show it as it is. Tones (`.accent`, `.success`, `.warning`, `.danger`) are drawn only as color, so put what matters about a tone, such as an error, in the text.
+- `UIFnSegmentedMeter` lights its share of the segments from the leading edge, rounded to the nearest segment; a value above the minimum always lights one and a value below the maximum always leaves one unlit. Values outside the range draw as the nearer end, and a value that is not a number, or a range with no width, as empty. Accessibility sees a progress indicator with the label, whose value is the meter's value as a percentage of its range, such as “60%”, even when a current value label shows something else.
+- `UIFnBanner` draws a title and an optional message on the tone's subtle color, with optional actions (in the secondary button style) and a dismiss button. Accessibility reads the title as the label and the message as the value of one text, then the actions, then the dismiss button with the label `UIFnBannerDismiss` gives it.
+- `uifnToast(_:dismissLabel:edge:)` shows a banner over a view at its top or bottom edge for the toast's duration (5 seconds unless set; nil, or a duration that is not positive and finite, keeps it until it is dismissed), then sets the binding to nil. A new toast replaces the one showing and gets its own full duration. Each toast is announced once when it appears, title then message, so VoiceOver reads it wherever focus is; on macOS warnings and dangers interrupt other speech. The banner slides in from the edge and fades; under Reduce Motion it only fades, for the theme's reduced-motion duration (none for the default theme).
+- `UIFnEmptyState` centers an optional icon, a title, an optional message and optional actions. The title is a heading for accessibility and the icon is hidden from it.
+- `UIFnSkeleton` draws the `UIFnSkeletonBlock` shapes of its placeholder in the subtle border color, with a highlight sweeping across them from the leading edge; under Reduce Motion the blocks stay still, without the highlight. Accessibility sees one busy indicator with the skeleton's label in place of the blocks.
+
 ## Snapshot tests
 
-`UIFnSwiftUITests` renders each style variant with `ImageRenderer` in light and dark at three Dynamic Type sizes and compares the result with the PNGs in `Tests/UIFnSwiftUITests/__Snapshots__`. Text renders in the box-glyph `UIFn Test Sans` test font, whose outlines and metrics do not change between OS releases. A snapshot passes when at most 0.5% of its pixels differ by more than 8/255 in a channel.
+`UIFnSwiftUITests` renders each style variant and component with `ImageRenderer` in light and dark at three Dynamic Type sizes and compares the result with the PNGs in `Tests/UIFnSwiftUITests/__Snapshots__`. Text renders in the box-glyph `UIFn Test Sans` test font, whose outlines and metrics do not change between OS releases. A snapshot passes when at most 0.5% of its pixels differ by more than 8/255 in a channel.
 
 - References are recorded on macOS. On iOS the tests check that the styles change with the color scheme and grow with Dynamic Type instead. UIKit draws iOS menus, which `ImageRenderer` cannot, so on iOS the menu subjects draw the label the menu style gives a menu.
-- `ImageRenderer` cannot draw platform text fields, so the text field snapshots draw the style around a `Text`. Indeterminate progress draws the moment it renders, so its snapshots draw the style at a fixed point in its cycle.
+- `ImageRenderer` cannot draw platform text fields, so the text field snapshots draw the style around a `Text`. Indeterminate progress and the skeleton's highlight draw the moment they render, so their snapshots draw them at a fixed point in their cycle.
 - Hosted-window tests on macOS check the segmented picker's arrow keys, clicks and focus ring with real key and mouse events.
+- Accessibility tests read the elements SwiftUI builds for each component in a window, with their roles (traits on iOS), labels and values. SwiftUI builds them only for assistive technologies, so each read turns on the app's enhanced user interface on macOS, as VoiceOver does, or accessibility automation on iOS, as UI tests do, and turns it off again. These tests do not stand in for checking the components with VoiceOver.
 - Record or update references with `UIFN_RECORD_SNAPSHOTS=1 swift test --filter UIFnControlStyleSnapshotTests`, then review the PNGs. A missing reference is recorded and fails the test.
 - On a mismatch the rendered image is written under its snapshot name (for example `macOS/button-primary-light.png`) to `$UIFN_SNAPSHOT_ARTIFACTS`, or `uifn-snapshots` in the temporary directory. The Swift workflow uploads them as the `uifn-snapshot-failures` artifact.
