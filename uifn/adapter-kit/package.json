@@ -1,6 +1,6 @@
 {
   "name": "@uifn/adapter-kit",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Shared adapter helpers and conformance harness for uifn framework adapters",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -21,7 +21,7 @@
     "prepack": "npm run build"
   },
   "dependencies": {
-    "@uifn/core": "0.0.2"
+    "@uifn/core": "0.0.3"
   },
   "devDependencies": {
     "tsup": "^8.0.0",

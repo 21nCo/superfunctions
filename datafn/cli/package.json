@@ -27,8 +27,8 @@
     "test:watch": "vitest watch"
   },
   "dependencies": {
-    "@datafn/core": "0.1.1",
-    "@datafn/client": "0.1.1"
+    "@datafn/core": "0.1.2",
+    "@datafn/client": "0.1.2"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

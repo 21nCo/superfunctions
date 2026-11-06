@@ -1,6 +1,6 @@
 {
   "name": "@mdfn/core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Environment-neutral document, transaction, command, history, extension, and migration engine for mdfn",
   "type": "module",
   "main": "dist/index.cjs",

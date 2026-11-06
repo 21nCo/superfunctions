@@ -1,6 +1,6 @@
 {
   "name": "@uifn/dom",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Owned DOM platform boundary for uifn",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -25,7 +25,7 @@
   },
   "dependencies": {
     "@floating-ui/dom": "^1.8.0",
-    "@uifn/core": "0.0.2",
+    "@uifn/core": "0.0.3",
     "tabbable": "^6.5.0"
   },
   "devDependencies": {

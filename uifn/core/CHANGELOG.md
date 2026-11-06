@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.0.3 - 2026-11-05
 
+- Republished from `dev` through npm trusted publishing (OIDC), with repository metadata pointing at `21nCo/superfunctions`.
 - Added the uniform public controller, typed part-composition, and explicit environment/scope contracts.
 - Added reactive controlled-input synchronization, immutable snapshots, selector subscriptions, and synchronous idempotent teardown across all 25 current controller factories.
 - Removed the public generic state-machine entrypoint, wildcard primitive implementation subpaths, legacy `createX` constructors, adapter wrappers, local store API, and process-global ID helpers without compatibility shims.

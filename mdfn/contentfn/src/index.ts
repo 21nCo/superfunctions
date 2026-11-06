@@ -286,4 +286,4 @@ export function mergeMigrationDiagnostics(content: MarkdownContent, diagnostics:
   return content;
 }
 
-export const MDFN_CONTENTFN_VERSION = "0.1.0" as const;
+export const MDFN_CONTENTFN_VERSION = "0.1.1" as const;

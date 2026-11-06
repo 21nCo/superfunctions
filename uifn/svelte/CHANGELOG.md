@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.4 - 2026-11-05
+
+- Republished from `dev` through npm trusted publishing (OIDC), with repository metadata pointing at `21nCo/superfunctions`.
+
 ## Unreleased - 2026-07-18
 
 - Replaced the partial handwritten adapter with generated Svelte 5 compounds for all 69 stable primitives and 465 anatomy parts.

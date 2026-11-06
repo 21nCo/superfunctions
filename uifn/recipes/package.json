@@ -1,6 +1,6 @@
 {
   "name": "@uifn/recipes",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Typed multi-target style recipes for uifn",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -26,8 +26,8 @@
     "prepack": "npm run build"
   },
   "dependencies": {
-    "@uifn/theme": "0.0.1",
-    "@uifn/tokens": "0.0.1"
+    "@uifn/theme": "0.0.2",
+    "@uifn/tokens": "0.0.2"
   },
   "devDependencies": {
     "tsup": "^8.0.0",

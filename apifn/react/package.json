@@ -1,6 +1,6 @@
 {
   "name": "@apifn/react",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "React UI components for ApiFn",
   "type": "module",
   "main": "dist/index.cjs",
@@ -19,7 +19,7 @@
     "test": "vitest run --config vitest.config.ts"
   },
   "dependencies": {
-    "@apifn/core": "0.0.3"
+    "@apifn/core": "0.0.4"
   },
   "peerDependencies": {
     "react": "^18.0.0 || ^19.0.0",
