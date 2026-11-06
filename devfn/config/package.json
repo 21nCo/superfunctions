@@ -2,6 +2,11 @@
   "name": "@devfn/config",
   "version": "0.1.0",
   "description": "Validated project manifests, organization policies, discovery, and trust contracts for DevFn",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "devfn/config"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

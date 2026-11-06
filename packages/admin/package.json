@@ -2,6 +2,11 @@
   "name": "@superfunctions/admin",
   "version": "0.1.4",
   "description": "Shared administration contracts and runtime for Superfunctions",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "packages/admin"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

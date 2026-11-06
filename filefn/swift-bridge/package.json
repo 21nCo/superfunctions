@@ -3,6 +3,11 @@
   "version": "0.0.1",
   "type": "module",
   "description": "WKWebView bridge primitives for native-backed FileFn clients",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "filefn/swift-bridge"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

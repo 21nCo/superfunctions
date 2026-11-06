@@ -3,6 +3,11 @@
   "version": "0.2.0",
   "description": "Postgres adapter for SearchFn on node-postgres, postgres.js and Cloudflare Workers (Hyperdrive).",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "searchfn/adapter-postgres"
+  },
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",

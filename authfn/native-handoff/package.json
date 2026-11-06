@@ -2,6 +2,11 @@
   "name": "@authfn/native-handoff",
   "version": "0.1.2",
   "description": "Native handoff plugin for AuthFn",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "authfn/native-handoff"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

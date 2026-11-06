@@ -20,7 +20,7 @@
   "sideEffects": ["styles.css"],
   "license": "MIT",
   "engines": { "node": ">=20 <25" },
-  "repository": { "type": "git", "url": "git+https://github.com/21nCo/super-functions.git", "directory": "mdfn/components" },
+  "repository": { "type": "git", "url": "git+https://github.com/21nCo/superfunctions.git", "directory": "mdfn/components" },
   "publishConfig": { "access": "public" },
   "mdfn": { "status": "stable-candidate", "layer": "components", "schemaVersion": 1 }
 }

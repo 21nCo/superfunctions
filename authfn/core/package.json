@@ -55,6 +55,11 @@
   ],
   "author": "21n",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "authfn/core"
+  },
   "publishConfig": {
     "access": "public"
   },

@@ -2,6 +2,11 @@
   "name": "@devfn/proxy",
   "version": "0.1.0",
   "description": "Lock-safe shared Caddy route management for DevFn localhost names",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "devfn/proxy"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
