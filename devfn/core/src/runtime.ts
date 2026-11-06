@@ -155,10 +155,7 @@ const STATE_DIRECTORY_ENTRY = [
 /** DevFn's entry names in a state directory: in any spelling where its filesystem folds case (foldsCase). */
 export const stateDirectoryEntry = (folds: boolean): RegExp => new RegExp(STATE_DIRECTORY_ENTRY, folds ? "i" : "");
 
-/**
- * Whether a directory's own filesystem folds case: a case-swapped spelling of it, or of its nearest ancestor with a cased
- * letter, reaches the same directory. Never decided by platform, as one machine mounts both kinds.
- */
+/** Whether a directory's own filesystem folds case: a case-swapped spelling of it, or of its nearest ancestor with a cased letter, reaches it (never decided by platform). */
 export async function foldsCase(directory: string): Promise<boolean> {
   for (let current = directory; current !== path.dirname(current); current = path.dirname(current)) {
     const name = path.basename(current);
@@ -198,14 +195,13 @@ export function newRuntimeId(): string {
   return randomBytes(16).toString("hex");
 }
 
-/**
- * The refusal of a state directory whose filesystem has no hard links, which its identity and every lock there need, for
- * an error linking there; any other error as it is.
- */
-export function withoutHardLinks(stateDir: string, error: unknown): unknown {
-  const code = (error as NodeJS.ErrnoException | undefined)?.code;
-  if (code !== "EPERM" && code !== "ENOTSUP" && code !== "EOPNOTSUPP" && code !== "EXDEV" && code !== "ENOSYS") return error;
-  return new DevFnError("DEVFN_RUNTIME_INVALID", `State directory ${stateDir} does not support hard links (${code}), which DevFn state files and locks require; choose a state directory on a local filesystem with --state-dir.`);
+/** Refuse a state directory without hard links, which its runtime identity and locks need, for an error linking there; any other error's code is returned. */
+export function refuseWithoutHardLinks(stateDir: string, error: unknown): string | undefined {
+  const code = (error as NodeJS.ErrnoException).code;
+  if (code === "EPERM" || code === "ENOTSUP" || code === "EOPNOTSUPP" || code === "EXDEV" || code === "ENOSYS") {
+    throw new DevFnError("DEVFN_RUNTIME_INVALID", `State directory ${stateDir} does not support hard links (${code}), which DevFn state files and locks require; choose a state directory on a local filesystem with --state-dir.`);
+  }
+  return code;
 }
 
 /**
@@ -228,7 +224,8 @@ export async function recordRuntimeId(stateDir: string, candidate: string): Prom
     await link(temp, target);
     return candidate;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw withoutHardLinks(stateDir, error);
+    const code = refuseWithoutHardLinks(stateDir, error);
+    if (code !== "EEXIST") throw error;
   } finally { await unlink(temp).catch(() => undefined); }
   const recorded = await readRuntimeId(stateDir);
   if (!recorded) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${target} could not be read.`);

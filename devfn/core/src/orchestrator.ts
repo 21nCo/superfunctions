@@ -18,7 +18,7 @@ import { createPlan } from "./planner.js";
 import { planResources, resourcePlanFingerprint, resourcesNeedComposeNetworks } from "./resources.js";
 import { livePublicUrls, profileTunnel, publicTemplateInputs, publishLifecycleTunnel, selectedPublicRoutes, selectionTemplateInputs, withdrawLifecycleTunnel, type PublicSelection, type TunnelOverrides } from "./tunnel.js";
 import { assertEnvironmentOutputsAvailable, claimEnvironmentOutputs, LIFECYCLE_LOCK, makeStateDirectory, releaseEnvironmentOutputs, withInstanceLifecycleLock, type EnvironmentOutputClaim } from "./outputs.js";
-import { listRuntimeReceipts, newRuntimeId, readReceipt, readRuntimeId, recordRuntimeId, secureRuntimeDirectory, sharedEnvironmentOutputs, withoutHardLinks, writeEnvironmentOutputs, writeReceipt, type RuntimePath } from "./runtime.js";
+import { listRuntimeReceipts, newRuntimeId, readReceipt, readRuntimeId, recordRuntimeId, refuseWithoutHardLinks, secureRuntimeDirectory, sharedEnvironmentOutputs, writeEnvironmentOutputs, writeReceipt, type RuntimePath } from "./runtime.js";
 import { preflightTasks, runTask, taskInputRevision, type TaskReceipt } from "./tasks.js";
 import { DevFnError, type CleanupResult, type InstanceIdentity, type RoutingIdentity, type LifecyclePlan, type LifecycleReceipt, type UpOptions } from "./types.js";
 
@@ -499,14 +499,14 @@ async function receiptIsReady(config: DevFnConfig, root: string, receipt: Lifecy
   return processReady.every(Boolean) && serviceReady.every(Boolean);
 }
 
-/**
- * Hold an instance's lifecycle lock in a state directory. Its owner record is linked, so a filesystem without hard links
- * refuses the lock as it refuses the runtime identity (withoutHardLinks), before anything is recorded there.
- */
+/** Hold an instance's lifecycle lock in a state directory; one without hard links for its owner record is refused as for the runtime identity. */
 async function withStateDirLifecycleLock<T>(stateDir: string, instanceId: string, action: () => Promise<T>): Promise<T> {
   let entered = false;
   try { return await withFileLock(path.join(stateDir, `lifecycle-${instanceId}.lock`), async () => { entered = true; return await action(); }, LIFECYCLE_LOCK); }
-  catch (error) { throw entered ? error : withoutHardLinks(stateDir, error); }
+  catch (error) {
+    if (!entered) refuseWithoutHardLinks(stateDir, error);
+    throw error;
+  }
 }
 
 /**

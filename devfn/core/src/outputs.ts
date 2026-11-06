@@ -243,8 +243,7 @@ const TRUST_STATE = /^trust\.(?:json(?:\..+\.tmp)?|lock)$/;
 const union = (...lists: (readonly string[] | undefined)[]): string[] => [...new Set(lists.flatMap((list) => list ?? []))];
 
 /**
- * Create a start's or stop's state directory under the instance's lifecycle lock, which the caller holds through its first
- * write there and any withdrawal, so no other start or stop of the instance runs in between. A state directory inside the checkout is
+ * Create a start's or stop's state directory under the instance's lifecycle lock, held by the caller through its first write there and any withdrawal. A state directory inside the checkout is
  * first recorded in the instance's claim, under the claims lock and before DevFn writes anything there: the directories this
  * creates as made; the state directory itself, when a start creates it, as held whole (`recorded`), and otherwise, also when it
  * existed before, as shared, whose DevFn entries are held by name. The record stays with the claim through a failed or
@@ -311,10 +310,7 @@ async function stateEntries(directory: string): Promise<string> {
   })));
 }
 
-/**
- * Remove the record a refused start added for an existing state directory where it changed no DevFn entry, still under the
- * start's instance lifecycle lock, so no other start of the instance relies on it; a claim then holding nothing, whose every recorded path is gone, goes too.
- */
+/** Remove, under the refused start's instance lifecycle lock, the record it added for an existing state directory where it changed no DevFn entry; a claim then holding nothing, whose every recorded path is gone, goes too. */
 async function withdrawStateRecord(root: string, instanceId: string, stateDir: string, before: string): Promise<void> {
   await withFileLock(path.join(await claimDirectory(root), CLAIMS_LOCK), async () => {
     const text = await readOwnClaim(root, instanceId), claim = text === undefined ? undefined : parseClaim(text, instanceId);

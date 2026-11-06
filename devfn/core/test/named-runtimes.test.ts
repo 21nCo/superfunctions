@@ -1,9 +1,10 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import http from "node:http";
 import net from "node:net";
-import { mkdirSync } from "node:fs";
-import { access, link, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdirSync, utimesSync, writeFileSync } from "node:fs";
+import { access, link, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -49,23 +50,35 @@ vi.mock("../src/outputs.js", async (importOriginal) => {
 });
 
 // Lets a test act right before the task-input walk reads a file, as a concurrent writer could, or right after a start creates a directory.
-const reads = vi.hoisted(() => ({ before: undefined as ((operation: "lstat" | "readFile", file: string) => Promise<void>) | undefined }));
+const reads = vi.hoisted(() => ({ before: undefined as ((operation: "lstat" | "readFile" | "opendir", file: string) => Promise<void>) | undefined }));
 const made = vi.hoisted(() => ({ after: undefined as ((directory: string) => Promise<void>) | undefined, fail: undefined as ((directory: string) => Error | undefined) | undefined }));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return { ...actual, mkdir: async (...args: Parameters<typeof actual.mkdir>) => { const failure = made.fail?.(String(args[0])); if (failure) throw failure; const created = await actual.mkdir(...args); await made.after?.(String(args[0])); return created; },
     lstat: async (...args: Parameters<typeof actual.lstat>) => { await reads.before?.("lstat", String(args[0])); return await actual.lstat(...args); },
-    readFile: async (...args: Parameters<typeof actual.readFile>) => { await reads.before?.("readFile", String(args[0])); return await actual.readFile(...args); } };
+    readFile: async (...args: Parameters<typeof actual.readFile>) => { await reads.before?.("readFile", String(args[0])); return await actual.readFile(...args); },
+    opendir: async (...args: Parameters<typeof actual.opendir>) => { await reads.before?.("opendir", String(args[0])); return await actual.opendir(...args); } };
+});
+
+// Lets a test fail acquiring a lock, as a filesystem without hard links fails linking its owner record.
+const lockFailures = vi.hoisted(() => ({ fail: undefined as ((lockPath: string) => Error | undefined) | undefined }));
+vi.mock("@devfn/ports", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@devfn/ports")>();
+  return { ...actual, withFileLock: async (...args: Parameters<typeof actual.withFileLock>) => {
+    const failure = lockFailures.fail?.(args[0]);
+    if (failure) throw failure;
+    return await actual.withFileLock(...args);
+  } };
 });
 
 // Lets a test act as soon as a stopped receipt's stable copy is written: at the first point writeReceipt yields after it, or once it returns.
 const stops = vi.hoisted(() => ({ onStopped: undefined as ((copyAfterStable: boolean) => Promise<void>) | undefined }));
 // Lets a test act once a start recorded its runtime identity, or each time a lifecycle command reads a receipt, also under its locks.
-const lifecycle = vi.hoisted(() => ({ recorded: undefined as (() => Promise<void>) | undefined, read: undefined as (() => Promise<void>) | undefined }));
+const lifecycle = vi.hoisted(() => ({ recorded: undefined as (() => Promise<void>) | undefined, read: undefined as (() => Promise<void>) | undefined, recording: undefined as (() => Promise<void>) | undefined }));
 vi.mock("../src/runtime.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/runtime.js")>();
   const once = async (name: "recorded") => { const hook = lifecycle[name]; lifecycle[name] = undefined; await hook?.(); };
-  return { ...actual, recordRuntimeId: async (...args: Parameters<typeof actual.recordRuntimeId>) => { const recorded = await actual.recordRuntimeId(...args); await once("recorded"); return recorded; },
+  return { ...actual, recordRuntimeId: async (...args: Parameters<typeof actual.recordRuntimeId>) => { await lifecycle.recording?.(); const recorded = await actual.recordRuntimeId(...args); await once("recorded"); return recorded; },
     readReceipt: async (...args: Parameters<typeof actual.readReceipt>) => { const receipt = await actual.readReceipt(...args); await lifecycle.read?.(); return receipt; }, writeReceipt: async (receipt: Parameters<typeof actual.writeReceipt>[0], options: Parameters<typeof actual.writeReceipt>[1] = {}) => {
     const onStopped = stops.onStopped;
     if (!onStopped || receipt.state !== "stopped" || options.runtimeCopy !== undefined || options.stable === false) return await actual.writeReceipt(receipt, options);
@@ -80,6 +93,14 @@ vi.mock("../src/runtime.js", async (importOriginal) => {
     if (!ran && await said()) await onStopped(false);
   } };
 });
+
+/** Whether a directory's filesystem folds case, observed by writing a probe there and reading it back in another case. */
+async function foldsCaseHere(directory: string): Promise<boolean> {
+  const probe = path.join(directory, `case-probe-${process.pid}`);
+  await writeFile(probe, "");
+  try { return await access(path.join(directory, `CASE-PROBE-${process.pid}`)).then(() => true, () => false); }
+  finally { await rm(probe, { force: true }); }
+}
 
 async function repository(): Promise<{ parent: string; primary: string; second: string }> {
   const parent = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-named-runtime-")));
@@ -1739,10 +1760,18 @@ it("keeps a task's input revision through every DevFn write of a failed, retried
       await mkdir(path.join(stateDir, "trust.lock"));
       await writeFile(path.join(stateDir, "trust.lock", "a.ticket"), "{}");
       for (const name of ["trust.json", "trust.json.1.a.tmp", "Caddyfile.candidate", `Caddyfile.preflight.${process.pid}.a`]) await writeFile(path.join(stateDir, name), "generated");
+      // The candidate is renamed once the walk lists the state directory, after the listing's names are read.
       const candidate = path.join(stateDir, "Caddyfile.candidate");
-      reads.before = async (_operation, file) => { if (file === candidate) await rename(candidate, path.join(stateDir, "Caddyfile")); };
+      let renamed = false;
+      reads.before = async (operation, file) => {
+        if (operation !== "opendir" || file !== stateDir || renamed) return;
+        renamed = true;
+        await rename(candidate, path.join(stateDir, "Caddyfile"));
+      };
       expect(await revision()).toBe(before);
       reads.before = undefined;
+      // Only an existing state directory is walked; one the start created is held whole.
+      expect(renamed).toBe(variant === "existing");
       // Only DevFn's entries of an existing one are held: a user's directory that only resembles a DevFn name stays an input. One the start created is held whole.
       if (variant !== "existing") continue;
       await mkdir(path.join(stateDir, "proxy"));
@@ -1750,8 +1779,8 @@ it("keeps a task's input revision through every DevFn write of a failed, retried
       expect(await revision()).not.toBe(before);
       await rm(path.join(stateDir, "proxy"), { recursive: true });
       expect(await revision()).toBe(before);
-      // Where the filesystem folds case, DevFn's task journals land in an existing directory of any spelling.
-      if (process.platform === "darwin" || process.platform === "win32") {
+      // Where this directory's filesystem folds case, DevFn's task journals land in an existing directory of any spelling.
+      if (await foldsCaseHere(stateDir)) {
         await mkdir(path.join(stateDir, "Tasks"));
         await writeFile(path.join(stateDir, "tasks", "journal.json"), "{}");
         expect(await revision()).toBe(before);
@@ -1875,6 +1904,181 @@ it("makes a stop wait for a start of its runtime in flight, then stop what it st
     await rm(parent, { recursive: true, force: true });
   }
 }, 120_000);
+
+it("keeps a task's input revision when two starts of one runtime race into an existing state directory inside the checkout and the first, refused after recording it, withdraws its record", async () => {
+  const { parent, primary } = await repository();
+  const config = validateDevFnConfig({ version: 1, project: { id: "racing-state-input" },
+    processes: { seed: { adapter: "command", command: [process.execPath, "-e", "0"], task: { rerun: "on-change", inputs: ["."] } } }, profiles: { default: { processes: ["seed"] } } });
+  const listen = [process.execPath, "-e", "require('node:net').createServer().listen(Number(process.env.PORT), '127.0.0.1')"];
+  const sibling = validateDevFnConfig({ version: 1, project: { id: "racing-state-input" }, ports: { r: { env: "PORT" } },
+    processes: { redis: { adapter: "command", command: listen, ports: ["r"] }, worker: { adapter: "command", command: [process.execPath, "-e", "setInterval(() => undefined, 1_000)"], resources: ["cache"] } },
+    resources: { cache: { kind: "cache", defaultTarget: "local", targets: { local: { node: "redis", port: "r", scheme: "redis" } } } }, profiles: { default: { processes: ["worker", "redis"] } } } as never);
+  const orchestrator = new DevFnOrchestrator();
+  const revision = async () => await taskInputRevision(config, primary, { name: "seed", kind: "process" }, "default");
+  const stateDir = path.join(primary, "cache", "state");
+  const claims = path.join(".devfn", "receipts", "outputs");
+  const start = new AsyncLocalStorage<"a" | "b">();
+  const seen = { aRecorded: false, bRecorded: false, aEnded: false };
+  const until = async (ready: () => boolean) => { for (const deadline = Date.now() + 3_000; !ready() && Date.now() < deadline;) await new Promise((resolve) => setTimeout(resolve, 10)); };
+  try {
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(path.join(stateDir, "notes.sql"), "-- mine");
+    const before = await revision();
+    // Before each instance lock: b goes once a recorded the state directory; a, having recorded it, goes on once b passed its own record, and b then waits for a to end.
+    made.after = async (directory) => {
+      const who = start.getStore();
+      if (directory === stateDir && who === "a") seen.aRecorded = true;
+      if (directory === stateDir && who === "b") seen.bRecorded = true;
+      if (!directory.endsWith(claims)) return;
+      if (who === "b") await until(() => seen.bRecorded ? seen.aEnded : seen.aRecorded);
+      if (who === "a" && seen.aRecorded) await until(() => seen.bRecorded);
+    };
+    // a is refused right before it would record the runtime identity, so it changed no DevFn entry there; b's identity is the first write sampled.
+    lifecycle.recording = async () => { if (start.getStore() === "a") throw new Error("a refused before writing"); };
+    const samples: string[] = [];
+    lifecycle.recorded = async () => { samples.push(await revision()); };
+    const a = start.run("a", async () => await orchestrator.up({ config: sibling, root: primary, stateDir, runtime: "b" })).finally(() => { seen.aEnded = true; });
+    const b = start.run("b", async () => await orchestrator.up({ config: sibling, root: primary, stateDir, runtime: "b" }));
+    await expect(a).rejects.toThrow("a refused before writing");
+    expect((await b).state).toBe("ready");
+    expect(samples).toEqual([before]);
+    expect(await revision()).toBe(before);
+    expect((await orchestrator.down({ config: sibling, root: primary, stateDir, runtime: "b" })).state).toBe("stopped");
+    expect(await revision()).toBe(before);
+  } finally {
+    made.after = undefined; lifecycle.recording = undefined; lifecycle.recorded = undefined;
+    await orchestrator.down({ config: sibling, root: primary, stateDir, runtime: "b" }).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 120_000);
+
+it("keeps the record of an existing state directory inside the checkout when a refused start changed a DevFn entry there, also keeping its size and modification time", async () => {
+  const { parent, primary } = await repository();
+  const config = validateDevFnConfig({ version: 1, project: { id: "changed-state-entry" },
+    processes: { seed: { adapter: "command", command: [process.execPath, "-e", "0"], task: { rerun: "on-change", inputs: ["."] } } }, profiles: { default: { processes: ["seed"] } } });
+  const sibling = validateDevFnConfig({ version: 1, project: { id: "changed-state-entry" }, processes: {}, profiles: { default: { processes: [] } } });
+  const orchestrator = new DevFnOrchestrator();
+  const revision = async () => await taskInputRevision(config, primary, { name: "seed", kind: "process" }, "default");
+  const stateDir = path.join(primary, "kept", "state");
+  const domains = path.join(stateDir, "domains.json");
+  try {
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(path.join(stateDir, "notes.sql"), "-- mine");
+    await writeFile(domains, "{\"a\":1}");
+    await utimes(domains, 1_000, 1_000);
+    // The start rewrites DevFn's entry there in place, then is refused creating its runtime directory.
+    const runtimeDir = path.resolve(runtimeDirectory(sibling, primary, (await resolveInstanceIdentity("changed-state-entry", primary, "b")).instanceId));
+    made.fail = (directory) => {
+      if (path.resolve(directory) !== runtimeDir) return undefined;
+      writeFileSync(domains, "{\"a\":2}");
+      utimesSync(domains, 1_000, 1_000);
+      return Object.assign(new Error("injected runtime directory failure"), { code: "EACCES" });
+    };
+    await expect(orchestrator.up({ config: sibling, root: primary, stateDir, runtime: "b" })).rejects.toThrow("injected runtime directory failure");
+    made.fail = undefined;
+    // DevFn's entry stays held; a user's file there stays an input.
+    const after = await revision();
+    await writeFile(domains, "{\"rewritten\":true}");
+    expect(await revision()).toBe(after);
+    await writeFile(path.join(stateDir, "notes.sql"), "-- changed");
+    expect(await revision()).not.toBe(after);
+  } finally {
+    made.fail = undefined;
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 60_000);
+
+it("decides DevFn's entry names in an existing state directory by that directory's own filesystem, so a user's file there differing only in case is an input where the filesystem keeps case apart", async () => {
+  const { parent, primary } = await repository();
+  const config = validateDevFnConfig({ version: 1, project: { id: "cased-state-entry" },
+    processes: { seed: { adapter: "command", command: [process.execPath, "-e", "0"], task: { rerun: "on-change", inputs: ["."] } } }, profiles: { default: { processes: ["seed"] } } });
+  const sibling = validateDevFnConfig({ version: 1, project: { id: "cased-state-entry" }, processes: {}, profiles: { default: { processes: [] } } });
+  const orchestrator = new DevFnOrchestrator();
+  const revision = async () => await taskInputRevision(config, primary, { name: "seed", kind: "process" }, "default");
+  const stateDir = path.join(primary, "cased", "state");
+  try {
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(path.join(stateDir, "notes.sql"), "-- mine");
+    expect((await orchestrator.up({ config: sibling, root: primary, stateDir, runtime: "b" })).state).toBe("ready");
+    const folds = await foldsCaseHere(stateDir);
+    for (const name of ["Domains.JSON", "TASKS"]) {
+      await writeFile(path.join(stateDir, name), "one");
+      const before = await revision();
+      await writeFile(path.join(stateDir, name), "two");
+      // Folding, the name is DevFn's own entry in another spelling; kept apart, it is the user's.
+      if (folds) expect(await revision()).toBe(before);
+      else expect(await revision()).not.toBe(before);
+      await rm(path.join(stateDir, name));
+    }
+    expect((await orchestrator.down({ config: sibling, root: primary, stateDir, runtime: "b" })).state).toBe("stopped");
+  } finally {
+    await orchestrator.down({ config: sibling, root: primary, stateDir, runtime: "b" }).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 60_000);
+
+it("gives every caller the same task-input revision over a state directory inside the checkout, whichever state directory it uses itself", async () => {
+  const { parent, primary } = await repository();
+  const config = validateDevFnConfig({ version: 1, project: { id: "caller-state-input" },
+    processes: { seed: { adapter: "command", command: [process.execPath, "-e", "0"], task: { rerun: "on-change", inputs: ["."] } } }, profiles: { default: { processes: ["seed"] } } });
+  const sibling = validateDevFnConfig({ version: 1, project: { id: "caller-state-input" }, processes: {}, profiles: { default: { processes: [] } } });
+  const orchestrator = new DevFnOrchestrator();
+  const existing = path.join(primary, "state-a"), created = path.join(primary, "made", "state");
+  const b = await resolveInstanceIdentity("caller-state-input", primary, "b"), c = await resolveInstanceIdentity("caller-state-input", primary, "c");
+  // The runtime using the state directory, and a sibling using one outside the checkout.
+  const both = async (stateDir: string) => await Promise.all([[stateDir, b.instanceId], [path.join(parent, "elsewhere"), c.instanceId]].map(async ([own, instanceId]) =>
+    await taskInputRevision(config, primary, { name: "seed", kind: "process" }, "default", undefined, undefined, own, instanceId)));
+  try {
+    await mkdir(existing);
+    await writeFile(path.join(existing, "notes.sql"), "-- mine");
+    expect((await orchestrator.up({ config: sibling, root: primary, stateDir: existing, runtime: "b" })).state).toBe("ready");
+    const [own, other] = await both(existing);
+    expect(own).toBe(other);
+    // A task journal there is DevFn's for both; a user's file there is an input for both.
+    await mkdir(path.join(existing, "tasks"), { recursive: true });
+    await writeFile(path.join(existing, "tasks", "journal.json"), "{}");
+    expect(await both(existing)).toEqual([own, other]);
+    await writeFile(path.join(existing, "notes.sql"), "-- changed");
+    const [ownChanged, otherChanged] = await both(existing);
+    expect(ownChanged).not.toBe(own);
+    expect(ownChanged).toBe(otherChanged);
+    expect((await orchestrator.down({ config: sibling, root: primary, stateDir: existing, runtime: "b" })).state).toBe("stopped");
+    expect(await both(existing)).toEqual([ownChanged, otherChanged]);
+    // One the start made is held whole for both.
+    expect((await orchestrator.up({ config: sibling, root: primary, stateDir: created, runtime: "b" })).state).toBe("ready");
+    const [ownMade, otherMade] = await both(created);
+    expect(ownMade).toBe(otherMade);
+    await writeFile(path.join(created, "notes.sql"), "-- mine");
+    expect(await both(created)).toEqual([ownMade, otherMade]);
+  } finally {
+    await orchestrator.down({ config: sibling, root: primary, stateDir: created, runtime: "b" }).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 60_000);
+
+it("refuses a state directory whose filesystem cannot link its lifecycle lock's owner record with the --state-dir remedy, before recording a runtime identity", async () => {
+  const { parent, primary } = await repository();
+  const listen = [process.execPath, "-e", "require('node:net').createServer().listen(Number(process.env.PORT), '127.0.0.1')"];
+  const config = validateDevFnConfig({ version: 1, project: { id: "unlinked-state" }, ports: { r: { env: "PORT" } },
+    processes: { redis: { adapter: "command", command: listen, ports: ["r"] }, worker: { adapter: "command", command: [process.execPath, "-e", "setInterval(() => undefined, 1_000)"], resources: ["cache"] } },
+    resources: { cache: { kind: "cache", defaultTarget: "local", targets: { local: { node: "redis", port: "r", scheme: "redis" } } } }, profiles: { default: { processes: ["worker", "redis"] } } } as never);
+  const orchestrator = new DevFnOrchestrator();
+  const stateDir = path.join(parent, "unlinked");
+  try {
+    for (const code of ["EPERM", "ENOTSUP", "EOPNOTSUPP", "EXDEV", "ENOSYS"]) {
+      lockFailures.fail = (lockPath) => path.dirname(lockPath) === stateDir && path.basename(lockPath).startsWith("lifecycle-") ? Object.assign(new Error(`link ${lockPath}`), { code }) : undefined;
+      await expect(orchestrator.up({ config, root: primary, stateDir, runtime: "b" })).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID", message: expect.stringContaining(`does not support hard links (${code})`) });
+      await expect(orchestrator.up({ config, root: primary, stateDir, runtime: "b" })).rejects.toThrow("--state-dir");
+      await expect(access(path.join(stateDir, "runtime-id"))).rejects.toMatchObject({ code: "ENOENT" });
+    }
+    // Any other failure acquiring it is reported as it is.
+    lockFailures.fail = (lockPath) => path.dirname(lockPath) === stateDir ? Object.assign(new Error("lock store failed"), { code: "EIO" }) : undefined;
+    await expect(orchestrator.up({ config, root: primary, stateDir, runtime: "b" })).rejects.toMatchObject({ code: "EIO" });
+  } finally {
+    lockFailures.fail = undefined;
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 60_000);
 
 it("treats every path below a filesystem root as inside it", () => {
   const root = path.parse(process.cwd()).root;
