@@ -7,7 +7,7 @@ import { processBirthSignature, processIdentityStatus, resolveContainedPath, typ
 import { withFileLock } from "@devfn/ports";
 
 import { DEFAULT_RUNTIME, isNamedRuntime, resolveInstanceIdentity } from "./identity.js";
-import { checkoutReceipts, devfnStateDirectories, runtimeDirectory, runtimeOutputPath, STATE_DIRECTORY_ENTRY } from "./runtime.js";
+import { checkoutReceipts, devfnStateDirectories, foldsCase, runtimeDirectory, runtimeOutputPath, stateDirectoryEntry } from "./runtime.js";
 import { DevFnError, type InstanceIdentity, type LifecycleReceipt } from "./types.js";
 
 /**
@@ -223,7 +223,7 @@ async function claimantRuns(claim: OutputClaim): Promise<boolean> {
   return status !== "exited" && status !== "identity-mismatch";
 }
 
-/** Task-input attribution of the checkout's instances (`own` starts now, so its earlier outputs are released): `held` are every runtime directory and state directory a start made inside the checkout a receipt or claim records and another's outputs while its live receipt, running claimant or pending write holds them; `released`, every file an instance wrote while it holds what it last wrote there; `shared`, every other state directory inside the checkout they record, of which only DevFn's entries (STATE_DIRECTORY_ENTRY) are held. */
+/** Task-input attribution of the checkout's instances (`own` starts now, so its earlier outputs are released): `held` are every runtime directory and state directory a start made inside the checkout a receipt or claim records and another's outputs while its live receipt, running claimant or pending write holds them; `released`, every file an instance wrote while it holds what it last wrote there; `shared`, every other state directory inside the checkout they record, of which only DevFn's entries (stateDirectoryEntry) are held. */
 export async function taskAttribution(config: DevFnConfig, root: string, claims: () => Promise<Map<string, { claim: OutputClaim }>>, own?: string): Promise<{ held: string[]; released: string[]; made: string[]; shared: string[] }> {
   const receipts = await checkoutReceipts(config, root), held = [...receipts].flatMap(([id, { receipt }]) => [receipt.runtimeDir, ...id !== own && live(receipt) ? receipt.environmentOutputs ?? [] : []]), released: string[] = [], read = await claims();
   const made = [...receipts].flatMap(([id, { receipt }]) => madeByRelease(receipt, read.get(id)?.claim)); // An earlier release's claimless receipt: its runtime directory's parents, as a claim replacing it records them.
@@ -243,74 +243,80 @@ const TRUST_STATE = /^trust\.(?:json(?:\..+\.tmp)?|lock)$/;
 const union = (...lists: (readonly string[] | undefined)[]): string[] => [...new Set(lists.flatMap((list) => list ?? []))];
 
 /**
- * Create a start's or stop's state directory under the instance's lifecycle lock. A state directory inside the checkout is
+ * Create a start's or stop's state directory under the instance's lifecycle lock, which the caller holds through its first
+ * write there and any withdrawal, so no other start or stop of the instance runs in between. A state directory inside the checkout is
  * first recorded in the instance's claim, under the claims lock and before DevFn writes anything there: the directories this
  * creates as made; the state directory itself, when a start creates it, as held whole (`recorded`), and otherwise, also when it
  * existed before, as shared, whose DevFn entries are held by name. The record stays with the claim through a failed or
  * interrupted start and a refused stop. A state path that is or lies below something other than a directory, or claims that
  * cannot be read, refuse it before any write; a failed creation keeps provenance only for the directories it left. It returns
  * the withdrawal of a refused start: the record it added for an existing state directory goes again when the start left that
- * directory's DevFn entries as they were, and so does a claim then left attributing nothing, with its claim directories.
+ * directory's DevFn entries as they were, and so does a claim then left attributing nothing.
  */
 export async function makeStateDirectory(config: DevFnConfig, root: string, identity: InstanceIdentity, stateDir: string, starting = false): Promise<() => Promise<void>> {
   let withdraw: () => Promise<void> = async () => undefined;
-  const fresh = (await missingDirectories(path.join(root, CLAIMS))).at(-1);
-  await withInstanceLifecycleLock(root, identity.instanceId, async () => {
-    const rootKey = pathKey(await realpath(root).catch(() => path.resolve(root)));
-    const inside = (item: string) => pathKey(item) !== rootKey && within(pathKey(item), rootKey);
-    const { canonical } = await canonicalTarget(path.resolve(stateDir));
-    const missing = await missingDirectories(canonical);
-    const parent = missing.length ? path.dirname(missing.at(-1)!) : canonical;
-    if (!(await stat(parent).catch(() => undefined))?.isDirectory()) {
-      throw Object.assign(new Error(`State directory ${stateDir} is, or lies below, something other than a directory`), { code: "ENOTDIR" });
+  const rootKey = pathKey(await realpath(root).catch(() => path.resolve(root)));
+  const inside = (item: string) => pathKey(item) !== rootKey && within(pathKey(item), rootKey);
+  const { canonical } = await canonicalTarget(path.resolve(stateDir));
+  const missing = await missingDirectories(canonical);
+  const parent = missing.length ? path.dirname(missing.at(-1)!) : canonical;
+  if (!(await stat(parent).catch(() => undefined))?.isDirectory()) {
+    throw Object.assign(new Error(`State directory ${stateDir} is, or lies below, something other than a directory`), { code: "ENOTDIR" });
+  }
+  // A state directory outside the checkout, and so every directory created for it, is never a task input.
+  if (!inside(canonical)) {
+    await mkdir(stateDir, { recursive: true, mode: 0o700 });
+    return withdraw;
+  }
+  const making = missing.filter(inside);
+  const field = starting && missing.includes(canonical) ? "recorded" : "shared";
+  const lock = path.join(await claimDirectory(root), CLAIMS_LOCK), options = { timeoutMs: CLAIMS_LOCK_TIMEOUT_MS, staleMs: CLAIMS_LOCK_STALE_MS };
+  let current: OutputClaim | undefined, next: OutputClaim | undefined;
+  await withFileLock(lock, async () => {
+    const claims = await readClaims(root);
+    current = claims.get(identity.instanceId)?.claim;
+    const attributed = [...current?.recorded ?? [], ...current?.shared ?? []].some((item) => pathKey(item) === pathKey(canonical));
+    if (attributed && !making.length) return;
+    const receipts = await checkoutReceipts(config, root), receipt = receipts.get(identity.instanceId)?.receipt;
+    next = { ...current ?? { version: 1, instanceId: identity.instanceId, runtime: identity.runtime ?? DEFAULT_RUNTIME, targets: [], written: [], pid: process.pid, createdAt: new Date().toISOString() } };
+    // One no instance records that holds only trust state, as `--trust` creates it just before, is DevFn's too: transparent while it holds nothing else.
+    const recorders = [...[...receipts.values()].map((entry) => entry.receipt.stateDir), ...[...claims.values()].flatMap((entry) => [entry.claim.stateDir, ...entry.claim.shared ?? [], ...entry.claim.recorded ?? []])];
+    const recordedAnywhere = (await Promise.all(recorders.map(async (item) => item !== undefined && await canonicalKey(path.resolve(root, item)) === pathKey(canonical)))).some(Boolean);
+    const names = missing.includes(canonical) || recordedAnywhere ? [] : await readdir(canonical).catch(() => [] as string[]);
+    const ours = names.length && names.every((name) => TRUST_STATE.test(name)) ? [canonical] : [];
+    next.made = union(current?.made, madeByRelease(receipt, current), making, ours);
+    next[field] = union(current?.[field], [canonical]);
+    if (field === "shared" && !making.length) {
+      const before = await stateEntries(canonical);
+      withdraw = async () => await withdrawStateRecord(root, identity.instanceId, canonical, before);
     }
-    // A state directory outside the checkout, and so every directory created for it, is never a task input.
-    if (!inside(canonical)) {
-      await mkdir(stateDir, { recursive: true, mode: 0o700 });
-      return;
-    }
-    const making = missing.filter(inside);
-    const field = starting && missing.includes(canonical) ? "recorded" : "shared";
-    const lock = path.join(await claimDirectory(root), CLAIMS_LOCK), options = { timeoutMs: CLAIMS_LOCK_TIMEOUT_MS, staleMs: CLAIMS_LOCK_STALE_MS };
-    let current: OutputClaim | undefined, next: OutputClaim | undefined;
-    await withFileLock(lock, async () => {
-      const claims = await readClaims(root);
-      current = claims.get(identity.instanceId)?.claim;
-      const attributed = [...current?.recorded ?? [], ...current?.shared ?? []].some((item) => pathKey(item) === pathKey(canonical));
-      if (attributed && !making.length) return;
-      const receipts = await checkoutReceipts(config, root), receipt = receipts.get(identity.instanceId)?.receipt;
-      next = { ...current ?? { version: 1, instanceId: identity.instanceId, runtime: identity.runtime ?? DEFAULT_RUNTIME, targets: [], written: [], pid: process.pid, createdAt: new Date().toISOString() } };
-      // One no instance records that holds only trust state, as `--trust` creates it just before, is DevFn's too: transparent while it holds nothing else.
-      const recorders = [...[...receipts.values()].map((entry) => entry.receipt.stateDir), ...[...claims.values()].flatMap((entry) => [entry.claim.stateDir, ...entry.claim.shared ?? [], ...entry.claim.recorded ?? []])];
-      const recordedAnywhere = (await Promise.all(recorders.map(async (item) => item !== undefined && await canonicalKey(path.resolve(root, item)) === pathKey(canonical)))).some(Boolean);
-      const names = missing.includes(canonical) || recordedAnywhere ? [] : await readdir(canonical).catch(() => [] as string[]);
-      const ours = names.length && names.every((name) => TRUST_STATE.test(name)) ? [canonical] : [];
-      next.made = union(current?.made, madeByRelease(receipt, current), making, ours);
-      next[field] = union(current?.[field], [canonical]);
-      if (field === "shared" && !making.length) {
-        const before = await stateEntries(canonical);
-        withdraw = async () => await withdrawStateRecord(root, identity.instanceId, canonical, before, fresh);
-      }
-      await writeClaim(root, next);
-    }, options);
-    await mkdir(stateDir, { recursive: true, mode: 0o700 }).catch(async (error: unknown) => {
-      const published = next;
-      if (published) await withFileLock(lock, async () => await restoreStateClaim(root, current, published, making), options);
-      throw error;
-    });
+    await writeClaim(root, next);
+  }, options);
+  await mkdir(stateDir, { recursive: true, mode: 0o700 }).catch(async (error: unknown) => {
+    const published = next;
+    if (published) await withFileLock(lock, async () => await restoreStateClaim(root, current, published, making), options);
+    throw error;
   });
   return withdraw;
 }
 
-/** A state directory's DevFn entries other than locks, with their modification times. */
+/** A state directory's DevFn entries other than locks, each with its type, size and content (a directory's, its entry names). */
 async function stateEntries(directory: string): Promise<string> {
-  const names = (await readdir(directory).catch(() => [] as string[])).filter((name) => STATE_DIRECTORY_ENTRY.test(name) && !/\.lock(?:\.released\..+)?$/.test(name)).sort();
-  return JSON.stringify(await Promise.all(names.map(async (name) => [name, (await lstat(path.join(directory, name)).catch(() => undefined))?.mtimeMs ?? null])));
+  const entry = stateDirectoryEntry(await foldsCase(directory));
+  const names = (await readdir(directory).catch(() => [] as string[])).filter((name) => entry.test(name) && !/\.lock(?:\.released\..+)?$/i.test(name)).sort();
+  return JSON.stringify(await Promise.all(names.map(async (name) => {
+    const item = path.join(directory, name), info = await lstat(item).catch(() => undefined);
+    const content = info?.isDirectory() ? (await readdir(item).catch(() => [] as string[])).sort().join("\0") : info?.isFile() ? digest(await readFile(item).catch(() => "")) : info?.isSymbolicLink() ? await readlink(item).catch(() => "") : "";
+    return [name, info ? (info.mode & 0o170000) : null, info?.size ?? null, content];
+  })));
 }
 
-/** Remove the record a refused start added for an existing state directory where it changed no DevFn entry; a claim then holding nothing, whose every recorded path is gone, goes too. */
-async function withdrawStateRecord(root: string, instanceId: string, stateDir: string, before: string, fresh: string | undefined): Promise<void> {
-  await withInstanceLifecycleLock(root, instanceId, async () => await withFileLock(path.join(await claimDirectory(root), CLAIMS_LOCK), async () => {
+/**
+ * Remove the record a refused start added for an existing state directory where it changed no DevFn entry, still under the
+ * start's instance lifecycle lock, so no other start of the instance relies on it; a claim then holding nothing, whose every recorded path is gone, goes too.
+ */
+async function withdrawStateRecord(root: string, instanceId: string, stateDir: string, before: string): Promise<void> {
+  await withFileLock(path.join(await claimDirectory(root), CLAIMS_LOCK), async () => {
     const text = await readOwnClaim(root, instanceId), claim = text === undefined ? undefined : parseClaim(text, instanceId);
     if (!claim?.shared?.some((item) => pathKey(item) === pathKey(stateDir)) || await stateEntries(stateDir) !== before) return;
     const rest: OutputClaim = { ...claim, shared: claim.shared.filter((item) => pathKey(item) !== pathKey(stateDir)) };
@@ -318,8 +324,7 @@ async function withdrawStateRecord(root: string, instanceId: string, stateDir: s
     const provenance = [...rest.recorded ?? [], ...rest.made ?? [], ...rest.shared ?? [], ...rest.replaced ?? []];
     const remains = (await Promise.all(provenance.map(async (item) => await lstat(item).then(() => true, () => false)))).some(Boolean);
     await (holds || remains ? writeClaim(root, rest) : removeClaim(root, instanceId));
-  }, { timeoutMs: CLAIMS_LOCK_TIMEOUT_MS, staleMs: CLAIMS_LOCK_STALE_MS }));
-  if (fresh) await removeEmptyDirectories(path.join(root, CLAIMS), fresh);
+  }, { timeoutMs: CLAIMS_LOCK_TIMEOUT_MS, staleMs: CLAIMS_LOCK_STALE_MS });
 }
 
 /** After a failed creation, the claim before it keeps provenance only for the directories the creation left; a claim it created goes when it left none. */

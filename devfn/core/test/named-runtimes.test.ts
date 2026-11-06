@@ -15,11 +15,14 @@ import { FilePortRegistry, withFileLock } from "@devfn/ports";
 import { CaddyProxyController, proxyListenerPorts, proxyOwnerStatus } from "@devfn/proxy";
 import { describe, expect, it, vi } from "vitest";
 
-import { assertEnvironmentOutputsAvailable, claimEnvironmentOutputs, makeStateDirectory, releaseEnvironmentOutputs, within } from "../src/outputs.js";
+import { assertEnvironmentOutputsAvailable, claimEnvironmentOutputs, makeStateDirectory, releaseEnvironmentOutputs, withInstanceLifecycleLock, within } from "../src/outputs.js";
 import { newRuntimeId, recordRuntimeId } from "../src/runtime.js";
 import { createPlan, DevFnOrchestrator, domainAliases, recoverOrphanedProxyRoutes, resolveEndpointTemplates, resolveInstanceIdentity, resolveLocalHostname, runtimeDirectory, selectRuntime, taskInputRevision } from "../src/index.js";
 
 const execFileAsync = promisify(execFile);
+// What a start does under its instance lifecycle lock before it writes in its state directory, as a start killed right after it leaves it.
+const recordStateDirectory = async (config: DevFnConfig, root: string, identity: Awaited<ReturnType<typeof resolveInstanceIdentity>>, stateDir: string) =>
+  await withInstanceLifecycleLock(root, identity.instanceId, async () => await makeStateDirectory(config, root, identity, stateDir, true));
 // Lets a test act right after down releases a claim, as a sibling start in another process could.
 const releases = vi.hoisted(() => ({ after: undefined as (() => Promise<void>) | undefined, fail: undefined as Error | undefined }));
 const claimReads = vi.hoisted(() => ({ root: undefined as string | undefined, after: undefined as (() => Promise<void>) | undefined }));
@@ -1668,7 +1671,7 @@ it("keeps refusing outputs a live claimless receipt may own after a refused star
     await expect(orchestrator.up({ config: plain, root: primary, stateDir: path.join(primary, "new", "state"), runtime: "d" })).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID" });
     await expect(access(path.join(primary, "new"))).rejects.toMatchObject({ code: "ENOENT" });
     // One killed right after it recorded that state directory leaves a claim of provenance alone.
-    await makeStateDirectory(plain, primary, d, path.join(primary, "new", "state"), true);
+    await recordStateDirectory(plain, primary, d, path.join(primary, "new", "state"));
     await access(path.join(primary, ".devfn", "receipts", "outputs", `${d.instanceId}.json`));
     await expect(assertEnvironmentOutputsAvailable(writer, primary, e)).rejects.toMatchObject({ code: "DEVFN_RUNTIME_INVALID" });
   } finally {
@@ -1780,7 +1783,7 @@ it("keeps a task's input revision when a start into an existing state directory 
     await mkdir(stateDir, { recursive: true });
     const before = await revision();
     // What a start killed before its claim binds leaves on disk: the state directory's record, then runtime-id, and no cleanup.
-    await makeStateDirectory(sibling, primary, await resolveInstanceIdentity("killed-state-input", primary, "b"), stateDir, true);
+    await recordStateDirectory(sibling, primary, await resolveInstanceIdentity("killed-state-input", primary, "b"), stateDir);
     await recordRuntimeId(stateDir, newRuntimeId());
     expect(await revision()).toBe(before);
     expect((await orchestrator.up({ config: sibling, root: primary, stateDir, runtime: "b" })).state).toBe("ready");
@@ -1804,7 +1807,7 @@ it("keeps a task's input revision when a start into an existing state directory 
     await mkdir(common);
     const withCommon = await revision();
     // Runtime d recorded it and was killed before writing there; e's --trust then writes only trust state into it before e starts.
-    await makeStateDirectory(sibling, primary, await resolveInstanceIdentity("killed-state-input", primary, "d"), common, true);
+    await recordStateDirectory(sibling, primary, await resolveInstanceIdentity("killed-state-input", primary, "d"), common);
     await expect(orchestrator.down({ config: sibling, root: primary, stateDir: common, runtime: "e" })).rejects.toMatchObject({ code: "DEVFN_NOT_RUNNING" });
     await trustProject(primary, path.join(parent, "devfn.json"), common);
     expect((await orchestrator.up({ config: sibling, root: primary, stateDir: common, runtime: "e" })).state).toBe("ready");

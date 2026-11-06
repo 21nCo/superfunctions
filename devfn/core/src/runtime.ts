@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { chmod, link, mkdir, open, readdir, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, open, readdir, readFile, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { resolveContainedPath, type DevFnConfig, type EnvironmentOutput } from "@devfn/config";
@@ -146,11 +146,29 @@ const RUNTIME_ID = /^[0-9a-f]{32}$/;
  * preflight configurations), certificate, domain, tunnel and OAuth relay state of @devfn/proxy, each file also as its temp
  * file and each lock also retired. Only these are held in a state directory that existed before DevFn used it.
  */
-export const STATE_DIRECTORY_ENTRY = new RegExp([
+const STATE_DIRECTORY_ENTRY = [
   String.raw`^(?:runtime-id|registry\.json|trust\.json|proxy-owner\.json|proxy-routes(?:\.pending)?\.json|proxy-routes\.pending\.uncertain|domains\.json|tunnels\.json|Caddyfile(?:\.candidate|\.preflight\..+)?)(?:\..+\.tmp)?$`,
   String.raw`^(?:registry\.json|routing|proxy|trust|tunnels|lifecycle-[0-9a-f]{12})\.lock(?:\.released\..+)?$`,
   "^(?:tasks|certificates|tunnels|tunnel-owners|oauth-relay)$",
-].join("|"), process.platform === "darwin" || process.platform === "win32" ? "i" : ""); // Where the filesystem folds case, any spelling names DevFn's entry.
+].join("|");
+
+/** DevFn's entry names in a state directory: in any spelling where its filesystem folds case (foldsCase). */
+export const stateDirectoryEntry = (folds: boolean): RegExp => new RegExp(STATE_DIRECTORY_ENTRY, folds ? "i" : "");
+
+/**
+ * Whether a directory's own filesystem folds case: a case-swapped spelling of it, or of its nearest ancestor with a cased
+ * letter, reaches the same directory. Never decided by platform, as one machine mounts both kinds.
+ */
+export async function foldsCase(directory: string): Promise<boolean> {
+  for (let current = directory; current !== path.dirname(current); current = path.dirname(current)) {
+    const name = path.basename(current);
+    const swapped = [...name].map((letter) => letter === letter.toUpperCase() ? letter.toLowerCase() : letter.toUpperCase()).join("");
+    if (swapped === name) continue;
+    const [own, other] = await Promise.all([current, path.join(path.dirname(current), swapped)].map(async (item) => await stat(item, { bigint: true }).catch(() => undefined)));
+    return own !== undefined && other !== undefined && own.dev === other.dev && own.ino === other.ino;
+  }
+  return false;
+}
 
 /**
  * The random identity of the runtime that owns a DevFn state directory, or
@@ -181,6 +199,16 @@ export function newRuntimeId(): string {
 }
 
 /**
+ * The refusal of a state directory whose filesystem has no hard links, which its identity and every lock there need, for
+ * an error linking there; any other error as it is.
+ */
+export function withoutHardLinks(stateDir: string, error: unknown): unknown {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  if (code !== "EPERM" && code !== "ENOTSUP" && code !== "EOPNOTSUPP" && code !== "EXDEV" && code !== "ENOSYS") return error;
+  return new DevFnError("DEVFN_RUNTIME_INVALID", `State directory ${stateDir} does not support hard links (${code}), which DevFn state files and locks require; choose a state directory on a local filesystem with --state-dir.`);
+}
+
+/**
  * Record a runtime identity unless the state directory already has one, and
  * return the recorded one. The identity is written to a private file, flushed
  * and then linked into place, so every reader sees either no identity or a
@@ -200,11 +228,7 @@ export async function recordRuntimeId(stateDir: string, candidate: string): Prom
     await link(temp, target);
     return candidate;
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "EPERM" || code === "ENOTSUP" || code === "EOPNOTSUPP" || code === "EXDEV" || code === "ENOSYS") {
-      throw new DevFnError("DEVFN_RUNTIME_INVALID", `State directory ${stateDir} does not support hard links (${code}), which DevFn state files and locks require; choose a state directory on a local filesystem with --state-dir.`);
-    }
-    if (code !== "EEXIST") throw error;
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw withoutHardLinks(stateDir, error);
   } finally { await unlink(temp).catch(() => undefined); }
   const recorded = await readRuntimeId(stateDir);
   if (!recorded) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${target} could not be read.`);

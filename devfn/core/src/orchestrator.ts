@@ -18,7 +18,7 @@ import { createPlan } from "./planner.js";
 import { planResources, resourcePlanFingerprint, resourcesNeedComposeNetworks } from "./resources.js";
 import { livePublicUrls, profileTunnel, publicTemplateInputs, publishLifecycleTunnel, selectedPublicRoutes, selectionTemplateInputs, withdrawLifecycleTunnel, type PublicSelection, type TunnelOverrides } from "./tunnel.js";
 import { assertEnvironmentOutputsAvailable, claimEnvironmentOutputs, LIFECYCLE_LOCK, makeStateDirectory, releaseEnvironmentOutputs, withInstanceLifecycleLock, type EnvironmentOutputClaim } from "./outputs.js";
-import { listRuntimeReceipts, newRuntimeId, readReceipt, readRuntimeId, recordRuntimeId, secureRuntimeDirectory, sharedEnvironmentOutputs, writeEnvironmentOutputs, writeReceipt, type RuntimePath } from "./runtime.js";
+import { listRuntimeReceipts, newRuntimeId, readReceipt, readRuntimeId, recordRuntimeId, secureRuntimeDirectory, sharedEnvironmentOutputs, withoutHardLinks, writeEnvironmentOutputs, writeReceipt, type RuntimePath } from "./runtime.js";
 import { preflightTasks, runTask, taskInputRevision, type TaskReceipt } from "./tasks.js";
 import { DevFnError, type CleanupResult, type InstanceIdentity, type RoutingIdentity, type LifecyclePlan, type LifecycleReceipt, type UpOptions } from "./types.js";
 
@@ -500,6 +500,16 @@ async function receiptIsReady(config: DevFnConfig, root: string, receipt: Lifecy
 }
 
 /**
+ * Hold an instance's lifecycle lock in a state directory. Its owner record is linked, so a filesystem without hard links
+ * refuses the lock as it refuses the runtime identity (withoutHardLinks), before anything is recorded there.
+ */
+async function withStateDirLifecycleLock<T>(stateDir: string, instanceId: string, action: () => Promise<T>): Promise<T> {
+  let entered = false;
+  try { return await withFileLock(path.join(stateDir, `lifecycle-${instanceId}.lock`), async () => { entered = true; return await action(); }, LIFECYCLE_LOCK); }
+  catch (error) { throw entered ? error : withoutHardLinks(stateDir, error); }
+}
+
+/**
  * Remove proxy routes no lifecycle can still own, for example after a
  * worktree was deleted while running. Holding an instance's lifecycle lock
  * proves no command of it runs; every process and container identity its
@@ -667,33 +677,33 @@ export class DevFnOrchestrator {
       ...(preflight.resources ? { resources: preflight.resources } : {}), environments: preflight.nodes, ...(options.rerunTasks ? { rerunTasks: options.rerunTasks } : {}), ...(locked ? { locked } : {}) });
     // Unknown reruns, missing task inputs and blocked tasks fail here; the locked start decides again from the journals.
     await decideTasks(requestedStateDir);
-    await this.assertStateDirOfReceipt(options, identity, requestedStateDir, false);
-    const withdraw = await makeStateDirectory(options.config, options.root, identity, requestedStateDir, true);
-    const stateDir = await realpath(requestedStateDir);
-    // The instance's checkout-wide lock first: its claim spans state directories.
-    try { return await this.upInstance(options, stateDir, identity, loadedPolicy, decideTasks, async () => { preflight = await resolvePreflight(); }); }
-    catch (error) {
-      await withdraw().catch(() => undefined);
-      throw error;
-    }
+    // The instance's checkout-wide lock first: its claim spans state directories. A start records its state directory, writes
+    // there and withdraws the record when refused, all under it, so no other start or stop of the instance runs in between.
+    return await withInstanceLifecycleLock(options.root, identity.instanceId, async () => {
+      await this.assertStateDirOfReceipt(options, identity, requestedStateDir, false);
+      const withdraw = await makeStateDirectory(options.config, options.root, identity, requestedStateDir, true);
+      try { return await this.upInstance(options, await realpath(requestedStateDir), identity, loadedPolicy, decideTasks, async () => { preflight = await resolvePreflight(); }); }
+      catch (error) {
+        await withdraw().catch(() => undefined);
+        throw error;
+      }
+    });
   }
 
   /**
-   * After any start or stop of the instance in flight (its lifecycle lock), refuse before anything is created, recorded or
-   * written in the requested state directory a start or stop its live receipt says ran in another one, and a stop of a runtime
-   * that is not running; the locked checks still decide later.
+   * Under the instance's lifecycle lock, which the caller holds, so after any start or stop of the instance in flight: refuse
+   * before anything is created, recorded or written in the requested state directory a start or stop its live receipt says
+   * ran in another one, and a stop of a runtime that is not running; the locked checks still decide later.
    */
   private async assertStateDirOfReceipt(options: { config: DevFnConfig; root: string }, identity: InstanceIdentity, requestedStateDir: string, stopping: boolean): Promise<void> {
-    await withInstanceLifecycleLock(options.root, identity.instanceId, async () => {
-      const receipt = await readReceipt(options.config, options.root, identity.instanceId, runtimeOf(identity));
-      if (receipt && receipt.state !== "stopped") return assertReceiptStateDir(receipt, await realpath(requestedStateDir).catch(() => path.resolve(requestedStateDir)));
-      if (stopping) throw await notRunning(options.config, options.root, identity);
-    });
+    const receipt = await readReceipt(options.config, options.root, identity.instanceId, runtimeOf(identity));
+    if (receipt && receipt.state !== "stopped") return assertReceiptStateDir(receipt, await realpath(requestedStateDir).catch(() => path.resolve(requestedStateDir)));
+    if (stopping) throw await notRunning(options.config, options.root, identity);
   }
 
   private async upInstance(options: UpOptions, stateDir: string, identity: RoutingIdentity, loadedPolicy: Awaited<ReturnType<typeof loadDevFnPolicy>>,
     decideTasks: (stateDir: string, locked?: { signal?: AbortSignal }) => Promise<unknown>, replan: () => Promise<void>): Promise<LifecycleReceipt> {
-    return await withInstanceLifecycleLock(options.root, identity.instanceId, async () => await withFileLock(path.join(stateDir, `lifecycle-${identity.instanceId}.lock`), async () => {
+    return await withStateDirLifecycleLock(stateDir, identity.instanceId, async () => {
       // A concurrent first start may have recorded another; the locked pass plans with the recorded one.
       const recorded = identity.runtimeId ? await recordRuntimeId(stateDir, identity.runtimeId) : undefined;
       if (recorded && recorded !== identity.runtimeId) {
@@ -708,7 +718,7 @@ export class DevFnOrchestrator {
         await claim.restore().catch(() => undefined);
         throw error;
       }
-    }, LIFECYCLE_LOCK));
+    });
   }
 
   private async upLocked(options: UpOptions, stateDir: string, identity: RoutingIdentity, loadedPolicy: Awaited<ReturnType<typeof loadDevFnPolicy>>,
@@ -1165,20 +1175,22 @@ export class DevFnOrchestrator {
   public async down(options: { config: DevFnConfig; root: string; stateDir?: string; runtime?: string }): Promise<LifecycleReceipt> {
     const requestedStateDir = options.stateDir ?? defaultStateDir();
     const identity = await resolveInstanceIdentity(options.config.project.id, options.root, options.runtime);
-    await this.assertStateDirOfReceipt(options, identity, requestedStateDir, true);
-    await makeStateDirectory(options.config, options.root, identity, requestedStateDir);
-    const stateDir = await realpath(requestedStateDir);
-    return await withInstanceLifecycleLock(options.root, identity.instanceId, async () => await withFileLock(path.join(stateDir, `lifecycle-${identity.instanceId}.lock`), async () => {
-      // Coordinate the destructive decision with sibling route/lease changes,
-      // then let long process and Compose stops run under the instance lock.
-      await withRoutingLock(stateDir, async () => {
-        const receipt = await readReceipt(options.config, options.root, identity.instanceId, runtimeOf(identity));
-        if (!receipt || receipt.state === "stopped") throw await notRunning(options.config, options.root, identity);
-        assertReceiptStateDir(receipt, stateDir);
-        await new FilePortRegistry(path.join(stateDir, "registry.json")).updateInvocation(receipt.invocationId, { state: "stopping" });
+    return await withInstanceLifecycleLock(options.root, identity.instanceId, async () => {
+      await this.assertStateDirOfReceipt(options, identity, requestedStateDir, true);
+      await makeStateDirectory(options.config, options.root, identity, requestedStateDir);
+      const stateDir = await realpath(requestedStateDir);
+      return await withStateDirLifecycleLock(stateDir, identity.instanceId, async () => {
+        // Coordinate the destructive decision with sibling route/lease changes,
+        // then let long process and Compose stops run under the instance lock.
+        await withRoutingLock(stateDir, async () => {
+          const receipt = await readReceipt(options.config, options.root, identity.instanceId, runtimeOf(identity));
+          if (!receipt || receipt.state === "stopped") throw await notRunning(options.config, options.root, identity);
+          assertReceiptStateDir(receipt, stateDir);
+          await new FilePortRegistry(path.join(stateDir, "registry.json")).updateInvocation(receipt.invocationId, { state: "stopping" });
+        });
+        return await this.downLocked(options, stateDir, identity);
       });
-      return await this.downLocked(options, stateDir, identity);
-    }, LIFECYCLE_LOCK));
+    });
   }
 
   private async downLocked(options: { config: DevFnConfig; root: string; stateDir?: string }, stateDir: string, identity: InstanceIdentity): Promise<LifecycleReceipt> {
