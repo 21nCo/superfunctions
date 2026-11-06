@@ -34,6 +34,31 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
         }
     }
 
+    /// Each switch on the toggles screen sets only its own setting.
+    func testTogglesChangeIndependently() throws {
+        let app = WorkbenchApp.launch(screen: "toggles", colorScheme: "light")
+        defer { app.terminate() }
+        XCTAssertTrue(WorkbenchApp.screen("toggles", in: app).waitForExistence(timeout: 10), "toggles did not appear")
+        func toggle(_ label: String) -> XCUIElement {
+            app.descendants(matching: .any).matching(NSPredicate(
+                format: "label == %@ AND (elementType == %d OR elementType == %d)",
+                label, XCUIElement.ElementType.switch.rawValue, XCUIElement.ElementType.checkBox.rawValue
+            )).firstMatch
+        }
+        func value(_ element: XCUIElement) -> String { "\(element.value ?? "")" }
+        let sounds = toggle("Sounds")
+        let vibrate = toggle("Vibrate")
+        XCTAssertTrue(vibrate.waitForExistence(timeout: 5), "The Vibrate switch did not appear")
+        let soundsBefore = value(sounds)
+        let vibrateBefore = value(vibrate)
+        vibrate.tap()
+        XCTAssertNotEqual(value(vibrate), vibrateBefore, "Vibrate did not change")
+        XCTAssertEqual(value(sounds), soundsBefore, "Setting Vibrate changed Sounds")
+        sounds.tap()
+        XCTAssertNotEqual(value(sounds), soundsBefore, "Sounds did not change")
+        XCTAssertNotEqual(value(vibrate), vibrateBefore, "Setting Sounds changed Vibrate")
+    }
+
     /// The screens in the app's list are the screens the tests above audit,
     /// each with its own test, and each opens from the list.
     func testEveryScreenInTheListIsAudited() throws {

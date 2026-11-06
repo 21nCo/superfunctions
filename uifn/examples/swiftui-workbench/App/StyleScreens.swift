@@ -31,6 +31,7 @@ struct ButtonsScreen: View {
 struct TogglesScreen: View {
     @State private var alerts = true
     @State private var sounds = false
+    @State private var vibrate = false
     @State private var remember = true
     @State private var newsletter = false
     @State private var lists = [
@@ -51,7 +52,7 @@ struct TogglesScreen: View {
             Toggle("Sync (disabled)", isOn: .constant(true)).toggleStyle(.uifnSwitch).disabled(true)
             HStack {
                 Text("Label hidden")
-                Toggle("Vibrate", isOn: $sounds).toggleStyle(.uifnSwitch).labelsHidden()
+                Toggle("Vibrate", isOn: $vibrate).toggleStyle(.uifnSwitch).labelsHidden()
             }
         }
         WorkbenchSection("Checkbox") {

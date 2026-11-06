@@ -155,7 +155,10 @@ struct WorkbenchAuditWaiver {
                 case ("toggles", "light"): return text == "Alerts"
                 case ("empty-states", "dark"): return text == "Files you add appear here."
                 case ("toasts", "dark"): return element.label == "Link copied"
-                case ("text-fields", "dark"): return text == "Text fields" && !context.isOnThePage(element.frame)
+                // The window title, not the list's row of the same name.
+                case ("text-fields", "dark"):
+                    return text == "Text fields" && !context.isOnThePage(element.frame)
+                        && !element.identifier.hasPrefix(WorkbenchApp.sidebarPrefix)
                 default: return false
                 }
             },

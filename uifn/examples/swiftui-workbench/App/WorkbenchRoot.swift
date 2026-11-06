@@ -99,8 +99,11 @@ struct WorkbenchRoot: View {
                             #if os(macOS)
                             // A navigation link in a macOS sidebar is an
                             // element with no role; a tagged row is the
-                            // list's own selectable row.
-                            Label(screen.title, systemImage: screen.systemImage)
+                            // list's own selectable row. It is the title
+                            // alone: a label's text element spans its icon,
+                            // which the sidebar draws fainter than the title,
+                            // so the contrast audit fails rows with large icons.
+                            Text(screen.title)
                                 .accessibilityIdentifier("workbench.sidebar.\(screen.rawValue)")
                                 .tag(screen)
                             #else
