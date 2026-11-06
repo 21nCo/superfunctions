@@ -96,10 +96,19 @@ struct WorkbenchRoot: View {
                 ForEach(WorkbenchScreen.Group.allCases, id: \.self) { group in
                     Section {
                         ForEach(WorkbenchScreen.allCases.filter { $0.group == group }) { screen in
+                            #if os(macOS)
+                            // A navigation link in a macOS sidebar is an
+                            // element with no role; a tagged row is the
+                            // list's own selectable row.
+                            Label(screen.title, systemImage: screen.systemImage)
+                                .accessibilityIdentifier("workbench.sidebar.\(screen.rawValue)")
+                                .tag(screen)
+                            #else
                             NavigationLink(value: screen) {
                                 Label(screen.title, systemImage: screen.systemImage)
                             }
                             .accessibilityIdentifier("workbench.sidebar.\(screen.rawValue)")
+                            #endif
                         }
                     } header: {
                         // The list's own header color is too faint on iOS for
@@ -122,8 +131,8 @@ struct WorkbenchRoot: View {
             if let selection {
                 WorkbenchPage(screen: selection)
             } else {
+                // The secondary color only nearly passes the contrast audit.
                 Text("Choose a screen")
-                    .foregroundStyle(.secondary)
                     .accessibilityIdentifier("workbench.placeholder")
             }
         }

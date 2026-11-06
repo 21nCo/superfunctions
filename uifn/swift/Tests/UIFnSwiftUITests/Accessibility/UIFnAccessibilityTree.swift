@@ -10,7 +10,7 @@ import UIKit
 
 /// What an assistive technology is told an element is, as each platform says it.
 enum UIFnAccessibilityRole: CustomStringConvertible {
-    case progressIndicator, busyIndicator, staticText, heading, button
+    case progressIndicator, busyIndicator, staticText, heading, button, popUpButton
 
     #if os(macOS)
     /// The element's accessibility role.
@@ -21,6 +21,7 @@ enum UIFnAccessibilityRole: CustomStringConvertible {
         case .staticText: NSAccessibility.Role.staticText.rawValue
         case .heading: "AXHeading"
         case .button: NSAccessibility.Role.button.rawValue
+        case .popUpButton: NSAccessibility.Role.popUpButton.rawValue
         }
     }
     #else
@@ -32,7 +33,7 @@ enum UIFnAccessibilityRole: CustomStringConvertible {
         case .progressIndicator, .busyIndicator: .updatesFrequently
         case .staticText: .staticText
         case .heading: [.header, .staticText]
-        case .button: .button
+        case .button, .popUpButton: .button
         }
         return UIFnAccessibilityElement.describe(traits)
     }

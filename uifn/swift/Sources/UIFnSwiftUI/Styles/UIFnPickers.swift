@@ -31,7 +31,8 @@ public enum UIFnSegmentedPickerVariant: String, CaseIterable, Sendable {
 /// one, in the reading direction of the layout, and stop at the first and
 /// last; with no option selected they select the first or last.
 /// Accessibility sees a system segmented `Picker` with the same options and
-/// selection in its place, so the label is read but not drawn.
+/// selection in its place, so the label is read but not drawn; on macOS it is
+/// the control's label rather than a text beside it.
 ///
 /// The segments share the width offered equally, like an iOS segmented
 /// control; under `fixedSize()` each is as wide as the widest. The segments
@@ -95,6 +96,7 @@ public struct UIFnSegmentedPicker<Label: View, SelectionValue: Hashable, Segment
         .accessibilityRepresentation {
             UIFnSystemPicker(selection: selection, options: options, label: label, content: segment)
                 .pickerStyle(.segmented)
+                .uifnRepresentedLabelHidden()
         }
     }
 
@@ -234,6 +236,21 @@ extension EnvironmentValues {
     var uifnHidesSystemFocusRing: Bool {
         get { self[UIFnHidesSystemFocusRingKey.self] }
         set { self[UIFnHidesSystemFocusRingKey.self] = newValue }
+    }
+}
+
+extension View {
+    /// On macOS, hides the label of a system picker that represents a UIFn
+    /// picker to accessibility. The macOS picker reads its label as a text of
+    /// its own, beside the control, where the UIFn picker draws its segments
+    /// or selected option; hidden, the label is the control's own.
+    @ViewBuilder
+    func uifnRepresentedLabelHidden() -> some View {
+        #if os(macOS)
+        labelsHidden()
+        #else
+        self
+        #endif
     }
 }
 
@@ -485,7 +502,9 @@ public struct UIFnMenuPicker<Label: View, SelectionValue: Hashable, Option: View
         }
         .menuStyle(.uifn)
         .accessibilityRepresentation {
-            picker(labelsNoSelection: true).pickerStyle(.menu)
+            picker(labelsNoSelection: true)
+                .pickerStyle(.menu)
+                .uifnRepresentedLabelHidden()
         }
     }
 

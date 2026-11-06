@@ -152,7 +152,10 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
                 let frame = child.frame
                 // Unlabeled containers and decoration, such as the scroll
                 // indicator, have nothing to audit; their children are checked.
-                let isAudited = child.elementType != .other || !child.label.isEmpty
+                // Nor do the 2-point pop-up buttons SwiftUI keeps at a corner
+                // of the screen to open each menu from on macOS.
+                let isAudited = (child.elementType != .other || !child.label.isEmpty)
+                    && !(frame.width <= 2 && frame.height <= 2)
                 if isAudited && !frame.isEmpty && (frame.minY < snapshot.frame.minY - 1 || frame.maxY > snapshot.frame.maxY + 1) {
                     outside.append("\(child.elementType.rawValue) \"\(child.label)\" \(frame)")
                 }
@@ -169,9 +172,15 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
 
     private func auditVisibleContent(of app: XCUIApplication, screen: String?, colorScheme: String) throws {
         var waived: [String] = []
+        let context = WorkbenchAuditContext(
+            screen: screen,
+            colorScheme: colorScheme,
+            page: screen.map { WorkbenchApp.screen($0, in: app).frame },
+            window: app.windows.firstMatch.frame
+        )
         try app.performAccessibilityAudit { issue in
             let summary = "\(issue.auditType.workbenchName) on \(issue.element.map(WorkbenchApp.describe) ?? "the app")"
-            if let waiver = WorkbenchAuditWaiver.matching(issue, screen: screen) {
+            if let waiver = WorkbenchAuditWaiver.matching(issue, in: context) {
                 waived.append("\(summary): \(waiver.reason)")
             } else {
                 // Recorded here, with the element, rather than by the audit,

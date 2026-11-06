@@ -73,9 +73,18 @@ struct TextFieldsScreen: View {
 
     var body: some View {
         WorkbenchSection("Text field") {
-            TextField("Name", text: $name, prompt: Text("Your name")).textFieldStyle(.uifn)
-            TextField("Email", text: $email).textFieldStyle(.uifn)
-            TextField("Workspace (disabled)", text: .constant("Design")).textFieldStyle(.uifn).disabled(true)
+            // On macOS a field shows its prompt, or its title when it has
+            // none, but gives accessibility no label, so each names itself.
+            TextField("Name", text: $name, prompt: Text("Your name"))
+                .textFieldStyle(.uifn)
+                .accessibilityLabel("Name")
+            TextField("Email", text: $email)
+                .textFieldStyle(.uifn)
+                .accessibilityLabel("Email")
+            TextField("Workspace (disabled)", text: .constant("Design"))
+                .textFieldStyle(.uifn)
+                .disabled(true)
+                .accessibilityLabel("Workspace (disabled)")
         }
     }
 }
