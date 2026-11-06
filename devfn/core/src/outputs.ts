@@ -7,7 +7,7 @@ import { processBirthSignature, processIdentityStatus, resolveContainedPath, typ
 import { withFileLock } from "@devfn/ports";
 
 import { DEFAULT_RUNTIME, isNamedRuntime, resolveInstanceIdentity } from "./identity.js";
-import { checkoutReceipts, devfnStateDirectories, foldsCase, runtimeDirectory, runtimeOutputPath, stateDirectoryEntry } from "./runtime.js";
+import { checkoutReceipts, devfnStateDirectories, isStateDirectoryEntry, runtimeDirectory, runtimeOutputPath } from "./runtime.js";
 import { DevFnError, type InstanceIdentity, type LifecycleReceipt } from "./types.js";
 
 /**
@@ -223,7 +223,7 @@ async function claimantRuns(claim: OutputClaim): Promise<boolean> {
   return status !== "exited" && status !== "identity-mismatch";
 }
 
-/** Task-input attribution of the checkout's instances (`own` starts now, so its earlier outputs are released): `held` are every runtime directory and state directory a start made inside the checkout a receipt or claim records and another's outputs while its live receipt, running claimant or pending write holds them; `released`, every file an instance wrote while it holds what it last wrote there; `shared`, every other state directory inside the checkout they record, of which only DevFn's entries (stateDirectoryEntry) are held. */
+/** Task-input attribution of the checkout's instances (`own` starts now, so its earlier outputs are released): `held` are every runtime directory and state directory a start made inside the checkout a receipt or claim records and another's outputs while its live receipt, running claimant or pending write holds them; `released`, every file an instance wrote while it holds what it last wrote there; `shared`, every other state directory inside the checkout they record, of which only DevFn's entries (isStateDirectoryEntry) are held. */
 export async function taskAttribution(config: DevFnConfig, root: string, claims: () => Promise<Map<string, { claim: OutputClaim }>>, own?: string): Promise<{ held: string[]; released: string[]; made: string[]; shared: string[] }> {
   const receipts = await checkoutReceipts(config, root), held = [...receipts].flatMap(([id, { receipt }]) => [receipt.runtimeDir, ...id !== own && live(receipt) ? receipt.environmentOutputs ?? [] : []]), released: string[] = [], read = await claims();
   const made = [...receipts].flatMap(([id, { receipt }]) => madeByRelease(receipt, read.get(id)?.claim)); // An earlier release's claimless receipt: its runtime directory's parents, as a claim replacing it records them.
@@ -299,15 +299,22 @@ export async function makeStateDirectory(config: DevFnConfig, root: string, iden
   return withdraw;
 }
 
-/** A state directory's DevFn entries other than locks, each with its type, size and content (a directory's, its entry names). */
+/** A state directory's DevFn entries other than locks, each with its content. */
 async function stateEntries(directory: string): Promise<string> {
-  const entry = stateDirectoryEntry(await foldsCase(directory));
-  const names = (await readdir(directory).catch(() => [] as string[])).filter((name) => entry.test(name) && !/\.lock(?:\.released\..+)?$/i.test(name)).sort();
-  return JSON.stringify(await Promise.all(names.map(async (name) => {
-    const item = path.join(directory, name), info = await lstat(item).catch(() => undefined);
-    const content = info?.isDirectory() ? (await readdir(item).catch(() => [] as string[])).sort().join("\0") : info?.isFile() ? digest(await readFile(item).catch(() => "")) : info?.isSymbolicLink() ? await readlink(item).catch(() => "") : "";
-    return [name, info ? (info.mode & 0o170000) : null, info?.size ?? null, content];
-  })));
+  const entries: unknown[] = [];
+  for (const name of (await readdir(directory).catch(() => [] as string[])).sort()) {
+    const item = path.join(directory, name);
+    if (!/\.lock(?:\.released\..+)?$/i.test(name) && await isStateDirectoryEntry(item)) entries.push([name, await entryContent(item)]);
+  }
+  return JSON.stringify(entries);
+}
+
+/** An entry's type and content: a file's digest, a link's target, a directory's entries' in turn. */
+async function entryContent(item: string): Promise<unknown> {
+  const info = await lstat(item).catch(() => undefined);
+  if (info?.isDirectory()) return await Promise.all((await readdir(item).catch(() => [] as string[])).sort().map(async (name) => [name, await entryContent(path.join(item, name))]));
+  if (info?.isSymbolicLink()) return ["l", await readlink(item).catch(() => "")];
+  return info?.isFile() ? ["f", digest(await readFile(item).catch(() => ""))] : info ? ["o"] : null;
 }
 
 /** Remove, under the refused start's instance lifecycle lock, the record it added for an existing state directory where it changed no DevFn entry; a claim then holding nothing, whose every recorded path is gone, goes too. */

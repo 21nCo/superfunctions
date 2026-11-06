@@ -1958,7 +1958,7 @@ it("keeps a task's input revision when two starts of one runtime race into an ex
   }
 }, 120_000);
 
-it("keeps the record of an existing state directory inside the checkout when a refused start changed a DevFn entry there, also keeping its size and modification time", async () => {
+it.each([["domains.json"], [path.join("tasks", "seed.json")]])("keeps the record of an existing state directory inside the checkout when a refused start changed DevFn's %s there, also keeping its size and modification times", async (entry) => {
   const { parent, primary } = await repository();
   const config = validateDevFnConfig({ version: 1, project: { id: "changed-state-entry" },
     processes: { seed: { adapter: "command", command: [process.execPath, "-e", "0"], task: { rerun: "on-change", inputs: ["."] } } }, profiles: { default: { processes: ["seed"] } } });
@@ -1966,18 +1966,18 @@ it("keeps the record of an existing state directory inside the checkout when a r
   const orchestrator = new DevFnOrchestrator();
   const revision = async () => await taskInputRevision(config, primary, { name: "seed", kind: "process" }, "default");
   const stateDir = path.join(primary, "kept", "state");
-  const domains = path.join(stateDir, "domains.json");
+  const domains = path.join(stateDir, entry);
   try {
-    await mkdir(stateDir, { recursive: true });
+    await mkdir(path.dirname(domains), { recursive: true });
     await writeFile(path.join(stateDir, "notes.sql"), "-- mine");
     await writeFile(domains, "{\"a\":1}");
-    await utimes(domains, 1_000, 1_000);
+    for (const item of [domains, path.dirname(domains)]) await utimes(item, 1_000, 1_000);
     // The start rewrites DevFn's entry there in place, then is refused creating its runtime directory.
     const runtimeDir = path.resolve(runtimeDirectory(sibling, primary, (await resolveInstanceIdentity("changed-state-entry", primary, "b")).instanceId));
     made.fail = (directory) => {
       if (path.resolve(directory) !== runtimeDir) return undefined;
       writeFileSync(domains, "{\"a\":2}");
-      utimesSync(domains, 1_000, 1_000);
+      for (const item of [domains, path.dirname(domains)]) utimesSync(item, 1_000, 1_000);
       return Object.assign(new Error("injected runtime directory failure"), { code: "EACCES" });
     };
     await expect(orchestrator.up({ config: sibling, root: primary, stateDir, runtime: "b" })).rejects.toThrow("injected runtime directory failure");
@@ -2022,6 +2022,42 @@ it("decides DevFn's entry names in an existing state directory by that directory
     await rm(parent, { recursive: true, force: true });
   }
 }, 60_000);
+
+// Opt in on macOS with DEVFN_CASE_MOUNTS=1: it attaches a small case-sensitive disk image as the state directory and detaches it.
+it.skipIf(process.platform !== "darwin" || process.env.DEVFN_CASE_MOUNTS !== "1")("decides DevFn's entry spellings inside a state directory mounted with another case policy than the checkout holding it", async () => {
+  const { parent, primary } = await repository();
+  const sibling = validateDevFnConfig({ version: 1, project: { id: "case-mount" }, processes: {}, profiles: { default: { processes: [] } } });
+  const config = validateDevFnConfig({ version: 1, project: { id: "case-mount" },
+    processes: { seed: { adapter: "command", command: [process.execPath, "-e", "0"], task: { rerun: "on-change", inputs: ["."] } } }, profiles: { default: { processes: ["seed"] } } });
+  const orchestrator = new DevFnOrchestrator();
+  const revision = async () => await taskInputRevision(config, primary, { name: "seed", kind: "process" }, "default");
+  const stateDir = path.join(primary, "cs");
+  let mounted = false;
+  try {
+    // The checkout folds case (the default macOS volume) and its state directory, a mounted volume, keeps case apart.
+    expect(await foldsCaseHere(primary)).toBe(true);
+    await execFileAsync("hdiutil", ["create", "-quiet", "-size", "64m", "-type", "SPARSE", "-fs", "Case-sensitive APFS", "-volname", "devfn-case", path.join(parent, "cs.sparseimage")]);
+    await mkdir(stateDir);
+    await execFileAsync("hdiutil", ["attach", "-quiet", "-nobrowse", "-mountpoint", stateDir, path.join(parent, "cs.sparseimage")]);
+    mounted = true;
+    expect(await foldsCaseHere(stateDir)).toBe(false);
+    await writeFile(path.join(stateDir, "notes.sql"), "-- mine");
+    expect((await orchestrator.up({ config: sibling, root: primary, stateDir, runtime: "b" })).state).toBe("ready");
+    // A user's file there differing from DevFn's name only in case is an input; DevFn's own spelling is not.
+    await writeFile(path.join(stateDir, "Domains.JSON"), "one");
+    await writeFile(path.join(stateDir, "domains.json"), "one");
+    const before = await revision();
+    await writeFile(path.join(stateDir, "domains.json"), "two");
+    expect(await revision()).toBe(before);
+    await writeFile(path.join(stateDir, "Domains.JSON"), "two");
+    expect(await revision()).not.toBe(before);
+    expect((await orchestrator.down({ config: sibling, root: primary, stateDir, runtime: "b" })).state).toBe("stopped");
+  } finally {
+    await orchestrator.down({ config: sibling, root: primary, stateDir, runtime: "b" }).catch(() => undefined);
+    if (mounted) await execFileAsync("hdiutil", ["detach", "-quiet", "-force", stateDir]).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 120_000);
 
 it("gives every caller the same task-input revision over a state directory inside the checkout, whichever state directory it uses itself", async () => {
   const { parent, primary } = await repository();

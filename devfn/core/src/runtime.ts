@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { chmod, link, mkdir, open, readdir, readFile, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, open, readdir, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { resolveContainedPath, type DevFnConfig, type EnvironmentOutput } from "@devfn/config";
@@ -152,19 +152,19 @@ const STATE_DIRECTORY_ENTRY = [
   "^(?:tasks|certificates|tunnels|tunnel-owners|oauth-relay)$",
 ].join("|");
 
-/** DevFn's entry names in a state directory: in any spelling where its filesystem folds case (foldsCase). */
-export const stateDirectoryEntry = (folds: boolean): RegExp => new RegExp(STATE_DIRECTORY_ENTRY, folds ? "i" : "");
+const [EXACT_ENTRY, FOLDED_ENTRY] = [new RegExp(STATE_DIRECTORY_ENTRY), new RegExp(STATE_DIRECTORY_ENTRY, "i")];
 
-/** Whether a directory's own filesystem folds case: a case-swapped spelling of it, or of its nearest ancestor with a cased letter, reaches it (never decided by platform). */
-export async function foldsCase(directory: string): Promise<boolean> {
-  for (let current = directory; current !== path.dirname(current); current = path.dirname(current)) {
-    const name = path.basename(current);
-    const swapped = [...name].map((letter) => letter === letter.toUpperCase() ? letter.toLowerCase() : letter.toUpperCase()).join("");
-    if (swapped === name) continue;
-    const [own, other] = await Promise.all([current, path.join(path.dirname(current), swapped)].map(async (item) => await stat(item, { bigint: true }).catch(() => undefined)));
-    return own !== undefined && other !== undefined && own.dev === other.dev && own.ino === other.ino;
-  }
-  return false;
+/**
+ * Whether a path in a state directory is DevFn's entry there: in DevFn's spelling, or in another case that the directory
+ * itself resolves to the same entry, as where it folds case. Decided in that directory, never by platform or a parent.
+ */
+export async function isStateDirectoryEntry(file: string): Promise<boolean> {
+  const name = path.basename(file);
+  if (EXACT_ENTRY.test(name)) return true;
+  if (!FOLDED_ENTRY.test(name)) return false;
+  const swapped = [...name].map((letter) => letter === letter.toUpperCase() ? letter.toLowerCase() : letter.toUpperCase()).join("");
+  const [own, other] = await Promise.all([file, path.join(path.dirname(file), swapped)].map(async (item) => await lstat(item, { bigint: true }).catch(() => undefined)));
+  return own !== undefined && other !== undefined && own.dev === other.dev && own.ino === other.ino;
 }
 
 /**
