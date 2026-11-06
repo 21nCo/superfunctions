@@ -101,9 +101,12 @@ struct WorkbenchRoot: View {
                             // A navigation link in a macOS sidebar is an
                             // element with no role; a tagged row is the
                             // list's own selectable row.
-                            WorkbenchSidebarTitle(title: screen.title)
+                            Text(screen.title)
+                                .fontWeight(selection == screen ? .semibold : .regular)
+                                .foregroundStyle(theme.colors.text.primary.color)
                                 .accessibilityIdentifier("workbench.sidebar.\(screen.rawValue)")
                                 .tag(screen)
+                                .listRowBackground(WorkbenchSidebarRowBackground(isSelected: selection == screen))
                             #else
                             NavigationLink(value: screen) {
                                 Label(screen.title, systemImage: screen.systemImage)
@@ -128,8 +131,9 @@ struct WorkbenchRoot: View {
             #if os(macOS)
             // Over the sidebar's own translucent material the audit failed
             // the contrast of a different set of legible rows each run. An
-            // opaque theme surface, with the rows in theme text colors,
-            // makes what it measures the same for every row.
+            // opaque theme surface, with the rows in theme text colors on
+            // backgrounds the app draws, makes what it measures the same for
+            // every row, selected or not.
             .scrollContentBackground(.hidden)
             .background(theme.colors.surface.sunken.color)
             .navigationSplitViewColumnWidth(min: 200, ideal: 240)
@@ -154,17 +158,30 @@ struct WorkbenchRoot: View {
 }
 
 #if os(macOS)
-/// A row's title in the macOS sidebar: the theme's primary text on the
-/// sidebar's theme surface, or AppKit's selected text color on the list's
-/// emphasized selection, which AppKit draws in the accent color.
-private struct WorkbenchSidebarTitle: View {
-    let title: String
+/// A macOS sidebar row's background, drawn by the app in every selection
+/// state. AppKit draws its selection (the accent color while the list has
+/// focus in the key window, gray otherwise) beneath a row's background, so
+/// this opaque background hides it, and the row's primary text has the same
+/// background whether or not the list has focus. The selected row is the
+/// theme's subtle accent with a solid accent bar at its leading edge.
+private struct WorkbenchSidebarRowBackground: View {
+    let isSelected: Bool
     @Environment(\.uifnTheme) private var theme
-    @Environment(\.backgroundProminence) private var prominence
 
     var body: some View {
-        Text(title)
-            .foregroundStyle(prominence == .increased ? Color(nsColor: .alternateSelectedControlTextColor) : theme.colors.text.primary.color)
+        ZStack(alignment: .leading) {
+            theme.colors.surface.sunken.color
+            if isSelected {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(theme.colors.accent.subtle.color)
+                    .padding(.horizontal, 8)
+                Capsule()
+                    .fill(theme.colors.accent.solid.color)
+                    .frame(width: 3)
+                    .padding(.vertical, 6)
+                    .padding(.leading, 10)
+            }
+        }
     }
 }
 #endif

@@ -16,12 +16,6 @@ struct WorkbenchAuditContext {
     var frameworkGroups: [WorkbenchAuditElement] = []
     /// The Touch Bars AppKit shows for the app on macOS, and their items.
     var touchBarItems: [WorkbenchAuditElement] = []
-
-    /// Whether the frame lies within the screen's page, which holds the
-    /// screen's own views.
-    func isOnThePage(_ frame: CGRect) -> Bool {
-        page.map { $0.insetBy(dx: -1, dy: -1).contains(frame) } ?? false
-    }
 }
 
 extension CGRect {
@@ -40,6 +34,9 @@ struct WorkbenchAuditElement {
     var value = ""
     var frame: CGRect
     var isEnabled = true
+    /// For a contrast issue, the colors measured from the element's
+    /// screenshot, or nil when it could not be read.
+    var contrast: WorkbenchContrastMeasurement?
 
     /// Whether the other element has this one's type, frame, label and
     /// identifier, all an element and a snapshot of it share.
@@ -252,24 +249,16 @@ struct WorkbenchAuditWaiver {
         ),
         WorkbenchAuditWaiver(
             id: "macos-contrast-misread",
-            screens: ["toggles", "empty-states", "toasts", "text-fields"],
+            screens: [],
             platform: .macOS,
             auditTypes: ["contrast"],
             element: { element, context in
-                guard let element else { return false }
-                let text = element.value
-                switch (context.screen, context.colorScheme) {
-                case ("toggles", "light"): return text == "Alerts"
-                case ("empty-states", "dark"): return text == "Files you add appear here."
-                case ("toasts", "dark"): return element.label == "Link copied"
-                // The window title, not the list's row of the same name.
-                case ("text-fields", "dark"):
-                    return text == "Text fields" && !context.isOnThePage(element.frame)
-                        && !element.identifier.hasPrefix(WorkbenchApp.sidebarPrefix)
-                default: return false
-                }
+                // The selected sidebar row is never waived.
+                guard let element, element.type == .staticText, element.isEnabled,
+                      element.identifier != context.screen.map({ WorkbenchApp.sidebarPrefix + $0 }) else { return false }
+                return element.contrast?.passes == true
             },
-            reason: "The colors of these texts measure well above 4.5:1: \"Alerts\" 17.1:1 (text.primary on the light canvas), the empty state's message 11.3:1 (text.secondary on the dark canvas), the toast 8.2:1 or more (on the dark success tone), and the window title is AppKit's. Other texts in the same colors on the same screens pass. The element's screenshot is attached to the test's result with each contrast issue, to check what the audit judged."
+            reason: "The macOS audit fails the contrast of texts that measure well above 4.5:1, and of different texts from run to run, such as the unselected \"Toasts\" row (11.4:1) while the \"Banners\" row in the same colors passes. The test measures each issue's element screenshot and waives an enabled text only when one color covers at least half of it and each line of text on it is in one color that a quarter of the line's ink pixels reach at 4.5:1 or more against it; edge pixels only blend toward the background, so this never overstates a text's contrast. A line below 4.5:1 or in a second color, an unreadable screenshot and the selected sidebar row stay failed. The measurement is attached with each contrast issue."
         ),
     ]
 
@@ -282,5 +271,135 @@ struct WorkbenchAuditWaiver {
                 && waiver.auditTypes.contains(auditType)
                 && waiver.element(element, context)
         }
+    }
+}
+
+/// The contrast of the text in an audit issue's element, measured from the
+/// element's screenshot: its background, the most common color, and each line
+/// of text on it. A line's text color is the color that a quarter of the
+/// line's ink pixels reach; edge pixels blend toward the background, so a
+/// text drawn in one color measures at most that color's contrast.
+struct WorkbenchContrastMeasurement {
+    struct RGB: Hashable {
+        var red, green, blue: UInt8
+
+        /// WCAG 2.2 relative luminance.
+        var luminance: Double {
+            func linear(_ value: UInt8) -> Double {
+                let s = Double(value) / 255
+                return s <= 0.04045 ? s / 12.92 : pow((s + 0.055) / 1.055, 2.4)
+            }
+            return 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue)
+        }
+
+        func contrast(with other: RGB) -> Double {
+            let (a, b) = (luminance, other.luminance)
+            return (max(a, b) + 0.05) / (min(a, b) + 0.05)
+        }
+
+        func isClose(to other: RGB) -> Bool {
+            max(abs(Int(red) - Int(other.red)), abs(Int(green) - Int(other.green)), abs(Int(blue) - Int(other.blue))) <= 8
+        }
+
+        var description: String { "rgb(\(red), \(green), \(blue))" }
+    }
+
+    /// A band of rows with ink, between rows without.
+    struct Line {
+        let rows: ClosedRange<Int>
+        let ink: Int
+        let text: RGB?
+        let contrast: Double
+        /// The share of the line's ink that is not a blend of the text color
+        /// and the background, such as a second text color.
+        let otherColorShare: Double
+
+        var passes: Bool { text != nil && contrast >= 4.5 && otherColorShare <= 0.15 }
+    }
+
+    let background: RGB
+    let backgroundShare: Double
+    let lines: [Line]
+    /// Rows of ink one or two pixels tall that span the crop, such as a
+    /// separator, which are not text.
+    let rules: [ClosedRange<Int>]
+
+    /// Whether every line of text on the one background reaches 4.5:1.
+    var passes: Bool { backgroundShare >= 0.5 && !lines.isEmpty && lines.allSatisfy(\.passes) }
+
+    var summary: String {
+        let measured = lines.map { line in
+            let text = line.text.map { "\($0.description) \(String(format: "%.2f", line.contrast)):1" } ?? "unreadable"
+            return "rows \(line.rows.lowerBound)-\(line.rows.upperBound): text \(text), \(Int((line.otherColorShare * 100).rounded()))% other colors"
+        }
+        let ruled = rules.isEmpty ? "" : "; separators at rows \(rules.map { "\($0.lowerBound)-\($0.upperBound)" }.joined(separator: ", "))"
+        return "background \(background.description) (\(Int((backgroundShare * 100).rounded()))%), \(lines.count) line(s): \(measured.joined(separator: "; "))\(ruled); \(passes ? "every line reaches 4.5:1" : "not shown to reach 4.5:1")"
+    }
+
+    init?(_ image: CGImage) {
+        let (width, height) = (image.width, image.height)
+        guard width > 0, height > 0, let sRGB = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        let drawn = bytes.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(
+                data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                space: sRGB, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+            ) else { return false }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        guard drawn else { return nil }
+        let pixels = stride(from: 0, to: bytes.count, by: 4).map { RGB(red: bytes[$0], green: bytes[$0 + 1], blue: bytes[$0 + 2]) }
+        self.init(pixels: pixels, width: width)
+    }
+
+    /// Measures pixels in rows of `width`, top row first.
+    init?(pixels: [RGB], width: Int) {
+        guard width > 0, !pixels.isEmpty, pixels.count % width == 0 else { return nil }
+        let height = pixels.count / width
+        var counts: [RGB: Int] = [:]
+        pixels.forEach { counts[$0, default: 0] += 1 }
+        guard let background = counts.max(by: { $0.value < $1.value || ($0.value == $1.value && $0.key.luminance < $1.key.luminance) })?.key else { return nil }
+        self.background = background
+        backgroundShare = Double(pixels.filter { $0.isClose(to: background) }.count) / Double(pixels.count)
+
+        let isInk = { (pixel: RGB) in !pixel.isClose(to: background) && pixel.contrast(with: background) >= 1.5 }
+        var bands: [ClosedRange<Int>] = []
+        for row in 0..<height where pixels[row * width ..< (row + 1) * width].contains(where: isInk) {
+            if let last = bands.last, last.upperBound == row - 1 {
+                bands[bands.count - 1] = last.lowerBound...row
+            } else {
+                bands.append(row...row)
+            }
+        }
+        var lines: [Line] = []
+        var rules: [ClosedRange<Int>] = []
+        for band in bands {
+            let ink = band.flatMap { row in pixels[row * width ..< (row + 1) * width].filter(isInk) }
+            let columns = Set(band.flatMap { row in (0..<width).filter { isInk(pixels[row * width + $0]) } })
+            if band.count <= 2 && Double(columns.count) >= 0.8 * Double(width) {
+                rules.append(band)
+                continue
+            }
+            lines.append(Self.line(band, ink: ink, background: background))
+        }
+        self.lines = lines
+        self.rules = rules
+    }
+
+    private static func line(_ rows: ClosedRange<Int>, ink: [RGB], background: RGB) -> Line {
+        guard ink.count >= 12 else { return Line(rows: rows, ink: ink.count, text: nil, contrast: 1, otherColorShare: 1) }
+        let text = ink.sorted { $0.contrast(with: background) > $1.contrast(with: background) }[ink.count / 4]
+        // A blend of the text color and the background lies on the line
+        // between them in RGB.
+        let direction = [Double(text.red) - Double(background.red), Double(text.green) - Double(background.green), Double(text.blue) - Double(background.blue)]
+        let length = (direction.map { $0 * $0 }.reduce(0, +)).squareRoot()
+        let others = ink.filter { pixel in
+            let offset = [Double(pixel.red) - Double(background.red), Double(pixel.green) - Double(background.green), Double(pixel.blue) - Double(background.blue)]
+            let along = zip(offset, direction).map(*).reduce(0, +) / max(length, 1)
+            let squared = offset.map { $0 * $0 }.reduce(0, +) - along * along
+            return max(squared, 0).squareRoot() > 32
+        }
+        return Line(rows: rows, ink: ink.count, text: text, contrast: text.contrast(with: background), otherColorShare: Double(others.count) / Double(ink.count))
     }
 }

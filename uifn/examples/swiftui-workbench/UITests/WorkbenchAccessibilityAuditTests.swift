@@ -222,11 +222,17 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
         WorkbenchApp.findFrameworkElements(of: app, for: &context)
         #endif
         try app.performAccessibilityAudit { issue in
-            let summary = "\(issue.auditType.workbenchName) on \(issue.element.map(WorkbenchApp.describe) ?? "the app")"
+            var summary = "\(issue.auditType.workbenchName) on \(issue.element.map(WorkbenchApp.describe) ?? "the app")"
+            var element = issue.element.map(WorkbenchAuditElement.init)
             // What the audit judged, kept with each contrast issue, waived
-            // or not: the element's screenshot, and the window's once.
-            if issue.auditType == .contrast, let element = issue.element {
-                let attachment = XCTAttachment(screenshot: element.screenshot())
+            // or not: the element's screenshot, its measured colors, and the
+            // window's screenshot once.
+            if issue.auditType == .contrast, let issueElement = issue.element {
+                let screenshot = issueElement.screenshot()
+                let contrast = screenshot.workbenchCGImage.flatMap(WorkbenchContrastMeasurement.init)
+                element?.contrast = contrast
+                summary += " [measured: \(contrast?.summary ?? "unreadable screenshot")]"
+                let attachment = XCTAttachment(screenshot: screenshot)
                 attachment.name = "Contrast issue: \(summary)"
                 attachment.lifetime = .keepAlways
                 if contrastEvidence.isEmpty {
@@ -237,7 +243,6 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
                 }
                 contrastEvidence.append(attachment)
             }
-            let element = issue.element.map(WorkbenchAuditElement.init)
             var waiver = WorkbenchAuditWaiver.matching(issue.auditType.workbenchName, on: element, in: context)
             #if os(macOS)
             // The audit can change the window, as by focusing a field, which
@@ -359,6 +364,17 @@ enum WorkbenchApp {
         if !element.isEnabled { parts.append("disabled") }
         parts.append("frame \(element.frame)")
         return parts.joined(separator: " ")
+    }
+}
+
+extension XCUIScreenshot {
+    /// The screenshot's pixels, for measuring their colors.
+    var workbenchCGImage: CGImage? {
+        #if os(macOS)
+        image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        #else
+        image.cgImage
+        #endif
     }
 }
 
