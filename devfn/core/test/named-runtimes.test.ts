@@ -1919,7 +1919,9 @@ it("keeps a task's input revision when two starts of one runtime race into an ex
   const claims = path.join(".devfn", "receipts", "outputs");
   const start = new AsyncLocalStorage<"a" | "b">();
   const seen = { aRecorded: false, bRecorded: false, aEnded: false };
-  const until = async (ready: () => boolean) => { for (const deadline = Date.now() + 3_000; !ready() && Date.now() < deadline;) await new Promise((resolve) => setTimeout(resolve, 10)); };
+  const until = async (ready: () => boolean | Promise<boolean>, ms = 3_000) => { for (const deadline = Date.now() + ms; !await ready() && Date.now() < deadline;) await new Promise((resolve) => setTimeout(resolve, 10)); };
+  const claim = path.join(primary, claims, `${(await resolveInstanceIdentity("racing-state-input", primary, "b")).instanceId}.json`);
+  const recorded = async () => await readFile(claim, "utf8").then((text) => (JSON.parse(text) as { shared?: string[] }).shared?.includes(stateDir) ?? false, () => false);
   try {
     await mkdir(stateDir, { recursive: true });
     await writeFile(path.join(stateDir, "notes.sql"), "-- mine");
@@ -1933,8 +1935,12 @@ it("keeps a task's input revision when two starts of one runtime race into an ex
       if (who === "b") await until(() => seen.bRecorded ? seen.aEnded : seen.aRecorded);
       if (who === "a" && seen.aRecorded) await until(() => seen.bRecorded);
     };
-    // a is refused right before it would record the runtime identity, so it changed no DevFn entry there; b's identity is the first write sampled.
-    lifecycle.recording = async () => { if (start.getStore() === "a") throw new Error("a refused before writing"); };
+    // a is refused right before it would record the runtime identity, so it changed no DevFn entry there; b's identity, written
+    // once a ended and its record is gone or a second passed, is the first write sampled.
+    lifecycle.recording = async () => {
+      if (start.getStore() === "a") throw new Error("a refused before writing");
+      await until(async () => seen.aEnded && !await recorded(), 1_000);
+    };
     const samples: string[] = [];
     lifecycle.recorded = async () => { samples.push(await revision()); };
     const a = start.run("a", async () => await orchestrator.up({ config: sibling, root: primary, stateDir, runtime: "b" })).finally(() => { seen.aEnded = true; });
