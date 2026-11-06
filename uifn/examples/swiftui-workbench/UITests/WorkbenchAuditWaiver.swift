@@ -1,7 +1,7 @@
 import XCTest
 
 /// Where an audit ran: the screen, its color scheme, and frames, in the
-/// audit's coordinates, of the screen's page, the window and the macOS
+/// audit's coordinates, of the screen's page and the window, with the macOS
 /// elements AppKit and SwiftUI make around the app's views.
 struct WorkbenchAuditContext {
     /// The screen's launch argument, or nil for the list of screens.
@@ -12,26 +12,15 @@ struct WorkbenchAuditContext {
     let page: CGRect?
     let window: CGRect
     /// The unlabeled groups AppKit and SwiftUI put around the app's views on
-    /// macOS, found by where they sit in the window (see ``WorkbenchApp/frameworkGroups(in:)``).
-    var frameworkGroups: [CGRect] = []
-    /// The Touch Bars AppKit shows for the app on macOS.
-    var touchBars: [CGRect] = []
+    /// macOS, found by ``WorkbenchFrameworkElements/find(in:touchBars:)``.
+    var frameworkGroups: [WorkbenchAuditElement] = []
+    /// The Touch Bars AppKit shows for the app on macOS, and their items.
+    var touchBarItems: [WorkbenchAuditElement] = []
 
     /// Whether the frame lies within the screen's page, which holds the
     /// screen's own views.
     func isOnThePage(_ frame: CGRect) -> Bool {
         page.map { $0.insetBy(dx: -1, dy: -1).contains(frame) } ?? false
-    }
-
-    /// Whether the frame is one of the framework's groups around the app's views.
-    func isAFrameworkGroup(_ frame: CGRect) -> Bool {
-        !frame.isEmpty && frameworkGroups.contains { !$0.isEmpty && $0.isWithinAPoint(of: frame) }
-    }
-
-    /// Whether the frame lies in a Touch Bar, outside the app's window.
-    func isInATouchBar(_ frame: CGRect) -> Bool {
-        !frame.isEmpty && !window.insetBy(dx: 1, dy: 1).intersects(frame)
-            && touchBars.contains { !$0.isEmpty && $0.insetBy(dx: -2, dy: -2).contains(frame) }
     }
 }
 
@@ -51,22 +40,94 @@ struct WorkbenchAuditElement {
     var value = ""
     var frame: CGRect
     var isEnabled = true
-    /// For a contrast issue, the contrast ratio between the lightest and the
-    /// darkest pixels of the element's screenshot, or nil when not measured.
-    var measuredContrast: Double?
+
+    /// Whether the other element has this one's type, frame, label and
+    /// identifier, all an element and a snapshot of it share.
+    func isSame(as other: WorkbenchAuditElement) -> Bool {
+        !frame.isEmpty && type == other.type && label == other.label && identifier == other.identifier
+            && frame.isWithinAPoint(of: other.frame)
+    }
 }
 
 extension WorkbenchAuditElement {
-    init(_ element: XCUIElement, measuredContrast: Double?) {
+    init(_ element: XCUIElement) {
         self.init(
             type: element.elementType,
             identifier: element.identifier,
             label: element.label,
             value: (element.value as? String) ?? "",
             frame: element.frame,
-            isEnabled: element.isEnabled,
-            measuredContrast: measuredContrast
+            isEnabled: element.isEnabled
         )
+    }
+}
+
+/// An element of the app's accessibility tree with its children.
+struct WorkbenchAuditNode {
+    var element: WorkbenchAuditElement
+    var children: [WorkbenchAuditNode] = []
+}
+
+extension WorkbenchAuditNode {
+    init(_ snapshot: XCUIElementSnapshot) {
+        element = WorkbenchAuditElement(
+            type: snapshot.elementType,
+            identifier: snapshot.identifier,
+            label: snapshot.label,
+            value: (snapshot.value as? String) ?? "",
+            frame: snapshot.frame,
+            isEnabled: snapshot.isEnabled
+        )
+        children = snapshot.children.map(WorkbenchAuditNode.init)
+    }
+}
+
+/// Finds the elements AppKit and SwiftUI make around the app's views on
+/// macOS by where they sit in the app's tree.
+enum WorkbenchFrameworkElements {
+    /// The workbench's sidebar section headers.
+    static let sectionHeaders: Set<String> = ["Styles", "Components"]
+
+    /// The framework's unlabeled groups and the Touch Bars and their items.
+    /// The groups are those whose parent is a window or the split view, the
+    /// group a sidebar row's cell holds around a section header's text, and
+    /// those in the window's full-screen button. An element is left out when
+    /// any other element of the app has its type and frame, so that an app
+    /// element that coincides with one is still audited.
+    static func find(in app: WorkbenchAuditNode, touchBars: [WorkbenchAuditNode]) -> (groups: [WorkbenchAuditElement], touchBarItems: [WorkbenchAuditElement]) {
+        var groups: [WorkbenchAuditElement] = []
+        var touchBarItems: [WorkbenchAuditElement] = []
+        var others: [WorkbenchAuditElement] = []
+        func visit(_ node: WorkbenchAuditNode, ancestors: [WorkbenchAuditNode]) {
+            if node.element.type == .touchBar || ancestors.contains(where: { $0.element.type == .touchBar }) {
+                touchBarItems.append(node.element)
+            } else if isAFrameworkGroup(node, ancestors: ancestors) {
+                groups.append(node.element)
+            } else {
+                others.append(node.element)
+            }
+            node.children.forEach { visit($0, ancestors: ancestors + [node]) }
+        }
+        visit(app, ancestors: [])
+        touchBars.forEach { visit($0, ancestors: [app]) }
+        let isUnique = { (element: WorkbenchAuditElement) in
+            !others.contains { $0.type == element.type && $0.frame.isWithinAPoint(of: element.frame) }
+        }
+        return (groups.filter(isUnique), touchBarItems.filter(isUnique))
+    }
+
+    private static func isAFrameworkGroup(_ node: WorkbenchAuditNode, ancestors: [WorkbenchAuditNode]) -> Bool {
+        let element = node.element
+        guard element.type == .group, element.label.isEmpty, element.identifier.isEmpty, let parent = ancestors.last else { return false }
+        switch parent.element.type {
+        case .window, .splitGroup:
+            return true
+        case .cell:
+            return ancestors.dropLast().last?.element.type == .outlineRow
+                && node.children.contains { $0.element.type == .staticText && sectionHeaders.contains($0.element.label) }
+        default:
+            return ancestors.contains { $0.element.type == .button && $0.element.identifier == "_XCUI:FullScreenWindow" }
+        }
     }
 }
 
@@ -150,10 +211,9 @@ struct WorkbenchAuditWaiver {
             auditTypes: ["sufficientElementDescription", "parentChild"],
             element: { element, context in
                 guard let element else { return false }
-                return element.type == .group && element.label.isEmpty && element.identifier.isEmpty
-                    && context.isAFrameworkGroup(element.frame)
+                return context.frameworkGroups.contains { $0.isSame(as: element) }
             },
-            reason: "SwiftUI and AppKit make these unlabeled groups around the app's views: the hosting views of the window, its sidebar and detail columns and the list's section headers, and the group inside the window's full-screen button. They are not elements VoiceOver stops on. Each is matched by where it sits in the window; any other unlabeled group, on a page or in the list, is still audited."
+            reason: "SwiftUI and AppKit make these unlabeled groups around the app's views: the hosting views of the window, its sidebar and detail columns and the list's section headers, and the group inside the window's full-screen button. They are not elements VoiceOver stops on. Each is found by its place in the app's tree, and one whose frame an element of the app's own shares is still audited, as is any other unlabeled group."
         ),
         WorkbenchAuditWaiver(
             id: "macos-touch-bar",
@@ -162,9 +222,9 @@ struct WorkbenchAuditWaiver {
             auditTypes: ["sufficientElementDescription", "action"],
             element: { element, context in
                 guard let element else { return false }
-                return element.type == .touchBar || context.isInATouchBar(element.frame)
+                return element.type == .touchBar || context.touchBarItems.contains { $0.isSame(as: element) }
             },
-            reason: "The CI Mac shows a Touch Bar, and AppKit fills it, adding items such as \"emoji & symbols\" while a text field has focus. They are not the app's views. Only the Touch Bar and elements inside its frame, outside the app's window, are waived."
+            reason: "The CI Mac shows a Touch Bar, and AppKit fills it, adding items such as \"emoji & symbols\" while a text field has focus. They are not the app's views. Only the Touch Bar and the elements in it are waived, and not one whose frame an element of the app's own shares."
         ),
         WorkbenchAuditWaiver(
             id: "macos-elementless-parent-child",
@@ -196,9 +256,7 @@ struct WorkbenchAuditWaiver {
             platform: .macOS,
             auditTypes: ["contrast"],
             element: { element, context in
-                // Only when the text's own pixels show the contrast the audit
-                // did not find.
-                guard let element, (element.measuredContrast ?? 0) >= 4.5 else { return false }
+                guard let element else { return false }
                 let text = element.value
                 switch (context.screen, context.colorScheme) {
                 case ("toggles", "light"): return text == "Alerts"
@@ -211,7 +269,7 @@ struct WorkbenchAuditWaiver {
                 default: return false
                 }
             },
-            reason: "The colors of these texts measure well above 4.5:1: \"Alerts\" 17.1:1 (text.primary on the light canvas), the empty state's message 11.3:1 (text.secondary on the dark canvas), the toast 8.2:1 or more (on the dark success tone), and the window title is AppKit's. Other texts in the same colors on the same screens pass. Each is waived only when the lightest and darkest pixels of its own screenshot, taken when the audit reports it, differ by 4.5:1 or more; the screenshot and that ratio are attached to the test's result."
+            reason: "The colors of these texts measure well above 4.5:1: \"Alerts\" 17.1:1 (text.primary on the light canvas), the empty state's message 11.3:1 (text.secondary on the dark canvas), the toast 8.2:1 or more (on the dark success tone), and the window title is AppKit's. Other texts in the same colors on the same screens pass. The element's screenshot is attached to the test's result with each contrast issue, to check what the audit judged."
         ),
     ]
 

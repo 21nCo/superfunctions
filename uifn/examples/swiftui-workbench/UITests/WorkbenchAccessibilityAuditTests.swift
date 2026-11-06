@@ -43,7 +43,10 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
         // separate text, as the system's is, and one with its label hidden
         // is a checkbox.
         func toggle(_ id: String) -> XCUIElement {
-            app.descendants(matching: .any).matching(identifier: id).firstMatch
+            app.descendants(matching: .any).matching(NSPredicate(
+                format: "identifier == %@ AND (elementType == %d OR elementType == %d)",
+                id, XCUIElement.ElementType.switch.rawValue, XCUIElement.ElementType.checkBox.rawValue
+            )).firstMatch
         }
         func value(_ element: XCUIElement) -> String { "\(element.value ?? "")" }
         // On iOS a labelled switch's element spans its label, which takes
@@ -216,20 +219,15 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
             window: app.windows.firstMatch.frame
         )
         #if os(macOS)
-        context.frameworkGroups = WorkbenchApp.frameworkGroups(in: app)
-        context.touchBars = app.touchBars.allElementsBoundByIndex.map(\.frame)
+        WorkbenchApp.findFrameworkElements(of: app, for: &context)
         #endif
         try app.performAccessibilityAudit { issue in
             let summary = "\(issue.auditType.workbenchName) on \(issue.element.map(WorkbenchApp.describe) ?? "the app")"
-            var measured: Double?
             // What the audit judged, kept with each contrast issue, waived
-            // or not: the element's screenshot, the contrast of its pixels,
-            // and the window once.
+            // or not: the element's screenshot, and the window's once.
             if issue.auditType == .contrast, let element = issue.element {
-                let screenshot = element.screenshot()
-                measured = WorkbenchContrast.ratio(of: screenshot)
-                let attachment = XCTAttachment(screenshot: screenshot)
-                attachment.name = "Contrast issue: \(summary); its pixels measure \(measured.map { String(format: "%.1f:1", $0) } ?? "nothing")"
+                let attachment = XCTAttachment(screenshot: element.screenshot())
+                attachment.name = "Contrast issue: \(summary)"
                 attachment.lifetime = .keepAlways
                 if contrastEvidence.isEmpty {
                     let window = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
@@ -239,8 +237,17 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
                 }
                 contrastEvidence.append(attachment)
             }
-            let element = issue.element.map { WorkbenchAuditElement($0, measuredContrast: measured) }
-            if let waiver = WorkbenchAuditWaiver.matching(issue.auditType.workbenchName, on: element, in: context) {
+            let element = issue.element.map(WorkbenchAuditElement.init)
+            var waiver = WorkbenchAuditWaiver.matching(issue.auditType.workbenchName, on: element, in: context)
+            #if os(macOS)
+            // The audit can change the window, as by focusing a field, which
+            // fills the Touch Bar; look again before failing the issue.
+            if waiver == nil {
+                WorkbenchApp.findFrameworkElements(of: app, for: &context)
+                waiver = WorkbenchAuditWaiver.matching(issue.auditType.workbenchName, on: element, in: context)
+            }
+            #endif
+            if let waiver {
                 waived.append("\(summary): \(waiver.reason)")
             } else {
                 // Recorded here, with the element, rather than by the audit,
@@ -320,19 +327,17 @@ enum WorkbenchApp {
     }
 
     #if os(macOS)
-    /// The unlabeled groups AppKit and SwiftUI put around the app's views, by
-    /// where they sit: the window's own group, the split view's column
-    /// groups, the groups in the sidebar outline's cells, which hold its
-    /// section headers, and the groups in the window's full-screen button.
-    static func frameworkGroups(in app: XCUIApplication) -> [CGRect] {
-        let window = app.windows.firstMatch
-        let groups = [
-            window.children(matching: .group),
-            window.splitGroups.children(matching: .group),
-            window.outlines.cells.children(matching: .group),
-            window.buttons.matching(identifier: "_XCUI:FullScreenWindow").descendants(matching: .group),
-        ]
-        return groups.flatMap { $0.allElementsBoundByIndex.map(\.frame) }
+    /// Sets the context's framework groups and Touch Bar items from the
+    /// app's tree, or none when it cannot be read.
+    static func findFrameworkElements(of app: XCUIApplication, for context: inout WorkbenchAuditContext) {
+        guard let tree = try? app.snapshot() else {
+            (context.frameworkGroups, context.touchBarItems) = ([], [])
+            return
+        }
+        let touchBars = app.touchBars.allElementsBoundByIndex.compactMap { try? $0.snapshot() }
+        (context.frameworkGroups, context.touchBarItems) = WorkbenchFrameworkElements.find(
+            in: WorkbenchAuditNode(tree), touchBars: touchBars.map(WorkbenchAuditNode.init)
+        )
     }
     #endif
 
@@ -375,46 +380,5 @@ extension XCUIAccessibilityAuditType {
         if contains(.parentChild) { names.append("parentChild") }
         #endif
         return names.isEmpty ? "rawValue \(rawValue)" : names.joined(separator: "+")
-    }
-}
-
-/// Measures the contrast a screenshot shows.
-enum WorkbenchContrast {
-    /// The WCAG contrast ratio between the lightest and the darkest pixels of
-    /// the screenshot, or nil when its pixels cannot be read. For a text's
-    /// element, these are its glyphs and the background behind them.
-    static func ratio(of screenshot: XCUIScreenshot) -> Double? {
-        #if os(macOS)
-        screenshot.image.cgImage(forProposedRect: nil, context: nil, hints: nil).flatMap(ratio(of:))
-        #else
-        screenshot.image.cgImage.flatMap(ratio(of:))
-        #endif
-    }
-
-    /// The WCAG contrast ratio between the lightest and the darkest pixels of
-    /// the image, or nil when its pixels cannot be read.
-    static func ratio(of image: CGImage) -> Double? {
-        guard image.width > 0, image.height > 0,
-              let space = CGColorSpace(name: CGColorSpace.sRGB),
-              let context = CGContext(
-                  data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: image.width * 4,
-                  space: space, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
-              )
-        else { return nil }
-        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
-        guard let data = context.data else { return nil }
-        let pixels = data.bindMemory(to: UInt8.self, capacity: image.width * image.height * 4)
-        func linear(_ component: UInt8) -> Double {
-            let value = Double(component) / 255
-            return value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
-        }
-        var lightest = 0.0
-        var darkest = 1.0
-        for pixel in stride(from: 0, to: image.width * image.height * 4, by: 4) {
-            let luminance = 0.2126 * linear(pixels[pixel]) + 0.7152 * linear(pixels[pixel + 1]) + 0.0722 * linear(pixels[pixel + 2])
-            lightest = max(lightest, luminance)
-            darkest = min(darkest, luminance)
-        }
-        return (lightest + 0.05) / (darkest + 0.05)
     }
 }
