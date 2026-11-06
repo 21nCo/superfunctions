@@ -49,6 +49,23 @@ struct UIFnMacAccessibilityRoleTests {
         #expect(elements.first?.label == "Range", "\(elements)")
     }
 
+    /// A switch is named by its label as the system's switch is: the label is
+    /// a text beside it that the switch gives as its title element, which
+    /// VoiceOver reads as its name. With its label hidden the switch is
+    /// labelled itself.
+    @Test func aSwitchIsNamedByItsLabel() async {
+        let toggles = VStack {
+            Toggle("Sounds", isOn: .constant(false)).toggleStyle(.uifnSwitch)
+            Toggle("Vibrate", isOn: .constant(false)).toggleStyle(.uifnSwitch).labelsHidden()
+        }
+        let checkBox = NSAccessibility.Role.checkBox.rawValue
+        let names = { (elements: [UIFnAccessibilityElement]) in
+            elements.filter { $0.platformRole == checkBox }.map { $0.label ?? $0.titleElementText }
+        }
+        let elements = await elements(toggles) { names($0) == ["Sounds", "Vibrate"] }
+        #expect(names(elements) == ["Sounds", "Vibrate"], "\(elements)")
+    }
+
     /// The menu picker's label is the pop-up button's, not a text of its own
     /// where the picker draws the selected option.
     @Test(arguments: [Optional("Name"), nil])

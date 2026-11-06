@@ -39,15 +39,15 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
         let app = WorkbenchApp.launch(screen: "toggles", colorScheme: "light")
         defer { app.terminate() }
         XCTAssertTrue(WorkbenchApp.screen("toggles", in: app).waitForExistence(timeout: 10), "toggles did not appear")
-        func toggle(_ label: String) -> XCUIElement {
-            app.descendants(matching: .any).matching(NSPredicate(
-                format: "label == %@ AND (elementType == %d OR elementType == %d)",
-                label, XCUIElement.ElementType.switch.rawValue, XCUIElement.ElementType.checkBox.rawValue
-            )).firstMatch
+        // By identifier: on macOS a labelled switch is a switch named by a
+        // separate text, as the system's is, and one with its label hidden
+        // is a checkbox.
+        func toggle(_ id: String) -> XCUIElement {
+            app.descendants(matching: .any).matching(identifier: id).firstMatch
         }
         func value(_ element: XCUIElement) -> String { "\(element.value ?? "")" }
-        // A labelled switch's element spans its label, which takes no
-        // presses, so press the track at the trailing end of the row.
+        // On iOS a labelled switch's element spans its label, which takes
+        // no presses, so press the track at the trailing end of the element.
         func press(_ element: XCUIElement) {
             let track = element.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0.5)).withOffset(CGVector(dx: -10, dy: 0))
             #if os(macOS)
@@ -56,8 +56,9 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
             track.tap()
             #endif
         }
-        let sounds = toggle("Sounds")
-        let vibrate = toggle("Vibrate")
+        let sounds = toggle("toggles.sounds")
+        let vibrate = toggle("toggles.vibrate")
+        XCTAssertTrue(sounds.waitForExistence(timeout: 5), "The Sounds switch did not appear")
         XCTAssertTrue(vibrate.waitForExistence(timeout: 5), "The Vibrate switch did not appear")
         let soundsBefore = value(sounds)
         let vibrateBefore = value(vibrate)
@@ -207,15 +208,39 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
 
     private func auditVisibleContent(of app: XCUIApplication, screen: String?, colorScheme: String) throws {
         var waived: [String] = []
-        let context = WorkbenchAuditContext(
+        var contrastEvidence: [XCTAttachment] = []
+        var context = WorkbenchAuditContext(
             screen: screen,
             colorScheme: colorScheme,
             page: screen.map { WorkbenchApp.screen($0, in: app).frame },
             window: app.windows.firstMatch.frame
         )
+        #if os(macOS)
+        context.frameworkGroups = WorkbenchApp.frameworkGroups(in: app)
+        context.touchBars = app.touchBars.allElementsBoundByIndex.map(\.frame)
+        #endif
         try app.performAccessibilityAudit { issue in
             let summary = "\(issue.auditType.workbenchName) on \(issue.element.map(WorkbenchApp.describe) ?? "the app")"
-            if let waiver = WorkbenchAuditWaiver.matching(issue, in: context) {
+            var measured: Double?
+            // What the audit judged, kept with each contrast issue, waived
+            // or not: the element's screenshot, the contrast of its pixels,
+            // and the window once.
+            if issue.auditType == .contrast, let element = issue.element {
+                let screenshot = element.screenshot()
+                measured = WorkbenchContrast.ratio(of: screenshot)
+                let attachment = XCTAttachment(screenshot: screenshot)
+                attachment.name = "Contrast issue: \(summary); its pixels measure \(measured.map { String(format: "%.1f:1", $0) } ?? "nothing")"
+                attachment.lifetime = .keepAlways
+                if contrastEvidence.isEmpty {
+                    let window = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+                    window.name = "The window when the audit reported contrast"
+                    window.lifetime = .keepAlways
+                    contrastEvidence.append(window)
+                }
+                contrastEvidence.append(attachment)
+            }
+            let element = issue.element.map { WorkbenchAuditElement($0, measuredContrast: measured) }
+            if let waiver = WorkbenchAuditWaiver.matching(issue.auditType.workbenchName, on: element, in: context) {
                 waived.append("\(summary): \(waiver.reason)")
             } else {
                 // Recorded here, with the element, rather than by the audit,
@@ -223,6 +248,11 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
                 XCTFail("\(screen ?? "screen list") (\(colorScheme)): \(summary): \(issue.compactDescription). \(issue.detailedDescription)")
             }
             return true
+        }
+        if !contrastEvidence.isEmpty {
+            XCTContext.runActivity(named: "\(contrastEvidence.count - 1) contrast issue(s)") { activity in
+                contrastEvidence.forEach(activity.add)
+            }
         }
         if !waived.isEmpty {
             let attachment = XCTAttachment(string: waived.joined(separator: "\n"))
@@ -289,6 +319,23 @@ enum WorkbenchApp {
         XCTFail("The window was still moving after \(Int(timeout)) seconds")
     }
 
+    #if os(macOS)
+    /// The unlabeled groups AppKit and SwiftUI put around the app's views, by
+    /// where they sit: the window's own group, the split view's column
+    /// groups, the groups in the sidebar outline's cells, which hold its
+    /// section headers, and the groups in the window's full-screen button.
+    static func frameworkGroups(in app: XCUIApplication) -> [CGRect] {
+        let window = app.windows.firstMatch
+        let groups = [
+            window.children(matching: .group),
+            window.splitGroups.children(matching: .group),
+            window.outlines.cells.children(matching: .group),
+            window.buttons.matching(identifier: "_XCUI:FullScreenWindow").descendants(matching: .group),
+        ]
+        return groups.flatMap { $0.allElementsBoundByIndex.map(\.frame) }
+    }
+    #endif
+
     /// The rows of the list of screens.
     static func sidebarRows(in app: XCUIApplication) -> XCUIElementQuery {
         app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", sidebarPrefix))
@@ -328,5 +375,46 @@ extension XCUIAccessibilityAuditType {
         if contains(.parentChild) { names.append("parentChild") }
         #endif
         return names.isEmpty ? "rawValue \(rawValue)" : names.joined(separator: "+")
+    }
+}
+
+/// Measures the contrast a screenshot shows.
+enum WorkbenchContrast {
+    /// The WCAG contrast ratio between the lightest and the darkest pixels of
+    /// the screenshot, or nil when its pixels cannot be read. For a text's
+    /// element, these are its glyphs and the background behind them.
+    static func ratio(of screenshot: XCUIScreenshot) -> Double? {
+        #if os(macOS)
+        screenshot.image.cgImage(forProposedRect: nil, context: nil, hints: nil).flatMap(ratio(of:))
+        #else
+        screenshot.image.cgImage.flatMap(ratio(of:))
+        #endif
+    }
+
+    /// The WCAG contrast ratio between the lightest and the darkest pixels of
+    /// the image, or nil when its pixels cannot be read.
+    static func ratio(of image: CGImage) -> Double? {
+        guard image.width > 0, image.height > 0,
+              let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(
+                  data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: image.width * 4,
+                  space: space, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+              )
+        else { return nil }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        guard let data = context.data else { return nil }
+        let pixels = data.bindMemory(to: UInt8.self, capacity: image.width * image.height * 4)
+        func linear(_ component: UInt8) -> Double {
+            let value = Double(component) / 255
+            return value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
+        }
+        var lightest = 0.0
+        var darkest = 1.0
+        for pixel in stride(from: 0, to: image.width * image.height * 4, by: 4) {
+            let luminance = 0.2126 * linear(pixels[pixel]) + 0.7152 * linear(pixels[pixel + 1]) + 0.0722 * linear(pixels[pixel + 2])
+            lightest = max(lightest, luminance)
+            darkest = min(darkest, luminance)
+        }
+        return (lightest + 0.05) / (darkest + 0.05)
     }
 }

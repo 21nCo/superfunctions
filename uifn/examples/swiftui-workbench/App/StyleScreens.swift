@@ -49,10 +49,12 @@ struct TogglesScreen: View {
         WorkbenchSection("Switch") {
             Toggle("Alerts", isOn: $alerts).toggleStyle(.uifnSwitch)
             Toggle("Sounds", isOn: $sounds).toggleStyle(.uifnSwitch)
+                .accessibilityIdentifier("toggles.sounds")
             Toggle("Sync (disabled)", isOn: .constant(true)).toggleStyle(.uifnSwitch).disabled(true)
             HStack {
                 Text("Label hidden")
                 Toggle("Vibrate", isOn: $vibrate).toggleStyle(.uifnSwitch).labelsHidden()
+                    .accessibilityIdentifier("toggles.vibrate")
             }
         }
         WorkbenchSection("Checkbox") {

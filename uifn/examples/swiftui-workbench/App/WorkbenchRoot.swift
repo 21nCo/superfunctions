@@ -84,6 +84,7 @@ enum WorkbenchScreen: String, CaseIterable, Identifiable, Hashable {
 struct WorkbenchRoot: View {
     @State private var selection: WorkbenchScreen?
     @State private var compactColumn: NavigationSplitViewColumn
+    @Environment(\.uifnTheme) private var theme
 
     init(initialScreen: WorkbenchScreen?) {
         _selection = State(initialValue: initialScreen)
@@ -99,11 +100,8 @@ struct WorkbenchRoot: View {
                             #if os(macOS)
                             // A navigation link in a macOS sidebar is an
                             // element with no role; a tagged row is the
-                            // list's own selectable row. It is the title
-                            // alone: a label's text element spans its icon,
-                            // which the sidebar draws fainter than the title,
-                            // so the contrast audit fails rows with large icons.
-                            Text(screen.title)
+                            // list's own selectable row.
+                            WorkbenchSidebarTitle(title: screen.title)
                                 .accessibilityIdentifier("workbench.sidebar.\(screen.rawValue)")
                                 .tag(screen)
                             #else
@@ -117,13 +115,23 @@ struct WorkbenchRoot: View {
                         // The list's own header color is too faint on iOS for
                         // the contrast audit.
                         Text(group.rawValue)
+                            #if os(macOS)
+                            .foregroundStyle(theme.colors.text.secondary.color)
+                            #else
                             .foregroundStyle(Color.primary)
+                            #endif
                             .accessibilityAddTraits(.isHeader)
                     }
                 }
             }
             .navigationTitle("UIFn Workbench")
             #if os(macOS)
+            // Over the sidebar's own translucent material the audit failed
+            // the contrast of a different set of legible rows each run. An
+            // opaque theme surface, with the rows in theme text colors,
+            // makes what it measures the same for every row.
+            .scrollContentBackground(.hidden)
+            .background(theme.colors.surface.sunken.color)
             .navigationSplitViewColumnWidth(min: 200, ideal: 240)
             #else
             // Keeps the whole list on an iPhone's screen, where the audit
@@ -144,6 +152,22 @@ struct WorkbenchRoot: View {
         #endif
     }
 }
+
+#if os(macOS)
+/// A row's title in the macOS sidebar: the theme's primary text on the
+/// sidebar's theme surface, or AppKit's selected text color on the list's
+/// emphasized selection, which AppKit draws in the accent color.
+private struct WorkbenchSidebarTitle: View {
+    let title: String
+    @Environment(\.uifnTheme) private var theme
+    @Environment(\.backgroundProminence) private var prominence
+
+    var body: some View {
+        Text(title)
+            .foregroundStyle(prominence == .increased ? Color(nsColor: .alternateSelectedControlTextColor) : theme.colors.text.primary.color)
+    }
+}
+#endif
 
 /// A screen's content, scrolling on the theme's canvas, with the toasts the
 /// screen shows over it.
