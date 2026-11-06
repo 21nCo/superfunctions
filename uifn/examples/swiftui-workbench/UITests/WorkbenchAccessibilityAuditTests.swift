@@ -46,15 +46,25 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
             )).firstMatch
         }
         func value(_ element: XCUIElement) -> String { "\(element.value ?? "")" }
+        // A labelled switch's element spans its label, which takes no
+        // presses, so press the track at the trailing end of the row.
+        func press(_ element: XCUIElement) {
+            let track = element.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0.5)).withOffset(CGVector(dx: -10, dy: 0))
+            #if os(macOS)
+            track.click()
+            #else
+            track.tap()
+            #endif
+        }
         let sounds = toggle("Sounds")
         let vibrate = toggle("Vibrate")
         XCTAssertTrue(vibrate.waitForExistence(timeout: 5), "The Vibrate switch did not appear")
         let soundsBefore = value(sounds)
         let vibrateBefore = value(vibrate)
-        vibrate.tap()
+        press(vibrate)
         XCTAssertNotEqual(value(vibrate), vibrateBefore, "Vibrate did not change")
         XCTAssertEqual(value(sounds), soundsBefore, "Setting Vibrate changed Sounds")
-        sounds.tap()
+        press(sounds)
         XCTAssertNotEqual(value(sounds), soundsBefore, "Sounds did not change")
         XCTAssertNotEqual(value(vibrate), vibrateBefore, "Setting Sounds changed Vibrate")
     }
