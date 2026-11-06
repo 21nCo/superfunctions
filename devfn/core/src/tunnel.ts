@@ -114,10 +114,10 @@ export function publishedPublicUrls(config: DevFnConfig, selection: PublicSelect
  * binding only: it does not need --allow-public because it neither starts a
  * connector nor calls the provider.
  */
-export async function planPublicUrls(options: { config: DevFnConfig; root: string; profile?: string; stateDir?: string }): Promise<{ binding?: string; timing?: UrlTiming; urls: Record<string, string>; assignedAfterStart?: string[] }> {
+export async function planPublicUrls(options: { config: DevFnConfig; root: string; profile?: string; stateDir?: string; runtime?: string }): Promise<{ binding?: string; timing?: UrlTiming; urls: Record<string, string>; assignedAfterStart?: string[] }> {
   validateDevFnConfig(options.config);
   const plan = createPlan(options.config, options.profile);
-  const identity = await resolveInstanceIdentity(options.config.project.id, options.root);
+  const identity = await resolveInstanceIdentity(options.config.project.id, options.root, options.runtime);
   const stateDir = await realpath(options.stateDir ?? defaultStateDir()).catch(() => options.stateDir ?? defaultStateDir());
   const selection = await selectedPublicRoutes(options.config, plan, identity, Object.fromEntries(plan.portNames.map((name) => [name, 1])), stateDir);
   if (!selection) return { urls: {} };

@@ -7,6 +7,8 @@ import { resolveContainedPath, type DevFnConfig, type TaskSpec } from "@devfn/co
 import { FilePortRegistry, withFileLock } from "@devfn/ports";
 import { createProcessEnvironment, resolveAdapterCommand, ProcessSupervisor, stopGatedLauncher, type ProcessRunResult } from "@devfn/processes";
 
+import { readClaims, stagedOutputName, taskAttribution } from "./outputs.js";
+import { devfnStateDirectories, runtimeDirectory, runtimeOutputPath, STATE_DIRECTORY_ENTRY } from "./runtime.js";
 import type { ResourcePlan } from "./resources.js";
 import { DevFnError, type LifecyclePlan } from "./types.js";
 
@@ -86,30 +88,86 @@ function taskNode(config: DevFnConfig, node: { name: string; kind: "process" | "
   return { spec, task: spec.task!, field: `${node.kind === "process" ? "processes" : "services"}.${node.name}` };
 }
 
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^$(){}|[\]\\]/g, String.raw`\$&`);
+/** Every runtime's file name of a `{runtime}` environment output; runtime names are those selectRuntime accepts. */
+const runtimeFileName = (template: string): RegExp =>
+  new RegExp("^" + template.split("{runtime}").map(escapeRegExp).join("[a-z0-9](?:[a-z0-9-]{0,22}[a-z0-9])?") + "$");
+/** The same pattern ignoring case, capturing each runtime segment. */
+const runtimeFileNameFolded = (template: string): RegExp =>
+  new RegExp("^" + template.split("{runtime}").map(escapeRegExp).join("([a-z0-9](?:[a-z0-9-]{0,22}[a-z0-9])?)") + "$", "i");
+
+/**
+ * Whether a canonical path is excluded DevFn state: an excluded path itself,
+ * any runtime's file of an excluded `{runtime}` output, or a staging file
+ * DevFn writes beside one of those (present during a write, or left by an
+ * interrupted one), decided by name before it is read.
+ */
+function isExcluded(excluded: readonly string[], absolute: string): boolean {
+  const matches = (candidate: string) => excluded.some((item) => item === candidate || (path.basename(item).includes("{runtime}") && path.dirname(item) === path.dirname(candidate) &&
+    runtimeFileName(path.basename(item)).test(path.basename(candidate))));
+  const staged = stagedOutputName(path.basename(absolute));
+  return matches(absolute) || (staged !== undefined && matches(path.join(path.dirname(absolute), staged)));
+}
+
+/**
+ * isExcluded, also for a name that spells a runtime's file of a `{runtime}` output (or its staging file) in another case. Such a name is excluded only when it is the same file as DevFn's own spelling (the template's literal segments as declared,
+ * the runtime segment lower-cased), as after a case-only rename on a case-insensitive volume; a distinct file on a case-sensitive volume stays an input. Links are never followed.
+ */
+async function isExcludedEntry(excluded: readonly string[], absolute: string): Promise<boolean> {
+  if (isExcluded(excluded, absolute)) return true;
+  const directory = path.dirname(absolute), name = path.basename(absolute), staged = stagedOutputName(name);
+  const spellings = excluded.filter((item) => path.basename(item).includes("{runtime}") && path.dirname(item) === directory).flatMap((item) => {
+    const template = path.basename(item), segments = template.split("{runtime}"), folded = runtimeFileNameFolded(template);
+    const written = (candidate: string) => {
+      const match = folded.exec(candidate);
+      return match ? segments.reduce((spelled, segment, index) => spelled + (index > 0 ? match[index]!.toLowerCase() : "") + segment, "") : undefined;
+    };
+    const direct = written(name), stagedName = staged === undefined ? undefined : written(staged);
+    return [...(direct === undefined ? [] : [direct]), ...(stagedName === undefined ? [] : [`.${stagedName}${name.slice(1 + staged!.length)}`])];
+  }).filter((spelling) => spelling !== name);
+  if (spellings.length === 0) return false;
+  const entry = await lstat(absolute).catch(() => undefined);
+  // A name of such a file that vanished during the walk has nothing left to hash.
+  if (!entry) return true;
+  for (const spelling of spellings) {
+    const own = await lstat(path.join(directory, spelling)).catch(() => undefined);
+    if (own && own.dev === entry.dev && own.ino === entry.ino) return true;
+  }
+  return false;
+}
+
 /** Content digest of a repository file or directory, walked under its canonical spelling (realpath of its parent) so excluded state matches however it is named; symlinks in it are hashed as links, never followed. A directory's entries are read one at a time within what remains of the entry budget, before any is sorted or visited. */
-async function digestInput(root: string, relative: string, field: string, excluded: readonly string[]): Promise<string> {
+async function digestInput(root: string, relative: string, field: string, excluded: readonly string[], fixed: readonly string[] = excluded, refused: readonly string[] = excluded, made: readonly string[] = [], listed: string[] = [], shared: readonly string[] = []): Promise<string> {
+  const ownEntry = (absolute: string) => shared.includes(path.dirname(absolute)) && STATE_DIRECTORY_ENTRY.test(path.basename(absolute)); // DevFn's entry, by name, in a recorded state directory that existed before DevFn used it.
+  const ownState = (absolute: string): boolean => absolute !== path.dirname(absolute) && (ownEntry(absolute) || ownState(path.dirname(absolute)));
   const target = await resolveContainedPath(root, relative, field).then(async (item) => path.join(await canonical(path.dirname(item)), path.basename(item))).catch((error: unknown) => {
     throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field}: ${error instanceof Error ? error.message : String(error)}`);
   });
-  if (await realpath(target).catch(() => target).then((real) => excluded.some((item) => real === item || real.startsWith(`${item}${path.sep}`)))) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} ${relative} is DevFn runtime state, not a task input.`);
-  const hash = createHash("sha256");
+  if (await realpath(target).catch(() => target).then(async (real) => await isExcludedEntry(refused, real) || refused.some((item) => real.startsWith(`${item}${path.sep}`)) || ownState(real))) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} ${relative} is DevFn runtime state, not a task input.`);
+  const hash = { parts: [] as string[], update: (part: string) => hash.parts.push(part), digest: (encoding: "hex") => createHash("sha256").update(hash.parts.join("")).digest(encoding) }, below = (items: readonly string[], absolute: string) => items.some((item) => item.startsWith(`${absolute}${path.sep}`));
   const budget = { entries: 0, bytes: 0 };
+  const gone = (entry: string, absolute: string) => (error: NodeJS.ErrnoException): undefined => { // An entry below the input that vanished while it was read is named, unless it held attributed state (a sibling's own cleanup); the revision retries the walk if attribution changed meanwhile.
+    if (error.code !== "ENOENT" && error.code !== "ENOTDIR") throw error;
+    if (!below(excluded, absolute)) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} entry ${entry} vanished while DevFn read it.`, { vanished: entry });
+  };
   const visit = async (absolute: string, name: string): Promise<void> => {
-    if (excluded.includes(absolute)) return;
+    if (await isExcludedEntry(absolute === target ? refused : excluded, absolute) || ownEntry(absolute)) return;
     if (++budget.entries > MAX_INPUT_ENTRIES) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} lists more than ${MAX_INPUT_ENTRIES} entries.`);
-    const stats = await lstat(absolute).catch((error: NodeJS.ErrnoException) => {
+    const shown = path.join(relative, name);
+    const stats = await lstat(absolute).catch(absolute !== target ? gone(shown, absolute) : (error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} ${relative} does not exist.`);
       throw error;
     });
-    if (stats.isSymbolicLink()) hash.update(`l\0${name}\0${await readlink(absolute)}\0`);
+    if (!stats) return; if (stats.isSymbolicLink()) hash.update(`l\0${name}\0${await readlink(absolute).catch(gone(shown, absolute)) ?? ""}\0`);
     else if (stats.isDirectory()) {
-      if (!excluded.some((item) => item.startsWith(`${absolute}${path.sep}`))) hash.update(`d\0${name}\0`);
-      const entries: string[] = []; for await (const { name: entry } of await opendir(absolute)) if (!excluded.includes(path.join(absolute, entry)) && entries.push(entry) > MAX_INPUT_ENTRIES - budget.entries) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} lists more than ${MAX_INPUT_ENTRIES} entries.`);
+      const marker = hash.update(below(fixed, absolute) ? "" : `d\0${name}\0`) - 1, listing = await opendir(absolute).catch(gone(shown, absolute)); listed.push(absolute); // Its marker depends on the config's own state below it, as in DevFn v0.1, and on provenance, never on recorded state below it: only a directory DevFn made, holding nothing else, is transparent.
+      const entries: string[] = []; for await (const { name: entry } of listing ?? []) if (!await isExcludedEntry(excluded, path.join(absolute, entry)) && !ownEntry(path.join(absolute, entry)) && entries.push(entry) > MAX_INPUT_ENTRIES - budget.entries) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} lists more than ${MAX_INPUT_ENTRIES} entries.`);
       for (const entry of entries.sort(compare)) await visit(path.join(absolute, entry), `${name}/${entry}`);
+      if (hash.parts.length === marker + 1 && made.includes(absolute)) hash.parts.length = marker;
     } else if (stats.isFile()) {
       budget.bytes += stats.size;
       if (budget.bytes > MAX_INPUT_BYTES) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} exceeds ${MAX_INPUT_BYTES} bytes.`);
-      hash.update(`f\0${name}\0${sha256(await readFile(absolute))}\0`);
+      hash.update(`f\0${name}\0${sha256(await readFile(absolute).catch(gone(shown, absolute)) ?? "")}\0`);
     } else hash.update(`o\0${name}\0`);
   };
   await visit(target, ".");
@@ -146,6 +204,22 @@ function leaseStable(config: DevFnConfig, node: string, profile: string, resourc
 }
 
 /**
+ * Where a task's artifacts go, when it declares them: a task's completion is
+ * valid only for the destination it wrote, so a changed mode or runtime
+ * directory, or a symlink anywhere on the instance's artifact directory, changes its revision: that directory
+ * counts as the one it reaches (deepest existing ancestor resolved, relative to the real checkout when inside it).
+ * Undeclared, nothing is added and earlier revisions stay valid.
+ */
+async function artifactSettings(config: DevFnConfig, root: string, name: string, instanceId = "{instance}"): Promise<{ artifacts?: { mode: "runtime" | "shared"; directory?: string } }> {
+  const mode = config.processes![name].artifacts;
+  if (!mode) return {};
+  if (mode === "shared") return { artifacts: { mode } };
+  const [checkout, reached] = await Promise.all([canonical(path.resolve(root)), canonical(path.join(runtimeDirectory(config, path.resolve(root), instanceId), "artifacts", name))]);
+  const relative = path.relative(checkout, reached);
+  return { artifacts: { mode, directory: relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) ? reached : relative } };
+}
+
+/**
  * The input revision of a task: its declared command and settings, its
  * manifest and selected profile environment as written (secret channels by
  * name only), the targets, namespaces and values of the resources it consumes
@@ -157,13 +231,13 @@ function leaseStable(config: DevFnConfig, node: string, profile: string, resourc
  * environment as written) only selects the Compose sources, as at startup; any value changing the effective Compose resource the task uses counts, and its profile's name where a written value names DEVFN_PROFILE.
  */
 export async function taskInputRevision(config: DevFnConfig, root: string, node: { name: string; kind: "process" | "service" }, profile: string, resources?: ResourcePlan,
-  environment?: Record<string, string>, stateDir?: string): Promise<string> {
+  environment?: Record<string, string>, stateDir?: string, instanceId?: string): Promise<string> {
   const { spec, task, field } = taskNode(config, node);
   const sorted = (values: readonly string[] | undefined) => [...(values ?? [])].sort(compare);
   const secrets = new Set(spec.secretEnv ?? []);
   const entries = (values: Record<string, string> | undefined) => Object.entries(values ?? {}).map(([key, value]): [string, string | null] => [key, secrets.has(key) ? null : value]).sort(([a], [b]) => compare(a, b));
   const settings = node.kind === "process"
-    ? { adapter: config.processes![node.name].adapter, command: config.processes![node.name].command ?? [], script: config.processes![node.name].script ?? null, cwd: config.processes![node.name].cwd ?? "." }
+    ? { adapter: config.processes![node.name].adapter, command: config.processes![node.name].command ?? [], script: config.processes![node.name].script ?? null, cwd: config.processes![node.name].cwd ?? ".", ...await artifactSettings(config, root, node.name, instanceId) }
     : { file: config.services![node.name].file ?? "compose.yaml", service: config.services![node.name].service, projectName: config.services![node.name].projectName ?? "devfn",
       source: await digestComposeSource(root, config.services![node.name], `${field}.file`, leaseStable(config, node.name, profile, resources, environment ?? { ...config.profiles[profile]?.environment, ...spec.env }), taskScope(config, "", node, resources).scope === "shared") };
   const consumed = sorted(spec.resources).map((name) => {
@@ -176,10 +250,16 @@ export async function taskInputRevision(config: DevFnConfig, root: string, node:
       provider: planned.provider ? [planned.provider.node, planned.provider.port] : null, namespace: planned.namespace?.prefix ?? null, values }];
   });
   const inputs: Array<[string, string]> = [];
-  // What DevFn writes under the repository (runtime, receipts, environment outputs, a state dir; canonical before it exists) is never an input, nor is a directory holding it beyond its other entries.
-  const excluded = await Promise.all([...[path.join(config.runtimeDir ?? ".devfn", "instances"), path.join(".devfn", "receipts"), ...(config.environmentOutputs ?? []).map((output) => output.path)]
-    .map((item) => path.resolve(root, item)), ...(stateDir ? [stateDir] : [])].map((item) => canonical(path.resolve(item))));
-  for (const [index, input] of (task.inputs ?? []).entries()) inputs.push([input, await digestInput(root, input, `${field}.task.inputs[${index}]`, excluded)]);
+  // What DevFn writes under the repository (runtime, receipts, environment outputs of every runtime and their claims, a state dir; canonical before it exists) is never an input, nor is a directory holding it beyond its other entries.
+  const resolved = async (items: readonly string[]) => await Promise.all(items.map((item) => canonical(path.resolve(root, item)))), fixed = await resolved([...devfnStateDirectories(config.runtimeDir), ...(config.environmentOutputs ?? []).flatMap((output) => output.path.includes("{runtime}") ? [output.path, runtimeOutputPath(output.path)] : [output.path]), ...(stateDir ? [stateDir] : [])]); // So is what the checkout's instances record (taskAttribution): every runtime directory, also under an earlier runtimeDir, and another instance's outputs while it holds them; a file one wrote, while it holds what it last wrote, only within a walked directory. A changed or dropped output is an input again, as in DevFn v0.1.
+  const discover = async () => await taskAttribution(config, root, async () => await readClaims(root), instanceId).then(async ({ held, released, made, shared }) => await Promise.all([held, [...held, ...released], made, shared].map(async (items) => [...new Set(await resolved(items))].sort(compare))));
+  for (let [held, recorded, made, shared] = await discover(), pass = 1, listed: string[] = []; ; pass += 1, inputs.length = 0, listed = []) { // A sibling publishes attribution before it creates anything and withdraws it only after removing what it created, so attribution read again after the walk, or after an entry vanished during it, covers all the walk saw unless a directory it listed is gone since (published and withdrawn meanwhile); the walk is repeated (bounded) while either changed.
+    const vanished = await (async () => { for (const [index, input] of (task.inputs ?? []).entries()) inputs.push([input, await digestInput(root, input, `${field}.task.inputs[${index}]`, [...fixed, ...recorded], fixed, [...fixed, ...held], made, listed, shared)]); })()
+      .catch((error: unknown) => { if (error instanceof DevFnError && error.details?.vanished !== undefined) return error; throw error; });
+    const now = await discover(); if (JSON.stringify(now) === JSON.stringify([held, recorded, made, shared]) && (await Promise.all(listed.map(async (item) => (await lstat(item).catch(() => undefined))?.isDirectory()))).every(Boolean)) { if (vanished) throw vanished; break; }
+    if (pass === 3) throw new DevFnError("DEVFN_RUNTIME_INVALID", `Other runtimes of this checkout kept starting while DevFn computed the input revision of task ${node.name}; start again.`, { task: node.name });
+    [held, recorded, made, shared] = now;
+  }
   return sha256(JSON.stringify({ version: 1, kind: node.kind, settings, env: entries(spec.env), profileEnv: entries(config.profiles[profile]?.environment),
     envAllowlist: sorted(spec.envAllowlist), secretEnv: sorted(spec.secretEnv), resources: consumed, inputs, profile: JSON.stringify([settings, spec.env, config.profiles[profile]?.environment]).includes("DEVFN_PROFILE") ? profile : undefined }));
 }
@@ -212,6 +292,11 @@ export function taskScope(config: DevFnConfig, instanceId: string, node: { name:
   if (shared.length > 0 && instance.length > 0) {
     throw new DevFnError("DEVFN_RUNTIME_INVALID", `Task ${node.name} consumes resources shared across worktrees (${shared.map(([name]) => name).join(", ")}) and per-instance resources (${instance.join(", ")}). Its completion cannot be recorded once for the shared targets and once per instance; split it into tasks that each consume only one kind.`,
       { task: node.name, shared: shared.map(([name]) => name), instance });
+  }
+  if (shared.length > 0 && node.kind === "process" && config.processes![node.name].artifacts === "runtime") {
+    // One completion for every worktree and runtime would leave each other runtime's own artifact directory empty.
+    throw new DevFnError("DEVFN_RUNTIME_INVALID", `Task ${node.name} consumes resources shared across worktrees (${shared.map(([name]) => name).join(", ")}), so it runs once for all of them, but declares artifacts "runtime", which each runtime needs written; declare artifacts "shared" or split it.`,
+      { task: node.name, shared: shared.map(([name]) => name) });
   }
   const identity = shared.length > 0
     ? { project: config.project.id, task: node.name, targets: shared.map(([name, planned]) => [name, planned.remote!.url, planned.namespace?.prefix ?? null]).sort((a, b) => compare(a[0]!, b[0]!)) }
@@ -363,7 +448,7 @@ export async function preflightTasks(input: { config: DevFnConfig; plan: Lifecyc
     if (!tasks.some((node) => node.name === name)) throw new DevFnError("DEVFN_RUNTIME_INVALID", `--rerun-task ${name} names no task of profile ${input.plan.profile}.`);
   }
   for (const node of tasks) {
-    const revision = async () => await taskInputRevision(input.config, input.root, node, input.plan.profile, input.resources, input.environments?.[node.name]?.environment, input.stateDir);
+    const revision = async () => await taskInputRevision(input.config, input.root, node, input.plan.profile, input.resources, input.environments?.[node.name]?.environment, input.stateDir, input.instanceId);
     const { key } = taskScope(input.config, input.instanceId, node, input.resources);
     const { task } = taskNode(input.config, node);
     const rerunRequested = input.rerunTasks?.includes(node.name) ?? false;
@@ -389,6 +474,8 @@ export interface RunTaskContext {
   root: string;
   stateDir: string;
   runtimeDir: string;
+  /** The runtime directory checked again immediately before each attempt writes its log and Compose override, so a link put on those paths after an earlier check or attempt is refused before any byte is written. */
+  attemptRuntimeDir?: () => Promise<string>;
   instanceId: string;
   invocationId: string;
   node: { name: string; kind: "process" | "service" };
@@ -427,7 +514,7 @@ export async function runTask(context: RunTaskContext): Promise<TaskReceipt> {
     locked = true;
     const journal: TaskJournal = await readTaskJournal(stateDir, key) ?? { version: 1, task: node.name, scope, attempts: [] };
     await settleAttempts(journal, node.name, () => context.compose ?? new ComposeController(), async () => await writeTaskJournal(stateDir, key, journal));
-    const revision = await taskInputRevision(config, context.root, node, context.profile, context.resources, context.environment, stateDir);
+    const revision = await taskInputRevision(config, context.root, node, context.profile, context.resources, context.environment, stateDir, context.instanceId);
     const decision = decide(journal, revision, task, node.name, context.rerunRequested);
     const receipt: TaskReceipt = { name: node.name, kind: node.kind, rerun: task.rerun ?? "on-change", idempotent: task.idempotent ?? false, inputRevision: revision,
       status: "skipped", reason: decision.reason, attempts: [], ...(journal.lastSuccess ? { lastSuccess: journal.lastSuccess } : {}) };
@@ -498,7 +585,8 @@ async function runAttempt(context: RunTaskContext, spec: ReturnType<typeof taskN
   journal: (launcher: { pid: number; birthSignature?: string }, compose?: TaskAttempt["compose"]) => Promise<void>): Promise<ProcessRunResult> {
   const supervisor = context.supervisor ?? new ProcessSupervisor();
   const { node, registry, invocationId } = context;
-  const common = { name: node.name, root: context.root, runtimeDir: context.runtimeDir, timeoutMs, redactKeys: spec.secretEnv ?? [], ...(context.signal ? { signal: context.signal } : {}) };
+  const runtimeDir = context.attemptRuntimeDir ? await context.attemptRuntimeDir() : context.runtimeDir;
+  const common = { name: node.name, root: context.root, runtimeDir, timeoutMs, redactKeys: spec.secretEnv ?? [], ...(context.signal ? { signal: context.signal } : {}) };
   if (node.kind === "process") {
     const processSpec = { ...context.config.processes![node.name], env: context.environment, command: context.command, script: context.script };
     return await supervisor.run({ ...common, command: resolveAdapterCommand(processSpec), cwd: processSpec.cwd, environment: createProcessEnvironment(processSpec, context.generated),
@@ -516,7 +604,7 @@ async function runAttempt(context: RunTaskContext, spec: ReturnType<typeof taskN
   // a task with secret channels keeps none of its output, as a started
   // service with them logs nothing.
   const discardOutput = (spec.secretEnv?.length ?? 0) > 0;
-  const prepared = await compose.prepareTask({ name: node.name, spec: serviceSpec, root: context.root, runtimeDir: context.runtimeDir, instanceId: context.instanceId, environment: context.environment,
+  const prepared = await compose.prepareTask({ name: node.name, spec: serviceSpec, root: context.root, runtimeDir, instanceId: context.instanceId, environment: context.environment,
     attempt: `${invocationId}.${number}` });
   let launcher: { pid: number; birthSignature?: string } | undefined;
   const result = await supervisor.run({ ...common, command: prepared.command, environment: prepared.environment, ...(discardOutput ? { discardOutput } : {}),
