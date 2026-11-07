@@ -47,7 +47,7 @@ final class WorkbenchAuditWaiverTests: XCTestCase {
         let selected = try crop("contrast-selected-row-light")
         XCTAssertFalse(selected.passes, selected.summary)
         XCTAssertEqual(selected.background, accent)
-        XCTAssertLessThan(selected.lines.first?.contrast ?? 0, 3.4, selected.summary)
+        XCTAssertLessThan(selected.lines.first?.weakest?.contrast ?? 0, 3.4, selected.summary)
         // The unselected "Toasts" row the audit failed, in the same colors as
         // the "Banners" row it passed.
         let toasts = try crop("contrast-toasts-row-light")
@@ -57,11 +57,11 @@ final class WorkbenchAuditWaiverTests: XCTestCase {
         let toast = try crop("contrast-toast-dark")
         XCTAssertTrue(toast.passes, toast.summary)
         XCTAssertEqual(toast.lines.count, 2, toast.summary)
-        // AppKit's window title, under the toolbar's separator.
+        // AppKit's window title: the toolbar's separator and the window's
+        // corner in the screenshot leave it unmeasured (see the
+        // macos-window-title waiver).
         let title = try crop("contrast-window-title-dark")
-        XCTAssertTrue(title.passes, title.summary)
-        XCTAssertEqual(title.lines.count, 1, title.summary)
-        XCTAssertEqual(title.rules.count, 1, title.summary)
+        XCTAssertFalse(title.passes, title.summary)
     }
 
     func testTheMeasurementFailsEveryTextItCannotShowReaches45To1() throws {
@@ -71,9 +71,24 @@ final class WorkbenchAuditWaiverTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(crop(on: canvas, lines: [[ink], [secondary]])).passes)
         // A title that passes does not carry a message that fails.
         XCTAssertFalse(try XCTUnwrap(crop(on: canvas, lines: [[ink], [faint]])).passes)
-        // Nor does one color carry another on the same line.
-        let twoColors = try XCTUnwrap(crop(on: canvas, lines: [[ink, RGB(red: 200, green: 30, blue: 30)]]))
-        XCTAssertFalse(twoColors.passes, twoColors.summary)
+        // Faint text is measured, not dropped as background.
+        for barelyThere in [RGB(red: 213, green: 220, blue: 227), RGB(red: 225, green: 232, blue: 239)] {
+            let measured = try XCTUnwrap(crop(on: canvas, lines: [[ink], [barelyThere]]))
+            XCTAssertFalse(measured.passes, measured.summary)
+        }
+        // Each run on a line is measured on its own, whether its color is
+        // another hue or a lighter one in the same hue.
+        XCTAssertTrue(try XCTUnwrap(crop(on: canvas, lines: [[ink, RGB(red: 150, green: 20, blue: 20)]])).passes)
+        for second in [RGB(red: 230, green: 120, blue: 120), faint] {
+            let twoColors = try XCTUnwrap(crop(on: canvas, lines: [[ink, ink, second]]))
+            XCTAssertFalse(twoColors.passes, twoColors.summary)
+        }
+        // Text on a fill is not measured against the background around it.
+        var chip = pixels(on: canvas, lines: [])
+        for _ in 0..<11 { chip += (0..<60).map { x in (10..<40).contains(x) ? (x % 4 == 0 ? RGB(red: 120, green: 128, blue: 136) : RGB(red: 40, green: 48, blue: 56)) : canvas } }
+        chip += [RGB](repeating: canvas, count: 60 * 5)
+        let onAFill = try XCTUnwrap(WorkbenchContrastMeasurement(pixels: chip, width: 60))
+        XCTAssertFalse(onAFill.passes, onAFill.summary)
         // A few pixels of higher contrast do not lift a failing line.
         var stray = [RGB](repeating: accent, count: 60 * 19)
         for row in 3..<14 { for x in stride(from: 0, to: 60, by: 4) { stray[row * 60 + x] = ink } }
@@ -94,6 +109,7 @@ final class WorkbenchAuditWaiverTests: XCTestCase {
     private let fullScreenButton = CGRect(x: 97, y: 50, width: 14, height: 14)
     private let touchBar = CGRect(x: 80, y: 0, width: 685, height: 30)
     private let emoji = WorkbenchAuditElement(type: .button, label: "emoji & symbols", frame: CGRect(x: 79, y: -1, width: 74, height: 32))
+    private let title = CGRect(x: 284, y: 31, width: 704, height: 52)
 
     private func node(_ type: XCUIElement.ElementType, _ frame: CGRect, label: String = "", identifier: String = "", _ children: [WorkbenchAuditNode] = []) -> WorkbenchAuditNode {
         WorkbenchAuditNode(element: WorkbenchAuditElement(type: type, identifier: identifier, label: label, frame: frame), children: children)
@@ -115,6 +131,7 @@ final class WorkbenchAuditWaiverTests: XCTestCase {
                         node(.group, window, [node(.scrollView, page, identifier: "workbench.screen.buttons", extra)]),
                     ]),
                 ]),
+                node(.staticText, title),
                 node(.button, CGRect(x: 96, y: 49, width: 16, height: 16), identifier: "_XCUI:FullScreenWindow", [node(.group, fullScreenButton, [node(.group, fullScreenButton)])]),
             ]),
         ])
@@ -127,7 +144,7 @@ final class WorkbenchAuditWaiverTests: XCTestCase {
             page: screen == nil ? nil : CGRect(x: 280, y: 83, width: 712, height: 622),
             window: window
         )
-        (context.frameworkGroups, context.touchBarItems) = WorkbenchFrameworkElements.find(
+        (context.frameworkGroups, context.touchBarItems, context.windowTitles) = WorkbenchFrameworkElements.find(
             in: app ?? self.app(),
             touchBars: touchBars ?? [node(.touchBar, touchBar, [node(.button, emoji.frame, label: emoji.label)])]
         )
@@ -182,6 +199,18 @@ final class WorkbenchAuditWaiverTests: XCTestCase {
         // An element of the app's with the item's frame leaves it audited.
         let shared = self.context(screen: "text-fields", app: app(page: [node(.button, emoji.frame, label: emoji.label)]))
         XCTAssertNil(waiver("action", emoji, shared))
+    }
+
+    func testTheWindowTitleWaiverCoversOnlyAppKitsTitle() {
+        let context = context(screen: "text-fields", colorScheme: "dark")
+        XCTAssertEqual(waiver("contrast", .init(type: .staticText, value: "Text fields", frame: title), context), "macos-window-title")
+        // The app's own texts: the list's row of the same name, and a text on
+        // the page.
+        XCTAssertNil(waiver("contrast", .init(type: .staticText, identifier: WorkbenchApp.sidebarPrefix + "text-fields", value: "Text fields", frame: CGRect(x: 56, y: 142, width: 70, height: 16)), context))
+        XCTAssertNil(waiver("contrast", .init(type: .staticText, value: "Text fields", frame: CGRect(x: 304, y: 107, width: 80, height: 20)), context))
+        // A text of the app's with the title's frame leaves it audited.
+        let shared = self.context(screen: "text-fields", app: app(page: [node(.staticText, title)]))
+        XCTAssertNil(waiver("contrast", .init(type: .staticText, frame: title), shared))
     }
 
     func testTheMisreadWaiverCoversOnlyMeasuredTextOutsideTheSelectedRow() throws {

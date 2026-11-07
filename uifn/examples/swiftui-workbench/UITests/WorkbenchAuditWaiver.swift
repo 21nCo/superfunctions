@@ -16,6 +16,9 @@ struct WorkbenchAuditContext {
     var frameworkGroups: [WorkbenchAuditElement] = []
     /// The Touch Bars AppKit shows for the app on macOS, and their items.
     var touchBarItems: [WorkbenchAuditElement] = []
+    /// The texts AppKit draws as children of a window or its toolbar on
+    /// macOS, such as the window's title.
+    var windowTitles: [WorkbenchAuditElement] = []
 }
 
 extension CGRect {
@@ -85,21 +88,25 @@ enum WorkbenchFrameworkElements {
     /// The workbench's sidebar section headers.
     static let sectionHeaders: Set<String> = ["Styles", "Components"]
 
-    /// The framework's unlabeled groups and the Touch Bars and their items.
+    /// The framework's unlabeled groups, the Touch Bars and their items, and
+    /// the texts that are children of a window or its toolbar.
     /// The groups are those whose parent is a window or the split view, the
     /// group a sidebar row's cell holds around a section header's text, and
     /// those in the window's full-screen button. An element is left out when
     /// any other element of the app has its type and frame, so that an app
     /// element that coincides with one is still audited.
-    static func find(in app: WorkbenchAuditNode, touchBars: [WorkbenchAuditNode]) -> (groups: [WorkbenchAuditElement], touchBarItems: [WorkbenchAuditElement]) {
+    static func find(in app: WorkbenchAuditNode, touchBars: [WorkbenchAuditNode]) -> (groups: [WorkbenchAuditElement], touchBarItems: [WorkbenchAuditElement], windowTitles: [WorkbenchAuditElement]) {
         var groups: [WorkbenchAuditElement] = []
         var touchBarItems: [WorkbenchAuditElement] = []
+        var windowTitles: [WorkbenchAuditElement] = []
         var others: [WorkbenchAuditElement] = []
         func visit(_ node: WorkbenchAuditNode, ancestors: [WorkbenchAuditNode]) {
             if node.element.type == .touchBar || ancestors.contains(where: { $0.element.type == .touchBar }) {
                 touchBarItems.append(node.element)
             } else if isAFrameworkGroup(node, ancestors: ancestors) {
                 groups.append(node.element)
+            } else if node.element.type == .staticText, let parent = ancestors.last, [.window, .toolbar].contains(parent.element.type) {
+                windowTitles.append(node.element)
             } else {
                 others.append(node.element)
             }
@@ -110,7 +117,7 @@ enum WorkbenchFrameworkElements {
         let isUnique = { (element: WorkbenchAuditElement) in
             !others.contains { $0.type == element.type && $0.frame.isWithinAPoint(of: element.frame) }
         }
-        return (groups.filter(isUnique), touchBarItems.filter(isUnique))
+        return (groups.filter(isUnique), touchBarItems.filter(isUnique), windowTitles.filter(isUnique))
     }
 
     private static func isAFrameworkGroup(_ node: WorkbenchAuditNode, ancestors: [WorkbenchAuditNode]) -> Bool {
@@ -248,6 +255,17 @@ struct WorkbenchAuditWaiver {
             reason: "The menu is SwiftUI's own, in the system button menu style; the UIFn style only draws its label. The audit finds no press action on the menu button SwiftUI makes. Opening it with VoiceOver and Full Keyboard Access is checked under UIF-29."
         ),
         WorkbenchAuditWaiver(
+            id: "macos-window-title",
+            screens: [],
+            platform: .macOS,
+            auditTypes: ["contrast"],
+            element: { element, context in
+                guard let element else { return false }
+                return context.windowTitles.contains { $0.isSame(as: element) }
+            },
+            reason: "AppKit draws the window's title in its toolbar in its own colors (light text at 15.7:1 on the dark toolbar). The title's screenshot spans the toolbar with its separator and the window's rounded corner, so the screenshot measurement cannot single out the text. Only a text that is a child of the window or its toolbar is waived, and not one whose type and frame an element of the app's own shares."
+        ),
+        WorkbenchAuditWaiver(
             id: "macos-contrast-misread",
             screens: [],
             platform: .macOS,
@@ -258,7 +276,7 @@ struct WorkbenchAuditWaiver {
                       element.identifier != context.screen.map({ WorkbenchApp.sidebarPrefix + $0 }) else { return false }
                 return element.contrast?.passes == true
             },
-            reason: "The macOS audit fails the contrast of texts that measure well above 4.5:1, and of different texts from run to run, such as the unselected \"Toasts\" row (11.4:1) while the \"Banners\" row in the same colors passes. The test measures each issue's element screenshot and waives an enabled text only when one color covers at least half of it and each line of text on it is in one color that a quarter of the line's ink pixels reach at 4.5:1 or more against it; edge pixels only blend toward the background, so this never overstates a text's contrast. A line below 4.5:1 or in a second color, an unreadable screenshot and the selected sidebar row stay failed. The measurement is attached with each contrast issue."
+            reason: "The macOS audit fails the contrast of texts that measure well above 4.5:1, and of different texts from run to run, such as the unselected \"Toasts\" row (8.5:1) while the \"Banners\" row in the same colors passes. The test measures each issue's element screenshot and waives an enabled text only when one color covers at least half of it and every glyph run on every line reaches 4.5:1 against it, each run by the color a quarter of its ink reaches. Faint ink counts, and a fill behind text fails. A failing or unreadable run and the selected sidebar row stay failed. The measurement is attached with each contrast issue."
         ),
     ]
 
@@ -275,10 +293,14 @@ struct WorkbenchAuditWaiver {
 }
 
 /// The contrast of the text in an audit issue's element, measured from the
-/// element's screenshot: its background, the most common color, and each line
-/// of text on it. A line's text color is the color that a quarter of the
-/// line's ink pixels reach; edge pixels blend toward the background, so a
-/// text drawn in one color measures at most that color's contrast.
+/// element's screenshot. The background is its most common color; every
+/// pixel further than 3 from it in any channel is ink, however faint. Ink
+/// forms lines (bands of rows) and, on each line, runs (columns with ink
+/// between columns without: a glyph or a few touching glyphs). A run's text
+/// color is the color a quarter of its ink reaches. Edge pixels blend toward
+/// the background, so a run drawn in one color measures at most that color's
+/// contrast, and a run in a second color, however faint, is measured on its
+/// own. What it cannot tell apart is two colors within one run.
 struct WorkbenchContrastMeasurement {
     struct RGB: Hashable {
         var red, green, blue: UInt8
@@ -298,23 +320,42 @@ struct WorkbenchContrastMeasurement {
         }
 
         func isClose(to other: RGB) -> Bool {
-            max(abs(Int(red) - Int(other.red)), abs(Int(green) - Int(other.green)), abs(Int(blue) - Int(other.blue))) <= 8
+            max(abs(Int(red) - Int(other.red)), abs(Int(green) - Int(other.green)), abs(Int(blue) - Int(other.blue))) <= 3
         }
 
         var description: String { "rgb(\(red), \(green), \(blue))" }
     }
 
+    /// A run of columns with ink on a line, a glyph or a few touching
+    /// glyphs, measured on its own so that a second color on the line is
+    /// measured as its own run.
+    struct Run {
+        let columns: ClosedRange<Int>
+        let ink: Int
+        /// The color a quarter of the run's ink reaches.
+        let text: RGB
+        let contrast: Double
+        /// The share of the run's ink that is not a blend of the text color
+        /// and the background, such as a second color.
+        let otherColorShare: Double
+        /// The share of the run's box its ink covers.
+        let coverage: Double
+        /// Whether the run is a fill behind text rather than text: as wide
+        /// as it is tall and mostly covered. A thin glyph such as "l" covers
+        /// its narrow box too.
+        let isAFill: Bool
+
+        var passes: Bool { contrast >= 4.5 && otherColorShare <= 0.15 && !isAFill }
+    }
+
     /// A band of rows with ink, between rows without.
     struct Line {
         let rows: ClosedRange<Int>
-        let ink: Int
-        let text: RGB?
-        let contrast: Double
-        /// The share of the line's ink that is not a blend of the text color
-        /// and the background, such as a second text color.
-        let otherColorShare: Double
+        let runs: [Run]
 
-        var passes: Bool { text != nil && contrast >= 4.5 && otherColorShare <= 0.15 }
+        var passes: Bool { !runs.isEmpty && runs.allSatisfy(\.passes) }
+        /// The failing run, or else the run of lowest contrast.
+        var weakest: Run? { runs.first { !$0.passes } ?? runs.min { $0.contrast < $1.contrast } }
     }
 
     let background: RGB
@@ -324,16 +365,19 @@ struct WorkbenchContrastMeasurement {
     /// separator, which are not text.
     let rules: [ClosedRange<Int>]
 
-    /// Whether every line of text on the one background reaches 4.5:1.
+    /// Whether every run of every line of text on the one background reaches
+    /// 4.5:1.
     var passes: Bool { backgroundShare >= 0.5 && !lines.isEmpty && lines.allSatisfy(\.passes) }
 
     var summary: String {
         let measured = lines.map { line in
-            let text = line.text.map { "\($0.description) \(String(format: "%.2f", line.contrast)):1" } ?? "unreadable"
-            return "rows \(line.rows.lowerBound)-\(line.rows.upperBound): text \(text), \(Int((line.otherColorShare * 100).rounded()))% other colors"
+            let weakest = line.weakest.map { run in
+                "weakest run at columns \(run.columns.lowerBound)-\(run.columns.upperBound): \(run.text.description) \(String(format: "%.2f", run.contrast)):1, \(Int((run.otherColorShare * 100).rounded()))% other colors, \(Int((run.coverage * 100).rounded()))% filled"
+            } ?? "no runs"
+            return "rows \(line.rows.lowerBound)-\(line.rows.upperBound), \(line.runs.count) run(s), \(weakest)"
         }
         let ruled = rules.isEmpty ? "" : "; separators at rows \(rules.map { "\($0.lowerBound)-\($0.upperBound)" }.joined(separator: ", "))"
-        return "background \(background.description) (\(Int((backgroundShare * 100).rounded()))%), \(lines.count) line(s): \(measured.joined(separator: "; "))\(ruled); \(passes ? "every line reaches 4.5:1" : "not shown to reach 4.5:1")"
+        return "background \(background.description) (\(Int((backgroundShare * 100).rounded()))%), \(lines.count) line(s): \(measured.joined(separator: "; "))\(ruled); \(passes ? "every run reaches 4.5:1" : "not shown to reach 4.5:1")"
     }
 
     init?(_ image: CGImage) {
@@ -353,7 +397,9 @@ struct WorkbenchContrastMeasurement {
         self.init(pixels: pixels, width: width)
     }
 
-    /// Measures pixels in rows of `width`, top row first.
+    /// Measures pixels in rows of `width`, top row first. Every pixel that
+    /// is not close to the background is ink, however faint, so faint text
+    /// is measured rather than dropped.
     init?(pixels: [RGB], width: Int) {
         guard width > 0, !pixels.isEmpty, pixels.count % width == 0 else { return nil }
         let height = pixels.count / width
@@ -363,9 +409,9 @@ struct WorkbenchContrastMeasurement {
         self.background = background
         backgroundShare = Double(pixels.filter { $0.isClose(to: background) }.count) / Double(pixels.count)
 
-        let isInk = { (pixel: RGB) in !pixel.isClose(to: background) && pixel.contrast(with: background) >= 1.5 }
+        let isInk = { (x: Int, y: Int) in !pixels[y * width + x].isClose(to: background) }
         var bands: [ClosedRange<Int>] = []
-        for row in 0..<height where pixels[row * width ..< (row + 1) * width].contains(where: isInk) {
+        for row in 0..<height where (0..<width).contains(where: { isInk($0, row) }) {
             if let last = bands.last, last.upperBound == row - 1 {
                 bands[bands.count - 1] = last.lowerBound...row
             } else {
@@ -375,20 +421,37 @@ struct WorkbenchContrastMeasurement {
         var lines: [Line] = []
         var rules: [ClosedRange<Int>] = []
         for band in bands {
-            let ink = band.flatMap { row in pixels[row * width ..< (row + 1) * width].filter(isInk) }
-            let columns = Set(band.flatMap { row in (0..<width).filter { isInk(pixels[row * width + $0]) } })
-            if band.count <= 2 && Double(columns.count) >= 0.8 * Double(width) {
+            let inkColumns = (0..<width).filter { x in band.contains { isInk(x, $0) } }
+            if band.count <= 2 && Double(inkColumns.count) >= 0.8 * Double(width) {
                 rules.append(band)
                 continue
             }
-            lines.append(Self.line(band, ink: ink, background: background))
+            // Columns with ink, split at columns without; a mark of fewer
+            // than 8 pixels, such as a period, joins the run before it.
+            var groups: [ClosedRange<Int>] = []
+            for x in inkColumns {
+                if let last = groups.last, last.upperBound == x - 1 {
+                    groups[groups.count - 1] = last.lowerBound...x
+                } else {
+                    groups.append(x...x)
+                }
+            }
+            let inkIn = { (columns: ClosedRange<Int>) in columns.flatMap { x in band.filter { isInk(x, $0) }.map { pixels[$0 * width + x] } } }
+            var runs: [ClosedRange<Int>] = []
+            for group in groups {
+                if let last = runs.last, inkIn(group).count < 8 || inkIn(last).count < 8 {
+                    runs[runs.count - 1] = last.lowerBound...group.upperBound
+                } else {
+                    runs.append(group)
+                }
+            }
+            lines.append(Line(rows: band, runs: runs.map { Self.run($0, ink: inkIn($0), rows: band.count, background: background) }))
         }
         self.lines = lines
         self.rules = rules
     }
 
-    private static func line(_ rows: ClosedRange<Int>, ink: [RGB], background: RGB) -> Line {
-        guard ink.count >= 12 else { return Line(rows: rows, ink: ink.count, text: nil, contrast: 1, otherColorShare: 1) }
+    private static func run(_ columns: ClosedRange<Int>, ink: [RGB], rows: Int, background: RGB) -> Run {
         let text = ink.sorted { $0.contrast(with: background) > $1.contrast(with: background) }[ink.count / 4]
         // A blend of the text color and the background lies on the line
         // between them in RGB.
@@ -400,6 +463,10 @@ struct WorkbenchContrastMeasurement {
             let squared = offset.map { $0 * $0 }.reduce(0, +) - along * along
             return max(squared, 0).squareRoot() > 32
         }
-        return Line(rows: rows, ink: ink.count, text: text, contrast: text.contrast(with: background), otherColorShare: Double(others.count) / Double(ink.count))
+        return Run(
+            columns: columns, ink: ink.count, text: text, contrast: text.contrast(with: background),
+            otherColorShare: Double(others.count) / Double(ink.count), coverage: Double(ink.count) / Double(columns.count * rows),
+            isAFill: columns.count >= rows && ink.count * 4 > columns.count * rows * 3
+        )
     }
 }

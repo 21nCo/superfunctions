@@ -332,15 +332,15 @@ enum WorkbenchApp {
     }
 
     #if os(macOS)
-    /// Sets the context's framework groups and Touch Bar items from the
-    /// app's tree, or none when it cannot be read.
+    /// Sets the context's framework groups, Touch Bar items and window titles
+    /// from the app's tree, or none when it cannot be read.
     static func findFrameworkElements(of app: XCUIApplication, for context: inout WorkbenchAuditContext) {
         guard let tree = try? app.snapshot() else {
-            (context.frameworkGroups, context.touchBarItems) = ([], [])
+            (context.frameworkGroups, context.touchBarItems, context.windowTitles) = ([], [], [])
             return
         }
         let touchBars = app.touchBars.allElementsBoundByIndex.compactMap { try? $0.snapshot() }
-        (context.frameworkGroups, context.touchBarItems) = WorkbenchFrameworkElements.find(
+        (context.frameworkGroups, context.touchBarItems, context.windowTitles) = WorkbenchFrameworkElements.find(
             in: WorkbenchAuditNode(tree), touchBars: touchBars.map(WorkbenchAuditNode.init)
         )
     }
