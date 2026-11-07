@@ -9,6 +9,7 @@ Private Workbench apps for exercising `@uifn/*` components, patterns, Superfunct
 - `@uifn/example-react-workbench` - React Workbench app
 - `@uifn/example-svelte-workbench` - Svelte Workbench app
 - `@uifn/example-solid-workbench` - Solid Workbench app
+- `swiftui-workbench` - macOS and iOS Workbench app for `UIFnSwiftUI`, with automated accessibility audits; an Xcode project, not an npm workspace (see [its README](swiftui-workbench/README.md))
 
 ## Commands
 

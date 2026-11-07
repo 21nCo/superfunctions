@@ -10,7 +10,7 @@ import UIKit
 
 /// What an assistive technology is told an element is, as each platform says it.
 enum UIFnAccessibilityRole: CustomStringConvertible {
-    case progressIndicator, busyIndicator, staticText, heading, button
+    case progressIndicator, busyIndicator, staticText, heading, button, popUpButton
 
     #if os(macOS)
     /// The element's accessibility role.
@@ -21,6 +21,7 @@ enum UIFnAccessibilityRole: CustomStringConvertible {
         case .staticText: NSAccessibility.Role.staticText.rawValue
         case .heading: "AXHeading"
         case .button: NSAccessibility.Role.button.rawValue
+        case .popUpButton: NSAccessibility.Role.popUpButton.rawValue
         }
     }
     #else
@@ -32,7 +33,7 @@ enum UIFnAccessibilityRole: CustomStringConvertible {
         case .progressIndicator, .busyIndicator: .updatesFrequently
         case .staticText: .staticText
         case .heading: [.header, .staticText]
-        case .button: .button
+        case .button, .popUpButton: .button
         }
         return UIFnAccessibilityElement.describe(traits)
     }
@@ -53,6 +54,9 @@ struct UIFnAccessibilityElement: CustomStringConvertible {
     let value: String?
     /// Presses the element, as VoiceOver's activate does.
     let press: @MainActor () -> Bool
+    /// On macOS, the text of the element that names it, such as a switch's
+    /// label beside it, which VoiceOver reads when the element has no label.
+    var titleElementText: String? = nil
 
     func `is`(_ role: UIFnAccessibilityRole) -> Bool { platformRole == role.platformRole }
 
@@ -183,11 +187,13 @@ final class UIFnAccessibilityHost<Content: View> {
         let label = element.accessibilityLabel?() ?? nil
         let value = (element.accessibilityValueDescription?() ?? nil) ?? object(element, "accessibilityValue").map { "\($0)" }
         let isText = role == NSAccessibility.Role.staticText.rawValue || role == "AXHeading"
+        let titleElement = (element.accessibilityTitleUIElement?() ?? nil).map { $0 as AnyObject }
         return [UIFnAccessibilityElement(
             platformRole: role,
             label: label ?? (isText ? value : nil),
             value: label == nil && isText ? nil : value,
-            press: { element.accessibilityPerformPress?() ?? false }
+            press: { element.accessibilityPerformPress?() ?? false },
+            titleElementText: titleElement.flatMap { object($0, "accessibilityValue") as? String }
         )]
     }
 

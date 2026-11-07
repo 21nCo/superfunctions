@@ -12,6 +12,7 @@ on:
       - "scripts/swift-release.test.mjs"
       - ".github/workflows/swift.yml"
       - ".github/workflows/release-swift.yml"
+      - "uifn/examples/swiftui-workbench/**"
   pull_request:
     paths:
       - "Package.swift"
@@ -22,6 +23,7 @@ on:
       - "scripts/swift-release.test.mjs"
       - ".github/workflows/swift.yml"
       - ".github/workflows/release-swift.yml"
+      - "uifn/examples/swiftui-workbench/**"
 
 permissions:
   contents: read
@@ -141,6 +143,77 @@ jobs:
           ')
           xcodebuild test -scheme SuperfunctionsSwift-Package -destination "id=$udid" \
             -only-testing:UIFnSwiftUITests -disableAutomaticPackageResolution
+
+  # The SwiftUI workbench shows every UIFnSwiftUI style and component; its UI
+  # tests run Xcode's accessibility audit on each screen in light and dark.
+  # An issue fails the job unless the tests' waiver list, mirrored in the
+  # workbench README, waives it.
+  workbench:
+    name: SwiftUI workbench accessibility audits (${{ matrix.platform }})
+    runs-on: macos-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macOS, iOS]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          sw_vers
+      # macOS UI tests drive the app through Automation Mode, which otherwise
+      # asks for a password.
+      - name: Enable Automation Mode for macOS UI tests
+        if: matrix.platform == 'macOS'
+        run: sudo automationmodetool enable-automationmode-without-authentication
+      - name: Pick the test destination
+        id: destination
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          if [ "$PLATFORM" = macOS ]; then
+            echo "destination=platform=macOS,arch=$(uname -m)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # The newest iPhone simulator on iOS 17 or later.
+          udid=$(xcrun simctl list devices available --json | python3 -c '
+          import json, re, sys
+          devices = json.load(sys.stdin)["devices"]
+          def version(runtime):
+              match = re.search(r"\.SimRuntime\.iOS-(\d+)-(\d+)", runtime)
+              return tuple(int(part) for part in match.groups()) if match else None
+          runtimes = [runtime for runtime in devices if version(runtime) and version(runtime) >= (17, 0)]
+          for runtime in sorted(runtimes, key=version, reverse=True):
+              for device in devices[runtime]:
+                  if device["name"].startswith("iPhone"):
+                      print(device["udid"])
+                      raise SystemExit
+          raise SystemExit("no available iPhone simulator on iOS 17 or later")
+          ')
+          echo "destination=id=$udid" >> "$GITHUB_OUTPUT"
+      - name: xcodebuild test (workbench accessibility audits)
+        working-directory: uifn/examples/swiftui-workbench
+        env:
+          DESTINATION: ${{ steps.destination.outputs.destination }}
+          RESULT: ${{ runner.temp }}/swiftui-workbench-${{ matrix.platform }}.xcresult
+          # xcodebuild passes it to the test runner without the prefix, so the
+          # README waiver table test fails instead of skipping.
+          TEST_RUNNER_UIFN_WORKBENCH_REQUIRE_README: "1"
+        run: |
+          xcodebuild test -project SwiftUIWorkbench.xcodeproj -scheme SwiftUIWorkbench \
+            -destination "$DESTINATION" -resultBundlePath "$RESULT" -disableAutomaticPackageResolution
+      # Kept on success too: the result bundle lists each audit and the issues
+      # it waived.
+      - name: Upload the audit results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: swiftui-workbench-${{ matrix.platform }}-xcresult
+          path: ${{ runner.temp }}/swiftui-workbench-${{ matrix.platform }}.xcresult
+          if-no-files-found: ignore
 
   tokens:
     name: Swift tokens match their themes
