@@ -83,6 +83,18 @@ final class WorkbenchAuditWaiverTests: XCTestCase {
             let twoColors = try XCTUnwrap(crop(on: canvas, lines: [[ink, ink, second]]))
             XCTAssertFalse(twoColors.passes, twoColors.summary)
         }
+        // A small mark is a run of its own, not part of the glyph beside it.
+        var mark = pixels(on: canvas, lines: [])
+        mark += [RGB](repeating: canvas, count: 60 * 16)
+        for row in 3...13 { mark[row * 60 + 10] = ink; mark[row * 60 + 11] = ink }
+        for row in 11...12 { mark[row * 60 + 15] = faint; mark[row * 60 + 16] = faint }
+        let smallMark = try XCTUnwrap(WorkbenchContrastMeasurement(pixels: mark, width: 60))
+        XCTAssertFalse(smallMark.passes, smallMark.summary)
+        // Text within 3 of the background is not seen at all: the waiver
+        // also checks the number of lines.
+        for invisible in [RGB(red: 226, green: 233, blue: 240), RGB(red: 227, green: 234, blue: 241)] {
+            XCTAssertEqual(try XCTUnwrap(crop(on: canvas, lines: [[ink], [invisible]])).lines.count, 1)
+        }
         // Text on a fill is not measured against the background around it.
         var chip = pixels(on: canvas, lines: [])
         for _ in 0..<11 { chip += (0..<60).map { x in (10..<40).contains(x) ? (x % 4 == 0 ? RGB(red: 120, green: 128, blue: 136) : RGB(red: 40, green: 48, blue: 56)) : canvas } }
@@ -238,6 +250,14 @@ final class WorkbenchAuditWaiverTests: XCTestCase {
         var alerts = WorkbenchAuditElement(type: .staticText, value: "Alerts", frame: CGRect(x: 304, y: 139, width: 36, height: 16))
         alerts.contrast = failing
         XCTAssertNil(waiver("contrast", alerts, context(screen: "toggles", colorScheme: "light")))
+        var known = WorkbenchAuditElement(type: .staticText, value: "Alerts", frame: CGRect(x: 304, y: 139, width: 36, height: 16))
+        known.contrast = passing
+        XCTAssertEqual(waiver("contrast", known, context(screen: "toggles", colorScheme: "dark")), "macos-contrast-misread")
+        // Only the texts the audit was seen to misread, where it misread them.
+        XCTAssertNil(waiver("contrast", known, context(screen: "buttons")))
+        var other = WorkbenchAuditElement(type: .staticText, value: "Anything else", frame: CGRect(x: 304, y: 139, width: 36, height: 16))
+        other.contrast = passing
+        XCTAssertNil(waiver("contrast", other, context(screen: "toggles")))
         // Only an enabled text.
         let context = context(screen: "toasts")
         for element in [
@@ -251,6 +271,9 @@ final class WorkbenchAuditWaiverTests: XCTestCase {
         toast.contrast = try crop("contrast-toast-dark")
         XCTAssertEqual(waiver("contrast", toast, context), "macos-contrast-misread")
         toast.contrast = crop(on: canvas, lines: [[ink], [RGB(red: 160, green: 166, blue: 173)]])
+        XCTAssertNil(waiver("contrast", toast, context))
+        // A message too faint to measure leaves one line of the toast's two.
+        toast.contrast = crop(on: canvas, lines: [[ink], [RGB(red: 227, green: 234, blue: 241)]])
         XCTAssertNil(waiver("contrast", toast, context))
         toast.isEnabled = false
         toast.contrast = try crop("contrast-toasts-row-light")

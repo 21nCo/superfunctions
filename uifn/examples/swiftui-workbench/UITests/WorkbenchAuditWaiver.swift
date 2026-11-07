@@ -272,13 +272,28 @@ struct WorkbenchAuditWaiver {
             auditTypes: ["contrast"],
             element: { element, context in
                 // The selected sidebar row is never waived.
-                guard let element, element.type == .staticText, element.isEnabled,
+                guard let element, element.type == .staticText, element.isEnabled, let contrast = element.contrast,
+                      let lines = misreadLines(of: element, on: context.screen),
                       element.identifier != context.screen.map({ WorkbenchApp.sidebarPrefix + $0 }) else { return false }
-                return element.contrast?.passes == true
+                return contrast.passes && contrast.lines.count == lines
             },
-            reason: "The macOS audit fails the contrast of texts that measure well above 4.5:1, and of different texts from run to run, such as the unselected \"Toasts\" row (8.5:1) while the \"Banners\" row in the same colors passes. The test measures each issue's element screenshot and waives an enabled text only when one color covers at least half of it and every glyph run on every line reaches 4.5:1 against it, each run by the color a quarter of its ink reaches. Faint ink counts, and a fill behind text fails. A failing or unreadable run and the selected sidebar row stay failed. The measurement is attached with each contrast issue."
+            reason: "The macOS audit fails the contrast of some texts that measure well above 4.5:1, a different set from run to run, such as the unselected \"Toasts\" row (8.5:1) while the \"Banners\" row in the same colors passes. Only those texts are waived, and only when the test measures the issue's screenshot: one color covers at least half of it, every glyph run on every line reaches 4.5:1 against it by the color a quarter of the run's ink reaches, and it shows as many lines as the text draws, so a line too faint to measure keeps the issue failed. A fill behind text, a failing run and the selected sidebar row stay failed. The measurement is attached with each contrast issue."
         ),
     ]
+
+    /// The lines of text drawn by a text the macOS audit was seen to misread
+    /// on the screen, or nil for any other element: a sidebar row on any
+    /// screen, "Alerts" on the toggles, the empty state's message and the
+    /// toast's title and message.
+    static func misreadLines(of element: WorkbenchAuditElement, on screen: String?) -> Int? {
+        switch screen {
+        case _ where element.identifier.hasPrefix(WorkbenchApp.sidebarPrefix): 1
+        case "toggles" where element.value == "Alerts": 1
+        case "empty-states" where element.value == "Files you add appear here.": 1
+        case "toasts" where element.label == "Link copied": 2
+        default: nil
+        }
+    }
 
     /// The first waiver that covers an issue of the audit type, by its name in
     /// ``XCUIAccessibilityAuditType/workbenchName``, on the element.
@@ -299,8 +314,10 @@ struct WorkbenchAuditWaiver {
 /// between columns without: a glyph or a few touching glyphs). A run's text
 /// color is the color a quarter of its ink reaches. Edge pixels blend toward
 /// the background, so a run drawn in one color measures at most that color's
-/// contrast, and a run in a second color, however faint, is measured on its
-/// own. What it cannot tell apart is two colors within one run.
+/// contrast, and a run in a second color is measured on its own. It cannot
+/// tell apart two colors within one run, nor see text within 3 of the
+/// background, so ``WorkbenchAuditWaiver/misreadLines(of:on:)`` also checks
+/// that it found every line the element draws.
 struct WorkbenchContrastMeasurement {
     struct RGB: Hashable {
         var red, green, blue: UInt8
@@ -426,8 +443,7 @@ struct WorkbenchContrastMeasurement {
                 rules.append(band)
                 continue
             }
-            // Columns with ink, split at columns without; a mark of fewer
-            // than 8 pixels, such as a period, joins the run before it.
+            // Columns with ink, split at columns without.
             var groups: [ClosedRange<Int>] = []
             for x in inkColumns {
                 if let last = groups.last, last.upperBound == x - 1 {
@@ -437,15 +453,7 @@ struct WorkbenchContrastMeasurement {
                 }
             }
             let inkIn = { (columns: ClosedRange<Int>) in columns.flatMap { x in band.filter { isInk(x, $0) }.map { pixels[$0 * width + x] } } }
-            var runs: [ClosedRange<Int>] = []
-            for group in groups {
-                if let last = runs.last, inkIn(group).count < 8 || inkIn(last).count < 8 {
-                    runs[runs.count - 1] = last.lowerBound...group.upperBound
-                } else {
-                    runs.append(group)
-                }
-            }
-            lines.append(Line(rows: band, runs: runs.map { Self.run($0, ink: inkIn($0), rows: band.count, background: background) }))
+            lines.append(Line(rows: band, runs: groups.map { Self.run($0, ink: inkIn($0), rows: band.count, background: background) }))
         }
         self.lines = lines
         self.rules = rules
