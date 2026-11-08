@@ -67,6 +67,14 @@ final class WorkbenchAuditWaiverTests: XCTestCase {
             let proof = try proof("contrast-toasts-row-light", expected)
             XCTAssertFalse(proof.passes, "\(expected): \(proof.summary)")
         }
+        // A screenshot that cuts the text off: the top of each glyph, or most
+        // of the last "s".
+        let (pixels, width) = try screenshot("contrast-toasts-row-light")
+        let lowered = try XCTUnwrap(WorkbenchTextProof(pixels: Array(pixels.dropFirst(6 * width)), width: width, expected: row("Toasts")))
+        XCTAssertFalse(lowered.passes, lowered.summary)
+        let narrowed = stride(from: 0, to: pixels.count, by: width).flatMap { pixels[$0..<$0 + width - 4] }
+        let cut = try XCTUnwrap(WorkbenchTextProof(pixels: narrowed, width: width - 4, expected: row("Toasts")))
+        XCTAssertFalse(cut.passes, cut.summary)
         let middle = { (words: [ClosedRange<Int>]) in words[2] }
         let edits: [(String, String, [Line], (inout [RGB], Int, RGB, [ClosedRange<Int>]) -> Void)] = [
             // A word within 3 of the background, which no band of ink shows.

@@ -283,7 +283,7 @@ struct WorkbenchAuditWaiver {
                       element.identifier != context.screen.map({ WorkbenchApp.sidebarPrefix + $0 }) else { return false }
                 return proof.passes
             },
-            reason: "The macOS audit fails the contrast of some texts that measure well above 4.5:1, a different set from run to run, such as the unselected \"Toasts\" row (15:1) while the \"Banners\" row in the same colors passes. Only those texts are waived, and only when the issue's screenshot proves it: the test draws the expected text in the system font in the screenshot's text and background colors and fits each glyph of the screenshot to the drawing. Each glyph must be drawn at 85-115% of the text color's strength and differ from the drawing by at most 12% of its ink, no ink may lie beyond the glyphs or off the blend of the two colors, and the text color at the weakest glyph's strength less that difference must reach 4.5:1. A missing, faint, partly faint or extra glyph, a second color or fill, and the selected sidebar row stay failed. The proof is attached with each contrast issue."
+            reason: "The macOS audit fails the contrast of some texts that measure well above 4.5:1, a different set from run to run, such as the unselected \"Toasts\" row (15:1) while the \"Banners\" row in the same colors passes. Only those texts are waived, and only when the issue's screenshot proves it: the test draws the expected text in the system font in the screenshot's text and background colors and fits each glyph of the screenshot to the drawing. Each glyph must be drawn at 85-115% of the text color's strength, differ from the drawing by at most 12% of its ink and lie at least three-quarters inside the screenshot, no ink may lie beyond the glyphs or off the blend of the two colors, and the text color at the weakest glyph's strength less that difference must reach 4.5:1. A missing, faint, partly faint, cut-off or extra glyph, a second color or fill, and the selected sidebar row stay failed. The proof is attached with each contrast issue."
         ),
     ]
 
@@ -339,8 +339,10 @@ struct WorkbenchExpectedLine: Equatable {
 /// to its neighbors' ink, are fitted to whichever drawing and offset suits them
 /// best: the glyph's strength, the share of the text color that scales the
 /// drawing to the screenshot, must be 85-115%, and what still differs, its
-/// misfit, at most 12% of its ink. So a missing, faint, invisible or partly
-/// faint glyph, or a mark beside one, fails. Ink beyond the glyphs fails, as
+/// misfit, at most 12% of its ink, and at most a quarter of its drawn ink may
+/// fall outside the screenshot, as where a glyph overhangs the element's
+/// frame. So a missing, faint, invisible, partly faint or cut-off glyph, or a
+/// mark beside one, fails. Ink beyond the glyphs fails, as
 /// does any pixel that is not a blend of the two colors, such as a second
 /// color or a fill. The text color at the weakest glyph's strength less its
 /// misfit must reach 4.5:1, so text mostly in a failing color fails whatever
@@ -382,6 +384,9 @@ struct WorkbenchTextProof {
         /// How far the screenshot differs from the scaled drawing, as a share
         /// of its ink.
         let misfit: Double
+        /// The share of the drawing's ink that falls outside the screenshot,
+        /// as of a glyph overhanging the element's frame.
+        let clipped: Double
     }
 
     struct Line {
@@ -394,16 +399,13 @@ struct WorkbenchTextProof {
         let glyphs: [Glyph]
         /// Ink beyond the glyphs' columns.
         let stray: Double
-        /// The share of the drawing's ink outside the screenshot, as of a
-        /// glyph overhanging the element's frame.
-        let clipped: Double
         /// The text color's contrast at the weakest glyph's strength less
         /// its misfit.
         let contrast: Double
 
         var passes: Bool {
-            offBlend <= 16 && clipped <= 0.1 && stray <= 0.5 && !glyphs.isEmpty
-                && glyphs.allSatisfy { (0.85...1.15).contains($0.strength) && $0.misfit <= 0.12 } && contrast >= 4.5
+            offBlend <= 16 && stray <= 0.5 && !glyphs.isEmpty
+                && glyphs.allSatisfy { (0.85...1.15).contains($0.strength) && $0.misfit <= 0.12 && $0.clipped <= 0.25 } && contrast >= 4.5
         }
     }
 
@@ -425,7 +427,7 @@ struct WorkbenchTextProof {
         let measured = lines.map { line in
             let strengths = line.glyphs.map(\.strength), misfits = line.glyphs.map(\.misfit)
             let ink = line.glyphs.isEmpty ? "no glyphs" : "glyph strength \(Int(((strengths.min() ?? 0) * 100).rounded()))-\(Int(((strengths.max() ?? 0) * 100).rounded()))%, misfit up to \(Int(((misfits.max() ?? 0) * 100).rounded()))%"
-            return "\"\(line.expected.text)\" rows \(line.rows.lowerBound)-\(line.rows.upperBound) in \(line.text.description), \(ink), \(String(format: "%.1f", line.stray)) stray ink, \(String(format: "%.1f", line.offBlend)) off the blend, \(Int((line.clipped * 100).rounded()))% clipped, \(String(format: "%.2f", line.contrast)):1"
+            return "\"\(line.expected.text)\" rows \(line.rows.lowerBound)-\(line.rows.upperBound) in \(line.text.description), \(ink), \(String(format: "%.1f", line.stray)) stray ink, \(String(format: "%.1f", line.offBlend)) off the blend, up to \(Int(((line.glyphs.map(\.clipped).max() ?? 0) * 100).rounded()))% of a glyph clipped, \(String(format: "%.2f", line.contrast)):1"
         }
         return "\(head): \(measured.joined(separator: "; ")); \(passes ? "every glyph shown reaches 4.5:1" : "not proven")"
     }
@@ -608,27 +610,32 @@ struct WorkbenchTextProof {
                 if best.map({ bestHere.difference < $0.difference }) ?? true { best = (bestHere.difference, drawing, bestHere.dx, bestHere.dy) }
             }
         }
-        guard let best else { return Line(expected: expected, rows: rows, text: text, offBlend: offBlend, glyphs: [], stray: 0, clipped: 1, contrast: 1) }
+        guard let best else { return Line(expected: expected, rows: rows, text: text, offBlend: offBlend, glyphs: [], stray: 0, contrast: 1) }
         var shown = [Double](repeating: 0, count: width)
-        var outside = 0.0
-        var total = 0.0
         for y in 0..<height { for x in 0..<width { shown[x] += ink[y * width + x] } }
-        for y in 0..<best.drawing.height {
-            for x in 0..<best.drawing.width {
-                total += best.drawing.ink[y * best.drawing.width + x]
-                if !(0..<width).contains(x + best.dx) { outside += best.drawing.ink[y * best.drawing.width + x] }
-            }
-        }
         let glyphs = best.drawing.glyphs.map { ($0.lowerBound + Double(best.dx))...($0.upperBound + Double(best.dx)) }
         var cuts = [-Double.infinity]
         for index in glyphs.indices.dropFirst() { cuts.append((glyphs[index - 1].upperBound + glyphs[index].lowerBound) / 2) }
         cuts.append(.infinity)
+        // The share of each glyph's drawn ink that lies outside the
+        // screenshot, on either axis.
+        var drawnInk = [Double](repeating: 0, count: glyphs.count)
+        var cropped = [Double](repeating: 0, count: glyphs.count)
+        for y in 0..<best.drawing.height {
+            for x in 0..<best.drawing.width {
+                let (px, py) = (x + best.dx, y + best.dy)
+                guard let index = glyphs.indices.first(where: { (cuts[$0]..<cuts[$0 + 1]).contains(Double(px) + 0.5) }) else { continue }
+                drawnInk[index] += best.drawing.ink[y * best.drawing.width + x]
+                if !(0..<width).contains(px) || !(0..<height).contains(py) { cropped[index] += best.drawing.ink[y * best.drawing.width + x] }
+            }
+        }
         // Each glyph's columns, scaled against whichever drawing and offset
         // fits them best: the strength that scales the drawing to the
         // screenshot, and how far the screenshot still differs from it.
         let fits = glyphs.indices.map { index -> Glyph in
             let columns = (0..<width).filter { (cuts[index]..<cuts[index + 1]).contains(Double($0) + 0.5) }
-            var fit = Glyph(strength: 0, misfit: .infinity)
+            let clipped = drawnInk[index] > 0 ? cropped[index] / drawnInk[index] : 1
+            var fit = Glyph(strength: 0, misfit: .infinity, clipped: clipped)
             for (drawing, dx0, dy) in placed {
                 for dx in dx0 - 1...dx0 + 1 {
                     var pairs: [(shown: Double, drawn: Double)] = []
@@ -642,7 +649,7 @@ struct WorkbenchTextProof {
                     guard squares > 0 else { continue }
                     let strength = pairs.map { $0.shown * $0.drawn }.reduce(0, +) / squares
                     let misfit = pairs.map { abs($0.shown - strength * $0.drawn) }.reduce(0, +) / max(strength * pairs.map(\.drawn).reduce(0, +), 0.5)
-                    if misfit < fit.misfit { fit = Glyph(strength: strength, misfit: misfit) }
+                    if misfit < fit.misfit { fit = Glyph(strength: strength, misfit: misfit, clipped: clipped) }
                 }
             }
             return fit
@@ -653,7 +660,7 @@ struct WorkbenchTextProof {
         let weakest = fits.map { min($0.strength, 1) - $0.misfit }.min() ?? 0
         return Line(
             expected: expected, rows: rows, text: text, offBlend: offBlend, glyphs: fits, stray: stray,
-            clipped: total == 0 ? 1 : outside / total, contrast: background.blend(toward: text, max(weakest, 0)).contrast(with: background)
+            contrast: background.blend(toward: text, max(weakest, 0)).contrast(with: background)
         )
     }
 }
