@@ -54,7 +54,7 @@ final class WorkbenchAuditWaiverTests: XCTestCase {
         // The selected row's text.primary on the accent selection: 3.36:1.
         let selected = try proof("contrast-selected-row-light", row("Toggles"))
         XCTAssertFalse(selected.passes, selected.summary)
-        XCTAssertEqual(selected.lines.first?.glyphInk.allSatisfy { (0.85...1.15).contains($0) }, true, selected.summary)
+        XCTAssertEqual(selected.lines.first?.glyphs.allSatisfy { (0.85...1.15).contains($0.strength) && $0.misfit <= 0.12 }, true, selected.summary)
         XCTAssertLessThan(selected.lines.first?.contrast ?? 0, 3.4, selected.summary)
         // AppKit's window title, which spans the toolbar's separator and the
         // window's corner (see the macos-window-title waiver).
@@ -79,6 +79,21 @@ final class WorkbenchAuditWaiverTests: XCTestCase {
                 pixel.offset(from: background).allSatisfy { abs($0) <= 3 } ? background.blend(toward: RGB(red: 15, green: 23, blue: 31), 0.3) : pixel
             }),
             ("faint message line", "contrast-toast-dark", toast, recolor({ _ in 0...Int.max }, rows: 20...36) { pixel, background in background.blend(toward: pixel, 0.3) }),
+            // A dot four columns after the title "Link copied", which ends at column 76.
+            ("mark after the text", "contrast-toast-dark", toast, recolor({ _ in 80...81 }, rows: 14...15) { _, _ in RGB(red: 234, green: 239, blue: 245) }),
+            // The top of the "T" at 40% of its strength.
+            ("glyph half faint", "contrast-toasts-row-light", row("Toasts"), recolor({ $0[0].lowerBound...($0[0].lowerBound + 7) }, rows: 0...7) { pixel, background in background.blend(toward: pixel, 0.4) }),
+            // Each glyph mostly in a color at 4.22:1, with every third pixel of
+            // ink in a darker one of the same hue at 6.78:1, so the glyphs'
+            // ink averages 87% of the darker color's, which would reach 4.9:1.
+            ("same-hue text below 4.5:1", "contrast-toasts-row-light", row("Toasts"), { pixels, _, background, _ in
+                var inked = 0
+                for index in pixels.indices where pixels[index] != background {
+                    let share = (Double(background.green) - Double(pixels[index].green)) / (Double(background.green) - 23)
+                    pixels[index] = background.blend(toward: inked % 3 == 0 ? RGB(red: 73, green: 81, blue: 88) : RGB(red: 104, green: 112, blue: 119), min(max(share, 0), 1))
+                    inked += 1
+                }
+            }),
             ("fill behind a glyph", "contrast-toasts-row-light", row("Toasts"), recolor({ $0[0].lowerBound...($0[0].lowerBound + 6) }) { pixel, _ in pixel.blend(toward: RGB(red: 200, green: 160, blue: 120), 0.5) }),
             ("no one background", "contrast-toasts-row-light", row("Toasts"), { pixels, _, background, _ in
                 for index in pixels.indices where index % 2 == 0 && pixels[index] == background { pixels[index] = background.blend(toward: RGB(red: 0, green: 0, blue: 0), 0.05) }
