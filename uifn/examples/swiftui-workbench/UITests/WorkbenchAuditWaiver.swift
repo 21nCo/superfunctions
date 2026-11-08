@@ -426,10 +426,16 @@ struct WorkbenchTextProof {
         guard bands.count == expected.count else { return "\(head) for \(expected.count) expected line(s); not proven" }
         let measured = lines.map { line in
             let strengths = line.glyphs.map(\.strength), misfits = line.glyphs.map(\.misfit)
-            let ink = line.glyphs.isEmpty ? "no glyphs" : "glyph strength \(Int(((strengths.min() ?? 0) * 100).rounded()))-\(Int(((strengths.max() ?? 0) * 100).rounded()))%, misfit up to \(Int(((misfits.max() ?? 0) * 100).rounded()))%"
-            return "\"\(line.expected.text)\" rows \(line.rows.lowerBound)-\(line.rows.upperBound) in \(line.text.description), \(ink), \(String(format: "%.1f", line.stray)) stray ink, \(String(format: "%.1f", line.offBlend)) off the blend, up to \(Int(((line.glyphs.map(\.clipped).max() ?? 0) * 100).rounded()))% of a glyph clipped, \(String(format: "%.2f", line.contrast)):1"
+            let ink = line.glyphs.isEmpty ? "no glyphs" : "glyph strength \(Self.percent(strengths.min() ?? 0))-\(Self.percent(strengths.max() ?? 0)), misfit up to \(Self.percent(misfits.max() ?? 0))"
+            return "\"\(line.expected.text)\" rows \(line.rows.lowerBound)-\(line.rows.upperBound) in \(line.text.description), \(ink), \(String(format: "%.1f", line.stray)) stray ink, \(String(format: "%.1f", line.offBlend)) off the blend, up to \(Self.percent(line.glyphs.map(\.clipped).max() ?? 0)) of a glyph clipped, \(String(format: "%.2f", line.contrast)):1"
         }
         return "\(head): \(measured.joined(separator: "; ")); \(passes ? "every glyph shown reaches 4.5:1" : "not proven")"
+    }
+
+    /// A share as a whole percentage, or "no fit" for a glyph with no
+    /// columns in the screenshot, whose misfit is infinite.
+    static func percent(_ share: Double) -> String {
+        share.isFinite ? "\(Int((share * 100).rounded()))%" : "no fit"
     }
 
     init?(_ image: CGImage, expected: [WorkbenchExpectedLine], scale: CGFloat = 1) {

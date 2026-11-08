@@ -75,6 +75,15 @@ final class WorkbenchAuditWaiverTests: XCTestCase {
         let narrowed = stride(from: 0, to: pixels.count, by: width).flatMap { pixels[$0..<$0 + width - 4] }
         let cut = try XCTUnwrap(WorkbenchTextProof(pixels: narrowed, width: width - 4, expected: row("Toasts")))
         XCTAssertFalse(cut.passes, cut.summary)
+        // Crops that leave whole glyphs out, with no columns to fit: they
+        // stay unproven, and their summary reads rather than trapping.
+        let white = RGB(red: 255, green: 255, blue: 255), black = RGB(red: 0, green: 0, blue: 0)
+        let firstColumns = stride(from: 0, to: pixels.count, by: width).flatMap { pixels[$0..<$0 + 8] }
+        for (name, crop, cropWidth) in [("one column", [white, white, black, white, white], 1), ("first 8 columns", firstColumns, 8)] {
+            guard let unfitted = WorkbenchTextProof(pixels: crop, width: cropWidth, expected: row("Toasts")) else { continue }
+            XCTAssertFalse(unfitted.passes, "\(name): \(unfitted.summary)")
+            XCTAssertTrue(unfitted.summary.hasSuffix("not proven"), "\(name): \(unfitted.summary)")
+        }
         let middle = { (words: [ClosedRange<Int>]) in words[2] }
         let edits: [(String, String, [Line], (inout [RGB], Int, RGB, [ClosedRange<Int>]) -> Void)] = [
             // A word within 3 of the background, which no band of ink shows.

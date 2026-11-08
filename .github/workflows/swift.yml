@@ -194,8 +194,8 @@ jobs:
           raise SystemExit("no available iPhone simulator on iOS 17 or later")
           ')
           echo "destination=id=$udid" >> "$GITHUB_OUTPUT"
-          # Booted while the tests build, so they start on a warm simulator.
-          xcrun simctl boot "$udid"
+          # Booted while the tests build, so they start on a warm simulator;
+          # bootstatus -b boots a shut-down device and accepts a booted one.
           xcrun simctl bootstatus "$udid" -b
           echo "udid=$udid" >> "$GITHUB_OUTPUT"
       - name: xcodebuild build-for-testing (workbench)
