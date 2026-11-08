@@ -9,6 +9,11 @@ struct SwiftUIWorkbenchApp: App {
         WindowGroup("UIFn Workbench") {
             WorkbenchRoot(initialScreen: launch.screen)
                 .preferredColorScheme(launch.colorScheme)
+                #if os(macOS)
+                // UIFn colors for the window's screen: the theme's sRGB values
+                // on an sRGB display, Display P3 on a P3 one.
+                .uifnDisplayGamutFromWindow()
+                #endif
         }
         #if os(macOS)
         // Tall enough for the tallest screen, so the audit sees each one whole,

@@ -73,6 +73,44 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
         XCTAssertNotEqual(value(vibrate), vibrateBefore, "Setting Sounds changed Vibrate")
     }
 
+    #if os(macOS)
+    /// While the list of screens has keyboard focus, the selected row shows
+    /// an outline that reaches 3:1 against what it covers; when focus moves
+    /// to the screen, the outline goes.
+    func testTheSelectedRowShowsWhenTheListHasFocus() throws {
+        for colorScheme in ["light", "dark"] {
+            let app = WorkbenchApp.launch(screen: "text-fields", colorScheme: colorScheme)
+            defer { app.terminate() }
+            let row = app.outlineRows.containing(.staticText, identifier: WorkbenchApp.sidebarPrefix + "text-fields").firstMatch
+            let field = app.textFields.firstMatch
+            XCTAssertTrue(row.waitForExistence(timeout: 10), "The selected row did not appear")
+            XCTAssertTrue(field.waitForExistence(timeout: 5), "No text field appeared")
+            field.click()
+            let unfocused = try XCTUnwrap(row.screenshot().workbenchCGImage.flatMap(WorkbenchTextProof.pixels(of:)))
+            /// The pixels of the row that changed from `unfocused` by at
+            /// least 3:1, waiting up to 3 seconds for `isDone`.
+            func outline(until isDone: (Int) -> Bool) -> Int {
+                var changed = 0
+                for _ in 0..<6 {
+                    let pixels = row.screenshot().workbenchCGImage.flatMap(WorkbenchTextProof.pixels(of:)) ?? []
+                    changed = pixels.count == unfocused.count ? zip(pixels, unfocused).filter { $0.contrast(with: $1) >= 3 }.count : -1
+                    if isDone(changed) { break }
+                    Thread.sleep(forTimeInterval: 0.5)
+                }
+                return changed
+            }
+            row.click()
+            // The outline runs along the row's long edges.
+            let width = Int(row.frame.width)
+            let focused = outline { $0 >= width }
+            XCTAssertGreaterThanOrEqual(focused, width, "\(colorScheme): with the list focused, \(focused) pixels of the selected row changed by 3:1")
+            field.click()
+            let left = outline { $0 == 0 }
+            XCTAssertEqual(left, 0, "\(colorScheme): with the text field focused, \(left) pixels of the selected row still differ by 3:1")
+        }
+    }
+    #endif
+
     /// The screens in the app's list are the screens the tests above audit,
     /// each with its own test, and each opens from the list.
     func testEveryScreenInTheListIsAudited() throws {
@@ -209,6 +247,21 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
         )
     }
 
+    /// Runs the audit, and runs it once more if XCTest gives up on it for
+    /// taking too long, as on a cold CI simulator. An issue the audit reports
+    /// is never retried.
+    private func performAudit(of app: XCUIApplication, _ handler: @escaping (XCUIAccessibilityAuditIssue) throws -> Bool) throws {
+        do {
+            try app.performAccessibilityAudit(handler)
+        } catch let error as NSError where error.domain == "com.apple.xcode.xctest.accessibilityAudit" && error.code == -56 {
+            let note = XCTAttachment(string: "\(error)")
+            note.name = "The audit did not complete in time, so it ran once more"
+            note.lifetime = .keepAlways
+            XCTContext.runActivity(named: "Audit timed out; running it once more") { $0.add(note) }
+            try app.performAccessibilityAudit(handler)
+        }
+    }
+
     private func auditVisibleContent(of app: XCUIApplication, screen: String?, colorScheme: String) throws {
         var waived: [String] = []
         var contrastEvidence: [XCTAttachment] = []
@@ -221,17 +274,23 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
         #if os(macOS)
         WorkbenchApp.findFrameworkElements(of: app, for: &context)
         #endif
-        try app.performAccessibilityAudit { issue in
+        #if os(iOS)
+        WorkbenchApp.waitForNoNotificationBanner()
+        #endif
+        try performAudit(of: app) { issue in
             var summary = "\(issue.auditType.workbenchName) on \(issue.element.map(WorkbenchApp.describe) ?? "the app")"
             var element = issue.element.map(WorkbenchAuditElement.init)
             // What the audit judged, kept with each contrast issue, waived
-            // or not: the element's screenshot, its measured colors, and the
-            // window's screenshot once.
-            if issue.auditType == .contrast, let issueElement = issue.element {
+            // or not: the element's screenshot, what it proves of the text a
+            // waiver expects, and the window's screenshot once.
+            if issue.auditType == .contrast, let issueElement = issue.element, let audited = element {
                 let screenshot = issueElement.screenshot()
-                let contrast = screenshot.workbenchCGImage.flatMap(WorkbenchContrastMeasurement.init)
-                element?.contrast = contrast
-                summary += " [measured: \(contrast?.summary ?? "unreadable screenshot")]"
+                let expected = WorkbenchAuditWaiver.misreadText(of: audited, on: screen) ?? []
+                let proof = screenshot.workbenchCGImage.flatMap { image in
+                    WorkbenchTextProof(image, expected: expected, scale: audited.frame.width > 0 ? max(1, (CGFloat(image.width) / audited.frame.width).rounded()) : 1)
+                }
+                element?.proof = proof
+                summary += " [measured: \(proof?.summary ?? "unreadable screenshot")]"
                 let attachment = XCTAttachment(screenshot: screenshot)
                 attachment.name = "Contrast issue: \(summary)"
                 attachment.lifetime = .keepAlways
@@ -261,6 +320,10 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
             }
             return true
         }
+        #if os(iOS)
+        let banner = WorkbenchApp.notificationBanner
+        XCTAssertFalse(banner.exists, "\(screen ?? "screen list") (\(colorScheme)): a notification banner covered the app during the audit, so issues above may be its: \(banner.exists ? banner.label : "")")
+        #endif
         if !contrastEvidence.isEmpty {
             XCTContext.runActivity(named: "\(contrastEvidence.count - 1) contrast issue(s)") { activity in
                 contrastEvidence.forEach(activity.add)
@@ -343,6 +406,25 @@ enum WorkbenchApp {
         (context.frameworkGroups, context.touchBarItems, context.windowTitles) = WorkbenchFrameworkElements.find(
             in: WorkbenchAuditNode(tree), touchBars: touchBars.map(WorkbenchAuditNode.init)
         )
+    }
+    #endif
+
+    #if os(iOS)
+    /// A SpringBoard notification banner, such as the "Ready for Apple
+    /// Intelligence" one a new simulator shows a few minutes after it boots.
+    static var notificationBanner: XCUIElement {
+        XCUIApplication(bundleIdentifier: "com.apple.springboard").descendants(matching: .any)["NotificationShortLookView"]
+    }
+
+    /// Waits until no notification banner covers the app, so the audit sees
+    /// only the app; a banner leaves after a few seconds.
+    static func waitForNoNotificationBanner(timeout: TimeInterval = 30, file: StaticString = #filePath, line: UInt = #line) {
+        let banner = notificationBanner
+        let deadline = Date().addingTimeInterval(timeout)
+        while banner.exists && Date() < deadline {
+            Thread.sleep(forTimeInterval: 1)
+        }
+        XCTAssertFalse(banner.exists, "A notification banner still covered the app after \(Int(timeout)) seconds: \(banner.exists ? banner.label : "")", file: file, line: line)
     }
     #endif
 

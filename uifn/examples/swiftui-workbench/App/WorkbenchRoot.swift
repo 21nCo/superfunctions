@@ -85,6 +85,11 @@ struct WorkbenchRoot: View {
     @State private var selection: WorkbenchScreen?
     @State private var compactColumn: NavigationSplitViewColumn
     @Environment(\.uifnTheme) private var theme
+    #if os(macOS)
+    @FocusState private var listHasFocus: Bool
+    @Environment(\.controlActiveState) private var windowState
+    @Environment(\.uifnDisplayGamut) private var displayGamut
+    #endif
 
     init(initialScreen: WorkbenchScreen?) {
         _selection = State(initialValue: initialScreen)
@@ -103,10 +108,13 @@ struct WorkbenchRoot: View {
                             // list's own selectable row.
                             Text(screen.title)
                                 .fontWeight(selection == screen ? .semibold : .regular)
-                                .foregroundStyle(theme.colors.text.primary.color)
+                                .foregroundStyle(theme.colors.text.primary.color(displayGamut: displayGamut))
                                 .accessibilityIdentifier("workbench.sidebar.\(screen.rawValue)")
                                 .tag(screen)
-                                .listRowBackground(WorkbenchSidebarRowBackground(isSelected: selection == screen))
+                                .listRowBackground(WorkbenchSidebarRowBackground(
+                                    isSelected: selection == screen,
+                                    showsFocus: selection == screen && listHasFocus && windowState == .key
+                                ))
                             #else
                             NavigationLink(value: screen) {
                                 Label(screen.title, systemImage: screen.systemImage)
@@ -119,7 +127,7 @@ struct WorkbenchRoot: View {
                         // the contrast audit.
                         Text(group.rawValue)
                             #if os(macOS)
-                            .foregroundStyle(theme.colors.text.secondary.color)
+                            .foregroundStyle(theme.colors.text.secondary.color(displayGamut: displayGamut))
                             #else
                             .foregroundStyle(Color.primary)
                             #endif
@@ -135,7 +143,8 @@ struct WorkbenchRoot: View {
             // backgrounds the app draws, makes what it measures the same for
             // every row, selected or not.
             .scrollContentBackground(.hidden)
-            .background(theme.colors.surface.sunken.color)
+            .background(theme.colors.surface.sunken.color(displayGamut: displayGamut))
+            .focused($listHasFocus)
             .navigationSplitViewColumnWidth(min: 200, ideal: 240)
             #else
             // Keeps the whole list on an iPhone's screen, where the audit
@@ -163,20 +172,30 @@ struct WorkbenchRoot: View {
 /// focus in the key window, gray otherwise) beneath a row's background, so
 /// this opaque background hides it, and the row's primary text has the same
 /// background whether or not the list has focus. The selected row is the
-/// theme's subtle accent with a solid accent bar at its leading edge.
+/// theme's subtle accent with a solid accent bar at its leading edge and,
+/// standing in for AppKit's focused selection, a solid accent outline while
+/// the list has keyboard focus in the key window.
 private struct WorkbenchSidebarRowBackground: View {
     let isSelected: Bool
+    let showsFocus: Bool
     @Environment(\.uifnTheme) private var theme
+    @Environment(\.uifnDisplayGamut) private var displayGamut
 
     var body: some View {
         ZStack(alignment: .leading) {
-            theme.colors.surface.sunken.color
+            theme.colors.surface.sunken.color(displayGamut: displayGamut)
             if isSelected {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(theme.colors.accent.subtle.color)
+                let shape = RoundedRectangle(cornerRadius: 6)
+                shape
+                    .fill(theme.colors.accent.subtle.color(displayGamut: displayGamut))
+                    .overlay {
+                        if showsFocus {
+                            shape.strokeBorder(theme.colors.accent.solid.color(displayGamut: displayGamut), lineWidth: 2)
+                        }
+                    }
                     .padding(.horizontal, 8)
                 Capsule()
-                    .fill(theme.colors.accent.solid.color)
+                    .fill(theme.colors.accent.solid.color(displayGamut: displayGamut))
                     .frame(width: 3)
                     .padding(.vertical, 6)
                     .padding(.leading, 10)
@@ -192,6 +211,12 @@ struct WorkbenchPage: View {
     let screen: WorkbenchScreen
     @State private var toast: UIFnToast?
     @Environment(\.uifnTheme) private var theme
+    #if os(macOS)
+    @Environment(\.uifnDisplayGamut) private var displayGamut
+    private var canvas: Color { theme.colors.surface.canvas.color(displayGamut: displayGamut) }
+    #else
+    private var canvas: Color { theme.colors.surface.canvas.color }
+    #endif
 
     var body: some View {
         ScrollView {
@@ -202,7 +227,7 @@ struct WorkbenchPage: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .accessibilityIdentifier("workbench.screen.\(screen.rawValue)")
-        .background(theme.colors.surface.canvas.color)
+        .background(canvas)
         .uifnToast($toast, dismissLabel: "Dismiss notification", edge: .bottom)
         .environment(\.workbenchShowToast) { toast = $0 }
         .navigationTitle(screen.title)

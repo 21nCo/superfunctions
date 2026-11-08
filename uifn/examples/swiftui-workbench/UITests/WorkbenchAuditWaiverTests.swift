@@ -5,116 +5,91 @@ import XCTest
 /// that merely shares a weak property with them, such as no label or a frame
 /// outside the window, is still audited. These tests run no app.
 final class WorkbenchAuditWaiverTests: XCTestCase {
-    private typealias RGB = WorkbenchContrastMeasurement.RGB
-    private let canvas = RGB(red: 229, green: 236, blue: 243)
-    private let accent = RGB(red: 0, green: 100, blue: 225)
-    private let ink = RGB(red: 15, green: 23, blue: 31)
+    #if os(macOS)
+    private typealias RGB = WorkbenchTextProof.RGB
+    private typealias Line = WorkbenchExpectedLine
+    private let alerts = [Line(text: "Alerts", points: 14)]
+    private let emptyState = [Line(text: "Files you add appear here.", points: 14)]
+    private let toast = [Line(text: "Link copied", points: 14, isSemibold: true), Line(text: "The link is on the clipboard.", points: 13)]
+    private func row(_ title: String) -> [Line] { [Line(text: title, points: 13)] }
 
-    /// A screenshot the macOS audit attached on CI, from this bundle.
-    private func crop(_ name: String) throws -> WorkbenchContrastMeasurement {
+    /// A screenshot the macOS audit attached on CI, from this bundle, as
+    /// rows of pixels, top row first.
+    private func screenshot(_ name: String) throws -> (pixels: [RGB], width: Int) {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: name, withExtension: "png"), "The test bundle has no \(name).png")
         let source = try XCTUnwrap(CGImageSourceCreateWithURL(url as CFURL, nil))
-        return try XCTUnwrap(WorkbenchContrastMeasurement(XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil))))
+        let image = try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        return try (XCTUnwrap(WorkbenchTextProof.pixels(of: image)), image.width)
     }
 
-    /// A drawn crop: lines of text 11 rows tall, each column of a stroke in
-    /// the line's colors in turn, with a blended edge column after it.
-    private func pixels(on background: RGB, lines: [[RGB]], width: Int = 60) -> [RGB] {
-        let blank = [RGB](repeating: background, count: width)
-        var pixels = blank + blank + blank
-        for colors in lines {
-            let row = (0..<width).map { x -> RGB in
-                let color = colors[(x / 4) % colors.count]
-                func half(_ a: UInt8, _ b: UInt8) -> UInt8 { UInt8((Int(a) + Int(b)) / 2) }
-                switch x % 4 {
-                case 0: return color
-                case 1: return RGB(red: half(color.red, background.red), green: half(color.green, background.green), blue: half(color.blue, background.blue))
-                default: return background
-                }
+    /// The proof of `expected` in the screenshot, after `edit` changes its
+    /// pixels, given the screenshot's background and its words' columns.
+    private func proof(_ name: String, _ expected: [Line], edit: (inout [RGB], Int, RGB, [ClosedRange<Int>]) -> Void = { _, _, _, _ in }) throws -> WorkbenchTextProof {
+        var (pixels, width) = try screenshot(name)
+        let background = try XCTUnwrap(WorkbenchTextProof(pixels: pixels, width: width, expected: []), name).background
+        // Words: columns with ink, split at three or more columns without.
+        var words: [ClosedRange<Int>] = []
+        for x in 0..<width where stride(from: x, to: pixels.count, by: width).contains(where: { pixels[$0].offset(from: background).contains { abs($0) > 3 } }) {
+            if let last = words.last, x - last.upperBound <= 3 { words[words.count - 1] = last.lowerBound...x } else { words.append(x...x) }
+        }
+        edit(&pixels, width, background, words)
+        return try XCTUnwrap(WorkbenchTextProof(pixels: pixels, width: width, expected: expected), name)
+    }
+
+    /// Sets each pixel in the columns that `pick` returns for the
+    /// screenshot's words to `color(pixel, background)`.
+    private func recolor(_ pick: @escaping ([ClosedRange<Int>]) -> ClosedRange<Int>, rows: ClosedRange<Int>? = nil, _ color: @escaping (RGB, RGB) -> RGB) -> (inout [RGB], Int, RGB, [ClosedRange<Int>]) -> Void {
+        { pixels, width, background, words in
+            for index in pixels.indices where pick(words).contains(index % width) && rows?.contains(index / width) != false {
+                pixels[index] = color(pixels[index], background)
             }
-            for _ in 0..<11 { pixels += row }
-            for _ in 0..<5 { pixels += blank }
         }
-        return pixels
     }
 
-    private func crop(on background: RGB, lines: [[RGB]]) -> WorkbenchContrastMeasurement? {
-        WorkbenchContrastMeasurement(pixels: pixels(on: background, lines: lines), width: 60)
-    }
-
-    func testTheMeasurementReadsTheAuditsScreenshots() throws {
+    func testTheProofPassesTheTextsTheAuditMisreadOnCI() throws {
+        for (name, expected) in [("contrast-toasts-row-light", row("Toasts")), ("contrast-alerts-light", alerts), ("contrast-empty-state-dark", emptyState), ("contrast-toast-dark", toast)] {
+            let proof = try proof(name, expected)
+            XCTAssertTrue(proof.passes, "\(name): \(proof.summary)")
+        }
         // The selected row's text.primary on the accent selection: 3.36:1.
-        let selected = try crop("contrast-selected-row-light")
+        let selected = try proof("contrast-selected-row-light", row("Toggles"))
         XCTAssertFalse(selected.passes, selected.summary)
-        XCTAssertEqual(selected.background, accent)
-        XCTAssertLessThan(selected.lines.first?.weakest?.contrast ?? 0, 3.4, selected.summary)
-        // The unselected "Toasts" row the audit failed, in the same colors as
-        // the "Banners" row it passed.
-        let toasts = try crop("contrast-toasts-row-light")
-        XCTAssertTrue(toasts.passes, toasts.summary)
-        XCTAssertEqual(toasts.background, canvas)
-        // The toast's title and message, each measured.
-        let toast = try crop("contrast-toast-dark")
-        XCTAssertTrue(toast.passes, toast.summary)
-        XCTAssertEqual(toast.lines.count, 2, toast.summary)
-        // AppKit's window title: the toolbar's separator and the window's
-        // corner in the screenshot leave it unmeasured (see the
-        // macos-window-title waiver).
-        let title = try crop("contrast-window-title-dark")
-        XCTAssertFalse(title.passes, title.summary)
+        XCTAssertEqual(selected.lines.first?.glyphInk.allSatisfy { (0.85...1.15).contains($0) }, true, selected.summary)
+        XCTAssertLessThan(selected.lines.first?.contrast ?? 0, 3.4, selected.summary)
+        // AppKit's window title, which spans the toolbar's separator and the
+        // window's corner (see the macos-window-title waiver).
+        XCTAssertFalse(try proof("contrast-window-title-dark", [Line(text: "Text fields", points: 13)]).passes)
     }
 
-    func testTheMeasurementFailsEveryTextItCannotShowReaches45To1() throws {
-        let faint = RGB(red: 160, green: 166, blue: 173)
-        let secondary = RGB(red: 51, green: 59, blue: 69)
-        XCTAssertTrue(try XCTUnwrap(crop(on: canvas, lines: [[ink]])).passes)
-        XCTAssertTrue(try XCTUnwrap(crop(on: canvas, lines: [[ink], [secondary]])).passes)
-        // A title that passes does not carry a message that fails.
-        XCTAssertFalse(try XCTUnwrap(crop(on: canvas, lines: [[ink], [faint]])).passes)
-        // Faint text is measured, not dropped as background.
-        for barelyThere in [RGB(red: 213, green: 220, blue: 227), RGB(red: 225, green: 232, blue: 239)] {
-            let measured = try XCTUnwrap(crop(on: canvas, lines: [[ink], [barelyThere]]))
-            XCTAssertFalse(measured.passes, measured.summary)
+    func testTheProofFailsTextTheScreenshotDoesNotShowInFull() throws {
+        // Another text, size or weight, a line too many or none.
+        for expected in [row("Toast"), row("Banners"), [Line(text: "Toasts", points: 13, isSemibold: true)], [Line(text: "Toasts", points: 14)], row("Toasts") + row("Toasts"), []] {
+            let proof = try proof("contrast-toasts-row-light", expected)
+            XCTAssertFalse(proof.passes, "\(expected): \(proof.summary)")
         }
-        // Each run on a line is measured on its own, whether its color is
-        // another hue or a lighter one in the same hue.
-        XCTAssertTrue(try XCTUnwrap(crop(on: canvas, lines: [[ink, RGB(red: 150, green: 20, blue: 20)]])).passes)
-        for second in [RGB(red: 230, green: 120, blue: 120), faint] {
-            let twoColors = try XCTUnwrap(crop(on: canvas, lines: [[ink, ink, second]]))
-            XCTAssertFalse(twoColors.passes, twoColors.summary)
+        let middle = { (words: [ClosedRange<Int>]) in words[2] }
+        let edits: [(String, String, [Line], (inout [RGB], Int, RGB, [ClosedRange<Int>]) -> Void)] = [
+            // A word within 3 of the background, which no band of ink shows.
+            ("invisible word", "contrast-empty-state-dark", emptyState, recolor(middle) { _, background in background.blend(toward: RGB(red: 255, green: 255, blue: 255), 0.01) }),
+            ("missing word", "contrast-empty-state-dark", emptyState, recolor(middle) { _, background in background }),
+            ("faint word", "contrast-empty-state-dark", emptyState, recolor(middle) { pixel, background in background.blend(toward: pixel, 0.3) }),
+            ("word in another color", "contrast-empty-state-dark", emptyState, recolor(middle) { pixel, background in pixel == background ? pixel : RGB(red: 230, green: 120, blue: 120) }),
+            // A faint mark of the text's hue touching the "l", at about 1.9:1.
+            ("faint mark touching a glyph", "contrast-alerts-light", alerts, recolor({ _ in 12...14 }, rows: 4...13) { pixel, background in
+                pixel.offset(from: background).allSatisfy { abs($0) <= 3 } ? background.blend(toward: RGB(red: 15, green: 23, blue: 31), 0.3) : pixel
+            }),
+            ("faint message line", "contrast-toast-dark", toast, recolor({ _ in 0...Int.max }, rows: 20...36) { pixel, background in background.blend(toward: pixel, 0.3) }),
+            ("fill behind a glyph", "contrast-toasts-row-light", row("Toasts"), recolor({ $0[0].lowerBound...($0[0].lowerBound + 6) }) { pixel, _ in pixel.blend(toward: RGB(red: 200, green: 160, blue: 120), 0.5) }),
+            ("no one background", "contrast-toasts-row-light", row("Toasts"), { pixels, _, background, _ in
+                for index in pixels.indices where index % 2 == 0 && pixels[index] == background { pixels[index] = background.blend(toward: RGB(red: 0, green: 0, blue: 0), 0.05) }
+            }),
+        ]
+        for (name, screenshot, expected, edit) in edits {
+            let proof = try proof(screenshot, expected, edit: edit)
+            XCTAssertFalse(proof.passes, "\(name): \(proof.summary)")
         }
-        // A small mark is a run of its own, not part of the glyph beside it.
-        var mark = pixels(on: canvas, lines: [])
-        mark += [RGB](repeating: canvas, count: 60 * 16)
-        for row in 3...13 { mark[row * 60 + 10] = ink; mark[row * 60 + 11] = ink }
-        for row in 11...12 { mark[row * 60 + 15] = faint; mark[row * 60 + 16] = faint }
-        let smallMark = try XCTUnwrap(WorkbenchContrastMeasurement(pixels: mark, width: 60))
-        XCTAssertFalse(smallMark.passes, smallMark.summary)
-        // Text within 3 of the background is not seen at all: the waiver
-        // also checks the number of lines.
-        for invisible in [RGB(red: 226, green: 233, blue: 240), RGB(red: 227, green: 234, blue: 241)] {
-            XCTAssertEqual(try XCTUnwrap(crop(on: canvas, lines: [[ink], [invisible]])).lines.count, 1)
-        }
-        // Text on a fill is not measured against the background around it.
-        var chip = pixels(on: canvas, lines: [])
-        for _ in 0..<11 { chip += (0..<60).map { x in (10..<40).contains(x) ? (x % 4 == 0 ? RGB(red: 120, green: 128, blue: 136) : RGB(red: 40, green: 48, blue: 56)) : canvas } }
-        chip += [RGB](repeating: canvas, count: 60 * 5)
-        let onAFill = try XCTUnwrap(WorkbenchContrastMeasurement(pixels: chip, width: 60))
-        XCTAssertFalse(onAFill.passes, onAFill.summary)
-        // A few pixels of higher contrast do not lift a failing line.
-        var stray = [RGB](repeating: accent, count: 60 * 19)
-        for row in 3..<14 { for x in stride(from: 0, to: 60, by: 4) { stray[row * 60 + x] = ink } }
-        for x in [1, 5, 9] { stray[8 * 60 + x] = RGB(red: 255, green: 255, blue: 255) }
-        let accentRow = try XCTUnwrap(WorkbenchContrastMeasurement(pixels: stray, width: 60))
-        XCTAssertFalse(accentRow.passes, accentRow.summary)
-        // No text, or no one background.
-        XCTAssertFalse(try XCTUnwrap(crop(on: canvas, lines: [])).passes)
-        let mixed = pixels(on: canvas, lines: [[ink]]).enumerated().map { $1 == canvas && $0 % 2 == 0 ? RGB(red: 209, green: 216, blue: 223) : $1 }
-        let noBackground = try XCTUnwrap(WorkbenchContrastMeasurement(pixels: mixed, width: 60))
-        XCTAssertFalse(noBackground.passes, noBackground.summary)
     }
 
-    #if os(macOS)
     private let window = CGRect(x: 32, y: 31, width: 960, height: 674)
     private let sidebar = CGRect(x: 40, y: 39, width: 240, height: 658)
     private let header = CGRect(x: 54, y: 83, width: 224, height: 19)
@@ -225,59 +200,51 @@ final class WorkbenchAuditWaiverTests: XCTestCase {
         XCTAssertNil(waiver("contrast", .init(type: .staticText, frame: title), shared))
     }
 
-    func testTheMisreadWaiverCoversOnlyMeasuredTextOutsideTheSelectedRow() throws {
-        let passing = try crop("contrast-toasts-row-light")
-        let failing = try crop("contrast-selected-row-light")
+    func testTheMisreadWaiverCoversOnlyProvenTextOutsideTheSelectedRow() throws {
+        let toastsRow = try proof("contrast-toasts-row-light", row("Toasts"))
+        let selectedRow = try proof("contrast-selected-row-light", row("Toggles"))
         let screens: [String?] = [nil, "buttons", "toggles", "text-fields", "menus", "segmented-pickers", "progress", "segmented-meters", "banners", "toasts", "empty-states", "skeletons"]
         for screen in screens {
             for colorScheme in ["light", "dark"] {
                 let context = context(screen: screen, colorScheme: colorScheme)
-                for (id, title) in [("buttons", "Buttons"), ("toggles", "Toggles"), ("toasts", "Toasts"), ("skeletons", "Skeletons")] {
-                    var row = WorkbenchAuditElement(
-                        type: .staticText, identifier: WorkbenchApp.sidebarPrefix + id, value: title,
-                        frame: CGRect(x: 56, y: 110, width: 62, height: 16)
-                    )
+                for (id, title) in [("buttons", "Buttons"), ("toggles", "Toggles"), ("toasts", "Toasts")] {
+                    var row = WorkbenchAuditElement(type: .staticText, identifier: WorkbenchApp.sidebarPrefix + id, value: title, frame: CGRect(x: 56, y: 110, width: 40, height: 16))
                     let name = "\(id) on \(screen ?? "the list") in \(colorScheme)"
-                    XCTAssertNil(waiver("contrast", row, context), "unmeasured \(name)")
-                    row.contrast = failing
+                    XCTAssertNil(waiver("contrast", row, context), "unproven \(name)")
+                    row.proof = selectedRow
                     XCTAssertNil(waiver("contrast", row, context), "failing \(name)")
-                    row.contrast = passing
-                    XCTAssertEqual(waiver("contrast", row, context), id == screen ? nil : "macos-contrast-misread", "passing \(name)")
+                    // A proof passes only for the text it shows: "Toasts".
+                    row.proof = toastsRow
+                    XCTAssertEqual(waiver("contrast", row, context), id == "toasts" && screen != "toasts" ? "macos-contrast-misread" : nil, "proven \(name)")
                 }
             }
         }
-        // A text is waived by what it measures, not by its name.
-        var alerts = WorkbenchAuditElement(type: .staticText, value: "Alerts", frame: CGRect(x: 304, y: 139, width: 36, height: 16))
-        alerts.contrast = failing
-        XCTAssertNil(waiver("contrast", alerts, context(screen: "toggles", colorScheme: "light")))
-        var known = WorkbenchAuditElement(type: .staticText, value: "Alerts", frame: CGRect(x: 304, y: 139, width: 36, height: 16))
-        known.contrast = passing
-        XCTAssertEqual(waiver("contrast", known, context(screen: "toggles", colorScheme: "dark")), "macos-contrast-misread")
-        // Only the texts the audit was seen to misread, where it misread them.
-        XCTAssertNil(waiver("contrast", known, context(screen: "buttons")))
-        var other = WorkbenchAuditElement(type: .staticText, value: "Anything else", frame: CGRect(x: 304, y: 139, width: 36, height: 16))
-        other.contrast = passing
+        // A text the audit was seen to misread, where it misread it.
+        let alertsProof = try proof("contrast-alerts-light", alerts)
+        let alertsText = WorkbenchAuditElement(type: .staticText, value: "Alerts", frame: CGRect(x: 304, y: 139, width: 36, height: 16), proof: alertsProof)
+        XCTAssertEqual(waiver("contrast", alertsText, context(screen: "toggles", colorScheme: "light")), "macos-contrast-misread")
+        XCTAssertNil(waiver("contrast", alertsText, context(screen: "buttons")))
+        var other = alertsText
+        other.value = "Anything else"
         XCTAssertNil(waiver("contrast", other, context(screen: "toggles")))
+        var emptyMessage = WorkbenchAuditElement(type: .staticText, value: "Files you add appear here.", frame: CGRect(x: 550, y: 218, width: 172, height: 17))
+        emptyMessage.proof = try proof("contrast-empty-state-dark", emptyState)
+        XCTAssertEqual(waiver("contrast", emptyMessage, context(screen: "empty-states", colorScheme: "dark")), "macos-contrast-misread")
         // Only an enabled text.
         let context = context(screen: "toasts")
+        let toastProof = try proof("contrast-toast-dark", toast)
         for element in [
-            WorkbenchAuditElement(type: .group, label: "Link copied", frame: CGRect(x: 412, y: 640, width: 167, height: 37), contrast: passing),
-            WorkbenchAuditElement(type: .button, label: "Show toast", frame: CGRect(x: 304, y: 139, width: 90, height: 24), contrast: passing),
+            WorkbenchAuditElement(type: .group, label: "Link copied", frame: CGRect(x: 412, y: 640, width: 167, height: 37), proof: toastProof),
+            WorkbenchAuditElement(type: .button, label: "Show toast", frame: CGRect(x: 304, y: 139, width: 90, height: 24), proof: toastProof),
         ] {
             XCTAssertNil(waiver("contrast", element, context), "\(element.type)")
         }
-        // A toast's title and message, each measured.
-        var toast = WorkbenchAuditElement(type: .staticText, label: "Link copied", frame: CGRect(x: 412, y: 640, width: 167, height: 37))
-        toast.contrast = try crop("contrast-toast-dark")
-        XCTAssertEqual(waiver("contrast", toast, context), "macos-contrast-misread")
-        toast.contrast = crop(on: canvas, lines: [[ink], [RGB(red: 160, green: 166, blue: 173)]])
-        XCTAssertNil(waiver("contrast", toast, context))
-        // A message too faint to measure leaves one line of the toast's two.
-        toast.contrast = crop(on: canvas, lines: [[ink], [RGB(red: 227, green: 234, blue: 241)]])
-        XCTAssertNil(waiver("contrast", toast, context))
-        toast.isEnabled = false
-        toast.contrast = try crop("contrast-toasts-row-light")
-        XCTAssertEqual(waiver("contrast", toast, context), "disabled-contrast")
+        var toastText = WorkbenchAuditElement(type: .staticText, label: "Link copied", value: "The link is on the clipboard.", frame: CGRect(x: 412, y: 640, width: 167, height: 37), proof: toastProof)
+        XCTAssertEqual(waiver("contrast", toastText, context), "macos-contrast-misread")
+        toastText.proof = try proof("contrast-toast-dark", toast, edit: recolor({ _ in 0...Int.max }, rows: 20...36) { pixel, background in background.blend(toward: pixel, 0.3) })
+        XCTAssertNil(waiver("contrast", toastText, context))
+        toastText.isEnabled = false
+        XCTAssertEqual(waiver("contrast", toastText, context), "disabled-contrast")
     }
     #endif
 }

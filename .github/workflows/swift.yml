@@ -194,7 +194,37 @@ jobs:
           raise SystemExit("no available iPhone simulator on iOS 17 or later")
           ')
           echo "destination=id=$udid" >> "$GITHUB_OUTPUT"
-      - name: xcodebuild test (workbench accessibility audits)
+          # Booted while the tests build, so they start on a warm simulator.
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+      - name: xcodebuild build-for-testing (workbench)
+        working-directory: uifn/examples/swiftui-workbench
+        env:
+          DESTINATION: ${{ steps.destination.outputs.destination }}
+        run: |
+          xcodebuild build-for-testing -project SwiftUIWorkbench.xcodeproj -scheme SwiftUIWorkbench \
+            -destination "$DESTINATION" -disableAutomaticPackageResolution
+      # A new iOS 26 simulator posts "Ready for Apple Intelligence" a few
+      # minutes after it boots, and its banner covers the app. Wait until it
+      # has been posted, so it does not land during an audit. The tests also
+      # wait out any banner before each audit and fail if one stays.
+      - name: Wait for the simulator's first-boot notification
+        if: matrix.platform == 'iOS'
+        env:
+          UDID: ${{ steps.destination.outputs.udid }}
+        run: |
+          for _ in $(seq 1 72); do
+            if xcrun simctl spawn "$UDID" log show --last 30m --style compact \
+              --predicate 'process == "followupd" AND composedMessage CONTAINS "Added notification request"' \
+              | grep -q "Added notification request"; then
+              echo "The first-boot notification was posted."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::notice::No first-boot notification within 6 minutes; the tests still wait out any banner."
+      - name: xcodebuild test-without-building (workbench accessibility audits)
         working-directory: uifn/examples/swiftui-workbench
         env:
           DESTINATION: ${{ steps.destination.outputs.destination }}
@@ -203,8 +233,8 @@ jobs:
           # README waiver table test fails instead of skipping.
           TEST_RUNNER_UIFN_WORKBENCH_REQUIRE_README: "1"
         run: |
-          xcodebuild test -project SwiftUIWorkbench.xcodeproj -scheme SwiftUIWorkbench \
-            -destination "$DESTINATION" -resultBundlePath "$RESULT" -disableAutomaticPackageResolution
+          xcodebuild test-without-building -project SwiftUIWorkbench.xcodeproj -scheme SwiftUIWorkbench \
+            -destination "$DESTINATION" -resultBundlePath "$RESULT"
       # Kept on success too: the result bundle lists each audit and the issues
       # it waived.
       - name: Upload the audit results
