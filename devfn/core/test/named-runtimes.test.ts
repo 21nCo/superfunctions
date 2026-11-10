@@ -2406,6 +2406,49 @@ it("reruns an idempotent once task whose unresolved attempt an earlier release r
   }
 }, 60_000);
 
+it("keeps the revision of an attempt this release recorded beside an earlier release's unmatched success, so an idempotent once task changed since it failed still needs an explicit rerun", async () => {
+  const { parent, primary } = await repository();
+  const log = path.join(parent, "runs.log"), failing = path.join(parent, "fail");
+  const command = `const fs = require("node:fs"); fs.appendFileSync(${JSON.stringify(log)}, "x\\n"); process.exit(fs.existsSync(${JSON.stringify(failing)}) ? 1 : 0);`;
+  const config = validateDevFnConfig({ version: 1, project: { id: "mixed-journal" },
+    processes: { seed: { adapter: "command", command: [process.execPath, "-e", command], task: { rerun: "once", idempotent: true, inputs: ["."] } } }, profiles: { default: { processes: ["seed"] } } });
+  const node = { name: "seed", kind: "process" as const };
+  const orchestrator = new DevFnOrchestrator();
+  // DevFn's own runtime directory as the state directory: both rules agree while it holds only DevFn's entries.
+  const stateDir = path.join(primary, ".devfn");
+  const { instanceId } = await resolveInstanceIdentity("mixed-journal", primary);
+  const key = taskScope(config, instanceId, node).key;
+  const runs = async () => (await readFile(log, "utf8").catch(() => "")).split("\n").filter(Boolean).length;
+  try {
+    await mkdir(path.join(stateDir, "tasks"), { recursive: true });
+    await writeFile(path.join(primary, "schema.sql"), "create table t();");
+    const at = new Date(0).toISOString(), succeeded = await taskInputRevision(config, primary, node, "default", undefined, undefined, stateDir, instanceId);
+    await writeFile(path.join(stateDir, "tasks", `${key}.json`), JSON.stringify({ version: 1, task: "seed", scope: "instance",
+      lastSuccess: { inputRevision: succeeded, invocationId: "earlier", instanceId, completedAt: at },
+      attempts: [{ invocationId: "earlier", instanceId, attempt: 1, inputRevision: succeeded, startedAt: at, endedAt: at, outcome: "succeeded", effects: "applied", stopped: true }] }));
+    // An explicit rerun for an edited source fails; the earlier release's success matches neither rule and stays unmarked.
+    await writeFile(path.join(primary, "schema.sql"), "create table u();");
+    await writeFile(failing, "");
+    await expect(orchestrator.up({ config, root: primary, stateDir, rerunTasks: ["seed"] })).rejects.toMatchObject({ code: "DEVFN_START_FAILED", details: { causeCode: "DEVFN_TASK_FAILED" } });
+    await orchestrator.down({ config, root: primary, stateDir }).catch(() => undefined);
+    const journal = await readTaskJournal(stateDir, key);
+    expect(journal?.lastSuccess).toMatchObject({ inputRevision: succeeded });
+    expect(journal?.lastSuccess?.stateEntries).toBeUndefined();
+    expect(journal?.attempts.at(-1)).toMatchObject({ outcome: "failed", effects: "unknown", stateEntries: true });
+    // A user's file there then changes the current revision only: that attempt's inputs are gone, so the task is not run again without an explicit rerun.
+    await rm(failing);
+    await writeFile(path.join(stateDir, "notes.sql"), "-- mine");
+    await expect(orchestrator.up({ config, root: primary, stateDir })).rejects.toMatchObject({ code: "DEVFN_TASK_INPUT_CHANGED" });
+    expect(await runs()).toBe(1);
+    // Explicitly rerun, it succeeds for this release.
+    expect((await orchestrator.up({ config, root: primary, stateDir, rerunTasks: ["seed"] })).state).toBe("ready");
+    expect(await runs()).toBe(2);
+  } finally {
+    await orchestrator.down({ config, root: primary, stateDir }).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 60_000);
+
 it("walks a task's inputs once per revision check while an earlier release's completion matches neither rule", async () => {
   const { parent, primary } = await repository();
   const config = validateDevFnConfig({ version: 1, project: { id: "one-walk" },

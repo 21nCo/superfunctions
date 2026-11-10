@@ -39,6 +39,7 @@ export interface TaskAttempt {
   /** Nothing the attempt ran is left: its process group and any one-off container are verified gone. */
   stopped?: boolean;
   error?: string;
+  stateEntries?: true; // Recorded under the rule holding only DevFn's entries of a recorded existing state directory, as every attempt of this release is.
 }
 
 export interface TaskReceipt {
@@ -262,7 +263,7 @@ export async function taskInputRevision(config: DevFnConfig, root: string, node:
     envAllowlist: sorted(spec.envAllowlist), secretEnv: sorted(spec.secretEnv), resources: consumed, inputs, profile: JSON.stringify([settings, spec.env, config.profiles[profile]?.environment]).includes("DEVFN_PROFILE") ? profile : undefined }));
   const current = revision(walked.map(([input, digests]) => [input, digests.current])), earlier = revision(walked.map(([input, digests]) => [input, digests.earlier])); // An input without an earlier digest gives a revision no earlier release recorded.
   if (typeof completed !== "object" || completed.lastSuccess?.stateEntries) return completed === earlier ? earlier : current; // A revision an earlier release recorded is taken where the earlier rule gives it.
-  for (const record of [completed.lastSuccess, ...completed.attempts]) if (record?.inputRevision === earlier) record.inputRevision = current; // In a journal whose success an earlier release recorded, each revision that rule gives is bound to the current one, and a success then matching is marked so a later change there counts.
+  for (const record of [completed.lastSuccess, ...completed.attempts]) if (record && !record.stateEntries && record.inputRevision === earlier) record.inputRevision = current; // In a journal whose success an earlier release recorded, each revision an earlier release recorded that its rule gives is bound to the current one, and a success then matching is marked so a later change there counts.
   if (completed.lastSuccess?.inputRevision === current) completed.lastSuccess.stateEntries = true;
   return current;
 }
@@ -525,7 +526,7 @@ export async function runTask(context: RunTaskContext): Promise<TaskReceipt> {
     if (!decision.run) { await context.record(receipt); return receipt; }
     for (let number = 1; number <= attemptsAllowed; number += 1) {
       if (context.signal?.aborted) break;
-      const attempt: TaskAttempt = { invocationId: context.invocationId, instanceId: context.instanceId, attempt: number, inputRevision: revision,
+      const attempt: TaskAttempt = { invocationId: context.invocationId, instanceId: context.instanceId, attempt: number, inputRevision: revision, stateEntries: true,
         startedAt: new Date().toISOString(), outcome: "running", effects: "unknown" };
       let result: ProcessRunResult;
       try {

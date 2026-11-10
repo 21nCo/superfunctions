@@ -690,9 +690,7 @@ export class DevFnOrchestrator {
   }
 
   /**
-   * Under the instance's lifecycle lock, which the caller holds, so after any start or stop of the instance in flight: refuse
-   * before anything is created, recorded or written in the requested state directory a start or stop its live receipt says
-   * ran in another one, and a stop of a runtime that is not running; the locked checks still decide later.
+   * Under the instance's lifecycle lock, which the caller holds, so after any start or stop of the instance in flight: refuse before anything is created, recorded or written in the requested state directory a start or stop its live receipt says ran in another one, and a stop of a runtime that is not running; the locked checks still decide later.
    */
   private async assertStateDirOfReceipt(options: { config: DevFnConfig; root: string }, identity: InstanceIdentity, requestedStateDir: string, stopping: boolean): Promise<void> {
     const receipt = await readReceipt(options.config, options.root, identity.instanceId, runtimeOf(identity));
