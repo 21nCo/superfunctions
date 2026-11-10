@@ -122,6 +122,27 @@ final class WorkbenchAuditWaiverTests: XCTestCase {
         }
     }
 
+    func testTheProofFailsFaintInkTheGlyphsDoNotExplain() throws {
+        // The row padded by three columns of its background, with a faint
+        // mark at 1.5:1 in the second, apart from the glyphs and far fainter.
+        let (pixels, width) = try screenshot("contrast-toasts-row-light")
+        let background = RGB(red: 229, green: 236, blue: 243)
+        var padded = stride(from: 0, to: pixels.count, by: width).flatMap { Array(pixels[$0..<$0 + width]) + [background, background, background] }
+        for row in 11...12 { padded[row * (width + 3) + width] = RGB(red: 186, green: 193, blue: 201) }
+        let marked = try XCTUnwrap(WorkbenchTextProof(pixels: padded, width: width + 3, expected: row("Toasts")))
+        XCTAssertFalse(marked.passes, marked.summary)
+        // Every eighth column of ink at 59% of the text color, 4.33:1, and
+        // the rest at 68%: each glyph's fit averages the weaker columns away.
+        let mixed = try proof("contrast-toasts-row-light", row("Toasts")) { pixels, width, background, _ in
+            let text = RGB(red: 15, green: 23, blue: 31)
+            for index in pixels.indices where pixels[index] != background {
+                let share = min(max((Double(background.green) - Double(pixels[index].green)) / (Double(background.green) - Double(text.green)), 0), 1)
+                pixels[index] = background.blend(toward: text, share * (index % width % 8 == 0 ? 0.59 : 0.68))
+            }
+        }
+        XCTAssertFalse(mixed.passes, mixed.summary)
+    }
+
     private let window = CGRect(x: 32, y: 31, width: 960, height: 674)
     private let sidebar = CGRect(x: 40, y: 39, width: 240, height: 658)
     private let header = CGRect(x: 54, y: 83, width: 224, height: 19)
