@@ -15,7 +15,7 @@
     "forceConsistentCasingInFileNames": true,
     "baseUrl": ".",
     "paths": {
-      "@searchfn/adapter-contracts": ["../adapter-contracts/src/index.ts"]
+      "@searchfn/adapter-contracts": ["./node_modules/@searchfn/adapter-contracts", "../adapter-contracts/src/index.ts"]
     }
   },
   "include": ["src"],
