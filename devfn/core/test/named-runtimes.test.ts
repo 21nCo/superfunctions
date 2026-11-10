@@ -2154,7 +2154,7 @@ it.each([["empty"], ["populated"]])("keeps once and on-change completions an ear
       expect(await start(name)).toBe("ready");
       const current = await revision(name);
       expect(current).not.toBe(earlier[name]);
-      expect((await readTaskJournal(stateDir, path.basename(journal(name), ".json")))?.lastSuccess?.inputRevision).toBe(current);
+      expect((await readTaskJournal(stateDir, path.basename(journal(name), ".json")))?.lastSuccess).toMatchObject({ inputRevision: current, stateEntries: true });
       expect(await start(name)).toBe("ready");
     }
     expect([await runs("once"), await runs("change")]).toEqual([0, 0]);
@@ -2191,13 +2191,14 @@ it("keeps a ready lifecycle an earlier release started, whose task completion he
     const earlier = await taskInputRevision(config, primary, { name: "seed", kind: "process" }, "default", undefined, undefined, stateDir, instanceId);
     expect((await orchestrator.up({ config, root: primary, stateDir })).state).toBe("ready");
     // The earlier release's receipt and journal recorded the revision that held the state directory whole.
-    const receipt = JSON.parse(await readFile(receiptFile, "utf8")) as { tasks: Array<{ inputRevision: string }> };
+    const receipt = JSON.parse(await readFile(receiptFile, "utf8")) as { tasks: Array<{ inputRevision: string; lastSuccess?: { inputRevision: string; stateEntries?: true } }> };
     expect(receipt.tasks[0].inputRevision).not.toBe(earlier);
     receipt.tasks[0].inputRevision = earlier;
+    receipt.tasks[0].lastSuccess = { ...receipt.tasks[0].lastSuccess!, inputRevision: earlier, stateEntries: undefined };
     await writeFile(receiptFile, JSON.stringify(receipt));
     const key = taskScope(config, instanceId, { name: "seed", kind: "process" }).key, journal = path.join(stateDir, "tasks", `${key}.json`);
-    const recorded = JSON.parse(await readFile(journal, "utf8")) as { lastSuccess: { inputRevision: string } };
-    recorded.lastSuccess.inputRevision = earlier;
+    const recorded = JSON.parse(await readFile(journal, "utf8")) as { lastSuccess: { inputRevision: string; stateEntries?: true } };
+    recorded.lastSuccess = { ...recorded.lastSuccess, inputRevision: earlier, stateEntries: undefined };
     await writeFile(journal, JSON.stringify(recorded));
     expect((await orchestrator.status({ config, root: primary })).state).toBe("ready");
     await expect(orchestrator.up({ config, root: primary, stateDir })).rejects.toMatchObject({ code: "DEVFN_ALREADY_RUNNING" });
@@ -2207,6 +2208,90 @@ it("keeps a ready lifecycle an earlier release started, whose task completion he
     await rm(parent, { recursive: true, force: true });
   }
 }, 60_000);
+
+/** Two tasks, a once and an on-change one appending to a log each, reading inputs and selected by their own profile. */
+function twoTasks(parent: string, id: string, inputs: string[]) {
+  const logs = { once: path.join(parent, "once.log"), change: path.join(parent, "change.log") };
+  const append = (log: string) => [process.execPath, "-e", `require("node:fs").appendFileSync(${JSON.stringify(log)}, "x\\n")`];
+  const config = validateDevFnConfig({ version: 1, project: { id },
+    processes: { once: { adapter: "command", command: append(logs.once), task: { rerun: "once", inputs } }, change: { adapter: "command", command: append(logs.change), task: { rerun: "on-change", inputs } } },
+    profiles: { default: { processes: ["once"] }, change: { processes: ["change"] }, none: { processes: [] } } });
+  const runs = async (name: "once" | "change") => (await readFile(logs[name], "utf8").catch(() => "")).split("\n").filter(Boolean).length;
+  return { config, runs, profileOf: { once: "default", change: "change" } as const };
+}
+
+it("never takes a completion this release recorded for an earlier release's where holding the caller's existing state directory whole gives the same revision, and marks an earlier one that matches as it is", async () => {
+  const { parent, primary } = await repository();
+  const { config, runs, profileOf } = twoTasks(parent, "same-rule", ["."]);
+  const orchestrator = new DevFnOrchestrator();
+  // DevFn's own runtime directory as the state directory: its marker is the config's state either way, so both rules agree while it holds only DevFn's entries.
+  const stateDir = path.join(primary, ".devfn");
+  const { instanceId } = await resolveInstanceIdentity("same-rule", primary);
+  const revision = async (name: "once" | "change") => await taskInputRevision(config, primary, { name, kind: "process" }, profileOf[name], undefined, undefined, stateDir, instanceId);
+  const key = (name: "once" | "change") => taskScope(config, instanceId, { name, kind: "process" }).key;
+  const start = async (name: "once" | "change") => {
+    try { return (await orchestrator.up({ config, root: primary, stateDir, profile: profileOf[name] })).state; }
+    finally { await orchestrator.down({ config, root: primary, stateDir, profile: profileOf[name] }).catch(() => undefined); }
+  };
+  try {
+    await mkdir(path.join(stateDir, "tasks"), { recursive: true });
+    const earlier = await revision("once");
+    const success = { invocationId: "earlier", instanceId, completedAt: new Date(0).toISOString() };
+    await writeFile(path.join(stateDir, "tasks", `${key("once")}.json`), JSON.stringify({ version: 1, task: "once", scope: "instance", lastSuccess: { inputRevision: earlier, ...success },
+      attempts: [{ ...success, attempt: 1, inputRevision: earlier, startedAt: success.completedAt, endedAt: success.completedAt, outcome: "succeeded", effects: "applied", stopped: true }] }));
+    // The earlier release's completion matches as it is and is marked; the on-change task's first run is this release's.
+    expect(await start("once")).toBe("ready");
+    expect(await revision("once")).toBe(earlier);
+    expect((await readTaskJournal(stateDir, key("once")))?.lastSuccess).toMatchObject({ inputRevision: earlier, stateEntries: true });
+    expect(await start("change")).toBe("ready");
+    expect((await readTaskJournal(stateDir, key("change")))?.lastSuccess?.stateEntries).toBe(true);
+    expect([await runs("once"), await runs("change")]).toEqual([0, 1]);
+    // A user's file there then changes both, though holding the directory whole still gives the recorded revision.
+    await writeFile(path.join(stateDir, "notes.sql"), "-- mine");
+    expect(await taskInputRevision(config, primary, { name: "once", kind: "process" }, "default", undefined, undefined, stateDir, instanceId, undefined, true)).toBe(earlier);
+    await expect(orchestrator.up({ config, root: primary, stateDir })).rejects.toMatchObject({ code: "DEVFN_TASK_INPUT_CHANGED" });
+    expect(await start("change")).toBe("ready");
+    expect([await runs("once"), await runs("change")]).toEqual([0, 2]);
+  } finally {
+    for (const profile of ["default", "change"]) await orchestrator.down({ config, root: primary, stateDir, profile }).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 120_000);
+
+it("decides a task reading a user's file in its own existing state directory inside the checkout by the current rule, also against an earlier release's completion that rule never gave", async () => {
+  const { parent, primary } = await repository();
+  const { config, runs, profileOf } = twoTasks(parent, "own-state-input", ["state/notes.sql"]);
+  const orchestrator = new DevFnOrchestrator();
+  const stateDir = path.join(primary, "state");
+  const { instanceId } = await resolveInstanceIdentity("own-state-input", primary);
+  const start = async (name: "once" | "change") => {
+    try { return (await orchestrator.up({ config, root: primary, stateDir, profile: profileOf[name] })).state; }
+    finally { await orchestrator.down({ config, root: primary, stateDir, profile: profileOf[name] }).catch(() => undefined); }
+  };
+  try {
+    await mkdir(stateDir);
+    await writeFile(path.join(stateDir, "notes.sql"), "-- mine");
+    // A start without tasks records the existing state directory, so its user's file is an input from then on.
+    expect((await orchestrator.up({ config, root: primary, stateDir, profile: "none" })).state).toBe("ready");
+    await orchestrator.down({ config, root: primary, stateDir, profile: "none" });
+    expect(await start("once")).toBe("ready");
+    expect(await start("change")).toBe("ready");
+    await writeFile(path.join(stateDir, "notes.sql"), "-- changed");
+    await expect(orchestrator.up({ config, root: primary, stateDir })).rejects.toMatchObject({ code: "DEVFN_TASK_INPUT_CHANGED" });
+    expect(await start("change")).toBe("ready");
+    expect([await runs("once"), await runs("change")]).toEqual([1, 2]);
+    // An earlier release's completion: holding the directory whole refuses this input, so it matches nothing and the task runs.
+    const journal = path.join(stateDir, "tasks", `${taskScope(config, instanceId, { name: "change", kind: "process" }).key}.json`);
+    const recorded = JSON.parse(await readFile(journal, "utf8")) as { lastSuccess: { inputRevision: string; stateEntries?: true } };
+    recorded.lastSuccess = { ...recorded.lastSuccess, inputRevision: "0".repeat(64), stateEntries: undefined };
+    await writeFile(journal, JSON.stringify(recorded));
+    expect(await start("change")).toBe("ready");
+    expect(await runs("change")).toBe(3);
+  } finally {
+    for (const profile of ["default", "change", "none"]) await orchestrator.down({ config, root: primary, stateDir, profile }).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 120_000);
 
 it("accepts a completed revision only where the earlier rule, holding the caller's existing state directory inside the checkout whole, gives it", async () => {
   const { parent, primary } = await repository();

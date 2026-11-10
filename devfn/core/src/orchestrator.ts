@@ -460,7 +460,7 @@ async function receiptIsReady(config: DevFnConfig, root: string, receipt: Lifecy
     for (const node of plan.nodes.filter((item) => item.task)) {
       const completed = receipt.tasks?.find((item) => item.name === node.name);
       if (!completed || (completed.status !== "succeeded" && completed.status !== "skipped") ||
-        completed.inputRevision !== await taskInputRevision(config, root, node, plan.profile, resolved.resources, resolved.nodes[node.name]?.environment, receipt.stateDir ?? defaultStateDir(), receipt.instanceId, completed.inputRevision)) return false;
+        completed.inputRevision !== await taskInputRevision(config, root, node, plan.profile, resolved.resources, resolved.nodes[node.name]?.environment, receipt.stateDir ?? defaultStateDir(), receipt.instanceId, completed.lastSuccess?.stateEntries ? undefined : completed.inputRevision)) return false;
     }
     if (receipt.startupFingerprints) {
       const current = await startupFingerprints(config, root, resolved);
@@ -1060,9 +1060,8 @@ export class DevFnOrchestrator {
     // claim bound, given to its writers as that real directory, with no link
     // out of it on their paths.
     const checkedRuntimeDir = async () => {
-      // A task of either kind also writes its launcher's log.
       if (node.kind === "service") await runtimePath(path.join("compose", `${node.name}.override.yaml`));
-      if (node.kind === "process" || node.task) await runtimePath(path.join("logs", `${node.name}.log`));
+      if (node.kind === "process" || node.task) await runtimePath(path.join("logs", `${node.name}.log`)); // A task of either kind also writes its launcher's log.
       // The directory a process receives as DEVFN_ARTIFACT_DIR exists, owner-only, before it starts.
       if (node.kind === "process" && options.config.processes![node.name].artifacts === "runtime") {
         await mkdir(await runtimePath(path.join("artifacts", node.name)), { recursive: true, mode: 0o700 });

@@ -65,7 +65,7 @@ export interface TaskJournal {
   version: 1;
   task: string;
   scope: "instance" | "shared";
-  lastSuccess?: { inputRevision: string; invocationId: string; instanceId: string; completedAt: string };
+  lastSuccess?: { inputRevision: string; invocationId: string; instanceId: string; completedAt: string; stateEntries?: true }; // stateEntries: recorded where DevFn holds only its entries of a recorded existing state directory.
   attempts: TaskAttempt[];
 }
 
@@ -126,8 +126,7 @@ async function isExcludedEntry(excluded: readonly string[], absolute: string): P
   }).filter((spelling) => spelling !== name);
   if (spellings.length === 0) return false;
   const entry = await lstat(absolute).catch(() => undefined);
-  // A name of such a file that vanished during the walk has nothing left to hash.
-  if (!entry) return true;
+  if (!entry) return true; // A name of such a file that vanished during the walk has nothing left to hash.
   for (const spelling of spellings) {
     const own = await lstat(path.join(directory, spelling)).catch(() => undefined);
     if (own && own.dev === entry.dev && own.ino === entry.ino) return true;
@@ -253,7 +252,7 @@ export async function taskInputRevision(config: DevFnConfig, root: string, node:
   const resolved = async (items: readonly string[]) => await Promise.all(items.map((item) => canonical(path.resolve(root, item)))), base = await resolved([...devfnStateDirectories(config.runtimeDir), ...(config.environmentOutputs ?? []).flatMap((output) => output.path.includes("{runtime}") ? [output.path, runtimeOutputPath(output.path)] : [output.path]), ...(stateDir ? [stateDir] : [])]); // So is what the checkout's instances record (taskAttribution): every runtime directory, also under an earlier runtimeDir, and another instance's outputs while it holds them; a file one wrote, while it holds what it last wrote, only within a walked directory. A changed or dropped output is an input again, as in DevFn v0.1.
   const discover = async () => await taskAttribution(config, root, async () => await readClaims(root), instanceId).then(async ({ held, released, made, shared }) => await Promise.all([held, [...held, ...released], made, shared].map(async (items) => [...new Set(await resolved(items))].sort(compare))));
   for (let [held, recorded, made, shared] = await discover(), pass = 1, listed: string[] = []; ; pass += 1, inputs.length = 0, listed = []) { // A sibling publishes attribution before it creates anything and withdraws it only after removing what it created, so attribution read again after the walk, or after an entry vanished during it, covers all the walk saw unless a directory it listed is gone since (published and withdrawn meanwhile); the walk is repeated (bounded) while either changed.
-    // The caller's own state directory, where an instance records it, is held as every caller holds it: whole where DevFn made it, otherwise only DevFn's entries. Before DevFn recorded one that existed (and in DevFn v0.1) it was held whole (wholeStateDir), so a completion recorded then still matches below.
+    // The caller's own state directory, where an instance records it, is held as every caller holds it: whole where DevFn made it, otherwise only DevFn's entries. A completion an earlier release recorded (without stateEntries) held one that existed whole (wholeStateDir), as DevFn v0.1 did, so it still matches below where that rule gives it.
     const own = stateDir ? base.at(-1) : undefined, fixed = !wholeStateDir && own !== undefined && shared.includes(own) ? base.slice(0, -1) : base;
     const vanished = await (async () => { for (const [index, input] of (task.inputs ?? []).entries()) inputs.push([input, await digestInput(root, input, `${field}.task.inputs[${index}]`, [...fixed, ...recorded], fixed, [...fixed, ...held], made, listed, shared)]); })()
       .catch((error: unknown) => { if (error instanceof DevFnError && error.details?.vanished !== undefined) return error; throw error; });
@@ -263,7 +262,7 @@ export async function taskInputRevision(config: DevFnConfig, root: string, node:
   }
   const revision = sha256(JSON.stringify({ version: 1, kind: node.kind, settings, env: entries(spec.env), profileEnv: entries(config.profiles[profile]?.environment),
     envAllowlist: sorted(spec.envAllowlist), secretEnv: sorted(spec.secretEnv), resources: consumed, inputs, profile: JSON.stringify([settings, spec.env, config.profiles[profile]?.environment]).includes("DEVFN_PROFILE") ? profile : undefined }));
-  return completed === undefined || completed === revision || wholeStateDir || !stateDir || !await discover().then(([, , , shared]) => shared.includes(base.at(-1)!)) || await taskInputRevision(config, root, node, profile, resources, environment, stateDir, instanceId, undefined, true) !== completed ? revision : completed;
+  return completed === undefined || completed === revision || wholeStateDir || !stateDir || !await discover().then(([, , , shared]) => shared.includes(base.at(-1)!)) || await taskInputRevision(config, root, node, profile, resources, environment, stateDir, instanceId, undefined, true).catch(() => undefined) !== completed ? revision : completed;
 }
 
 /**
@@ -450,7 +449,7 @@ export async function preflightTasks(input: { config: DevFnConfig; plan: Lifecyc
     if (!tasks.some((node) => node.name === name)) throw new DevFnError("DEVFN_RUNTIME_INVALID", `--rerun-task ${name} names no task of profile ${input.plan.profile}.`);
   }
   for (const node of tasks) {
-    const revision = async () => await taskInputRevision(input.config, input.root, node, input.plan.profile, input.resources, input.environments?.[node.name]?.environment, input.stateDir, input.instanceId, (await readTaskJournal(input.stateDir, key))?.lastSuccess?.inputRevision);
+    const revision = async () => await taskInputRevision(input.config, input.root, node, input.plan.profile, input.resources, input.environments?.[node.name]?.environment, input.stateDir, input.instanceId, await readTaskJournal(input.stateDir, key).then((journal) => journal?.lastSuccess?.stateEntries ? undefined : journal?.lastSuccess?.inputRevision));
     const { key } = taskScope(input.config, input.instanceId, node, input.resources);
     const { task } = taskNode(input.config, node);
     const rerunRequested = input.rerunTasks?.includes(node.name) ?? false;
@@ -516,9 +515,9 @@ export async function runTask(context: RunTaskContext): Promise<TaskReceipt> {
     locked = true;
     const journal: TaskJournal = await readTaskJournal(stateDir, key) ?? { version: 1, task: node.name, scope, attempts: [] };
     await settleAttempts(journal, node.name, () => context.compose ?? new ComposeController(), async () => await writeTaskJournal(stateDir, key, journal));
-    const revision = await taskInputRevision(config, context.root, node, context.profile, context.resources, context.environment, stateDir, context.instanceId); // A success recorded while this state directory was held whole is rebound to it, so a later change there counts.
-    if (journal.lastSuccess && journal.lastSuccess.inputRevision !== revision && await taskInputRevision(config, context.root, node, context.profile, context.resources, context.environment, stateDir, context.instanceId, undefined, true) === journal.lastSuccess.inputRevision) {
-      journal.lastSuccess.inputRevision = revision;
+    const revision = await taskInputRevision(config, context.root, node, context.profile, context.resources, context.environment, stateDir, context.instanceId); // An earlier release's success, matching as it is or where it held this state directory whole, is rebound to it, so a later change there counts.
+    if (journal.lastSuccess && !journal.lastSuccess.stateEntries && (journal.lastSuccess.inputRevision === revision || await taskInputRevision(config, context.root, node, context.profile, context.resources, context.environment, stateDir, context.instanceId, undefined, true).catch(() => undefined) === journal.lastSuccess.inputRevision)) {
+      Object.assign(journal.lastSuccess, { inputRevision: revision, stateEntries: true });
       await writeTaskJournal(stateDir, key, journal);
     }
     const decision = decide(journal, revision, task, node.name, context.rerunRequested);
@@ -555,7 +554,7 @@ export async function runTask(context: RunTaskContext): Promise<TaskReceipt> {
         effects: outcome === "succeeded" ? "applied" : "unknown", stopped: !result.stopError, ...(error ? { error } : {}) });
       receipt.logPath = result.process.logPath;
       if (outcome === "succeeded") {
-        journal.lastSuccess = { inputRevision: revision, invocationId: context.invocationId, instanceId: context.instanceId, completedAt: attempt.endedAt! };
+        journal.lastSuccess = { inputRevision: revision, invocationId: context.invocationId, instanceId: context.instanceId, completedAt: attempt.endedAt!, stateEntries: true };
         receipt.lastSuccess = journal.lastSuccess;
       }
       await writeTaskJournal(stateDir, key, journal);
