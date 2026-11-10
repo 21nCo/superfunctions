@@ -141,6 +141,10 @@ final class WorkbenchAuditWaiverTests: XCTestCase {
             }
         }
         XCTAssertFalse(mixed.passes, mixed.summary)
+        // The middle row of ink at 55% of its strength, 3.82:1: each column
+        // averages it with the rows above and below.
+        let strip = try proof("contrast-toasts-row-light", row("Toasts"), edit: recolor({ _ in 0...Int.max }, rows: 8...8) { pixel, background in background.blend(toward: pixel, 0.55) })
+        XCTAssertFalse(strip.passes, strip.summary)
         // The text, a little heavier, in a green at 4.498:1, with its darkest
         // pixel in a gray the green lies within 16 of, off the blend.
         let tinted = try proof("contrast-toasts-row-light", row("Toasts")) { pixels, _, background, _ in

@@ -283,7 +283,7 @@ struct WorkbenchAuditWaiver {
                       element.identifier != context.screen.map({ WorkbenchApp.sidebarPrefix + $0 }) else { return false }
                 return proof.passes
             },
-            reason: "The macOS audit fails the contrast of some texts that measure well above 4.5:1, a different set from run to run, such as the unselected \"Toasts\" row (15:1) while the \"Banners\" row in the same colors passes. Only those texts are waived, and only when the issue's screenshot proves it: the test draws the expected text in the system font in the screenshot's text and background colors and fits each glyph of the screenshot to the drawing. Each glyph must be drawn at 85-115% of the text color's strength, differ from the drawing by at most 12% of its ink and lie at least three-quarters inside the screenshot, no pixel of ink may lie where no glyph is drawn, or more than 15% of the text color beyond the drawing within a pixel, or off the blend of the two colors, and the text color at the weakest glyph's strength less that difference, or at the weakest column's, moved in each channel by the farthest any pixel lies off the blend toward the background's luminance, must reach 4.5:1. A missing, faint, partly faint, cut-off or extra glyph, a separate mark however faint, a second color or fill, and the selected sidebar row stay failed. The proof is attached with each contrast issue."
+            reason: "The macOS audit fails the contrast of some texts that measure well above 4.5:1, a different set from run to run, such as the unselected \"Toasts\" row (15:1) while the \"Banners\" row in the same colors passes. Only those texts are waived, and only when the issue's screenshot proves it: the test draws the expected text in the system font in the screenshot's text and background colors and fits each glyph of the screenshot to the drawing. Each glyph must be drawn at 85-115% of the text color's strength, differ from the drawing by at most 12% of its ink and lie at least three-quarters inside the screenshot, no pixel of ink may lie where no glyph is drawn, or more than 15% of the text color beyond the drawing within a pixel, or off the blend of the two colors, and the text color at the weakest glyph's strength less that difference, or at the weakest pixel the drawing inks at least 80%, moved in each channel by the farthest any pixel lies off the blend toward the background's luminance, must reach 4.5:1. A missing, faint, partly faint, cut-off or extra glyph, a separate mark however faint, a second color or fill, and the selected sidebar row stay failed. The proof is attached with each contrast issue."
         ),
     ]
 
@@ -347,11 +347,11 @@ struct WorkbenchExpectedLine: Equatable {
 /// most it has there, is stray and fails, so a separate mark fails however
 /// faint, as does any pixel that is not a blend of the two colors, such as a
 /// second color or a fill. The text color at the weakest glyph's strength
-/// less its misfit, and at the strength of the weakest column a drawing inks
-/// fully, moved in each channel by the farthest any pixel lies off the blend
+/// less its misfit, and at the strength of the weakest pixel the drawing inks
+/// at least 80%, moved in each channel by the farthest any pixel lies off the blend
 /// toward the background's luminance, must reach 4.5:1, so text mostly in a
-/// failing color fails whatever darker pixels it holds, and weaker columns
-/// are not averaged away.
+/// failing color fails whatever darker pixels it holds, and no weaker part
+/// of a glyph is averaged away.
 struct WorkbenchTextProof {
     struct RGB: Hashable {
         var red, green, blue: UInt8
@@ -404,10 +404,11 @@ struct WorkbenchTextProof {
         let glyphs: [Glyph]
         /// Pixels of ink the fitted glyphs do not explain.
         let stray: Int
-        /// The strength of the weakest column a glyph's drawing inks fully.
-        let weakestColumn: Double
+        /// The share of the drawing's ink that the weakest pixel the drawing
+        /// inks at least 80% shows.
+        let weakestPixel: Double
         /// The text color's contrast at the weakest glyph's strength less
-        /// its misfit, or the weakest column's strength if lower, moved by
+        /// its misfit, or the weakest fully drawn pixel's if lower, moved by
         /// offBlend in each channel toward the background's luminance.
         let contrast: Double
 
@@ -435,7 +436,7 @@ struct WorkbenchTextProof {
         let measured = lines.map { line in
             let strengths = line.glyphs.map(\.strength), misfits = line.glyphs.map(\.misfit)
             let ink = line.glyphs.isEmpty ? "no glyphs" : "glyph strength \(Self.percent(strengths.min() ?? 0))-\(Self.percent(strengths.max() ?? 0)), misfit up to \(Self.percent(misfits.max() ?? 0))"
-            return "\"\(line.expected.text)\" rows \(line.rows.lowerBound)-\(line.rows.upperBound) in \(line.text.description), \(ink), weakest column \(Self.percent(line.weakestColumn)), \(line.stray) stray pixel(s), \(String(format: "%.1f", line.offBlend)) off the blend, up to \(Self.percent(line.glyphs.map(\.clipped).max() ?? 0)) of a glyph clipped, \(String(format: "%.2f", line.contrast)):1"
+            return "\"\(line.expected.text)\" rows \(line.rows.lowerBound)-\(line.rows.upperBound) in \(line.text.description), \(ink), weakest pixel \(Self.percent(line.weakestPixel)), \(line.stray) stray pixel(s), \(String(format: "%.1f", line.offBlend)) off the blend, up to \(Self.percent(line.glyphs.map(\.clipped).max() ?? 0)) of a glyph clipped, \(String(format: "%.2f", line.contrast)):1"
         }
         return "\(head): \(measured.joined(separator: "; ")); \(passes ? "every glyph shown reaches 4.5:1" : "not proven")"
     }
@@ -624,7 +625,7 @@ struct WorkbenchTextProof {
                 if best.map({ bestHere.difference < $0.difference }) ?? true { best = (bestHere.difference, drawing, bestHere.dx, bestHere.dy) }
             }
         }
-        guard let best else { return Line(expected: expected, rows: rows, text: text, offBlend: offBlend, glyphs: [], stray: 0, weakestColumn: 0, contrast: 1) }
+        guard let best else { return Line(expected: expected, rows: rows, text: text, offBlend: offBlend, glyphs: [], stray: 0, weakestPixel: 0, contrast: 1) }
         let glyphs = best.drawing.glyphs.map { ($0.lowerBound + Double(best.dx))...($0.upperBound + Double(best.dx)) }
         var cuts = [-Double.infinity]
         for index in glyphs.indices.dropFirst() { cuts.append((glyphs[index - 1].upperBound + glyphs[index].lowerBound) / 2) }
@@ -670,10 +671,11 @@ struct WorkbenchTextProof {
         // Each pixel of ink against its glyph's fitted drawing: ink no glyph
         // draws within a pixel, or more than 0.15 of the text color beyond
         // the most the drawing puts within a pixel, is stray, as a separate
-        // mark is however faint. Each column the drawing inks fully is
-        // scaled on its own, so weaker parts of a glyph count for what they are.
+        // mark is however faint. Each pixel the drawing inks at least 80% is
+        // scaled on its own, so no weaker part of a glyph, a column, a row or
+        // a spot, is averaged into stronger ink.
         var stray = 0
-        var weakestColumn = 1.0
+        var weakestPixel = 1.0
         for (fit, columns, model) in fits {
             guard let (drawing, dx, dy) = model else { continue }
             func drawn(_ x: Int, _ y: Int) -> Double {
@@ -681,18 +683,16 @@ struct WorkbenchTextProof {
                 return (0..<drawing.width).contains(rx) && (0..<drawing.height).contains(ry) ? drawing.ink[ry * drawing.width + rx] : 0
             }
             for x in columns {
-                var (product, squares, total) = (0.0, 0.0, 0.0)
                 for y in 0..<height {
                     let d = drawn(x, y)
-                    (product, squares, total) = (product + ink[y * width + x] * d, squares + d * d, total + d)
+                    if d >= 0.8 { weakestPixel = min(weakestPixel, ink[y * width + x] / d) }
                     guard rows.contains(y), pixels[y * width + x].offset(from: background).contains(where: { abs($0) > 3 }) else { continue }
                     let near = (y - 1...y + 1).flatMap { ny in (x - 1...x + 1).map { drawn($0, ny) } }.max() ?? 0
                     if near < 0.02 || ink[y * width + x] - fit.strength * near > 0.15 { stray += 1 }
                 }
-                if total >= 1 { weakestColumn = min(weakestColumn, product / squares) }
             }
         }
-        let weakest = min(fits.map { min($0.fit.strength, 1) - $0.fit.misfit }.min() ?? 0, weakestColumn)
+        let weakest = min(fits.map { min($0.fit.strength, 1) - $0.fit.misfit }.min() ?? 0, weakestPixel)
         // A pixel may lie up to offBlend from the blend in each channel, so
         // the weakest blend is moved that far toward the background's
         // luminance: a color off the blend cannot borrow a darker pixel's contrast.
@@ -702,7 +702,7 @@ struct WorkbenchTextProof {
         }
         let blend = background.blend(toward: text, max(weakest, 0))
         return Line(
-            expected: expected, rows: rows, text: text, offBlend: offBlend, glyphs: fits.map(\.fit), stray: stray, weakestColumn: weakestColumn,
+            expected: expected, rows: rows, text: text, offBlend: offBlend, glyphs: fits.map(\.fit), stray: stray, weakestPixel: weakestPixel,
             contrast: RGB(red: bound(blend.red), green: bound(blend.green), blue: bound(blend.blue)).contrast(with: background)
         )
     }
