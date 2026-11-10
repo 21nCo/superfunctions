@@ -198,8 +198,9 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
     /// An audit that XCTest gives up on for taking too long, as on a busy CI
     /// simulator, runs once more in a new launch of the app, with a note
     /// attached; running it again in the same launch lost the test runner.
-    /// The issues the unfinished audit reported are dropped, so each issue is
-    /// reported once, from a finished audit. A second timeout fails the test.
+    /// What the unfinished audit saw (unwaived issues, a banner, contrast
+    /// evidence) is reported with the second audit's, each issue once. A
+    /// second timeout fails the test.
     private func audit(
         _ screen: String?,
         prepare: (XCUIApplication) -> Void = { _ in },
@@ -208,12 +209,15 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
     ) throws {
         for colorScheme in ["light", "dark"] {
             try XCTContext.runActivity(named: "Audit \(screen ?? "the screen list") in \(colorScheme)") { _ in
+                var unfinished = WorkbenchUnfinishedAudit()
+                // Reported here if no later audit finished to report it.
+                defer { unfinished.report() }
                 for attempt in 1...2 {
                     let app = WorkbenchApp.launch(screen: screen, colorScheme: colorScheme)
                     defer { app.terminate() }
                     do {
-                        return try audit(app, screen: screen, colorScheme: colorScheme, prepare: prepare, file: file, line: line)
-                    } catch let error as NSError where attempt == 1 && error.domain == "com.apple.xcode.xctest.accessibilityAudit" && error.code == -56 {
+                        return try audit(app, screen: screen, colorScheme: colorScheme, unfinished: &unfinished, prepare: prepare, file: file, line: line)
+                    } catch let error as NSError where attempt == 1 && error.isWorkbenchAuditTimeout {
                         let note = XCTAttachment(string: "\(error)")
                         note.name = "The audit did not complete in time, so it runs once more in a new launch"
                         note.lifetime = .keepAlways
@@ -229,6 +233,7 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
         _ app: XCUIApplication,
         screen: String?,
         colorScheme: String,
+        unfinished: inout WorkbenchUnfinishedAudit,
         prepare: (XCUIApplication) -> Void,
         file: StaticString,
         line: UInt
@@ -241,7 +246,7 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
             for row in rows.allElementsBoundByIndex where !window.contains(row.frame) {
                 XCTFail("The screen list does not fit its window: \(row.identifier) is at \(row.frame)", file: file, line: line)
             }
-            try auditVisibleContent(of: app, screen: nil, colorScheme: colorScheme)
+            try auditVisibleContent(of: app, screen: nil, colorScheme: colorScheme, unfinished: &unfinished)
             return
         }
         let page = WorkbenchApp.screen(screen, in: app)
@@ -253,7 +258,7 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
         // The audit judges contrast from what is on screen, so the
         // whole page must be.
         try assertWholePageIsOnScreen(page, screen: screen, file: file, line: line)
-        try auditVisibleContent(of: app, screen: screen, colorScheme: colorScheme)
+        try auditVisibleContent(of: app, screen: screen, colorScheme: colorScheme, unfinished: &unfinished)
     }
 
     /// Fails unless every element of the page lies inside the page's frame,
@@ -285,8 +290,10 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
     }
 
     /// Audits the app and, once the audit has finished, fails each issue no
-    /// waiver matches and attaches the waived ones and the contrast evidence.
-    private func auditVisibleContent(of app: XCUIApplication, screen: String?, colorScheme: String) throws {
+    /// waiver matches, here or in `unfinished`, and attaches the waived ones
+    /// and the contrast evidence. If the audit times out, what it saw is
+    /// added to `unfinished` for the next audit to report.
+    private func auditVisibleContent(of app: XCUIApplication, screen: String?, colorScheme: String, unfinished: inout WorkbenchUnfinishedAudit) throws {
         var failures: [String] = []
         var waived: [String] = []
         var banner: String?
@@ -303,7 +310,7 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
         #if os(iOS)
         WorkbenchApp.waitForNoNotificationBanner()
         #endif
-        try app.performAccessibilityAudit { issue in
+        let handler: (XCUIAccessibilityAuditIssue) throws -> Bool = { issue in
             #if os(iOS)
             // A banner that came and went during the audit leaves no trace
             // after it, so look while the audit reports each issue.
@@ -353,6 +360,18 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
             }
             return true
         }
+        do {
+            try app.performAccessibilityAudit(handler)
+        } catch let error as NSError where error.isWorkbenchAuditTimeout {
+            unfinished.failures += failures.filter { !unfinished.failures.contains($0) }
+            unfinished.banner = unfinished.banner ?? banner
+            unfinished.contrastEvidence += contrastEvidence
+            throw error
+        }
+        failures = unfinished.failures + failures.filter { !unfinished.failures.contains($0) }
+        banner = unfinished.banner ?? banner
+        contrastEvidence = unfinished.contrastEvidence + contrastEvidence
+        unfinished = WorkbenchUnfinishedAudit()
         failures.forEach { XCTFail($0) }
         #if os(iOS)
         if banner == nil, WorkbenchApp.notificationBanner.exists {
@@ -361,7 +380,7 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
         XCTAssertNil(banner, "\(screen ?? "screen list") (\(colorScheme)): a notification banner covered the app during the audit, so the issues above may be its")
         #endif
         if !contrastEvidence.isEmpty {
-            XCTContext.runActivity(named: "\(contrastEvidence.count - 1) contrast issue(s)") { activity in
+            XCTContext.runActivity(named: "\(contrastEvidence.filter { $0.name?.hasPrefix("Contrast issue") == true }.count) contrast issue(s)") { activity in
                 contrastEvidence.forEach(activity.add)
             }
         }
@@ -415,21 +434,25 @@ enum WorkbenchApp {
         return app
     }
 
+    /// The element types of progress and activity indicators.
+    static let indicatorTypes: Set<XCUIElement.ElementType> = [.progressIndicator, .activityIndicator]
+
     /// Waits until no element of the window moves for half a second, so the
     /// audit does not run during a transition, such as the push to the first
     /// screen that iOS 18 animates at launch. On failure it names the
     /// elements that still moved.
     ///
-    /// Progress indicators are left out: an indeterminate one moves for as
-    /// long as it shows, and on iOS its frame follows the moving bar or the
-    /// turning ring. A transition moves the elements around them too.
+    /// Progress and activity indicators are left out: an indeterminate one
+    /// moves for as long as it shows, and on iOS its frame follows the moving
+    /// bar or the turning ring, both of which XCUITest reports as activity
+    /// indicators. A transition moves the elements around them too.
     static func waitForStillLayout(_ app: XCUIApplication, timeout: TimeInterval = 10) throws {
         /// Each element's frame, by its path in the tree.
         func frames() throws -> [String: CGRect] {
             var frames: [String: CGRect] = [:]
             func visit(_ element: XCUIElementSnapshot, path: String) {
                 frames[path] = element.frame
-                for (index, child) in element.children.enumerated() where child.elementType != .progressIndicator {
+                for (index, child) in element.children.enumerated() where !Self.indicatorTypes.contains(child.elementType) {
                     visit(child, path: "\(path)/\(child.elementType.rawValue)[\(index)]\(child.identifier.isEmpty ? "" : " id \"\(child.identifier)\"")\(child.label.isEmpty ? "" : " \"\(child.label)\"")")
                 }
             }
@@ -533,5 +556,33 @@ extension XCUIAccessibilityAuditType {
         if contains(.parentChild) { names.append("parentChild") }
         #endif
         return names.isEmpty ? "rawValue \(rawValue)" : names.joined(separator: "+")
+    }
+}
+
+/// What an audit that timed out saw, for the audit that runs after it to
+/// report.
+struct WorkbenchUnfinishedAudit {
+    var failures: [String] = []
+    var banner: String?
+    var contrastEvidence: [XCTAttachment] = []
+
+    /// Fails each issue and the banner, and attaches the contrast evidence.
+    func report() {
+        failures.forEach { XCTFail($0) }
+        if let banner {
+            XCTFail("A notification banner covered the app during an audit that timed out, so its issues may be the banner's: \(banner)")
+        }
+        if !contrastEvidence.isEmpty {
+            XCTContext.runActivity(named: "Contrast evidence from an audit that timed out") { activity in
+                contrastEvidence.forEach(activity.add)
+            }
+        }
+    }
+}
+
+extension NSError {
+    /// XCTest gave up on the accessibility audit for taking too long.
+    var isWorkbenchAuditTimeout: Bool {
+        domain == "com.apple.xcode.xctest.accessibilityAudit" && code == -56
     }
 }
