@@ -141,6 +141,18 @@ final class WorkbenchAuditWaiverTests: XCTestCase {
             }
         }
         XCTAssertFalse(mixed.passes, mixed.summary)
+        // The text, a little heavier, in a green at 4.498:1, with its darkest
+        // pixel in a gray the green lies within 16 of, off the blend.
+        let tinted = try proof("contrast-toasts-row-light", row("Toasts")) { pixels, _, background, _ in
+            let text = RGB(red: 15, green: 23, blue: 31)
+            let share = { (pixel: RGB) in min(max((Double(background.green) - Double(pixel.green)) / (Double(background.green) - Double(text.green)), 0), 1) }
+            guard let darkest = pixels.indices.max(by: { share(pixels[$0]) < share(pixels[$1]) }) else { return }
+            for index in pixels.indices where pixels[index] != background {
+                pixels[index] = background.blend(toward: RGB(red: 86, green: 114, blue: 80), min(share(pixels[index]) * 1.06, 1))
+            }
+            pixels[darkest] = RGB(red: 86, green: 98, blue: 84)
+        }
+        XCTAssertFalse(tinted.passes, tinted.summary)
     }
 
     private let window = CGRect(x: 32, y: 31, width: 960, height: 674)

@@ -283,7 +283,7 @@ struct WorkbenchAuditWaiver {
                       element.identifier != context.screen.map({ WorkbenchApp.sidebarPrefix + $0 }) else { return false }
                 return proof.passes
             },
-            reason: "The macOS audit fails the contrast of some texts that measure well above 4.5:1, a different set from run to run, such as the unselected \"Toasts\" row (15:1) while the \"Banners\" row in the same colors passes. Only those texts are waived, and only when the issue's screenshot proves it: the test draws the expected text in the system font in the screenshot's text and background colors and fits each glyph of the screenshot to the drawing. Each glyph must be drawn at 85-115% of the text color's strength, differ from the drawing by at most 12% of its ink and lie at least three-quarters inside the screenshot, no pixel of ink may lie where no glyph is drawn, or more than 15% of the text color beyond the drawing within a pixel, or off the blend of the two colors, and the text color at the weakest glyph's strength less that difference, or at the weakest column's, must reach 4.5:1. A missing, faint, partly faint, cut-off or extra glyph, a separate mark however faint, a second color or fill, and the selected sidebar row stay failed. The proof is attached with each contrast issue."
+            reason: "The macOS audit fails the contrast of some texts that measure well above 4.5:1, a different set from run to run, such as the unselected \"Toasts\" row (15:1) while the \"Banners\" row in the same colors passes. Only those texts are waived, and only when the issue's screenshot proves it: the test draws the expected text in the system font in the screenshot's text and background colors and fits each glyph of the screenshot to the drawing. Each glyph must be drawn at 85-115% of the text color's strength, differ from the drawing by at most 12% of its ink and lie at least three-quarters inside the screenshot, no pixel of ink may lie where no glyph is drawn, or more than 15% of the text color beyond the drawing within a pixel, or off the blend of the two colors, and the text color at the weakest glyph's strength less that difference, or at the weakest column's, moved in each channel by the farthest any pixel lies off the blend toward the background's luminance, must reach 4.5:1. A missing, faint, partly faint, cut-off or extra glyph, a separate mark however faint, a second color or fill, and the selected sidebar row stay failed. The proof is attached with each contrast issue."
         ),
     ]
 
@@ -348,8 +348,10 @@ struct WorkbenchExpectedLine: Equatable {
 /// faint, as does any pixel that is not a blend of the two colors, such as a
 /// second color or a fill. The text color at the weakest glyph's strength
 /// less its misfit, and at the strength of the weakest column a drawing inks
-/// fully, must reach 4.5:1, so text mostly in a failing color fails whatever
-/// darker pixels it holds, and weaker columns are not averaged away.
+/// fully, moved in each channel by the farthest any pixel lies off the blend
+/// toward the background's luminance, must reach 4.5:1, so text mostly in a
+/// failing color fails whatever darker pixels it holds, and weaker columns
+/// are not averaged away.
 struct WorkbenchTextProof {
     struct RGB: Hashable {
         var red, green, blue: UInt8
@@ -405,7 +407,8 @@ struct WorkbenchTextProof {
         /// The strength of the weakest column a glyph's drawing inks fully.
         let weakestColumn: Double
         /// The text color's contrast at the weakest glyph's strength less
-        /// its misfit, or the weakest column's strength if lower.
+        /// its misfit, or the weakest column's strength if lower, moved by
+        /// offBlend in each channel toward the background's luminance.
         let contrast: Double
 
         var passes: Bool {
@@ -690,9 +693,17 @@ struct WorkbenchTextProof {
             }
         }
         let weakest = min(fits.map { min($0.fit.strength, 1) - $0.fit.misfit }.min() ?? 0, weakestColumn)
+        // A pixel may lie up to offBlend from the blend in each channel, so
+        // the weakest blend is moved that far toward the background's
+        // luminance: a color off the blend cannot borrow a darker pixel's contrast.
+        let lighter = text.luminance < background.luminance
+        func bound(_ value: UInt8) -> UInt8 {
+            UInt8(min(max(lighter ? (Double(value) + offBlend).rounded(.up) : (Double(value) - offBlend).rounded(.down), 0), 255))
+        }
+        let blend = background.blend(toward: text, max(weakest, 0))
         return Line(
             expected: expected, rows: rows, text: text, offBlend: offBlend, glyphs: fits.map(\.fit), stray: stray, weakestColumn: weakestColumn,
-            contrast: background.blend(toward: text, max(weakest, 0)).contrast(with: background)
+            contrast: RGB(red: bound(blend.red), green: bound(blend.green), blue: bound(blend.blue)).contrast(with: background)
         )
     }
 }
