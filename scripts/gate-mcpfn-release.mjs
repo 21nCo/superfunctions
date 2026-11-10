@@ -437,6 +437,9 @@ try {
   for (const workspace of [
     "@datafn/core",
     "@superfunctions/http",
+    // The Drizzle SQLite suite (__tests__/drizzle-sqlite/suite.ts, also run under
+    // workerd) imports toHono from the built Hono adapter.
+    "@superfunctions/http-hono",
     // Server network conformance imports the built public client.
     "@datafn/client",
   ]) {
