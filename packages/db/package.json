@@ -81,7 +81,7 @@
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.800.0",
     "@aws-sdk/lib-dynamodb": "^3.800.0",
-    "@superfunctions/observability": "0.0.2"
+    "@superfunctions/observability": "0.0.3"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

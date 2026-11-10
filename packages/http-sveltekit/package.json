@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/http-sveltekit",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "SvelteKit adapter for @superfunctions/http",
   "type": "module",
   "main": "./dist/index.js",

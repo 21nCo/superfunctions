@@ -18,7 +18,7 @@ const program = new Command();
 program
   .name('plugfn')
   .description('CLI tool for PlugFn SDK')
-  .version('0.0.1');
+  .version('0.0.4');
 
 // Init command
 program

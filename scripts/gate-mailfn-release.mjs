@@ -22,6 +22,7 @@ const packageDirs = [
   "mailfn/facade",
   "mailfn/admin",
 ];
+const packedDependencyDirs = ["clifn/core"];
 
 function run(file, args, cwd = root) {
   execFileSync(file, args, {
@@ -101,7 +102,7 @@ if (
 const staging = mkdtempSync(path.join(tmpdir(), "mailfn-release-"));
 try {
   const tarballs = [];
-  for (const directory of packageDirs) {
+  for (const directory of [...packedDependencyDirs, ...packageDirs]) {
     const output = execFileSync("npm", ["pack", "--json"], {
       cwd: path.join(root, directory),
       encoding: "utf8",
@@ -151,7 +152,7 @@ try {
   console.log("MailFn release gate passed");
 } finally {
   rmSync(staging, { recursive: true, force: true });
-  for (const directory of packageDirs) {
+  for (const directory of [...packedDependencyDirs, ...packageDirs]) {
     const manifest = JSON.parse(
       readFileSync(path.join(root, directory, "package.json"), "utf8"),
     );

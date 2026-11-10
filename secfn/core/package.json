@@ -1,6 +1,6 @@
 {
   "name": "@secfn/core",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Core contracts, encryption, scanning, and schema primitives for SecFn",
   "type": "module",
   "main": "./dist/index.js",

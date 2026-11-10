@@ -47,7 +47,7 @@
   "sideEffects": false,
   "dependencies": {
     "@searchfn/adapter-contracts": "^0.4.0",
-    "@superfunctions/observability": "0.0.2"
+    "@superfunctions/observability": "0.0.3"
   },
   "peerDependencies": {
     "@libsql/client": ">=0.14.0",

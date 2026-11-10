@@ -335,4 +335,4 @@ export function createCollaborationSession(options: CollaborationSessionOptions)
 }
 
 export { Awareness, Y };
-export const MDFN_COLLAB_VERSION = "0.1.0" as const;
+export const MDFN_COLLAB_VERSION = "0.1.1" as const;

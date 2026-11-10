@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 - Unreleased
+## 0.2.0 - 2026-11-05
 
 - `PostgresAdapter` accepts an injected `driver` (`PostgresDriver`: `query(sql, params)` and an optional `transaction(fn)`) as an alternative to `connectionString`, with `fromPg(pool)` and `fromPostgresJs(sql)` bindings. With either binding on a Hyperdrive connection string it runs on Cloudflare Workers (`nodejs_compat`).
 - `pg` is imported only when `connectionString` is used, so a Worker that injects postgres.js does not load it. The `connectionString` path is otherwise unchanged and still owns and ends its Pool.

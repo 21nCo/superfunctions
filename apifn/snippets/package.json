@@ -1,6 +1,6 @@
 {
   "name": "@apifn/snippets",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Code snippet generation for ApiFn",
   "type": "module",
   "main": "dist/index.cjs",
@@ -20,7 +20,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@apifn/core": "0.0.3"
+    "@apifn/core": "0.0.4"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

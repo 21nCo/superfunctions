@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/reviewfn-context-composio",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Explicit-account Composio context adapter for ReviewFn",
   "type": "module",
   "main": "./dist/index.js",
@@ -14,7 +14,7 @@
     "lint": "tsc --noEmit -p tsconfig.json",
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
   },
-  "dependencies": { "@superfunctions/reviewfn-core": "0.1.0" },
+  "dependencies": { "@superfunctions/reviewfn-core": "0.1.1" },
   "devDependencies": { "@types/node": "^22.0.0", "typescript": "^5.6.0", "vitest": "^3.2.4" },
   "engines": { "node": ">=22" },
   "license": "MIT",

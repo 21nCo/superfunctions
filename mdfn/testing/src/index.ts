@@ -232,4 +232,4 @@ export function deterministicFuzzCorpus(seed = 0x4d44464e, cases = 100): readonl
   });
 }
 
-export const MDFN_TESTING_VERSION = "0.1.0" as const;
+export const MDFN_TESTING_VERSION = "0.1.1" as const;

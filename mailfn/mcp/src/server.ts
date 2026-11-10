@@ -87,7 +87,7 @@ export class MailFnMcpServer {
           ? requested
           : SUPPORTED_PROTOCOL_VERSIONS[0],
         capabilities: { tools: {} },
-        serverInfo: { name: 'mailfn', version: '0.1.0' },
+        serverInfo: { name: 'mailfn', version: '0.1.1' },
       }));
     }
     if (request.method === 'ping') return finish(response(request, {}));
