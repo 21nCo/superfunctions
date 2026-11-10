@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "description": "Meilisearch adapter for SearchFn.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "searchfn/adapter-meilisearch"
+  },
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",

@@ -8,7 +8,7 @@ import { resolveTypeScriptOptions, type TypeScriptOptions } from "./options.js";
 export type { TypeScriptOptions } from "./options.js";
 
 /** Bumped with any change to generated TypeScript output. */
-export const TYPESCRIPT_TARGET_VERSION = "0.1.0";
+export const TYPESCRIPT_TARGET_VERSION = "0.1.1";
 
 export const typescriptTarget: SdkTarget<TypeScriptOptions> = {
   id: "typescript",

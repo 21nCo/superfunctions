@@ -2,6 +2,11 @@
   "name": "@authfn/social-oauth",
   "version": "0.1.2",
   "description": "Social OAuth plugin for AuthFn",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "authfn/social-oauth"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

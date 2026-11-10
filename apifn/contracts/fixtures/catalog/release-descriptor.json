@@ -46,13 +46,13 @@
       "target": "typescript"
     }
   ],
-  "catalogDigest": "sha256:0a1a55294c558cc5b763526ffaf080c727f164d9ff5ae1b5e8565a4f51797512",
+  "catalogDigest": "sha256:a1a80794ea7ac7279291536e3d7cb8b5965fefbd84bff669c3a78d1cb7868bb2",
   "descriptorVersion": "apifn.release-descriptor/v1",
   "generator": {
     "name": "@apifn/contracts-fixture",
     "version": "0.1.0"
   },
-  "manifestDigest": "sha256:398125844426680a3bb83d343356606be36edf9f08c195ed3b61f5797d5aa060",
-  "releaseId": "rel_002ad074c2e160d9946379b9",
+  "manifestDigest": "sha256:ac5f5599cdaee0d631388cd33228b9a5b593a3fe36dc8e71b6a2add574ec50da",
+  "releaseId": "rel_0fc7311aec95c894940a446a",
   "specDigest": "sha256:9cb040e18030e798c1fcf6681d6b0b1cca8a24748c1738d78bbd45120569eaf5"
 }

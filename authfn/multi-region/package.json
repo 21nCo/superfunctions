@@ -2,6 +2,11 @@
   "name": "@authfn/multi-region",
   "version": "0.1.2",
   "description": "Multi-region routing plugin for AuthFn",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "authfn/multi-region"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

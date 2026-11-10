@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   API_ID_PATTERN,
   CREDENTIAL_KEY_PATTERN,
+  HEADER_NAME_PATTERN,
   NAME_PATTERN,
   OCCURRED_AT_PATTERN,
   OPERATION_ID_PATTERN,
@@ -100,6 +101,48 @@ describe("published JSON Schemas", () => {
     for (const url of ["https:api.example.test/v1", "https:\\\\api.example.test\\v1", "urn:example:svc@host"]) expect(serverUrl(url), url).toBe(true);
   });
 
+  it("agree with validateManifest on idempotency declarations", () => {
+    const base = { manifestVersion: 1, api: { id: "example.projects", version: "1" } };
+    const accepts = (idempotency: unknown) => {
+      const manifest = { ...base, operations: [{ id: "a", operationId: "x", idempotency }] };
+      const bySchema = check("manifest", manifest);
+      expect(validateManifest(manifest).manifest !== null, JSON.stringify(idempotency)).toBe(bySchema);
+      return bySchema;
+    };
+    expect(accepts({ semantics: "server" })).toBe(true);
+    expect(accepts({ semantics: "server", key: { in: "header", name: "Idempotency-Key" } })).toBe(true);
+    for (const idempotency of [true, {}, { semantics: "client" }, { semantics: "server", extra: 1 }, { semantics: "server", key: { in: "query", name: "k" } }, { semantics: "server", key: { in: "header" } }, { semantics: "server", key: { in: "header", name: "a b" } }]) {
+      expect(accepts(idempotency)).toBe(false);
+    }
+    // A route binding to a safe method (in any ASCII case) takes no declaration; a write route does.
+    const route = (method: string) => {
+      const manifest = { ...base, operations: [{ id: "a", method, path: "/x", idempotency: { semantics: "server" } }] };
+      const bySchema = check("manifest", manifest);
+      expect(validateManifest(manifest).manifest !== null, method).toBe(bySchema);
+      return bySchema;
+    };
+    for (const method of ["GET", "head", "Options", "tRACE"]) expect(route(method), method).toBe(false);
+    for (const method of ["POST", "put", "Patch", "delete"]) expect(route(method), method).toBe(true);
+    // In the catalog the member is optional, and when present states its key (or null).
+    const catalog = fixture("catalog/catalog.json");
+    const withIdempotency = (idempotency: unknown) => {
+      const next = clone(catalog);
+      next.operations[0].idempotency = idempotency;
+      return check("operation-catalog", next);
+    };
+    expect(withIdempotency({ semantics: "server", key: null })).toBe(true);
+    expect(withIdempotency({ semantics: "server" })).toBe(false);
+    expect(withIdempotency({ semantics: "server", key: { in: "header", name: "Idempotency Key" } })).toBe(false);
+    expect(withIdempotency(true)).toBe(false);
+    // Only writes take one: GET, HEAD, OPTIONS and TRACE operations are refused, as the builder and SDK refuse them.
+    for (const method of ["get", "head", "options", "trace"]) {
+      const next = clone(catalog);
+      next.operations[0].method = method;
+      next.operations[0].idempotency = { semantics: "server", key: null };
+      expect(check("operation-catalog", next), method).toBe(false);
+    }
+  });
+
   it("share identifier patterns with the TypeScript contract", () => {
     const manifest = schema("manifest");
     const failure = schema("client-failure-event");
@@ -109,6 +152,9 @@ describe("published JSON Schemas", () => {
     expect(binding.id.pattern).toBe(OPERATION_ID_PATTERN.source);
     expect(binding.name.pattern).toBe(NAME_PATTERN.source);
     expect(binding.sdk.properties.excludeTargets.items.pattern).toBe(TARGET_PATTERN.source);
+    expect(binding.idempotency.properties.key.properties.name.pattern).toBe(HEADER_NAME_PATTERN.source);
+    const catalogKey = schema("operation-catalog").$defs.operation.properties.idempotency.properties.key.anyOf[0];
+    expect(catalogKey.properties.name.pattern).toBe(HEADER_NAME_PATTERN.source);
     expect(failure.properties.release.properties.releaseId.pattern).toBe(RELEASE_ID_PATTERN.source);
     expect(failure.properties.occurredAt.pattern).toBe(OCCURRED_AT_PATTERN.source);
     expect(failure.properties.attributes.propertyNames.not.pattern).toBe(CREDENTIAL_KEY_PATTERN);

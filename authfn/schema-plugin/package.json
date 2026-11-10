@@ -2,6 +2,11 @@
   "name": "@authfn/schema-plugin",
   "version": "0.1.2",
   "description": "Schema-only plugin helper for AuthFn",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "authfn/schema-plugin"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

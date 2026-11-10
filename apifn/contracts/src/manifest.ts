@@ -8,7 +8,11 @@ export const NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_]*$/;
 export const TARGET_PATTERN = /^[a-z][a-z0-9-]*$/;
 export const VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
 export const POLICY_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
+/** An HTTP field name: an RFC 9110 token. */
+export const HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 const METHODS = new Set(["get", "put", "post", "delete", "options", "head", "patch", "trace"]);
+/** Safe methods (RFC 9110 section 9.2.1), which take no idempotency declaration: only writes do. */
+const SAFE_METHODS = new Set(["get", "head", "options", "trace"]);
 
 /** Media types the catalog can describe for generated clients. */
 export function isSupportedMediaType(mediaType: string): boolean {
@@ -105,7 +109,7 @@ function codePointLength(value: string): number {
 }
 
 function checkBinding(check: ManifestChecker, binding: unknown, pointer: string): void {
-  const fields = ["id", "operationId", "method", "path", "name", "sdk", "agent", "deprecation", "executionPolicy"];
+  const fields = ["id", "operationId", "method", "path", "name", "sdk", "agent", "deprecation", "executionPolicy", "idempotency"];
   if (!check.object(binding, pointer, fields, ["id"])) return;
   const value = binding as Record<string, unknown>;
   check.string(value.id, `${pointer}/id`, OPERATION_ID_PATTERN, 128);
@@ -148,6 +152,22 @@ function checkBinding(check: ManifestChecker, binding: unknown, pointer: string)
     check.string(deprecation.replacement, `${pointer}/deprecation/replacement`, OPERATION_ID_PATTERN, 128);
     check.string(deprecation.since, `${pointer}/deprecation/since`, VERSION_PATTERN, 64);
     check.string(deprecation.message, `${pointer}/deprecation/message`, undefined, 1024, true);
+  }
+  if (value.idempotency !== undefined && check.object(value.idempotency, `${pointer}/idempotency`, ["semantics", "key"], ["semantics"])) {
+    // Only an explicit, reviewed declaration lets clients retry a write; there is no default and no other semantics.
+    const idempotency = value.idempotency as Record<string, unknown>;
+    if (idempotency.semantics !== undefined && idempotency.semantics !== "server") {
+      check.fail(`${pointer}/idempotency/semantics`, `Unsupported idempotency semantics; the only value is "server" (the server makes repeated calls safe).`);
+    }
+    if (idempotency.key !== undefined && check.object(idempotency.key, `${pointer}/idempotency/key`, ["in", "name"], ["in", "name"])) {
+      const key = idempotency.key as Record<string, unknown>;
+      if (key.in !== undefined && key.in !== "header") check.fail(`${pointer}/idempotency/key/in`, `Unsupported idempotency key location; the only value is "header".`);
+      check.string(key.name, `${pointer}/idempotency/key/name`, HEADER_NAME_PATTERN, 128);
+    }
+    // A route binding names its method here; an operationId binding's method is checked when the catalog is built.
+    if (typeof value.method === "string" && SAFE_METHODS.has(value.method.toLowerCase())) {
+      check.fail(`${pointer}/idempotency`, `Operation binding ${quote(value.id)} is a ${value.method.toUpperCase()}, which HTTP defines as safe; idempotency is declared only for POST, PUT, PATCH and DELETE.`);
+    }
   }
 }
 

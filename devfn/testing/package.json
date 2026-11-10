@@ -2,6 +2,11 @@
   "name": "@devfn/testing",
   "version": "0.1.0",
   "description": "Deterministic fixtures, fake listeners and the networking qualification harness for DevFn",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "devfn/testing"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

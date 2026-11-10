@@ -132,7 +132,7 @@ for (const node of nodes) {
     type: "module",
     license: "MIT",
     engines: { node: ">=20 <25" },
-    repository: { type: "git", url: "git+https://github.com/21nCo/super-functions.git", directory: node.path },
+    repository: { type: "git", url: "git+https://github.com/21nCo/superfunctions.git", directory: node.path },
     publishConfig: { access: "public" },
     mdfn: { status: expectedStatus, layer: node.layer, schemaVersion: 1 },
   };

@@ -11,7 +11,7 @@
   "keywords": ["mailfn", "email", "testing", "otp"],
   "author": "21n",
   "license": "MIT",
-  "repository": { "type": "git", "url": "git+https://github.com/21nCo/super-functions.git", "directory": "mailfn/testing" },
+  "repository": { "type": "git", "url": "git+https://github.com/21nCo/superfunctions.git", "directory": "mailfn/testing" },
   "publishConfig": { "access": "public" },
   "sideEffects": false,
   "dependencies": { "@mailfn/core": "0.1.0" },

@@ -38,12 +38,12 @@ const CLIENT_BINDINGS = ["ApiRuntime", "DeepObjectValue", "OperationSpec", "Para
 const CLIENT_GLOBALS = ["ArrayBuffer", "Blob", "Promise", "ReadableStream", "Record", "Uint8Array"];
 
 /**
- * Whether the catalog declares that the server makes repeated calls of a write operation safe. Catalog v1
- * has no such field (method, schema and an `Idempotency-Key` parameter grant none), so no write is
- * retried; a later catalog version supplies the declaration here, not the SDK config.
+ * Whether the catalog declares that the server makes repeated calls of a write operation safe: only its
+ * reviewed `idempotency` member does. Method, schema, an `Idempotency-Key` parameter and the SDK config grant
+ * nothing. With a declared key, the runtime retries only calls that send that header.
  */
-function declaresIdempotency(_operation: CatalogOperation): boolean {
-  return false;
+function declaresIdempotency(operation: CatalogOperation): boolean {
+  return operation.idempotency?.semantics === "server";
 }
 
 function header(context: SdkTargetContext<TypeScriptOptions>): string {
@@ -255,6 +255,7 @@ export function emitTypeScript(context: SdkTargetContext<TypeScriptOptions>): Sd
         `    errors: [${shape.errors.map((entry) => `{ status: ${JSON.stringify(entry.status)}, kinds: ${kinds(entry.shape)} }`).join(", ")}],`,
         `    security: [${terms.join(", ")}],`,
         `    retry: ${JSON.stringify(retry)},`,
+        ...(retry === "idempotent" && operation.idempotency?.key ? [`    idempotencyKey: ${JSON.stringify(operation.idempotency.key.name)},`] : []),
         `  },`,
       ].join("\n")
     );
@@ -409,7 +410,7 @@ ${first ? `const result = await client.${first.name}(/* params */);\n` : ""}\`\`
 
 - Requests go only to \`baseUrl\` (${options.baseUrl === null ? "required" : `default \`${options.baseUrl}\``}); spec servers are never used and redirects are not followed.
 - Non-2xx responses, including documented redirects, throw \`ApiHttpError\`; use \`isOperationError(error, operationId)\` for typed bodies. Timeouts throw \`ApiTimeoutError\`, aborted calls \`ApiAbortError\`.
-- Reads are retried up to ${options.retry.maxAttempts} attempts on network errors, timeouts and HTTP 408, 429, 500, 502, 503 and 504; writes are never retried.
+- Reads are retried up to ${options.retry.maxAttempts} attempts on network errors, timeouts and HTTP 408, 429, 500, 502, 503 and 504. A write is retried the same way only when the API's catalog declares that its server makes repeated calls safe; when that declaration names a key header, only calls that send it with a non-empty value are retried, and every attempt sends the same value. Other writes, and calls with a \`ReadableStream\` body (a stream), are never retried.
 - \`onFailure\` receives an apifn.client-failure/v1 observation per failed call; nothing is observed unless it is set.
 
 Provenance is in \`apifn.sdk-manifest.json\`.
