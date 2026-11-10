@@ -206,9 +206,11 @@ jobs:
           xcodebuild build-for-testing -project SwiftUIWorkbench.xcodeproj -scheme SwiftUIWorkbench \
             -destination "$DESTINATION" -disableAutomaticPackageResolution
       # A new iOS 26 simulator posts "Ready for Apple Intelligence" a few
-      # minutes after it boots, and its banner covers the app. Wait until it
-      # has been posted, so it does not land during an audit. The tests also
-      # wait out any banner before each audit and fail if one stays.
+      # minutes after it boots, and its banner covers the app. Wait until
+      # followupd, which posts it, has added a notification request, so it
+      # does not land during an audit; any followupd request ends the wait.
+      # The tests also wait out any banner before each audit and fail if one
+      # stays or shows while the audit reports an issue.
       - name: Wait for the simulator's first-boot notification
         if: matrix.platform == 'iOS'
         env:
