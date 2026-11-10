@@ -2344,10 +2344,10 @@ it("decides an unlocked preflight from the one journal snapshot it read, while a
     const current = await taskInputRevision(config, primary, node, "default", undefined, undefined, stateDir, identity.instanceId);
     expect(current).not.toBe(earlier);
     await writeFile(file, journal(earlier, false));
-    // Right after the preflight read the earlier release's journal, a concurrent start's task binds it to the current revision.
+    // Right after the preflight read the earlier release's journal, a concurrent start's task binds it to the current revision. Every read of the journal is counted: the decision reads it exactly once.
     const events: string[] = [];
     reads.before = async (operation, target) => {
-      if (operation === "readFile" && target === file && !events.includes("read")) { events.push("read"); return; }
+      if (operation === "readFile" && target === file) { events.push("read"); return; }
       if (events.includes("read") && !events.includes("bound")) { events.push("bound"); writeFileSync(file, journal(current, true)); }
     };
     await preflightTasks({ config, plan: createPlan(config, "default"), root: primary, stateDir, instanceId: identity.instanceId });
@@ -2485,6 +2485,75 @@ it("marks an earlier release's attempt once it is bound where both rules agree, 
     await rm(parent, { recursive: true, force: true });
   }
 }, 60_000);
+
+it("binds an earlier release's unresolved attempt once an interrupted start has bound and persisted its success, persists that binding too, and still refuses a later change", async () => {
+  const { parent, primary } = await repository();
+  const log = path.join(parent, "runs.log");
+  const config = validateDevFnConfig({ version: 1, project: { id: "mixed-marker" },
+    processes: { seed: { adapter: "command", command: [process.execPath, "-e", `require("node:fs").appendFileSync(${JSON.stringify(log)}, "x\\n")`], task: { rerun: "once", idempotent: true, inputs: ["."] } } },
+    profiles: { default: { processes: ["seed"] } } });
+  const node = { name: "seed", kind: "process" as const };
+  const orchestrator = new DevFnOrchestrator();
+  const stateDir = path.join(primary, "cache", "state");
+  const { instanceId } = await resolveInstanceIdentity("mixed-marker", primary);
+  const key = taskScope(config, instanceId, node).key, file = path.join(stateDir, "tasks", `${key}.json`);
+  const revision = async () => await taskInputRevision(config, primary, node, "default", undefined, undefined, stateDir, instanceId);
+  const runs = async () => (await readFile(log, "utf8").catch(() => "")).split("\n").filter(Boolean).length;
+  const start = async () => {
+    try { return (await orchestrator.up({ config, root: primary, stateDir })).state; }
+    finally { await orchestrator.down({ config, root: primary, stateDir }).catch(() => undefined); }
+  };
+  // A start interrupted under the scope lock at its task's own journal read (the third decision read of the start, after both preflights), so it binds and persists but records no attempt.
+  const interrupted = async () => {
+    const controller = new AbortController();
+    let journalReads = 0;
+    reads.before = async (operation, target) => { if (operation === "readFile" && target === file && new Error().stack?.includes("readTaskJournal") && ++journalReads === 3) controller.abort(); };
+    try { await expect(orchestrator.up({ config, root: primary, stateDir, signal: controller.signal })).rejects.toMatchObject({ code: "DEVFN_START_FAILED", details: { causeCode: "DEVFN_CANCELLED" } }); }
+    finally { reads.before = undefined; await orchestrator.down({ config, root: primary, stateDir }).catch(() => undefined); }
+    expect(journalReads).toBe(3);
+  };
+  const failed = async () => (await readTaskJournal(stateDir, key))?.attempts.find((attempt) => attempt.invocationId === "failed");
+  try {
+    await mkdir(path.join(stateDir, "tasks"), { recursive: true });
+    await writeFile(path.join(stateDir, "notes.sql"), "-- mine");
+    // The earlier release succeeded at A, then an attempt at B ended with unknown effects.
+    await writeFile(path.join(primary, "schema.sql"), "create table t();");
+    const succeeded = await revision();
+    await writeFile(path.join(primary, "schema.sql"), "create table u();");
+    const attempted = await revision();
+    const at = new Date(0).toISOString();
+    await writeFile(file, JSON.stringify({ version: 1, task: "seed", scope: "instance", lastSuccess: { inputRevision: succeeded, invocationId: "earlier", instanceId, completedAt: at },
+      attempts: [{ invocationId: "earlier", instanceId, attempt: 1, inputRevision: succeeded, startedAt: at, endedAt: at, outcome: "succeeded", effects: "applied", stopped: true },
+        { invocationId: "failed", instanceId, attempt: 1, inputRevision: attempted, startedAt: at, endedAt: at, outcome: "failed", exitCode: 1, effects: "unknown", stopped: true }] }));
+    // An interrupted start at A binds and marks the success only.
+    await writeFile(path.join(primary, "schema.sql"), "create table t();");
+    await interrupted();
+    expect((await readTaskJournal(stateDir, key))?.lastSuccess?.stateEntries).toBe(true);
+    expect((await failed())?.stateEntries).toBeUndefined();
+    // An interrupted start at B binds the attempt beside the marked success and persists it.
+    await writeFile(path.join(primary, "schema.sql"), "create table u();");
+    await interrupted();
+    expect(await failed()).toMatchObject({ inputRevision: await revision(), stateEntries: true });
+    expect(await runs()).toBe(0);
+    // Persisted, the binding makes a change in the state directory since count.
+    await writeFile(path.join(stateDir, "notes.sql"), "-- changed");
+    await expect(orchestrator.up({ config, root: primary, stateDir })).rejects.toMatchObject({ code: "DEVFN_TASK_INPUT_CHANGED" });
+    // Back at B's inputs the unresolved attempt reruns, as the earlier release reran it.
+    await writeFile(path.join(stateDir, "notes.sql"), "-- mine");
+    expect(await start()).toBe("ready");
+    expect(await runs()).toBe(1);
+    const journal = await readTaskJournal(stateDir, key);
+    expect([journal?.lastSuccess, ...journal!.attempts].every((record) => record?.stateEntries)).toBe(true);
+    // A later change refuses the once task.
+    await writeFile(path.join(stateDir, "notes.sql"), "-- changed");
+    await expect(orchestrator.up({ config, root: primary, stateDir })).rejects.toMatchObject({ code: "DEVFN_TASK_INPUT_CHANGED" });
+    expect(await runs()).toBe(1);
+  } finally {
+    reads.before = undefined;
+    await orchestrator.down({ config, root: primary, stateDir }).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 120_000);
 
 it("walks a task's inputs once per revision check while an earlier release's completion matches neither rule", async () => {
   const { parent, primary } = await repository();

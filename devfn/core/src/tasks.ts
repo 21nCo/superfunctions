@@ -262,8 +262,8 @@ export async function taskInputRevision(config: DevFnConfig, root: string, node:
   const revision = (inputs: Array<[string, string | undefined]>) => sha256(JSON.stringify({ version: 1, kind: node.kind, settings, env: entries(spec.env), profileEnv: entries(config.profiles[profile]?.environment),
     envAllowlist: sorted(spec.envAllowlist), secretEnv: sorted(spec.secretEnv), resources: consumed, inputs, profile: JSON.stringify([settings, spec.env, config.profiles[profile]?.environment]).includes("DEVFN_PROFILE") ? profile : undefined }));
   const current = revision(walked.map(([input, digests]) => [input, digests.current])), earlier = revision(walked.map(([input, digests]) => [input, digests.earlier])); // An input without an earlier digest gives a revision no earlier release recorded.
-  if (typeof completed !== "object" || completed.lastSuccess?.stateEntries) return completed === earlier ? earlier : current; // A revision an earlier release recorded is taken where the earlier rule gives it.
-  for (const record of [completed.lastSuccess, ...completed.attempts]) if (record && !record.stateEntries && record.inputRevision === earlier) Object.assign(record, { inputRevision: current, stateEntries: true }); // In a journal whose success an earlier release recorded, each revision an earlier release recorded that its rule gives is bound to the current one and marked, as is a success matching as it is, so a later change there counts.
+  if (typeof completed !== "object") return completed === earlier ? earlier : current; // A revision an earlier release recorded is taken where the earlier rule gives it.
+  for (const record of [completed.lastSuccess, ...completed.attempts]) if (record && !record.stateEntries && record.inputRevision === earlier) Object.assign(record, { inputRevision: current, stateEntries: true }); // In a journal, each revision an earlier release recorded (unmarked) that its rule gives is bound to the current one and marked, whatever else there is marked already, as is a success matching as it is, so a later change there counts.
   if (completed.lastSuccess?.inputRevision === current) completed.lastSuccess.stateEntries = true;
   return current;
 }
@@ -517,9 +517,9 @@ export async function runTask(context: RunTaskContext): Promise<TaskReceipt> {
     locked = true;
     const journal: TaskJournal = await readTaskJournal(stateDir, key) ?? { version: 1, task: node.name, scope, attempts: [] };
     await settleAttempts(journal, node.name, () => context.compose ?? new ComposeController(), async () => await writeTaskJournal(stateDir, key, journal));
-    const unmarked = journal.lastSuccess && !journal.lastSuccess.stateEntries;
-    const revision = await taskInputRevision(config, context.root, node, context.profile, context.resources, context.environment, stateDir, context.instanceId, journal); // An earlier release's revisions are bound under the scope lock.
-    if (unmarked) await writeTaskJournal(stateDir, key, journal);
+    const unbound = JSON.stringify(journal);
+    const revision = await taskInputRevision(config, context.root, node, context.profile, context.resources, context.environment, stateDir, context.instanceId, journal); // An earlier release's revisions are bound under the scope lock, and persisted whenever any was bound or marked.
+    if (JSON.stringify(journal) !== unbound) await writeTaskJournal(stateDir, key, journal);
     const decision = decide(journal, revision, task, node.name, context.rerunRequested);
     const receipt: TaskReceipt = { name: node.name, kind: node.kind, rerun: task.rerun ?? "on-change", idempotent: task.idempotent ?? false, inputRevision: revision,
       status: "skipped", reason: decision.reason, attempts: [], ...(journal.lastSuccess ? { lastSuccess: journal.lastSuccess } : {}) };
