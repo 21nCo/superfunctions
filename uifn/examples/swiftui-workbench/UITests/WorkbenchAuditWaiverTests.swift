@@ -1,5 +1,9 @@
+import CoreText
 import ImageIO
 import XCTest
+#if os(macOS)
+import AppKit
+#endif
 
 /// The waivers cover only the elements their reasons name: an app element
 /// that merely shares a weak property with them, such as no label or a frame
@@ -157,6 +161,44 @@ final class WorkbenchAuditWaiverTests: XCTestCase {
             pixels[darkest] = RGB(red: 86, green: 98, blue: 84)
         }
         XCTAssertFalse(tinted.passes, tinted.summary)
+        // A second "Toasts" below the row, 4 from the background, fails; at
+        // 2 from it, under 1.05:1, it counts as background, as the reason says.
+        let farther = Array(pixels.prefix(13 * width)).map { $0.offset(from: background).contains { abs($0) > 3 } ? RGB(red: 225, green: 232, blue: 239) : background }
+        let below = try XCTUnwrap(WorkbenchTextProof(pixels: pixels + farther, width: width, expected: row("Toasts")))
+        XCTAssertFalse(below.passes, below.summary)
+        let within = Array(pixels.prefix(13 * width)).map { $0.offset(from: background).contains { abs($0) > 3 } ? RGB(red: 227, green: 234, blue: 241) : background }
+        let hidden = try XCTUnwrap(WorkbenchTextProof(pixels: pixels + within, width: width, expected: row("Toasts")))
+        XCTAssertTrue(hidden.passes, hidden.summary)
+    }
+
+    /// Text drawn as AppKit draws it on a display of `scale`: the font at its
+    /// point size in a context scaled to the display's pixels.
+    private func rendered(_ line: Line, scale: CGFloat, text: CGColor, background: CGColor) throws -> (pixels: [RGB], width: Int) {
+        let font = NSFont.systemFont(ofSize: line.points, weight: line.isSemibold ? .semibold : .regular)
+        let attributes = [NSAttributedString.Key(kCTFontAttributeName as String): font, NSAttributedString.Key(kCTForegroundColorAttributeName as String): text] as [NSAttributedString.Key: Any]
+        let ctLine = CTLineCreateWithAttributedString(NSAttributedString(string: line.text, attributes: attributes))
+        let (width, height) = (Int((CTLineGetTypographicBounds(ctLine, nil, nil, nil) + 8) * scale), Int(line.points * 1.6 * scale))
+        let sRGB = try XCTUnwrap(CGColorSpace(name: CGColorSpace.sRGB))
+        let context = try XCTUnwrap(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4, space: sRGB, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+        context.setFillColor(background)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        context.scaleBy(x: scale, y: scale)
+        context.textPosition = CGPoint(x: 4, y: line.points * 0.45)
+        CTLineDraw(ctLine, context)
+        let image = try XCTUnwrap(context.makeImage())
+        return try (XCTUnwrap(WorkbenchTextProof.pixels(of: image)), width)
+    }
+
+    func testTheProofPassesTextAtTheScreenshotsScale() throws {
+        let text = CGColor(srgbRed: 15 / 255, green: 23 / 255, blue: 31 / 255, alpha: 1)
+        let background = CGColor(srgbRed: 229 / 255, green: 236 / 255, blue: 243 / 255, alpha: 1)
+        for title in ["Toasts", "Group boxes and menus"] {
+            for scale: CGFloat in [1, 2] {
+                let (pixels, width) = try rendered(Line(text: title, points: 13), scale: scale, text: text, background: background)
+                let proof = try XCTUnwrap(WorkbenchTextProof(pixels: pixels, width: width, expected: row(title), scale: scale))
+                XCTAssertTrue(proof.passes, "\(title) at \(scale)x: \(proof.summary)")
+            }
+        }
     }
 
     private let window = CGRect(x: 32, y: 31, width: 960, height: 674)

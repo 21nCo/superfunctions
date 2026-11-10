@@ -283,7 +283,7 @@ struct WorkbenchAuditWaiver {
                       element.identifier != context.screen.map({ WorkbenchApp.sidebarPrefix + $0 }) else { return false }
                 return proof.passes
             },
-            reason: "The macOS audit fails the contrast of some texts that measure well above 4.5:1, a different set from run to run, such as the unselected \"Toasts\" row (15:1) while the \"Banners\" row in the same colors passes. Only those texts are waived, and only when the issue's screenshot proves it: the test draws the expected text in the system font in the screenshot's text and background colors and fits each glyph of the screenshot to the drawing. Each glyph must be drawn at 85-115% of the text color's strength, differ from the drawing by at most 12% of its ink and lie at least three-quarters inside the screenshot, no pixel of ink may lie where no glyph is drawn, or more than 15% of the text color beyond the drawing within a pixel, or off the blend of the two colors, and the text color at the weakest glyph's strength less that difference, or at the weakest pixel the drawing inks at least 80%, moved in each channel by the farthest any pixel lies off the blend toward the background's luminance, must reach 4.5:1. A missing, faint, partly faint, cut-off or extra glyph, a separate mark however faint, a second color or fill, and the selected sidebar row stay failed. The proof is attached with each contrast issue."
+            reason: "The macOS audit fails the contrast of some texts that measure well above 4.5:1, a different set from run to run, such as the unselected \"Toasts\" row (15:1) while the \"Banners\" row in the same colors passes. Only those texts are waived, and only when the issue's screenshot proves it: the test draws the expected text in the system font in the screenshot's text and background colors and fits each glyph of the screenshot to the drawing. Each glyph must be drawn at 85-115% of the text color's strength, differ from the drawing by at most 12% of its ink and lie at least three-quarters inside the screenshot, no pixel of ink may lie where no glyph is drawn, or more than 15% of the text color beyond the drawing within a pixel, or off the blend of the two colors, and the text color at the weakest glyph's strength less that difference, or at the weakest pixel the drawing inks at least 80%, moved in each channel by the farthest any pixel lies off the blend toward the background's luminance, must reach 4.5:1. A missing, faint, partly faint, cut-off or extra glyph, a separate mark however faint, a second color or fill, and the selected sidebar row stay failed; only ink within 3 of the background in every channel, under 1.05:1, counts as background. The proof is attached with each contrast issue."
         ),
     ]
 
@@ -515,20 +515,23 @@ struct WorkbenchTextProof {
     /// `text` on `background`, offset by a fraction of a pixel.
     private static func drawing(of line: WorkbenchExpectedLine, scale: CGFloat, text: RGB, background: RGB, offset: CGPoint) -> Drawing? {
         #if os(macOS)
-        let font = NSFont.systemFont(ofSize: line.points * scale, weight: line.isSemibold ? .semibold : .regular)
+        let font = NSFont.systemFont(ofSize: line.points, weight: line.isSemibold ? .semibold : .regular)
         #else
-        let font = UIFont.systemFont(ofSize: line.points * scale, weight: line.isSemibold ? .semibold : .regular)
+        let font = UIFont.systemFont(ofSize: line.points, weight: line.isSemibold ? .semibold : .regular)
         #endif
         func cgColor(_ color: RGB) -> CGColor {
             CGColor(srgbRed: CGFloat(color.red) / 255, green: CGFloat(color.green) / 255, blue: CGFloat(color.blue) / 255, alpha: 1)
         }
         let attributes = [NSAttributedString.Key(kCTFontAttributeName as String): font, NSAttributedString.Key(kCTForegroundColorAttributeName as String): cgColor(text)] as [NSAttributedString.Key: Any]
         let ctLine = CTLineCreateWithAttributedString(NSAttributedString(string: line.text, attributes: attributes))
+        // The font at its own point size, drawn at the screenshot's scale, as
+        // a Retina display draws it: the system font's optical size follows
+        // its point size, so a font of points times scale draws other glyphs.
         let bounds = CTLineGetBoundsWithOptions(ctLine, .useGlyphPathBounds)
-        let (width, height) = (Int(bounds.width.rounded(.up)) + 4, Int(bounds.height.rounded(.up)) + 4)
+        let (width, height) = (Int((bounds.width * scale).rounded(.up)) + 4, Int((bounds.height * scale).rounded(.up)) + 4)
         guard !bounds.isEmpty, let sRGB = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
         var bytes = [UInt8](repeating: 0, count: width * height * 4)
-        let origin = CGPoint(x: 2 - bounds.minX + offset.x, y: 2 - bounds.minY + offset.y)
+        let origin = CGPoint(x: 2 - bounds.minX * scale + offset.x, y: 2 - bounds.minY * scale + offset.y)
         let drawn = bytes.withUnsafeMutableBytes { buffer -> Bool in
             guard let context = CGContext(
                 data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
@@ -538,7 +541,8 @@ struct WorkbenchTextProof {
             context.fill(CGRect(x: 0, y: 0, width: width, height: height))
             context.setAllowsFontSmoothing(true)
             context.setShouldSmoothFonts(true)
-            context.textPosition = origin
+            context.scaleBy(x: scale, y: scale)
+            context.textPosition = CGPoint(x: origin.x / scale, y: origin.y / scale)
             CTLineDraw(ctLine, context)
             return true
         }
@@ -554,8 +558,8 @@ struct WorkbenchTextProof {
             let runFont = (CTRunGetAttributes(run) as NSDictionary)[kCTFontAttributeName as String].map { $0 as! CTFont } ?? (font as CTFont)
             CTFontGetBoundingRectsForGlyphs(runFont, .default, ids, &boxes, count)
             for index in 0..<count where !boxes[index].isEmpty {
-                let left = Double(origin.x + positions[index].x + boxes[index].minX)
-                glyphs.append(left...(left + Double(boxes[index].width)))
+                let left = Double(origin.x + (positions[index].x + boxes[index].minX) * scale)
+                glyphs.append(left...(left + Double(boxes[index].width * scale)))
             }
         }
         let ink = stride(from: 0, to: bytes.count, by: 4).map {
