@@ -26,7 +26,7 @@ describe("McpFn OAuth client compatibility", () => {
       openAuthorization,
       diagnostics: (event) => { diagnostics.push(event); },
     });
-    await provider.saveClientInformation({ client_id: "chatgpt-client" });
+    await provider.saveClientInformation({ issuer: "https://issuer.example.com", client_id: "chatgpt-client" });
     const authorizationUrl = new URL("https://login.example.com/authorize");
     authorizationUrl.searchParams.set("client_id", "chatgpt-client");
     authorizationUrl.searchParams.set("redirect_uri", String(provider.redirectUrl));
@@ -165,7 +165,7 @@ describe("McpFn OAuth client compatibility", () => {
       store,
       openAuthorization: () => undefined,
     });
-    await provider.saveTokens({ access_token: "secret", token_type: "Bearer" });
+    await provider.saveTokens({ issuer: "https://issuer.example.com", access_token: "secret", token_type: "Bearer" });
     await expect(provider.tokens()).resolves.toMatchObject({ access_token: "secret" });
     expect(store.security).toBe("memory");
   });
@@ -178,8 +178,8 @@ describe("McpFn OAuth client compatibility", () => {
       store,
       openAuthorization: () => undefined,
     });
-    await provider.saveClientInformation({ client_id: "client-1" });
-    await provider.saveTokens({ access_token: "secret", token_type: "Bearer" });
+    await provider.saveClientInformation({ issuer: "https://issuer.example.com", client_id: "client-1" });
+    await provider.saveTokens({ issuer: "https://issuer.example.com", access_token: "secret", token_type: "Bearer" });
 
     await provider.invalidateCredentials("discovery");
 
@@ -248,8 +248,8 @@ describe("McpFn OAuth client compatibility", () => {
     await expect(provider.validateAuthorizationState("wrong")).rejects.toThrow(/state/);
     await provider.validateAuthorizationState(state);
     await expect(provider.validateAuthorizationState(state)).rejects.toThrow(/state/);
-    await provider.saveTokens({ access_token: "one", refresh_token: "refresh", token_type: "Bearer" });
-    await provider.saveTokens({ access_token: "two", refresh_token: "refresh-2", token_type: "Bearer" });
+    await provider.saveTokens({ issuer: "https://issuer.example.com", access_token: "one", refresh_token: "refresh", token_type: "Bearer" });
+    await provider.saveTokens({ issuer: "https://issuer.example.com", access_token: "two", refresh_token: "refresh-2", token_type: "Bearer" });
     expect(diagnostics.map((event) => event.phase)).toContain("token-refresh");
   });
 
@@ -307,8 +307,8 @@ describe("McpFn OAuth client compatibility", () => {
       },
     });
 
-    await expect(provider.saveClientInformation({ client_id: "client-1" })).resolves.toBeUndefined();
-    await expect(provider.saveTokens({ access_token: "opaque", token_type: "Bearer" }))
+    await expect(provider.saveClientInformation({ issuer: "https://issuer.example.com", client_id: "client-1" })).resolves.toBeUndefined();
+    await expect(provider.saveTokens({ issuer: "https://issuer.example.com", access_token: "opaque", token_type: "Bearer" }))
       .resolves.toBeUndefined();
   });
 
@@ -326,11 +326,11 @@ describe("McpFn OAuth client compatibility", () => {
       openAuthorization: async () => { throw new Error("browser unavailable"); },
       diagnostics: (event) => { diagnostics.push(event); },
     });
-    await provider.saveClientInformation({ client_id: "client-1" });
+    await provider.saveClientInformation({ issuer: "https://issuer.example.com", client_id: "client-1" });
     await provider.saveCodeVerifier("verifier");
     const state = await provider.state();
     await provider.validateAuthorizationState(state);
-    await provider.saveTokens({ access_token: "access", token_type: "Bearer" });
+    await provider.saveTokens({ issuer: "https://issuer.example.com", access_token: "access", token_type: "Bearer" });
     await expect(provider.codeVerifier()).rejects.toThrow(/No PKCE verifier/);
     await expect(provider.validateAuthorizationState("stale")).rejects.toThrow(/state/);
 
@@ -365,10 +365,10 @@ describe("McpFn OAuth client compatibility", () => {
       openAuthorization: () => undefined,
       diagnostics: (event) => { diagnostics.push(event); },
     });
-    await provider.saveTokens({ access_token: "old", token_type: "Bearer" });
+    await provider.saveTokens({ issuer: "https://issuer.example.com", access_token: "old", token_type: "Bearer" });
     await provider.saveCodeVerifier("v".repeat(43));
     const pendingState = await provider.state();
-    await provider.saveTokens({ access_token: "new", token_type: "Bearer" });
+    await provider.saveTokens({ issuer: "https://issuer.example.com", access_token: "new", token_type: "Bearer" });
     expect(diagnostics.at(-1)).toMatchObject({
       phase: "token-refresh",
       outcome: "succeeded",
@@ -389,7 +389,7 @@ describe("McpFn OAuth client compatibility", () => {
       openAuthorization: () => undefined,
       diagnostics: (event) => { failedDiagnostics.push(event); },
     });
-    await expect(failing.saveTokens({ access_token: "new", token_type: "Bearer" }))
+    await expect(failing.saveTokens({ issuer: "https://issuer.example.com", access_token: "new", token_type: "Bearer" }))
       .rejects.toThrow("storage unavailable");
     expect(failedDiagnostics.at(-1)).toMatchObject({
       phase: "token-exchange",
@@ -1609,6 +1609,7 @@ describe("generic auth provider composition", () => {
         authenticateBearer: async () => ({
           id: "client-1",
           type: "oauth",
+          resourceIds: ["https://mcp.example.com/mcp"],
           subject: {
             actorId: "user-1",
             actorType: "user",
@@ -1635,6 +1636,7 @@ describe("generic auth provider composition", () => {
       ? {
           id: "client-1",
           type: "oauth",
+          resourceIds: ["https://mcp.example.com/mcp"],
           subject: { actorId: "user-1", actorType: "user" },
         }
       : null);
@@ -1662,6 +1664,7 @@ describe("generic auth provider composition", () => {
       return {
         id: "client-1",
         type: "oauth",
+        resourceIds: ["https://mcp.example.com/mcp"],
         subject: { actorId: "user-1", actorType: "user" },
       };
     });
@@ -1686,6 +1689,7 @@ describe("generic auth provider composition", () => {
     const session = {
       id: "client-1",
       type: "oauth",
+      resourceIds: ["https://mcp.example.com/mcp"],
       subject: { actorId: "user-1", actorType: "user" as const },
     };
     const authorize = vi.fn(async () => false);
@@ -1794,6 +1798,7 @@ describe("generic auth provider composition", () => {
         authenticateBearer: async () => ({
           id: "client-1",
           type: "oauth",
+          resourceIds: ["https://mcp.example.com/mcp"],
           subject: { actorId: "user-1", actorType: "user" },
           scopes: ["mcp:read"],
         }),
@@ -1826,6 +1831,7 @@ describe("generic auth provider composition", () => {
           return {
             id: "client-1",
             type: "oauth",
+            resourceIds: ["https://mcp.example.com/mcp"],
             subject: { actorId: "user-1", actorType: "user" },
           };
         },
@@ -1868,6 +1874,7 @@ describe("generic auth provider composition", () => {
           return {
             id: "client-1",
             type: "oauth",
+            resourceIds: ["https://mcp.example.com/mcp"],
             subject: { actorId: "user-1", actorType: "user" },
           };
         },
@@ -1878,7 +1885,7 @@ describe("generic auth provider composition", () => {
           subject: session.subject.actorId,
           clientId: session.id,
           scopes: [],
-          resourceIds: [],
+          resourceIds: ["https://mcp.example.com/mcp"],
         };
       },
       authorize: async ({ request }) => {
@@ -1911,6 +1918,7 @@ describe("generic auth provider composition", () => {
         authenticateBearer: async () => ({
           id: "client-1",
           type: "oauth",
+          resourceIds: ["https://mcp.example.com/mcp"],
           subject: { actorId: "user-1", actorType: "user" },
         }),
       },
@@ -1918,7 +1926,7 @@ describe("generic auth provider composition", () => {
         subject: "trusted-user",
         clientId: "trusted-client",
         scopes: ["mcp:read"],
-        resourceIds: ["trusted-resource"],
+        resourceIds: ["https://mcp.example.com/mcp"],
         tenantId: "trusted-tenant",
         extra: {
           subject: "attacker",
@@ -1936,7 +1944,7 @@ describe("generic auth provider composition", () => {
     await expect(response.json()).resolves.toMatchObject({
       extra: {
         subject: "trusted-user",
-        resourceIds: ["trusted-resource"],
+        resourceIds: ["https://mcp.example.com/mcp"],
         tenantId: "trusted-tenant",
         visible: "retained",
       },

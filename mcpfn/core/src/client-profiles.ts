@@ -1,3 +1,4 @@
+import { schemaUriResolver } from "./schema-uri.js";
 import Ajv from "ajv";
 import Ajv2019 from "ajv/dist/2019.js";
 import Ajv2020 from "ajv/dist/2020.js";
@@ -5,7 +6,7 @@ import { ToolSchema, type Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import { canonicalJson, compareCodeUnits, sha256 } from "./canonical.js";
 import { McpFnClientProfileError } from "./errors.js";
-import { createSchemaCompiler, schemaEngine } from "./validation.js";
+import { schemaEngine, validateSchemaCollection } from "./validation.js";
 import type {
   McpFnListedTool,
   McpFnReportedClient,
@@ -200,6 +201,7 @@ function assertProjectedCatalog(
   knownTools: McpFnListedTool[],
   projectedTools: McpFnListedTool[],
   profile: McpFnClientProfile<unknown>,
+  schemaResources: readonly object[],
 ): void {
   const canonical = new Map(canonicalTools.map((tool) => [tool.name, tool]));
   const known = new Map(knownTools.map((tool) => [tool.name, tool]));
@@ -244,8 +246,8 @@ function assertProjectedCatalog(
     const visibleTool = projectedTools.find((tool) => tool.name === toolName);
     if (!visibleTool) continue;
     const ownedFields = new Set(ownedArguments(profile, visibleTool.name));
-    const canonicalShape = rootShape(canonicalTool.inputSchema, ownedFields);
-    const visibleShape = rootShape(visibleTool.inputSchema, ownedFields);
+    const canonicalShape = rootShape(canonicalTool.inputSchema, ownedFields, schemaResources);
+    const visibleShape = rootShape(visibleTool.inputSchema, ownedFields, schemaResources.filter(resource => canonicalJson(resource) !== canonicalJson(canonicalTool.inputSchema)));
     const canonicalProperties = canonicalShape.properties;
     const canonicalRequired = canonicalShape.required;
     const visibleProperties = visibleShape.properties;
@@ -273,10 +275,11 @@ function assertProjectedCatalog(
 
   for (const visibleTool of projectedTools) {
     const canonicalTool = canonical.get(visibleTool.name)!;
-    assertValidProfileSchema(visibleTool.inputSchema);
+    const projectedResources = schemaResources.filter(resource => canonicalJson(resource) !== canonicalJson(canonicalTool.inputSchema));
+    assertValidProfileSchema(visibleTool.inputSchema, projectedResources);
     const ownedFields = new Set(ownedArguments(profile, visibleTool.name));
-    const canonicalShape = rootShape(canonicalTool.inputSchema, ownedFields);
-    const visibleShape = rootShape(visibleTool.inputSchema, ownedFields);
+    const canonicalShape = rootShape(canonicalTool.inputSchema, ownedFields, schemaResources);
+    const visibleShape = rootShape(visibleTool.inputSchema, ownedFields, projectedResources);
     const visibleRequired = visibleShape.required;
     const visibleProperties = visibleShape.properties;
     const owned = new Set(
@@ -327,6 +330,8 @@ export async function buildMcpFnEffectiveCatalog<TContext>(input: {
   canonicalTools: McpFnListedTool[];
   /** Complete registry inventory when canonicalTools has already been visibility-filtered. */
   knownTools?: McpFnListedTool[];
+  /** All registered resources, including schemas of hidden tools and prompts. */
+  schemaResources?: readonly object[];
   resolved: McpFnResolvedClientProfile<TContext>;
 }): Promise<{ tools: McpFnListedTool[]; changes: McpFnCatalogChange[] }> {
   const canonicalTools = structuredClone(input.canonicalTools);
@@ -354,6 +359,7 @@ export async function buildMcpFnEffectiveCatalog<TContext>(input: {
     knownTools,
     projected,
     profile as McpFnClientProfile<unknown>,
+    input.schemaResources ?? knownTools.flatMap(tool => [tool.inputSchema, ...(tool.outputSchema ? [tool.outputSchema] : [])]),
   );
   const tools = structuredClone(projected).sort((left, right) => compareCodeUnits(left.name, right.name));
   const projectedByName = new Map(tools.map((tool) => [tool.name, tool]));
@@ -403,22 +409,45 @@ function validateDefinitionContainers(schema: unknown, ajv: Ajv | Ajv2019 | Ajv2
   for (const keyword of ["items", "additionalItems", "additionalProperties", "contains", "not", "if", "then", "else"]) validateDefinitionContainers(object[keyword], ajv);
 }
 
-function assertValidProfileSchema(schema: Record<string, unknown>): void {
+// Cache only syntax validation; identity, projection and ownership checks still run per request.
+const validProfileSchemas = new Set<string>();
+function profileSchemaResources(schema: Record<string, unknown>, resources: readonly object[]): object[] {
+  const rootId = schema.$id;
+  const unique = new Map<string, object>();
+  const rootKey = canonicalJson(schema);
+  for (const resource of resources) {
+    const id = (resource as Record<string, unknown>).$id;
+    const key = canonicalJson(resource);
+    if (!(typeof rootId === "string" && id === rootId) && key !== rootKey) unique.set(key, resource);
+  }
+  return [...unique.values(), schema];
+}
+
+function assertValidProfileSchema(schema: Record<string, unknown>, resources: readonly object[]): void {
+  const graph = profileSchemaResources(schema, resources);
+  const cacheKey = `${schemaEngine}:${sha256(graph)}`;
+  if (validProfileSchemas.has(cacheKey)) return;
   try {
     const dialect = typeof schema.$schema === "string" ? schema.$schema : "http://json-schema.org/draft-07/schema#";
     if (schemaEngine === "cfworker") {
       if (!dialect.includes("draft-07")) {
         throw new Error("Modern projected schemas require a dialect-aware edge validator");
       }
-      createSchemaCompiler("cfworker").compile(schema);
-      return;
+      validateSchemaCollection(graph, "cfworker");
+    } else {
+      const Validator = dialect.includes("draft-07") ? Ajv : dialect.includes("2019-09") ? Ajv2019 : Ajv2020;
+      const ajv = new Validator({ uriResolver: schemaUriResolver, strict: false, allowUnionTypes: true, validateFormats: false, logger: false,
+        ...(dialect.includes("draft-07") ? { ignoreKeywordsWithRef: true } : {}),
+      });
+      for (const resource of graph) validateDefinitionContainers(resource, ajv);
+      for (const [index, resource] of graph.entries()) {
+        // Anonymous schemas need distinct registry keys without changing their JSON Schema IDs.
+        ajv.addSchema(resource as object, (resource as Record<string, unknown>).$id === undefined ? `mcpfn-profile-${index}` : undefined);
+      }
+      ajv.compile(schema);
     }
-    const Validator = dialect.includes("draft-07") ? Ajv : dialect.includes("2019-09") ? Ajv2019 : Ajv2020;
-    const ajv = new Validator({ strict: false, allowUnionTypes: true, validateFormats: false, logger: false,
-      ...(dialect.includes("draft-07") ? { ignoreKeywordsWithRef: true } : {}),
-    });
-    validateDefinitionContainers(schema, ajv);
-    ajv.compile(schema);
+    if (validProfileSchemas.size >= 64) validProfileSchemas.delete(validProfileSchemas.values().next().value!);
+    validProfileSchemas.add(cacheKey);
   }
   catch { throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Projected schema must be valid JSON Schema"); }
 }
@@ -533,7 +562,7 @@ function mapSchemaKeyword(key: string, value: unknown, visit: (schema: unknown) 
 // still affect reference resolution, so keep those fail-closed.
 const DRAFT07_REF_UNSAFE_KEYWORDS = new Set(["$id", "id"]);
 
-function rootShape(root: Record<string, unknown>, owned = new Set<string>()): { properties: Record<string, unknown>; required: Set<string>; constraints: string[]; ownershipSensitive: boolean; prohibited: Set<string> } {
+function rootShape(root: Record<string, unknown>, owned = new Set<string>(), schemaResources: readonly object[] = []): { properties: Record<string, unknown>; required: Set<string>; constraints: string[]; ownershipSensitive: boolean; prohibited: Set<string> } {
   // JSON transports duplicate aliases. Give each occurrence its own identity so
   // relative references inherit the resource at that occurrence, not the first one.
   root = JSON.parse(JSON.stringify(root)) as Record<string, unknown>;
@@ -599,6 +628,10 @@ function rootShape(root: Record<string, unknown>, owned = new Set<string>()): { 
       mapSchemaKeyword(key, child, item => { index(item, resource, base); return item; }, modernDialect(resource));
     }
   };
+  for (const resource of profileSchemaResources(root, schemaResources).slice(0, -1)) {
+    const detached = JSON.parse(JSON.stringify(resource)) as Record<string, unknown>;
+    index(detached, detached, initialBase);
+  }
   index(root, root, initialBase);
   const referenceTarget = (schema: Record<string, unknown>): unknown => {
     const reference = schema.$ref as string;

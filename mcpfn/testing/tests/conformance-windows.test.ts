@@ -23,3 +23,10 @@ it("bounds an unresponsive Windows tree-kill and falls back to the wrapper", asy
   expect(child.kill).toHaveBeenCalledWith("SIGKILL");
   expect(child.stderr.destroy).toHaveBeenCalledOnce();
 });
+
+it.each([{ exitCode: 0, signalCode: null }, { exitCode: null, signalCode: "SIGTERM" }])("never taskkills an already exited Windows PID: %j", async status => {
+  const child = { ...runner(), ...status };
+  await terminateConformanceRunner(child as unknown as ChildProcess, "win32", "C:\\Windows");
+  expect(mocks.execFile).not.toHaveBeenCalled(); expect(child.kill).not.toHaveBeenCalled();
+  expect(child.stdout.destroy).toHaveBeenCalledOnce();
+});

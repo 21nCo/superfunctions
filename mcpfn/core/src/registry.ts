@@ -448,6 +448,20 @@ export function promptArguments<TContext>(
 
 export class McpFnRegistry<TContext = undefined> {
   private readonly schemaCompiler: SchemaCompiler;
+  private readonly registrations: Array<(target: McpFnRegistry<TContext>) => void> = [];
+  private readonly schemas: object[] = [];
+
+  /** Clone in successful registration order, preserving cross-definition references. */
+  clone(): McpFnRegistry<TContext> {
+    const target = new McpFnRegistry<TContext>();
+    for (const register of this.registrations) register(target);
+    return target;
+  }
+
+  /** Registered schema resources for catalog projections, including hidden tools and prompts. */
+  schemaDefinitions(): object[] {
+    return [...this.schemas];
+  }
   private readonly tools = new Map<string, RegisteredTool<TContext>>();
   private readonly resources = new Map<
     string,
@@ -535,6 +549,8 @@ export class McpFnRegistry<TContext = undefined> {
       validateInput,
       validateOutput,
     });
+    this.schemas.push(definition.inputSchema, ...(definition.outputSchema ? [definition.outputSchema] : []));
+    this.registrations.push(target => { target.register(definition); });
     return this;
   }
 
@@ -563,6 +579,7 @@ export class McpFnRegistry<TContext = undefined> {
       definition.unsubscribe,
     );
     this.resources.set(definition.uri, definition);
+    this.registrations.push(target => { target.registerResource(definition); });
     return this;
   }
 
@@ -630,6 +647,7 @@ export class McpFnRegistry<TContext = undefined> {
       }
     }
     this.resourceTemplates.set(definition.name, { definition, template });
+    this.registrations.push(target => { target.registerResourceTemplate(definition); });
     return this;
   }
 
@@ -734,6 +752,8 @@ export class McpFnRegistry<TContext = undefined> {
       }
     }
     this.prompts.set(definition.name, { definition, validateArguments });
+    this.schemas.push(promptSchema(definition));
+    this.registrations.push(target => { target.registerPrompt(definition); });
     return this;
   }
 

@@ -238,3 +238,13 @@ describe("McpFn OAuth resource server", () => {
     });
   });
 });
+
+it.each([NaN, Infinity, null, '2030-01-01'])("rejects malformed verified expiry %s", async expiresAt => {
+  const resource = new URL('https://mcp.example.com/mcp');
+  const downstream = vi.fn(async () => new Response('ok'));
+  const handler = createOAuthResourceServerHandler(downstream, { resource, authorizationServers: ['https://issuer.example'],
+    verifier: { verifyAccessToken: async token => ({ token, clientId: 'client', scopes: [], resource, expiresAt: expiresAt as number }) },
+  });
+  expect((await handler(new Request(resource, { headers: { authorization: 'Bearer token' } }))).status).toBe(401);
+  expect(downstream).not.toHaveBeenCalled();
+});

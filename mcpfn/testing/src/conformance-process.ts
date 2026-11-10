@@ -1,7 +1,7 @@
 import { execFile, type ChildProcess } from "node:child_process";
 import path from "node:path";
 
-/** Internal bounded best-effort process-tree cleanup after capture overflow. */
+/** Internal bounded best-effort process-tree cleanup after cancellation, timeout, or capture overflow. */
 export async function terminateConformanceRunner(
   child: ChildProcess,
   platform = process.platform,
@@ -10,6 +10,8 @@ export async function terminateConformanceRunner(
   const killWrapper = () => { try { child.kill("SIGKILL"); } catch { /* Report remains failed. */ } };
   try {
     if (platform === "win32" && child.pid) {
+      // An exited PID can be reused and taskkill cannot discover its former tree.
+      if (child.exitCode != null || child.signalCode != null) return;
       if (!systemRoot || !path.win32.isAbsolute(systemRoot)) { killWrapper(); return; }
       await new Promise<void>(resolve => {
         const timer = setTimeout(() => { killWrapper(); resolve(); }, 2500);
@@ -31,4 +33,10 @@ export async function terminateConformanceRunner(
     child.stdout?.destroy();
     child.stderr?.destroy();
   }
+}
+
+/** Synchronous POSIX cleanup only; exit handlers cannot await taskkill. */
+export function terminateConformanceRunnerOnExit(child: ChildProcess): void {
+  if (process.platform === "win32" || !child.pid) return;
+  try { process.kill(-child.pid, "SIGKILL"); } catch { /* Group already gone. */ }
 }

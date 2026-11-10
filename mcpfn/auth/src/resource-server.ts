@@ -168,7 +168,7 @@ export function createOAuthResourceServerHandler(
       });
     }
     const now = Math.floor((options.clock?.() ?? Date.now()) / 1_000);
-    if (authInfo.expiresAt !== undefined && authInfo.expiresAt <= now) {
+    if (authInfo.expiresAt !== undefined && (!Number.isFinite(authInfo.expiresAt) || authInfo.expiresAt <= now)) {
       return bearerChallengeResponse(401, metadataUrl, {
         error: "invalid_token",
         description: "The access token has expired",

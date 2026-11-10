@@ -29,7 +29,7 @@ try {
   }));
   installWithRetry([
     `${packageName}@${packageVersion}`,
-    "@modelcontextprotocol/sdk@1.29.0",
+    "@modelcontextprotocol/sdk@1.32.1",
   ]);
   copyFileSync(
     path.join(repoRoot, "mcpfn/examples/external-http-server.mjs"),
