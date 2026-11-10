@@ -92,8 +92,7 @@ const escapeRegExp = (text: string): string => text.replace(/[.*+?^$(){}|[\]\\]/
 /** Every runtime's file name of a `{runtime}` environment output; runtime names are those selectRuntime accepts. */
 const runtimeFileName = (template: string): RegExp =>
   new RegExp("^" + template.split("{runtime}").map(escapeRegExp).join("[a-z0-9](?:[a-z0-9-]{0,22}[a-z0-9])?") + "$");
-/** The same pattern ignoring case, capturing each runtime segment. */
-const runtimeFileNameFolded = (template: string): RegExp => new RegExp("^" + template.split("{runtime}").map(escapeRegExp).join("([a-z0-9](?:[a-z0-9-]{0,22}[a-z0-9])?)") + "$", "i");
+const runtimeFileNameFolded = (template: string): RegExp => new RegExp("^" + template.split("{runtime}").map(escapeRegExp).join("([a-z0-9](?:[a-z0-9-]{0,22}[a-z0-9])?)") + "$", "i"); // The same pattern ignoring case, capturing each runtime segment.
 
 /**
  * Whether a canonical path is excluded DevFn state: an excluded path itself,
@@ -109,8 +108,7 @@ function isExcluded(excluded: readonly string[], absolute: string): boolean {
 }
 
 /**
- * isExcluded, also for a name that spells a runtime's file of a `{runtime}` output (or its staging file) in another case. Such a name is excluded only when it is the same file as DevFn's own spelling (the template's literal segments as declared,
- * the runtime segment lower-cased), as after a case-only rename on a case-insensitive volume; a distinct file on a case-sensitive volume stays an input. Links are never followed.
+ * isExcluded, also for a name that spells a runtime's file of a `{runtime}` output (or its staging file) in another case. Such a name is excluded only when it is the same file as DevFn's own spelling (the template's literal segments as declared, the runtime segment lower-cased), as after a case-only rename on a case-insensitive volume; a distinct file on a case-sensitive volume stays an input. Links are never followed.
  */
 async function isExcludedEntry(excluded: readonly string[], absolute: string): Promise<boolean> {
   if (isExcluded(excluded, absolute)) return true;
@@ -135,21 +133,22 @@ async function isExcludedEntry(excluded: readonly string[], absolute: string): P
 }
 
 /** Content digest of a repository file or directory, walked under its canonical spelling (realpath of its parent) so excluded state matches however it is named; symlinks in it are hashed as links, never followed. A directory's entries are read one at a time within what remains of the entry budget, before any is sorted or visited. */
-async function digestInput(root: string, relative: string, field: string, excluded: readonly string[], fixed: readonly string[] = excluded, refused: readonly string[] = excluded, made: readonly string[] = [], listed: string[] = [], shared: readonly string[] = []): Promise<string> {
-  // DevFn's entry, by name as that directory resolves it, in a recorded state directory that existed before DevFn used it.
-  const ownEntry = async (absolute: string) => shared.includes(path.dirname(absolute)) && await isStateDirectoryEntry(absolute);
+async function digestInput(root: string, relative: string, field: string, excluded: readonly string[], fixed: readonly string[] = excluded, refused: readonly string[] = excluded, made: readonly string[] = [], listed: string[] = [], shared: readonly string[] = [], own?: string): Promise<{ current: string; earlier?: string }> { // The same walk gives the earlier digest, holding own (the caller's existing state directory) whole as an earlier release did; an input in it has none.
+  const ownEntry = async (absolute: string) => shared.includes(path.dirname(absolute)) && await isStateDirectoryEntry(absolute); // DevFn's entry, by name as that directory resolves it, in a recorded state directory that existed before DevFn used it.
   const ownState = async (absolute: string): Promise<boolean> => absolute !== path.dirname(absolute) && (await ownEntry(absolute) || await ownState(path.dirname(absolute)));
   const target = await resolveContainedPath(root, relative, field).then(async (item) => path.join(await canonical(path.dirname(item)), path.basename(item))).catch((error: unknown) => {
     throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field}: ${error instanceof Error ? error.message : String(error)}`);
   });
   if (await realpath(target).catch(() => target).then(async (real) => await isExcludedEntry(refused, real) || refused.some((item) => real.startsWith(`${item}${path.sep}`)) || await ownState(real))) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} ${relative} is DevFn runtime state, not a task input.`);
-  const hash = { parts: [] as string[], update: (part: string) => hash.parts.push(part), digest: (encoding: "hex") => createHash("sha256").update(hash.parts.join("")).digest(encoding) }, below = (items: readonly string[], absolute: string) => items.some((item) => item.startsWith(`${absolute}${path.sep}`));
+  const within = (absolute: string) => own !== undefined && (absolute === own || absolute.startsWith(`${own}${path.sep}`)), below = (items: readonly string[], absolute: string) => items.some((item) => item.startsWith(`${absolute}${path.sep}`));
+  const hash = { parts: [] as string[], earlier: [] as string[], at: target, update: (part: string) => { if (!within(hash.at)) hash.earlier.push(own !== undefined && below([own], hash.at) ? "" : part); hash.parts.push(part); } }; // A part of the entry visited (at): the earlier digest leaves out own's, and the marker of a directory holding own.
   const budget = { entries: 0, bytes: 0 };
   const gone = (entry: string, absolute: string) => (error: NodeJS.ErrnoException): undefined => { // An entry below the input that vanished while it was read is named, unless it held attributed state (a sibling's own cleanup); the revision retries the walk if attribution changed meanwhile.
     if (error.code !== "ENOENT" && error.code !== "ENOTDIR") throw error;
     if (!below(excluded, absolute)) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} entry ${entry} vanished while DevFn read it.`, { vanished: entry });
   };
   const visit = async (absolute: string, name: string): Promise<void> => {
+    hash.at = absolute;
     if (await isExcludedEntry(absolute === target ? refused : excluded, absolute) || await ownEntry(absolute)) return;
     if (++budget.entries > MAX_INPUT_ENTRIES) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} lists more than ${MAX_INPUT_ENTRIES} entries.`);
     const shown = path.join(relative, name);
@@ -159,10 +158,11 @@ async function digestInput(root: string, relative: string, field: string, exclud
     });
     if (!stats) return; if (stats.isSymbolicLink()) hash.update(`l\0${name}\0${await readlink(absolute).catch(gone(shown, absolute)) ?? ""}\0`);
     else if (stats.isDirectory()) {
-      const marker = hash.update(below(fixed, absolute) ? "" : `d\0${name}\0`) - 1, listing = await opendir(absolute).catch(gone(shown, absolute)); listed.push(absolute); // Its marker depends on the config's own state below it, as in DevFn v0.1, and on provenance, never on recorded state below it: only a directory DevFn made, holding nothing else, is transparent.
+      const marks = [hash.parts.length, hash.earlier.length], listing = await opendir(absolute).catch(gone(shown, absolute)); listed.push(absolute);
+      hash.update(below(fixed, absolute) ? "" : `d\0${name}\0`); // Its marker depends on the config's own state below it, as in DevFn v0.1, and on provenance, never on recorded state below it: only a directory DevFn made, holding nothing else, is transparent.
       const entries: string[] = []; for await (const { name: entry } of listing ?? []) if (!await isExcludedEntry(excluded, path.join(absolute, entry)) && !await ownEntry(path.join(absolute, entry)) && entries.push(entry) > MAX_INPUT_ENTRIES - budget.entries) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} lists more than ${MAX_INPUT_ENTRIES} entries.`);
       for (const entry of entries.sort(compare)) await visit(path.join(absolute, entry), `${name}/${entry}`);
-      if (hash.parts.length === marker + 1 && made.includes(absolute)) hash.parts.length = marker;
+      if (hash.parts.length === marks[0] + 1 && made.includes(absolute)) [hash.parts.length, hash.earlier.length] = marks; // At most its marker is left in either digest.
     } else if (stats.isFile()) {
       budget.bytes += stats.size;
       if (budget.bytes > MAX_INPUT_BYTES) throw new DevFnError("DEVFN_RUNTIME_INVALID", `${field} exceeds ${MAX_INPUT_BYTES} bytes.`);
@@ -170,7 +170,7 @@ async function digestInput(root: string, relative: string, field: string, exclud
     } else hash.update(`o\0${name}\0`);
   };
   await visit(target, ".");
-  return hash.digest("hex");
+  return { current: sha256(hash.parts.join("")), earlier: within(target) ? undefined : sha256(hash.earlier.join("")) };
 }
 
 /**
@@ -205,8 +205,7 @@ function leaseStable(config: DevFnConfig, node: string, profile: string, resourc
 /**
  * Where a task's artifacts go, when it declares them: a task's completion is
  * valid only for the destination it wrote, so a changed mode or runtime
- * directory, or a symlink anywhere on the instance's artifact directory, changes its revision: that directory counts as the one it reaches
- * (deepest existing ancestor resolved, relative to the real checkout when inside it). Undeclared, nothing is added and earlier revisions stay valid.
+ * directory, or a symlink anywhere on the instance's artifact directory, changes its revision: that directory counts as the one it reaches (deepest existing ancestor resolved, relative to the real checkout when inside it). Undeclared, nothing is added and earlier revisions stay valid.
  */
 async function artifactSettings(config: DevFnConfig, root: string, name: string, instanceId = "{instance}"): Promise<{ artifacts?: { mode: "runtime" | "shared"; directory?: string } }> {
   const mode = config.processes![name].artifacts;
@@ -229,7 +228,7 @@ async function artifactSettings(config: DevFnConfig, root: string, name: string,
  * environment as written) only selects the Compose sources, as at startup; any value changing the effective Compose resource the task uses counts, and its profile's name where a written value names DEVFN_PROFILE.
  */
 export async function taskInputRevision(config: DevFnConfig, root: string, node: { name: string; kind: "process" | "service" }, profile: string, resources?: ResourcePlan,
-  environment?: Record<string, string>, stateDir?: string, instanceId?: string, completed?: string, wholeStateDir = false): Promise<string> {
+  environment?: Record<string, string>, stateDir?: string, instanceId?: string, completed?: string | TaskJournal): Promise<string> {
   const { spec, task, field } = taskNode(config, node);
   const sorted = (values: readonly string[] | undefined) => [...(values ?? [])].sort(compare);
   const secrets = new Set(spec.secretEnv ?? []);
@@ -247,22 +246,25 @@ export async function taskInputRevision(config: DevFnConfig, root: string, node:
     return [name, { kind: planned.kind, target: planned.target?.name ?? null, location: planned.target?.location ?? null, remote: planned.remote?.url ?? null,
       provider: planned.provider ? [planned.provider.node, planned.provider.port] : null, namespace: planned.namespace?.prefix ?? null, values }];
   });
-  const inputs: Array<[string, string]> = [];
+  const walked: Array<[string, { current: string; earlier?: string }]> = [];
   // What DevFn writes under the repository (runtime, receipts, environment outputs of every runtime and their claims, a state dir; canonical before it exists) is never an input, nor is a directory holding it beyond its other entries.
   const resolved = async (items: readonly string[]) => await Promise.all(items.map((item) => canonical(path.resolve(root, item)))), base = await resolved([...devfnStateDirectories(config.runtimeDir), ...(config.environmentOutputs ?? []).flatMap((output) => output.path.includes("{runtime}") ? [output.path, runtimeOutputPath(output.path)] : [output.path]), ...(stateDir ? [stateDir] : [])]); // So is what the checkout's instances record (taskAttribution): every runtime directory, also under an earlier runtimeDir, and another instance's outputs while it holds them; a file one wrote, while it holds what it last wrote, only within a walked directory. A changed or dropped output is an input again, as in DevFn v0.1.
   const discover = async () => await taskAttribution(config, root, async () => await readClaims(root), instanceId).then(async ({ held, released, made, shared }) => await Promise.all([held, [...held, ...released], made, shared].map(async (items) => [...new Set(await resolved(items))].sort(compare))));
-  for (let [held, recorded, made, shared] = await discover(), pass = 1, listed: string[] = []; ; pass += 1, inputs.length = 0, listed = []) { // A sibling publishes attribution before it creates anything and withdraws it only after removing what it created, so attribution read again after the walk, or after an entry vanished during it, covers all the walk saw unless a directory it listed is gone since (published and withdrawn meanwhile); the walk is repeated (bounded) while either changed.
-    // The caller's own state directory, where an instance records it, is held as every caller holds it: whole where DevFn made it, otherwise only DevFn's entries. A completion an earlier release recorded (without stateEntries) held one that existed whole (wholeStateDir), as DevFn v0.1 did, so it still matches below where that rule gives it.
-    const own = stateDir ? base.at(-1) : undefined, fixed = !wholeStateDir && own !== undefined && shared.includes(own) ? base.slice(0, -1) : base;
-    const vanished = await (async () => { for (const [index, input] of (task.inputs ?? []).entries()) inputs.push([input, await digestInput(root, input, `${field}.task.inputs[${index}]`, [...fixed, ...recorded], fixed, [...fixed, ...held], made, listed, shared)]); })()
+  for (let [held, recorded, made, shared] = await discover(), pass = 1, listed: string[] = []; ; pass += 1, walked.length = 0, listed = []) { // A sibling publishes attribution before it creates anything and withdraws it only after removing what it created, so attribution read again after the walk, or after an entry vanished during it, covers all the walk saw unless a directory it listed is gone since (published and withdrawn meanwhile); the walk is repeated (bounded) while either changed.
+    const own = stateDir ? base.at(-1) : undefined, entriesOnly = own !== undefined && shared.includes(own), fixed = entriesOnly ? base.slice(0, -1) : base; // The caller's own state directory, where an instance records it, is held as every caller holds it: whole where DevFn made it, otherwise only DevFn's entries.
+    const vanished = await (async () => { for (const [index, input] of (task.inputs ?? []).entries()) walked.push([input, await digestInput(root, input, `${field}.task.inputs[${index}]`, [...fixed, ...recorded], fixed, [...fixed, ...held], made, listed, shared, entriesOnly ? own : undefined)]); })()
       .catch((error: unknown) => { if (error instanceof DevFnError && error.details?.vanished !== undefined) return error; throw error; });
     const now = await discover(); if (JSON.stringify(now) === JSON.stringify([held, recorded, made, shared]) && (await Promise.all(listed.map(async (item) => (await lstat(item).catch(() => undefined))?.isDirectory()))).every(Boolean)) { if (vanished) throw vanished; break; }
     if (pass === 3) throw new DevFnError("DEVFN_RUNTIME_INVALID", `Other runtimes of this checkout kept starting while DevFn computed the input revision of task ${node.name}; start again.`, { task: node.name });
     [held, recorded, made, shared] = now;
   }
-  const revision = sha256(JSON.stringify({ version: 1, kind: node.kind, settings, env: entries(spec.env), profileEnv: entries(config.profiles[profile]?.environment),
+  const revision = (inputs: Array<[string, string | undefined]>) => sha256(JSON.stringify({ version: 1, kind: node.kind, settings, env: entries(spec.env), profileEnv: entries(config.profiles[profile]?.environment),
     envAllowlist: sorted(spec.envAllowlist), secretEnv: sorted(spec.secretEnv), resources: consumed, inputs, profile: JSON.stringify([settings, spec.env, config.profiles[profile]?.environment]).includes("DEVFN_PROFILE") ? profile : undefined }));
-  return completed === undefined || completed === revision || wholeStateDir || !stateDir || !await discover().then(([, , , shared]) => shared.includes(base.at(-1)!)) || await taskInputRevision(config, root, node, profile, resources, environment, stateDir, instanceId, undefined, true).catch(() => undefined) !== completed ? revision : completed;
+  const current = revision(walked.map(([input, digests]) => [input, digests.current])), earlier = revision(walked.map(([input, digests]) => [input, digests.earlier])); // An input without an earlier digest gives a revision no earlier release recorded.
+  if (typeof completed !== "object" || completed.lastSuccess?.stateEntries) return completed === earlier ? earlier : current; // A revision an earlier release recorded is taken where the earlier rule gives it.
+  for (const record of [completed.lastSuccess, ...completed.attempts]) if (record?.inputRevision === earlier) record.inputRevision = current; // In a journal whose success an earlier release recorded, each revision that rule gives is bound to the current one, and a success then matching is marked so a later change there counts.
+  if (completed.lastSuccess?.inputRevision === current) completed.lastSuccess.stateEntries = true;
+  return current;
 }
 
 /**
@@ -449,12 +451,12 @@ export async function preflightTasks(input: { config: DevFnConfig; plan: Lifecyc
     if (!tasks.some((node) => node.name === name)) throw new DevFnError("DEVFN_RUNTIME_INVALID", `--rerun-task ${name} names no task of profile ${input.plan.profile}.`);
   }
   for (const node of tasks) {
-    const revision = async () => await taskInputRevision(input.config, input.root, node, input.plan.profile, input.resources, input.environments?.[node.name]?.environment, input.stateDir, input.instanceId, await readTaskJournal(input.stateDir, key).then((journal) => journal?.lastSuccess?.stateEntries ? undefined : journal?.lastSuccess?.inputRevision));
+    const revision = async (journal: TaskJournal | undefined) => await taskInputRevision(input.config, input.root, node, input.plan.profile, input.resources, input.environments?.[node.name]?.environment, input.stateDir, input.instanceId, journal); // Each decision reads its journal once; its earlier revisions are bound in that snapshot.
     const { key } = taskScope(input.config, input.instanceId, node, input.resources);
     const { task } = taskNode(input.config, node);
     const rerunRequested = input.rerunTasks?.includes(node.name) ?? false;
     if (!input.locked) {
-      decide(await readTaskJournal(input.stateDir, key), await revision(), task, node.name, rerunRequested, true);
+      await readTaskJournal(input.stateDir, key).then(async (journal) => decide(journal, await revision(journal), task, node.name, rerunRequested, true));
       continue;
     }
     const { compose, signal } = input.locked;
@@ -462,7 +464,7 @@ export async function preflightTasks(input: { config: DevFnConfig; plan: Lifecyc
     await withFileLock(lockPath(input.stateDir, key), async () => {
       const journal = await readTaskJournal(input.stateDir, key);
       if (journal) await settleAttempts(journal, node.name, () => compose ?? new ComposeController(), async () => await writeTaskJournal(input.stateDir, key, journal));
-      decide(journal, await revision(), task, node.name, rerunRequested);
+      decide(journal, await revision(journal), task, node.name, rerunRequested);
     }, { timeoutMs: scopeLockTimeout(task), staleMs: SCOPE_LOCK_STALE_MS, ...(signal ? { signal } : {}) }).catch((error: unknown) => {
       if (signal?.aborted) throw new DevFnError("DEVFN_CANCELLED", `DevFn startup was cancelled while task ${node.name} was decided; nothing was started.`, { task: node.name });
       throw error;
@@ -475,8 +477,7 @@ export interface RunTaskContext {
   root: string;
   stateDir: string;
   runtimeDir: string;
-  /** The runtime directory checked again immediately before each attempt writes its log and Compose override, so a link put on those paths after an earlier check or attempt is refused before any byte is written. */
-  attemptRuntimeDir?: () => Promise<string>;
+  attemptRuntimeDir?: () => Promise<string>; // The runtime directory checked again immediately before each attempt writes its log and Compose override, so a link put on those paths after an earlier check or attempt is refused before any byte is written.
   instanceId: string;
   invocationId: string;
   node: { name: string; kind: "process" | "service" };
@@ -515,11 +516,9 @@ export async function runTask(context: RunTaskContext): Promise<TaskReceipt> {
     locked = true;
     const journal: TaskJournal = await readTaskJournal(stateDir, key) ?? { version: 1, task: node.name, scope, attempts: [] };
     await settleAttempts(journal, node.name, () => context.compose ?? new ComposeController(), async () => await writeTaskJournal(stateDir, key, journal));
-    const revision = await taskInputRevision(config, context.root, node, context.profile, context.resources, context.environment, stateDir, context.instanceId); // An earlier release's success, matching as it is or where it held this state directory whole, is rebound to it, so a later change there counts.
-    if (journal.lastSuccess && !journal.lastSuccess.stateEntries && (journal.lastSuccess.inputRevision === revision || await taskInputRevision(config, context.root, node, context.profile, context.resources, context.environment, stateDir, context.instanceId, undefined, true).catch(() => undefined) === journal.lastSuccess.inputRevision)) {
-      Object.assign(journal.lastSuccess, { inputRevision: revision, stateEntries: true });
-      await writeTaskJournal(stateDir, key, journal);
-    }
+    const unmarked = journal.lastSuccess && !journal.lastSuccess.stateEntries;
+    const revision = await taskInputRevision(config, context.root, node, context.profile, context.resources, context.environment, stateDir, context.instanceId, journal); // An earlier release's revisions are bound under the scope lock.
+    if (unmarked) await writeTaskJournal(stateDir, key, journal);
     const decision = decide(journal, revision, task, node.name, context.rerunRequested);
     const receipt: TaskReceipt = { name: node.name, kind: node.kind, rerun: task.rerun ?? "on-change", idempotent: task.idempotent ?? false, inputRevision: revision,
       status: "skipped", reason: decision.reason, attempts: [], ...(journal.lastSuccess ? { lastSuccess: journal.lastSuccess } : {}) };

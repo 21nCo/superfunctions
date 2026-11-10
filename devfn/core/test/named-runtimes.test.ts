@@ -18,6 +18,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { assertEnvironmentOutputsAvailable, claimEnvironmentOutputs, makeStateDirectory, releaseEnvironmentOutputs, withInstanceLifecycleLock, within } from "../src/outputs.js";
 import { newRuntimeId, recordRuntimeId } from "../src/runtime.js";
+import { preflightTasks } from "../src/tasks.js";
 import { createPlan, DevFnOrchestrator, domainAliases, readTaskJournal, recoverOrphanedProxyRoutes, resolveEndpointTemplates, resolveInstanceIdentity, resolveLocalHostname, runtimeDirectory, selectRuntime, taskInputRevision, taskScope } from "../src/index.js";
 
 const execFileAsync = promisify(execFile);
@@ -2248,7 +2249,7 @@ it("never takes a completion this release recorded for an earlier release's wher
     expect([await runs("once"), await runs("change")]).toEqual([0, 1]);
     // A user's file there then changes both, though holding the directory whole still gives the recorded revision.
     await writeFile(path.join(stateDir, "notes.sql"), "-- mine");
-    expect(await taskInputRevision(config, primary, { name: "once", kind: "process" }, "default", undefined, undefined, stateDir, instanceId, undefined, true)).toBe(earlier);
+    expect(await taskInputRevision(config, primary, { name: "once", kind: "process" }, "default", undefined, undefined, stateDir, instanceId, earlier)).toBe(earlier);
     await expect(orchestrator.up({ config, root: primary, stateDir })).rejects.toMatchObject({ code: "DEVFN_TASK_INPUT_CHANGED" });
     expect(await start("change")).toBe("ready");
     expect([await runs("once"), await runs("change")]).toEqual([0, 2]);
@@ -2320,6 +2321,116 @@ it("accepts a completed revision only where the earlier rule, holding the caller
     expect(await revision(earlier)).not.toBe(earlier);
   } finally {
     await orchestrator.down({ config: sibling, root: primary, stateDir, runtime: "b" }).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 60_000);
+
+it("decides an unlocked preflight from the one journal snapshot it read, while a concurrent start binds an earlier release's completion before the inputs are walked", async () => {
+  const { parent, primary } = await repository();
+  const config = validateDevFnConfig({ version: 1, project: { id: "snapshot-race" },
+    processes: { once: { adapter: "command", command: [process.execPath, "-e", "0"], task: { rerun: "once", inputs: ["."] } } }, profiles: { default: { processes: ["once"] } } });
+  const node = { name: "once", kind: "process" as const };
+  const stateDir = path.join(primary, "cache", "state");
+  const identity = await resolveInstanceIdentity("snapshot-race", primary);
+  const file = path.join(stateDir, "tasks", `${taskScope(config, identity.instanceId, node).key}.json`);
+  const success = { invocationId: "earlier", instanceId: identity.instanceId, completedAt: new Date(0).toISOString() };
+  const journal = (revision: string, marked: boolean) => JSON.stringify({ version: 1, task: "once", scope: "instance", lastSuccess: { inputRevision: revision, ...success, ...(marked ? { stateEntries: true } : {}) },
+    attempts: [{ ...success, attempt: 1, inputRevision: revision, startedAt: success.completedAt, endedAt: success.completedAt, outcome: "succeeded", effects: "applied", stopped: true }] });
+  try {
+    await mkdir(path.join(stateDir, "tasks"), { recursive: true });
+    await writeFile(path.join(primary, "schema.sql"), "create table t();");
+    const earlier = await taskInputRevision(config, primary, node, "default", undefined, undefined, stateDir, identity.instanceId);
+    await recordStateDirectory(config, primary, identity, stateDir);
+    const current = await taskInputRevision(config, primary, node, "default", undefined, undefined, stateDir, identity.instanceId);
+    expect(current).not.toBe(earlier);
+    await writeFile(file, journal(earlier, false));
+    // Right after the preflight read the earlier release's journal, a concurrent start's task binds it to the current revision.
+    const events: string[] = [];
+    reads.before = async (operation, target) => {
+      if (operation === "readFile" && target === file && !events.includes("read")) { events.push("read"); return; }
+      if (events.includes("read") && !events.includes("bound")) { events.push("bound"); writeFileSync(file, journal(current, true)); }
+    };
+    await preflightTasks({ config, plan: createPlan(config, "default"), root: primary, stateDir, instanceId: identity.instanceId });
+    expect(events).toEqual(["read", "bound"]);
+    // A once task whose input really changed still refuses, from a bound or an earlier journal alike.
+    reads.before = undefined;
+    await writeFile(path.join(primary, "schema.sql"), "create table u();");
+    for (const recorded of [journal(current, true), journal(earlier, false)]) {
+      await writeFile(file, recorded);
+      await expect(preflightTasks({ config, plan: createPlan(config, "default"), root: primary, stateDir, instanceId: identity.instanceId })).rejects.toMatchObject({ code: "DEVFN_TASK_INPUT_CHANGED" });
+    }
+  } finally {
+    reads.before = undefined;
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 60_000);
+
+it("reruns an idempotent once task whose unresolved attempt an earlier release recorded where it held its existing state directory whole, and refuses it once its inputs changed since", async () => {
+  const { parent, primary } = await repository();
+  const log = path.join(parent, "runs.log");
+  const config = validateDevFnConfig({ version: 1, project: { id: "earlier-attempt" },
+    processes: { seed: { adapter: "command", command: [process.execPath, "-e", `require("node:fs").appendFileSync(${JSON.stringify(log)}, "x\\n")`], task: { rerun: "once", idempotent: true, inputs: ["."] } } },
+    profiles: { default: { processes: ["seed"] } } });
+  const node = { name: "seed", kind: "process" as const };
+  const orchestrator = new DevFnOrchestrator();
+  const stateDir = path.join(primary, "cache", "state");
+  const { instanceId } = await resolveInstanceIdentity("earlier-attempt", primary);
+  const key = taskScope(config, instanceId, node).key;
+  const revision = async () => await taskInputRevision(config, primary, node, "default", undefined, undefined, stateDir, instanceId);
+  const runs = async () => (await readFile(log, "utf8").catch(() => "")).split("\n").filter(Boolean).length;
+  try {
+    await mkdir(path.join(stateDir, "tasks"), { recursive: true });
+    await writeFile(path.join(stateDir, "notes.sql"), "-- mine");
+    // The earlier release succeeded for one source, then an attempt for an edited one ended with unknown effects.
+    await writeFile(path.join(primary, "schema.sql"), "create table t();");
+    const succeeded = await revision();
+    await writeFile(path.join(primary, "schema.sql"), "create table u();");
+    const attempted = await revision();
+    const at = new Date(0).toISOString();
+    await writeFile(path.join(stateDir, "tasks", `${key}.json`), JSON.stringify({ version: 1, task: "seed", scope: "instance",
+      lastSuccess: { inputRevision: succeeded, invocationId: "earlier", instanceId, completedAt: at },
+      attempts: [{ invocationId: "earlier", instanceId, attempt: 1, inputRevision: succeeded, startedAt: at, endedAt: at, outcome: "succeeded", effects: "applied", stopped: true },
+        { invocationId: "failed", instanceId, attempt: 1, inputRevision: attempted, startedAt: at, endedAt: at, outcome: "failed", exitCode: 1, effects: "unknown", stopped: true }] }));
+    // Edited again since that attempt, it is refused as the earlier release refused it.
+    await writeFile(path.join(primary, "schema.sql"), "create table v();");
+    await expect(orchestrator.up({ config, root: primary, stateDir })).rejects.toMatchObject({ code: "DEVFN_TASK_INPUT_CHANGED" });
+    expect(await runs()).toBe(0);
+    // At that attempt's inputs it reruns, and its success is this release's.
+    await writeFile(path.join(primary, "schema.sql"), "create table u();");
+    expect((await orchestrator.up({ config, root: primary, stateDir })).state).toBe("ready");
+    expect(await runs()).toBe(1);
+    expect((await readTaskJournal(stateDir, key))?.lastSuccess).toMatchObject({ inputRevision: await revision(), stateEntries: true });
+  } finally {
+    await orchestrator.down({ config, root: primary, stateDir }).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 60_000);
+
+it("walks a task's inputs once per revision check while an earlier release's completion matches neither rule", async () => {
+  const { parent, primary } = await repository();
+  const config = validateDevFnConfig({ version: 1, project: { id: "one-walk" },
+    processes: { seed: { adapter: "command", command: [process.execPath, "-e", "0"], task: { rerun: "on-change", inputs: ["."] } } }, profiles: { default: { processes: ["seed"] } } });
+  const node = { name: "seed", kind: "process" as const };
+  const stateDir = path.join(primary, "state");
+  const identity = await resolveInstanceIdentity("one-walk", primary);
+  const root = await realpath(primary);
+  const walks = { count: 0 };
+  try {
+    await mkdir(path.join(stateDir, "tasks"), { recursive: true });
+    await writeFile(path.join(stateDir, "notes.sql"), "-- mine");
+    await recordStateDirectory(config, primary, identity, stateDir);
+    const at = new Date(0).toISOString(), mismatched = "0".repeat(64);
+    await writeFile(path.join(stateDir, "tasks", `${taskScope(config, identity.instanceId, node).key}.json`), JSON.stringify({ version: 1, task: "seed", scope: "instance",
+      lastSuccess: { inputRevision: mismatched, invocationId: "earlier", instanceId: identity.instanceId, completedAt: at },
+      attempts: [{ invocationId: "earlier", instanceId: identity.instanceId, attempt: 1, inputRevision: mismatched, startedAt: at, endedAt: at, outcome: "succeeded", effects: "applied", stopped: true }] }));
+    reads.before = async (operation, target) => { if (operation === "opendir" && target === root) walks.count += 1; };
+    for (let check = 1; check <= 3; check += 1) {
+      await taskInputRevision(config, primary, node, "default", undefined, undefined, stateDir, identity.instanceId, mismatched);
+      await preflightTasks({ config, plan: createPlan(config, "default"), root: primary, stateDir, instanceId: identity.instanceId });
+      expect(walks.count).toBe(2 * check);
+    }
+  } finally {
+    reads.before = undefined;
     await rm(parent, { recursive: true, force: true });
   }
 }, 60_000);

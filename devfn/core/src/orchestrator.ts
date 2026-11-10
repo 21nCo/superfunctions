@@ -677,8 +677,7 @@ export class DevFnOrchestrator {
       ...(preflight.resources ? { resources: preflight.resources } : {}), environments: preflight.nodes, ...(options.rerunTasks ? { rerunTasks: options.rerunTasks } : {}), ...(locked ? { locked } : {}) });
     // Unknown reruns, missing task inputs and blocked tasks fail here; the locked start decides again from the journals.
     await decideTasks(requestedStateDir);
-    // The instance's checkout-wide lock first: its claim spans state directories. A start records its state directory, writes
-    // there and withdraws the record when refused, all under it, so no other start or stop of the instance runs in between.
+    // The instance's checkout-wide lock first: its claim spans state directories. A start records its state directory, writes there and withdraws the record when refused, all under it, so no other start or stop of the instance runs in between.
     return await withInstanceLifecycleLock(options.root, identity.instanceId, async () => {
       await this.assertStateDirOfReceipt(options, identity, requestedStateDir, false);
       const withdraw = await makeStateDirectory(options.config, options.root, identity, requestedStateDir, true);
@@ -731,8 +730,7 @@ export class DevFnOrchestrator {
     // this lifecycle while sibling route/lease transitions use the short
     // shared routing lock below.
     const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
-    // A prior invocation stopped here no longer holds its outputs, also when this start fails.
-    const oldReady = await this.prepareExisting(options, stateDir, identity, loadedPolicy, registry, true, () => claim.previousStopped());
+    const oldReady = await this.prepareExisting(options, stateDir, identity, loadedPolicy, registry, true, () => claim.previousStopped()); // A prior invocation stopped here no longer holds its outputs, also when this start fails.
     // Unless a ready lifecycle is kept for replacement, public exposure this
     // owner still has, also without a receipt, ends before any lease or
     // node start; a public profile republishes once it is ready.
@@ -1070,8 +1068,7 @@ export class DevFnOrchestrator {
     };
     if (node.task) {
       // A task is never a running owner: it is not in startedNodes, and teardown has nothing of it to stop once it ended.
-      // Its paths are checked once the hand-off to whileTaskRuns lets it run, and again before each attempt.
-      const run = async () => await runTask({ config: options.config, root: options.root, stateDir: receipt.stateDir ?? defaultStateDir(), runtimeDir: await checkedRuntimeDir(), attemptRuntimeDir: checkedRuntimeDir,
+      const run = async () => await runTask({ config: options.config, root: options.root, stateDir: receipt.stateDir ?? defaultStateDir(), runtimeDir: await checkedRuntimeDir(), attemptRuntimeDir: checkedRuntimeDir, // Its paths are checked once the hand-off to whileTaskRuns lets it run, and again before each attempt.
         instanceId: identity.instanceId, invocationId: receipt.invocationId, node, profile: receipt.profile, environment: resolved.nodes[node.name].environment,
         command: resolved.nodes[node.name].command, script: resolved.nodes[node.name].script, generated: lifecycleGeneratedEnvironment(receipt, resolved.nodes[node.name].generated ?? resolved.generated),
         ...(resolved.resources ? { resources: resolved.resources } : {}), rerunRequested: options.rerunTasks?.includes(node.name) ?? false,
@@ -1210,9 +1207,8 @@ export class DevFnOrchestrator {
     receipt.cleanup = cleanup;
     receipt.state = cleanup.errors.length || cleanup.publicOutstanding?.length ? "degraded" : "stopped";
     receipt.updatedAt = new Date().toISOString();
-    // A stopped runtime no longer holds its environment-output files or its runtime directory. Its last write there, the receipt copy, lands while
-    // the claim still holds the directory; the claim is released before the stable receipt says stopped, so a failed release, or a down that dies
-    // before that write, leaves a live receipt that a retried down releases.
+    // A stopped runtime no longer holds its environment-output files or its runtime directory. Its last write there, the receipt copy, lands while the claim still holds the directory;
+    // the claim is released before the stable receipt says stopped, so a failed release, or a down that dies before that write, leaves a live receipt that a retried down releases.
     let released = false;
     if (receipt.state === "stopped") {
       await writeReceipt(receipt, { stable: false });
@@ -1224,8 +1220,7 @@ export class DevFnOrchestrator {
         receipt.state = "degraded";
       }
     }
-    // Nothing is written in a released runtime directory.
-    await writeReceipt(receipt, released ? { runtimeCopy: false } : {});
+    await writeReceipt(receipt, released ? { runtimeCopy: false } : {}); // Nothing is written in a released runtime directory.
     return receipt;
   }
 
