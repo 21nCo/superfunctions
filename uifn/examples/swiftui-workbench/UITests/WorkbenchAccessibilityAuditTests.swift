@@ -198,9 +198,9 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
     /// An audit that XCTest gives up on for taking too long, as on a busy CI
     /// simulator, runs once more in a new launch of the app, with a note
     /// attached; running it again in the same launch lost the test runner.
-    /// What the unfinished audit saw (unwaived issues, a banner, contrast
-    /// evidence) is reported with the second audit's, each issue once. A
-    /// second timeout fails the test.
+    /// What the unfinished audit saw (unwaived and waived issues, a banner,
+    /// contrast evidence) is reported with the second audit's, without
+    /// repeating an identical report. A second timeout fails the test.
     private func audit(
         _ screen: String?,
         prepare: (XCUIApplication) -> Void = { _ in },
@@ -364,11 +364,13 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
             try app.performAccessibilityAudit(handler)
         } catch let error as NSError where error.isWorkbenchAuditTimeout {
             unfinished.failures += failures.filter { !unfinished.failures.contains($0) }
+            unfinished.waived += waived.filter { !unfinished.waived.contains($0) }
             unfinished.banner = unfinished.banner ?? banner
             unfinished.contrastEvidence += contrastEvidence
             throw error
         }
         failures = unfinished.failures + failures.filter { !unfinished.failures.contains($0) }
+        waived = unfinished.waived + waived.filter { !unfinished.waived.contains($0) }
         banner = unfinished.banner ?? banner
         contrastEvidence = unfinished.contrastEvidence + contrastEvidence
         unfinished = WorkbenchUnfinishedAudit()
@@ -563,12 +565,20 @@ extension XCUIAccessibilityAuditType {
 /// report.
 struct WorkbenchUnfinishedAudit {
     var failures: [String] = []
+    var waived: [String] = []
     var banner: String?
     var contrastEvidence: [XCTAttachment] = []
 
-    /// Fails each issue and the banner, and attaches the contrast evidence.
+    /// Fails each issue and the banner, and attaches the waived issues and
+    /// the contrast evidence.
     func report() {
         failures.forEach { XCTFail($0) }
+        if !waived.isEmpty {
+            let attachment = XCTAttachment(string: waived.joined(separator: "\n"))
+            attachment.name = "Waived accessibility audit issues of an audit that timed out"
+            attachment.lifetime = .keepAlways
+            XCTContext.runActivity(named: "\(waived.count) waived issue(s) of an audit that timed out") { $0.add(attachment) }
+        }
         if let banner {
             XCTFail("A notification banner covered the app during an audit that timed out, so its issues may be the banner's: \(banner)")
         }
