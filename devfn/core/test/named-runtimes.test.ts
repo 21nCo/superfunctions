@@ -18,7 +18,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { assertEnvironmentOutputsAvailable, claimEnvironmentOutputs, makeStateDirectory, releaseEnvironmentOutputs, withInstanceLifecycleLock, within } from "../src/outputs.js";
 import { newRuntimeId, recordRuntimeId } from "../src/runtime.js";
-import { createPlan, DevFnOrchestrator, domainAliases, recoverOrphanedProxyRoutes, resolveEndpointTemplates, resolveInstanceIdentity, resolveLocalHostname, runtimeDirectory, selectRuntime, taskInputRevision } from "../src/index.js";
+import { createPlan, DevFnOrchestrator, domainAliases, readTaskJournal, recoverOrphanedProxyRoutes, resolveEndpointTemplates, resolveInstanceIdentity, resolveLocalHostname, runtimeDirectory, selectRuntime, taskInputRevision, taskScope } from "../src/index.js";
 
 const execFileAsync = promisify(execFile);
 // What a start does under its instance lifecycle lock before it writes in its state directory, as a start killed right after it leaves it.
@@ -60,13 +60,14 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     opendir: async (...args: Parameters<typeof actual.opendir>) => { await reads.before?.("opendir", String(args[0])); return await actual.opendir(...args); } };
 });
 
-// Lets a test fail acquiring a lock, as a filesystem without hard links fails linking its owner record.
-const lockFailures = vi.hoisted(() => ({ fail: undefined as ((lockPath: string) => Error | undefined) | undefined }));
+// Lets a test fail acquiring a lock, as a filesystem without hard links fails linking its owner record, or act right before acquiring one.
+const lockFailures = vi.hoisted(() => ({ fail: undefined as ((lockPath: string) => Error | undefined) | undefined, before: undefined as ((lockPath: string) => Promise<void>) | undefined }));
 vi.mock("@devfn/ports", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@devfn/ports")>();
   return { ...actual, withFileLock: async (...args: Parameters<typeof actual.withFileLock>) => {
     const failure = lockFailures.fail?.(args[0]);
     if (failure) throw failure;
+    await lockFailures.before?.(args[0]);
     return await actual.withFileLock(...args);
   } };
 });
@@ -1918,41 +1919,60 @@ it("keeps a task's input revision when two starts of one runtime race into an ex
   const stateDir = path.join(primary, "cache", "state");
   const claims = path.join(".devfn", "receipts", "outputs");
   const start = new AsyncLocalStorage<"a" | "b">();
-  const seen = { aRecorded: false, bRecorded: false, aEnded: false };
-  const until = async (ready: () => boolean | Promise<boolean>, ms = 3_000) => { for (const deadline = Date.now() + ms; !await ready() && Date.now() < deadline;) await new Promise((resolve) => setTimeout(resolve, 10)); };
-  const claim = path.join(primary, claims, `${(await resolveInstanceIdentity("racing-state-input", primary, "b")).instanceId}.json`);
+  const { instanceId } = await resolveInstanceIdentity("racing-state-input", primary, "b");
+  const events: string[] = [];
+  // A step the interleaving needs that never comes fails the test, rather than letting it go on without that interleaving.
+  const until = async (event: string, ms = 20_000) => {
+    for (const deadline = Date.now() + ms; !events.includes(event);) {
+      if (Date.now() > deadline) throw new Error(`timed out waiting for ${event}`);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  };
+  const claim = path.join(primary, claims, `${instanceId}.json`);
   const recorded = async () => await readFile(claim, "utf8").then((text) => (JSON.parse(text) as { shared?: string[] }).shared?.includes(stateDir) ?? false, () => false);
+  let recordedAtWrite: boolean | undefined;
   try {
     await mkdir(stateDir, { recursive: true });
     await writeFile(path.join(stateDir, "notes.sql"), "-- mine");
     const before = await revision();
-    // Before each instance lock: b goes once a recorded the state directory; a, having recorded it, goes on once b passed its own record, and b then waits for a to end.
-    made.after = async (directory) => {
-      const who = start.getStore();
-      if (directory === stateDir && who === "a") seen.aRecorded = true;
-      if (directory === stateDir && who === "b") seen.bRecorded = true;
-      if (!directory.endsWith(claims)) return;
-      if (who === "b") await until(() => seen.bRecorded ? seen.aEnded : seen.aRecorded);
-      if (who === "a" && seen.aRecorded) await until(() => seen.bRecorded);
+    // b asks for the instance lock once a recorded the state directory; a later request, made only where a start takes it step by step,
+    // waits for a to end. a, at its next lifecycle lock after recording, goes on once b asked and had a chance to record the directory too,
+    // which the instance lock a holds must exclude.
+    let chance = false;
+    lockFailures.before = async (lockPath) => {
+      if (path.basename(lockPath) !== `lifecycle-${instanceId}.lock`) return;
+      if (start.getStore() === "b" && path.dirname(lockPath).endsWith(claims)) {
+        if (events.includes("b recorded")) return await until("a ended");
+        await until("a recorded");
+        events.push("b waits");
+      }
+      if (start.getStore() !== "a" || !events.includes("a recorded") || chance) return;
+      chance = true;
+      await until("b waits");
+      for (const deadline = Date.now() + 3_000; !events.includes("b recorded") && Date.now() < deadline;) await new Promise((resolve) => setTimeout(resolve, 10));
     };
-    // a is refused right before it would record the runtime identity, so it changed no DevFn entry there; b's identity, written
-    // once a ended and its record is gone or a second passed, is the first write sampled.
+    made.after = async (directory) => { if (directory === stateDir) events.push(`${start.getStore()} recorded`); };
+    // a is refused right before it would record the runtime identity, so it changed no DevFn entry there; b's identity is the first write sampled.
     lifecycle.recording = async () => {
+      events.push(`${start.getStore()} writes`);
       if (start.getStore() === "a") throw new Error("a refused before writing");
-      await until(async () => seen.aEnded && !await recorded(), 1_000);
+      recordedAtWrite = await recorded();
     };
     const samples: string[] = [];
     lifecycle.recorded = async () => { samples.push(await revision()); };
-    const a = start.run("a", async () => await orchestrator.up({ config: sibling, root: primary, stateDir, runtime: "b" })).finally(() => { seen.aEnded = true; });
+    const a = start.run("a", async () => await orchestrator.up({ config: sibling, root: primary, stateDir, runtime: "b" })).finally(() => { events.push("a ended"); });
     const b = start.run("b", async () => await orchestrator.up({ config: sibling, root: primary, stateDir, runtime: "b" }));
     await expect(a).rejects.toThrow("a refused before writing");
     expect((await b).state).toBe("ready");
+    // b waited at the lock while a held its record, and recorded the state directory again only after a was refused and withdrew under that lock.
+    expect(events.filter((event, index) => event !== "a ended" && events.indexOf(event) === index)).toEqual(["a recorded", "b waits", "a writes", "b recorded", "b writes"]);
+    expect(recordedAtWrite).toBe(true);
     expect(samples).toEqual([before]);
     expect(await revision()).toBe(before);
     expect((await orchestrator.down({ config: sibling, root: primary, stateDir, runtime: "b" })).state).toBe("stopped");
     expect(await revision()).toBe(before);
   } finally {
-    made.after = undefined; lifecycle.recording = undefined; lifecycle.recorded = undefined;
+    made.after = undefined; lockFailures.before = undefined; lifecycle.recording = undefined; lifecycle.recorded = undefined;
     await orchestrator.down({ config: sibling, root: primary, stateDir, runtime: "b" }).catch(() => undefined);
     await rm(parent, { recursive: true, force: true });
   }
@@ -2094,6 +2114,127 @@ it("gives every caller the same task-input revision over a state directory insid
     expect(await both(created)).toEqual([ownMade, otherMade]);
   } finally {
     await orchestrator.down({ config: sibling, root: primary, stateDir: created, runtime: "b" }).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 60_000);
+
+it.each([["empty"], ["populated"]])("keeps once and on-change completions an earlier release recorded while it held an existing state directory inside the checkout (%s) whole, rebinding them so a later change there counts, and still acts on a source edit", async (kind) => {
+  const { parent, primary } = await repository();
+  const logs = { once: path.join(parent, "once.log"), change: path.join(parent, "change.log") };
+  const append = (log: string) => [process.execPath, "-e", `require("node:fs").appendFileSync(${JSON.stringify(log)}, "x\\n")`];
+  const config = validateDevFnConfig({ version: 1, project: { id: "earlier-journal" },
+    processes: { once: { adapter: "command", command: append(logs.once), task: { rerun: "once", inputs: ["."] } }, change: { adapter: "command", command: append(logs.change), task: { rerun: "on-change", inputs: ["."] } } },
+    profiles: { default: { processes: ["once"] }, change: { processes: ["change"] } } });
+  const profileOf = { once: "default", change: "change" } as const;
+  const orchestrator = new DevFnOrchestrator();
+  const stateDir = path.join(primary, "cache", "state");
+  const { instanceId } = await resolveInstanceIdentity("earlier-journal", primary);
+  const runs = async (name: "once" | "change") => (await readFile(logs[name], "utf8").catch(() => "")).split("\n").filter(Boolean).length;
+  const revision = async (name: "once" | "change") => await taskInputRevision(config, primary, { name, kind: "process" }, profileOf[name], undefined, undefined, stateDir, instanceId);
+  const journal = (name: "once" | "change") => path.join(stateDir, "tasks", `${taskScope(config, instanceId, { name, kind: "process" }).key}.json`);
+  const start = async (name: "once" | "change") => {
+    const profile = profileOf[name];
+    try { return (await orchestrator.up({ config, root: primary, stateDir, profile })).state; }
+    finally { await orchestrator.down({ config, root: primary, stateDir, profile }).catch(() => undefined); }
+  };
+  try {
+    await mkdir(path.join(stateDir, "tasks"), { recursive: true });
+    if (kind === "populated") await writeFile(path.join(stateDir, "notes.sql"), "-- mine");
+    await writeFile(path.join(primary, "schema.sql"), "create table t();");
+    // An earlier release held this state directory whole: the revision it recorded is what DevFn gives before it records the directory.
+    const earlier: Record<string, string> = {};
+    for (const name of ["once", "change"] as const) {
+      earlier[name] = await revision(name);
+      const success = { invocationId: "earlier", instanceId, completedAt: new Date(0).toISOString() };
+      await writeFile(journal(name), JSON.stringify({ version: 1, task: name, scope: "instance", lastSuccess: { inputRevision: earlier[name], ...success },
+        attempts: [{ ...success, attempt: 1, inputRevision: earlier[name], startedAt: success.completedAt, endedAt: success.completedAt, outcome: "succeeded", effects: "applied", stopped: true }] }));
+    }
+    // Neither reruns or refuses, and each completion is rebound to the revision that now holds only DevFn's entries there.
+    for (const name of ["once", "change"] as const) {
+      expect(await start(name)).toBe("ready");
+      const current = await revision(name);
+      expect(current).not.toBe(earlier[name]);
+      expect((await readTaskJournal(stateDir, path.basename(journal(name), ".json")))?.lastSuccess?.inputRevision).toBe(current);
+      expect(await start(name)).toBe("ready");
+    }
+    expect([await runs("once"), await runs("change")]).toEqual([0, 0]);
+    // A user's file there is an input once rebound.
+    await writeFile(path.join(stateDir, "notes.sql"), "-- changed");
+    await expect(orchestrator.up({ config, root: primary, stateDir, profile: "default" })).rejects.toMatchObject({ code: "DEVFN_TASK_INPUT_CHANGED" });
+    expect(await start("change")).toBe("ready");
+    expect([await runs("once"), await runs("change")]).toEqual([0, 1]);
+    // So is a source edit.
+    await writeFile(path.join(primary, "schema.sql"), "create table u();");
+    await expect(orchestrator.up({ config, root: primary, stateDir, profile: "default" })).rejects.toMatchObject({ code: "DEVFN_TASK_INPUT_CHANGED" });
+    expect(await start("change")).toBe("ready");
+    expect([await runs("once"), await runs("change")]).toEqual([0, 2]);
+  } finally {
+    for (const profile of ["default", "change"]) await orchestrator.down({ config, root: primary, stateDir, profile }).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 120_000);
+
+it("keeps a ready lifecycle an earlier release started, whose task completion held its existing state directory inside the checkout whole, as ready and running", async () => {
+  const { parent, primary } = await repository();
+  const log = path.join(parent, "runs.log");
+  const config = validateDevFnConfig({ version: 1, project: { id: "earlier-ready" },
+    processes: { seed: { adapter: "command", command: [process.execPath, "-e", `require("node:fs").appendFileSync(${JSON.stringify(log)}, "x\\n")`], task: { rerun: "once", inputs: ["."] } },
+      web: { adapter: "command", command: [process.execPath, "-e", "setTimeout(() => {}, 60_000)"], dependsOn: ["seed"] } },
+    profiles: { default: { processes: ["seed", "web"] } } });
+  const orchestrator = new DevFnOrchestrator();
+  const stateDir = path.join(primary, "cache", "state");
+  const { instanceId } = await resolveInstanceIdentity("earlier-ready", primary);
+  const receiptFile = path.join(primary, ".devfn", "receipts", `${instanceId}.json`);
+  try {
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(path.join(stateDir, "notes.sql"), "-- mine");
+    const earlier = await taskInputRevision(config, primary, { name: "seed", kind: "process" }, "default", undefined, undefined, stateDir, instanceId);
+    expect((await orchestrator.up({ config, root: primary, stateDir })).state).toBe("ready");
+    // The earlier release's receipt and journal recorded the revision that held the state directory whole.
+    const receipt = JSON.parse(await readFile(receiptFile, "utf8")) as { tasks: Array<{ inputRevision: string }> };
+    expect(receipt.tasks[0].inputRevision).not.toBe(earlier);
+    receipt.tasks[0].inputRevision = earlier;
+    await writeFile(receiptFile, JSON.stringify(receipt));
+    const key = taskScope(config, instanceId, { name: "seed", kind: "process" }).key, journal = path.join(stateDir, "tasks", `${key}.json`);
+    const recorded = JSON.parse(await readFile(journal, "utf8")) as { lastSuccess: { inputRevision: string } };
+    recorded.lastSuccess.inputRevision = earlier;
+    await writeFile(journal, JSON.stringify(recorded));
+    expect((await orchestrator.status({ config, root: primary })).state).toBe("ready");
+    await expect(orchestrator.up({ config, root: primary, stateDir })).rejects.toMatchObject({ code: "DEVFN_ALREADY_RUNNING" });
+    expect((await readFile(log, "utf8")).split("\n").filter(Boolean)).toHaveLength(1);
+  } finally {
+    await orchestrator.down({ config, root: primary, stateDir }).catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 60_000);
+
+it("accepts a completed revision only where the earlier rule, holding the caller's existing state directory inside the checkout whole, gives it", async () => {
+  const { parent, primary } = await repository();
+  const config = validateDevFnConfig({ version: 1, project: { id: "earlier-rule" },
+    processes: { seed: { adapter: "command", command: [process.execPath, "-e", "0"], task: { rerun: "on-change", inputs: ["."] } } }, profiles: { default: { processes: ["seed"] } } });
+  const sibling = validateDevFnConfig({ version: 1, project: { id: "earlier-rule" }, processes: {}, profiles: { default: { processes: [] } } });
+  const orchestrator = new DevFnOrchestrator();
+  const stateDir = path.join(primary, "state");
+  const { instanceId } = await resolveInstanceIdentity("earlier-rule", primary, "b");
+  const revision = async (completed?: string) => await taskInputRevision(config, primary, { name: "seed", kind: "process" }, "default", undefined, undefined, stateDir, instanceId, completed);
+  try {
+    await mkdir(stateDir);
+    await writeFile(path.join(stateDir, "notes.sql"), "-- mine");
+    const earlier = await revision();
+    expect((await orchestrator.up({ config: sibling, root: primary, stateDir, runtime: "b" })).state).toBe("ready");
+    const current = await revision();
+    expect(current).not.toBe(earlier);
+    expect(await revision(earlier)).toBe(earlier);
+    expect(await revision(current)).toBe(current);
+    expect(await revision("0".repeat(64))).toBe(current);
+    // A change outside the state directory changes both rules' revisions; one inside it only the current rule's.
+    await writeFile(path.join(stateDir, "notes.sql"), "-- changed");
+    expect(await revision(earlier)).toBe(earlier);
+    expect(await revision()).not.toBe(current);
+    await writeFile(path.join(primary, "schema.sql"), "create table t();");
+    expect(await revision(earlier)).not.toBe(earlier);
+  } finally {
+    await orchestrator.down({ config: sibling, root: primary, stateDir, runtime: "b" }).catch(() => undefined);
     await rm(parent, { recursive: true, force: true });
   }
 }, 60_000);

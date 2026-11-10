@@ -460,7 +460,7 @@ async function receiptIsReady(config: DevFnConfig, root: string, receipt: Lifecy
     for (const node of plan.nodes.filter((item) => item.task)) {
       const completed = receipt.tasks?.find((item) => item.name === node.name);
       if (!completed || (completed.status !== "succeeded" && completed.status !== "skipped") ||
-        completed.inputRevision !== await taskInputRevision(config, root, node, plan.profile, resolved.resources, resolved.nodes[node.name]?.environment, receipt.stateDir ?? defaultStateDir(), receipt.instanceId)) return false;
+        completed.inputRevision !== await taskInputRevision(config, root, node, plan.profile, resolved.resources, resolved.nodes[node.name]?.environment, receipt.stateDir ?? defaultStateDir(), receipt.instanceId, completed.inputRevision)) return false;
     }
     if (receipt.startupFingerprints) {
       const current = await startupFingerprints(config, root, resolved);
@@ -1211,10 +1211,8 @@ export class DevFnOrchestrator {
     receipt.cleanup = cleanup;
     receipt.state = cleanup.errors.length || cleanup.publicOutstanding?.length ? "degraded" : "stopped";
     receipt.updatedAt = new Date().toISOString();
-    // A stopped runtime no longer holds its environment-output files or its
-    // runtime directory. Its last write there, the receipt copy, lands while
-    // the claim still holds the directory; the claim is released before the
-    // stable receipt says stopped, so a failed release, or a down that dies
+    // A stopped runtime no longer holds its environment-output files or its runtime directory. Its last write there, the receipt copy, lands while
+    // the claim still holds the directory; the claim is released before the stable receipt says stopped, so a failed release, or a down that dies
     // before that write, leaves a live receipt that a retried down releases.
     let released = false;
     if (receipt.state === "stopped") {
