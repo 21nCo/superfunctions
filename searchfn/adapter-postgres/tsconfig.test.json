@@ -6,8 +6,8 @@
     "declarationMap": false,
     "types": ["node", "vitest/globals", "@cloudflare/vitest-pool-workers"],
     "paths": {
-      "@searchfn/adapter-contracts": ["../adapter-contracts/src/index.ts"],
-      "@searchfn/adapter-contracts/testing": ["../adapter-contracts/src/testing.ts"]
+      "@searchfn/adapter-contracts": ["./node_modules/@searchfn/adapter-contracts", "../adapter-contracts/src/index.ts"],
+      "@searchfn/adapter-contracts/testing": ["./node_modules/@searchfn/adapter-contracts/dist/testing.d.ts", "../adapter-contracts/src/testing.ts"]
     }
   },
   "include": [
