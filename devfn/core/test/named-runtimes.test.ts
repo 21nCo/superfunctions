@@ -2449,6 +2449,43 @@ it("keeps the revision of an attempt this release recorded beside an earlier rel
   }
 }, 60_000);
 
+it("marks an earlier release's attempt once it is bound where both rules agree, so a later change in the state directory refuses its idempotent once task", async () => {
+  const { parent, primary } = await repository();
+  const config = validateDevFnConfig({ version: 1, project: { id: "bound-attempt" },
+    processes: { seed: { adapter: "command", command: [process.execPath, "-e", "0"], task: { rerun: "once", idempotent: true, inputs: ["."] } } }, profiles: { default: { processes: ["seed"] } } });
+  const node = { name: "seed", kind: "process" as const };
+  // DevFn's own runtime directory as the state directory: both rules agree while it holds only DevFn's entries.
+  const stateDir = path.join(primary, ".devfn");
+  const identity = await resolveInstanceIdentity("bound-attempt", primary);
+  const key = taskScope(config, identity.instanceId, node).key, file = path.join(stateDir, "tasks", `${key}.json`);
+  const revision = async () => await taskInputRevision(config, primary, node, "default", undefined, undefined, stateDir, identity.instanceId);
+  const preflight = async () => await preflightTasks({ config, plan: createPlan(config, "default"), root: primary, stateDir, instanceId: identity.instanceId });
+  try {
+    await mkdir(path.join(stateDir, "tasks"), { recursive: true });
+    await recordStateDirectory(config, primary, identity, stateDir);
+    // The earlier release succeeded for one source, then an attempt for an edited one ended with unknown effects.
+    await writeFile(path.join(primary, "schema.sql"), "create table t();");
+    const succeeded = await revision();
+    await writeFile(path.join(primary, "schema.sql"), "create table u();");
+    const attempted = await revision();
+    const at = new Date(0).toISOString();
+    await writeFile(file, JSON.stringify({ version: 1, task: "seed", scope: "instance", lastSuccess: { inputRevision: succeeded, invocationId: "earlier", instanceId: identity.instanceId, completedAt: at },
+      attempts: [{ invocationId: "failed", instanceId: identity.instanceId, attempt: 1, inputRevision: attempted, startedAt: at, endedAt: at, outcome: "failed", exitCode: 1, effects: "unknown", stopped: true }] }));
+    // A start binds the journal under the scope lock and persists it, then stops before recording an attempt.
+    const journal = await readTaskJournal(stateDir, key);
+    expect(await taskInputRevision(config, primary, node, "default", undefined, undefined, stateDir, identity.instanceId, journal)).toBe(attempted);
+    expect(journal?.attempts.at(-1)).toMatchObject({ inputRevision: attempted, stateEntries: true });
+    expect(journal?.lastSuccess?.stateEntries).toBeUndefined();
+    await writeFile(file, JSON.stringify(journal));
+    await preflight();
+    // A user's file there changes the current revision only; the bound attempt is not bound again, so the task needs an explicit rerun.
+    await writeFile(path.join(stateDir, "notes.sql"), "-- mine");
+    await expect(preflight()).rejects.toMatchObject({ code: "DEVFN_TASK_INPUT_CHANGED" });
+  } finally {
+    await rm(parent, { recursive: true, force: true });
+  }
+}, 60_000);
+
 it("walks a task's inputs once per revision check while an earlier release's completion matches neither rule", async () => {
   const { parent, primary } = await repository();
   const config = validateDevFnConfig({ version: 1, project: { id: "one-walk" },

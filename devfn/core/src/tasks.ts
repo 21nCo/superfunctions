@@ -263,7 +263,7 @@ export async function taskInputRevision(config: DevFnConfig, root: string, node:
     envAllowlist: sorted(spec.envAllowlist), secretEnv: sorted(spec.secretEnv), resources: consumed, inputs, profile: JSON.stringify([settings, spec.env, config.profiles[profile]?.environment]).includes("DEVFN_PROFILE") ? profile : undefined }));
   const current = revision(walked.map(([input, digests]) => [input, digests.current])), earlier = revision(walked.map(([input, digests]) => [input, digests.earlier])); // An input without an earlier digest gives a revision no earlier release recorded.
   if (typeof completed !== "object" || completed.lastSuccess?.stateEntries) return completed === earlier ? earlier : current; // A revision an earlier release recorded is taken where the earlier rule gives it.
-  for (const record of [completed.lastSuccess, ...completed.attempts]) if (record && !record.stateEntries && record.inputRevision === earlier) record.inputRevision = current; // In a journal whose success an earlier release recorded, each revision an earlier release recorded that its rule gives is bound to the current one, and a success then matching is marked so a later change there counts.
+  for (const record of [completed.lastSuccess, ...completed.attempts]) if (record && !record.stateEntries && record.inputRevision === earlier) Object.assign(record, { inputRevision: current, stateEntries: true }); // In a journal whose success an earlier release recorded, each revision an earlier release recorded that its rule gives is bound to the current one and marked, as is a success matching as it is, so a later change there counts.
   if (completed.lastSuccess?.inputRevision === current) completed.lastSuccess.stateEntries = true;
   return current;
 }
