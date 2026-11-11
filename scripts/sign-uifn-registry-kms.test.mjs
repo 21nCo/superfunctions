@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash, generateKeyPairSync, sign, verify } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -74,12 +74,17 @@ function pair(t, first = V1_JSON, second = V1_TS) {
   return { directory, files };
 }
 
-/** Real fs operations, except that the nth rename of a staged file over its target fails. */
+/** Real fs operations, except that the nth rename of a newly staged file over its target fails. */
 function failingPublishRename(failAt) {
+  const created = new Set();
   let publishes = 0;
   return {
+    openSync(file, flags) {
+      created.add(file);
+      return openSync(file, flags);
+    },
     renameSync(from, to) {
-      if (from.endsWith('.tmp')) {
+      if (created.delete(from)) {
         publishes += 1;
         if (publishes === failAt) throw Object.assign(new Error(`EIO: injected rename failure ${publishes}`), { code: 'EIO' });
       }
@@ -87,6 +92,8 @@ function failingPublishRename(failAt) {
     },
   };
 }
+
+const journalOf = (first) => `${first}.kms-sign.journal`;
 
 test('signing input is exactly UTF8("uifn-registry-v2\\0") followed by SHA-256 of the catalog bytes', () => {
   const input = registryV2SigningInput(Buffer.from(CATALOG));
@@ -264,49 +271,50 @@ test('removes a newly created first file when the second publish fails and leave
 
 test('keeps the journal and backup and names them when an original cannot be restored; the next run recovers', (t) => {
   const { directory, files: [first, second] } = pair(t);
-  const failing = failingPublishRename(2);
   const fileSystem = {
-    renameSync(from, to) {
+    ...failingPublishRename(2),
+    linkSync(from, to) {
       if (from.endsWith('.bak')) throw new Error('EIO: injected restore failure');
-      failing.renameSync(from, to);
+      linkSync(from, to);
     },
   };
   assert.throws(
     () => writeFilesAtomically([[first, 'new'], [second, 'new']], fileSystem),
     { code: 'UIFN_REGISTRY_WRITE_FAILED', message: /injected rename failure 2.*recovery failed \(.*first\.json: EIO: injected restore failure.*first\.json\.kms-sign\.journal and any backups are kept/ },
   );
+  assert.equal(readFileSync(first, 'utf8'), 'new');
   assert.equal(readFileSync(`${first}.kms-sign.bak`, 'utf8'), V1_JSON);
-  assert.ok(existsSync(`${first}.kms-sign.journal`));
+  assert.equal(readFileSync(`${second}.kms-sign.bak`, 'utf8'), V1_TS);
+  assert.ok(existsSync(journalOf(first)));
   writeFilesAtomically([[first, 'signed'], [second, 'signed']]);
   assert.equal(readFileSync(first, 'utf8'), 'signed');
   assert.equal(readFileSync(second, 'utf8'), 'signed');
   assert.deepEqual(readdirSync(directory).sort(), ['first.json', 'second.ts']);
 });
 
-test('reports the publish, restore and cleanup failures together, attempts every cleanup, and the next run restores the originals', (t) => {
+test('reports the publish and every cleanup failure, attempts each removal, and the next run settles the pair', (t) => {
   const { directory, files: [first, second] } = pair(t);
-  const failing = failingPublishRename(2);
-  const removals = [];
+  const attempted = [];
   const fileSystem = {
-    renameSync(from, to) {
-      if (from.endsWith('.bak')) throw new Error('EIO: injected restore failure');
-      failing.renameSync(from, to);
-    },
-    rmSync(target) {
-      removals.push(path.basename(target));
-      throw new Error('EIO: injected cleanup failure');
+    ...failingPublishRename(2),
+    rmSync(target, options) {
+      if (/\.kms-sign\.(tmp|bak)$/.test(target) && existsSync(target)) {
+        attempted.push(path.basename(target));
+        throw new Error('EIO: injected cleanup failure');
+      }
+      rmSync(target, options);
     },
   };
   assert.throws(
     () => writeFilesAtomically([[first, 'new'], [second, 'new']], fileSystem),
-    { code: 'UIFN_REGISTRY_WRITE_FAILED', message: /injected rename failure 2.*injected restore failure.*second\.ts\.kms-sign\.tmp: EIO: injected cleanup failure.*kms-sign\.journal and any backups are kept/ },
+    { code: 'UIFN_REGISTRY_WRITE_FAILED', message: /injected rename failure 2.*recovery failed \(.*first\.json\.kms-sign\.bak: EIO: injected cleanup failure.*second\.ts\.kms-sign\.tmp: EIO: injected cleanup failure.*kms-sign\.journal and any backups are kept/ },
   );
-  assert.deepEqual(removals.filter((name) => name.endsWith('.tmp')), ['first.json.kms-sign.tmp', 'second.ts.kms-sign.tmp']);
-  assert.equal(readFileSync(first, 'utf8'), 'new');
-  // A later run with a working file system restores both originals before it writes anything.
-  assert.throws(() => writeFilesAtomically([[first, 'later'], [second, 'later']], failingPublishRename(2)), { message: /every replaced signature file was restored/ });
+  assert.deepEqual(attempted.sort(), ['first.json.kms-sign.bak', 'second.ts.kms-sign.bak', 'second.ts.kms-sign.tmp']);
   assert.equal(readFileSync(first, 'utf8'), V1_JSON);
   assert.equal(readFileSync(second, 'utf8'), V1_TS);
+  writeFilesAtomically([[first, 'signed'], [second, 'signed']]);
+  assert.equal(readFileSync(first, 'utf8'), 'signed');
+  assert.equal(readFileSync(second, 'utf8'), 'signed');
   assert.deepEqual(readdirSync(directory).sort(), ['first.json', 'second.ts']);
 });
 
@@ -334,14 +342,73 @@ writeFilesAtomically([[${JSON.stringify(first)}, 'killed'], [${JSON.stringify(se
 
 test('refuses while another live run holds the journal and changes nothing', (t) => {
   const { directory, files: [first, second] } = pair(t);
-  const journal = JSON.stringify({ pid: process.ppid, targets: [{ target: first, existed: true }] });
-  writeFileSync(`${first}.kms-sign.journal`, journal);
+  const journal = JSON.stringify({ pid: process.ppid, targets: [{ target: first, existed: true }, { target: second, existed: true }] });
+  writeFileSync(journalOf(first), journal);
   writeFileSync(`${first}.kms-sign.bak`, 'other run');
   assert.throws(() => writeFilesAtomically([[first, 'new'], [second, 'new']]), { code: 'UIFN_REGISTRY_WRITE_IN_PROGRESS' });
   assert.equal(readFileSync(first, 'utf8'), V1_JSON);
-  assert.equal(readFileSync(`${first}.kms-sign.journal`, 'utf8'), journal);
+  assert.equal(readFileSync(journalOf(first), 'utf8'), journal);
   assert.equal(readFileSync(`${first}.kms-sign.bak`, 'utf8'), 'other run');
   assert.equal(readdirSync(directory).length, 4);
+});
+
+test('refuses a journal it cannot trust or read and changes nothing', (t) => {
+  const { directory, files: [first, second] } = pair(t);
+  const victim = path.join(directory, 'victim.txt');
+  writeFileSync(victim, 'keep');
+  const foreign = JSON.stringify({ pid: 2 ** 22 + 1, targets: [{ target: victim, existed: false }, { target: second, existed: true }] });
+  const cases = [
+    [foreign, {}, /does not describe these signature files/],
+    ['', {}, /Unexpected end of JSON input/],
+    [JSON.stringify({ pid: 2 ** 22 + 1, targets: [{ target: first, existed: true }, { target: second, existed: true }] }),
+      { readFileSync() { throw new Error('EIO: injected read failure'); } }, /EIO: injected read failure/],
+  ];
+  for (const [contents, fileSystem, message] of cases) {
+    writeFileSync(journalOf(first), contents);
+    assert.throws(() => writeFilesAtomically([[first, 'new'], [second, 'new']], fileSystem), { code: 'UIFN_REGISTRY_WRITE_FAILED', message });
+    assert.equal(readFileSync(journalOf(first), 'utf8'), contents);
+    assert.equal(readFileSync(victim, 'utf8'), 'keep');
+    assert.equal(readFileSync(first, 'utf8'), V1_JSON);
+    assert.equal(readFileSync(second, 'utf8'), V1_TS);
+  }
+  rmSync(journalOf(first));
+  symlinkSync(victim, journalOf(first));
+  assert.throws(() => writeFilesAtomically([[first, 'new'], [second, 'new']]), { message: /not a regular file/ });
+  assert.equal(readFileSync(victim, 'utf8'), 'keep');
+});
+
+/** Runs writeFilesAtomically in a child process that is killed when `killWhen(operation, path)` first holds. */
+function killedRun(files, killWhen) {
+  const child = `import * as fs from 'node:fs';
+import { writeFilesAtomically } from ${JSON.stringify(scriptPath)};
+const killWhen = ${killWhen};
+const wrap = (name) => (...args) => { const result = fs[name](...args); if (killWhen(name, String(args[0]))) process.kill(process.pid, 'SIGKILL'); return result; };
+writeFilesAtomically(${JSON.stringify(files)}, { renameSync: wrap('renameSync'), rmSync: wrap('rmSync') });`;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', child], { encoding: 'utf8' });
+  assert.equal(result.signal, 'SIGKILL', result.stderr);
+}
+
+test('completes in one run after a killed first-ever signing created only the first file', (t) => {
+  const { directory, files: [first, second] } = pair(t);
+  rmSync(first);
+  rmSync(second);
+  killedRun([[first, 'killed'], [second, 'killed']], "(name, file) => name === 'renameSync' && file.endsWith('.tmp')");
+  assert.deepEqual(readdirSync(directory).filter((name) => !name.includes('.kms-sign')), ['first.json']);
+  writeFilesAtomically([[first, 'signed'], [second, 'signed']]);
+  assert.equal(readFileSync(first, 'utf8'), 'signed');
+  assert.equal(readFileSync(second, 'utf8'), 'signed');
+  assert.deepEqual(readdirSync(directory).sort(), ['first.json', 'second.ts']);
+});
+
+test('keeps the new pair when a run is killed after it released a backup', (t) => {
+  const { directory, files: [first, second] } = pair(t);
+  killedRun([[first, 'killed'], [second, 'killed']], "(name, file) => name === 'rmSync' && file.endsWith('first.json.kms-sign.bak')");
+  assert.ok(existsSync(journalOf(first)));
+  // Recovery must not restore the one remaining backup: that would mix the pair.
+  assert.throws(() => writeFilesAtomically([[first, 'later'], [second, 'later']], failingPublishRename(2)), { message: /every replaced signature file was restored/ });
+  assert.equal(readFileSync(first, 'utf8'), 'killed');
+  assert.equal(readFileSync(second, 'utf8'), 'killed');
+  assert.deepEqual(readdirSync(directory).sort(), ['first.json', 'second.ts']);
 });
 
 test('removes stale sidecars left without a journal and publishes both files', (t) => {
@@ -385,9 +452,8 @@ test('cleans up staged files and backups through the injected file system', (t) 
   writeFileSync(first, V1_JSON);
   writeFileSync(second, V1_TS);
   const removed = [];
-  const failing = failingPublishRename(2);
   const fileSystem = {
-    renameSync: failing.renameSync,
+    ...failingPublishRename(2),
     rmSync(target, options) {
       removed.push(path.basename(target));
       rmSync(target, options);

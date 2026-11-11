@@ -138,7 +138,7 @@ function checkoutFile(root, relative, { mustExist }) {
   return target;
 }
 
-const defaultFileSystem = { closeSync, existsSync, linkSync, openSync, readFileSync, renameSync, rmSync, writeFileSync };
+const defaultFileSystem = { closeSync, existsSync, linkSync, lstatSync, openSync, readFileSync, renameSync, rmSync, writeFileSync };
 const SIDECAR = 'kms-sign';
 
 /** Run-independent sidecar paths of a target: its staged replacement and the backup of its original. */
@@ -156,18 +156,6 @@ function isProcessAlive(pid) {
   }
 }
 
-/** Creates a file exclusively and writes it; a file created here but not fully written is removed again. */
-function createExclusive(file, contents, fsOps) {
-  const descriptor = fsOps.openSync(file, 'wx');
-  try {
-    fsOps.writeFileSync(descriptor, contents);
-  } catch (error) {
-    attemptEach([[file, () => fsOps.closeSync(descriptor)], [file, () => fsOps.rmSync(file, { force: true })]]);
-    throw error;
-  }
-  fsOps.closeSync(descriptor);
-}
-
 /** Runs every step even when earlier ones fail and returns the failures instead of throwing. */
 function attemptEach(steps) {
   const failures = [];
@@ -182,67 +170,114 @@ function attemptEach(steps) {
 }
 
 const describeFailures = (failures) => failures.map(({ file, message }) => `${file}: ${message}`).join('; ');
+const removal = (file, fsOps) => [file, () => fsOps.rmSync(file, { force: true })];
 
-/**
- * Puts each journaled target back to its original: the backup is renamed over the target (a backup that still
- * shares the target's file is then removed), or a target that did not exist before is removed. Staged files are removed. Returns every failure; the journal is not touched.
- */
-function restoreTargets(targets, fsOps) {
-  return attemptEach(targets.flatMap(({ target, existed }) => {
-    const { staged, backup } = sidecarsOf(target);
-    const restore = () => {
-      if (fsOps.existsSync(backup)) {
-        fsOps.renameSync(backup, target);
-        // rename() is a no-op when both names already link the same file (a target that was never replaced).
-        fsOps.rmSync(backup, { force: true });
-      } else if (!existed) {
-        fsOps.rmSync(target, { force: true });
-      }
-    };
-    return [[target, restore], [staged, () => fsOps.rmSync(staged, { force: true })]];
-  }));
+/** Creates a file exclusively and writes it; a file created here but not fully written is removed again. */
+function createExclusive(file, contents, fsOps) {
+  const descriptor = fsOps.openSync(file, 'wx');
+  try {
+    fsOps.writeFileSync(descriptor, contents);
+  } catch (error) {
+    attemptEach([[file, () => fsOps.closeSync(descriptor)], removal(file, fsOps)]);
+    throw error;
+  }
+  fsOps.closeSync(descriptor);
 }
 
 /**
- * Recovers the transaction of an earlier run that was interrupted: its journal is present, so its targets may be
- * mixed. Refuses while the journal's owner is still running. A journal that cannot be parsed was written before
- * anything else, so there is nothing to restore.
+ * Publishes the journal atomically: a private file is fully written, then hard-linked into place. The journal is
+ * therefore never observable empty or partial, and link() fails with EEXIST while another journal exists.
  */
-function recoverInterruptedWrite(journal, fsOps) {
-  let record = null;
+function createJournal(journal, record, fsOps) {
+  const temporary = `${journal}.${process.pid}.tmp`;
+  fsOps.rmSync(temporary, { force: true });
+  createExclusive(temporary, JSON.stringify(record), fsOps);
   try {
-    record = JSON.parse(fsOps.readFileSync(journal, 'utf8'));
-  } catch {
-    record = null;
+    fsOps.linkSync(temporary, journal);
+  } finally {
+    fsOps.rmSync(temporary, { force: true });
   }
-  if (Number.isInteger(record?.pid) && record.pid !== process.pid && isProcessAlive(record.pid)) {
+}
+
+/** Reads an existing journal, refusing (without changing anything) one that is unreadable or names other files. */
+function readJournal(journal, files, fsOps) {
+  const refuse = (reason) => new RegistrySigningError('UIFN_REGISTRY_WRITE_FAILED', `Cannot recover from ${journal} (${reason}); nothing was changed. Inspect and remove it by hand.`);
+  let record;
+  try {
+    if (!fsOps.lstatSync(journal).isFile()) throw refuse('not a regular file');
+    record = JSON.parse(fsOps.readFileSync(journal, 'utf8'));
+  } catch (error) {
+    throw error instanceof RegistrySigningError ? error : refuse(error.message);
+  }
+  const valid = Number.isInteger(record?.pid) && Array.isArray(record.targets) && record.targets.length === files.length
+    && record.targets.every((entry, index) => entry?.target === files[index][0] && typeof entry.existed === 'boolean');
+  if (!valid) throw refuse('it does not describe these signature files');
+  return record;
+}
+
+/** Restores one original (unless the target still is it), keeping the backup until the pair is consistent again. */
+function restoreTarget({ target, existed }, fsOps) {
+  if (!existed) {
+    fsOps.rmSync(target, { force: true });
+    return;
+  }
+  const { staged, backup } = sidecarsOf(target);
+  const current = fsOps.existsSync(target) ? fsOps.lstatSync(target) : null;
+  const original = fsOps.lstatSync(backup);
+  if (current?.ino === original.ino && current.dev === original.dev) return;
+  fsOps.rmSync(staged, { force: true });
+  fsOps.linkSync(backup, staged);
+  fsOps.renameSync(staged, target);
+}
+
+/**
+ * Brings a journaled pair back to a consistent state and removes its sidecars. No target is renamed before every
+ * original has a backup, and backups are released only after every rename, so while every backup is present the
+ * originals are restored; once one is gone the new pair is complete and stays. Returns every failure; on a
+ * restore failure all sidecars are kept for the next attempt. The journal is not touched.
+ */
+function settleTargets(targets, fsOps) {
+  const rollBack = targets.every(({ target, existed }) => !existed || fsOps.existsSync(sidecarsOf(target).backup));
+  const failures = rollBack ? attemptEach(targets.map((entry) => [entry.target, () => restoreTarget(entry, fsOps)])) : [];
+  if (failures.length > 0) return failures;
+  return attemptEach(targets.flatMap(({ target }) => Object.values(sidecarsOf(target)).map((file) => removal(file, fsOps))));
+}
+
+/** Recovers the transaction of an interrupted earlier run, refusing while its owner is still running. */
+function recoverInterruptedWrite(journal, files, fsOps) {
+  const record = readJournal(journal, files, fsOps);
+  if (record.pid !== process.pid && isProcessAlive(record.pid)) {
     throw new RegistrySigningError('UIFN_REGISTRY_WRITE_IN_PROGRESS', `Another signing run (pid ${record.pid}) holds ${journal}; wait for it, or remove that file if no run is active.`);
   }
-  const failures = restoreTargets(Array.isArray(record?.targets) ? record.targets : [], fsOps);
+  const failures = settleTargets(record.targets, fsOps);
   if (failures.length === 0) failures.push(...attemptEach([[journal, () => fsOps.rmSync(journal)]]));
   if (failures.length > 0) {
     throw new RegistrySigningError('UIFN_REGISTRY_WRITE_FAILED', `Recovering an interrupted signing run failed (${describeFailures(failures)}); ${journal} is kept so the next run retries.`);
   }
 }
 
-/** Takes the journal (the write lock), recovering an interrupted earlier run first. */
-function acquireJournal(journal, record, fsOps) {
+/** Takes the journal (the write lock), recovering an interrupted run first; target existence is read after that. */
+function acquireJournal(journal, files, fsOps) {
+  const record = () => ({ pid: process.pid, targets: files.map(([target]) => ({ target, existed: fsOps.existsSync(target) })) });
+  let current = record();
   try {
-    createExclusive(journal, JSON.stringify(record), fsOps);
-    return;
+    createJournal(journal, current, fsOps);
+    return current.targets;
   } catch (error) {
     if (error?.code !== 'EEXIST') throw error;
   }
-  recoverInterruptedWrite(journal, fsOps);
-  createExclusive(journal, JSON.stringify(record), fsOps);
+  recoverInterruptedWrite(journal, files, fsOps);
+  current = record();
+  createJournal(journal, current, fsOps);
+  return current.targets;
 }
 
 /** Stages, backs up and renames every file, counting renames in `progress`. Throws on the first failure. */
 function publish(files, targets, fsOps, progress) {
   // Sidecars without a journal are left over from a run that ended with a consistent pair; they hold nothing needed.
   const stale = files.flatMap(([target]) => Object.values(sidecarsOf(target))).filter((file) => fsOps.existsSync(file));
-  const sidecarFailures = attemptEach(stale.map((file) => [file, () => fsOps.rmSync(file, { force: true })]));
-  if (sidecarFailures.length > 0) throw new Error(`stale ${sidecarFailures[0].file} could not be removed: ${sidecarFailures[0].message}`);
+  const sidecarFailures = attemptEach(stale.map((file) => removal(file, fsOps)));
+  if (sidecarFailures.length > 0) throw new Error(`stale ${describeFailures(sidecarFailures)}`);
   for (const [target, contents] of files) createExclusive(sidecarsOf(target).staged, contents, fsOps);
   for (const { target, existed } of targets) {
     if (existed) fsOps.linkSync(target, sidecarsOf(target).backup);
@@ -254,19 +289,19 @@ function publish(files, targets, fsOps, progress) {
 }
 
 /**
- * Replaces every target or none of them, also across an interruption. A journal next to the first target is
- * created exclusively before anything else; it records which targets existed and is removed only after every
- * staged file was renamed over its target (the commit point), then the backups go. If a step fails, the targets
- * are restored from their backups; the journal and backups are kept if that fails, and the next run (or an
- * interrupted run's successor) restores them before writing. Every cleanup is attempted and every failure and
- * retained path is reported. Not crash-safe against power loss (no fsync). `fileSystem` is injectable for tests.
+ * Replaces every target or none of them, also across an interruption. A journal next to the first target is the
+ * write lock and the recovery record: it is published atomically before anything else, records which targets
+ * existed, and is removed last, after the backups are released. If a step fails, the pair is settled (see
+ * settleTargets); if that fails, the journal and backups are kept and the next run settles them before writing.
+ * Every cleanup is attempted and every failure is reported. Not crash-safe against power loss (no fsync).
+ * `fileSystem` is injectable for tests.
  */
 export function writeFilesAtomically(files, fileSystem = defaultFileSystem) {
   const fsOps = { ...defaultFileSystem, ...fileSystem };
   const journal = `${files[0][0]}.${SIDECAR}.journal`;
-  const targets = files.map(([target]) => ({ target, existed: fsOps.existsSync(target) }));
+  let targets;
   try {
-    acquireJournal(journal, { pid: process.pid, targets }, fsOps);
+    targets = acquireJournal(journal, files, fsOps);
   } catch (error) {
     if (error instanceof RegistrySigningError) throw error;
     throw new RegistrySigningError('UIFN_REGISTRY_WRITE_FAILED', `Writing the signature files failed (${error.message}); no signature file was changed.`, { cause: error });
@@ -275,19 +310,16 @@ export function writeFilesAtomically(files, fileSystem = defaultFileSystem) {
   try {
     publish(files, targets, fsOps, progress);
   } catch (error) {
-    const restoreFailures = restoreTargets(targets, fsOps);
-    const failures = restoreFailures.length > 0 ? restoreFailures : attemptEach([[journal, () => fsOps.rmSync(journal)]]);
-    let outcome = 'every replaced signature file was restored';
-    if (progress.published === 0) outcome = 'no signature file was changed';
+    const failures = settleTargets(targets, fsOps);
+    if (failures.length === 0) failures.push(...attemptEach([[journal, () => fsOps.rmSync(journal)]]));
+    let outcome = progress.published === 0 ? 'no signature file was changed' : 'every replaced signature file was restored';
     if (failures.length > 0) {
       outcome = `recovery failed (${describeFailures(failures)}); ${journal} and any backups are kept and the next signing run restores them`;
     }
     throw new RegistrySigningError('UIFN_REGISTRY_WRITE_FAILED', `Writing the signature files failed (${error.message}); ${outcome}.`, { cause: error });
   }
-  const failures = attemptEach([[journal, () => fsOps.rmSync(journal)]]);
-  if (failures.length === 0) {
-    failures.push(...attemptEach(targets.map(({ target }) => sidecarsOf(target).backup).map((file) => [file, () => fsOps.rmSync(file, { force: true })])));
-  }
+  const failures = attemptEach(targets.map(({ target }) => removal(sidecarsOf(target).backup, fsOps)));
+  if (failures.length === 0) failures.push(...attemptEach([[journal, () => fsOps.rmSync(journal)]]));
   if (failures.length > 0) {
     throw new RegistrySigningError('UIFN_REGISTRY_WRITE_CLEANUP_FAILED', `Both signature files were written, but cleanup failed (${describeFailures(failures)}); the next signing run recovers a consistent pair from what is left.`);
   }

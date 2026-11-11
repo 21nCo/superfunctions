@@ -85,12 +85,21 @@ jobs:
         run: |
           set -euo pipefail
           # The whole generator chain (relative imports only). A branch-modified generator could report success for any
-          # catalog, so only dev's generator may vouch for the bytes that get signed.
+          # catalog, so only dev's generator may vouch for the bytes that get signed. Node runs a module from its real
+          # path, so each file and the scripts directory must be real (not symlinks) as well as byte-identical.
+          if [[ -L target/scripts || ! -d target/scripts ]]; then
+            echo "::error::scripts on $SIGN_REF must be a real directory"; exit 1
+          fi
           for file in generate-uifn-registry.mjs generate-uifn-phase-16.mjs uifn-delivery-generator.mjs uifn-component-fixtures.mjs; do
-            if ! cmp -s "trusted/scripts/$file" "target/scripts/$file"; then
+            if [[ -L "target/scripts/$file" || ! -f "target/scripts/$file" ]] || ! cmp -s "trusted/scripts/$file" "target/scripts/$file"; then
               echo "::error::scripts/$file on $SIGN_REF differs from dev; land generator changes on dev before signing"; exit 1
             fi
           done
+          # The signer's journal and backups are never committed; a branch must not supply its own recovery state.
+          sidecars="$(git -C target ls-files -- '*.kms-sign.*')"
+          if [[ -n "$sidecars" ]]; then
+            echo "$sidecars"; echo "::error::$SIGN_REF tracks signer sidecar files (*.kms-sign.*)"; exit 1
+          fi
 
       - name: Require the committed catalog to match a fresh generation
         working-directory: target
