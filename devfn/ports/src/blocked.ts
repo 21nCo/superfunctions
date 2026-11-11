@@ -3,9 +3,10 @@
  * fetch() and browsers refuse every request to one of them before connecting,
  * so an HTTP readiness check, a status probe or a browser could never reach a
  * process listening there. Port 4190 lies in the default fallback range.
- * The set is what fetch() refuses over the connectable ports 1-65535, checked
- * against the runtime in the tests. The standard also lists 0, which is not
- * a connectable port: configuration rejects it and no allocator yields it.
+ * The tests check that the runtime's fetch() refuses every listed port, and
+ * that the set is exact across the default fallback range. The standard also
+ * lists 0, which is not a connectable port: configuration rejects it and no
+ * allocator yields it.
  */
 const FETCH_BLOCKED_PORTS: ReadonlySet<number> = new Set([
   1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77, 79, 87, 95, 101, 102, 103, 104, 109, 110, 111, 113, 115, 117, 119, 123, 135,

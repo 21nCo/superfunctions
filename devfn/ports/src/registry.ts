@@ -549,7 +549,8 @@ export class FilePortRegistry {
             const { value: range, source } = ranges[rangeIndex];
             for (const start of seededOrder(range[0], range[1] - group.length + 1, `${input.instanceId}:${block}:${rangeIndex}`)) {
               const ports = group.map((_, index) => start + index);
-              if (ports.some((port, index) => fetchRefuses(port, group[index].spec.protocol ?? "tcp"))) continue;
+              // A member keeps its own configured preferred port; only a port DevFn chose for it must not be fetch-blocked.
+              if (ports.some((port, index) => port !== group[index].spec.preferred && fetchRefuses(port, group[index].spec.protocol ?? "tcp"))) continue;
               if (ports.some((port, index) => group[index].spec.range && (port < group[index].spec.range![0] || port > group[index].spec.range![1]))) continue;
               if (ports.some((port, index) => occupied.has(occupancyKey(port, group[index].spec.protocol ?? "tcp")))) continue;
               if ((await Promise.all(ports.map((port, index) => availableForReplacement(port, group[index].spec.protocol ?? "tcp", group[index].spec.exposure === "public" ? "0.0.0.0" : "127.0.0.1")))).every(Boolean)) {

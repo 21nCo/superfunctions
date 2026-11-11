@@ -1064,6 +1064,22 @@ describe("fetch-blocked ports", () => {
     });
   });
 
+  it("keeps a block member's own preferred port while still skipping one chosen for an unpreferred member", async () => {
+    // Not every member prefers a port, so the block is walked from a range; 4190 is the start the walk offers.
+    const partly = [{ name: "first", spec: { block: "pair", preferred: 4190 } }, { name: "second", spec: { block: "pair" } }];
+    await withRegistry(async (registry) => expect(await reserve(registry, "partly", "partly", partly, { fallbackRange: [4190, 4191] })).toEqual({ first: 4190, second: 4191 }));
+    // The same walk puts 4190 on a member that did not prefer it, so it is still refused.
+    const reversed = [{ name: "first", spec: { block: "pair" } }, { name: "second", spec: { block: "pair", preferred: 4190 } }];
+    await withRegistry(async (registry) => await expect(reserve(registry, "partly", "reversed", reversed, { fallbackRange: [4190, 4191] }))
+      .rejects.toMatchObject({ code: "DEVFN_PORT_CONFLICT" }));
+    // A member preferring a different port gets no exemption for 4190 either.
+    const other = [{ name: "first", spec: { block: "pair", preferred: 4191 } }, { name: "second", spec: { block: "pair" } }];
+    await withRegistry(async (registry) => expect(await reserve(registry, "partly", "other", other, { fallbackRange: [4189, 4192] })).toEqual({ first: 4191, second: 4192 }));
+    // UDP members were never excluded and are unchanged.
+    const udp = [{ name: "first", spec: { block: "pair", protocol: "udp", preferred: 4190 } }, { name: "second", spec: { block: "pair", protocol: "udp" } }];
+    await withRegistry(async (registry) => expect(await reserve(registry, "partly", "udp", udp, { fallbackRange: [4189, 4190] })).toEqual({ first: 4189, second: 4190 }));
+  });
+
   it("is a TCP rule: a UDP port is chosen from any range, block or the OS and renewed as before", async () => {
     const udp = { protocol: "udp" };
     // 5060 and 4190 are fetch-blocked; fetch never speaks UDP, so neither is excluded for it.
