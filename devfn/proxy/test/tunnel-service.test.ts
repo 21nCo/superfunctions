@@ -130,7 +130,7 @@ describe("tunnel bindings", () => {
 
 // Each test starts, replaces and stops real connector processes behind synced journal writes.
 describe("tunnel lifecycle", { timeout: 30_000 }, () => {
-  it("refuses a logs directory linked out of the tunnel's directory before moving any log in it aside", async () => {
+  posixIt("refuses a logs directory linked out of the tunnel's directory before moving any log in it aside", async () => {
     // Rotation is due for a secret-bearing connector, and for any log over the size limit.
     for (const [secrets, size] of [[{ DEVFN_FIXTURE_TOKEN: "fixture-token" }, 8], [{}, 1024 * 1024 + 1]] as const) {
       const outside = await mkdtemp(path.join(os.tmpdir(), "devfn-tunnel-logs-"));

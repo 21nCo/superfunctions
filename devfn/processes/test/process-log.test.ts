@@ -58,7 +58,8 @@ describe("process log preparation", () => {
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
-  it("prepares one log at a time, under any alias, so concurrent preparations share one reachable log and never touch the other name", async () => {
+  // The directory alias is a symlink, which Windows creates only with privilege.
+  it.skipIf(process.platform === "win32")("prepares one log at a time, under any alias, so concurrent preparations share one reachable log and never touch the other name", async () => {
     for (const [reset, aliased] of [[false, "none"], [true, "none"], [false, "directory"], [false, "case"], [true, "case"]] as const) {
       const { root, other, logPath } = await linkedLog();
       // The second preparation may name the log through a linked directory,
