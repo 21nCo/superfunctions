@@ -1,4 +1,3 @@
-import CoreText
 import XCTest
 #if os(macOS)
 import AppKit
@@ -43,9 +42,6 @@ struct WorkbenchAuditElement {
     var value = ""
     var frame: CGRect
     var isEnabled = true
-    /// For a contrast issue, what the element's screenshot shows of the text
-    /// a waiver expects, or nil when it could not be read.
-    var proof: WorkbenchTextProof?
 
     /// Whether the other element has this one's type, frame, label and
     /// identifier, all an element and a snapshot of it share.
@@ -277,33 +273,12 @@ struct WorkbenchAuditWaiver {
             platform: .macOS,
             auditTypes: ["contrast"],
             element: { element, context in
-                // The selected sidebar row is never waived.
-                guard let element, element.type == .staticText, element.isEnabled, let proof = element.proof,
-                      proof.expected == misreadText(of: element, on: context.screen),
-                      element.identifier != context.screen.map({ WorkbenchApp.sidebarPrefix + $0 }) else { return false }
-                return proof.passes
+                guard let element else { return false }
+                return WorkbenchContrastMisread.matching(element, in: context) != nil
             },
-            reason: "The macOS audit fails the contrast of some texts that measure well above 4.5:1, a different set from run to run, such as the unselected \"Toasts\" row (15:1) while the \"Banners\" row in the same colors passes. Only those texts are waived, and only when the issue's screenshot proves it: the test draws the expected text in the system font in the screenshot's text and background colors and fits each glyph of the screenshot to the drawing. Each glyph must be drawn at 85-115% of the text color's strength, differ from the drawing by at most 12% of its ink and lie at least three-quarters inside the screenshot, no pixel of ink may lie where no glyph is drawn, or more than 15% of the text color beyond the drawing within a pixel, or off the blend of the two colors, and the text color at the weakest glyph's strength less that difference, or at the weakest pixel the drawing inks at least 80%, moved in each channel by the farthest any pixel lies off the blend toward the background's luminance, must reach 4.5:1. A missing, faint, partly faint, cut-off or extra glyph, a separate mark however faint, a second color or fill, and the selected sidebar row stay failed; only ink within 3 of the background in every channel, under 1.05:1, counts as background. The proof is attached with each contrast issue."
+            reason: "Apple's contrast engine, which the macOS audit uses, samples five rows of a text's screenshot and compares only its two most frequent exact colors, so it can fail text whose colors pass. Only the texts in the known contrast misreads table are waived, each on its screens and in its color scheme: an offline run of the engine on the screenshot CI failed reproduces the reported ratio, and the text's theme tokens give at least 4.5:1. Any other contrast issue fails, as does the selected sidebar row."
         ),
     ]
-
-    /// The lines, in the fonts the app draws them in, of a text the macOS
-    /// audit was seen to misread on the screen, or nil for any other element:
-    /// a sidebar row on any screen (13-point system font, AppKit's sidebar
-    /// size), "Alerts" on the toggles and the empty state's message (UIFn's
-    /// md size, 14 points), and the toast's title (md, semibold) and message
-    /// (sm, 13 points).
-    static func misreadText(of element: WorkbenchAuditElement, on screen: String?) -> [WorkbenchExpectedLine]? {
-        switch screen {
-        case _ where element.identifier.hasPrefix(WorkbenchApp.sidebarPrefix) && !element.value.isEmpty:
-            [WorkbenchExpectedLine(text: element.value, points: 13)]
-        case "toggles" where element.value == "Alerts", "empty-states" where element.value == "Files you add appear here.":
-            [WorkbenchExpectedLine(text: element.value, points: 14)]
-        case "toasts" where element.label == "Link copied" && element.value == "The link is on the clipboard.":
-            [WorkbenchExpectedLine(text: element.label, points: 14, isSemibold: true), WorkbenchExpectedLine(text: element.value, points: 13)]
-        default: nil
-        }
-    }
 
     /// The first waiver that covers an issue of the audit type, by its name in
     /// ``XCUIAccessibilityAuditType/workbenchName``, on the element.
@@ -317,42 +292,74 @@ struct WorkbenchAuditWaiver {
     }
 }
 
-/// A line of text a waiver expects an element's screenshot to show, in the
-/// system font.
-struct WorkbenchExpectedLine: Equatable {
-    let text: String
-    let points: CGFloat
-    var isSemibold = false
+/// A text the macOS contrast audit fails although its theme colors pass, from
+/// the fixed list that the README's known contrast misreads table mirrors.
+/// An offline run of Apple's engine (``WorkbenchContrastEngine``) on the
+/// screenshot the audit failed on CI reproduces the reported ratio, and the
+/// theme tokens the text is drawn in give the token ratio, at least 4.5:1;
+/// `WorkbenchAuditWaiverTests` checks both.
+struct WorkbenchContrastMisread {
+    let id: String
+    /// The screens, as the README names them.
+    let screens: String
+    /// "light" or "dark".
+    let colorScheme: String
+    /// The element, as the README names it.
+    let element: String
+    /// Whether an audited element on the screen, nil for the list of
+    /// screens, is this text.
+    let matches: (WorkbenchAuditElement, String?) -> Bool
+    /// The ratio Apple's engine gives the screenshot.
+    let reportedRatio: Double
+    /// The screenshot the audit failed on CI, a PNG in the test bundle, and
+    /// the text's size in points.
+    let screenshot: String
+    let fontSize: Double
+    /// The tokens the text is drawn in, such as "text.primary", and the one
+    /// it is drawn on.
+    let foregrounds: [String]
+    let background: String
+    /// The lowest ratio of a foreground token to the background token.
+    let tokenRatio: Double
+
+    static let all: [WorkbenchContrastMisread] = [
+        WorkbenchContrastMisread(
+            id: "toasts-row", screens: "All but Toasts", colorScheme: "light", element: "The unselected sidebar row “Toasts”",
+            matches: { element, screen in element.identifier == WorkbenchApp.sidebarPrefix + "toasts" && screen != "toasts" },
+            reportedRatio: 4.35, screenshot: "contrast-toasts-row-light", fontSize: 13,
+            foregrounds: ["text.primary"], background: "surface.sunken", tokenRatio: 15.19
+        ),
+        WorkbenchContrastMisread(
+            id: "toggles-alerts", screens: "Toggles", colorScheme: "light", element: "The switch label “Alerts”",
+            matches: { element, screen in screen == "toggles" && element.value == "Alerts" },
+            reportedRatio: 1.01, screenshot: "contrast-alerts-light", fontSize: 14,
+            foregrounds: ["text.primary"], background: "surface.canvas", tokenRatio: 17.09
+        ),
+        WorkbenchContrastMisread(
+            id: "toast-link-copied", screens: "Toasts", colorScheme: "dark", element: "The toast “Link copied” with its message",
+            matches: { element, screen in screen == "toasts" && element.label == "Link copied" && element.value == "The link is on the clipboard." },
+            reportedRatio: 1.01, screenshot: "contrast-toast-dark", fontSize: 14,
+            foregrounds: ["text.primary", "text.secondary"], background: "success.subtle", tokenRatio: 8.20
+        ),
+    ]
+
+    /// The row of the README's table: the id, then each column.
+    var readmeRow: [String] {
+        [
+            "`\(id)`", screens, colorScheme, element, String(format: "%.2f:1", reportedRatio),
+            "\(foregrounds.map { "`\($0)`" }.joined(separator: " and ")) on `\(background)`", String(format: "%.2f:1", tokenRatio),
+        ]
+    }
+
+    /// The listed text an enabled static text is, where the audit ran, or nil.
+    static func matching(_ element: WorkbenchAuditElement, in context: WorkbenchAuditContext) -> WorkbenchContrastMisread? {
+        guard element.type == .staticText, element.isEnabled else { return nil }
+        return all.first { $0.colorScheme == context.colorScheme && $0.matches(element, context.screen) }
+    }
 }
 
-/// What an audit issue's screenshot shows of the text a waiver expects.
-///
-/// The background is the screenshot's most common color. Each expected line
-/// is a band of rows with ink, pixels more than 3 from the background in a
-/// channel; a line too faint for that leaves too few bands. The line's text
-/// color is its pixel farthest from the background, and each pixel's ink is
-/// how far it lies from the background toward that color, so ink however
-/// faint counts for what it is. The test draws the expected line in the
-/// system font in those two colors, smoothed as AppKit draws text, at eight
-/// horizontal and two vertical sub-pixel offsets, and places each drawing
-/// where it differs least from the band. Each glyph's columns, out to halfway
-/// to its neighbors' ink, are fitted to whichever drawing and offset suits them
-/// best: the glyph's strength, the share of the text color that scales the
-/// drawing to the screenshot, must be 85-115%, and what still differs, its
-/// misfit, at most 12% of its ink, and at most a quarter of its drawn ink may
-/// fall outside the screenshot, as where a glyph overhangs the element's
-/// frame. So a missing, faint, invisible, partly faint or cut-off glyph, or a
-/// mark beside one, fails. A pixel of ink where the glyph's fitted drawing
-/// has none within a pixel, or more than 15% of the text color beyond the
-/// most it has there, is stray and fails, so a separate mark fails however
-/// faint, as does any pixel that is not a blend of the two colors, such as a
-/// second color or a fill. The text color at the weakest glyph's strength
-/// less its misfit, and at the strength of the weakest pixel the drawing inks
-/// at least 80%, moved in each channel by the farthest any pixel lies off the blend
-/// toward the background's luminance, must reach 4.5:1, so text mostly in a
-/// failing color fails whatever darker pixels it holds, and no weaker part
-/// of a glyph is averaged away.
-struct WorkbenchTextProof {
+/// The pixels of a screenshot, to compare two screenshots.
+enum WorkbenchPixels {
     struct RGB: Hashable {
         var red, green, blue: UInt8
 
@@ -369,87 +376,6 @@ struct WorkbenchTextProof {
             let (a, b) = (luminance, other.luminance)
             return (max(a, b) + 0.05) / (min(a, b) + 0.05)
         }
-
-        /// The color `share` of the way from this color to `other`.
-        func blend(toward other: RGB, _ share: Double) -> RGB {
-            func mix(_ a: UInt8, _ b: UInt8) -> UInt8 { UInt8((Double(a) + share * (Double(b) - Double(a))).rounded()) }
-            return RGB(red: mix(red, other.red), green: mix(green, other.green), blue: mix(blue, other.blue))
-        }
-
-        func offset(from other: RGB) -> [Double] { [Double(red) - Double(other.red), Double(green) - Double(other.green), Double(blue) - Double(other.blue)] }
-
-        var description: String { "rgb(\(red), \(green), \(blue))" }
-    }
-
-    /// How a glyph of the screenshot compares with the drawing of it.
-    struct Glyph {
-        /// The share of the text color that best scales the drawing to the
-        /// screenshot.
-        let strength: Double
-        /// How far the screenshot differs from the scaled drawing, as a share
-        /// of its ink.
-        let misfit: Double
-        /// The share of the drawing's ink that falls outside the screenshot,
-        /// as of a glyph overhanging the element's frame.
-        let clipped: Double
-    }
-
-    struct Line {
-        let expected: WorkbenchExpectedLine
-        let rows: ClosedRange<Int>
-        let text: RGB
-        /// The farthest any pixel of the line lies from a blend of the text
-        /// color and the background.
-        let offBlend: Double
-        let glyphs: [Glyph]
-        /// Pixels of ink the fitted glyphs do not explain.
-        let stray: Int
-        /// The share of the drawing's ink that the weakest pixel the drawing
-        /// inks at least 80% shows.
-        let weakestPixel: Double
-        /// The text color's contrast at the weakest glyph's strength less
-        /// its misfit, or the weakest fully drawn pixel's if lower, moved by
-        /// offBlend in each channel toward the background's luminance.
-        let contrast: Double
-
-        var passes: Bool {
-            offBlend <= 16 && stray == 0 && !glyphs.isEmpty
-                && glyphs.allSatisfy { (0.85...1.15).contains($0.strength) && $0.misfit <= 0.12 && $0.clipped <= 0.25 } && contrast >= 4.5
-        }
-    }
-
-    let expected: [WorkbenchExpectedLine]
-    let background: RGB
-    let backgroundShare: Double
-    /// The bands of rows with ink.
-    let bands: [ClosedRange<Int>]
-    let lines: [Line]
-
-    var passes: Bool {
-        !expected.isEmpty && backgroundShare >= 0.5 && bands.count == expected.count && lines.allSatisfy(\.passes)
-    }
-
-    var summary: String {
-        let head = "background \(background.description) (\(Int((backgroundShare * 100).rounded()))%), \(bands.count) band(s) of ink"
-        guard !expected.isEmpty else { return "\(head); no text expected, not proven" }
-        guard bands.count == expected.count else { return "\(head) for \(expected.count) expected line(s); not proven" }
-        let measured = lines.map { line in
-            let strengths = line.glyphs.map(\.strength), misfits = line.glyphs.map(\.misfit)
-            let ink = line.glyphs.isEmpty ? "no glyphs" : "glyph strength \(Self.percent(strengths.min() ?? 0))-\(Self.percent(strengths.max() ?? 0)), misfit up to \(Self.percent(misfits.max() ?? 0))"
-            return "\"\(line.expected.text)\" rows \(line.rows.lowerBound)-\(line.rows.upperBound) in \(line.text.description), \(ink), weakest pixel \(Self.percent(line.weakestPixel)), \(line.stray) stray pixel(s), \(String(format: "%.1f", line.offBlend)) off the blend, up to \(Self.percent(line.glyphs.map(\.clipped).max() ?? 0)) of a glyph clipped, \(String(format: "%.2f", line.contrast)):1"
-        }
-        return "\(head): \(measured.joined(separator: "; ")); \(passes ? "every glyph shown reaches 4.5:1" : "not proven")"
-    }
-
-    /// A share as a whole percentage, or "no fit" for a glyph with no
-    /// columns in the screenshot, whose misfit is infinite.
-    static func percent(_ share: Double) -> String {
-        share.isFinite ? "\(Int((share * 100).rounded()))%" : "no fit"
-    }
-
-    init?(_ image: CGImage, expected: [WorkbenchExpectedLine], scale: CGFloat = 1) {
-        guard let pixels = Self.pixels(of: image) else { return nil }
-        self.init(pixels: pixels, width: image.width, expected: expected, scale: scale)
     }
 
     /// The image's pixels in sRGB, in rows, top row first.
@@ -466,248 +392,5 @@ struct WorkbenchTextProof {
             return true
         }
         return drawn ? stride(from: 0, to: bytes.count, by: 4).map { RGB(red: bytes[$0], green: bytes[$0 + 1], blue: bytes[$0 + 2]) } : nil
-    }
-
-    /// Proves pixels in rows of `width`, top row first.
-    init?(pixels: [RGB], width: Int, expected: [WorkbenchExpectedLine], scale: CGFloat = 1) {
-        guard width > 0, !pixels.isEmpty, pixels.count % width == 0 else { return nil }
-        let height = pixels.count / width
-        var counts: [RGB: Int] = [:]
-        pixels.forEach { counts[$0, default: 0] += 1 }
-        guard let background = counts.max(by: { $0.value < $1.value || ($0.value == $1.value && $0.key.luminance < $1.key.luminance) })?.key else { return nil }
-        self.expected = expected
-        self.background = background
-        backgroundShare = Double(pixels.filter { $0.offset(from: background).allSatisfy { abs($0) <= 2 } }.count) / Double(pixels.count)
-        var bands: [ClosedRange<Int>] = []
-        for row in 0..<height where (0..<width).contains(where: { x in pixels[row * width + x].offset(from: background).contains { abs($0) > 3 } }) {
-            if let last = bands.last, last.upperBound == row - 1 {
-                bands[bands.count - 1] = last.lowerBound...row
-            } else {
-                bands.append(row...row)
-            }
-        }
-        self.bands = bands
-        lines = bands.count == expected.count
-            ? zip(bands, expected).map { Self.line($1, in: $0, of: pixels, width: width, background: background, scale: scale) }
-            : []
-    }
-
-    /// The share of the way from `background` toward `text` that `pixel`
-    /// lies, and how far it lies from that line.
-    private static func ink(_ pixel: RGB, background: RGB, text: RGB) -> (share: Double, off: Double) {
-        let toward = text.offset(from: background)
-        let offset = pixel.offset(from: background)
-        let length = toward.map { $0 * $0 }.reduce(0, +)
-        let share = length == 0 ? 0 : min(max(zip(offset, toward).map(*).reduce(0, +) / length, 0), 1)
-        let off = zip(offset, toward).map { ($0 - share * $1) * ($0 - share * $1) }.reduce(0, +).squareRoot()
-        return (share, off)
-    }
-
-    private struct Drawing {
-        let width: Int
-        let height: Int
-        let ink: [Double]
-        /// Each glyph's ink, from its left edge to its right, in columns.
-        let glyphs: [ClosedRange<Double>]
-    }
-
-    /// The line drawn in the system font, smoothed as AppKit draws text, in
-    /// `text` on `background`, offset by a fraction of a pixel.
-    private static func drawing(of line: WorkbenchExpectedLine, scale: CGFloat, text: RGB, background: RGB, offset: CGPoint) -> Drawing? {
-        #if os(macOS)
-        let font = NSFont.systemFont(ofSize: line.points, weight: line.isSemibold ? .semibold : .regular)
-        #else
-        let font = UIFont.systemFont(ofSize: line.points, weight: line.isSemibold ? .semibold : .regular)
-        #endif
-        func cgColor(_ color: RGB) -> CGColor {
-            CGColor(srgbRed: CGFloat(color.red) / 255, green: CGFloat(color.green) / 255, blue: CGFloat(color.blue) / 255, alpha: 1)
-        }
-        let attributes = [NSAttributedString.Key(kCTFontAttributeName as String): font, NSAttributedString.Key(kCTForegroundColorAttributeName as String): cgColor(text)] as [NSAttributedString.Key: Any]
-        let ctLine = CTLineCreateWithAttributedString(NSAttributedString(string: line.text, attributes: attributes))
-        // The font at its own point size, drawn at the screenshot's scale, as
-        // a Retina display draws it: the system font's optical size follows
-        // its point size, so a font of points times scale draws other glyphs.
-        let bounds = CTLineGetBoundsWithOptions(ctLine, .useGlyphPathBounds)
-        let (width, height) = (Int((bounds.width * scale).rounded(.up)) + 4, Int((bounds.height * scale).rounded(.up)) + 4)
-        guard !bounds.isEmpty, let sRGB = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
-        var bytes = [UInt8](repeating: 0, count: width * height * 4)
-        let origin = CGPoint(x: 2 - bounds.minX * scale + offset.x, y: 2 - bounds.minY * scale + offset.y)
-        let drawn = bytes.withUnsafeMutableBytes { buffer -> Bool in
-            guard let context = CGContext(
-                data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
-                space: sRGB, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
-            ) else { return false }
-            context.setFillColor(cgColor(background))
-            context.fill(CGRect(x: 0, y: 0, width: width, height: height))
-            context.setAllowsFontSmoothing(true)
-            context.setShouldSmoothFonts(true)
-            context.scaleBy(x: scale, y: scale)
-            context.textPosition = CGPoint(x: origin.x / scale, y: origin.y / scale)
-            CTLineDraw(ctLine, context)
-            return true
-        }
-        guard drawn else { return nil }
-        var glyphs: [ClosedRange<Double>] = []
-        for run in CTLineGetGlyphRuns(ctLine) as? [CTRun] ?? [] {
-            let count = CTRunGetGlyphCount(run)
-            var ids = [CGGlyph](repeating: 0, count: count)
-            var positions = [CGPoint](repeating: .zero, count: count)
-            var boxes = [CGRect](repeating: .zero, count: count)
-            CTRunGetGlyphs(run, CFRange(location: 0, length: count), &ids)
-            CTRunGetPositions(run, CFRange(location: 0, length: count), &positions)
-            let runFont = (CTRunGetAttributes(run) as NSDictionary)[kCTFontAttributeName as String].map { $0 as! CTFont } ?? (font as CTFont)
-            CTFontGetBoundingRectsForGlyphs(runFont, .default, ids, &boxes, count)
-            for index in 0..<count where !boxes[index].isEmpty {
-                let left = Double(origin.x + (positions[index].x + boxes[index].minX) * scale)
-                glyphs.append(left...(left + Double(boxes[index].width * scale)))
-            }
-        }
-        let ink = stride(from: 0, to: bytes.count, by: 4).map {
-            Self.ink(RGB(red: bytes[$0], green: bytes[$0 + 1], blue: bytes[$0 + 2]), background: background, text: text).share
-        }
-        return Drawing(width: width, height: height, ink: ink, glyphs: glyphs)
-    }
-
-    private static func line(_ expected: WorkbenchExpectedLine, in rows: ClosedRange<Int>, of pixels: [RGB], width: Int, background: RGB, scale: CGFloat) -> Line {
-        let height = pixels.count / width
-        let distance = { (pixel: RGB) in pixel.offset(from: background).map { $0 * $0 }.reduce(0, +) }
-        let text = rows.flatMap { row in (0..<width).map { pixels[row * width + $0] } }.max { distance($0) < distance($1) } ?? background
-        var ink = [Double](repeating: 0, count: pixels.count)
-        var offBlend = 0.0
-        for row in rows {
-            for x in 0..<width {
-                let measured = Self.ink(pixels[row * width + x], background: background, text: text)
-                ink[row * width + x] = measured.share
-                offBlend = max(offBlend, measured.off)
-            }
-        }
-        func centroid(_ ink: [Double], width: Int) -> CGPoint {
-            var (sum, x, y) = (0.0, 0.0, 0.0)
-            for (index, share) in ink.enumerated() {
-                sum += share
-                x += share * Double(index % width)
-                y += share * Double(index / width)
-            }
-            return sum == 0 ? .zero : CGPoint(x: x / sum, y: y / sum)
-        }
-        let center = centroid(ink, width: width)
-        // The drawing, and where it lies in the screenshot, that differs least from the line.
-        var best: (difference: Double, drawing: Drawing, dx: Int, dy: Int)?
-        var placed: [(drawing: Drawing, dx: Int, dy: Int)] = []
-        for step in 0..<16 {
-            guard let drawing = drawing(of: expected, scale: scale, text: text, background: background, offset: CGPoint(x: CGFloat(step % 8) / 8, y: CGFloat(step / 8) / 2)) else { continue }
-            let drawn = centroid(drawing.ink, width: drawing.width)
-            let (dx0, dy0) = (Int((center.x - drawn.x).rounded()), Int((center.y - drawn.y).rounded()))
-            var bestHere: (difference: Double, dx: Int, dy: Int)?
-            for dx in dx0 - 1...dx0 + 1 {
-                for dy in dy0 - 1...dy0 + 1 {
-                    // The line's ink against the drawing's, and the drawing's
-                    // ink that falls outside the line.
-                    var difference = 0.0
-                    ink.withUnsafeBufferPointer { shown in
-                        drawing.ink.withUnsafeBufferPointer { drawn in
-                            for y in 0..<drawing.height {
-                                let inLine = rows.contains(y + dy)
-                                for x in 0..<drawing.width {
-                                    let share = drawn[y * drawing.width + x]
-                                    let px = x + dx
-                                    if inLine && px >= 0 && px < width {
-                                        difference += abs(shown[(y + dy) * width + px] - share) - shown[(y + dy) * width + px]
-                                    } else {
-                                        difference += share
-                                    }
-                                }
-                            }
-                            for index in rows.lowerBound * width..<(rows.upperBound + 1) * width { difference += shown[index] }
-                        }
-                    }
-                    if bestHere.map({ difference < $0.difference }) ?? true { bestHere = (difference, dx, dy) }
-                }
-            }
-            if let bestHere {
-                placed.append((drawing, bestHere.dx, bestHere.dy))
-                if best.map({ bestHere.difference < $0.difference }) ?? true { best = (bestHere.difference, drawing, bestHere.dx, bestHere.dy) }
-            }
-        }
-        guard let best else { return Line(expected: expected, rows: rows, text: text, offBlend: offBlend, glyphs: [], stray: 0, weakestPixel: 0, contrast: 1) }
-        let glyphs = best.drawing.glyphs.map { ($0.lowerBound + Double(best.dx))...($0.upperBound + Double(best.dx)) }
-        var cuts = [-Double.infinity]
-        for index in glyphs.indices.dropFirst() { cuts.append((glyphs[index - 1].upperBound + glyphs[index].lowerBound) / 2) }
-        cuts.append(.infinity)
-        // The share of each glyph's drawn ink that lies outside the
-        // screenshot, on either axis.
-        var drawnInk = [Double](repeating: 0, count: glyphs.count)
-        var cropped = [Double](repeating: 0, count: glyphs.count)
-        for y in 0..<best.drawing.height {
-            for x in 0..<best.drawing.width {
-                let (px, py) = (x + best.dx, y + best.dy)
-                guard let index = glyphs.indices.first(where: { (cuts[$0]..<cuts[$0 + 1]).contains(Double(px) + 0.5) }) else { continue }
-                drawnInk[index] += best.drawing.ink[y * best.drawing.width + x]
-                if !(0..<width).contains(px) || !(0..<height).contains(py) { cropped[index] += best.drawing.ink[y * best.drawing.width + x] }
-            }
-        }
-        // Each glyph's columns, scaled against whichever drawing and offset
-        // fits them best: the strength that scales the drawing to the
-        // screenshot, and how far the screenshot still differs from it.
-        let fits = glyphs.indices.map { index -> (fit: Glyph, columns: [Int], model: (drawing: Drawing, dx: Int, dy: Int)?) in
-            let columns = (0..<width).filter { (cuts[index]..<cuts[index + 1]).contains(Double($0) + 0.5) }
-            let clipped = drawnInk[index] > 0 ? cropped[index] / drawnInk[index] : 1
-            var fit = Glyph(strength: 0, misfit: .infinity, clipped: clipped)
-            var model: (drawing: Drawing, dx: Int, dy: Int)?
-            for (drawing, dx0, dy) in placed {
-                for dx in dx0 - 1...dx0 + 1 {
-                    var pairs: [(shown: Double, drawn: Double)] = []
-                    for y in 0..<height {
-                        for x in columns {
-                            let (rx, ry) = (x - dx, y - dy)
-                            pairs.append((ink[y * width + x], (0..<drawing.width).contains(rx) && (0..<drawing.height).contains(ry) ? drawing.ink[ry * drawing.width + rx] : 0))
-                        }
-                    }
-                    let squares = pairs.map { $0.drawn * $0.drawn }.reduce(0, +)
-                    guard squares > 0 else { continue }
-                    let strength = pairs.map { $0.shown * $0.drawn }.reduce(0, +) / squares
-                    let misfit = pairs.map { abs($0.shown - strength * $0.drawn) }.reduce(0, +) / max(strength * pairs.map(\.drawn).reduce(0, +), 0.5)
-                    if misfit < fit.misfit { (fit, model) = (Glyph(strength: strength, misfit: misfit, clipped: clipped), (drawing, dx, dy)) }
-                }
-            }
-            return (fit, columns, model)
-        }
-        // Each pixel of ink against its glyph's fitted drawing: ink no glyph
-        // draws within a pixel, or more than 0.15 of the text color beyond
-        // the most the drawing puts within a pixel, is stray, as a separate
-        // mark is however faint. Each pixel the drawing inks at least 80% is
-        // scaled on its own, so no weaker part of a glyph, a column, a row or
-        // a spot, is averaged into stronger ink.
-        var stray = 0
-        var weakestPixel = 1.0
-        for (fit, columns, model) in fits {
-            guard let (drawing, dx, dy) = model else { continue }
-            func drawn(_ x: Int, _ y: Int) -> Double {
-                let (rx, ry) = (x - dx, y - dy)
-                return (0..<drawing.width).contains(rx) && (0..<drawing.height).contains(ry) ? drawing.ink[ry * drawing.width + rx] : 0
-            }
-            for x in columns {
-                for y in 0..<height {
-                    let d = drawn(x, y)
-                    if d >= 0.8 { weakestPixel = min(weakestPixel, ink[y * width + x] / d) }
-                    guard rows.contains(y), pixels[y * width + x].offset(from: background).contains(where: { abs($0) > 3 }) else { continue }
-                    let near = (y - 1...y + 1).flatMap { ny in (x - 1...x + 1).map { drawn($0, ny) } }.max() ?? 0
-                    if near < 0.02 || ink[y * width + x] - fit.strength * near > 0.15 { stray += 1 }
-                }
-            }
-        }
-        let weakest = min(fits.map { min($0.fit.strength, 1) - $0.fit.misfit }.min() ?? 0, weakestPixel)
-        // A pixel may lie up to offBlend from the blend in each channel, so
-        // the weakest blend is moved that far toward the background's
-        // luminance: a color off the blend cannot borrow a darker pixel's contrast.
-        let lighter = text.luminance < background.luminance
-        func bound(_ value: UInt8) -> UInt8 {
-            UInt8(min(max(lighter ? (Double(value) + offBlend).rounded(.up) : (Double(value) - offBlend).rounded(.down), 0), 255))
-        }
-        let blend = background.blend(toward: text, max(weakest, 0))
-        return Line(
-            expected: expected, rows: rows, text: text, offBlend: offBlend, glyphs: fits.map(\.fit), stray: stray, weakestPixel: weakestPixel,
-            contrast: RGB(red: bound(blend.red), green: bound(blend.green), blue: bound(blend.blue)).contrast(with: background)
-        )
     }
 }

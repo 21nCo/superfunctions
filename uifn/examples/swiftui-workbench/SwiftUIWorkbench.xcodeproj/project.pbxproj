@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		5F0A00000000000000000101 /* UIFnSwiftUI in Frameworks */ = {isa = PBXBuildFile; productRef = 5F0A00000000000000000501 /* UIFnSwiftUI */; };
+		5F0A00000000000000000102 /* UIFnSwiftUI in Frameworks */ = {isa = PBXBuildFile; productRef = 5F0A00000000000000000502 /* UIFnSwiftUI */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -51,6 +52,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5F0A00000000000000000102 /* UIFnSwiftUI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -118,6 +120,9 @@
 				5F0A00000000000000000602 /* UITests */,
 			);
 			name = SwiftUIWorkbenchUITests;
+			packageProductDependencies = (
+				5F0A00000000000000000502 /* UIFnSwiftUI */,
+			);
 			productName = SwiftUIWorkbenchUITests;
 			productReference = 5F0A00000000000000000302 /* SwiftUIWorkbenchUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
@@ -377,6 +382,10 @@
 
 /* Begin XCSwiftPackageProductDependency section */
 		5F0A00000000000000000501 /* UIFnSwiftUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = UIFnSwiftUI;
+		};
+		5F0A00000000000000000502 /* UIFnSwiftUI */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = UIFnSwiftUI;
 		};

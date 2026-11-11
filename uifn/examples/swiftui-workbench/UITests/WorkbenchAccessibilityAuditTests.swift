@@ -90,13 +90,13 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
             XCTAssertTrue(row.waitForExistence(timeout: 10), "The selected row did not appear")
             XCTAssertTrue(field.waitForExistence(timeout: 5), "No text field appeared")
             field.click()
-            let unfocused = try XCTUnwrap(row.screenshot().workbenchCGImage.flatMap(WorkbenchTextProof.pixels(of:)))
+            let unfocused = try XCTUnwrap(row.screenshot().workbenchCGImage.flatMap(WorkbenchPixels.pixels(of:)))
             /// The pixels of the row that changed from `unfocused` by at
             /// least 3:1, waiting up to 3 seconds for `isDone`.
             func outline(until isDone: (Int) -> Bool) -> Int {
                 var changed = 0
                 for _ in 0..<6 {
-                    let pixels = row.screenshot().workbenchCGImage.flatMap(WorkbenchTextProof.pixels(of:)) ?? []
+                    let pixels = row.screenshot().workbenchCGImage.flatMap(WorkbenchPixels.pixels(of:)) ?? []
                     changed = pixels.count == unfocused.count ? zip(pixels, unfocused).filter { $0.contrast(with: $1) >= 3 }.count : -1
                     if isDone(changed) { break }
                     Thread.sleep(forTimeInterval: 0.5)
@@ -148,7 +148,8 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
         }
     }
 
-    /// The README's waiver table lists each waiver by id with its reason. A
+    /// The README's waiver table lists each waiver by id with its reason, and
+    /// its known contrast misreads table each listed text. A
     /// runner that cannot read the README skips the test, unless
     /// `UIFN_WORKBENCH_REQUIRE_README` is set, as CI sets it through
     /// `TEST_RUNNER_UIFN_WORKBENCH_REQUIRE_README`.
@@ -169,14 +170,23 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
             throw XCTSkip(message)
         }
         var listed: [String: String] = [:]
-        for row in text.split(separator: "\n") where row.hasPrefix("| `") {
+        var misreads: [[String]] = []
+        var heading = ""
+        for row in text.split(separator: "\n") {
+            if row.hasPrefix("#") { heading = String(row) }
+            guard row.hasPrefix("| `") else { continue }
             let cells = row.split(separator: "|", omittingEmptySubsequences: false)
                 .map { $0.trimmingCharacters(in: .whitespaces) }
             guard cells.count > 3 else { continue }
-            listed[cells[1].trimmingCharacters(in: CharacterSet(charactersIn: "`"))] = cells[cells.count - 2]
+            if heading == "### Known contrast misreads" {
+                misreads.append(Array(cells.dropFirst().dropLast()))
+            } else {
+                listed[cells[1].trimmingCharacters(in: CharacterSet(charactersIn: "`"))] = cells[cells.count - 2]
+            }
         }
         let waivers = Dictionary(uniqueKeysWithValues: WorkbenchAuditWaiver.all.map { ($0.id, $0.reason) })
         XCTAssertEqual(listed, waivers, "The README's waiver table and WorkbenchAuditWaiver.all differ")
+        XCTAssertEqual(misreads, WorkbenchContrastMisread.all.map(\.readmeRow), "The README's known contrast misreads table and WorkbenchContrastMisread.all differ")
     }
 
     /// Audits the screen ``WorkbenchApp/screensByTest`` names for the test.
@@ -319,18 +329,16 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
             }
             #endif
             var summary = "\(issue.auditType.workbenchName) on \(issue.element.map(WorkbenchApp.describe) ?? "the app")"
-            var element = issue.element.map(WorkbenchAuditElement.init)
+            let element = issue.element.map(WorkbenchAuditElement.init)
             // What the audit judged, kept with each contrast issue, waived
-            // or not: the element's screenshot, what it proves of the text a
-            // waiver expects, and the window's screenshot once.
-            if issue.auditType == .contrast, let issueElement = issue.element, let audited = element {
+            // or not: the element's screenshot, on macOS what Apple's engine
+            // makes of it, and the window's screenshot once.
+            if issue.auditType == .contrast, let issueElement = issue.element {
                 let screenshot = issueElement.screenshot()
-                let expected = WorkbenchAuditWaiver.misreadText(of: audited, on: screen) ?? []
-                let proof = screenshot.workbenchCGImage.flatMap { image in
-                    WorkbenchTextProof(image, expected: expected, scale: audited.frame.width > 0 ? max(1, (CGFloat(image.width) / audited.frame.width).rounded()) : 1)
-                }
-                element?.proof = proof
-                summary += " [measured: \(proof?.summary ?? "unreadable screenshot")]"
+                #if os(macOS)
+                let engine = WorkbenchContrastEngine.contrast(png: screenshot.pngRepresentation, fontSize: 13)
+                summary += " [Apple's engine on this screenshot: \(engine.map { String(format: "%.2f:1", $0.ratio) } ?? "not run")]"
+                #endif
                 let attachment = XCTAttachment(screenshot: screenshot)
                 attachment.name = "Contrast issue: \(summary)"
                 attachment.lifetime = .keepAlways
