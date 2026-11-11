@@ -1,0 +1,341 @@
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { createHash, generateKeyPairSync, sign, verify } from 'node:crypto';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+import {
+  REGISTRY_CATALOG_PATH,
+  REGISTRY_SIGNATURE_JSON_PATH,
+  REGISTRY_SIGNATURE_TS_PATH,
+  createAwsCliKmsClient,
+  registryKeyId,
+  registryV2SigningInput,
+  signRegistryCatalogWithKms,
+} from './sign-uifn-registry-kms.mjs';
+
+const scriptPath = fileURLToPath(new URL('./sign-uifn-registry-kms.mjs', import.meta.url));
+const KMS_KEY_ARN = 'arn:aws:kms:us-east-1:000000000000:key/00000000-0000-0000-0000-000000000000';
+const CATALOG = '{\n  "schemaVersion": 2,\n  "artifacts": []\n}\n';
+const V1_JSON = '{\n  "schemaVersion": 1\n}\n';
+const V1_TS = '/* v1 */\nexport const REGISTRY_SIGNATURE = { "schemaVersion": 1 } as const;\n';
+
+function fixture(t) {
+  const root = mkdtempSync(path.join(tmpdir(), 'uifn-registry-kms-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  for (const relative of [REGISTRY_CATALOG_PATH, REGISTRY_SIGNATURE_TS_PATH]) mkdirSync(path.dirname(path.join(root, relative)), { recursive: true });
+  writeFileSync(path.join(root, REGISTRY_CATALOG_PATH), CATALOG);
+  writeFileSync(path.join(root, REGISTRY_SIGNATURE_JSON_PATH), V1_JSON);
+  writeFileSync(path.join(root, REGISTRY_SIGNATURE_TS_PATH), V1_TS);
+  return root;
+}
+
+function keyPair() {
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+  const spki = publicKey.export({ type: 'spki', format: 'der' });
+  return { privateKey, publicKey, spki, keyId: createHash('sha256').update(spki).digest('hex').slice(0, 24) };
+}
+
+function mockKms(keys, overrides = {}) {
+  const calls = [];
+  return {
+    calls,
+    async getPublicKey(input) {
+      calls.push(['GetPublicKey', input]);
+      return { KeyId: KMS_KEY_ARN, KeySpec: 'ECC_NIST_EDWARDS25519', KeyUsage: 'SIGN_VERIFY', PublicKey: keys.spki, ...overrides.publicKey };
+    },
+    async sign(input) {
+      calls.push(['Sign', input]);
+      const signer = overrides.signWith ?? keys.privateKey;
+      return { KeyId: KMS_KEY_ARN, SigningAlgorithm: input.SigningAlgorithm, Signature: sign(null, Buffer.from(input.Message), signer), ...overrides.sign };
+    },
+  };
+}
+
+function assertUnchanged(root) {
+  assert.equal(readFileSync(path.join(root, REGISTRY_SIGNATURE_JSON_PATH), 'utf8'), V1_JSON);
+  assert.equal(readFileSync(path.join(root, REGISTRY_SIGNATURE_TS_PATH), 'utf8'), V1_TS);
+  for (const relative of [REGISTRY_SIGNATURE_JSON_PATH, REGISTRY_SIGNATURE_TS_PATH]) {
+    const directory = path.dirname(path.join(root, relative));
+    assert.deepEqual(readdirSync(directory).filter((name) => name.endsWith('.tmp')), []);
+  }
+}
+
+test('signing input is exactly UTF8("uifn-registry-v2\\0") followed by SHA-256 of the catalog bytes', () => {
+  const input = registryV2SigningInput(Buffer.from(CATALOG));
+  assert.equal(input.length, 49);
+  assert.equal(input.subarray(0, 17).toString('hex'), '7569666e2d72656769737472792d763200');
+  assert.equal(input.subarray(17).toString('hex'), createHash('sha256').update(CATALOG).digest('hex'));
+});
+
+test('signs the digest input with RAW / ED25519_SHA_512 and writes a verifiable v2 envelope', async (t) => {
+  const root = fixture(t);
+  const keys = keyPair();
+  const kms = mockKms(keys);
+  const { envelope, files } = await signRegistryCatalogWithKms({ root, kms, kmsKeyId: 'alias/uifn-registry', expectedKeyId: keys.keyId });
+
+  const signCalls = kms.calls.filter(([name]) => name === 'Sign');
+  assert.equal(signCalls.length, 1);
+  const [, request] = signCalls[0];
+  assert.equal(request.KeyId, 'alias/uifn-registry');
+  assert.equal(request.MessageType, 'RAW');
+  assert.equal(request.SigningAlgorithm, 'ED25519_SHA_512');
+  assert.deepEqual(Buffer.from(request.Message), registryV2SigningInput(Buffer.from(CATALOG)));
+  assert.deepEqual(kms.calls.find(([name]) => name === 'GetPublicKey')[1], { KeyId: 'alias/uifn-registry' });
+
+  const catalogSha256 = createHash('sha256').update(CATALOG).digest('hex');
+  const written = JSON.parse(readFileSync(path.join(root, REGISTRY_SIGNATURE_JSON_PATH), 'utf8'));
+  assert.deepEqual(written, envelope);
+  assert.deepEqual(Object.keys(written), ['schemaVersion', 'algorithm', 'domain', 'keyId', 'catalogSha256', 'signatureBase64']);
+  assert.equal(written.schemaVersion, 2);
+  assert.equal(written.algorithm, 'Ed25519');
+  assert.equal(written.domain, 'uifn-registry-v2');
+  assert.equal(written.keyId, keys.keyId);
+  assert.equal(written.keyId, registryKeyId(keys.spki));
+  assert.equal(written.catalogSha256, catalogSha256);
+
+  // Offline verification with only the public key: the domain-separated digest verifies, the raw catalog (v1) does not.
+  const signature = Buffer.from(written.signatureBase64, 'base64');
+  const offlineInput = Buffer.concat([Buffer.from('uifn-registry-v2\0', 'utf8'), Buffer.from(catalogSha256, 'hex')]);
+  assert.equal(verify(null, offlineInput, keys.publicKey, signature), true);
+  assert.equal(verify(null, Buffer.from(CATALOG), keys.publicKey, signature), false);
+
+  const ts = readFileSync(path.join(root, REGISTRY_SIGNATURE_TS_PATH), 'utf8');
+  assert.equal(ts, `/* Generated detached registry signature. */\nexport const REGISTRY_SIGNATURE = ${JSON.stringify(envelope, null, 2)} as const;\n`);
+  assert.deepEqual(files, [REGISTRY_SIGNATURE_JSON_PATH, REGISTRY_SIGNATURE_TS_PATH]);
+  assert.deepEqual(readdirSync(path.dirname(path.join(root, REGISTRY_SIGNATURE_JSON_PATH))).filter((name) => name.endsWith('.tmp')), []);
+});
+
+test('refuses and writes nothing when the KMS signature does not verify against the KMS public key', async (t) => {
+  const root = fixture(t);
+  const keys = keyPair();
+  const kms = mockKms(keys, { signWith: keyPair().privateKey });
+  await assert.rejects(
+    signRegistryCatalogWithKms({ root, kms, kmsKeyId: KMS_KEY_ARN, expectedKeyId: keys.keyId }),
+    { code: 'UIFN_REGISTRY_KMS_SIGNATURE_INVALID' },
+  );
+  assertUnchanged(root);
+});
+
+test('refuses and writes nothing when KMS returns a signature over different bytes', async (t) => {
+  const root = fixture(t);
+  const keys = keyPair();
+  const kms = mockKms(keys, { sign: { Signature: sign(null, Buffer.from(CATALOG), keys.privateKey) } });
+  await assert.rejects(
+    signRegistryCatalogWithKms({ root, kms, kmsKeyId: KMS_KEY_ARN, expectedKeyId: keys.keyId }),
+    { code: 'UIFN_REGISTRY_KMS_SIGNATURE_INVALID' },
+  );
+  assertUnchanged(root);
+});
+
+test('refuses before signing and writes nothing when the KMS key id differs from the expected key id', async (t) => {
+  const root = fixture(t);
+  const keys = keyPair();
+  const kms = mockKms(keys);
+  await assert.rejects(
+    signRegistryCatalogWithKms({ root, kms, kmsKeyId: KMS_KEY_ARN, expectedKeyId: keyPair().keyId }),
+    { code: 'UIFN_REGISTRY_KMS_KEY_MISMATCH' },
+  );
+  assert.deepEqual(kms.calls.map(([name]) => name), ['GetPublicKey']);
+  assertUnchanged(root);
+});
+
+test('refuses and writes nothing when Sign used a different KMS key than GetPublicKey', async (t) => {
+  const root = fixture(t);
+  const keys = keyPair();
+  const kms = mockKms(keys, { sign: { KeyId: `${KMS_KEY_ARN.slice(0, -1)}1` } });
+  await assert.rejects(
+    signRegistryCatalogWithKms({ root, kms, kmsKeyId: KMS_KEY_ARN, expectedKeyId: keys.keyId }),
+    { code: 'UIFN_REGISTRY_KMS_KEY_MISMATCH' },
+  );
+  assertUnchanged(root);
+});
+
+test('refuses and writes nothing when KMS reports another signing algorithm', async (t) => {
+  const root = fixture(t);
+  const keys = keyPair();
+  const kms = mockKms(keys, { sign: { SigningAlgorithm: 'ED25519_PH_SHA_512' } });
+  await assert.rejects(
+    signRegistryCatalogWithKms({ root, kms, kmsKeyId: KMS_KEY_ARN, expectedKeyId: keys.keyId }),
+    { code: 'UIFN_REGISTRY_KMS_RESPONSE_INVALID' },
+  );
+  assertUnchanged(root);
+});
+
+test('refuses a non-Ed25519 KMS key before signing', async (t) => {
+  const root = fixture(t);
+  const keys = keyPair();
+  const ecSpki = generateKeyPairSync('ec', { namedCurve: 'P-256' }).publicKey.export({ type: 'spki', format: 'der' });
+  const kms = mockKms(keys, { publicKey: { PublicKey: ecSpki } });
+  await assert.rejects(
+    signRegistryCatalogWithKms({ root, kms, kmsKeyId: KMS_KEY_ARN, expectedKeyId: registryKeyId(ecSpki) }),
+    { code: 'UIFN_REGISTRY_KMS_KEY_INVALID' },
+  );
+  assert.deepEqual(kms.calls.map(([name]) => name), ['GetPublicKey']);
+  assertUnchanged(root);
+});
+
+test('refuses and writes nothing when KMS omits the key spec, key id or signing algorithm', async (t) => {
+  const keys = keyPair();
+  for (const [overrides, code] of [
+    [{ publicKey: { KeySpec: undefined } }, 'UIFN_REGISTRY_KMS_KEY_INVALID'],
+    [{ publicKey: { KeySpec: 'RSA_2048' } }, 'UIFN_REGISTRY_KMS_KEY_INVALID'],
+    [{ sign: { SigningAlgorithm: undefined } }, 'UIFN_REGISTRY_KMS_RESPONSE_INVALID'],
+    [{ sign: { KeyId: undefined } }, 'UIFN_REGISTRY_KMS_KEY_MISMATCH'],
+  ]) {
+    const root = fixture(t);
+    await assert.rejects(
+      signRegistryCatalogWithKms({ root, kms: mockKms(keys, overrides), kmsKeyId: KMS_KEY_ARN, expectedKeyId: keys.keyId }),
+      { code },
+    );
+    assertUnchanged(root);
+  }
+});
+
+test('refuses and writes nothing when a KMS call fails', async (t) => {
+  const root = fixture(t);
+  const keys = keyPair();
+  const kms = mockKms(keys);
+  kms.sign = async () => { throw new Error('AccessDeniedException'); };
+  await assert.rejects(signRegistryCatalogWithKms({ root, kms, kmsKeyId: KMS_KEY_ARN, expectedKeyId: keys.keyId }), /AccessDeniedException/);
+  assertUnchanged(root);
+});
+
+test('refuses missing or malformed configuration before calling KMS', async (t) => {
+  const root = fixture(t);
+  const keys = keyPair();
+  const kms = mockKms(keys);
+  for (const [kmsKeyId, expectedKeyId] of [['', keys.keyId], [KMS_KEY_ARN, undefined], [KMS_KEY_ARN, keys.keyId.toUpperCase()], [KMS_KEY_ARN, keys.keyId.slice(0, 23)]]) {
+    await assert.rejects(signRegistryCatalogWithKms({ root, kms, kmsKeyId, expectedKeyId }), { code: 'UIFN_REGISTRY_KMS_CONFIG_MISSING' });
+  }
+  assert.deepEqual(kms.calls, []);
+  assertUnchanged(root);
+});
+
+test('AWS CLI client passes RAW / ED25519_SHA_512, the base64 message and the region without a shell', async () => {
+  const keys = keyPair();
+  const invocations = [];
+  const run = (command, args, options) => {
+    invocations.push({ command, args, options });
+    if (args[1] === 'get-public-key') {
+      return { status: 0, stdout: JSON.stringify({ KeyId: KMS_KEY_ARN, KeySpec: 'ECC_NIST_EDWARDS25519', PublicKey: keys.spki.toString('base64') }) };
+    }
+    const message = Buffer.from(args[args.indexOf('--message') + 1], 'base64');
+    return { status: 0, stdout: JSON.stringify({ KeyId: KMS_KEY_ARN, SigningAlgorithm: 'ED25519_SHA_512', Signature: sign(null, message, keys.privateKey).toString('base64') }) };
+  };
+  const client = createAwsCliKmsClient({ region: 'eu-west-1', run, env: {} });
+  const message = registryV2SigningInput(Buffer.from(CATALOG));
+  const publicKey = await client.getPublicKey({ KeyId: 'alias/uifn' });
+  assert.deepEqual(publicKey.PublicKey, keys.spki);
+  const signed = await client.sign({ KeyId: 'alias/uifn', Message: message, MessageType: 'RAW', SigningAlgorithm: 'ED25519_SHA_512' });
+  assert.equal(verify(null, message, keys.publicKey, signed.Signature), true);
+
+  assert.deepEqual(invocations[0].args, ['kms', 'get-public-key', '--key-id', 'alias/uifn', '--region', 'eu-west-1', '--output', 'json']);
+  assert.deepEqual(invocations[1].args, [
+    'kms', 'sign', '--key-id', 'alias/uifn', '--message', message.toString('base64'), '--cli-binary-format', 'base64',
+    '--message-type', 'RAW', '--signing-algorithm', 'ED25519_SHA_512', '--region', 'eu-west-1', '--output', 'json',
+  ]);
+  for (const { command, options } of invocations) {
+    assert.equal(command, 'aws');
+    assert.equal(options.shell, false);
+    assert.equal(options.env.AWS_PAGER, '');
+  }
+});
+
+test('AWS CLI client turns a failed or malformed call into an error', async () => {
+  const failing = createAwsCliKmsClient({ region: 'us-east-1', run: () => ({ status: 254, stdout: '', stderr: 'An error occurred (AccessDeniedException)' }), env: {} });
+  await assert.rejects(failing.getPublicKey({ KeyId: 'k' }), { code: 'UIFN_REGISTRY_KMS_CALL_FAILED', message: /AccessDeniedException/ });
+  const malformed = createAwsCliKmsClient({ region: 'us-east-1', run: () => ({ status: 0, stdout: JSON.stringify({ Signature: 'not base64!' }) }), env: {} });
+  await assert.rejects(malformed.sign({ KeyId: 'k', Message: Buffer.alloc(49), MessageType: 'RAW', SigningAlgorithm: 'ED25519_SHA_512' }), { code: 'UIFN_REGISTRY_KMS_RESPONSE_INVALID' });
+  assert.throws(() => createAwsCliKmsClient({ region: '' }), { code: 'UIFN_REGISTRY_KMS_CONFIG_MISSING' });
+});
+
+test('CLI exits non-zero without configuration and does not touch the committed signature', (t) => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'uifn-registry-kms-cli-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  // A fake `aws` on PATH proves no KMS call is attempted when the expected key id is missing.
+  const marker = path.join(directory, 'aws-called');
+  const fakeAws = path.join(directory, 'aws');
+  writeFileSync(fakeAws, `#!/bin/sh\ntouch "${marker}"\nexit 1\n`);
+  chmodSync(fakeAws, 0o755);
+  const repositoryRoot = path.resolve(path.dirname(scriptPath), '..');
+  const before = readFileSync(path.join(repositoryRoot, REGISTRY_SIGNATURE_JSON_PATH));
+  const result = spawnSync(process.execPath, [scriptPath], {
+    encoding: 'utf8',
+    env: { PATH: `${directory}${path.delimiter}${process.env.PATH}`, UIFN_REGISTRY_KMS_KEY_ID: KMS_KEY_ARN, UIFN_REGISTRY_KMS_REGION: 'us-east-1' },
+  });
+  assert.equal(result.status, 1);
+  assert.equal(JSON.parse(result.stderr).code, 'UIFN_REGISTRY_KMS_CONFIG_MISSING');
+  assert.equal(existsSync(marker), false);
+  assert.deepEqual(readFileSync(path.join(repositoryRoot, REGISTRY_SIGNATURE_JSON_PATH)), before);
+});
+
+test('refuses a symlinked catalog or signature file and writes nothing', async (t) => {
+  const keys = keyPair();
+  for (const relative of [REGISTRY_CATALOG_PATH, REGISTRY_SIGNATURE_JSON_PATH]) {
+    const root = fixture(t);
+    const outside = path.join(root, 'outside.json');
+    writeFileSync(outside, CATALOG);
+    rmSync(path.join(root, relative));
+    symlinkSync(outside, path.join(root, relative));
+    const kms = mockKms(keys);
+    await assert.rejects(
+      signRegistryCatalogWithKms({ root, kms, kmsKeyId: KMS_KEY_ARN, expectedKeyId: keys.keyId }),
+      { code: 'UIFN_REGISTRY_PATH_INVALID' },
+    );
+    assert.deepEqual(kms.calls, []);
+    assert.equal(readFileSync(outside, 'utf8'), CATALOG);
+  }
+});
+
+test('CLI signs another checkout with --root through the AWS CLI and prints a summary', (t) => {
+  const root = fixture(t);
+  const keys = keyPair();
+  const bin = mkdtempSync(path.join(tmpdir(), 'uifn-registry-kms-bin-'));
+  t.after(() => rmSync(bin, { recursive: true, force: true }));
+  const privateKeyPath = path.join(bin, 'key.pem');
+  writeFileSync(privateKeyPath, keys.privateKey.export({ type: 'pkcs8', format: 'pem' }));
+  const log = path.join(bin, 'calls.jsonl');
+  // Fake AWS CLI: records argv and answers get-public-key / sign like KMS would.
+  writeFileSync(path.join(bin, 'aws'), `#!${process.execPath}
+const { appendFileSync, readFileSync } = require('node:fs');
+const { createPrivateKey, createPublicKey, sign } = require('node:crypto');
+const args = process.argv.slice(2);
+appendFileSync(${JSON.stringify(log)}, JSON.stringify(args) + '\\n');
+const key = createPrivateKey(readFileSync(${JSON.stringify(privateKeyPath)}));
+const arn = ${JSON.stringify(KMS_KEY_ARN)};
+if (args[1] === 'get-public-key') {
+  process.stdout.write(JSON.stringify({ KeyId: arn, KeySpec: 'ECC_NIST_EDWARDS25519', PublicKey: createPublicKey(key).export({ type: 'spki', format: 'der' }).toString('base64') }));
+} else {
+  const message = Buffer.from(args[args.indexOf('--message') + 1], 'base64');
+  process.stdout.write(JSON.stringify({ KeyId: arn, SigningAlgorithm: 'ED25519_SHA_512', Signature: sign(null, message, key).toString('base64') }));
+}
+`);
+  chmodSync(path.join(bin, 'aws'), 0o755);
+  const result = spawnSync(process.execPath, [scriptPath, '--root', root], {
+    encoding: 'utf8',
+    env: {
+      PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+      UIFN_REGISTRY_KMS_KEY_ID: 'alias/uifn-registry',
+      UIFN_REGISTRY_KMS_REGION: 'us-east-1',
+      UIFN_REGISTRY_EXPECTED_KEY_ID: keys.keyId,
+    },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const summary = JSON.parse(result.stdout);
+  assert.equal(summary.keyId, keys.keyId);
+  assert.equal(summary.domain, 'uifn-registry-v2');
+  const envelope = JSON.parse(readFileSync(path.join(root, REGISTRY_SIGNATURE_JSON_PATH), 'utf8'));
+  assert.equal(envelope.schemaVersion, 2);
+  assert.equal(verify(null, registryV2SigningInput(Buffer.from(CATALOG)), keys.publicKey, Buffer.from(envelope.signatureBase64, 'base64')), true);
+  const calls = readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(calls.map((args) => args[1]), ['get-public-key', 'sign']);
+  assert.ok(calls[1].includes('--cli-binary-format'));
+});
+
+test('CLI rejects unknown arguments', () => {
+  const result = spawnSync(process.execPath, [scriptPath, '--private-key', 'x'], { encoding: 'utf8', env: { PATH: process.env.PATH } });
+  assert.equal(result.status, 1);
+});

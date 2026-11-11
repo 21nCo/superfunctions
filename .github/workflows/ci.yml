@@ -65,6 +65,9 @@ jobs:
       - name: Verify UIFn docs CLI resolution
         run: node --test scripts/uifn-docs-cli-resolution.test.mjs
 
+      - name: Verify UIFn registry KMS signer
+        run: node --test scripts/sign-uifn-registry-kms.test.mjs
+
       - name: Nested package-lock.json files are not tracked
         run: |
           node --test scripts/verify-package-lockfiles.test.mjs
