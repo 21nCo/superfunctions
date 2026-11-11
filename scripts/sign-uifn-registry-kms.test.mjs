@@ -19,6 +19,7 @@ import {
 } from './sign-uifn-registry-kms.mjs';
 
 const scriptPath = fileURLToPath(new URL('./sign-uifn-registry-kms.mjs', import.meta.url));
+const scriptUrl = pathToFileURL(scriptPath).href;
 const KMS_KEY_ARN = 'arn:aws:kms:us-east-1:000000000000:key/00000000-0000-0000-0000-000000000000';
 const CATALOG = '{\n  "schemaVersion": 2,\n  "artifacts": []\n}\n';
 const V1_JSON = '{\n  "schemaVersion": 1\n}\n';
@@ -340,7 +341,7 @@ test('reports the publish and every cleanup failure, attempts each removal, and 
 test('recovers the originals after a run was killed between the two renames', (t) => {
   const { directory, files: [first, second] } = pair(t);
   const child = `import { renameSync } from 'node:fs';
-import { writeFilesAtomically } from ${JSON.stringify(scriptPath)};
+import { writeFilesAtomically } from ${JSON.stringify(scriptUrl)};
 writeFilesAtomically([[${JSON.stringify(first)}, 'killed'], [${JSON.stringify(second)}, 'killed']], {
   renameSync(from, to) { renameSync(from, to); if (from.endsWith('.kms-sign.tmp')) process.kill(process.pid, 'SIGKILL'); },
 });`;
@@ -401,7 +402,7 @@ test('refuses a journal it cannot trust or read and changes nothing', (t) => {
 /** Runs writeFilesAtomically in a child process that is killed when `killWhen(operation, path)` first holds. */
 function killedRun(files, killWhen) {
   const child = `import * as fs from 'node:fs';
-import { writeFilesAtomically } from ${JSON.stringify(scriptPath)};
+import { writeFilesAtomically } from ${JSON.stringify(scriptUrl)};
 const killWhen = ${killWhen};
 const wrap = (name) => (...args) => { const result = fs[name](...args); if (killWhen(name, String(args[0]))) process.kill(process.pid, 'SIGKILL'); return result; };
 writeFilesAtomically(${JSON.stringify(files)}, { linkSync: wrap('linkSync'), renameSync: wrap('renameSync'), rmSync: wrap('rmSync') });`;
@@ -497,6 +498,8 @@ test('the workflow commit step commits any nonempty subset of the two signature 
   t.after(() => rmSync(work, { recursive: true, force: true }));
   const repo = path.join(work, 'repo');
   const env = { ...process.env, GIT_CONFIG_GLOBAL: path.join(work, 'gitconfig'), GIT_CONFIG_NOSYSTEM: '1' };
+  // Never let an inherited repository location (for example from a git hook) point the destructive commands below elsewhere.
+  for (const name of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE', 'GIT_CEILING_DIRECTORIES']) delete env[name];
   const git = (...args) => {
     const result = spawnSync('git', args, { cwd: repo, encoding: 'utf8', env });
     assert.equal(result.status, 0, result.stderr);
