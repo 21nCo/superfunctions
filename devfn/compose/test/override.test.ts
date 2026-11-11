@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import { checkReadinessNow, gatedLauncherStatus, processBirthSignature, runGatedCommand } from "@devfn/processes";
 import { describe, expect, it } from "vitest";
 import { ComposeController, composeProjectName, type ComposeLaunch, createComposeEnvironment, createComposeReadinessEnvironment, effectiveComposeServiceNetworks, fingerprintComposeSource, renderComposeOverride, type ManagedComposeService } from "../src/index.js";
