@@ -57,6 +57,8 @@ struct UIFnAccessibilityElement: CustomStringConvertible {
     /// On macOS, the text of the element that names it, such as a switch's
     /// label beside it, which VoiceOver reads when the element has no label.
     var titleElementText: String? = nil
+    /// The element's frame in screen coordinates, in points.
+    var frame: CGRect = .zero
 
     func `is`(_ role: UIFnAccessibilityRole) -> Bool { platformRole == role.platformRole }
 
@@ -193,7 +195,8 @@ final class UIFnAccessibilityHost<Content: View> {
             label: label ?? (isText ? value : nil),
             value: label == nil && isText ? nil : value,
             press: { element.accessibilityPerformPress?() ?? false },
-            titleElementText: titleElement.flatMap { object($0, "accessibilityValue") as? String }
+            titleElementText: titleElement.flatMap { object($0, "accessibilityValue") as? String },
+            frame: element.accessibilityFrame?() ?? .zero
         )]
     }
 
@@ -212,7 +215,8 @@ final class UIFnAccessibilityHost<Content: View> {
                 platformRole: UIFnAccessibilityElement.describe(node.accessibilityTraits),
                 label: node.accessibilityLabel,
                 value: node.accessibilityValue,
-                press: { node.accessibilityActivate() }
+                press: { node.accessibilityActivate() },
+                frame: node.accessibilityFrame
             )]
         }
         if let children = node.accessibilityElements as? [NSObject] {

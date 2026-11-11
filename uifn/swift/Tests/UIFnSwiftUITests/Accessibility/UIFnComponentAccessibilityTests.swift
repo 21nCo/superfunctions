@@ -171,6 +171,21 @@ struct UIFnComponentAccessibilityTests {
         )
     }
 
+    /// The title and message start at whole points, whatever their widths,
+    /// so neither is drawn between pixels. Centered at a half point on a 1x
+    /// display, the message failed the macOS contrast audit.
+    @Test(arguments: [400, 401] as [CGFloat])
+    func anEmptyStatesTextsStartAtWholePoints(_ width: CGFloat) async {
+        let expected: [Expected] = [(.heading, "No files", nil), (.staticText, "Files you add appear here.", nil)]
+        let host = UIFnAccessibilityHost(UIFnEmptyState("No files", message: "Files you add appear here.").environment(\.locale, Locale(identifier: "en_US")), width: width)
+        defer { host.close() }
+        let elements = await host.elements { Self.match($0, expected) && $0.allSatisfy { !$0.frame.isEmpty } }
+        #expect(Self.match(elements, expected), "\(elements)")
+        for element in elements {
+            #expect(!element.frame.isEmpty && element.frame.minX == element.frame.minX.rounded() && element.frame.minY == element.frame.minY.rounded(), "\(element.label ?? "") at \(element.frame)")
+        }
+    }
+
     @Test
     func anEmptyStateWithOnlyATitleIsOneHeading() async {
         await expectElements(UIFnEmptyState("No files"), [(.heading, "No files", nil)])

@@ -268,6 +268,7 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
         // The audit judges contrast from what is on screen, so the
         // whole page must be.
         try assertWholePageIsOnScreen(page, screen: screen, file: file, line: line)
+        try assertListedControlsAreDisabled(on: page, screen: screen, file: file, line: line)
         try auditVisibleContent(of: app, screen: screen, colorScheme: colorScheme, unfinished: &unfinished)
     }
 
@@ -297,6 +298,24 @@ final class WorkbenchAccessibilityAuditTests: XCTestCase {
             "\(screen) is taller than its \(snapshot.frame) page, so the audit cannot see all of it; split the screen or enlarge the window. Outside: \(outside.joined(separator: "; "))",
             file: file, line: line
         )
+    }
+
+    /// Fails unless each control `disabled-contrast` lists for the screen is
+    /// on the page and disabled, so the waiver covers only controls the
+    /// screen disables.
+    private func assertListedControlsAreDisabled(on page: XCUIElement, screen: String, file: StaticString, line: UInt) throws {
+        guard let names = WorkbenchAuditWaiver.disabledControls.first(where: { $0.screen == screen })?.names else { return }
+        var disabled: Set<String> = []
+        func visit(_ element: XCUIElementSnapshot) {
+            if !element.isEnabled {
+                disabled.insert(element.label)
+                (element.value as? String).map { disabled.insert($0) }
+            }
+            element.children.forEach(visit)
+        }
+        visit(try page.snapshot())
+        let missing = names.filter { !disabled.contains($0) }
+        XCTAssertTrue(missing.isEmpty, "\(screen) has no disabled \(missing.joined(separator: ", ")), which disabled-contrast lists", file: file, line: line)
     }
 
     /// Audits the app and, once the audit has finished, fails each issue no

@@ -4,13 +4,11 @@ import AppKit
 /// Apple's contrast engine, the one the macOS accessibility audit judges text
 /// with, run offline: `AXAuditContrastDetectionManager` in the private
 /// AccessibilityAudit framework. It samples five rows of the image and
-/// compares its two most frequent exact colors, or, given both, the
-/// foreground and background colors instead of the image.
+/// compares its two most frequent exact colors.
 ///
 /// The waiver tests run it on the screenshots the audit failed on CI to show
-/// that it reproduces each listed ratio, and the workflow's AX color step runs
-/// it on the colors an element exposes to accessibility. Both run on the CI
-/// Mac's own copy of the framework.
+/// that it reproduces each listed ratio, on the CI Mac's own copy of the
+/// framework.
 enum WorkbenchContrastEngine {
     struct Result {
         let ratio: Double
@@ -20,8 +18,7 @@ enum WorkbenchContrastEngine {
 
     /// The engine's verdict on a PNG of text in the system font of
     /// `fontSize` points, or nil when this Mac has no engine to run.
-    /// `foreground` and `background` are hex colors such as "#BEC5CC".
-    static func contrast(png: Data, fontSize: Double, scale: Double = 1, foreground: String? = nil, background: String? = nil) -> Result? {
+    static func contrast(png: Data, fontSize: Double, scale: Double = 1) -> Result? {
         guard dlopen("/System/Library/PrivateFrameworks/AccessibilityAudit.framework/AccessibilityAudit", RTLD_NOW) != nil,
               let inputClass = NSClassFromString("AXAuditContrastInput") as? NSObject.Type,
               let manager = NSClassFromString("AXAuditContrastDetectionManager") as? NSObject.Type,
@@ -32,8 +29,6 @@ enum WorkbenchContrastEngine {
         input.setValue(scale, forKey: "displayScaleFactor")
         input.setValue(false, forKey: "enhanced")
         input.setValue(NSValue(rect: NSRect(x: 0, y: 0, width: Double(image.pixelsWide) / scale, height: Double(image.pixelsHigh) / scale)), forKey: "imageFrame")
-        foreground.map { input.setValue($0, forKey: "foregroundHexColorValue") }
-        background.map { input.setValue($0, forKey: "backgroundHexColorValue") }
         let shared = NSSelectorFromString("sharedManager"), judge = NSSelectorFromString("contrastResultForInput:")
         guard manager.responds(to: shared),
               let engine = manager.perform(shared)?.takeUnretainedValue() as? NSObject, engine.responds(to: judge),

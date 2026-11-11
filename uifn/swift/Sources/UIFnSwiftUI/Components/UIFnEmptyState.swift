@@ -78,7 +78,7 @@ struct UIFnEmptyStateAppearance<Icon: View, Actions: View>: View {
                     .foregroundColor(context.color(colors.text.muted))
                     .accessibilityHidden(true)
             }
-            VStack(spacing: context.scaled(context.spacing.space1)) {
+            UIFnWholePointColumn(spacing: context.scaled(context.spacing.space1)) {
                 Text(verbatim: title)
                     .uifnFont(context.typography.size.lg, weight: context.typography.weight.semibold)
                     .foregroundColor(context.color(colors.text.primary))
@@ -100,5 +100,30 @@ struct UIFnEmptyStateAppearance<Icon: View, Actions: View>: View {
         }
         .padding(context.scaled(context.spacing.space6))
         .frame(maxWidth: .infinity)
+    }
+}
+
+/// A column of views, each centered, that starts each at a whole point.
+///
+/// A stack centers a text by half its width, which can leave the text at a
+/// fraction of a point, drawn between pixels. The macOS accessibility audit
+/// failed the empty state's message there on a 1x display, though its colors
+/// pass. Whole points are whole pixels at every display scale.
+struct UIFnWholePointColumn: Layout {
+    var spacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let sizes = subviews.map { $0.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil)) }
+        let height = sizes.reduce(0) { $0 + $1.height } + spacing * CGFloat(max(sizes.count - 1, 0))
+        return CGSize(width: sizes.map(\.width).max() ?? 0, height: height.rounded(.up))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for subview in subviews {
+            let size = subview.sizeThatFits(ProposedViewSize(width: bounds.width, height: nil))
+            subview.place(at: CGPoint(x: (bounds.midX - size.width / 2).rounded(), y: y.rounded()), proposal: ProposedViewSize(size))
+            y += size.height + spacing
+        }
     }
 }

@@ -237,20 +237,6 @@ jobs:
         run: |
           xcodebuild test-without-building -project SwiftUIWorkbench.xcodeproj -scheme SwiftUIWorkbench \
             -destination "$DESTINATION" -resultBundlePath "$RESULT"
-      # The macOS audit has failed the empty state's message in dark, though
-      # Apple's engine passes its screenshot (11.29:1). Record the colors the
-      # message exposes to accessibility and what the engine makes of them; the
-      # README lists it as a known misread only if they reproduce a failure.
-      - name: Record the empty state message's accessibility colors
-        if: ${{ !cancelled() && matrix.platform == 'macOS' }}
-        working-directory: uifn/examples/swiftui-workbench
-        env:
-          OUT: ${{ runner.temp }}/swiftui-workbench-macOS-ax-colors.txt
-        run: |
-          app=$(find ~/Library/Developer/Xcode/DerivedData -maxdepth 6 -path '*/Build/Products/Debug/SwiftUIWorkbench.app' -print -quit)
-          xcrun swiftc -parse-as-library Scripts/RecordAXColors.swift UITests/WorkbenchContrastEngine.swift -o "$RUNNER_TEMP/RecordAXColors"
-          "$RUNNER_TEMP/RecordAXColors" "$app" UITests/contrast-empty-state-dark.png | tee "$OUT"
-          { echo "### Accessibility colors of the empty state's message (dark)"; echo '```'; cat "$OUT"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       # Kept on success too: the result bundle lists each audit and the issues
       # it waived.
       - name: Upload the audit results
@@ -258,9 +244,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: swiftui-workbench-${{ matrix.platform }}-xcresult
-          path: |
-            ${{ runner.temp }}/swiftui-workbench-${{ matrix.platform }}.xcresult
-            ${{ runner.temp }}/swiftui-workbench-${{ matrix.platform }}-ax-colors.txt
+          path: ${{ runner.temp }}/swiftui-workbench-${{ matrix.platform }}.xcresult
           if-no-files-found: ignore
 
   tokens:

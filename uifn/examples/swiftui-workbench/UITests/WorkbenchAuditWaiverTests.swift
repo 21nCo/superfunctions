@@ -36,6 +36,49 @@ final class WorkbenchAuditWaiverTests: XCTestCase {
         }
     }
 
+    private func waiver(_ auditType: String, _ element: WorkbenchAuditElement?, _ context: WorkbenchAuditContext) -> String? {
+        WorkbenchAuditWaiver.matching(auditType, on: element, in: context)?.id
+    }
+
+    /// `disabled-contrast` covers only the controls a screen disables, and
+    /// only while the audit reports them disabled.
+    func testTheDisabledWaiverCoversOnlyTheControlsTheScreensDisable() {
+        let context = { (screen: String) in
+            WorkbenchAuditContext(screen: screen, colorScheme: "light", page: CGRect(x: 0, y: 100, width: 400, height: 600), window: CGRect(x: 0, y: 0, width: 400, height: 800))
+        }
+        for (screen, _, names) in WorkbenchAuditWaiver.disabledControls {
+            for name in names {
+                let disabled = [
+                    WorkbenchAuditElement(type: .button, label: name, frame: CGRect(x: 24, y: 452, width: 57, height: 33), isEnabled: false),
+                    WorkbenchAuditElement(type: .staticText, value: name, frame: CGRect(x: 24, y: 452, width: 57, height: 16), isEnabled: false),
+                ]
+                for element in disabled {
+                    XCTAssertEqual(waiver("contrast", element, context(screen)), "disabled-contrast", "\(name) on \(screen)")
+                    var enabled = element
+                    enabled.isEnabled = true
+                    XCTAssertNotEqual(waiver("contrast", enabled, context(screen)), "disabled-contrast", "\(name) on \(screen), enabled")
+                    // Another screen that does not disable it.
+                    XCTAssertNil(waiver("contrast", element, context("banners")), "\(name) on banners")
+                }
+            }
+        }
+        // A disabled control no screen disables.
+        XCTAssertNil(waiver("contrast", WorkbenchAuditElement(type: .button, label: "Show toast", frame: CGRect(x: 24, y: 100, width: 90, height: 24), isEnabled: false), context("buttons")))
+    }
+
+    /// The unchecked checkboxes are listed misreads on iOS only, where the
+    /// audit failed them, and only as the unchecked "Send me news" and "Archive".
+    func testTheUncheckedCheckboxesAreListedOnIOSOnly() {
+        for colorScheme in ["light", "dark"] {
+            let context = WorkbenchAuditContext(screen: "toggles", colorScheme: colorScheme, page: CGRect(x: 0, y: 100, width: 400, height: 600), window: CGRect(x: 0, y: 0, width: 400, height: 800))
+            for label in ["Send me news", "Archive", "Remember me", "Inbox"] {
+                let element = WorkbenchAuditElement(type: .staticText, label: label, frame: CGRect(x: 24, y: 454, width: 111, height: 20))
+                let listed = WorkbenchAuditWaiver.Platform.current == .iOS && ["Send me news", "Archive"].contains(label)
+                XCTAssertEqual(waiver("contrast", element, context), listed ? "contrast-misread" : nil, "\(label) in \(colorScheme)")
+            }
+        }
+    }
+
     #if os(macOS)
     /// Apple's engine, run offline on the screenshot the audit failed on CI,
     /// reproduces each listed ratio, and fails the selected row's screenshot
@@ -101,10 +144,6 @@ final class WorkbenchAuditWaiverTests: XCTestCase {
             touchBars: touchBars ?? [node(.touchBar, touchBar, [node(.button, emoji.frame, label: emoji.label)])]
         )
         return context
-    }
-
-    private func waiver(_ auditType: String, _ element: WorkbenchAuditElement?, _ context: WorkbenchAuditContext) -> String? {
-        WorkbenchAuditWaiver.matching(auditType, on: element, in: context)?.id
     }
 
     func testTheWindowGroupsWaiverCoversOnlyTheFrameworksGroups() {
@@ -174,7 +213,7 @@ final class WorkbenchAuditWaiverTests: XCTestCase {
                     let row = WorkbenchAuditElement(type: .staticText, identifier: WorkbenchApp.sidebarPrefix + id, value: title, frame: CGRect(x: 56, y: 110, width: 40, height: 16))
                     // Only the unselected "Toasts" row, in light.
                     XCTAssertEqual(
-                        waiver("contrast", row, context), id == "toasts" && screen != "toasts" && colorScheme == "light" ? "macos-contrast-misread" : nil,
+                        waiver("contrast", row, context), id == "toasts" && screen != "toasts" && colorScheme == "light" ? "contrast-misread" : nil,
                         "\(id) on \(screen ?? "the list") in \(colorScheme)"
                     )
                 }
@@ -182,7 +221,7 @@ final class WorkbenchAuditWaiverTests: XCTestCase {
         }
         // "Alerts" on the toggles in light, and nowhere else.
         let alerts = WorkbenchAuditElement(type: .staticText, value: "Alerts", frame: CGRect(x: 304, y: 139, width: 36, height: 16))
-        XCTAssertEqual(waiver("contrast", alerts, context(screen: "toggles", colorScheme: "light")), "macos-contrast-misread")
+        XCTAssertEqual(waiver("contrast", alerts, context(screen: "toggles", colorScheme: "light")), "contrast-misread")
         XCTAssertNil(waiver("contrast", alerts, context(screen: "toggles", colorScheme: "dark")))
         XCTAssertNil(waiver("contrast", alerts, context(screen: "buttons")))
         var other = alerts
@@ -203,10 +242,11 @@ final class WorkbenchAuditWaiverTests: XCTestCase {
             XCTAssertNil(waiver("contrast", element, context), "\(element.type)")
         }
         var toastText = WorkbenchAuditElement(type: .staticText, label: "Link copied", value: "The link is on the clipboard.", frame: CGRect(x: 412, y: 640, width: 167, height: 37))
-        XCTAssertEqual(waiver("contrast", toastText, context), "macos-contrast-misread")
+        XCTAssertEqual(waiver("contrast", toastText, context), "contrast-misread")
         XCTAssertNil(waiver("contrast", toastText, self.context(screen: "toasts", colorScheme: "light")))
+        // Toasts disables no control.
         toastText.isEnabled = false
-        XCTAssertEqual(waiver("contrast", toastText, context), "disabled-contrast")
+        XCTAssertNil(waiver("contrast", toastText, context))
     }
     #endif
 }

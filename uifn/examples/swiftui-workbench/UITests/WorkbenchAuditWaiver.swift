@@ -169,22 +169,30 @@ struct WorkbenchAuditWaiver {
     let element: (WorkbenchAuditElement?, WorkbenchAuditContext) -> Bool
     let reason: String
 
+    /// The controls the screens disable, by screen and as the audit names
+    /// them. `disabled-contrast` covers only these, and only an element the
+    /// audit reports disabled; each audit first checks that each is on its
+    /// screen and disabled.
+    static let disabledControls: [(screen: String, title: String, names: [String])] = [
+        ("buttons", "Buttons", ["Save", "Cancel", "More", "Delete"]),
+        ("toggles", "Toggles", ["Sync (disabled)", "Accept terms (disabled)"]),
+        ("text-fields", "Text fields", ["Workspace (disabled)"]),
+        ("segmented-pickers", "Segmented pickers", ["Day", "Week", "Month"]),
+    ]
+
     static let all: [WorkbenchAuditWaiver] = [
         WorkbenchAuditWaiver(
             id: "disabled-contrast",
-            screens: [],
+            screens: Set(disabledControls.map(\.screen)),
             platform: nil,
             auditTypes: ["contrast"],
-            element: { element, _ in element.map { !$0.isEnabled } ?? false },
-            reason: "Disabled controls fade so they read as unavailable. WCAG 2.2 success criterion 1.4.3 exempts text in inactive controls."
-        ),
-        WorkbenchAuditWaiver(
-            id: "unchecked-checkbox-contrast",
-            screens: ["toggles"],
-            platform: nil,
-            auditTypes: ["contrast"],
-            element: { element, _ in element.map { ["Send me news", "Archive"].contains($0.label) } ?? false },
-            reason: "The audit compares the unchecked box's raised fill with the canvas (1.1:1); the checked rows with the same label color pass. The label is the primary text color on the canvas (17:1), and the box's strong border meets the 3:1 non-text minimum (4.0:1 light, 3.6:1 dark)."
+            element: { element, context in
+                guard let element, !element.isEnabled else { return false }
+                let names = disabledControls.first { $0.screen == context.screen }?.names ?? []
+                return names.contains(element.label) || names.contains(element.value)
+            },
+            reason: "Disabled controls fade so they read as unavailable, and WCAG 2.2 success criterion 1.4.3 exempts text in inactive controls. Only the controls the screens disable are waived, each only when the audit reports it disabled, and each audit first checks that they are on its screen and disabled: "
+                + disabledControls.map { "\($0.title) \($0.names.map { "“\($0)”" }.joined(separator: ", "))" }.joined(separator: "; ") + "."
         ),
         WorkbenchAuditWaiver(
             id: "text-field-hit-region",
@@ -265,18 +273,18 @@ struct WorkbenchAuditWaiver {
                 guard let element else { return false }
                 return context.windowTitles.contains { $0.isSame(as: element) }
             },
-            reason: "AppKit draws the window's title in its toolbar in its own colors (light text at 15.7:1 on the dark toolbar). The title's screenshot spans the toolbar with its separator and the window's rounded corner, so the screenshot measurement cannot single out the text. Only a text that is a child of the window or its toolbar is waived, and not one whose type and frame an element of the app's own shares."
+            reason: "AppKit draws the window's title in its toolbar in its own colors (light text at 15.7:1 on the dark toolbar), so neither the app nor UIFn sets them. Only a text that is a child of the window or its toolbar is waived, and not one whose type and frame an element of the app's own shares."
         ),
         WorkbenchAuditWaiver(
-            id: "macos-contrast-misread",
+            id: "contrast-misread",
             screens: [],
-            platform: .macOS,
+            platform: nil,
             auditTypes: ["contrast"],
             element: { element, context in
                 guard let element else { return false }
                 return WorkbenchContrastMisread.matching(element, in: context) != nil
             },
-            reason: "Apple's contrast engine, which the macOS audit uses, samples five rows of a text's screenshot and compares only its two most frequent exact colors, so it can fail text whose colors pass. Only the texts in the known contrast misreads table are waived, each on its screens and in its color scheme: an offline run of the engine on the screenshot CI failed reproduces the reported ratio, and the text's theme tokens give at least 4.5:1. Any other contrast issue fails, as does the selected sidebar row."
+            reason: "Apple's contrast engine samples five rows of a text's screenshot and compares only its two most frequent exact colors, so it can fail text whose colors pass. Only the texts in the known contrast misreads table are waived, each on its platform and screens and in its color scheme: an offline run of the engine on the screenshot CI failed reproduces the reported ratio, and the text's theme tokens give at least 4.5:1. Any other contrast issue fails, as does the selected sidebar row."
         ),
     ]
 
@@ -300,6 +308,7 @@ struct WorkbenchAuditWaiver {
 /// `WorkbenchAuditWaiverTests` checks both.
 struct WorkbenchContrastMisread {
     let id: String
+    let platform: WorkbenchAuditWaiver.Platform
     /// The screens, as the README names them.
     let screens: String
     /// "light" or "dark".
@@ -324,37 +333,54 @@ struct WorkbenchContrastMisread {
 
     static let all: [WorkbenchContrastMisread] = [
         WorkbenchContrastMisread(
-            id: "toasts-row", screens: "All but Toasts", colorScheme: "light", element: "The unselected sidebar row “Toasts”",
+            id: "toasts-row", platform: .macOS, screens: "All but Toasts", colorScheme: "light", element: "The unselected sidebar row “Toasts”",
             matches: { element, screen in element.identifier == WorkbenchApp.sidebarPrefix + "toasts" && screen != "toasts" },
             reportedRatio: 4.35, screenshot: "contrast-toasts-row-light", fontSize: 13,
             foregrounds: ["text.primary"], background: "surface.sunken", tokenRatio: 15.19
         ),
         WorkbenchContrastMisread(
-            id: "toggles-alerts", screens: "Toggles", colorScheme: "light", element: "The switch label “Alerts”",
+            id: "toggles-alerts", platform: .macOS, screens: "Toggles", colorScheme: "light", element: "The switch label “Alerts”",
             matches: { element, screen in screen == "toggles" && element.value == "Alerts" },
             reportedRatio: 1.01, screenshot: "contrast-alerts-light", fontSize: 14,
             foregrounds: ["text.primary"], background: "surface.canvas", tokenRatio: 17.09
         ),
         WorkbenchContrastMisread(
-            id: "toast-link-copied", screens: "Toasts", colorScheme: "dark", element: "The toast “Link copied” with its message",
+            id: "toast-link-copied", platform: .macOS, screens: "Toasts", colorScheme: "dark", element: "The toast “Link copied” with its message",
             matches: { element, screen in screen == "toasts" && element.label == "Link copied" && element.value == "The link is on the clipboard." },
             reportedRatio: 1.01, screenshot: "contrast-toast-dark", fontSize: 14,
             foregrounds: ["text.primary", "text.secondary"], background: "success.subtle", tokenRatio: 8.20
         ),
+        // The engine compares the canvas with the unchecked box's raised fill.
+        uncheckedCheckbox("send-me-news", "Send me news", colorScheme: "light", reportedRatio: 1.06, tokenRatio: 17.09),
+        uncheckedCheckbox("send-me-news", "Send me news", colorScheme: "dark", reportedRatio: 1.09, tokenRatio: 17.01),
+        uncheckedCheckbox("archive", "Archive", colorScheme: "light", reportedRatio: 1.06, tokenRatio: 17.09),
+        uncheckedCheckbox("archive", "Archive", colorScheme: "dark", reportedRatio: 1.09, tokenRatio: 17.01),
     ]
+
+    /// An unchecked checkbox on Toggles on iOS, with its label in the
+    /// primary text color on the canvas.
+    private static func uncheckedCheckbox(_ id: String, _ label: String, colorScheme: String, reportedRatio: Double, tokenRatio: Double) -> WorkbenchContrastMisread {
+        WorkbenchContrastMisread(
+            id: "\(id)-\(colorScheme)", platform: .iOS, screens: "Toggles", colorScheme: colorScheme, element: "The unchecked checkbox “\(label)”",
+            matches: { element, screen in screen == "toggles" && element.label == label },
+            reportedRatio: reportedRatio, screenshot: "contrast-\(id)-\(colorScheme)", fontSize: 17,
+            foregrounds: ["text.primary"], background: "surface.canvas", tokenRatio: tokenRatio
+        )
+    }
 
     /// The row of the README's table: the id, then each column.
     var readmeRow: [String] {
         [
-            "`\(id)`", screens, colorScheme, element, String(format: "%.2f:1", reportedRatio),
+            "`\(id)`", platform.rawValue, screens, colorScheme, element, String(format: "%.2f:1", reportedRatio),
             "\(foregrounds.map { "`\($0)`" }.joined(separator: " and ")) on `\(background)`", String(format: "%.2f:1", tokenRatio),
         ]
     }
 
-    /// The listed text an enabled static text is, where the audit ran, or nil.
+    /// The listed text an enabled static text is, on this platform where the
+    /// audit ran, or nil.
     static func matching(_ element: WorkbenchAuditElement, in context: WorkbenchAuditContext) -> WorkbenchContrastMisread? {
         guard element.type == .staticText, element.isEnabled else { return nil }
-        return all.first { $0.colorScheme == context.colorScheme && $0.matches(element, context.screen) }
+        return all.first { $0.platform == .current && $0.colorScheme == context.colorScheme && $0.matches(element, context.screen) }
     }
 }
 
