@@ -128,12 +128,18 @@ export function inspectPhase16() {
 
   const catalogSha256 = sha256(catalogSource);
   const keyId = sha256(createPublicKey(publicKey).export({ format: 'der', type: 'spki' })).slice(0, 24);
-  const signatureValid = signature.catalogSha256 === catalogSha256
+  // Schema-v2 envelope: the signed input is UTF8("uifn-registry-v2\0") || SHA-256(catalog-bytes), recomputed here.
+  const signingInput = Buffer.concat([Buffer.from('uifn-registry-v2\0', 'utf8'), createHash('sha256').update(catalogSource).digest()]);
+  const signatureValid = signature.schemaVersion === 2
+    && signature.algorithm === 'Ed25519'
+    && signature.domain === 'uifn-registry-v2'
+    && signature.catalogSha256 === catalogSha256
     && signature.keyId === keyId
-    && verify(null, Buffer.from(catalogSource), publicKey, Buffer.from(signature.signatureBase64, 'base64'));
+    && typeof signature.signatureBase64 === 'string'
+    && verify(null, signingInput, publicKey, Buffer.from(signature.signatureBase64, 'base64'));
   if (!signatureValid) failures.push({ code: 'UIFN_REGISTRY_SIGNATURE_INVALID' });
 
-  const registrySources = ['schema.ts', 'trust.ts', 'build-registry.ts', 'plan.ts', 'transaction.ts', 'add.ts', 'diff.ts', 'update.ts', 'remove.ts', 'lockfile.ts', 'cli.ts'];
+  const registrySources = ['schema.ts', 'trust.ts', 'trust-verify.ts', 'trust-root.ts', 'build-registry.ts', 'plan.ts', 'transaction.ts', 'add.ts', 'diff.ts', 'update.ts', 'remove.ts', 'lockfile.ts', 'cli.ts'];
   registrySources.forEach((name) => {
     const pathname = path.join(root, 'uifn/registry/src', name);
     if (!existsSync(pathname) || !statSync(pathname).isFile()) failures.push({ code: 'UIFN_REGISTRY_RUNTIME_MISSING', path: `uifn/registry/src/${name}` });

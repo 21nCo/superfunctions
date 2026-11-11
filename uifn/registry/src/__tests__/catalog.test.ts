@@ -68,13 +68,15 @@ describe('TV-GEN-001-P/N canonical delivery catalog', () => {
       .update(publicKey.export({ type: 'spki', format: 'der' }))
       .digest('hex')
       .slice(0, 24);
+    const digest = createHash('sha256').update(payload).digest();
     expect(verifyRegistryCatalogSignature(payload, {
-      schemaVersion: 1,
+      schemaVersion: 2,
       algorithm: 'Ed25519',
+      domain: 'uifn-registry-v2',
       keyId,
-      catalogSha256: createHash('sha256').update(payload).digest('hex'),
-      signatureBase64: sign(null, Buffer.from(payload), privateKey).toString('base64'),
-    })).toMatchObject({ ok: false, code: 'UIFN_REGISTRY_SIGNATURE_INVALID' });
+      catalogSha256: digest.toString('hex'),
+      signatureBase64: sign(null, Buffer.concat([Buffer.from('uifn-registry-v2\0'), digest]), privateKey).toString('base64'),
+    })).toMatchObject({ ok: false, code: 'UIFN_REGISTRY_SIGNATURE_INVALID', reason: 'key-mismatch' });
   });
 
   it('fails closed for malformed signature envelopes', () => {
@@ -94,7 +96,8 @@ describe('TV-GEN-001-P/N canonical delivery catalog', () => {
     expect(verifyRegistryCatalogSignature('catalog', signature)).toMatchObject({
       ok: false,
       code: 'UIFN_REGISTRY_SIGNATURE_INVALID',
-      keyId: '',
+      reason: 'envelope-malformed',
+      keyId: 'a72cc93c0e85e7af79cf582c',
     });
   });
 });
