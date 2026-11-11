@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash, generateKeyPairSync, sign, verify } from 'node:crypto';
-import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
+import * as nodeModule from 'node:module';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   REGISTRY_CATALOG_PATH,
   REGISTRY_SIGNATURE_JSON_PATH,
@@ -94,6 +95,24 @@ function failingPublishRename(failAt) {
 }
 
 const journalOf = (first) => `${first}.kms-sign.journal`;
+
+/** Real fs operations, except that every lookup of `file` fails with EIO (fs.existsSync then reports it missing). */
+function failingLookup(file) {
+  return {
+    existsSync: (candidate) => candidate !== file && existsSync(candidate),
+    lstatSync(candidate, options) {
+      if (candidate === file) throw Object.assign(new Error(`EIO: injected lookup failure ${path.basename(file)}`), { code: 'EIO' });
+      return lstatSync(candidate, options);
+    },
+  };
+}
+
+const failingStaging = {
+  openSync(file, flags) {
+    if (file.endsWith('.kms-sign.tmp')) throw new Error('EIO: injected staging failure');
+    return openSync(file, flags);
+  },
+};
 
 test('signing input is exactly UTF8("uifn-registry-v2\\0") followed by SHA-256 of the catalog bytes', () => {
   const input = registryV2SigningInput(Buffer.from(CATALOG));
@@ -342,7 +361,7 @@ writeFilesAtomically([[${JSON.stringify(first)}, 'killed'], [${JSON.stringify(se
 
 test('refuses while another live run holds the journal and changes nothing', (t) => {
   const { directory, files: [first, second] } = pair(t);
-  const journal = JSON.stringify({ pid: process.ppid, targets: [{ target: first, existed: true }, { target: second, existed: true }] });
+  const journal = JSON.stringify({ pid: process.ppid, targets: [{ target: first, existed: true }, { target: second, existed: true }], published: false });
   writeFileSync(journalOf(first), journal);
   writeFileSync(`${first}.kms-sign.bak`, 'other run');
   assert.throws(() => writeFilesAtomically([[first, 'new'], [second, 'new']]), { code: 'UIFN_REGISTRY_WRITE_IN_PROGRESS' });
@@ -356,11 +375,13 @@ test('refuses a journal it cannot trust or read and changes nothing', (t) => {
   const { directory, files: [first, second] } = pair(t);
   const victim = path.join(directory, 'victim.txt');
   writeFileSync(victim, 'keep');
-  const foreign = JSON.stringify({ pid: 2 ** 22 + 1, targets: [{ target: victim, existed: false }, { target: second, existed: true }] });
+  const foreign = JSON.stringify({ pid: 2 ** 22 + 1, targets: [{ target: victim, existed: false }, { target: second, existed: true }], published: false });
+  const unphased = JSON.stringify({ pid: 2 ** 22 + 1, targets: [{ target: first, existed: true }, { target: second, existed: true }] });
   const cases = [
     [foreign, {}, /does not describe these signature files/],
+    [unphased, {}, /does not describe these signature files/],
     ['', {}, /Unexpected end of JSON input/],
-    [JSON.stringify({ pid: 2 ** 22 + 1, targets: [{ target: first, existed: true }, { target: second, existed: true }] }),
+    [JSON.stringify({ pid: 2 ** 22 + 1, targets: [{ target: first, existed: true }, { target: second, existed: true }], published: false }),
       { readFileSync() { throw new Error('EIO: injected read failure'); } }, /EIO: injected read failure/],
   ];
   for (const [contents, fileSystem, message] of cases) {
@@ -402,7 +423,8 @@ test('completes in one run after a killed first-ever signing created only the fi
 
 test('keeps the new pair when a run is killed after it released a backup', (t) => {
   const { directory, files: [first, second] } = pair(t);
-  killedRun([[first, 'killed'], [second, 'killed']], "(name, file) => name === 'rmSync' && file.endsWith('first.json.kms-sign.bak')");
+  // The first removal of that path is the sweep before staging; the second releases the backup after publishing.
+  killedRun([[first, 'killed'], [second, 'killed']], "((count = 0) => (name, file) => name === 'rmSync' && file.endsWith('first.json.kms-sign.bak') && ++count === 2)()");
   assert.ok(existsSync(journalOf(first)));
   // Recovery must not restore the one remaining backup: that would mix the pair.
   assert.throws(() => writeFilesAtomically([[first, 'later'], [second, 'later']], failingPublishRename(2)), { message: /every replaced signature file was restored/ });
@@ -444,15 +466,84 @@ test('the workflow compares every module the catalog generator loads', (t) => {
   const hooks = `import { appendFileSync } from 'node:fs';
 export async function resolve(specifier, context, next) { const result = await next(specifier, context); appendFileSync(${JSON.stringify(log)}, result.url + '\\n'); return result; }`;
   const hooksUrl = 'data:text/javascript,' + encodeURIComponent(hooks);
+  // module.register needs Node 18.19+; on older supported versions (engines: >=18.17) the same hooks load with --experimental-loader.
   const register = `import { register } from 'node:module'; register(${JSON.stringify(hooksUrl)});`;
-  spawnSync(process.execPath, ['--import', `data:text/javascript,${encodeURIComponent(register)}`, 'scripts/generate-uifn-registry.mjs', '--check'], { cwd: repositoryRoot, encoding: 'utf8' });
+  const loader = typeof nodeModule.register === 'function' ? ['--import', `data:text/javascript,${encodeURIComponent(register)}`] : ['--experimental-loader', hooksUrl];
+  const generated = spawnSync(process.execPath, [...loader, 'scripts/generate-uifn-registry.mjs', '--check'], { cwd: repositoryRoot, encoding: 'utf8' });
+  assert.equal(generated.status, 0, generated.stderr);
   const urls = [...new Set(readFileSync(log, 'utf8').trim().split('\n'))];
-  const scriptsUrl = new URL('./', `file://${path.dirname(scriptPath)}/`).href;
+  const scriptsUrl = pathToFileURL(path.dirname(scriptPath) + path.sep).href;
   assert.deepEqual(urls.filter((url) => !url.startsWith('node:') && !url.startsWith(scriptsUrl)), [], 'the generator loads only builtins and scripts/ modules');
   const loaded = urls.filter((url) => url.startsWith(scriptsUrl)).map((url) => url.slice(scriptsUrl.length)).sort();
   const workflow = readFileSync(path.join(repositoryRoot, '.github/workflows/uifn-registry-sign.yml'), 'utf8');
   const compared = workflow.match(/for file in ([^;]+); do/)[1].trim().split(/\s+/).sort();
   assert.deepEqual(compared, loaded);
+});
+
+/** The body of a `run: |` step of the signing workflow. */
+function workflowStepScript(name) {
+  const lines = readFileSync(path.join(path.dirname(scriptPath), '../.github/workflows/uifn-registry-sign.yml'), 'utf8').split('\n');
+  const start = lines.findIndex((line) => line.trim() === `- name: ${name}`);
+  const run = lines.findIndex((line, index) => index > start && line.trim() === 'run: |');
+  assert.ok(start >= 0 && !lines.slice(start + 1, run).some((line) => line.trim().startsWith('- name:')), `step ${name} has a run block`);
+  const indent = lines[run + 1].match(/^ */)[0];
+  const end = lines.findIndex((line, index) => index > run && line.trim() !== '' && !line.startsWith(indent));
+  return lines.slice(run + 1, end).map((line) => line.slice(indent.length)).join('\n');
+}
+
+test('the workflow commit step commits any nonempty subset of the two signature files and nothing else', (t) => {
+  const script = workflowStepScript('Commit and push the signature files');
+  const work = mkdtempSync(path.join(tmpdir(), 'uifn-registry-kms-commit-'));
+  t.after(() => rmSync(work, { recursive: true, force: true }));
+  const repo = path.join(work, 'repo');
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: path.join(work, 'gitconfig'), GIT_CONFIG_NOSYSTEM: '1' };
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: repo, encoding: 'utf8', env });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  writeFileSync(env.GIT_CONFIG_GLOBAL, '[user]\n\tname = test\n\temail = test@example.invalid\n');
+  spawnSync('git', ['init', '--bare', '-q', path.join(work, 'remote.git')], { env });
+  mkdirSync(repo);
+  git('init', '-q');
+  for (const relative of [REGISTRY_SIGNATURE_JSON_PATH, REGISTRY_SIGNATURE_TS_PATH]) {
+    mkdirSync(path.dirname(path.join(repo, relative)), { recursive: true });
+    writeFileSync(path.join(repo, relative), 'v1\n');
+  }
+  git('add', '.');
+  git('commit', '-q', '-m', 'base');
+  git('remote', 'add', 'origin', path.join(work, 'remote.git'));
+  const base = git('rev-parse', 'HEAD');
+  const cases = [
+    [[REGISTRY_SIGNATURE_JSON_PATH], 0, [REGISTRY_SIGNATURE_JSON_PATH]],
+    [[REGISTRY_SIGNATURE_TS_PATH], 0, [REGISTRY_SIGNATURE_TS_PATH]],
+    [[REGISTRY_SIGNATURE_JSON_PATH, REGISTRY_SIGNATURE_TS_PATH], 0, [REGISTRY_SIGNATURE_JSON_PATH, REGISTRY_SIGNATURE_TS_PATH]],
+    [[], 0, []],
+    [['other.txt'], 1, []],
+    [[REGISTRY_SIGNATURE_JSON_PATH, 'other.txt'], 1, []],
+    [[REGISTRY_SIGNATURE_TS_PATH, `${REGISTRY_SIGNATURE_JSON_PATH}.kms-sign.bak`], 1, []],
+  ];
+  for (const [index, [changes, status, committed]] of cases.entries()) {
+    git('reset', '-q', '--hard', base);
+    git('clean', '-qfdx');
+    for (const relative of changes) writeFileSync(path.join(repo, relative), 'v2\n');
+    const output = path.join(work, `output-${index}`);
+    writeFileSync(output, '');
+    const result = spawnSync('bash', ['-c', script], {
+      cwd: repo,
+      encoding: 'utf8',
+      env: { ...env, SIGN_REF: `case-${index}`, EXPECTED_SHA: base, EXPECTED_KEY_ID: '0'.repeat(24), GITHUB_OUTPUT: output, GITHUB_SERVER_URL: 'https://github.invalid', GITHUB_REPOSITORY: 'o/r', GITHUB_RUN_ID: '1' },
+    });
+    assert.equal(result.status, status, `changes ${changes}: ${result.stdout}${result.stderr}`);
+    const head = git('rev-parse', 'HEAD');
+    if (committed.length === 0) {
+      assert.equal(head, base, `changes ${changes} made no commit`);
+      continue;
+    }
+    assert.deepEqual(git('show', '--name-only', '--format=', 'HEAD').split('\n').sort(), [...committed].sort());
+    assert.equal(git('--git-dir', path.join(work, 'remote.git'), 'rev-parse', `refs/heads/case-${index}`), head);
+    assert.equal(readFileSync(output, 'utf8'), `commit=${head}\n`);
+  }
 });
 
 test('never restores a stale backup as an original, even when the run is interrupted or the sweep fails', (t) => {
@@ -483,6 +574,79 @@ test('removes stale sidecars left without a journal and publishes both files', (
   writeFilesAtomically([[first, 'signed'], [second, 'signed']]);
   assert.equal(readFileSync(first, 'utf8'), 'signed');
   assert.equal(readFileSync(second, 'utf8'), 'signed');
+  assert.deepEqual(readdirSync(directory).sort(), ['first.json', 'second.ts']);
+});
+
+test('a failed lookup of a target is never taken as absence: the run refuses and both originals stay', (t) => {
+  const { directory, files: [first, second] } = pair(t);
+  assert.throws(
+    () => writeFilesAtomically([[first, 'new'], [second, 'new']], { ...failingPublishRename(2), ...failingLookup(first) }),
+    { code: 'UIFN_REGISTRY_WRITE_FAILED', message: /injected lookup failure first\.json\).*no signature file was changed/ },
+  );
+  assert.equal(readFileSync(first, 'utf8'), V1_JSON);
+  assert.equal(readFileSync(second, 'utf8'), V1_TS);
+  assert.deepEqual(readdirSync(directory).sort(), ['first.json', 'second.ts']);
+});
+
+test('a failed backup lookup during recovery keeps the journal and backups; a later run restores the originals', (t) => {
+  const { directory, files: [first, second] } = pair(t);
+  killedRun([[first, 'killed'], [second, 'killed']], "(name, file) => name === 'renameSync' && file.endsWith('.kms-sign.tmp')");
+  const interrupted = readdirSync(directory).sort();
+  assert.throws(
+    () => writeFilesAtomically([[first, 'next'], [second, 'next']], failingLookup(`${first}.kms-sign.bak`)),
+    { code: 'UIFN_REGISTRY_WRITE_FAILED', message: /injected lookup failure first\.json\.kms-sign\.bak.*is kept so the next run retries/ },
+  );
+  assert.deepEqual(readdirSync(directory).sort(), interrupted);
+  assert.equal(readFileSync(`${first}.kms-sign.bak`, 'utf8'), V1_JSON);
+  assert.throws(() => writeFilesAtomically([[first, 'later'], [second, 'later']], failingStaging), { message: /no signature file was changed/ });
+  assert.equal(readFileSync(first, 'utf8'), V1_JSON);
+  assert.equal(readFileSync(second, 'utf8'), V1_TS);
+  assert.deepEqual(readdirSync(directory).sort(), ['first.json', 'second.ts']);
+});
+
+test('keeps a completed first-ever pair whose journal was left behind, even when the next run fails', (t) => {
+  const leaveJournal = [
+    (files) => assert.throws(() => writeFilesAtomically(files, {
+      rmSync(file, options) {
+        if (file.endsWith('.kms-sign.journal')) throw new Error('EIO: injected journal removal failure');
+        rmSync(file, options);
+      },
+    }), { code: 'UIFN_REGISTRY_WRITE_CLEANUP_FAILED' }),
+    // Killed at the first sidecar removal after both renames.
+    (files) => killedRun(files, "((renamed = 0) => (name, file) => { if (name === 'renameSync' && file.endsWith('.kms-sign.tmp')) renamed += 1; return renamed === 2 && name === 'rmSync' && file.includes('.kms-sign.') && !file.includes('.journal'); })()"),
+  ];
+  for (const [index, leave] of leaveJournal.entries()) {
+    const { directory, files: [first, second] } = pair(t);
+    rmSync(first);
+    rmSync(second);
+    leave([[first, 'new'], [second, 'new']]);
+    assert.ok(existsSync(journalOf(first)), `case ${index} left its journal`);
+    assert.throws(() => writeFilesAtomically([[first, 'retry'], [second, 'retry']], failingStaging), { message: /injected staging failure.*no signature file was changed/ });
+    assert.deepEqual([readFileSync(first, 'utf8'), readFileSync(second, 'utf8')], ['new', 'new'], `case ${index}`);
+    assert.deepEqual(readdirSync(directory).sort(), ['first.json', 'second.ts']);
+  }
+});
+
+test('removes the journal temp file when closing it fails and changes nothing', (t) => {
+  const { directory, files: [first, second] } = pair(t);
+  const temporaries = new Set();
+  const fileSystem = {
+    openSync(file, flags) {
+      const descriptor = openSync(file, flags);
+      if (/\.journal\.\d+\.tmp$/.test(file)) temporaries.add(descriptor);
+      return descriptor;
+    },
+    closeSync(descriptor) {
+      closeSync(descriptor);
+      if (temporaries.has(descriptor)) throw new Error('EIO: injected close failure');
+    },
+  };
+  assert.throws(
+    () => writeFilesAtomically([[first, 'new'], [second, 'new']], fileSystem),
+    { code: 'UIFN_REGISTRY_WRITE_FAILED', message: /injected close failure.*no signature file was changed/ },
+  );
+  assert.equal(readFileSync(first, 'utf8'), V1_JSON);
+  assert.equal(readFileSync(second, 'utf8'), V1_TS);
   assert.deepEqual(readdirSync(directory).sort(), ['first.json', 'second.ts']);
 });
 
