@@ -196,6 +196,29 @@ describe("real local startup fixtures", () => {
     }
   }, 60_000);
 
+  // fetch() refuses port 4190 before connecting, so a lease there failed HTTP
+  // readiness after its whole timeout although the process listened on it.
+  it("never leases a port fetch refuses, so HTTP readiness reaches a native process on a port DevFn chose", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "devfn-native-blocked-port-"));
+    const stateDir = path.join(root, "state");
+    const config = validateDevFnConfig({ version: 1, project: { id: "native-blocked-port-fixture" }, ports: { native: { range: [4190, 4190] } },
+      processes: { native: { adapter: "command", command: [process.execPath, "server.mjs"], ports: ["native"],
+        health: { type: "http", port: "native", timeoutMs: 10_000 }, env: { OBSERVED_FILE: path.join(root, "observed.json") } } },
+      profiles: { default: { processes: ["native"] } } });
+    const orchestrator = new DevFnOrchestrator();
+    try {
+      await writeFile(path.join(root, "server.mjs"), serverScript);
+      const receipt = await orchestrator.up({ config, root, stateDir });
+      expect(receipt.allocations).toMatchObject([{ service: "native", source: "fallback" }]);
+      expect(receipt.allocations[0].port).not.toBe(4190);
+      expect(JSON.parse(await readFile(path.join(root, "observed.json"), "utf8")).port).toBe(String(receipt.allocations[0].port));
+      expect(await fetch(`http://127.0.0.1:${receipt.allocations[0].port}/health`).then((response) => response.status)).toBe(200);
+    } finally {
+      await orchestrator.down({ config, root, stateDir }).catch(() => undefined);
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 60_000);
+
   it.skipIf(process.env.DEVFN_REAL_COMPOSE !== "1")("replaces dotenv-backed config drift while retaining duration-secret rotation", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "devfn-compose-config-lifecycle-"));
     const stateDir = path.join(root, "state");
