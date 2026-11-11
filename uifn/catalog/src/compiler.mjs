@@ -201,7 +201,7 @@ export function validateCatalogSource(source = CATALOG_SOURCE) {
 const SWIFTUI_ENTRY_FIELDS = ['status', 'controls', 'surfaces', 'note'];
 const SWIFTUI_CONTROL_PATTERN = /^\.?[A-Za-z][A-Za-z0-9]*$/;
 const SWIFTUI_SURFACE_ID_PATTERN = /^(?:UIFn|uifn)[A-Za-z0-9]+$/;
-const SWIFTUI_SURFACE_DIRECTORIES = { Styles: 'style', Components: 'component' };
+const SWIFTUI_SURFACE_DIRECTORIES = ['Styles', 'Components'];
 
 function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -224,8 +224,7 @@ function validateSwiftUISurfaces(surfaces) {
     assert(!byId.has(surface.id), 'UIFN_CATALOG_DUPLICATE', `Duplicate SwiftUI surface: ${surface.id}`, { value: surface.id });
     assert(SWIFTUI_SURFACE_KINDS.includes(surface.kind), 'UIFN_CATALOG_UNSUPPORTED_VALUE', `SwiftUI surface ${surface.id} has an unknown kind.`, { surface: surface.id, value: surface.kind });
     assert(typeof surface.issue === 'string' && /^UIF-[0-9]+$/.test(surface.issue), 'UIFN_CATALOG_UNSUPPORTED_VALUE', `SwiftUI surface ${surface.id} has an invalid issue.`, { surface: surface.id, value: surface.issue });
-    const directory = Object.entries(SWIFTUI_SURFACE_DIRECTORIES).find(([, kind]) => kind === surface.kind)[0];
-    assert(typeof surface.source === 'string' && new RegExp(`^${SWIFTUI_SOURCES_ROOT}/${directory}/[A-Za-z0-9+]+\\.swift$`).test(surface.source), 'UIFN_CATALOG_UNSUPPORTED_VALUE', `SwiftUI surface ${surface.id} has an invalid source path.`, { surface: surface.id, value: surface.source });
+    assert(typeof surface.source === 'string' && new RegExp(`^${SWIFTUI_SOURCES_ROOT}/(?:${SWIFTUI_SURFACE_DIRECTORIES.join('|')})/[A-Za-z0-9+]+\\.swift$`).test(surface.source), 'UIFN_CATALOG_UNSUPPORTED_VALUE', `SwiftUI surface ${surface.id} has an invalid source path.`, { surface: surface.id, value: surface.source });
     byId.set(surface.id, surface);
   }
   return byId;
@@ -273,38 +272,71 @@ export function validateSwiftUIStatus(source = SWIFTUI_STATUS_SOURCE) {
   return { ok: true, primitiveCount: EXPECTED_PRIMITIVE_NAMES.length, surfaceCount: surfaces.size };
 }
 
-// The styles and components a UIFnSwiftUI source file declares: a top-level
-// public struct conforming to View or to a SwiftUI style protocol, and, in
-// Components, a public function in a View extension (a view modifier).
+// The styles and components UIFnSwiftUI declares in Styles and Components.
+// The kind follows the declaration, not the directory:
+// - a public struct conforming to a SwiftUI style protocol (`...Style`) is a
+//   style;
+// - a public struct conforming to View or ViewModifier is a component, so a
+//   UIFnSwiftUI view that stands in for a system control is a component;
+// - in Components, a public function in an extension of View (a view
+//   modifier) is a component.
+// A struct's conformance counts whether it is in the declaration or in an
+// extension in either directory. Nested public structs count by their own
+// name. Classes, enums, protocols and View-extension functions in Styles
+// (such as the uifnTheme environment modifier) are not surfaces.
 const SWIFT_ATTRIBUTES = String.raw`(?:@\w+(?:\([^)\n]*\))?\s+)*`;
+const SWIFT_GENERICS = String.raw`(?:<[^>{]*>)?`;
 
-export function parseSwiftUISurfaceDeclarations(relativePath, text) {
-  const directory = Object.keys(SWIFTUI_SURFACE_DIRECTORIES).find((name) => relativePath.startsWith(`${SWIFTUI_SOURCES_ROOT}/${name}/`));
-  if (!directory) return [];
-  const kind = SWIFTUI_SURFACE_DIRECTORIES[directory];
-  const declarations = [];
-  const structs = new RegExp(String.raw`^${SWIFT_ATTRIBUTES}public\s+(?:final\s+)?struct\s+(\w+)\s*(?:<[^>{]*>)?\s*:\s*([^{]+)\{`, 'gm');
-  for (const match of text.matchAll(structs)) {
-    const conformances = match[2].split(/\bwhere\b/)[0].split(/[,&]/).map((value) => value.trim().replace(/^SwiftUI\./, '')).filter(Boolean);
-    if (conformances.some((value) => value === 'View' || /^[A-Z]\w*Style$/.test(value))) declarations.push({ id: match[1], kind, source: relativePath });
-  }
-  if (kind === 'component') {
-    const extensions = new RegExp(String.raw`^${SWIFT_ATTRIBUTES}(public\s+)?extension\s+(?:SwiftUI\.)?View\b[^{]*\{([\s\S]*?)^\}`, 'gm');
-    const functions = new RegExp(String.raw`^[ \t]*${SWIFT_ATTRIBUTES}((?:(?:public|private|fileprivate|internal|nonisolated|static)\s+)*)func\s+(\w+)\s*[<(]`, 'gm');
-    for (const block of text.matchAll(extensions)) {
-      for (const match of block[2].matchAll(functions)) {
-        const modifiers = match[1].split(/\s+/);
-        const isPublic = modifiers.includes('public') || (Boolean(block[1]) && !modifiers.some((value) => ['private', 'fileprivate', 'internal'].includes(value)));
-        if (isPublic) declarations.push({ id: match[2], kind, source: relativePath });
+function swiftConformances(clause) {
+  return (clause ?? '').split(/\bwhere\b/)[0].split(/[,&]/).map((value) => value.trim().replace(/^SwiftUI\./, '')).filter(Boolean);
+}
+
+function swiftSurfaceKind(conformances) {
+  if (conformances.some((value) => /^[A-Z]\w*Style$/.test(value))) return 'style';
+  if (conformances.some((value) => value === 'View' || value === 'ViewModifier')) return 'component';
+  return undefined;
+}
+
+function swiftSurfaceDirectory(relativePath) {
+  return SWIFTUI_SURFACE_DIRECTORIES.find((name) => relativePath.startsWith(`${SWIFTUI_SOURCES_ROOT}/${name}/`));
+}
+
+// `files` is a list of { path, text }, path relative to the repository root.
+export function parseSwiftUISurfaceDeclarations(files) {
+  const found = [];
+  const extensionConformances = new Map();
+  for (const { path: relativePath, text } of files) {
+    const directory = swiftSurfaceDirectory(relativePath);
+    if (!directory) continue;
+    const structs = new RegExp(String.raw`^[ \t]*${SWIFT_ATTRIBUTES}public\s+(?:final\s+)?struct\s+(\w+)\s*${SWIFT_GENERICS}\s*(?::([^{]+))?\{`, 'gm');
+    for (const match of text.matchAll(structs)) {
+      found.push({ id: match[1], source: relativePath, conformances: swiftConformances(match[2]) });
+    }
+    const conformingExtensions = new RegExp(String.raw`^[ \t]*${SWIFT_ATTRIBUTES}(?:(?:public|internal|fileprivate|private)\s+)?extension\s+(?:\w+\.)*(\w+)\s*${SWIFT_GENERICS}\s*:([^{]+)\{`, 'gm');
+    for (const match of text.matchAll(conformingExtensions)) {
+      extensionConformances.set(match[1], [...(extensionConformances.get(match[1]) ?? []), ...swiftConformances(match[2])]);
+    }
+    if (directory === 'Components') {
+      const extensions = new RegExp(String.raw`^${SWIFT_ATTRIBUTES}(public\s+)?extension\s+(?:SwiftUI\.)?View\b[^{]*\{([\s\S]*?)^\}`, 'gm');
+      const functions = new RegExp(String.raw`^[ \t]*${SWIFT_ATTRIBUTES}((?:(?:public|private|fileprivate|internal|nonisolated|static)\s+)*)func\s+(\w+)\s*[<(]`, 'gm');
+      for (const block of text.matchAll(extensions)) {
+        for (const match of block[2].matchAll(functions)) {
+          const modifiers = match[1].split(/\s+/);
+          const isPublic = modifiers.includes('public') || (Boolean(block[1]) && !modifiers.some((value) => ['private', 'fileprivate', 'internal'].includes(value)));
+          if (isPublic) found.push({ id: match[2], source: relativePath, kind: 'component' });
+        }
       }
     }
   }
-  return declarations;
+  return found.flatMap(({ id, source, kind, conformances }) => {
+    const resolved = kind ?? swiftSurfaceKind([...conformances, ...(extensionConformances.get(id) ?? [])]);
+    return resolved ? [{ id, kind: resolved, source }] : [];
+  });
 }
 
 export async function readSwiftUISurfaceDeclarations(repoRoot) {
-  const declarations = [];
-  for (const directory of Object.keys(SWIFTUI_SURFACE_DIRECTORIES)) {
+  const files = [];
+  for (const directory of SWIFTUI_SURFACE_DIRECTORIES) {
     const relativeDirectory = `${SWIFTUI_SOURCES_ROOT}/${directory}`;
     let entries;
     try {
@@ -315,10 +347,10 @@ export async function readSwiftUISurfaceDeclarations(repoRoot) {
     }
     for (const entry of entries.filter((item) => item.isFile() && item.name.endsWith('.swift')).sort((left, right) => left.name.localeCompare(right.name))) {
       const relativePath = `${relativeDirectory}/${entry.name}`;
-      declarations.push(...parseSwiftUISurfaceDeclarations(relativePath, await readFile(path.join(repoRoot, relativePath), 'utf8')));
+      files.push({ path: relativePath, text: await readFile(path.join(repoRoot, relativePath), 'utf8') });
     }
   }
-  return declarations;
+  return parseSwiftUISurfaceDeclarations(files);
 }
 
 export function verifySwiftUISurfaceDeclarations(declarations, source = SWIFTUI_STATUS_SOURCE) {

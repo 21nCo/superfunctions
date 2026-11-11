@@ -1,0 +1,18 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "test": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/**"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/swift/Sources/UIFnSwiftUI/Styles/**",
+        "$TURBO_ROOT$/uifn/swift/Sources/UIFnSwiftUI/Components/**",
+        "$TURBO_ROOT$/scripts/verify-uifn-catalog.mjs",
+        "$TURBO_ROOT$/scripts/verify-uifn-catalog.test.mjs",
+        "$TURBO_ROOT$/scripts/generate-uifn-catalog.mjs"
+      ]
+    }
+  }
+}

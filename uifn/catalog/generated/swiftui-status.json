@@ -531,8 +531,8 @@
         "controls": [
           "Picker"
         ],
-        "note": "UIFnSegmentedPicker with the .segmented variant; accessibility sees a system segmented Picker.",
-        "status": "uifn-style",
+        "note": "UIFnSegmentedPicker with the .segmented variant, a UIFnSwiftUI view that draws the segments; accessibility sees a system segmented Picker.",
+        "status": "uifn-component",
         "surfaces": [
           "UIFnSegmentedPicker"
         ]
@@ -546,8 +546,8 @@
           "Picker",
           "Menu"
         ],
-        "note": "UIFnMenuPicker: a system Picker inside a .uifn menu.",
-        "status": "uifn-style",
+        "note": "UIFnMenuPicker, a UIFnSwiftUI view: a system Picker inside a .uifn menu.",
+        "status": "uifn-component",
         "surfaces": [
           "UIFnMenuPicker",
           "UIFnMenuStyle"
@@ -633,7 +633,7 @@
           "Picker"
         ],
         "note": "UIFnSegmentedPicker with the .tabs variant, which switches content in place. For app sections, TabView.",
-        "status": "uifn-style",
+        "status": "uifn-component",
         "surfaces": [
           "UIFnSegmentedPicker"
         ]
@@ -852,8 +852,8 @@
   "statusCounts": {
     "native": 33,
     "none": 19,
-    "uifn-component": 2,
-    "uifn-style": 15
+    "uifn-component": 5,
+    "uifn-style": 12
   },
   "statuses": [
     "native",
@@ -924,7 +924,7 @@
     {
       "id": "UIFnMenuPicker",
       "issue": "UIF-25",
-      "kind": "style",
+      "kind": "component",
       "primitives": [
         "select"
       ],
@@ -933,7 +933,7 @@
     {
       "id": "UIFnSegmentedPicker",
       "issue": "UIF-25",
-      "kind": "style",
+      "kind": "component",
       "primitives": [
         "segment-group",
         "tabs"

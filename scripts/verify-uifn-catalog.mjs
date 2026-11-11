@@ -79,7 +79,7 @@ try {
   const unlisted = JSON.parse(await readFile(path.join(fixtureDirectory, 'unlisted-swiftui-surface.json'), 'utf8'));
   swiftuiNegativeCodes.push(expectCode(() => verifySwiftUISurfaceDeclarations([
     ...swiftuiDeclarations,
-    ...parseSwiftUISurfaceDeclarations(unlisted.mutation.swiftSource, unlisted.mutation.text),
+    ...parseSwiftUISurfaceDeclarations([{ path: unlisted.mutation.swiftSource, text: unlisted.mutation.text }]),
   ]), unlisted.expectedErrorCodes[0]));
 
   const migrated = migrateCatalogDocument({ schemaVersion: 0, components: [{ id: 'example' }] });

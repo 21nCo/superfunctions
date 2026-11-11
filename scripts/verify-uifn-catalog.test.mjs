@@ -173,18 +173,28 @@ test('a SwiftUI status must agree with the controls and surfaces it names', () =
 test('the SwiftUI surface list must match the styles and components UIFnSwiftUI declares', async () => {
   const declarations = await readSwiftUISurfaceDeclarations(repoRoot);
   const descriptor = await fixture('unlisted-swiftui-surface.json');
-  const added = parseSwiftUISurfaceDeclarations(descriptor.mutation.swiftSource, descriptor.mutation.text);
+  const added = parseSwiftUISurfaceDeclarations([{ path: descriptor.mutation.swiftSource, text: descriptor.mutation.text }]);
   assert.deepEqual(added.map((declaration) => declaration.id), ['UIFnSliderStyle']);
   expectCatalogCode(() => verifySwiftUISurfaceDeclarations([...declarations, ...added]), descriptor.expectedErrorCodes[0]);
   expectCatalogCode(() => verifySwiftUISurfaceDeclarations(declarations.filter((declaration) => declaration.id !== 'UIFnGaugeStyle')), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
   expectCatalogCode(() => verifySwiftUISurfaceDeclarations(declarations.map((declaration) => (
     declaration.id === 'UIFnBanner' ? { ...declaration, source: 'uifn/swift/Sources/UIFnSwiftUI/Components/UIFnToast.swift' } : declaration
   ))), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
+  // A listed kind must match the declaration: UIFnSegmentedPicker lives in
+  // Styles but is a View, so listing it as a style is drift.
+  assert.equal(declarations.find((declaration) => declaration.id === 'UIFnSegmentedPicker').kind, 'component');
+  expectCatalogCode(() => verifySwiftUISurfaceDeclarations(declarations, swiftuiSourceWith((source) => {
+    source.surfaces.find((surface) => surface.id === 'UIFnSegmentedPicker').kind = 'style';
+  })), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
 });
+
+function parseOne(relativePath, lines) {
+  return parseSwiftUISurfaceDeclarations([{ path: relativePath, text: lines.join('\n') }]).map((declaration) => [declaration.id, declaration.kind]);
+}
 
 test('Swift declarations count only public styles, views, and component view modifiers', () => {
   const components = 'uifn/swift/Sources/UIFnSwiftUI/Components/Example.swift';
-  const text = [
+  assert.deepEqual(parseOne(components, [
     'public struct UIFnCard<Content: View, Footer: View>: View {',
     '}',
     'public struct UIFnCardModel: Identifiable, Equatable {',
@@ -203,13 +213,70 @@ test('Swift declarations count only public styles, views, and component view mod
     '}',
     '@MainActor public struct UIFnCardList: View {',
     '}',
-  ].join('\n');
-  assert.deepEqual(parseSwiftUISurfaceDeclarations(components, text).map((declaration) => [declaration.id, declaration.kind]), [
+  ]), [
     ['UIFnCard', 'component'],
+    ['UIFnCardModel', undefined],
     ['UIFnCardList', 'component'],
     ['uifnCardOverlay', 'component'],
     ['uifnCardBadge', 'component'],
+  ].filter(([, kind]) => kind));
+  assert.deepEqual(parseOne('uifn/swift/Sources/UIFnSwiftUI/Styles/Example.swift', ['public struct UIFnRowStyle: LabelStyle {', '}']), [['UIFnRowStyle', 'style']]);
+  assert.deepEqual(parseOne('uifn/swift/Sources/UIFnSwiftUI/Tokens/Example.swift', ['public struct UIFnThemeView: View {', '}']), []);
+});
+
+test('a surface kind follows its Swift declaration, not its directory', () => {
+  // A View in Styles is a component; a style protocol conformance in
+  // Components is a style. View-extension functions count only in Components.
+  assert.deepEqual(parseOne('uifn/swift/Sources/UIFnSwiftUI/Styles/Example.swift', [
+    'public struct UIFnChipPicker<Label: View>: View {',
+    '}',
+    'public extension View {',
+    '    func uifnTheme(_ theme: Int) -> some View { self }',
+    '}',
+  ]), [['UIFnChipPicker', 'component']]);
+  assert.deepEqual(parseOne('uifn/swift/Sources/UIFnSwiftUI/Components/Example.swift', [
+    'public struct UIFnChipStyle: SwiftUI.ButtonStyle {',
+    '}',
+  ]), [['UIFnChipStyle', 'style']]);
+});
+
+test('public ViewModifiers, extension conformances, and nested public structs are surfaces', () => {
+  const components = 'uifn/swift/Sources/UIFnSwiftUI/Components/Example.swift';
+  assert.deepEqual(parseOne(components, [
+    'public struct UIFnHighlight: ViewModifier {',
+    '    public func body(content: Content) -> some View { content }',
+    '}',
+    'public struct UIFnTag<Label: View> {',
+    '    let label: Label',
+    '}',
+    'extension UIFnTag: View {',
+    '    public var body: some View { label }',
+    '}',
+    'public struct UIFnTimeline {',
+    '    public struct Row:',
+    '        View {',
+    '        public var body: some View { EmptyView() }',
+    '    }',
+    '    struct Hidden: View {',
+    '    }',
+    '}',
+    'public struct UIFnTagModel {',
+    '}',
+    'extension UIFnTagModel where Self: Equatable {',
+    '}',
+    'struct UIFnInternalModifier: ViewModifier {',
+    '}',
+    'extension UIFnInternalModifier: View {',
+    '}',
+  ]), [
+    ['UIFnHighlight', 'component'],
+    ['UIFnTag', 'component'],
+    ['Row', 'component'],
   ]);
-  assert.deepEqual(parseSwiftUISurfaceDeclarations('uifn/swift/Sources/UIFnSwiftUI/Styles/Example.swift', 'public struct UIFnRowStyle: LabelStyle {\n}\n').map((declaration) => [declaration.id, declaration.kind]), [['UIFnRowStyle', 'style']]);
-  assert.deepEqual(parseSwiftUISurfaceDeclarations('uifn/swift/Sources/UIFnSwiftUI/Tokens/Example.swift', 'public struct UIFnThemeView: View {\n}\n'), []);
+  // A conformance added in another file, in either directory, also counts.
+  assert.deepEqual(parseSwiftUISurfaceDeclarations([
+    { path: 'uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnChip.swift', text: 'public struct UIFnChipStyle {\n}\n' },
+    { path: 'uifn/swift/Sources/UIFnSwiftUI/Components/UIFnChip+Style.swift', text: 'extension UIFnChipStyle: ToggleStyle {\n}\n' },
+    { path: 'uifn/swift/Sources/UIFnSwiftUI/Tokens/UIFnIgnored.swift', text: 'public struct UIFnIgnored: View {\n}\n' },
+  ]), [{ id: 'UIFnChipStyle', kind: 'style', source: 'uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnChip.swift' }]);
 });

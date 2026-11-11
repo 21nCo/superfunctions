@@ -9,8 +9,10 @@
 export const SWIFTUI_STATUS_SCHEMA_VERSION = 1;
 
 // native: a SwiftUI control or modifier as the system draws it.
-// uifn-style: a SwiftUI control drawn with a UIFnSwiftUI style.
-// uifn-component: a UIFnSwiftUI view or modifier.
+// uifn-style: a SwiftUI control drawn with a UIFnSwiftUI style, a type that
+//   conforms to a SwiftUI style protocol such as ButtonStyle.
+// uifn-component: a UIFnSwiftUI view or view modifier, including a view that
+//   stands in for a system control, such as UIFnSegmentedPicker.
 // none: neither SwiftUI nor UIFnSwiftUI has one.
 export const SWIFTUI_STATUSES = ['native', 'uifn-style', 'uifn-component', 'none'];
 
@@ -21,9 +23,12 @@ export const SWIFTUI_SOURCES_ROOT = 'uifn/swift/Sources/UIFnSwiftUI';
 const styles = `${SWIFTUI_SOURCES_ROOT}/Styles`;
 const components = `${SWIFTUI_SOURCES_ROOT}/Components`;
 
-// Every public style and component UIFnSwiftUI declares. The verify script
-// checks this list against the Swift sources, so a new style or component has
-// to be listed here and mapped to a primitive below.
+// Every public style and component UIFnSwiftUI declares. A surface's kind
+// follows its declaration, not its directory: a style conforms to a SwiftUI
+// style protocol; a component is a View, a ViewModifier or a View-extension
+// function. The verify script checks this list, kinds included, against the
+// Swift sources, so a new style or component has to be listed here and mapped
+// to a primitive below.
 export const SWIFTUI_SURFACES = [
   { id: 'UIFnButtonStyle', kind: 'style', issue: 'UIF-24', source: `${styles}/UIFnButtonStyle.swift` },
   { id: 'UIFnSwitchToggleStyle', kind: 'style', issue: 'UIF-24', source: `${styles}/UIFnToggleStyles.swift` },
@@ -31,8 +36,8 @@ export const SWIFTUI_SURFACES = [
   { id: 'UIFnTextFieldStyle', kind: 'style', issue: 'UIF-24', source: `${styles}/UIFnTextFieldStyle.swift` },
   { id: 'UIFnGroupBoxStyle', kind: 'style', issue: 'UIF-24', source: `${styles}/UIFnGroupBoxStyle.swift` },
   { id: 'UIFnMenuStyle', kind: 'style', issue: 'UIF-25', source: `${styles}/UIFnMenuStyle.swift` },
-  { id: 'UIFnMenuPicker', kind: 'style', issue: 'UIF-25', source: `${styles}/UIFnPickers.swift` },
-  { id: 'UIFnSegmentedPicker', kind: 'style', issue: 'UIF-25', source: `${styles}/UIFnPickers.swift` },
+  { id: 'UIFnMenuPicker', kind: 'component', issue: 'UIF-25', source: `${styles}/UIFnPickers.swift` },
+  { id: 'UIFnSegmentedPicker', kind: 'component', issue: 'UIF-25', source: `${styles}/UIFnPickers.swift` },
   { id: 'UIFnProgressViewStyle', kind: 'style', issue: 'UIF-25', source: `${styles}/UIFnProgressViewStyle.swift` },
   { id: 'UIFnGaugeStyle', kind: 'style', issue: 'UIF-25', source: `${styles}/UIFnGaugeStyle.swift` },
   { id: 'UIFnSegmentedMeter', kind: 'component', issue: 'UIF-26', source: `${components}/UIFnSegmentedMeter.swift` },
@@ -106,15 +111,15 @@ export const SWIFTUI_PRIMITIVES = {
   RadioGroup: native(['Picker'], 'Picker with the .radioGroup style on macOS or .inline on iOS; UIFnSwiftUI has no radio style.'),
   RatingGroup: none('SwiftUI has no rating control.'),
   ScrollArea: native(['ScrollView'], 'A ScrollView.'),
-  SegmentGroup: styled(['Picker'], ['UIFnSegmentedPicker'], 'UIFnSegmentedPicker with the .segmented variant; accessibility sees a system segmented Picker.'),
-  Select: styled(['Picker', 'Menu'], ['UIFnMenuPicker', 'UIFnMenuStyle'], 'UIFnMenuPicker: a system Picker inside a .uifn menu.'),
+  SegmentGroup: component(['UIFnSegmentedPicker'], 'UIFnSegmentedPicker with the .segmented variant, a UIFnSwiftUI view that draws the segments; accessibility sees a system segmented Picker.', ['Picker']),
+  Select: component(['UIFnMenuPicker', 'UIFnMenuStyle'], 'UIFnMenuPicker, a UIFnSwiftUI view: a system Picker inside a .uifn menu.', ['Picker', 'Menu']),
   Separator: native(['Divider'], 'A Divider.'),
   SignaturePad: none('SwiftUI has no drawing canvas for signatures.'),
   Slider: native(['Slider'], 'The system Slider; SwiftUI has no public slider style.'),
   Splitter: native(['HSplitView', 'VSplitView'], 'Split views on macOS; iOS has no resizable split, only NavigationSplitView columns.'),
   Steps: none('SwiftUI has no step indicator.'),
   Switch: styled(['Toggle'], ['UIFnSwitchToggleStyle'], 'Toggle with .uifnSwitch.'),
-  Tabs: styled(['Picker'], ['UIFnSegmentedPicker'], 'UIFnSegmentedPicker with the .tabs variant, which switches content in place. For app sections, TabView.'),
+  Tabs: component(['UIFnSegmentedPicker'], 'UIFnSegmentedPicker with the .tabs variant, which switches content in place. For app sections, TabView.', ['Picker']),
   TagsInput: none('SwiftUI shows tokens only in a search field (.searchable with tokens), not in a general input.'),
   Timer: native(['Text', 'TimelineView'], 'Text(timerInterval:) counts up or down; start, pause and reset are up to the app.'),
   Toast: component(['uifnToast', 'UIFnBanner'], 'uifnToast shows a UIFnBanner at the edge of a view and announces it.'),

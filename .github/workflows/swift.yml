@@ -272,3 +272,8 @@ jobs:
           node uifn/swift/scripts/generate-tokens.mjs
           git diff --exit-code -- uifn/swift
           test -z "$(git status --porcelain -- uifn/swift)"
+      # The catalog lists every public UIFnSwiftUI style and component and maps
+      # each to a primitive; a Swift-only change does not run the catalog's
+      # own tests, so the verifier runs here.
+      - name: The uifn catalog's SwiftUI status lists every UIFnSwiftUI style and component
+        run: node scripts/verify-uifn-catalog.mjs
