@@ -18,7 +18,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { createHash, createPublicKey, verify } from 'node:crypto';
-import { linkSync, lstatSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, linkSync, lstatSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -136,10 +136,11 @@ function checkoutFile(root, relative, { mustExist }) {
   return target;
 }
 
-const defaultFileSystem = { linkSync, renameSync, rmSync, writeFileSync };
+const defaultFileSystem = { closeSync, linkSync, openSync, renameSync, rmSync, writeFileSync };
 
 /**
- * Replaces every target or none of them. Each new file is staged next to its target, each existing target is
+ * Replaces every target or none of them. Each new file is staged next to its target (created exclusively, so a
+ * pre-existing file of the same name is never touched, and owned from the moment it is created), each existing target is
  * hard-linked to a backup, and each staged file is renamed over its target. If any step fails, the targets
  * already replaced are restored from their backups (or removed when they did not exist), staged files are
  * removed, and a backup is left in place only if its original could not be restored (the error names it).
@@ -154,8 +155,15 @@ export function writeFilesAtomically(files, fileSystem = defaultFileSystem) {
   try {
     for (const [target, contents] of files) {
       const temporary = `${target}.${suffix}.tmp`;
-      fsOps.writeFileSync(temporary, contents, { flag: 'wx' });
+      // Exclusive creation fails with EEXIST on a pre-existing file, which is then not ours to remove. Once it
+      // succeeds the file is recorded as staged before any byte is written, so a failed write is cleaned up too.
+      const descriptor = fsOps.openSync(temporary, 'wx');
       staged.push([temporary, target]);
+      try {
+        fsOps.writeFileSync(descriptor, contents);
+      } finally {
+        fsOps.closeSync(descriptor);
+      }
     }
     for (const [, target] of staged) {
       const backup = `${target}.${suffix}.bak`;
@@ -194,8 +202,8 @@ export function writeFilesAtomically(files, fileSystem = defaultFileSystem) {
     throw new RegistrySigningError('UIFN_REGISTRY_WRITE_FAILED', `Writing the signature files failed (${error.message}); ${detail}.`, { cause: error });
   } finally {
     // Staged files are always removed; a backup is kept only if its original could not be restored.
-    for (const [temporary] of staged) rmSync(temporary, { force: true });
-    for (const [, backup] of backups) rmSync(backup, { force: true });
+    for (const [temporary] of staged) fsOps.rmSync(temporary, { force: true });
+    for (const [, backup] of backups) fsOps.rmSync(backup, { force: true });
   }
 }
 

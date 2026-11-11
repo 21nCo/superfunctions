@@ -277,6 +277,71 @@ test('keeps the backup and names it when an original cannot be restored', (t) =>
   assert.equal(readFileSync(second, 'utf8'), V1_TS);
 });
 
+test('removes a staged file whose write fails after it was created and leaves both originals unchanged', async (t) => {
+  const root = fixture(t);
+  const keys = keyPair();
+  let writes = 0;
+  const fileSystem = {
+    writeFileSync(descriptor, contents) {
+      writes += 1;
+      if (writes === 2) {
+        // The staged file exists and holds partial bytes when the write fails.
+        writeFileSync(descriptor, String(contents).slice(0, 4));
+        throw Object.assign(new Error('ENOSPC: injected write failure'), { code: 'ENOSPC' });
+      }
+      writeFileSync(descriptor, contents);
+    },
+  };
+  await assert.rejects(
+    signRegistryCatalogWithKms({ root, kms: mockKms(keys), kmsKeyId: KMS_KEY_ARN, expectedKeyId: keys.keyId, fileSystem }),
+    { code: 'UIFN_REGISTRY_WRITE_FAILED', message: /injected write failure.*no signature file was changed/ },
+  );
+  assert.equal(writes, 2);
+  assertUnchanged(root);
+});
+
+test('leaves a pre-existing staged file of the same name untouched and changes nothing', (t) => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'uifn-registry-kms-write-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const first = path.join(directory, 'first.json');
+  const second = path.join(directory, 'second.ts');
+  const foreign = `${second}.kms-sign-${process.pid}.tmp`;
+  writeFileSync(first, V1_JSON);
+  writeFileSync(second, V1_TS);
+  writeFileSync(foreign, 'not ours');
+  assert.throws(
+    () => writeFilesAtomically([[first, 'new'], [second, 'new']]),
+    { code: 'UIFN_REGISTRY_WRITE_FAILED', message: /EEXIST.*no signature file was changed/ },
+  );
+  assert.equal(readFileSync(foreign, 'utf8'), 'not ours');
+  assert.equal(readFileSync(first, 'utf8'), V1_JSON);
+  assert.equal(readFileSync(second, 'utf8'), V1_TS);
+  assert.deepEqual(readdirSync(directory).sort(), ['first.json', 'second.ts', path.basename(foreign)].sort());
+});
+
+test('cleans up staged files and backups through the injected file system', (t) => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'uifn-registry-kms-write-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const first = path.join(directory, 'first.json');
+  const second = path.join(directory, 'second.ts');
+  writeFileSync(first, V1_JSON);
+  writeFileSync(second, V1_TS);
+  const removed = [];
+  const failing = failingPublishRename(2);
+  const fileSystem = {
+    renameSync: failing.renameSync,
+    rmSync(target, options) {
+      removed.push(path.basename(target));
+      rmSync(target, options);
+    },
+  };
+  assert.throws(() => writeFilesAtomically([[first, 'new'], [second, 'new']], fileSystem), { code: 'UIFN_REGISTRY_WRITE_FAILED' });
+  assert.ok(removed.some((name) => name.endsWith('.tmp')), `expected an injected cleanup of a staged file, saw ${removed}`);
+  assert.equal(readFileSync(first, 'utf8'), V1_JSON);
+  assert.equal(readFileSync(second, 'utf8'), V1_TS);
+  assert.deepEqual(readdirSync(directory).sort(), ['first.json', 'second.ts']);
+});
+
 test('refuses missing or malformed configuration before calling KMS', async (t) => {
   const root = fixture(t);
   const keys = keyPair();
