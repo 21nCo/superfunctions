@@ -3,7 +3,7 @@
 // Vitest project in a child process and checks its exit, its report and what is left.
 import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -62,17 +62,24 @@ ${content}
 /**
  * Runs the project. Once the fixture has recorded what it started, `"signal"` sends Vitest
  * SIGTERM, and `"cancel"` cancels it the way turbo cancels a task when a sibling fails: it
- * closes the task's output and sends SIGINT to its process group.
+ * closes the task's output and sends SIGINT to its process group. With `duringTeardown`, the
+ * interruption waits until every test has finished and Vitest has printed its summary, when
+ * the guard's run teardown is waiting for leftover processes to exit. `env` adds variables.
  */
-async function runProject(dir: string, record: string, interrupt?: "signal" | "cancel"): Promise<{ code: number | null; output: string; recorded: { root: string; pid?: number; dir?: string; child?: number; sibling?: number; nested?: number } }> {
+async function runProject(dir: string, record: string, interrupt?: "signal" | "cancel", { duringTeardown = false, env = {} }: { duringTeardown?: boolean; env?: Record<string, string> } = {}): Promise<{ code: number | null; output: string; recorded: { root: string; pid?: number; dir?: string; child?: number; sibling?: number; nested?: number } }> {
   const child = spawn(process.execPath, [vitest, "run", "--root", dir, "--config", path.join(dir, "vitest.config.mjs")],
-    { cwd: dir, detached: interrupt === "cancel", env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1" } });
+    { cwd: dir, detached: interrupt === "cancel", env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1", ...env } });
   let output = "";
   child.stdout.on("data", (chunk) => { output += chunk; });
   child.stderr.on("data", (chunk) => { output += chunk; });
   const exited = new Promise<number | null>((resolve) => child.once("exit", (code, signal) => resolve(code ?? (signal ? -1 : null))));
   if (interrupt) {
     while (!existsSync(record)) await new Promise((resolve) => setTimeout(resolve, 50));
+    if (duringTeardown) {
+      while (!/Test Files\s/.test(output)) await new Promise((resolve) => setTimeout(resolve, 50));
+      // The teardown waits RUN_GRACE_MS (5 s) for leftovers to exit; this lands well inside it.
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+    }
     if (interrupt === "signal") child.kill("SIGTERM");
     else {
       child.stdout.destroy();
@@ -88,38 +95,47 @@ describe("pathsNamedUnder", () => {
   const root = "/tmp/review-repo";
   it.each([
     ["a path separator", `node ${root}/server.mjs`, `${root}/server.mjs`],
-    ["an equals sign", `TMPDIR=${root}= x`, root],
-    ["a colon", `PATH=${root}:/usr/bin`, root],
+    ["a trailing path separator", `node ${root}/`, root],
+    ["a KEY= assignment", `TMPDIR=${root} HOME=/home/x`, root],
+    ["an --option= assignment", `node --state-dir=${root}/state`, `${root}/state`],
+    ["a : list separator", `PATH=/usr/bin:${root}:/bin`, root],
     ["a space", `node ${root} --flag`, root],
+    ["a quote", `sh -c "node '${root}/server.mjs'"`, `${root}/server.mjs`],
     ["the end of the text", `cd ${root}`, root],
     ["a file URL", `node --import=file://${root}/loader.mjs`, `${root}/loader.mjs`],
-  ])("names a path under the root when the root is followed by %s", (_, text, named) => {
+  ])("names a path under the root when it is a complete value, with %s", (_, text, named) => {
     expect(pathsNamedUnder(text, root)).toEqual([named]);
   });
 
+  it("names a path under a root with a space in it", () => {
+    expect(pathsNamedUnder("node /tmp/my repo/server.mjs", "/tmp/my repo")).toEqual(["/tmp/my repo/server.mjs"]);
+  });
+
+  // Each of these characters can be part of a file name, so the value is a sibling path.
+  const siblings = ["[", "é", "-", ".", "+", ";", ",", "(", ")", "&", "|", "<", ">", "="].map((suffix) => [suffix, `${root}${suffix}other`]);
   it.each([
-    ["[", `node ${root}[other]/server.mjs`],
-    ["a non-ASCII letter", `node ${root}é/server.mjs`],
-    ["-", `node ${root}-dev-42/server.mjs`],
-    [".", `node ${root}.old/server.mjs`],
-    ["+", `node ${root}+x/server.mjs`],
-    ["a path that only ends with the root", `node /srv${root}/server.mjs`],
-  ])("names no path under the root for a sibling whose name continues with %s", (_, text) => {
+    ...siblings.map(([suffix, sibling]) => [suffix, `node ${sibling}/server.mjs`]),
+    ["a longer path that only ends with the root", `node /srv${root}/server.mjs`],
+    ["a shell command before it", `sh -c cd;${root}/server.mjs`],
+  ])("names no path under the root for a value that continues with %s", (_, text) => {
     expect(pathsNamedUnder(text, root)).toEqual([]);
   });
 
-  it("decides which processes a run or registered directory owns, and so may signal", () => {
+  it("decides which processes a run or registered directory owns, and so may signal, on complete path values", () => {
     const entry = (pid: number, command: string, environment = "", cwd?: string) => ({ pid, ppid: 1, pgid: pid, elapsed: 0, command, environment, cwd });
-    const processes = [
+    const owned = [
       entry(9_000_001, `node ${root}/server.mjs`),
       entry(9_000_002, "node server.mjs", `TMPDIR=${root} HOME=/home/x`),
       entry(9_000_003, "node server.mjs", "", `${root}/package`),
-      entry(9_000_011, `node ${root}[other]/server.mjs`),
-      entry(9_000_012, `node ${root}é/server.mjs`),
-      entry(9_000_013, "node server.mjs", `TMPDIR=${root}-dev-42 HOME=/home/x`),
-      entry(9_000_014, "node server.mjs", "", `${root}.old/package`),
+      entry(9_000_004, `node --state-dir=${root}/state server.mjs`),
+      entry(9_000_005, "node server.mjs", `PATH=/usr/bin:${root}/bin`),
     ];
-    expect(ownedProcesses(processes, { roots: [root] }).map(({ pid }) => pid)).toEqual([9_000_001, 9_000_002, 9_000_003]);
+    const foreign = siblings.flatMap(([, sibling], index) => [
+      entry(9_000_100 + 3 * index, `node ${sibling}/server.mjs`),
+      entry(9_000_101 + 3 * index, "node server.mjs", `TMPDIR=${sibling} HOME=/home/x`),
+      entry(9_000_102 + 3 * index, "node server.mjs", "", sibling),
+    ]);
+    expect(ownedProcesses([...owned, ...foreign], { roots: [root] }).map(({ pid }) => pid)).toEqual(owned.map(({ pid }) => pid));
   });
 });
 
@@ -225,6 +241,49 @@ test("leaves a guarded directory", () => {
     expect(code).not.toBe(0);
     expect(alive(recorded.pid!)).toBe(false);
     expect(existsSync(recorded.root)).toBe(false);
+  });
+
+  // The process escapes the file's folder, so only the run's teardown finds it, and keeps running
+  // until the teardown's settle window ends; the run is interrupted inside that window.
+  const escapes = `test("leaks into the run root", () => {
+  record({ pid: ${orphanProcess("process.env.SFN_TEST_LEAK_GUARD_ROOT")} });
+});`;
+
+  it("still stops, removes and reports everything when the run is interrupted during its teardown", async () => {
+    const { dir, record } = project(escapes);
+    const { code, output, recorded } = await runProject(dir, record, "signal", { duringTeardown: true });
+    expect(code).not.toBe(0);
+    expect(output).toContain("DevFn test leak guard: This interrupted test run left these behind.");
+    expect(output).toContain(`process ${recorded.pid} `);
+    expect(alive(recorded.pid!)).toBe(false);
+    expect(existsSync(recorded.root)).toBe(false);
+  });
+
+  it("still stops and removes everything when the run is cancelled with its output closed during its teardown", async () => {
+    const { dir, record } = project(escapes);
+    const { code, recorded } = await runProject(dir, record, "cancel", { duringTeardown: true });
+    expect(code).not.toBe(0);
+    expect(alive(recorded.pid!)).toBe(false);
+    expect(existsSync(recorded.root)).toBe(false);
+  });
+
+  // Permissions do not stop root from removing the folder.
+  it.skipIf(process.getuid?.() === 0)("fails a run whose temp root cannot be removed and names it", async () => {
+    // The run's temp folder is made read-only once the run has started, so its root cannot be unlinked from it.
+    const parent = tempDir("devfn-leak-guard-parent-");
+    const { dir, record } = project(`test("locks the temp folder", () => {
+  require("node:fs").chmodSync(path.dirname(process.env.SFN_TEST_LEAK_GUARD_ROOT), 0o500);
+  record({});
+});`);
+    try {
+      const { code, output, recorded } = await runProject(dir, record, undefined, { env: { TMPDIR: parent, TMP: parent, TEMP: parent } });
+      expect(path.dirname(recorded.root)).toBe(parent);
+      expect(code, output).not.toBe(0);
+      expect(output).toContain(`temp entry ${recorded.root}, the run's temp root, which could not be removed`);
+      expect(existsSync(recorded.root)).toBe(true);
+    } finally {
+      chmodSync(parent, 0o700);
+    }
   });
 
   it("stops what an interrupted run started from a directory a test registered outside the temp folder, though it was orphaned", async () => {

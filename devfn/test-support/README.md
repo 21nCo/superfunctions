@@ -38,15 +38,20 @@ calls `guardTestFile` as a setup file.
   checkout nested in the worktree (such as `.worktrees/<task>` under the main checkout) or
   in a sibling directory whose name merely starts with the worktree's (`repo-dev-42` beside
   `repo`). A command, environment or working directory names a path under a root only
-  where the root starts a path (at the start, after a delimiter or after `file://`) and is
-  followed by `/`, a delimiter (whitespace, quotes, `:`, `;`, `,`, `=`, brackets `(` `)`
-  `<` `>`, `|`, `&`) or the end. Any other character, such as `-`, `.`, `[` or a non-ASCII
-  letter, continues a different name. The same rule decides which processes the guard owns
-  and may signal.
+  through a complete path value equal to the root or starting with `root/`. Values are
+  split only at structural boundaries: whitespace, quotes and NUL, a `KEY=` or `--option=`
+  prefix, `file://`, and `:` list separators. Shell punctuation such as `;`, `,`, `(`,
+  `&`, `|` or `<`, like `-`, `.`, `[` or a non-ASCII letter, can be part of a file name,
+  so `/x/repo;other` is not under `/x/repo`. A process a shell started that way is still
+  attributed by its marker, working directory or parent. The same rule decides which
+  processes the guard owns and may signal.
 - When the run is interrupted (Ctrl-C, or turbo cancelling the task after a sibling
   failed), it stops what the run started, including processes running from directories
   registered with `guardDirectory`, and removes those directories and the temp root as the
-  process exits.
+  process exits. This stays armed until the run's teardown has finished, so a run
+  interrupted while the teardown waits for leftovers still cleans up and reports them.
+- A temp root or file folder the guard cannot remove fails the run, or the file, and is
+  named, like any other leftover.
 
 A directory a test creates outside the temp folder, such as one under the package's
 `node_modules/.cache`, is added to the file's guard with `guardDirectory(directory)` before

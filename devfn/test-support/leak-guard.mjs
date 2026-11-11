@@ -193,28 +193,33 @@ function descendantsOf(pid, processes) {
   return descendants;
 }
 
-// A character that ends a path where a command line or environment names it. Anything else,
-// such as `-`, `.`, `[` or a non-ASCII letter, may continue a file name: `/x/repo-dev-42` and
-// `/x/repoé` are not under `/x/repo`.
-const PATH_END = /[\s"'`:;,=()<>|&\0]/;
-const endsPath = (character) => character === undefined || PATH_END.test(character);
+// Characters that separate values in a command line or environment as the guard lists them:
+// whitespace and quotes in macOS's ps listing, NUL in Linux's /proc. A value may also be a
+// `KEY=` or `--option=` assignment, a `file://` URL, or a `:`-separated list such as PATH.
+// Nothing else ends a path: `;`, `(`, `[`, `-`, `.` and non-ASCII letters may all be part of a
+// file name, so `/x/repo;other` and `/x/repo-dev-42` are not under `/x/repo`.
+const SEPARATOR = /[\s"'`\0]/;
+const LIST_SEPARATOR = ":";
+// What may come between the start of a value and a path in it.
+const VALUE_PREFIX = /^(?:[^/=:]*=)?(?:file:\/\/)?$|:$/;
 
 /**
- * The paths at or under `root` that `text` names: each occurrence of `root` that starts a path
- * (at the start of the text, after a delimiter or after `file://`) and is followed by `/`, a
- * delimiter or the end of the text, up to where that path ends. Only an allowlist of boundaries
- * counts, so a root never matches a longer name that merely starts with it.
+ * The paths at or under `root` that `text` names. A path is a complete value: it starts where a
+ * value does (after a separator, a `KEY=` or `--option=` prefix, `file://` or a `:` list
+ * separator) and runs to the next separator or `:`. It is named when it equals `root` or starts
+ * with `root/`; a value that merely starts with `root`'s text names a different path.
  */
 export function pathsNamedUnder(text, root) {
   const paths = [];
   for (let at = text.indexOf(root); at !== -1; at = text.indexOf(root, at + 1)) {
-    const next = text[at + root.length];
-    if (next !== "/" && !endsPath(next)) continue;
-    // `/a/x/repo` names a path under /a, not /x/repo.
-    if (!endsPath(text[at - 1]) && !text.slice(0, at).endsWith("file://")) continue;
+    let start = at;
+    while (start > 0 && !SEPARATOR.test(text[start - 1])) start -= 1;
+    if (!VALUE_PREFIX.test(text.slice(start, at))) continue;
+    // From the end of `root`, so a root with a space in it still matches.
     let end = at + root.length;
-    while (end < text.length && !PATH_END.test(text[end])) end += 1;
-    paths.push(text.slice(at, end).replace(/\/+$/, "") || root);
+    while (end < text.length && !SEPARATOR.test(text[end]) && text[end] !== LIST_SEPARATOR) end += 1;
+    const value = text.slice(at, end).replace(/(?<=.)\/+$/, "");
+    if (value === root || value.startsWith(`${root}/`)) paths.push(value);
   }
   return paths;
 }
@@ -390,12 +395,17 @@ export async function setup(project) {
   const scope = () => ({ marker, roots: roots(), parent: process.pid, excluded: isRunnerChild });
   const worktree = findWorktree(process.cwd());
 
-  let finished = false;
+  // Shared by the exit cleanup and the teardown. The exit cleanup stays armed until the teardown
+  // has finished, so a run interrupted during the teardown (turbo cancelling a package while it
+  // waits for processes to exit) still stops, removes and reports everything. `found` holds what
+  // the teardown has already found, so that report names it even once it is stopped.
+  const state = { cleanedUp: false, tornDown: false, found: { processes: new Map(), entries: new Set() } };
   // Interrupted runs (Ctrl-C, or turbo stopping sibling tasks after a failure) never reach the
-  // teardown, so the process exit stops what the run started and removes its root synchronously.
+  // teardown, or never finish it, so the process exit stops what the run started and removes its
+  // root synchronously.
   const onExit = () => {
-    if (finished) return;
-    finished = true;
+    if (state.cleanedUp) return;
+    state.cleanedUp = true;
     // Stopping comes before reporting, and no step may keep the next from running: turbo, for
     // one, closes the output pipe of a task it cancels, so writing the report can throw.
     const attempt = (step) => { try { return step(); } catch { return undefined; } };
@@ -411,9 +421,11 @@ export async function setup(project) {
     for (const directory of directories) attempt(() => removeTree(directory));
     attempt(() => removeTree(root));
     if (runnerTemp) attempt(() => removeTree(runnerTemp));
-    const leaked = owned.filter((entry) => !isRunnerChild(entry));
+    const leaked = new Map(state.found.processes);
+    for (const entry of owned) if (!isRunnerChild(entry)) leaked.set(entry.pid, entry);
+    const entries = [...state.found.entries, ...locks.map(describeLock)];
     // The process is exiting, so only a synchronous write reaches a piped stderr.
-    if (leaked.length > 0 || locks.length > 0) attempt(() => writeSync(2, `${report("This interrupted test run", leaked, locks.map(describeLock), [])}\n`));
+    if (leaked.size > 0 || entries.length > 0) attempt(() => writeSync(2, `${report("This interrupted test run", [...leaked.values()], entries, [])}\n`));
   };
   const onSignal = (signal) => {
     onExit();
@@ -426,20 +438,36 @@ export async function setup(project) {
   // them, so these go first.
   process.prependListener("exit", onExit);
   for (const signal of signals) process.prependListener(signal, onSignal);
-
-  return async function teardown() {
-    if (finished) return;
-    finished = true;
+  const disarm = () => {
     process.off("exit", onExit);
     for (const signal of signals) process.off(signal, onSignal);
+  };
+
+  return async function teardown() {
+    if (state.tornDown) return;
+    state.tornDown = true;
+    try {
+      // The exit cleanup has already run: the run was interrupted and the process is exiting.
+      if (state.cleanedUp) return;
+      await check();
+    } finally {
+      // Only now, whether the check passed or threw, is there nothing left for the exit cleanup to do.
+      state.cleanedUp = true;
+      disarm();
+    }
+  };
+
+  async function check() {
+    const found = (processes) => { for (const entry of processes) state.found.processes.set(entry.pid, entry); return processes; };
     const notes = [];
     const listed = listProcesses(startedAt);
     if (!listed) notes.push(`Processes were not checked: the guard cannot list processes on ${process.platform}.`);
-    const owned = listed ? await settle(() => ownedProcesses(listProcesses(startedAt) ?? [], scope()), RUN_GRACE_MS) ?? [] : [];
+    const owned = listed ? await settle(() => found(ownedProcesses(listProcesses(startedAt) ?? [], scope())), RUN_GRACE_MS) ?? [] : [];
     const unstopped = owned.length > 0 ? await stopProcesses(owned) : [];
     if (unstopped.length > 0) notes.push(`Still running after SIGKILL: ${unstopped.map((entry) => entry.pid).join(", ")}.`);
     // Every test has finished, so a lock this run's processes still hold, this one included, is abandoned.
     const locks = removeAbandonedLocks(root, { graceMs: STOP_GRACE_MS, ending: process.pid });
+    for (const lock of locks) state.found.entries.add(describeLock(lock));
     const unattributed = listed && worktree ? await settle(() => worktreeOrphans(listProcesses(startedAt) ?? [], { worktree, startedAt, own: scope(), root }), STOP_GRACE_MS) ?? [] : [];
     const containers = composeContainers(roots());
     for (const container of containers) run("docker", ["rm", "-f", "-v", container.id], 30_000);
@@ -456,14 +484,17 @@ export async function setup(project) {
     }
     entries.push(...locks.map(describeLock));
     for (const container of containers) entries.push(`compose container ${container.name} (${container.id}) for ${container.directory}`);
-    if (!removeTree(root)) notes.push(`The temp root ${root} could not be removed.`);
+    for (const entry of entries) state.found.entries.add(entry);
+    // A root the guard cannot remove stays in the temp folder, so it fails the run like any other leftover.
+    const rootRemoved = removeTree(root);
+    if (!rootRemoved) entries.push(`${root}, the run's temp root, which could not be removed`);
     if (owned.length > 0 || entries.length > 0 || unstopped.length > 0 || unattributed.length > 0) {
       // Failing here ends Vitest's close before it removes its own folder, so remove it now.
       if (runnerTemp) removeTree(runnerTemp);
       throw new Error(report(`This test run (temp root ${root})`, owned, entries, notes, { worktree, processes: unattributed }));
     }
     if (notes.length > 0) process.stderr.write(`${notes.join("\n")}\n`);
-  };
+  }
 }
 
 const GUARDED_DIRECTORIES = Symbol.for("superfunctions.testLeakGuard.directories");
@@ -735,7 +766,7 @@ export function guardTestFile({ beforeEach, afterEach, afterAll }) {
     }
     const notes = [];
     if (unstopped.length > 0) notes.push(`Still running after SIGKILL: ${unstopped.map((entry) => entry.pid).join(", ")}.`);
-    if (!removed) notes.push(`The temp folder ${folder} could not be removed.`);
+    if (!removed) entries.push(`${folder}, the test file's temp folder, which could not be removed`);
     if (owned.length > 0 || entries.length > 0) {
       const relative = suite?.filepath ? path.relative(process.cwd(), suite.filepath) : undefined;
       const file = relative === undefined ? "This test file" : relative.startsWith("..") ? suite.filepath : relative;
