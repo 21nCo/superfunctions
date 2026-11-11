@@ -29,10 +29,11 @@ async function openLaunchGate(child: ChildProcess): Promise<void> {
 const LOG_FLAGS = constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | (constants.O_NOFOLLOW ?? 0);
 // A log name that keeps gaining other hard links is refused after this many detaches.
 const MAX_LOG_DETACHES = 3;
-// Preparations of one log (by its canonical directory, so aliases meet) in
-// this process run one after another, so one never detaches the fresh log
-// another just created in its place. Across processes, callers hold the lock
-// that owns the runtime and name.
+// Preparations of one log (by its canonical directory and case-folded name,
+// so aliases meet on case-insensitive filesystems too) in this process run
+// one after another, so one never detaches the fresh log another just
+// created in its place. Across processes, callers hold the lock that owns
+// the runtime and name.
 const logPreparations = new Map<string, Promise<void>>();
 
 async function presentEntry(file: string): Promise<Stats | undefined> {
@@ -87,7 +88,8 @@ async function openProcessLog(logPath: string, resetSensitiveHistory: boolean): 
  * before a reset).
  */
 export async function prepareProcessLog(logPath: string, resetSensitiveHistory: boolean): Promise<{ logFd: number; logOffset: number }> {
-  const key = await realpath(path.dirname(logPath)).then((dir) => path.join(dir, path.basename(logPath)), () => logPath);
+  const canonical = await realpath(path.dirname(logPath)).then((dir) => path.join(dir, path.basename(logPath)), () => logPath);
+  const key = canonical.normalize("NFC").toLowerCase();
   const previous = logPreparations.get(key) ?? Promise.resolve();
   let release!: () => void;
   const done = new Promise<void>((resolve) => { release = resolve; });

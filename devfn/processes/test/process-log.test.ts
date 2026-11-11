@@ -59,12 +59,15 @@ describe("process log preparation", () => {
   });
 
   it("prepares one log at a time, under any alias, so concurrent preparations share one reachable log and never touch the other name", async () => {
-    for (const [reset, aliased] of [[false, false], [true, false], [false, true]] as const) {
+    for (const [reset, aliased] of [[false, "none"], [true, "none"], [false, "directory"], [false, "case"], [true, "case"]] as const) {
       const { root, other, logPath } = await linkedLog();
-      // The second preparation may name the log through a linked directory.
+      // The second preparation may name the log through a linked directory,
+      // or in other letter case where the filesystem ignores case.
       const alias = path.join(root, "alias");
       await symlink(root, alias);
-      const second = aliased ? path.join(alias, path.basename(logPath)) : logPath;
+      const upper = path.join(root, "APP.log");
+      if (aliased === "case" && await stat(upper).then((found) => found.ino !== statSync(logPath).ino, () => true)) { await rm(root, { recursive: true, force: true }); continue; }
+      const second = { none: logPath, directory: path.join(alias, path.basename(logPath)), case: upper }[aliased];
       // Each removal of the name lands later than the last, as a slow
       // filesystem would order them, after the next preparation has looked.
       let removals = 0;
