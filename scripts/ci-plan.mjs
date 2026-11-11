@@ -36,6 +36,11 @@ const MCPFN_PATTERNS = [
   /^scripts\/(?:gate|test)-mcpfn.*\.mjs$/,
 ];
 
+// Test support a product's packages share, outside any package, selects all of that product's packages.
+const SHARED_TEST_SUPPORT = [
+  { pattern: /^devfn\/test-support\//, packages: "devfn/" },
+];
+
 const MCPFN_SUPPORT_PATTERNS = [
   /^README\.md$/,
   /^release-packages\.json$/,
@@ -269,6 +274,18 @@ for (const entry of changedEntries) {
     const jsDir = findNearestManifestDir(changedPath, jsDirs);
     if (jsDir && jsByDir.has(jsDir)) {
       changedJsDirs.add(jsDir);
+    }
+
+    for (const support of SHARED_TEST_SUPPORT) {
+      if (!support.pattern.test(changedPath)) {
+        continue;
+      }
+
+      for (const dir of jsDirs) {
+        if (dir.startsWith(support.packages)) {
+          changedJsDirs.add(dir);
+        }
+      }
     }
 
     const pythonDir = findNearestManifestDir(changedPath, pythonDirs);

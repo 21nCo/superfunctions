@@ -5,11 +5,15 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import net from "node:net";
 import { promisify } from "node:util";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { processBirthSignature } from "@devfn/processes";
 import { allocateEphemeralPort, FilePortRegistry, isFetchBlockedPort, isPortAvailable, renderPolicyInventory, resolvePolicy, withFileLock } from "../src/index.js";
 import { inspectContainerRunning } from "../src/registry.js";
+import { temporaryDirectories } from "../../test-support/temp-directories.mjs";
+
+// Removed after each test, whether it passes, fails or times out.
+const tempDir = temporaryDirectories(afterEach);
 
 // Fixtures that need the fixed Caddy admin port 127.0.0.1:2019 free share one
 // machine-wide lock with other DevFn packages' fixtures that bind it.
@@ -334,7 +338,7 @@ describe("FilePortRegistry", () => {
     } finally { await rm(dir, { recursive: true, force: true }); }
   }), 150_000);
   it("claims proxy listeners atomically across TCP and UDP and releases failed claims", async () => await withCaddyAdminPort(async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "devfn-registry-proxy-"));
+    const dir = tempDir("devfn-registry-proxy-");
     const port = 18443;
     const registry = new FilePortRegistry(path.join(dir, "registry.json"), async () => port + 1, async () => true);
     const request = (instanceId: string, invocationId: string, protocol: "tcp" | "udp", exact = true) =>
@@ -393,7 +397,7 @@ describe("FilePortRegistry", () => {
   }), 150_000);
 
   it("serializes a proxy claim against a concurrent sibling listener reservation", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "devfn-registry-proxy-race-"));
+    const dir = tempDir("devfn-registry-proxy-race-");
     const file = path.join(dir, "registry.json");
     const port = 18444;
     const proxy = new FilePortRegistry(file, async () => port + 1, async () => true);
@@ -410,19 +414,19 @@ describe("FilePortRegistry", () => {
     expect(state.allocations.some((allocation) => allocation.port === port)).toBe(state.invocations[0].instanceId === "sibling");
   });
   it("gives concurrent worktrees distinct deterministic allocations", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "devfn-registry-"));
+    const dir = tempDir("devfn-registry-");
     const registry = new FilePortRegistry(path.join(dir, "registry.json"));
     const reserve = (instanceId: string, invocationId: string) => registry.reserve({ projectId: "app", instanceId, invocationId, profile: "default", requests: [{ name: "app", spec: { range: [43000, 43100] } }] });
     const [first, second] = await Promise.all([reserve("worktree-a", "one"), reserve("worktree-b", "two")]);
     expect(first[0].port).not.toBe(second[0].port);
     expect((await registry.read()).revision).toBe(2);
-    const freshDir = await mkdtemp(path.join(tmpdir(), "devfn-registry-"));
+    const freshDir = tempDir("devfn-registry-");
     const repeated = await new FilePortRegistry(path.join(freshDir, "registry.json")).reserve({ projectId: "app", instanceId: "worktree-a", invocationId: "repeat", profile: "default", requests: [{ name: "app", spec: { range: [43000, 43100] } }] });
     expect(repeated[0].port).toBe(first[0].port);
   });
 
   it("fails closed when an exact reservation is already leased", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "devfn-registry-"));
+    const dir = tempDir("devfn-registry-");
     const registry = new FilePortRegistry(path.join(dir, "registry.json"));
     const exactPort = await allocateEphemeralPort();
     const input = { projectId: "app", profile: "default", requests: [{ name: "oauth", spec: { preferred: exactPort, exact: true } }] } as const;
@@ -434,7 +438,7 @@ describe("FilePortRegistry", () => {
     let exactPort = 0;
     let udp: Awaited<ReturnType<FilePortRegistry["reserve"]>> | undefined;
     for (let attempt = 0; attempt < 20 && !udp; attempt += 1) {
-      const dir = await mkdtemp(path.join(tmpdir(), "devfn-registry-"));
+      const dir = tempDir("devfn-registry-");
       const registry = new FilePortRegistry(path.join(dir, "registry.json"));
       exactPort = await allocateEphemeralPort();
       try {
@@ -455,7 +459,7 @@ describe("FilePortRegistry", () => {
   });
 
   it("preserves contiguous exact blocks", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "devfn-registry-"));
+    const dir = tempDir("devfn-registry-");
     const registry = new FilePortRegistry(path.join(dir, "registry.json"));
     let firstPort = 0;
     let allocations: Awaited<ReturnType<typeof registry.reserve>> | undefined;
@@ -476,7 +480,7 @@ describe("FilePortRegistry", () => {
   });
 
   it("honors contiguous preferred ports for reallocatable blocks", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "devfn-registry-"));
+    const dir = tempDir("devfn-registry-");
     const registry = new FilePortRegistry(path.join(dir, "registry.json"), undefined, async () => true);
     const firstPort = 45_670;
     const allocations = await registry.reserve({
@@ -491,7 +495,7 @@ describe("FilePortRegistry", () => {
   });
 
   it("rejects blocks whose assigned ports cannot satisfy every member range", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "devfn-registry-"));
+    const dir = tempDir("devfn-registry-");
     const registry = new FilePortRegistry(path.join(dir, "registry.json"), undefined, async () => true);
     await expect(registry.reserve({
       projectId: "oauth", instanceId: "incompatible", invocationId: "incompatible-block", profile: "default",
@@ -503,7 +507,7 @@ describe("FilePortRegistry", () => {
   });
 
   it("skips registry-leased ports returned by the OS ephemeral allocator", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "devfn-registry-"));
+    const dir = tempDir("devfn-registry-");
     const leased = await allocateEphemeralPort();
     let replacement = await allocateEphemeralPort();
     while (replacement === leased) replacement = await allocateEphemeralPort();
@@ -515,7 +519,7 @@ describe("FilePortRegistry", () => {
   });
 
   it("releases planned leases left by an interrupted instance", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "devfn-registry-"));
+    const dir = tempDir("devfn-registry-");
     const registry = new FilePortRegistry(path.join(dir, "registry.json"));
     await registry.reserve({ projectId: "app", instanceId: "one", invocationId: "interrupted", profile: "default", requests: [{ name: "app", spec: { range: [45600, 45699] } }] });
     await expect(registry.recoverInterrupted("one")).resolves.toBe(1);
@@ -525,7 +529,7 @@ describe("FilePortRegistry", () => {
   });
 
   it("fails interrupted planning invocations that reserved no ports", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "devfn-registry-"));
+    const dir = tempDir("devfn-registry-");
     const registry = new FilePortRegistry(path.join(dir, "registry.json"));
     await registry.reserve({ projectId: "app", instanceId: "one", invocationId: "empty", profile: "default", requests: [] });
     await expect(registry.recoverInterrupted("one")).resolves.toBe(1);
@@ -533,7 +537,7 @@ describe("FilePortRegistry", () => {
   });
 
   it("recovers ownerless stale lock directories", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "devfn-lock-"));
+    const dir = tempDir("devfn-lock-");
     const lockPath = path.join(dir, "registry.lock");
     await mkdir(lockPath);
     // Only past the bound every release waits for a creator to record itself.
@@ -638,7 +642,7 @@ describe("FilePortRegistry", () => {
   });
 
   it("refreshes planned allocations with the lifecycle heartbeat", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "devfn-registry-"));
+    const dir = tempDir("devfn-registry-");
     const registry = new FilePortRegistry(path.join(dir, "registry.json"));
     await registry.reserve({ projectId: "app", instanceId: "one", invocationId: "starting", profile: "default", requests: [{ name: "app", spec: { range: [45100, 45199] } }] });
     const before = (await registry.read()).allocations[0].updatedAt;
@@ -648,7 +652,7 @@ describe("FilePortRegistry", () => {
   });
 
   it("does not refresh planned allocations after an invocation becomes terminal", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "devfn-registry-"));
+    const dir = tempDir("devfn-registry-");
     const registry = new FilePortRegistry(path.join(dir, "registry.json"));
     await registry.reserve({ projectId: "app", instanceId: "one", invocationId: "failed", profile: "default", requests: [{ name: "app", spec: { range: [45200, 45299] } }] });
     const before = (await registry.read()).allocations[0].updatedAt;

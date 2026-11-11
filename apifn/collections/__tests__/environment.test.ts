@@ -1,5 +1,4 @@
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { readCollection } from "../src/reader.js";
 import {
@@ -8,10 +7,11 @@ import {
   selectEnvironment,
   writeEnvironmentFile,
 } from "../src/environment.js";
+import { tempDir } from "./temp-dirs.js";
 
 describe("environment file handling", () => {
   it("TV-ENV-001: reads and writes environment file in OpenCollection format", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "apifn-env-"));
+    const dir = await tempDir("apifn-env-");
     const filePath = path.join(dir, "development.yml");
 
     await writeEnvironmentFile(filePath, {
@@ -31,7 +31,7 @@ describe("environment file handling", () => {
   });
 
   it("TV-ENV-005: supports multiple environments and discovery", async () => {
-    const fixture = await mkdtemp(path.join(tmpdir(), "apifn-env-coll-"));
+    const fixture = await tempDir("apifn-env-coll-");
     await writeFile(
       path.join(fixture, "opencollection.yml"),
       "name: Env Collection\n",
@@ -85,7 +85,7 @@ describe("environment file handling", () => {
   });
 
   it("rejects array variables and duplicate environment keys", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "apifn-env-"));
+    const dir = await tempDir("apifn-env-");
     await writeFile(
       path.join(dir, "bad.yml"),
       ["name: bad", "variables:", "  - nope", ""].join("\n"),
@@ -96,7 +96,7 @@ describe("environment file handling", () => {
       /Environment variables are required/
     );
 
-    const envDir = await mkdtemp(path.join(tmpdir(), "apifn-env-dupe-"));
+    const envDir = await tempDir("apifn-env-dupe-");
     await writeFile(path.join(envDir, "dev.yml"), "name: dev\nvariables: {}\n", "utf8");
     await writeFile(path.join(envDir, "dev.yaml"), "name: dev2\nvariables: {}\n", "utf8");
 

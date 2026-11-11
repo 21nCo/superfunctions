@@ -3,11 +3,15 @@ import { access, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, write
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { FilePortRegistry, isPortAvailable } from "@devfn/ports";
 import { processBirthSignature, processExists, validateDevFnConfig } from "@devfn/config";
 import { DevFnOrchestrator, readReceipt, resolveInstanceIdentity, writeReceipt } from "@devfn/core";
 import { runCli } from "../src/index.js";
+import { temporaryDirectories } from "../../test-support/temp-directories.mjs";
+
+// Removed after each test, whether it passes, fails or times out.
+const tempDir = temporaryDirectories(afterEach);
 
 async function withListenerTools<T>(action: () => Promise<T>): Promise<T> {
   const toolsDir = await mkdtemp(path.join(tmpdir(), "devfn-tools-"));
@@ -168,7 +172,7 @@ describe("devfn CLI", () => {
   });
 
   it("previews detection before init writes", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "devfn-init-"));
+    const cwd = tempDir("devfn-init-");
     await writeFile(path.join(cwd, "package.json"), JSON.stringify({ name: "sample", scripts: { dev: "node server.js" } }), "utf8");
     let stdout = "";
     expect(await runCli(["init", "--json"], { cwd, stdout: (text) => { stdout += text; } })).toBe(0);
@@ -178,8 +182,8 @@ describe("devfn CLI", () => {
   });
 
   it("writes a manifest only with explicit confirmation and adds the runtime ignore", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "devfn-init-"));
-    const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-state-"));
+    const cwd = tempDir("devfn-init-");
+    const stateDir = tempDir("devfn-state-");
     await writeFile(path.join(cwd, "package.json"), JSON.stringify({ name: "sample", scripts: { dev: "node server.js" } }), "utf8");
     expect(await runCli(["init", "--yes", "--json"], { cwd, stdout: () => undefined })).toBe(0);
     expect(await readFile(path.join(cwd, "devfn.config.ts"), "utf8")).toContain("sample");
@@ -190,7 +194,7 @@ describe("devfn CLI", () => {
   });
 
   it("rejects non-TypeScript init targets", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "devfn-init-"));
+    const cwd = tempDir("devfn-init-");
     await writeFile(path.join(cwd, "package.json"), JSON.stringify({ name: "sample" }), "utf8");
     let stdout = "";
     expect(await runCli(["init", "--yes", "--config", "devfn.config.json", "--json"], { cwd, stdout: (text) => { stdout += text; }, stderr: () => undefined })).toBe(1);
@@ -202,7 +206,7 @@ describe("devfn CLI", () => {
   });
 
   it("restricts init manifests to the repository root", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "devfn-init-"));
+    const cwd = tempDir("devfn-init-");
     await writeFile(path.join(cwd, "package.json"), JSON.stringify({ name: "sample" }), "utf8");
     let stdout = "";
     expect(await runCli(["init", "--yes", "--config", "config/devfn.config.ts", "--json"], { cwd, stdout: (text) => { stdout += text; }, stderr: () => undefined })).toBe(1);
@@ -211,7 +215,7 @@ describe("devfn CLI", () => {
   });
 
   it("rolls back the generated manifest when the runtime ignore cannot be written", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "devfn-init-"));
+    const cwd = tempDir("devfn-init-");
     await writeFile(path.join(cwd, "package.json"), JSON.stringify({ name: "sample" }), "utf8");
     await mkdir(path.join(cwd, ".gitignore"));
     expect(await runCli(["init", "--yes", "--json"], { cwd, stdout: () => undefined, stderr: () => undefined })).toBe(1);
@@ -219,8 +223,8 @@ describe("devfn CLI", () => {
   });
 
   it("refuses to update a runtime ignore symlink outside the repository", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "devfn-init-"));
-    const outside = path.join(await mkdtemp(path.join(tmpdir(), "devfn-outside-")), "gitignore");
+    const cwd = tempDir("devfn-init-");
+    const outside = path.join(tempDir("devfn-outside-"), "gitignore");
     await writeFile(path.join(cwd, "package.json"), JSON.stringify({ name: "sample" }), "utf8");
     await writeFile(outside, "outside\n", "utf8");
     await symlink(outside, path.join(cwd, ".gitignore"));
@@ -230,8 +234,8 @@ describe("devfn CLI", () => {
   });
 
   it("runs the local up, status, url, and down lifecycle with JSON receipts", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "devfn-lifecycle-"));
-    const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-state-"));
+    const cwd = tempDir("devfn-lifecycle-");
+    const stateDir = tempDir("devfn-state-");
     await writeFile(path.join(cwd, "server.mjs"), "import http from 'node:http'; const server = http.createServer((_request, response) => { response.writeHead(200); response.end('ok'); }); server.listen(Number(process.env.PORT), '127.0.0.1', () => console.log('ready'));\n", "utf8");
     await writeFile(path.join(cwd, "devfn.config.json"), JSON.stringify({
       version: 1,
@@ -257,7 +261,7 @@ describe("devfn CLI", () => {
       expect((url.value.urls as Record<string, string>).app).toMatch(/^http:\/\/127\.0\.0\.1:/);
       expect((await invoke(["logs"])).value.app).toContain("ready");
       expect((await invoke(["logs", "--tail", "0"])).value.app).toBe("");
-      const wrongStateDir = await mkdtemp(path.join(tmpdir(), "devfn-wrong-state-"));
+      const wrongStateDir = tempDir("devfn-wrong-state-");
       let wrongOutput = "";
       expect(await runCli(["down", "--trust", "--json", "--state-dir", wrongStateDir], { cwd, stdout: (text) => { wrongOutput += text; }, stderr: () => undefined })).toBe(1);
       expect(JSON.parse(wrongOutput).error.message).toContain("same --state-dir");
@@ -312,8 +316,8 @@ describe("devfn CLI", () => {
   }, 25_000);
 
   it("restarts a live process whose configured readiness has degraded", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "devfn-readiness-recovery-"));
-    const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-state-"));
+    const cwd = tempDir("devfn-readiness-recovery-");
+    const stateDir = tempDir("devfn-state-");
     const closeMarker = path.join(cwd, "close-listener");
     await writeFile(path.join(cwd, "server.mjs"), "import { existsSync, unlinkSync } from 'node:fs'; import http from 'node:http'; const server = http.createServer((_request, response) => { response.writeHead(200); response.end('ok'); }); server.listen(Number(process.env.PORT), '127.0.0.1'); setInterval(() => { if (existsSync(process.env.CLOSE_FILE)) { unlinkSync(process.env.CLOSE_FILE); server.close(); } }, 25);\n", "utf8");
     await writeFile(path.join(cwd, "devfn.config.json"), JSON.stringify({
@@ -343,8 +347,8 @@ describe("devfn CLI", () => {
   }, 20_000);
 
   it("recovers a stale receipt without stopping a reused PID", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "devfn-reused-receipt-"));
-    const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-state-"));
+    const cwd = tempDir("devfn-reused-receipt-");
+    const stateDir = tempDir("devfn-state-");
     const config = { version: 1 as const, project: { id: "reused-receipt" }, profiles: { default: {} } };
     await writeFile(path.join(cwd, "devfn.config.json"), JSON.stringify(config), "utf8");
     const identity = await resolveInstanceIdentity(config.project.id, cwd);
@@ -363,8 +367,8 @@ describe("devfn CLI", () => {
   });
 
   it("keeps port leases when unjournaled proxy cleanup fails", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "devfn-proxy-cleanup-"));
-    const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-state-"));
+    const cwd = tempDir("devfn-proxy-cleanup-");
+    const stateDir = tempDir("devfn-state-");
     const config = { version: 1 as const, project: { id: "proxy-cleanup" }, profiles: { default: {} } };
     await writeFile(path.join(cwd, "devfn.config.json"), JSON.stringify(config), "utf8");
     const identity = await resolveInstanceIdentity(config.project.id, cwd);
@@ -559,8 +563,8 @@ describe("devfn CLI", () => {
   }, 30_000);
 
   it("requires a separate confirmation for public exposure", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "devfn-public-"));
-    const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-state-"));
+    const cwd = tempDir("devfn-public-");
+    const stateDir = tempDir("devfn-state-");
     await writeFile(path.join(cwd, "devfn.config.json"), JSON.stringify({
       version: 1,
       project: { id: "public-fixture" },
@@ -575,8 +579,8 @@ describe("devfn CLI", () => {
   });
 
   it("does not infer HTTP URLs from inactive profile nodes", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "devfn-profile-url-"));
-    const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-state-"));
+    const cwd = tempDir("devfn-profile-url-");
+    const stateDir = tempDir("devfn-state-");
     await writeFile(path.join(cwd, "server.mjs"), "import net from 'node:net'; const server = net.createServer(); server.listen(Number(process.env.PORT), '127.0.0.1');\n", "utf8");
     await writeFile(path.join(cwd, "devfn.config.json"), JSON.stringify({
       version: 1, project: { id: "profile-url" }, ports: { app: { range: [44600, 44700], env: "PORT" } },
@@ -598,8 +602,8 @@ describe("devfn CLI", () => {
   }, 15_000);
 
   it("does not infer an HTTP URL from a hostname when proxying is disabled", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "devfn-nonproxy-url-"));
-    const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-state-"));
+    const cwd = tempDir("devfn-nonproxy-url-");
+    const stateDir = tempDir("devfn-state-");
     await writeFile(path.join(cwd, "server.mjs"), "import net from 'node:net'; const server = net.createServer(); server.listen(Number(process.env.PORT), '127.0.0.1');\n", "utf8");
     await writeFile(path.join(cwd, "devfn.config.json"), JSON.stringify({
       version: 1, project: { id: "nonproxy-url" }, ports: { app: { range: [44810, 44900], env: "PORT" } },
@@ -618,8 +622,8 @@ describe("devfn CLI", () => {
   }, 15_000);
 
   it("matches exact-port diagnostics by protocol", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "devfn-doctor-"));
-    const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-state-"));
+    const cwd = tempDir("devfn-doctor-");
+    const stateDir = tempDir("devfn-state-");
     const server = createServer();
     await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
     const address = server.address();
@@ -637,8 +641,8 @@ describe("devfn CLI", () => {
   });
 
   it("does not report the running instance's exact port as a doctor conflict", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "devfn-doctor-owned-"));
-    const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-state-"));
+    const cwd = tempDir("devfn-doctor-owned-");
+    const stateDir = tempDir("devfn-state-");
     const probe = createServer();
     await new Promise<void>((resolve, reject) => { probe.once("error", reject); probe.listen(0, "127.0.0.1", resolve); });
     const address = probe.address();
@@ -674,8 +678,8 @@ describe("devfn CLI", () => {
 
   it("fails closed when local TCP listener ownership cannot be inspected", async () => {
     if (process.platform === "win32") return;
-    const cwd = await mkdtemp(path.join(tmpdir(), "devfn-listener-tools-"));
-    const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-state-"));
+    const cwd = tempDir("devfn-listener-tools-");
+    const stateDir = tempDir("devfn-state-");
     await writeFile(path.join(cwd, "server.mjs"), "import net from 'node:net'; net.createServer().listen(Number(process.env.PORT), '127.0.0.1');\n", "utf8");
     await writeFile(path.join(cwd, "devfn.config.json"), JSON.stringify({
       version: 1, project: { id: "listener-tools" }, ports: { app: { range: [45300, 45400], env: "PORT" } },
@@ -694,8 +698,8 @@ describe("devfn CLI", () => {
 
   it("preflights both listener protocols for portless local processes", async () => {
     if (process.platform === "win32") return;
-    const cwd = await mkdtemp(path.join(tmpdir(), "devfn-portless-listener-tools-"));
-    const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-state-"));
+    const cwd = tempDir("devfn-portless-listener-tools-");
+    const stateDir = tempDir("devfn-state-");
     await writeFile(path.join(cwd, "devfn.config.json"), JSON.stringify({
       version: 1, project: { id: "portless-listener-tools" },
       processes: { app: { adapter: "command", command: [process.execPath, "-e", "setInterval(() => {}, 1000)"] } },
@@ -711,8 +715,8 @@ describe("devfn CLI", () => {
   }, 15_000);
 
   it("waits for an unprobed process to bind its declared port", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "devfn-slow-listener-"));
-    const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-state-"));
+    const cwd = tempDir("devfn-slow-listener-");
+    const stateDir = tempDir("devfn-state-");
     await writeFile(path.join(cwd, "server.mjs"), "import net from 'node:net'; setTimeout(() => net.createServer().listen(Number(process.env.PORT), '127.0.0.1'), 900);\n", "utf8");
     await writeFile(path.join(cwd, "devfn.config.json"), JSON.stringify({
       version: 1, project: { id: "slow-listener" }, ports: { app: { range: [45410, 45500], env: "PORT" } },
@@ -735,8 +739,8 @@ describe("devfn CLI", () => {
   }, 15_000);
 
   it("reports an unrelated listener that replaces a recorded exact-port owner", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "devfn-doctor-replaced-"));
-    const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-state-"));
+    const cwd = tempDir("devfn-doctor-replaced-");
+    const stateDir = tempDir("devfn-state-");
     const probe = createServer();
     await new Promise<void>((resolve, reject) => { probe.once("error", reject); probe.listen(0, "127.0.0.1", resolve); });
     const address = probe.address();
@@ -771,8 +775,8 @@ describe("devfn CLI", () => {
   }, 15_000);
 
   it("does not execute an untrusted TypeScript manifest", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "devfn-trust-"));
-    const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-state-"));
+    const cwd = tempDir("devfn-trust-");
+    const stateDir = tempDir("devfn-state-");
     const marker = path.join(cwd, "executed.txt");
     await writeFile(path.join(cwd, "devfn.config.ts"), `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(marker)}, "executed"); export default { version: 1, project: { id: "unsafe" }, profiles: { default: {} } };\n`, "utf8");
     let stdout = "";
@@ -826,8 +830,8 @@ describe("devfn CLI", () => {
   });
 
   it("does not load an untrusted JSON manifest", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "devfn-json-trust-"));
-    const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-state-"));
+    const cwd = tempDir("devfn-json-trust-");
+    const stateDir = tempDir("devfn-state-");
     await writeFile(path.join(cwd, "devfn.config.json"), JSON.stringify({ version: 1, project: { id: "unsafe-json" }, profiles: { default: {} } }), "utf8");
     let stdout = "";
     const code = await runCli(["status", "--json", "--state-dir", stateDir], { cwd, stdout: (text) => { stdout += text; }, stderr: () => undefined });
@@ -836,8 +840,8 @@ describe("devfn CLI", () => {
   });
 
   it("rejects unsupported ports actions", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "devfn-ports-"));
-    const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-state-"));
+    const cwd = tempDir("devfn-ports-");
+    const stateDir = tempDir("devfn-state-");
     await writeFile(path.join(cwd, "devfn.config.json"), JSON.stringify({ version: 1, project: { id: "ports" }, profiles: { default: {} } }), "utf8");
     let stdout = "";
     const code = await runCli(["ports", "wat", "--trust", "--json", "--state-dir", stateDir], { cwd, stdout: (text) => { stdout += text; }, stderr: () => undefined });
@@ -846,8 +850,8 @@ describe("devfn CLI", () => {
   });
 
   it("rolls back a ready dependency when a later process fails", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "devfn-rollback-"));
-    const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-state-"));
+    const cwd = tempDir("devfn-rollback-");
+    const stateDir = tempDir("devfn-state-");
     await writeFile(path.join(cwd, "server.mjs"), "import net from 'node:net'; const server = net.createServer(); server.listen(Number(process.env.PORT), '127.0.0.1');\n", "utf8");
     await writeFile(path.join(cwd, "devfn.config.json"), JSON.stringify({
       version: 1,
