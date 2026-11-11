@@ -41,7 +41,8 @@
   },
   "dependencies": {
     "sharp": "^0.33.5",
-    "tesseract.js": "^7.0.0"
+    "tesseract.js": "^7.0.0",
+    "wasm-feature-detect": ">=1.8.0 <1.10.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

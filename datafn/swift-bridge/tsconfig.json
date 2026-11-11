@@ -7,7 +7,8 @@
     "baseUrl": ".",
     "paths": {
       "@datafn/client": ["../client/src/index.ts"],
-      "@datafn/core": ["../core/src/index.ts"]
+      "@datafn/core": ["../core/src/index.ts"],
+      "@superfunctions/http": ["./node_modules/@superfunctions/http"]
     },
     "strict": true,
     "declaration": true,
