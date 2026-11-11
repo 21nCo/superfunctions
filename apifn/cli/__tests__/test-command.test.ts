@@ -43,9 +43,19 @@ async function startFailingServer(port: number): Promise<{ close: () => Promise<
     };
 }
 
+// Suite-level collection directories, recorded as soon as they exist so that afterAll removes them
+// even when populating them or closing a server fails.
+const suiteDirs: string[] = [];
+
+async function suiteDir(prefix: string): Promise<string> {
+    const dir = await mkdtemp(path.join(tmpdir(), prefix));
+    suiteDirs.push(dir);
+    return dir;
+}
+
 /** Create a minimal passing collection in a temp dir */
 async function createPassingCollection(baseUrl: string): Promise<string> {
-    const dir = await mkdtemp(path.join(tmpdir(), "apifn-test-pass-"));
+    const dir = await suiteDir("apifn-test-pass-");
 
     await writeFile(
         path.join(dir, "opencollection.yml"),
@@ -81,7 +91,7 @@ async function createPassingCollection(baseUrl: string): Promise<string> {
 
 /** Create a minimal failing collection in a temp dir */
 async function createFailingCollection(baseUrl: string): Promise<string> {
-    const dir = await mkdtemp(path.join(tmpdir(), "apifn-test-fail-"));
+    const dir = await suiteDir("apifn-test-fail-");
 
     await writeFile(
         path.join(dir, "opencollection.yml"),
@@ -131,9 +141,13 @@ describe("apifn test command — CLI-004, CLI-011, RUN-009", () => {
     });
 
     afterAll(async () => {
-        await passServer.close();
-        await failServer.close();
-        await Promise.all([passDir, failDir].filter(Boolean).map((dir) => rm(dir, { recursive: true, force: true })));
+        try {
+            const closed = await Promise.allSettled([passServer?.close(), failServer?.close()]);
+            const failed = closed.find((result) => result.status === "rejected");
+            if (failed) throw failed.reason;
+        } finally {
+            await Promise.all(suiteDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+        }
     });
 
     it("TV-CLI-004 + TV-CLI-011: passing collection exits 0 with console reporter", async () => {

@@ -3,7 +3,7 @@
 // Vitest project in a child process and checks its exit, its report and what is left.
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,9 +27,10 @@ const leakProcess = (cwd: string) => `(() => {
 
 // The same process, started through a short-lived parent so that it is orphaned (re-parented to
 // init) at once, as a DevFn wrapper is once the command that started it exits.
-const orphanProcess = (cwd: string) => `(() => {
-  const start = 'const child = require("node:child_process").spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore", cwd: process.argv[1], env: { PATH: process.env.PATH } }); child.unref(); process.stdout.write(String(child.pid));';
-  return Number(require("node:child_process").spawnSync(process.execPath, ["-e", start, ${cwd}], { encoding: "utf8", env: { PATH: process.env.PATH } }).stdout);
+// With `named`, the orphan's command line also names that path.
+const orphanProcess = (cwd: string, named = '""') => `(() => {
+  const start = 'const child = require("node:child_process").spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", ...process.argv.slice(2).filter(Boolean)], { detached: true, stdio: "ignore", cwd: process.argv[1], env: { PATH: process.env.PATH } }); child.unref(); process.stdout.write(String(child.pid));';
+  return Number(require("node:child_process").spawnSync(process.execPath, ["-e", start, ${cwd}, ${named}], { encoding: "utf8", env: { PATH: process.env.PATH } }).stdout);
 })()`;
 
 /**
@@ -59,7 +60,7 @@ ${content}
  * SIGTERM, and `"cancel"` cancels it the way turbo cancels a task when a sibling fails: it
  * closes the task's output and sends SIGINT to its process group.
  */
-async function runProject(dir: string, record: string, interrupt?: "signal" | "cancel"): Promise<{ code: number | null; output: string; recorded: { root: string; pid?: number; dir?: string; child?: number } }> {
+async function runProject(dir: string, record: string, interrupt?: "signal" | "cancel"): Promise<{ code: number | null; output: string; recorded: { root: string; pid?: number; dir?: string; child?: number; sibling?: number; nested?: number } }> {
   const child = spawn(process.execPath, [vitest, "run", "--root", dir, "--config", path.join(dir, "vitest.config.mjs")],
     { cwd: dir, detached: interrupt === "cancel", env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1" } });
   let output = "";
@@ -225,6 +226,40 @@ test("hangs", async () => {
       expect(existsSync(recorded.root)).toBe(false);
     } finally {
       if (orphan) try { process.kill(orphan, "SIGKILL"); } catch { /* already gone */ }
+    }
+  });
+
+  it("reports a worktree orphan but not one in a sibling directory whose name extends the worktree's, or in a checkout nested in it", async () => {
+    // Run from the main checkout, a worktree under its .worktrees is someone else's checkout, as is
+    // /x/repo-dev-42 beside /x/repo. Orphans there are not this run's and must not fail it.
+    const { dir, record } = project(`test("orphans in and beside the worktree", () => {
+  const sibling = process.cwd() + "-sibling";
+  const nested = path.join(process.cwd(), ".worktrees", "other", "package");
+  const own = path.join(process.cwd(), "package");
+  record({
+    sibling: ${orphanProcess("sibling", 'path.join(sibling, "server.mjs")')},
+    nested: ${orphanProcess("nested", 'path.join(nested, "server.mjs")')},
+    pid: ${orphanProcess("own", 'path.join(own, "server.mjs")')},
+  });
+});`);
+    mkdirSync(path.join(dir, ".git"));
+    mkdirSync(path.join(dir, "package"));
+    mkdirSync(path.join(dir, ".worktrees", "other", "package"), { recursive: true });
+    writeFileSync(path.join(dir, ".worktrees", "other", ".git"), "gitdir: elsewhere\n");
+    mkdirSync(`${dir}-sibling`);
+    let recorded: { root: string; pid?: number; sibling?: number; nested?: number } | undefined;
+    try {
+      const result = await runProject(dir, record);
+      recorded = result.recorded;
+      expect(result.code).not.toBe(0);
+      expect(result.output).toContain(`run from or name a path in the worktree ${realpathSync(dir)}, and were orphaned.`);
+      expect(result.output).toContain(`process ${recorded!.pid} `);
+      expect(result.output).not.toContain(`process ${recorded!.sibling} `);
+      expect(result.output).not.toContain(`process ${recorded!.nested} `);
+      for (const pid of [recorded!.pid, recorded!.sibling, recorded!.nested]) expect(alive(pid!)).toBe(true);
+    } finally {
+      for (const pid of [recorded?.pid, recorded?.sibling, recorded?.nested]) if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+      rmSync(`${dir}-sibling`, { recursive: true, force: true });
     }
   });
 

@@ -34,7 +34,10 @@ calls `guardTestFile` as a setup file.
   (re-parented to init), as a detached wrapper is once the command that started it exits.
   It never signals them. A process still under this run's or a sibling turbo task's process
   tree, one that was already running (an editor, say), and one that a sibling guarded run
-  still going attributes to itself are not listed.
+  still going attributes to itself are not listed. Nor is one whose path is only in a
+  checkout nested in the worktree (such as `.worktrees/<task>` under the main checkout) or
+  in a sibling directory whose name merely starts with the worktree's (`repo-dev-42` beside
+  `repo`): a path counts only where the root is followed by `/`, a delimiter or the end.
 - When the run is interrupted (Ctrl-C, or turbo cancelling the task after a sibling
   failed), it stops what the run started, including processes running from directories
   registered with `guardDirectory`, and removes those directories and the temp root as the

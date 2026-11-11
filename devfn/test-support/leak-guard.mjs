@@ -191,9 +191,51 @@ function descendantsOf(pid, processes) {
   return descendants;
 }
 
-/** Whether a process names a path under the given roots in its command, environment or working directory. */
-const namesPathUnder = (entry, roots) => roots.some((root) => entry.command.includes(root) || entry.environment.includes(root)) ||
-  (entry.cwd !== undefined && isUnder(entry.cwd, roots));
+// A character that can continue a file name, so `/x/repo` followed by one names `/x/repo-dev-42`, not `/x/repo`.
+const NAME_CHARACTER = /[A-Za-z0-9._+@~-]/;
+// A character that ends a path where a command line or environment names it.
+const PATH_END = /[\s"'`:;,=()<>|&\0]/;
+
+/**
+ * The paths at or under `root` that `text` names: each occurrence of `root` that is followed by
+ * a path separator, a delimiter or the end of the text, up to where that path ends.
+ */
+export function pathsNamedUnder(text, root) {
+  const paths = [];
+  for (let at = text.indexOf(root); at !== -1; at = text.indexOf(root, at + 1)) {
+    const next = text[at + root.length];
+    if (next !== undefined && NAME_CHARACTER.test(next)) continue;
+    let end = at + root.length;
+    while (end < text.length && !PATH_END.test(text[end])) end += 1;
+    paths.push(text.slice(at, end).replace(/\/+$/, "") || root);
+  }
+  return paths;
+}
+
+/**
+ * Whether a process names a path under the given roots in its command, environment or working
+ * directory. `accept(path, root)` can reject a named path, such as one inside a nested checkout.
+ */
+const namesPathUnder = (entry, roots, accept = () => true) => roots.some((root) =>
+  pathsNamedUnder(entry.command, root).some((named) => accept(named, root)) ||
+  pathsNamedUnder(entry.environment, root).some((named) => accept(named, root)) ||
+  (entry.cwd !== undefined && isUnder(entry.cwd, [root]) && accept(entry.cwd, root)));
+
+/**
+ * Whether `candidate`, a path under `root`, lies in another checkout nested in it, such as a
+ * worktree under the main checkout's `.worktrees`: a directory between them holds a `.git` entry.
+ */
+export function inNestedCheckout(candidate, root, cache = new Map()) {
+  const nested = [];
+  let answer = false;
+  for (let directory = candidate; directory !== root && directory.startsWith(`${root}/`); directory = path.dirname(directory)) {
+    if (cache.has(directory)) { answer = cache.get(directory); break; }
+    nested.push(directory);
+    if (existsSync(path.join(directory, ".git"))) { answer = true; break; }
+  }
+  for (const directory of nested) cache.set(directory, answer);
+  return answer;
+}
 
 /**
  * The processes a scope owns: those carrying its marker, descending from its `parent` process, or
@@ -492,8 +534,10 @@ function worktreeOrphans(processes, { worktree, startedAt, own, root }) {
   const ownPids = new Set(ownedProcesses(processes, own).map((entry) => entry.pid));
   const siblings = liveSiblingRuns(root);
   const worktreeRoots = pathAliases(worktree);
+  const checkouts = new Map();
+  const inThisWorktree = (named, worktreeRoot) => !inNestedCheckout(named, worktreeRoot, checkouts);
   return processes.filter((entry) => entry.pid !== process.pid && !ancestors.has(entry.pid) && !ownPids.has(entry.pid) && recent(entry) &&
-    namesPathUnder(entry, worktreeRoots) && !/\bturbo(?:\.exe)?\b.*\bdaemon\b/.test(entry.command) &&
+    namesPathUnder(entry, worktreeRoots, inThisWorktree) && !/\bturbo(?:\.exe)?\b.*\bdaemon\b/.test(entry.command) &&
     !siblings.some((sibling) => entry.environment.includes(sibling.marker) || namesPathUnder(entry, sibling.roots)) && orphaned(entry));
 }
 
