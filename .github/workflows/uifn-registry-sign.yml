@@ -1,0 +1,236 @@
+name: uifn registry sign (KMS)
+
+# Signs the uifn registry catalog on a branch with the AWS KMS Ed25519 release key (envelope schema v2)
+# and pushes the two signature files to that branch as a new commit.
+#
+# Dispatch from dev only. The sign job runs in the uifn-release environment, so a maintainer must approve
+# it before it receives AWS credentials. Branch code never runs with credentials: the check job regenerates
+# the branch's catalog without credentials, using only a generator byte-identical to this workflow's dev commit,
+# and the sign job runs the signer from that dev commit against a plain checkout of the branch.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch to sign (it receives the signature commit; never dev, next or main)
+        required: true
+        type: string
+      expected_sha:
+        description: Full 40-character commit SHA the branch head must equal
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: uifn-registry-sign-${{ inputs.ref }}
+  cancel-in-progress: false
+
+env:
+  SIGN_REF: ${{ inputs.ref }}
+  EXPECTED_SHA: ${{ inputs.expected_sha }}
+
+jobs:
+  check:
+    name: Check branch catalog
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Validate inputs
+        run: |
+          set -euo pipefail
+          if [[ ! "$SIGN_REF" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] || [[ "$SIGN_REF" == *..* ]] || [[ "$SIGN_REF" == */ ]] || [[ "$SIGN_REF" == *.lock ]]; then
+            echo "::error::ref must be a plain branch name"; exit 1
+          fi
+          if [[ "$SIGN_REF" == "dev" || "$SIGN_REF" == "next" || "$SIGN_REF" == "main" ]]; then
+            echo "::error::sign a feature branch; the signature then lands through its pull request"; exit 1
+          fi
+          if [[ ! "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::expected_sha must be a full 40-character lowercase commit SHA"; exit 1
+          fi
+
+      - name: Checkout trusted generator (this workflow's dev commit)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          path: trusted
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Checkout branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: refs/heads/${{ inputs.ref }}
+          path: target
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Require the expected branch head
+        working-directory: target
+        run: |
+          set -euo pipefail
+          head="$(git rev-parse HEAD)"
+          if [[ "$head" != "$EXPECTED_SHA" ]]; then
+            echo "::error::$SIGN_REF is at $head, expected $EXPECTED_SHA"; exit 1
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+
+      - name: Require the dev catalog generator
+        run: |
+          set -euo pipefail
+          # The whole generator chain (relative imports only). A branch-modified generator could report success for any
+          # catalog, so only dev's generator may vouch for the bytes that get signed. Node runs a module from its real
+          # path, so each file and the scripts directory must be real (not symlinks) as well as byte-identical.
+          if [[ -L target/scripts || ! -d target/scripts ]]; then
+            echo "::error::scripts on $SIGN_REF must be a real directory"; exit 1
+          fi
+          for file in generate-uifn-registry.mjs generate-uifn-phase-16.mjs uifn-delivery-generator.mjs uifn-component-fixtures.mjs; do
+            if [[ -L "target/scripts/$file" || ! -f "target/scripts/$file" ]] || ! cmp -s "trusted/scripts/$file" "target/scripts/$file"; then
+              echo "::error::scripts/$file on $SIGN_REF differs from dev; land generator changes on dev before signing"; exit 1
+            fi
+          done
+          # The signer's journal and backups are never committed; a branch must not supply its own recovery state.
+          sidecars="$(git -C target ls-files -- '*.kms-sign.*')"
+          if [[ -n "$sidecars" ]]; then
+            echo "$sidecars"; echo "::error::$SIGN_REF tracks signer sidecar files (*.kms-sign.*)"; exit 1
+          fi
+
+      - name: Require the committed catalog to match a fresh generation
+        working-directory: target
+        run: |
+          set -euo pipefail
+          node scripts/generate-uifn-registry.mjs --check
+          if [[ -n "$(git status --porcelain --untracked-files=all)" ]]; then
+            git status --porcelain --untracked-files=all; echo "::error::catalog generation changed the checkout"; exit 1
+          fi
+
+  sign:
+    name: Sign registry catalog
+    needs: check
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: uifn-release
+    permissions:
+      id-token: write
+      contents: write
+    env:
+      # Protected configuration of the uifn-release environment; a dispatcher cannot override any of it.
+      EXPECTED_KEY_ID: ${{ vars.UIFN_REGISTRY_EXPECTED_KEY_ID }}
+    steps:
+      - name: Require the protected signing configuration
+        env:
+          SIGNING_ROLE_ARN: ${{ vars.UIFN_REGISTRY_SIGNING_ROLE_ARN }}
+          KMS_KEY_ID: ${{ vars.UIFN_REGISTRY_KMS_KEY_ID }}
+          KMS_REGION: ${{ vars.UIFN_REGISTRY_KMS_REGION }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [[ -n "$SIGNING_ROLE_ARN" ]] || missing+=(UIFN_REGISTRY_SIGNING_ROLE_ARN)
+          [[ -n "$KMS_KEY_ID" ]] || missing+=(UIFN_REGISTRY_KMS_KEY_ID)
+          [[ -n "$KMS_REGION" ]] || missing+=(UIFN_REGISTRY_KMS_REGION)
+          [[ -n "$EXPECTED_KEY_ID" ]] || missing+=(UIFN_REGISTRY_EXPECTED_KEY_ID)
+          if (( ${#missing[@]} > 0 )); then
+            echo "::error::set these uifn-release environment variables: ${missing[*]}"; exit 1
+          fi
+          if [[ ! "$EXPECTED_KEY_ID" =~ ^[0-9a-f]{24}$ ]]; then
+            echo "::error::UIFN_REGISTRY_EXPECTED_KEY_ID must be 24 lowercase hex characters"; exit 1
+          fi
+
+      - name: Checkout signer (this workflow's dev commit)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          path: signer
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Checkout branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: refs/heads/${{ inputs.ref }}
+          path: target
+          fetch-depth: 1
+          persist-credentials: true
+
+      - name: Require the expected branch head
+        working-directory: target
+        run: |
+          set -euo pipefail
+          head="$(git rev-parse HEAD)"
+          if [[ "$head" != "$EXPECTED_SHA" ]]; then
+            echo "::error::$SIGN_REF is at $head, expected $EXPECTED_SHA"; exit 1
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.UIFN_REGISTRY_SIGNING_ROLE_ARN }}
+          aws-region: ${{ vars.UIFN_REGISTRY_KMS_REGION }}
+          role-session-name: uifn-registry-sign-${{ github.run_id }}
+          mask-aws-account-id: true
+
+      - name: Sign catalog with KMS
+        env:
+          UIFN_REGISTRY_KMS_KEY_ID: ${{ vars.UIFN_REGISTRY_KMS_KEY_ID }}
+          UIFN_REGISTRY_KMS_REGION: ${{ vars.UIFN_REGISTRY_KMS_REGION }}
+          UIFN_REGISTRY_EXPECTED_KEY_ID: ${{ vars.UIFN_REGISTRY_EXPECTED_KEY_ID }}
+        working-directory: target
+        run: node ../signer/scripts/sign-uifn-registry-kms.mjs
+
+      - name: Commit and push the signature files
+        id: commit
+        working-directory: target
+        run: |
+          set -euo pipefail
+          files=(uifn/registry/generated/catalog-signature.json uifn/registry/src/generated/signature.ts)
+          changed="$(git status --porcelain --untracked-files=all | cut -c4- | sort)"
+          if [[ -z "$changed" ]]; then
+            # Ed25519 is deterministic: the same catalog and key reproduce the committed signature byte for byte.
+            echo "::notice::$SIGN_REF already carries this KMS signature at $EXPECTED_SHA; nothing to commit"
+            echo "commit=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Either file may already hold this signature (Ed25519 is deterministic), so a repair of one file is valid.
+          unexpected="$(comm -23 <(printf '%s\n' "$changed") <(printf '%s\n' "${files[@]}" | sort))"
+          if [[ -n "$unexpected" ]]; then
+            printf 'changed:\n%s\n' "$changed"; echo "::error::signing may change only the two signature files"; exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- "${files[@]}"
+          git commit -m "chore(uifn-registry): sign catalog with KMS key $EXPECTED_KEY_ID" \
+            -m "Signed by ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID} at ${EXPECTED_SHA}."
+          git push origin "HEAD:refs/heads/$SIGN_REF"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Job summary
+        env:
+          SIGNATURE_COMMIT: ${{ steps.commit.outputs.commit }}
+        run: |
+          set -euo pipefail
+          envelope=target/uifn/registry/generated/catalog-signature.json
+          {
+            echo "## uifn registry KMS signature"
+            echo
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Ref | \`$SIGN_REF\` |"
+            echo "| Signed head | \`$EXPECTED_SHA\` |"
+            echo "| Signature commit | \`${SIGNATURE_COMMIT:-none (already signed)}\` |"
+            echo "| Schema version | \`$(jq -r .schemaVersion "$envelope")\` |"
+            echo "| Domain | \`$(jq -r .domain "$envelope")\` |"
+            echo "| Catalog SHA-256 | \`$(jq -r .catalogSha256 "$envelope")\` |"
+            echo "| Key id | \`$(jq -r .keyId "$envelope")\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
