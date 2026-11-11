@@ -7,7 +7,13 @@ name: DevFn readiness repeat
 on:
   pull_request:
     branches: [dev, next, main]
+    # Everything the job installs, builds or runs: npm ci installs the test
+    # toolchain from the root manifest and lockfile.
     paths:
+      - "package.json"
+      - "package-lock.json"
+      - "scripts/ci-install-rollup-native.mjs"
+      - "clifn/core/**"
       - "devfn/config/**"
       - "devfn/ports/**"
       - "devfn/processes/**"
@@ -18,7 +24,7 @@ on:
   workflow_dispatch:
     inputs:
       iterations:
-        description: Consecutive runs of the readiness tests
+        description: Consecutive runs of the readiness tests (a whole number from 1 to 200)
         required: false
         default: "20"
 
@@ -79,8 +85,15 @@ jobs:
           pattern+='|replaces a running lifecycle when its selected target changes behind a credential-like name'
           pattern+='|replaces a native process when an inherited ordinary allowlist value changes'
           pattern+='|restores the served certificate after its source was removed and a refused prior teardown'
+          # A count that runs no test must not report success: accept only a
+          # whole number from 1 to 200 (about 20 minutes at CI speed).
+          if ! [[ "$ITERATIONS" =~ ^[1-9][0-9]*$ ]] || [ "${#ITERATIONS}" -gt 3 ] || [ "$ITERATIONS" -gt 200 ]; then
+            echo "::error::iterations must be a whole number from 1 to 200, got '$ITERATIONS'"
+            exit 1
+          fi
           mkdir -p readiness-repeat-logs
-          for iteration in $(seq 1 "$ITERATIONS"); do
+          completed=0
+          for ((iteration = 1; iteration <= ITERATIONS; iteration++)); do
             echo "::group::Iteration $iteration of $ITERATIONS"
             # Each file holds one of the four tests; --retry=0 makes any failure final.
             set +e
@@ -98,8 +111,13 @@ jobs:
               echo "::error::Iteration $iteration failed: exit $status, $passed of 4 readiness tests passed"
               exit 1
             fi
+            completed=$((completed + 1))
           done
-          echo "All $ITERATIONS iterations passed all 4 readiness tests."
+          if [ "$completed" -ne "$ITERATIONS" ]; then
+            echo "::error::Only $completed of $ITERATIONS iterations ran"
+            exit 1
+          fi
+          echo "All $completed iterations passed all 4 readiness tests."
 
       - name: Upload the iteration logs when an iteration failed
         if: failure()
