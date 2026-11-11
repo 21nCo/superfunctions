@@ -275,20 +275,27 @@ export function validateSwiftUIStatus(source = SWIFTUI_STATUS_SOURCE) {
 
 // The styles and components a UIFnSwiftUI source file declares: a top-level
 // public struct conforming to View or to a SwiftUI style protocol, and, in
-// Components, a function in a public View extension (a view modifier).
+// Components, a public function in a View extension (a view modifier).
+const SWIFT_ATTRIBUTES = String.raw`(?:@\w+(?:\([^)\n]*\))?\s+)*`;
+
 export function parseSwiftUISurfaceDeclarations(relativePath, text) {
   const directory = Object.keys(SWIFTUI_SURFACE_DIRECTORIES).find((name) => relativePath.startsWith(`${SWIFTUI_SOURCES_ROOT}/${name}/`));
   if (!directory) return [];
   const kind = SWIFTUI_SURFACE_DIRECTORIES[directory];
   const declarations = [];
-  for (const match of text.matchAll(/^public\s+(?:final\s+)?struct\s+(\w+)\s*(?:<[^>{]*>)?\s*:\s*([^{]+)\{/gm)) {
+  const structs = new RegExp(String.raw`^${SWIFT_ATTRIBUTES}public\s+(?:final\s+)?struct\s+(\w+)\s*(?:<[^>{]*>)?\s*:\s*([^{]+)\{`, 'gm');
+  for (const match of text.matchAll(structs)) {
     const conformances = match[2].split(/\bwhere\b/)[0].split(/[,&]/).map((value) => value.trim().replace(/^SwiftUI\./, '')).filter(Boolean);
     if (conformances.some((value) => value === 'View' || /^[A-Z]\w*Style$/.test(value))) declarations.push({ id: match[1], kind, source: relativePath });
   }
   if (kind === 'component') {
-    for (const block of text.matchAll(/^public\s+extension\s+(?:SwiftUI\.)?View\s*\{([\s\S]*?)^\}/gm)) {
-      for (const match of block[1].matchAll(/^[ \t]*(?:@\w+(?:\([^)\n]*\))?\s+)*(?:(?:public|nonisolated)\s+)*func\s+(\w+)\s*[<(]/gm)) {
-        declarations.push({ id: match[1], kind, source: relativePath });
+    const extensions = new RegExp(String.raw`^${SWIFT_ATTRIBUTES}(public\s+)?extension\s+(?:SwiftUI\.)?View\b[^{]*\{([\s\S]*?)^\}`, 'gm');
+    const functions = new RegExp(String.raw`^[ \t]*${SWIFT_ATTRIBUTES}((?:(?:public|private|fileprivate|internal|nonisolated|static)\s+)*)func\s+(\w+)\s*[<(]`, 'gm');
+    for (const block of text.matchAll(extensions)) {
+      for (const match of block[2].matchAll(functions)) {
+        const modifiers = match[1].split(/\s+/);
+        const isPublic = modifiers.includes('public') || (Boolean(block[1]) && !modifiers.some((value) => ['private', 'fileprivate', 'internal'].includes(value)));
+        if (isPublic) declarations.push({ id: match[2], kind, source: relativePath });
       }
     }
   }

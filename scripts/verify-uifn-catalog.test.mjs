@@ -199,11 +199,16 @@ test('Swift declarations count only public styles, views, and component view mod
     '}',
     'extension View {',
     '    func uifnInternal() -> some View { self }',
+    '    public func uifnCardBadge() -> some View { self }',
+    '}',
+    '@MainActor public struct UIFnCardList: View {',
     '}',
   ].join('\n');
   assert.deepEqual(parseSwiftUISurfaceDeclarations(components, text).map((declaration) => [declaration.id, declaration.kind]), [
     ['UIFnCard', 'component'],
+    ['UIFnCardList', 'component'],
     ['uifnCardOverlay', 'component'],
+    ['uifnCardBadge', 'component'],
   ]);
   assert.deepEqual(parseSwiftUISurfaceDeclarations('uifn/swift/Sources/UIFnSwiftUI/Styles/Example.swift', 'public struct UIFnRowStyle: LabelStyle {\n}\n').map((declaration) => [declaration.id, declaration.kind]), [['UIFnRowStyle', 'style']]);
   assert.deepEqual(parseSwiftUISurfaceDeclarations('uifn/swift/Sources/UIFnSwiftUI/Tokens/Example.swift', 'public struct UIFnThemeView: View {\n}\n'), []);
