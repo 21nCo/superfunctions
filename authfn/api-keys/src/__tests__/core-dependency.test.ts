@@ -17,7 +17,8 @@ describe('authfn dependency', () => {
   // The release build installs only this package, so it tests against the
   // published authfn that the release pins.
   it.skipIf(workspaceInstalled)('resolves the pinned authfn release', () => {
-    const manifest = (url: URL) => JSON.parse(readFileSync(url, 'utf8'));
+    type Manifest = { version: string; dependencies: Record<string, string> };
+    const manifest = (url: URL): Manifest => JSON.parse(readFileSync(url, 'utf8')) as Manifest;
     const pinned = manifest(new URL('../../package.json', import.meta.url)).dependencies.authfn;
     const installed = manifest(new URL('../../node_modules/authfn/package.json', import.meta.url)).version;
     expect(installed).toBe(pinned);
