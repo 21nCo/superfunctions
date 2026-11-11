@@ -58,14 +58,15 @@ describe("process log preparation", () => {
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
-  // The directory alias is a symlink, which Windows creates only with privilege.
-  it.skipIf(process.platform === "win32")("prepares one log at a time, under any alias, so concurrent preparations share one reachable log and never touch the other name", async () => {
+  it("prepares one log at a time, under any alias, so concurrent preparations share one reachable log and never touch the other name", async () => {
     for (const [reset, aliased] of [[false, "none"], [true, "none"], [false, "directory"], [false, "case"], [true, "case"]] as const) {
+      // The directory alias is a symlink, which Windows creates only with privilege.
+      if (aliased === "directory" && process.platform === "win32") continue;
       const { root, other, logPath } = await linkedLog();
       // The second preparation may name the log through a linked directory,
       // or in other letter case where the filesystem ignores case.
       const alias = path.join(root, "alias");
-      await symlink(root, alias);
+      if (aliased === "directory") await symlink(root, alias);
       const upper = path.join(root, "APP.log");
       if (aliased === "case" && await stat(upper).then((found) => found.ino !== statSync(logPath).ino, () => true)) { await rm(root, { recursive: true, force: true }); continue; }
       const second = { none: logPath, directory: path.join(alias, path.basename(logPath)), case: upper }[aliased];
