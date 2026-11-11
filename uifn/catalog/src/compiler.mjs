@@ -15,6 +15,13 @@ import {
   STABLE_FRAMEWORKS,
   STORY_PROFILES,
 } from './profiles.mjs';
+import {
+  SWIFTUI_SOURCES_ROOT,
+  SWIFTUI_STATUS_SCHEMA_VERSION,
+  SWIFTUI_STATUS_SOURCE,
+  SWIFTUI_STATUSES,
+  SWIFTUI_SURFACE_KINDS,
+} from './swiftui-status.mjs';
 
 export const GENERATED_OUTPUT_NAMES = [
   'adapter-coverage.json',
@@ -28,6 +35,7 @@ export const GENERATED_OUTPUT_NAMES = [
   'registry-metadata.json',
   'release-matrix.json',
   'story-manifest.json',
+  'swiftui-status.json',
   'test-manifest.json',
 ];
 
@@ -190,6 +198,153 @@ export function validateCatalogSource(source = CATALOG_SOURCE) {
   return { ok: true, primitiveCount: source.primitives.length };
 }
 
+const SWIFTUI_ENTRY_FIELDS = ['status', 'controls', 'surfaces', 'note'];
+const SWIFTUI_CONTROL_PATTERN = /^\.?[A-Za-z][A-Za-z0-9]*$/;
+const SWIFTUI_SURFACE_ID_PATTERN = /^(?:UIFn|uifn)[A-Za-z0-9]+$/;
+const SWIFTUI_SURFACE_DIRECTORIES = { Styles: 'style', Components: 'component' };
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function validateSwiftUINames(entry, field, primitive, pattern) {
+  const values = entry[field];
+  assert(Array.isArray(values), 'UIFN_CATALOG_FIELD_MISSING', `${primitive} swiftui.${field} must be an array.`, { primitive, field: `swiftui.${field}` });
+  for (const value of values) {
+    assert(typeof value === 'string' && pattern.test(value), 'UIFN_CATALOG_UNSUPPORTED_VALUE', `${primitive} has an invalid swiftui.${field} entry.`, { primitive, field: `swiftui.${field}`, value });
+  }
+  assertUnique(values, `swiftui.${field}`, primitive);
+}
+
+function validateSwiftUISurfaces(surfaces) {
+  assert(Array.isArray(surfaces) && surfaces.length > 0, 'UIFN_CATALOG_FIELD_MISSING', 'SwiftUI status needs the UIFnSwiftUI style and component list.', { field: 'surfaces' });
+  const byId = new Map();
+  for (const surface of surfaces) {
+    assert(isPlainObject(surface) && SWIFTUI_SURFACE_ID_PATTERN.test(surface.id ?? ''), 'UIFN_CATALOG_UNSUPPORTED_VALUE', 'A SwiftUI surface has an invalid id.', { value: surface?.id });
+    assert(!byId.has(surface.id), 'UIFN_CATALOG_DUPLICATE', `Duplicate SwiftUI surface: ${surface.id}`, { value: surface.id });
+    assert(SWIFTUI_SURFACE_KINDS.includes(surface.kind), 'UIFN_CATALOG_UNSUPPORTED_VALUE', `SwiftUI surface ${surface.id} has an unknown kind.`, { surface: surface.id, value: surface.kind });
+    assert(typeof surface.issue === 'string' && /^UIF-[0-9]+$/.test(surface.issue), 'UIFN_CATALOG_UNSUPPORTED_VALUE', `SwiftUI surface ${surface.id} has an invalid issue.`, { surface: surface.id, value: surface.issue });
+    const directory = Object.entries(SWIFTUI_SURFACE_DIRECTORIES).find(([, kind]) => kind === surface.kind)[0];
+    assert(typeof surface.source === 'string' && new RegExp(`^${SWIFTUI_SOURCES_ROOT}/${directory}/[A-Za-z0-9+]+\\.swift$`).test(surface.source), 'UIFN_CATALOG_UNSUPPORTED_VALUE', `SwiftUI surface ${surface.id} has an invalid source path.`, { surface: surface.id, value: surface.source });
+    byId.set(surface.id, surface);
+  }
+  return byId;
+}
+
+function validateSwiftUIEntry(primitive, entry, surfaces) {
+  assert(isPlainObject(entry), 'UIFN_CATALOG_FIELD_MISSING', `${primitive} is missing its SwiftUI status.`, { primitive, field: 'swiftui' });
+  for (const field of SWIFTUI_ENTRY_FIELDS) {
+    assert(Object.hasOwn(entry, field) && entry[field] !== undefined && entry[field] !== null, 'UIFN_CATALOG_FIELD_MISSING', `${primitive} is missing swiftui.${field}.`, { primitive, field: `swiftui.${field}` });
+  }
+  const extra = Object.keys(entry).filter((field) => !SWIFTUI_ENTRY_FIELDS.includes(field));
+  assert(extra.length === 0, 'UIFN_CATALOG_UNSUPPORTED_VALUE', `${primitive} has unknown swiftui fields.`, { primitive, fields: extra });
+  assert(SWIFTUI_STATUSES.includes(entry.status), 'UIFN_CATALOG_UNSUPPORTED_VALUE', `${primitive} has an unknown SwiftUI status.`, { primitive, field: 'swiftui.status', value: entry.status, allowed: SWIFTUI_STATUSES });
+  validateSwiftUINames(entry, 'controls', primitive, SWIFTUI_CONTROL_PATTERN);
+  validateSwiftUINames(entry, 'surfaces', primitive, SWIFTUI_SURFACE_ID_PATTERN);
+  for (const id of entry.surfaces) {
+    assert(surfaces.has(id), 'UIFN_CATALOG_UNSUPPORTED_VALUE', `${primitive} names an unknown SwiftUI surface.`, { primitive, field: 'swiftui.surfaces', value: id });
+  }
+  assert(typeof entry.note === 'string' && entry.note.trim().length > 0, 'UIFN_CATALOG_FIELD_MISSING', `${primitive} needs a SwiftUI note.`, { primitive, field: 'swiftui.note' });
+
+  const kinds = new Set(entry.surfaces.map((id) => surfaces.get(id).kind));
+  const consistent = {
+    native: entry.controls.length > 0 && !kinds.has('style'),
+    'uifn-style': entry.controls.length > 0 && kinds.has('style'),
+    'uifn-component': kinds.has('component'),
+    none: entry.controls.length === 0 && entry.surfaces.length === 0,
+  }[entry.status];
+  assert(consistent, 'UIFN_CATALOG_SWIFTUI_STATUS_INCONSISTENT', `${primitive} SwiftUI status ${entry.status} does not match its controls and surfaces.`, { primitive, status: entry.status, controls: entry.controls, surfaces: entry.surfaces });
+}
+
+export function validateSwiftUIStatus(source = SWIFTUI_STATUS_SOURCE) {
+  assert(isPlainObject(source) && source.schemaVersion === SWIFTUI_STATUS_SCHEMA_VERSION, 'UIFN_CATALOG_SCHEMA_INVALID', 'SwiftUI status schema version is unsupported.', { actual: source?.schemaVersion });
+  assertExactArray(source.statuses, SWIFTUI_STATUSES, 'SwiftUI statuses', 'swiftui');
+  const surfaces = validateSwiftUISurfaces(source.surfaces);
+  assert(isPlainObject(source.primitives), 'UIFN_CATALOG_FIELD_MISSING', 'SwiftUI status needs an entry per primitive.', { field: 'primitives' });
+  const unknown = Object.keys(source.primitives).filter((name) => !EXPECTED_PRIMITIVE_NAMES.includes(name));
+  assert(unknown.length === 0, 'UIFN_CATALOG_NAME_SET_INVALID', 'SwiftUI status names primitives outside the catalog.', { unknown });
+  const referenced = new Set();
+  for (const name of EXPECTED_PRIMITIVE_NAMES) {
+    validateSwiftUIEntry(name, Object.hasOwn(source.primitives, name) ? source.primitives[name] : undefined, surfaces);
+    for (const id of source.primitives[name].surfaces) referenced.add(id);
+  }
+  const unmapped = [...surfaces.keys()].filter((id) => !referenced.has(id));
+  assert(unmapped.length === 0, 'UIFN_CATALOG_SWIFTUI_SURFACE_UNMAPPED', 'Every UIFnSwiftUI style and component must map to at least one primitive.', { unmapped });
+  return { ok: true, primitiveCount: EXPECTED_PRIMITIVE_NAMES.length, surfaceCount: surfaces.size };
+}
+
+// The styles and components a UIFnSwiftUI source file declares: a top-level
+// public struct conforming to View or to a SwiftUI style protocol, and, in
+// Components, a function in a public View extension (a view modifier).
+export function parseSwiftUISurfaceDeclarations(relativePath, text) {
+  const directory = Object.keys(SWIFTUI_SURFACE_DIRECTORIES).find((name) => relativePath.startsWith(`${SWIFTUI_SOURCES_ROOT}/${name}/`));
+  if (!directory) return [];
+  const kind = SWIFTUI_SURFACE_DIRECTORIES[directory];
+  const declarations = [];
+  for (const match of text.matchAll(/^public\s+(?:final\s+)?struct\s+(\w+)\s*(?:<[^>{]*>)?\s*:\s*([^{]+)\{/gm)) {
+    const conformances = match[2].split(/\bwhere\b/)[0].split(/[,&]/).map((value) => value.trim().replace(/^SwiftUI\./, '')).filter(Boolean);
+    if (conformances.some((value) => value === 'View' || /^[A-Z]\w*Style$/.test(value))) declarations.push({ id: match[1], kind, source: relativePath });
+  }
+  if (kind === 'component') {
+    for (const block of text.matchAll(/^public\s+extension\s+(?:SwiftUI\.)?View\s*\{([\s\S]*?)^\}/gm)) {
+      for (const match of block[1].matchAll(/^[ \t]*(?:@\w+(?:\([^)\n]*\))?\s+)*(?:(?:public|nonisolated)\s+)*func\s+(\w+)\s*[<(]/gm)) {
+        declarations.push({ id: match[1], kind, source: relativePath });
+      }
+    }
+  }
+  return declarations;
+}
+
+export async function readSwiftUISurfaceDeclarations(repoRoot) {
+  const declarations = [];
+  for (const directory of Object.keys(SWIFTUI_SURFACE_DIRECTORIES)) {
+    const relativeDirectory = `${SWIFTUI_SOURCES_ROOT}/${directory}`;
+    let entries;
+    try {
+      entries = await readdir(path.join(repoRoot, relativeDirectory), { withFileTypes: true });
+    } catch (error) {
+      if (error.code === 'ENOENT') fail('UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `UIFnSwiftUI source directory is missing: ${relativeDirectory}`, { directory: relativeDirectory });
+      throw error;
+    }
+    for (const entry of entries.filter((item) => item.isFile() && item.name.endsWith('.swift')).sort((left, right) => left.name.localeCompare(right.name))) {
+      const relativePath = `${relativeDirectory}/${entry.name}`;
+      declarations.push(...parseSwiftUISurfaceDeclarations(relativePath, await readFile(path.join(repoRoot, relativePath), 'utf8')));
+    }
+  }
+  return declarations;
+}
+
+export function verifySwiftUISurfaceDeclarations(declarations, source = SWIFTUI_STATUS_SOURCE) {
+  const declared = new Map();
+  for (const declaration of declarations) {
+    assert(!declared.has(declaration.id), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `UIFnSwiftUI declares ${declaration.id} more than once.`, { id: declaration.id });
+    declared.set(declaration.id, declaration);
+  }
+  const listed = new Map(source.surfaces.map((surface) => [surface.id, surface]));
+  const unlisted = [...declared.keys()].filter((id) => !listed.has(id));
+  const undeclared = [...listed.keys()].filter((id) => !declared.has(id));
+  const moved = [...listed.values()]
+    .filter((surface) => declared.has(surface.id) && (declared.get(surface.id).source !== surface.source || declared.get(surface.id).kind !== surface.kind))
+    .map((surface) => ({ id: surface.id, listed: { kind: surface.kind, source: surface.source }, declared: { kind: declared.get(surface.id).kind, source: declared.get(surface.id).source } }));
+  assert(unlisted.length === 0 && undeclared.length === 0 && moved.length === 0, 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', 'The SwiftUI status surface list differs from the UIFnSwiftUI sources.', { unlisted, undeclared, moved });
+  return { ok: true, surfaceCount: declared.size };
+}
+
+function swiftuiStatusOutput(catalog, source, metadata) {
+  const byName = source.primitives;
+  return {
+    ...metadata,
+    swiftuiStatusSchemaVersion: source.schemaVersion,
+    statuses: [...source.statuses],
+    statusCounts: Object.fromEntries(source.statuses.map((status) => [status, catalog.primitives.filter((primitive) => byName[primitive.name].status === status).length])),
+    surfaces: source.surfaces.map((surface) => ({
+      ...surface,
+      primitives: catalog.primitives.filter((primitive) => byName[primitive.name].surfaces.includes(surface.id)).map((primitive) => primitive.id),
+    })),
+    primitives: catalog.primitives.map((primitive) => ({ id: primitive.id, name: primitive.name, swiftui: structuredClone(byName[primitive.name]) })),
+  };
+}
+
 export function compileCatalog(source = CATALOG_SOURCE) {
   validateCatalogSource(source);
   const cloned = structuredClone(source);
@@ -218,8 +373,9 @@ function primitiveContractsDts(catalog) {
   return `${definitionHeader()}export type UifnPrimitiveName = ${names};\nexport type UifnPrimitiveId = ${ids};\nexport type UifnStableFramework = 'react' | 'svelte' | 'solid';\nexport type UifnImplementationStatus = 'implemented';\n\nexport interface UifnPrimitiveDefinitionStub {\n  readonly id: UifnPrimitiveId;\n  readonly name: UifnPrimitiveName;\n  readonly implementationStatus: UifnImplementationStatus;\n}\n`;
 }
 
-export function createGeneratedOutputs(source = CATALOG_SOURCE) {
+export function createGeneratedOutputs(source = CATALOG_SOURCE, swiftuiSource = SWIFTUI_STATUS_SOURCE) {
   const catalog = compileCatalog(source);
+  validateSwiftUIStatus(swiftuiSource);
   const metadata = { schemaVersion: catalog.schemaVersion, catalogVersion: catalog.catalogVersion, generatorVersion: catalog.generatorVersion, sourceSha256: catalog.sourceSha256, catalogSha256: catalog.catalogSha256, implementationEvidence: true };
   const coreExports = catalog.primitives.flatMap((primitive) => primitive.outputs.core.map((symbol) => ({ primitiveId: primitive.id, primitiveName: primitive.name, symbol, kind: primitive.implementationKind, implementationStatus: 'implemented' })));
   const packageNames = ['@uifn/core', ...STABLE_FRAMEWORKS.flatMap((framework) => [FRAMEWORK_TARGETS[framework].headlessPackage, FRAMEWORK_TARGETS[framework].styledPackage])];
@@ -237,6 +393,7 @@ export function createGeneratedOutputs(source = CATALOG_SOURCE) {
     'adapter-coverage.json': stableStringify({ ...metadata, frameworks: STABLE_FRAMEWORKS, primitives: catalog.primitives.map((primitive) => ({ id: primitive.id, name: primitive.name, frameworks: primitive.frameworks })) }),
     'registry-metadata.json': stableStringify({ ...metadata, writePolicy: 'metadata-targets-only-no-registry-write', primitives: catalog.primitives.map((primitive) => ({ id: primitive.id, name: primitive.name, outputs: primitive.outputs, implementationStatus: primitive.release.implementationStatus })) }),
     'story-manifest.json': stableStringify({ ...metadata, manifestStatus: 'implemented', primitives: catalog.primitives.map((primitive) => ({ id: primitive.id, name: primitive.name, ...primitive.stories })) }),
+    'swiftui-status.json': stableStringify(swiftuiStatusOutput(catalog, swiftuiSource, metadata)),
     'docs-manifest.json': stableStringify({ ...metadata, manifestStatus: 'implemented', primitives: catalog.primitives.map((primitive) => ({ id: primitive.id, name: primitive.name, ...primitive.docs })) }),
     'test-manifest.json': stableStringify({ ...metadata, primitiveCount: catalog.primitiveCount, vectors: ['TV-CAT-001-P', 'TV-CAT-001-N'], primitives: catalog.primitives.map((primitive) => ({ id: primitive.id, name: primitive.name, requirementIds: primitive.requirementIds, vectors: primitive.vectors })) }),
     'release-matrix.json': stableStringify({ ...metadata, releaseChannel: 'stable-1.0', allImplementationsImplemented: true, primitives: catalog.primitives.map((primitive) => ({ id: primitive.id, name: primitive.name, release: primitive.release, frameworkStatuses: Object.fromEntries(STABLE_FRAMEWORKS.map((framework) => [framework, primitive.frameworks[framework].implementationStatus])) })) }),
