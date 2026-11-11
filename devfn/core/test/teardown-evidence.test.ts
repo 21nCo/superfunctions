@@ -73,7 +73,6 @@ async function withLifecycle(prefix: string, action: (fixture: { root: string; s
   }
 }
 
-/** Start a gated launch from a CLI process that dies once the launch runs, as an interrupted devfn up would. */
 /** The installed @devfn/processes entry, which the spawned helper CLIs load directly. */
 const PROCESSES_ENTRY = pathToFileURL(path.join(installedPackageDir("@devfn/processes"), "dist", "index.js")).href;
 
@@ -84,6 +83,7 @@ function installedPackageDir(name: string): string {
   return packageDir;
 }
 
+/** Start a gated launch from a CLI process that dies once the launch runs, as an interrupted devfn up would. */
 async function launchFromDyingCli(root: string): Promise<{ pid: number; birthSignature?: string }> {
   const launcherFile = path.join(root, "launcher.json");
   // The launched command keeps a child standing in for the Compose plugin.
