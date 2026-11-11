@@ -18,7 +18,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { createHash, createPublicKey, verify } from 'node:crypto';
-import { lstatSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { linkSync, lstatSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -39,8 +39,8 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 const sha256 = (value) => createHash('sha256').update(value).digest();
 
 export class RegistrySigningError extends Error {
-  constructor(code, message) {
-    super(message);
+  constructor(code, message, options) {
+    super(message, options);
     this.name = 'RegistrySigningError';
     this.code = code;
   }
@@ -136,17 +136,66 @@ function checkoutFile(root, relative, { mustExist }) {
   return target;
 }
 
-function writeFilesAtomically(files) {
+const defaultFileSystem = { linkSync, renameSync, rmSync, writeFileSync };
+
+/**
+ * Replaces every target or none of them. Each new file is staged next to its target, each existing target is
+ * hard-linked to a backup, and each staged file is renamed over its target. If any step fails, the targets
+ * already replaced are restored from their backups (or removed when they did not exist), staged files are
+ * removed, and a backup is left in place only if its original could not be restored (the error names it).
+ * `fileSystem` is injectable so tests can force a failure at any step.
+ */
+export function writeFilesAtomically(files, fileSystem = defaultFileSystem) {
+  const fsOps = { ...defaultFileSystem, ...fileSystem };
+  const suffix = `kms-sign-${process.pid}`;
   const staged = [];
+  const backups = [];
+  const published = [];
   try {
     for (const [target, contents] of files) {
-      const temporary = `${target}.kms-sign-${process.pid}.tmp`;
-      writeFileSync(temporary, contents, { flag: 'wx' });
+      const temporary = `${target}.${suffix}.tmp`;
+      fsOps.writeFileSync(temporary, contents, { flag: 'wx' });
       staged.push([temporary, target]);
     }
-    for (const [temporary, target] of staged) renameSync(temporary, target);
+    for (const [, target] of staged) {
+      const backup = `${target}.${suffix}.bak`;
+      try {
+        fsOps.linkSync(target, backup);
+      } catch (error) {
+        if (error?.code === 'ENOENT') continue;
+        throw error;
+      }
+      backups.push([target, backup]);
+    }
+    for (const [temporary, target] of staged) {
+      fsOps.renameSync(temporary, target);
+      published.push(target);
+    }
+  } catch (error) {
+    const rollbackFailures = [];
+    for (const target of published.reverse()) {
+      const entry = backups.find(([original]) => original === target);
+      try {
+        if (entry === undefined) {
+          fsOps.rmSync(target, { force: true });
+        } else {
+          fsOps.renameSync(entry[1], target);
+          backups.splice(backups.indexOf(entry), 1);
+        }
+      } catch (rollbackError) {
+        rollbackFailures.push(`${path.basename(target)} (${rollbackError.message}${entry ? `; original kept at ${entry[1]}` : ''})`);
+        if (entry) backups.splice(backups.indexOf(entry), 1);
+      }
+    }
+    let detail;
+    if (published.length === 0) detail = 'no signature file was changed';
+    else if (rollbackFailures.length === 0) detail = 'every replaced signature file was restored';
+    else detail = `restoring failed for ${rollbackFailures.join(', ')}`;
+    throw new RegistrySigningError('UIFN_REGISTRY_WRITE_FAILED', `Writing the signature files failed (${error.message}); ${detail}.`, { cause: error });
   } finally {
+    // Staged files are always removed; a backup is kept only if its original could not be restored.
     for (const [temporary] of staged) rmSync(temporary, { force: true });
+    for (const [, backup] of backups) rmSync(backup, { force: true });
   }
 }
 
@@ -154,7 +203,7 @@ function writeFilesAtomically(files) {
  * Signs the committed catalog with KMS and writes the schema-v2 envelope files.
  * Nothing is written unless every check passes and the signature verifies locally.
  */
-export async function signRegistryCatalogWithKms({ root = repositoryRoot, kms, kmsKeyId, expectedKeyId }) {
+export async function signRegistryCatalogWithKms({ root = repositoryRoot, kms, kmsKeyId, expectedKeyId, fileSystem }) {
   if (typeof kmsKeyId !== 'string' || kmsKeyId.trim() === '') {
     throw new RegistrySigningError('UIFN_REGISTRY_KMS_CONFIG_MISSING', 'UIFN_REGISTRY_KMS_KEY_ID is required.');
   }
@@ -219,7 +268,7 @@ export async function signRegistryCatalogWithKms({ root = repositoryRoot, kms, k
   writeFilesAtomically([
     [signatureJsonPath, `${JSON.stringify(envelope, null, 2)}\n`],
     [signatureTsPath, `/* Generated detached registry signature. */\nexport const REGISTRY_SIGNATURE = ${JSON.stringify(envelope, null, 2)} as const;\n`],
-  ]);
+  ], fileSystem);
   return { envelope, files: [REGISTRY_SIGNATURE_JSON_PATH, REGISTRY_SIGNATURE_TS_PATH] };
 }
 

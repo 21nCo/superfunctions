@@ -65,16 +65,28 @@ AWS KMS supports importing asymmetric key material, so preserving the existing k
 
 ### Release signing (KMS)
 
-The `uifn registry sign (KMS)` workflow (`.github/workflows/uifn-registry-sign.yml`) signs a branch's catalog with the KMS key. The private key never leaves KMS. It is started by hand only (`workflow_dispatch`), from `dev`, with three inputs:
+The `uifn registry sign (KMS)` workflow (`.github/workflows/uifn-registry-sign.yml`) signs a branch's catalog with the KMS key. The private key never leaves KMS. It is started by hand only (`workflow_dispatch`), from `dev`, with two inputs:
 
 - `ref`: the branch to sign. It receives the signature commit, so it must be a feature branch, never `dev`, `next` or `main`.
 - `expected_sha`: the full commit SHA that the branch head must equal. The run fails if the branch has moved.
-- `expected_key_id`: the registry key ID of the KMS key (the first 24 hex characters of SHA-256 over the SPKI DER public key). The signer refuses to sign if KMS returns a different public key.
+
+The signing configuration lives only in variables of the protected `uifn-release` environment, so a dispatcher cannot change it:
+
+- `UIFN_REGISTRY_SIGNING_ROLE_ARN`: the AWS role assumed through GitHub OIDC.
+- `UIFN_REGISTRY_KMS_KEY_ID` and `UIFN_REGISTRY_KMS_REGION`: the KMS signing key and its region.
+- `UIFN_REGISTRY_EXPECTED_KEY_ID`: the registry key ID of that KMS key (the first 24 hex characters of SHA-256 over the SPKI DER public key). The signer refuses to sign if KMS returns a different public key, so repointing `UIFN_REGISTRY_KMS_KEY_ID` alone cannot change the signing key. A repository admin sets it once, from the key's public key:
+
+  ```bash
+  aws kms get-public-key --key-id "$UIFN_REGISTRY_KMS_KEY_ID" --region "$UIFN_REGISTRY_KMS_REGION" \
+    --query PublicKey --output text | base64 --decode | shasum -a 256 | cut -c1-24
+  ```
+
+The sign job fails before requesting credentials if any of these variables is missing or the key ID is malformed.
 
 The workflow runs two jobs:
 
 1. **Check branch catalog** has no credentials. It checks out the branch, confirms its head is `expected_sha`, and fails unless regenerating the catalog reproduces the committed files exactly.
-2. **Sign registry catalog** runs in the protected `uifn-release` environment. It waits until a maintainer approves the run, and the environment accepts deployments from `dev` only. It gets short-lived AWS credentials through GitHub OIDC for the role in `vars.UIFN_REGISTRY_SIGNING_ROLE_ARN`. The signer runs from the workflow's own `dev` commit, never from the branch: `node signer/scripts/sign-uifn-registry-kms.mjs --root target`. The key comes from `vars.UIFN_REGISTRY_KMS_KEY_ID` and the region from `vars.UIFN_REGISTRY_KMS_REGION`. The job confirms that the branch head is still `expected_sha`, then commits only `generated/catalog-signature.json` and `src/generated/signature.ts` to the branch as a new commit, without force-pushing. The job summary records the ref, signed head, signature commit, catalog SHA-256 and key ID.
+2. **Sign registry catalog** runs in the protected `uifn-release` environment. It waits until a maintainer approves the run, and the environment accepts deployments from `dev` only. It gets short-lived AWS credentials through GitHub OIDC for the role in `vars.UIFN_REGISTRY_SIGNING_ROLE_ARN`. The signer runs from the workflow's own `dev` commit, never from the branch: `node signer/scripts/sign-uifn-registry-kms.mjs --root target`. The key comes from `vars.UIFN_REGISTRY_KMS_KEY_ID` and the region from `vars.UIFN_REGISTRY_KMS_REGION`. The job confirms that the branch head is still `expected_sha`, then commits only `generated/catalog-signature.json` and `src/generated/signature.ts` to the branch as a new commit, without force-pushing. Ed25519 signatures are deterministic, so re-signing an unchanged, already signed branch with the same key produces no change; the job then reports that the branch is already signed and commits nothing. The job summary records the ref, signed head, signature commit, catalog SHA-256 and key ID.
 
 The job holds only `id-token: write` and `contents: write`. No `pull_request` or `pull_request_target` event can start it.
 
@@ -91,7 +103,7 @@ The job holds only `id-token: write` and `contents: write`. No `pull_request` or
 }
 ```
 
-If any check fails, the signer writes nothing and exits non-zero.
+If any check fails, the signer writes nothing and exits non-zero. Both files are replaced together: if replacing the second file fails, the first is restored from a backup, so the checkout keeps its previous signature.
 
 Until the schema-v2 verifier and the KMS trust root land, the package still verifies schema v1 with the pinned key above. A branch that carries a KMS signature commit therefore fails the v1 signature checks. Use the workflow only on the branch that lands the v2 verifier and trust root, or on a throwaway branch for an acceptance run.
 

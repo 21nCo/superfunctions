@@ -18,10 +18,6 @@ on:
         description: Full 40-character commit SHA the branch head must equal
         required: true
         type: string
-      expected_key_id:
-        description: Expected registry key id of the KMS key (first 24 hex of SHA-256 over the SPKI DER)
-        required: true
-        type: string
 
 permissions: {}
 
@@ -32,7 +28,6 @@ concurrency:
 env:
   SIGN_REF: ${{ inputs.ref }}
   EXPECTED_SHA: ${{ inputs.expected_sha }}
-  EXPECTED_KEY_ID: ${{ inputs.expected_key_id }}
 
 jobs:
   check:
@@ -54,9 +49,6 @@ jobs:
           fi
           if [[ ! "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
             echo "::error::expected_sha must be a full 40-character lowercase commit SHA"; exit 1
-          fi
-          if [[ ! "$EXPECTED_KEY_ID" =~ ^[0-9a-f]{24}$ ]]; then
-            echo "::error::expected_key_id must be 24 lowercase hex characters"; exit 1
           fi
 
       - name: Checkout branch
@@ -97,7 +89,29 @@ jobs:
     permissions:
       id-token: write
       contents: write
+    env:
+      # Protected configuration of the uifn-release environment; a dispatcher cannot override any of it.
+      EXPECTED_KEY_ID: ${{ vars.UIFN_REGISTRY_EXPECTED_KEY_ID }}
     steps:
+      - name: Require the protected signing configuration
+        env:
+          SIGNING_ROLE_ARN: ${{ vars.UIFN_REGISTRY_SIGNING_ROLE_ARN }}
+          KMS_KEY_ID: ${{ vars.UIFN_REGISTRY_KMS_KEY_ID }}
+          KMS_REGION: ${{ vars.UIFN_REGISTRY_KMS_REGION }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [[ -n "$SIGNING_ROLE_ARN" ]] || missing+=(UIFN_REGISTRY_SIGNING_ROLE_ARN)
+          [[ -n "$KMS_KEY_ID" ]] || missing+=(UIFN_REGISTRY_KMS_KEY_ID)
+          [[ -n "$KMS_REGION" ]] || missing+=(UIFN_REGISTRY_KMS_REGION)
+          [[ -n "$EXPECTED_KEY_ID" ]] || missing+=(UIFN_REGISTRY_EXPECTED_KEY_ID)
+          if (( ${#missing[@]} > 0 )); then
+            echo "::error::set these uifn-release environment variables: ${missing[*]}"; exit 1
+          fi
+          if [[ ! "$EXPECTED_KEY_ID" =~ ^[0-9a-f]{24}$ ]]; then
+            echo "::error::UIFN_REGISTRY_EXPECTED_KEY_ID must be 24 lowercase hex characters"; exit 1
+          fi
+
       - name: Checkout signer (this workflow's dev commit)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -140,7 +154,7 @@ jobs:
         env:
           UIFN_REGISTRY_KMS_KEY_ID: ${{ vars.UIFN_REGISTRY_KMS_KEY_ID }}
           UIFN_REGISTRY_KMS_REGION: ${{ vars.UIFN_REGISTRY_KMS_REGION }}
-          UIFN_REGISTRY_EXPECTED_KEY_ID: ${{ inputs.expected_key_id }}
+          UIFN_REGISTRY_EXPECTED_KEY_ID: ${{ vars.UIFN_REGISTRY_EXPECTED_KEY_ID }}
         run: node signer/scripts/sign-uifn-registry-kms.mjs --root target
 
       - name: Commit and push the signature files
@@ -150,6 +164,12 @@ jobs:
           set -euo pipefail
           files=(uifn/registry/generated/catalog-signature.json uifn/registry/src/generated/signature.ts)
           changed="$(git status --porcelain --untracked-files=all | cut -c4- | sort)"
+          if [[ -z "$changed" ]]; then
+            # Ed25519 is deterministic: the same catalog and key reproduce the committed signature byte for byte.
+            echo "::notice::$SIGN_REF already carries this KMS signature at $EXPECTED_SHA; nothing to commit"
+            echo "commit=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           expected="$(printf '%s\n' "${files[@]}" | sort)"
           if [[ "$changed" != "$expected" ]]; then
             printf 'changed:\n%s\n' "$changed"; echo "::error::signing must change exactly the two signature files"; exit 1
@@ -175,7 +195,7 @@ jobs:
             echo "| --- | --- |"
             echo "| Ref | \`$SIGN_REF\` |"
             echo "| Signed head | \`$EXPECTED_SHA\` |"
-            echo "| Signature commit | \`$SIGNATURE_COMMIT\` |"
+            echo "| Signature commit | \`${SIGNATURE_COMMIT:-none (already signed)}\` |"
             echo "| Schema version | \`$(jq -r .schemaVersion "$envelope")\` |"
             echo "| Domain | \`$(jq -r .domain "$envelope")\` |"
             echo "| Catalog SHA-256 | \`$(jq -r .catalogSha256 "$envelope")\` |"

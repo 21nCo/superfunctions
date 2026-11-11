@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash, generateKeyPairSync, sign, verify } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -14,6 +14,7 @@ import {
   registryKeyId,
   registryV2SigningInput,
   signRegistryCatalogWithKms,
+  writeFilesAtomically,
 } from './sign-uifn-registry-kms.mjs';
 
 const scriptPath = fileURLToPath(new URL('./sign-uifn-registry-kms.mjs', import.meta.url));
@@ -59,8 +60,22 @@ function assertUnchanged(root) {
   assert.equal(readFileSync(path.join(root, REGISTRY_SIGNATURE_TS_PATH), 'utf8'), V1_TS);
   for (const relative of [REGISTRY_SIGNATURE_JSON_PATH, REGISTRY_SIGNATURE_TS_PATH]) {
     const directory = path.dirname(path.join(root, relative));
-    assert.deepEqual(readdirSync(directory).filter((name) => name.endsWith('.tmp')), []);
+    assert.deepEqual(readdirSync(directory).filter((name) => name.endsWith('.tmp') || name.endsWith('.bak')), []);
   }
+}
+
+/** Real fs operations, except that the nth rename of a staged file over its target fails. */
+function failingPublishRename(failAt) {
+  let publishes = 0;
+  return {
+    renameSync(from, to) {
+      if (from.endsWith('.tmp')) {
+        publishes += 1;
+        if (publishes === failAt) throw Object.assign(new Error(`EIO: injected rename failure ${publishes}`), { code: 'EIO' });
+      }
+      renameSync(from, to);
+    },
+  };
 }
 
 test('signing input is exactly UTF8("uifn-registry-v2\\0") followed by SHA-256 of the catalog bytes', () => {
@@ -201,6 +216,65 @@ test('refuses and writes nothing when a KMS call fails', async (t) => {
   kms.sign = async () => { throw new Error('AccessDeniedException'); };
   await assert.rejects(signRegistryCatalogWithKms({ root, kms, kmsKeyId: KMS_KEY_ARN, expectedKeyId: keys.keyId }), /AccessDeniedException/);
   assertUnchanged(root);
+});
+
+test('restores both original signature files when publishing the second file fails after the first was replaced', async (t) => {
+  const root = fixture(t);
+  const keys = keyPair();
+  await assert.rejects(
+    signRegistryCatalogWithKms({ root, kms: mockKms(keys), kmsKeyId: KMS_KEY_ARN, expectedKeyId: keys.keyId, fileSystem: failingPublishRename(2) }),
+    { code: 'UIFN_REGISTRY_WRITE_FAILED', message: /injected rename failure 2.*every replaced signature file was restored/ },
+  );
+  assertUnchanged(root);
+});
+
+test('writes nothing when publishing the first file fails', async (t) => {
+  const root = fixture(t);
+  const keys = keyPair();
+  await assert.rejects(
+    signRegistryCatalogWithKms({ root, kms: mockKms(keys), kmsKeyId: KMS_KEY_ARN, expectedKeyId: keys.keyId, fileSystem: failingPublishRename(1) }),
+    { code: 'UIFN_REGISTRY_WRITE_FAILED', message: /no signature file was changed/ },
+  );
+  assertUnchanged(root);
+});
+
+test('removes a newly created first file when the second publish fails and leaves no staged files', (t) => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'uifn-registry-kms-write-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const created = path.join(directory, 'created.json');
+  const existing = path.join(directory, 'existing.ts');
+  writeFileSync(existing, V1_TS);
+  assert.throws(
+    () => writeFilesAtomically([[created, 'new'], [existing, 'new']], failingPublishRename(2)),
+    { code: 'UIFN_REGISTRY_WRITE_FAILED' },
+  );
+  assert.deepEqual(readdirSync(directory), ['existing.ts']);
+  assert.equal(readFileSync(existing, 'utf8'), V1_TS);
+});
+
+test('keeps the backup and names it when an original cannot be restored', (t) => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'uifn-registry-kms-write-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const first = path.join(directory, 'first.json');
+  const second = path.join(directory, 'second.ts');
+  writeFileSync(first, V1_JSON);
+  writeFileSync(second, V1_TS);
+  const failing = failingPublishRename(2);
+  const fileSystem = {
+    renameSync(from, to) {
+      if (from.endsWith('.bak')) throw new Error('EIO: injected restore failure');
+      failing.renameSync(from, to);
+    },
+  };
+  assert.throws(
+    () => writeFilesAtomically([[first, 'new'], [second, 'new']], fileSystem),
+    { code: 'UIFN_REGISTRY_WRITE_FAILED', message: /restoring failed for first\.json .*original kept at .*first\.json\.kms-sign-\d+\.bak/ },
+  );
+  const backups = readdirSync(directory).filter((name) => name.endsWith('.bak'));
+  assert.equal(backups.length, 1);
+  assert.equal(readFileSync(path.join(directory, backups[0]), 'utf8'), V1_JSON);
+  assert.deepEqual(readdirSync(directory).filter((name) => name.endsWith('.tmp')), []);
+  assert.equal(readFileSync(second, 'utf8'), V1_TS);
 });
 
 test('refuses missing or malformed configuration before calling KMS', async (t) => {
