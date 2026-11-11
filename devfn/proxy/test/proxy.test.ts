@@ -7,6 +7,7 @@ import { parsePersistedProxyRoutes, withFileLock } from "@devfn/ports";
 import { processBirthSignature } from "@devfn/processes";
 import { CaddyProxyController, proxyOwnerStatus, renderCaddyfile } from "../src/index.js";
 import { temporaryDirectories } from "../../test-support/temp-directories.mjs";
+import { caddyAdminLockPath } from "../../test-support/shared-locks.mjs";
 
 // Removed after each test, whether it passes, fails or times out.
 const tempDir = temporaryDirectories(afterEach);
@@ -14,7 +15,7 @@ const tempDir = temporaryDirectories(afterEach);
 // Fixtures that need the fixed Caddy admin port 127.0.0.1:2019 free share one
 // machine-wide lock with other DevFn packages' fixtures that bind it.
 const withCaddyAdminPort = async <T>(action: () => Promise<T>): Promise<T> =>
-  await withFileLock(path.join(tmpdir(), "devfn-test-caddy-admin.lock"), action, { timeoutMs: 120_000 });
+  await withFileLock(caddyAdminLockPath(), action, { timeoutMs: 120_000 });
 
 /**
  * A state directory owned by this live process, with a Caddy command stub

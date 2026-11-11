@@ -13,6 +13,7 @@ import { proxyListenerPorts, proxyOwnerStatus, PUBLIC_ORIGIN_HEADER, PUBLIC_ORIG
 import { caddyInternalRoot, probePublicOrigin, readTunnelState, registerTunnelBinding } from "@devfn/proxy/tunnel";
 import { DevFnOrchestrator, resolveInstanceIdentity, type LifecycleReceipt } from "../src/index.js";
 import { FakeTunnelProvider, fixtureBinding, writeConnectorScript } from "../../proxy/test/fixtures/tunnel.js";
+import { caddyAdminLockPath } from "../../test-support/shared-locks.mjs";
 
 // Local evidence only: the real DevFn Caddy, its public origin listener and
 // the real origin probe, with the fake DNS provider and connector stand-in.
@@ -63,7 +64,7 @@ async function stopFixtureProxy(stateDir: string): Promise<void> {
 }
 
 it.skipIf(process.env.DEVFN_REAL_PROXY !== "1")("shuts down and rolls back one runtime's public routes on the real public origin without disturbing another's", async () => await withFileLock(
-  path.join(os.tmpdir(), "devfn-test-caddy-admin.lock"), async () => {
+  caddyAdminLockPath(), async () => {
     const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-tunnel-real-origin-")));
     const stateDir = path.join(root, "state");
     // Two worktrees of one repository share the binding.

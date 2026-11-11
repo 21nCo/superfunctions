@@ -12,13 +12,14 @@ import { CaddyProxyController, proxyListenerPorts, registerDomain } from "@devfn
 import { validateDevFnConfig } from "@devfn/config";
 import { allocateEphemeralPort, bindProbe, connectionRefused, FilePortRegistry, isPortAvailable, withFileLock, withRoutingLock } from "@devfn/ports";
 import { DevFnOrchestrator, domainAliases, readReceipt, resolveAllocationUrls, resolveInstanceIdentity, resolveLocalHostname } from "../src/index.js";
+import { caddyAdminLockPath } from "../../test-support/shared-locks.mjs";
 
 const execFileAsync = promisify(execFile);
 
 // Fixtures that need the fixed Caddy admin port 127.0.0.1:2019 free share one
 // machine-wide lock with other DevFn packages' fixtures that bind it.
 const withCaddyAdminPort = async <T>(action: () => Promise<T>): Promise<T> =>
-  await withFileLock(path.join(tmpdir(), "devfn-test-caddy-admin.lock"), action, { timeoutMs: 120_000 });
+  await withFileLock(caddyAdminLockPath(), action, { timeoutMs: 120_000 });
 
 // These fixtures stand in for DevFn's Caddy on its fixed listener ports. A
 // host process already listening there makes them inapplicable on that host;

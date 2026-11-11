@@ -30,6 +30,7 @@ vi.mock("@devfn/ports", async (importOriginal) => {
 
 import { isPortAvailable, withFileLock } from "@devfn/ports";
 import { CaddyProxyController, proxyListenerPorts, registerDomain, type ProxyRoute } from "../src/index.js";
+import { caddyAdminLockPath } from "../../test-support/shared-locks.mjs";
 
 // Stands in for `caddy run`: its admin endpoint answers immediately, like
 // Caddy's, and it confirms startup through --pingback only when told to.
@@ -118,7 +119,7 @@ async function tearDown(): Promise<void> {
 // The controller's admin endpoint is fixed at 127.0.0.1:2019. Fixtures in
 // other DevFn packages that need it free take the same machine-wide lock.
 function adminTest(name: string, body: () => Promise<void>): void {
-  it(name, async () => await withFileLock(path.join(tmpdir(), "devfn-test-caddy-admin.lock"), async () => {
+  it(name, async () => await withFileLock(caddyAdminLockPath(), async () => {
     expect.hasAssertions();
     await setUp();
     try { await body(); } finally { await tearDown(); }

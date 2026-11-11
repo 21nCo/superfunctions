@@ -3,6 +3,7 @@ type Hook = (fn: (...args: any[]) => unknown, timeout?: number) => void;
 export declare const RUN_MARKER: string;
 export declare const FILE_MARKER: string;
 export declare const ROOT_VARIABLE: string;
+export declare const ORIGINAL_TEMP_VARIABLE: string;
 export declare function setup(project?: unknown): Promise<() => Promise<void>>;
 export declare function guardTestFile(hooks: { beforeEach: Hook; afterEach: Hook; afterAll: Hook }): void;
 export declare function guardDirectory(directory: string): void;

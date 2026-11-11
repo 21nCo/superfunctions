@@ -9,28 +9,47 @@
 // processes and removes the folders so a failing run leaves nothing behind either.
 //
 // A process belongs to a file or the run when its command line, working directory or
-// environment names a path under that file's folder or the run's root, or when it inherited
-// the file's or run's marker variable. Both are unique to the run, so the guard never
-// signals a process it cannot attribute to this run.
+// environment names a path under that file's folder, the run's root or a directory a test
+// registered with guardDirectory, when it inherited the file's or run's marker variable, or
+// when it descends from the file's worker or the run's own process. All of these are unique
+// to the run, so the guard never signals a process it cannot attribute to this run.
+//
+// The run's check also looks for processes it cannot attribute: ones started during the run
+// that run from, or name, a path in the worktree, and were orphaned (re-parented to init) as
+// a detached wrapper is once whatever started it exits. They fail the run and are listed, but
+// are never signalled.
 //
 // Node built-ins only: DevFn packages also install and test on their own, without the
 // workspace's node_modules.
 
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync, writeSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 export const RUN_MARKER = "SFN_TEST_LEAK_GUARD_RUN";
 export const FILE_MARKER = "SFN_TEST_LEAK_GUARD_FILE";
 export const ROOT_VARIABLE = "SFN_TEST_LEAK_GUARD_ROOT";
-const ORIGINAL_TEMP_VARIABLE = "SFN_TEST_LEAK_GUARD_ORIGINAL_TMPDIR";
+/** The temp folder the outermost guarded run started with, where machine-wide test locks live (shared-locks.mjs). */
+export const ORIGINAL_TEMP_VARIABLE = "SFN_TEST_LEAK_GUARD_ORIGINAL_TMPDIR";
+const MAIN_PID_VARIABLE = "SFN_TEST_LEAK_GUARD_MAIN_PID";
 const TEMP_VARIABLES = ["TMPDIR", "TMP", "TEMP"];
+// Kept short: a Unix socket path, such as tsx's IPC pipe in TMPDIR, has room for about 103
+// bytes on macOS, whose temp folder already takes about 50.
+const ROOT_PREFIX = "devfn-tests-";
+const FILE_PREFIX = "f-";
+// Files the guard keeps in the run's root: the run's own record, which a sibling run reads to
+// leave this run's processes alone, and the directories its tests registered with guardDirectory.
+const RUN_RECORD = ".leak-guard-run.json";
+const DIRECTORY_RECORD = ".leak-guard-directories";
+const isGuardRecord = (name) => name === RUN_RECORD || name === DIRECTORY_RECORD;
 // Entries a tool creates in TMPDIR for its own reuse rather than for a test: Node's compile
 // cache and tsx's per-user cache, which the tsx loader that runs TypeScript fixtures writes.
 const TOOL_CACHES = ["node-compile-cache", `tsx-${process.geteuid?.() ?? os.userInfo().username}`];
 const isToolCache = (name) => TOOL_CACHES.includes(name) || /^tsx-\w+$/.test(name);
+// Processes an orphan is re-parented to: launchd or init, or a Linux subreaper such as `systemd --user`.
+const isReaper = (entry) => entry.pid <= 1 || /^(?:\S*\/)?(?:launchd|init|systemd|tini|dumb-init|docker-init)(?:\s|$)/.test(entry.command);
 
 /**
  * Links the tool caches of the original temp folder into a new temp folder, so tools started
@@ -82,9 +101,17 @@ function elapsedSeconds(value) {
   return clock.split(":").map(Number).reduce((total, part) => total * 60 + part, 0) + Number(days) * 86_400;
 }
 
+let clockTicks;
+function linuxClockTicks() {
+  clockTicks ??= Number(run("getconf", ["CLK_TCK"])?.stdout.trim()) || 100;
+  return clockTicks;
+}
+
 function listLinux() {
   let names;
   try { names = readdirSync("/proc"); } catch { return undefined; }
+  let uptime;
+  try { uptime = Number(readFileSync("/proc/uptime", "utf8").split(" ")[0]); } catch { uptime = undefined; }
   const processes = [];
   for (const name of names) {
     if (!/^\d+$/.test(name)) continue;
@@ -96,7 +123,9 @@ function listLinux() {
     const read = (file) => { try { return readFileSync(`/proc/${pid}/${file}`, "utf8").replaceAll("\0", " ").trim(); } catch { return ""; } };
     let cwd;
     try { cwd = readlinkSync(`/proc/${pid}/cwd`); } catch { /* another user's process */ }
-    processes.push({ pid, ppid: Number(fields[1]), pgid: Number(fields[2]), command: read("cmdline"), environment: read("environ"), cwd });
+    // Field 22 of stat, the start time in clock ticks since boot.
+    const elapsed = uptime === undefined ? undefined : Math.max(0, Math.floor(uptime - Number(fields[19]) / linuxClockTicks()));
+    processes.push({ pid, ppid: Number(fields[1]), pgid: Number(fields[2]), elapsed, command: read("cmdline"), environment: read("environ"), cwd });
   }
   return processes;
 }
@@ -115,7 +144,8 @@ function listDarwin(sinceMs) {
   const environments = parse(withEnvironment.stdout);
   const processes = [];
   for (const [pid, entry] of commands) {
-    if (entry.state.startsWith("Z")) continue;
+    // The listing shows the ps that made it, a child of this process.
+    if (entry.state.startsWith("Z") || pid === plain.pid || pid === withEnvironment.pid) continue;
     const full = environments.get(pid)?.text ?? "";
     processes.push({ pid, ppid: entry.ppid, pgid: entry.pgid, elapsed: entry.elapsed, command: entry.text.trim(), environment: full.startsWith(entry.text) ? full.slice(entry.text.length) : "", cwd: undefined });
   }
@@ -148,17 +178,34 @@ function ancestorsOf(pid, processes) {
   return ancestors;
 }
 
+function descendantsOf(pid, processes) {
+  const children = new Map();
+  for (const entry of processes) children.set(entry.ppid, [...(children.get(entry.ppid) ?? []), entry.pid]);
+  const descendants = new Set();
+  for (const pending = [...(children.get(pid) ?? [])]; pending.length > 0;) {
+    const next = pending.pop();
+    if (descendants.has(next)) continue;
+    descendants.add(next);
+    pending.push(...(children.get(next) ?? []));
+  }
+  return descendants;
+}
+
+/** Whether a process names a path under the given roots in its command, environment or working directory. */
+const namesPathUnder = (entry, roots) => roots.some((root) => entry.command.includes(root) || entry.environment.includes(root)) ||
+  (entry.cwd !== undefined && isUnder(entry.cwd, roots));
+
 /**
- * The processes a scope owns: those carrying its marker, or running from a path under its roots or
- * naming one in their command or environment (DevFn passes TMPDIR on to what it starts). The guard's
- * own process and its ancestors are never included, nor are `excluded` processes.
+ * The processes a scope owns: those carrying its marker, descending from its `parent` process, or
+ * running from a path under its roots or naming one in their command or environment (DevFn passes
+ * TMPDIR on to what it starts). The guard's own process and its ancestors are never included, nor
+ * are `excluded` processes, though their descendants may be.
  */
-export function ownedProcesses(processes, { marker, roots, excluded = () => false }) {
+export function ownedProcesses(processes, { marker, roots, parent, excluded = () => false }) {
   const ancestors = ancestorsOf(process.pid, processes);
+  const descendants = parent === undefined ? new Set() : descendantsOf(parent, processes);
   return processes.filter((entry) => entry.pid !== process.pid && !ancestors.has(entry.pid) && !excluded(entry) &&
-    ((marker !== undefined && entry.environment.includes(marker)) ||
-      roots.some((root) => entry.command.includes(root) || entry.environment.includes(root)) ||
-      (entry.cwd !== undefined && isUnder(entry.cwd, roots))));
+    ((marker !== undefined && entry.environment.includes(marker)) || descendants.has(entry.pid) || namesPathUnder(entry, roots)));
 }
 
 /**
@@ -202,9 +249,9 @@ async function settle(find, graceMs) {
   return owned;
 }
 
-/** Entries left in a temp folder, ignoring tool caches. */
+/** Entries left in a temp folder, ignoring tool caches and the guard's own records. */
 export function tempLeftovers(directory) {
-  try { return readdirSync(directory).filter((name) => !isToolCache(name)).sort(); } catch { return []; }
+  try { return readdirSync(directory).filter((name) => !isToolCache(name) && !isGuardRecord(name)).sort(); } catch { return []; }
 }
 
 /** Removes a directory tree, first making read-only folders in it writable again. */
@@ -226,14 +273,21 @@ const describeProcess = (entry) => {
   return `process ${entry.pid} (group ${entry.pgid}${entry.cwd ? `, cwd ${entry.cwd}` : ""}): ${command}`;
 };
 
-function report(subject, processes, entries, notes) {
+const listed = (items, describe, noun) => [
+  ...items.slice(0, MAX_LISTED).map((item) => `  ${describe(item)}`),
+  ...(items.length > MAX_LISTED ? [`  …and ${items.length - MAX_LISTED} more ${noun}`] : []),
+];
+
+function report(subject, processes, entries, notes, unattributed = { processes: [] }) {
   const lines = [`DevFn test leak guard: ${subject} left these behind.`];
-  for (const entry of processes.slice(0, MAX_LISTED)) lines.push(`  ${describeProcess(entry)}`);
-  if (processes.length > MAX_LISTED) lines.push(`  …and ${processes.length - MAX_LISTED} more processes`);
-  for (const entry of entries.slice(0, MAX_LISTED)) lines.push(`  temp entry ${entry}`);
-  if (entries.length > MAX_LISTED) lines.push(`  …and ${entries.length - MAX_LISTED} more temp entries`);
+  lines.push(...listed(processes, describeProcess, "processes"));
+  lines.push(...listed(entries, (entry) => `temp entry ${entry}`, "temp entries"));
+  if (unattributed.processes.length > 0) {
+    lines.push(`These processes started during the run, run from or name a path in the worktree ${unattributed.worktree}, and were orphaned. The guard cannot tell they are this run's, so it has not stopped them:`);
+    lines.push(...listed(unattributed.processes, describeProcess, "processes"));
+  }
   lines.push(...notes);
-  lines.push("Stop every process a test starts, with its detached process group, and remove every temp directory it creates in teardown (afterEach, afterAll or finally), so failures and timeouts clean up too. The guard has stopped and removed what it listed.");
+  lines.push(`Stop every process a test starts, with its detached process group, and remove every temp directory it creates in teardown (afterEach, afterAll or finally), so failures and timeouts clean up too.${processes.length > 0 || entries.length > 0 ? " The guard has stopped and removed what it attributed to this run." : ""}`);
   return lines.join("\n");
 }
 
@@ -266,16 +320,24 @@ export async function setup(project) {
   // Vitest keeps a folder of its own in the original temp folder and removes it only when it closes.
   const runnerTemp = typeof project?.tmpDir === "string" ? project.tmpDir : undefined;
   const original = os.tmpdir();
-  const root = mkdtempSync(path.join(original, "devfn-test-run-"));
-  const roots = pathAliases(root);
-  process.env[ORIGINAL_TEMP_VARIABLE] = original;
-  linkToolCaches(root, original);
+  const root = mkdtempSync(path.join(original, ROOT_PREFIX));
+  const rootAliases = pathAliases(root);
+  // A run nested in a guarded test keeps the outer run's original temp folder for machine-wide locks.
+  process.env[ORIGINAL_TEMP_VARIABLE] ||= original;
+  linkToolCaches(root, process.env[ORIGINAL_TEMP_VARIABLE]);
   const marker = `${RUN_MARKER}=${newToken()}`;
   const [name, value] = marker.split("=");
+  writeFileSync(path.join(root, RUN_RECORD), JSON.stringify({ pid: process.pid, marker }));
   process.env[name] = value;
   process.env[ROOT_VARIABLE] = root;
+  process.env[MAIN_PID_VARIABLE] = String(process.pid);
   setTempDirectory(root);
-  const scope = { marker, roots, excluded: isRunnerChild };
+  // The run's root and every directory its tests registered, read again each time: tests register them as they go.
+  const runDirectories = () => registeredDirectories(root);
+  const roots = () => [...rootAliases, ...runDirectories().flatMap(pathAliases)];
+  // The run's own pool workers and Vite's esbuild are excluded, but not what tests started from them.
+  const scope = () => ({ marker, roots: roots(), parent: process.pid, excluded: isRunnerChild });
+  const worktree = findWorktree(process.cwd());
 
   let finished = false;
   // Interrupted runs (Ctrl-C, or turbo stopping sibling tasks after a failure) never reach the
@@ -286,11 +348,14 @@ export async function setup(project) {
     // Stopping comes before reporting, and no step may keep the next from running: turbo, for
     // one, closes the output pipe of a task it cancels, so writing the report can throw.
     const attempt = (step) => { try { return step(); } catch { return undefined; } };
+    const directories = attempt(runDirectories) ?? [];
+    const allRoots = [...rootAliases, ...directories.flatMap(pathAliases)];
     // The run is ending, so its own pool workers, which a hung test may keep alive, go too.
-    const owned = attempt(() => ownedProcesses(listProcesses(startedAt) ?? [], { marker, roots })) ?? [];
+    const owned = attempt(() => ownedProcesses(listProcesses(startedAt) ?? [], { marker, roots: allRoots, parent: process.pid })) ?? [];
     // A cancelling runner may SIGKILL this process shortly after its signal, so there is no grace.
     if (owned.length > 0) attempt(() => signalAll(owned, "SIGKILL"));
-    for (const container of attempt(() => composeContainers(roots)) ?? []) attempt(() => run("docker", ["rm", "-f", "-v", container.id], 30_000));
+    for (const container of attempt(() => composeContainers(allRoots)) ?? []) attempt(() => run("docker", ["rm", "-f", "-v", container.id], 30_000));
+    for (const directory of directories) attempt(() => removeTree(directory));
     attempt(() => removeTree(root));
     if (runnerTemp) attempt(() => removeTree(runnerTemp));
     const leaked = owned.filter((entry) => !isRunnerChild(entry));
@@ -317,22 +382,29 @@ export async function setup(project) {
     const notes = [];
     const listed = listProcesses(startedAt);
     if (!listed) notes.push(`Processes were not checked: the guard cannot list processes on ${process.platform}.`);
-    const owned = listed ? await settle(() => ownedProcesses(listProcesses(startedAt) ?? [], scope), RUN_GRACE_MS) ?? [] : [];
+    const owned = listed ? await settle(() => ownedProcesses(listProcesses(startedAt) ?? [], scope()), RUN_GRACE_MS) ?? [] : [];
     const unstopped = owned.length > 0 ? await stopProcesses(owned) : [];
     if (unstopped.length > 0) notes.push(`Still running after SIGKILL: ${unstopped.map((entry) => entry.pid).join(", ")}.`);
-    const containers = composeContainers(roots);
+    const unattributed = listed && worktree ? await settle(() => worktreeOrphans(listProcesses(startedAt) ?? [], { worktree, startedAt, own: scope(), root }), STOP_GRACE_MS) ?? [] : [];
+    const containers = composeContainers(roots());
     for (const container of containers) run("docker", ["rm", "-f", "-v", container.id], 30_000);
     const entries = tempLeftovers(root).flatMap((entry) => {
       // A file's folder is listed by its contents: the file's own check has already reported it.
-      const nested = entry.startsWith("file-") ? tempLeftovers(path.join(root, entry)).map((inner) => `${entry}/${inner}`) : [entry];
+      const nested = entry.startsWith(FILE_PREFIX) ? tempLeftovers(path.join(root, entry)).map((inner) => `${entry}/${inner}`) : [entry];
       return nested.map((relative) => path.join(root, relative));
     });
+    // A file's own check removes the directories it registered; one still here escaped it.
+    for (const directory of runDirectories()) {
+      if (!existsSync(directory)) continue;
+      entries.push(directory);
+      if (!removeTree(directory)) notes.push(`The directory ${directory} could not be removed.`);
+    }
     for (const container of containers) entries.push(`compose container ${container.name} (${container.id}) for ${container.directory}`);
     if (!removeTree(root)) notes.push(`The temp root ${root} could not be removed.`);
-    if (owned.length > 0 || entries.length > 0 || unstopped.length > 0) {
+    if (owned.length > 0 || entries.length > 0 || unstopped.length > 0 || unattributed.length > 0) {
       // Failing here ends Vitest's close before it removes its own folder, so remove it now.
       if (runnerTemp) removeTree(runnerTemp);
-      throw new Error(report(`This test run (temp root ${root})`, owned, entries, notes));
+      throw new Error(report(`This test run (temp root ${root})`, owned, entries, notes, { worktree, processes: unattributed }));
     }
     if (notes.length > 0) process.stderr.write(`${notes.join("\n")}\n`);
   };
@@ -346,7 +418,83 @@ const GUARDED_DIRECTORIES = Symbol.for("superfunctions.testLeakGuard.directories
  * and the directory must be gone once the file's own hooks have run.
  */
 export function guardDirectory(directory) {
-  (globalThis[GUARDED_DIRECTORIES] ??= new Set()).add(directory);
+  const resolved = path.resolve(directory);
+  (globalThis[GUARDED_DIRECTORIES] ??= new Set()).add(resolved);
+  // Recorded in the run's root as well, before the test starts anything there, so the run's own
+  // check, and its cleanup when it is interrupted, cover the directory even once this worker is gone.
+  const root = process.env[ROOT_VARIABLE];
+  if (root) appendFileSync(path.join(root, DIRECTORY_RECORD), `${JSON.stringify(resolved)}\n`);
+}
+
+/** The directories the tests of the run with the given root registered with guardDirectory. */
+function registeredDirectories(root) {
+  let text;
+  try { text = readFileSync(path.join(root, DIRECTORY_RECORD), "utf8"); } catch { return []; }
+  const directories = new Set();
+  for (const line of text.split("\n")) {
+    try { if (line) directories.add(JSON.parse(line)); } catch { /* a line another worker is still writing */ }
+  }
+  return [...directories];
+}
+
+/** The nearest directory at or above `start` that holds a `.git` entry, or undefined. */
+function findWorktree(start) {
+  for (let directory = path.resolve(start); ; directory = path.dirname(directory)) {
+    if (existsSync(path.join(directory, ".git"))) return directory;
+    if (path.dirname(directory) === directory) return undefined;
+  }
+}
+
+/**
+ * Other guarded runs that are still going and share this run's temp folder, such as the sibling
+ * packages turbo runs alongside this one: the paths and marker that make a process theirs.
+ */
+function liveSiblingRuns(root) {
+  const parent = path.dirname(root);
+  let names;
+  try { names = readdirSync(parent); } catch { return []; }
+  return names.filter((name) => name.startsWith(ROOT_PREFIX) && path.join(parent, name) !== root).flatMap((name) => {
+    const sibling = path.join(parent, name);
+    try {
+      const { pid, marker } = JSON.parse(readFileSync(path.join(sibling, RUN_RECORD), "utf8"));
+      if (!Number.isSafeInteger(pid) || typeof marker !== "string" || !alive(pid)) return [];
+      return [{ marker, roots: [sibling, ...registeredDirectories(sibling)].flatMap(pathAliases) }];
+    } catch { return []; }
+  });
+}
+
+/**
+ * Processes the run cannot attribute but must report: started since the run began, running from
+ * or naming a path in the worktree, and orphaned, that is re-parented to init or a subreaper
+ * along a chain of processes that also started during the run. A process whose chain reaches this
+ * run's process or one of its ancestors, such as a sibling task under the same turbo, or a
+ * process that was already running, such as an editor, is someone else's. So is one that a live
+ * sibling guarded run attributes to itself.
+ */
+function worktreeOrphans(processes, { worktree, startedAt, own, root }) {
+  const window = Math.ceil((Date.now() - startedAt) / 1000);
+  const byPid = new Map(processes.map((entry) => [entry.pid, entry]));
+  const ancestors = ancestorsOf(process.pid, processes);
+  const recent = (entry) => entry.elapsed !== undefined && entry.elapsed <= window;
+  const orphaned = (entry) => {
+    const seen = new Set();
+    for (let current = entry; !seen.has(current.pid);) {
+      seen.add(current.pid);
+      if (current.ppid <= 1) return true;
+      const parent = byPid.get(current.ppid);
+      // A subreaper such as `systemd --user` may be this run's ancestor too.
+      if (parent && isReaper(parent)) return true;
+      if (!parent || current.ppid === process.pid || ancestors.has(current.ppid) || !recent(parent)) return false;
+      current = parent;
+    }
+    return false;
+  };
+  const ownPids = new Set(ownedProcesses(processes, own).map((entry) => entry.pid));
+  const siblings = liveSiblingRuns(root);
+  const worktreeRoots = pathAliases(worktree);
+  return processes.filter((entry) => entry.pid !== process.pid && !ancestors.has(entry.pid) && !ownPids.has(entry.pid) && recent(entry) &&
+    namesPathUnder(entry, worktreeRoots) && !/\bturbo(?:\.exe)?\b.*\bdaemon\b/.test(entry.command) &&
+    !siblings.some((sibling) => entry.environment.includes(sibling.marker) || namesPathUnder(entry, sibling.roots)) && orphaned(entry));
 }
 
 const guardedDirectories = () => [...(globalThis[GUARDED_DIRECTORIES] ?? [])];
@@ -379,11 +527,14 @@ export function guardTestFile({ beforeEach, afterEach, afterAll }) {
   // Without the global setup (a custom config) there is no run to attribute leftovers to.
   if (!root) return;
   const startedAt = Date.now();
-  const folder = mkdtempSync(path.join(root, "file-"));
+  const folder = mkdtempSync(path.join(root, FILE_PREFIX));
   linkToolCaches(folder, process.env[ORIGINAL_TEMP_VARIABLE]);
   const folderRoots = pathAliases(folder);
   globalThis[GUARDED_DIRECTORIES] = new Set();
-  const scope = () => ({ marker, roots: [...folderRoots, ...guardedDirectories().flatMap(pathAliases)] });
+  // In Vitest's forks pool this file runs in a worker process of its own, so every process the
+  // worker started is the file's. In the threads pool the process is the runner's, shared with other files.
+  const worker = process.env[MAIN_PID_VARIABLE] !== String(process.pid) ? process.pid : undefined;
+  const scope = () => ({ marker, roots: [...folderRoots, ...guardedDirectories().flatMap(pathAliases)], parent: worker });
   const marker = `${FILE_MARKER}=${newToken()}`;
   const [name, value] = marker.split("=");
   process.env[name] = value;
