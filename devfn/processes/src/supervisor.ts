@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { closeSync, constants, fchmodSync, fstatSync, ftruncateSync, mkdirSync, openSync, type Stats } from "node:fs";
-import { lstat, mkdir, unlink } from "node:fs/promises";
+import { lstat, mkdir, realpath, unlink } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -29,8 +29,10 @@ async function openLaunchGate(child: ChildProcess): Promise<void> {
 const LOG_FLAGS = constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | (constants.O_NOFOLLOW ?? 0);
 // A log name that keeps gaining other hard links is refused after this many detaches.
 const MAX_LOG_DETACHES = 3;
-// Preparations of one log path in this process run one after another, so one
-// never detaches the fresh log another just created in its place.
+// Preparations of one log (by its canonical directory, so aliases meet) in
+// this process run one after another, so one never detaches the fresh log
+// another just created in its place. Across processes, callers hold the lock
+// that owns the runtime and name.
 const logPreparations = new Map<string, Promise<void>>();
 
 async function presentEntry(file: string): Promise<Stats | undefined> {
@@ -85,11 +87,12 @@ async function openProcessLog(logPath: string, resetSensitiveHistory: boolean): 
  * before a reset).
  */
 export async function prepareProcessLog(logPath: string, resetSensitiveHistory: boolean): Promise<{ logFd: number; logOffset: number }> {
-  const previous = logPreparations.get(logPath) ?? Promise.resolve();
+  const key = await realpath(path.dirname(logPath)).then((dir) => path.join(dir, path.basename(logPath)), () => logPath);
+  const previous = logPreparations.get(key) ?? Promise.resolve();
   let release!: () => void;
   const done = new Promise<void>((resolve) => { release = resolve; });
   const turn = previous.then(() => done);
-  logPreparations.set(logPath, turn);
+  logPreparations.set(key, turn);
   await previous;
   try {
     return await openProcessLog(logPath, resetSensitiveHistory);
@@ -98,7 +101,7 @@ export async function prepareProcessLog(logPath: string, resetSensitiveHistory: 
     throw new ProcessError("DEVFN_PROCESS_START_FAILED", `Unable to open process log ${logPath} safely.`, { cause: error instanceof Error ? error.message : String(error) });
   } finally {
     release();
-    if (logPreparations.get(logPath) === turn) logPreparations.delete(logPath);
+    if (logPreparations.get(key) === turn) logPreparations.delete(key);
   }
 }
 

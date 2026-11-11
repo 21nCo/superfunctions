@@ -1,5 +1,5 @@
 import { closeSync, fstatSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
-import { link, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { link, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -58,19 +58,23 @@ describe("process log preparation", () => {
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
-  it("prepares one log path at a time, so concurrent preparations share one reachable log and never touch the other name", async () => {
-    for (const reset of [false, true]) {
+  it("prepares one log at a time, under any alias, so concurrent preparations share one reachable log and never touch the other name", async () => {
+    for (const [reset, aliased] of [[false, false], [true, false], [false, true]] as const) {
       const { root, other, logPath } = await linkedLog();
+      // The second preparation may name the log through a linked directory.
+      const alias = path.join(root, "alias");
+      await symlink(root, alias);
+      const second = aliased ? path.join(alias, path.basename(logPath)) : logPath;
       // Each removal of the name lands later than the last, as a slow
       // filesystem would order them, after the next preparation has looked.
       let removals = 0;
       hook.before = async (operation, file) => {
-        if (operation !== "unlink" || file !== logPath) return;
+        if (operation !== "unlink" || (file !== logPath && file !== second)) return;
         removals += 1;
         await new Promise((resolve) => setTimeout(resolve, 40 * removals));
       };
       try {
-        const prepared = await Promise.all([prepareProcessLog(logPath, reset), prepareProcessLog(logPath, reset)]);
+        const prepared = await Promise.all([prepareProcessLog(logPath, reset), prepareProcessLog(second, reset)]);
         try {
           const reachable = (await stat(logPath)).ino;
           for (const { logFd } of prepared) expect(fstatSync(logFd).ino).toBe(reachable);
