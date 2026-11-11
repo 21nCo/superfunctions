@@ -413,8 +413,8 @@ test('keeps the new pair when a run is killed after it released a backup', (t) =
 
 test('recovers a claim left by a run killed before it touched anything, including the journal temp file', (t) => {
   const { directory, files: [first, second] } = pair(t);
-  killedRun([[first, 'killed'], [second, 'killed']], "(name, file) => name === 'linkSync' && file.endsWith('.journal.tmp')");
-  assert.ok(existsSync(`${journalOf(first)}.tmp`));
+  killedRun([[first, 'killed'], [second, 'killed']], "(name, file) => name === 'linkSync' && /\\.journal\\.\\d+\\.tmp$/.test(file)");
+  assert.equal(readdirSync(directory).filter((name) => /\.journal\.\d+\.tmp$/.test(name)).length, 1);
   writeFilesAtomically([[first, 'signed'], [second, 'signed']]);
   assert.equal(readFileSync(second, 'utf8'), 'signed');
   assert.deepEqual(readdirSync(directory).sort(), ['first.json', 'second.ts']);
@@ -443,7 +443,8 @@ test('the workflow compares every module the catalog generator loads', (t) => {
   t.after(() => rmSync(path.dirname(log), { recursive: true, force: true }));
   const hooks = `import { appendFileSync } from 'node:fs';
 export async function resolve(specifier, context, next) { const result = await next(specifier, context); appendFileSync(${JSON.stringify(log)}, result.url + '\\n'); return result; }`;
-  const register = `import { register } from 'node:module'; register(${JSON.stringify(`data:text/javascript,${encodeURIComponent(hooks)}`)});`;
+  const hooksUrl = 'data:text/javascript,' + encodeURIComponent(hooks);
+  const register = `import { register } from 'node:module'; register(${JSON.stringify(hooksUrl)});`;
   spawnSync(process.execPath, ['--import', `data:text/javascript,${encodeURIComponent(register)}`, 'scripts/generate-uifn-registry.mjs', '--check'], { cwd: repositoryRoot, encoding: 'utf8' });
   const urls = [...new Set(readFileSync(log, 'utf8').trim().split('\n'))];
   const scriptsUrl = new URL('./', `file://${path.dirname(scriptPath)}/`).href;
@@ -452,6 +453,27 @@ export async function resolve(specifier, context, next) { const result = await n
   const workflow = readFileSync(path.join(repositoryRoot, '.github/workflows/uifn-registry-sign.yml'), 'utf8');
   const compared = workflow.match(/for file in ([^;]+); do/)[1].trim().split(/\s+/).sort();
   assert.deepEqual(compared, loaded);
+});
+
+test('never restores a stale backup as an original, even when the run is interrupted or the sweep fails', (t) => {
+  for (const missing of [[], [0], [1]]) {
+    const { files } = pair(t, 'current', 'current');
+    for (const index of missing) rmSync(files[index]);
+    const present = files.filter((file) => existsSync(file));
+    for (const file of files) writeFileSync(`${file}.kms-sign.bak`, 'stale');
+    // Killed right after it recorded the transaction; the retry then fails before staging.
+    killedRun([[files[0], 'killed'], [files[1], 'killed']], "(name, file) => name === 'renameSync' && file.endsWith('.journal.' + process.pid + '.tmp')");
+    assert.throws(() => writeFilesAtomically([[files[0], 'retry'], [files[1], 'retry']], { openSync(file) { if (file.endsWith('.kms-sign.tmp')) throw new Error('EIO: injected staging failure'); return openSync(file, 'wx'); } }),
+      { message: /injected staging failure.*no signature file was changed/ });
+    assert.deepEqual(present.map((file) => readFileSync(file, 'utf8')), present.map(() => 'current'), `missing ${missing}`);
+    assert.deepEqual(files.filter((file) => existsSync(file)), present);
+  }
+  const { files: [first, second] } = pair(t, 'current', 'current');
+  writeFileSync(`${first}.kms-sign.bak`, 'stale');
+  const fileSystem = { rmSync(file, options) { if (file.endsWith('.kms-sign.bak')) throw new Error('EIO: injected sweep failure'); rmSync(file, options); } };
+  assert.throws(() => writeFilesAtomically([[first, 'new'], [second, 'new']], fileSystem), { message: /injected sweep failure.*no signature file was changed/ });
+  assert.equal(readFileSync(first, 'utf8'), 'current');
+  assert.equal(existsSync(journalOf(first)), false);
 });
 
 test('removes stale sidecars left without a journal and publishes both files', (t) => {

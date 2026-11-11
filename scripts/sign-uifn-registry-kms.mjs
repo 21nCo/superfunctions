@@ -18,7 +18,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { createHash, createPublicKey, verify } from 'node:crypto';
-import { closeSync, existsSync, linkSync, lstatSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, linkSync, lstatSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -138,7 +138,7 @@ function checkoutFile(root, relative, { mustExist }) {
   return target;
 }
 
-const defaultFileSystem = { closeSync, existsSync, linkSync, lstatSync, openSync, readFileSync, renameSync, rmSync, writeFileSync };
+const defaultFileSystem = { closeSync, existsSync, linkSync, lstatSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync };
 const SIDECAR = 'kms-sign';
 
 /** Run-independent sidecar paths of a target: its staged replacement and the backup of its original. */
@@ -185,12 +185,12 @@ function createExclusive(file, contents, fsOps) {
 }
 
 /**
- * Publishes a journal record atomically: it is fully written to `<journal>.tmp`, then placed with `place`, either
- * link() (fails with EEXIST while another journal exists) or rename() (replaces this run's own journal). The journal
- * is therefore never observable empty or partial. A leftover temp file is removed by the next run.
+ * Publishes a journal record atomically: it is fully written to this run's `<journal>.<pid>.tmp`, then placed with
+ * `place`, either link() (fails with EEXIST while another journal exists) or rename() (replaces this run's own
+ * journal). The journal is therefore never observable empty or partial. Dead runs' temp files are swept later.
  */
 function writeJournal(journal, record, fsOps, place) {
-  const temporary = `${journal}.tmp`;
+  const temporary = `${journal}.${process.pid}.tmp`;
   fsOps.rmSync(temporary, { force: true });
   createExclusive(temporary, JSON.stringify(record), fsOps);
   try {
@@ -266,8 +266,24 @@ function recoverInterruptedWrite(journal, files, fsOps) {
 }
 
 /**
- * Takes the journal (the write lock), recovering an interrupted run first. Target existence is read only while this
- * run holds the journal, then recorded by atomically replacing the claim.
+ * Removes sidecars left without a journal (a run that ended with a consistent pair; they hold nothing needed) and
+ * journal temp files of runs that are no longer alive. Runs while this run holds only an empty claim, so a stale
+ * backup can never be mistaken for one of this transaction's backups.
+ */
+function sweepStaleSidecars(journal, files, fsOps) {
+  const prefix = `${path.basename(journal)}.`;
+  const temporaries = fsOps.readdirSync(path.dirname(journal))
+    .map((name) => [name, Number(name.slice(prefix.length, -'.tmp'.length))])
+    .filter(([name, pid]) => name.startsWith(prefix) && name.endsWith('.tmp') && Number.isInteger(pid) && pid !== process.pid && !isProcessAlive(pid))
+    .map(([name]) => path.join(path.dirname(journal), name));
+  const stale = files.flatMap(([target]) => Object.values(sidecarsOf(target))).filter((file) => fsOps.existsSync(file));
+  const failures = attemptEach([...stale, ...temporaries].map((file) => removal(file, fsOps)));
+  if (failures.length > 0) throw new Error(`stale ${describeFailures(failures)}`);
+}
+
+/**
+ * Takes the journal (the write lock), recovering an interrupted run first. While it holds only the empty claim, it
+ * sweeps stale sidecars and reads target existence, then records the transaction by atomically replacing the claim.
  */
 function acquireJournal(journal, files, fsOps) {
   const claim = (temporary, target) => fsOps.linkSync(temporary, target);
@@ -279,6 +295,7 @@ function acquireJournal(journal, files, fsOps) {
     writeJournal(journal, { pid: process.pid, targets: null }, fsOps, claim);
   }
   try {
+    sweepStaleSidecars(journal, files, fsOps);
     const targets = files.map(([target]) => ({ target, existed: fsOps.existsSync(target) }));
     writeJournal(journal, { pid: process.pid, targets }, fsOps, (temporary, target) => fsOps.renameSync(temporary, target));
     return targets;
@@ -290,10 +307,6 @@ function acquireJournal(journal, files, fsOps) {
 
 /** Stages, backs up and renames every file, counting renames in `progress`. Throws on the first failure. */
 function publish(files, targets, fsOps, progress) {
-  // Sidecars without a journal are left over from a run that ended with a consistent pair; they hold nothing needed.
-  const stale = files.flatMap(([target]) => Object.values(sidecarsOf(target))).filter((file) => fsOps.existsSync(file));
-  const sidecarFailures = attemptEach(stale.map((file) => removal(file, fsOps)));
-  if (sidecarFailures.length > 0) throw new Error(`stale ${describeFailures(sidecarFailures)}`);
   for (const [target, contents] of files) createExclusive(sidecarsOf(target).staged, contents, fsOps);
   for (const { target, existed } of targets) {
     if (existed) fsOps.linkSync(target, sidecarsOf(target).backup);
