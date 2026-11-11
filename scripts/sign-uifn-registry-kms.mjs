@@ -12,13 +12,13 @@
 //   UIFN_REGISTRY_EXPECTED_KEY_ID   expected registry key id (first 24 hex of SHA-256 over the SPKI DER)
 // AWS credentials are taken from the standard AWS environment (in CI: GitHub OIDC role credentials).
 //
-// Usage: node scripts/sign-uifn-registry-kms.mjs [--root <checkout>]
-// --root selects the checkout whose catalog is signed (default: this script's repository), so a trusted
-// copy of this script can sign another checkout without running that checkout's code.
+// Usage: node <path-to>/sign-uifn-registry-kms.mjs, run from the root of the checkout to sign. The script takes
+// no arguments: it signs the checkout in the current directory, so a trusted copy of this script can sign another
+// checkout without running that checkout's code.
 
 import { spawnSync } from 'node:child_process';
 import { createHash, createPublicKey, verify } from 'node:crypto';
-import { closeSync, linkSync, lstatSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, linkSync, lstatSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -35,7 +35,6 @@ const KEY_ID_PATTERN = /^[0-9a-f]{24}$/;
 const BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 const ED25519_SIGNATURE_BYTES = 64;
 
-const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sha256 = (value) => createHash('sha256').update(value).digest();
 
 export class RegistrySigningError extends Error {
@@ -56,11 +55,13 @@ export function registryKeyId(spkiDer) {
   return sha256(spkiDer).toString('hex').slice(0, 24);
 }
 
+/** Returns a binary KMS response field as a Buffer, refusing anything else. */
 function toBytes(value, field) {
   if (value instanceof Uint8Array) return Buffer.from(value);
   throw new RegistrySigningError('UIFN_REGISTRY_KMS_RESPONSE_INVALID', `KMS response field ${field} is missing or not binary.`);
 }
 
+/** Decodes a base64 KMS CLI response field, refusing anything that is not strict base64. */
 function decodeBase64(value, field) {
   if (typeof value !== 'string' || value.length === 0 || !BASE64_PATTERN.test(value)) {
     throw new RegistrySigningError('UIFN_REGISTRY_KMS_RESPONSE_INVALID', `KMS response field ${field} is not base64.`);
@@ -84,8 +85,9 @@ export function createAwsCliKmsClient({ region, command = 'aws', run = spawnSync
       shell: false,
     });
     if (result.error || result.status !== 0) {
-      const detail = result.error ? result.error.message : String(result.stderr ?? '').trim().split('\n').slice(-3).join(' ');
-      throw new RegistrySigningError('UIFN_REGISTRY_KMS_CALL_FAILED', `aws kms ${args[0]} failed: ${detail || `exit ${result.status}`}`);
+      const stderr = String(result.stderr ?? '').trim().split('\n').slice(-3).join(' ');
+      const detail = result.error?.message ?? (stderr || 'exit ' + result.status);
+      throw new RegistrySigningError('UIFN_REGISTRY_KMS_CALL_FAILED', `aws kms ${args[0]} failed: ${detail}`);
     }
     try {
       return JSON.parse(result.stdout);
@@ -136,74 +138,158 @@ function checkoutFile(root, relative, { mustExist }) {
   return target;
 }
 
-const defaultFileSystem = { closeSync, linkSync, openSync, renameSync, rmSync, writeFileSync };
+const defaultFileSystem = { closeSync, existsSync, linkSync, openSync, readFileSync, renameSync, rmSync, writeFileSync };
+const SIDECAR = 'kms-sign';
+
+/** Run-independent sidecar paths of a target: its staged replacement and the backup of its original. */
+function sidecarsOf(target) {
+  return { staged: `${target}.${SIDECAR}.tmp`, backup: `${target}.${SIDECAR}.bak` };
+}
+
+/** True when a process with this pid is running (EPERM means it exists but belongs to another user). */
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === 'EPERM';
+  }
+}
+
+/** Creates a file exclusively and writes it; a file created here but not fully written is removed again. */
+function createExclusive(file, contents, fsOps) {
+  const descriptor = fsOps.openSync(file, 'wx');
+  try {
+    fsOps.writeFileSync(descriptor, contents);
+  } catch (error) {
+    attemptEach([[file, () => fsOps.closeSync(descriptor)], [file, () => fsOps.rmSync(file, { force: true })]]);
+    throw error;
+  }
+  fsOps.closeSync(descriptor);
+}
+
+/** Runs every step even when earlier ones fail and returns the failures instead of throwing. */
+function attemptEach(steps) {
+  const failures = [];
+  for (const [file, step] of steps) {
+    try {
+      step();
+    } catch (error) {
+      failures.push({ file, message: error.message });
+    }
+  }
+  return failures;
+}
+
+const describeFailures = (failures) => failures.map(({ file, message }) => `${file}: ${message}`).join('; ');
 
 /**
- * Replaces every target or none of them. Each new file is staged next to its target (created exclusively, so a
- * pre-existing file of the same name is never touched, and owned from the moment it is created), each existing target is
- * hard-linked to a backup, and each staged file is renamed over its target. If any step fails, the targets
- * already replaced are restored from their backups (or removed when they did not exist), staged files are
- * removed, and a backup is left in place only if its original could not be restored (the error names it).
- * `fileSystem` is injectable so tests can force a failure at any step.
+ * Puts each journaled target back to its original: the backup is renamed over the target (a backup that still
+ * shares the target's file is then removed), or a target that did not exist before is removed. Staged files are removed. Returns every failure; the journal is not touched.
+ */
+function restoreTargets(targets, fsOps) {
+  return attemptEach(targets.flatMap(({ target, existed }) => {
+    const { staged, backup } = sidecarsOf(target);
+    const restore = () => {
+      if (fsOps.existsSync(backup)) {
+        fsOps.renameSync(backup, target);
+        // rename() is a no-op when both names already link the same file (a target that was never replaced).
+        fsOps.rmSync(backup, { force: true });
+      } else if (!existed) {
+        fsOps.rmSync(target, { force: true });
+      }
+    };
+    return [[target, restore], [staged, () => fsOps.rmSync(staged, { force: true })]];
+  }));
+}
+
+/**
+ * Recovers the transaction of an earlier run that was interrupted: its journal is present, so its targets may be
+ * mixed. Refuses while the journal's owner is still running. A journal that cannot be parsed was written before
+ * anything else, so there is nothing to restore.
+ */
+function recoverInterruptedWrite(journal, fsOps) {
+  let record = null;
+  try {
+    record = JSON.parse(fsOps.readFileSync(journal, 'utf8'));
+  } catch {
+    record = null;
+  }
+  if (Number.isInteger(record?.pid) && record.pid !== process.pid && isProcessAlive(record.pid)) {
+    throw new RegistrySigningError('UIFN_REGISTRY_WRITE_IN_PROGRESS', `Another signing run (pid ${record.pid}) holds ${journal}; wait for it, or remove that file if no run is active.`);
+  }
+  const failures = restoreTargets(Array.isArray(record?.targets) ? record.targets : [], fsOps);
+  if (failures.length === 0) failures.push(...attemptEach([[journal, () => fsOps.rmSync(journal)]]));
+  if (failures.length > 0) {
+    throw new RegistrySigningError('UIFN_REGISTRY_WRITE_FAILED', `Recovering an interrupted signing run failed (${describeFailures(failures)}); ${journal} is kept so the next run retries.`);
+  }
+}
+
+/** Takes the journal (the write lock), recovering an interrupted earlier run first. */
+function acquireJournal(journal, record, fsOps) {
+  try {
+    createExclusive(journal, JSON.stringify(record), fsOps);
+    return;
+  } catch (error) {
+    if (error?.code !== 'EEXIST') throw error;
+  }
+  recoverInterruptedWrite(journal, fsOps);
+  createExclusive(journal, JSON.stringify(record), fsOps);
+}
+
+/** Stages, backs up and renames every file, counting renames in `progress`. Throws on the first failure. */
+function publish(files, targets, fsOps, progress) {
+  // Sidecars without a journal are left over from a run that ended with a consistent pair; they hold nothing needed.
+  const stale = files.flatMap(([target]) => Object.values(sidecarsOf(target))).filter((file) => fsOps.existsSync(file));
+  const sidecarFailures = attemptEach(stale.map((file) => [file, () => fsOps.rmSync(file, { force: true })]));
+  if (sidecarFailures.length > 0) throw new Error(`stale ${sidecarFailures[0].file} could not be removed: ${sidecarFailures[0].message}`);
+  for (const [target, contents] of files) createExclusive(sidecarsOf(target).staged, contents, fsOps);
+  for (const { target, existed } of targets) {
+    if (existed) fsOps.linkSync(target, sidecarsOf(target).backup);
+  }
+  for (const [target] of files) {
+    fsOps.renameSync(sidecarsOf(target).staged, target);
+    progress.published += 1;
+  }
+}
+
+/**
+ * Replaces every target or none of them, also across an interruption. A journal next to the first target is
+ * created exclusively before anything else; it records which targets existed and is removed only after every
+ * staged file was renamed over its target (the commit point), then the backups go. If a step fails, the targets
+ * are restored from their backups; the journal and backups are kept if that fails, and the next run (or an
+ * interrupted run's successor) restores them before writing. Every cleanup is attempted and every failure and
+ * retained path is reported. Not crash-safe against power loss (no fsync). `fileSystem` is injectable for tests.
  */
 export function writeFilesAtomically(files, fileSystem = defaultFileSystem) {
   const fsOps = { ...defaultFileSystem, ...fileSystem };
-  const suffix = `kms-sign-${process.pid}`;
-  const staged = [];
-  const backups = [];
-  const published = [];
+  const journal = `${files[0][0]}.${SIDECAR}.journal`;
+  const targets = files.map(([target]) => ({ target, existed: fsOps.existsSync(target) }));
   try {
-    for (const [target, contents] of files) {
-      const temporary = `${target}.${suffix}.tmp`;
-      // Exclusive creation fails with EEXIST on a pre-existing file, which is then not ours to remove. Once it
-      // succeeds the file is recorded as staged before any byte is written, so a failed write is cleaned up too.
-      const descriptor = fsOps.openSync(temporary, 'wx');
-      staged.push([temporary, target]);
-      try {
-        fsOps.writeFileSync(descriptor, contents);
-      } finally {
-        fsOps.closeSync(descriptor);
-      }
-    }
-    for (const [, target] of staged) {
-      const backup = `${target}.${suffix}.bak`;
-      try {
-        fsOps.linkSync(target, backup);
-      } catch (error) {
-        if (error?.code === 'ENOENT') continue;
-        throw error;
-      }
-      backups.push([target, backup]);
-    }
-    for (const [temporary, target] of staged) {
-      fsOps.renameSync(temporary, target);
-      published.push(target);
-    }
+    acquireJournal(journal, { pid: process.pid, targets }, fsOps);
   } catch (error) {
-    const rollbackFailures = [];
-    for (const target of published.reverse()) {
-      const entry = backups.find(([original]) => original === target);
-      try {
-        if (entry === undefined) {
-          fsOps.rmSync(target, { force: true });
-        } else {
-          fsOps.renameSync(entry[1], target);
-          backups.splice(backups.indexOf(entry), 1);
-        }
-      } catch (rollbackError) {
-        rollbackFailures.push(`${path.basename(target)} (${rollbackError.message}${entry ? `; original kept at ${entry[1]}` : ''})`);
-        if (entry) backups.splice(backups.indexOf(entry), 1);
-      }
+    if (error instanceof RegistrySigningError) throw error;
+    throw new RegistrySigningError('UIFN_REGISTRY_WRITE_FAILED', `Writing the signature files failed (${error.message}); no signature file was changed.`, { cause: error });
+  }
+  const progress = { published: 0 };
+  try {
+    publish(files, targets, fsOps, progress);
+  } catch (error) {
+    const restoreFailures = restoreTargets(targets, fsOps);
+    const failures = restoreFailures.length > 0 ? restoreFailures : attemptEach([[journal, () => fsOps.rmSync(journal)]]);
+    let outcome = 'every replaced signature file was restored';
+    if (progress.published === 0) outcome = 'no signature file was changed';
+    if (failures.length > 0) {
+      outcome = `recovery failed (${describeFailures(failures)}); ${journal} and any backups are kept and the next signing run restores them`;
     }
-    let detail;
-    if (published.length === 0) detail = 'no signature file was changed';
-    else if (rollbackFailures.length === 0) detail = 'every replaced signature file was restored';
-    else detail = `restoring failed for ${rollbackFailures.join(', ')}`;
-    throw new RegistrySigningError('UIFN_REGISTRY_WRITE_FAILED', `Writing the signature files failed (${error.message}); ${detail}.`, { cause: error });
-  } finally {
-    // Staged files are always removed; a backup is kept only if its original could not be restored.
-    for (const [temporary] of staged) fsOps.rmSync(temporary, { force: true });
-    for (const [, backup] of backups) fsOps.rmSync(backup, { force: true });
+    throw new RegistrySigningError('UIFN_REGISTRY_WRITE_FAILED', `Writing the signature files failed (${error.message}); ${outcome}.`, { cause: error });
+  }
+  const failures = attemptEach([[journal, () => fsOps.rmSync(journal)]]);
+  if (failures.length === 0) {
+    failures.push(...attemptEach(targets.map(({ target }) => sidecarsOf(target).backup).map((file) => [file, () => fsOps.rmSync(file, { force: true })])));
+  }
+  if (failures.length > 0) {
+    throw new RegistrySigningError('UIFN_REGISTRY_WRITE_CLEANUP_FAILED', `Both signature files were written, but cleanup failed (${describeFailures(failures)}); the next signing run recovers a consistent pair from what is left.`);
   }
 }
 
@@ -211,7 +297,7 @@ export function writeFilesAtomically(files, fileSystem = defaultFileSystem) {
  * Signs the committed catalog with KMS and writes the schema-v2 envelope files.
  * Nothing is written unless every check passes and the signature verifies locally.
  */
-export async function signRegistryCatalogWithKms({ root = repositoryRoot, kms, kmsKeyId, expectedKeyId, fileSystem }) {
+export async function signRegistryCatalogWithKms({ root = process.cwd(), kms, kmsKeyId, expectedKeyId, fileSystem }) {
   if (typeof kmsKeyId !== 'string' || kmsKeyId.trim() === '') {
     throw new RegistrySigningError('UIFN_REGISTRY_KMS_CONFIG_MISSING', 'UIFN_REGISTRY_KMS_KEY_ID is required.');
   }
@@ -280,11 +366,11 @@ export async function signRegistryCatalogWithKms({ root = repositoryRoot, kms, k
   return { envelope, files: [REGISTRY_SIGNATURE_JSON_PATH, REGISTRY_SIGNATURE_TS_PATH] };
 }
 
+/** CLI entry point: signs the checkout in the current directory with the KMS key configured in `env`. */
 export async function main({ argv = process.argv.slice(2), env = process.env, kms } = {}) {
-  const { values } = parseArgs({ args: argv, options: { root: { type: 'string' } }, strict: true, allowPositionals: false });
+  parseArgs({ args: argv, options: {}, strict: true, allowPositionals: false });
   const client = kms ?? createAwsCliKmsClient({ region: env.UIFN_REGISTRY_KMS_REGION });
   const { envelope, files } = await signRegistryCatalogWithKms({
-    root: values.root === undefined ? repositoryRoot : path.resolve(values.root),
     kms: client,
     kmsKeyId: env.UIFN_REGISTRY_KMS_KEY_ID,
     expectedKeyId: env.UIFN_REGISTRY_EXPECTED_KEY_ID,
@@ -303,11 +389,10 @@ export async function main({ argv = process.argv.slice(2), env = process.env, km
 const invokedDirectly = process.argv[1] !== undefined
   && realpathSync(path.resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url));
 if (invokedDirectly) {
-  main().then(
-    (summary) => console.log(JSON.stringify(summary, null, 2)),
-    (error) => {
-      console.error(JSON.stringify({ ok: false, code: error.code ?? 'UIFN_REGISTRY_KMS_SIGN_FAILED', message: error.message }, null, 2));
-      process.exitCode = 1;
-    },
-  );
+  try {
+    console.log(JSON.stringify(await main(), null, 2));
+  } catch (error) {
+    console.error(JSON.stringify({ ok: false, code: error.code ?? 'UIFN_REGISTRY_KMS_SIGN_FAILED', message: error.message }, null, 2));
+    process.exitCode = 1;
+  }
 }

@@ -5,8 +5,8 @@ name: uifn registry sign (KMS)
 #
 # Dispatch from dev only. The sign job runs in the uifn-release environment, so a maintainer must approve
 # it before it receives AWS credentials. Branch code never runs with credentials: the check job regenerates
-# the branch's catalog without credentials, and the sign job runs the signer from this workflow's dev commit
-# against a plain checkout of the branch.
+# the branch's catalog without credentials, using only a generator byte-identical to this workflow's dev commit,
+# and the sign job runs the signer from that dev commit against a plain checkout of the branch.
 on:
   workflow_dispatch:
     inputs:
@@ -51,14 +51,24 @@ jobs:
             echo "::error::expected_sha must be a full 40-character lowercase commit SHA"; exit 1
           fi
 
+      - name: Checkout trusted generator (this workflow's dev commit)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          path: trusted
+          fetch-depth: 1
+          persist-credentials: false
+
       - name: Checkout branch
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: refs/heads/${{ inputs.ref }}
+          path: target
           fetch-depth: 1
           persist-credentials: false
 
       - name: Require the expected branch head
+        working-directory: target
         run: |
           set -euo pipefail
           head="$(git rev-parse HEAD)"
@@ -71,7 +81,19 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Require the dev catalog generator
+        run: |
+          set -euo pipefail
+          # The whole generator chain (relative imports only). A branch-modified generator could report success for any
+          # catalog, so only dev's generator may vouch for the bytes that get signed.
+          for file in generate-uifn-registry.mjs generate-uifn-phase-16.mjs uifn-delivery-generator.mjs uifn-component-fixtures.mjs; do
+            if ! cmp -s "trusted/scripts/$file" "target/scripts/$file"; then
+              echo "::error::scripts/$file on $SIGN_REF differs from dev; land generator changes on dev before signing"; exit 1
+            fi
+          done
+
       - name: Require the committed catalog to match a fresh generation
+        working-directory: target
         run: |
           set -euo pipefail
           node scripts/generate-uifn-registry.mjs --check
@@ -155,7 +177,8 @@ jobs:
           UIFN_REGISTRY_KMS_KEY_ID: ${{ vars.UIFN_REGISTRY_KMS_KEY_ID }}
           UIFN_REGISTRY_KMS_REGION: ${{ vars.UIFN_REGISTRY_KMS_REGION }}
           UIFN_REGISTRY_EXPECTED_KEY_ID: ${{ vars.UIFN_REGISTRY_EXPECTED_KEY_ID }}
-        run: node signer/scripts/sign-uifn-registry-kms.mjs --root target
+        working-directory: target
+        run: node ../signer/scripts/sign-uifn-registry-kms.mjs
 
       - name: Commit and push the signature files
         id: commit
@@ -170,9 +193,10 @@ jobs:
             echo "commit=" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          expected="$(printf '%s\n' "${files[@]}" | sort)"
-          if [[ "$changed" != "$expected" ]]; then
-            printf 'changed:\n%s\n' "$changed"; echo "::error::signing must change exactly the two signature files"; exit 1
+          # Either file may already hold this signature (Ed25519 is deterministic), so a repair of one file is valid.
+          unexpected="$(comm -23 <(printf '%s\n' "$changed") <(printf '%s\n' "${files[@]}" | sort))"
+          if [[ -n "$unexpected" ]]; then
+            printf 'changed:\n%s\n' "$changed"; echo "::error::signing may change only the two signature files"; exit 1
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
