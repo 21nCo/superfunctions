@@ -21,6 +21,7 @@ import { FilePortRegistry, withFileLock } from "@devfn/ports";
 import { processBirthSignature } from "@devfn/processes";
 import { markOwnerBinding, publishTunnelRoutes, readOwnerBindings, readTunnelState, registerTunnelBinding, tunnelPaths, type TunnelServiceOptions } from "@devfn/proxy/tunnel";
 import { DevFnOrchestrator, planPublicUrls, recoverOrphanedProxyRoutes, resolveInstanceIdentity, type TunnelOverrides } from "../src/index.js";
+import { readClaims } from "../src/outputs.js";
 import { livePublicUrls, publishLifecycleTunnel, withdrawLifecycleTunnel } from "../src/tunnel.js";
 import { writeTunnelState } from "../../proxy/src/tunnel/state.js";
 import { FakeTunnelProvider, fixtureBinding, writeConnectorScript } from "../../proxy/test/fixtures/tunnel.js";
@@ -198,7 +199,11 @@ it("ends a receiptless owner's public exposure before a private start takes a le
   await expect(orchestrator.up({ config, root, stateDir })).rejects.toThrow("could not be withdrawn before startup");
   expect(provider.records.has(hostname)).toBe(false);
   expect(await leased()).toBe(false);
-  await expect(access(path.join(root, ".devfn"))).rejects.toThrow();
+  // The refused start rewrote DevFn's tunnel state in the existing state directory, so only that provenance stays recorded: no live claim.
+  const claims = await readClaims(root);
+  expect([...claims.keys()]).toEqual([identity.instanceId]);
+  expect(claims.get(identity.instanceId)!.claim).toMatchObject({ targets: [], written: [], shared: [stateDir] });
+  expect(claims.get(identity.instanceId)!.claim.pending ?? []).toEqual([]);
   expect((await readTunnelState(stateDir, "preview")).connector!.hostnames).toEqual([OTHER, hostname].sort());
 
   provider.connector = "ready";
