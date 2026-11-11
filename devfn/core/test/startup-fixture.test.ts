@@ -35,7 +35,10 @@ const serverScript = `import { createServer } from "node:http";
 import { writeFile } from "node:fs/promises";
 const upstream = process.argv[2];
 if (upstream && upstream !== process.env.DEVFN_URL_NATIVE && !(await fetch(upstream + "/health")).ok) throw new Error("upstream unavailable");
-const server = createServer((request, response) => { response.writeHead(!process.env.EXPECTED_HEALTH_PATH || request.url === process.env.EXPECTED_HEALTH_PATH ? 200 : 404); response.end("ok"); });
+// Readiness answers 503 until the observation is completely written, so a
+// 200 (and so a returned up()) always implies the file is there to read.
+let observed = false;
+const server = createServer((request, response) => { response.writeHead(!observed ? 503 : !process.env.EXPECTED_HEALTH_PATH || request.url === process.env.EXPECTED_HEALTH_PATH ? 200 : 404); response.end("ok"); });
 await new Promise((resolve) => server.listen(Number(process.env.DEVFN_PORT_NATIVE), process.env.HOST || "127.0.0.1", resolve));
 await writeFile(process.env.OBSERVED_FILE, JSON.stringify({
   port: process.env.DEVFN_PORT_NATIVE,
@@ -49,6 +52,7 @@ await writeFile(process.env.OBSERVED_FILE, JSON.stringify({
   devfnHost: process.env.DEVFN_HOST,
   inheritedSecretPresent: Boolean(process.env.DB_PRIVATE_KEY),
 }));
+observed = true;
 if (process.env.SECRET_TOKEN) console.log(process.env.SECRET_TOKEN);
 `;
 
@@ -192,6 +196,29 @@ describe("real local startup fixtures", () => {
     } finally {
       await orchestrator.down({ config, root, stateDir }).catch(() => undefined);
       if (oldMode === undefined) delete process.env.MODE; else process.env.MODE = oldMode;
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  // fetch() refuses port 4190 before connecting, so a lease there failed HTTP
+  // readiness after its whole timeout although the process listened on it.
+  it("never leases a port fetch refuses, so HTTP readiness reaches a native process on a port DevFn chose", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "devfn-native-blocked-port-"));
+    const stateDir = path.join(root, "state");
+    const config = validateDevFnConfig({ version: 1, project: { id: "native-blocked-port-fixture" }, ports: { native: { range: [4190, 4190] } },
+      processes: { native: { adapter: "command", command: [process.execPath, "server.mjs"], ports: ["native"],
+        health: { type: "http", port: "native", timeoutMs: 10_000 }, env: { OBSERVED_FILE: path.join(root, "observed.json") } } },
+      profiles: { default: { processes: ["native"] } } });
+    const orchestrator = new DevFnOrchestrator();
+    try {
+      await writeFile(path.join(root, "server.mjs"), serverScript);
+      const receipt = await orchestrator.up({ config, root, stateDir });
+      expect(receipt.allocations).toMatchObject([{ service: "native", source: "fallback" }]);
+      expect(receipt.allocations[0].port).not.toBe(4190);
+      expect(JSON.parse(await readFile(path.join(root, "observed.json"), "utf8")).port).toBe(String(receipt.allocations[0].port));
+      expect(await fetch(`http://127.0.0.1:${receipt.allocations[0].port}/health`).then((response) => response.status)).toBe(200);
+    } finally {
+      await orchestrator.down({ config, root, stateDir }).catch(() => undefined);
       await rm(root, { recursive: true, force: true });
     }
   }, 60_000);
