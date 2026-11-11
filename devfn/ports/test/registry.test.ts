@@ -1063,4 +1063,23 @@ describe("fetch-blocked ports", () => {
       expect(await reserve(registry, "preferred", "moved", [{ name: "web", spec: {} }], { fallbackRange: [4190, 4191] })).toEqual({ web: 4191 });
     });
   });
+
+  it("is a TCP rule: a UDP port is chosen from any range, block or the OS and renewed as before", async () => {
+    const udp = { protocol: "udp" };
+    // 5060 and 4190 are fetch-blocked; fetch never speaks UDP, so neither is excluded for it.
+    await withRegistry(async (registry) => expect(await reserve(registry, "udp", "ranged", [{ name: "sip", spec: { ...udp, range: [5060, 5060] } }],
+      { fallbackRange: [5062, 5062] })).toEqual({ sip: 5060 }));
+    await withRegistry(async (registry) => {
+      expect(await reserve(registry, "udp", "fallback", [{ name: "game", spec: udp }], { fallbackRange: [4190, 4190] })).toEqual({ game: 4190 });
+      await registry.release({ invocationId: "fallback" });
+      expect(await reserve(registry, "udp", "renewed", [{ name: "game", spec: udp }], { fallbackRange: [4190, 4191] })).toEqual({ game: 4190 });
+    });
+    await withRegistry(async (registry) => expect(await reserve(registry, "udp", "ephemeral", [{ name: "game", spec: { ...udp, ephemeral: true } }])).toEqual({ game: 4190 }),
+      async () => 4190);
+    // A mixed block excludes a blocked port only for its TCP member.
+    await withRegistry(async (registry) => expect(await reserve(registry, "udp", "block", [{ name: "media", spec: { ...udp, block: "pair" } }, { name: "control", spec: { block: "pair" } }],
+      { fallbackRange: [4190, 4191] })).toEqual({ media: 4190, control: 4191 }));
+    await withRegistry(async (registry) => await expect(reserve(registry, "udp", "reversed", [{ name: "control", spec: { block: "pair" } }, { name: "media", spec: { ...udp, block: "pair" } }],
+      { fallbackRange: [4190, 4191] })).rejects.toMatchObject({ code: "DEVFN_PORT_CONFLICT" }));
+  });
 });

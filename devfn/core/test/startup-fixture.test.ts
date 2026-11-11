@@ -35,7 +35,10 @@ const serverScript = `import { createServer } from "node:http";
 import { writeFile } from "node:fs/promises";
 const upstream = process.argv[2];
 if (upstream && upstream !== process.env.DEVFN_URL_NATIVE && !(await fetch(upstream + "/health")).ok) throw new Error("upstream unavailable");
-const server = createServer((request, response) => { response.writeHead(!process.env.EXPECTED_HEALTH_PATH || request.url === process.env.EXPECTED_HEALTH_PATH ? 200 : 404); response.end("ok"); });
+// Readiness answers 503 until the observation is completely written, so a
+// 200 (and so a returned up()) always implies the file is there to read.
+let observed = false;
+const server = createServer((request, response) => { response.writeHead(!observed ? 503 : !process.env.EXPECTED_HEALTH_PATH || request.url === process.env.EXPECTED_HEALTH_PATH ? 200 : 404); response.end("ok"); });
 await new Promise((resolve) => server.listen(Number(process.env.DEVFN_PORT_NATIVE), process.env.HOST || "127.0.0.1", resolve));
 await writeFile(process.env.OBSERVED_FILE, JSON.stringify({
   port: process.env.DEVFN_PORT_NATIVE,
@@ -49,6 +52,7 @@ await writeFile(process.env.OBSERVED_FILE, JSON.stringify({
   devfnHost: process.env.DEVFN_HOST,
   inheritedSecretPresent: Boolean(process.env.DB_PRIVATE_KEY),
 }));
+observed = true;
 if (process.env.SECRET_TOKEN) console.log(process.env.SECRET_TOKEN);
 `;
 

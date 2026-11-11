@@ -30,7 +30,7 @@ A port can specify `protocol` (`tcp` or `udp`), `preferred`, `range: [start, end
 - `exact: true` requires `preferred` and fails closed on collision.
 - `ephemeral: true` cannot be combined with fixed preferences.
 - Requirements sharing `block` receive a contiguous allocation.
-- DevFn never chooses a port that `fetch()` and browsers refuse (the Fetch Standard's bad ports, such as 4190 in the default fallback range 4100-4999), whether from a `range`, the policy ranges, a `block` or the OS, and it does not renew an earlier lease on one. A `preferred` or `exact` port is used as configured.
+- DevFn never chooses a TCP port that `fetch()` and browsers refuse (the Fetch Standard's bad ports, such as 4190 in the default fallback range 4100-4999), whether from a `range`, the policy ranges, a `block` or the OS, and it does not renew an earlier lease on one. A `preferred` or `exact` port is used as configured. The rule is TCP only: a `udp` port can be any of them.
 - Public ports require `devfn up --allow-public`.
 
 ## Native processes

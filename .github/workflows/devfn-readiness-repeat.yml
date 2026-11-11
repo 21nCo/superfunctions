@@ -68,6 +68,8 @@ jobs:
 
       - name: Run the readiness tests repeatedly, without retries
         working-directory: devfn/core
+        # bash -eo pipefail; the loop reads vitest's own status from PIPESTATUS.
+        shell: bash
         env:
           ITERATIONS: ${{ github.event.inputs.iterations || '20' }}
           # Plain reporter lines, so each passed test can be counted.
@@ -77,15 +79,20 @@ jobs:
           pattern+='|replaces a running lifecycle when its selected target changes behind a credential-like name'
           pattern+='|replaces a native process when an inherited ordinary allowlist value changes'
           pattern+='|restores the served certificate after its source was removed and a refused prior teardown'
+          mkdir -p readiness-repeat-logs
           for iteration in $(seq 1 "$ITERATIONS"); do
             echo "::group::Iteration $iteration of $ITERATIONS"
             # Each file holds one of the four tests; --retry=0 makes any failure final.
-            status=0
+            set +e
             ../../node_modules/.bin/vitest run --retry=0 --reporter=verbose -t "$pattern" \
               test/task-lifecycle.test.ts test/resources.test.ts test/startup-fixture.test.ts test/registered-domain-startup.test.ts \
-              | tee "iteration-$iteration.log" || status=$?
+              2>&1 | tee "readiness-repeat-logs/iteration-$iteration.log"
+            # vitest's exit status, not tee's: an error after every test passed
+            # (an unhandled error, a failed hook) still fails the iteration.
+            status=${PIPESTATUS[0]}
+            set -e
             echo "::endgroup::"
-            passed=$(grep -cE '^ +✓ .*(stops what an earlier attempt|selected target changes behind|inherited ordinary allowlist|removed and a refused prior teardown)' "iteration-$iteration.log" || true)
+            passed=$(grep -cE '^ +✓ .*(stops what an earlier attempt|selected target changes behind|inherited ordinary allowlist|removed and a refused prior teardown)' "readiness-repeat-logs/iteration-$iteration.log" || true)
             echo "Iteration $iteration: exit $status, $passed of 4 readiness tests passed"
             if [ "$status" -ne 0 ] || [ "$passed" -ne 4 ]; then
               echo "::error::Iteration $iteration failed: exit $status, $passed of 4 readiness tests passed"
@@ -93,3 +100,12 @@ jobs:
             fi
           done
           echo "All $ITERATIONS iterations passed all 4 readiness tests."
+
+      - name: Upload the iteration logs when an iteration failed
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: devfn-readiness-repeat-logs
+          path: devfn/core/readiness-repeat-logs/
+          if-no-files-found: ignore
+          retention-days: 14
