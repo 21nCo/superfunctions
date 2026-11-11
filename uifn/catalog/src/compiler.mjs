@@ -224,7 +224,7 @@ function validateSwiftUISurfaces(surfaces) {
     assert(!byId.has(surface.id), 'UIFN_CATALOG_DUPLICATE', `Duplicate SwiftUI surface: ${surface.id}`, { value: surface.id });
     assert(SWIFTUI_SURFACE_KINDS.includes(surface.kind), 'UIFN_CATALOG_UNSUPPORTED_VALUE', `SwiftUI surface ${surface.id} has an unknown kind.`, { surface: surface.id, value: surface.kind });
     assert(typeof surface.issue === 'string' && /^UIF-[0-9]+$/.test(surface.issue), 'UIFN_CATALOG_UNSUPPORTED_VALUE', `SwiftUI surface ${surface.id} has an invalid issue.`, { surface: surface.id, value: surface.issue });
-    assert(typeof surface.source === 'string' && new RegExp(`^${SWIFTUI_SOURCES_ROOT}/(?:${SWIFTUI_SURFACE_DIRECTORIES.join('|')})/[A-Za-z0-9+]+\\.swift$`).test(surface.source), 'UIFN_CATALOG_UNSUPPORTED_VALUE', `SwiftUI surface ${surface.id} has an invalid source path.`, { surface: surface.id, value: surface.source });
+    assert(typeof surface.source === 'string' && new RegExp(`^${SWIFTUI_SOURCES_ROOT}/(?:${SWIFTUI_SURFACE_DIRECTORIES.join('|')})/(?:[A-Za-z0-9+]+/)*[A-Za-z0-9+]+\\.swift$`).test(surface.source), 'UIFN_CATALOG_UNSUPPORTED_VALUE', `SwiftUI surface ${surface.id} has an invalid source path.`, { surface: surface.id, value: surface.source });
     byId.set(surface.id, surface);
   }
   return byId;
@@ -276,13 +276,16 @@ export function validateSwiftUIStatus(source = SWIFTUI_STATUS_SOURCE) {
 // The kind follows the declaration, not the directory:
 // - a public struct conforming to a SwiftUI style protocol (`...Style`) is a
 //   style;
-// - a public struct conforming to View or ViewModifier is a component, so a
-//   UIFnSwiftUI view that stands in for a system control is a component;
+// - a public struct conforming to View, ViewModifier or a protocol that
+//   refines View (Shape, InsettableShape and the UIKit/AppKit view and view
+//   controller representables) is a component, so a UIFnSwiftUI view that
+//   stands in for a system control is a component;
 // - in Components, a public function in an extension of View (a view
 //   modifier) is a component.
 // A struct's conformance counts whether it is in the declaration or in an
 // extension in either directory. Nested public structs count by their own
-// name. Classes, enums, protocols and View-extension functions in Styles
+// name. Both directories are scanned recursively, because the package
+// compiles every file under UIFnSwiftUI. Classes, enums, protocols and View-extension functions in Styles
 // (such as the uifnTheme environment modifier) are not surfaces.
 const SWIFT_ATTRIBUTES = String.raw`(?:@\w+(?:\([^)\n]*\))?\s+)*`;
 const SWIFT_GENERICS = String.raw`(?:<[^>{]*>)?`;
@@ -291,9 +294,20 @@ function swiftConformances(clause) {
   return (clause ?? '').split(/\bwhere\b/)[0].split(/[,&]/).map((value) => value.trim().replace(/^SwiftUI\./, '')).filter(Boolean);
 }
 
+const SWIFT_COMPONENT_PROTOCOLS = [
+  'View',
+  'ViewModifier',
+  'Shape',
+  'InsettableShape',
+  'UIViewRepresentable',
+  'NSViewRepresentable',
+  'UIViewControllerRepresentable',
+  'NSViewControllerRepresentable',
+];
+
 function swiftSurfaceKind(conformances) {
   if (conformances.some((value) => /^[A-Z]\w*Style$/.test(value))) return 'style';
-  if (conformances.some((value) => value === 'View' || value === 'ViewModifier')) return 'component';
+  if (conformances.some((value) => SWIFT_COMPONENT_PROTOCOLS.includes(value))) return 'component';
   return undefined;
 }
 
@@ -334,19 +348,29 @@ export function parseSwiftUISurfaceDeclarations(files) {
   });
 }
 
+async function listSwiftFiles(repoRoot, relativeDirectory) {
+  const entries = await readdir(path.join(repoRoot, relativeDirectory), { withFileTypes: true });
+  const files = [];
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    const relativePath = `${relativeDirectory}/${entry.name}`;
+    if (entry.isDirectory()) files.push(...await listSwiftFiles(repoRoot, relativePath));
+    else if (entry.isFile() && entry.name.endsWith('.swift')) files.push(relativePath);
+  }
+  return files;
+}
+
 export async function readSwiftUISurfaceDeclarations(repoRoot) {
   const files = [];
   for (const directory of SWIFTUI_SURFACE_DIRECTORIES) {
     const relativeDirectory = `${SWIFTUI_SOURCES_ROOT}/${directory}`;
-    let entries;
+    let paths;
     try {
-      entries = await readdir(path.join(repoRoot, relativeDirectory), { withFileTypes: true });
+      paths = await listSwiftFiles(repoRoot, relativeDirectory);
     } catch (error) {
       if (error.code === 'ENOENT') fail('UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `UIFnSwiftUI source directory is missing: ${relativeDirectory}`, { directory: relativeDirectory });
       throw error;
     }
-    for (const entry of entries.filter((item) => item.isFile() && item.name.endsWith('.swift')).sort((left, right) => left.name.localeCompare(right.name))) {
-      const relativePath = `${relativeDirectory}/${entry.name}`;
+    for (const relativePath of paths) {
       files.push({ path: relativePath, text: await readFile(path.join(repoRoot, relativePath), 'utf8') });
     }
   }

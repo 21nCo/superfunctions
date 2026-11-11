@@ -31,7 +31,7 @@
           "id": { "type": "string", "pattern": "^(?:UIFn|uifn)[A-Za-z0-9]+$" },
           "kind": { "enum": ["style", "component"] },
           "issue": { "type": "string", "pattern": "^UIF-[0-9]+$" },
-          "source": { "type": "string", "pattern": "^uifn/swift/Sources/UIFnSwiftUI/(?:Styles|Components)/[A-Za-z0-9+]+\\.swift$" },
+          "source": { "type": "string", "pattern": "^uifn/swift/Sources/UIFnSwiftUI/(?:Styles|Components)/(?:[A-Za-z0-9+]+/)*[A-Za-z0-9+]+\\.swift$" },
           "primitives": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$" } }
         }
       }

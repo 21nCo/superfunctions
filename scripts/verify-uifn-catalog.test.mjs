@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -279,4 +279,64 @@ test('public ViewModifiers, extension conformances, and nested public structs ar
     { path: 'uifn/swift/Sources/UIFnSwiftUI/Components/UIFnChip+Style.swift', text: 'extension UIFnChipStyle: ToggleStyle {\n}\n' },
     { path: 'uifn/swift/Sources/UIFnSwiftUI/Tokens/UIFnIgnored.swift', text: 'public struct UIFnIgnored: View {\n}\n' },
   ]), [{ id: 'UIFnChipStyle', kind: 'style', source: 'uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnChip.swift' }]);
+});
+
+test('Shapes and view representables are components', () => {
+  assert.deepEqual(parseOne('uifn/swift/Sources/UIFnSwiftUI/Components/Example.swift', [
+    'public struct UIFnNotch: Shape {',
+    '}',
+    'public struct UIFnRing: SwiftUI.InsettableShape {',
+    '}',
+    '#if canImport(UIKit)',
+    'public struct UIFnHostedView: UIViewRepresentable {',
+    '}',
+    'public struct UIFnHostedController: UIViewControllerRepresentable {',
+    '}',
+    '#else',
+    'public struct UIFnHostedView: NSViewRepresentable {',
+    '}',
+    'public struct UIFnHostedController: NSViewControllerRepresentable {',
+    '}',
+    '#endif',
+    'public struct UIFnSpacing: Equatable {',
+    '}',
+  ]), [
+    ['UIFnNotch', 'component'],
+    ['UIFnRing', 'component'],
+    ['UIFnHostedView', 'component'],
+    ['UIFnHostedController', 'component'],
+    ['UIFnHostedView', 'component'],
+    ['UIFnHostedController', 'component'],
+  ]);
+});
+
+test('Swift files in subdirectories of Styles and Components are scanned', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'uifn-swiftui-surfaces-'));
+  try {
+    const sources = path.join(root, 'uifn/swift/Sources/UIFnSwiftUI');
+    const write = async (relativePath, text) => {
+      await mkdir(path.dirname(path.join(sources, relativePath)), { recursive: true });
+      await writeFile(path.join(sources, relativePath), text);
+    };
+    await write('Styles/UIFnChipStyle.swift', 'public struct UIFnChipStyle: ButtonStyle {\n}\n');
+    await write('Components/Feedback/UIFnAlert.swift', 'public struct UIFnAlert: View {\n}\n');
+    await write('Components/Feedback/Deep/UIFnNotch.swift', 'public struct UIFnNotch: Shape {\n}\n');
+    await write('Components/Feedback/README.md', 'public struct UIFnNotSwift: View {\n}\n');
+    await write('Tokens/Nested/UIFnIgnored.swift', 'public struct UIFnIgnored: View {\n}\n');
+    const declarations = await readSwiftUISurfaceDeclarations(root);
+    assert.deepEqual(declarations, [
+      { id: 'UIFnChipStyle', kind: 'style', source: 'uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnChipStyle.swift' },
+      { id: 'UIFnNotch', kind: 'component', source: 'uifn/swift/Sources/UIFnSwiftUI/Components/Feedback/Deep/UIFnNotch.swift' },
+      { id: 'UIFnAlert', kind: 'component', source: 'uifn/swift/Sources/UIFnSwiftUI/Components/Feedback/UIFnAlert.swift' },
+    ]);
+    // An unlisted view in a subdirectory is drift against the real list.
+    const real = await readSwiftUISurfaceDeclarations(repoRoot);
+    expectCatalogCode(() => verifySwiftUISurfaceDeclarations([...real, declarations[2]]), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
+    // A listed surface may live in a subdirectory once it is listed with that path.
+    validateSwiftUIStatus(swiftuiSourceWith((source) => {
+      source.surfaces.find((surface) => surface.id === 'UIFnBanner').source = 'uifn/swift/Sources/UIFnSwiftUI/Components/Feedback/UIFnBanner.swift';
+    }));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

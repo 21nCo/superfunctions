@@ -25,8 +25,9 @@ const components = `${SWIFTUI_SOURCES_ROOT}/Components`;
 
 // Every public style and component UIFnSwiftUI declares. A surface's kind
 // follows its declaration, not its directory: a style conforms to a SwiftUI
-// style protocol; a component is a View, a ViewModifier or a View-extension
-// function. The verify script checks this list, kinds included, against the
+// style protocol; a component is a View (or a protocol refining View, such as
+// Shape or a view representable), a ViewModifier or a View-extension
+// function. Files in subdirectories of Styles and Components count too. The verify script checks this list, kinds included, against the
 // Swift sources, so a new style or component has to be listed here and mapped
 // to a primitive below.
 export const SWIFTUI_SURFACES = [

@@ -36,12 +36,14 @@ The verifier compiles twice, requires byte-identical results, checks the checked
 directory for drift, and executes positive and negative CAT-001 vectors. It
 rejects a primitive with a missing or unknown SwiftUI status, a status that does
 not match its controls and surfaces, and a UIFnSwiftUI style or component that
-no primitive maps. It also reads `uifn/swift/Sources/UIFnSwiftUI/Styles` and
-`Components` and fails when the list misses a public style or component, names
+no primitive maps. It also reads every Swift file under
+`uifn/swift/Sources/UIFnSwiftUI/Styles` and `Components`, subdirectories
+included, and fails when the list misses a public style or component, names
 one the sources do not declare, or gives one the wrong kind or file. A surface's
 kind follows its declaration, not its directory: a public struct conforming to a
 SwiftUI style protocol (a name ending in `Style`) is a style; a public struct
-conforming to `View` or `ViewModifier` is a component; in `Components`, a public
+conforming to `View`, `ViewModifier`, `Shape`, `InsettableShape` or a UIKit or
+AppKit view or view controller representable is a component; in `Components`, a public
 function in an extension of `View` is a component. A conformance counts in the
 declaration or in an extension in either directory, and a nested public struct
 counts by its own name. Classes, enums, protocols and `View`-extension functions
