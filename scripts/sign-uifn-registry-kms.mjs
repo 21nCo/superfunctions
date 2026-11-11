@@ -185,17 +185,18 @@ function createExclusive(file, contents, fsOps) {
 }
 
 /**
- * Publishes the journal atomically: a private file is fully written, then hard-linked into place. The journal is
- * therefore never observable empty or partial, and link() fails with EEXIST while another journal exists.
+ * Publishes a journal record atomically: it is fully written to `<journal>.tmp`, then placed with `place`, either
+ * link() (fails with EEXIST while another journal exists) or rename() (replaces this run's own journal). The journal
+ * is therefore never observable empty or partial. A leftover temp file is removed by the next run.
  */
-function createJournal(journal, record, fsOps) {
-  const temporary = `${journal}.${process.pid}.tmp`;
+function writeJournal(journal, record, fsOps, place) {
+  const temporary = `${journal}.tmp`;
   fsOps.rmSync(temporary, { force: true });
   createExclusive(temporary, JSON.stringify(record), fsOps);
   try {
-    fsOps.linkSync(temporary, journal);
+    place(temporary, journal);
   } finally {
-    fsOps.rmSync(temporary, { force: true });
+    attemptEach([removal(temporary, fsOps)]);
   }
 }
 
@@ -207,10 +208,13 @@ function readJournal(journal, files, fsOps) {
     if (!fsOps.lstatSync(journal).isFile()) throw refuse('not a regular file');
     record = JSON.parse(fsOps.readFileSync(journal, 'utf8'));
   } catch (error) {
+    if (error?.code === 'ENOENT') return null;
     throw error instanceof RegistrySigningError ? error : refuse(error.message);
   }
-  const valid = Number.isInteger(record?.pid) && Array.isArray(record.targets) && record.targets.length === files.length
-    && record.targets.every((entry, index) => entry?.target === files[index][0] && typeof entry.existed === 'boolean');
+  // `targets: null` is a claim taken before anything was touched.
+  const valid = Number.isInteger(record?.pid) && (record.targets === null || (Array.isArray(record.targets)
+    && record.targets.length === files.length
+    && record.targets.every((entry, index) => entry?.target === files[index][0] && typeof entry.existed === 'boolean')));
   if (!valid) throw refuse('it does not describe these signature files');
   return record;
 }
@@ -243,33 +247,45 @@ function settleTargets(targets, fsOps) {
   return attemptEach(targets.flatMap(({ target }) => Object.values(sidecarsOf(target)).map((file) => removal(file, fsOps))));
 }
 
-/** Recovers the transaction of an interrupted earlier run, refusing while its owner is still running. */
+/**
+ * Recovers the transaction of an interrupted earlier run, refusing while its owner is still running. Recovery
+ * assumes no other signing run starts on the same checkout at the same moment (the workflow runs one signer per
+ * fresh checkout).
+ */
 function recoverInterruptedWrite(journal, files, fsOps) {
   const record = readJournal(journal, files, fsOps);
+  if (record === null) return;
   if (record.pid !== process.pid && isProcessAlive(record.pid)) {
     throw new RegistrySigningError('UIFN_REGISTRY_WRITE_IN_PROGRESS', `Another signing run (pid ${record.pid}) holds ${journal}; wait for it, or remove that file if no run is active.`);
   }
-  const failures = settleTargets(record.targets, fsOps);
+  const failures = record.targets === null ? [] : settleTargets(record.targets, fsOps);
   if (failures.length === 0) failures.push(...attemptEach([[journal, () => fsOps.rmSync(journal)]]));
   if (failures.length > 0) {
     throw new RegistrySigningError('UIFN_REGISTRY_WRITE_FAILED', `Recovering an interrupted signing run failed (${describeFailures(failures)}); ${journal} is kept so the next run retries.`);
   }
 }
 
-/** Takes the journal (the write lock), recovering an interrupted run first; target existence is read after that. */
+/**
+ * Takes the journal (the write lock), recovering an interrupted run first. Target existence is read only while this
+ * run holds the journal, then recorded by atomically replacing the claim.
+ */
 function acquireJournal(journal, files, fsOps) {
-  const record = () => ({ pid: process.pid, targets: files.map(([target]) => ({ target, existed: fsOps.existsSync(target) })) });
-  let current = record();
+  const claim = (temporary, target) => fsOps.linkSync(temporary, target);
   try {
-    createJournal(journal, current, fsOps);
-    return current.targets;
+    writeJournal(journal, { pid: process.pid, targets: null }, fsOps, claim);
   } catch (error) {
     if (error?.code !== 'EEXIST') throw error;
+    recoverInterruptedWrite(journal, files, fsOps);
+    writeJournal(journal, { pid: process.pid, targets: null }, fsOps, claim);
   }
-  recoverInterruptedWrite(journal, files, fsOps);
-  current = record();
-  createJournal(journal, current, fsOps);
-  return current.targets;
+  try {
+    const targets = files.map(([target]) => ({ target, existed: fsOps.existsSync(target) }));
+    writeJournal(journal, { pid: process.pid, targets }, fsOps, (temporary, target) => fsOps.renameSync(temporary, target));
+    return targets;
+  } catch (error) {
+    attemptEach([removal(journal, fsOps)]);
+    throw error;
+  }
 }
 
 /** Stages, backs up and renames every file, counting renames in `progress`. Throws on the first failure. */

@@ -80,7 +80,7 @@ function failingPublishRename(failAt) {
   let publishes = 0;
   return {
     openSync(file, flags) {
-      created.add(file);
+      if (file.endsWith('.kms-sign.tmp')) created.add(file);
       return openSync(file, flags);
     },
     renameSync(from, to) {
@@ -323,7 +323,7 @@ test('recovers the originals after a run was killed between the two renames', (t
   const child = `import { renameSync } from 'node:fs';
 import { writeFilesAtomically } from ${JSON.stringify(scriptPath)};
 writeFilesAtomically([[${JSON.stringify(first)}, 'killed'], [${JSON.stringify(second)}, 'killed']], {
-  renameSync(from, to) { renameSync(from, to); if (from.endsWith('.tmp')) process.kill(process.pid, 'SIGKILL'); },
+  renameSync(from, to) { renameSync(from, to); if (from.endsWith('.kms-sign.tmp')) process.kill(process.pid, 'SIGKILL'); },
 });`;
   const killed = spawnSync(process.execPath, ['--input-type=module', '-e', child], { encoding: 'utf8' });
   assert.equal(killed.signal, 'SIGKILL', killed.stderr);
@@ -383,7 +383,7 @@ function killedRun(files, killWhen) {
 import { writeFilesAtomically } from ${JSON.stringify(scriptPath)};
 const killWhen = ${killWhen};
 const wrap = (name) => (...args) => { const result = fs[name](...args); if (killWhen(name, String(args[0]))) process.kill(process.pid, 'SIGKILL'); return result; };
-writeFilesAtomically(${JSON.stringify(files)}, { renameSync: wrap('renameSync'), rmSync: wrap('rmSync') });`;
+writeFilesAtomically(${JSON.stringify(files)}, { linkSync: wrap('linkSync'), renameSync: wrap('renameSync'), rmSync: wrap('rmSync') });`;
   const result = spawnSync(process.execPath, ['--input-type=module', '-e', child], { encoding: 'utf8' });
   assert.equal(result.signal, 'SIGKILL', result.stderr);
 }
@@ -392,7 +392,7 @@ test('completes in one run after a killed first-ever signing created only the fi
   const { directory, files: [first, second] } = pair(t);
   rmSync(first);
   rmSync(second);
-  killedRun([[first, 'killed'], [second, 'killed']], "(name, file) => name === 'renameSync' && file.endsWith('.tmp')");
+  killedRun([[first, 'killed'], [second, 'killed']], "(name, file) => name === 'renameSync' && file.endsWith('.kms-sign.tmp')");
   assert.deepEqual(readdirSync(directory).filter((name) => !name.includes('.kms-sign')), ['first.json']);
   writeFilesAtomically([[first, 'signed'], [second, 'signed']]);
   assert.equal(readFileSync(first, 'utf8'), 'signed');
@@ -411,6 +411,49 @@ test('keeps the new pair when a run is killed after it released a backup', (t) =
   assert.deepEqual(readdirSync(directory).sort(), ['first.json', 'second.ts']);
 });
 
+test('recovers a claim left by a run killed before it touched anything, including the journal temp file', (t) => {
+  const { directory, files: [first, second] } = pair(t);
+  killedRun([[first, 'killed'], [second, 'killed']], "(name, file) => name === 'linkSync' && file.endsWith('.journal.tmp')");
+  assert.ok(existsSync(`${journalOf(first)}.tmp`));
+  writeFilesAtomically([[first, 'signed'], [second, 'signed']]);
+  assert.equal(readFileSync(second, 'utf8'), 'signed');
+  assert.deepEqual(readdirSync(directory).sort(), ['first.json', 'second.ts']);
+});
+
+test('reads target existence only while holding the journal, so a rollback keeps a pair another run completed meanwhile', (t) => {
+  for (const missing of [[0, 1], [0], [1]]) {
+    const { files } = pair(t);
+    for (const index of missing) rmSync(files[index]);
+    const fileSystem = {
+      ...failingPublishRename(2),
+      linkSync(from, to) {
+        // Another run finishes signing both files just before this run claims the journal.
+        if (to.endsWith('.kms-sign.journal')) for (const file of files) writeFileSync(file, 'other run');
+        linkSync(from, to);
+      },
+    };
+    assert.throws(() => writeFilesAtomically([[files[0], 'new'], [files[1], 'new']], fileSystem), { message: /every replaced signature file was restored/ });
+    assert.deepEqual(files.map((file) => readFileSync(file, 'utf8')), ['other run', 'other run'], `missing ${missing}`);
+  }
+});
+
+test('the workflow compares every module the catalog generator loads', (t) => {
+  const repositoryRoot = path.resolve(path.dirname(scriptPath), '..');
+  const log = path.join(mkdtempSync(path.join(tmpdir(), 'uifn-registry-kms-closure-')), 'resolved.txt');
+  t.after(() => rmSync(path.dirname(log), { recursive: true, force: true }));
+  const hooks = `import { appendFileSync } from 'node:fs';
+export async function resolve(specifier, context, next) { const result = await next(specifier, context); appendFileSync(${JSON.stringify(log)}, result.url + '\\n'); return result; }`;
+  const register = `import { register } from 'node:module'; register(${JSON.stringify(`data:text/javascript,${encodeURIComponent(hooks)}`)});`;
+  spawnSync(process.execPath, ['--import', `data:text/javascript,${encodeURIComponent(register)}`, 'scripts/generate-uifn-registry.mjs', '--check'], { cwd: repositoryRoot, encoding: 'utf8' });
+  const urls = [...new Set(readFileSync(log, 'utf8').trim().split('\n'))];
+  const scriptsUrl = new URL('./', `file://${path.dirname(scriptPath)}/`).href;
+  assert.deepEqual(urls.filter((url) => !url.startsWith('node:') && !url.startsWith(scriptsUrl)), [], 'the generator loads only builtins and scripts/ modules');
+  const loaded = urls.filter((url) => url.startsWith(scriptsUrl)).map((url) => url.slice(scriptsUrl.length)).sort();
+  const workflow = readFileSync(path.join(repositoryRoot, '.github/workflows/uifn-registry-sign.yml'), 'utf8');
+  const compared = workflow.match(/for file in ([^;]+); do/)[1].trim().split(/\s+/).sort();
+  assert.deepEqual(compared, loaded);
+});
+
 test('removes stale sidecars left without a journal and publishes both files', (t) => {
   const { directory, files: [first, second] } = pair(t);
   writeFileSync(`${second}.kms-sign.tmp`, 'stale');
@@ -425,10 +468,16 @@ test('removes a staged file whose write fails after it was created and leaves bo
   const root = fixture(t);
   const keys = keyPair();
   let writes = 0;
+  let secondStaged;
   const fileSystem = {
+    openSync(file, flags) {
+      const descriptor = openSync(file, flags);
+      if (file.endsWith(`${REGISTRY_SIGNATURE_TS_PATH}.kms-sign.tmp`)) secondStaged = descriptor;
+      return descriptor;
+    },
     writeFileSync(descriptor, contents) {
       writes += 1;
-      if (writes === 2) {
+      if (descriptor === secondStaged) {
         // The staged file exists and holds partial bytes when the write fails.
         writeFileSync(descriptor, String(contents).slice(0, 4));
         throw Object.assign(new Error('ENOSPC: injected write failure'), { code: 'ENOSPC' });
@@ -440,8 +489,9 @@ test('removes a staged file whose write fails after it was created and leaves bo
     signRegistryCatalogWithKms({ root, kms: mockKms(keys), kmsKeyId: KMS_KEY_ARN, expectedKeyId: keys.keyId, fileSystem }),
     { code: 'UIFN_REGISTRY_WRITE_FAILED', message: /injected write failure.*no signature file was changed/ },
   );
-  assert.equal(writes, 2);
+  assert.ok(secondStaged !== undefined && writes >= 2, 'the second staged file was written after the first');
   assertUnchanged(root);
+  assert.equal(existsSync(path.join(root, `${REGISTRY_SIGNATURE_JSON_PATH}.kms-sign.journal`)), false);
 });
 
 test('cleans up staged files and backups through the injected file system', (t) => {
