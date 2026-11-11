@@ -24,7 +24,7 @@
 
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync, writeSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync, writeSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -40,10 +40,12 @@ const TEMP_VARIABLES = ["TMPDIR", "TMP", "TEMP"];
 const ROOT_PREFIX = "devfn-tests-";
 const FILE_PREFIX = "f-";
 // Files the guard keeps in the run's root: the run's own record, which a sibling run reads to
-// leave this run's processes alone, and the directories its tests registered with guardDirectory.
+// leave this run's processes alone, the directories its tests registered with guardDirectory,
+// and the machine-wide locks its tests named (shared-locks.mjs).
 const RUN_RECORD = ".leak-guard-run.json";
 const DIRECTORY_RECORD = ".leak-guard-directories";
-const isGuardRecord = (name) => name === RUN_RECORD || name === DIRECTORY_RECORD;
+const LOCK_RECORD = ".leak-guard-locks";
+const isGuardRecord = (name) => name === RUN_RECORD || name === DIRECTORY_RECORD || name === LOCK_RECORD;
 // Entries a tool creates in TMPDIR for its own reuse rather than for a test: Node's compile
 // cache and tsx's per-user cache, which the tsx loader that runs TypeScript fixtures writes.
 const TOOL_CACHES = ["node-compile-cache", `tsx-${process.geteuid?.() ?? os.userInfo().username}`];
@@ -191,20 +193,25 @@ function descendantsOf(pid, processes) {
   return descendants;
 }
 
-// A character that can continue a file name, so `/x/repo` followed by one names `/x/repo-dev-42`, not `/x/repo`.
-const NAME_CHARACTER = /[A-Za-z0-9._+@~-]/;
-// A character that ends a path where a command line or environment names it.
+// A character that ends a path where a command line or environment names it. Anything else,
+// such as `-`, `.`, `[` or a non-ASCII letter, may continue a file name: `/x/repo-dev-42` and
+// `/x/repoé` are not under `/x/repo`.
 const PATH_END = /[\s"'`:;,=()<>|&\0]/;
+const endsPath = (character) => character === undefined || PATH_END.test(character);
 
 /**
- * The paths at or under `root` that `text` names: each occurrence of `root` that is followed by
- * a path separator, a delimiter or the end of the text, up to where that path ends.
+ * The paths at or under `root` that `text` names: each occurrence of `root` that starts a path
+ * (at the start of the text, after a delimiter or after `file://`) and is followed by `/`, a
+ * delimiter or the end of the text, up to where that path ends. Only an allowlist of boundaries
+ * counts, so a root never matches a longer name that merely starts with it.
  */
 export function pathsNamedUnder(text, root) {
   const paths = [];
   for (let at = text.indexOf(root); at !== -1; at = text.indexOf(root, at + 1)) {
     const next = text[at + root.length];
-    if (next !== undefined && NAME_CHARACTER.test(next)) continue;
+    if (next !== "/" && !endsPath(next)) continue;
+    // `/a/x/repo` names a path under /a, not /x/repo.
+    if (!endsPath(text[at - 1]) && !text.slice(0, at).endsWith("file://")) continue;
     let end = at + root.length;
     while (end < text.length && !PATH_END.test(text[end])) end += 1;
     paths.push(text.slice(at, end).replace(/\/+$/, "") || root);
@@ -315,6 +322,8 @@ const describeProcess = (entry) => {
   return `process ${entry.pid} (group ${entry.pgid}${entry.cwd ? `, cwd ${entry.cwd}` : ""}): ${command}`;
 };
 
+const describeLock = (lock) => `${lock.directory}, a machine-wide lock held by process ${lock.pid}, which ended without releasing it`;
+
 const listed = (items, describe, noun) => [
   ...items.slice(0, MAX_LISTED).map((item) => `  ${describe(item)}`),
   ...(items.length > MAX_LISTED ? [`  …and ${items.length - MAX_LISTED} more ${noun}`] : []),
@@ -397,12 +406,14 @@ export async function setup(project) {
     // A cancelling runner may SIGKILL this process shortly after its signal, so there is no grace.
     if (owned.length > 0) attempt(() => signalAll(owned, "SIGKILL"));
     for (const container of attempt(() => composeContainers(allRoots)) ?? []) attempt(() => run("docker", ["rm", "-f", "-v", container.id], 30_000));
+    // A worker killed above may have held a machine-wide lock; this process is exiting too.
+    const locks = attempt(() => removeAbandonedLocks(root, { graceMs: 1_000, ending: process.pid })) ?? [];
     for (const directory of directories) attempt(() => removeTree(directory));
     attempt(() => removeTree(root));
     if (runnerTemp) attempt(() => removeTree(runnerTemp));
     const leaked = owned.filter((entry) => !isRunnerChild(entry));
     // The process is exiting, so only a synchronous write reaches a piped stderr.
-    if (leaked.length > 0) attempt(() => writeSync(2, `${report("This interrupted test run", leaked, [], [])}\n`));
+    if (leaked.length > 0 || locks.length > 0) attempt(() => writeSync(2, `${report("This interrupted test run", leaked, locks.map(describeLock), [])}\n`));
   };
   const onSignal = (signal) => {
     onExit();
@@ -427,6 +438,8 @@ export async function setup(project) {
     const owned = listed ? await settle(() => ownedProcesses(listProcesses(startedAt) ?? [], scope()), RUN_GRACE_MS) ?? [] : [];
     const unstopped = owned.length > 0 ? await stopProcesses(owned) : [];
     if (unstopped.length > 0) notes.push(`Still running after SIGKILL: ${unstopped.map((entry) => entry.pid).join(", ")}.`);
+    // Every test has finished, so a lock this run's processes still hold, this one included, is abandoned.
+    const locks = removeAbandonedLocks(root, { graceMs: STOP_GRACE_MS, ending: process.pid });
     const unattributed = listed && worktree ? await settle(() => worktreeOrphans(listProcesses(startedAt) ?? [], { worktree, startedAt, own: scope(), root }), STOP_GRACE_MS) ?? [] : [];
     const containers = composeContainers(roots());
     for (const container of containers) run("docker", ["rm", "-f", "-v", container.id], 30_000);
@@ -441,6 +454,7 @@ export async function setup(project) {
       entries.push(directory);
       if (!removeTree(directory)) notes.push(`The directory ${directory} could not be removed.`);
     }
+    entries.push(...locks.map(describeLock));
     for (const container of containers) entries.push(`compose container ${container.name} (${container.id}) for ${container.directory}`);
     if (!removeTree(root)) notes.push(`The temp root ${root} could not be removed.`);
     if (owned.length > 0 || entries.length > 0 || unstopped.length > 0 || unattributed.length > 0) {
@@ -477,6 +491,119 @@ function registeredDirectories(root) {
     try { if (line) directories.add(JSON.parse(line)); } catch { /* a line another worker is still writing */ }
   }
   return [...directories];
+}
+
+/**
+ * Records, in the current run's root, that this process is about to take the machine-wide lock
+ * at `lockPath` (shared-locks.mjs). Such a lock lives outside the run's temp root, so when the
+ * process holding it is killed before it releases the lock (an interrupted run, or a worker
+ * stopped at the run's end), the run's cleanup finds it here.
+ */
+export function recordMachineLock(lockPath) {
+  const root = process.env[ROOT_VARIABLE];
+  if (!root) return;
+  try { appendFileSync(path.join(root, LOCK_RECORD), `${JSON.stringify({ lock: path.resolve(lockPath), pid: process.pid, at: Date.now() })}\n`); }
+  catch { /* the run has ended; there is nothing left to clean up for */ }
+}
+
+/** The machine-wide locks the run's tests named: each lock with the processes that named it and when each first did. */
+function recordedLocks(root) {
+  let text;
+  try { text = readFileSync(path.join(root, LOCK_RECORD), "utf8"); } catch { return new Map(); }
+  const locks = new Map();
+  for (const line of text.split("\n")) {
+    let entry;
+    try { entry = line ? JSON.parse(line) : undefined; } catch { continue; /* a line another worker is still writing */ }
+    if (typeof entry?.lock !== "string" || !Number.isSafeInteger(entry.pid) || !Number.isFinite(entry.at)) continue;
+    const namers = locks.get(entry.lock) ?? new Map();
+    namers.set(entry.pid, Math.min(namers.get(entry.pid) ?? Infinity, entry.at));
+    locks.set(entry.lock, namers);
+  }
+  return locks;
+}
+
+/**
+ * The locks, and released locks not yet removed (`<lock>.released.<token>`, as withFileLock in
+ * @devfn/ports leaves one when killed between moving and removing it), that a process of this run
+ * holds: the owner record names a process that named that lock in this run and took it after
+ * doing so. Anything else, such as a lock of another run or of a process that is still running
+ * elsewhere, is not this run's.
+ */
+function runLocks(root) {
+  const held = [];
+  for (const [lock, namers] of recordedLocks(root)) {
+    const parent = path.dirname(lock);
+    const base = path.basename(lock);
+    let names;
+    try { names = readdirSync(parent); } catch { continue; }
+    for (const name of names) {
+      if (name !== base && !name.startsWith(`${base}.released.`)) continue;
+      const directory = path.join(parent, name);
+      let owner;
+      try { owner = JSON.parse(readFileSync(path.join(directory, "owner.json"), "utf8")); } catch { continue; }
+      const pid = owner?.pid;
+      const created = Date.parse(owner?.createdAt);
+      if (!Number.isSafeInteger(pid) || !namers.has(pid) || !(created >= namers.get(pid))) continue;
+      held.push({ directory, released: name !== base, pid });
+    }
+  }
+  return held;
+}
+
+/** The IDs of the processes still running, without zombies, or undefined where they cannot be listed. */
+function runningPids() {
+  if (process.platform === "linux") {
+    let names;
+    try { names = readdirSync("/proc"); } catch { return undefined; }
+    return new Set(names.filter((name) => /^\d+$/.test(name)).flatMap((name) => {
+      try {
+        const stat = readFileSync(`/proc/${name}/stat`, "utf8");
+        return /^[ZX]/.test(stat.slice(stat.lastIndexOf(")") + 2)) ? [] : [Number(name)];
+      } catch { return []; }
+    }));
+  }
+  if (process.platform !== "darwin") return undefined;
+  const listing = run("ps", ["-A", "-o", "pid=", "-o", "stat="]);
+  if (!listing || listing.status !== 0) return undefined;
+  return new Set(listing.stdout.split("\n").flatMap((line) => {
+    const match = /^\s*(\d+)\s+(\S+)/.exec(line);
+    return match && !match[2].startsWith("Z") ? [Number(match[1])] : [];
+  }));
+}
+
+const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+/**
+ * Removes the locks a process of this run took and died holding, once it has died: this runs
+ * after the run's own processes were stopped, and waits up to `graceMs` for them to go. A lock
+ * whose holder is still running, or that this run's processes never took, is left alone.
+ * `ending` names a process to count as gone although it is still running, such as this one
+ * when it is about to exit. Synchronous, so it can run as the process exits.
+ *
+ * The lock is moved aside first, as withFileLock releases one, so its path is freed in one step.
+ */
+function removeAbandonedLocks(root, { graceMs, ending } = {}) {
+  let held = runLocks(root);
+  if (held.length === 0) return [];
+  let running = runningPids();
+  // Without a listing, a zombie still counts as running, so nothing is removed that may be live.
+  const dead = (pid) => pid === ending || (running ? !running.has(pid) : !alive(pid));
+  for (const deadline = Date.now() + (graceMs ?? 0); held.some((lock) => !dead(lock.pid)) && Date.now() < deadline;) {
+    sleepSync(50);
+    running = runningPids();
+  }
+  const removed = [];
+  for (const lock of runLocks(root)) {
+    if (!dead(lock.pid)) continue;
+    let target = lock.directory;
+    if (!lock.released) {
+      target = `${lock.directory}.released.leak-guard-${newToken()}`;
+      try { renameSync(lock.directory, target); } catch { continue; }
+    }
+    removeTree(target);
+    removed.push(lock);
+  }
+  return removed;
 }
 
 /** The nearest directory at or above `start` that holds a `.git` entry, or undefined. */

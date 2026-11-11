@@ -1,14 +1,18 @@
 // The DevFn test leak guard (devfn/test-support/leak-guard.mjs) fails a run that leaves a
 // process or temp directory behind, and still removes them. Each case runs a small guarded
 // Vitest project in a child process and checks its exit, its report and what is left.
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { withFileLock } from "@devfn/ports";
+
+import { ORIGINAL_TEMP_VARIABLE, ownedProcesses, pathsNamedUnder } from "../../test-support/leak-guard.mjs";
 import { temporaryDirectories } from "../../test-support/temp-directories.mjs";
 
 const tempDir = temporaryDirectories(afterEach);
@@ -79,6 +83,45 @@ async function runProject(dir: string, record: string, interrupt?: "signal" | "c
   const code = await exited;
   return { code, output, recorded: JSON.parse(readFileSync(record, "utf8")) };
 }
+
+describe("pathsNamedUnder", () => {
+  const root = "/tmp/review-repo";
+  it.each([
+    ["a path separator", `node ${root}/server.mjs`, `${root}/server.mjs`],
+    ["an equals sign", `TMPDIR=${root}= x`, root],
+    ["a colon", `PATH=${root}:/usr/bin`, root],
+    ["a space", `node ${root} --flag`, root],
+    ["the end of the text", `cd ${root}`, root],
+    ["a file URL", `node --import=file://${root}/loader.mjs`, `${root}/loader.mjs`],
+  ])("names a path under the root when the root is followed by %s", (_, text, named) => {
+    expect(pathsNamedUnder(text, root)).toEqual([named]);
+  });
+
+  it.each([
+    ["[", `node ${root}[other]/server.mjs`],
+    ["a non-ASCII letter", `node ${root}é/server.mjs`],
+    ["-", `node ${root}-dev-42/server.mjs`],
+    [".", `node ${root}.old/server.mjs`],
+    ["+", `node ${root}+x/server.mjs`],
+    ["a path that only ends with the root", `node /srv${root}/server.mjs`],
+  ])("names no path under the root for a sibling whose name continues with %s", (_, text) => {
+    expect(pathsNamedUnder(text, root)).toEqual([]);
+  });
+
+  it("decides which processes a run or registered directory owns, and so may signal", () => {
+    const entry = (pid: number, command: string, environment = "", cwd?: string) => ({ pid, ppid: 1, pgid: pid, elapsed: 0, command, environment, cwd });
+    const processes = [
+      entry(9_000_001, `node ${root}/server.mjs`),
+      entry(9_000_002, "node server.mjs", `TMPDIR=${root} HOME=/home/x`),
+      entry(9_000_003, "node server.mjs", "", `${root}/package`),
+      entry(9_000_011, `node ${root}[other]/server.mjs`),
+      entry(9_000_012, `node ${root}é/server.mjs`),
+      entry(9_000_013, "node server.mjs", `TMPDIR=${root}-dev-42 HOME=/home/x`),
+      entry(9_000_014, "node server.mjs", "", `${root}.old/package`),
+    ];
+    expect(ownedProcesses(processes, { roots: [root] }).map(({ pid }) => pid)).toEqual([9_000_001, 9_000_002, 9_000_003]);
+  });
+});
 
 // The guard lists processes on Linux and macOS, and the fixtures stop process groups.
 describe.skipIf(process.platform === "win32")("DevFn test leak guard", { timeout: 60_000 }, () => {
@@ -201,6 +244,90 @@ test("hangs", async () => {
     expect(alive(recorded.pid!)).toBe(false);
     expect(existsSync(recorded.dir!)).toBe(false);
     expect(existsSync(recorded.root)).toBe(false);
+  });
+
+  // Where machineLockPath puts a lock for a nested run: in the outermost run's original temp folder.
+  const machineLock = (name: string) => path.join(process.env[ORIGINAL_TEMP_VARIABLE] || tmpdir(), name);
+
+  // An owner record as withFileLock (@devfn/ports) writes it, taken from inside a guarded test.
+  const takeLock = (lock: string) => `const { machineLockPath } = await import(${JSON.stringify(locks)});
+const lock = machineLockPath(${JSON.stringify(lock)});
+mkdirSync(lock);
+writeFileSync(path.join(lock, "owner.json"), JSON.stringify({ token: "fixture", pid: process.pid, createdAt: new Date().toISOString() }));`;
+
+  it("removes a machine-wide lock whose holder an interrupted run killed, so the next run takes it at once", async () => {
+    const name = `devfn-leak-guard-lock-${randomUUID()}`;
+    const lock = machineLock(name);
+    const { dir, record } = project(`test("holds the lock and hangs", async () => {
+  ${takeLock(name)}
+  record({ pid: process.pid, dir: lock });
+  await new Promise(() => {});
+}, 60_000);`);
+    try {
+      const { code, output, recorded } = await runProject(dir, record, "signal");
+      expect(code).not.toBe(0);
+      expect(recorded.dir).toBe(lock);
+      expect(alive(recorded.pid!)).toBe(false);
+      expect(output).toContain(`${lock}, a machine-wide lock held by process ${recorded.pid}, which ended without releasing it`);
+      expect(existsSync(lock)).toBe(false);
+      expect(existsSync(recorded.root)).toBe(false);
+      // Before, the dead holder's lock blocked every taker until it was 300 s old.
+      await expect(withFileLock(lock, async () => "taken", { timeoutMs: 2_000 })).resolves.toBe("taken");
+    } finally {
+      rmSync(lock, { recursive: true, force: true });
+    }
+  });
+
+  it("removes and lists a machine-wide lock whose holder died without releasing it before the run ended", async () => {
+    const name = `devfn-leak-guard-lock-${randomUUID()}`;
+    const lock = machineLock(name);
+    const { dir, record } = project(`test("holds the lock and dies", async () => {
+  ${takeLock(name)}
+  record({ pid: process.pid });
+  process.kill(process.pid, "SIGKILL");
+});`);
+    try {
+      const { code, output, recorded } = await runProject(dir, record);
+      expect(code).not.toBe(0);
+      // Vitest ends the run as soon as a worker dies, through the guard's exit cleanup.
+      expect(output).toContain("DevFn test leak guard: This interrupted test run left these behind.");
+      expect(output).toContain(`${lock}, a machine-wide lock held by process ${recorded.pid}, which ended without releasing it`);
+      expect(existsSync(lock)).toBe(false);
+    } finally {
+      rmSync(lock, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves alone a machine-wide lock a run's test named but another process holds, running or not", async () => {
+    // Held by this process, still running, and by a process that has exited but was never the run's.
+    const exited = spawnSync(process.execPath, ["-e", ""]).pid;
+    const held = [process.pid, exited].map((pid) => {
+      const name = `devfn-leak-guard-lock-${randomUUID()}`;
+      const lock = machineLock(name);
+      mkdirSync(lock);
+      writeFileSync(path.join(lock, "owner.json"), JSON.stringify({ token: "foreign", pid, createdAt: new Date(Date.now() + 60_000).toISOString() }));
+      return { name, lock };
+    });
+    const namesLocks = (then: string) => `const { machineLockPath } = await import(${JSON.stringify(locks)});
+test("names the locks", async () => {
+  for (const name of ${JSON.stringify(held.map(({ name }) => name))}) expect(existsSync(machineLockPath(name))).toBe(true);
+  record({});
+  ${then}
+}, 60_000);`;
+    try {
+      // When the run is interrupted, and when it ends.
+      const interrupted = project(namesLocks("await new Promise(() => {});"));
+      const { code, output } = await runProject(interrupted.dir, interrupted.record, "signal");
+      expect(code).not.toBe(0);
+      expect(output).not.toContain("machine-wide lock");
+      for (const { lock } of held) expect(existsSync(path.join(lock, "owner.json"))).toBe(true);
+      const ended = project(namesLocks(""));
+      const { code: passed, output: passOutput } = await runProject(ended.dir, ended.record);
+      expect(passed, passOutput).toBe(0);
+      for (const { lock } of held) expect(existsSync(path.join(lock, "owner.json"))).toBe(true);
+    } finally {
+      for (const { lock } of held) rmSync(lock, { recursive: true, force: true });
+    }
   });
 
   it("stops a process a test file started with no trace of the run, and fails the run on an orphan in the worktree without signalling it", async () => {

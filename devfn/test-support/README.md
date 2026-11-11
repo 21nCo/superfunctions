@@ -37,7 +37,12 @@ calls `guardTestFile` as a setup file.
   still going attributes to itself are not listed. Nor is one whose path is only in a
   checkout nested in the worktree (such as `.worktrees/<task>` under the main checkout) or
   in a sibling directory whose name merely starts with the worktree's (`repo-dev-42` beside
-  `repo`): a path counts only where the root is followed by `/`, a delimiter or the end.
+  `repo`). A command, environment or working directory names a path under a root only
+  where the root starts a path (at the start, after a delimiter or after `file://`) and is
+  followed by `/`, a delimiter (whitespace, quotes, `:`, `;`, `,`, `=`, brackets `(` `)`
+  `<` `>`, `|`, `&`) or the end. Any other character, such as `-`, `.`, `[` or a non-ASCII
+  letter, continues a different name. The same rule decides which processes the guard owns
+  and may signal.
 - When the run is interrupted (Ctrl-C, or turbo cancelling the task after a sibling
   failed), it stops what the run started, including processes running from directories
   registered with `guardDirectory`, and removes those directories and the temp root as the
@@ -54,7 +59,15 @@ Fixtures in different files, packages and runs that share a fixed resource, such
 Caddy's admin port `127.0.0.1:2019`, lock it with `caddyAdminLockPath()` or
 `machineLockPath(name)` from `shared-locks.mjs`. These name a lock in the temp folder the
 outermost run started with, not the per-file `TMPDIR`, so every file contends on the same
-lock.
+lock. Call them in the process that takes the lock, before taking it.
+
+Naming a lock also records it in the run's root, since the lock lives outside it. When the
+run is interrupted, or ends, after stopping its own processes the guard removes each such
+lock (and any `<lock>.released.*` copy withFileLock left) whose `owner.json` names a process
+that named that lock in this run, took it after doing so and is now gone, and lists it as a
+leftover. Otherwise a killed holder's lock would block every later run until it is old
+enough to recover. A lock held by another run's process, or by a process still running, is
+never touched.
 
 The guard lists processes with `/proc` on Linux and `ps` and `lsof` on macOS. On other
 platforms it checks only temp entries, and says so.
