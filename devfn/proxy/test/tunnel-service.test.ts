@@ -1,4 +1,4 @@
-import { access, chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -130,6 +130,27 @@ describe("tunnel bindings", () => {
 
 // Each test starts, replaces and stops real connector processes behind synced journal writes.
 describe("tunnel lifecycle", { timeout: 30_000 }, () => {
+  it("refuses a logs directory linked out of the tunnel's directory before moving any log in it aside", async () => {
+    // Rotation is due for a secret-bearing connector, and for any log over the size limit.
+    for (const [secrets, size] of [[{ DEVFN_FIXTURE_TOKEN: "fixture-token" }, 8], [{}, 1024 * 1024 + 1]] as const) {
+      const outside = await mkdtemp(path.join(os.tmpdir(), "devfn-tunnel-logs-"));
+      const log = "x".repeat(size);
+      try {
+        await writeFile(path.join(outside, "connector.log"), log);
+        await writeFile(path.join(outside, "connector.log.1"), "external backup\n");
+        const paths = tunnelPaths(dir, "preview");
+        await mkdir(paths.dir, { recursive: true });
+        await rm(path.join(paths.dir, "logs"), { recursive: true, force: true });
+        await symlink(outside, path.join(paths.dir, "logs"));
+        Object.assign(provider, { connectorSecrets: () => ({ ...secrets }) });
+        await expect(publishTunnelRoutes(options, "owner-a", [A])).rejects.toMatchObject({ code: "DEVFN_TUNNEL_UNAVAILABLE" });
+        expect(await readFile(path.join(outside, "connector.log"), "utf8")).toBe(log);
+        expect(await readFile(path.join(outside, "connector.log.1"), "utf8")).toBe("external backup\n");
+        expect((await readTunnelState(dir, "preview")).connector).toBeUndefined();
+      } finally { await rm(outside, { recursive: true, force: true }); }
+    }
+  });
+
   it("shares one connector between owners and withdraws one owner without touching another's routes", async () => {
     await publishTunnelRoutes(options, "owner-a", [A]);
     const first = (await readTunnelState(dir, "preview")).connector!;

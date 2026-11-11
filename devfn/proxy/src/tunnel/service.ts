@@ -6,7 +6,7 @@ import path from "node:path";
 import tls from "node:tls";
 
 import { withFileLock } from "@devfn/ports";
-import { ProcessError, ProcessSupervisor, processGroupStatus, processIdentityStatus, stopProcessGroup, type ProcessGroupStatus } from "@devfn/processes";
+import { ProcessError, ProcessSupervisor, processGroupStatus, processLogsDirectory, processIdentityStatus, stopProcessGroup, type ProcessGroupStatus } from "@devfn/processes";
 
 import { PUBLIC_ORIGIN_HEADER, PUBLIC_ORIGIN_PORT } from "../index.js";
 import { CloudflareTunnelProvider } from "./cloudflare.js";
@@ -306,6 +306,11 @@ async function launchConnector(ctx: Context, hostnames: readonly string[], narro
   await mkdir(home, { recursive: true, mode: 0o700 });
   // A connector with secrets starts on a truncated log; moving the old one aside first keeps the
   // make-before-break predecessor writing into its own history rather than over the new log.
+  // The logs directory is checked as the supervisor checks it before anything in it is moved,
+  // so one linked out of the tunnel's directory is refused with nothing outside renamed.
+  await processLogsDirectory(paths.dir, "connector").catch((error) => {
+    throw new TunnelError("DEVFN_TUNNEL_UNAVAILABLE", `The tunnel connector cannot start (${message(error)}).`);
+  });
   const previousLog = await stat(paths.log).catch(() => undefined);
   if (previousLog && (Object.keys(secrets).length || previousLog.size > LOG_LIMIT_BYTES)) await rename(paths.log, `${paths.log}.1`);
   let record: ConnectorRecord | undefined;
