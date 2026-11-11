@@ -31,12 +31,16 @@ public enum UIFnSegmentedPickerVariant: String, CaseIterable, Sendable {
 /// one, in the reading direction of the layout, and stop at the first and
 /// last; with no option selected they select the first or last.
 /// Accessibility sees a system segmented `Picker` with the same options and
-/// selection in its place, so the label is read but not drawn.
+/// selection in its place, so the label is read but not drawn; on macOS it is
+/// the control's label rather than a text beside it.
 ///
 /// The segments share the width offered equally, like an iOS segmented
-/// control; under `fixedSize()` each is as wide as the widest. Options that
-/// repeat an earlier option are left out, and a selection that is not among
-/// the options selects no segment.
+/// control; under `fixedSize()` each is as wide as the widest. The segments
+/// follow Dynamic Type only up to `.xxxLarge`, as the system segmented control
+/// stops growing, and a label wider than its segment shrinks, to half its size
+/// at most, before it truncates. On iOS a long press on a segment at an
+/// accessibility text size shows its label in the Large Content Viewer. Options that repeat an earlier option are
+/// left out, and a selection that is not among the options selects no segment.
 public struct UIFnSegmentedPicker<Label: View, SelectionValue: Hashable, Segment: View>: View {
     private let selection: Binding<SelectionValue>
     private let options: [SelectionValue]
@@ -72,6 +76,9 @@ public struct UIFnSegmentedPicker<Label: View, SelectionValue: Hashable, Segment
                 segmentButton(index, selected: selected)
             }
         }
+        // Segments share a fixed width, so like the system segmented control
+        // they stop growing at the largest non-accessibility text size.
+        .dynamicTypeSize(...UIFnSegmentedTrack<EmptyView>.largestTextSize)
         // The selected segment draws the ring; with none, the whole picker does.
         .uifnFocusRing(
             drawsFocusRing && isEnabled && selected == nil,
@@ -89,6 +96,7 @@ public struct UIFnSegmentedPicker<Label: View, SelectionValue: Hashable, Segment
         .accessibilityRepresentation {
             UIFnSystemPicker(selection: selection, options: options, label: label, content: segment)
                 .pickerStyle(.segmented)
+                .uifnRepresentedLabelHidden()
         }
     }
 
@@ -106,6 +114,13 @@ public struct UIFnSegmentedPicker<Label: View, SelectionValue: Hashable, Segment
         #if os(macOS)
         // The picker takes focus as one control, not one per segment.
         .focusable(false)
+        #else
+        // The segments stop growing at the accessibility text sizes, so, like
+        // the system segmented control, a long press on one shows its label
+        // in the Large Content Viewer.
+        .accessibilityShowsLargeContentViewer {
+            segment(options[index])
+        }
         #endif
     }
 
@@ -224,6 +239,21 @@ extension EnvironmentValues {
     }
 }
 
+extension View {
+    /// On macOS, hides the label of a system picker that represents a UIFn
+    /// picker to accessibility. The macOS picker reads its label as a text of
+    /// its own, beside the control, where the UIFn picker draws its segments
+    /// or selected option; hidden, the label is the control's own.
+    @ViewBuilder
+    func uifnRepresentedLabelHidden() -> some View {
+        #if os(macOS)
+        labelsHidden()
+        #else
+        self
+        #endif
+    }
+}
+
 /// The options in order, without any that repeat an earlier one.
 func uifnUniqueOptions<Options: Sequence>(_ options: Options) -> [Options.Element] where Options.Element: Hashable {
     var seen = Set<Options.Element>()
@@ -337,6 +367,12 @@ struct UIFnSegmentedTrack<Content: View>: View {
         .opacity(isEnabled ? 1 : UIFnStyleContext.disabledOpacity)
     }
 
+    /// The largest Dynamic Type size the segments draw at.
+    static var largestTextSize: DynamicTypeSize { .xxxLarge }
+
+    /// How far a segment's label shrinks to fit its segment before it truncates.
+    static var minimumLabelScale: CGFloat { 0.5 }
+
     /// The space between a segmented track's border and its segments.
     static func inset(_ context: UIFnStyleContext) -> CGFloat {
         context.scaled(2)
@@ -363,6 +399,8 @@ struct UIFnSegmentAppearance<Label: View>: View {
             .uifnFont(context.typography.size.md, weight: context.typography.weight.medium)
             .foregroundColor(context.color(isSelected ? colors.text.primary : colors.text.secondary))
             .lineLimit(1)
+            // A label wider than its segment shrinks rather than truncating.
+            .minimumScaleFactor(UIFnSegmentedTrack<EmptyView>.minimumLabelScale)
             .padding(.horizontal, context.scaled(context.spacing.space3))
             .padding(.vertical, variant == .segmented ? context.scaled(context.spacing.space2) - inset : context.scaled(context.spacing.space2))
             .frame(maxWidth: .infinity)
@@ -464,7 +502,9 @@ public struct UIFnMenuPicker<Label: View, SelectionValue: Hashable, Option: View
         }
         .menuStyle(.uifn)
         .accessibilityRepresentation {
-            picker(labelsNoSelection: true).pickerStyle(.menu)
+            picker(labelsNoSelection: true)
+                .pickerStyle(.menu)
+                .uifnRepresentedLabelHidden()
         }
     }
 
