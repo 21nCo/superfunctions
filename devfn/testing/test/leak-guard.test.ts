@@ -64,7 +64,8 @@ async function runProject(dir: string, record: string, interrupt?: "signal" | "c
   return { code, output, recorded: JSON.parse(readFileSync(record, "utf8")) };
 }
 
-describe("DevFn test leak guard", { timeout: 60_000 }, () => {
+// The guard lists processes on Linux and macOS, and the fixtures stop process groups.
+describe.skipIf(process.platform === "win32")("DevFn test leak guard", { timeout: 60_000 }, () => {
   it("passes a run whose tests stop what they start and remove what they create", async () => {
     const { dir, record } = project(`test("cleans up", async () => {
   const folder = mkdtempSync(path.join(tmpdir(), "devfn-clean-"));
@@ -149,7 +150,7 @@ test("leaves a guarded directory", () => {
   await new Promise(() => {});
 }, 60_000);`;
 
-  it.skipIf(process.platform === "win32")("stops what an interrupted run started, lists it and removes its temp root", async () => {
+  it("stops what an interrupted run started, lists it and removes its temp root", async () => {
     const { dir, record } = project(hangs);
     const { code, output, recorded } = await runProject(dir, record, "signal");
     expect(code).not.toBe(0);
@@ -159,7 +160,7 @@ test("leaves a guarded directory", () => {
     expect(existsSync(recorded.root)).toBe(false);
   });
 
-  it.skipIf(process.platform === "win32")("stops what a run started when it is cancelled with its output already closed", async () => {
+  it("stops what a run started when it is cancelled with its output already closed", async () => {
     const { dir, record } = project(hangs);
     const { code, recorded } = await runProject(dir, record, "cancel");
     expect(code).not.toBe(0);

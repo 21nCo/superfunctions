@@ -18,17 +18,34 @@
 
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmodSync, existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, writeSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 export const RUN_MARKER = "SFN_TEST_LEAK_GUARD_RUN";
 export const FILE_MARKER = "SFN_TEST_LEAK_GUARD_FILE";
 export const ROOT_VARIABLE = "SFN_TEST_LEAK_GUARD_ROOT";
+const ORIGINAL_TEMP_VARIABLE = "SFN_TEST_LEAK_GUARD_ORIGINAL_TMPDIR";
 const TEMP_VARIABLES = ["TMPDIR", "TMP", "TEMP"];
 // Entries a tool creates in TMPDIR for its own reuse rather than for a test: Node's compile
 // cache and tsx's per-user cache, which the tsx loader that runs TypeScript fixtures writes.
-const isToolCache = (name) => name === "node-compile-cache" || /^tsx-\d+$/.test(name);
+const TOOL_CACHES = ["node-compile-cache", `tsx-${process.geteuid?.() ?? os.userInfo().username}`];
+const isToolCache = (name) => TOOL_CACHES.includes(name) || /^tsx-\w+$/.test(name);
+
+/**
+ * Links the tool caches of the original temp folder into a new temp folder, so tools started
+ * with TMPDIR pointing there keep reusing them. Removing the folder removes only the links.
+ */
+function linkToolCaches(directory, original) {
+  if (!original) return;
+  for (const name of TOOL_CACHES) {
+    try {
+      const target = path.join(original, name);
+      mkdirSync(target, { recursive: true });
+      symlinkSync(target, path.join(directory, name), "dir");
+    } catch { /* the tool then fills a cache of its own in the folder */ }
+  }
+}
 const FILE_GRACE_MS = 3_000;
 const RUN_GRACE_MS = 5_000;
 const STOP_GRACE_MS = 2_000;
@@ -248,8 +265,11 @@ export async function setup(project) {
   const startedAt = Date.now();
   // Vitest keeps a folder of its own in the original temp folder and removes it only when it closes.
   const runnerTemp = typeof project?.tmpDir === "string" ? project.tmpDir : undefined;
-  const root = mkdtempSync(path.join(os.tmpdir(), "devfn-test-run-"));
+  const original = os.tmpdir();
+  const root = mkdtempSync(path.join(original, "devfn-test-run-"));
   const roots = pathAliases(root);
+  process.env[ORIGINAL_TEMP_VARIABLE] = original;
+  linkToolCaches(root, original);
   const marker = `${RUN_MARKER}=${newToken()}`;
   const [name, value] = marker.split("=");
   process.env[name] = value;
@@ -360,6 +380,7 @@ export function guardTestFile({ beforeEach, afterEach, afterAll }) {
   if (!root) return;
   const startedAt = Date.now();
   const folder = mkdtempSync(path.join(root, "file-"));
+  linkToolCaches(folder, process.env[ORIGINAL_TEMP_VARIABLE]);
   const folderRoots = pathAliases(folder);
   globalThis[GUARDED_DIRECTORIES] = new Set();
   const scope = () => ({ marker, roots: [...folderRoots, ...guardedDirectories().flatMap(pathAliases)] });
