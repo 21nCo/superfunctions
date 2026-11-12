@@ -253,6 +253,8 @@ describe("pathsNamedUnder", () => {
       macos(9_000_723, `node ${run}/.. sibling/server.mjs`),
       // A scheme in capitals is still a file: URL.
       macos(9_000_724, `node FILE://${run}/x`),
+      // The URL may go on past the space, to <run>/.. /server.mjs.
+      macos(9_000_725, `node --import=file://${run}/%2e%2e /server.mjs`),
     ];
     expect(attributeProcesses([...outside, ...owned, ...ambiguous], { roots: pathAliases(run) })).toEqual({ owned, ambiguous });
     rmSync(path.join(run, ".. sibling"), { recursive: true });
@@ -934,7 +936,8 @@ const wait = setInterval(() => {
   // the guard: it replaces the Node functions the guard lists with (ps on macOS, /proc on Linux).
   // As a global setup, it does so in the run's main process before the guard's teardown runs.
   // From then on, a process whose ID a test wrote to replaced.pid shows a later start when read
-  // on its own, as a process that reused the ID would.
+  // on its own, as a process that reused the ID would. SLOW_ENVIRONMENT_LISTING_MS delays the first
+  // listing's second macOS ps, as a loaded system may.
   const failListing = `const childProcess = require("node:child_process");
 const fs = require("node:fs");
 export function failListingsAfter(allowed) {
@@ -943,8 +946,13 @@ export function failListingsAfter(allowed) {
   const failure = () => Object.assign(new Error("process listing failed (test)"), { code: "EIO" });
   const { spawnSync } = childProcess;
   const { readdirSync, readFileSync: read } = fs;
-  const replaced = () => listings > allowed && existsSync("replaced.pid") ? read("replaced.pid", "utf8").trim() : undefined;
+  const replaced = () => listings > allowed && fs.existsSync("replaced.pid") ? read("replaced.pid", "utf8").trim() : undefined;
+  let slowed = !process.env.SLOW_ENVIRONMENT_LISTING_MS;
   childProcess.spawnSync = (command, args, ...rest) => {
+    if (command === "ps" && args?.includes("-E") && !slowed) {
+      slowed = true;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.env.SLOW_ENVIRONMENT_LISTING_MS));
+    }
     // A macOS listing runs ps -A -ww once without -E and once with it; it counts once.
     if (command === "ps" && args?.includes("-ww") && !args.includes("-E") && fails()) return { error: failure() };
     if (command === "ps" && args?.includes("etime=") && args.at(-1) === replaced()) return { pid: 0, status: 0, signal: null, stdout: "1-00:00:00 S\\n", stderr: "" };
@@ -1024,6 +1032,23 @@ test("leaves processes, and then listing them fails", () => {
       expect(output).toContain("Listing processes failed after an earlier listing had succeeded");
       // The process the ID now names is someone else's.
       expect(alive(pid!)).toBe(true);
+    } finally {
+      if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+    }
+  });
+
+  it.runIf(process.platform === "darwin")("stops a process the run owned once listing processes fails, although the listing that found it took seconds", async () => {
+    const { dir, record } = project(`test("leaves a process in the run's root", () => {
+  record({ pid: ${orphanProcess("process.env.SFN_TEST_LEAK_GUARD_ROOT")} });
+});`, { files: { "fail-listing.mjs": failListing }, options: `, globalSetup: [${JSON.stringify(guard)}, "./fail-listing.mjs"]` });
+    let pid: number | undefined;
+    try {
+      const { code, output, recorded } = await runProject(dir, record, undefined, { env: { SLOW_ENVIRONMENT_LISTING_MS: "4000" } });
+      pid = recorded.pid;
+      expect(code, output).not.toBe(0);
+      expect(output).toContain("Listing processes failed after an earlier listing had succeeded");
+      expect(output).toContain(`process ${pid} `);
+      expect(await gone(pid!)).toBe(true);
     } finally {
       if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
     }

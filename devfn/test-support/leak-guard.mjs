@@ -150,6 +150,8 @@ function listLinux() {
 function listDarwin(sinceMs) {
   const columns = ["-o", "pid=", "-o", "ppid=", "-o", "pgid=", "-o", "etime=", "-o", "stat=", "-o", "command="];
   const plain = run("ps", ["-A", "-ww", ...columns]);
+  // When that listing was taken, to within the second ps -o etime counts in (`started` below).
+  const sampled = Math.round(Date.now() / 1000);
   // -E appends each process's initial environment to its command; it is read only to find the marker.
   const withEnvironment = run("ps", ["-A", "-ww", "-E", ...columns]);
   if (!plain || plain.status !== 0 || !withEnvironment) return undefined;
@@ -158,7 +160,6 @@ function listDarwin(sinceMs) {
     return match ? [[Number(match[1]), { ppid: Number(match[2]), pgid: Number(match[3]), elapsed: elapsedSeconds(match[4]), state: match[5], text: match[6] }]] : [];
   }));
   const commands = parse(plain.stdout);
-  const now = Math.round(Date.now() / 1000);
   const environments = parse(withEnvironment.stdout);
   const processes = [];
   for (const [pid, entry] of commands) {
@@ -166,7 +167,7 @@ function listDarwin(sinceMs) {
     if (entry.state.startsWith("Z") || pid === plain.pid || pid === withEnvironment.pid) continue;
     const full = environments.get(pid)?.text ?? "";
     // `started`, in seconds since the epoch, tells this process from a later one given its ID (stillRunning).
-    processes.push({ pid, ppid: entry.ppid, pgid: entry.pgid, elapsed: entry.elapsed, started: now - entry.elapsed, command: entry.text.trim(), environment: full.startsWith(entry.text) ? full.slice(entry.text.length) : "", cwd: undefined });
+    processes.push({ pid, ppid: entry.ppid, pgid: entry.pgid, elapsed: entry.elapsed, started: sampled - entry.elapsed, command: entry.text.trim(), environment: full.startsWith(entry.text) ? full.slice(entry.text.length) : "", cwd: undefined });
   }
   // Working directories come from lsof, for processes started since the run began only.
   const window = Math.ceil((Date.now() - sinceMs) / 1000) + 5;
@@ -357,10 +358,13 @@ function namedPaths(text, root, { separated = false, environment = false } = {})
     // From the end of `root`, so a root with a space in it still matches.
     let end = at + root.length;
     while (end < text.length && !SEPARATOR.test(text[end]) && text[end] !== LIST_SEPARATOR) end += 1;
-    // A value after a `file:` or `file://` scheme, in any case, is read as that URL.
+    // A value after a `file:` or `file://` scheme, in any case, is read as that URL. Its whitespace
+    // is encoded, so that a reading cut short after a space keeps that space, as the URL it may be
+    // part of does (`file://<root>/%2e%2e /x` is `<root>/.. /x`), instead of losing it to URL parsing.
     const url = /file:(?:\/\/)?$/i.exec(prefix)?.[0] ?? "";
+    const readable = (reading) => (url ? `${url}${reading.replaceAll(/\s/g, encodeURIComponent)}` : reading);
     const readings = [text.slice(at, end), ...(end < text.length ? continuations(text, at, end) : [])]
-      .map((reading) => ({ reading, ...classifyValue(`${url}${reading}`, root) }));
+      .map((reading) => ({ reading, ...classifyValue(readable(reading), root) }));
     const under = readings.filter(({ kind }) => kind !== "none");
     if (under.length === 0) continue;
     const besides = readings.filter(({ kind }) => kind === "none").map(({ reading }) => reading);
@@ -546,11 +550,15 @@ function stillRunning(entry) {
   if (process.platform !== "darwin") return undefined;
   const result = run("ps", ["-o", "etime=", "-o", "stat=", "-p", String(entry.pid)]);
   if (!result || result.signal) return undefined;
+  const sampled = Math.round(Date.now() / 1000);
   const match = /^\s*(\S+)\s+(\S+)/.exec(result.stdout);
-  // ps lists nothing, and exits 1, for a process that is gone.
-  if (!match) return result.status === 1 ? false : undefined;
-  // `ps -o etime` counts whole seconds, so the two readings of one start may differ by a second or two.
-  return !match[2].startsWith("Z") && Math.abs(Math.round(Date.now() / 1000) - elapsedSeconds(match[1]) - entry.started) <= 2;
+  // ps lists nothing, says nothing and exits 1 for a process that is gone.
+  if (!match) return result.status === 1 && !result.stdout.trim() && !result.stderr.trim() ? false : undefined;
+  if (match[2].startsWith("Z")) return false;
+  // `ps -o etime` counts whole seconds, and each listing takes a while, so two readings of one
+  // start may differ by a second or two. Any other difference may still be timing, or a reused
+  // ID: either way the process cannot be told to be the same one, but it may still run.
+  return Math.abs(sampled - elapsedSeconds(match[1]) - entry.started) <= 2 ? true : undefined;
 }
 
 /**
