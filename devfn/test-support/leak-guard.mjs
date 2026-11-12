@@ -164,8 +164,8 @@ function listLinux() {
     const pid = Number(name);
     const stat = read(pid, "stat");
     if (failed) return undefined;
-    if (!stat) continue;
-    // A stat read but not well formed fails the listing: the process it names may still run.
+    if (stat === null || stat === undefined) continue;
+    // A stat read but not well formed (empty, say) fails the listing: the process it names may still run.
     const parsed = parseStat(stat);
     if (parsed?.pid !== pid) return undefined;
     if (parsed.zombie) continue;
@@ -243,10 +243,18 @@ function listDarwin(sinceMs) {
 
 /** Every process visible to this user, or undefined where the platform has no supported listing. */
 export function listProcesses(sinceMs = 0) {
-  if (process.platform === "linux") return listLinux();
-  if (process.platform === "darwin") return listDarwin(sinceMs);
+  const list = { linux: listLinux, darwin: () => listDarwin(sinceMs) }[process.platform];
+  // A listing that fails, on a read error or a line that is not well formed, is taken again a few times.
+  for (let tries = 0; list && tries < IDENTITY_TRIES; tries += 1) {
+    const listed = list();
+    if (listed) return listed;
+  }
   return undefined;
 }
+
+/** Whether the guard can list processes here; where it can, a listing that fails fails the scope. */
+const SUPPORTED = ["linux", "darwin"].includes(process.platform);
+const FAILED_NOTE = "Listing processes failed every time the guard tried, so it could not tell which processes remain, and fails.";
 
 function ancestorsOf(pid, processes) {
   const byPid = new Map(processes.map((entry) => [entry.pid, entry]));
@@ -536,6 +544,7 @@ export async function stopProcessesUnder(directories, sinceMs = 0) {
     return ownedProcesses(listed, { roots, vouch: (entry) => descendants.has(entry.pid) || markers.some((marker) => entry.environment.includes(marker)) });
   };
   const owned = find();
+  if (owned === undefined && SUPPORTED) throw new Error(FAILED_NOTE);
   return owned && owned.length > 0 ? await stopProcesses(owned, find) : [];
 }
 
@@ -595,7 +604,7 @@ function signalAll(processes, signal, held = new Map()) {
       continue;
     }
     if (leads && current?.exited) {
-      const { members, complete } = groupMembers(entry.pid);
+      const { members, complete } = exitedGroup(entry);
       if (members.some((member) => inLeadersGroup(entry, member) && identityOf(member)?.pgid === entry.pid)) send(entry, -entry.pid, members);
       else hold(members);
       // A group read only in part is not taken for all of it: its leader stands for the rest, as unresolved.
@@ -675,6 +684,18 @@ function groupMembers(pgid) {
   return { members, complete };
 }
 
+/**
+ * The group of `entry`, a leader that has exited, read (groupMembers) and taken only when a read
+ * of the leader right after it shows it still exited: otherwise its ID may have been reused
+ * meanwhile, by a new leader of a new group with the same ID, so the read is not taken and counts
+ * as incomplete, and `other` says when the ID names another process.
+ */
+function exitedGroup(entry) {
+  const read = groupMembers(entry.pid);
+  const leader = identityOf(entry);
+  return leader?.exited ? read : { members: [], complete: false, other: leader?.other === true };
+}
+
 /** Whether `entry` may still run: not when its ID names no process, a zombie or a process started at another time. */
 const mayRun = (entry, states) => alive(entry.pid) && stillRunning(entry, states) !== false;
 
@@ -704,9 +725,14 @@ function resolveHeld(held, listed = []) {
     if (!leader?.exited) continue;
     let complete = false;
     for (let tries = 0; tries < IDENTITY_TRIES && !complete; tries += 1) {
-      const read = groupMembers(entry.pid);
+      const read = exitedGroup(entry);
       for (const member of read.members) if (mayRun(member)) held.set(keyOf(member), member);
       complete = read.complete;
+      // Its ID names another process now: the group may be a new one, so nothing more is read of it.
+      if (read.other) {
+        held.delete(key);
+        break;
+      }
     }
     if (complete) held.delete(key);
   }
@@ -867,7 +893,8 @@ function recheck(classified) {
  * one), a failed one never reads as the processes having exited: the wrapper returns the last good
  * result instead, checked again process by process (recheck), and sets `stale` until a listing
  * succeeds again. A scope whose last result is stale fails, since a process may have appeared that
- * the guard could not see.
+ * the guard could not see. Where the guard can list processes (SUPPORTED), one whose listings have
+ * all failed sets `failed` and fails too: that is never taken for nothing running.
  */
 function keepingLast(classify, seed = () => undefined) {
   let last;
@@ -875,17 +902,20 @@ function keepingLast(classify, seed = () => undefined) {
     const listed = classify();
     if (listed !== undefined) {
       find.stale = false;
+      find.failed = false;
       last = listed;
       return last;
     }
     last ??= seed();
     find.stale = last !== undefined;
+    find.failed = SUPPORTED && !find.stale;
     if (!find.stale) return undefined;
     const { remaining, current } = recheck(last);
     last = remaining;
     return current;
   };
   find.stale = false;
+  find.failed = false;
   return find;
 }
 
@@ -1072,13 +1102,14 @@ export async function setup(project) {
     // A cancelling runner may SIGKILL this process shortly after its signal, so there is no grace.
     // SIGKILL leaves a process no time to start another, but one may have just started; the
     // listing is taken again, a bounded number of times, to stop it too.
-    // The first round also reaches the group of each leader an interrupted stop holds, so that a
-    // process recorded in it that outlives the leader is stopped through it (signalAll), never on its own.
-    let reach = attempt(() => [...state.held.values()].filter((entry) => entry.pgid === entry.pid)) ?? [];
-    for (let round = 0, pending = find(); (pending.length > 0 || reach.length > 0) && round < EXIT_ROUNDS; round += 1) {
+    // Each round also reaches the group of each leader an interrupted stop holds that the run
+    // owned (the teardown found it), so that a process recorded in its group that outlives it is
+    // stopped through that group (signalAll), never on its own. A process the guard only read in a
+    // group is reported, never a target.
+    const reach = () => attempt(() => [...state.held.values()].filter((entry) => entry.pgid === entry.pid && state.found.processes.has(keyOf(entry)))) ?? [];
+    for (let round = 0, pending = find(); (pending.length > 0 || reach().length > 0) && round < EXIT_ROUNDS; round += 1) {
       for (const entry of pending) owned.set(keyOf(entry), entry);
-      const targets = [...pending, ...reach.filter((entry) => !owned.has(keyOf(entry)))];
-      reach = [];
+      const targets = [...pending, ...reach().filter((entry) => !owned.has(keyOf(entry)))];
       attempt(() => signalAll(targets, "SIGKILL", state.held));
       sleepSync(100);
       if (round + 1 < EXIT_ROUNDS) pending = find();
@@ -1098,7 +1129,7 @@ export async function setup(project) {
     for (const entry of [...owned.values(), ...unstopped]) if (!isRunnerChild(entry)) leaked.set(keyOf(entry), entry);
     const entries = [...new Set([...state.found.entries, ...leftovers]), ...locks.map(describeLock), ...unremoved.map((directory) => `${directory}, which could not be removed`)];
     const { ambiguous, orphans } = classified;
-    const notes = classify.stale ? [STALE_NOTE] : [];
+    const notes = classify.stale ? [STALE_NOTE] : classify.failed ? [FAILED_NOTE] : [];
     if (unstopped.length > 0) notes.push(unstoppedNote(unstopped));
     if (leaked.size === 0 && entries.length === 0 && ambiguous.length === 0 && orphans.length === 0 && notes.length === 0) return;
     // The run fails even when it is exiting with success, such as through process.exit(0) or
@@ -1149,7 +1180,7 @@ export async function setup(project) {
       return classified;
     });
     const listed = classify();
-    if (!listed) notes.push(`Processes were not checked: the guard cannot list processes on ${process.platform}.`);
+    if (!listed && !SUPPORTED) notes.push(`Processes were not checked: the guard cannot list processes on ${process.platform}.`);
     const none = { owned: [], ambiguous: [], orphans: [] };
     // Every process the run left, those the guard only reports too, gets the same while to exit.
     const settled = listed ? await settle(classify, RUN_GRACE_MS, listed) : none;
@@ -1158,6 +1189,7 @@ export async function setup(project) {
     const { ambiguous, orphans } = reported ?? none;
     if (unstopped.length > 0) notes.push(unstoppedNote(unstopped));
     if (classify.stale) notes.push(STALE_NOTE);
+    if (classify.failed) notes.push(FAILED_NOTE);
     // Every test has finished, so a lock this run's processes still hold, this one included, is abandoned.
     const locks = removeAbandonedLocks(root, { graceMs: STOP_GRACE_MS, ending: process.pid });
     for (const lock of locks) state.found.entries.add(describeLock(lock));
@@ -1176,7 +1208,7 @@ export async function setup(project) {
     // A root the guard cannot remove stays in the temp folder, so it fails the run like any other leftover.
     const rootRemoved = removeTree(root);
     if (!rootRemoved) entries.push(`${root}, the run's temp root, which could not be removed`);
-    if (owned.length > 0 || entries.length > 0 || unstopped.length > 0 || orphans.length > 0 || ambiguous.length > 0 || classify.stale) {
+    if (owned.length > 0 || entries.length > 0 || unstopped.length > 0 || orphans.length > 0 || ambiguous.length > 0 || classify.stale || classify.failed) {
       // Failing here ends Vitest's close before it removes its own folder, so remove it now.
       if (runnerTemp) removeTree(runnerTemp);
       throw new Error(report(`This test run (temp root ${root})`, owned, entries, notes, { worktree, orphans, ambiguous }));
@@ -1584,8 +1616,9 @@ export function guardTestFile({ beforeEach, afterEach, afterAll }) {
     const notes = [];
     if (unstopped.length > 0) notes.push(unstoppedNote(unstopped));
     if (classify.stale) notes.push(STALE_NOTE);
+    if (classify.failed) notes.push(FAILED_NOTE);
     if (!removed) entries.push(`${folder}, the test file's temp folder, which could not be removed`);
-    if (owned.length > 0 || entries.length > 0 || ambiguous.length > 0 || classify.stale) {
+    if (owned.length > 0 || entries.length > 0 || ambiguous.length > 0 || classify.stale || classify.failed) {
       // The absolute path, the same on every platform and from every working directory.
       throw new Error(report(suite?.filepath ?? "This test file", owned, entries, notes, { ambiguous }));
     }

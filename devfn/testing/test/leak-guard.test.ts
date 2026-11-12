@@ -17,6 +17,18 @@ import { attributeProcesses, listProcesses, ORIGINAL_TEMP_VARIABLE, ownedProcess
 import { temporaryDirectories } from "../../test-support/temp-directories.mjs";
 
 const tempDir = temporaryDirectories(afterEach);
+// Processes a fixture leaves on purpose where no guard finds them, read from the files that name
+// them and stopped after each test however it ends, a timeout included. Registered after
+// temporaryDirectories, so this runs first, while the files are still there.
+const fixtureFiles: string[] = [];
+afterEach(() => {
+  for (const file of fixtureFiles.splice(0)) {
+    let text = "";
+    try { text = readFileSync(file, "utf8"); } catch { continue; }
+    const pids = file.endsWith(".json") ? [JSON.parse(text).named] : [Number(text)];
+    for (const pid of pids) if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+  }
+});
 const guard = fileURLToPath(new URL("../../test-support/leak-guard.mjs", import.meta.url));
 const locks = fileURLToPath(new URL("../../test-support/shared-locks.mjs", import.meta.url));
 const vitest = path.join(path.dirname(createRequire(import.meta.url).resolve("vitest/package.json")), "vitest.mjs");
@@ -596,6 +608,7 @@ setInterval(() => {}, 1000);`;
   while (!existsSync("member.pid")) await sleep(20);
   record({ pid, child: Number(readFileSync("member.pid", "utf8")) });
 }, 10_000);`);
+    fixtureFiles.push(path.join(dir, "member.pid"));
     let member: number | undefined;
     try {
       const { code, output, recorded } = await runProject(dir, record);
@@ -616,6 +629,7 @@ setInterval(() => {}, 1000);`;
   const pid = ${orphan("process.env.SFN_TEST_LEAK_GUARD_ROOT", ['"-e"', JSON.stringify(interruptingLeader), "process.cwd()", "process.env.SFN_TEST_LEAK_GUARD_MAIN_PID"])};
   record({ pid, named: ${orphanProcess('"/"', 'process.env.SFN_TEST_LEAK_GUARD_ROOT + "/missing/../server.mjs"')} });
 });`);
+    fixtureFiles.push(path.join(dir, "member.pid"), record);
     let named: number | undefined;
     let member: number | undefined;
     try {
@@ -1119,6 +1133,21 @@ test("leaves processes, and then listing them fails", () => {
     }
   });
 
+  it.each([
+    ["a test file", true],
+    ["a run", false],
+  ])("fails %s whose every listing of processes fails, never taking that for nothing left running", async (_, inFile) => {
+    const { dir, record } = project(inFile ? `import { failListingsAfter } from "./fail-listing.mjs";
+test("cannot list processes", () => {
+  failListingsAfter(0);
+  record({});
+});` : `test("passes", () => { record({}); });`, { files: { "fail-listing.mjs": failListing, "fail-all.mjs": `import { failListingsAfter } from "./fail-listing.mjs";\nexport default () => { failListingsAfter(0); };` }, options: inFile ? "" : `, globalSetup: [${JSON.stringify(guard)}, "./fail-all.mjs"]` });
+    const { code, output } = await runProject(dir, record);
+    expect(code, output).not.toBe(0);
+    expect(output).toContain(inFile ? `DevFn test leak guard: ${path.join(dir, "fixture.test.mjs")} left these behind.` : "This test run (temp root");
+    expect(output).toContain("Listing processes failed every time the guard tried");
+  });
+
   it("never signals a process the run owned once listing processes fails and its process ID shows a process started a second later", async () => {
     const { dir, record } = project(`test("leaves a process in the run's root", () => {
   const pid = ${orphanProcess("process.env.SFN_TEST_LEAK_GUARD_ROOT")};
@@ -1422,9 +1451,13 @@ process.stdin.resume();`);
     const { readFileSync, readlinkSync } = fs;
     let failing: [string, string] | undefined;
     const fail = (target: unknown) => {
-      if (failing && target === `/proc/${pid}/${failing[0]}`) throw Object.assign(new Error("reading failed (test)"), { code: failing[1] });
+      if (failing?.[1] && target === `/proc/${pid}/${failing[0]}`) throw Object.assign(new Error("reading failed (test)"), { code: failing[1] });
     };
-    (fs as { readFileSync: unknown }).readFileSync = (target: unknown, ...rest: unknown[]) => { fail(target); return (readFileSync as (...all: unknown[]) => unknown)(target, ...rest); };
+    (fs as { readFileSync: unknown }).readFileSync = (target: unknown, ...rest: unknown[]) => {
+      fail(target);
+      // An empty code: the read succeeds with no text.
+      return failing?.[1] === "" && target === `/proc/${pid}/${failing[0]}` ? "" : (readFileSync as (...all: unknown[]) => unknown)(target, ...rest);
+    };
     (fs as { readlinkSync: unknown }).readlinkSync = (target: unknown, ...rest: unknown[]) => { fail(target); return (readlinkSync as (...all: unknown[]) => unknown)(target, ...rest); };
     syncBuiltinESMExports();
     restore = () => {
@@ -1435,6 +1468,9 @@ process.stdin.resume();`);
       failing = [file, "EIO"];
       expect(listProcesses(Date.now()), `${file} EIO`).toBeUndefined();
     }
+    // A stat read with no text in it is not well formed.
+    failing = ["stat", ""];
+    expect(listProcesses(Date.now())).toBeUndefined();
     // Another user's process: listed, without what could not be read.
     failing = ["environ", "EACCES"];
     expect(listProcesses(Date.now())?.find((entry) => entry.pid === pid)?.environment).toBe("");
@@ -1740,8 +1776,10 @@ setInterval(() => {}, 1000);`;
    * and every read of the group shows `joins`, when given, in it too, as a new group with the same
    * ID would.
    */
-  function rereadAfterFailures(leader: number, after: "other" | "unreadable", joins?: number) {
+  function rereadAfterFailures(leader: number, after: "other" | "unreadable" | "reused", joins?: number) {
     let reads = 0;
+    // "reused": the leader's ID names another process only from the third read of its group on.
+    const from = after === "reused" ? 3 : 2;
     const { spawnSync } = childProcess;
     const { readdirSync, readFileSync } = fs;
     const failure = () => Object.assign(new Error("reading failed (test)"), { code: "EIO" });
@@ -1754,7 +1792,7 @@ setInterval(() => {}, 1000);`;
         return { ...real, stdout: reads === 1 ? `${real.stdout}not a process line\n` : real.stdout.split("\n").map(regroup).join("\n") };
       }
       const asked = command === "ps" && args?.includes("-p") ? String(args.at(-1)).split(",") : [];
-      if (reads < 2 || !asked.includes(String(leader))) return real;
+      if (reads < from || !asked.includes(String(leader))) return real;
       if (after === "unreadable") return { error: failure() };
       // This process's line, under the leader's ID: the ID names a process with another start.
       const own = (spawnSync as (...all: unknown[]) => { stdout: string })(command, [...args.slice(0, -1), String(process.pid)], ...rest).stdout.replace(/^(\s*)\d+/, `$1${leader}`);
@@ -1768,7 +1806,7 @@ setInterval(() => {}, 1000);`;
     };
     (fs as { readFileSync: unknown }).readFileSync = (target: unknown, ...rest: unknown[]) => {
       if (target === "/proc/2147483646/stat") throw failure();
-      if (target === `/proc/${leader}/stat` && reads >= 2 && !inGroupRead()) {
+      if (target === `/proc/${leader}/stat` && reads >= from && !inGroupRead()) {
         if (after === "unreadable") throw failure();
         return (readFileSync as (...all: unknown[]) => string)(`/proc/${process.pid}/stat`, ...rest).replace(/^\d+/, String(leader));
       }
@@ -1789,6 +1827,14 @@ setInterval(() => {}, 1000);`;
     rereadAfterFailures(entry.pid, "other", stranger);
     expect((await stopProcesses([entry], () => [])).map((left) => left.pid)).toEqual([member]);
     expect(alive(member)).toBe(true);
+    expect(alive(stranger)).toBe(true);
+  });
+
+  it("takes no read of an unresolved exited leader's group after which the leader's ID names another process, though it had exited just before", async () => {
+    const { pid: stranger } = await start(`process.stdout.write("ready\\n"); setInterval(() => {}, 1000);`);
+    const { member, entry } = await exitedLeader();
+    rereadAfterFailures(entry.pid, "reused", stranger);
+    expect((await stopProcesses([entry], () => [])).map((left) => left.pid)).toEqual([member]);
     expect(alive(stranger)).toBe(true);
   });
 
