@@ -56,7 +56,10 @@ declaration or in an extension in either directory. Any other public struct,
 class or actor (a value type, a `Layout`), and a public `View`-extension member
 in `Styles` (such as `uifnTheme`), is a non-surface. Enums and protocols count
 only as styles or components. One declaration repeated with the same kind and
-file, as `#if` alternatives or overloads are, is listed once.
+file, as `#if` alternatives or overloads are, is listed once; keep a
+declaration's alternatives and overloads in one file. Only extensions of `View`
+itself are read for view modifiers, and a list entry's id is an ASCII Swift
+name. Text the scan cannot read, such as unpaired braces, fails verification.
 
 `npm test` in this package runs the verifier and its tests; turbo hashes the
 UIFnSwiftUI sources and these scripts as its inputs. The Swift workflow's Linux

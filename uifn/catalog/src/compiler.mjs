@@ -312,14 +312,17 @@ export function validateSwiftUIStatus(source = SWIFTUI_STATUS_SOURCE) {
 // any View-extension member in Styles, is unclassified and has to be listed
 // as a non-surface, so the scan fails closed.
 const SWIFT_STYLE_PROTOCOL = /^[A-Z]\w*Style$/;
-const SWIFT_COMPONENT_PROTOCOLS = new Set(['View', 'ViewModifier', 'Shape', 'InsettableShape', 'UIViewRepresentable', 'NSViewRepresentable', 'UIViewControllerRepresentable', 'NSViewControllerRepresentable']);
+const SWIFT_COMPONENT_PROTOCOLS = new Set(['View', 'ViewModifier', 'Shape', 'InsettableShape', 'ShapeView', 'DynamicViewContent', 'GeometryEffect', 'AnimatableModifier', 'EnvironmentalModifier', 'UIViewRepresentable', 'NSViewRepresentable', 'UIViewControllerRepresentable', 'NSViewControllerRepresentable']);
 const SWIFT_TYPE_KEYWORDS = new Set(['struct', 'class', 'actor', 'enum', 'protocol', 'extension']);
 const SWIFT_SURFACE_TYPE_KEYWORDS = new Set(['struct', 'class', 'actor']);
 const SWIFT_MEMBER_KEYWORDS = new Set(['func', 'var', 'let', 'case', 'typealias', 'associatedtype', 'init', 'subscript']);
 const SWIFT_ACCESS_MODIFIERS = new Set(['open', 'public', 'package', 'internal', 'fileprivate', 'private']);
-const SWIFT_DECLARATION_WORDS = new Set([...SWIFT_MEMBER_KEYWORDS, ...SWIFT_ACCESS_MODIFIERS, 'class', 'static', 'final', 'override', 'nonisolated', 'mutating', 'convenience', 'required', 'dynamic', 'lazy']);
-const SWIFT_TOKEN = /`[^`\n]+`|[A-Za-z_]\w*|#\w+|->|\d[\w.]*|[^\s\w]/g;
-const SWIFT_IDENTIFIER = /^[A-Za-z_]\w*$/;
+const SWIFT_MODIFIER_WORDS = new Set([...SWIFT_ACCESS_MODIFIERS, 'class', 'static', 'final', 'override', 'nonisolated', 'mutating', 'nonmutating', 'convenience', 'required', 'dynamic', 'lazy', 'weak', 'unowned', 'indirect', 'optional', 'distributed', 'prefix', 'postfix', 'infix']);
+const SWIFT_DECLARATION_WORDS = new Set([...SWIFT_MEMBER_KEYWORDS, ...SWIFT_MODIFIER_WORDS]);
+const SWIFT_IMPORT_KINDS = new Set(['struct', 'class', 'enum', 'protocol', 'typealias', 'func', 'var', 'let']);
+// Identifiers may use any letter, so a non-ASCII name is read, not skipped.
+const SWIFT_TOKEN = /`[^`\n]+`|[\p{L}_][\p{L}\p{N}_]*|#\w+|->|\d[\w.]*|[^\s\p{L}\p{N}_]/gu;
+const SWIFT_IDENTIFIER = /^[\p{L}_][\p{L}\p{N}_]*$/u;
 const SWIFT_STRING_START = /#*"/y;
 
 // The text with comments and string literals (multi-line, raw and
@@ -464,19 +467,32 @@ function stepSwiftDeclarations(state, index) {
   const token = tokens[index];
   const next = tokens[index + 1] ?? '';
   if (token === '{' || token === '}') {
+    assert(token === '{' || scopes.length > 0, 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `Cannot read the declarations in ${state.source}: a } has no {.`, { source: state.source });
     if (token === '{') scopes.push({ kind: 'body' });
     else scopes.pop();
     state.modifiers = [];
     return index + 1;
   }
   if (scopes.at(-1)?.kind === 'body') return index + 1;
+  // `import struct Foundation.URL` declares nothing here; `.private` in a
+  // default value is a member name, not a modifier.
+  if (token === '.') {
+    state.modifiers = [];
+    return SWIFT_IDENTIFIER.test(next) ? index + 2 : index + 1;
+  }
+  if (token === 'import') {
+    let end = SWIFT_IMPORT_KINDS.has(next) ? index + 2 : index + 1;
+    while (tokens[end + 1] === '.') end += 2;
+    state.modifiers = [];
+    return end + 1;
+  }
   if (token === '@') return tokens[index + 2] === '(' ? skipBalanced(tokens, index + 2, '(', ')') : index + 2;
   // `private(set)` limits only the setter.
   if (SWIFT_ACCESS_MODIFIERS.has(token) && next === '(') return skipBalanced(tokens, index + 1, '(', ')');
   let end = index + 1;
   if (SWIFT_TYPE_KEYWORDS.has(token) && SWIFT_IDENTIFIER.test(next) && !SWIFT_DECLARATION_WORDS.has(next)) end = readSwiftTypeDeclaration(state, index);
   else if (SWIFT_MEMBER_KEYWORDS.has(token)) end = readSwiftMember(state, index);
-  else if (SWIFT_IDENTIFIER.test(token)) {
+  else if (SWIFT_MODIFIER_WORDS.has(token)) {
     state.modifiers.push(token);
     return end;
   }
@@ -488,6 +504,8 @@ function walkSwiftDeclarations(text, source, model) {
   const tokens = (swiftCodeOnly(text).match(SWIFT_TOKEN) ?? []).map((token) => token.replaceAll('`', ''));
   const state = { tokens, scopes: [], model, source, modifiers: [] };
   for (let index = 0; index < tokens.length;) index = stepSwiftDeclarations(state, index);
+  // Text the scan cannot model (an unclosed scope) fails closed.
+  assert(state.scopes.length === 0, 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `Cannot read the declarations in ${source}: a { is not closed.`, { source });
 }
 
 function swiftSurfaceKind(conformances, protocols, seen = new Set()) {
@@ -550,7 +568,7 @@ function coalesceSwiftUIDeclarations(declarations) {
   const declared = new Map();
   for (const declaration of declarations) {
     const earlier = declared.get(declaration.id);
-    assert(!earlier || (earlier.kind === declaration.kind && earlier.source === declaration.source), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `UIFnSwiftUI declares ${declaration.id} more than once, with a different kind or source.`, { id: declaration.id, declarations: [earlier, declaration] });
+    assert(!earlier || (earlier.kind === declaration.kind && earlier.source === declaration.source), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `UIFnSwiftUI declares ${declaration.id} more than once, with a different kind or source. Keep the #if alternatives and overloads of one declaration in one file, with one kind.`, { id: declaration.id, declarations: [earlier, declaration] });
     declared.set(declaration.id, { id: declaration.id, kind: declaration.kind, source: declaration.source });
   }
   return declared;

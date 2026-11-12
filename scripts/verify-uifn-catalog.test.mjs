@@ -480,3 +480,24 @@ test('the generated SwiftUI status conforms to its schema', async () => {
   blank.surfaces[0].notes = 'stray';
   assert.deepEqual(schemaErrors(schema, blank).sort(), ['$.primitives[0].swiftui.note: string', '$.surfaces[0]: unknown notes']);
 });
+
+test('imports, default values and unreadable text do not hide a public declaration', async () => {
+  const real = await readSwiftUISurfaceDeclarations(repoRoot);
+  const probe = `${swiftComponents}/UIFnProbe.swift`;
+  const cases = [
+    ['selective imports', 'import SwiftUI\nimport struct Foundation.URL\n@testable import class Foundation.NSObject\nimport protocol Swift.Equatable\npublic struct UIFnProbe: View {}\n', [['UIFnProbe', 'component']]],
+    ['access-qualified imports', 'internal import Foundation\npublic struct UIFnProbe: View {}\npublic import SwiftUI\nstruct UIFnInternal: View {}\nextension View {\n    func uifnHidden() -> some View { self }\n}\n', [['UIFnProbe', 'component']]],
+    ['a default value of .private', 'public let uifnDefault: Access = .internal\npublic struct UIFnPager: View {\n    var scope: Access = .private\n    public struct Row: View {}\n}\n', [['UIFnPager', 'component'], ['UIFnPager.Row', 'component']]],
+    ['SwiftUI refinements of View and ViewModifier', 'public struct UIFnShake: GeometryEffect {}\npublic struct UIFnFade: SwiftUI.AnimatableModifier {}\n', [['UIFnShake', 'component'], ['UIFnFade', 'component']]],
+    ['a non-ASCII name', 'public struct Ünit: View {\n    public struct Row: View {}\n}\n', [['Ünit', 'component'], ['Ünit.Row', 'component']]],
+  ];
+  for (const [name, text, expected] of cases) {
+    const declarations = parseSwiftUISurfaceDeclarations([{ path: probe, text }]);
+    assert.deepEqual(declarations.map((declaration) => [declaration.id, declaration.kind]), expected, name);
+    expectCatalogCode(() => verifySwiftUISurfaceDeclarations([...real, ...declarations]), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
+  }
+  // Braces the scan cannot pair, as in a regex literal, fail closed.
+  for (const text of ['let pattern = /[{]/\npublic struct UIFnAfter: View {}\n', '}\npublic struct UIFnAfter: View {}\n']) {
+    expectCatalogCode(() => parseSwiftUISurfaceDeclarations([{ path: probe, text }]), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
+  }
+});
