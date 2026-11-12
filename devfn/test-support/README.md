@@ -37,7 +37,8 @@ calls `guardTestFile` as a setup file.
   still going attributes to itself are not listed. Nor is one whose path is only in a
   checkout nested in the worktree (such as `.worktrees/<task>` under the main checkout) or
   in a sibling directory whose name merely starts with the worktree's (`repo-dev-42` beside
-  `repo`). A command, environment or working directory names a path under a root only
+  `repo`), nor, in a macOS listing, one that names only the worktree itself cut short at a
+  space, quote or `:` (as `repo copy/x` lists). A command, environment or working directory names a path under a root only
   through a complete path value equal to the root or starting with `root/`. On Linux,
   `/proc` keeps each argument and variable whole, NUL-separated, so a value is a whole
   argument (after a `KEY=` or `--option=` prefix and `file://`) or a whole variable's

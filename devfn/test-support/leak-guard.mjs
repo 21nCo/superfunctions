@@ -248,7 +248,8 @@ function separatedValues(text, environment) {
 
 /**
  * The paths at or under `root` that `text` names, each `ambiguous` when it comes from a
- * space-joined listing, which cannot show where a value starts or ends.
+ * space-joined listing, which cannot show where a value starts or ends, and `cut` when it is
+ * `root` itself cut short there at a separator (`<root> copy/x` lists as `<root>`).
  */
 function namedPaths(text, root, { separated = false, environment = false } = {}) {
   if (separated) return separatedValues(text, environment).filter((value) => isPathUnder(value, root)).map((value) => ({ path: value, ambiguous: false }));
@@ -261,7 +262,7 @@ function namedPaths(text, root, { separated = false, environment = false } = {})
     let end = at + root.length;
     while (end < text.length && !SEPARATOR.test(text[end]) && text[end] !== LIST_SEPARATOR) end += 1;
     const value = trimTrailingSlashes(text.slice(at, end));
-    if (isPathUnder(value, root)) paths.push({ path: value, ambiguous: true });
+    if (isPathUnder(value, root)) paths.push({ path: value, ambiguous: true, cut: end === at + root.length && end < text.length });
   }
   return paths;
 }
@@ -277,7 +278,8 @@ export function pathsNamedUnder(text, root, options) {
 /**
  * How a process names a path under the given roots in its command, environment or working
  * directory: "exact", "ambiguous" when its only such values come from a space-joined listing,
- * or undefined. `accept(path, root)` can reject a named path, such as one inside a nested checkout.
+ * "cut" when each of those is the root itself cut short at a separator, or undefined.
+ * `accept(path, root)` can reject a named path, such as one inside a nested checkout.
  */
 function namesPathUnder(entry, roots, accept = () => true) {
   let found;
@@ -288,7 +290,8 @@ function namesPathUnder(entry, roots, accept = () => true) {
       ...namedPaths(entry.environment, root, { separated: entry.separated, environment: true }),
     ].filter(({ path: value }) => accept(value, root));
     if (named.some(({ ambiguous }) => !ambiguous)) return "exact";
-    if (named.length > 0) found = "ambiguous";
+    if (named.some(({ cut }) => !cut)) found = "ambiguous";
+    else if (named.length > 0) found ??= "cut";
   }
   return found;
 }
@@ -325,8 +328,8 @@ export function attributeProcesses(processes, { marker, roots, parent, excluded 
   for (const entry of processes) {
     if (entry.pid === process.pid || ancestors.has(entry.pid) || excluded(entry)) continue;
     const named = (marker !== undefined && entry.environment.includes(marker)) || descendants.has(entry.pid) ? "exact" : namesPathUnder(entry, roots);
-    if (named === "exact" || (named === "ambiguous" && vouch(entry))) owned.push(entry);
-    else if (named === "ambiguous") ambiguous.push(entry);
+    if (named === "exact" || (named !== undefined && vouch(entry))) owned.push(entry);
+    else if (named !== undefined) ambiguous.push(entry);
   }
   return { owned, ambiguous };
 }
@@ -787,7 +790,10 @@ function birthSignature(pid) {
 function takerDead(marker) {
   let owner;
   try { owner = JSON.parse(readFileSync(marker, "utf8")); } catch { return false; }
-  if (typeof owner?.token !== "string" || !Number.isSafeInteger(owner.pid) || owner.pid <= 0) return false;
+  // Only a record withFileLock itself accepts (parseOwnerRecord in @devfn/ports src/lock.ts) can show its taker dead.
+  if (typeof owner !== "object" || owner === null || Array.isArray(owner) || typeof owner.token !== "string" || owner.token === "") return false;
+  if (!Number.isSafeInteger(owner.pid) || owner.pid <= 0 || typeof owner.createdAt !== "string" || Number.isNaN(Date.parse(owner.createdAt))) return false;
+  if (owner.birthSignature !== undefined && typeof owner.birthSignature !== "string") return false;
   const running = runningPids();
   if (running ? !running.has(owner.pid) : !alive(owner.pid)) return true;
   const current = typeof owner.birthSignature === "string" ? birthSignature(owner.pid) : undefined;
@@ -910,7 +916,8 @@ function liveSiblingRuns(root) {
 
 /**
  * Processes the run cannot attribute but must report: started since the run began, running from
- * or naming a path in the worktree, and orphaned, that is re-parented to init or a subreaper
+ * or naming a path in the worktree (one in a macOS listing too, unless it is only the worktree
+ * itself cut short at a separator, as `<worktree> copy/x` lists), and orphaned, that is re-parented to init or a subreaper
  * along a chain of processes that also started during the run. A process whose chain reaches this
  * run's process or one of its ancestors, such as a sibling task under the same turbo, or a
  * process that was already running, such as an editor, is someone else's. So is one that a live
@@ -941,7 +948,7 @@ function worktreeOrphans(processes, { worktree, startedAt, own, root }) {
   const checkouts = new Map();
   const inThisWorktree = (named, worktreeRoot) => !inNestedCheckout(named, worktreeRoot, checkouts);
   return processes.filter((entry) => entry.pid !== process.pid && !ancestors.has(entry.pid) && !ownPids.has(entry.pid) && recent(entry) &&
-    namesPathUnder(entry, worktreeRoots, inThisWorktree) === "exact" && !/\bturbo(?:\.exe)?\b.*\bdaemon\b/.test(entry.command) &&
+    ["exact", "ambiguous"].includes(namesPathUnder(entry, worktreeRoots, inThisWorktree)) && !/\bturbo(?:\.exe)?\b.*\bdaemon\b/.test(entry.command) &&
     !siblings.some((sibling) => entry.environment.includes(sibling.marker) || namesPathUnder(entry, sibling.roots)) && orphaned(entry));
 }
 

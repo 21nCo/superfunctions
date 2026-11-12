@@ -14,6 +14,6 @@ export declare function stopProcessesUnder(directories: string[], sinceMs?: numb
 export declare function recordMachineLock(lockPath: string): void;
 export declare function pathsNamedUnder(text: string, root: string, options?: { separated?: boolean; environment?: boolean }): string[];
 type Listed = { pid: number; ppid: number; command: string; environment: string; cwd?: string; argv?: string; separated?: boolean };
-type Scope<T> = { marker?: string; roots: string[]; parent?: number; excluded?: (entry: T) => boolean };
+type Scope<T> = { marker?: string; roots: string[]; parent?: number; excluded?: (entry: T) => boolean; vouch?: (entry: T) => boolean };
 export declare function attributeProcesses<T extends Listed>(processes: T[], scope: Scope<T>): { owned: T[]; ambiguous: T[] };
 export declare function ownedProcesses<T extends Listed>(processes: T[], scope: Scope<T>): T[];

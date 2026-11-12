@@ -82,7 +82,7 @@ ${content}
  * interruption waits until every test has finished and Vitest has printed its summary, when
  * the guard's run teardown is waiting for leftover processes to exit. `env` adds variables.
  */
-async function runProject(dir: string, record: string, interrupt?: "signal" | "cancel", { duringTeardown = false, env = {} }: { duringTeardown?: boolean; env?: Record<string, string> } = {}): Promise<{ code: number | null; output: string; recorded: { root: string; pid?: number; dir?: string; child?: number; siblings?: number[]; nested?: number } }> {
+async function runProject(dir: string, record: string, interrupt?: "signal" | "cancel", { duringTeardown = false, env = {} }: { duringTeardown?: boolean; env?: Record<string, string> } = {}): Promise<{ code: number | null; output: string; recorded: { root: string; pid?: number; dir?: string; child?: number; named?: number; siblings?: number[]; nested?: number } }> {
   const child = spawn(process.execPath, [vitest, "run", "--root", dir, "--config", path.join(dir, "vitest.config.mjs")],
     { cwd: dir, detached: interrupt === "cancel", env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1", ...env } });
   let output = "";
@@ -559,24 +559,32 @@ writeFileSync(path.join(lock, "owner.json"), JSON.stringify({ token: "fixture", 
     }
   });
 
-  it("leaves in place, and lists, a dead holder's lock that a live waiter holds the takeover marker for", async () => {
+  // A process that has exited, for markers whose taker would otherwise count as dead.
+  const exitedPid = spawnSync(process.execPath, ["-e", ""]).pid;
+  it.each([
+    ["a live waiter holds", { token: "waiter", pid: process.pid, createdAt: new Date().toISOString() }],
+    // withFileLock cannot tell these takers dead either, so it never passes them.
+    ["a marker without a token holds", { token: "", pid: exitedPid, createdAt: new Date().toISOString() }],
+    ["a marker without a creation time holds", { token: "waiter", pid: exitedPid }],
+    ["a marker with an ill-formed birth signature holds", { token: "waiter", pid: exitedPid, birthSignature: 1, createdAt: new Date().toISOString() }],
+  ])("leaves in place, and lists, a dead holder's lock whose takeover marker %s", async (_, taker) => {
     const lock = machineLock(`devfn-leak-guard-lock-${randomUUID()}`);
     const marker = (record: string) => `owner.takeover.${createHash("sha256").update(record).digest("hex").slice(0, 32)}.0`;
     const { dir, record } = project(`test("holds the lock, which a live waiter is taking over, and hangs", async () => {
   ${takeLock(path.basename(lock))}
   const owner = readFileSync(path.join(lock, "owner.json"), "utf8");
   const marker = "owner.takeover." + require("node:crypto").createHash("sha256").update(owner).digest("hex").slice(0, 32) + ".0";
-  writeFileSync(path.join(lock, marker), JSON.stringify({ token: "waiter", pid: Number(process.env.LIVE_WAITER), createdAt: new Date().toISOString() }));
+  writeFileSync(path.join(lock, marker), process.env.TAKER_RECORD);
   record({ pid: process.pid, dir: lock });
   await new Promise(() => {});
 }, 60_000);`);
     try {
-      const { code, output, recorded } = await runProject(dir, record, "signal", { env: { LIVE_WAITER: String(process.pid) } });
+      const { code, output, recorded } = await runProject(dir, record, "signal", { env: { TAKER_RECORD: JSON.stringify(taker) } });
       expect(code).not.toBe(0);
       expect(alive(recorded.pid!)).toBe(false);
       expect(output).toContain(`${lock}, a machine-wide lock held by process ${recorded.pid}, which ended without releasing it; it was left in place`);
       expect(ownerRecord(lock)).toMatchObject({ token: "fixture", pid: recorded.pid });
-      // Only the holder's record and the live waiter's marker: the guard took nothing and left nothing.
+      // Only the holder's record and the taker's marker: the guard took nothing and left nothing.
       expect(readdirSync(lock).sort()).toEqual(["owner.json", marker(readFileSync(path.join(lock, "owner.json"), "utf8"))].sort());
     } finally {
       rmSync(lock, { recursive: true, force: true });
@@ -712,6 +720,8 @@ test("names the locks", async () => {
     siblings: ${JSON.stringify(besides)}.map((suffix) => process.cwd() + suffix).map((sibling) => ${orphanProcess("sibling", 'path.join(sibling, "server.mjs")')}),
     nested: ${orphanProcess("nested", 'path.join(nested, "server.mjs")')},
     pid: ${orphanProcess("own", 'path.join(own, "server.mjs")')},
+    // Named only in its arguments, from outside the worktree, as a wrapper's script is.
+    named: ${orphanProcess('"/"', 'path.join(own, "server.mjs")')},
   });
 });`);
     mkdirSync(path.join(dir, ".git"));
@@ -719,17 +729,17 @@ test("names the locks", async () => {
     mkdirSync(path.join(dir, ".worktrees", "other", "package"), { recursive: true });
     writeFileSync(path.join(dir, ".worktrees", "other", ".git"), "gitdir: elsewhere\n");
     for (const suffix of besides) mkdirSync(`${dir}${suffix}`);
-    let recorded: { root: string; pid?: number; siblings?: number[]; nested?: number } | undefined;
+    let recorded: { root: string; pid?: number; named?: number; siblings?: number[]; nested?: number } | undefined;
     try {
       const result = await runProject(dir, record);
       recorded = result.recorded;
       expect(result.code).not.toBe(0);
       expect(result.output).toContain(`run from or name a path in the worktree ${realpathSync(dir)}, and were orphaned.`);
-      expect(result.output).toContain(`process ${recorded!.pid} `);
+      for (const pid of [recorded!.pid, recorded!.named]) expect(result.output).toContain(`process ${pid} `);
       for (const pid of [...recorded!.siblings!, recorded!.nested]) expect(result.output).not.toContain(`process ${pid} `);
-      for (const pid of [recorded!.pid, ...recorded!.siblings!, recorded!.nested]) expect(alive(pid!)).toBe(true);
+      for (const pid of [recorded!.pid, recorded!.named, ...recorded!.siblings!, recorded!.nested]) expect(alive(pid!)).toBe(true);
     } finally {
-      for (const pid of [recorded?.pid, ...(recorded?.siblings ?? []), recorded?.nested]) if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+      for (const pid of [recorded?.pid, recorded?.named, ...(recorded?.siblings ?? []), recorded?.nested]) if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
       for (const suffix of besides) rmSync(`${dir}${suffix}`, { recursive: true, force: true });
     }
   });
