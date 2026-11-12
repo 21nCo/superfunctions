@@ -351,11 +351,23 @@ test('the inventory and its fixtures come from graphs down to private access, wi
   }
 });
 
-test('a default implementation whose protocol the graph does not have fails closed', async () => {
+test('a default implementation whose protocol the graph does not have, or has twice, fails closed', async () => {
   const [mac] = await fixtureGraphs();
   const graphs = structuredClone(mac);
   for (const symbol of graphs[0].symbols.filter((entry) => entry.pathComponents.join('.') === 'UIFnShiningView.uifnShine()')) symbol.pathComponents = ['UIFnElsewhere', 'uifnShine()'];
   expectCatalogCode(() => swiftUIDeclarationsFromSymbolGraphs(graphs), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
+  // A private protocol in another file with the name of the extended one,
+  // before or after it: never resolved to either, never dropped.
+  for (const id of ['UIFnGlowing', 'UIFnShiningView', 'UIFnSizing']) {
+    for (const first of [true, false]) {
+      const shadowed = structuredClone(mac);
+      const protocol = shadowed[0].symbols.find((symbol) => symbol.pathComponents.join('.') === id && symbol.kind.identifier === 'swift.protocol');
+      const namesake = { ...structuredClone(protocol), accessLevel: 'private', identifier: { ...protocol.identifier, precise: `${protocol.identifier.precise}Namesake` }, location: { uri: `file:///checkout/${swiftRoot}/Components/UIFnOther.swift` } };
+      if (first) shadowed[0].symbols.unshift(namesake);
+      else shadowed[0].symbols.push(namesake);
+      expectCatalogCode(() => swiftUIDeclarationsFromSymbolGraphs(shadowed), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
+    }
+  }
 });
 
 test('repeats of one declaration coalesce; a conflicting kind or source is drift', async () => {

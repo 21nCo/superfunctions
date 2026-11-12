@@ -21,7 +21,8 @@
 // - a member of an extension of a UIFnSwiftUI protocol, by protocol and name
 //   (UIFnPanelView.uifnGlow), a default implementation of one of its own or
 //   inherited requirements included (the graph links that to the requirement,
-//   not to the extended protocol; one whose protocol cannot be found fails);
+//   not to the extended protocol; one whose protocol cannot be found, or is
+//   one of several with its name, fails);
 //   or
 // - a member of an extension of a type from another module: of View by its
 //   name (uifnToast), of any other type by type and name (Text.uifnBold).
@@ -99,14 +100,20 @@ function symbolGraphIndex(graphs) {
   // A default implementation of a requirement of a UIFnSwiftUI protocol, its
   // own or one it inherits, is a member of the protocol whose extension
   // declares it, though the graph links it only to the requirement. That
-  // protocol's path is the implementation's path less its name (a path names
-  // one type in a module). One without a resolvable owner is unresolved.
-  const protocols = new Map([...symbols].filter(([, symbol]) => symbol.kind.identifier === 'swift.protocol').map(([precise, symbol]) => [symbol.pathComponents.join('\0'), precise]));
+  // protocol's path is the implementation's path less its name. Private
+  // protocols in different files can share a path, so only a path exactly one
+  // protocol has resolves; any other default implementation is unresolved.
+  const protocols = new Map();
+  for (const [precise, symbol] of symbols) {
+    if (symbol.kind.identifier !== 'swift.protocol') continue;
+    const key = symbol.pathComponents.join('\0');
+    protocols.set(key, [...(protocols.get(key) ?? []), precise]);
+  }
   const unresolved = new Set();
   for (const source of defaults) {
     if (parents.has(source) || !symbols.has(source)) continue;
-    const owner = protocols.get(symbols.get(source).pathComponents.slice(0, -1).join('\0'));
-    if (owner) parents.set(source, { kind: 'memberOf', source, target: owner });
+    const owners = protocols.get(symbols.get(source).pathComponents.slice(0, -1).join('\0')) ?? [];
+    if (owners.length === 1) parents.set(source, { kind: 'memberOf', source, target: owners[0] });
     else unresolved.add(source);
   }
   return { symbols, parents, conformances, unresolved };
@@ -162,7 +169,7 @@ export function swiftUIDeclarationsFromSymbolGraphs(graphs) {
     const directory = ['Styles', 'Components'].find((name) => source?.startsWith(`${SWIFTUI_SOURCES_ROOT}/${name}/`));
     if (!directory || precise.includes('::SYNTHESIZED::') || !isEffectivelyPublic(index, precise)) continue;
     if (index.unresolved.has(precise)) {
-      throw new CatalogError('UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `UIFnSwiftUI declares ${symbol.pathComponents.join('.')} in ${source}, a default implementation whose protocol the symbol graph does not have.`, { id: symbol.pathComponents.join('.'), source });
+      throw new CatalogError('UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `UIFnSwiftUI declares ${symbol.pathComponents.join('.')} in ${source}, a default implementation whose protocol the symbol graph does not have, or has more than one of. Give the protocol a name no other protocol in UIFnSwiftUI has.`, { id: symbol.pathComponents.join('.'), source });
     }
     const declaration = symbolDeclaration(index, precise, symbol, source, directory);
     if (declaration) declarations.push(declaration);
