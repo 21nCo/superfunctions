@@ -147,17 +147,22 @@ function listLinux() {
   return processes;
 }
 
+// ps -o lstart, the second a process started, in UTC and the C locale ("Thu Nov 12 02:42:52 2026"). It
+// is read from the process, not counted back from the time of the listing, so every reading of
+// one process's start is the same.
+const UTC_TOOL_ENV = () => ({ ...toolEnv(), TZ: "UTC0" });
+const LSTART = String.raw`(\S+\s+\S+\s+\d+\s+\d+:\d+:\d+\s+\d+)`;
+const darwinStart = (lstart) => `darwin-utc:${lstart.replaceAll(/\s+/g, " ")}`;
+
 function listDarwin(sinceMs) {
-  const columns = ["-o", "pid=", "-o", "ppid=", "-o", "pgid=", "-o", "etime=", "-o", "stat=", "-o", "command="];
-  const plain = run("ps", ["-A", "-ww", ...columns]);
-  // When that listing was taken, to within the second ps -o etime counts in (`started` below).
-  const sampled = Math.round(Date.now() / 1000);
+  const columns = ["-o", "pid=", "-o", "ppid=", "-o", "pgid=", "-o", "etime=", "-o", "stat=", "-o", "lstart=", "-o", "command="];
+  const plain = run("ps", ["-A", "-ww", ...columns], 15_000, UTC_TOOL_ENV());
   // -E appends each process's initial environment to its command; it is read only to find the marker.
-  const withEnvironment = run("ps", ["-A", "-ww", "-E", ...columns]);
+  const withEnvironment = run("ps", ["-A", "-ww", "-E", ...columns], 15_000, UTC_TOOL_ENV());
   if (!plain || plain.status !== 0 || !withEnvironment) return undefined;
   const parse = (output) => new Map(output.split("\n").flatMap((line) => {
-    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s(.*)$/.exec(line);
-    return match ? [[Number(match[1]), { ppid: Number(match[2]), pgid: Number(match[3]), elapsed: elapsedSeconds(match[4]), state: match[5], text: match[6] }]] : [];
+    const match = new RegExp(`^\\s*(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\S+)\\s+(\\S+)\\s+${LSTART}\\s(.*)$`).exec(line);
+    return match ? [[Number(match[1]), { ppid: Number(match[2]), pgid: Number(match[3]), elapsed: elapsedSeconds(match[4]), state: match[5], started: darwinStart(match[6]), text: match[7] }]] : [];
   }));
   const commands = parse(plain.stdout);
   const environments = parse(withEnvironment.stdout);
@@ -166,8 +171,8 @@ function listDarwin(sinceMs) {
     // The listing shows the ps that made it, a child of this process.
     if (entry.state.startsWith("Z") || pid === plain.pid || pid === withEnvironment.pid) continue;
     const full = environments.get(pid)?.text ?? "";
-    // `started`, in seconds since the epoch, tells this process from a later one given its ID (stillRunning).
-    processes.push({ pid, ppid: entry.ppid, pgid: entry.pgid, elapsed: entry.elapsed, started: sampled - entry.elapsed, command: entry.text.trim(), environment: full.startsWith(entry.text) ? full.slice(entry.text.length) : "", cwd: undefined });
+    // `started`, its absolute start, tells this process from a later one given its ID (stillRunning).
+    processes.push({ pid, ppid: entry.ppid, pgid: entry.pgid, elapsed: entry.elapsed, started: entry.started, command: entry.text.trim(), environment: full.startsWith(entry.text) ? full.slice(entry.text.length) : "", cwd: undefined });
   }
   // Working directories come from lsof, for processes started since the run began only.
   const window = Math.ceil((Date.now() - sinceMs) / 1000) + 5;
@@ -548,38 +553,43 @@ function stillRunning(entry) {
     return !/^[ZX]/.test(fields[0]) && Number(fields[19]) === entry.started;
   }
   if (process.platform !== "darwin") return undefined;
-  const result = run("ps", ["-o", "etime=", "-o", "stat=", "-p", String(entry.pid)]);
+  const result = run("ps", ["-o", "lstart=", "-o", "stat=", "-p", String(entry.pid)], 15_000, UTC_TOOL_ENV());
   if (!result || result.signal) return undefined;
-  const sampled = Math.round(Date.now() / 1000);
-  const match = /^\s*(\S+)\s+(\S+)/.exec(result.stdout);
+  const match = new RegExp(`^\\s*${LSTART}\\s+(\\S+)`).exec(result.stdout);
   // ps lists nothing, says nothing and exits 1 for a process that is gone.
   if (!match) return result.status === 1 && !result.stdout.trim() && !result.stderr.trim() ? false : undefined;
   if (match[2].startsWith("Z")) return false;
-  // `ps -o etime` counts whole seconds, and each listing takes a while, so two readings of one
-  // start may differ by a second or two. Any other difference may still be timing, or a reused
-  // ID: either way the process cannot be told to be the same one, but it may still run.
-  return Math.abs(sampled - elapsedSeconds(match[1]) - entry.started) <= 2 ? true : undefined;
+  // The same absolute start, as on Linux, with no tolerance: a start even a second apart means
+  // the ID now names a later process, and the one the listing found has exited. Reusing an ID
+  // within the second it was freed would take macOS's whole range of IDs in that second.
+  return darwinStart(match[1]) === entry.started;
 }
 
 /**
- * An earlier classification checked again process by process (stillRunning): those that have
- * exited go, and an owned one that cannot be told to be the same process still becomes one the
- * guard only reports (ambiguous), since the guard signals only a process it can tell is its own.
+ * An earlier classification checked again process by process (stillRunning). Those that have
+ * exited go from both results. `remaining` keeps every other one as the listing classified it;
+ * `current` moves an owned one that cannot be told, this time, to be the same process to those
+ * the guard only reports (ambiguous), since the guard signals only a process it can tell is its
+ * own. Each check starts from `remaining`, so one read that fails does not stop the guard from
+ * stopping that process once a later read tells it is the same.
  */
 function recheck(classified) {
-  const kept = {};
+  const remaining = {};
+  const current = {};
   const unverified = [];
   for (const [kind, processes] of Object.entries(classified)) {
-    kept[kind] = [];
+    remaining[kind] = [];
+    current[kind] = [];
     for (const entry of processes) {
       const running = stillRunning(entry);
       if (running === false) continue;
+      remaining[kind].push(entry);
       if (kind === "owned" && running !== true) unverified.push(entry);
-      else kept[kind].push(entry);
+      else current[kind].push(entry);
     }
   }
-  kept.ambiguous = [...(kept.ambiguous ?? []), ...unverified];
-  return kept;
+  current.ambiguous = [...(current.ambiguous ?? []), ...unverified];
+  return { remaining, current };
 }
 
 /**
@@ -601,8 +611,10 @@ function keepingLast(classify, seed = () => undefined) {
     }
     last ??= seed();
     find.stale = last !== undefined;
-    if (find.stale) last = recheck(last);
-    return last;
+    if (!find.stale) return undefined;
+    const { remaining, current } = recheck(last);
+    last = remaining;
+    return current;
   };
   find.stale = false;
   return find;
@@ -1034,7 +1046,7 @@ function birthSignature(pid) {
     } catch { return undefined; }
   }
   if (process.platform !== "darwin") return undefined;
-  const start = run("ps", ["-o", "lstart=", "-p", String(pid)], 15_000, { ...toolEnv(), TZ: "UTC0" })?.stdout.trim();
+  const start = run("ps", ["-o", "lstart=", "-p", String(pid)], 15_000, UTC_TOOL_ENV())?.stdout.trim();
   return start ? `darwin-utc:${start}` : undefined;
 }
 

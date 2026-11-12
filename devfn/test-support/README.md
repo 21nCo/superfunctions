@@ -80,7 +80,11 @@ calls `guardTestFile` as a setup file.
   its own that appears in that listing is stopped and listed too. When listing processes
   fails after a listing has found some, the guard keeps what that listing found (less those
   that have since exited), stops what it owns, lists the rest and fails the file or run: a
-  failed listing never reads as the processes having exited.
+  failed listing never reads as the processes having exited. Before signalling one of them it
+  reads that process's own start (`/proc/<pid>/stat` on Linux, `ps -o lstart` on macOS) and
+  signals it only when that start is exactly the one the listing read; a different start means
+  the ID names a later process, and one it cannot read is listed, not signalled, until a later
+  read shows the same start.
 - The run lists a folder the guard made for a test file (recorded in the run's root) by its
   contents; any other entry in the root, whatever its name, is listed itself.
 - A temp root or file folder the guard cannot remove fails the run, or the file, and is

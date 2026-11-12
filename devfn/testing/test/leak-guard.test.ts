@@ -935,9 +935,10 @@ const wait = setInterval(() => {
   // Makes this process's process listings fail once `allowed` of them have succeeded, from outside
   // the guard: it replaces the Node functions the guard lists with (ps on macOS, /proc on Linux).
   // As a global setup, it does so in the run's main process before the guard's teardown runs.
-  // From then on, a process whose ID a test wrote to replaced.pid shows a later start when read
-  // on its own, as a process that reused the ID would. SLOW_ENVIRONMENT_LISTING_MS delays the first
-  // listing's second macOS ps, as a loaded system may.
+  // From then on, a process whose ID a test wrote to replaced.pid shows a start one second (Linux:
+  // one clock tick) later when read on its own, as a process that reused the ID would; with
+  // UNREADABLE_ONCE, its first such read fails instead and later ones are true.
+  // SLOW_ENVIRONMENT_LISTING_MS delays the first listing's second macOS ps, as a loaded system may.
   const failListing = `const childProcess = require("node:child_process");
 const fs = require("node:fs");
 export function failListingsAfter(allowed) {
@@ -948,6 +949,8 @@ export function failListingsAfter(allowed) {
   const { readdirSync, readFileSync: read } = fs;
   const replaced = () => listings > allowed && fs.existsSync("replaced.pid") ? read("replaced.pid", "utf8").trim() : undefined;
   let slowed = !process.env.SLOW_ENVIRONMENT_LISTING_MS;
+  let unreadable = Boolean(process.env.UNREADABLE_ONCE);
+  const later = (text) => text.replace(/:(\\d\\d)(?!:)/, (_, s) => ":" + String(s === "59" ? 58 : Number(s) + 1).padStart(2, "0"));
   childProcess.spawnSync = (command, args, ...rest) => {
     if (command === "ps" && args?.includes("-E") && !slowed) {
       slowed = true;
@@ -955,16 +958,20 @@ export function failListingsAfter(allowed) {
     }
     // A macOS listing runs ps -A -ww once without -E and once with it; it counts once.
     if (command === "ps" && args?.includes("-ww") && !args.includes("-E") && fails()) return { error: failure() };
-    if (command === "ps" && args?.includes("etime=") && args.at(-1) === replaced()) return { pid: 0, status: 0, signal: null, stdout: "1-00:00:00 S\\n", stderr: "" };
+    if (command === "ps" && args?.includes("-p") && args.at(-1) === replaced()) {
+      if (unreadable) { unreadable = false; return { error: failure() }; }
+      if (!process.env.UNREADABLE_ONCE) { const result = spawnSync(command, args, ...rest); return { ...result, stdout: later(result.stdout) }; }
+    }
     return spawnSync(command, args, ...rest);
   };
   fs.readdirSync = (target, ...rest) => { if (target === "/proc" && fails()) throw failure(); return readdirSync(target, ...rest); };
   fs.readFileSync = (target, ...rest) => {
+    if (target === "/proc/" + replaced() + "/stat" && unreadable) { unreadable = false; throw failure(); }
     const text = read(target, ...rest);
-    if (target !== "/proc/" + replaced() + "/stat") return text;
+    if (target !== "/proc/" + replaced() + "/stat" || process.env.UNREADABLE_ONCE) return text;
     const at = text.lastIndexOf(")") + 2;
     const fields = text.slice(at).split(" ");
-    fields[19] = String(Number(fields[19]) + 100000);
+    fields[19] = String(Number(fields[19]) + 1);
     return text.slice(0, at) + fields.join(" ");
   };
   require("node:module").syncBuiltinESMExports();
@@ -1018,7 +1025,7 @@ test("leaves processes, and then listing them fails", () => {
     }
   });
 
-  it("never signals a process the run owned once listing processes fails and its process ID shows a process started at another time", async () => {
+  it("never signals a process the run owned once listing processes fails and its process ID shows a process started a second later", async () => {
     const { dir, record } = project(`test("leaves a process in the run's root", () => {
   const pid = ${orphanProcess("process.env.SFN_TEST_LEAK_GUARD_ROOT")};
   writeFileSync("replaced.pid", String(pid));
@@ -1032,6 +1039,39 @@ test("leaves processes, and then listing them fails", () => {
       expect(output).toContain("Listing processes failed after an earlier listing had succeeded");
       // The process the ID now names is someone else's.
       expect(alive(pid!)).toBe(true);
+    } finally {
+      if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+    }
+  });
+
+  it.each([
+    ["a test file", true],
+    ["a run", false],
+  ])("stops a process %s owned once listing processes fails, although the first read of its start failed", async (_, inFile) => {
+    const { dir, record } = project(inFile ? `import { failListingsAfter } from "./fail-listing.mjs";
+test("leaves a process, and then listing it fails", () => {
+  const pid = ${leakProcess("tmpdir()")};
+  writeFileSync("replaced.pid", String(pid));
+  record({ pid });
+  failListingsAfter(1);
+});` : `test("leaves a process in the run's root", () => {
+  const pid = ${orphanProcess("process.env.SFN_TEST_LEAK_GUARD_ROOT")};
+  writeFileSync("replaced.pid", String(pid));
+  record({ pid });
+});`, { files: { "fail-listing.mjs": failListing }, ...(inFile ? {} : { options: `, globalSetup: [${JSON.stringify(guard)}, "./fail-listing.mjs"]` }) });
+    let pid: number | undefined;
+    try {
+      const { code, output, recorded } = await runProject(dir, record, undefined, { env: { UNREADABLE_ONCE: "1" } });
+      pid = recorded.pid;
+      expect(code, output).not.toBe(0);
+      // That scope's own report lists it among what the guard stopped, not what it only reports.
+      const from = output.indexOf(`DevFn test leak guard: ${inFile ? path.join(dir, "fixture.test.mjs") : `This test run (temp root ${recorded.root})`} left these behind.`);
+      const scoped = output.slice(from, output.indexOf("Stop every process a test starts", from));
+      expect(from, output).toBeGreaterThanOrEqual(0);
+      expect(scoped, output).toContain("Listing processes failed after an earlier listing had succeeded");
+      expect(scoped).toContain(`process ${pid} `);
+      expect(scoped).not.toContain("so it has not stopped them");
+      expect(await gone(pid!)).toBe(true);
     } finally {
       if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
     }
