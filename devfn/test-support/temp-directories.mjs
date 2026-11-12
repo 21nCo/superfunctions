@@ -22,11 +22,15 @@ export function temporaryDirectories(hook) {
     const directories = created;
     created = [];
     if (directories.length === 0) return;
-    const running = await stopProcessesUnder(directories, since);
+    // The directories are removed whether or not the processes could be listed; a listing that fails still fails the test.
+    let running = [];
+    let listing;
+    try { running = await stopProcessesUnder(directories, since); } catch (error) { listing = error; }
     const failed = directories.filter((directory) => !removeTree(directory));
     since = Date.now();
-    if (running.length > 0 || failed.length > 0) {
+    if (listing || running.length > 0 || failed.length > 0) {
       throw new Error([
+        ...(listing ? [listing.message] : []),
         ...running.map((entry) => `Process ${entry.pid} still runs from a test's temp directory: it outlived SIGKILL, or the guard could not tell it was still the process it had listed, so it did not signal it: ${entry.command}`),
         ...failed.map((directory) => `Could not remove the temp directory ${directory}.`),
       ].join("\n"));

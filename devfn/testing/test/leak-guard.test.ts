@@ -1838,6 +1838,80 @@ setInterval(() => {}, 1000);`;
     expect(alive(stranger)).toBe(true);
   });
 
+  it("leaves no unresolved group for an exited leader whose ID names another process right after its group is read, though later reads of it fail", async () => {
+    const { child, pid } = await start(`process.stdout.write("ready\\n"); process.stdin.on("end", () => process.exit(0)); process.stdin.resume();`);
+    const entry = listed(pid);
+    const exited = new Promise((resolve) => child.once("exit", resolve));
+    child.stdin!.end();
+    await exited;
+    // The first read of its start shows it exited, the second another process's start, and every later one fails.
+    let reads = 0;
+    const { spawnSync } = childProcess;
+    const { readFileSync } = fs;
+    const failure = () => Object.assign(new Error("reading failed (test)"), { code: "EIO" });
+    (childProcess as { spawnSync: unknown }).spawnSync = (command: string, args: string[], ...rest: unknown[]) => {
+      const call = (list: string[]) => (spawnSync as (...all: unknown[]) => { stdout: string })(command, list, ...rest);
+      if (command !== "ps" || !args?.includes("-p") || !String(args.at(-1)).split(",").includes(String(pid)) || (reads += 1) === 1) return call(args);
+      if (reads > 2) return { error: failure() };
+      return { ...call(args), status: 0, stdout: call([...args.slice(0, -1), String(process.pid)]).stdout.replace(/^(\s*)\d+/, `$1${pid}`) };
+    };
+    (fs as { readFileSync: unknown }).readFileSync = (target: unknown, ...rest: unknown[]) => {
+      if (target !== `/proc/${pid}/stat` || new Error().stack?.includes("groupMembers") || (reads += 1) === 1) return (readFileSync as (...all: unknown[]) => string)(target, ...rest);
+      if (reads > 2) throw failure();
+      return (readFileSync as (...all: unknown[]) => string)(`/proc/${process.pid}/stat`, ...rest).replace(/^\d+/, String(pid));
+    };
+    syncBuiltinESMExports();
+    restore = () => {
+      Object.assign(childProcess, { spawnSync });
+      Object.assign(fs, { readFileSync });
+      syncBuiltinESMExports();
+    };
+    expect(await stopProcesses([entry], () => [])).toEqual([]);
+  });
+
+  it("removes a test's temp directories though listing processes fails, and still fails the test", async () => {
+    let teardown: (() => Promise<void>) | undefined;
+    const create = temporaryDirectories((hook: () => Promise<void>) => { teardown = hook; });
+    const directory = create("devfn-leak-guard-listing-");
+    const { spawnSync } = childProcess;
+    const { readdirSync } = fs;
+    const failure = () => Object.assign(new Error("listing failed (test)"), { code: "EIO" });
+    (childProcess as { spawnSync: unknown }).spawnSync = (command: string, args: string[], ...rest: unknown[]) =>
+      command === "ps" && args?.includes("-A") ? { error: failure() } : (spawnSync as (...all: unknown[]) => unknown)(command, args, ...rest);
+    (fs as { readdirSync: unknown }).readdirSync = (target: unknown, ...rest: unknown[]) => {
+      if (target === "/proc") throw failure();
+      return (readdirSync as (...all: unknown[]) => unknown)(target, ...rest);
+    };
+    syncBuiltinESMExports();
+    restore = () => {
+      Object.assign(childProcess, { spawnSync });
+      Object.assign(fs, { readdirSync });
+      syncBuiltinESMExports();
+    };
+    await expect(teardown!()).rejects.toThrow("Listing processes failed every time the guard tried");
+    expect(existsSync(directory)).toBe(false);
+  });
+
+  it.runIf(process.platform === "darwin")("fails a listing whose working directories or environments could not be read in full", async () => {
+    const { spawnSync } = childProcess;
+    let failing: "lsof" | "environment" | undefined;
+    (childProcess as { spawnSync: unknown }).spawnSync = (command: string, args: string[], ...rest: unknown[]) => {
+      const result = (spawnSync as (...all: unknown[]) => { status: number })(command, args, ...rest);
+      if (failing === "lsof" && command === "lsof") return { error: Object.assign(new Error("lsof failed (test)"), { code: "EIO" }) };
+      return failing === "environment" && command === "ps" && args?.includes("-E") ? { ...result, status: 1 } : result;
+    };
+    syncBuiltinESMExports();
+    restore = () => {
+      Object.assign(childProcess, { spawnSync });
+      syncBuiltinESMExports();
+    };
+    expect(listProcesses(0)).toBeDefined();
+    for (const mode of ["lsof", "environment"] as const) {
+      failing = mode;
+      expect(listProcesses(0), mode).toBeUndefined();
+    }
+  });
+
   it("keeps returning an unresolved exited leader whose own start cannot be read, without trusting a read of its group", async () => {
     const { member, entry } = await exitedLeader();
     rereadAfterFailures(entry.pid, "unreadable");

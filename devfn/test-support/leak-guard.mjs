@@ -207,7 +207,8 @@ function listDarwin(sinceMs) {
   const plain = run("ps", ["-A", "-ww", ...columns], 15_000, UTC_TOOL_ENV());
   // -E appends each process's initial environment to its command; it is read only to find the marker.
   const withEnvironment = run("ps", ["-A", "-ww", "-E", ...columns], 15_000, UTC_TOOL_ENV());
-  if (!plain || plain.status !== 0 || !withEnvironment) return undefined;
+  // A listing cut short (a signal) or that failed fails this one: with -E it carries each process's marker.
+  if ([plain, withEnvironment].some((result) => !result || result.status !== 0 || result.signal)) return undefined;
   const line = new RegExp(`^\\s*(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\S+)\\s+(\\S+)\\s+${LSTART}(?:\\s(.*))?$`);
   const parse = (output) => new Map(output.split("\n").flatMap((text) => {
     const match = line.exec(text);
@@ -231,6 +232,9 @@ function listDarwin(sinceMs) {
   const recent = processes.filter((entry) => entry.elapsed <= window && entry.pid !== process.pid);
   if (recent.length > 0) {
     const lsof = run("lsof", ["-nP", "-a", "-d", "cwd", "-Fpn", "-p", recent.map((entry) => entry.pid).join(",")]);
+    // lsof exits 1 when a process has exited meanwhile; one that failed or was cut short fails the
+    // listing, since on macOS a working directory may be all that ties a process to the run.
+    if (!lsof || lsof.signal) return undefined;
     const byPid = new Map(processes.map((entry) => [entry.pid, entry]));
     let current;
     for (const line of lsof?.stdout.split("\n") ?? []) {
@@ -604,11 +608,12 @@ function signalAll(processes, signal, held = new Map()) {
       continue;
     }
     if (leads && current?.exited) {
-      const { members, complete } = exitedGroup(entry);
+      const { members, complete, other } = exitedGroup(entry);
       if (members.some((member) => inLeadersGroup(entry, member) && identityOf(member)?.pgid === entry.pid)) send(entry, -entry.pid, members);
       else hold(members);
-      // A group read only in part is not taken for all of it: its leader stands for the rest, as unresolved.
-      if (complete) held.delete(keyOf(entry));
+      // A group read only in part is not taken for all of it: its leader stands for the rest, as
+      // unresolved. Once its ID names another process, its group may be a new one, and it leaves.
+      if (complete || other) held.delete(keyOf(entry));
       else held.set(keyOf(entry), { ...entry, unresolvedGroup: true });
       reread();
     }
