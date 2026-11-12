@@ -327,11 +327,68 @@ describe('phase-16 static signature check', () => {
     ];
     for (const [label, envelope] of cases) {
       const runtime = verifyRegistrySignatureEnvelope(catalog, envelope, root.pem);
-      expect(phase16.verifyRegistrySignatureFile(catalog, envelope, root.pem), label)
-        .toEqual({ valid: runtime.ok, keyId: root.keyId, catalogSha256: sha256Hex(catalog) });
+      expect(phase16.verifyRegistrySignatureFile(catalog, envelope, root.pem), label).toEqual(runtime.ok
+        ? { valid: true, keyId: root.keyId, catalogSha256: sha256Hex(catalog) }
+        : { valid: false, keyId: root.keyId, catalogSha256: sha256Hex(catalog), reason: runtime.reason });
     }
     expect(phase16.verifyRegistrySignatureFile(catalog, REGISTRY_SIGNATURE, REGISTRY_TRUST_ROOT_PUBLIC_KEY_PEM))
       .toEqual({ valid: true, keyId: PINNED_KEY_ID, catalogSha256: sha256Hex(catalog) });
+  });
+
+  it('fails closed without throwing for trust roots that are not a parseable Ed25519 key', async () => {
+    const phase16 = await import(pathToFileURL(path.join(repoRoot, 'scripts/verify-uifn-phase-16.mjs')).href);
+    const input = registrySigningInput(Buffer.from(catalog));
+    /** A non-Ed25519 root whose envelope carries the root's own derived key id and a 64-byte signature it verifies. */
+    const foreignRoot = (label: string, type: 'ec' | 'rsa', options: object, signOptions: object = {}): [string, string, unknown] => {
+      const { privateKey, publicKey } = generateKeyPairSync(type as 'ec', options as { namedCurve: string });
+      let signature = Buffer.alloc(0);
+      for (let attempt = 0; attempt < 512 && signature.length !== 64; attempt += 1) {
+        signature = sign(null, input, { key: privateKey, ...signOptions });
+      }
+      expect(signature, label).toHaveLength(64);
+      const envelope = { ...envelopeFor(root, catalog), keyId: registryKeyId(publicKey), signatureBase64: signature.toString('base64') };
+      return [label, publicKey.export({ type: 'spki', format: 'pem' }).toString(), envelope];
+    };
+    const roots: [string, string, unknown][] = [
+      ['malformed PEM', '-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----\n', envelopeFor(root, catalog)],
+      ['empty PEM', '', envelopeFor(root, catalog)],
+      foreignRoot('P-224 root', 'ec', { namedCurve: 'P-224' }),
+      foreignRoot('P-256 root', 'ec', { namedCurve: 'prime256v1' }, { dsaEncoding: 'ieee-p1363' }),
+      foreignRoot('RSA root', 'rsa', { modulusLength: 512 }),
+    ];
+    for (const [label, pem, envelope] of roots) {
+      let runtime: ReturnType<typeof verifyRegistrySignatureEnvelope> | undefined;
+      let file: unknown;
+      expect(() => { runtime = verifyRegistrySignatureEnvelope(catalog, envelope, pem); }, label).not.toThrow();
+      expect(() => { file = phase16.verifyRegistrySignatureFile(catalog, envelope, pem); }, label).not.toThrow();
+      expect(runtime, label).toEqual({ ...INVALID, reason: 'trust-root-invalid', keyId: '', catalogSha256: sha256Hex(catalog) });
+      expect(file, label).toEqual({ valid: false, keyId: '', catalogSha256: sha256Hex(catalog), reason: 'trust-root-invalid' });
+    }
+  });
+
+  it('delegates to the runtime verifier instead of carrying its own copy of the signature rules', () => {
+    const phase16Source = readFileSync(path.join(repoRoot, 'scripts/verify-uifn-phase-16.mjs'), 'utf8');
+    const runtimeSource = readFileSync(path.join(packageRoot, 'src/trust-verify.ts'), 'utf8');
+    for (const source of [phase16Source, runtimeSource]) {
+      expect(source).toContain('trust-verify-core.mjs');
+      expect(source).not.toMatch(/createPublicKey|uifn-registry-v2|signatureBase64/);
+    }
+  });
+
+  it('reports UIFN_REGISTRY_SIGNATURE_INVALID from inspectPhase16 instead of throwing on an unusable trust root', async () => {
+    const phase16 = await import(pathToFileURL(path.join(repoRoot, 'scripts/verify-uifn-phase-16.mjs')).href);
+    const pemPath = path.join(packageRoot, 'trust/registry-ed25519-public.pem');
+    const pinned = readFileSync(pemPath, 'utf8');
+    try {
+      writeFileSync(pemPath, '-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----\n');
+      let inspection: { failures: { code: string; reason?: string }[]; signature: { valid: boolean } } | undefined;
+      expect(() => { inspection = phase16.inspectPhase16(); }).not.toThrow();
+      expect(inspection?.signature.valid).toBe(false);
+      expect(inspection?.failures).toContainEqual({ code: 'UIFN_REGISTRY_SIGNATURE_INVALID', reason: 'trust-root-invalid' });
+    } finally {
+      writeFileSync(pemPath, pinned);
+    }
+    expect(readFileSync(pemPath, 'utf8')).toBe(pinned);
   });
 });
 
