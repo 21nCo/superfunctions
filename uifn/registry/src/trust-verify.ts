@@ -1,4 +1,5 @@
 import { createHash, createPublicKey, verify, type KeyObject } from 'node:crypto';
+import { types } from 'node:util';
 
 /** Domain of the schema-v2 registry signature. The signed input is UTF8(domain + "\0") || SHA-256(catalog-bytes). */
 export const REGISTRY_SIGNATURE_DOMAIN = 'uifn-registry-v2';
@@ -57,13 +58,15 @@ export function registrySigningInput(catalogBytes: Uint8Array): Buffer {
 type EnvelopeFields = Record<(typeof ENVELOPE_FIELDS)[number], unknown>;
 
 /**
- * Copies the envelope's own data properties into a plain record. Only own property descriptors are read, so an
- * accessor property is rejected instead of being invoked. A value that is not a plain object with exactly the
+ * Copies the envelope's own data properties into a plain record. A Proxy is rejected before any reflective
+ * operation, so none of its traps run. Only own property descriptors are read, so an accessor property is rejected
+ * instead of being invoked. A value that is not a plain object with exactly the
  * schema-v2 fields is malformed; an envelope whose schemaVersion is not 2 (such as a v1 envelope, which has no
  * domain field) is reported as an unsupported schema.
  */
 function readEnvelope(value: unknown): { fields: EnvelopeFields } | { reason: RegistrySignatureFailure } {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return { reason: 'envelope-malformed' };
+  if (value === null || typeof value !== 'object' || types.isProxy(value)) return { reason: 'envelope-malformed' };
+  if (Array.isArray(value)) return { reason: 'envelope-malformed' };
   const prototype = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) return { reason: 'envelope-malformed' };
   const schema = Object.getOwnPropertyDescriptor(value, 'schemaVersion');
@@ -111,7 +114,7 @@ export function verifyRegistrySignatureEnvelope(
   try {
     envelopeRead = readEnvelope(envelope);
   } catch {
-    // A proxy trap that throws is a malformed envelope.
+    // Defensive: proxies are rejected before reflection, so an ordinary envelope cannot throw here.
     return fail('envelope-malformed');
   }
   if ('reason' in envelopeRead) return fail(envelopeRead.reason);
@@ -124,7 +127,10 @@ export function verifyRegistrySignatureEnvelope(
   if (fields.catalogSha256 !== catalogSha256) return fail('digest-mismatch');
   if (typeof fields.signatureBase64 !== 'string' || !BASE64.test(fields.signatureBase64)) return fail('envelope-malformed');
   const signature = Buffer.from(fields.signatureBase64, 'base64');
-  if (signature.length !== ED25519_SIGNATURE_BYTES) return fail('envelope-malformed');
+  // Canonical encoding only: Buffer.from ignores nonzero unused pad bits, so the decoded bytes must re-encode exactly.
+  if (signature.length !== ED25519_SIGNATURE_BYTES || signature.toString('base64') !== fields.signatureBase64) {
+    return fail('envelope-malformed');
+  }
 
   let valid = false;
   try {

@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSy
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { types } from 'node:util';
 import { DELIVERY_GENERATOR_VERSION } from './uifn-delivery-generator.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -64,6 +65,38 @@ function latestParityTraceRoot() {
   const evidenceRoot = path.join(root, 'uifn/.conduct/evidence/phase-14');
   const candidates = existsSync(evidenceRoot) ? readdirSync(evidenceRoot).sort().reverse() : [];
   return candidates.map((name) => path.join(evidenceRoot, name, 'traces')).find((candidate) => existsSync(path.join(candidate, 'package-react.json')) && existsSync(path.join(candidate, 'source-solid.json')));
+}
+
+const REGISTRY_ENVELOPE_FIELDS = ['algorithm', 'catalogSha256', 'domain', 'keyId', 'schemaVersion', 'signatureBase64'];
+
+// Same acceptance rules as uifn/registry/src/trust-verify.ts: a plain object with exactly the six schema-v2 data
+// fields, schemaVersion 2, Ed25519, domain uifn-registry-v2, the pinned key id, the recomputed catalog digest and a
+// canonical Base64 64-byte signature over UTF8("uifn-registry-v2\0") || SHA-256(catalog-bytes).
+export function verifyRegistrySignatureFile(catalogSource, signature, publicKeyPem) {
+  const catalogSha256 = sha256(catalogSource);
+  const keyId = sha256(createPublicKey(publicKeyPem).export({ format: 'der', type: 'spki' })).slice(0, 24);
+  const result = (valid) => ({ valid, keyId, catalogSha256 });
+  if (signature === null || typeof signature !== 'object' || types.isProxy(signature) || Array.isArray(signature)) return result(false);
+  const prototype = Object.getPrototypeOf(signature);
+  if (prototype !== Object.prototype && prototype !== null) return result(false);
+  const keys = Reflect.ownKeys(signature);
+  if (keys.length !== REGISTRY_ENVELOPE_FIELDS.length) return result(false);
+  const fields = {};
+  for (const field of REGISTRY_ENVELOPE_FIELDS) {
+    const descriptor = Object.getOwnPropertyDescriptor(signature, field);
+    if (!descriptor || !('value' in descriptor)) return result(false);
+    fields[field] = descriptor.value;
+  }
+  if (fields.schemaVersion !== 2 || fields.algorithm !== 'Ed25519' || fields.domain !== 'uifn-registry-v2'
+    || fields.keyId !== keyId || fields.catalogSha256 !== catalogSha256 || typeof fields.signatureBase64 !== 'string') return result(false);
+  const signatureBytes = Buffer.from(fields.signatureBase64, 'base64');
+  if (signatureBytes.length !== 64 || signatureBytes.toString('base64') !== fields.signatureBase64) return result(false);
+  const signingInput = Buffer.concat([Buffer.from('uifn-registry-v2\0', 'utf8'), createHash('sha256').update(catalogSource).digest()]);
+  try {
+    return result(verify(null, signingInput, publicKeyPem, signatureBytes));
+  } catch {
+    return result(false);
+  }
 }
 
 export function inspectPhase16() {
@@ -126,17 +159,7 @@ export function inspectPhase16() {
   const legacyCatalogCount = existsSync(legacyCatalogRoot) ? readdirSync(legacyCatalogRoot).filter((name) => name.endsWith('.json')).length : 0;
   if (legacyCatalogCount) failures.push({ code: 'UIFN_REGISTRY_DUPLICATE_CATALOG', count: legacyCatalogCount });
 
-  const catalogSha256 = sha256(catalogSource);
-  const keyId = sha256(createPublicKey(publicKey).export({ format: 'der', type: 'spki' })).slice(0, 24);
-  // Schema-v2 envelope: the signed input is UTF8("uifn-registry-v2\0") || SHA-256(catalog-bytes), recomputed here.
-  const signingInput = Buffer.concat([Buffer.from('uifn-registry-v2\0', 'utf8'), createHash('sha256').update(catalogSource).digest()]);
-  const signatureValid = signature.schemaVersion === 2
-    && signature.algorithm === 'Ed25519'
-    && signature.domain === 'uifn-registry-v2'
-    && signature.catalogSha256 === catalogSha256
-    && signature.keyId === keyId
-    && typeof signature.signatureBase64 === 'string'
-    && verify(null, signingInput, publicKey, Buffer.from(signature.signatureBase64, 'base64'));
+  const { valid: signatureValid, keyId, catalogSha256 } = verifyRegistrySignatureFile(catalogSource, signature, publicKey);
   if (!signatureValid) failures.push({ code: 'UIFN_REGISTRY_SIGNATURE_INVALID' });
 
   const registrySources = ['schema.ts', 'trust.ts', 'trust-verify.ts', 'trust-root.ts', 'build-registry.ts', 'plan.ts', 'transaction.ts', 'add.ts', 'diff.ts', 'update.ts', 'remove.ts', 'lockfile.ts', 'cli.ts'];

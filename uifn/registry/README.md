@@ -24,7 +24,7 @@ AWS KMS accepts at most 4,096 bytes per `Sign` request, so the key signs a domai
 UTF8("uifn-registry-v2\0") || SHA-256(catalog-bytes)
 ```
 
-The verifier (`src/trust-verify.ts`) recomputes the catalog SHA-256 and that 49-byte input itself; it never trusts a digest supplied only by the envelope. It accepts only an envelope with exactly the schema-v2 fields, `schemaVersion: 2`, `algorithm: "Ed25519"`, `domain: "uifn-registry-v2"`, the pinned key ID, a `catalogSha256` equal to the recomputed digest, and a 64-byte signature that verifies against the pinned key. Anything else, including a schema-v1 envelope, fails with `UIFN_REGISTRY_SIGNATURE_INVALID` and a `reason`.
+The verifier (`src/trust-verify.ts`) recomputes the catalog SHA-256 and that 49-byte input itself; it never trusts a digest supplied only by the envelope. It accepts only a plain (non-Proxy) envelope with exactly the schema-v2 data fields, `schemaVersion: 2`, `algorithm: "Ed25519"`, `domain: "uifn-registry-v2"`, the pinned key ID, a `catalogSha256` equal to the recomputed digest, and a canonically Base64-encoded 64-byte signature that verifies against the pinned key. Anything else, including a schema-v1 envelope, fails with `UIFN_REGISTRY_SIGNATURE_INVALID` and a `reason`.
 
 Schema-v1 signatures from the retired local development key are not accepted by this or later versions. Versions published before the KMS cutover bundle their own pinned key and v1 signature and keep verifying as before.
 

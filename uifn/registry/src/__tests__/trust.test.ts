@@ -39,6 +39,37 @@ function envelopeFor(key: TestKey, catalog: string, message: Uint8Array = regist
 const catalog = REGISTRY_CATALOG_PAYLOAD_JSON;
 const root = testKey();
 
+const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+/** Sets an unused pad bit of a 64-byte signature's Base64 form; Buffer.from still decodes the same 64 bytes. */
+function withAlteredPadBits(signatureBase64: string): string {
+  const index = signatureBase64.length - 3;
+  const altered = BASE64_ALPHABET[BASE64_ALPHABET.indexOf(signatureBase64[index]!) ^ 1]!;
+  return `${signatureBase64.slice(0, index)}${altered}${signatureBase64.slice(index + 1)}`;
+}
+
+/** Envelopes the schema-v2 verifier must reject as malformed. */
+const malformedEnvelopes = (): [string, unknown][] => [
+    ['null', null],
+    ['undefined', undefined],
+    ['a string', JSON.stringify(envelopeFor(root, catalog))],
+    ['an array', [envelopeFor(root, catalog)]],
+    ['a class instance', Object.assign(new (class Envelope {})(), envelopeFor(root, catalog))],
+    ['no schemaVersion', (({ schemaVersion: _, ...rest }) => rest)(envelopeFor(root, catalog))],
+    ['a missing signature', (({ signatureBase64: _, ...rest }) => rest)(envelopeFor(root, catalog))],
+    ['an extra field', { ...envelopeFor(root, catalog), note: 'x' }],
+    ['an extra symbol field', { ...envelopeFor(root, catalog), [Symbol('x')]: 1 }],
+    ['an upper-case key id', { ...envelopeFor(root, catalog), keyId: root.keyId.toUpperCase() }],
+    ['a short key id', { ...envelopeFor(root, catalog), keyId: root.keyId.slice(0, 23) }],
+    ['an upper-case digest', { ...envelopeFor(root, catalog), catalogSha256: sha256Hex(catalog).toUpperCase() }],
+    ['a numeric digest', { ...envelopeFor(root, catalog), catalogSha256: 7 }],
+    ['non-base64 signature', { ...envelopeFor(root, catalog), signatureBase64: '!!!!' }],
+    ['unpadded signature', { ...envelopeFor(root, catalog), signatureBase64: envelopeFor(root, catalog).signatureBase64.replace(/=+$/, '') }],
+    ['a 63-byte signature', { ...envelopeFor(root, catalog), signatureBase64: Buffer.alloc(63).toString('base64') }],
+    ['an empty signature', { ...envelopeFor(root, catalog), signatureBase64: '' }],
+    ['noncanonical signature pad bits', { ...envelopeFor(root, catalog), signatureBase64: withAlteredPadBits(envelopeFor(root, catalog).signatureBase64) }],
+];
+
 describe('schema-v2 registry signature verification', () => {
   it('accepts a schema-v2 envelope signed over UTF8("uifn-registry-v2\\0") || SHA-256(catalog)', () => {
     const input = registrySigningInput(Buffer.from(catalog));
@@ -174,25 +205,7 @@ describe('schema-v2 registry signature verification', () => {
   describe('malformed envelopes', () => {
     const valid = () => envelopeFor(root, catalog);
 
-    it.each([
-      ['null', null],
-      ['undefined', undefined],
-      ['a string', JSON.stringify(envelopeFor(root, catalog))],
-      ['an array', [envelopeFor(root, catalog)]],
-      ['a class instance', Object.assign(new (class Envelope {})(), envelopeFor(root, catalog))],
-      ['no schemaVersion', (({ schemaVersion: _, ...rest }) => rest)(envelopeFor(root, catalog))],
-      ['a missing signature', (({ signatureBase64: _, ...rest }) => rest)(envelopeFor(root, catalog))],
-      ['an extra field', { ...envelopeFor(root, catalog), note: 'x' }],
-      ['an extra symbol field', { ...envelopeFor(root, catalog), [Symbol('x')]: 1 }],
-      ['an upper-case key id', { ...envelopeFor(root, catalog), keyId: root.keyId.toUpperCase() }],
-      ['a short key id', { ...envelopeFor(root, catalog), keyId: root.keyId.slice(0, 23) }],
-      ['an upper-case digest', { ...envelopeFor(root, catalog), catalogSha256: sha256Hex(catalog).toUpperCase() }],
-      ['a numeric digest', { ...envelopeFor(root, catalog), catalogSha256: 7 }],
-      ['non-base64 signature', { ...envelopeFor(root, catalog), signatureBase64: '!!!!' }],
-      ['unpadded signature', { ...envelopeFor(root, catalog), signatureBase64: envelopeFor(root, catalog).signatureBase64.replace(/=+$/, '') }],
-      ['a 63-byte signature', { ...envelopeFor(root, catalog), signatureBase64: Buffer.alloc(63).toString('base64') }],
-      ['an empty signature', { ...envelopeFor(root, catalog), signatureBase64: '' }],
-    ])('rejects %s', (_label, envelope) => {
+    it.each(malformedEnvelopes())('rejects %s', (_label, envelope) => {
       expect(verifyRegistrySignatureEnvelope(catalog, envelope, root.pem)).toMatchObject({ ...INVALID, reason: 'envelope-malformed', keyId: root.keyId });
     });
 
@@ -202,6 +215,34 @@ describe('schema-v2 registry signature verification', () => {
       Object.defineProperty(envelope, 'signatureBase64', { enumerable: true, get() { invoked = true; return valid().signatureBase64; } });
       expect(verifyRegistrySignatureEnvelope(catalog, envelope, root.pem)).toMatchObject({ ...INVALID, reason: 'envelope-malformed' });
       expect(invoked).toBe(false);
+    });
+
+    it('rejects a proxy without running any of its traps', () => {
+      const traps: string[] = [];
+      const recording = <T extends object>(target: T) => new Proxy(target, new Proxy({}, {
+        get: (_handler, trap: string) => (...args: unknown[]) => {
+          traps.push(trap);
+          return (Reflect as unknown as Record<string, (...a: unknown[]) => unknown>)[trap]!(...args);
+        },
+      }));
+      // Even a proxy over a valid envelope is rejected, before inspection.
+      expect(verifyRegistrySignatureEnvelope(catalog, valid(), root.pem)).toMatchObject({ ok: true });
+      expect(verifyRegistrySignatureEnvelope(catalog, recording(valid()), root.pem)).toMatchObject({ ...INVALID, reason: 'envelope-malformed' });
+      expect(verifyRegistryCatalogSignature(REGISTRY_CATALOG_PAYLOAD_JSON, recording({ ...REGISTRY_SIGNATURE })))
+        .toMatchObject({ ...INVALID, reason: 'envelope-malformed', keyId: PINNED_KEY_ID });
+      expect(verifyRegistrySignatureEnvelope(catalog, recording(Object.assign(Object.create(null), valid())), root.pem))
+        .toMatchObject({ ...INVALID, reason: 'envelope-malformed' });
+      expect(traps).toEqual([]);
+    });
+
+    it('accepts the canonical signature whose pad-bit variant is rejected', () => {
+      const envelope = valid();
+      const altered = withAlteredPadBits(envelope.signatureBase64);
+      expect(altered).not.toBe(envelope.signatureBase64);
+      expect(Buffer.from(altered, 'base64')).toEqual(Buffer.from(envelope.signatureBase64, 'base64'));
+      expect(verifyRegistrySignatureEnvelope(catalog, envelope, root.pem)).toMatchObject({ ok: true });
+      expect(verifyRegistrySignatureEnvelope(catalog, { ...envelope, signatureBase64: altered }, root.pem))
+        .toMatchObject({ ...INVALID, reason: 'envelope-malformed' });
     });
 
     it('fails closed when a proxy trap throws', () => {
@@ -266,6 +307,31 @@ describe('KMS signer interoperability', () => {
     const pem = publicKey.export({ type: 'spki', format: 'pem' }).toString();
     expect(verifyRegistrySignatureEnvelope(catalog, written, pem)).toMatchObject({ ok: true, keyId: registryKeyId(publicKey) });
     expect(Buffer.from(signer.registryV2SigningInput(Buffer.from(catalog)))).toEqual(registrySigningInput(Buffer.from(catalog)));
+  });
+});
+
+describe('phase-16 static signature check', () => {
+  it('accepts exactly the envelopes the runtime verifier accepts', async () => {
+    const phase16 = await import(pathToFileURL(path.join(repoRoot, 'scripts/verify-uifn-phase-16.mjs')).href);
+    const other = testKey();
+    const valid = envelopeFor(root, catalog);
+    const cases: [string, unknown][] = [
+      ['valid', valid],
+      ['null-prototype valid', Object.assign(Object.create(null), valid)],
+      ['tampered digest', { ...valid, catalogSha256: sha256Hex(`${catalog} `) }],
+      ['wrong key', envelopeFor(other, catalog)],
+      ['schema v1', { schemaVersion: 1, algorithm: 'Ed25519', keyId: root.keyId, catalogSha256: sha256Hex(catalog), signatureBase64: valid.signatureBase64 }],
+      ['wrong domain', { ...valid, domain: 'uifn-registry-v1' }],
+      ['proxy over valid', new Proxy(valid, {})],
+      ...malformedEnvelopes(),
+    ];
+    for (const [label, envelope] of cases) {
+      const runtime = verifyRegistrySignatureEnvelope(catalog, envelope, root.pem);
+      expect(phase16.verifyRegistrySignatureFile(catalog, envelope, root.pem), label)
+        .toEqual({ valid: runtime.ok, keyId: root.keyId, catalogSha256: sha256Hex(catalog) });
+    }
+    expect(phase16.verifyRegistrySignatureFile(catalog, REGISTRY_SIGNATURE, REGISTRY_TRUST_ROOT_PUBLIC_KEY_PEM))
+      .toEqual({ valid: true, keyId: PINNED_KEY_ID, catalogSha256: sha256Hex(catalog) });
   });
 });
 
