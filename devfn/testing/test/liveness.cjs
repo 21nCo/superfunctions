@@ -14,7 +14,8 @@ function live(pid) {
       return !/^[ZX]/.test(stat.slice(stat.lastIndexOf(")") + 2));
     } catch { return false; }
   }
-  const state = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).stdout.trim();
+  // The system's own ps, by absolute path and with a fixed system PATH, never one the inherited PATH names.
+  const state = spawnSync("/bin/ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8", env: { PATH: "/bin:/usr/bin", LC_ALL: "C" } }).stdout.trim();
   return state !== "" && !state.startsWith("Z");
 }
 

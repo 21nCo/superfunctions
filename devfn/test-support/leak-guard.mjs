@@ -121,6 +121,7 @@ function linuxClockTicks() {
 }
 
 function listLinux() {
+  const listedAt = Date.now();
   let names;
   try { names = readdirSync("/proc"); } catch { return undefined; }
   let uptime;
@@ -142,7 +143,7 @@ function listLinux() {
     const elapsed = uptime === undefined ? undefined : Math.max(0, Math.floor(uptime - Number(fields[19]) / linuxClockTicks()));
     // `command` is the arguments joined with spaces, for reports and matching a program name.
     // `started`, field 22 itself, tells this process from a later one given its ID (stillRunning).
-    processes.push({ pid, ppid: Number(fields[1]), pgid: Number(fields[2]), elapsed, started: Number(fields[19]), command: argv.replaceAll("\0", " ").trim(), argv, environment: read("environ"), separated: true, cwd });
+    processes.push({ pid, ppid: Number(fields[1]), pgid: Number(fields[2]), elapsed, started: Number(fields[19]), listedAt, command: argv.replaceAll("\0", " ").trim(), argv, environment: read("environ"), separated: true, cwd });
   }
   return processes;
 }
@@ -155,6 +156,7 @@ const LSTART = String.raw`(\S+\s+\S+\s+\d+\s+\d+:\d+:\d+\s+\d+)`;
 const darwinStart = (lstart) => `darwin-utc:${lstart.replaceAll(/\s+/g, " ")}`;
 
 function listDarwin(sinceMs) {
+  const listedAt = Date.now();
   const columns = ["-o", "pid=", "-o", "ppid=", "-o", "pgid=", "-o", "etime=", "-o", "stat=", "-o", "lstart=", "-o", "command="];
   const plain = run("ps", ["-A", "-ww", ...columns], 15_000, UTC_TOOL_ENV());
   // -E appends each process's initial environment to its command; it is read only to find the marker.
@@ -172,7 +174,7 @@ function listDarwin(sinceMs) {
     if (entry.state.startsWith("Z") || pid === plain.pid || pid === withEnvironment.pid) continue;
     const full = environments.get(pid)?.text ?? "";
     // `started`, its absolute start, tells this process from a later one given its ID (stillRunning).
-    processes.push({ pid, ppid: entry.ppid, pgid: entry.pgid, elapsed: entry.elapsed, started: entry.started, command: entry.text.trim(), environment: full.startsWith(entry.text) ? full.slice(entry.text.length) : "", cwd: undefined });
+    processes.push({ pid, ppid: entry.ppid, pgid: entry.pgid, elapsed: entry.elapsed, started: entry.started, listedAt, command: entry.text.trim(), environment: full.startsWith(entry.text) ? full.slice(entry.text.length) : "", cwd: undefined });
   }
   // Working directories come from lsof, for processes started since the run began only.
   const window = Math.ceil((Date.now() - sinceMs) / 1000) + 5;
@@ -497,72 +499,154 @@ function ownProcessGroup() {
 }
 
 /**
- * Signals each process. A process that leads its own group (a detached wrapper) is signalled with
- * its whole group, which holds only what it started, even once the leader itself has exited: what
- * it started on its way out is still in that group. Any other process is signalled on its own,
- * and only while it is still running, so a reused process ID is not hit.
+ * Signals each process the guard can tell, just before it signals it, is still the process its
+ * listing found: the same process ID with the same start (identityOf), running and not a zombie.
+ * A process that leads its own group (a detached wrapper) is signalled with its whole group, which
+ * holds only what it started. Once that leader has exited, what it started on its way out is
+ * still in its group, so the group is signalled while it has a member started no earlier than
+ * the leader and the guard saw the leader as itself (in a listing, or just before a signal) at
+ * most GROUP_TRUST_MS before. A process ID that now names a process started at another time is
+ * never signalled, nor is its group, and nor is a process whose start cannot be read. Returns
+ * those it signalled.
  */
 function signalAll(processes, signal) {
   const group = ownProcessGroup();
+  const signalled = [];
+  const send = (entry, target) => { signalled.push(entry); try { process.kill(target, signal); } catch { /* ESRCH: already gone */ } };
   for (const entry of processes) {
     const leads = entry.pgid === entry.pid && entry.pgid !== group;
-    if (!leads && !alive(entry.pid)) continue;
-    try { process.kill(leads ? -entry.pid : entry.pid, signal); } catch { /* ESRCH: already gone */ }
+    const current = identityOf(entry);
+    if (current?.same) {
+      seenAt.set(`${entry.pid}:${entry.started}`, Date.now());
+      send(entry, leads && current.pgid === entry.pid ? -entry.pid : entry.pid);
+    } else if (leads && current?.exited && Date.now() - Math.max(entry.listedAt ?? 0, seenAt.get(`${entry.pid}:${entry.started}`) ?? 0) <= GROUP_TRUST_MS
+      && groupStarts(entry.pid)?.some((started) => startOrder(started) >= startOrder(entry.started))) send(entry, -entry.pid);
   }
+  return signalled;
 }
 
-async function waitForExit(processes, graceMs) {
-  for (const deadline = Date.now() + graceMs; Date.now() < deadline && processes.some((entry) => alive(entry.pid));) await pause(100);
+// A group ID in use is never given to a new process, so an exited leader's group can be another
+// only if every process in it exited and its ID went to a new group leader, all within this while
+// since the guard saw the leader: that takes the system's whole range of process IDs, as a start a
+// second apart does (identityOf).
+const GROUP_TRUST_MS = 5_000;
+const seenAt = new Map();
+
+/** A start as listings record it, as a number that orders starts: Linux clock ticks, macOS seconds. */
+function startOrder(started) {
+  if (typeof started === "number") return started;
+  const [, month, day, clock, year] = String(started).replace(/^darwin-utc:/, "").split(" ");
+  const [hours, minutes, seconds] = (clock ?? "").split(":").map(Number);
+  const index = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].indexOf(month);
+  return index < 0 ? Number.NaN : Date.UTC(Number(year), index, Number(day), hours, minutes, seconds) / 1000;
 }
+
+/** The starts of the running processes in group `pgid`, or undefined when they cannot be listed. */
+function groupStarts(pgid) {
+  if (process.platform === "linux") {
+    let names;
+    try { names = readdirSync("/proc"); } catch { return undefined; }
+    return names.filter((name) => /^\d+$/.test(name)).flatMap((name) => {
+      try {
+        const stat = readFileSync(`/proc/${name}/stat`, "utf8");
+        const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+        return Number(fields[2]) === pgid && !/^[ZX]/.test(fields[0]) ? [Number(fields[19])] : [];
+      } catch { return []; }
+    });
+  }
+  if (process.platform !== "darwin") return undefined;
+  const listing = run("ps", ["-A", "-o", "pgid=", "-o", "stat=", "-o", "lstart="], 15_000, UTC_TOOL_ENV());
+  if (!listing || listing.status !== 0) return undefined;
+  return listing.stdout.split("\n").flatMap((line) => {
+    const match = new RegExp(`^\\s*(\\d+)\\s+(\\S+)\\s+${LSTART}`).exec(line);
+    return match && Number(match[1]) === pgid && !match[2].startsWith("Z") ? [darwinStart(match[3])] : [];
+  });
+}
+
+/** Whether `entry` may still run: not when its ID names no process, a zombie or a process started at another time. */
+const mayRun = (entry) => alive(entry.pid) && stillRunning(entry) !== false;
+
+async function waitForExit(processes, graceMs) {
+  for (const deadline = Date.now() + graceMs; Date.now() < deadline && processes.some(mayRun);) await pause(100);
+}
+
+const sameProcesses = (a, b) => {
+  const keys = new Set(a.map((entry) => `${entry.pid}:${entry.started}`));
+  return keys.size === b.length && b.every((entry) => keys.has(`${entry.pid}:${entry.started}`));
+};
 
 /**
  * Stops the given processes: SIGTERM to each (its group when it leads one), then SIGKILL to each
- * and to every group one of them led. A process may start another as it stops, such as a
- * wrapper's SIGTERM handler, so with `find`, which lists the scope's processes again, it keeps
- * killing whatever the scope still holds until nothing is left or STOP_DEADLINE_MS has passed.
+ * and to every group one of them led, each only once signalAll can tell it is still the process
+ * listed. A process may start another as it stops, such as a wrapper's SIGTERM handler, so with
+ * `find`, which lists the scope's processes again, it keeps killing whatever the scope still holds
+ * until nothing is left, STOP_DEADLINE_MS has passed, or a round signals nothing and the listing
+ * still shows the same processes, which the guard could not tell are still the ones it found.
  * Returns the processes still running: what `find` still lists, or else those of the given ones
- * still alive.
+ * that may still run.
  */
 export async function stopProcesses(processes, find) {
   const deadline = Date.now() + STOP_DEADLINE_MS;
-  signalAll(processes, "SIGTERM");
-  await waitForExit(processes, STOP_GRACE_MS);
+  // Only a process signalled is waited for: one the guard did not signal has no reason to exit now.
+  await waitForExit(signalAll(processes, "SIGTERM"), STOP_GRACE_MS);
   for (let pending = processes; ;) {
     // Stragglers found by listing again started while the scope was stopping, so they get no grace.
-    signalAll(pending, "SIGKILL");
-    await waitForExit(pending, STOP_GRACE_MS);
-    if (!find) return pending.filter((entry) => alive(entry.pid));
-    const remaining = find() ?? pending.filter((entry) => alive(entry.pid));
-    if (remaining.length === 0 || Date.now() >= deadline) return remaining;
+    const signalled = signalAll(pending, "SIGKILL");
+    await waitForExit(signalled, STOP_GRACE_MS);
+    if (!find) return pending.filter(mayRun);
+    const remaining = find() ?? pending.filter(mayRun);
+    if (remaining.length === 0 || Date.now() >= deadline || (signalled.length === 0 && sameProcesses(remaining, pending))) return remaining;
     pending = remaining;
   }
 }
 
+/** The note for processes stopProcesses left running. */
+const unstoppedNote = (unstopped) => `Not stopped: ${unstopped.map((entry) => entry.pid).join(", ")}. Each still ran after SIGKILL, or the guard could not tell it was still the process it had listed, so it did not signal it.`;
+
 /**
- * Whether `entry`, from an earlier listing, is still that same process and running, read for its
- * process ID alone, so that it can be told while a full listing fails: false once it has exited or
- * is a zombie, or when its ID now belongs to a process started at another time; undefined when
- * that cannot be read.
+ * What a process ID names now, read for that ID alone, so that it can be told while a full listing
+ * fails and just before a signal: { exited } when nothing runs as `entry` (the ID names no
+ * process, or a zombie that started when `entry` did), { same, pgid } when it is still `entry`,
+ * running, and { other } when the ID now names a process started at another time. Undefined when
+ * that cannot be read, or `entry` has no recorded start.
  */
-function stillRunning(entry) {
+function identityOf(entry) {
   if (entry.started === undefined) return undefined;
+  const state = processState(entry.pid);
+  if (state === undefined) return undefined;
+  if (state === null) return { exited: true };
+  // The same absolute start, with no tolerance: a start even a second apart means the ID now names
+  // a later process, and the one the listing found has exited. Reusing an ID within the second it
+  // was freed would take macOS's whole range of IDs in that second.
+  if (state.started !== entry.started) return { other: true };
+  return state.zombie ? { exited: true } : { same: true, pgid: state.pgid };
+}
+
+/** A process's start (as the listings record it), group and whether it is a zombie; null when no process has the ID, undefined when it cannot be read. */
+function processState(pid) {
   if (process.platform === "linux") {
     let stat;
-    try { stat = readFileSync(`/proc/${entry.pid}/stat`, "utf8"); } catch (error) { return error?.code === "ENOENT" ? false : undefined; }
+    try { stat = readFileSync(`/proc/${pid}/stat`, "utf8"); } catch (error) { return error?.code === "ENOENT" ? null : undefined; }
     const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-    return !/^[ZX]/.test(fields[0]) && Number(fields[19]) === entry.started;
+    return { started: Number(fields[19]), pgid: Number(fields[2]), zombie: /^[ZX]/.test(fields[0]) };
   }
   if (process.platform !== "darwin") return undefined;
-  const result = run("ps", ["-o", "lstart=", "-o", "stat=", "-p", String(entry.pid)], 15_000, UTC_TOOL_ENV());
+  const result = run("ps", ["-o", "lstart=", "-o", "stat=", "-o", "pgid=", "-p", String(pid)], 15_000, UTC_TOOL_ENV());
   if (!result || result.signal) return undefined;
-  const match = new RegExp(`^\\s*${LSTART}\\s+(\\S+)`).exec(result.stdout);
+  const match = new RegExp(`^\\s*${LSTART}\\s+(\\S+)\\s+(\\d+)`).exec(result.stdout);
   // ps lists nothing, says nothing and exits 1 for a process that is gone.
-  if (!match) return result.status === 1 && !result.stdout.trim() && !result.stderr.trim() ? false : undefined;
-  if (match[2].startsWith("Z")) return false;
-  // The same absolute start, as on Linux, with no tolerance: a start even a second apart means
-  // the ID now names a later process, and the one the listing found has exited. Reusing an ID
-  // within the second it was freed would take macOS's whole range of IDs in that second.
-  return darwinStart(match[1]) === entry.started;
+  if (!match) return result.status === 1 && !result.stdout.trim() && !result.stderr.trim() ? null : undefined;
+  return { started: darwinStart(match[1]), pgid: Number(match[3]), zombie: match[2].startsWith("Z") };
+}
+
+/**
+ * Whether `entry`, from an earlier listing, is still that same process and running (identityOf):
+ * false once it has exited or is a zombie, or when its ID now belongs to a process started at
+ * another time; undefined when that cannot be read.
+ */
+function stillRunning(entry) {
+  const current = identityOf(entry);
+  return current === undefined ? undefined : current.same === true;
 }
 
 /**
@@ -648,6 +732,8 @@ async function stopAndReport(classify, settled) {
     for (const entry of reported.owned) stopped.set(entry.pid, entry);
     unstopped = await stopProcesses(reported.owned, find);
     reported = await settle(classify, STOP_GRACE_MS);
+    // Stopping again what the guard could not signal, and nothing else, would change nothing.
+    if (reported && sameProcesses(reported.owned, unstopped)) break;
   }
   if (reported) unstopped = reported.owned;
   for (const entry of unstopped) stopped.set(entry.pid, entry);
@@ -817,6 +903,9 @@ export async function setup(project) {
     const entries = [...new Set([...state.found.entries, ...leftovers]), ...locks.map(describeLock), ...unremoved.map((directory) => `${directory}, which could not be removed`)];
     const { ambiguous, orphans } = classified;
     const notes = classify.stale ? [STALE_NOTE] : [];
+    // A process signalAll could not tell was still the one listed was never signalled.
+    const unstopped = attempt(() => [...owned.values()].filter(mayRun)) ?? [];
+    if (unstopped.length > 0) notes.push(unstoppedNote(unstopped));
     if (leaked.size === 0 && entries.length === 0 && ambiguous.length === 0 && orphans.length === 0 && notes.length === 0) return;
     // The run fails even when it is exiting with success, such as through process.exit(0) or
     // Vitest's exit once a teardown outlasts its teardownTimeout.
@@ -873,7 +962,7 @@ export async function setup(project) {
     // Everything stopped, including what a stopping process started, is reported.
     const { owned, unstopped, reported } = await stopAndReport(classify, settled);
     const { ambiguous, orphans } = reported ?? none;
-    if (unstopped.length > 0) notes.push(`Still running after SIGKILL: ${unstopped.map((entry) => entry.pid).join(", ")}.`);
+    if (unstopped.length > 0) notes.push(unstoppedNote(unstopped));
     if (classify.stale) notes.push(STALE_NOTE);
     // Every test has finished, so a lock this run's processes still hold, this one included, is abandoned.
     const locks = removeAbandonedLocks(root, { graceMs: STOP_GRACE_MS, ending: process.pid });
@@ -1296,7 +1385,7 @@ export function guardTestFile({ beforeEach, afterEach, afterAll }) {
       removeTree(directory);
     }
     const notes = [];
-    if (unstopped.length > 0) notes.push(`Still running after SIGKILL: ${unstopped.map((entry) => entry.pid).join(", ")}.`);
+    if (unstopped.length > 0) notes.push(unstoppedNote(unstopped));
     if (classify.stale) notes.push(STALE_NOTE);
     if (!removed) entries.push(`${folder}, the test file's temp folder, which could not be removed`);
     if (owned.length > 0 || entries.length > 0 || ambiguous.length > 0 || classify.stale) {

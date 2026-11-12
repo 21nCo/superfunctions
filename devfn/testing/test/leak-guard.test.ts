@@ -13,7 +13,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { processBirthSignature } from "@devfn/config";
 import { withFileLock } from "@devfn/ports";
 
-import { attributeProcesses, ORIGINAL_TEMP_VARIABLE, ownedProcesses, pathAliases, pathsNamedUnder } from "../../test-support/leak-guard.mjs";
+import { attributeProcesses, listProcesses, ORIGINAL_TEMP_VARIABLE, ownedProcesses, pathAliases, pathsNamedUnder, stopProcesses } from "../../test-support/leak-guard.mjs";
 import { temporaryDirectories } from "../../test-support/temp-directories.mjs";
 
 const tempDir = temporaryDirectories(afterEach);
@@ -937,7 +937,9 @@ const wait = setInterval(() => {
   // As a global setup, it does so in the run's main process before the guard's teardown runs.
   // From then on, a process whose ID a test wrote to replaced.pid shows a start one second (Linux:
   // one clock tick) later when read on its own, as a process that reused the ID would; with
-  // UNREADABLE_ONCE, its first such read fails instead and later ones are true.
+  // UNREADABLE_ONCE, its first such read fails instead and later ones are true. With
+// RESTARTED_ALWAYS ("later" or "unreadable"), listings never fail and every such read of it shows
+// a later start or fails, while listings still read its real start.
   // SLOW_ENVIRONMENT_LISTING_MS delays the first listing's second macOS ps, as a loaded system may.
   const failListing = `const childProcess = require("node:child_process");
 const fs = require("node:fs");
@@ -947,7 +949,8 @@ export function failListingsAfter(allowed) {
   const failure = () => Object.assign(new Error("process listing failed (test)"), { code: "EIO" });
   const { spawnSync } = childProcess;
   const { readdirSync, readFileSync: read } = fs;
-  const replaced = () => listings > allowed && fs.existsSync("replaced.pid") ? read("replaced.pid", "utf8").trim() : undefined;
+  const always = process.env.RESTARTED_ALWAYS;
+  const replaced = () => (always || listings > allowed) && fs.existsSync("replaced.pid") ? read("replaced.pid", "utf8").trim() : undefined;
   let slowed = !process.env.SLOW_ENVIRONMENT_LISTING_MS;
   let unreadable = Boolean(process.env.UNREADABLE_ONCE);
   const later = (text) => text.replace(/:(\\d\\d)(?!:)/, (_, s) => ":" + String(s === "59" ? 58 : Number(s) + 1).padStart(2, "0"));
@@ -959,14 +962,16 @@ export function failListingsAfter(allowed) {
     // A macOS listing runs ps -A -ww once without -E and once with it; it counts once.
     if (command === "ps" && args?.includes("-ww") && !args.includes("-E") && fails()) return { error: failure() };
     if (command === "ps" && args?.includes("-p") && args.at(-1) === replaced()) {
-      if (unreadable) { unreadable = false; return { error: failure() }; }
+      if (unreadable || always === "unreadable") { unreadable = false; return { error: failure() }; }
       if (!process.env.UNREADABLE_ONCE) { const result = spawnSync(command, args, ...rest); return { ...result, stdout: later(result.stdout) }; }
     }
     return spawnSync(command, args, ...rest);
   };
   fs.readdirSync = (target, ...rest) => { if (target === "/proc" && fails()) throw failure(); return readdirSync(target, ...rest); };
   fs.readFileSync = (target, ...rest) => {
-    if (target === "/proc/" + replaced() + "/stat" && unreadable) { unreadable = false; throw failure(); }
+    // Linux lists processes with the same file; a listing still reads the real start.
+    if (always && target === "/proc/" + replaced() + "/stat" && new Error().stack.includes("listLinux")) return read(target, ...rest);
+    if (target === "/proc/" + replaced() + "/stat" && (unreadable || always === "unreadable")) { unreadable = false; throw failure(); }
     const text = read(target, ...rest);
     if (target !== "/proc/" + replaced() + "/stat" || process.env.UNREADABLE_ONCE) return text;
     const at = text.lastIndexOf(")") + 2;
@@ -976,7 +981,7 @@ export function failListingsAfter(allowed) {
   };
   require("node:module").syncBuiltinESMExports();
 }
-export default () => { failListingsAfter(1); };`;
+export default () => { failListingsAfter(process.env.RESTARTED_ALWAYS ? Infinity : 1); };`;
 
   it("fails a test file, listing what it found, stopping what it owns and never signalling the rest, when listing processes fails after a listing found them", async () => {
     // One process the file owns, as the worker's child, and one it can only report: an orphan
@@ -1038,6 +1043,32 @@ test("leaves processes, and then listing them fails", () => {
       expect(code, output).not.toBe(0);
       expect(output).toContain("Listing processes failed after an earlier listing had succeeded");
       // The process the ID now names is someone else's.
+      expect(alive(pid!)).toBe(true);
+    } finally {
+      if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+    }
+  });
+
+  it.each([
+    ["shows a later start", "later", false],
+    ["cannot be read", "unreadable", false],
+    ["shows a later start, when it exits with success before its teardown", "later", true],
+    ["cannot be read, when it exits with success before its teardown", "unreadable", true],
+  ])("fails a run, listing it but never signalling it, on a process it owns whose start read on its own %s, though every listing succeeds", async (_, restarted, exits) => {
+    const { dir, record } = project(`test("leaves a process in the run's root", () => {
+  const pid = ${orphanProcess("process.env.SFN_TEST_LEAK_GUARD_ROOT")};
+  writeFileSync("replaced.pid", String(pid));
+  record({ pid });
+});`, { files: { "fail-listing.mjs": failListing, ...(exits ? exitsFirst.files : {}) }, options: `, globalSetup: [${JSON.stringify(guard)}, "./fail-listing.mjs"${exits ? ', "./exit.mjs"' : ""}]` });
+    let pid: number | undefined;
+    try {
+      const { code, output, recorded } = await runProject(dir, record, undefined, { env: { RESTARTED_ALWAYS: restarted } });
+      pid = recorded.pid;
+      expect(code, output).not.toBe(0);
+      expect(output).toContain(`process ${pid} `);
+      if (!exits || restarted === "unreadable") expect(output).toMatch(new RegExp(`Not stopped: (?:\\d+, )*${pid}\\b`));
+      expect(output).not.toContain("Listing processes failed");
+      // Signalled by neither the teardown's SIGTERM and SIGKILL nor the exit cleanup's SIGKILL.
       expect(alive(pid!)).toBe(true);
     } finally {
       if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
@@ -1155,5 +1186,124 @@ test("finds the lock taken while the other file holds it", async () => {
     const { code, output } = await runProject(dir, record);
     expect(code, output).toBe(0);
     expect(existsSync(path.join(signals, "contended"))).toBe(true);
+  });
+});
+
+// stopProcesses signals a listed process only once a read of that process alone, just before the
+// signal, shows it still runs with the start the listing read.
+describe.skipIf(!["linux", "darwin"].includes(process.platform))("stopProcesses", { timeout: 30_000 }, () => {
+  const nodeRequire = createRequire(import.meta.url);
+  const fs = nodeRequire("node:fs") as typeof import("node:fs");
+  const childProcess = nodeRequire("node:child_process") as typeof import("node:child_process");
+  const { syncBuiltinESMExports } = nodeRequire("node:module") as typeof import("node:module");
+  // One second later (macOS ps -o lstart) or one clock tick later (Linux /proc/<pid>/stat field 22).
+  const later = (text: string) => text.replace(/:(\d\d)(?!:)/, (_, s: string) => `:${String(s === "59" ? 58 : Number(s) + 1).padStart(2, "0")}`);
+  const pids: number[] = [];
+  let restore: (() => void) | undefined;
+  afterEach(() => {
+    restore?.();
+    restore = undefined;
+    for (const pid of pids.splice(0)) try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+  });
+
+  /**
+   * From the read after the first `after` on, this process's reads of `pid`'s own start (ps -p on
+   * macOS, /proc/<pid>/stat on Linux), the ones the guard makes before signalling, fail or show a
+   * later start, as when the ID has been reused. The self-test's own liveness check is unaffected.
+   */
+  function alterStartReads(pid: number, mode: "unreadable" | "later", after = 0) {
+    let reads = 0;
+    const { spawnSync } = childProcess;
+    const { readFileSync } = fs;
+    const failure = () => Object.assign(new Error("reading the start failed (test)"), { code: "EIO" });
+    (childProcess as { spawnSync: unknown }).spawnSync = (command: string, args: string[], ...rest: unknown[]) => {
+      const result = (spawnSync as (...all: unknown[]) => { stdout: string })(command, args, ...rest);
+      if (command !== "ps" || !args?.includes("-p") || args.at(-1) !== String(pid) || (reads += 1) <= after) return result;
+      return mode === "unreadable" ? { error: failure() } : { ...result, stdout: later(result.stdout) };
+    };
+    (fs as { readFileSync: unknown }).readFileSync = (target: unknown, ...rest: unknown[]) => {
+      const text = (readFileSync as (...all: unknown[]) => string)(target, ...rest);
+      if (target !== `/proc/${pid}/stat` || (reads += 1) <= after) return text;
+      if (mode === "unreadable") throw failure();
+      const at = text.lastIndexOf(")") + 2;
+      const fields = text.slice(at).split(" ");
+      fields[19] = String(Number(fields[19]) + 1);
+      return text.slice(0, at) + fields.join(" ");
+    };
+    syncBuiltinESMExports();
+    restore = () => {
+      (childProcess as { spawnSync: unknown }).spawnSync = spawnSync;
+      (fs as { readFileSync: unknown }).readFileSync = readFileSync;
+      syncBuiltinESMExports();
+    };
+  }
+
+  /** Starts a detached Node process running `script`, and returns it once it has written its first line, with the output it writes. */
+  async function start(script: string) {
+    const child = spawn(process.execPath, ["-e", script], { detached: true, stdio: ["pipe", "pipe", "ignore"] });
+    pids.push(child.pid!);
+    let output = "";
+    child.stdout.on("data", (chunk) => { output += chunk; });
+    while (!output.includes("\n")) await sleep(20);
+    return { child, pid: child.pid!, output: () => output };
+  }
+  const listed = (pid: number) => {
+    const entry = listProcesses(Date.now())?.find((candidate) => candidate.pid === pid);
+    expect(entry?.started, `process ${pid} is listed with its start`).toBeDefined();
+    return entry!;
+  };
+  const ignoresSigterm = `process.on("SIGTERM", () => process.stdout.write("SIGTERM\\n")); process.stdout.write("ready\\n"); setInterval(() => {}, 1000);`;
+
+  it("never signals a process whose ID shows another start than the one listed, though listing succeeds", async () => {
+    const { pid } = await start(ignoresSigterm);
+    const entry = listed(pid);
+    for (const started of [typeof entry.started === "number" ? entry.started + 1 : later(String(entry.started)), 1]) {
+      // The process listed has exited, as far as the guard can tell, so nothing is left of it.
+      expect(await stopProcesses([{ ...entry, started }])).toEqual([]);
+      expect(alive(pid)).toBe(true);
+    }
+  });
+
+  it("never signals, and returns as still running, a process whose start cannot be read", async () => {
+    const { pid } = await start(ignoresSigterm);
+    const entry = listed(pid);
+    alterStartReads(pid, "unreadable");
+    expect((await stopProcesses([entry])).map((left) => left.pid)).toEqual([pid]);
+    expect(alive(pid)).toBe(true);
+  });
+
+  it("sends SIGKILL after SIGTERM only while the process ID still shows the start listed", async () => {
+    const { pid, output } = await start(ignoresSigterm);
+    const entry = listed(pid);
+    // The read before SIGTERM shows the start listed; every later one shows a later start.
+    alterStartReads(pid, "later", 1);
+    expect(await stopProcesses([entry])).toEqual([]);
+    for (const deadline = Date.now() + 2_000; !output().includes("SIGTERM") && Date.now() < deadline;) await sleep(20);
+    expect(output()).toContain("SIGTERM");
+    expect(alive(pid)).toBe(true);
+  });
+
+  it.each([
+    ["stops it, with what the leader started on its way out, when the guard saw the leader as itself just before", 0, true],
+    ["never signals it, stopping only the process listed, when the guard last saw the leader a minute before", 60_000, false],
+  ])("for a group whose leader has exited while a process listed in it runs, %s", async (_, seenBefore, groupStopped) => {
+    // The leader starts two processes in its group, then exits once its input closes.
+    const { child, pid: leader, output } = await start(`const { spawn } = require("node:child_process");
+const keep = () => spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+const [listedChild, unlisted] = [keep(), keep()];
+process.stdout.write(listedChild.pid + " " + unlisted.pid + "\\n");
+process.stdin.on("end", () => process.exit(0));
+process.stdin.resume();`);
+    const [member, unlisted] = output().trim().split(" ").map(Number);
+    pids.push(member!, unlisted!);
+    const entries = [listed(leader), listed(member!)].map((entry) => ({ ...entry, listedAt: Date.now() - seenBefore }));
+    expect(entries.map((entry) => entry.pgid)).toEqual([leader, leader]);
+    const exited = new Promise((resolve) => child.once("exit", resolve));
+    child.stdin!.end();
+    await exited;
+    expect(await stopProcesses(entries)).toEqual([]);
+    expect(await gone(member!)).toBe(true);
+    if (groupStopped) expect(await gone(unlisted!)).toBe(true);
+    else expect(alive(unlisted!)).toBe(true);
   });
 });

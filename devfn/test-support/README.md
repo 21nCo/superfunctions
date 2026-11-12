@@ -80,20 +80,26 @@ calls `guardTestFile` as a setup file.
   its own that appears in that listing is stopped and listed too. When listing processes
   fails after a listing has found some, the guard keeps what that listing found (less those
   that have since exited), stops what it owns, lists the rest and fails the file or run: a
-  failed listing never reads as the processes having exited. Before signalling one of them it
-  reads that process's own start (`/proc/<pid>/stat` on Linux, `ps -o lstart` on macOS) and
-  signals it only when that start is exactly the one the listing read; a different start means
-  the ID names a later process, and one it cannot read is listed, not signalled, until a later
-  read shows the same start.
+  failed listing never reads as the processes having exited.
 - The run lists a folder the guard made for a test file (recorded in the run's root) by its
   contents; any other entry in the root, whatever its name, is listed itself.
 - A temp root or file folder the guard cannot remove fails the run, or the file, and is
   named, like any other leftover.
-- Stopping sends SIGTERM, then SIGKILL to each process and to every process group one of
-  them led, even once the leader has exited, since what it started on its way out (a
-  wrapper's SIGTERM handler starting a child, say) is still in that group. The guard then
-  lists the scope's processes again and kills what is left, until nothing is or 10 seconds
-  have passed; anything still running fails the run or the file.
+- Stopping sends SIGTERM, then SIGKILL to each process and to the process group it leads.
+  Immediately before every signal, on every path (a file's or run's stop, the stop after a
+  failed or timed-out test, a test's temp-directory cleanup and the exit cleanup), the guard
+  reads that process's own start (`/proc/<pid>/stat` on Linux, `ps -o lstart` on macOS) and
+  signals it only when it still runs, is not a zombie and started exactly when the listing
+  read: a different start means the ID names a later process, which is never signalled, nor
+  is its group. One whose start cannot be read is not signalled; it is listed and fails the
+  file or run. Once a leader has exited, what it started on its way out (a wrapper's SIGTERM
+  handler starting a child, say) is still in its group, so the group is still signalled while
+  it has a member started no earlier than the leader and the guard saw the leader as itself at
+  most 5 seconds before. A group ID in use is never given to a new process, so that group can
+  be another only if the system ran through its whole range of process IDs in that while, the
+  same bound the start comparison relies on. The guard then lists the scope's processes again
+  and kills what is left, until nothing is, 10 seconds have passed, or a round signals nothing
+  and the same processes remain; anything still running fails the run or the file.
 
 A directory a test creates outside the temp folder, such as one under the package's
 `node_modules/.cache`, is added to the file's guard with `guardDirectory(directory)` before

@@ -27,7 +27,7 @@ export function temporaryDirectories(hook) {
     since = Date.now();
     if (running.length > 0 || failed.length > 0) {
       throw new Error([
-        ...running.map((entry) => `Process ${entry.pid} still runs from a test's temp directory after SIGKILL: ${entry.command}`),
+        ...running.map((entry) => `Process ${entry.pid} still runs from a test's temp directory: it outlived SIGKILL, or the guard could not tell it was still the process it had listed, so it did not signal it: ${entry.command}`),
         ...failed.map((directory) => `Could not remove the temp directory ${directory}.`),
       ].join("\n"));
     }
