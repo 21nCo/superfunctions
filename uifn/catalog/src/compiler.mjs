@@ -432,7 +432,7 @@ function skipBalanced(tokens, index, open, close) {
 }
 
 function swiftTypeName(value) {
-  return value.replace(/^SwiftUI\./, '');
+  return value.replace(/^SwiftUI(?:Core)?\./, '');
 }
 
 // `where Self: View` refines a protocol as `: View` does.
@@ -441,7 +441,13 @@ function readSwiftSelfConstraints(tokens, start) {
   for (let index = start; index < tokens.length && tokens[index] !== '{'; index += 1) {
     if (tokens[index] !== 'Self' || tokens[index + 1] !== ':') continue;
     let name = '';
-    for (index += 2; SWIFT_IDENTIFIER.test(tokens[index] ?? '') || tokens[index] === '.'; index += 1) name += tokens[index];
+    for (index += 2; SWIFT_IDENTIFIER.test(tokens[index] ?? '') || ['.', '&'].includes(tokens[index]); index += 1) {
+      if (tokens[index] !== '&') name += tokens[index];
+      else {
+        constraints.push(name);
+        name = '';
+      }
+    }
     constraints.push(name);
     index -= 1;
   }
@@ -590,12 +596,27 @@ function walkSwiftDeclarations(text, source, model) {
   assert(state.scopes.length === 0 && index === tokens.length, 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `Cannot read the declarations in ${source}: a { or ( is not closed.`, { source });
 }
 
-function swiftSurfaceKind(conformances, protocols, seen = new Set()) {
+function swiftOuter(id) {
+  return id.split('.').slice(0, -1).join('.');
+}
+
+// A protocol name resolves as Swift looks it up: in the enclosing scopes
+// first, innermost out, then at file level.
+function resolveSwiftProtocol(value, outer, protocols) {
+  const parts = outer ? outer.split('.') : [];
+  for (let size = parts.length; size >= 0; size -= 1) {
+    const key = [...parts.slice(0, size), value].join('.');
+    if (protocols.has(key)) return key;
+  }
+  return undefined;
+}
+
+function swiftSurfaceKind(conformances, protocols, outer = '', seen = new Set()) {
   if (conformances.some((value) => SWIFT_STYLE_PROTOCOL.test(value))) return 'style';
   if (conformances.some((value) => SWIFT_COMPONENT_PROTOCOLS.has(value))) return 'component';
-  const refined = conformances.filter((value) => protocols.has(value) && !seen.has(value));
-  for (const value of refined) seen.add(value);
-  return refined.map((value) => swiftSurfaceKind(protocols.get(value), protocols, seen)).find(Boolean);
+  const refined = conformances.map((value) => resolveSwiftProtocol(value, outer, protocols)).filter((key) => key && !seen.has(key));
+  for (const key of refined) seen.add(key);
+  return refined.map((key) => swiftSurfaceKind(protocols.get(key), protocols, swiftOuter(key), seen)).find(Boolean);
 }
 
 function swiftSurfaceDirectory(relativePath) {
@@ -617,7 +638,7 @@ export function parseSwiftUISurfaceDeclarations(files) {
   const hidden = (id) => id.split('.').slice(0, -1).some((_, index, outer) => isHidden(outer.slice(0, index + 1).join('.')));
   const declarations = model.found.filter(({ id }) => !hidden(id)).flatMap(({ id, keyword, source, conformances, member }) => {
     if (member) return [{ id, kind: swiftSurfaceDirectory(source) === 'Components' ? 'component' : 'unclassified', source }];
-    const kind = swiftSurfaceKind([...conformances, ...(model.extensions.get(id) ?? [])], model.protocols);
+    const kind = swiftSurfaceKind([...conformances, ...(model.extensions.get(id) ?? [])], model.protocols, swiftOuter(id));
     if (kind) return [{ id, kind, source }];
     return SWIFT_SURFACE_TYPE_KEYWORDS.has(keyword) ? [{ id, kind: 'unclassified', source }] : [];
   });
