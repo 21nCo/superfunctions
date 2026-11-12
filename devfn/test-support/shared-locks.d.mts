@@ -1,2 +1,2 @@
-export declare function machineLockPath(name: string, options?: { staleMs?: number }): string;
+export declare function machineLockPath(name: string): string;
 export declare function caddyAdminLockPath(): string;

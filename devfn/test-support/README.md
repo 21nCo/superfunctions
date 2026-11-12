@@ -38,16 +38,20 @@ calls `guardTestFile` as a setup file.
   checkout nested in the worktree (such as `.worktrees/<task>` under the main checkout) or
   in a sibling directory whose name merely starts with the worktree's (`repo-dev-42` beside
   `repo`). A command, environment or working directory names a path under a root only
-  through a complete path value equal to the root or starting with `root/`. Values are
-  split only at structural boundaries: the boundary between arguments or variables, a
-  `KEY=` or `--option=` prefix, `file://`, and `:` list separators. On Linux, `/proc` keeps
-  each argument and variable whole, NUL-separated, so an argument with a space in it is one
-  value. On macOS, the `ps` listing joins arguments with spaces and cannot show where one
-  with a space or `:` in it ends, so whitespace and quotes end a value there too. Shell punctuation such as `;`, `,`, `(`,
-  `&`, `|` or `<`, like `-`, `.`, `[` or a non-ASCII letter, can be part of a file name,
-  so `/x/repo;other` is not under `/x/repo`. A process a shell started that way is still
-  attributed by its marker, working directory or parent. The same rule decides which
-  processes the guard owns and may signal.
+  through a complete path value equal to the root or starting with `root/`. On Linux,
+  `/proc` keeps each argument and variable whole, NUL-separated, so a value is a whole
+  argument (after a `KEY=` or `--option=` prefix and `file://`) or a whole variable's
+  value; only a PATH-like variable (`PATH`, `NODE_PATH`, `LD_LIBRARY_PATH`...) is split at
+  `:`. An argument `<root>:x` or `<root> x` is never under the root there. On macOS, the
+  `ps` listing joins arguments with spaces and cannot show where one with a space or `:` in
+  it ends, so whitespace, quotes and `:` end a value. A value that is the root itself cut
+  short there is ambiguous when an entry beside the root continues its name across that
+  separator (`<root> copy`, `<root>:x`): a process whose only link to the run is such a
+  value fails the run and is listed, but is never signalled. Shell punctuation such as `;`,
+  `,`, `(`, `&`, `|` or `<`, like `-`, `.`, `[` or a non-ASCII letter, can be part of a
+  file name, so `/x/repo;other` is not under `/x/repo`. A process a shell started that way
+  is still attributed by its marker, working directory or parent. The same rule decides
+  which processes the guard owns and may signal.
 - When the run is interrupted (Ctrl-C, or turbo cancelling the task after a sibling
   failed), it stops what the run started, including processes running from directories
   registered with `guardDirectory`, and removes those directories and the temp root as the
@@ -83,12 +87,13 @@ enough to recover. A lock held by another run's process, or by a process still r
 never touched.
 
 withFileLock (`@devfn/ports`) lets any waiter take over a dead holder's lock once it is
-`staleMs` old (300 s by default), replacing its `owner.json` in place. So the guard removes
-such a lock only while its owner record is younger than 80% of that age (240 s by default),
-and only if a fresh read of `owner.json` just before it moves the lock aside still shows the
-dead holder's record. An older lock is left in place for withFileLock to recover and is still
-listed, so the run fails. A fixture that passes withFileLock a different `staleMs` passes the
-same value to `machineLockPath(name, { staleMs })`.
+`staleMs` old, replacing its `owner.json` in place, and keeps other takers out only through
+its takeover markers (`owner.takeover.<record hash>.<generation>`, see `recoverLock` in
+`devfn/ports/src/lock.ts`). The guard follows the same protocol: it links the record's next
+marker itself, passing a generation only when its taker is dead, and while holding it moves
+the lock aside only if `owner.json` still shows the dead holder's record. A waiter can then
+neither take the lock over nor be moved away mid-takeover, whatever the lock's age. A lock
+another live process holds a marker for is left in place and listed, so the run fails.
 
 The guard lists processes with `/proc` on Linux and `ps` and `lsof` on macOS. On other
 platforms it checks only temp entries, and says so.

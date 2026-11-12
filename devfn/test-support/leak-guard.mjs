@@ -23,8 +23,8 @@
 // workspace's node_modules.
 
 import { spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
-import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync, writeSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { appendFileSync, chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync, writeSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -47,9 +47,10 @@ const DIRECTORY_RECORD = ".leak-guard-directories";
 const LOCK_RECORD = ".leak-guard-locks";
 const isGuardRecord = (name) => name === RUN_RECORD || name === DIRECTORY_RECORD || name === LOCK_RECORD;
 // Entries a tool creates in TMPDIR for its own reuse rather than for a test: Node's compile
-// cache and tsx's per-user cache, which the tsx loader that runs TypeScript fixtures writes.
+// cache and tsx's per-user cache, which the tsx loader that runs TypeScript fixtures names
+// exactly so. Any other entry, such as a test's own mkdtemp("tsx-") folder, is a leftover.
 const TOOL_CACHES = ["node-compile-cache", `tsx-${process.geteuid?.() ?? os.userInfo().username}`];
-const isToolCache = (name) => TOOL_CACHES.includes(name) || /^tsx-\w+$/.test(name);
+const isToolCache = (name) => TOOL_CACHES.includes(name);
 // Processes an orphan is re-parented to: launchd or init, or a Linux subreaper such as `systemd --user`.
 const isReaper = (entry) => entry.pid <= 1 || /^(?:\S*\/)?(?:launchd|init|systemd|tini|dumb-init|docker-init)(?:\s|$)/.test(entry.command);
 
@@ -206,51 +207,107 @@ function descendantsOf(pid, processes) {
   return descendants;
 }
 
-// Characters that separate values in a command line or environment as the guard lists them.
-// Linux's /proc keeps each argument and variable whole, NUL-separated, so NUL alone separates
-// them there. macOS's ps listing joins them with spaces and cannot show where one with a space
-// in it ends, so whitespace and quotes separate them too. A value may also be a `KEY=` or
-// `--option=` assignment, a `file://` URL, or a `:`-separated list such as PATH. Nothing else
-// ends a path: `;`, `(`, `[`, `-`, `.` and non-ASCII letters may all be part of a file name, so
-// `/x/repo;other` and `/x/repo-dev-42` are not under `/x/repo`.
-const SEPARATOR = /[\s"'`\0]/;
-const STRUCTURAL_SEPARATOR = /\0/;
+// How the guard reads a path out of a command line or environment. Linux's /proc keeps each
+// argument and variable whole, NUL-separated, so a path is a whole argument, after a `KEY=` or
+// `--option=` prefix and `file://`, or a whole variable's value, which only a PATH-like variable
+// (PATH, NODE_PATH, LD_LIBRARY_PATH...) splits into a `:`-separated list.
+//
+// macOS's ps listing joins arguments and variables with spaces, so there a value starts after
+// whitespace, a quote, an assignment prefix, `file://` or a `:` list separator, and runs to the
+// next of those. Such a listing cannot show where a value with a space or `:` in it ends: a
+// value that is the root itself, cut short at a separator, may be the start of a path beside it
+// (`<root> copy/x`, `<root>:x`). That match is ambiguous unless no entry beside the root
+// continues its name across that separator. Nothing else ends a path: `;`, `(`, `[`, `-`, `.`
+// and non-ASCII letters may all be part of a file name, so `/x/repo;other` and `/x/repo-dev-42`
+// are not under `/x/repo`.
+const SEPARATOR = /[\s"'`]/;
 const LIST_SEPARATOR = ":";
+const ASSIGNMENT = /^[^/=:]*=/;
+const LIST_VARIABLE = /PATH$/;
 // What may come between the start of a value and a path in it.
-const VALUE_PREFIX = /^(?:[^/=:]*=)?(?:file:\/\/)?$|:$/;
+const isValuePrefix = (text) => text.endsWith(LIST_SEPARATOR) || /^(?:[^/=:]*=)?(?:file:\/\/)?$/.test(text);
+
+/** The value without trailing slashes, keeping a lone `/`. Linear, unlike a trailing-slash regex. */
+function trimTrailingSlashes(value) {
+  let end = value.length;
+  while (end > 1 && value[end - 1] === "/") end -= 1;
+  return value.slice(0, end);
+}
+
+const isPathUnder = (value, root) => value === root || value.startsWith(`${root}/`);
+
+/** The values of a NUL-separated /proc listing that may be paths. */
+function separatedValues(text, environment) {
+  return text.split("\0").flatMap((field) => {
+    if (!environment) return [field.replace(ASSIGNMENT, "")];
+    const at = field.indexOf("=");
+    if (at <= 0) return [];
+    const value = field.slice(at + 1);
+    return LIST_VARIABLE.test(field.slice(0, at)) ? value.split(LIST_SEPARATOR) : [value];
+  }).map((value) => trimTrailingSlashes(value.replace(/^file:\/\//, "")));
+}
 
 /**
- * The paths at or under `root` that `text` names. A path is a complete value: it starts where a
- * value does (after a separator, a `KEY=` or `--option=` prefix, `file://` or a `:` list
- * separator) and runs to the next separator or `:`. It is named when it equals `root` or starts
- * with `root/`; a value that merely starts with `root`'s text names a different path.
- * With `separated`, the text is NUL-separated, as Linux's /proc keeps it, and only NUL
- * separates values.
+ * The paths at or under `root` that `text` names, each with `cut`: the separator a value that is
+ * `root` itself was cut short at in a space-joined listing, or undefined when the value is whole.
  */
-export function pathsNamedUnder(text, root, { separated = false } = {}) {
-  const separator = separated ? STRUCTURAL_SEPARATOR : SEPARATOR;
+function namedPaths(text, root, { separated = false, environment = false } = {}) {
+  if (separated) return separatedValues(text, environment).filter((value) => isPathUnder(value, root)).map((value) => ({ path: value }));
   const paths = [];
   for (let at = text.indexOf(root); at !== -1; at = text.indexOf(root, at + 1)) {
     let start = at;
-    while (start > 0 && !separator.test(text[start - 1])) start -= 1;
-    if (!VALUE_PREFIX.test(text.slice(start, at))) continue;
+    while (start > 0 && !SEPARATOR.test(text[start - 1])) start -= 1;
+    if (!isValuePrefix(text.slice(start, at))) continue;
     // From the end of `root`, so a root with a space in it still matches.
     let end = at + root.length;
-    while (end < text.length && !separator.test(text[end]) && text[end] !== LIST_SEPARATOR) end += 1;
-    const value = text.slice(at, end).replace(/(?<=.)\/+$/, "");
-    if (value === root || value.startsWith(`${root}/`)) paths.push(value);
+    while (end < text.length && !SEPARATOR.test(text[end]) && text[end] !== LIST_SEPARATOR) end += 1;
+    const value = trimTrailingSlashes(text.slice(at, end));
+    const cut = end === at + root.length && end < text.length ? text[end] : undefined;
+    if (isPathUnder(value, root)) paths.push({ path: value, cut });
   }
   return paths;
 }
 
 /**
- * Whether a process names a path under the given roots in its command, environment or working
- * directory. `accept(path, root)` can reject a named path, such as one inside a nested checkout.
+ * The paths at or under `root` that `text` names. With `separated`, the text is NUL-separated,
+ * as Linux's /proc keeps it, and `environment` says it holds variables rather than arguments.
  */
-const namesPathUnder = (entry, roots, accept = () => true) => roots.some((root) =>
-  pathsNamedUnder(entry.argv ?? entry.command, root, { separated: entry.separated }).some((named) => accept(named, root)) ||
-  pathsNamedUnder(entry.environment, root, { separated: entry.separated }).some((named) => accept(named, root)) ||
-  (entry.cwd !== undefined && isUnder(entry.cwd, [root]) && accept(entry.cwd, root)));
+export function pathsNamedUnder(text, root, options) {
+  return namedPaths(text, root, options).map(({ path: named }) => named);
+}
+
+/** Whether an entry beside `root` continues its name across `separator`, such as `<root> copy`. */
+function continuedBeside(root, separator, cache) {
+  const key = `${root}\0${separator}`;
+  if (!cache.has(key)) {
+    const prefix = `${path.basename(root)}${separator}`;
+    // A folder that cannot be read may hold such an entry.
+    let continued = true;
+    try { continued = readdirSync(path.dirname(root)).some((name) => name.startsWith(prefix)); } catch { /* left ambiguous */ }
+    cache.set(key, continued);
+  }
+  return cache.get(key);
+}
+
+/**
+ * How a process names a path under the given roots in its command, environment or working
+ * directory: "exact", "ambiguous" when its only such value is a root cut short at a separator
+ * that a path beside the root continues across, or undefined. `accept(path, root)` can reject a
+ * named path, such as one inside a nested checkout.
+ */
+function namesPathUnder(entry, roots, accept = () => true, cache = new Map()) {
+  let found;
+  for (const root of roots) {
+    if (entry.cwd !== undefined && isPathUnder(entry.cwd, root) && accept(entry.cwd, root)) return "exact";
+    const named = [
+      ...namedPaths(entry.argv ?? entry.command, root, { separated: entry.separated }),
+      ...namedPaths(entry.environment, root, { separated: entry.separated, environment: true }),
+    ].filter(({ path: value }) => accept(value, root));
+    if (named.some(({ cut }) => cut === undefined || !continuedBeside(root, cut, cache))) return "exact";
+    if (named.length > 0) found = "ambiguous";
+  }
+  return found;
+}
 
 /**
  * Whether `candidate`, a path under `root`, lies in another checkout nested in it, such as a
@@ -269,16 +326,31 @@ export function inNestedCheckout(candidate, root, cache = new Map()) {
 }
 
 /**
- * The processes a scope owns: those carrying its marker, descending from its `parent` process, or
- * running from a path under its roots or naming one in their command or environment (DevFn passes
- * TMPDIR on to what it starts). The guard's own process and its ancestors are never included, nor
- * are `excluded` processes, though their descendants may be.
+ * The processes a scope owns, which it may signal: those carrying its marker, descending from its
+ * `parent` process, or running from a path under its roots or naming one in their command or
+ * environment (DevFn passes TMPDIR on to what it starts). `ambiguous` holds those whose only link
+ * is an ambiguous path (see namesPathUnder): they are reported, never signalled. The guard's own
+ * process and its ancestors are never included, nor are `excluded` processes, though their
+ * descendants may be.
  */
-export function ownedProcesses(processes, { marker, roots, parent, excluded = () => false }) {
+export function attributeProcesses(processes, { marker, roots, parent, excluded = () => false }) {
   const ancestors = ancestorsOf(process.pid, processes);
   const descendants = parent === undefined ? new Set() : descendantsOf(parent, processes);
-  return processes.filter((entry) => entry.pid !== process.pid && !ancestors.has(entry.pid) && !excluded(entry) &&
-    ((marker !== undefined && entry.environment.includes(marker)) || descendants.has(entry.pid) || namesPathUnder(entry, roots)));
+  const cache = new Map();
+  const owned = [];
+  const ambiguous = [];
+  for (const entry of processes) {
+    if (entry.pid === process.pid || ancestors.has(entry.pid) || excluded(entry)) continue;
+    const named = (marker !== undefined && entry.environment.includes(marker)) || descendants.has(entry.pid) ? "exact" : namesPathUnder(entry, roots, undefined, cache);
+    if (named === "exact") owned.push(entry);
+    else if (named === "ambiguous") ambiguous.push(entry);
+  }
+  return { owned, ambiguous };
+}
+
+/** The processes a scope owns and may signal (see attributeProcesses). */
+export function ownedProcesses(processes, scope) {
+  return attributeProcesses(processes, scope).owned;
 }
 
 /**
@@ -377,7 +449,7 @@ const describeProcess = (entry) => {
 };
 
 const describeLock = (lock) => `${lock.directory}, a machine-wide lock held by process ${lock.pid}, which ended without releasing it${lock.kept
-  ? `; it was left in place, since at ${Math.round(lock.age / 1_000)} s old a waiter may already be recovering it (withFileLock recovers a dead holder's lock after ${Math.round(lock.staleMs / 1_000)} s)`
+  ? "; it was left in place, since another process holds withFileLock's takeover marker for it and may be taking it over"
   : ""}`;
 
 const listed = (items, describe, noun) => [
@@ -385,13 +457,18 @@ const listed = (items, describe, noun) => [
   ...(items.length > MAX_LISTED ? [`  …and ${items.length - MAX_LISTED} more ${noun}`] : []),
 ];
 
-function report(subject, processes, entries, notes, unattributed = { processes: [] }) {
-  const lines = [`DevFn test leak guard: ${subject} left these behind.`];
-  lines.push(...listed(processes, describeProcess, "processes"));
-  lines.push(...listed(entries, (entry) => `temp entry ${entry}`, "temp entries"));
-  if (unattributed.processes.length > 0) {
-    lines.push(`These processes started during the run, run from or name a path in the worktree ${unattributed.worktree}, and were orphaned. The guard cannot tell they are this run's, so it has not stopped them:`);
-    lines.push(...listed(unattributed.processes, describeProcess, "processes"));
+/** The report of a scope's leftovers; `orphans` and `ambiguous` are processes the guard did not stop. */
+function report(subject, processes, entries, notes, { worktree, orphans = [], ambiguous = [] } = {}) {
+  const lines = [`DevFn test leak guard: ${subject} left these behind.`,
+    ...listed(processes, describeProcess, "processes"),
+    ...listed(entries, (entry) => `temp entry ${entry}`, "temp entries")];
+  if (orphans.length > 0) {
+    lines.push(`These processes started during the run, run from or name a path in the worktree ${worktree}, and were orphaned. The guard cannot tell they are this run's, so it has not stopped them:`,
+      ...listed(orphans, describeProcess, "processes"));
+  }
+  if (ambiguous.length > 0) {
+    lines.push("These processes name one of the run's temp folders where the process listing cannot show where that value ends, and an entry beside the folder continues its name. The guard cannot tell they are this run's, so it has not stopped them:",
+      ...listed(ambiguous, describeProcess, "processes"));
   }
   lines.push(...notes);
   lines.push(`Stop every process a test starts, with its detached process group, and remove every temp directory it creates in teardown (afterEach, afterAll or finally), so failures and timeouts clean up too.${processes.length > 0 || entries.length > 0 ? " The guard has stopped and removed what it attributed to this run." : ""}`);
@@ -409,7 +486,8 @@ function newToken() {
 // Vitest forks its pool workers from the main process, and Vite may start esbuild there:
 // those children inherit the run marker but are the runner's own and exit when it closes.
 // Vitest retitles them "node (vitest 1)" and so on, which is what ps then shows.
-const isRunnerChild = (entry) => entry.ppid === process.pid && /^node \(vitest(?: \d+)?\)|[\\/](?:vitest|tinypool|esbuild)[\\/]|[\\/]esbuild(?:\s|$)/.test(entry.command);
+const isRunnerChild = (entry) => entry.ppid === process.pid &&
+  (/^node \(vitest(?: \d+)?\)/.test(entry.command) || /[\\/](?:vitest|tinypool|esbuild)[\\/]|[\\/]esbuild(?:\s|$)/.test(entry.command));
 
 function composeContainers(roots) {
   if (process.env.DEVFN_REAL_COMPOSE !== "1") return [];
@@ -477,14 +555,17 @@ export async function setup(project) {
     for (const container of attempt(() => composeContainers(allRoots)) ?? []) attempt(() => run("docker", ["rm", "-f", "-v", container.id], 30_000));
     // A worker killed above may have held a machine-wide lock; this process is exiting too.
     const locks = attempt(() => removeAbandonedLocks(root, { graceMs: 1_000, ending: process.pid })) ?? [];
-    for (const directory of directories) attempt(() => removeTree(directory));
-    attempt(() => removeTree(root));
+    const unremoved = [...directories, root].filter((directory) => attempt(() => removeTree(directory)) !== true);
     if (runnerTemp) attempt(() => removeTree(runnerTemp));
     const leaked = new Map(state.found.processes);
     for (const entry of owned.values()) if (!isRunnerChild(entry)) leaked.set(entry.pid, entry);
-    const entries = [...state.found.entries, ...locks.map(describeLock)];
+    const entries = [...state.found.entries, ...locks.map(describeLock), ...unremoved.map((directory) => `${directory}, which could not be removed`)];
+    if (leaked.size === 0 && entries.length === 0) return;
+    // The run fails even when it is exiting with success, such as through process.exit(0) or
+    // Vitest's exit once a teardown outlasts its teardownTimeout.
+    if (!process.exitCode) process.exitCode = 1;
     // The process is exiting, so only a synchronous write reaches a piped stderr.
-    if (leaked.size > 0 || entries.length > 0) attempt(() => writeSync(2, `${report("This interrupted test run", [...leaked.values()], entries, [])}\n`));
+    attempt(() => writeSync(2, `${report("This interrupted test run", [...leaked.values()], entries, [])}\n`));
   };
   const onSignal = (signal) => {
     onExit();
@@ -521,7 +602,9 @@ export async function setup(project) {
     const notes = [];
     const listed = listProcesses(startedAt);
     if (!listed) notes.push(`Processes were not checked: the guard cannot list processes on ${process.platform}.`);
-    const find = () => { const processes = listProcesses(startedAt); return processes && found(ownedProcesses(processes, scope())); };
+    // The latest listing, from which processes the guard could not attribute are reported.
+    let latest = listed;
+    const find = () => { latest = listProcesses(startedAt); return latest && found(ownedProcesses(latest, scope())); };
     const settled = listed ? await settle(find, RUN_GRACE_MS) ?? [] : [];
     // Everything stopped, including what a stopping process started, is reported.
     const stopped = new Map(settled.map((entry) => [entry.pid, entry]));
@@ -531,7 +614,8 @@ export async function setup(project) {
     // Every test has finished, so a lock this run's processes still hold, this one included, is abandoned.
     const locks = removeAbandonedLocks(root, { graceMs: STOP_GRACE_MS, ending: process.pid });
     for (const lock of locks) state.found.entries.add(describeLock(lock));
-    const unattributed = listed && worktree ? await settle(() => worktreeOrphans(listProcesses(startedAt) ?? [], { worktree, startedAt, own: scope(), root }), STOP_GRACE_MS) ?? [] : [];
+    const orphans = listed && worktree ? await settle(() => worktreeOrphans(listProcesses(startedAt) ?? [], { worktree, startedAt, own: scope(), root }), STOP_GRACE_MS) ?? [] : [];
+    const ambiguous = latest ? attributeProcesses(latest, scope()).ambiguous : [];
     const containers = composeContainers(roots());
     for (const container of containers) run("docker", ["rm", "-f", "-v", container.id], 30_000);
     const entries = tempLeftovers(root).flatMap((entry) => {
@@ -551,10 +635,10 @@ export async function setup(project) {
     // A root the guard cannot remove stays in the temp folder, so it fails the run like any other leftover.
     const rootRemoved = removeTree(root);
     if (!rootRemoved) entries.push(`${root}, the run's temp root, which could not be removed`);
-    if (owned.length > 0 || entries.length > 0 || unstopped.length > 0 || unattributed.length > 0) {
+    if (owned.length > 0 || entries.length > 0 || unstopped.length > 0 || orphans.length > 0 || ambiguous.length > 0) {
       // Failing here ends Vitest's close before it removes its own folder, so remove it now.
       if (runnerTemp) removeTree(runnerTemp);
-      throw new Error(report(`This test run (temp root ${root})`, owned, entries, notes, { worktree, processes: unattributed }));
+      throw new Error(report(`This test run (temp root ${root})`, owned, entries, notes, { worktree, orphans, ambiguous }));
     }
     if (notes.length > 0) process.stderr.write(`${notes.join("\n")}\n`);
   }
@@ -593,23 +677,14 @@ function registeredDirectories(root) {
  * process holding it is killed before it releases the lock (an interrupted run, or a worker
  * stopped at the run's end), the run's cleanup finds it here.
  */
-export function recordMachineLock(lockPath, { staleMs = DEFAULT_LOCK_STALE_MS } = {}) {
+export function recordMachineLock(lockPath) {
   const root = process.env[ROOT_VARIABLE];
   if (!root) return;
-  try { appendFileSync(path.join(root, LOCK_RECORD), `${JSON.stringify({ lock: path.resolve(lockPath), pid: process.pid, at: Date.now(), staleMs })}\n`); }
+  try { appendFileSync(path.join(root, LOCK_RECORD), `${JSON.stringify({ lock: path.resolve(lockPath), pid: process.pid, at: Date.now() })}\n`); }
   catch { /* the run has ended; there is nothing left to clean up for */ }
 }
 
-/** withFileLock's (@devfn/ports) default: it recovers a lock whose holder is dead once the lock is this old. */
-const DEFAULT_LOCK_STALE_MS = 300_000;
-// The guard removes a dead holder's lock only while it is younger than this share of its
-// recovery age, so no waiter can be recovering it at the same time (see removeAbandonedLocks).
-const REMOVABLE_SHARE = 0.8;
-
-/**
- * The machine-wide locks the run's tests named: each lock with the processes that named it and
- * when each first did, and the shortest recovery age any of them gave it.
- */
+/** The machine-wide locks the run's tests named: each lock with the processes that named it and when each first did. */
 function recordedLocks(root) {
   let text;
   try { text = readFileSync(path.join(root, LOCK_RECORD), "utf8"); } catch { return new Map(); }
@@ -618,11 +693,9 @@ function recordedLocks(root) {
     let entry;
     try { entry = line ? JSON.parse(line) : undefined; } catch { continue; /* a line another worker is still writing */ }
     if (typeof entry?.lock !== "string" || !Number.isSafeInteger(entry.pid) || !Number.isFinite(entry.at)) continue;
-    const named = locks.get(entry.lock) ?? { namers: new Map(), staleMs: DEFAULT_LOCK_STALE_MS };
-    named.namers.set(entry.pid, Math.min(named.namers.get(entry.pid) ?? Infinity, entry.at));
-    // A record from before recovery ages were recorded uses withFileLock's default.
-    if (Number.isFinite(entry.staleMs) && entry.staleMs >= 0) named.staleMs = Math.min(named.staleMs, entry.staleMs);
-    locks.set(entry.lock, named);
+    const namers = locks.get(entry.lock) ?? new Map();
+    namers.set(entry.pid, Math.min(namers.get(entry.pid) ?? Infinity, entry.at));
+    locks.set(entry.lock, namers);
   }
   return locks;
 }
@@ -636,7 +709,7 @@ function recordedLocks(root) {
  */
 function runLocks(root) {
   const held = [];
-  for (const [lock, { namers, staleMs }] of recordedLocks(root)) {
+  for (const [lock, namers] of recordedLocks(root)) {
     const parent = path.dirname(lock);
     const base = path.basename(lock);
     let names;
@@ -649,8 +722,8 @@ function runLocks(root) {
       try { record = readFileSync(path.join(directory, "owner.json"), "utf8"); owner = JSON.parse(record); } catch { continue; }
       const pid = owner?.pid;
       const created = Date.parse(owner?.createdAt);
-      if (!Number.isSafeInteger(pid) || !namers.has(pid) || !(created >= namers.get(pid))) continue;
-      held.push({ directory, released: name !== base, pid, record, created, staleMs });
+      if (!Number.isSafeInteger(pid) || !namers.has(pid) || Number.isNaN(created) || created < namers.get(pid)) continue;
+      held.push({ directory, released: name !== base, pid, record });
     }
   }
   return held;
@@ -680,25 +753,85 @@ function runningPids() {
 const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 /**
+ * withFileLock's takeover marker prefix for an owner record. @devfn/ports src/lock.ts
+ * (recoverLock) is the source of truth for this format: a waiter taking over a dead holder's lock
+ * links `owner.takeover.<first 32 hex digits of the record's SHA-256>.<generation>`, and links
+ * generation n+1 only once the taker of n is dead, so only the newest taker of a record may be live.
+ */
+const takeoverPrefix = (record) => `owner.takeover.${createHash("sha256").update(record).digest("hex").slice(0, 32)}.`;
+
+/** Whether a takeover marker records a taker that is no longer running. One that cannot be read may still be live. */
+function takerDead(marker) {
+  let owner;
+  try { owner = JSON.parse(readFileSync(marker, "utf8")); } catch { return false; }
+  if (typeof owner?.token !== "string" || !Number.isSafeInteger(owner.pid) || owner.pid <= 0) return false;
+  const running = runningPids();
+  return running ? !running.has(owner.pid) : !alive(owner.pid);
+}
+
+// Test-only: set to a file path, the guard writes `<path>.held` once it holds a lock's takeover
+// marker and waits, up to 30 s, for `<path>` to exist, so a self-test can interleave a waiter.
+const LOCK_PAUSE_VARIABLE = "SFN_TEST_LEAK_GUARD_LOCK_PAUSE";
+
+function pauseForTest(marker) {
+  const pauseFile = process.env[LOCK_PAUSE_VARIABLE];
+  if (!pauseFile) return;
+  writeFileSync(`${pauseFile}.held`, JSON.stringify({ pid: process.pid, marker }));
+  for (const deadline = Date.now() + 30_000; !existsSync(pauseFile) && Date.now() < deadline;) sleepSync(20);
+}
+
+/**
+ * Moves a dead holder's lock to `target` under withFileLock's own takeover protocol, as a waiter
+ * recovering it would: it links the record's next takeover marker with an owner record of its
+ * own, passing a generation only when its taker is dead, then, holding that marker, moves the
+ * lock only while its owner record is still the one the guard read. No waiter can take the lock
+ * over meanwhile, and the move frees its path in one step. Returns "moved", "busy" when another
+ * taker may be live (the lock is left to it) or "changed" when it was released or replaced.
+ */
+function moveAbandonedLock({ directory, record }, target) {
+  const token = `leak-guard-${newToken()}`;
+  const temp = path.join(directory, `owner.${token}.tmp`);
+  const snapshot = path.join(directory, `owner.snapshot.${token}`);
+  const prefix = takeoverPrefix(record);
+  let marker;
+  try {
+    writeFileSync(temp, JSON.stringify({ token, pid: process.pid, createdAt: new Date().toISOString() }), { mode: 0o600, flag: "wx" });
+    for (let generation = 0; marker === undefined; generation += 1) {
+      const candidate = path.join(directory, `${prefix}${generation}`);
+      try { linkSync(temp, candidate); marker = candidate; }
+      catch (error) {
+        if (error?.code !== "EEXIST") throw error;
+        if (!takerDead(candidate)) return "busy";
+      }
+    }
+    pauseForTest(marker);
+    linkSync(path.join(directory, "owner.json"), snapshot);
+    if (readFileSync(snapshot, "utf8") !== record) return "changed";
+    renameSync(directory, target);
+    return "moved";
+  } catch (error) {
+    return error?.code === "ENOENT" ? "changed" : "busy";
+  } finally {
+    // Once moved, these files go with the lock; otherwise only the guard's own files go.
+    if (!existsSync(target)) for (const file of [temp, snapshot, marker]) if (file) try { rmSync(file, { force: true }); } catch { /* left for the next taker to judge */ }
+  }
+}
+
+/**
  * Removes the locks a process of this run took and died holding, once it has died: this runs
  * after the run's own processes were stopped, and waits up to `graceMs` for them to go. A lock
  * whose holder is still running, or that this run's processes never took, is left alone.
  * `ending` names a process to count as gone although it is still running, such as this one
  * when it is about to exit. Synchronous, so it can run as the process exits.
  *
- * The lock is moved aside first, as withFileLock releases one, so its path is freed in one step.
- *
- * withFileLock lets any waiter take over a lock whose holder is dead once it is `staleMs` old,
- * replacing its owner record in place. The guard must never move such a lock away under a waiter
- * that has just taken it over. So it removes a lock only while its owner record is younger than
- * REMOVABLE_SHARE of that age (240 s of the default 300 s), checked against a fresh read of the
- * record just before the move, which also skips a lock whose record changed. A waiter judges a
- * lock recoverable only after it is `staleMs` old, a clear margin after the guard's last check.
- * An older lock is left in place for withFileLock to recover, and listed as kept, so the run
- * still fails. A released copy (`<lock>.released.*`) is never taken over, so it goes at any age.
+ * withFileLock lets any waiter take over a dead holder's lock once it is `staleMs` old, replacing
+ * its owner record in place, and excludes other takers only through its takeover markers. So the
+ * guard moves a lock away only while holding such a marker itself (moveAbandonedLock). A lock
+ * another live taker holds a marker for is left in place and listed as kept, so the run still
+ * fails. A released copy (`<lock>.released.*`) is never taken over, so it goes as it is.
  */
 function removeAbandonedLocks(root, { graceMs, ending } = {}) {
-  let held = runLocks(root);
+  const held = runLocks(root);
   if (held.length === 0) return [];
   let running = runningPids();
   // Without a listing, a zombie still counts as running, so nothing is removed that may be live.
@@ -708,22 +841,11 @@ function removeAbandonedLocks(root, { graceMs, ending } = {}) {
     running = runningPids();
   }
   const removed = [];
-  for (const lock of runLocks(root)) {
-    if (!dead(lock.pid)) continue;
-    let target = lock.directory;
-    if (!lock.released) {
-      let current;
-      try { current = readFileSync(path.join(lock.directory, "owner.json"), "utf8"); } catch { continue; }
-      // Released, or taken over, since it was read: it is no longer the dead holder's.
-      if (current !== lock.record) continue;
-      const age = Date.now() - lock.created;
-      if (!(age < lock.staleMs * REMOVABLE_SHARE)) {
-        removed.push({ ...lock, kept: true, age });
-        continue;
-      }
-      target = `${lock.directory}.released.leak-guard-${newToken()}`;
-      try { renameSync(lock.directory, target); } catch { continue; }
-    }
+  for (const lock of runLocks(root).filter((candidate) => dead(candidate.pid))) {
+    const target = lock.released ? lock.directory : `${lock.directory}.released.leak-guard-${newToken()}`;
+    const outcome = lock.released ? "moved" : moveAbandonedLock(lock, target);
+    if (outcome === "busy") removed.push({ ...lock, kept: true });
+    if (outcome !== "moved") continue;
     removeTree(target);
     removed.push(lock);
   }
@@ -782,13 +904,15 @@ function worktreeOrphans(processes, { worktree, startedAt, own, root }) {
     }
     return false;
   };
-  const ownPids = new Set(ownedProcesses(processes, own).map((entry) => entry.pid));
+  const { owned, ambiguous } = attributeProcesses(processes, own);
+  const ownPids = new Set([...owned, ...ambiguous].map((entry) => entry.pid));
   const siblings = liveSiblingRuns(root);
   const worktreeRoots = pathAliases(worktree);
   const checkouts = new Map();
   const inThisWorktree = (named, worktreeRoot) => !inNestedCheckout(named, worktreeRoot, checkouts);
+  const beside = new Map();
   return processes.filter((entry) => entry.pid !== process.pid && !ancestors.has(entry.pid) && !ownPids.has(entry.pid) && recent(entry) &&
-    namesPathUnder(entry, worktreeRoots, inThisWorktree) && !/\bturbo(?:\.exe)?\b.*\bdaemon\b/.test(entry.command) &&
+    namesPathUnder(entry, worktreeRoots, inThisWorktree, beside) === "exact" && !/\bturbo(?:\.exe)?\b.*\bdaemon\b/.test(entry.command) &&
     !siblings.some((sibling) => entry.environment.includes(sibling.marker) || namesPathUnder(entry, sibling.roots)) && orphaned(entry));
 }
 
@@ -849,11 +973,13 @@ export function guardTestFile({ beforeEach, afterEach, afterAll }) {
     for (const entry of tempLeftovers(folder)) if (!entries.has(entry)) removeTree(path.join(folder, entry));
   }, 60_000);
   afterAll(async (suite) => {
-    const find = () => { const listed = listProcesses(startedAt); return listed && ownedProcesses(listed, scope()); };
+    let latest;
+    const find = () => { latest = listProcesses(startedAt); return latest && ownedProcesses(latest, scope()); };
     const settled = await settle(find, FILE_GRACE_MS) ?? [];
     const stopped = new Map(settled.map((entry) => [entry.pid, entry]));
     const unstopped = settled.length > 0 ? await stopProcesses(settled, () => { const remaining = find(); for (const entry of remaining ?? []) stopped.set(entry.pid, entry); return remaining; }) : [];
     const owned = [...stopped.values()];
+    const ambiguous = latest ? attributeProcesses(latest, scope()).ambiguous : [];
     const entries = tempLeftovers(folder).map((entry) => path.join(folder, entry));
     const removed = removeTree(folder);
     for (const directory of guardedDirectories()) {
@@ -864,10 +990,9 @@ export function guardTestFile({ beforeEach, afterEach, afterAll }) {
     const notes = [];
     if (unstopped.length > 0) notes.push(`Still running after SIGKILL: ${unstopped.map((entry) => entry.pid).join(", ")}.`);
     if (!removed) entries.push(`${folder}, the test file's temp folder, which could not be removed`);
-    if (owned.length > 0 || entries.length > 0) {
-      const relative = suite?.filepath ? path.relative(process.cwd(), suite.filepath) : undefined;
-      const file = relative === undefined ? "This test file" : relative.startsWith("..") ? suite.filepath : relative;
-      throw new Error(report(file, owned, entries, notes));
+    if (owned.length > 0 || entries.length > 0 || ambiguous.length > 0) {
+      // The absolute path, the same on every platform and from every working directory.
+      throw new Error(report(suite?.filepath ?? "This test file", owned, entries, notes, { ambiguous }));
     }
   }, 60_000);
 }
