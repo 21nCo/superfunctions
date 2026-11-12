@@ -193,16 +193,21 @@ describe("pathsNamedUnder", () => {
     expect(attributeProcesses(corroborated, { roots: [run], marker: "SFN_TEST_LEAK_GUARD_RUN=x", vouch: ({ pid }) => pid === 9_000_413 })).toEqual({ owned: corroborated, ambiguous: [] });
   });
 
-  it("resolves '.' and '..' in a path value before deciding that it is under the root", () => {
+  it("resolves '.' and '..' in a path value before deciding that it is under the root, and names no path the system could not follow", () => {
     const linux = (pid: number, argv: string, environment = "") => ({ pid, ppid: 1, pgid: pid, elapsed: 0, command: argv.replaceAll("\0", " ").trim(), argv, environment, separated: true, cwd: "/" });
     const macos = (pid: number, command: string, environment = "") => ({ pid, ppid: 1, pgid: pid, elapsed: 0, command, environment, cwd: undefined });
     const outside = [
       linux(9_000_501, `node\0${root}/../other/server.mjs\0`), linux(9_000_502, "node\0", `TMPDIR=${root}/../other\0`),
       macos(9_000_503, `node ${root}/../other/x`), macos(9_000_504, "node", `TMPDIR=${root}/./../other`),
     ];
-    const inside = [linux(9_000_511, `node\0${root}/a/../b/x\0`), macos(9_000_512, `node ${root}/a/../b/x`)];
-    expect(attributeProcesses([...outside, ...inside], { roots: [root] })).toEqual({ owned: [inside[0]], ambiguous: [inside[1]] });
-    expect(pathsNamedUnder(`node ${root}/a/..//b/ ${root}/..`, root)).toEqual([`${root}/b`]);
+    // Through a missing directory or a file, which the system cannot go up from.
+    const unresolved = [
+      linux(9_000_511, `node\0${root}/a/../b/x\0`), macos(9_000_512, `node ${root}/a/../b/x`),
+      linux(9_000_513, `node\0/dev/null/../..${root}/server.mjs\0`), linux(9_000_514, "node\0", `TMPDIR=/dev/null/../..${root}\0`),
+      macos(9_000_515, `node /dev/null/../..${root}/server.mjs`),
+    ];
+    expect(attributeProcesses([...outside, ...unresolved], { roots: [root] })).toEqual({ owned: [], ambiguous: [] });
+    expect(pathsNamedUnder(`node ${root}/./b//c/`, root)).toEqual([`${root}/b/c`]);
   });
 
   it("resolves '..' through a symbolic link as the system does, so a path that only reads as under the root is not", () => {
@@ -211,11 +216,17 @@ describe("pathsNamedUnder", () => {
     mkdirSync(path.join(outside, "deep"));
     symlinkSync(path.join(outside, "deep"), path.join(run, "link"));
     mkdirSync(path.join(run, "real"));
+    writeFileSync(path.join(run, "file.txt"), "");
     const linux = (pid: number, argv: string, environment = "") => ({ pid, ppid: 1, pgid: pid, elapsed: 0, command: argv.replaceAll("\0", " ").trim(), argv, environment, separated: true, cwd: "/" });
     const macos = (pid: number, command: string) => ({ pid, ppid: 1, pgid: pid, elapsed: 0, command, environment: "", cwd: undefined });
     // <run>/link/.. is the outside folder, not <run>.
-    const outsideRun = [linux(9_000_601, `node\0${run}/link/../x\0`), linux(9_000_602, "node\0", `TMPDIR=${run}/link/..\0`), macos(9_000_603, `node ${run}/link/../x`)];
-    const inside = [linux(9_000_611, `node\0${run}/real/../x\0`), linux(9_000_612, `node\0${run}/missing/../x\0`), macos(9_000_613, `node ${run}/real/../x`)];
+    const outsideRun = [
+      linux(9_000_601, `node\0${run}/link/../x\0`), linux(9_000_602, "node\0", `TMPDIR=${run}/link/..\0`), macos(9_000_603, `node ${run}/link/../x`),
+      // Not paths at all: the system cannot go up from a file or a missing directory.
+      linux(9_000_604, `node\0${run}/file.txt/../x\0`), linux(9_000_605, "node\0", `TMPDIR=${run}/file.txt/..\0`), linux(9_000_606, `node\0${run}/missing/../x\0`),
+      macos(9_000_607, `node ${run}/file.txt/../x`),
+    ];
+    const inside = [linux(9_000_611, `node\0${run}/real/../x\0`), linux(9_000_612, "node\0", `TMPDIR=${run}/real/./..\0`), macos(9_000_613, `node ${run}/real/../x`)];
     expect(attributeProcesses([...outsideRun, ...inside], { roots: pathAliases(run) })).toEqual({ owned: inside.slice(0, 2), ambiguous: inside.slice(2) });
   });
 

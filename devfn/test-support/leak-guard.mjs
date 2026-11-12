@@ -24,7 +24,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { appendFileSync, chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync, writeSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync, writeSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -238,8 +238,9 @@ const isPathUnder = (value, root) => value === root || value.startsWith(`${root}
 /**
  * An absolute value with its `.` and `..` segments and repeated slashes resolved as the system
  * resolves them, so `<root>/../other` is not under `<root>`: `..` goes up from where the path so
- * far really is, through a symbolic link where one is, and only where nothing is there yet, from
- * the path as written. Every named path goes through this.
+ * far really is, through a symbolic link where one is. Undefined when the system could not
+ * follow it: the path before a `..` is missing or not a directory, as in `/dev/null/../x`.
+ * Every named path goes through this.
  */
 function normalPath(value) {
   if (!value.startsWith("/")) return value;
@@ -247,7 +248,10 @@ function normalPath(value) {
   for (const segment of value.split("/")) {
     if (segment === "" || segment === ".") continue;
     if (segment === "..") {
-      try { current = realpathSync.native(current); } catch { /* nothing there, so not a link */ }
+      try {
+        current = realpathSync.native(current);
+        if (!statSync(current).isDirectory()) return undefined;
+      } catch { return undefined; }
       current = path.posix.dirname(current);
     } else current = path.posix.join(current, segment);
   }
@@ -263,6 +267,7 @@ const DOT_DOT = /(?:^|\/)\.\.(?:\/|$)/;
  */
 function pathUnder(raw, root) {
   const value = normalPath(raw);
+  if (value === undefined) return undefined;
   if (isPathUnder(value, root)) return value;
   if (!DOT_DOT.test(raw)) return undefined;
   const alias = pathAliases(root).find((spelling) => isPathUnder(value, spelling));
