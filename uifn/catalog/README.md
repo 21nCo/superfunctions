@@ -54,8 +54,9 @@ in these sources that refines one of them makes a component, as does a public
 `View`-extension member in `Components`. A conformance counts in the
 declaration or in an extension in either directory. Any other public struct,
 class or actor (a value type, a `Layout`), and a public `View`-extension member
-in `Styles` (such as `uifnTheme`), is a non-surface. Enums and protocols count
-only as styles or components. One declaration repeated with the same kind and
+in `Styles` (such as `uifnTheme`), is a non-surface. An enum counts only as a
+style or component; a protocol is never listed, it passes its refinement on to
+the types that conform to it. One declaration repeated with the same kind and
 file, as `#if` alternatives or overloads are, is listed once; keep a
 declaration's alternatives and overloads in one file. Only extensions of `View`
 itself are read for view modifiers; public protocols, file-scope functions and

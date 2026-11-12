@@ -307,8 +307,9 @@ export function validateSwiftUIStatus(source = SWIFTUI_STATUS_SOURCE) {
 // Shape, InsettableShape, the view and view controller representables, or a
 // protocol declared in these sources that refines one of them, makes a
 // component, as does a View-extension member in Components. Conformances
-// added by an extension in any scanned file count. An enum or protocol counts
-// only as a style or component. Any other public struct, class or actor, and
+// added by an extension in any scanned file count. An enum counts only as a
+// style or component; a protocol is never listed, it only passes its
+// refinement on to the types that conform to it. Any other public struct, class or actor, and
 // any View-extension member in Styles, is unclassified and has to be listed
 // as a non-surface, so the scan fails closed.
 const SWIFT_STYLE_PROTOCOL = /^[A-Z]\w*Style$/;
@@ -367,13 +368,15 @@ function swiftStringEnd(context, start) {
   return index;
 }
 
-function swiftRegexEnd(text, start) {
+function swiftRegexEnd(context, start) {
+  const { text } = context;
   let index = start;
   while (text[index] === '#') index += 1;
   const close = `/${text.slice(start, index)}`;
   const bare = close === '/';
   if (bare) {
-    const before = text.slice(0, start).trimEnd();
+    // The code before it, with comments already blanked.
+    const before = context.out.slice(0, start).join('').trimEnd();
     if (!SWIFT_OPERAND_BEFORE.has(before.at(-1) ?? '') && !/\breturn$/.test(before)) return 0;
   }
   for (index += 1; index < text.length && !(bare && text[index] === '\n'); index += 1) {
@@ -389,7 +392,7 @@ function swiftLiteralEnd(context, index) {
   SWIFT_STRING_START.lastIndex = index;
   if (SWIFT_STRING_START.test(text)) return swiftStringEnd(context, index);
   SWIFT_REGEX_START.lastIndex = index;
-  return SWIFT_REGEX_START.test(text) ? swiftRegexEnd(text, index) : 0;
+  return SWIFT_REGEX_START.test(text) ? swiftRegexEnd(context, index) : 0;
 }
 
 // Scans code from `start`; in a string interpolation, stops after its `)`.
@@ -492,7 +495,14 @@ function readSwiftMember(state, index) {
   if (['func', 'var'].includes(tokens[index]) && scope?.kind === 'extension' && scope.name === 'View' && SWIFT_IDENTIFIER.test(name) && isSwiftPublic(state.modifiers, scope)) {
     model.found.push({ id: name, keyword: tokens[index], source, member: true });
   }
-  return index + 2;
+  if (!['func', 'init', 'subscript'].includes(tokens[index])) return index + 2;
+  // Skips the name (an operator's too), generic clause and parameter list, so
+  // a parameter label such as `class` is not read as a declaration.
+  let cursor = tokens[index] === 'func' ? index + 2 : index + 1;
+  while (!SWIFT_IDENTIFIER.test(name) && tokens[index] === 'func' && cursor < tokens.length && tokens[cursor] !== '(') cursor += 1;
+  while (['?', '!'].includes(tokens[cursor])) cursor += 1;
+  if (tokens[cursor] === '<') cursor = skipBalanced(tokens, cursor, '<', '>');
+  return tokens[cursor] === '(' ? skipBalanced(tokens, cursor, '(', ')') : cursor;
 }
 
 function stepSwiftBrace(state, index) {
