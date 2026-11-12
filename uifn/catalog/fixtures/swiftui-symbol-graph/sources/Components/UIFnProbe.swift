@@ -161,6 +161,25 @@ extension UIFnGlowing {
     func uifnShade() -> Int { 0 }
 }
 
+// A default implementation of a requirement inherited from a protocol that
+// does not refine View belongs to the extended protocol, which does.
+public protocol UIFnShining {
+    func uifnShine() -> Int
+}
+
+public protocol UIFnShiningView: UIFnShining, View {}
+
+extension UIFnShiningView {
+    public func uifnShine() -> Int { 2 }
+}
+
+// A default implementation of another module's requirement (View.body).
+public protocol UIFnPanelView: View {}
+
+extension UIFnPanelView {
+    public var body: some View { EmptyView() }
+}
+
 // Declarations in debug-only, release-only and device-only builds.
 #if DEBUG
 public struct UIFnDebugOnly: View {

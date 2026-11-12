@@ -4281,6 +4281,137 @@
   },
   {
    "kind": {
+    "identifier": "swift.protocol",
+    "displayName": "Protocol"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A7ShiningP",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnShining"
+   ],
+   "names": {
+    "title": "UIFnShining"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A7ShiningP9uifnShineSiyF",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnShining",
+    "uifnShine()"
+   ],
+   "names": {
+    "title": "uifnShine()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.protocol",
+    "displayName": "Protocol"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A11ShiningViewP",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnShiningView"
+   ],
+   "names": {
+    "title": "UIFnShiningView"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A11ShiningViewPAAE9uifnShineSiyF",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnShiningView",
+    "uifnShine()"
+   ],
+   "names": {
+    "title": "uifnShine()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "UIFnSwiftUI",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.protocol",
+    "displayName": "Protocol"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A9PanelViewP",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPanelView"
+   ],
+   "names": {
+    "title": "UIFnPanelView"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.property",
+    "displayName": "Instance Property"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A9PanelViewPAAE4bodyQrvp",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPanelView",
+    "body"
+   ],
+   "names": {
+    "title": "body"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "UIFnSwiftUI",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
     "identifier": "swift.struct",
     "displayName": "Structure"
    },
@@ -6365,6 +6496,44 @@
    "kind": "defaultImplementationOf",
    "source": "s:11UIFnSwiftUI0A7GlowingPAAE9uifnShadeSiyF",
    "target": "s:11UIFnSwiftUI0A7GlowingP9uifnShadeSiyF"
+  },
+  {
+   "kind": "requirementOf",
+   "source": "s:11UIFnSwiftUI0A7ShiningP9uifnShineSiyF",
+   "target": "s:11UIFnSwiftUI0A7ShiningP"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A11ShiningViewP",
+   "target": "s:7SwiftUI4ViewP",
+   "targetFallback": "SwiftUICore.View"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A11ShiningViewP",
+   "target": "s:11UIFnSwiftUI0A7ShiningP"
+  },
+  {
+   "kind": "defaultImplementationOf",
+   "source": "s:11UIFnSwiftUI0A11ShiningViewPAAE9uifnShineSiyF",
+   "target": "s:11UIFnSwiftUI0A7ShiningP9uifnShineSiyF"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A9PanelViewP",
+   "target": "s:7SwiftUI4ViewP",
+   "targetFallback": "SwiftUICore.View"
+  },
+  {
+   "kind": "defaultImplementationOf",
+   "source": "s:11UIFnSwiftUI0A9PanelViewPAAE4bodyQrvp",
+   "target": "s:7SwiftUI4ViewP4body4BodyQzvp",
+   "targetFallback": "SwiftUICore.View.body"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A9PanelViewPAAE4bodyQrvp",
+   "target": "s:11UIFnSwiftUI0A9PanelViewP"
   },
   {
    "kind": "memberOf",

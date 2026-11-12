@@ -12,7 +12,8 @@
 //   node uifn/catalog/fixtures/swiftui-symbol-graph/regenerate.mjs
 
 import { execFileSync } from 'node:child_process';
-import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { cp, mkdtemp, readdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -51,16 +52,18 @@ function trimmed(graph) {
 }
 
 // Builds one platform and writes its trimmed graphs to staged/<name>.
-async function stagePlatform([name, target, sdkPath, defines], files) {
+// Synchronous, so a failure stops the run before the next build starts and
+// before the temporary directory is removed.
+function stagePlatform([name, target, sdkPath, defines], files) {
   const build = path.join(temporaryRoot, 'build', name);
   const staged = path.join(temporaryRoot, 'staged', name);
-  await Promise.all([mkdir(build, { recursive: true }), mkdir(staged, { recursive: true })]);
+  mkdirSync(build, { recursive: true });
+  mkdirSync(staged, { recursive: true });
   execFileSync(XCRUN, ['swiftc', '-module-name', 'UIFnSwiftUI', '-parse-as-library', '-target', target, '-sdk', sdkPath, '-emit-module', '-emit-module-path', path.join(build, 'UIFnSwiftUI.swiftmodule'), '-emit-symbol-graph-dir', build, ...SWIFTUI_SYMBOL_GRAPH_FLAGS, ...defines, ...files], { stdio: 'inherit' });
-  const graphFiles = (await readdir(build)).filter((entry) => entry.endsWith('.symbols.json'));
-  await Promise.all(graphFiles.map(async (file) => {
-    const graph = JSON.parse(await readFile(path.join(build, file), 'utf8'));
-    await writeFile(path.join(staged, file), `${JSON.stringify(trimmed(graph), null, 1)}\n`);
-  }));
+  for (const file of readdirSync(build).filter((entry) => entry.endsWith('.symbols.json'))) {
+    const graph = JSON.parse(readFileSync(path.join(build, file), 'utf8'));
+    writeFileSync(path.join(staged, file), `${JSON.stringify(trimmed(graph), null, 1)}\n`);
+  }
 }
 
 try {
@@ -73,9 +76,7 @@ try {
   ];
   await cp(path.join(here, 'sources'), sourceRoot, { recursive: true });
   const files = await swiftFiles(sourceRoot);
-  // Each platform builds into its own directories (the compiler runs
-  // synchronously, so one at a time).
-  await Promise.all(platforms.map((platform) => stagePlatform(platform, files)));
+  for (const platform of platforms) stagePlatform(platform, files);
   // Every platform built: replace the committed fixtures. The temporary
   // directory may be on another volume, so copy rather than rename.
   await Promise.all(platforms.map(async ([name]) => {

@@ -272,6 +272,8 @@ test('the compiler symbol graphs give every public declaration in Styles and Com
     { id: 'UIFnHosted', kind: 'component', source: at('Components/UIFnProbe.swift') },
     { id: 'UIFnList', kind: 'component', source: at('Components/UIFnProbe.swift') },
     { id: 'UIFnPager', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    // A default implementation of View.body.
+    { id: 'UIFnPanelView.body', kind: 'component', source: at('Components/UIFnProbe.swift') },
     // Declared only in the #if os(iOS) branch.
     { id: 'UIFnPhoneOnly', kind: 'component', source: at('Components/UIFnProbe.swift') },
     { id: 'UIFnPlaceholder', kind: 'component', source: at('Components/UIFnProbe.swift') },
@@ -281,6 +283,9 @@ test('the compiler symbol graphs give every public declaration in Styles and Com
     // protocol refining View, unclassified otherwise.
     { id: 'UIFnRenderable.uifnGlow', kind: 'component', source: at('Components/UIFnProbe.swift') },
     { id: 'UIFnRing', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    // A default implementation of a requirement UIFnShiningView inherits from
+    // UIFnShining, which does not refine View, belongs to UIFnShiningView.
+    { id: 'UIFnShiningView.uifnShine', kind: 'component', source: at('Components/UIFnProbe.swift') },
     // A default implementation of a requirement of a protocol that does not.
     { id: 'UIFnSizing.size', kind: 'unclassified', source: at('Components/UIFnProbe.swift') },
     { id: 'UIFnSizing.uifnDoubled', kind: 'unclassified', source: at('Components/UIFnProbe.swift') },
@@ -306,6 +311,12 @@ test('the compiler symbol graphs give every public declaration in Styles and Com
   assert.ok(has(mac, 'UIFnInternal.Inner') && has(mac, 'UIFnPrivateView') && has(mac, 'UIFnFilePrivateView'));
   // Requirement and default implementation are both in the graph.
   for (const id of ['UIFnSizing.size()', 'UIFnGlowing.uifnHalo()', 'UIFnGlowing.uifnShade()']) assert.equal(count(mac, id), 2, id);
+  // The graph has no memberOf for these default implementations.
+  for (const id of ['UIFnGlowing.uifnHalo()', 'UIFnShiningView.uifnShine()']) {
+    const precise = mac[0].symbols.filter((symbol) => symbol.pathComponents.join('.') === id).map((symbol) => symbol.identifier.precise);
+    const kinds = mac[0].relationships.filter((relationship) => precise.includes(relationship.source)).map((relationship) => relationship.kind);
+    assert.ok(kinds.includes('defaultImplementationOf') && !kinds.includes('memberOf'), id);
+  }
   for (const id of ['UIFnPhoneOnly', 'UIFnDeviceOnly', 'UIFnReleaseOnly']) assert.ok(has(ios, id) && !has(mac, id), id);
   assert.ok(has(mac, 'UIFnDebugOnly') && !has(ios, 'UIFnDebugOnly'));
   // Each one has to be listed: unlisted it is drift against the real lists.
@@ -332,12 +343,19 @@ test('the inventory and its fixtures come from graphs down to private access, wi
   // component or style parked in nonSurfaces is drift.
   const inventory = await fixtureInventory();
   const real = await committedDeclarations();
-  for (const id of ['UIFnHiddenCard', 'UIFnHiddenStyle', 'UIFnGlowing.uifnHalo']) {
+  for (const id of ['UIFnHiddenCard', 'UIFnHiddenStyle', 'UIFnGlowing.uifnHalo', 'UIFnShiningView.uifnShine', 'UIFnPanelView.body']) {
     const declaration = inventory.declarations.find((entry) => entry.id === id);
     assert.ok(declaration && declaration.kind !== 'unclassified', id);
     expectCatalogCode(() => verifySwiftUISurfaceDeclarations([...real, declaration]), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
     expectCatalogCode(() => verifySwiftUISurfaceDeclarations([...real, declaration], listedWith([{ ...declaration, kind: 'unclassified' }])), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
   }
+});
+
+test('a default implementation whose protocol the graph does not have fails closed', async () => {
+  const [mac] = await fixtureGraphs();
+  const graphs = structuredClone(mac);
+  for (const symbol of graphs[0].symbols.filter((entry) => entry.pathComponents.join('.') === 'UIFnShiningView.uifnShine()')) symbol.pathComponents = ['UIFnElsewhere', 'uifnShine()'];
+  expectCatalogCode(() => swiftUIDeclarationsFromSymbolGraphs(graphs), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
 });
 
 test('repeats of one declaration coalesce; a conflicting kind or source is drift', async () => {

@@ -19,9 +19,10 @@
 // - an enum that is a style or a component;
 // - a top-level function, variable or type alias;
 // - a member of an extension of a UIFnSwiftUI protocol, by protocol and name
-//   (UIFnPanelView.uifnGlow), a default implementation of one of its
-//   requirements included (the graph links that to the requirement, not to
-//   the protocol); or
+//   (UIFnPanelView.uifnGlow), a default implementation of one of its own or
+//   inherited requirements included (the graph links that to the requirement,
+//   not to the extended protocol; one whose protocol cannot be found fails);
+//   or
 // - a member of an extension of a type from another module: of View by its
 //   name (uifnToast), of any other type by type and name (Text.uifnBold).
 // A member of an extension constrained to Self == a UIFnSwiftUI type, such as
@@ -89,20 +90,26 @@ function symbolGraphIndex(graphs) {
   const symbols = new Map(ownGraphs.flatMap((graph) => graph.symbols).map((symbol) => [symbol.identifier.precise, symbol]));
   const parents = new Map();
   const conformances = new Map();
-  const defaults = [];
+  const defaults = new Set();
   for (const relationship of ownGraphs.flatMap((graph) => graph.relationships ?? [])) {
     if (PARENT_RELATIONSHIPS.has(relationship.kind)) parents.set(relationship.source, relationship);
     if (relationship.kind === 'conformsTo') conformances.set(relationship.source, [...(conformances.get(relationship.source) ?? []), relationship]);
-    if (relationship.kind === 'defaultImplementationOf') defaults.push(relationship);
+    if (relationship.kind === 'defaultImplementationOf') defaults.add(relationship.source);
   }
-  // A default implementation of a UIFnSwiftUI protocol's requirement is a
-  // member of that protocol's extension, though the graph links it only to
-  // the requirement. (One of another module's requirement has a memberOf.)
-  for (const { source, target } of defaults) {
-    const owner = parents.get(target);
-    if (!parents.has(source) && owner) parents.set(source, { kind: 'memberOf', source, target: owner.target });
+  // A default implementation of a requirement of a UIFnSwiftUI protocol, its
+  // own or one it inherits, is a member of the protocol whose extension
+  // declares it, though the graph links it only to the requirement. That
+  // protocol's path is the implementation's path less its name (a path names
+  // one type in a module). One without a resolvable owner is unresolved.
+  const protocols = new Map([...symbols].filter(([, symbol]) => symbol.kind.identifier === 'swift.protocol').map(([precise, symbol]) => [symbol.pathComponents.join('\0'), precise]));
+  const unresolved = new Set();
+  for (const source of defaults) {
+    if (parents.has(source) || !symbols.has(source)) continue;
+    const owner = protocols.get(symbols.get(source).pathComponents.slice(0, -1).join('\0'));
+    if (owner) parents.set(source, { kind: 'memberOf', source, target: owner });
+    else unresolved.add(source);
   }
-  return { symbols, parents, conformances };
+  return { symbols, parents, conformances, unresolved };
 }
 
 // Public or open, and so is every UIFnSwiftUI type it is nested in.
@@ -154,6 +161,9 @@ export function swiftUIDeclarationsFromSymbolGraphs(graphs) {
     const source = sourceOf(symbol);
     const directory = ['Styles', 'Components'].find((name) => source?.startsWith(`${SWIFTUI_SOURCES_ROOT}/${name}/`));
     if (!directory || precise.includes('::SYNTHESIZED::') || !isEffectivelyPublic(index, precise)) continue;
+    if (index.unresolved.has(precise)) {
+      throw new CatalogError('UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `UIFnSwiftUI declares ${symbol.pathComponents.join('.')} in ${source}, a default implementation whose protocol the symbol graph does not have.`, { id: symbol.pathComponents.join('.'), source });
+    }
     const declaration = symbolDeclaration(index, precise, symbol, source, directory);
     if (declaration) declarations.push(declaration);
   }
