@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { createSelectController, type SelectProps, type SelectController } from '@uifn/core/primitives/select';
+import { popupDomBinding } from '../internal/dom-bindings';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -22,6 +23,7 @@ const SelectDefinition: ReactPrimitiveDefinition<SelectProps> = {
   inputNames: ["value","defaultValue","items","multiple","name","disabled","readOnly","required"],
   context: SelectContext,
   createController: createSelectController as never,
+  domBindings: [popupDomBinding],
 };
 
 export type SelectRootProps = ReactPrimitiveRootProps<SelectProps, 'div'>;

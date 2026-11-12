@@ -1,5 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createCarouselController, type CarouselProps, type CarouselController } from '@uifn/core/primitives/carousel';
+import { rangeGestureDomBinding } from '../internal/dom-bindings.js';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -19,6 +20,7 @@ export const CarouselDefinition: SolidPrimitiveDefinition<CarouselProps> = {
   inputNames: ["index","defaultIndex","itemCount","loop","orientation","autoplayDelay","dir"],
   context: CarouselContext,
   createController: createCarouselController as never,
+  domBindings: [rangeGestureDomBinding],
 };
 
 function CarouselRootElement(props: JSX.IntrinsicElements['section']): JSX.Element {

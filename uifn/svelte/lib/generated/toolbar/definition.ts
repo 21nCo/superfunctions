@@ -1,5 +1,6 @@
 import { createToolbarController, type ToolbarProps } from '@uifn/core/primitives/toolbar';
 import type { SveltePrimitiveDefinition } from '../../internal/compound.js';
+import { rovingFocusDomBinding } from '../../internal/dom-bindings.js';
 
 export const ToolbarDefinition: SveltePrimitiveDefinition<ToolbarProps> = {
   name: 'Toolbar',
@@ -9,4 +10,5 @@ export const ToolbarDefinition: SveltePrimitiveDefinition<ToolbarProps> = {
   inputNames: ["orientation","loop","dir","disabled"],
   contextKey: Symbol('uifn.Toolbar'),
   createController: createToolbarController as never,
+  domBindings: [rovingFocusDomBinding],
 };

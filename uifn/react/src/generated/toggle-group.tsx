@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { createToggleGroupController, type ToggleGroupProps, type ToggleGroupController } from '@uifn/core/primitives/toggle-group';
+import { rovingFocusDomBinding } from '../internal/dom-bindings';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -22,6 +23,7 @@ const ToggleGroupDefinition: ReactPrimitiveDefinition<ToggleGroupProps> = {
   inputNames: ["value","defaultValue","type","orientation","loop","disabled"],
   context: ToggleGroupContext,
   createController: createToggleGroupController as never,
+  domBindings: [rovingFocusDomBinding],
 };
 
 export type ToggleGroupRootProps = ReactPrimitiveRootProps<ToggleGroupProps, 'div'>;

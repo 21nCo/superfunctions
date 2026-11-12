@@ -1,5 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createEditableController, type EditableProps, type EditableController } from '@uifn/core/primitives/editable';
+import { rovingFocusDomBinding } from '../internal/dom-bindings.js';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -19,6 +20,7 @@ export const EditableDefinition: SolidPrimitiveDefinition<EditableProps> = {
   inputNames: ["value","defaultValue","editing","defaultEditing","name","disabled","readOnly","required"],
   context: EditableContext,
   createController: createEditableController as never,
+  domBindings: [rovingFocusDomBinding],
 };
 
 function EditableRootElement(props: JSX.IntrinsicElements['div']): JSX.Element {

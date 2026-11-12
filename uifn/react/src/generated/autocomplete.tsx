@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { createAutocompleteController, type AutocompleteProps, type AutocompleteController } from '@uifn/core/primitives/autocomplete';
+import { popupDomBinding } from '../internal/dom-bindings';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -22,6 +23,7 @@ const AutocompleteDefinition: ReactPrimitiveDefinition<AutocompleteProps> = {
   inputNames: ["value","defaultValue","items","filter","disabled","readOnly"],
   context: AutocompleteContext,
   createController: createAutocompleteController as never,
+  domBindings: [popupDomBinding],
 };
 
 export type AutocompleteRootProps = ReactPrimitiveRootProps<AutocompleteProps, 'div'>;

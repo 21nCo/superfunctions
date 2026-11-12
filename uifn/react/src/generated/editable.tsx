@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { createEditableController, type EditableProps, type EditableController } from '@uifn/core/primitives/editable';
+import { rovingFocusDomBinding } from '../internal/dom-bindings';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -22,6 +23,7 @@ const EditableDefinition: ReactPrimitiveDefinition<EditableProps> = {
   inputNames: ["value","defaultValue","editing","defaultEditing","name","disabled","readOnly","required"],
   context: EditableContext,
   createController: createEditableController as never,
+  domBindings: [rovingFocusDomBinding],
 };
 
 export type EditableRootProps = ReactPrimitiveRootProps<EditableProps, 'div'>;

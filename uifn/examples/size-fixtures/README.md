@@ -17,7 +17,9 @@ Vite and framework plugin that adapter's Workbench declares), then:
   code a primitive adds: the adapter, `@uifn/dom`, `@uifn/core` and their dependencies;
 - fails when a fixture is over its budget in `budgets.json`;
 - fails when a fixture contains code from an unrelated primitive, detected by marker strings that survive
-  minification: the QR-code generator and QRCode contract, and the color-picker controller;
+  minification: the QR-code generator and QRCode contract, the color-picker controller, and the `@uifn/dom`
+  bindings that Dialog (overlay), Select (popup), Slider (range gesture) and Menu wire. Each adapter primitive
+  imports only the bindings that `scripts/uifn-adapter-dom-bindings.mjs` assigns to it;
 - fails when an adapter source imports the `@uifn/core` root barrel instead of a subpath.
 
 Build the adapters first, then run the check from the repository root:

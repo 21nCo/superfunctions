@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { createDrawerController, type DrawerProps, type DrawerController } from '@uifn/core/primitives/drawer';
+import { overlayDomBinding } from '../internal/dom-bindings';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -22,6 +23,7 @@ const DrawerDefinition: ReactPrimitiveDefinition<DrawerProps> = {
   inputNames: ["open","defaultOpen","side","modal","dismissThreshold"],
   context: DrawerContext,
   createController: createDrawerController as never,
+  domBindings: [overlayDomBinding],
 };
 
 export type DrawerRootProps = ReactPrimitiveRootProps<DrawerProps, 'div'>;

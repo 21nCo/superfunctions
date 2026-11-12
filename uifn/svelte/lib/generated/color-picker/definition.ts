@@ -1,5 +1,6 @@
 import { createColorPickerController, type ColorPickerProps } from '@uifn/core/primitives/color-picker';
 import type { SveltePrimitiveDefinition } from '../../internal/compound.js';
+import { popupDomBinding, rovingFocusDomBinding, rangeGestureDomBinding } from '../../internal/dom-bindings.js';
 
 export const ColorPickerDefinition: SveltePrimitiveDefinition<ColorPickerProps> = {
   name: 'ColorPicker',
@@ -9,4 +10,5 @@ export const ColorPickerDefinition: SveltePrimitiveDefinition<ColorPickerProps> 
   inputNames: ["value","defaultValue","open","defaultOpen","colorSpace","alpha","name","disabled","readOnly"],
   contextKey: Symbol('uifn.ColorPicker'),
   createController: createColorPickerController as never,
+  domBindings: [popupDomBinding, rovingFocusDomBinding, rangeGestureDomBinding],
 };

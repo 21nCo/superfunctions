@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { createTourController, type TourProps, type TourController } from '@uifn/core/primitives/tour';
+import { overlayDomBinding } from '../internal/dom-bindings';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -22,6 +23,7 @@ const TourDefinition: ReactPrimitiveDefinition<TourProps> = {
   inputNames: ["open","defaultOpen","step","defaultStep","steps","modal"],
   context: TourContext,
   createController: createTourController as never,
+  domBindings: [overlayDomBinding],
 };
 
 export type TourRootProps = ReactPrimitiveRootProps<TourProps, 'div'>;

@@ -1,5 +1,6 @@
 import { createSliderController, type SliderProps } from '@uifn/core/primitives/slider';
 import type { SveltePrimitiveDefinition } from '../../internal/compound.js';
+import { rangeGestureDomBinding } from '../../internal/dom-bindings.js';
 
 export const SliderDefinition: SveltePrimitiveDefinition<SliderProps> = {
   name: 'Slider',
@@ -9,4 +10,5 @@ export const SliderDefinition: SveltePrimitiveDefinition<SliderProps> = {
   inputNames: ["value","defaultValue","min","max","step","minStepsBetweenThumbs","orientation","dir","name","disabled","readOnly"],
   contextKey: Symbol('uifn.Slider'),
   createController: createSliderController as never,
+  domBindings: [rangeGestureDomBinding],
 };

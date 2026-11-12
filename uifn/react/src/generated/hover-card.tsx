@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { createHoverCardController, type CreateHoverCardProps, type HoverCardController } from '@uifn/core/primitives/hover-card';
+import { overlayDomBinding } from '../internal/dom-bindings';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -22,6 +23,7 @@ const HoverCardDefinition: ReactPrimitiveDefinition<CreateHoverCardProps> = {
   inputNames: ["open","defaultOpen","openDelay","closeDelay","placement"],
   context: HoverCardContext,
   createController: createHoverCardController as never,
+  domBindings: [overlayDomBinding],
 };
 
 export type HoverCardRootProps = ReactPrimitiveRootProps<CreateHoverCardProps, 'div'>;

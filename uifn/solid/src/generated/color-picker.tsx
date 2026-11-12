@@ -1,5 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createColorPickerController, type ColorPickerProps, type ColorPickerController } from '@uifn/core/primitives/color-picker';
+import { popupDomBinding, rovingFocusDomBinding, rangeGestureDomBinding } from '../internal/dom-bindings.js';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -19,6 +20,7 @@ export const ColorPickerDefinition: SolidPrimitiveDefinition<ColorPickerProps> =
   inputNames: ["value","defaultValue","open","defaultOpen","colorSpace","alpha","name","disabled","readOnly"],
   context: ColorPickerContext,
   createController: createColorPickerController as never,
+  domBindings: [popupDomBinding, rovingFocusDomBinding, rangeGestureDomBinding],
 };
 
 function ColorPickerRootElement(props: JSX.IntrinsicElements['div']): JSX.Element {

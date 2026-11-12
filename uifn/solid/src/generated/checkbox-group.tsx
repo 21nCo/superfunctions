@@ -1,5 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createCheckboxGroupController, type CheckboxGroupProps, type CheckboxGroupController } from '@uifn/core/primitives/checkbox-group';
+import { rovingFocusDomBinding } from '../internal/dom-bindings.js';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -19,6 +20,7 @@ export const CheckboxGroupDefinition: SolidPrimitiveDefinition<CheckboxGroupProp
   inputNames: ["value","defaultValue","name","disabled","readOnly","required"],
   context: CheckboxGroupContext,
   createController: createCheckboxGroupController as never,
+  domBindings: [rovingFocusDomBinding],
 };
 
 function CheckboxGroupRootElement(props: JSX.IntrinsicElements['fieldset']): JSX.Element {

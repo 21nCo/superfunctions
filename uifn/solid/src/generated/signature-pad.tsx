@@ -1,5 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createSignaturePadController, type SignaturePadProps, type SignaturePadController } from '@uifn/core/primitives/signature-pad';
+import { rangeGestureDomBinding } from '../internal/dom-bindings.js';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -19,6 +20,7 @@ export const SignaturePadDefinition: SolidPrimitiveDefinition<SignaturePadProps>
   inputNames: ["value","defaultValue","name","disabled","readOnly","required"],
   context: SignaturePadContext,
   createController: createSignaturePadController as never,
+  domBindings: [rangeGestureDomBinding],
 };
 
 function SignaturePadRootElement(props: JSX.IntrinsicElements['div']): JSX.Element {

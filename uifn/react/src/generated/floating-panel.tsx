@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { createFloatingPanelController, type FloatingPanelProps, type FloatingPanelController } from '@uifn/core/primitives/floating-panel';
+import { overlayDomBinding } from '../internal/dom-bindings';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -22,6 +23,7 @@ const FloatingPanelDefinition: ReactPrimitiveDefinition<FloatingPanelProps> = {
   inputNames: ["open","defaultOpen","modal","placement","draggable","resizable"],
   context: FloatingPanelContext,
   createController: createFloatingPanelController as never,
+  domBindings: [overlayDomBinding],
 };
 
 export type FloatingPanelRootProps = ReactPrimitiveRootProps<FloatingPanelProps, 'div'>;

@@ -1,5 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createToggleGroupController, type ToggleGroupProps, type ToggleGroupController } from '@uifn/core/primitives/toggle-group';
+import { rovingFocusDomBinding } from '../internal/dom-bindings.js';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -19,6 +20,7 @@ export const ToggleGroupDefinition: SolidPrimitiveDefinition<ToggleGroupProps> =
   inputNames: ["value","defaultValue","type","orientation","loop","disabled"],
   context: ToggleGroupContext,
   createController: createToggleGroupController as never,
+  domBindings: [rovingFocusDomBinding],
 };
 
 function ToggleGroupRootElement(props: JSX.IntrinsicElements['div']): JSX.Element {

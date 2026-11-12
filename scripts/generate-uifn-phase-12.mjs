@@ -3,6 +3,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { adapterDomBindingsSource } from './uifn-adapter-dom-bindings.mjs';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -50,9 +51,10 @@ function definitionModule(primitive) {
   const runtimeField = interactive
     ? `createController: create${name}Controller as never,`
     : `contract: ${name}Contract as never,`;
+  const domBindings = adapterDomBindingsSource(primitive, '../../internal/dom-bindings.js');
   return `import { ${runtimeImport}, type ${input} } from '@uifn/core/primitives/${primitive.id}';
 import type { SveltePrimitiveDefinition } from '../../internal/compound.js';
-
+${domBindings.importLine}
 export const ${name}Definition: SveltePrimitiveDefinition<${input}> = {
   name: '${name}',
   family: '${primitive.behaviorFamily}',
@@ -64,7 +66,7 @@ export const ${name}Definition: SveltePrimitiveDefinition<${input}> = {
     ...(primitive.name === 'Carousel' ? ['dir'] : []),
   ])},
   contextKey: Symbol('uifn.${name}'),
-  ${runtimeField}
+  ${runtimeField}${domBindings.field}
 };
 `;
 }

@@ -140,3 +140,24 @@ test("the check exits non-zero when a real fixture build exceeds a lowered budge
   assert.equal(stored.status, 0, stored.stderr);
   assert.match(stored.stdout, /ok: every fixture is within budget and free of unrelated primitives/);
 });
+
+test("the DOM-binding markers find Dialog, Select, Slider and Menu wiring in a real minified build of every adapter", async (t) => {
+  requireBuiltAdapters();
+  for (const framework of ["react", "svelte", "solid"]) {
+    const directory = tempDir(t, ".binding-marker-check-", path.join(FIXTURE_ROOT, framework));
+    const entry = path.join(directory, framework === "svelte" ? "entry.ts" : "entry.tsx");
+    writeFileSync(entry, [
+      `import { Dialog } from '@uifn/${framework}/dialog';`,
+      `import { Select } from '@uifn/${framework}/select';`,
+      `import { Slider } from '@uifn/${framework}/slider';`,
+      `import { Menu } from '@uifn/${framework}/menu';`,
+      "console.log(Dialog, Select, Slider, Menu);",
+      "",
+    ].join("\n"));
+    const { source } = await buildFixture({ id: `${framework}/binding-marker-check`, framework, primitive: "tabs", entry });
+    const hits = Object.fromEntries(findUnrelatedPrimitiveCode(source, "tabs").map((hit) => [hit.primitive, hit.markers]));
+    for (const primitive of ["dialog", "select", "slider", "menu"]) {
+      assert.ok(hits[primitive]?.length >= 1, `${framework}: expected ${primitive} markers, found ${JSON.stringify(hits)}`);
+    }
+  }
+});

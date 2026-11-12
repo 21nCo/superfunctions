@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { createRadioGroupController, type RadioGroupProps, type RadioGroupController } from '@uifn/core/primitives/radio-group';
+import { rovingFocusDomBinding } from '../internal/dom-bindings';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -22,6 +23,7 @@ const RadioGroupDefinition: ReactPrimitiveDefinition<RadioGroupProps> = {
   inputNames: ["value","defaultValue","name","orientation","loop","disabled","readOnly","required"],
   context: RadioGroupContext,
   createController: createRadioGroupController as never,
+  domBindings: [rovingFocusDomBinding],
 };
 
 export type RadioGroupRootProps = ReactPrimitiveRootProps<RadioGroupProps, 'fieldset'>;

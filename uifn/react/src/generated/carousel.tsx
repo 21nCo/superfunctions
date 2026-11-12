@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { createCarouselController, type CarouselProps, type CarouselController } from '@uifn/core/primitives/carousel';
+import { rangeGestureDomBinding } from '../internal/dom-bindings';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -22,6 +23,7 @@ const CarouselDefinition: ReactPrimitiveDefinition<CarouselProps> = {
   inputNames: ["index","defaultIndex","itemCount","loop","orientation","autoplayDelay","dir"],
   context: CarouselContext,
   createController: createCarouselController as never,
+  domBindings: [rangeGestureDomBinding],
 };
 
 export type CarouselRootProps = ReactPrimitiveRootProps<CarouselProps, 'section'>;

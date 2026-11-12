@@ -1,5 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createPopoverController, type PopoverProps, type PopoverController } from '@uifn/core/primitives/popover';
+import { overlayDomBinding } from '../internal/dom-bindings.js';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -19,6 +20,7 @@ export const PopoverDefinition: SolidPrimitiveDefinition<PopoverProps> = {
   inputNames: ["open","defaultOpen","modal","placement","closeOnEscape","closeOnInteractOutside"],
   context: PopoverContext,
   createController: createPopoverController as never,
+  domBindings: [overlayDomBinding],
 };
 
 function PopoverRootElement(props: JSX.IntrinsicElements['div']): JSX.Element {

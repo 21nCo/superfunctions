@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { createColorPickerController, type ColorPickerProps, type ColorPickerController } from '@uifn/core/primitives/color-picker';
+import { popupDomBinding, rovingFocusDomBinding, rangeGestureDomBinding } from '../internal/dom-bindings';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -22,6 +23,7 @@ const ColorPickerDefinition: ReactPrimitiveDefinition<ColorPickerProps> = {
   inputNames: ["value","defaultValue","open","defaultOpen","colorSpace","alpha","name","disabled","readOnly"],
   context: ColorPickerContext,
   createController: createColorPickerController as never,
+  domBindings: [popupDomBinding, rovingFocusDomBinding, rangeGestureDomBinding],
 };
 
 export type ColorPickerRootProps = ReactPrimitiveRootProps<ColorPickerProps, 'div'>;

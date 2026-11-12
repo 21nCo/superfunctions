@@ -1,5 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createAlertDialogController, type AlertDialogProps, type AlertDialogController } from '@uifn/core/primitives/alert-dialog';
+import { overlayDomBinding } from '../internal/dom-bindings.js';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -19,6 +20,7 @@ export const AlertDialogDefinition: SolidPrimitiveDefinition<AlertDialogProps> =
   inputNames: ["open","defaultOpen","initialFocus","restoreFocus"],
   context: AlertDialogContext,
   createController: createAlertDialogController as never,
+  domBindings: [overlayDomBinding],
 };
 
 function AlertDialogRootElement(props: JSX.IntrinsicElements['div']): JSX.Element {

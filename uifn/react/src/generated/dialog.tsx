@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { createDialogController, type DialogProps, type DialogController } from '@uifn/core/primitives/dialog';
+import { overlayDomBinding } from '../internal/dom-bindings';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -22,6 +23,7 @@ const DialogDefinition: ReactPrimitiveDefinition<DialogProps> = {
   inputNames: ["open","defaultOpen","modal","initialFocus","restoreFocus"],
   context: DialogContext,
   createController: createDialogController as never,
+  domBindings: [overlayDomBinding],
 };
 
 export type DialogRootProps = ReactPrimitiveRootProps<DialogProps, 'div'>;

@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { createMenuController, type MenuProps, type MenuController } from '@uifn/core/primitives/menu';
+import { menuDomBinding } from '../internal/dom-bindings';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -22,6 +23,7 @@ const MenuDefinition: ReactPrimitiveDefinition<MenuProps> = {
   inputNames: ["open","defaultOpen","orientation","loop","dir"],
   context: MenuContext,
   createController: createMenuController as never,
+  domBindings: [menuDomBinding],
 };
 
 export type MenuRootProps = ReactPrimitiveRootProps<MenuProps, 'div'>;

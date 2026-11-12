@@ -1,5 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createListboxController, type ListboxProps, type ListboxController } from '@uifn/core/primitives/listbox';
+import { rovingFocusDomBinding } from '../internal/dom-bindings.js';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -19,6 +20,7 @@ export const ListboxDefinition: SolidPrimitiveDefinition<ListboxProps> = {
   inputNames: ["value","defaultValue","items","multiple","orientation","name","disabled","readOnly","required"],
   context: ListboxContext,
   createController: createListboxController as never,
+  domBindings: [rovingFocusDomBinding],
 };
 
 function ListboxRootElement(props: JSX.IntrinsicElements['div']): JSX.Element {

@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { createAngleSliderController, type AngleSliderProps, type AngleSliderController } from '@uifn/core/primitives/angle-slider';
+import { rangeGestureDomBinding } from '../internal/dom-bindings';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -22,6 +23,7 @@ const AngleSliderDefinition: ReactPrimitiveDefinition<AngleSliderProps> = {
   inputNames: ["value","defaultValue","min","max","step","disabled","readOnly"],
   context: AngleSliderContext,
   createController: createAngleSliderController as never,
+  domBindings: [rangeGestureDomBinding],
 };
 
 export type AngleSliderRootProps = ReactPrimitiveRootProps<AngleSliderProps, 'div'>;

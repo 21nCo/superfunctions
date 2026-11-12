@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { createTabsController, type TabsProps, type TabsController } from '@uifn/core/primitives/tabs';
+import { rovingFocusDomBinding } from '../internal/dom-bindings';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -22,6 +23,7 @@ const TabsDefinition: ReactPrimitiveDefinition<TabsProps> = {
   inputNames: ["value","defaultValue","activationMode","orientation","loop","dir"],
   context: TabsContext,
   createController: createTabsController as never,
+  domBindings: [rovingFocusDomBinding],
 };
 
 export type TabsRootProps = ReactPrimitiveRootProps<TabsProps, 'div'>;

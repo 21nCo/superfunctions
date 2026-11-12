@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { createTreeViewController, type TreeViewProps, type TreeViewController } from '@uifn/core/primitives/tree-view';
+import { rovingFocusDomBinding } from '../internal/dom-bindings';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -22,6 +23,7 @@ const TreeViewDefinition: ReactPrimitiveDefinition<TreeViewProps> = {
   inputNames: ["expanded","defaultExpanded","selection","defaultSelection","items","selectionMode","dir"],
   context: TreeViewContext,
   createController: createTreeViewController as never,
+  domBindings: [rovingFocusDomBinding],
 };
 
 export type TreeViewRootProps = ReactPrimitiveRootProps<TreeViewProps, 'div'>;

@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { createImageCropperController, type ImageCropperProps, type ImageCropperController } from '@uifn/core/primitives/image-cropper';
+import { rangeGestureDomBinding } from '../internal/dom-bindings';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -22,6 +23,7 @@ const ImageCropperDefinition: ReactPrimitiveDefinition<ImageCropperProps> = {
   inputNames: ["src","crop","defaultCrop","aspectRatio","minSize","maxSize","disabled"],
   context: ImageCropperContext,
   createController: createImageCropperController as never,
+  domBindings: [rangeGestureDomBinding],
 };
 
 export type ImageCropperRootProps = ReactPrimitiveRootProps<ImageCropperProps, 'div'>;

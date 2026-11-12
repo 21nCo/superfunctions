@@ -12,20 +12,15 @@ import {
 import type { UIFnStaticPrimitiveContract } from '@uifn/core/primitives';
 import {
   acquireUIFnDomPlatform,
-  createUIFnMenuDomBinding,
   createUIFnNativeFormResetBinding,
-  createUIFnNavigationMenuDomBinding,
-  createUIFnOverlayDomBinding,
-  createUIFnPopupDomBinding,
-  createUIFnRangeGestureDomBinding,
-  createUIFnRovingFocusDomBinding,
   type UIFnDomResourceSnapshot,
 } from '@uifn/dom';
 import { toReactPartProps } from '../core-props';
+import type { ReactDomBinding, ReactDomBindingInstaller } from './dom-bindings';
 import { Portal } from '../portal';
 import { Slot, composeReactRefs } from '../utils/slot';
 
-const AUTOMATIC_PORTAL_PRIMITIVES = new Set(['Select', 'Menu', 'ContextMenu']);
+export const AUTOMATIC_PORTAL_PRIMITIVES: ReadonlySet<string> = new Set(['Select', 'Menu', 'ContextMenu']);
 const PositionerOwner = React.createContext<ReactPrimitiveBridge<any> | null>(null);
 
 type AnyRecord = Record<string, unknown>;
@@ -42,6 +37,8 @@ export interface ReactPrimitiveDefinition<TInputs extends object = AnyRecord> {
   readonly context: React.Context<ReactPrimitiveBridge<TInputs> | null>;
   readonly createController?: (inputs: TInputs, environment: UIFnEnvironment) => AnyController;
   readonly contract?: AnyStaticContract;
+  /** The @uifn/dom behaviors this primitive wires, in installation order; none when absent. */
+  readonly domBindings?: readonly ReactDomBindingInstaller[];
 }
 
 export interface ReactPrimitiveCompositionProps {
@@ -443,121 +440,14 @@ function useDomOwnership<TInputs extends object>(bridge: ReactPrimitiveBridge<TI
     const root = bridge.getElement(bridge.definition.rootPart);
     if (!root) return undefined;
     const lease = acquireUIFnDomPlatform({ root: root.ownerDocument });
-    const bindings: Array<{ destroy(): void }> = [];
+    const bindings: ReactDomBinding[] = [];
     const controller = bridge.getController();
     const reset = controller?.actions.reset;
     if (typeof reset === 'function') {
       bindings.push(createUIFnNativeFormResetBinding(lease.platform.scope, root, () => reset()));
     }
-    if (bridge.definition.family === 'modal-overlay') {
-      const content = bridge.getElement('content');
-      if (content && controller) {
-        bindings.push(createUIFnOverlayDomBinding({
-          platform: lease.platform,
-          controller: controller as never,
-          content,
-          trigger: () => {
-            if (bridge.definition.name !== 'Tour') return bridge.getElement('trigger');
-            const target = (controller.getState().currentStep as { target?: unknown } | undefined)?.target;
-            return typeof target === 'string'
-              ? content.ownerDocument.querySelector<HTMLElement>(target)
-              : null;
-          },
-          positioner: () => bridge.getElement('positioner'),
-          arrow: () => bridge.getElement('arrow'),
-          portalNode: bridge.getElement('portal') ?? bridge.getElement('positioner') ?? content,
-          portalManagedExternally: bridge.getElement('portal') !== null || AUTOMATIC_PORTAL_PRIMITIVES.has(bridge.definition.name),
-          validateAccessibleName: true,
-        }));
-      }
-    }
-    if ((bridge.definition.name === 'Menu' || bridge.definition.name === 'ContextMenu') && controller) {
-      const trigger = bridge.getElement('trigger');
-      const content = bridge.getElement('content');
-      if (trigger && content) {
-        bindings.push(createUIFnMenuDomBinding({
-          platform: lease.platform,
-          controller: controller as never,
-          id: content.id,
-          trigger,
-          content,
-          positioner: () => bridge.getElement('positioner'),
-          portalManagedExternally: bridge.getElement('portal') !== null || AUTOMATIC_PORTAL_PRIMITIVES.has(bridge.definition.name),
-          getItemElement: (id) => bridge.getElement('item', id),
-        }));
-      }
-    }
-    if (
-      controller
-      && ['Autocomplete', 'Combobox', 'Select', 'ColorPicker', 'DatePicker'].includes(bridge.definition.name)
-    ) {
-      const content = bridge.getElement('content');
-      const trigger = bridge.definition.name === 'Autocomplete'
-        ? bridge.getElement('input')
-        : bridge.getElement('trigger');
-      const reference = ['Autocomplete', 'Combobox', 'Select', 'ColorPicker'].includes(bridge.definition.name)
-        ? bridge.getElement('control') ?? bridge.getElement('input') ?? trigger
-        : bridge.definition.name === 'DatePicker'
-          ? bridge.getElement('input') ?? trigger
-          : trigger;
-      const setOpen = controller.actions.setOpen;
-      if (content && trigger && reference && typeof setOpen === 'function') {
-        bindings.push(createUIFnPopupDomBinding({
-          platform: lease.platform,
-          controller: controller as never,
-          id: root.id || `${bridge.definition.name.toLowerCase()}-popup`,
-          trigger: () => (
-            bridge.definition.name === 'Autocomplete'
-              ? bridge.getElement('input')
-              : bridge.getElement('trigger')
-          ),
-          reference: () => (
-            ['Autocomplete', 'Combobox', 'Select', 'ColorPicker'].includes(bridge.definition.name)
-              ? bridge.getElement('control') ?? bridge.getElement('input') ?? bridge.getElement('trigger')
-              : bridge.definition.name === 'DatePicker'
-                ? bridge.getElement('input') ?? bridge.getElement('trigger')
-                : bridge.getElement('trigger')
-          ),
-          content: () => bridge.getElement('content'),
-          positioner: () => bridge.getElement('positioner'),
-          portalNode: bridge.getElement('portal') ?? bridge.getElement('positioner'),
-          portalManagedExternally: bridge.getElement('portal') !== null || AUTOMATIC_PORTAL_PRIMITIVES.has(bridge.definition.name),
-          placement: 'bottom-start',
-          matchReferenceWidth: ['Autocomplete', 'Combobox', 'Select'].includes(bridge.definition.name),
-          getOpen: (state: Record<string, unknown>) => state.open === true,
-          setOpen: (next: boolean) => (setOpen as (value: boolean) => void)(next),
-        }));
-      }
-    }
-    if (bridge.definition.name === 'NavigationMenu' && controller) {
-      bindings.push(createUIFnNavigationMenuDomBinding({
-        platform: lease.platform,
-        controller: controller as never,
-        getTriggerElement: (id) => bridge.getElement('trigger', id),
-      }));
-    }
-    const roving = rovingTarget(bridge.definition.name, controller?.getState() ?? null);
-    if (controller && roving) {
-      bindings.push(createUIFnRovingFocusDomBinding({
-        platform: lease.platform,
-        controller,
-        getActiveKey: (state) => roving.getActiveKey(state as AnyRecord),
-        getElement: (key) => roving.getParts(controller.getState())
-          .map((part) => roving.valueScoped ? bridge.getElement(part, key) : bridge.getElement(part))
-          .find(Boolean) ?? null,
-        focusInitial: false,
-      }));
-    }
-    if (controller) {
-      for (const target of gestureTargets(bridge)) {
-        bindings.push(createUIFnRangeGestureDomBinding({
-          scope: lease.platform.scope,
-          primitive: bridge.definition.name as never,
-          element: target.element,
-          value: target.value,
-          controller: controller as never,
-        }));
-      }
+    for (const install of bridge.definition.domBindings ?? []) {
+      install({ bridge, controller, platform: lease.platform, root, add: (binding) => bindings.push(binding) });
     }
     bridge.recordDomBindingAcquire();
     return () => {
@@ -566,67 +456,6 @@ function useDomOwnership<TInputs extends object>(bridge: ReactPrimitiveBridge<TI
       bridge.recordDomBindingRelease(lease.platform.scope.resources());
     };
   }, [bridge, elementVersion, generation]);
-}
-
-function gestureTargets(bridge: ReactPrimitiveBridge<any>): ReadonlyArray<{ value?: unknown; element: HTMLElement }> {
-  const name = bridge.definition.name;
-  const single = (part: string) => {
-    const element = bridge.getElement(part);
-    return element ? [{ element }] : [];
-  };
-  if (name === 'Slider') return single('control');
-  if (name === 'AngleSlider') return single('track');
-  if (name === 'Carousel') return single('viewport');
-  if (name === 'SignaturePad') return single('canvas');
-  if (name === 'ImageCropper') return [...single('cropArea'), ...bridge.getElementEntries('handle')];
-  if (name === 'ColorPicker') return [...single('area'), ...bridge.getElementEntries('channelSlider')];
-  if (name === 'Splitter') return bridge.getElementEntries('resizeHandle').map(({ value, element }) => ({ value: Number(value), element }));
-  if (name === 'ScrollArea') return bridge.getElementEntries('thumb');
-  return [];
-}
-
-interface RovingTarget {
-  getActiveKey(state: AnyRecord): string | null;
-  getParts(state: AnyRecord): readonly string[];
-  readonly valueScoped: boolean;
-}
-
-function rovingTarget(name: string, state: AnyRecord | null): RovingTarget | null {
-  if (!state) return null;
-  if (name === 'Menubar') return {
-    getActiveKey: (current) => String(current.value ? current.activeItem ?? '' : current.focusedMenu ?? '') || null,
-    getParts: (current) => current.value ? ['item', 'submenuTrigger'] : ['trigger'],
-    valueScoped: true,
-  };
-  const fixed = (stateKey: string, parts: readonly string[]): RovingTarget => ({
-    getActiveKey: (current) => String(current[stateKey] ?? '') || null,
-    getParts: () => parts,
-    valueScoped: true,
-  });
-  if (name === 'ColorPicker') return {
-    getActiveKey: (current) => current.open ? null : 'trigger',
-    getParts: () => ['trigger'],
-    valueScoped: false,
-  };
-  if (name === 'Editable') return {
-    getActiveKey: (current) => current.editing ? 'input' : 'preview',
-    getParts: (current) => current.editing ? ['input'] : ['preview'],
-    valueScoped: false,
-  };
-  if (name === 'PinInput') return {
-    getActiveKey: (current) => String(Math.max(0, Number(current.valueLength ?? 0) - (current.completed ? 1 : 0))),
-    getParts: () => ['input'],
-    valueScoped: true,
-  };
-  if (name === 'NavigationMenu') return fixed('focusedItem', ['trigger']);
-  if (name === 'Tabs') return fixed('focusedItem', ['trigger']);
-  if (name === 'Toolbar') return fixed('focusedItem', ['button', 'link']);
-  if (name === 'Pagination') return fixed('focusedPage', ['pageTrigger']);
-  if (name === 'TreeView') return fixed('focusedItem', ['item']);
-  if (['CheckboxGroup', 'Listbox', 'RadioGroup', 'SegmentGroup', 'ToggleGroup'].includes(name)) {
-    return fixed('focusedItem', ['itemControl', 'item']);
-  }
-  return null;
 }
 
 function renderComposed(

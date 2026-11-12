@@ -1,5 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createSegmentGroupController, type SegmentGroupProps, type SegmentGroupController } from '@uifn/core/primitives/segment-group';
+import { rovingFocusDomBinding } from '../internal/dom-bindings.js';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -19,6 +20,7 @@ export const SegmentGroupDefinition: SolidPrimitiveDefinition<SegmentGroupProps>
   inputNames: ["value","defaultValue","name","orientation","disabled","readOnly","required"],
   context: SegmentGroupContext,
   createController: createSegmentGroupController as never,
+  domBindings: [rovingFocusDomBinding],
 };
 
 function SegmentGroupRootElement(props: JSX.IntrinsicElements['div']): JSX.Element {

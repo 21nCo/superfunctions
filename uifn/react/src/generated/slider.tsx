@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { createSliderController, type SliderProps, type SliderController } from '@uifn/core/primitives/slider';
+import { rangeGestureDomBinding } from '../internal/dom-bindings';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -22,6 +23,7 @@ const SliderDefinition: ReactPrimitiveDefinition<SliderProps> = {
   inputNames: ["value","defaultValue","min","max","step","minStepsBetweenThumbs","orientation","dir","name","disabled","readOnly"],
   context: SliderContext,
   createController: createSliderController as never,
+  domBindings: [rangeGestureDomBinding],
 };
 
 export type SliderRootProps = ReactPrimitiveRootProps<SliderProps, 'div'>;

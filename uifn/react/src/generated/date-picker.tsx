@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { createDatePickerController, type DatePickerProps, type DatePickerController } from '@uifn/core/primitives/date-picker';
+import { popupDomBinding } from '../internal/dom-bindings';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -22,6 +23,7 @@ const DatePickerDefinition: ReactPrimitiveDefinition<DatePickerProps> = {
   inputNames: ["value","defaultValue","open","defaultOpen","locale","timeZone","min","max","unavailable","name","disabled","readOnly"],
   context: DatePickerContext,
   createController: createDatePickerController as never,
+  domBindings: [popupDomBinding],
 };
 
 export type DatePickerRootProps = ReactPrimitiveRootProps<DatePickerProps, 'div'>;

@@ -33,6 +33,24 @@ export const UNRELATED_PRIMITIVE_MARKERS = Object.freeze({
     "--uifn-channel-position", // @uifn/core ColorPicker channel parts
     "area-thumb", // @uifn/core ColorPicker area part
   ]),
+  // The @uifn/dom bindings other primitives wire. An adapter that installs every binding for every primitive
+  // ships these in a Tabs-only app even though the QR-code and color-picker markers stay clean.
+  dialog: Object.freeze([
+    "create overlay DOM binding", // @uifn/dom overlay binding (Dialog, AlertDialog, Drawer, Popover, Tooltip, ...)
+    "Overlay DOM binding requires a content element.",
+  ]),
+  select: Object.freeze([
+    "create popup DOM binding", // @uifn/dom popup binding (Select, Combobox, Autocomplete, DatePicker, ColorPicker)
+    "Popup DOM binding requires content and floating elements.",
+  ]),
+  slider: Object.freeze([
+    "resizeCancel", // @uifn/dom range-gesture binding (Slider, Splitter, Carousel, AngleSlider, ...)
+    "dragCancel",
+  ]),
+  menu: Object.freeze([
+    "create menu DOM binding", // @uifn/dom menu binding (Menu, ContextMenu)
+    "Menu DOM binding requires a content element.",
+  ]),
 });
 
 // Each adapter's fixtures build with the Vite and framework plugin its Workbench declares. The framework runtime

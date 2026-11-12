@@ -1,5 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createSplitterController, type SplitterProps, type SplitterController } from '@uifn/core/primitives/splitter';
+import { rangeGestureDomBinding } from '../internal/dom-bindings.js';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -19,6 +20,7 @@ export const SplitterDefinition: SolidPrimitiveDefinition<SplitterProps> = {
   inputNames: ["sizes","defaultSizes","minSizes","maxSizes","orientation","dir","disabled"],
   context: SplitterContext,
   createController: createSplitterController as never,
+  domBindings: [rangeGestureDomBinding],
 };
 
 function SplitterRootElement(props: JSX.IntrinsicElements['div']): JSX.Element {

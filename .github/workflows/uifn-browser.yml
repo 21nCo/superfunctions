@@ -14,6 +14,8 @@ on:
       - ".github/workflows/uifn-browser.yml"
       - "scripts/verify-uifn-bundle-size.mjs"
       - "scripts/verify-uifn-bundle-size.test.mjs"
+      - "scripts/uifn-adapter-dom-bindings.mjs"
+      - "scripts/uifn-adapter-dom-bindings.test.mjs"
   push:
     branches:
       - dev
@@ -65,8 +67,8 @@ jobs:
       - name: Solid adapter tests
         run: npm --workspace @uifn/solid run test
 
-      - name: Verify bundle size checker
-        run: node --test scripts/verify-uifn-bundle-size.test.mjs
+      - name: Verify bundle size checker and adapter DOM-binding plan
+        run: node --test scripts/verify-uifn-bundle-size.test.mjs scripts/uifn-adapter-dom-bindings.test.mjs
 
       # Vite production builds of one-primitive apps against uifn/examples/size-fixtures/budgets.json.
       - name: Check per-primitive bundle size

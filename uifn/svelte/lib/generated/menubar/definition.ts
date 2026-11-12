@@ -1,5 +1,6 @@
 import { createMenubarController, type MenubarProps } from '@uifn/core/primitives/menubar';
 import type { SveltePrimitiveDefinition } from '../../internal/compound.js';
+import { rovingFocusDomBinding } from '../../internal/dom-bindings.js';
 
 export const MenubarDefinition: SveltePrimitiveDefinition<MenubarProps> = {
   name: 'Menubar',
@@ -9,4 +10,5 @@ export const MenubarDefinition: SveltePrimitiveDefinition<MenubarProps> = {
   inputNames: ["value","defaultValue","loop","dir"],
   contextKey: Symbol('uifn.Menubar'),
   createController: createMenubarController as never,
+  domBindings: [rovingFocusDomBinding],
 };

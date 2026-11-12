@@ -1,5 +1,6 @@
 import { createTreeViewController, type TreeViewProps } from '@uifn/core/primitives/tree-view';
 import type { SveltePrimitiveDefinition } from '../../internal/compound.js';
+import { rovingFocusDomBinding } from '../../internal/dom-bindings.js';
 
 export const TreeViewDefinition: SveltePrimitiveDefinition<TreeViewProps> = {
   name: 'TreeView',
@@ -9,4 +10,5 @@ export const TreeViewDefinition: SveltePrimitiveDefinition<TreeViewProps> = {
   inputNames: ["expanded","defaultExpanded","selection","defaultSelection","items","selectionMode","dir"],
   contextKey: Symbol('uifn.TreeView'),
   createController: createTreeViewController as never,
+  domBindings: [rovingFocusDomBinding],
 };

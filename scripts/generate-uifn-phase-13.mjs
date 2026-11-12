@@ -3,6 +3,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { adapterDomBindingsSource } from './uifn-adapter-dom-bindings.mjs';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -85,9 +86,10 @@ export function ${component}(props: ${component}Props): JSX.Element {
     ...(primitive.name === 'Accordion' ? ['type'] : []),
     ...(primitive.name === 'Carousel' ? ['dir'] : []),
   ];
+  const domBindings = adapterDomBindingsSource(primitive, '../internal/dom-bindings.js');
   return `import { createContext, type JSX } from 'solid-js';
 import { ${coreTypeImports} } from '@uifn/core/primitives/${primitive.id}';
-import {
+${domBindings.importLine}import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
   SolidPrimitiveRoot,
@@ -105,7 +107,7 @@ export const ${name}Definition: SolidPrimitiveDefinition<${input}> = {
   rootPart: '${host.id}',
   inputNames: ${JSON.stringify(inputNames)},
   context: ${name}Context,
-  ${runtimeField}
+  ${runtimeField}${domBindings.field}
 };
 
 function ${hostName}Element(props: JSX.IntrinsicElements['${hostElement}']): JSX.Element {
