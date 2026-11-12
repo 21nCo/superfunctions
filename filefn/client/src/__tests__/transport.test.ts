@@ -279,6 +279,52 @@ describe('client transport options', () => {
     expect(init.credentials).toBe(toFileFn ? 'include' : 'omit');
   });
 
+  it.each([
+    ['/', '/upload/sess_1/parts/1', true],
+    ['', '/upload/sess_1/parts/1', true],
+    ['/', 'https://app.example/upload/sess_1/parts/1', true],
+    ['/', '//other.example/upload/sess_1/parts/1', false],
+    ['', '//other.example/upload/sess_1/parts/1', false],
+    ['', '/\\other.example/upload/sess_1/parts/1', false],
+    ['/', 'https://other.example/upload/sess_1/parts/1', false],
+  ])('treats a root baseUrl %j as the page origin for part URL %s on a non-root page (%s)', async (baseUrl, url, toFileFn) => {
+    vi.stubGlobal('location', { href: 'https://app.example/dashboard' });
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 200, headers: { ETag: '"e"' } }));
+    const http = createHttpClient({
+      baseUrl,
+      fetch: fetchImpl as unknown as typeof fetch,
+      credentials: 'include',
+      getAuthHeaders: () => ({ Authorization: 'Bearer secret' }),
+    });
+
+    await http.uploadPartToSignedUrl(url, { 'content-type': 'text/plain' }, tenBytes(), 'upls_1');
+
+    const init = (fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1];
+    expect(new Headers(init.headers).get('authorization')).toBe(toFileFn ? 'Bearer secret' : null);
+    expect(init.credentials).toBe(toFileFn ? 'include' : 'omit');
+  });
+
+  it.each([
+    ['', '/upload/sess_1/parts/1', true],
+    ['', '//other.example/upload/sess_1/parts/1', false],
+    ['', '/\\other.example/upload/sess_1/parts/1', false],
+  ])('never treats a protocol-relative URL as FileFn without a page location (baseUrl %j, %s, %s)', async (baseUrl, url, toFileFn) => {
+    expect(globalThis.location).toBeUndefined();
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 200, headers: { ETag: '"e"' } }));
+    const http = createHttpClient({
+      baseUrl,
+      fetch: fetchImpl as unknown as typeof fetch,
+      credentials: 'include',
+      getAuthHeaders: () => ({ Authorization: 'Bearer secret' }),
+    });
+
+    await http.uploadPartToSignedUrl(url, { 'content-type': 'text/plain' }, tenBytes());
+
+    const init = (fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1];
+    expect(new Headers(init.headers).get('authorization')).toBe(toFileFn ? 'Bearer secret' : null);
+    expect(init.credentials).toBe(toFileFn ? 'include' : 'omit');
+  });
+
   it('defaults to the global fetch, resolved per request, and same-origin credentials', async () => {
     const client = createFileFnClient({ baseUrl: BASE });
     const lateFetch = vi.fn(async () => envelope({ fileId: 'file_1' }));

@@ -64,8 +64,8 @@ const files = createFileFnClient({
 
 A part URL returned by the sign endpoint is sent through the same `fetch`:
 
-- A proxy upload URL under `baseUrl` (a relative path, or an absolute URL with the same origin and path prefix) is a FileFn request. It gets the `getAuthHeaders` headers and the configured `credentials`.
-- A presigned storage URL anywhere else (for example an R2 bucket) gets only its signed headers and the upload session token, with `credentials: 'omit'`. Your auth headers and cookies are never sent to storage.
+- A proxy upload URL under `baseUrl` (a relative path, or an absolute URL with the same origin and path prefix) is a FileFn request. It gets the `getAuthHeaders` headers and the configured `credentials`. A `baseUrl` of `'/'` or `''` means the page origin root, so every same-origin path is under it.
+- Any other URL (for example an R2 bucket presigned URL, or a protocol-relative `//host/...` URL) gets only its signed headers and the upload session token, with `credentials: 'omit'`. Your auth headers and cookies are never sent to storage.
 
 ### Offline replay
 

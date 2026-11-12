@@ -197,15 +197,20 @@ function resolveUrl(url: string): URL | undefined {
 /**
  * Returns a predicate that tells whether a URL addresses the FileFn API under
  * `baseUrl` (same origin and path prefix). Only those requests carry the
- * configured auth headers and credentials mode.
+ * configured auth headers and credentials mode. An empty `baseUrl` (a
+ * configured "" or "/") is the page origin root, so every same-origin path
+ * matches it.
  */
 function createFileFnUrlMatcher(baseUrl: string): (url: string) => boolean {
-  const base = resolveUrl(baseUrl);
+  const base = resolveUrl(baseUrl || "/");
   const basePath = base?.pathname.replace(/\/$/, "") ?? "";
   return (url) => {
     const target = resolveUrl(url);
     if (!base || !target) {
-      return url.startsWith(`${baseUrl}/`);
+      // Without a page location only a plain prefix check is possible; a
+      // protocol-relative URL ("//host/...", or "/\\host/..." which URL
+      // parsers treat the same way) names another host, never FileFn.
+      return !/^[/\\]{2}/.test(url) && url.startsWith(`${baseUrl}/`);
     }
     return (
       target.origin === base.origin &&
