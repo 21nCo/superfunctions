@@ -22,15 +22,9 @@ const locks = fileURLToPath(new URL("../../test-support/shared-locks.mjs", impor
 const vitest = path.join(path.dirname(createRequire(import.meta.url).resolve("vitest/package.json")), "vitest.mjs");
 
 // Whether the process runs: an unreaped zombie, which a container's PID 1 may leave, does not.
-// Read from /proc on Linux and ps on macOS, independently of the guard's own listing.
-const alive = (pid: number) => {
-  try { process.kill(pid, 0); } catch { return false; }
-  if (process.platform === "linux") {
-    try { const stat = readFileSync(`/proc/${pid}/stat`, "utf8"); return !/^[ZX]/.test(stat.slice(stat.lastIndexOf(")") + 2)); } catch { return false; }
-  }
-  const state = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).stdout.trim();
-  return state !== "" && !state.startsWith("Z");
-};
+// The same check runs in every script this file generates, which require it from here.
+const liveness = fileURLToPath(new URL("./liveness.cjs", import.meta.url));
+const { live: alive } = createRequire(import.meta.url)(liveness) as { live: (pid: number) => boolean };
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 // Whether the process has gone within a short while: a killed orphan is reaped by init.
 const gone = async (pid: number) => {
@@ -70,6 +64,7 @@ const { existsSync, mkdirSync, mkdtempSync, readFileSync, rmdirSync, writeFileSy
 const { tmpdir } = require("node:os");
 const path = require("node:path");
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const { live } = require(${JSON.stringify(liveness)});
 const record = (value) => writeFileSync(${JSON.stringify(record)}, JSON.stringify({ root: process.env.SFN_TEST_LEAK_GUARD_ROOT, ...value }));
 ${content}
 `);
@@ -234,6 +229,46 @@ describe("pathsNamedUnder", () => {
     expect(attributeProcesses([...disputed, ...outsideRun, ...inside], { roots: pathAliases(run) })).toEqual({ owned: inside.slice(0, 2), ambiguous: [...disputed, inside[2]] });
   });
 
+  it("reads a file: URL as a URL, owns a path only when every reading of it is under the root, and reports one whose value may continue past a macOS separator", () => {
+    const run = tempDir("devfn-leak-guard-readings-");
+    mkdirSync(path.join(run, "sub"));
+    mkdirSync(path.join(run, "deep", "child"), { recursive: true });
+    symlinkSync(path.join(run, "deep", "child"), path.join(run, "link"));
+    mkdirSync(path.join(run, ".. sibling"));
+    const linux = (pid: number, argv: string, environment = "") => ({ pid, ppid: 1, pgid: pid, elapsed: 0, command: argv.replaceAll("\0", " ").trim(), argv, environment, separated: true, cwd: "/" });
+    const macos = (pid: number, command: string) => ({ pid, ppid: 1, pgid: pid, elapsed: 0, command, environment: "", cwd: undefined });
+    // Percent-encoded dot segments go up out of the root, as Node reads the URL.
+    const outside = [
+      linux(9_000_701, `node\0file://${run}/%2e%2e/out.mjs\0`), linux(9_000_702, `node\0--import=file://${run}/%2E%2E/out.mjs\0`),
+      linux(9_000_703, "node\0", `TMPDIR=file://${run}/%2e%2e\0`), macos(9_000_704, `node file://${run}/%2e%2e/x`),
+    ];
+    // <run>/link/../x is <run>/deep/x through the link and <run>/x as written: under the run either way.
+    const owned = [linux(9_000_711, `node\0file://${run}/sub/%2e%2e/x.mjs\0`), linux(9_000_712, `node\0${run}/link/../x.mjs\0`)];
+    const ambiguous = [
+      // A URL Node cannot decode, and a '..' the system cannot follow.
+      linux(9_000_721, `node\0file://${run}%2Fx\0`), linux(9_000_722, `node\0${run}/missing/../x\0`),
+      // <run>/.. alone is outside the run, but the value may be "<run>/.. sibling/server.mjs".
+      macos(9_000_723, `node ${run}/.. sibling/server.mjs`),
+    ];
+    expect(attributeProcesses([...outside, ...owned, ...ambiguous], { roots: pathAliases(run) })).toEqual({ owned, ambiguous });
+    rmSync(path.join(run, ".. sibling"), { recursive: true });
+    expect(attributeProcesses([ambiguous[2]], { roots: pathAliases(run) })).toEqual({ owned: [], ambiguous: [ambiguous[2]] });
+  });
+
+  it("decides whether a value names a path under a root only in the guard's path containment section", () => {
+    const source = readFileSync(guard, "utf8");
+    const start = source.indexOf("// Path containment.");
+    const end = source.indexOf("// End of path containment.");
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    for (const part of [source.slice(0, start), source.slice(end)]) expect(part).not.toMatch(/isPathUnder\(|startsWith\(`\$\{[^}]*\}\/`\)/);
+  });
+
+  it("checks whether a process runs only through the zombie-aware helper, here and in every script this file generates", () => {
+    // Sending signal 0 alone succeeds for an unreaped zombie, which a non-reaping PID 1 leaves behind.
+    expect(readFileSync(fileURLToPath(import.meta.url), "utf8")).not.toMatch(/\bkill\([^()]*,\s*0\)/);
+  });
+
   it("decides which processes name a path under a run or registered directory on complete path values, and owns from a macOS listing only by working directory", () => {
     const entry = (pid: number, command: string, environment = "", cwd?: string) => ({ pid, ppid: 1, pgid: pid, elapsed: 0, command, environment, cwd });
     const named = [
@@ -260,7 +295,7 @@ describe.skipIf(process.platform === "win32")("DevFn test leak guard", { timeout
   const pid = ${leakProcess("folder")};
   record({ pid, dir: folder });
   process.kill(-pid, "SIGKILL");
-  while (true) { try { process.kill(pid, 0); await new Promise((resolve) => setTimeout(resolve, 20)); } catch { break; } }
+  while (live(pid)) await sleep(20);
   require("node:fs").rmSync(folder, { recursive: true });
 });`);
     const { code, output, recorded } = await runProject(dir, record);
@@ -430,7 +465,7 @@ test("times out", async () => {
   try { await new Promise(() => {}); } finally { /* only runs once the stalled call settles */ }
 });
 test("finds it stopped", () => {
-  expect(() => process.kill(pid, 0)).toThrow();
+  expect(live(pid)).toBe(false);
 });`);
     const { code, output, recorded } = await runProject(dir, record);
     expect(code).not.toBe(0);
@@ -802,6 +837,26 @@ test("names the locks", async () => {
     }
   });
 
+  it("fails the run, without signalling it, on a worktree orphan named only by a path in a worktree folder whose name starts with '.. '", async () => {
+    // A macOS listing shows "<worktree>/.. sibling/server.mjs", whose value may stop at "<worktree>/..", outside the worktree.
+    const { dir, record } = project(`test("leaves an orphan naming a path in the worktree", () => {
+  record({ named: ${orphanProcess('"/"', 'process.cwd() + "/.. sibling/server.mjs"')} });
+});`);
+    mkdirSync(path.join(dir, ".git"));
+    mkdirSync(path.join(dir, ".. sibling"));
+    let named: number | undefined;
+    try {
+      const { code, output, recorded } = await runProject(dir, record);
+      named = recorded.named;
+      expect(code, output).not.toBe(0);
+      expect(output).toContain(`run from or name a path in the worktree ${realpathSync(dir)}, and were orphaned.`);
+      expect(output).toContain(`process ${named} `);
+      expect(alive(named!)).toBe(true);
+    } finally {
+      if (named) try { process.kill(named, "SIGKILL"); } catch { /* already gone */ }
+    }
+  });
+
   it.runIf(process.platform === "darwin")("lists a process it can only report that appears while the run's teardown waits for a worktree orphan", async () => {
     const { dir, record } = project(`test("leaves a worktree orphan and a starter that later names the run's root", () => {
   const hex = (value) => Buffer.from(value).toString("hex");
@@ -842,9 +897,11 @@ setTimeout(() => {
   record({ pid, nested: ${orphan('"/"', ['path.join(process.cwd(), "starter.cjs")', "String(pid)", "hex(process.env.SFN_TEST_LEAK_GUARD_ROOT)", 'hex(path.join(process.cwd(), "child.pid"))'])} });
 });`);
     writeFileSync(path.join(dir, "starter.cjs"), `const [pid, root, pidFile] = [process.argv[2], ...process.argv.slice(3).map((value) => Buffer.from(value, "hex").toString())];
-// Once the guard has stopped that process and finished listing for what stopping it started.
+const { live } = require(${JSON.stringify(liveness)});
+// Once the guard has stopped that process, which may stay a zombie, and finished listing for what stopping it started.
 const wait = setInterval(() => {
-  try { process.kill(Number(pid), 0); return; } catch { clearInterval(wait); }
+  if (live(Number(pid))) return;
+  clearInterval(wait);
   setTimeout(() => {
     const child = require("node:child_process").spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore", cwd: root, env: { PATH: process.env.PATH } });
     child.unref();
@@ -866,6 +923,71 @@ const wait = setInterval(() => {
       expect(alive(starter!)).toBe(true);
     } finally {
       for (const pid of [starter, childPid()]) if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+    }
+  });
+
+  // Makes this process's process listings fail once `allowed` of them have succeeded, from outside
+  // the guard: it replaces the Node functions the guard lists with (ps on macOS, /proc on Linux).
+  // As a global setup, it does so in the run's main process before the guard's teardown runs.
+  const failListing = `const childProcess = require("node:child_process");
+const fs = require("node:fs");
+export function failListingsAfter(allowed) {
+  let listings = 0;
+  const fails = () => (listings += 1) > allowed;
+  const failure = () => Object.assign(new Error("process listing failed (test)"), { code: "EIO" });
+  const { spawnSync } = childProcess;
+  const { readdirSync } = fs;
+  // A macOS listing runs ps -A -ww once without -E and once with it; it counts once.
+  childProcess.spawnSync = (command, args, ...rest) => command === "ps" && args?.includes("-ww") && !args.includes("-E") && fails() ? { error: failure() } : spawnSync(command, args, ...rest);
+  fs.readdirSync = (target, ...rest) => { if (target === "/proc" && fails()) throw failure(); return readdirSync(target, ...rest); };
+  require("node:module").syncBuiltinESMExports();
+}
+export default () => { failListingsAfter(1); };`;
+
+  it("fails a test file, listing what it found, stopping what it owns and never signalling the rest, when listing processes fails after a listing found them", async () => {
+    // One process the file owns, as the worker's child, and one it can only report: an orphan
+    // naming a path under the file's folder through a directory that does not exist.
+    const { dir, record } = project(`import { failListingsAfter } from "./fail-listing.mjs";
+test("leaves processes, and then listing them fails", () => {
+  record({ pid: ${leakProcess("tmpdir()")}, named: ${orphanProcess('"/"', 'tmpdir() + "/missing/../server.mjs"')} });
+  failListingsAfter(1);
+});`, { files: { "fail-listing.mjs": failListing } });
+    let named: number | undefined;
+    try {
+      const { code, output, recorded } = await runProject(dir, record);
+      named = recorded.named;
+      expect(code, output).not.toBe(0);
+      const fileReport = output.slice(output.indexOf(`DevFn test leak guard: ${path.join(dir, "fixture.test.mjs")} left these behind.`));
+      expect(fileReport, output).toContain("Listing processes failed after an earlier listing had succeeded");
+      for (const pid of [recorded.pid, named]) expect(fileReport).toContain(`process ${pid} `);
+      expect(await gone(recorded.pid!)).toBe(true);
+      expect(alive(named!)).toBe(true);
+    } finally {
+      if (named) try { process.kill(named, "SIGKILL"); } catch { /* already gone */ }
+    }
+  });
+
+  it.each([
+    ["at its teardown", false],
+    ["when it exits with success before its teardown", true],
+  ])("fails a run, listing what it found, stopping what it owns and never signalling the rest, when listing processes fails after a listing found them, %s", async (_, exits) => {
+    // One process the run owns, running from its root, and one it can only report.
+    const { dir, record } = project(`test("leaves processes in the run's root", () => {
+  record({ pid: ${orphanProcess("process.env.SFN_TEST_LEAK_GUARD_ROOT")}, named: ${orphanProcess('"/"', 'process.env.SFN_TEST_LEAK_GUARD_ROOT + "/missing/../server.mjs"')} });
+});`, { files: { "fail-listing.mjs": failListing, ...(exits ? exitsFirst.files : {}) }, options: `, globalSetup: [${JSON.stringify(guard)}, "./fail-listing.mjs"${exits ? ', "./exit.mjs"' : ""}]` });
+    let named: number | undefined;
+    try {
+      const { code, output, recorded } = await runProject(dir, record);
+      named = recorded.named;
+      expect(code, output).not.toBe(0);
+      expect(output).toContain(exits ? "DevFn test leak guard: This interrupted test run left these behind." : `DevFn test leak guard: This test run (temp root ${recorded.root}) left these behind.`);
+      expect(output).toContain("Listing processes failed after an earlier listing had succeeded");
+      for (const pid of [recorded.pid, named]) expect(output).toContain(`process ${pid} `);
+      expect(await gone(recorded.pid!)).toBe(true);
+      expect(alive(named!)).toBe(true);
+      expect(existsSync(recorded.root)).toBe(false);
+    } finally {
+      if (named) try { process.kill(named, "SIGKILL"); } catch { /* already gone */ }
     }
   });
 

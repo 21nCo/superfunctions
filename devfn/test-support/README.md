@@ -37,17 +37,22 @@ calls `guardTestFile` as a setup file.
   still going attributes to itself are not listed. Nor is one whose path is only in a
   checkout nested in the worktree (such as `.worktrees/<task>` under the main checkout) or
   in a sibling directory whose name merely starts with the worktree's (`repo-dev-42` beside
-  `repo`), nor, in a macOS listing, one that names the worktree cut short at a space, quote
-  or `:` where an entry beside the worktree continues its name there (`repo copy/x` or
-  `repo copy --flag` with `repo copy` existing); any other such match, `repo --flag` say, is listed. A command,
-  environment or working directory names a path under a root only through a complete path
-  value equal to the root or starting with `root/`, once its `.` and `..` segments are
-  resolved as the system resolves them (`..` through a symbolic link goes up from the
-  link's target), so `<root>/../x` is not under the root. A `..` value that is under the
-  root only as written (as Node resolves a script) or only as the system resolves it, such
-  as `<root>/link/../x` or `<root>/missing/../x`, is reported but never signalled on its own. On Linux,
+  `repo`), nor, in a macOS listing, one whose value, cut short at a space, quote or `:`, may
+  name a path outside the worktree that exists (`repo copy/x` or `repo copy --flag` with
+  `repo copy` existing) while no path inside it that the value may name, other than the
+  worktree itself, does; any other such match, `repo --flag` or `repo/.. sibling/x` with
+  `repo/.. sibling` existing say, is listed. One function, `classifyValue`, decides whether a
+  value names a path under a root, for every check: a command, environment or working
+  directory names a path under a root only through a complete path value equal to the root
+  or starting with `root/`. A `file:` URL is read as Node reads it, percent-decoding included,
+  so `file://<root>/%2e%2e/x` is not under the root; one Node cannot decode is reported but
+  never signalled. A `..` is read both as the system resolves it (through a symbolic link it
+  goes up from the link's target) and as written (as Node resolves a script): the value is
+  under the root when both readings are, so `<root>/../x` is not, and when only one is, as
+  with `<root>/link/../x` for a link out of the root or `<root>/missing/../x`, it is reported
+  but never signalled on its own. On Linux,
   `/proc` keeps each argument and variable whole, NUL-separated, so a value is a whole
-  argument (after a `KEY=` or `--option=` prefix and `file://`) or a whole variable's
+  argument (after a `KEY=` or `--option=` prefix) or a whole variable's
   value; only a variable known to hold a list (`PATH`, `NODE_PATH`, `LD_LIBRARY_PATH`...) is split at
   `:`. An argument `<root>:x` or `<root> x` is never under the root there. On macOS, the
   `ps` listing joins arguments with spaces and cannot show where one with a space, quote or
@@ -72,7 +77,10 @@ calls `guardTestFile` as a setup file.
 - Before failing a file or the run, the guard gives every process it found, those it can
   only report as well as those it would stop, the same short while to exit by itself, and
   reports what it cannot stop from one listing taken once stopping is done. A process of
-  its own that appears in that listing is stopped and listed too.
+  its own that appears in that listing is stopped and listed too. When listing processes
+  fails after a listing has found some, the guard keeps what that listing found (less those
+  that have since exited), stops what it owns, lists the rest and fails the file or run: a
+  failed listing never reads as the processes having exited.
 - The run lists a folder the guard made for a test file (recorded in the run's root) by its
   contents; any other entry in the root, whatever its name, is listed itself.
 - A temp root or file folder the guard cannot remove fails the run, or the file, and is

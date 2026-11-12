@@ -27,6 +27,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { appendFileSync, chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync, writeSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 export const RUN_MARKER = "SFN_TEST_LEAK_GUARD_RUN";
 export const FILE_MARKER = "SFN_TEST_LEAK_GUARD_FILE";
@@ -106,8 +107,6 @@ export function pathAliases(directory) {
   }
   return [...spellings];
 }
-
-const isUnder = (candidate, roots) => roots.some((root) => candidate === root || candidate.startsWith(`${root}/`));
 
 /** Elapsed time from `ps -o etime` ([[dd-]hh:]mm:ss) in seconds. */
 function elapsedSeconds(value) {
@@ -234,6 +233,9 @@ function trimTrailingSlashes(value) {
   return value.slice(0, end);
 }
 
+// Path containment. Every test of whether a value a process shows names a path under a root is
+// in this section, up to "End of path containment": classifyValue decides it, and everything
+// else uses its result. A self-test checks that no such test is made anywhere else.
 const isPathUnder = (value, root) => value === root || value.startsWith(`${root}/`);
 /**
  * An absolute value with its `.` and `..` segments and repeated slashes resolved as the system
@@ -267,22 +269,52 @@ function respelled(value, root) {
   return alias === undefined ? undefined : `${root}${value.slice(alias.length)}`;
 }
 
+const NONE = Object.freeze({ kind: "none" });
+const FILE_URL = /^file:/i;
+
 /**
- * The path at or under `root`, spelled from `root`, that `raw` names, or undefined. A `..` may
- * be read two ways: as the system resolves it (normalPath), and as a program such as Node resolves
- * its script, lexically. When only one reading is under `root`, as with `<root>/link/../x` or
- * `<root>/missing/../x`, the path is `ambiguous`: reported, never signalled on its own.
+ * How one value a process shows names a path at or under `root`: a whole /proc argument or
+ * variable value, a working directory, or a value read out of a macOS listing. Returns
+ * `{ kind, path }`, `path` spelled from `root`:
+ *
+ * - "exact" when every reading of the value is a path under `root`, so it may justify a signal;
+ * - "ambiguous" when only some readings are, or when the value cannot be read for certain: it is
+ *   reported and fails the run, but is never signalled on its own;
+ * - "none" when no reading is.
+ *
+ * A `file:` URL is read as a URL first, percent-decoding included, so `file://<root>/%2e%2e/x` is
+ * `<root>/../x`, which is not under `<root>`; one Node cannot decode is ambiguous when its text
+ * names a path under `root`. A `..` is then read two ways: as the system resolves it, through
+ * symbolic links (normalPath), and lexically, as Node resolves its script. Both readings of
+ * `<root>/link/../x` may lie under `<root>` even where they differ, and then it is exact.
  */
-function pathUnder(raw, root) {
-  if (!DOT_DOT.test(raw)) {
-    const value = normalPath(raw);
-    return isPathUnder(value, root) ? { path: value, ambiguous: false } : undefined;
+export function classifyValue(raw, root) {
+  let value = raw;
+  if (FILE_URL.test(value)) {
+    try { value = fileURLToPath(value); } catch { return undecodableUrl(value, root); }
   }
-  const resolved = respelled(normalPath(raw), root);
-  const lexical = respelled(trimTrailingSlashes(path.posix.normalize(raw)), root);
-  if (resolved === undefined && lexical === undefined) return undefined;
-  return { path: resolved ?? lexical, ambiguous: resolved !== lexical };
+  if (!value.startsWith("/")) return NONE;
+  if (!DOT_DOT.test(value)) {
+    const normal = normalPath(value);
+    return isPathUnder(normal, root) ? { kind: "exact", path: normal } : NONE;
+  }
+  const physical = respelled(normalPath(value), root);
+  const lexical = respelled(trimTrailingSlashes(path.posix.normalize(value)), root);
+  if (physical === undefined && lexical === undefined) return NONE;
+  return { kind: physical !== undefined && lexical !== undefined ? "exact" : "ambiguous", path: physical ?? lexical };
 }
+
+/** A `file:` URL that fileURLToPath rejects, such as one with an encoded `/`: ambiguous when its decoded text names a path under `root`. */
+function undecodableUrl(value, root) {
+  let text = value.replace(/^file:(?:\/\/)?/i, "");
+  try { text = decodeURIComponent(text); } catch { /* read as written */ }
+  if (!text.startsWith("/")) return NONE;
+  const lexical = respelled(trimTrailingSlashes(path.posix.normalize(text)), root);
+  return lexical === undefined ? NONE : { kind: "ambiguous", path: lexical };
+}
+
+/** Whether a whole path, such as a Compose project's working directory, is at or under one of `roots`. */
+const isUnder = (candidate, roots) => roots.some((root) => classifyValue(candidate, root).kind === "exact");
 
 /** The values of a NUL-separated /proc listing that may be paths. */
 function separatedValues(text, environment) {
@@ -292,29 +324,44 @@ function separatedValues(text, environment) {
     if (at <= 0) return [];
     const value = field.slice(at + 1);
     return LIST_VARIABLES.has(field.slice(0, at)) ? value.split(LIST_SEPARATOR) : [value];
-  }).map((value) => value.replace(/^file:\/\//, ""));
+  });
 }
 
 /**
  * The paths at or under `root` that `text` names, each `ambiguous` when it comes from a
- * space-joined listing, which cannot show where a value starts or ends, and `cut` when it is
- * `root` itself cut short there at a separator (`<root> copy/x` lists as `<root>`). A cut path
- * also gives `besides`, the texts from `root` to each later separator up to the next `/`, any of
- * which may name a sibling, such as `<root> copy` in `<root> copy --flag` or `PWD=<root> copy HOME=`.
+ * space-joined listing, which cannot show where a value starts or ends.
+ *
+ * In such a listing, a value that stops at a separator may go on past it: `node <root>/.. sibling/x`
+ * may name `<root>/..` or `<root>/.. sibling/x`, and `node <root> copy/x` `<root>` or `<root> copy/x`.
+ * So the value is read up to the separator and up to each later separator before the next `/`
+ * (continuations), and it names a path under `root` when any of those readings does. It is `cut`
+ * when another of them does not: then `besides` holds the readings outside `root`, any of which
+ * may be what the process names, and `within` those under `root` other than `root` itself.
  */
 function namedPaths(text, root, { separated = false, environment = false } = {}) {
-  if (separated) return separatedValues(text, environment).flatMap((raw) => { const named = pathUnder(raw, root); return named === undefined ? [] : [named]; });
+  if (separated) {
+    return separatedValues(text, environment).flatMap((raw) => {
+      const { kind, path: named } = classifyValue(raw, root);
+      return kind === "none" ? [] : [{ path: named, ambiguous: kind === "ambiguous" }];
+    });
+  }
   const paths = [];
   for (let at = text.indexOf(root); at !== -1; at = text.indexOf(root, at + 1)) {
     let start = at;
     while (start > 0 && !SEPARATOR.test(text[start - 1])) start -= 1;
-    if (!isValuePrefix(text.slice(start, at))) continue;
+    const prefix = text.slice(start, at);
+    if (!isValuePrefix(prefix)) continue;
     // From the end of `root`, so a root with a space in it still matches.
     let end = at + root.length;
     while (end < text.length && !SEPARATOR.test(text[end]) && text[end] !== LIST_SEPARATOR) end += 1;
-    const value = pathUnder(text.slice(at, end), root)?.path;
-    const cut = end === at + root.length && end < text.length;
-    if (value !== undefined) paths.push({ path: value, ambiguous: true, cut, besides: cut ? continuations(text, at, end) : [] });
+    const url = /file:\/\/$/i.test(prefix) ? "file://" : "";
+    const readings = [text.slice(at, end), ...(end < text.length ? continuations(text, at, end) : [])]
+      .map((reading) => ({ reading, ...classifyValue(`${url}${reading}`, root) }));
+    const under = readings.filter(({ kind }) => kind !== "none");
+    if (under.length === 0) continue;
+    const besides = readings.filter(({ kind }) => kind === "none").map(({ reading }) => reading);
+    const within = under.map(({ path: named }) => named).filter((named) => named !== root);
+    paths.push({ path: under[0].path, ambiguous: true, cut: besides.length > 0, besides, within });
   }
   return paths;
 }
@@ -329,6 +376,7 @@ function continuations(text, at, end) {
   for (let index = end + 1; index < stop && ends.length < MAX_CONTINUATIONS; index += 1) if (SEPARATOR.test(text[index]) || text[index] === LIST_SEPARATOR) ends.push(index);
   return [...ends, stop].map((index) => text.slice(at, index));
 }
+// End of path containment.
 
 /**
  * The paths at or under `root` that `text` names. With `separated`, the text is NUL-separated,
@@ -340,14 +388,17 @@ export function pathsNamedUnder(text, root, options) {
 
 /**
  * How a process names a path under the given roots in its command, environment or working
- * directory: "exact", "ambiguous" when its only such values come from a space-joined listing,
- * "cut" when each of those is the root itself cut short at a separator, or undefined.
- * `accept(path, root, named)` can reject a named path, such as one inside a nested checkout.
+ * directory: "exact", "ambiguous" when it names one only in a value classifyValue cannot read for
+ * certain or in a space-joined listing, "cut" when each such value may also be read as a path
+ * outside the roots, or undefined. `accept(path, root, named)` can reject a named path, such as
+ * one inside a nested checkout.
  */
 function namesPathUnder(entry, roots, accept = () => true) {
   let found;
   for (const root of roots) {
-    if (entry.cwd !== undefined && isPathUnder(entry.cwd, root) && accept(entry.cwd, root)) return "exact";
+    const cwd = entry.cwd === undefined ? NONE : classifyValue(entry.cwd, root);
+    if (cwd.kind === "exact" && accept(cwd.path, root)) return "exact";
+    if (cwd.kind === "ambiguous" && accept(cwd.path, root)) found = "ambiguous";
     const named = [
       ...namedPaths(entry.argv ?? entry.command, root, { separated: entry.separated }),
       ...namedPaths(entry.environment, root, { separated: entry.separated, environment: true }),
@@ -366,7 +417,8 @@ function namesPathUnder(entry, roots, accept = () => true) {
 export function inNestedCheckout(candidate, root, cache = new Map()) {
   const nested = [];
   let answer = false;
-  for (let directory = candidate; directory !== root && directory.startsWith(`${root}/`); directory = path.dirname(directory)) {
+  // `candidate` is a path classifyValue spelled from `root`, so going up from it reaches `root`.
+  for (let directory = candidate; directory !== root && directory !== path.dirname(directory); directory = path.dirname(directory)) {
     if (cache.has(directory)) { answer = cache.get(directory); break; }
     nested.push(directory);
     if (existsSync(path.join(directory, ".git"))) { answer = true; break; }
@@ -472,6 +524,31 @@ export async function stopProcesses(processes, find) {
     pending = remaining;
   }
 }
+
+/**
+ * Wraps `classify`, which lists a scope's processes by kind ({ owned, ambiguous, ... }), or returns
+ * undefined when they cannot be listed. Once a listing has succeeded, a failed one never reads as
+ * the processes having exited: the wrapper returns the last good result instead, without those
+ * that have since exited, and sets `stale` until a listing succeeds again. A scope whose last
+ * result is stale fails, since a process may have appeared that the guard could not see.
+ */
+function keepingLast(classify) {
+  let last;
+  const find = () => {
+    const listed = classify();
+    find.stale = listed === undefined && last !== undefined;
+    if (find.stale) {
+      const running = runningPids();
+      const live = (entry) => (running ? running.has(entry.pid) : alive(entry.pid));
+      last = Object.fromEntries(Object.entries(last).map(([kind, processes]) => [kind, processes.filter(live)]));
+    } else last = listed;
+    return last;
+  };
+  find.stale = false;
+  return find;
+}
+
+const STALE_NOTE = "Listing processes failed after an earlier listing had succeeded, so the guard could not tell which processes remain: it lists those the last listing found that may still run, and fails.";
 
 /**
  * Waits up to `graceMs` for the processes `find` lists, by kind ({ owned, ambiguous, ... }), to
@@ -633,10 +710,15 @@ export async function setup(project) {
     const directories = attempt(runDirectories) ?? [];
     const allRoots = [...rootAliases, ...directories.flatMap(pathAliases)];
     // The run is ending, so its own pool workers, which a hung test may keep alive, go too. What it
-    // only reports, ambiguous processes and worktree orphans, comes from the latest listing.
-    let classified = { ambiguous: [], orphans: [] };
+    // only reports, ambiguous processes and worktree orphans, comes from the latest listing, or
+    // from the last one that succeeded when a later one fails.
+    const classify = keepingLast(() => {
+      const listing = listProcesses(startedAt);
+      return listing && classifyRun(listing, { marker, roots: allRoots, parent: process.pid }, { worktree, startedAt, root });
+    });
+    let classified = { owned: [], ambiguous: [], orphans: [] };
     const find = () => attempt(() => {
-      classified = classifyRun(listProcesses(startedAt) ?? [], { marker, roots: allRoots, parent: process.pid }, { worktree, startedAt, root });
+      classified = classify() ?? classified;
       return classified.owned;
     }) ?? [];
     const owned = new Map();
@@ -660,12 +742,13 @@ export async function setup(project) {
     for (const entry of owned.values()) if (!isRunnerChild(entry)) leaked.set(entry.pid, entry);
     const entries = [...new Set([...state.found.entries, ...leftovers]), ...locks.map(describeLock), ...unremoved.map((directory) => `${directory}, which could not be removed`)];
     const { ambiguous, orphans } = classified;
-    if (leaked.size === 0 && entries.length === 0 && ambiguous.length === 0 && orphans.length === 0) return;
+    const notes = classify.stale ? [STALE_NOTE] : [];
+    if (leaked.size === 0 && entries.length === 0 && ambiguous.length === 0 && orphans.length === 0 && notes.length === 0) return;
     // The run fails even when it is exiting with success, such as through process.exit(0) or
     // Vitest's exit once a teardown outlasts its teardownTimeout.
     if (!process.exitCode) process.exitCode = 1;
     // The process is exiting, so only a synchronous write reaches a piped stderr.
-    attempt(() => writeSync(2, `${report("This interrupted test run", [...leaked.values()], entries, [], { worktree, orphans, ambiguous })}\n`));
+    attempt(() => writeSync(2, `${report("This interrupted test run", [...leaked.values()], entries, notes, { worktree, orphans, ambiguous })}\n`));
   };
   const onSignal = (signal) => {
     onExit();
@@ -700,22 +783,23 @@ export async function setup(project) {
   async function check() {
     const found = (processes) => { for (const entry of processes) state.found.processes.set(entry.pid, entry); return processes; };
     const notes = [];
-    const classify = () => {
+    const classify = keepingLast(() => {
       const listing = listProcesses(startedAt);
       if (!listing) return undefined;
       const classified = classifyRun(listing, scope(), { worktree, startedAt, root });
       found(classified.owned);
       return classified;
-    };
+    });
     const listed = classify();
     if (!listed) notes.push(`Processes were not checked: the guard cannot list processes on ${process.platform}.`);
     const none = { owned: [], ambiguous: [], orphans: [] };
     // Every process the run left, those the guard only reports too, gets the same while to exit.
-    const settled = listed ? await settle(classify, RUN_GRACE_MS, listed) ?? none : none;
+    const settled = listed ? await settle(classify, RUN_GRACE_MS, listed) : none;
     // Everything stopped, including what a stopping process started, is reported.
     const { owned, unstopped, reported } = await stopAndReport(classify, settled);
     const { ambiguous, orphans } = reported ?? none;
     if (unstopped.length > 0) notes.push(`Still running after SIGKILL: ${unstopped.map((entry) => entry.pid).join(", ")}.`);
+    if (classify.stale) notes.push(STALE_NOTE);
     // Every test has finished, so a lock this run's processes still hold, this one included, is abandoned.
     const locks = removeAbandonedLocks(root, { graceMs: STOP_GRACE_MS, ending: process.pid });
     for (const lock of locks) state.found.entries.add(describeLock(lock));
@@ -734,7 +818,7 @@ export async function setup(project) {
     // A root the guard cannot remove stays in the temp folder, so it fails the run like any other leftover.
     const rootRemoved = removeTree(root);
     if (!rootRemoved) entries.push(`${root}, the run's temp root, which could not be removed`);
-    if (owned.length > 0 || entries.length > 0 || unstopped.length > 0 || orphans.length > 0 || ambiguous.length > 0) {
+    if (owned.length > 0 || entries.length > 0 || unstopped.length > 0 || orphans.length > 0 || ambiguous.length > 0 || classify.stale) {
       // Failing here ends Vitest's close before it removes its own folder, so remove it now.
       if (runnerTemp) removeTree(runnerTemp);
       throw new Error(report(`This test run (temp root ${root})`, owned, entries, notes, { worktree, orphans, ambiguous }));
@@ -1055,9 +1139,11 @@ function worktreeOrphans(processes, { worktree, startedAt, attributed, root }) {
   const siblings = liveSiblingRuns(root);
   const worktreeRoots = pathAliases(worktree);
   const checkouts = new Map();
-  // A cut match is the sibling beside the worktree whose name continues across the separator
-  // (`<worktree> copy`) only when such a sibling exists; otherwise it may be the worktree itself.
-  const inThisWorktree = (named, worktreeRoot, match) => !inNestedCheckout(named, worktreeRoot, checkouts) && !(match?.cut && match.besides.some((beside) => existsSync(beside)));
+  // A cut match names a path outside the worktree, such as the sibling `<worktree> copy` beside
+  // it, only when such a path exists and no path in the worktree that it may name, other than
+  // the worktree itself, does; otherwise it may name the worktree.
+  const inThisWorktree = (named, worktreeRoot, match) => !inNestedCheckout(named, worktreeRoot, checkouts) &&
+    !(match?.cut && match.besides.some((beside) => existsSync(beside)) && !match.within.some((inside) => existsSync(inside)));
   return processes.filter((entry) => entry.pid !== process.pid && !ancestors.has(entry.pid) && !attributed.has(entry.pid) && recent(entry) &&
     namesPathUnder(entry, worktreeRoots, inThisWorktree) !== undefined && !/\bturbo(?:\.exe)?\b.*\bdaemon\b/.test(entry.command) &&
     !siblings.some((sibling) => entry.environment.includes(sibling.marker) || namesPathUnder(entry, sibling.roots)) && orphaned(entry));
@@ -1122,7 +1208,7 @@ export function guardTestFile({ beforeEach, afterEach, afterAll }) {
     for (const entry of tempLeftovers(folder)) if (!entries.has(entry)) removeTree(path.join(folder, entry));
   }, 60_000);
   afterAll(async (suite) => {
-    const classify = () => { const listing = listProcesses(startedAt); return listing && attributeProcesses(listing, scope()); };
+    const classify = keepingLast(() => { const listing = listProcesses(startedAt); return listing && attributeProcesses(listing, scope()); });
     // Ambiguous processes, which the guard only reports, get the same while to exit as owned ones.
     const settled = await settle(classify, FILE_GRACE_MS) ?? { owned: [], ambiguous: [] };
     const { owned, unstopped, reported } = await stopAndReport(classify, settled);
@@ -1136,8 +1222,9 @@ export function guardTestFile({ beforeEach, afterEach, afterAll }) {
     }
     const notes = [];
     if (unstopped.length > 0) notes.push(`Still running after SIGKILL: ${unstopped.map((entry) => entry.pid).join(", ")}.`);
+    if (classify.stale) notes.push(STALE_NOTE);
     if (!removed) entries.push(`${folder}, the test file's temp folder, which could not be removed`);
-    if (owned.length > 0 || entries.length > 0 || ambiguous.length > 0) {
+    if (owned.length > 0 || entries.length > 0 || ambiguous.length > 0 || classify.stale) {
       // The absolute path, the same on every platform and from every working directory.
       throw new Error(report(suite?.filepath ?? "This test file", owned, entries, notes, { ambiguous }));
     }
