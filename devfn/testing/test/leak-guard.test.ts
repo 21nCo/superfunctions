@@ -148,7 +148,7 @@ describe("pathsNamedUnder", () => {
     expect(ownedProcesses([owned, ...foreign], { roots: [root] }).map(({ pid }) => pid)).toEqual([owned.pid]);
   });
 
-  it("splits a Linux argument at nothing but its assignment prefix, and a variable at ':' only when it is PATH-like", () => {
+  it("splits a Linux argument at nothing but its assignment prefix, and a variable at ':' only when it is known to hold a list", () => {
     const listed = (pid: number, argv: string, environment = "") => ({ pid, ppid: 1, pgid: pid, elapsed: 0, command: argv.replaceAll("\0", " ").trim(), argv, environment, separated: true, cwd: "/" });
     const owned = [
       listed(9_000_301, `node\0${root}/server.mjs\0`),
@@ -160,18 +160,23 @@ describe("pathsNamedUnder", () => {
       listed(9_000_311, `node\0${root}:sibling/x\0`),
       listed(9_000_312, `node\0--dir=${root}:sibling\0`),
       listed(9_000_313, "node\0", `TMPDIR=${root}:sibling\0PATH=/usr/bin\0`),
+      // Names ending in PATH that hold a single path.
+      listed(9_000_314, "node\0", `DOCKER_CERT_PATH=${root}:sibling/certs\0`),
+      listed(9_000_315, "node\0", `ARTIFACT_PATH=${root}:sibling\0`),
     ];
     expect(ownedProcesses([...owned, ...foreign], { roots: [root] }).map(({ pid }) => pid)).toEqual(owned.map(({ pid }) => pid));
   });
 
-  it("owns a macOS process whose only link is the root cut short at a separator only when no entry beside the root continues its name there", () => {
+  it("never owns a macOS process whose only link is the root cut short at a separator, whether or not the longer path exists", () => {
     const parent = tempDir("devfn-leak-guard-beside-");
     const run = path.join(parent, "run");
     mkdirSync(run);
     const entry = (pid: number, command: string, environment = "", cwd?: string) => ({ pid, ppid: 1, pgid: pid, elapsed: 0, command, environment, cwd });
-    const cut = [entry(9_000_401, `node ${run} sibling/x`), entry(9_000_402, `node ${run}:sibling/x`), entry(9_000_403, `node '${run}'sibling/x`)];
-    // Nothing beside the root continues its name: each names the root.
-    expect(attributeProcesses(cut, { roots: [run] })).toEqual({ owned: cut, ambiguous: [] });
+    const cut = [
+      entry(9_000_401, `node ${run} sibling/x`), entry(9_000_402, `node ${run}:sibling/x`), entry(9_000_403, `node '${run}'sibling/x`),
+      entry(9_000_404, "node server.mjs", `TMPDIR=${run} HOME=/home/x`),
+    ];
+    expect(attributeProcesses(cut, { roots: [run] })).toEqual({ owned: [], ambiguous: cut });
     for (const name of ["run sibling", "run:sibling", "run'sibling"]) mkdirSync(path.join(parent, name));
     expect(attributeProcesses(cut, { roots: [run] })).toEqual({ owned: [], ambiguous: cut });
     // A marker, a working directory under the root or a whole path still owns one.
@@ -179,6 +184,7 @@ describe("pathsNamedUnder", () => {
       entry(9_000_411, `node ${run} sibling/x`, "SFN_TEST_LEAK_GUARD_RUN=x"),
       entry(9_000_412, `node ${run} sibling/x`, "", path.join(run, "package")),
       entry(9_000_413, `node ${run}/server.mjs`),
+      entry(9_000_414, "node server.mjs", `HOME=/home/x TMPDIR=${run}`),
     ];
     expect(attributeProcesses(corroborated, { roots: [run], marker: "SFN_TEST_LEAK_GUARD_RUN=x" })).toEqual({ owned: corroborated, ambiguous: [] });
   });
@@ -187,7 +193,7 @@ describe("pathsNamedUnder", () => {
     const entry = (pid: number, command: string, environment = "", cwd?: string) => ({ pid, ppid: 1, pgid: pid, elapsed: 0, command, environment, cwd });
     const owned = [
       entry(9_000_001, `node ${root}/server.mjs`),
-      entry(9_000_002, "node server.mjs", `TMPDIR=${root} HOME=/home/x`),
+      entry(9_000_002, "node server.mjs", `HOME=/home/x TMPDIR=${root}`),
       entry(9_000_003, "node server.mjs", "", `${root}/package`),
       entry(9_000_004, `node --state-dir=${root}/state server.mjs`),
       entry(9_000_005, "node server.mjs", `PATH=/usr/bin:${root}/bin`),
@@ -243,40 +249,41 @@ describe.skipIf(process.platform === "win32")("DevFn test leak guard", { timeout
     expect(existsSync(recorded.dir!)).toBe(false);
   });
 
-  it("fails, but never signals, a process whose only link to the run is its root cut short where an entry beside the root continues the name", async () => {
-    // The orphan names "<root> sibling/x" as one argument. Linux's /proc shows that whole, so it
-    // is not the run's at all. macOS's ps cannot show where it ends, so the run fails and lists it.
+  it("fails, but never signals, a process whose only link to the run is its root cut short at a separator", async () => {
+    // The orphan names "<root> sibling/x", which need not exist, as one argument. Linux's /proc
+    // shows that whole, so it is not the run's at all. macOS's ps cannot show where it ends, so
+    // the run fails and lists it.
     const { dir, record } = project(`test("leaves a process naming a path beside the run's root", () => {
-  const sibling = process.env.SFN_TEST_LEAK_GUARD_ROOT + " sibling";
-  mkdirSync(sibling);
-  record({ dir: sibling, pid: ${orphanProcess('"/"', 'path.join(sibling, "x")')} });
+  record({ pid: ${orphanProcess('"/"', 'process.env.SFN_TEST_LEAK_GUARD_ROOT + " sibling/x"')} });
 });`);
-    let recorded: { pid?: number; dir?: string } | undefined;
+    let recorded: { pid?: number } | undefined;
     try {
       const result = await runProject(dir, record);
       recorded = result.recorded;
       if (process.platform === "darwin") {
         expect(result.code).not.toBe(0);
-        expect(result.output).toContain("These processes name one of the run's temp folders where the process listing cannot show where that value ends");
+        expect(result.output).toContain("These processes name one of the run's temp folders only where the process listing cannot show where that value ends");
         expect(result.output).toContain(`process ${recorded.pid} `);
       } else expect(result.code, result.output).toBe(0);
       expect(alive(recorded.pid!)).toBe(true);
     } finally {
       if (recorded?.pid) try { process.kill(recorded.pid, "SIGKILL"); } catch { /* already gone */ }
-      if (recorded?.dir) rmSync(recorded.dir, { recursive: true, force: true });
     }
   });
 
-  it("fails a run whose process exits with success before the run's teardown, as Vitest does after its teardownTimeout", async () => {
+  it.each([
+    ["a process", `record({ pid: ${orphanProcess("process.env.SFN_TEST_LEAK_GUARD_ROOT")} });`],
+    ["only a temp directory", `record({ dir: mkdtempSync(path.join(process.env.SFN_TEST_LEAK_GUARD_ROOT, "devfn-leaked-")) });`],
+  ])("fails a run that leaves %s in its root and exits with success before its teardown, as Vitest does after its teardownTimeout", async (_, leak) => {
     // A global setup listed after the guard's tears down first and ends the process with code 0.
     const { dir, record } = project(`test("leaks into the run root", () => {
-  record({ pid: ${orphanProcess("process.env.SFN_TEST_LEAK_GUARD_ROOT")} });
+  ${leak}
 });`, { files: { "exit.mjs": "export default () => () => process.exit(0);" }, options: `, globalSetup: [${JSON.stringify(guard)}, "./exit.mjs"]` });
     const { code, output, recorded } = await runProject(dir, record);
     expect(code).not.toBe(0);
     expect(output).toContain("DevFn test leak guard: This interrupted test run left these behind.");
-    expect(output).toContain(`process ${recorded.pid} `);
-    expect(await gone(recorded.pid!)).toBe(true);
+    expect(output).toContain(recorded.pid ? `process ${recorded.pid} ` : `temp entry ${recorded.dir}`);
+    if (recorded.pid) expect(await gone(recorded.pid)).toBe(true);
     expect(existsSync(recorded.root)).toBe(false);
   });
 

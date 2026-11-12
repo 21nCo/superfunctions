@@ -41,13 +41,13 @@ calls `guardTestFile` as a setup file.
   through a complete path value equal to the root or starting with `root/`. On Linux,
   `/proc` keeps each argument and variable whole, NUL-separated, so a value is a whole
   argument (after a `KEY=` or `--option=` prefix and `file://`) or a whole variable's
-  value; only a PATH-like variable (`PATH`, `NODE_PATH`, `LD_LIBRARY_PATH`...) is split at
+  value; only a variable known to hold a list (`PATH`, `NODE_PATH`, `LD_LIBRARY_PATH`...) is split at
   `:`. An argument `<root>:x` or `<root> x` is never under the root there. On macOS, the
   `ps` listing joins arguments with spaces and cannot show where one with a space or `:` in
   it ends, so whitespace, quotes and `:` end a value. A value that is the root itself cut
-  short there is ambiguous when an entry beside the root continues its name across that
-  separator (`<root> copy`, `<root>:x`): a process whose only link to the run is such a
-  value fails the run and is listed, but is never signalled. Shell punctuation such as `;`,
+  short there may be the start of another path (`<root> copy`, `<root>:x`), whether or not
+  it exists: a process whose only link to the run is such a value fails the run and is
+  listed, but is never signalled. Shell punctuation such as `;`,
   `,`, `(`, `&`, `|` or `<`, like `-`, `.`, `[` or a non-ASCII letter, can be part of a
   file name, so `/x/repo;other` is not under `/x/repo`. A process a shell started that way
   is still attributed by its marker, working directory or parent. The same rule decides

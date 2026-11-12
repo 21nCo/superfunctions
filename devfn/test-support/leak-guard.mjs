@@ -209,21 +209,20 @@ function descendantsOf(pid, processes) {
 
 // How the guard reads a path out of a command line or environment. Linux's /proc keeps each
 // argument and variable whole, NUL-separated, so a path is a whole argument, after a `KEY=` or
-// `--option=` prefix and `file://`, or a whole variable's value, which only a PATH-like variable
-// (PATH, NODE_PATH, LD_LIBRARY_PATH...) splits into a `:`-separated list.
+// `--option=` prefix and `file://`, or a whole variable's value, which only a variable known to
+// hold a `:`-separated list (LIST_VARIABLES) splits.
 //
 // macOS's ps listing joins arguments and variables with spaces, so there a value starts after
 // whitespace, a quote, an assignment prefix, `file://` or a `:` list separator, and runs to the
 // next of those. Such a listing cannot show where a value with a space or `:` in it ends: a
-// value that is the root itself, cut short at a separator, may be the start of a path beside it
-// (`<root> copy/x`, `<root>:x`). That match is ambiguous unless no entry beside the root
-// continues its name across that separator. Nothing else ends a path: `;`, `(`, `[`, `-`, `.`
-// and non-ASCII letters may all be part of a file name, so `/x/repo;other` and `/x/repo-dev-42`
-// are not under `/x/repo`.
+// value that is the root itself, cut short at a separator, may be the start of another path
+// (`<root> copy/x`, `<root>:x`), whether or not that path exists. Such a match is ambiguous.
+// Nothing else ends a path: `;`, `(`, `[`, `-`, `.` and non-ASCII letters may all be part of a
+// file name, so `/x/repo;other` and `/x/repo-dev-42` are not under `/x/repo`.
 const SEPARATOR = /[\s"'`]/;
 const LIST_SEPARATOR = ":";
 const ASSIGNMENT = /^[^/=:]*=/;
-const LIST_VARIABLE = /PATH$/;
+const LIST_VARIABLES = new Set(["PATH", "NODE_PATH", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH", "LIBRARY_PATH", "MANPATH", "PYTHONPATH", "CLASSPATH", "PKG_CONFIG_PATH", "GOPATH"]);
 // What may come between the start of a value and a path in it.
 const isValuePrefix = (text) => text.endsWith(LIST_SEPARATOR) || /^(?:[^/=:]*=)?(?:file:\/\/)?$/.test(text);
 
@@ -243,7 +242,7 @@ function separatedValues(text, environment) {
     const at = field.indexOf("=");
     if (at <= 0) return [];
     const value = field.slice(at + 1);
-    return LIST_VARIABLE.test(field.slice(0, at)) ? value.split(LIST_SEPARATOR) : [value];
+    return LIST_VARIABLES.has(field.slice(0, at)) ? value.split(LIST_SEPARATOR) : [value];
   }).map((value) => trimTrailingSlashes(value.replace(/^file:\/\//, "")));
 }
 
@@ -276,26 +275,12 @@ export function pathsNamedUnder(text, root, options) {
   return namedPaths(text, root, options).map(({ path: named }) => named);
 }
 
-/** Whether an entry beside `root` continues its name across `separator`, such as `<root> copy`. */
-function continuedBeside(root, separator, cache) {
-  const key = `${root}\0${separator}`;
-  if (!cache.has(key)) {
-    const prefix = `${path.basename(root)}${separator}`;
-    // A folder that cannot be read may hold such an entry.
-    let continued = true;
-    try { continued = readdirSync(path.dirname(root)).some((name) => name.startsWith(prefix)); } catch { /* left ambiguous */ }
-    cache.set(key, continued);
-  }
-  return cache.get(key);
-}
-
 /**
  * How a process names a path under the given roots in its command, environment or working
- * directory: "exact", "ambiguous" when its only such value is a root cut short at a separator
- * that a path beside the root continues across, or undefined. `accept(path, root)` can reject a
- * named path, such as one inside a nested checkout.
+ * directory: "exact", "ambiguous" when its only such value is a root cut short at a separator,
+ * or undefined. `accept(path, root)` can reject a named path, such as one inside a nested checkout.
  */
-function namesPathUnder(entry, roots, accept = () => true, cache = new Map()) {
+function namesPathUnder(entry, roots, accept = () => true) {
   let found;
   for (const root of roots) {
     if (entry.cwd !== undefined && isPathUnder(entry.cwd, root) && accept(entry.cwd, root)) return "exact";
@@ -303,7 +288,7 @@ function namesPathUnder(entry, roots, accept = () => true, cache = new Map()) {
       ...namedPaths(entry.argv ?? entry.command, root, { separated: entry.separated }),
       ...namedPaths(entry.environment, root, { separated: entry.separated, environment: true }),
     ].filter(({ path: value }) => accept(value, root));
-    if (named.some(({ cut }) => cut === undefined || !continuedBeside(root, cut, cache))) return "exact";
+    if (named.some(({ cut }) => cut === undefined)) return "exact";
     if (named.length > 0) found = "ambiguous";
   }
   return found;
@@ -336,12 +321,11 @@ export function inNestedCheckout(candidate, root, cache = new Map()) {
 export function attributeProcesses(processes, { marker, roots, parent, excluded = () => false }) {
   const ancestors = ancestorsOf(process.pid, processes);
   const descendants = parent === undefined ? new Set() : descendantsOf(parent, processes);
-  const cache = new Map();
   const owned = [];
   const ambiguous = [];
   for (const entry of processes) {
     if (entry.pid === process.pid || ancestors.has(entry.pid) || excluded(entry)) continue;
-    const named = (marker !== undefined && entry.environment.includes(marker)) || descendants.has(entry.pid) ? "exact" : namesPathUnder(entry, roots, undefined, cache);
+    const named = (marker !== undefined && entry.environment.includes(marker)) || descendants.has(entry.pid) ? "exact" : namesPathUnder(entry, roots);
     if (named === "exact") owned.push(entry);
     else if (named === "ambiguous") ambiguous.push(entry);
   }
@@ -467,7 +451,7 @@ function report(subject, processes, entries, notes, { worktree, orphans = [], am
       ...listed(orphans, describeProcess, "processes"));
   }
   if (ambiguous.length > 0) {
-    lines.push("These processes name one of the run's temp folders where the process listing cannot show where that value ends, and an entry beside the folder continues its name. The guard cannot tell they are this run's, so it has not stopped them:",
+    lines.push("These processes name one of the run's temp folders only where the process listing cannot show where that value ends, so it may name another path. The guard cannot tell they are this run's, so it has not stopped them:",
       ...listed(ambiguous, describeProcess, "processes"));
   }
   lines.push(...notes);
@@ -555,11 +539,13 @@ export async function setup(project) {
     for (const container of attempt(() => composeContainers(allRoots)) ?? []) attempt(() => run("docker", ["rm", "-f", "-v", container.id], 30_000));
     // A worker killed above may have held a machine-wide lock; this process is exiting too.
     const locks = attempt(() => removeAbandonedLocks(root, { graceMs: 1_000, ending: process.pid })) ?? [];
+    // What is left is listed before it is removed, so a temp entry alone also fails the run.
+    const leftovers = attempt(() => [...runLeftovers(root), ...directories.filter((directory) => existsSync(directory))]) ?? [];
     const unremoved = [...directories, root].filter((directory) => attempt(() => removeTree(directory)) !== true);
     if (runnerTemp) attempt(() => removeTree(runnerTemp));
     const leaked = new Map(state.found.processes);
     for (const entry of owned.values()) if (!isRunnerChild(entry)) leaked.set(entry.pid, entry);
-    const entries = [...state.found.entries, ...locks.map(describeLock), ...unremoved.map((directory) => `${directory}, which could not be removed`)];
+    const entries = [...new Set([...state.found.entries, ...leftovers]), ...locks.map(describeLock), ...unremoved.map((directory) => `${directory}, which could not be removed`)];
     if (leaked.size === 0 && entries.length === 0) return;
     // The run fails even when it is exiting with success, such as through process.exit(0) or
     // Vitest's exit once a teardown outlasts its teardownTimeout.
@@ -618,11 +604,7 @@ export async function setup(project) {
     const ambiguous = latest ? attributeProcesses(latest, scope()).ambiguous : [];
     const containers = composeContainers(roots());
     for (const container of containers) run("docker", ["rm", "-f", "-v", container.id], 30_000);
-    const entries = tempLeftovers(root).flatMap((entry) => {
-      // A file's folder is listed by its contents: the file's own check has already reported it.
-      const nested = entry.startsWith(FILE_PREFIX) ? tempLeftovers(path.join(root, entry)).map((inner) => `${entry}/${inner}`) : [entry];
-      return nested.map((relative) => path.join(root, relative));
-    });
+    const entries = runLeftovers(root);
     // A file's own check removes the directories it registered; one still here escaped it.
     for (const directory of runDirectories()) {
       if (!existsSync(directory)) continue;
@@ -642,6 +624,14 @@ export async function setup(project) {
     }
     if (notes.length > 0) process.stderr.write(`${notes.join("\n")}\n`);
   }
+}
+
+/** The temp entries left in a run's root; a file's folder is listed by its contents. */
+function runLeftovers(root) {
+  return tempLeftovers(root).flatMap((entry) => {
+    const nested = entry.startsWith(FILE_PREFIX) ? tempLeftovers(path.join(root, entry)).map((inner) => `${entry}/${inner}`) : [entry];
+    return nested.map((relative) => path.join(root, relative));
+  });
 }
 
 const GUARDED_DIRECTORIES = Symbol.for("superfunctions.testLeakGuard.directories");
@@ -910,9 +900,8 @@ function worktreeOrphans(processes, { worktree, startedAt, own, root }) {
   const worktreeRoots = pathAliases(worktree);
   const checkouts = new Map();
   const inThisWorktree = (named, worktreeRoot) => !inNestedCheckout(named, worktreeRoot, checkouts);
-  const beside = new Map();
   return processes.filter((entry) => entry.pid !== process.pid && !ancestors.has(entry.pid) && !ownPids.has(entry.pid) && recent(entry) &&
-    namesPathUnder(entry, worktreeRoots, inThisWorktree, beside) === "exact" && !/\bturbo(?:\.exe)?\b.*\bdaemon\b/.test(entry.command) &&
+    namesPathUnder(entry, worktreeRoots, inThisWorktree) === "exact" && !/\bturbo(?:\.exe)?\b.*\bdaemon\b/.test(entry.command) &&
     !siblings.some((sibling) => entry.environment.includes(sibling.marker) || namesPathUnder(entry, sibling.roots)) && orphaned(entry));
 }
 
