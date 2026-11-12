@@ -14,11 +14,11 @@ conforms to a SwiftUI style protocol such as `ButtonStyle`), `uifn-component` (a
 UIFnSwiftUI view or view modifier, including a view that stands in for a system
 control, such as `UIFnSegmentedPicker`) or `none`. Each entry names
 the SwiftUI `controls` and UIFnSwiftUI `surfaces` involved and has a `note`. It
-also lists every public UIFnSwiftUI style and component. The compiler writes it
-to `generated/swiftui-status.json`, under each primitive's `swiftui` field. It is
-kept out of `catalog-source.mjs` so that SwiftUI changes leave the catalog's
-`sourceSha256` and `catalogSha256`, which adapter evidence and the signed
-registry pin, as they are.
+also lists every public UIFnSwiftUI style and component. The compiler writes
+it to `generated/swiftui-status.json`, under each primitive's `swiftui` field.
+It is kept out of `catalog-source.mjs` so that SwiftUI changes leave the
+catalog's `sourceSha256` and `catalogSha256`, which adapter evidence and the
+signed registry pin, as they are.
 
 The generated files are requirement and target metadata only. They do not prove
 that controllers, adapters, components, stories, docs, accessibility reviews, or
@@ -47,37 +47,40 @@ inventory does not have, or with the wrong kind or file, fails too.
 `node scripts/uifn-swiftui-inventory.mjs --write` (macOS with Xcode) rebuilds
 the inventory: it builds UIFnSwiftUI for macOS, iOS devices and the iOS
 simulator, each in debug and release, with `-emit-symbol-graph` down to
-private access and SPI included (`SWIFTUI_SYMBOL_GRAPH_FLAGS`, which the
-fixture generator uses too), and reads the graphs with
-`src/swiftui-symbol-graph.mjs`, so a declaration in any of those `#if`
-branches counts, and so do underscored, `@_spi` and `@_documentation`-hidden
-ones, whatever their documentation visibility. Code in an `#if` clause no build compiles is not in any graph, so it
-also fails when an `#if`, `#elseif` or `#else` clause in `Styles` or
+private access and SPI included and synthesized members skipped
+(`SWIFTUI_SYMBOL_GRAPH_FLAGS`, which the fixture generator uses too), and
+reads the graphs one build at a time with `src/swiftui-symbol-graph.mjs`, so a
+declaration in any of those `#if` branches counts, and so do underscored,
+`@_spi` and `@_documentation`-hidden ones, whatever their documentation
+visibility. Code in an `#if` clause no build compiles is not in any graph, so
+it also fails when an `#if`, `#elseif` or `#else` clause in `Styles` or
 `Components`, as `scripts/uifn-swiftui-if-clauses.swift` lists them with the
 Swift parser, is compiled by none of those builds, or uses a condition other
 than `os(macOS)`, `os(iOS)`, `canImport(SwiftUI|UIKit|AppKit)`, `DEBUG` and
-`targetEnvironment(simulator)` with `!`, `&&` and `||`. Without `--write` it fails when
-the committed inventory differs; the Swift workflow's macOS job runs that
-check. The Swift compiler has already resolved comments, `#if`,
+`targetEnvironment(simulator)` with `!`, `&&` and `||`. Without `--write` it
+fails when the committed inventory differs; the Swift workflow's macOS job
+runs that check. The Swift compiler has already resolved comments, `#if`,
 access, nesting and conformances, implied ones included. A declaration is
 public or open and nested only in public types: a struct, class or actor at
 any nesting depth, listed by its qualified name such as `UIFnTimeline.Row`; an
 enum that is a style or component; a top-level function, variable or type
 alias; a member of an extension of a UIFnSwiftUI protocol, by protocol and
-name, a default implementation of one of its requirements included; or a member of an extension of another module's type, listed by name for `View` (`uifnToast`) and by type and
-name otherwise (`EnvironmentValues.uifnTheme`). A member of an extension
-constrained to `Self ==` a UIFnSwiftUI type, such as `ButtonStyle.uifnPrimary`,
-belongs to that type. A conformance to a SwiftUI protocol whose name ends in
-`Style` makes a style; one to `View` or `ViewModifier`, which a `Shape`, a view
-representable or a protocol refining `View` implies, makes a component, as
-does a member in `Components` of an extension of `View` or of a UIFnSwiftUI
-protocol refining it. Anything else (a value type, a
-`Layout`, a top-level function) is a non-surface. One declaration repeated
-with the same kind and file, as overloads and `#if` alternatives are, is
-listed once. A list entry's id is an ASCII Swift name and its file path uses
-letters, digits and `+`; a declared name or path the lists cannot hold fails.
-The tests read symbol graphs that `fixtures/swiftui-symbol-graph/regenerate.mjs`
-emits from the Swift files beside it.
+name, a default implementation of one of its requirements included; or a
+member of an extension of another module's type, listed by name for `View`
+(`uifnToast`) and by type and name otherwise (`EnvironmentValues.uifnTheme`).
+A member of an extension constrained to `Self ==` a UIFnSwiftUI type, such as
+`ButtonStyle.uifnPrimary`, belongs to that type. A conformance to a SwiftUI
+protocol whose name ends in `Style` makes a style; one to `View` or
+`ViewModifier`, which a `Shape`, a view representable or a protocol refining
+`View` implies, makes a component, as does a member in `Components` of an
+extension of `View` or of a UIFnSwiftUI protocol refining it. Anything else (a
+value type, a `Layout`, a top-level function) is a non-surface. One
+declaration repeated with the same kind and file, as overloads and `#if`
+alternatives are, is listed once. A list entry's id is an ASCII Swift name and
+its file path uses letters, digits and `+`; a declared name or path the lists
+cannot hold fails. The tests read symbol graphs that
+`fixtures/swiftui-symbol-graph/regenerate.mjs` emits from the Swift files
+beside it.
 
 `npm test` in this package runs the verifier and its tests; turbo hashes these
 scripts as its inputs. The Swift workflow runs on every change under

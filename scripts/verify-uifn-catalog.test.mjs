@@ -10,7 +10,7 @@ import { CATALOG_SOURCE, EXPECTED_PRIMITIVE_NAMES } from '../uifn/catalog/src/ca
 import { compareGeneratedOutputs, createGeneratedOutputs, createSwiftUISurfaceInventory, stableStringify, validateCatalogSource, validateSwiftUIStatus, validateSwiftUISurfaceInventory, verifyGeneratedDirectory, verifySwiftUISurfaceDeclarations, writeGeneratedOutputs } from '../uifn/catalog/src/compiler.mjs';
 import { migrateCatalogDocument } from '../uifn/catalog/src/migrations.mjs';
 import { SWIFTUI_STATUS_SOURCE, SWIFTUI_STATUSES } from '../uifn/catalog/src/swiftui-status.mjs';
-import { readSwiftUISymbolGraphs, SWIFTUI_SYMBOL_GRAPH_FLAGS, swiftUIDeclarationsFromSymbolGraphs, uncoveredSwiftClauses } from '../uifn/catalog/src/swiftui-symbol-graph.mjs';
+import { readSwiftUISymbolGraphs, SWIFTUI_SYMBOL_GRAPH_FLAGS, swiftUIDeclarationsFromSymbolGraphs, uncoveredSwiftClauses, XCRUN } from '../uifn/catalog/src/swiftui-symbol-graph.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fixtureRoot = path.join(repoRoot, 'uifn/catalog/fixtures/negative');
@@ -302,12 +302,11 @@ test('the compiler symbol graphs give every public declaration in Styles and Com
   // Not declarations: private, fileprivate, internal and commented-out types,
   // a public type nested in an internal one (UIFnInternal.Inner), protocols
   // and their requirements, an internal default implementation
-  // (UIFnGlowing.uifnShade), a plain enum, Tokens, ButtonStyle.uifnChip (Self
-  // == UIFnChipStyle) and the copies of uifnDim the graph adds to each view.
+  // (UIFnGlowing.uifnShade), a plain enum, Tokens and ButtonStyle.uifnChip
+  // (Self == UIFnChipStyle).
   const [mac, ios] = await fixtureGraphs();
   const has = (graphs, id) => graphs[0].symbols.some((symbol) => symbol.pathComponents.join('.') === id);
   const count = (graphs, id) => graphs[0].symbols.filter((symbol) => symbol.pathComponents.join('.') === id).length;
-  assert.ok(mac[0].symbols.some((symbol) => symbol.identifier.precise.includes('::SYNTHESIZED::') && symbol.pathComponents.at(-1).startsWith('uifnDim')));
   assert.ok(has(mac, 'UIFnInternal.Inner') && has(mac, 'UIFnPrivateView') && has(mac, 'UIFnFilePrivateView'));
   // Requirement and default implementation are both in the graph.
   for (const id of ['UIFnSizing.size()', 'UIFnGlowing.uifnHalo()', 'UIFnGlowing.uifnShade()']) assert.equal(count(mac, id), 2, id);
@@ -333,6 +332,14 @@ test('the inventory and its fixtures come from graphs down to private access, wi
   const flags = SWIFTUI_SYMBOL_GRAPH_FLAGS;
   assert.equal(flags[flags.indexOf('-symbol-graph-minimum-access-level') + 1], 'private');
   assert.ok(flags.includes('-include-spi-symbols'));
+  // Each build's graph holds no synthesized copies, which at private access
+  // grow it to about 200 MB, yet still has the default implementations above:
+  // a UIFn protocol's own (UIFnGlowing.uifnHalo), an inherited one
+  // (UIFnShiningView.uifnShine) and one of View.body (UIFnPanelView.body).
+  assert.ok(flags.includes('-symbol-graph-skip-synthesized-members'));
+  for (const graphs of await fixtureGraphs()) {
+    assert.ok(graphs.every((graph) => graph.symbols.every((symbol) => !symbol.identifier.precise.includes('::SYNTHESIZED::'))));
+  }
   for (const file of ['scripts/uifn-swiftui-inventory.mjs', 'uifn/catalog/fixtures/swiftui-symbol-graph/regenerate.mjs']) {
     const text = await readFile(path.join(repoRoot, file), 'utf8');
     assert.match(text, /\.\.\.SWIFTUI_SYMBOL_GRAPH_FLAGS/, file);
@@ -368,6 +375,26 @@ test('a default implementation whose protocol the graph does not have, or has tw
       expectCatalogCode(() => swiftUIDeclarationsFromSymbolGraphs(shadowed), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
     }
   }
+});
+
+test('a synthesized copy of a protocol-extension member is not a declaration', async () => {
+  // A graph emitted without -symbol-graph-skip-synthesized-members, as one
+  // passed with --symbol-graphs may be, copies uifnDim onto each view; a
+  // copy is never a declaration, even one linked to a protocol refining View.
+  const [mac] = await fixtureGraphs();
+  const graphs = structuredClone(mac);
+  const originals = graphs.flatMap((graph) => graph.symbols).filter((symbol) => symbol.pathComponents.at(-1).startsWith('uifnDim'));
+  assert.ok(originals.length > 0);
+  for (const owner of ['UIFnRing', 'UIFnPanelView']) {
+    const target = graphs[0].symbols.find((symbol) => symbol.pathComponents.join('.') === owner).identifier.precise;
+    for (const original of originals) {
+      const precise = `${original.identifier.precise}::SYNTHESIZED::${target}`;
+      graphs[0].symbols.push({ ...structuredClone(original), identifier: { ...original.identifier, precise }, pathComponents: [owner, original.pathComponents.at(-1)] });
+      graphs[0].relationships.push({ kind: 'memberOf', source: precise, target });
+    }
+  }
+  assert.ok(graphs[0].symbols.length > mac[0].symbols.length);
+  assert.deepEqual(swiftUIDeclarationsFromSymbolGraphs(graphs), swiftUIDeclarationsFromSymbolGraphs(mac));
 });
 
 test('repeats of one declaration coalesce; a conflicting kind or source is drift', async () => {
@@ -423,7 +450,7 @@ test('an #if clause no inventory build compiles is reported', () => {
 });
 
 test('the Swift parser lists #if clauses, never text in comments or strings', { skip: process.platform !== 'darwin' && 'needs macOS with Xcode' }, async () => {
-  const host = path.join(path.dirname(spawnSync('xcrun', ['--find', 'swift'], { encoding: 'utf8' }).stdout.trim()), '../lib/swift/host');
+  const host = path.join(path.dirname(spawnSync(XCRUN, ['--find', 'swift'], { encoding: 'utf8' }).stdout.trim()), '../lib/swift/host');
   const temporary = await mkdtemp(path.join(os.tmpdir(), 'uifn-if-clauses-'));
   try {
     const file = path.join(temporary, 'Probe.swift');
@@ -440,7 +467,7 @@ test('the Swift parser lists #if clauses, never text in comments or strings', { 
       '#else',
       '*/',
     ].join('\n'));
-    const listed = spawnSync('xcrun', ['swift', '-I', host, '-L', host, '-lSwiftParser', '-lSwiftSyntax', '-Xlinker', '-rpath', '-Xlinker', host, path.join(repoRoot, 'scripts/uifn-swiftui-if-clauses.swift'), file], { encoding: 'utf8' });
+    const listed = spawnSync(XCRUN, ['swift', '-I', host, '-L', host, '-lSwiftParser', '-lSwiftSyntax', '-Xlinker', '-rpath', '-Xlinker', host, path.join(repoRoot, 'scripts/uifn-swiftui-if-clauses.swift'), file], { encoding: 'utf8' });
     assert.equal(listed.status, 0, listed.stderr);
     const parsed = JSON.parse(listed.stdout)[file];
     assert.deepEqual(parsed.map(({ line, directive, condition }) => [line, directive, condition.replaceAll(' ', '')]), [

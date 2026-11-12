@@ -3,8 +3,8 @@
 // Rebuilds the symbol-graph fixtures the catalog tests read: compiles
 // sources/ as module UIFnSwiftUI for macOS in debug (DEBUG defined) and for
 // iOS devices in release, with the symbol-graph flags
-// scripts/uifn-swiftui-inventory.mjs uses (SWIFTUI_SYMBOL_GRAPH_FLAGS), keeps
-// the symbols declared in sources/ (synthesized copies included) and the
+// scripts/uifn-swiftui-inventory.mjs uses (SWIFTUI_SYMBOL_GRAPH_FLAGS, so no
+// synthesized copies), keeps the symbols declared in sources/ and the
 // fields src/swiftui-symbol-graph.mjs reads, and rewrites each file URI under
 // file:///checkout/. Every platform is built and trimmed before any committed
 // fixture directory is replaced. Needs macOS with Xcode.

@@ -87,8 +87,12 @@ try {
     await checkConditions();
     directories = emitSymbolGraphs(temporaryRoot);
   }
-  const graphs = await Promise.all(directories.map((directory) => readSwiftUISymbolGraphs(directory)));
-  const declarations = graphs.flatMap((build) => swiftUIDeclarationsFromSymbolGraphs(build));
+  // One build's graphs at a time, keeping only its declarations, so memory
+  // stays bounded by the largest build rather than the sum of them.
+  const declarations = [];
+  for (const directory of directories) {
+    declarations.push(...swiftUIDeclarationsFromSymbolGraphs(await readSwiftUISymbolGraphs(directory)));
+  }
   const inventory = createSwiftUISurfaceInventory(declarations);
   const contents = stableStringify(inventory);
   if (write) {

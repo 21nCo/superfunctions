@@ -36,7 +36,8 @@
 // is unclassified). Anything
 // else is unclassified, so it has to be listed as a non-surface. Protocols,
 // their requirements, the members of UIFnSwiftUI types and the copies of
-// protocol-extension members the graph adds to each conforming type
+// protocol-extension members a graph emitted without
+// -symbol-graph-skip-synthesized-members adds to each conforming type
 // (::SYNTHESIZED::) are not declarations.
 
 import { readdir, readFile } from 'node:fs/promises';
@@ -54,8 +55,11 @@ export const XCRUN = '/usr/bin/xcrun';
 // The swiftc flags, after -emit-symbol-graph-dir <directory>, that both the
 // inventory script and the fixture generator emit graphs with. The minimum
 // access level is private because @_documentation(visibility: private) hides
-// a public declaration from every graph above it.
-export const SWIFTUI_SYMBOL_GRAPH_FLAGS = ['-emit-symbol-graph', '-symbol-graph-minimum-access-level', 'private', '-include-spi-symbols'];
+// a public declaration from every graph above it. The graph skips the copies
+// of protocol-extension members it would add to every conforming type
+// (::SYNTHESIZED::): they are not declarations, and at private access they
+// make each UIFnSwiftUI graph close to 200 MB.
+export const SWIFTUI_SYMBOL_GRAPH_FLAGS = ['-emit-symbol-graph', '-symbol-graph-minimum-access-level', 'private', '-include-spi-symbols', '-symbol-graph-skip-synthesized-members'];
 
 const VIEW = 's:7SwiftUI4ViewP';
 const COMPONENT_PROTOCOLS = new Set([VIEW, 's:7SwiftUI12ViewModifierP']);
@@ -86,23 +90,14 @@ function surfaceKind(conformances = []) {
   return undefined;
 }
 
-function symbolGraphIndex(graphs) {
-  const ownGraphs = graphs.filter((graph) => graph.module?.name === SWIFTUI_MODULE);
-  const symbols = new Map(ownGraphs.flatMap((graph) => graph.symbols).map((symbol) => [symbol.identifier.precise, symbol]));
-  const parents = new Map();
-  const conformances = new Map();
-  const defaults = new Set();
-  for (const relationship of ownGraphs.flatMap((graph) => graph.relationships ?? [])) {
-    if (PARENT_RELATIONSHIPS.has(relationship.kind)) parents.set(relationship.source, relationship);
-    if (relationship.kind === 'conformsTo') conformances.set(relationship.source, [...(conformances.get(relationship.source) ?? []), relationship]);
-    if (relationship.kind === 'defaultImplementationOf') defaults.add(relationship.source);
-  }
-  // A default implementation of a requirement of a UIFnSwiftUI protocol, its
-  // own or one it inherits, is a member of the protocol whose extension
-  // declares it, though the graph links it only to the requirement. That
-  // protocol's path is the implementation's path less its name. Private
-  // protocols in different files can share a path, so only a path exactly one
-  // protocol has resolves; any other default implementation is unresolved.
+// A default implementation of a requirement of a UIFnSwiftUI protocol, its
+// own or one it inherits, is a member of the protocol whose extension
+// declares it, though the graph links it only to the requirement. That
+// protocol's path is the implementation's path less its name. Private
+// protocols in different files can share a path, so only a path exactly one
+// protocol has resolves; this adds the memberOf of each one that does and
+// returns the others.
+function resolveDefaultImplementations(symbols, parents, defaults) {
   const protocols = new Map();
   for (const [precise, symbol] of symbols) {
     if (symbol.kind.identifier !== 'swift.protocol') continue;
@@ -116,6 +111,21 @@ function symbolGraphIndex(graphs) {
     if (owners.length === 1) parents.set(source, { kind: 'memberOf', source, target: owners[0] });
     else unresolved.add(source);
   }
+  return unresolved;
+}
+
+function symbolGraphIndex(graphs) {
+  const ownGraphs = graphs.filter((graph) => graph.module?.name === SWIFTUI_MODULE);
+  const symbols = new Map(ownGraphs.flatMap((graph) => graph.symbols).map((symbol) => [symbol.identifier.precise, symbol]));
+  const parents = new Map();
+  const conformances = new Map();
+  const defaults = new Set();
+  for (const relationship of ownGraphs.flatMap((graph) => graph.relationships ?? [])) {
+    if (PARENT_RELATIONSHIPS.has(relationship.kind)) parents.set(relationship.source, relationship);
+    if (relationship.kind === 'conformsTo') conformances.set(relationship.source, [...(conformances.get(relationship.source) ?? []), relationship]);
+    if (relationship.kind === 'defaultImplementationOf') defaults.add(relationship.source);
+  }
+  const unresolved = resolveDefaultImplementations(symbols, parents, defaults);
   return { symbols, parents, conformances, unresolved };
 }
 
