@@ -1,0 +1,8 @@
+{
+  "id": "unlisted-swiftui-surface",
+  "description": "Add a UIFnSwiftUI style to the surface inventory that the SwiftUI status surface list does not name.",
+  "mutation": {
+    "addDeclaration": { "id": "UIFnSliderStyle", "kind": "style", "source": "uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnSliderStyle.swift" }
+  },
+  "expectedErrorCodes": ["UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT"]
+}

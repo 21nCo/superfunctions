@@ -4,7 +4,7 @@
   "deterministic": true,
   "generatorVersion": "1.0.0",
   "implementationEvidence": true,
-  "outputCount": 12,
+  "outputCount": 13,
   "outputs": [
     {
       "bytes": 57938,
@@ -60,6 +60,11 @@
       "bytes": 25316,
       "path": "story-manifest.json",
       "sha256": "be13fa03bc5e09ad9a71be72853fb6ab2b072e681d09fd3604ab8cdf71d5a5ce"
+    },
+    {
+      "bytes": 23871,
+      "path": "swiftui-status.json",
+      "sha256": "bb2a74b8d66a842ecc83066e3271577f662fe3c748cad63bbf3a40e99173151c"
     },
     {
       "bytes": 18456,
