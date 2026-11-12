@@ -24,14 +24,16 @@ const styles = `${SWIFTUI_SOURCES_ROOT}/Styles`;
 const components = `${SWIFTUI_SOURCES_ROOT}/Components`;
 
 // Every public style and component UIFnSwiftUI declares in Styles and
-// Components, at any depth. A surface's kind follows its declaration, not its
-// directory: a style conforms to a SwiftUI style protocol; a component is a
-// View (or a protocol refining View, such as Shape, a view representable or
-// one declared in these sources), a ViewModifier or a public View-extension
-// function in Components. A nested type is listed by its qualified name, such
-// as UIFnTimeline.Row. The verify script checks this list and
-// SWIFTUI_NON_SURFACES, kinds and sources included, against the Swift
-// sources, so a new style or component has to be listed here and mapped to a
+// Components, at any depth. A surface's kind follows the compiler's view of
+// its declaration, not its directory: a style conforms to a SwiftUI style
+// protocol; a component is a View (a Shape, a view representable or a type
+// conforming to a protocol that refines View included), a ViewModifier or a
+// public View-extension member in Components. A nested type is listed by its
+// qualified name, such as UIFnTimeline.Row. The verify script checks this
+// list and SWIFTUI_NON_SURFACES, kinds and sources included, against
+// ../swiftui-surface-inventory.json, which the Swift workflow's macOS job
+// checks against the compiler's symbol graphs (src/swiftui-symbol-graph.mjs),
+// so a new style or component has to be listed here and mapped to a
 // primitive below.
 export const SWIFTUI_SURFACES = [
   { id: 'UIFnButtonStyle', kind: 'style', issue: 'UIF-24', source: `${styles}/UIFnButtonStyle.swift` },
@@ -52,14 +54,16 @@ export const SWIFTUI_SURFACES = [
   { id: 'UIFnSkeletonBlock', kind: 'component', issue: 'UIF-26', source: `${components}/UIFnSkeleton.swift` },
 ];
 
-// Every other public struct, class or actor in Styles and Components, and
-// every public View-extension member in Styles. The scan fails closed: a
-// public type it cannot classify as a style or component, such as a value
-// type or a Layout, has to be listed here with the reason it is not one.
+// Every other public declaration in the inventory: a struct, class or actor
+// that is not a style or component (a value type, a Layout), a top-level
+// function or variable, a View-extension member in Styles and a member of an
+// extension of another module's type, by type and name. The check fails
+// closed: each has to be listed here with the reason it is not a surface.
 export const SWIFTUI_NON_SURFACES = [
   { id: 'UIFnBannerDismiss', source: `${components}/UIFnBanner.swift`, reason: 'The dismiss button a UIFnBanner shows; a value, not a view.' },
   { id: 'UIFnToast', source: `${components}/UIFnBanner.swift`, reason: 'The toast uifnToast presents; a value, not a view.' },
   { id: 'uifnTheme', source: `${styles}/UIFnStyleEnvironment.swift`, reason: 'Sets the theme the UIFn styles draw with; an environment setting, not a style.' },
+  { id: 'EnvironmentValues.uifnTheme', source: `${styles}/UIFnStyleEnvironment.swift`, reason: 'The environment value uifnTheme sets; a setting, not a style.' },
 ];
 
 function native(controls, note, surfaces = []) {

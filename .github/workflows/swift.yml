@@ -13,6 +13,9 @@ on:
       - ".github/workflows/swift.yml"
       - ".github/workflows/release-swift.yml"
       - "uifn/examples/swiftui-workbench/**"
+      - "uifn/catalog/swiftui-surface-inventory.json"
+      - "uifn/catalog/src/swiftui-symbol-graph.mjs"
+      - "scripts/uifn-swiftui-inventory.mjs"
   pull_request:
     paths:
       - "Package.swift"
@@ -24,6 +27,9 @@ on:
       - ".github/workflows/swift.yml"
       - ".github/workflows/release-swift.yml"
       - "uifn/examples/swiftui-workbench/**"
+      - "uifn/catalog/swiftui-surface-inventory.json"
+      - "uifn/catalog/src/swiftui-symbol-graph.mjs"
+      - "scripts/uifn-swiftui-inventory.mjs"
 
 permissions:
   contents: read
@@ -52,6 +58,11 @@ jobs:
         run: node --test scripts/swift-release.test.mjs
       - name: swift build
         run: swift build --only-use-versions-from-resolved-file
+      # Builds UIFnSwiftUI for macOS and the iOS simulator with symbol graphs
+      # and fails when the uifn catalog's SwiftUI surface inventory differs
+      # from the public declarations the compiler reports.
+      - name: The uifn catalog's SwiftUI surface inventory matches the compiler
+        run: node scripts/uifn-swiftui-inventory.mjs
       # The UIFnSwiftUI tests hold the main actor while they render and drive
       # windows, so other modules' main-actor tests that wait on a deadline run
       # in a separate process. Each run still going after 10 minutes is
@@ -272,8 +283,8 @@ jobs:
           node uifn/swift/scripts/generate-tokens.mjs
           git diff --exit-code -- uifn/swift
           test -z "$(git status --porcelain -- uifn/swift)"
-      # The catalog lists every public UIFnSwiftUI style and component and maps
-      # each to a primitive; a Swift-only change does not run the catalog's
-      # own tests, so the verifier runs here.
+      # The catalog lists every declaration in its SwiftUI surface inventory
+      # and maps each style and component to a primitive; a Swift-only change
+      # does not run the catalog's own tests, so the verifier runs here.
       - name: The uifn catalog's SwiftUI status lists every UIFnSwiftUI style and component
         run: node scripts/verify-uifn-catalog.mjs

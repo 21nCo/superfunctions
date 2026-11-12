@@ -203,7 +203,7 @@ const SWIFTUI_SURFACE_FIELDS = new Set(['id', 'kind', 'issue', 'source']);
 const SWIFTUI_NON_SURFACE_FIELDS = new Set(['id', 'source', 'reason']);
 const SWIFTUI_CONTROL_PATTERN = /^\.?[A-Za-z][A-Za-z0-9]*$/;
 // A Swift name, qualified for a nested type (UIFnTimeline.Row): every id the
-// declaration scan reports can be listed.
+// surface inventory holds can be listed.
 const SWIFTUI_SURFACE_ID_PATTERN = /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$/;
 const SWIFTUI_SURFACE_DIRECTORIES = ['Styles', 'Components'];
 const SWIFTUI_SOURCE_PATTERN = new RegExp(String.raw`^${SWIFTUI_SOURCES_ROOT}/(?:${SWIFTUI_SURFACE_DIRECTORIES.join('|')})/(?:[A-Za-z0-9+]+/)*[A-Za-z0-9+]+\.swift$`);
@@ -293,385 +293,36 @@ export function validateSwiftUIStatus(source = SWIFTUI_STATUS_SOURCE) {
   return { ok: true, primitiveCount: EXPECTED_PRIMITIVE_NAMES.length, surfaceCount: surfaces.size };
 }
 
-// The UIFnSwiftUI declarations the verify script checks the SwiftUI surface
-// and non-surface lists against. Every .swift file under Styles and
-// Components, at any depth, is read as the compiler sees it: comments and
-// string literals are blanked first, so a commented-out type does not count.
-// A scope walk then finds
-// - each public struct, class or actor at any nesting depth, by its qualified
-//   name (UIFnTimeline.Row). A member of a public extension is public unless
-//   it says otherwise, and a type nested in a non-public type is not public;
-// - each public func or var in an extension of View (a view modifier).
-// The kind follows the declaration, not the directory. A conformance to a
-// SwiftUI style protocol (`...Style`) makes a style. View, ViewModifier,
-// Shape, InsettableShape, the view and view controller representables, or a
-// protocol declared in these sources that refines one of them, makes a
-// component, as does a View-extension member in Components. Conformances
-// added by an extension in any scanned file count. An enum counts only as a
-// style or component; a protocol is never listed, it only passes its
-// refinement on to the types that conform to it. Any other public struct, class or actor, and
-// any View-extension member in Styles, is unclassified and has to be listed
-// as a non-surface, so the scan fails closed.
-const SWIFT_STYLE_PROTOCOL = /^[A-Z]\w*Style$/;
-const SWIFT_COMPONENT_PROTOCOLS = new Set(['View', 'ViewModifier', 'Shape', 'InsettableShape', 'ShapeView', 'DynamicViewContent', 'GeometryEffect', 'AnimatableModifier', 'EnvironmentalModifier', 'UIViewRepresentable', 'NSViewRepresentable', 'UIViewControllerRepresentable', 'NSViewControllerRepresentable']);
-const SWIFT_TYPE_KEYWORDS = new Set(['struct', 'class', 'actor', 'enum', 'protocol', 'extension']);
-const SWIFT_SURFACE_TYPE_KEYWORDS = new Set(['struct', 'class', 'actor']);
-const SWIFT_MEMBER_KEYWORDS = new Set(['func', 'var', 'let', 'case', 'typealias', 'associatedtype', 'init', 'subscript']);
-const SWIFT_ACCESS_MODIFIERS = new Set(['open', 'public', 'package', 'internal', 'fileprivate', 'private']);
-const SWIFT_MODIFIER_WORDS = new Set([...SWIFT_ACCESS_MODIFIERS, 'class', 'static', 'final', 'override', 'nonisolated', 'mutating', 'nonmutating', 'convenience', 'required', 'dynamic', 'lazy', 'weak', 'unowned', 'indirect', 'optional', 'distributed', 'prefix', 'postfix', 'infix']);
-const SWIFT_DECLARATION_WORDS = new Set([...SWIFT_MEMBER_KEYWORDS, ...SWIFT_MODIFIER_WORDS]);
-const SWIFT_IMPORT_KINDS = new Set(['struct', 'class', 'enum', 'protocol', 'typealias', 'func', 'var', 'let']);
-// Identifiers may use any letter, so a non-ASCII name is read, not skipped.
-const SWIFT_TOKEN = /`[^`\n]+`|[\p{L}_][\p{L}\p{M}\p{N}_]*|#\w+|->|\d[\w.]*|[^\s\p{L}\p{M}\p{N}_]/gu;
-const SWIFT_IDENTIFIER = /^[\p{L}_][\p{L}\p{M}\p{N}_]*$/u;
-const SWIFT_NAMED_KEYWORDS = new Set(['struct', 'class', 'enum', 'protocol', 'extension']);
-const SWIFT_STRING_START = /#*"/y;
+// The public UIFnSwiftUI declarations in Styles and Components, as the Swift
+// compiler reports them for macOS and the iOS simulator
+// (src/swiftui-symbol-graph.mjs), in the form committed as
+// swiftui-surface-inventory.json: { id, kind, source } sorted by id, kind
+// 'style', 'component' or 'unclassified'. A name or path the SwiftUI status
+// lists cannot hold fails here rather than being dropped.
+export const SWIFTUI_SURFACE_INVENTORY_VERSION = 1;
+const SWIFTUI_DECLARATION_KINDS = [...SWIFTUI_SURFACE_KINDS, 'unclassified'];
 
-// Swift's lexical forms that hold arbitrary text: comments, string literals
-// (multi-line, raw and interpolated ones too) and regex literals. A bare
-// `/.../` counts as a regex only where an operand is expected, as in Swift.
-const SWIFT_REGEX_START = /#+\/|\/(?![\s/*])/y;
-const SWIFT_OPERAND_BEFORE = new Set(['', '=', '(', '[', '{', ',', ':', ';', '!', '&', '|', '?', '^', '~', '<', '>', '+', '-', '*', '%']);
-
-function blankSwift(context, from, to) {
-  for (let index = from; index < to; index += 1) if (context.out[index] !== '\n') context.out[index] = ' ';
-}
-
-function swiftCommentEnd(text, start) {
-  if (text.startsWith('//', start)) return text.includes('\n', start) ? text.indexOf('\n', start) : text.length;
-  let depth = 0;
-  for (let index = start; index < text.length; index += 1) {
-    if (text.startsWith('/*', index)) depth += 1;
-    else if (text.startsWith('*/', index)) depth -= 1;
-    else continue;
-    index += 1;
-    if (depth === 0) return index + 1;
+export function createSwiftUISurfaceInventory(declarations) {
+  for (const { id, kind, source } of declarations) {
+    assert(typeof id === 'string' && SWIFTUI_SURFACE_ID_PATTERN.test(id), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `UIFnSwiftUI declares ${id} in ${source}, a name the SwiftUI status lists cannot hold. Give public UIFnSwiftUI types and members ASCII names.`, { id, source });
+    assert(typeof source === 'string' && SWIFTUI_SOURCE_PATTERN.test(source), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `UIFnSwiftUI declares ${id} in ${source}, a path the SwiftUI status lists cannot hold. Use letters, digits and + in its directory and file names.`, { id, source });
+    assert(SWIFTUI_DECLARATION_KINDS.includes(kind), 'UIFN_CATALOG_UNSUPPORTED_VALUE', `UIFnSwiftUI declaration ${id} has an unknown kind.`, { id, value: kind });
   }
-  return text.length;
+  const declared = [...coalesceSwiftUIDeclarations(declarations).values()];
+  declared.sort((left, right) => (left.id < right.id ? -1 : 1));
+  return { inventoryVersion: SWIFTUI_SURFACE_INVENTORY_VERSION, declarations: declared };
 }
 
-function swiftStringEnd(context, start) {
-  const { text } = context;
-  let index = start;
-  while (text[index] === '#') index += 1;
-  const hashes = text.slice(start, index);
-  const multiline = text.startsWith('"""', index);
-  const close = `${multiline ? '"""' : '"'}${hashes}`;
-  const escape = `\\${hashes}`;
-  index += multiline ? 3 : 1;
-  while (index < text.length && (multiline || text[index] !== '\n')) {
-    if (text.startsWith(close, index)) return index + close.length;
-    if (!text.startsWith(escape, index)) index += 1;
-    else if (text[index + escape.length] === '(') index = swiftCodeEnd(context, index + escape.length + 1, true);
-    else index += escape.length + 1;
+// Checks a committed inventory and returns its declarations. It has to be
+// exactly what createSwiftUISurfaceInventory makes of its own entries.
+export function validateSwiftUISurfaceInventory(inventory) {
+  assert(isPlainObject(inventory) && inventory.inventoryVersion === SWIFTUI_SURFACE_INVENTORY_VERSION && Array.isArray(inventory.declarations), 'UIFN_CATALOG_SCHEMA_INVALID', 'The UIFnSwiftUI surface inventory is not a version 1 inventory.', { actual: inventory?.inventoryVersion });
+  for (const entry of inventory.declarations) {
+    assert(isPlainObject(entry) && Object.keys(entry).sort().join() === 'id,kind,source', 'UIFN_CATALOG_UNSUPPORTED_VALUE', 'A UIFnSwiftUI surface inventory entry needs exactly an id, kind and source.', { entry });
   }
-  return index;
-}
-
-function swiftRegexEnd(context, start) {
-  const { text } = context;
-  let index = start;
-  while (text[index] === '#') index += 1;
-  const close = `/${text.slice(start, index)}`;
-  const bare = close === '/';
-  if (bare) {
-    // The code before it, with comments already blanked.
-    const before = context.out.slice(0, start).join('').trimEnd();
-    if (!SWIFT_OPERAND_BEFORE.has(before.at(-1) ?? '') && !/\b(?:return|in|throw|try|await|case|where|if|guard|while)$/.test(before)) return 0;
-  }
-  for (index += 1; index < text.length && !(bare && text[index] === '\n'); index += 1) {
-    if (text.startsWith(close, index)) return index + close.length;
-    if (text[index] === '\\') index += 1;
-  }
-  return bare ? 0 : text.length;
-}
-
-function swiftLiteralEnd(context, index) {
-  const { text } = context;
-  if (text.startsWith('//', index) || text.startsWith('/*', index)) return swiftCommentEnd(text, index);
-  SWIFT_STRING_START.lastIndex = index;
-  if (SWIFT_STRING_START.test(text)) return swiftStringEnd(context, index);
-  SWIFT_REGEX_START.lastIndex = index;
-  return SWIFT_REGEX_START.test(text) ? swiftRegexEnd(context, index) : 0;
-}
-
-// Scans code from `start`; in a string interpolation, stops after its `)`.
-function swiftCodeEnd(context, start, interpolation) {
-  let depth = 0;
-  for (let index = start; index < context.text.length;) {
-    const end = swiftLiteralEnd(context, index);
-    if (end) {
-      blankSwift(context, index, end);
-      index = end;
-      continue;
-    }
-    const char = context.text[index];
-    if (interpolation && char === ')' && depth === 0) return index + 1;
-    if (interpolation) depth += { '(': 1, ')': -1 }[char] ?? 0;
-    index += 1;
-  }
-  return context.text.length;
-}
-
-// The text with comments and string and regex literals replaced by spaces;
-// line breaks are kept.
-function swiftCodeOnly(text) {
-  const context = { text, out: text.split('') };
-  swiftCodeEnd(context, 0, false);
-  return context.out.join('');
-}
-
-function skipBalanced(tokens, index, open, close) {
-  let depth = 0;
-  for (let cursor = index; cursor < tokens.length; cursor += 1) {
-    if (tokens[cursor] === open) depth += 1;
-    if (tokens[cursor] === close) depth -= 1;
-    if (depth === 0) return cursor + 1;
-  }
-  return tokens.length + 1;
-}
-
-function swiftTypeName(value) {
-  return value.replace(/^SwiftUI(?:Core)?\./, '');
-}
-
-// `where Self: View` refines a protocol as `: View` does.
-function readSwiftSelfConstraints(tokens, start) {
-  const constraints = [];
-  for (let index = start; index < tokens.length && tokens[index] !== '{'; index += 1) {
-    if (tokens[index] !== 'Self' || tokens[index + 1] !== ':') continue;
-    let name = '';
-    for (index += 2; SWIFT_IDENTIFIER.test(tokens[index] ?? '') || ['.', '&'].includes(tokens[index]); index += 1) {
-      if (tokens[index] !== '&') name += tokens[index];
-      else {
-        constraints.push(name);
-        name = '';
-      }
-    }
-    constraints.push(name);
-    index -= 1;
-  }
-  return constraints;
-}
-
-// Reads `Name<...>: A, B & C<...> where ... {` from the name on, and returns
-// the name, its conformances and the index after `{`.
-function readSwiftTypeHeader(tokens, index) {
-  let cursor = index + 1;
-  while (tokens[cursor] === '.' && SWIFT_IDENTIFIER.test(tokens[cursor + 1] ?? '')) cursor += 2;
-  const name = swiftTypeName(tokens.slice(index, cursor).join(''));
-  if (tokens[cursor] === '<') cursor = skipBalanced(tokens, cursor, '<', '>');
-  const conformances = [];
-  let current = '';
-  let depth = 0;
-  for (cursor += tokens[cursor] === ':' ? 1 : 0; cursor < tokens.length && tokens[cursor] !== '{'; cursor += 1) {
-    const token = tokens[cursor];
-    if (token === '<' || token === '>') depth += token === '<' ? 1 : -1;
-    else if (depth > 0) continue;
-    else if (token === 'where') break;
-    else if (token === '@') cursor += 1;
-    else if (token === ',' || token === '&') {
-      conformances.push(current);
-      current = '';
-    } else current += token;
-  }
-  conformances.push(current, ...readSwiftSelfConstraints(tokens, cursor));
-  while (cursor < tokens.length && tokens[cursor] !== '{') cursor += 1;
-  return { name, conformances: conformances.filter(Boolean).map(swiftTypeName), next: cursor + 1 };
-}
-
-function isSwiftPublic(modifiers, scope) {
-  const access = modifiers.find((value) => SWIFT_ACCESS_MODIFIERS.has(value));
-  if (access) return access === 'public' || access === 'open';
-  return scope?.kind === 'extension' && scope.membersPublic;
-}
-
-function readSwiftTypeDeclaration(state, index) {
-  const { tokens, scopes, model, source } = state;
-  const keyword = tokens[index];
-  const scope = scopes.at(-1);
-  const header = readSwiftTypeHeader(tokens, index + 1);
-  if (keyword === 'extension') {
-    model.extensions.set(header.name, [...(model.extensions.get(header.name) ?? []), ...header.conformances]);
-    scopes.push({ kind: 'extension', name: header.name, isPublic: true, membersPublic: state.modifiers.includes('public') || state.modifiers.includes('open') });
-    return header.next;
-  }
-  const id = [...scopes.map((entry) => entry.name), header.name].join('.');
-  const isPublic = isSwiftPublic(state.modifiers, scope) && scopes.every((entry) => entry.isPublic);
-  if (keyword === 'protocol') {
-    // #if alternatives add up; a nested protocol keeps its qualified name.
-    model.protocols.set(id, [...(model.protocols.get(id) ?? []), ...header.conformances]);
-  } else if (isPublic) model.found.push({ id, keyword, source, conformances: header.conformances });
-  else model.hidden.add(id);
-  if (isPublic) model.visible.add(id);
-  scopes.push({ kind: 'type', name: header.name, isPublic });
-  return header.next;
-}
-
-function readSwiftMember(state, index) {
-  const { tokens, scopes, model, source } = state;
-  const scope = scopes.at(-1);
-  const name = (tokens[index + 1] ?? '').replaceAll('`', '');
-  if (['func', 'var'].includes(tokens[index]) && scope?.kind === 'extension' && scope.name === 'View' && SWIFT_IDENTIFIER.test(name) && isSwiftPublic(state.modifiers, scope)) {
-    model.found.push({ id: name, keyword: tokens[index], source, member: true });
-  }
-  if (!['func', 'init', 'subscript'].includes(tokens[index])) return index + 2;
-  // Skips the name (an operator's too), generic clause and parameter list, so
-  // a parameter label such as `class` is not read as a declaration.
-  let cursor = tokens[index] === 'func' ? index + 2 : index + 1;
-  while (!SWIFT_IDENTIFIER.test(name) && tokens[index] === 'func' && cursor < tokens.length && tokens[cursor] !== '(') cursor += 1;
-  while (['?', '!'].includes(tokens[cursor])) cursor += 1;
-  if (tokens[cursor] === '<') cursor = skipBalanced(tokens, cursor, '<', '>');
-  return tokens[cursor] === '(' ? skipBalanced(tokens, cursor, '(', ')') : cursor;
-}
-
-function stepSwiftBrace(state, index) {
-  const { scopes, source } = state;
-  assert(state.tokens[index] === '{' || scopes.length > 0, 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `Cannot read the declarations in ${source}: a } has no {.`, { source });
-  if (state.tokens[index] === '{') scopes.push({ kind: 'body' });
-  else scopes.pop();
-  state.modifiers = [];
-  return index + 1;
-}
-
-// Skips text that qualifies no declaration: `import struct Foundation.URL`,
-// a member name such as `.private` in a default value, an attribute, and the
-// `(set)` of `private(set)`. Returns undefined for any other token.
-function skipSwiftNonDeclaration(state, index) {
-  const { tokens } = state;
-  const token = tokens[index];
-  const next = tokens[index + 1] ?? '';
-  if (token === '@') return next && tokens[index + 2] === '(' ? skipBalanced(tokens, index + 2, '(', ')') : index + 2;
-  if (SWIFT_ACCESS_MODIFIERS.has(token) && next === '(') return skipBalanced(tokens, index + 1, '(', ')');
-  if (token !== '.' && token !== 'import') return undefined;
-  state.modifiers = [];
-  if (token === '.') return SWIFT_IDENTIFIER.test(next) ? index + 2 : index + 1;
-  let end = SWIFT_IMPORT_KINDS.has(next) ? index + 2 : index + 1;
-  while (tokens[end + 1] === '.') end += 2;
-  return end + 1;
-}
-
-// Reads one token in a type or extension body (or at file level); skips
-// function and property bodies. Modifiers gather up to the declaration they
-// qualify.
-function stepSwiftDeclarations(state, index) {
-  const { tokens, scopes } = state;
-  const token = tokens[index];
-  const next = tokens[index + 1] ?? '';
-  if (token === '{' || token === '}') return stepSwiftBrace(state, index);
-  if (scopes.at(-1)?.kind === 'body') return index + 1;
-  const skipped = skipSwiftNonDeclaration(state, index);
-  if (skipped !== undefined) return skipped;
-  // No declaration starts inside parentheses: argument and tuple labels
-  // such as `class:` in a call, an enum case's values or a function type.
-  if (token === '(') {
-    const end = skipBalanced(tokens, index, '(', ')');
-    assert(end <= tokens.length, 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `Cannot read the declarations in ${state.source}: a ( is not closed.`, { source: state.source });
-    state.modifiers = [];
-    return end;
-  }
-  // A name the scan cannot read (`Raw Name`, an emoji) fails closed.
-  assert(!SWIFT_NAMED_KEYWORDS.has(token) || SWIFT_IDENTIFIER.test(next), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `Cannot read the name after ${token} in ${state.source}: ${next}`, { source: state.source, name: next });
-  // Only `class` and `actor` can also open a member (`class func`); after the
-  // other keywords any name, `dynamic` too, is the type's.
-  const isTypeKeyword = SWIFT_TYPE_KEYWORDS.has(token) && SWIFT_IDENTIFIER.test(next) && !(['class', 'actor'].includes(token) && SWIFT_DECLARATION_WORDS.has(next));
-  if (isTypeKeyword || SWIFT_MEMBER_KEYWORDS.has(token)) {
-    const end = isTypeKeyword ? readSwiftTypeDeclaration(state, index) : readSwiftMember(state, index);
-    state.modifiers = [];
-    return end;
-  }
-  if (SWIFT_MODIFIER_WORDS.has(token)) state.modifiers.push(token);
-  else state.modifiers = [];
-  return index + 1;
-}
-
-function walkSwiftDeclarations(text, source, model) {
-  // A backticked keyword (`class`) stays a name, never a keyword.
-  const unquote = (token) => (SWIFT_DECLARATION_WORDS.has(token.slice(1, -1)) || SWIFT_TYPE_KEYWORDS.has(token.slice(1, -1)) ? token : token.replaceAll('`', ''));
-  const tokens = (swiftCodeOnly(text).match(SWIFT_TOKEN) ?? []).map(unquote);
-  const state = { tokens, scopes: [], model, source, modifiers: [] };
-  let index = 0;
-  while (index < tokens.length) index = stepSwiftDeclarations(state, index);
-  // Text the scan cannot model (an unclosed scope or group) fails closed.
-  assert(state.scopes.length === 0 && index === tokens.length, 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `Cannot read the declarations in ${source}: a { or ( is not closed.`, { source });
-}
-
-function swiftOuter(id) {
-  return id.split('.').slice(0, -1).join('.');
-}
-
-// A protocol name resolves as Swift looks it up: in the enclosing scopes
-// first, innermost out, then at file level.
-function resolveSwiftProtocol(value, outer, protocols) {
-  const parts = outer ? outer.split('.') : [];
-  for (let size = parts.length; size >= 0; size -= 1) {
-    const key = [...parts.slice(0, size), value].join('.');
-    if (protocols.has(key)) return key;
-  }
-  return undefined;
-}
-
-function swiftSurfaceKind(conformances, protocols, outer = '', seen = new Set()) {
-  if (conformances.some((value) => SWIFT_STYLE_PROTOCOL.test(value))) return 'style';
-  if (conformances.some((value) => SWIFT_COMPONENT_PROTOCOLS.has(value))) return 'component';
-  const refined = conformances.map((value) => resolveSwiftProtocol(value, outer, protocols)).filter((key) => key && !seen.has(key));
-  for (const key of refined) seen.add(key);
-  return refined.map((key) => swiftSurfaceKind(protocols.get(key), protocols, swiftOuter(key), seen)).find(Boolean);
-}
-
-function swiftSurfaceDirectory(relativePath) {
-  return SWIFTUI_SURFACE_DIRECTORIES.find((name) => relativePath.startsWith(`${SWIFTUI_SOURCES_ROOT}/${name}/`));
-}
-
-// `files` is a list of { path, text }, path relative to the repository root.
-// Returns every public declaration in scan order as { id, kind, source }, kind
-// 'style', 'component' or 'unclassified'. An id repeats when it is declared
-// more than once, as #if alternatives or overloads are.
-export function parseSwiftUISurfaceDeclarations(files) {
-  const model = { found: [], extensions: new Map(), protocols: new Map(), hidden: new Set(), visible: new Set() };
-  for (const { path: relativePath, text } of files) {
-    if (swiftSurfaceDirectory(relativePath)) walkSwiftDeclarations(text, relativePath, model);
-  }
-  // A type nested, through an extension too, in a type that no #if
-  // alternative declares public is not public.
-  const isHidden = (outer) => model.hidden.has(outer) && !model.visible.has(outer);
-  const hidden = (id) => id.split('.').slice(0, -1).some((_, index, outer) => isHidden(outer.slice(0, index + 1).join('.')));
-  const declarations = model.found.filter(({ id }) => !hidden(id)).flatMap(({ id, keyword, source, conformances, member }) => {
-    if (member) return [{ id, kind: swiftSurfaceDirectory(source) === 'Components' ? 'component' : 'unclassified', source }];
-    const kind = swiftSurfaceKind([...conformances, ...(model.extensions.get(id) ?? [])], model.protocols, swiftOuter(id));
-    if (kind) return [{ id, kind, source }];
-    return SWIFT_SURFACE_TYPE_KEYWORDS.has(keyword) ? [{ id, kind: 'unclassified', source }] : [];
-  });
-  for (const { id, source } of declarations) {
-    assert(SWIFTUI_SURFACE_ID_PATTERN.test(id), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `UIFnSwiftUI declares ${id} in ${source}, a name the SwiftUI status lists cannot hold. Give public UIFnSwiftUI types and modifiers ASCII names.`, { id, source });
-    assert(SWIFTUI_SOURCE_PATTERN.test(source), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `UIFnSwiftUI declares ${id} in ${source}, a path the SwiftUI status lists cannot hold. Use letters, digits and + in its directory and file names.`, { id, source });
-  }
-  return declarations;
-}
-
-async function listSwiftFiles(repoRoot, relativeDirectory) {
-  const entries = await readdir(path.join(repoRoot, relativeDirectory), { withFileTypes: true });
-  entries.sort((left, right) => left.name.localeCompare(right.name));
-  const nested = await Promise.all(entries.map((entry) => {
-    const relativePath = `${relativeDirectory}/${entry.name}`;
-    if (entry.isDirectory()) return listSwiftFiles(repoRoot, relativePath);
-    return entry.isFile() && entry.name.endsWith('.swift') ? [relativePath] : [];
-  }));
-  return nested.flat();
-}
-
-export async function readSwiftUISurfaceDeclarations(repoRoot) {
-  const paths = await Promise.all(SWIFTUI_SURFACE_DIRECTORIES.map(async (directory) => {
-    const relativeDirectory = `${SWIFTUI_SOURCES_ROOT}/${directory}`;
-    try {
-      return await listSwiftFiles(repoRoot, relativeDirectory);
-    } catch (error) {
-      if (error.code === 'ENOENT') fail('UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `UIFnSwiftUI source directory is missing: ${relativeDirectory}`, { directory: relativeDirectory });
-      throw error;
-    }
-  }));
-  const files = await Promise.all(paths.flat().map(async (relativePath) => ({ path: relativePath, text: await readFile(path.join(repoRoot, relativePath), 'utf8') })));
-  return parseSwiftUISurfaceDeclarations(files);
+  const canonical = createSwiftUISurfaceInventory(inventory.declarations);
+  assert(stableStringify(canonical) === stableStringify(inventory), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', 'The UIFnSwiftUI surface inventory is not in canonical form. Regenerate it with node scripts/uifn-swiftui-inventory.mjs --write.');
+  return canonical.declarations;
 }
 
 // Repeats of one id with the same kind and source (#if alternatives,
@@ -699,7 +350,7 @@ export function verifySwiftUISurfaceDeclarations(declarations, source = SWIFTUI_
   const moved = [...listed]
     .filter(([id, entry]) => declared.has(id) && (declared.get(id).source !== entry.source || declared.get(id).kind !== entry.kind))
     .map(([id, entry]) => ({ id, listed: entry, declared: { kind: declared.get(id).kind, source: declared.get(id).source } }));
-  assert(unlisted.length === 0 && unclassified.length === 0 && undeclared.length === 0 && moved.length === 0, 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', 'The SwiftUI status lists differ from the UIFnSwiftUI sources. List a public style, view or view modifier as a surface, and any other public type or Styles View-extension member as a non-surface.', { unlisted, unclassified, undeclared, moved });
+  assert(unlisted.length === 0 && unclassified.length === 0 && undeclared.length === 0 && moved.length === 0, 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', 'The SwiftUI status lists differ from the UIFnSwiftUI surface inventory. List a public style, view or view modifier as a surface, and any other public declaration in the inventory as a non-surface.', { unlisted, unclassified, undeclared, moved });
   return { ok: true, surfaceCount: source.surfaces.length, nonSurfaceCount: source.nonSurfaces.length };
 }
 

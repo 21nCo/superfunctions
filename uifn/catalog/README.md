@@ -36,36 +36,40 @@ The verifier compiles twice, requires byte-identical results, checks the checked
 directory for drift, and executes positive and negative CAT-001 vectors. It
 rejects a primitive with a missing or unknown SwiftUI status, a status that does
 not match its controls and surfaces, and a UIFnSwiftUI style or component that
-no primitive maps. It also reads every Swift file under
+no primitive maps. It also checks the SwiftUI status lists against
+`swiftui-surface-inventory.json`, the public UIFnSwiftUI declarations under
 `uifn/swift/Sources/UIFnSwiftUI/Styles` and `Components`, subdirectories
-included, as the compiler sees it (comments and string literals do not count),
-and fails closed: every public struct, class or actor, at any nesting depth,
-and every public `func` or `var` in an extension of `View` has to be listed,
-either as a surface with its kind and file or, in `nonSurfaces`, as a public
-type that is not one, with a reason. It also fails when a list names a
-declaration the sources do not have, or gives one the wrong kind or file.
-A member of a `public extension` is public unless it says otherwise; a type
-nested in a non-public type is not. A nested type is listed by its qualified
-name, such as `UIFnTimeline.Row`. A surface's kind follows its declaration,
-not its directory: a conformance to a SwiftUI style protocol (a name ending in
-`Style`) makes a style; `View`, `ViewModifier`, `Shape`, `InsettableShape`, a
-UIKit or AppKit view or view controller representable, or a protocol declared
-in these sources that refines one of them makes a component, as does a public
-`View`-extension member in `Components`. A conformance counts in the
-declaration or in an extension in either directory. Any other public struct,
-class or actor (a value type, a `Layout`), and a public `View`-extension member
-in `Styles` (such as `uifnTheme`), is a non-surface. An enum counts only as a
-style or component; a protocol is never listed, it passes its refinement on to
-the types that conform to it. One declaration repeated with the same kind and
-file, as `#if` alternatives or overloads are, is listed once; keep a
-declaration's alternatives and overloads in one file. Only extensions of `View`
-itself are read for view modifiers; public protocols, file-scope functions and
-members of extensions of other types are not read. A list entry's id is an
-ASCII Swift name and its file path uses letters, digits and `+`. A declared
-name or path the lists cannot hold, and text the scan cannot read, such as
-unpaired braces or a raw `` `Name` ``, fail verification.
+included, as the Swift compiler reports them. The check fails closed: every
+declaration in the inventory has to be listed, either as a surface with its
+kind and file or, in `nonSurfaces`, with a reason, and a list entry the
+inventory does not have, or with the wrong kind or file, fails too.
 
-`npm test` in this package runs the verifier and its tests; turbo hashes the
-UIFnSwiftUI sources and these scripts as its inputs. The Swift workflow's Linux
-job also runs the verifier on every change under `uifn/swift`, so a new or
-renamed style or component fails CI until it is listed and mapped here.
+`node scripts/uifn-swiftui-inventory.mjs --write` (macOS with Xcode) rebuilds
+the inventory: it builds UIFnSwiftUI for macOS and for the iOS simulator with
+`-emit-symbol-graph`, so a declaration in either platform's `#if` branch
+counts, and reads the graphs with `src/swiftui-symbol-graph.mjs`. Without
+`--write` it fails when the committed inventory differs; the Swift workflow's
+macOS job runs that check. The compiler has already resolved comments, `#if`,
+access, nesting and conformances, implied ones included. A declaration is a
+public struct, class or actor at any nesting depth, listed by its qualified
+name such as `UIFnTimeline.Row`; an enum that is a style or component; a
+top-level function, variable or type alias; or a member of an extension of
+another module's type, listed by name for `View` (`uifnToast`) and by type and
+name otherwise (`EnvironmentValues.uifnTheme`). A member of an extension
+constrained to `Self ==` a UIFnSwiftUI type, such as `ButtonStyle.uifnPrimary`,
+belongs to that type. A conformance to a SwiftUI protocol whose name ends in
+`Style` makes a style; one to `View` or `ViewModifier`, which a `Shape`, a view
+representable or a protocol refining `View` implies, makes a component, as
+does a `View`-extension member in `Components`. Anything else (a value type, a
+`Layout`, a top-level function) is a non-surface. One declaration repeated
+with the same kind and file, as overloads and `#if` alternatives are, is
+listed once. A list entry's id is an ASCII Swift name and its file path uses
+letters, digits and `+`; a declared name or path the lists cannot hold fails.
+The tests read symbol graphs that `fixtures/swiftui-symbol-graph/regenerate.mjs`
+emits from the Swift files beside it.
+
+`npm test` in this package runs the verifier and its tests; turbo hashes these
+scripts as its inputs. The Swift workflow runs on every change under
+`uifn/swift`: its macOS job fails until the inventory is regenerated, and its
+Linux job runs the verifier, so a new or renamed style or component fails CI
+until it is listed and mapped here.

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { CATALOG_SOURCE } from '../uifn/catalog/src/catalog-source.mjs';
-import { CatalogError, compareGeneratedOutputs, createGeneratedOutputs, parseSwiftUISurfaceDeclarations, readSwiftUISurfaceDeclarations, verifyGeneratedDirectory, verifySwiftUISurfaceDeclarations, writeGeneratedOutputs } from '../uifn/catalog/src/compiler.mjs';
+import { CatalogError, compareGeneratedOutputs, createGeneratedOutputs, validateSwiftUISurfaceInventory, verifyGeneratedDirectory, verifySwiftUISurfaceDeclarations, writeGeneratedOutputs } from '../uifn/catalog/src/compiler.mjs';
 import { migrateCatalogDocument } from '../uifn/catalog/src/migrations.mjs';
 import { SWIFTUI_STATUS_SOURCE } from '../uifn/catalog/src/swiftui-status.mjs';
 
@@ -64,7 +64,9 @@ try {
     exportCode = error.code;
   }
 
-  const swiftuiDeclarations = await readSwiftUISurfaceDeclarations(repoRoot);
+  // The compiler-derived inventory; the Swift workflow's macOS job checks it
+  // against the UIFnSwiftUI symbol graphs (scripts/uifn-swiftui-inventory.mjs).
+  const swiftuiDeclarations = validateSwiftUISurfaceInventory(JSON.parse(await readFile(path.join(repoRoot, 'uifn/catalog/swiftui-surface-inventory.json'), 'utf8')));
   verifySwiftUISurfaceDeclarations(swiftuiDeclarations);
   const swiftuiStatus = JSON.parse(first.outputs['swiftui-status.json']);
   const swiftuiNegativeCodes = [];
@@ -77,10 +79,7 @@ try {
     swiftuiNegativeCodes.push(expectCode(() => createGeneratedOutputs(CATALOG_SOURCE, mutated), expectedErrorCodes[0]));
   }
   const unlisted = JSON.parse(await readFile(path.join(fixtureDirectory, 'unlisted-swiftui-surface.json'), 'utf8'));
-  swiftuiNegativeCodes.push(expectCode(() => verifySwiftUISurfaceDeclarations([
-    ...swiftuiDeclarations,
-    ...parseSwiftUISurfaceDeclarations([{ path: unlisted.mutation.swiftSource, text: unlisted.mutation.text }]),
-  ]), unlisted.expectedErrorCodes[0]));
+  swiftuiNegativeCodes.push(expectCode(() => verifySwiftUISurfaceDeclarations([...swiftuiDeclarations, unlisted.mutation.addDeclaration]), unlisted.expectedErrorCodes[0]));
 
   const migrated = migrateCatalogDocument({ schemaVersion: 0, components: [{ id: 'example' }] });
   if (!migrated.ok || migrated.document.schemaVersion !== 1 || !Array.isArray(migrated.document.primitives) || migrated.document.components) {
