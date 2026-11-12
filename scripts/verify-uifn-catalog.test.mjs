@@ -330,22 +330,24 @@ test('a declared name or path the lists cannot hold fails closed', async () => {
   }
 });
 
-test('an #if condition the inventory builds do not cover is reported', () => {
-  const text = [
-    '#if os(iOS) && !targetEnvironment(simulator)',
-    '#elseif canImport(AppKit) // macOS',
-    '  #if !DEBUG',
-    '#if os(tvOS)',
-    '#if swift(>=6)',
-    '#if UIFN_EXPERIMENTAL',
-    '#else',
-    '#endif',
-  ].join('\r\n');
-  assert.deepEqual(uncoveredSwiftConditions(text), [
-    { line: 4, condition: 'os(tvOS)' },
-    { line: 5, condition: 'swift(>=6)' },
-    { line: 6, condition: 'UIFN_EXPERIMENTAL' },
-  ]);
+test('an #if clause no inventory build compiles is reported', () => {
+  const check = (lines) => uncoveredSwiftConditions(lines.join('\n')).map(({ line, reason }) => [line, reason]);
+  const none = 'no inventory build compiles this branch';
+  // Covered: every clause is compiled by some build.
+  assert.deepEqual(check(['#if os(iOS) && !targetEnvironment(simulator)', '#elseif canImport(AppKit) // macOS', '  #if !DEBUG', '  #endif', '#endif']), []);
+  assert.deepEqual(check(['#if os(macOS) /* supported OS */', '#elseif canImport(UIKit)', '#else', '  #if DEBUG', '  #endif', '#endif']).slice(0, 1), [[3, none]]);
+  assert.deepEqual(check(['#if os(macOS)', '#elseif canImport(UIKit)', '#endif']), []);
+  // Branches no build compiles, nesting included.
+  assert.deepEqual(check(['#if !os(macOS) && !os(iOS)', '#endif']), [[1, none]]);
+  assert.deepEqual(check(['#if os(macOS) || os(iOS)', '#else', '#endif']), [[2, none]]);
+  assert.deepEqual(check(['#if os(macOS)', '  #if os(iOS)', '  #endif', '#endif']), [[2, none]]);
+  // Conditions the builds cannot decide, after a block comment too.
+  assert.deepEqual(check(['/* platform */ #if arch(x86_64)', '#endif']), [[1, 'unsupported condition']]);
+  assert.deepEqual(check(['/*', ' note', '*/ #if canImport(WatchKit)', '#endif']), [[3, 'unsupported condition']]);
+  assert.deepEqual(check(['#if swift(>=6)', '#endif', '#if UIFN_EXPERIMENTAL', '#endif']), [[1, 'unsupported condition'], [3, 'unsupported condition']]);
+  // Unbalanced directives.
+  assert.deepEqual(check(['#endif']), [[1, 'unbalanced']]);
+  assert.deepEqual(check(['#if DEBUG']), [[1, 'unbalanced']]);
 });
 
 test('the committed inventory is canonical and the verifier rejects a malformed one', async () => {

@@ -25,7 +25,9 @@
 // A conformance to a SwiftUI protocol whose name ends in Style makes a style;
 // one to View or ViewModifier, which a Shape, a view representable or a
 // protocol refining View implies, makes a component, as does a member in
-// Components of an extension of View or of a protocol refining it. Anything
+// Components of an extension of View or of a UIFnSwiftUI protocol refining
+// it (a member of an extension of another SwiftUI protocol, such as Shape,
+// is unclassified). Anything
 // else is unclassified, so it has to be listed as a non-surface. Protocols,
 // their requirements, the members of UIFnSwiftUI types and the copies of
 // protocol-extension members the graph adds to each conforming type
@@ -117,17 +119,97 @@ export function swiftUIDeclarationsFromSymbolGraphs(graphs) {
   return declarations;
 }
 
-// The builds cover the package's platforms, os(macOS) and os(iOS), and
-// canImport(), DEBUG and targetEnvironment(simulator). Any other #if
-// condition in Styles or Components could hide a declaration from every
-// build, so the inventory script rejects it. Returns the
-// uncovered conditions in one file's text as { line, condition }.
-const COVERED_CONDITION = /^(?:[\s!()]|&&|\|\||os\((?:macOS|iOS)\)|canImport\([\w.]+\)|DEBUG\b|targetEnvironment\(simulator\))*$/;
+// The inventory builds: macOS, iOS devices and the iOS simulator, each in
+// debug (DEBUG defined) and release, one bit each. The symbol graphs cannot
+// show code in an #if clause no build compiles, so every #if, #elseif and
+// #else clause in Styles and Components has to be compiled by at least one
+// build, judged by evaluating its condition, nesting included, over these
+// atoms. Any other atom (arch(), swift(), a custom flag, canImport of another
+// module) fails, as does an unbalanced directive. A directive is a line whose
+// first token, after any block comments, is #if, #elseif, #else or #endif; a
+// line inside a multi-line string or comment that reads like one is checked
+// too, which can only fail closed.
+const SWIFT_BUILDS = { macOS: 0b000011, iOS: 0b111100, debug: 0b010101, simulator: 0b110000 };
+const ALL_BUILDS = 0b111111;
+const SWIFT_CONDITION_ATOMS = new Map([
+  ['os(macOS)', SWIFT_BUILDS.macOS],
+  ['os(iOS)', SWIFT_BUILDS.iOS],
+  ['canImport(AppKit)', SWIFT_BUILDS.macOS],
+  ['canImport(UIKit)', SWIFT_BUILDS.iOS],
+  ['canImport(SwiftUI)', ALL_BUILDS],
+  ['DEBUG', SWIFT_BUILDS.debug],
+  ['targetEnvironment(simulator)', SWIFT_BUILDS.simulator],
+]);
+const SWIFT_CONDITION_TOKEN = /\s*(&&|\|\||!|\(|\)|[A-Za-z]+\([A-Za-z]+\)|[A-Za-z_]\w*)/y;
 
+// Returns the builds a condition is true in, or undefined if it is not one
+// the builds can decide.
+function swiftConditionBuilds(condition) {
+  const tokens = [];
+  SWIFT_CONDITION_TOKEN.lastIndex = 0;
+  for (let match = SWIFT_CONDITION_TOKEN.exec(condition); match; match = SWIFT_CONDITION_TOKEN.exec(condition)) tokens.push(match[1]);
+  if (tokens.join('') !== condition.replace(/\s/g, '')) return undefined;
+  let index = 0;
+  const unary = () => {
+    const token = tokens[index++];
+    if (token === '!') return ALL_BUILDS & ~unary();
+    if (token === '(') {
+      const inner = or();
+      if (tokens[index++] !== ')') throw new Error('unbalanced');
+      return inner;
+    }
+    if (SWIFT_CONDITION_ATOMS.has(token)) return SWIFT_CONDITION_ATOMS.get(token);
+    throw new Error('unsupported');
+  };
+  const and = () => {
+    let value = unary();
+    while (tokens[index] === '&&') { index += 1; value &= unary(); }
+    return value;
+  };
+  const or = () => {
+    let value = and();
+    while (tokens[index] === '||') { index += 1; value |= and(); }
+    return value;
+  };
+  try {
+    const value = or();
+    return index === tokens.length ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const SWIFT_DIRECTIVE = /^(?:.*?\*\/)?\s*(?:\/\*.*?\*\/\s*)*#(if|elseif|else|endif)\b(.*)$/;
+
+// Returns { line, condition, reason } for each clause in one file's text that
+// no inventory build compiles or that the builds cannot decide.
 export function uncoveredSwiftConditions(text) {
-  return text.split(/\r\n|\r|\n/).flatMap((line, index) => {
-    const match = /^\s*#(?:if|elseif)\b(.*)$/.exec(line);
-    const condition = match?.[1].replace(/\/\/.*$/, '').trim();
-    return match && !COVERED_CONDITION.test(condition) ? [{ line: index + 1, condition }] : [];
+  const uncovered = [];
+  const frames = [];
+  let active = ALL_BUILDS;
+  text.split(/\r\n|\r|\n/).forEach((line, index) => {
+    const match = SWIFT_DIRECTIVE.exec(line);
+    if (!match) return;
+    const [, directive, rest] = match;
+    const condition = rest.replace(/\/\*.*?\*\//g, ' ').replace(/\/\/.*$/, '').trim();
+    const report = (reason) => uncovered.push({ line: index + 1, condition: `#${directive} ${condition}`.trim(), reason });
+    if (directive === 'if') frames.push({ outer: active, taken: 0 });
+    const frame = frames.at(-1);
+    if (!frame) return report('unbalanced');
+    if (directive === 'endif') {
+      active = frames.pop().outer;
+      return undefined;
+    }
+    let builds = directive === 'else' ? ALL_BUILDS : swiftConditionBuilds(condition);
+    if (builds === undefined) {
+      report('unsupported condition');
+      builds = ALL_BUILDS;
+    }
+    active = frame.outer & builds & ~frame.taken;
+    frame.taken |= frame.outer & builds;
+    if (active === 0) report('no inventory build compiles this branch');
+    return undefined;
   });
+  if (frames.length > 0) uncovered.push({ line: text.split(/\r\n|\r|\n/).length, condition: '#endif', reason: 'unbalanced' });
+  return uncovered;
 }

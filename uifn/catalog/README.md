@@ -50,9 +50,11 @@ simulator, each in debug and release, with `-emit-symbol-graph` down to
 internal access and SPI included, and reads the graphs with
 `src/swiftui-symbol-graph.mjs`, so a declaration in any of those `#if`
 branches counts, and so do underscored, `@_spi` and `@_documentation`-hidden
-ones. It fails on any other `#if` condition in `Styles` or `Components`: only
-`os(macOS)`, `os(iOS)`, `canImport()`, `DEBUG` and
-`targetEnvironment(simulator)` are covered. Without `--write` it fails when
+ones. Code in an `#if` clause no build compiles is not in any graph, so it
+also fails when an `#if`, `#elseif` or `#else` clause in `Styles` or
+`Components` is compiled by none of those builds, or uses a condition other
+than `os(macOS)`, `os(iOS)`, `canImport(SwiftUI|UIKit|AppKit)`, `DEBUG` and
+`targetEnvironment(simulator)` with `!`, `&&` and `||`. Without `--write` it fails when
 the committed inventory differs; the Swift workflow's macOS job runs that
 check. The compiler has already resolved comments, `#if`,
 access, nesting and conformances, implied ones included. A declaration is
@@ -66,8 +68,8 @@ constrained to `Self ==` a UIFnSwiftUI type, such as `ButtonStyle.uifnPrimary`,
 belongs to that type. A conformance to a SwiftUI protocol whose name ends in
 `Style` makes a style; one to `View` or `ViewModifier`, which a `Shape`, a view
 representable or a protocol refining `View` implies, makes a component, as
-does a member in `Components` of an extension of `View` or of a protocol
-refining it. Anything else (a value type, a
+does a member in `Components` of an extension of `View` or of a UIFnSwiftUI
+protocol refining it. Anything else (a value type, a
 `Layout`, a top-level function) is a non-surface. One declaration repeated
 with the same kind and file, as overloads and `#if` alternatives are, is
 listed once. A list entry's id is an ASCII Swift name and its file path uses

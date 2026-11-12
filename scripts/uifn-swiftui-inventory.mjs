@@ -4,8 +4,8 @@
 // against the public UIFnSwiftUI declarations the Swift compiler reports when
 // it builds the target for macOS, iOS devices and the iOS simulator, each in
 // debug and release, so a declaration in any of those #if branches counts. It
-// fails on an #if condition in Styles or Components those builds do not
-// cover. Needs macOS with Xcode; the Swift workflow's macOS job runs the
+// fails on an #if clause in Styles or Components that none of those builds
+// compiles. Needs macOS with Xcode; the Swift workflow's macOS job runs the
 // check. With --symbol-graphs <directory>... it reads graphs already emitted
 // with -emit-symbol-graph instead of building.
 //
@@ -46,7 +46,7 @@ async function checkConditions() {
   const files = (await Promise.all(['Styles', 'Components'].map((name) => swiftFiles(path.join(repoRoot, SWIFTUI_SOURCES_ROOT, name))))).flat();
   const uncovered = (await Promise.all(files.map(async (file) => uncoveredSwiftConditions(await readFile(file, 'utf8')).map((entry) => ({ source: path.relative(repoRoot, file), ...entry }))))).flat();
   if (uncovered.length > 0) {
-    throw new CatalogError('UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', 'An #if condition in UIFnSwiftUI Styles or Components is not one the inventory builds cover: os(macOS), os(iOS), canImport(), DEBUG or targetEnvironment(simulator).', { uncovered });
+    throw new CatalogError('UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', 'An #if clause in UIFnSwiftUI Styles or Components is compiled by none of the inventory builds, or uses a condition they cannot decide. Use os(macOS), os(iOS), canImport(SwiftUI|UIKit|AppKit), DEBUG and targetEnvironment(simulator).', { uncovered });
   }
 }
 

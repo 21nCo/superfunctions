@@ -294,8 +294,8 @@ export function validateSwiftUIStatus(source = SWIFTUI_STATUS_SOURCE) {
 }
 
 // The public UIFnSwiftUI declarations in Styles and Components, as the Swift
-// compiler reports them for macOS and the iOS simulator
-// (src/swiftui-symbol-graph.mjs), in the form committed as
+// compiler reports them for macOS, iOS devices and the iOS simulator, each in
+// debug and release (src/swiftui-symbol-graph.mjs), in the form committed as
 // swiftui-surface-inventory.json: { id, kind, source } sorted by id, kind
 // 'style', 'component' or 'unclassified'. A name or path the SwiftUI status
 // lists cannot hold fails here rather than being dropped.
