@@ -5,6 +5,7 @@
  * WebCrypto, independently of the node:crypto verifier the provider uses.
  */
 import { execFile } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -27,6 +28,23 @@ type EnvelopeBody = { ok: boolean; data?: any; error?: { code: string; status: n
 let workDir: string;
 let mf: Miniflare;
 
+/**
+ * The provider-dodo source is bundled from its sibling directory, which has no
+ * node_modules of its own in an isolated core install (the tagged-release
+ * flow). Its external imports therefore resolve from core, which declares
+ * each of them as a devDependency.
+ */
+function providerDodoDependencyAliases(): Record<string, string> {
+  const manifest = JSON.parse(readFileSync(fromHere('../../../provider-dodo/package.json'), 'utf8')) as {
+    dependencies?: Record<string, string>;
+  };
+  return Object.fromEntries(
+    Object.keys(manifest.dependencies ?? {})
+      .filter((name) => !name.startsWith('@billfn/'))
+      .map((name) => [name, require.resolve(name)])
+  );
+}
+
 /** Bundles worker.ts with wrangler's deploy bundler, BillFn packages resolved to their sources. */
 async function bundleWorker(outDir: string): Promise<string> {
   const config = join(workDir, 'wrangler.json');
@@ -38,6 +56,7 @@ async function bundleWorker(outDir: string): Promise<string> {
       compatibility_date: COMPATIBILITY_DATE,
       compatibility_flags: COMPATIBILITY_FLAGS,
       alias: {
+        ...providerDodoDependencyAliases(),
         '@billfn/core': fromHere('../../src/index.ts'),
         '@billfn/provider-dodo': fromHere('../../../provider-dodo/src/index.ts')
       }

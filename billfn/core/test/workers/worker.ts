@@ -40,7 +40,14 @@ const catalog: BillFnCatalog = {
 
 /** Answers the Dodo create-subscription call the checkout route makes. */
 const dodoApiFixture: typeof fetch = async (input, init) => {
-  const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+  let url: string;
+  if (typeof input === 'string') {
+    url = input;
+  } else if (input instanceof URL) {
+    url = input.href;
+  } else {
+    url = input.url;
+  }
   if (init?.method === 'POST' && url === 'https://dodo.fixture.test/subscriptions') {
     return Response.json({
       subscription_id: SMOKE_SUBSCRIPTION_ID,
