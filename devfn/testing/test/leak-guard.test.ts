@@ -433,6 +433,7 @@ describe.skipIf(process.platform === "win32")("DevFn test leak guard", { timeout
     // has killed `ownGroup`, so that a second round stops it.
     const later = `const { live } = require(${JSON.stringify(liveness)});
 const [, ownGroup, where, file] = process.argv;
+setTimeout(() => process.exit(1), 30_000);
 const wait = setInterval(() => {
   if (live(Number(ownGroup))) return;
   clearInterval(wait);
@@ -448,8 +449,8 @@ process.on("SIGTERM", () => {
   const env = { PATH: process.env.PATH };
   const sameGroup = spawn(...keep, { stdio: "ignore", cwd: "/", env });
   const ownGroup = spawn(...keep, { detached: true, stdio: "ignore", env });
-  spawn(process.execPath, ["-e", ${JSON.stringify(later)}, String(ownGroup.pid), Buffer.from(process.cwd()).toString("hex"), process.argv[2] + ".late"], { detached: true, stdio: "ignore", cwd: "/", env });
-  require("node:fs").writeFileSync(process.argv[2], JSON.stringify({ sameGroup: sameGroup.pid, ownGroup: ownGroup.pid }));
+  const watcher = spawn(process.execPath, ["-e", ${JSON.stringify(later)}, String(ownGroup.pid), Buffer.from(process.cwd()).toString("hex"), process.argv[2] + ".late"], { detached: true, stdio: "ignore", cwd: "/", env });
+  require("node:fs").writeFileSync(process.argv[2], JSON.stringify({ sameGroup: sameGroup.pid, ownGroup: ownGroup.pid, watcher: watcher.pid }));
   process.exit(0);
 });
 setInterval(() => {}, 1000);
@@ -464,21 +465,23 @@ test("leaves a process that starts more as it stops", async () => {
   // Long enough for the leader to install its SIGTERM handler.
   await sleep(500);
 });`);
-    let started: { sameGroup: number; ownGroup: number; late?: number; named?: number } | undefined;
+    // Whatever was started, read on its own: the run, or reading one of these, may fail.
+    const read = (file: string) => { try { return JSON.parse(readFileSync(file, "utf8")); } catch { return undefined; } };
     try {
       const { code, output, recorded } = await runProject(dir, record);
-      started = { ...JSON.parse(readFileSync(stopped, "utf8")), named: recorded.named };
-      started!.late = Number(readFileSync(`${stopped}.late`, "utf8"));
+      const { sameGroup, ownGroup } = read(stopped);
+      const late = read(`${stopped}.late`);
       expect(code).not.toBe(0);
-      for (const pid of [recorded.pid, started!.late, started!.sameGroup]) expect(output, output).toContain(`process ${pid} `);
-      for (const pid of [recorded.pid, started!.ownGroup, started!.late]) expect(await gone(pid!)).toBe(true);
+      for (const pid of [recorded.pid, late, sameGroup]) expect(output, output).toContain(`process ${pid} `);
+      for (const pid of [recorded.pid, ownGroup, late]) expect(await gone(pid)).toBe(true);
       // Started in the leader's group after the guard last read that group, it is linked to the
       // leader by nothing the guard saw: it is listed from the first round on, and never signalled.
-      expect(output).toMatch(new RegExp(`Not stopped: (?:\\d+, )*${started!.sameGroup}\\b`));
-      expect(alive(started!.sameGroup)).toBe(true);
+      expect(output).toMatch(new RegExp(`Not stopped: (?:\\d+, )*${sameGroup}\\b`));
+      expect(alive(sameGroup)).toBe(true);
       expect(existsSync(recorded.root)).toBe(false);
     } finally {
-      for (const pid of [started?.sameGroup, started?.ownGroup, started?.late, started?.named]) if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* stopped */ }
+      const started = read(stopped) ?? {};
+      for (const pid of [read(record)?.pid, read(record)?.named, started.sameGroup, started.ownGroup, started.watcher, read(`${stopped}.late`)]) if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* stopped */ }
     }
   });
 
@@ -1383,6 +1386,37 @@ process.stdin.resume();`);
     expect(alive(member)).toBe(true);
   });
 
+  it.runIf(process.platform === "linux")("keeps listing a process a partial read of an exited leader's group found, though a later complete read no longer shows it there", async () => {
+    const { member, entry } = await exitedLeader();
+    // The reads in the SIGTERM and SIGKILL rounds fail; the next finds the process but cannot read
+    // another process's stat; every later one shows the process in another group, as after setsid.
+    let reads = 0;
+    const { readdirSync, readFileSync } = fs;
+    const failure = () => Object.assign(new Error("reading the group failed (test)"), { code: "EIO" });
+    (fs as { readdirSync: unknown }).readdirSync = (target: unknown, ...rest: unknown[]) => {
+      const names = (readdirSync as (...all: unknown[]) => string[])(target, ...rest);
+      if (target !== "/proc" || !new Error().stack?.includes("groupMembers")) return names;
+      if ((reads += 1) <= 2) throw failure();
+      return reads === 3 ? [...names, "2147483646"] : names;
+    };
+    (fs as { readFileSync: unknown }).readFileSync = (target: unknown, ...rest: unknown[]) => {
+      if (target === "/proc/2147483646/stat") throw failure();
+      const text = (readFileSync as (...all: unknown[]) => string)(target, ...rest);
+      if (target !== `/proc/${member}/stat` || reads <= 3 || !new Error().stack?.includes("groupMembers")) return text;
+      const at = text.lastIndexOf(")") + 2;
+      const fields = text.slice(at).split(" ");
+      fields[2] = String(member);
+      return text.slice(0, at) + fields.join(" ");
+    };
+    syncBuiltinESMExports();
+    restore = () => {
+      Object.assign(fs, { readdirSync, readFileSync });
+      syncBuiltinESMExports();
+    };
+    expect((await stopProcesses([entry], () => [])).map((left) => left.pid)).toEqual([member]);
+    expect(alive(member)).toBe(true);
+  });
+
   it("never signals a group whose leader shows another start once the processes in its group have been read", async () => {
     const { pid } = await start(`process.stdout.write("ready\\n"); setInterval(() => {}, 1000);`);
     const entry = listed(pid);
@@ -1413,6 +1447,44 @@ process.stdin.resume();`);
     for (const deadline = Date.now() + 2_000; !output().includes("SIGTERM") && Date.now() < deadline;) await sleep(20);
     expect(output()).toContain("SIGTERM");
     expect(alive(pid)).toBe(true);
+  });
+
+  it("kills the group of a leader still itself in a SIGKILL round at once, with what it started since SIGTERM, however soon after the leader exits", async () => {
+    // The leader outlives SIGTERM, and starts a process in its group when it gets it.
+    const { pid: leader, output } = await start(`process.on("SIGTERM", () => {
+  const member = require("node:child_process").spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+  require("node:fs").writeSync(1, member.pid + "\\n");
+});
+process.stdout.write("ready\\n");
+setInterval(() => {}, 1000);`);
+    const entry = listed(leader);
+    // Were the guard to read the group again after the read before SIGTERM, the leader would exit just before it.
+    let reads = 0;
+    const { spawnSync } = childProcess;
+    const { readdirSync } = fs;
+    const exitFirst = () => {
+      if ((reads += 1) !== 2) return;
+      process.kill(leader, "SIGKILL");
+      while (alive(leader)) { /* until it is a zombie */ }
+    };
+    (childProcess as { spawnSync: unknown }).spawnSync = (command: string, args: string[], ...rest: unknown[]) => {
+      if (command === "ps" && args?.includes("-A") && !args.includes("etime=")) exitFirst();
+      return (spawnSync as (...all: unknown[]) => unknown)(command, args, ...rest);
+    };
+    (fs as { readdirSync: unknown }).readdirSync = (target: unknown, ...rest: unknown[]) => {
+      if (target === "/proc" && new Error().stack?.includes("groupMembers")) exitFirst();
+      return (readdirSync as (...all: unknown[]) => unknown)(target, ...rest);
+    };
+    syncBuiltinESMExports();
+    restore = () => {
+      Object.assign(childProcess, { spawnSync });
+      Object.assign(fs, { readdirSync });
+      syncBuiltinESMExports();
+    };
+    expect(await stopProcesses([entry])).toEqual([]);
+    const member = Number(output().trim().split("\n")[1]);
+    pids.push(member);
+    expect(await gone(member)).toBe(true);
   });
 
   it("stops the group of a leader that exits on SIGTERM while a process the guard saw in that group as the leader ran is still in it", async () => {

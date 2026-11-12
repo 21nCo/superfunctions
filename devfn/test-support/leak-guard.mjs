@@ -500,10 +500,11 @@ function ownProcessGroup() {
  * Signals each process the guard can tell, just before it signals it, is still the process its
  * listing found: the same process ID with the same start (identityOf, read for all of them at
  * once), running and not a zombie. A process that leads its own group (a detached wrapper) is
- * signalled with its whole group, which holds only what it started. Before each signal to a
- * group, after which its leader may exit and leave the group behind, the guard records which
- * processes are in it (witnessGroup) and signals it only if the leader is still itself after
- * that. Once a leader has exited, its group is signalled only while it holds a process the guard
+ * signalled with its whole group, which holds only what it started. Before SIGTERM, after which
+ * its leader may exit and leave the group behind, the guard records which processes are in it
+ * (witnessGroup) and signals it only if the leader is still itself after that. SIGKILL goes to
+ * the group at once: it ends all of it together, leaving nothing to link to the leader later,
+ * and a read of the group first would only give the leader time to exit. Once a leader has exited, its group is signalled only while it holds a process the guard
  * recorded in it so (inLeadersGroup) that a read of its own, just before the signal, shows is
  * still that process and still in the group. The group's other processes are otherwise added to
  * `held`, keyed by process ID and start, to be reported, never signalled, and a group read only
@@ -522,11 +523,11 @@ function signalAll(processes, signal, held = new Map()) {
     // Reading a group takes a while, so the processes after it have their starts read again.
     const reread = () => { states = processStates(processes.slice(index + 1).map((later) => later.pid)); };
     if (current?.same && leads && current.pgid === entry.pid) {
-      // The signal follows the last read of the leader at once. A leader that exits meanwhile is
-      // taken as what a read of it now shows.
-      const verified = witnessGroup(entry);
+      // The signal follows the last read of the leader at once. A leader that exits while its
+      // group is read is taken as what a read of it now shows.
+      const verified = signal !== "SIGTERM" || witnessGroup(entry);
       if (verified) send(entry, -entry.pid);
-      reread();
+      if (signal === "SIGTERM") reread();
       if (verified) continue;
       current = identityOf(entry);
     } else if (current?.same) {
@@ -615,8 +616,9 @@ const mayRun = (entry, states) => alive(entry.pid) && stillRunning(entry, states
 /**
  * Of the processes a stop left (held back or still running), those still to report: each that
  * may run, and for an exited leader whose group was read only in part (unresolvedGroup), that
- * group read again, up to IDENTITY_TRIES times: its running processes once a read is complete,
- * which clears it when none is left, or else those read and the leader, standing for the rest.
+ * group read again, up to IDENTITY_TRIES times, until a read is complete: then a group with no
+ * running process left is cleared, and otherwise the leader stands for the rest. Every process
+ * any of those reads found stays as long as it may run, even once it has left the group.
  */
 function stillHeld(entries) {
   const states = processStates(entries.filter((entry) => !entry.unresolvedGroup).map((entry) => entry.pid));
@@ -626,10 +628,15 @@ function stillHeld(entries) {
       if (mayRun(entry, states)) left.set(keyOf(entry), entry);
       continue;
     }
-    let read = { members: [], complete: false };
-    for (let tries = 0; tries < IDENTITY_TRIES && !read.complete; tries += 1) read = groupMembers(entry.pid);
-    for (const member of read.members) left.set(keyOf(member), member);
-    if (!read.complete) left.set(keyOf(entry), entry);
+    const found = new Map();
+    let complete = false;
+    for (let tries = 0; tries < IDENTITY_TRIES && !complete; tries += 1) {
+      const read = groupMembers(entry.pid);
+      for (const member of read.members) found.set(keyOf(member), member);
+      complete = read.complete;
+    }
+    for (const [key, member] of found) if (mayRun(member)) left.set(key, member);
+    if (!complete) left.set(keyOf(entry), entry);
   }
   return [...left.values()];
 }

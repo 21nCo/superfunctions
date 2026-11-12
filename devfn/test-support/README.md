@@ -92,8 +92,9 @@ calls `guardTestFile` as a setup file.
   signals it only when it still runs, is not a zombie and started exactly when the listing
   read: a different start means the ID names a later process, which is never signalled, nor
   is its group. One whose start cannot be read is not signalled; it is listed and fails the
-  file or run. Before each signal to a group, the guard records which processes are in it,
-  and signals it only if its leader is still itself after that. Once the leader has exited,
+  file or run. Before sending SIGTERM to a group, the guard records which processes are in
+  it, and signals it only if its leader is still itself after that; SIGKILL goes to the group
+  of a leader still itself at once, ending all of it together. Once the leader has exited,
   its group is signalled only while it holds a process the guard recorded in it so, and a
   read of that process's own, just before the signal, shows it is still that process and
   still in the group. Nothing else, such as when a process started, links it to the leader:
