@@ -92,3 +92,53 @@ public struct UIFnHosted: NSViewRepresentable {
     public func updateNSView(_ view: NSView, context: Context) {}
 }
 #endif
+
+// Public API the default symbol graph leaves out.
+public struct _UIFnRow: View {
+    public var body: some View { EmptyView() }
+}
+
+@_spi(Preview) public struct UIFnSpiCard: View {
+    public var body: some View { EmptyView() }
+}
+
+@_documentation(visibility: internal) public struct UIFnDocCard: View {
+    public var body: some View { EmptyView() }
+}
+
+// Public, but nested in an internal type.
+struct UIFnInternal {
+    public struct Inner: View {
+        public var body: some View { EmptyView() }
+    }
+}
+
+// Members of extensions of UIFnSwiftUI protocols, one refining View.
+public extension UIFnRenderable {
+    func uifnGlow() -> some View { self }
+}
+
+public protocol UIFnSizing {
+    func size() -> Int
+}
+
+extension UIFnSizing {
+    public func uifnDoubled() -> Int { size() * 2 }
+}
+
+// Declarations in debug-only, release-only and device-only builds.
+#if DEBUG
+public struct UIFnDebugOnly: View {
+    public var body: some View { EmptyView() }
+}
+#else
+public struct UIFnReleaseOnly: View {
+    public var body: some View { EmptyView() }
+}
+#endif
+
+#if os(iOS) && !targetEnvironment(simulator)
+public struct UIFnDeviceOnly: View {
+    public var body: some View { EmptyView() }
+}
+#endif

@@ -2,21 +2,24 @@
 
 // Checks, or with --write rewrites, uifn/catalog/swiftui-surface-inventory.json
 // against the public UIFnSwiftUI declarations the Swift compiler reports when
-// it builds the target for macOS and for the iOS simulator, so a declaration
-// in either platform's #if branch counts. Needs macOS with Xcode; the Swift
-// workflow's macOS job runs the check. With --symbol-graphs <directory>...
-// it reads graphs already emitted with -emit-symbol-graph instead of building.
+// it builds the target for macOS, iOS devices and the iOS simulator, each in
+// debug and release, so a declaration in any of those #if branches counts. It
+// fails on an #if condition in Styles or Components those builds do not
+// cover. Needs macOS with Xcode; the Swift workflow's macOS job runs the
+// check. With --symbol-graphs <directory>... it reads graphs already emitted
+// with -emit-symbol-graph instead of building.
 //
 //   node scripts/uifn-swiftui-inventory.mjs [--write] [--symbol-graphs <directory>...]
 
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { CatalogError, createSwiftUISurfaceInventory, stableStringify } from '../uifn/catalog/src/compiler.mjs';
-import { readSwiftUISymbolGraphs, SWIFTUI_MODULE, swiftUIDeclarationsFromSymbolGraphs } from '../uifn/catalog/src/swiftui-symbol-graph.mjs';
+import { readSwiftUISymbolGraphs, SWIFTUI_MODULE, swiftUIDeclarationsFromSymbolGraphs, uncoveredSwiftConditions } from '../uifn/catalog/src/swiftui-symbol-graph.mjs';
+import { SWIFTUI_SOURCES_ROOT } from '../uifn/catalog/src/swiftui-status.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const inventoryPath = path.join(repoRoot, 'uifn/catalog/swiftui-surface-inventory.json');
@@ -29,27 +32,56 @@ if (args.some((arg) => arg.startsWith('--') && !['--write', '--symbol-graphs'].i
   process.exit(2);
 }
 
+async function swiftFiles(directory) {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const nested = await Promise.all(entries.map(async (entry) => {
+    const file = path.join(directory, entry.name);
+    if (entry.isDirectory()) return swiftFiles(file);
+    return entry.name.endsWith('.swift') ? [file] : [];
+  }));
+  return nested.flat().sort();
+}
+
+async function checkConditions() {
+  const files = (await Promise.all(['Styles', 'Components'].map((name) => swiftFiles(path.join(repoRoot, SWIFTUI_SOURCES_ROOT, name))))).flat();
+  const uncovered = (await Promise.all(files.map(async (file) => uncoveredSwiftConditions(await readFile(file, 'utf8')).map((entry) => ({ source: path.relative(repoRoot, file), ...entry }))))).flat();
+  if (uncovered.length > 0) {
+    throw new CatalogError('UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', 'An #if condition in UIFnSwiftUI Styles or Components is not one the inventory builds cover: os(macOS), os(iOS), canImport(), DEBUG or targetEnvironment(simulator).', { uncovered });
+  }
+}
+
 function emitSymbolGraphs(temporaryRoot) {
   const arch = process.arch === 'x64' ? 'x86_64' : process.arch;
-  const simulatorSdk = execFileSync('xcrun', ['--sdk', 'iphonesimulator', '--show-sdk-path'], { encoding: 'utf8' }).trim();
+  const sdk = (name) => execFileSync('xcrun', ['--sdk', name, '--show-sdk-path'], { encoding: 'utf8' }).trim();
   const platforms = [
     ['macos', []],
-    ['ios-simulator', ['--triple', `${arch}-apple-ios16.0-simulator`, '--sdk', simulatorSdk]],
+    ['ios', ['--triple', 'arm64-apple-ios16.0', '--sdk', sdk('iphoneos')]],
+    ['ios-simulator', ['--triple', `${arch}-apple-ios16.0-simulator`, '--sdk', sdk('iphonesimulator')]],
   ];
-  return platforms.map(([name, platformArgs]) => {
+  return platforms.flatMap(([platform, platformArgs]) => ['debug', 'release'].map((configuration) => {
+    const name = `${platform}-${configuration}`;
     const graphs = path.join(temporaryRoot, `${name}-symbol-graphs`);
     // A fresh scratch path builds every file, so the compiler writes a graph.
+    // Internal access and SPI are emitted so that underscored, @_spi and
+    // @_documentation-hidden public declarations are in the graph. Release
+    // keeps its conditions (no DEBUG) but skips optimization, which does not
+    // change declarations.
+    const flags = ['-emit-symbol-graph', '-emit-symbol-graph-dir', graphs, '-symbol-graph-minimum-access-level', 'internal', '-include-spi-symbols', ...(configuration === 'release' ? ['-Onone'] : [])];
     execFileSync('swift', [
-      'build', '--target', SWIFTUI_MODULE, '--scratch-path', path.join(temporaryRoot, `${name}-build`), ...platformArgs,
-      '-Xswiftc', '-emit-symbol-graph', '-Xswiftc', '-emit-symbol-graph-dir', '-Xswiftc', graphs,
+      'build', '--target', SWIFTUI_MODULE, '--configuration', configuration, '--scratch-path', path.join(temporaryRoot, `${name}-build`), ...platformArgs,
+      ...flags.flatMap((flag) => ['-Xswiftc', flag]),
     ], { cwd: repoRoot, stdio: ['ignore', 2, 2] });
     return graphs;
-  });
+  }));
 }
 
 const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'uifn-swiftui-inventory-'));
 try {
-  const directories = givenDirectories.length > 0 ? givenDirectories.map((directory) => path.resolve(directory)) : emitSymbolGraphs(temporaryRoot);
+  let directories = givenDirectories.map((directory) => path.resolve(directory));
+  if (directories.length === 0) {
+    await checkConditions();
+    directories = emitSymbolGraphs(temporaryRoot);
+  }
   const declarations = [];
   for (const directory of directories) declarations.push(...swiftUIDeclarationsFromSymbolGraphs(await readSwiftUISymbolGraphs(directory)));
   const inventory = createSwiftUISurfaceInventory(declarations);

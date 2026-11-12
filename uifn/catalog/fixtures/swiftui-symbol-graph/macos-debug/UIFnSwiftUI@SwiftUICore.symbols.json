@@ -3,12 +3,11 @@
   "name": "UIFnSwiftUI",
   "platform": {
    "architecture": "arm64",
-   "environment": "simulator",
    "vendor": "apple",
    "operatingSystem": {
-    "name": "ios",
+    "name": "macosx",
     "minimumVersion": {
-     "major": 16,
+     "major": 13,
      "minor": 0
     }
    }
@@ -82,6 +81,31 @@
     "title": "uifnDim(_:)"
    },
    "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "View",
+    "uifnInternal()"
+   ],
+   "names": {
+    "title": "uifnInternal()"
+   },
+   "accessLevel": "internal",
    "location": {
     "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
    },
@@ -182,6 +206,12 @@
   {
    "kind": "memberOf",
    "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF",
+   "target": "s:7SwiftUI4ViewP",
+   "targetFallback": "SwiftUICore.View"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF",
    "target": "s:7SwiftUI4ViewP",
    "targetFallback": "SwiftUICore.View"
   },

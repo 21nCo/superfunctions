@@ -58,9 +58,10 @@ jobs:
         run: node --test scripts/swift-release.test.mjs
       - name: swift build
         run: swift build --only-use-versions-from-resolved-file
-      # Builds UIFnSwiftUI for macOS and the iOS simulator with symbol graphs
-      # and fails when the uifn catalog's SwiftUI surface inventory differs
-      # from the public declarations the compiler reports.
+      # Builds UIFnSwiftUI for macOS, iOS devices and the iOS simulator, in
+      # debug and release, with symbol graphs, and fails when the uifn
+      # catalog's SwiftUI surface inventory differs from the public
+      # declarations the compiler reports.
       - name: The uifn catalog's SwiftUI surface inventory matches the compiler
         run: node scripts/uifn-swiftui-inventory.mjs
       # The UIFnSwiftUI tests hold the main actor while they render and drive

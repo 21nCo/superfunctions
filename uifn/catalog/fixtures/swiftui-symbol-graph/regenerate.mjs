@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 // Rebuilds the symbol-graph fixtures the catalog tests read: compiles
-// sources/ as module UIFnSwiftUI for macOS and the iOS simulator with
-// -emit-symbol-graph, keeps the symbols declared in sources/ (synthesized
+// sources/ as module UIFnSwiftUI for macOS in debug (DEBUG defined) and for
+// iOS devices in release, with the symbol-graph flags
+// scripts/uifn-swiftui-inventory.mjs uses, keeps the symbols declared in sources/ (synthesized
 // copies included) and the fields src/swiftui-symbol-graph.mjs reads, and
 // rewrites each file URI under file:///checkout/. Needs macOS with Xcode.
 //
@@ -20,13 +21,13 @@ const sourceRoot = path.join(temporaryRoot, 'uifn/swift/Sources/UIFnSwiftUI');
 const arch = process.arch === 'x64' ? 'x86_64' : process.arch;
 const sdk = (name) => execFileSync('xcrun', ['--sdk', name, '--show-sdk-path'], { encoding: 'utf8' }).trim();
 const platforms = [
-  ['macos', `${arch}-apple-macos13.0`, sdk('macosx')],
-  ['ios-simulator', `${arch}-apple-ios16.0-simulator`, sdk('iphonesimulator')],
+  ['macos-debug', `${arch}-apple-macos13.0`, sdk('macosx'), ['-D', 'DEBUG']],
+  ['ios-release', 'arm64-apple-ios16.0', sdk('iphoneos'), []],
 ];
 
 async function swiftFiles(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
-  const nested = await Promise.all(entries.map((entry) => {
+  const nested = await Promise.all(entries.map(async (entry) => {
     const file = path.join(directory, entry.name);
     if (entry.isDirectory()) return swiftFiles(file);
     return entry.name.endsWith('.swift') ? [file] : [];
@@ -37,10 +38,10 @@ async function swiftFiles(directory) {
 try {
   await cp(path.join(here, 'sources'), sourceRoot, { recursive: true });
   const files = await swiftFiles(sourceRoot);
-  for (const [name, target, sdkPath] of platforms) {
+  for (const [name, target, sdkPath, defines] of platforms) {
     const build = path.join(temporaryRoot, name);
     await mkdir(build, { recursive: true });
-    execFileSync('xcrun', ['swiftc', '-module-name', 'UIFnSwiftUI', '-parse-as-library', '-target', target, '-sdk', sdkPath, '-emit-module', '-emit-module-path', path.join(build, 'UIFnSwiftUI.swiftmodule'), '-emit-symbol-graph', '-emit-symbol-graph-dir', build, ...files], { stdio: 'inherit' });
+    execFileSync('xcrun', ['swiftc', '-module-name', 'UIFnSwiftUI', '-parse-as-library', '-target', target, '-sdk', sdkPath, '-emit-module', '-emit-module-path', path.join(build, 'UIFnSwiftUI.swiftmodule'), '-emit-symbol-graph', '-emit-symbol-graph-dir', build, '-symbol-graph-minimum-access-level', 'internal', '-include-spi-symbols', ...defines, ...files], { stdio: 'inherit' });
     const output = path.join(here, name);
     await rm(output, { recursive: true, force: true });
     await mkdir(output, { recursive: true });

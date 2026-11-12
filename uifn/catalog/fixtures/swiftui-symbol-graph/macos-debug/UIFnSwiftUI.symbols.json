@@ -1,0 +1,5173 @@
+{
+ "module": {
+  "name": "UIFnSwiftUI",
+  "platform": {
+   "architecture": "arm64",
+   "vendor": "apple",
+   "operatingSystem": {
+    "name": "macosx",
+    "minimumVersion": {
+     "major": 13,
+     "minor": 0
+    }
+   }
+  }
+ },
+ "symbols": [
+  {
+   "kind": {
+    "identifier": "swift.struct",
+    "displayName": "Structure"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A5AlertV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnAlert"
+   ],
+   "names": {
+    "title": "UIFnAlert"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/Feedback/UIFnAlert.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.type.property",
+    "displayName": "Type Property"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A5AlertV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnAlert",
+    "uifnDefault"
+   ],
+   "names": {
+    "title": "uifnDefault"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A5AlertV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnAlert",
+    "uifnDim()"
+   ],
+   "names": {
+    "title": "uifnDim()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A5AlertV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnAlert",
+    "uifnDim(_:)"
+   ],
+   "names": {
+    "title": "uifnDim(_:)"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A5AlertV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnAlert",
+    "uifnInternal()"
+   ],
+   "names": {
+    "title": "uifnInternal()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A5AlertV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnAlert",
+    "uifnStyled()"
+   ],
+   "names": {
+    "title": "uifnStyled()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnCR.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.property",
+    "displayName": "Instance Property"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A5AlertV4bodyQrvp",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnAlert",
+    "body"
+   ],
+   "names": {
+    "title": "body"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/Feedback/UIFnAlert.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.init",
+    "displayName": "Initializer"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A5AlertVACycfc",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnAlert",
+    "init()"
+   ],
+   "names": {
+    "title": "init()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/Feedback/UIFnAlert.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.protocol",
+    "displayName": "Protocol"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A10RenderableP",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnRenderable"
+   ],
+   "names": {
+    "title": "UIFnRenderable"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.enum",
+    "displayName": "Enumeration"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A3BoxO",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnBox"
+   ],
+   "names": {
+    "title": "UIFnBox"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.protocol",
+    "displayName": "Protocol"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A3BoxO0A10RenderableP",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnBox",
+    "UIFnRenderable"
+   ],
+   "names": {
+    "title": "UIFnBox.UIFnRenderable"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.struct",
+    "displayName": "Structure"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A3BoxO5PanelV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnBox",
+    "Panel"
+   ],
+   "names": {
+    "title": "UIFnBox.Panel"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A10RenderablePAAE8uifnGlowQryF::SYNTHESIZED::s:11UIFnSwiftUI0A3BoxO5PanelV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnBox",
+    "Panel",
+    "uifnGlow()"
+   ],
+   "names": {
+    "title": "uifnGlow()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "UIFnSwiftUI",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.type.property",
+    "displayName": "Type Property"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A3BoxO5PanelV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnBox",
+    "Panel",
+    "uifnDefault"
+   ],
+   "names": {
+    "title": "uifnDefault"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A3BoxO5PanelV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnBox",
+    "Panel",
+    "uifnDim()"
+   ],
+   "names": {
+    "title": "uifnDim()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A3BoxO5PanelV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnBox",
+    "Panel",
+    "uifnDim(_:)"
+   ],
+   "names": {
+    "title": "uifnDim(_:)"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A3BoxO5PanelV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnBox",
+    "Panel",
+    "uifnInternal()"
+   ],
+   "names": {
+    "title": "uifnInternal()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A3BoxO5PanelV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnBox",
+    "Panel",
+    "uifnStyled()"
+   ],
+   "names": {
+    "title": "uifnStyled()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnCR.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.init",
+    "displayName": "Initializer"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A3BoxO5PanelVAEycfc",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnBox",
+    "Panel",
+    "init()"
+   ],
+   "names": {
+    "title": "init()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.struct",
+    "displayName": "Structure"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A3BoxO4ItemV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnBox",
+    "Item"
+   ],
+   "names": {
+    "title": "UIFnBox.Item"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.type.property",
+    "displayName": "Type Property"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A3BoxO4ItemV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnBox",
+    "Item",
+    "uifnDefault"
+   ],
+   "names": {
+    "title": "uifnDefault"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A3BoxO4ItemV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnBox",
+    "Item",
+    "uifnDim()"
+   ],
+   "names": {
+    "title": "uifnDim()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A3BoxO4ItemV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnBox",
+    "Item",
+    "uifnDim(_:)"
+   ],
+   "names": {
+    "title": "uifnDim(_:)"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A3BoxO4ItemV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnBox",
+    "Item",
+    "uifnInternal()"
+   ],
+   "names": {
+    "title": "uifnInternal()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A3BoxO4ItemV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnBox",
+    "Item",
+    "uifnStyled()"
+   ],
+   "names": {
+    "title": "uifnStyled()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnCR.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.property",
+    "displayName": "Instance Property"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A3BoxO4ItemV4bodyQrvp",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnBox",
+    "Item",
+    "body"
+   ],
+   "names": {
+    "title": "body"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.init",
+    "displayName": "Initializer"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A3BoxO4ItemVAEycfc",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnBox",
+    "Item",
+    "init()"
+   ],
+   "names": {
+    "title": "init()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.property",
+    "displayName": "Instance Property"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A3BoxO5PanelV4bodyQrvp",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnBox",
+    "Panel",
+    "body"
+   ],
+   "names": {
+    "title": "body"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "UIFnSwiftUI",
+    "typeKind": "swift.struct"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.struct",
+    "displayName": "Structure"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A3BoxO3BarV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnBox",
+    "Bar"
+   ],
+   "names": {
+    "title": "UIFnBox.Bar"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "UIFnSwiftUI",
+    "typeKind": "swift.enum"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.type.property",
+    "displayName": "Type Property"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A3BoxO3BarV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnBox",
+    "Bar",
+    "uifnDefault"
+   ],
+   "names": {
+    "title": "uifnDefault"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A3BoxO3BarV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnBox",
+    "Bar",
+    "uifnDim()"
+   ],
+   "names": {
+    "title": "uifnDim()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A3BoxO3BarV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnBox",
+    "Bar",
+    "uifnDim(_:)"
+   ],
+   "names": {
+    "title": "uifnDim(_:)"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A3BoxO3BarV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnBox",
+    "Bar",
+    "uifnInternal()"
+   ],
+   "names": {
+    "title": "uifnInternal()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A3BoxO3BarV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnBox",
+    "Bar",
+    "uifnStyled()"
+   ],
+   "names": {
+    "title": "uifnStyled()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnCR.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.property",
+    "displayName": "Instance Property"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A3BoxO3BarV4bodyQrvp",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnBox",
+    "Bar",
+    "body"
+   ],
+   "names": {
+    "title": "body"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.init",
+    "displayName": "Initializer"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A3BoxO3BarVAEycfc",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnBox",
+    "Bar",
+    "init()"
+   ],
+   "names": {
+    "title": "init()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.struct",
+    "displayName": "Structure"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A4RingV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnRing"
+   ],
+   "names": {
+    "title": "UIFnRing"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.type.property",
+    "displayName": "Type Property"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A4RingV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnRing",
+    "uifnDefault"
+   ],
+   "names": {
+    "title": "uifnDefault"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A4RingV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnRing",
+    "uifnDim()"
+   ],
+   "names": {
+    "title": "uifnDim()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A4RingV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnRing",
+    "uifnDim(_:)"
+   ],
+   "names": {
+    "title": "uifnDim(_:)"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A4RingV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnRing",
+    "uifnInternal()"
+   ],
+   "names": {
+    "title": "uifnInternal()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A4RingV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnRing",
+    "uifnStyled()"
+   ],
+   "names": {
+    "title": "uifnStyled()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnCR.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A4RingV4path2in0bC04PathVSo6CGRectV_tF",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnRing",
+    "path(in:)"
+   ],
+   "names": {
+    "title": "path(in:)"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.init",
+    "displayName": "Initializer"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A4RingVACycfc",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnRing",
+    "init()"
+   ],
+   "names": {
+    "title": "init()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.struct",
+    "displayName": "Structure"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A4FlowV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnFlow"
+   ],
+   "names": {
+    "title": "UIFnFlow"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A4FlowV12sizeThatFits8proposal8subviews5cacheSo6CGSizeV0bC016ProposedViewSizeV_AJ14LayoutSubviewsVytztF",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnFlow",
+    "sizeThatFits(proposal:subviews:cache:)"
+   ],
+   "names": {
+    "title": "sizeThatFits(proposal:subviews:cache:)"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A4FlowV13placeSubviews2in8proposal8subviews5cacheySo6CGRectV_0bC016ProposedViewSizeVAK06LayoutF0VytztF",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnFlow",
+    "placeSubviews(in:proposal:subviews:cache:)"
+   ],
+   "names": {
+    "title": "placeSubviews(in:proposal:subviews:cache:)"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.init",
+    "displayName": "Initializer"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A4FlowVACycfc",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnFlow",
+    "init()"
+   ],
+   "names": {
+    "title": "init()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.class",
+    "displayName": "Class"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A6WorkerC",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnWorker"
+   ],
+   "names": {
+    "title": "UIFnWorker"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.init",
+    "displayName": "Initializer"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A6WorkerCACycfc",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnWorker",
+    "init()"
+   ],
+   "names": {
+    "title": "init()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.struct",
+    "displayName": "Structure"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A4ListV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnList"
+   ],
+   "names": {
+    "title": "UIFnList"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.type.property",
+    "displayName": "Type Property"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A4ListV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnList",
+    "uifnDefault"
+   ],
+   "names": {
+    "title": "uifnDefault"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A4ListV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnList",
+    "uifnDim()"
+   ],
+   "names": {
+    "title": "uifnDim()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A4ListV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnList",
+    "uifnDim(_:)"
+   ],
+   "names": {
+    "title": "uifnDim(_:)"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A4ListV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnList",
+    "uifnInternal()"
+   ],
+   "names": {
+    "title": "uifnInternal()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A4ListV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnList",
+    "uifnStyled()"
+   ],
+   "names": {
+    "title": "uifnStyled()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnCR.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.property",
+    "displayName": "Instance Property"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A4ListV4bodyQrvp",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnList",
+    "body"
+   ],
+   "names": {
+    "title": "body"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.init",
+    "displayName": "Initializer"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A4ListVACyxGycfc",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnList",
+    "init()"
+   ],
+   "names": {
+    "title": "init()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.struct",
+    "displayName": "Structure"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A3DimV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnDim"
+   ],
+   "names": {
+    "title": "UIFnDim"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A3DimV4body7contentQr0bC021_ViewModifier_ContentVyACG_tF",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnDim",
+    "body(content:)"
+   ],
+   "names": {
+    "title": "body(content:)"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.init",
+    "displayName": "Initializer"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A3DimVACycfc",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnDim",
+    "init()"
+   ],
+   "names": {
+    "title": "init()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.enum",
+    "displayName": "Enumeration"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A7VariantO",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnVariant"
+   ],
+   "names": {
+    "title": "UIFnVariant"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.enum.case",
+    "displayName": "Case"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A7VariantO5plainyA2CmF",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnVariant",
+    "plain"
+   ],
+   "names": {
+    "title": "UIFnVariant.plain"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.enum",
+    "displayName": "Enumeration"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A11PlaceholderO",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPlaceholder"
+   ],
+   "names": {
+    "title": "UIFnPlaceholder"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.type.property",
+    "displayName": "Type Property"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A11PlaceholderO",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPlaceholder",
+    "uifnDefault"
+   ],
+   "names": {
+    "title": "uifnDefault"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A11PlaceholderO",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPlaceholder",
+    "uifnDim()"
+   ],
+   "names": {
+    "title": "uifnDim()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A11PlaceholderO",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPlaceholder",
+    "uifnDim(_:)"
+   ],
+   "names": {
+    "title": "uifnDim(_:)"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A11PlaceholderO",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPlaceholder",
+    "uifnInternal()"
+   ],
+   "names": {
+    "title": "uifnInternal()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A11PlaceholderO",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPlaceholder",
+    "uifnStyled()"
+   ],
+   "names": {
+    "title": "uifnStyled()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnCR.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.enum.case",
+    "displayName": "Case"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A11PlaceholderO5plainyA2CmF",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPlaceholder",
+    "plain"
+   ],
+   "names": {
+    "title": "UIFnPlaceholder.plain"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.property",
+    "displayName": "Instance Property"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A11PlaceholderO4bodyQrvp",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPlaceholder",
+    "body"
+   ],
+   "names": {
+    "title": "body"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.func",
+    "displayName": "Function"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI12uifnMakeViewQryF",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "uifnMakeView()"
+   ],
+   "names": {
+    "title": "uifnMakeView()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.typealias",
+    "displayName": "Type Alias"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A5Aliasa",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnAlias"
+   ],
+   "names": {
+    "title": "UIFnAlias"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.struct",
+    "displayName": "Structure"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A12InternalViewV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnInternalView"
+   ],
+   "names": {
+    "title": "UIFnInternalView"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.type.property",
+    "displayName": "Type Property"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A12InternalViewV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnInternalView",
+    "uifnDefault"
+   ],
+   "names": {
+    "title": "uifnDefault"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A12InternalViewV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnInternalView",
+    "uifnDim()"
+   ],
+   "names": {
+    "title": "uifnDim()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A12InternalViewV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnInternalView",
+    "uifnDim(_:)"
+   ],
+   "names": {
+    "title": "uifnDim(_:)"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A12InternalViewV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnInternalView",
+    "uifnInternal()"
+   ],
+   "names": {
+    "title": "uifnInternal()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A12InternalViewV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnInternalView",
+    "uifnStyled()"
+   ],
+   "names": {
+    "title": "uifnStyled()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnCR.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.property",
+    "displayName": "Instance Property"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A12InternalViewV4bodyQrvp",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnInternalView",
+    "body"
+   ],
+   "names": {
+    "title": "body"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.init",
+    "displayName": "Initializer"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A12InternalViewVACycfc",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnInternalView",
+    "init()"
+   ],
+   "names": {
+    "title": "init()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.struct",
+    "displayName": "Structure"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A5PagerV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPager"
+   ],
+   "names": {
+    "title": "UIFnPager"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.type.property",
+    "displayName": "Type Property"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A5PagerV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPager",
+    "uifnDefault"
+   ],
+   "names": {
+    "title": "uifnDefault"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A5PagerV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPager",
+    "uifnDim()"
+   ],
+   "names": {
+    "title": "uifnDim()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A5PagerV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPager",
+    "uifnDim(_:)"
+   ],
+   "names": {
+    "title": "uifnDim(_:)"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A5PagerV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPager",
+    "uifnInternal()"
+   ],
+   "names": {
+    "title": "uifnInternal()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A5PagerV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPager",
+    "uifnStyled()"
+   ],
+   "names": {
+    "title": "uifnStyled()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnCR.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.struct",
+    "displayName": "Structure"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A5PagerV6HiddenV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPager",
+    "Hidden"
+   ],
+   "names": {
+    "title": "UIFnPager.Hidden"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.type.property",
+    "displayName": "Type Property"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A5PagerV6HiddenV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPager",
+    "Hidden",
+    "uifnDefault"
+   ],
+   "names": {
+    "title": "uifnDefault"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A5PagerV6HiddenV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPager",
+    "Hidden",
+    "uifnDim()"
+   ],
+   "names": {
+    "title": "uifnDim()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A5PagerV6HiddenV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPager",
+    "Hidden",
+    "uifnDim(_:)"
+   ],
+   "names": {
+    "title": "uifnDim(_:)"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A5PagerV6HiddenV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPager",
+    "Hidden",
+    "uifnInternal()"
+   ],
+   "names": {
+    "title": "uifnInternal()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A5PagerV6HiddenV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPager",
+    "Hidden",
+    "uifnStyled()"
+   ],
+   "names": {
+    "title": "uifnStyled()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnCR.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.property",
+    "displayName": "Instance Property"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A5PagerV6HiddenV4bodyQrvp",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPager",
+    "Hidden",
+    "body"
+   ],
+   "names": {
+    "title": "body"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.init",
+    "displayName": "Initializer"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A5PagerV6HiddenVAEycfc",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPager",
+    "Hidden",
+    "init()"
+   ],
+   "names": {
+    "title": "init()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.property",
+    "displayName": "Instance Property"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A5PagerV4bodyQrvp",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPager",
+    "body"
+   ],
+   "names": {
+    "title": "body"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.init",
+    "displayName": "Initializer"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A5PagerVACycfc",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPager",
+    "init()"
+   ],
+   "names": {
+    "title": "init()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.var",
+    "displayName": "Global Variable"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI9uifnRatioSivp",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "uifnRatio"
+   ],
+   "names": {
+    "title": "uifnRatio"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.struct",
+    "displayName": "Structure"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A6HostedV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnHosted"
+   ],
+   "names": {
+    "title": "UIFnHosted"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.type.property",
+    "displayName": "Type Property"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A6HostedV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnHosted",
+    "uifnDefault"
+   ],
+   "names": {
+    "title": "uifnDefault"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A6HostedV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnHosted",
+    "uifnDim()"
+   ],
+   "names": {
+    "title": "uifnDim()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A6HostedV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnHosted",
+    "uifnDim(_:)"
+   ],
+   "names": {
+    "title": "uifnDim(_:)"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A6HostedV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnHosted",
+    "uifnInternal()"
+   ],
+   "names": {
+    "title": "uifnInternal()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A6HostedV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnHosted",
+    "uifnStyled()"
+   ],
+   "names": {
+    "title": "uifnStyled()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnCR.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A6HostedV10makeNSView7contextSo0F0C0bC00F20RepresentableContextVyACG_tF",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnHosted",
+    "makeNSView(context:)"
+   ],
+   "names": {
+    "title": "makeNSView(context:)"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A6HostedV12updateNSView_7contextySo0F0C_0bC00F20RepresentableContextVyACGtF",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnHosted",
+    "updateNSView(_:context:)"
+   ],
+   "names": {
+    "title": "updateNSView(_:context:)"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.init",
+    "displayName": "Initializer"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A6HostedVACycfc",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnHosted",
+    "init()"
+   ],
+   "names": {
+    "title": "init()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.struct",
+    "displayName": "Structure"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI01_A3RowV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "_UIFnRow"
+   ],
+   "names": {
+    "title": "_UIFnRow"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.type.property",
+    "displayName": "Type Property"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI01_A3RowV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "_UIFnRow",
+    "uifnDefault"
+   ],
+   "names": {
+    "title": "uifnDefault"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI01_A3RowV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "_UIFnRow",
+    "uifnDim()"
+   ],
+   "names": {
+    "title": "uifnDim()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI01_A3RowV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "_UIFnRow",
+    "uifnDim(_:)"
+   ],
+   "names": {
+    "title": "uifnDim(_:)"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI01_A3RowV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "_UIFnRow",
+    "uifnInternal()"
+   ],
+   "names": {
+    "title": "uifnInternal()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI01_A3RowV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "_UIFnRow",
+    "uifnStyled()"
+   ],
+   "names": {
+    "title": "uifnStyled()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnCR.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.property",
+    "displayName": "Instance Property"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI01_A3RowV4bodyQrvp",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "_UIFnRow",
+    "body"
+   ],
+   "names": {
+    "title": "body"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.init",
+    "displayName": "Initializer"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI01_A3RowVACycfc",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "_UIFnRow",
+    "init()"
+   ],
+   "names": {
+    "title": "init()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.struct",
+    "displayName": "Structure"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A7SpiCardV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnSpiCard"
+   ],
+   "names": {
+    "title": "UIFnSpiCard"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.type.property",
+    "displayName": "Type Property"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A7SpiCardV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnSpiCard",
+    "uifnDefault"
+   ],
+   "names": {
+    "title": "uifnDefault"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A7SpiCardV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnSpiCard",
+    "uifnDim()"
+   ],
+   "names": {
+    "title": "uifnDim()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A7SpiCardV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnSpiCard",
+    "uifnDim(_:)"
+   ],
+   "names": {
+    "title": "uifnDim(_:)"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A7SpiCardV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnSpiCard",
+    "uifnInternal()"
+   ],
+   "names": {
+    "title": "uifnInternal()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A7SpiCardV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnSpiCard",
+    "uifnStyled()"
+   ],
+   "names": {
+    "title": "uifnStyled()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnCR.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.property",
+    "displayName": "Instance Property"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A7SpiCardV4bodyQrvp",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnSpiCard",
+    "body"
+   ],
+   "names": {
+    "title": "body"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.init",
+    "displayName": "Initializer"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A7SpiCardVACycfc",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnSpiCard",
+    "init()"
+   ],
+   "names": {
+    "title": "init()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.struct",
+    "displayName": "Structure"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A7DocCardV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnDocCard"
+   ],
+   "names": {
+    "title": "UIFnDocCard"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.type.property",
+    "displayName": "Type Property"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A7DocCardV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnDocCard",
+    "uifnDefault"
+   ],
+   "names": {
+    "title": "uifnDefault"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A7DocCardV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnDocCard",
+    "uifnDim()"
+   ],
+   "names": {
+    "title": "uifnDim()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A7DocCardV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnDocCard",
+    "uifnDim(_:)"
+   ],
+   "names": {
+    "title": "uifnDim(_:)"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A7DocCardV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnDocCard",
+    "uifnInternal()"
+   ],
+   "names": {
+    "title": "uifnInternal()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A7DocCardV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnDocCard",
+    "uifnStyled()"
+   ],
+   "names": {
+    "title": "uifnStyled()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnCR.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.property",
+    "displayName": "Instance Property"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A7DocCardV4bodyQrvp",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnDocCard",
+    "body"
+   ],
+   "names": {
+    "title": "body"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.init",
+    "displayName": "Initializer"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A7DocCardVACycfc",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnDocCard",
+    "init()"
+   ],
+   "names": {
+    "title": "init()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.struct",
+    "displayName": "Structure"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A8InternalV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnInternal"
+   ],
+   "names": {
+    "title": "UIFnInternal"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.struct",
+    "displayName": "Structure"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A8InternalV5InnerV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnInternal",
+    "Inner"
+   ],
+   "names": {
+    "title": "UIFnInternal.Inner"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.type.property",
+    "displayName": "Type Property"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A8InternalV5InnerV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnInternal",
+    "Inner",
+    "uifnDefault"
+   ],
+   "names": {
+    "title": "uifnDefault"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A8InternalV5InnerV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnInternal",
+    "Inner",
+    "uifnDim()"
+   ],
+   "names": {
+    "title": "uifnDim()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A8InternalV5InnerV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnInternal",
+    "Inner",
+    "uifnDim(_:)"
+   ],
+   "names": {
+    "title": "uifnDim(_:)"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A8InternalV5InnerV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnInternal",
+    "Inner",
+    "uifnInternal()"
+   ],
+   "names": {
+    "title": "uifnInternal()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A8InternalV5InnerV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnInternal",
+    "Inner",
+    "uifnStyled()"
+   ],
+   "names": {
+    "title": "uifnStyled()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnCR.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.property",
+    "displayName": "Instance Property"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A8InternalV5InnerV4bodyQrvp",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnInternal",
+    "Inner",
+    "body"
+   ],
+   "names": {
+    "title": "body"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.init",
+    "displayName": "Initializer"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A8InternalV5InnerVAEycfc",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnInternal",
+    "Inner",
+    "init()"
+   ],
+   "names": {
+    "title": "init()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.init",
+    "displayName": "Initializer"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A8InternalVACycfc",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnInternal",
+    "init()"
+   ],
+   "names": {
+    "title": "init()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A10RenderablePAAE8uifnGlowQryF",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnRenderable",
+    "uifnGlow()"
+   ],
+   "names": {
+    "title": "uifnGlow()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "UIFnSwiftUI",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.protocol",
+    "displayName": "Protocol"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A6SizingP",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnSizing"
+   ],
+   "names": {
+    "title": "UIFnSizing"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A6SizingP4sizeSiyF",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnSizing",
+    "size()"
+   ],
+   "names": {
+    "title": "size()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A6SizingPAAE11uifnDoubledSiyF",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnSizing",
+    "uifnDoubled()"
+   ],
+   "names": {
+    "title": "uifnDoubled()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "UIFnSwiftUI",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.struct",
+    "displayName": "Structure"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A9DebugOnlyV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnDebugOnly"
+   ],
+   "names": {
+    "title": "UIFnDebugOnly"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.type.property",
+    "displayName": "Type Property"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A9DebugOnlyV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnDebugOnly",
+    "uifnDefault"
+   ],
+   "names": {
+    "title": "uifnDefault"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A9DebugOnlyV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnDebugOnly",
+    "uifnDim()"
+   ],
+   "names": {
+    "title": "uifnDim()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A9DebugOnlyV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnDebugOnly",
+    "uifnDim(_:)"
+   ],
+   "names": {
+    "title": "uifnDim(_:)"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A9DebugOnlyV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnDebugOnly",
+    "uifnInternal()"
+   ],
+   "names": {
+    "title": "uifnInternal()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A9DebugOnlyV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnDebugOnly",
+    "uifnStyled()"
+   ],
+   "names": {
+    "title": "uifnStyled()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnCR.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.property",
+    "displayName": "Instance Property"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A9DebugOnlyV4bodyQrvp",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnDebugOnly",
+    "body"
+   ],
+   "names": {
+    "title": "body"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.init",
+    "displayName": "Initializer"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A9DebugOnlyVACycfc",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnDebugOnly",
+    "init()"
+   ],
+   "names": {
+    "title": "init()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.struct",
+    "displayName": "Structure"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A6CRViewV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnCRView"
+   ],
+   "names": {
+    "title": "UIFnCRView"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnCR.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.type.property",
+    "displayName": "Type Property"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A6CRViewV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnCRView",
+    "uifnDefault"
+   ],
+   "names": {
+    "title": "uifnDefault"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A6CRViewV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnCRView",
+    "uifnDim()"
+   ],
+   "names": {
+    "title": "uifnDim()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A6CRViewV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnCRView",
+    "uifnDim(_:)"
+   ],
+   "names": {
+    "title": "uifnDim(_:)"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A6CRViewV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnCRView",
+    "uifnInternal()"
+   ],
+   "names": {
+    "title": "uifnInternal()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A6CRViewV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnCRView",
+    "uifnStyled()"
+   ],
+   "names": {
+    "title": "uifnStyled()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnCR.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.property",
+    "displayName": "Instance Property"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A6CRViewV4bodyQrvp",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnCRView",
+    "body"
+   ],
+   "names": {
+    "title": "body"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnCR.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.init",
+    "displayName": "Initializer"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A6CRViewVACycfc",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnCRView",
+    "init()"
+   ],
+   "names": {
+    "title": "init()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnCR.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.struct",
+    "displayName": "Structure"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A9ChipStyleV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnChipStyle"
+   ],
+   "names": {
+    "title": "UIFnChipStyle"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnCR.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.type.property",
+    "displayName": "Type Property"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI11ButtonStyleP04UIFnaB0AD0e4ChipD0VRszrlE04uifnF0AFvpZ::SYNTHESIZED::s:11UIFnSwiftUI0A9ChipStyleV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnChipStyle",
+    "uifnChip"
+   ],
+   "names": {
+    "title": "uifnChip"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnCR.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUI",
+    "typeKind": "swift.protocol",
+    "constraints": [
+     {
+      "kind": "sameType",
+      "lhs": "Self",
+      "rhs": "UIFnChipStyle",
+      "rhsPrecise": "s:11UIFnSwiftUI0A9ChipStyleV"
+     }
+    ]
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A9ChipStyleV8makeBody13configurationQr0bC006ButtonE13ConfigurationV_tF",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnChipStyle",
+    "makeBody(configuration:)"
+   ],
+   "names": {
+    "title": "makeBody(configuration:)"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnCR.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.init",
+    "displayName": "Initializer"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A9ChipStyleVACycfc",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnChipStyle",
+    "init()"
+   ],
+   "names": {
+    "title": "init()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnCR.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.struct",
+    "displayName": "Structure"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A7IgnoredV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnIgnored"
+   ],
+   "names": {
+    "title": "UIFnIgnored"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Tokens/UIFnIgnored.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.type.property",
+    "displayName": "Type Property"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A7IgnoredV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnIgnored",
+    "uifnDefault"
+   ],
+   "names": {
+    "title": "uifnDefault"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A7IgnoredV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnIgnored",
+    "uifnDim()"
+   ],
+   "names": {
+    "title": "uifnDim()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A7IgnoredV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnIgnored",
+    "uifnDim(_:)"
+   ],
+   "names": {
+    "title": "uifnDim(_:)"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A7IgnoredV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnIgnored",
+    "uifnInternal()"
+   ],
+   "names": {
+    "title": "uifnInternal()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A7IgnoredV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnIgnored",
+    "uifnStyled()"
+   ],
+   "names": {
+    "title": "uifnStyled()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnCR.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.property",
+    "displayName": "Instance Property"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A7IgnoredV4bodyQrvp",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnIgnored",
+    "body"
+   ],
+   "names": {
+    "title": "body"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Tokens/UIFnIgnored.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.init",
+    "displayName": "Initializer"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A7IgnoredVACycfc",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnIgnored",
+    "init()"
+   ],
+   "names": {
+    "title": "init()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Tokens/UIFnIgnored.swift"
+   }
+  }
+ ],
+ "relationships": [
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A5AlertV",
+   "target": "s:11UIFnSwiftUI0A5AlertV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A5AlertV",
+   "target": "s:11UIFnSwiftUI0A5AlertV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A5AlertV",
+   "target": "s:11UIFnSwiftUI0A5AlertV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A5AlertV",
+   "target": "s:11UIFnSwiftUI0A5AlertV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A5AlertV",
+   "target": "s:11UIFnSwiftUI0A5AlertV"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A5AlertV",
+   "target": "s:7SwiftUI4ViewP",
+   "targetFallback": "SwiftUICore.View"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A5AlertV",
+   "target": "s:s8SendableP",
+   "targetFallback": "Swift.Sendable"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A5AlertV4bodyQrvp",
+   "target": "s:11UIFnSwiftUI0A5AlertV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A5AlertVACycfc",
+   "target": "s:11UIFnSwiftUI0A5AlertV"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A10RenderableP",
+   "target": "s:7SwiftUI4ViewP",
+   "targetFallback": "SwiftUICore.View"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A3BoxO0A10RenderableP",
+   "target": "s:11UIFnSwiftUI0A3BoxO"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A3BoxO5PanelV",
+   "target": "s:11UIFnSwiftUI0A3BoxO"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A10RenderablePAAE8uifnGlowQryF::SYNTHESIZED::s:11UIFnSwiftUI0A3BoxO5PanelV",
+   "target": "s:11UIFnSwiftUI0A3BoxO5PanelV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A3BoxO5PanelV",
+   "target": "s:11UIFnSwiftUI0A3BoxO5PanelV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A3BoxO5PanelV",
+   "target": "s:11UIFnSwiftUI0A3BoxO5PanelV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A3BoxO5PanelV",
+   "target": "s:11UIFnSwiftUI0A3BoxO5PanelV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A3BoxO5PanelV",
+   "target": "s:11UIFnSwiftUI0A3BoxO5PanelV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A3BoxO5PanelV",
+   "target": "s:11UIFnSwiftUI0A3BoxO5PanelV"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A3BoxO5PanelV",
+   "target": "s:11UIFnSwiftUI0A10RenderableP"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A3BoxO5PanelV",
+   "target": "s:7SwiftUI4ViewP",
+   "targetFallback": "SwiftUICore.View"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A3BoxO5PanelVAEycfc",
+   "target": "s:11UIFnSwiftUI0A3BoxO5PanelV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A3BoxO4ItemV",
+   "target": "s:11UIFnSwiftUI0A3BoxO"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A3BoxO4ItemV",
+   "target": "s:11UIFnSwiftUI0A3BoxO4ItemV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A3BoxO4ItemV",
+   "target": "s:11UIFnSwiftUI0A3BoxO4ItemV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A3BoxO4ItemV",
+   "target": "s:11UIFnSwiftUI0A3BoxO4ItemV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A3BoxO4ItemV",
+   "target": "s:11UIFnSwiftUI0A3BoxO4ItemV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A3BoxO4ItemV",
+   "target": "s:11UIFnSwiftUI0A3BoxO4ItemV"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A3BoxO4ItemV",
+   "target": "s:7SwiftUI4ViewP",
+   "targetFallback": "SwiftUICore.View"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A3BoxO4ItemV",
+   "target": "s:s8SendableP",
+   "targetFallback": "Swift.Sendable"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A3BoxO4ItemV4bodyQrvp",
+   "target": "s:11UIFnSwiftUI0A3BoxO4ItemV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A3BoxO4ItemVAEycfc",
+   "target": "s:11UIFnSwiftUI0A3BoxO4ItemV"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A3BoxO5PanelV",
+   "target": "s:s9EscapableP",
+   "targetFallback": "Swift.Escapable"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A3BoxO5PanelV",
+   "target": "s:s8CopyableP",
+   "targetFallback": "Swift.Copyable"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A3BoxO5PanelV4bodyQrvp",
+   "target": "s:11UIFnSwiftUI0A3BoxO5PanelV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A3BoxO3BarV",
+   "target": "s:11UIFnSwiftUI0A3BoxO"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A3BoxO3BarV",
+   "target": "s:11UIFnSwiftUI0A3BoxO3BarV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A3BoxO3BarV",
+   "target": "s:11UIFnSwiftUI0A3BoxO3BarV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A3BoxO3BarV",
+   "target": "s:11UIFnSwiftUI0A3BoxO3BarV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A3BoxO3BarV",
+   "target": "s:11UIFnSwiftUI0A3BoxO3BarV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A3BoxO3BarV",
+   "target": "s:11UIFnSwiftUI0A3BoxO3BarV"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A3BoxO3BarV",
+   "target": "s:7SwiftUI4ViewP",
+   "targetFallback": "SwiftUICore.View"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A3BoxO3BarV",
+   "target": "s:s8SendableP",
+   "targetFallback": "Swift.Sendable"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A3BoxO3BarV4bodyQrvp",
+   "target": "s:11UIFnSwiftUI0A3BoxO3BarV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A3BoxO3BarVAEycfc",
+   "target": "s:11UIFnSwiftUI0A3BoxO3BarV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A4RingV",
+   "target": "s:11UIFnSwiftUI0A4RingV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A4RingV",
+   "target": "s:11UIFnSwiftUI0A4RingV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A4RingV",
+   "target": "s:11UIFnSwiftUI0A4RingV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A4RingV",
+   "target": "s:11UIFnSwiftUI0A4RingV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A4RingV",
+   "target": "s:11UIFnSwiftUI0A4RingV"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A4RingV",
+   "target": "s:7SwiftUI5ShapeP",
+   "targetFallback": "SwiftUICore.Shape"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A4RingV",
+   "target": "s:s8SendableP",
+   "targetFallback": "Swift.Sendable"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A4RingV",
+   "target": "s:7SwiftUI10AnimatableP",
+   "targetFallback": "SwiftUICore.Animatable"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A4RingV",
+   "target": "s:7SwiftUI4ViewP",
+   "targetFallback": "SwiftUICore.View"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A4RingV",
+   "target": "s:s16SendableMetatypeP",
+   "targetFallback": "Swift.SendableMetatype"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A4RingV4path2in0bC04PathVSo6CGRectV_tF",
+   "target": "s:11UIFnSwiftUI0A4RingV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A4RingVACycfc",
+   "target": "s:11UIFnSwiftUI0A4RingV"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A4FlowV",
+   "target": "s:7SwiftUI6LayoutP",
+   "targetFallback": "SwiftUICore.Layout"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A4FlowV",
+   "target": "s:s8SendableP",
+   "targetFallback": "Swift.Sendable"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A4FlowV",
+   "target": "s:7SwiftUI10AnimatableP",
+   "targetFallback": "SwiftUICore.Animatable"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A4FlowV",
+   "target": "s:s16SendableMetatypeP",
+   "targetFallback": "Swift.SendableMetatype"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A4FlowV12sizeThatFits8proposal8subviews5cacheSo6CGSizeV0bC016ProposedViewSizeV_AJ14LayoutSubviewsVytztF",
+   "target": "s:11UIFnSwiftUI0A4FlowV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A4FlowV13placeSubviews2in8proposal8subviews5cacheySo6CGRectV_0bC016ProposedViewSizeVAK06LayoutF0VytztF",
+   "target": "s:11UIFnSwiftUI0A4FlowV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A4FlowVACycfc",
+   "target": "s:11UIFnSwiftUI0A4FlowV"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A6WorkerC",
+   "target": "s:ScA",
+   "targetFallback": "_Concurrency.Actor"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A6WorkerC",
+   "target": "s:s8SendableP",
+   "targetFallback": "Swift.Sendable"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A6WorkerC",
+   "target": "s:s16SendableMetatypeP",
+   "targetFallback": "Swift.SendableMetatype"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A6WorkerCACycfc",
+   "target": "s:11UIFnSwiftUI0A6WorkerC"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A4ListV",
+   "target": "s:11UIFnSwiftUI0A4ListV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A4ListV",
+   "target": "s:11UIFnSwiftUI0A4ListV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A4ListV",
+   "target": "s:11UIFnSwiftUI0A4ListV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A4ListV",
+   "target": "s:11UIFnSwiftUI0A4ListV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A4ListV",
+   "target": "s:11UIFnSwiftUI0A4ListV"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A4ListV",
+   "target": "s:7SwiftUI4ViewP",
+   "targetFallback": "SwiftUICore.View"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A4ListV",
+   "target": "s:s8SendableP",
+   "targetFallback": "Swift.Sendable"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A4ListV4bodyQrvp",
+   "target": "s:11UIFnSwiftUI0A4ListV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A4ListVACyxGycfc",
+   "target": "s:11UIFnSwiftUI0A4ListV"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A3DimV",
+   "target": "s:7SwiftUI12ViewModifierP",
+   "targetFallback": "SwiftUICore.ViewModifier"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A3DimV",
+   "target": "s:s8SendableP",
+   "targetFallback": "Swift.Sendable"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A3DimV4body7contentQr0bC021_ViewModifier_ContentVyACG_tF",
+   "target": "s:11UIFnSwiftUI0A3DimV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A3DimVACycfc",
+   "target": "s:11UIFnSwiftUI0A3DimV"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A7VariantO",
+   "target": "s:SQ",
+   "targetFallback": "Swift.Equatable"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A7VariantO",
+   "target": "s:SH",
+   "targetFallback": "Swift.Hashable"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A7VariantO5plainyA2CmF",
+   "target": "s:11UIFnSwiftUI0A7VariantO"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A11PlaceholderO",
+   "target": "s:11UIFnSwiftUI0A11PlaceholderO"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A11PlaceholderO",
+   "target": "s:11UIFnSwiftUI0A11PlaceholderO"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A11PlaceholderO",
+   "target": "s:11UIFnSwiftUI0A11PlaceholderO"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A11PlaceholderO",
+   "target": "s:11UIFnSwiftUI0A11PlaceholderO"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A11PlaceholderO",
+   "target": "s:11UIFnSwiftUI0A11PlaceholderO"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A11PlaceholderO",
+   "target": "s:SQ",
+   "targetFallback": "Swift.Equatable"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A11PlaceholderO",
+   "target": "s:SH",
+   "targetFallback": "Swift.Hashable"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A11PlaceholderO",
+   "target": "s:7SwiftUI4ViewP",
+   "targetFallback": "SwiftUICore.View"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A11PlaceholderO",
+   "target": "s:s8SendableP",
+   "targetFallback": "Swift.Sendable"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A11PlaceholderO5plainyA2CmF",
+   "target": "s:11UIFnSwiftUI0A11PlaceholderO"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A11PlaceholderO4bodyQrvp",
+   "target": "s:11UIFnSwiftUI0A11PlaceholderO"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A12InternalViewV",
+   "target": "s:11UIFnSwiftUI0A12InternalViewV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A12InternalViewV",
+   "target": "s:11UIFnSwiftUI0A12InternalViewV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A12InternalViewV",
+   "target": "s:11UIFnSwiftUI0A12InternalViewV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A12InternalViewV",
+   "target": "s:11UIFnSwiftUI0A12InternalViewV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A12InternalViewV",
+   "target": "s:11UIFnSwiftUI0A12InternalViewV"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A12InternalViewV",
+   "target": "s:7SwiftUI4ViewP",
+   "targetFallback": "SwiftUICore.View"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A12InternalViewV",
+   "target": "s:s8SendableP",
+   "targetFallback": "Swift.Sendable"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A12InternalViewV",
+   "target": "s:s15BitwiseCopyableP",
+   "targetFallback": "Swift.BitwiseCopyable"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A12InternalViewV4bodyQrvp",
+   "target": "s:11UIFnSwiftUI0A12InternalViewV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A12InternalViewVACycfc",
+   "target": "s:11UIFnSwiftUI0A12InternalViewV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A5PagerV",
+   "target": "s:11UIFnSwiftUI0A5PagerV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A5PagerV",
+   "target": "s:11UIFnSwiftUI0A5PagerV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A5PagerV",
+   "target": "s:11UIFnSwiftUI0A5PagerV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A5PagerV",
+   "target": "s:11UIFnSwiftUI0A5PagerV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A5PagerV",
+   "target": "s:11UIFnSwiftUI0A5PagerV"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A5PagerV",
+   "target": "s:7SwiftUI4ViewP",
+   "targetFallback": "SwiftUICore.View"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A5PagerV",
+   "target": "s:s8SendableP",
+   "targetFallback": "Swift.Sendable"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A5PagerV6HiddenV",
+   "target": "s:11UIFnSwiftUI0A5PagerV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A5PagerV6HiddenV",
+   "target": "s:11UIFnSwiftUI0A5PagerV6HiddenV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A5PagerV6HiddenV",
+   "target": "s:11UIFnSwiftUI0A5PagerV6HiddenV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A5PagerV6HiddenV",
+   "target": "s:11UIFnSwiftUI0A5PagerV6HiddenV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A5PagerV6HiddenV",
+   "target": "s:11UIFnSwiftUI0A5PagerV6HiddenV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A5PagerV6HiddenV",
+   "target": "s:11UIFnSwiftUI0A5PagerV6HiddenV"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A5PagerV6HiddenV",
+   "target": "s:7SwiftUI4ViewP",
+   "targetFallback": "SwiftUICore.View"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A5PagerV6HiddenV",
+   "target": "s:s8SendableP",
+   "targetFallback": "Swift.Sendable"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A5PagerV6HiddenV",
+   "target": "s:s15BitwiseCopyableP",
+   "targetFallback": "Swift.BitwiseCopyable"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A5PagerV6HiddenV4bodyQrvp",
+   "target": "s:11UIFnSwiftUI0A5PagerV6HiddenV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A5PagerV6HiddenVAEycfc",
+   "target": "s:11UIFnSwiftUI0A5PagerV6HiddenV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A5PagerV4bodyQrvp",
+   "target": "s:11UIFnSwiftUI0A5PagerV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A5PagerVACycfc",
+   "target": "s:11UIFnSwiftUI0A5PagerV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A6HostedV",
+   "target": "s:11UIFnSwiftUI0A6HostedV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A6HostedV",
+   "target": "s:11UIFnSwiftUI0A6HostedV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A6HostedV",
+   "target": "s:11UIFnSwiftUI0A6HostedV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A6HostedV",
+   "target": "s:11UIFnSwiftUI0A6HostedV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A6HostedV",
+   "target": "s:11UIFnSwiftUI0A6HostedV"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A6HostedV",
+   "target": "s:7SwiftUI19NSViewRepresentableP",
+   "targetFallback": "SwiftUI.NSViewRepresentable"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A6HostedV",
+   "target": "s:7SwiftUI4ViewP",
+   "targetFallback": "SwiftUICore.View"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A6HostedV",
+   "target": "s:s8SendableP",
+   "targetFallback": "Swift.Sendable"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A6HostedV10makeNSView7contextSo0F0C0bC00F20RepresentableContextVyACG_tF",
+   "target": "s:11UIFnSwiftUI0A6HostedV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A6HostedV12updateNSView_7contextySo0F0C_0bC00F20RepresentableContextVyACGtF",
+   "target": "s:11UIFnSwiftUI0A6HostedV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A6HostedVACycfc",
+   "target": "s:11UIFnSwiftUI0A6HostedV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI01_A3RowV",
+   "target": "s:11UIFnSwiftUI01_A3RowV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI01_A3RowV",
+   "target": "s:11UIFnSwiftUI01_A3RowV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI01_A3RowV",
+   "target": "s:11UIFnSwiftUI01_A3RowV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI01_A3RowV",
+   "target": "s:11UIFnSwiftUI01_A3RowV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI01_A3RowV",
+   "target": "s:11UIFnSwiftUI01_A3RowV"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI01_A3RowV",
+   "target": "s:7SwiftUI4ViewP",
+   "targetFallback": "SwiftUICore.View"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI01_A3RowV",
+   "target": "s:s8SendableP",
+   "targetFallback": "Swift.Sendable"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI01_A3RowV4bodyQrvp",
+   "target": "s:11UIFnSwiftUI01_A3RowV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI01_A3RowVACycfc",
+   "target": "s:11UIFnSwiftUI01_A3RowV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A7SpiCardV",
+   "target": "s:11UIFnSwiftUI0A7SpiCardV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A7SpiCardV",
+   "target": "s:11UIFnSwiftUI0A7SpiCardV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A7SpiCardV",
+   "target": "s:11UIFnSwiftUI0A7SpiCardV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A7SpiCardV",
+   "target": "s:11UIFnSwiftUI0A7SpiCardV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A7SpiCardV",
+   "target": "s:11UIFnSwiftUI0A7SpiCardV"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A7SpiCardV",
+   "target": "s:7SwiftUI4ViewP",
+   "targetFallback": "SwiftUICore.View"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A7SpiCardV",
+   "target": "s:s8SendableP",
+   "targetFallback": "Swift.Sendable"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A7SpiCardV4bodyQrvp",
+   "target": "s:11UIFnSwiftUI0A7SpiCardV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A7SpiCardVACycfc",
+   "target": "s:11UIFnSwiftUI0A7SpiCardV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A7DocCardV",
+   "target": "s:11UIFnSwiftUI0A7DocCardV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A7DocCardV",
+   "target": "s:11UIFnSwiftUI0A7DocCardV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A7DocCardV",
+   "target": "s:11UIFnSwiftUI0A7DocCardV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A7DocCardV",
+   "target": "s:11UIFnSwiftUI0A7DocCardV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A7DocCardV",
+   "target": "s:11UIFnSwiftUI0A7DocCardV"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A7DocCardV",
+   "target": "s:7SwiftUI4ViewP",
+   "targetFallback": "SwiftUICore.View"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A7DocCardV",
+   "target": "s:s8SendableP",
+   "targetFallback": "Swift.Sendable"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A7DocCardV4bodyQrvp",
+   "target": "s:11UIFnSwiftUI0A7DocCardV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A7DocCardVACycfc",
+   "target": "s:11UIFnSwiftUI0A7DocCardV"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A8InternalV",
+   "target": "s:s8SendableP",
+   "targetFallback": "Swift.Sendable"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A8InternalV",
+   "target": "s:s15BitwiseCopyableP",
+   "targetFallback": "Swift.BitwiseCopyable"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A8InternalV5InnerV",
+   "target": "s:11UIFnSwiftUI0A8InternalV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A8InternalV5InnerV",
+   "target": "s:11UIFnSwiftUI0A8InternalV5InnerV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A8InternalV5InnerV",
+   "target": "s:11UIFnSwiftUI0A8InternalV5InnerV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A8InternalV5InnerV",
+   "target": "s:11UIFnSwiftUI0A8InternalV5InnerV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A8InternalV5InnerV",
+   "target": "s:11UIFnSwiftUI0A8InternalV5InnerV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A8InternalV5InnerV",
+   "target": "s:11UIFnSwiftUI0A8InternalV5InnerV"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A8InternalV5InnerV",
+   "target": "s:7SwiftUI4ViewP",
+   "targetFallback": "SwiftUICore.View"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A8InternalV5InnerV",
+   "target": "s:s8SendableP",
+   "targetFallback": "Swift.Sendable"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A8InternalV5InnerV",
+   "target": "s:s15BitwiseCopyableP",
+   "targetFallback": "Swift.BitwiseCopyable"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A8InternalV5InnerV4bodyQrvp",
+   "target": "s:11UIFnSwiftUI0A8InternalV5InnerV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A8InternalV5InnerVAEycfc",
+   "target": "s:11UIFnSwiftUI0A8InternalV5InnerV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A8InternalVACycfc",
+   "target": "s:11UIFnSwiftUI0A8InternalV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A10RenderablePAAE8uifnGlowQryF",
+   "target": "s:11UIFnSwiftUI0A10RenderableP"
+  },
+  {
+   "kind": "requirementOf",
+   "source": "s:11UIFnSwiftUI0A6SizingP4sizeSiyF",
+   "target": "s:11UIFnSwiftUI0A6SizingP"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A6SizingPAAE11uifnDoubledSiyF",
+   "target": "s:11UIFnSwiftUI0A6SizingP"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A9DebugOnlyV",
+   "target": "s:11UIFnSwiftUI0A9DebugOnlyV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A9DebugOnlyV",
+   "target": "s:11UIFnSwiftUI0A9DebugOnlyV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A9DebugOnlyV",
+   "target": "s:11UIFnSwiftUI0A9DebugOnlyV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A9DebugOnlyV",
+   "target": "s:11UIFnSwiftUI0A9DebugOnlyV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A9DebugOnlyV",
+   "target": "s:11UIFnSwiftUI0A9DebugOnlyV"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A9DebugOnlyV",
+   "target": "s:7SwiftUI4ViewP",
+   "targetFallback": "SwiftUICore.View"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A9DebugOnlyV",
+   "target": "s:s8SendableP",
+   "targetFallback": "Swift.Sendable"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A9DebugOnlyV4bodyQrvp",
+   "target": "s:11UIFnSwiftUI0A9DebugOnlyV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A9DebugOnlyVACycfc",
+   "target": "s:11UIFnSwiftUI0A9DebugOnlyV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A6CRViewV",
+   "target": "s:11UIFnSwiftUI0A6CRViewV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A6CRViewV",
+   "target": "s:11UIFnSwiftUI0A6CRViewV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A6CRViewV",
+   "target": "s:11UIFnSwiftUI0A6CRViewV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A6CRViewV",
+   "target": "s:11UIFnSwiftUI0A6CRViewV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A6CRViewV",
+   "target": "s:11UIFnSwiftUI0A6CRViewV"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A6CRViewV",
+   "target": "s:7SwiftUI4ViewP",
+   "targetFallback": "SwiftUICore.View"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A6CRViewV",
+   "target": "s:s8SendableP",
+   "targetFallback": "Swift.Sendable"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A6CRViewV4bodyQrvp",
+   "target": "s:11UIFnSwiftUI0A6CRViewV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A6CRViewVACycfc",
+   "target": "s:11UIFnSwiftUI0A6CRViewV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI11ButtonStyleP04UIFnaB0AD0e4ChipD0VRszrlE04uifnF0AFvpZ::SYNTHESIZED::s:11UIFnSwiftUI0A9ChipStyleV",
+   "target": "s:11UIFnSwiftUI0A9ChipStyleV"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A9ChipStyleV",
+   "target": "s:7SwiftUI11ButtonStyleP",
+   "targetFallback": "SwiftUI.ButtonStyle"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A9ChipStyleV",
+   "target": "s:s8SendableP",
+   "targetFallback": "Swift.Sendable"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A9ChipStyleV8makeBody13configurationQr0bC006ButtonE13ConfigurationV_tF",
+   "target": "s:11UIFnSwiftUI0A9ChipStyleV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A9ChipStyleVACycfc",
+   "target": "s:11UIFnSwiftUI0A9ChipStyleV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A7IgnoredV",
+   "target": "s:11UIFnSwiftUI0A7IgnoredV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A7IgnoredV",
+   "target": "s:11UIFnSwiftUI0A7IgnoredV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A7IgnoredV",
+   "target": "s:11UIFnSwiftUI0A7IgnoredV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A7IgnoredV",
+   "target": "s:11UIFnSwiftUI0A7IgnoredV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A7IgnoredV",
+   "target": "s:11UIFnSwiftUI0A7IgnoredV"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A7IgnoredV",
+   "target": "s:7SwiftUI4ViewP",
+   "targetFallback": "SwiftUICore.View"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A7IgnoredV",
+   "target": "s:s8SendableP",
+   "targetFallback": "Swift.Sendable"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A7IgnoredV4bodyQrvp",
+   "target": "s:11UIFnSwiftUI0A7IgnoredV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A7IgnoredVACycfc",
+   "target": "s:11UIFnSwiftUI0A7IgnoredV"
+  }
+ ]
+}

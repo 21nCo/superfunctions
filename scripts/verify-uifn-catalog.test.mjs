@@ -10,7 +10,7 @@ import { CATALOG_SOURCE, EXPECTED_PRIMITIVE_NAMES } from '../uifn/catalog/src/ca
 import { compareGeneratedOutputs, createGeneratedOutputs, createSwiftUISurfaceInventory, stableStringify, validateCatalogSource, validateSwiftUIStatus, validateSwiftUISurfaceInventory, verifyGeneratedDirectory, verifySwiftUISurfaceDeclarations, writeGeneratedOutputs } from '../uifn/catalog/src/compiler.mjs';
 import { migrateCatalogDocument } from '../uifn/catalog/src/migrations.mjs';
 import { SWIFTUI_STATUS_SOURCE, SWIFTUI_STATUSES } from '../uifn/catalog/src/swiftui-status.mjs';
-import { readSwiftUISymbolGraphs, swiftUIDeclarationsFromSymbolGraphs } from '../uifn/catalog/src/swiftui-symbol-graph.mjs';
+import { readSwiftUISymbolGraphs, swiftUIDeclarationsFromSymbolGraphs, uncoveredSwiftConditions } from '../uifn/catalog/src/swiftui-symbol-graph.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fixtureRoot = path.join(repoRoot, 'uifn/catalog/fixtures/negative');
@@ -187,9 +187,12 @@ async function committedDeclarations() {
   return validateSwiftUISurfaceInventory(JSON.parse(await readFile(inventoryPath, 'utf8')));
 }
 
-// The macOS and iOS-simulator graphs swiftc emits for fixtures/swiftui-symbol-graph/sources.
+// The macOS debug and iOS device release graphs swiftc emits for
+// fixtures/swiftui-symbol-graph/sources.
+const fixturePlatforms = ['macos-debug', 'ios-release'];
+
 async function fixtureGraphs() {
-  return Promise.all(['macos', 'ios-simulator'].map((platform) => readSwiftUISymbolGraphs(path.join(symbolGraphRoot, platform))));
+  return Promise.all(fixturePlatforms.map((platform) => readSwiftUISymbolGraphs(path.join(symbolGraphRoot, platform))));
 }
 
 async function fixtureInventory() {
@@ -251,7 +254,13 @@ test('the compiler symbol graphs give every public declaration in Styles and Com
     // After a line comment that ends at a carriage return.
     { id: 'UIFnCRView', kind: 'component', source: at('Styles/UIFnCR.swift') },
     { id: 'UIFnChipStyle', kind: 'style', source: at('Styles/UIFnCR.swift') },
+    // #if DEBUG, in the debug build only.
+    { id: 'UIFnDebugOnly', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    // #if os(iOS) && !targetEnvironment(simulator).
+    { id: 'UIFnDeviceOnly', kind: 'component', source: at('Components/UIFnProbe.swift') },
     { id: 'UIFnDim', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    // @_documentation(visibility: internal) is still public.
+    { id: 'UIFnDocCard', kind: 'component', source: at('Components/UIFnProbe.swift') },
     { id: 'UIFnFlow', kind: 'unclassified', source: at('Components/UIFnProbe.swift') },
     // The iOS UIViewRepresentable and the macOS NSViewRepresentable.
     { id: 'UIFnHosted', kind: 'component', source: at('Components/UIFnProbe.swift') },
@@ -260,21 +269,33 @@ test('the compiler symbol graphs give every public declaration in Styles and Com
     // Declared only in the #if os(iOS) branch.
     { id: 'UIFnPhoneOnly', kind: 'component', source: at('Components/UIFnProbe.swift') },
     { id: 'UIFnPlaceholder', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    // #else of #if DEBUG, in the release build only.
+    { id: 'UIFnReleaseOnly', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    // Members of extensions of UIFnSwiftUI protocols: a View modifier for a
+    // protocol refining View, unclassified otherwise.
+    { id: 'UIFnRenderable.uifnGlow', kind: 'component', source: at('Components/UIFnProbe.swift') },
     { id: 'UIFnRing', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    { id: 'UIFnSizing.uifnDoubled', kind: 'unclassified', source: at('Components/UIFnProbe.swift') },
+    // @_spi and an underscored name are public API too.
+    { id: 'UIFnSpiCard', kind: 'component', source: at('Components/UIFnProbe.swift') },
     { id: 'UIFnWorker', kind: 'unclassified', source: at('Components/UIFnProbe.swift') },
+    { id: '_UIFnRow', kind: 'component', source: at('Components/UIFnProbe.swift') },
     // public nonisolated(unsafe) static var in extension View.
     { id: 'uifnDefault', kind: 'component', source: at('Components/UIFnProbe.swift') },
     { id: 'uifnDim', kind: 'component', source: at('Components/UIFnProbe.swift') },
     { id: 'uifnMakeView', kind: 'unclassified', source: at('Components/UIFnProbe.swift') },
     { id: 'uifnStyled', kind: 'unclassified', source: at('Styles/UIFnCR.swift') },
   ]);
-  // Not declarations: internal and commented-out types, protocols, a plain
-  // enum, Tokens, ButtonStyle.uifnChip (Self == UIFnChipStyle) and the copies
-  // of uifnDim the graph adds to each view.
+  // Not declarations: internal and commented-out types, a public type nested
+  // in an internal one (UIFnInternal.Inner), protocols and their
+  // requirements, a plain enum, Tokens, ButtonStyle.uifnChip (Self ==
+  // UIFnChipStyle) and the copies of uifnDim the graph adds to each view.
   const [mac, ios] = await fixtureGraphs();
+  const has = (graphs, id) => graphs[0].symbols.some((symbol) => symbol.pathComponents.join('.') === id);
   assert.ok(mac[0].symbols.some((symbol) => symbol.identifier.precise.includes('::SYNTHESIZED::') && symbol.pathComponents.at(-1).startsWith('uifnDim')));
-  assert.ok(ios[0].symbols.some((symbol) => symbol.pathComponents.join('.') === 'UIFnPhoneOnly'));
-  assert.ok(!mac[0].symbols.some((symbol) => symbol.pathComponents.join('.') === 'UIFnPhoneOnly'));
+  assert.ok(has(mac, 'UIFnInternal.Inner') && has(mac, 'UIFnSizing.size()'));
+  for (const id of ['UIFnPhoneOnly', 'UIFnDeviceOnly', 'UIFnReleaseOnly']) assert.ok(has(ios, id) && !has(mac, id), id);
+  assert.ok(has(mac, 'UIFnDebugOnly') && !has(ios, 'UIFnDebugOnly'));
   // Each one has to be listed: unlisted it is drift against the real lists.
   const real = await committedDeclarations();
   for (const declaration of inventory.declarations) {
@@ -309,6 +330,24 @@ test('a declared name or path the lists cannot hold fails closed', async () => {
   }
 });
 
+test('an #if condition the inventory builds do not cover is reported', () => {
+  const text = [
+    '#if os(iOS) && !targetEnvironment(simulator)',
+    '#elseif canImport(AppKit) // macOS',
+    '  #if !DEBUG',
+    '#if os(tvOS)',
+    '#if swift(>=6)',
+    '#if UIFN_EXPERIMENTAL',
+    '#else',
+    '#endif',
+  ].join('\r\n');
+  assert.deepEqual(uncoveredSwiftConditions(text), [
+    { line: 4, condition: 'os(tvOS)' },
+    { line: 5, condition: 'swift(>=6)' },
+    { line: 6, condition: 'UIFN_EXPERIMENTAL' },
+  ]);
+});
+
 test('the committed inventory is canonical and the verifier rejects a malformed one', async () => {
   const text = await readFile(inventoryPath, 'utf8');
   const committed = JSON.parse(text);
@@ -330,7 +369,7 @@ test('the committed inventory is canonical and the verifier rejects a malformed 
 
 test('the inventory script reports a stale inventory from symbol graphs', async () => {
   const run = (directories) => spawnSync(process.execPath, [path.join(repoRoot, 'scripts/uifn-swiftui-inventory.mjs'), '--symbol-graphs', ...directories], { encoding: 'utf8' });
-  const stale = run(['macos', 'ios-simulator'].map((platform) => path.join(symbolGraphRoot, platform)));
+  const stale = run(fixturePlatforms.map((platform) => path.join(symbolGraphRoot, platform)));
   assert.equal(stale.status, 1);
   const report = JSON.parse(stale.stderr);
   assert.equal(report.code, 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');

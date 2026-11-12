@@ -3,7 +3,6 @@
   "name": "UIFnSwiftUI",
   "platform": {
    "architecture": "arm64",
-   "environment": "simulator",
    "vendor": "apple",
    "operatingSystem": {
     "name": "ios",
