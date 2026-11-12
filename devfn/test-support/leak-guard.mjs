@@ -147,25 +147,37 @@ function listLinux() {
   let uptime;
   try { uptime = Number(readFileSync("/proc/uptime", "utf8").split(" ")[0]); } catch { uptime = undefined; }
   const processes = [];
+  // A read of one of a process's files gives its text; null once the process has exited (ENOENT,
+  // ESRCH); undefined when it is another user's (EACCES, EPERM), which the guard cannot have
+  // started. Any other failure (EIO, EMFILE, say) fails the listing: the process it was reading
+  // may still run, with what ties it to the run unread.
+  let failed = false;
+  const read = (pid, file, link = false) => {
+    try { return link ? readlinkSync(`/proc/${pid}/${file}`) : readFileSync(`/proc/${pid}/${file}`, "utf8"); } catch (error) {
+      if (["ENOENT", "ESRCH"].includes(error?.code)) return null;
+      if (!["EACCES", "EPERM"].includes(error?.code)) failed = true;
+      return undefined;
+    }
+  };
   for (const name of names) {
     if (!/^\d+$/.test(name)) continue;
     const pid = Number(name);
-    let stat;
-    try { stat = readFileSync(`/proc/${pid}/stat`, "utf8"); } catch { continue; }
+    const stat = read(pid, "stat");
+    if (failed) return undefined;
+    if (!stat) continue;
     // A stat read but not well formed fails the listing: the process it names may still run.
     const parsed = parseStat(stat);
     if (parsed?.pid !== pid) return undefined;
     if (parsed.zombie) continue;
     // Arguments and variables stay NUL-separated, so a value with a space in it stays one value.
-    const read = (file) => { try { return readFileSync(`/proc/${pid}/${file}`, "utf8"); } catch { return ""; } };
-    const argv = read("cmdline");
-    let cwd;
-    try { cwd = readlinkSync(`/proc/${pid}/cwd`); } catch { /* another user's process */ }
+    const [argv, environment, cwd] = [read(pid, "cmdline"), read(pid, "environ"), read(pid, "cwd", true)];
+    if (failed) return undefined;
+    if ([argv, environment, cwd].includes(null)) continue;
     const { ppid, pgid, started } = parsed;
     const elapsed = uptime === undefined ? undefined : Math.max(0, Math.floor(uptime - started / linuxClockTicks()));
     // `command` is the arguments joined with spaces, for reports and matching a program name.
     // `started`, field 22 of stat, tells this process from a later one given its ID (stillRunning).
-    processes.push({ pid, ppid, pgid, elapsed, started, command: argv.replaceAll("\0", " ").trim(), argv, environment: read("environ"), separated: true, cwd });
+    processes.push({ pid, ppid, pgid, elapsed, started, command: (argv ?? "").replaceAll("\0", " ").trim(), argv: argv ?? "", environment: environment ?? "", separated: true, cwd });
   }
   return processes;
 }
@@ -733,6 +745,9 @@ const IDENTITY_TRIES = 3;
  */
 async function stopRounds(processes, find, held = new Map()) {
   const deadline = Date.now() + STOP_DEADLINE_MS;
+  // Each process given or listed is held from the start, so a read that later fails or leaves it out does not lose it.
+  const register = (entries) => { for (const entry of entries) if (!held.get(keyOf(entry))?.unresolvedGroup) held.set(keyOf(entry), entry); };
+  register(processes);
   // Only a process signalled is waited for: one the guard did not signal has no reason to exit now.
   await waitForExit(signalAll(processes, "SIGTERM", held), STOP_GRACE_MS);
   for (let pending = processes, idle = 0; ;) {
@@ -740,6 +755,7 @@ async function stopRounds(processes, find, held = new Map()) {
     const signalled = signalAll(pending, "SIGKILL", held);
     await waitForExit(signalled, STOP_GRACE_MS);
     const listed = (find && find()) ?? pending.filter((entry) => mayRun(entry));
+    register(listed);
     idle = signalled.length === 0 && sameProcesses(listed, pending) ? idle + 1 : 0;
     if (!find || listed.length === 0 || Date.now() >= deadline || idle >= IDENTITY_TRIES) {
       return { listed, refused: idle >= IDENTITY_TRIES, remaining: resolveHeld(held, listed) };
@@ -1056,9 +1072,14 @@ export async function setup(project) {
     // A cancelling runner may SIGKILL this process shortly after its signal, so there is no grace.
     // SIGKILL leaves a process no time to start another, but one may have just started; the
     // listing is taken again, a bounded number of times, to stop it too.
-    for (let round = 0, pending = find(); pending.length > 0 && round < EXIT_ROUNDS; round += 1) {
+    // The first round also reaches the group of each leader an interrupted stop holds, so that a
+    // process recorded in it that outlives the leader is stopped through it (signalAll), never on its own.
+    let reach = attempt(() => [...state.held.values()].filter((entry) => entry.pgid === entry.pid)) ?? [];
+    for (let round = 0, pending = find(); (pending.length > 0 || reach.length > 0) && round < EXIT_ROUNDS; round += 1) {
       for (const entry of pending) owned.set(keyOf(entry), entry);
-      attempt(() => signalAll(pending, "SIGKILL", state.held));
+      const targets = [...pending, ...reach.filter((entry) => !owned.has(keyOf(entry)))];
+      reach = [];
+      attempt(() => signalAll(targets, "SIGKILL", state.held));
       sleepSync(100);
       if (round + 1 < EXIT_ROUNDS) pending = find();
     }

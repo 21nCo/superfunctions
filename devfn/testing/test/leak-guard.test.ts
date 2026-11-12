@@ -581,6 +581,34 @@ process.on("SIGTERM", () => {
 });
 setInterval(() => {}, 1000);`;
 
+  // A leader whose group holds a process found only through it, which runs from "/" and outlives
+  // SIGTERM. The leader exits on SIGTERM; 300 ms after SIGTERM, that process interrupts the run.
+  const leaderOfInterrupter = `const [dir, main] = process.argv.slice(1);
+const script = "process.on('SIGTERM', () => setTimeout(() => process.kill(" + main + ", 'SIGTERM'), 300)); setInterval(() => {}, 1000)";
+const member = require("node:child_process").spawn(process.execPath, ["-e", script], { stdio: "ignore", cwd: "/", env: { PATH: process.env.PATH } });
+process.on("SIGTERM", () => process.exit(0));
+setTimeout(() => require("node:fs").writeFileSync(require("node:path").join(dir, "member.pid"), String(member.pid)), 300);
+setInterval(() => {}, 1000);`;
+
+  it("stops, through its group, a process its stop saw in a leader's group when the run is interrupted after the leader exits", async () => {
+    const { dir, record } = project(`test("leaves a leader whose group holds a process found only through it", async () => {
+  const pid = ${orphan("process.env.SFN_TEST_LEAK_GUARD_ROOT", ['"-e"', JSON.stringify(leaderOfInterrupter), "process.cwd()", "process.env.SFN_TEST_LEAK_GUARD_MAIN_PID"])};
+  while (!existsSync("member.pid")) await sleep(20);
+  record({ pid, child: Number(readFileSync("member.pid", "utf8")) });
+}, 10_000);`);
+    let member: number | undefined;
+    try {
+      const { code, output, recorded } = await runProject(dir, record);
+      member = recorded.child;
+      expect(code, output).not.toBe(0);
+      expect(output).toContain("DevFn test leak guard: This interrupted test run left these behind.");
+      expect(await gone(member!)).toBe(true);
+      expect(alive(recorded.pid!)).toBe(false);
+    } finally {
+      if (member) try { process.kill(member, "SIGKILL"); } catch { /* already gone */ }
+    }
+  });
+
   it("names a process its stop held in an exited leader's group when the run is interrupted before its teardown ends", async () => {
     // The leader's stop holds the process in its group, never signalled. The teardown then waits for
     // a process it can only report to exit, and the interruption lands in that wait.
@@ -1379,6 +1407,42 @@ process.stdin.resume();`);
     expect(alive(pid)).toBe(true);
   });
 
+  it("keeps returning a process it was given whose start cannot be read, though a listing no longer shows it", async () => {
+    const { pid: leader } = await start(`process.stdout.write("ready\\n"); setInterval(() => {}, 1000);`);
+    const { pid } = await start(ignoresSigterm);
+    // Listed as a process of another group, it would be signalled on its own.
+    const entry = { ...listed(pid), pgid: leader };
+    alterStartReads(pid, "unreadable");
+    expect((await stopProcesses([entry], () => [])).map((left) => left.pid)).toEqual([pid]);
+    expect(alive(pid)).toBe(true);
+  });
+
+  it.runIf(process.platform === "linux")("fails a listing when a process's file cannot be read for any reason but that it has exited or is another user's", async () => {
+    const { pid } = await start(`process.stdout.write("ready\\n"); setInterval(() => {}, 1000);`);
+    const { readFileSync, readlinkSync } = fs;
+    let failing: [string, string] | undefined;
+    const fail = (target: unknown) => {
+      if (failing && target === `/proc/${pid}/${failing[0]}`) throw Object.assign(new Error("reading failed (test)"), { code: failing[1] });
+    };
+    (fs as { readFileSync: unknown }).readFileSync = (target: unknown, ...rest: unknown[]) => { fail(target); return (readFileSync as (...all: unknown[]) => unknown)(target, ...rest); };
+    (fs as { readlinkSync: unknown }).readlinkSync = (target: unknown, ...rest: unknown[]) => { fail(target); return (readlinkSync as (...all: unknown[]) => unknown)(target, ...rest); };
+    syncBuiltinESMExports();
+    restore = () => {
+      Object.assign(fs, { readFileSync, readlinkSync });
+      syncBuiltinESMExports();
+    };
+    for (const file of ["stat", "cmdline", "environ", "cwd"]) {
+      failing = [file, "EIO"];
+      expect(listProcesses(Date.now()), `${file} EIO`).toBeUndefined();
+    }
+    // Another user's process: listed, without what could not be read.
+    failing = ["environ", "EACCES"];
+    expect(listProcesses(Date.now())?.find((entry) => entry.pid === pid)?.environment).toBe("");
+    // A process that has exited is left out.
+    failing = ["cmdline", "ENOENT"];
+    expect(listProcesses(Date.now())?.some((entry) => entry.pid === pid)).toBe(false);
+  });
+
   it("reads a start that could not be read again, and stops the process once a read shows it is the one listed", async () => {
     const { pid } = await start(ignoresSigterm);
     const entry = listed(pid);
@@ -1602,13 +1666,16 @@ setInterval(() => {}, 1000);`;
     expect(alive(member)).toBe(true);
   });
 
-  it("keeps returning a process it saw in the group of a leader still itself while both survive SIGKILL to that group", async () => {
+  it.each([
+    ["with no listing", undefined],
+    ["with a listing that does not show them", () => []],
+  ])("keeps returning a process it saw in the group of a leader still itself while both survive SIGKILL to that group, %s", async (_, find) => {
     const { pid: leader, output } = await start(leaderOfSurvivor);
     const member = Number(output().trim());
     pids.push(member);
     const entry = listed(leader);
     refuseGroupSignals(leader);
-    expect((await stopProcesses([entry])).map((left) => left.pid).sort()).toEqual([leader, member].sort());
+    expect((await stopProcesses([entry], find)).map((left) => left.pid).sort()).toEqual([leader, member].sort());
     expect(alive(member)).toBe(true);
   });
 
