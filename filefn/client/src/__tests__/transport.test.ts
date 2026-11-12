@@ -190,6 +190,95 @@ describe('client transport options', () => {
     expect(put.credentials).toBe(toFileFn ? 'include' : 'omit');
   });
 
+  it('lets request headers replace auth headers of any case on API requests', async () => {
+    const server = createFakeServer((n) => `/upload/sess_1/parts/${n}`);
+    const http = createHttpClient({
+      baseUrl: BASE,
+      fetch: server.fetch,
+      getAuthHeaders: () => ({
+        'CONTENT-TYPE': 'text/x-auth',
+        'X-Upload-Session-Token': 'stale',
+        'x-csrf-token': 'csrf-1',
+      }),
+    });
+
+    await http.signPart('sess_1', 1, 5, 'upls_1');
+
+    const init = vi.mocked(server.fetch).mock.calls[0][1]!;
+    expect(init.headers).toEqual({
+      'x-csrf-token': 'csrf-1',
+      'Content-Type': 'application/json',
+      'x-upload-session-token': 'upls_1',
+    });
+  });
+
+  it('lets signed part headers and the session token replace auth headers of any case on proxy uploads', async () => {
+    const server = createFakeServer((n) => `/upload/sess_1/parts/${n}`);
+    const http = createHttpClient({
+      baseUrl: BASE,
+      fetch: server.fetch,
+      getAuthHeaders: () => ({
+        'Content-Type': 'application/json',
+        'X-UPLOAD-SESSION-TOKEN': 'stale',
+        'x-csrf-token': 'csrf-1',
+      }),
+    });
+
+    await http.uploadPartToSignedUrl(
+      '/upload/sess_1/parts/1',
+      { 'content-type': 'text/plain' },
+      tenBytes(),
+      'upls_1',
+    );
+
+    const init = vi.mocked(server.fetch).mock.calls[0][1]!;
+    expect(init.headers).toEqual({
+      'x-csrf-token': 'csrf-1',
+      'content-type': 'text/plain',
+      'x-upload-session-token': 'upls_1',
+    });
+  });
+
+  it('aborts an upload through the injected fetch with auth headers and credentials', async () => {
+    const fetchImpl = vi.fn(async () => envelope({ status: 'aborted' }));
+    const http = createHttpClient({
+      baseUrl: BASE,
+      fetch: fetchImpl as unknown as typeof fetch,
+      credentials: 'include',
+      getAuthHeaders: () => ({ 'x-csrf-token': 'csrf-1' }),
+    });
+
+    await http.abortUpload('sess_1', 'upls_1');
+
+    expect(globalFetch).not.toHaveBeenCalled();
+    expect(fetchImpl).toHaveBeenCalledWith(`${BASE}/upload/sess_1/abort`, expect.objectContaining({
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'x-csrf-token': 'csrf-1', 'x-upload-session-token': 'upls_1' },
+    }));
+  });
+
+  it.each([
+    ['/upload/sess_1/parts/1', true],
+    ['/api/files/upload/sess_1/parts/1', true],
+    [PRESIGNED, false],
+  ])('matches part URL %s against a relative baseUrl without a page location (%s)', async (url, toFileFn) => {
+    expect(globalThis.location).toBeUndefined();
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 200, headers: { ETag: '"e"' } }));
+    const http = createHttpClient({
+      baseUrl: '/api/files',
+      fetch: fetchImpl as unknown as typeof fetch,
+      credentials: 'include',
+      getAuthHeaders: () => ({ Authorization: 'Bearer secret' }),
+    });
+
+    await http.uploadPartToSignedUrl(url, { 'content-type': 'text/plain' }, tenBytes());
+
+    const init = (fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1];
+    expect(new Headers(init.headers).get('authorization')).toBe(toFileFn ? 'Bearer secret' : null);
+    expect(init.credentials).toBe(toFileFn ? 'include' : 'omit');
+  });
+
   it('defaults to the global fetch, resolved per request, and same-origin credentials', async () => {
     const client = createFileFnClient({ baseUrl: BASE });
     const lateFetch = vi.fn(async () => envelope({ fileId: 'file_1' }));

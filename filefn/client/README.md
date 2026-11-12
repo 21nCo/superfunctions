@@ -26,7 +26,7 @@ const { fileId, versionId } = await upload.done();
 | `credentials` | `'same-origin'` | `RequestCredentials` mode for requests sent to FileFn. |
 | `getAuthHeaders` | none | Headers added to every request sent to FileFn. Called for each request and each retry attempt. |
 
-When `fetch` and `getAuthHeaders` are both given, the headers from `getAuthHeaders` are merged onto every request passed to that fetch. Request-specific headers (`Content-Type`, signed part headers, `x-upload-session-token`) are applied after them. Leaving out every option keeps the previous behavior: the global `fetch` with `same-origin` credentials.
+When `fetch` and `getAuthHeaders` are both given, the headers from `getAuthHeaders` are merged onto every request passed to that fetch. Request-specific headers (the JSON `Content-Type`, signed part headers, `x-upload-session-token`) are applied after them and replace an auth header with the same name in any letter case. Leaving out every option keeps the previous behavior: the global `fetch` with `same-origin` credentials.
 
 The injected `fetch` is called without a `this` binding, so `window.fetch` can be passed directly. If no `fetch` is given, the global `fetch` is looked up when each request is sent.
 

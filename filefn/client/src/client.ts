@@ -164,6 +164,26 @@ function resolveTransport(config: FileFnClientConfig): {
   };
 }
 
+/**
+ * Merges header records from left to right. Header names are
+ * case-insensitive, so a later source replaces an earlier header whatever its
+ * casing, and the later source's spelling of the name is kept. Callers pass
+ * the auth headers first so request-specific headers (JSON Content-Type,
+ * signed part headers, x-upload-session-token) always win.
+ */
+function mergeHeaders(
+  ...sources: Array<Record<string, string> | undefined>
+): Record<string, string> {
+  const merged = new Map<string, [name: string, value: string]>();
+  for (const source of sources) {
+    if (!source) continue;
+    for (const [name, value] of Object.entries(source)) {
+      merged.set(name.toLowerCase(), [name, value]);
+    }
+  }
+  return Object.fromEntries(merged.values());
+}
+
 function resolveUrl(url: string): URL | undefined {
   const pageUrl =
     typeof globalThis.location?.href === "string" ? globalThis.location.href : undefined;
@@ -238,19 +258,8 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
     return { rawBody: "", parsedBody: undefined, isJson: false };
   }
 
-  async function getHeaders(includeJsonContentType = false): Promise<Record<string, string>> {
-    const headers: Record<string, string> = {};
-
-    if (includeJsonContentType) {
-      headers["Content-Type"] = "application/json";
-    }
-
-    if (config.getAuthHeaders) {
-      const authHeaders = await config.getAuthHeaders();
-      Object.assign(headers, authHeaders);
-    }
-
-    return headers;
+  async function readAuthHeaders(): Promise<Record<string, string> | undefined> {
+    return config.getAuthHeaders ? await config.getAuthHeaders() : undefined;
   }
 
   async function request<T>(
@@ -264,10 +273,11 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
     return withRetry(
       async () => {
         const hasJsonBody = body !== undefined;
-        const headers = await getHeaders(hasJsonBody);
-        if (extraHeaders) {
-          Object.assign(headers, extraHeaders);
-        }
+        const headers = mergeHeaders(
+          await readAuthHeaders(),
+          hasJsonBody ? { "Content-Type": "application/json" } : undefined,
+          extraHeaders,
+        );
         const response = await transport.send(`${baseUrl}${path}`, {
           method,
           headers,
@@ -456,11 +466,11 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
           // URL) gets only its signed headers and never ambient credentials.
           const toFileFn = isFileFnUrl(finalUrl);
 
-          const requestHeaders = {
-            ...(toFileFn ? await getHeaders() : {}),
-            ...headers,
-            ...(uploadSessionToken ? { "x-upload-session-token": uploadSessionToken } : {}),
-          };
+          const requestHeaders = mergeHeaders(
+            toFileFn ? await readAuthHeaders() : undefined,
+            headers,
+            uploadSessionToken ? { "x-upload-session-token": uploadSessionToken } : undefined,
+          );
           const response = await transport.send(finalUrl, {
             method: "PUT",
             headers: requestHeaders,
