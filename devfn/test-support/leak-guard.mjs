@@ -260,18 +260,28 @@ function normalPath(value) {
 
 const DOT_DOT = /(?:^|\/)\.\.(?:\/|$)/;
 
-/**
- * The path `raw` names (see normalPath) when it is at or under `root`, spelled from `root`, or
- * undefined. A `..` resolved through a link gives the real spelling, such as macOS's /private/var
- * for /var, so that path is compared with each spelling of `root`.
- */
-function pathUnder(raw, root) {
-  const value = normalPath(raw);
-  if (value === undefined) return undefined;
-  if (isPathUnder(value, root)) return value;
-  if (!DOT_DOT.test(raw)) return undefined;
+/** `value` spelled from `root` when it is at or under one of root's spellings, else undefined. */
+function respelled(value, root) {
+  if (value === undefined || isPathUnder(value, root)) return value;
   const alias = pathAliases(root).find((spelling) => isPathUnder(value, spelling));
   return alias === undefined ? undefined : `${root}${value.slice(alias.length)}`;
+}
+
+/**
+ * The path at or under `root`, spelled from `root`, that `raw` names, or undefined. A `..` may
+ * be read two ways: as the system resolves it (normalPath), and as a program such as Node resolves
+ * its script, lexically. When only one reading is under `root`, as with `<root>/link/../x` or
+ * `<root>/missing/../x`, the path is `ambiguous`: reported, never signalled on its own.
+ */
+function pathUnder(raw, root) {
+  if (!DOT_DOT.test(raw)) {
+    const value = normalPath(raw);
+    return isPathUnder(value, root) ? { path: value, ambiguous: false } : undefined;
+  }
+  const resolved = respelled(normalPath(raw), root);
+  const lexical = respelled(trimTrailingSlashes(path.posix.normalize(raw)), root);
+  if (resolved === undefined && lexical === undefined) return undefined;
+  return { path: resolved ?? lexical, ambiguous: resolved !== lexical };
 }
 
 /** The values of a NUL-separated /proc listing that may be paths. */
@@ -293,7 +303,7 @@ function separatedValues(text, environment) {
  * which may name a sibling, such as `<root> copy` in `<root> copy --flag` or `PWD=<root> copy HOME=`.
  */
 function namedPaths(text, root, { separated = false, environment = false } = {}) {
-  if (separated) return separatedValues(text, environment).flatMap((raw) => { const value = pathUnder(raw, root); return value === undefined ? [] : [{ path: value, ambiguous: false }]; });
+  if (separated) return separatedValues(text, environment).flatMap((raw) => { const named = pathUnder(raw, root); return named === undefined ? [] : [named]; });
   const paths = [];
   for (let at = text.indexOf(root); at !== -1; at = text.indexOf(root, at + 1)) {
     let start = at;
@@ -302,7 +312,7 @@ function namedPaths(text, root, { separated = false, environment = false } = {})
     // From the end of `root`, so a root with a space in it still matches.
     let end = at + root.length;
     while (end < text.length && !SEPARATOR.test(text[end]) && text[end] !== LIST_SEPARATOR) end += 1;
-    const value = pathUnder(text.slice(at, end), root);
+    const value = pathUnder(text.slice(at, end), root)?.path;
     const cut = end === at + root.length && end < text.length;
     if (value !== undefined) paths.push({ path: value, ambiguous: true, cut, besides: cut ? continuations(text, at, end) : [] });
   }

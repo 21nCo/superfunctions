@@ -43,7 +43,9 @@ calls `guardTestFile` as a setup file.
   environment or working directory names a path under a root only through a complete path
   value equal to the root or starting with `root/`, once its `.` and `..` segments are
   resolved as the system resolves them (`..` through a symbolic link goes up from the
-  link's target), so `<root>/../x` is not under the root. On Linux,
+  link's target), so `<root>/../x` is not under the root. A `..` value that is under the
+  root only as written (as Node resolves a script) or only as the system resolves it, such
+  as `<root>/link/../x` or `<root>/missing/../x`, is reported but never signalled on its own. On Linux,
   `/proc` keeps each argument and variable whole, NUL-separated, so a value is a whole
   argument (after a `KEY=` or `--option=` prefix and `file://`) or a whole variable's
   value; only a variable known to hold a list (`PATH`, `NODE_PATH`, `LD_LIBRARY_PATH`...) is split at

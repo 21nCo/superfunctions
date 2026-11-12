@@ -193,20 +193,22 @@ describe("pathsNamedUnder", () => {
     expect(attributeProcesses(corroborated, { roots: [run], marker: "SFN_TEST_LEAK_GUARD_RUN=x", vouch: ({ pid }) => pid === 9_000_413 })).toEqual({ owned: corroborated, ambiguous: [] });
   });
 
-  it("resolves '.' and '..' in a path value before deciding that it is under the root, and names no path the system could not follow", () => {
+  it("resolves '.' and '..' in a path value before deciding that it is under the root, and reports, but never owns, one the system could not follow", () => {
     const linux = (pid: number, argv: string, environment = "") => ({ pid, ppid: 1, pgid: pid, elapsed: 0, command: argv.replaceAll("\0", " ").trim(), argv, environment, separated: true, cwd: "/" });
     const macos = (pid: number, command: string, environment = "") => ({ pid, ppid: 1, pgid: pid, elapsed: 0, command, environment, cwd: undefined });
     const outside = [
       linux(9_000_501, `node\0${root}/../other/server.mjs\0`), linux(9_000_502, "node\0", `TMPDIR=${root}/../other\0`),
       macos(9_000_503, `node ${root}/../other/x`), macos(9_000_504, "node", `TMPDIR=${root}/./../other`),
     ];
-    // Through a missing directory or a file, which the system cannot go up from.
+    // Through a missing directory or a file, which the system cannot go up from, but Node, which
+    // resolves its script lexically, would run under the root.
     const unresolved = [
       linux(9_000_511, `node\0${root}/a/../b/x\0`), macos(9_000_512, `node ${root}/a/../b/x`),
       linux(9_000_513, `node\0/dev/null/../..${root}/server.mjs\0`), linux(9_000_514, "node\0", `TMPDIR=/dev/null/../..${root}\0`),
-      macos(9_000_515, `node /dev/null/../..${root}/server.mjs`),
     ];
-    expect(attributeProcesses([...outside, ...unresolved], { roots: [root] })).toEqual({ owned: [], ambiguous: [] });
+    // A macOS listing cannot show where a value starting with /dev/null starts, so it names no root there.
+    const unlisted = macos(9_000_515, `node /dev/null/../..${root}/server.mjs`);
+    expect(attributeProcesses([...outside, ...unresolved, unlisted], { roots: [root] })).toEqual({ owned: [], ambiguous: unresolved });
     expect(pathsNamedUnder(`node ${root}/./b//c/`, root)).toEqual([`${root}/b/c`]);
   });
 
@@ -220,14 +222,16 @@ describe("pathsNamedUnder", () => {
     const linux = (pid: number, argv: string, environment = "") => ({ pid, ppid: 1, pgid: pid, elapsed: 0, command: argv.replaceAll("\0", " ").trim(), argv, environment, separated: true, cwd: "/" });
     const macos = (pid: number, command: string) => ({ pid, ppid: 1, pgid: pid, elapsed: 0, command, environment: "", cwd: undefined });
     // <run>/link/.. is the outside folder, not <run>.
-    const outsideRun = [
+    // Under the run only as written: through the link the system goes up outside it, and it cannot
+    // go up from a file or a missing directory. Reported, never owned.
+    const disputed = [
       linux(9_000_601, `node\0${run}/link/../x\0`), linux(9_000_602, "node\0", `TMPDIR=${run}/link/..\0`), macos(9_000_603, `node ${run}/link/../x`),
-      // Not paths at all: the system cannot go up from a file or a missing directory.
       linux(9_000_604, `node\0${run}/file.txt/../x\0`), linux(9_000_605, "node\0", `TMPDIR=${run}/file.txt/..\0`), linux(9_000_606, `node\0${run}/missing/../x\0`),
       macos(9_000_607, `node ${run}/file.txt/../x`),
     ];
+    const outsideRun = [linux(9_000_608, `node\0${run}/real/../../x\0`), linux(9_000_609, `node\0${run}/link/../../x\0`)];
     const inside = [linux(9_000_611, `node\0${run}/real/../x\0`), linux(9_000_612, "node\0", `TMPDIR=${run}/real/./..\0`), macos(9_000_613, `node ${run}/real/../x`)];
-    expect(attributeProcesses([...outsideRun, ...inside], { roots: pathAliases(run) })).toEqual({ owned: inside.slice(0, 2), ambiguous: inside.slice(2) });
+    expect(attributeProcesses([...disputed, ...outsideRun, ...inside], { roots: pathAliases(run) })).toEqual({ owned: inside.slice(0, 2), ambiguous: [...disputed, inside[2]] });
   });
 
   it("decides which processes name a path under a run or registered directory on complete path values, and owns from a macOS listing only by working directory", () => {
