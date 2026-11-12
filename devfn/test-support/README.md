@@ -37,9 +37,12 @@ calls `guardTestFile` as a setup file.
   still going attributes to itself are not listed. Nor is one whose path is only in a
   checkout nested in the worktree (such as `.worktrees/<task>` under the main checkout) or
   in a sibling directory whose name merely starts with the worktree's (`repo-dev-42` beside
-  `repo`), nor, in a macOS listing, one that names only the worktree itself cut short at a
-  space, quote or `:` (as `repo copy/x` lists). A command, environment or working directory names a path under a root only
-  through a complete path value equal to the root or starting with `root/`. On Linux,
+  `repo`), nor, in a macOS listing, one that names the worktree cut short at a space, quote
+  or `:` where an entry beside the worktree continues its name there (`repo copy/x` with
+  `repo copy` existing); any other such match, `repo --flag` say, is listed. A command,
+  environment or working directory names a path under a root only through a complete path
+  value equal to the root or starting with `root/`, once its `.` and `..` segments are
+  resolved, so `<root>/../x` is not under the root. On Linux,
   `/proc` keeps each argument and variable whole, NUL-separated, so a value is a whole
   argument (after a `KEY=` or `--option=` prefix and `file://`) or a whole variable's
   value; only a variable known to hold a list (`PATH`, `NODE_PATH`, `LD_LIBRARY_PATH`...) is split at
@@ -58,8 +61,16 @@ calls `guardTestFile` as a setup file.
 - When the run is interrupted (Ctrl-C, or turbo cancelling the task after a sibling
   failed), it stops what the run started, including processes running from directories
   registered with `guardDirectory`, and removes those directories and the temp root as the
-  process exits. This stays armed until the run's teardown has finished, so a run
-  interrupted while the teardown waits for leftovers still cleans up and reports them.
+  process exits. It lists everything the run's check would, worktree orphans and processes
+  it can only report included, from the same classification of one process listing, and
+  fails the run even when it exits with success. This stays armed until the run's teardown
+  has finished, so a run interrupted while the teardown waits for leftovers still cleans up
+  and reports them.
+- Before failing a file or the run, the guard gives every process it found, those it can
+  only report as well as those it would stop, the same short while to exit by itself, and
+  reports what it cannot stop from one listing taken once stopping is done.
+- The run lists a folder the guard made for a test file (recorded in the run's root) by its
+  contents; any other entry in the root, whatever its name, is listed itself.
 - A temp root or file folder the guard cannot remove fails the run, or the file, and is
   named, like any other leftover.
 - Stopping sends SIGTERM, then SIGKILL to each process and to every process group one of

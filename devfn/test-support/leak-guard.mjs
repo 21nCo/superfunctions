@@ -41,11 +41,12 @@ const ROOT_PREFIX = "devfn-tests-";
 const FILE_PREFIX = "f-";
 // Files the guard keeps in the run's root: the run's own record, which a sibling run reads to
 // leave this run's processes alone, the directories its tests registered with guardDirectory,
-// and the machine-wide locks its tests named (shared-locks.mjs).
+// the machine-wide locks its tests named (shared-locks.mjs) and the test files' own folders.
 const RUN_RECORD = ".leak-guard-run.json";
 const DIRECTORY_RECORD = ".leak-guard-directories";
 const LOCK_RECORD = ".leak-guard-locks";
-const isGuardRecord = (name) => name === RUN_RECORD || name === DIRECTORY_RECORD || name === LOCK_RECORD;
+const FOLDER_RECORD = ".leak-guard-folders";
+const isGuardRecord = (name) => [RUN_RECORD, DIRECTORY_RECORD, LOCK_RECORD, FOLDER_RECORD].includes(name);
 // Entries a tool creates in TMPDIR for its own reuse rather than for a test: Node's compile
 // cache and tsx's per-user cache, which the tsx loader that runs TypeScript fixtures names
 // exactly so. Any other entry, such as a test's own mkdtemp("tsx-") folder, is a leftover.
@@ -234,6 +235,9 @@ function trimTrailingSlashes(value) {
 }
 
 const isPathUnder = (value, root) => value === root || value.startsWith(`${root}/`);
+// An absolute value with its `.` and `..` segments and repeated slashes resolved, as the system
+// resolves it, so `<root>/../other` is not under `<root>`. Every named path goes through this.
+const normalPath = (value) => trimTrailingSlashes(value.startsWith("/") ? path.posix.normalize(value) : value);
 
 /** The values of a NUL-separated /proc listing that may be paths. */
 function separatedValues(text, environment) {
@@ -243,13 +247,14 @@ function separatedValues(text, environment) {
     if (at <= 0) return [];
     const value = field.slice(at + 1);
     return LIST_VARIABLES.has(field.slice(0, at)) ? value.split(LIST_SEPARATOR) : [value];
-  }).map((value) => trimTrailingSlashes(value.replace(/^file:\/\//, "")));
+  }).map((value) => normalPath(value.replace(/^file:\/\//, "")));
 }
 
 /**
  * The paths at or under `root` that `text` names, each `ambiguous` when it comes from a
  * space-joined listing, which cannot show where a value starts or ends, and `cut` when it is
- * `root` itself cut short there at a separator (`<root> copy/x` lists as `<root>`).
+ * `root` itself cut short there at a separator (`<root> copy/x` lists as `<root>`). A cut path
+ * also gives `beside`, the text from `root` to the next `/`, which may be a sibling such as `<root> copy`.
  */
 function namedPaths(text, root, { separated = false, environment = false } = {}) {
   if (separated) return separatedValues(text, environment).filter((value) => isPathUnder(value, root)).map((value) => ({ path: value, ambiguous: false }));
@@ -261,8 +266,10 @@ function namedPaths(text, root, { separated = false, environment = false } = {})
     // From the end of `root`, so a root with a space in it still matches.
     let end = at + root.length;
     while (end < text.length && !SEPARATOR.test(text[end]) && text[end] !== LIST_SEPARATOR) end += 1;
-    const value = trimTrailingSlashes(text.slice(at, end));
-    if (isPathUnder(value, root)) paths.push({ path: value, ambiguous: true, cut: end === at + root.length && end < text.length });
+    const value = normalPath(text.slice(at, end));
+    const cut = end === at + root.length && end < text.length;
+    const slash = text.indexOf("/", end);
+    if (isPathUnder(value, root)) paths.push({ path: value, ambiguous: true, cut, beside: cut ? text.slice(at, slash === -1 ? text.length : slash) : undefined });
   }
   return paths;
 }
@@ -279,7 +286,7 @@ export function pathsNamedUnder(text, root, options) {
  * How a process names a path under the given roots in its command, environment or working
  * directory: "exact", "ambiguous" when its only such values come from a space-joined listing,
  * "cut" when each of those is the root itself cut short at a separator, or undefined.
- * `accept(path, root)` can reject a named path, such as one inside a nested checkout.
+ * `accept(path, root, named)` can reject a named path, such as one inside a nested checkout.
  */
 function namesPathUnder(entry, roots, accept = () => true) {
   let found;
@@ -288,7 +295,7 @@ function namesPathUnder(entry, roots, accept = () => true) {
     const named = [
       ...namedPaths(entry.argv ?? entry.command, root, { separated: entry.separated }),
       ...namedPaths(entry.environment, root, { separated: entry.separated, environment: true }),
-    ].filter(({ path: value }) => accept(value, root));
+    ].filter((named) => accept(named.path, root, named));
     if (named.some(({ ambiguous }) => !ambiguous)) return "exact";
     if (named.some(({ cut }) => !cut)) found = "ambiguous";
     else if (named.length > 0) found ??= "cut";
@@ -410,11 +417,15 @@ export async function stopProcesses(processes, find) {
   }
 }
 
-/** Waits up to `graceMs` for owned processes to exit by themselves and returns those still running. */
-async function settle(find, graceMs) {
-  let owned = find();
-  for (const deadline = Date.now() + graceMs; owned && owned.length > 0 && Date.now() < deadline; owned = find()) await pause(200);
-  return owned;
+/**
+ * Waits up to `graceMs` for the processes `find` lists, by kind ({ owned, ambiguous, ... }), to
+ * exit by themselves, those the guard only reports as well as those it would stop, and returns
+ * what the last listing still holds, or undefined when the processes cannot be listed.
+ */
+async function settle(find, graceMs, found = find()) {
+  const pending = () => found && Object.values(found).some((processes) => processes.length > 0);
+  for (const deadline = Date.now() + graceMs; pending() && Date.now() < deadline; found = find()) await pause(200);
+  return found;
 }
 
 /** Entries left in a temp folder, ignoring tool caches and the guard's own records. */
@@ -482,6 +493,17 @@ function newToken() {
 const isRunnerChild = (entry) => entry.ppid === process.pid &&
   (/^node \(vitest(?: \d+)?\)/.test(entry.command) || /[\\/](?:vitest|tinypool|esbuild)[\\/]|[\\/]esbuild(?:\s|$)/.test(entry.command));
 
+/**
+ * What one listing holds of a run: the processes it owns, those it cannot tell are its own
+ * (ambiguous) and its worktree orphans. Both the run's check and its exit cleanup take all three
+ * from the same listing, so a process one class excludes is always in another.
+ */
+function classifyRun(listing, scope, { worktree, startedAt, root }) {
+  const { owned, ambiguous } = attributeProcesses(listing, scope);
+  const attributed = new Set([...owned, ...ambiguous].map((entry) => entry.pid));
+  return { owned, ambiguous, orphans: worktree ? worktreeOrphans(listing, { worktree, startedAt, attributed, root }) : [] };
+}
+
 function composeContainers(roots) {
   if (process.env.DEVFN_REAL_COMPOSE !== "1") return [];
   const listing = run("docker", ["ps", "-a", "--filter", "label=com.docker.compose.project.working_dir", "--format", "{{.ID}}\t{{.Names}}\t{{.Label \"com.docker.compose.project.working_dir\"}}"], 20_000);
@@ -533,12 +555,12 @@ export async function setup(project) {
     const attempt = (step) => { try { return step(); } catch { return undefined; } };
     const directories = attempt(runDirectories) ?? [];
     const allRoots = [...rootAliases, ...directories.flatMap(pathAliases)];
-    // The run is ending, so its own pool workers, which a hung test may keep alive, go too.
-    let ambiguous = [];
+    // The run is ending, so its own pool workers, which a hung test may keep alive, go too. What it
+    // only reports, ambiguous processes and worktree orphans, comes from the latest listing.
+    let classified = { ambiguous: [], orphans: [] };
     const find = () => attempt(() => {
-      const attributed = attributeProcesses(listProcesses(startedAt) ?? [], { marker, roots: allRoots, parent: process.pid });
-      ({ ambiguous } = attributed);
-      return attributed.owned;
+      classified = classifyRun(listProcesses(startedAt) ?? [], { marker, roots: allRoots, parent: process.pid }, { worktree, startedAt, root });
+      return classified.owned;
     }) ?? [];
     const owned = new Map();
     // A cancelling runner may SIGKILL this process shortly after its signal, so there is no grace.
@@ -560,12 +582,13 @@ export async function setup(project) {
     const leaked = new Map(state.found.processes);
     for (const entry of owned.values()) if (!isRunnerChild(entry)) leaked.set(entry.pid, entry);
     const entries = [...new Set([...state.found.entries, ...leftovers]), ...locks.map(describeLock), ...unremoved.map((directory) => `${directory}, which could not be removed`)];
-    if (leaked.size === 0 && entries.length === 0 && ambiguous.length === 0) return;
+    const { ambiguous, orphans } = classified;
+    if (leaked.size === 0 && entries.length === 0 && ambiguous.length === 0 && orphans.length === 0) return;
     // The run fails even when it is exiting with success, such as through process.exit(0) or
     // Vitest's exit once a teardown outlasts its teardownTimeout.
     if (!process.exitCode) process.exitCode = 1;
     // The process is exiting, so only a synchronous write reaches a piped stderr.
-    attempt(() => writeSync(2, `${report("This interrupted test run", [...leaked.values()], entries, [], { ambiguous })}\n`));
+    attempt(() => writeSync(2, `${report("This interrupted test run", [...leaked.values()], entries, [], { worktree, orphans, ambiguous })}\n`));
   };
   const onSignal = (signal) => {
     onExit();
@@ -600,22 +623,30 @@ export async function setup(project) {
   async function check() {
     const found = (processes) => { for (const entry of processes) state.found.processes.set(entry.pid, entry); return processes; };
     const notes = [];
-    const listed = listProcesses(startedAt);
+    const classify = () => {
+      const listing = listProcesses(startedAt);
+      if (!listing) return undefined;
+      const classified = classifyRun(listing, scope(), { worktree, startedAt, root });
+      found(classified.owned);
+      return classified;
+    };
+    const listed = classify();
     if (!listed) notes.push(`Processes were not checked: the guard cannot list processes on ${process.platform}.`);
-    // The latest listing, from which processes the guard could not attribute are reported.
-    let latest = listed;
-    const find = () => { latest = listProcesses(startedAt); return latest && found(ownedProcesses(latest, scope())); };
-    const settled = listed ? await settle(find, RUN_GRACE_MS) ?? [] : [];
+    const none = { owned: [], ambiguous: [], orphans: [] };
+    // Every process the run left, those the guard only reports too, gets the same while to exit.
+    const settled = listed ? await settle(classify, RUN_GRACE_MS, listed) ?? none : none;
     // Everything stopped, including what a stopping process started, is reported.
-    const stopped = new Map(settled.map((entry) => [entry.pid, entry]));
-    const unstopped = settled.length > 0 ? await stopProcesses(settled, () => { const remaining = find(); for (const entry of remaining ?? []) stopped.set(entry.pid, entry); return remaining; }) : [];
+    const stopped = new Map(settled.owned.map((entry) => [entry.pid, entry]));
+    const unstopped = settled.owned.length > 0 ? await stopProcesses(settled.owned, () => { const remaining = classify()?.owned; for (const entry of remaining ?? []) stopped.set(entry.pid, entry); return remaining; }) : [];
     const owned = [...stopped.values()];
     if (unstopped.length > 0) notes.push(`Still running after SIGKILL: ${unstopped.map((entry) => entry.pid).join(", ")}.`);
     // Every test has finished, so a lock this run's processes still hold, this one included, is abandoned.
     const locks = removeAbandonedLocks(root, { graceMs: STOP_GRACE_MS, ending: process.pid });
     for (const lock of locks) state.found.entries.add(describeLock(lock));
-    const orphans = listed && worktree ? await settle(() => worktreeOrphans(listProcesses(startedAt) ?? [], { worktree, startedAt, own: scope(), root }), STOP_GRACE_MS) ?? [] : [];
-    const ambiguous = latest ? attributeProcesses(latest, scope()).ambiguous : [];
+    // What the guard only reports comes from one listing taken once stopping is done, when a
+    // process the stopped ones left behind gets a short while to exit.
+    const reported = settled.owned.length > 0 ? await settle(() => { const latest = classify(); return latest && { ambiguous: latest.ambiguous, orphans: latest.orphans }; }, STOP_GRACE_MS) ?? none : settled;
+    const { ambiguous, orphans } = reported;
     const containers = composeContainers(roots());
     for (const container of containers) run("docker", ["rm", "-f", "-v", container.id], 30_000);
     const entries = runLeftovers(root);
@@ -640,10 +671,16 @@ export async function setup(project) {
   }
 }
 
-/** The temp entries left in a run's root; a file's folder is listed by its contents. */
+/**
+ * The temp entries left in a run's root. A folder the guard made for a test file, as recorded
+ * in the root, is listed by its contents; any other entry, whatever its name, is listed itself.
+ */
 function runLeftovers(root) {
+  let folders;
+  try { folders = new Set(readFileSync(path.join(root, FOLDER_RECORD), "utf8").split("\n")); } catch { folders = new Set(); }
+  const isFileFolder = (entry) => { try { return folders.has(entry) && lstatSync(path.join(root, entry)).isDirectory(); } catch { return false; } };
   return tempLeftovers(root).flatMap((entry) => {
-    const nested = entry.startsWith(FILE_PREFIX) ? tempLeftovers(path.join(root, entry)).map((inner) => `${entry}/${inner}`) : [entry];
+    const nested = isFileFolder(entry) ? tempLeftovers(path.join(root, entry)).map((inner) => `${entry}/${inner}`) : [entry];
     return nested.map((relative) => path.join(root, relative));
   });
 }
@@ -916,14 +953,16 @@ function liveSiblingRuns(root) {
 
 /**
  * Processes the run cannot attribute but must report: started since the run began, running from
- * or naming a path in the worktree (one in a macOS listing too, unless it is only the worktree
- * itself cut short at a separator, as `<worktree> copy/x` lists), and orphaned, that is re-parented to init or a subreaper
+ * or naming a path in the worktree (one in a macOS listing too, even the worktree itself cut short
+ * at a separator, unless an entry beside it continues the name there, as `<worktree> copy/x` with
+ * `<worktree> copy` existing), and orphaned, that is re-parented to init or a subreaper
  * along a chain of processes that also started during the run. A process whose chain reaches this
  * run's process or one of its ancestors, such as a sibling task under the same turbo, or a
  * process that was already running, such as an editor, is someone else's. So is one that a live
- * sibling guarded run attributes to itself.
+ * sibling guarded run attributes to itself, or one in `attributed`, the processes the run owns or
+ * reports as ambiguous from the same listing.
  */
-function worktreeOrphans(processes, { worktree, startedAt, own, root }) {
+function worktreeOrphans(processes, { worktree, startedAt, attributed, root }) {
   const window = Math.ceil((Date.now() - startedAt) / 1000);
   const byPid = new Map(processes.map((entry) => [entry.pid, entry]));
   const ancestors = ancestorsOf(process.pid, processes);
@@ -941,14 +980,14 @@ function worktreeOrphans(processes, { worktree, startedAt, own, root }) {
     }
     return false;
   };
-  const { owned, ambiguous } = attributeProcesses(processes, own);
-  const ownPids = new Set([...owned, ...ambiguous].map((entry) => entry.pid));
   const siblings = liveSiblingRuns(root);
   const worktreeRoots = pathAliases(worktree);
   const checkouts = new Map();
-  const inThisWorktree = (named, worktreeRoot) => !inNestedCheckout(named, worktreeRoot, checkouts);
-  return processes.filter((entry) => entry.pid !== process.pid && !ancestors.has(entry.pid) && !ownPids.has(entry.pid) && recent(entry) &&
-    ["exact", "ambiguous"].includes(namesPathUnder(entry, worktreeRoots, inThisWorktree)) && !/\bturbo(?:\.exe)?\b.*\bdaemon\b/.test(entry.command) &&
+  // A cut match is the sibling beside the worktree whose name continues across the separator
+  // (`<worktree> copy`) only when that sibling exists; otherwise it may be the worktree itself.
+  const inThisWorktree = (named, worktreeRoot, match) => !inNestedCheckout(named, worktreeRoot, checkouts) && !(match?.cut && existsSync(match.beside));
+  return processes.filter((entry) => entry.pid !== process.pid && !ancestors.has(entry.pid) && !attributed.has(entry.pid) && recent(entry) &&
+    namesPathUnder(entry, worktreeRoots, inThisWorktree) !== undefined && !/\bturbo(?:\.exe)?\b.*\bdaemon\b/.test(entry.command) &&
     !siblings.some((sibling) => entry.environment.includes(sibling.marker) || namesPathUnder(entry, sibling.roots)) && orphaned(entry));
 }
 
@@ -983,6 +1022,8 @@ export function guardTestFile({ beforeEach, afterEach, afterAll }) {
   if (!root) return;
   const startedAt = Date.now();
   const folder = mkdtempSync(path.join(root, FILE_PREFIX));
+  // Recorded at once, so the run lists this folder by its contents, and lists as itself any other entry.
+  appendFileSync(path.join(root, FOLDER_RECORD), `${path.basename(folder)}\n`);
   linkToolCaches(folder, process.env[ORIGINAL_TEMP_VARIABLE]);
   const folderRoots = pathAliases(folder);
   globalThis[GUARDED_DIRECTORIES] = new Set();
@@ -1009,13 +1050,14 @@ export function guardTestFile({ beforeEach, afterEach, afterAll }) {
     for (const entry of tempLeftovers(folder)) if (!entries.has(entry)) removeTree(path.join(folder, entry));
   }, 60_000);
   afterAll(async (suite) => {
-    let latest;
-    const find = () => { latest = listProcesses(startedAt); return latest && ownedProcesses(latest, scope()); };
-    const settled = await settle(find, FILE_GRACE_MS) ?? [];
-    const stopped = new Map(settled.map((entry) => [entry.pid, entry]));
-    const unstopped = settled.length > 0 ? await stopProcesses(settled, () => { const remaining = find(); for (const entry of remaining ?? []) stopped.set(entry.pid, entry); return remaining; }) : [];
+    const classify = () => { const listing = listProcesses(startedAt); return listing && attributeProcesses(listing, scope()); };
+    // Ambiguous processes, which the guard only reports, get the same while to exit as owned ones.
+    const settled = await settle(classify, FILE_GRACE_MS) ?? { owned: [], ambiguous: [] };
+    const stopped = new Map(settled.owned.map((entry) => [entry.pid, entry]));
+    const unstopped = settled.owned.length > 0 ? await stopProcesses(settled.owned, () => { const remaining = classify()?.owned; for (const entry of remaining ?? []) stopped.set(entry.pid, entry); return remaining; }) : [];
     const owned = [...stopped.values()];
-    const ambiguous = latest ? attributeProcesses(latest, scope()).ambiguous : [];
+    // Reported from one listing taken once stopping is done.
+    const ambiguous = settled.owned.length > 0 ? (await settle(() => { const latest = classify(); return latest && { ambiguous: latest.ambiguous }; }, STOP_GRACE_MS))?.ambiguous ?? [] : settled.ambiguous;
     const entries = tempLeftovers(folder).map((entry) => path.join(folder, entry));
     const removed = removeTree(folder);
     for (const directory of guardedDirectories()) {

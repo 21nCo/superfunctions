@@ -45,13 +45,15 @@ const leakProcess = (cwd: string) => `(() => {
   return child.pid;
 })()`;
 
-// The same process, started through a short-lived parent so that it is orphaned (re-parented to
-// init) at once, as a DevFn wrapper is once the command that started it exits.
-// With `named`, the orphan's command line also names that path.
-const orphanProcess = (cwd: string, named = '""') => `(() => {
-  const start = 'const child = require("node:child_process").spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", ...process.argv.slice(2).filter(Boolean)], { detached: true, stdio: "ignore", cwd: process.argv[1], env: { PATH: process.env.PATH } }); child.unref(); process.stdout.write(String(child.pid));';
-  return Number(require("node:child_process").spawnSync(process.execPath, ["-e", start, ${cwd}, ${named}], { encoding: "utf8", env: { PATH: process.env.PATH } }).stdout);
+// A Node process with the given arguments (fixture expressions), started detached through a
+// short-lived parent so that it is orphaned (re-parented to init) at once, as a DevFn wrapper is
+// once the command that started it exits.
+const orphan = (cwd: string, args: string[]) => `(() => {
+  const start = 'const child = require("node:child_process").spawn(process.execPath, process.argv.slice(2).filter(Boolean), { detached: true, stdio: "ignore", cwd: process.argv[1], env: { PATH: process.env.PATH } }); child.unref(); process.stdout.write(String(child.pid));';
+  return Number(require("node:child_process").spawnSync(process.execPath, ["-e", start, ${[cwd, ...args].join(", ")}], { encoding: "utf8", env: { PATH: process.env.PATH } }).stdout);
 })()`;
+// Such an orphan kept alive. With `named`, its command line also names those values.
+const orphanProcess = (cwd: string, ...named: string[]) => orphan(cwd, ['"-e"', '"setInterval(() => {}, 1000)"', ...named]);
 
 /**
  * Writes a guarded Vitest project whose test file has the given body, with more test files
@@ -191,6 +193,18 @@ describe("pathsNamedUnder", () => {
     expect(attributeProcesses(corroborated, { roots: [run], marker: "SFN_TEST_LEAK_GUARD_RUN=x", vouch: ({ pid }) => pid === 9_000_413 })).toEqual({ owned: corroborated, ambiguous: [] });
   });
 
+  it("resolves '.' and '..' in a path value before deciding that it is under the root", () => {
+    const linux = (pid: number, argv: string, environment = "") => ({ pid, ppid: 1, pgid: pid, elapsed: 0, command: argv.replaceAll("\0", " ").trim(), argv, environment, separated: true, cwd: "/" });
+    const macos = (pid: number, command: string, environment = "") => ({ pid, ppid: 1, pgid: pid, elapsed: 0, command, environment, cwd: undefined });
+    const outside = [
+      linux(9_000_501, `node\0${root}/../other/server.mjs\0`), linux(9_000_502, "node\0", `TMPDIR=${root}/../other\0`),
+      macos(9_000_503, `node ${root}/../other/x`), macos(9_000_504, "node", `TMPDIR=${root}/./../other`),
+    ];
+    const inside = [linux(9_000_511, `node\0${root}/a/../b/x\0`), macos(9_000_512, `node ${root}/a/../b/x`)];
+    expect(attributeProcesses([...outside, ...inside], { roots: [root] })).toEqual({ owned: [inside[0]], ambiguous: [inside[1]] });
+    expect(pathsNamedUnder(`node ${root}/a/..//b/ ${root}/..`, root)).toEqual([`${root}/b`]);
+  });
+
   it("decides which processes name a path under a run or registered directory on complete path values, and owns from a macOS listing only by working directory", () => {
     const entry = (pid: number, command: string, environment = "", cwd?: string) => ({ pid, ppid: 1, pgid: pid, elapsed: 0, command, environment, cwd });
     const named = [
@@ -273,16 +287,42 @@ describe.skipIf(process.platform === "win32")("DevFn test leak guard", { timeout
     }
   });
 
+  // A global setup listed after the guard's tears down first and ends the process with code 0.
+  const exitsFirst = { files: { "exit.mjs": "export default () => () => process.exit(0);" }, options: `, globalSetup: [${JSON.stringify(guard)}, "./exit.mjs"]` };
+
+  it.each([[false], [true]])("fails a run that leaves an entry named like a test file's folder in its root, exiting first: %s", async (exits) => {
+    // Only the folders the guard made for test files are listed by their contents.
+    const { dir, record } = project(`test("leaves f- entries", () => {
+  mkdirSync(path.join(process.env.SFN_TEST_LEAK_GUARD_ROOT, "f-forgotten"));
+  writeFileSync(path.join(process.env.SFN_TEST_LEAK_GUARD_ROOT, "f-result.txt"), "");
+  record({});
+});`, exits ? exitsFirst : {});
+    const { code, output, recorded } = await runProject(dir, record);
+    expect(code, output).not.toBe(0);
+    for (const name of ["f-forgotten", "f-result.txt"]) expect(output).toContain(`temp entry ${path.join(recorded.root, name)}\n`);
+    expect(existsSync(recorded.root)).toBe(false);
+  });
+
+  it("lets a process it can only report exit by itself within the same grace as one it would stop", async () => {
+    // Each names a temp folder cut short at a space, which a macOS listing cannot tell from the folder itself, and exits within 2 s.
+    const { dir, record } = project(`test("leaves short-lived processes naming the file's folder and the run's root", () => {
+  for (const folder of [tmpdir(), process.env.SFN_TEST_LEAK_GUARD_ROOT]) ${orphan('"/"', ['"-e"', '"setTimeout(() => {}, 2000)"', 'folder + " sibling/x"'])};
+  record({});
+});`);
+    const { code, output } = await runProject(dir, record);
+    expect(code, output).toBe(0);
+    expect(output).not.toContain("leak guard");
+  });
+
   it.each([
     ["a process", `record({ pid: ${orphanProcess("process.env.SFN_TEST_LEAK_GUARD_ROOT")} });`],
     ["only a temp directory", `record({ dir: mkdtempSync(path.join(process.env.SFN_TEST_LEAK_GUARD_ROOT, "devfn-leaked-")) });`],
     // Only its argument names the root: whole on Linux, so it is stopped; ambiguous in macOS's ps listing, so it is only listed.
     ["a process that only names it", `record({ pid: ${orphanProcess('"/"', 'path.join(process.env.SFN_TEST_LEAK_GUARD_ROOT, "server.mjs")')} });`],
   ])("fails a run that leaves %s in its root and exits with success before its teardown, as Vitest does after its teardownTimeout", async (_, leak) => {
-    // A global setup listed after the guard's tears down first and ends the process with code 0.
     const { dir, record } = project(`test("leaks into the run root", () => {
   ${leak}
-});`, { files: { "exit.mjs": "export default () => () => process.exit(0);" }, options: `, globalSetup: [${JSON.stringify(guard)}, "./exit.mjs"]` });
+});`, exitsFirst);
     const { code, output, recorded } = await runProject(dir, record);
     try {
       expect(code).not.toBe(0);
@@ -399,6 +439,8 @@ test("leaves a guarded directory", () => {
     expect(code).not.toBe(0);
     expect(output).toContain("DevFn test leak guard: This interrupted test run left these behind.");
     expect(output).toContain(`process ${recorded.pid} `);
+    // The test file's own folder, which the guard made, is listed by its contents.
+    expect(output).toContain(`temp entry ${recorded.dir}\n`);
     expect(alive(recorded.pid!)).toBe(false);
     expect(existsSync(recorded.root)).toBe(false);
   });
@@ -704,6 +746,61 @@ test("names the locks", async () => {
       expect(existsSync(recorded.root)).toBe(false);
     } finally {
       if (orphan) try { process.kill(orphan, "SIGKILL"); } catch { /* already gone */ }
+    }
+  });
+
+  it.each([
+    ["at its teardown", undefined],
+    ["when it exits with success before its teardown", "exit"],
+    ["when it is interrupted while its teardown waits for leftovers", "signal"],
+  ] as const)("fails the run, without signalling them, on worktree orphans that run from the worktree or name only the worktree followed by another argument, %s", async (_, end) => {
+    const { dir, record } = project(`test("leaves orphans in the worktree", () => {
+  record({ pid: ${orphanProcess('path.join(process.cwd(), "package")')}, named: ${orphanProcess('"/"', "process.cwd()", '"--flag"')} });
+});`, end === "exit" ? exitsFirst : {});
+    mkdirSync(path.join(dir, ".git"));
+    mkdirSync(path.join(dir, "package"));
+    let recorded: { root: string; pid?: number; named?: number } | undefined;
+    try {
+      const result = await runProject(dir, record, end === "signal" ? "signal" : undefined, { duringTeardown: end === "signal" });
+      recorded = result.recorded;
+      expect(result.code, result.output).not.toBe(0);
+      if (end) expect(result.output).toContain("DevFn test leak guard: This interrupted test run left these behind.");
+      expect(result.output).toContain(`run from or name a path in the worktree ${realpathSync(dir)}, and were orphaned.`);
+      for (const pid of [recorded.pid, recorded.named]) expect(result.output).toContain(`process ${pid} `);
+      for (const pid of [recorded.pid, recorded.named]) expect(alive(pid!)).toBe(true);
+    } finally {
+      for (const pid of [recorded?.pid, recorded?.named]) if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+    }
+  });
+
+  it.runIf(process.platform === "darwin")("lists a process it can only report that appears while the run's teardown waits for a worktree orphan", async () => {
+    const { dir, record } = project(`test("leaves a worktree orphan and a starter that later names the run's root", () => {
+  const hex = (value) => Buffer.from(value).toString("hex");
+  record({ pid: ${orphanProcess('path.join(process.cwd(), "package")')} });
+  ${orphan('"/"', ['path.join(process.cwd(), "late.cjs")', 'hex(process.env.SFN_TEST_LEAK_GUARD_ROOT + " sibling/x")', 'hex(path.join(process.cwd(), "late.pid"))'])};
+});`);
+    // Hex-encoded, so the starter itself names neither the root nor a path of the late process.
+    writeFileSync(path.join(dir, "late.cjs"), `const [named, pidFile] = process.argv.slice(2).map((value) => Buffer.from(value, "hex").toString());
+setTimeout(() => {
+  const child = require("node:child_process").spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", named], { detached: true, stdio: "ignore", cwd: "/", env: { PATH: process.env.PATH } });
+  child.unref();
+  require("node:fs").writeFileSync(pidFile, String(child.pid));
+}, 2000);
+`);
+    mkdirSync(path.join(dir, ".git"));
+    mkdirSync(path.join(dir, "package"));
+    const latePid = () => existsSync(path.join(dir, "late.pid")) ? Number(readFileSync(path.join(dir, "late.pid"), "utf8")) : undefined;
+    let orphaned: number | undefined;
+    try {
+      const { code, output, recorded } = await runProject(dir, record);
+      orphaned = recorded.pid;
+      expect(code, output).not.toBe(0);
+      expect(output).toContain(`process ${orphaned} `);
+      expect(output.slice(output.indexOf("These processes name one of the run's temp folders only where"))).toContain(`process ${latePid()} `);
+      for (const pid of [orphaned, latePid()]) expect(alive(pid!)).toBe(true);
+    } finally {
+      await sleep(2_500);
+      for (const pid of [orphaned, latePid()]) if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
     }
   });
 
