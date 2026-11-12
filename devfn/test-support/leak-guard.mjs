@@ -514,17 +514,21 @@ function signalAll(processes, signal, held = new Map()) {
   const group = ownProcessGroup();
   const signalled = [];
   const send = (entry, target) => { signalled.push(entry); try { process.kill(target, signal); } catch { /* ESRCH: already gone */ } };
-  const states = processStates(processes.map((entry) => entry.pid));
-  for (const entry of processes) {
+  let states = processStates(processes.map((entry) => entry.pid));
+  for (const [index, entry] of processes.entries()) {
     const leads = entry.pgid === entry.pid && entry.pgid !== group;
     const current = identityOf(entry, states);
+    // Reading a group takes a while, so the processes after it have their starts read again.
+    const reread = () => { states = processStates(processes.slice(index + 1).map((later) => later.pid)); };
     if (current?.same) {
       const wholeGroup = leads && current.pgid === entry.pid;
+      const witnessed = !(wholeGroup && signal === "SIGTERM") || witnessGroup(entry);
+      if (wholeGroup && signal === "SIGTERM") reread();
       // A leader that has just exited is left to the next round, which treats it as exited.
-      if (wholeGroup && signal === "SIGTERM" && !witnessGroup(entry)) continue;
-      send(entry, wholeGroup ? -entry.pid : entry.pid);
+      if (witnessed) send(entry, wholeGroup ? -entry.pid : entry.pid);
     } else if (leads && current?.exited) {
       const members = groupMembers(entry.pid) ?? [];
+      reread();
       if (members.some((member) => inLeadersGroup(entry, member) && identityOf(member)?.pgid === entry.pid)) send(entry, -entry.pid);
       else for (const member of members) held.set(member.pid, member);
     }

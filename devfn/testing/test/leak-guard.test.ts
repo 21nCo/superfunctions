@@ -1297,6 +1297,18 @@ describe.skipIf(!["linux", "darwin"].includes(process.platform))("stopProcesses"
     expect(alive(pid)).toBe(true);
   });
 
+  it("reads a process's start again after reading the group of a leader signalled before it", async () => {
+    const { pid: leader } = await start(`process.stdout.write("ready\\n"); setInterval(() => {}, 1000);`);
+    const { pid } = await start(`process.stdout.write("ready\\n"); setInterval(() => {}, 1000);`);
+    // Listed as a process of another group, it is signalled on its own, after the leader.
+    const entries = [listed(leader), { ...listed(pid), pgid: leader }];
+    // Its start, read with the leader's before SIGTERM, shows a later start once the leader's group has been read.
+    alterStartReads(pid, "later", 1);
+    await stopProcesses(entries);
+    expect(await gone(leader)).toBe(true);
+    expect(alive(pid)).toBe(true);
+  });
+
   it("sends SIGKILL after SIGTERM only while the process ID still shows the start listed", async () => {
     const { pid, output } = await start(ignoresSigterm);
     const entry = listed(pid);
