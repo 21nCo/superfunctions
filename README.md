@@ -108,20 +108,23 @@ Every published package has a GitHub Actions trusted publisher on npm with
 organization/user `21nCo`, repository `superfunctions`, workflow filename
 `publish-tag.yml` and no environment name. The workflow has no npm token. npm
 can only attach a trusted publisher to a package that already exists, so before
-a new package's first release tag a maintainer claims the name by publishing a
-`0.0.0` placeholder by hand with `npm publish --access public` and 2FA (not the
-real version, whose tag would then fail because that version already exists; and
-always `--access public`, because a scoped package defaults to restricted). Then
-add its trusted publisher with **Allow npm publish** enabled (npm defaults new
-connections to staged publishing only) and push the release tag within 2 days:
-npm expires a trusted publisher configuration that has not completed a
-successful publish within 2 days of creation. After that release, deprecate the
-placeholder with
+a new package's first release tag a maintainer claims the name with a `0.0.0`
+placeholder: in a new empty directory outside the repository, write a
+`package.json` containing only the package's `"name"` and `"version": "0.0.0"`,
+check that `npm pack --dry-run` lists only `package.json`, then run
+`npm publish --access public` with 2FA (`--access public` because a scoped
+package defaults to restricted; never the real version, whose tag would then fail
+because that version already exists). Then add its trusted publisher with
+**Allow npm publish** enabled (npm defaults new connections to staged publishing
+only) and push the release tag within 2 days: npm expires a trusted publisher
+configuration that has not completed a successful publish within 2 days of
+creation. After that release, deprecate the placeholder with
 `npm deprecate <name>@0.0.0 "Name placeholder; install a released version"`.
-The placeholder is the package's first version, so it holds `latest` until the
-first stable release; if the first release is a prerelease, point `latest` at it
-by hand (`npm dist-tag add <name>@<version> latest`) if it should be the default
-install.
+The placeholder keeps `latest` until the package's first stable release, so make
+the first release a stable version. Don't move `latest` to a prerelease by hand:
+`reconcile-channel` removes `latest` from a prerelease. After a prerelease-only
+first release, an unqualified install gets the empty placeholder and users have
+to install by the prerelease's dist-tag.
 npm attaches a provenance attestation to every OIDC publish from this public
 repository. The registry accepts it only when the packed `package.json`
 `repository.url` is `git+https://github.com/21nCo/superfunctions.git`, so every
