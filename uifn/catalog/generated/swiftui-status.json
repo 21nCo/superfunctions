@@ -82,9 +82,11 @@
       "id": "carousel",
       "name": "Carousel",
       "swiftui": {
-        "controls": [],
-        "note": "TabView pages only on iOS (.page style), so there is no carousel on both platforms, and UIFnSwiftUI has none.",
-        "status": "none",
+        "controls": [
+          "TabView"
+        ],
+        "note": "TabView with the .page style pages through views on iOS; macOS has no page style. UIFnSwiftUI has no carousel.",
+        "status": "native",
         "surfaces": []
       }
     },
@@ -850,8 +852,8 @@
   "schemaVersion": 1,
   "sourceSha256": "667f372d5fbba3ee294e8a4ab7918d65baead04d9938a2a62400b69475987250",
   "statusCounts": {
-    "native": 33,
-    "none": 19,
+    "native": 34,
+    "none": 18,
     "uifn-component": 5,
     "uifn-style": 12
   },

@@ -38,16 +38,25 @@ rejects a primitive with a missing or unknown SwiftUI status, a status that does
 not match its controls and surfaces, and a UIFnSwiftUI style or component that
 no primitive maps. It also reads every Swift file under
 `uifn/swift/Sources/UIFnSwiftUI/Styles` and `Components`, subdirectories
-included, and fails when the list misses a public style or component, names
-one the sources do not declare, or gives one the wrong kind or file. A surface's
-kind follows its declaration, not its directory: a public struct conforming to a
-SwiftUI style protocol (a name ending in `Style`) is a style; a public struct
-conforming to `View`, `ViewModifier`, `Shape`, `InsettableShape` or a UIKit or
-AppKit view or view controller representable is a component; in `Components`, a public
-function in an extension of `View` is a component. A conformance counts in the
-declaration or in an extension in either directory, and a nested public struct
-counts by its own name. Classes, enums, protocols and `View`-extension functions
-in `Styles` (such as `uifnTheme`) are not surfaces.
+included, as the compiler sees it (comments and string literals do not count),
+and fails closed: every public struct, class or actor, at any nesting depth,
+and every public `func` or `var` in an extension of `View` has to be listed,
+either as a surface with its kind and file or, in `nonSurfaces`, as a public
+type that is not one, with a reason. It also fails when a list names a
+declaration the sources do not have, or gives one the wrong kind or file.
+A member of a `public extension` is public unless it says otherwise; a type
+nested in a non-public type is not. A nested type is listed by its qualified
+name, such as `UIFnTimeline.Row`. A surface's kind follows its declaration,
+not its directory: a conformance to a SwiftUI style protocol (a name ending in
+`Style`) makes a style; `View`, `ViewModifier`, `Shape`, `InsettableShape`, a
+UIKit or AppKit view or view controller representable, or a protocol declared
+in these sources that refines one of them makes a component, as does a public
+`View`-extension member in `Components`. A conformance counts in the
+declaration or in an extension in either directory. Any other public struct,
+class or actor (a value type, a `Layout`), and a public `View`-extension member
+in `Styles` (such as `uifnTheme`), is a non-surface. Enums and protocols count
+only as styles or components. One declaration repeated with the same kind and
+file, as `#if` alternatives or overloads are, is listed once.
 
 `npm test` in this package runs the verifier and its tests; turbo hashes the
 UIFnSwiftUI sources and these scripts as its inputs. The Swift workflow's Linux

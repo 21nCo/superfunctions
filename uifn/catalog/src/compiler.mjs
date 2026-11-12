@@ -198,10 +198,15 @@ export function validateCatalogSource(source = CATALOG_SOURCE) {
   return { ok: true, primitiveCount: source.primitives.length };
 }
 
-const SWIFTUI_ENTRY_FIELDS = ['status', 'controls', 'surfaces', 'note'];
+const SWIFTUI_ENTRY_FIELDS = new Set(['status', 'controls', 'surfaces', 'note']);
+const SWIFTUI_SURFACE_FIELDS = new Set(['id', 'kind', 'issue', 'source']);
+const SWIFTUI_NON_SURFACE_FIELDS = new Set(['id', 'source', 'reason']);
 const SWIFTUI_CONTROL_PATTERN = /^\.?[A-Za-z][A-Za-z0-9]*$/;
-const SWIFTUI_SURFACE_ID_PATTERN = /^(?:UIFn|uifn)[A-Za-z0-9]+$/;
+// A Swift name, qualified for a nested type (UIFnTimeline.Row): every id the
+// declaration scan reports can be listed.
+const SWIFTUI_SURFACE_ID_PATTERN = /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$/;
 const SWIFTUI_SURFACE_DIRECTORIES = ['Styles', 'Components'];
+const SWIFTUI_SOURCE_PATTERN = new RegExp(String.raw`^${SWIFTUI_SOURCES_ROOT}/(?:${SWIFTUI_SURFACE_DIRECTORIES.join('|')})/(?:[A-Za-z0-9+]+/)*[A-Za-z0-9+]+\.swift$`);
 
 function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -216,18 +221,33 @@ function validateSwiftUINames(entry, field, primitive, pattern) {
   assertUnique(values, `swiftui.${field}`, primitive);
 }
 
+function validateSwiftUIListEntry(entry, fields, label, byId) {
+  assert(isPlainObject(entry) && typeof entry.id === 'string' && SWIFTUI_SURFACE_ID_PATTERN.test(entry.id), 'UIFN_CATALOG_UNSUPPORTED_VALUE', `A SwiftUI ${label} has an invalid id.`, { value: entry?.id });
+  assert(!byId.has(entry.id), 'UIFN_CATALOG_DUPLICATE', `Duplicate SwiftUI ${label}: ${entry.id}`, { value: entry.id });
+  const extra = Object.keys(entry).filter((field) => !fields.has(field));
+  assert(extra.length === 0, 'UIFN_CATALOG_UNSUPPORTED_VALUE', `SwiftUI ${label} ${entry.id} has unknown fields.`, { id: entry.id, fields: extra });
+  assert(typeof entry.source === 'string' && SWIFTUI_SOURCE_PATTERN.test(entry.source), 'UIFN_CATALOG_UNSUPPORTED_VALUE', `SwiftUI ${label} ${entry.id} has an invalid source path.`, { id: entry.id, value: entry.source });
+  byId.set(entry.id, entry);
+}
+
 function validateSwiftUISurfaces(surfaces) {
   assert(Array.isArray(surfaces) && surfaces.length > 0, 'UIFN_CATALOG_FIELD_MISSING', 'SwiftUI status needs the UIFnSwiftUI style and component list.', { field: 'surfaces' });
   const byId = new Map();
   for (const surface of surfaces) {
-    assert(isPlainObject(surface) && SWIFTUI_SURFACE_ID_PATTERN.test(surface.id ?? ''), 'UIFN_CATALOG_UNSUPPORTED_VALUE', 'A SwiftUI surface has an invalid id.', { value: surface?.id });
-    assert(!byId.has(surface.id), 'UIFN_CATALOG_DUPLICATE', `Duplicate SwiftUI surface: ${surface.id}`, { value: surface.id });
+    validateSwiftUIListEntry(surface, SWIFTUI_SURFACE_FIELDS, 'surface', byId);
     assert(SWIFTUI_SURFACE_KINDS.includes(surface.kind), 'UIFN_CATALOG_UNSUPPORTED_VALUE', `SwiftUI surface ${surface.id} has an unknown kind.`, { surface: surface.id, value: surface.kind });
-    assert(typeof surface.issue === 'string' && /^UIF-[0-9]+$/.test(surface.issue), 'UIFN_CATALOG_UNSUPPORTED_VALUE', `SwiftUI surface ${surface.id} has an invalid issue.`, { surface: surface.id, value: surface.issue });
-    assert(typeof surface.source === 'string' && new RegExp(`^${SWIFTUI_SOURCES_ROOT}/(?:${SWIFTUI_SURFACE_DIRECTORIES.join('|')})/(?:[A-Za-z0-9+]+/)*[A-Za-z0-9+]+\\.swift$`).test(surface.source), 'UIFN_CATALOG_UNSUPPORTED_VALUE', `SwiftUI surface ${surface.id} has an invalid source path.`, { surface: surface.id, value: surface.source });
-    byId.set(surface.id, surface);
+    assert(typeof surface.issue === 'string' && /^UIF-\d+$/.test(surface.issue), 'UIFN_CATALOG_UNSUPPORTED_VALUE', `SwiftUI surface ${surface.id} has an invalid issue.`, { surface: surface.id, value: surface.issue });
   }
   return byId;
+}
+
+function validateSwiftUINonSurfaces(nonSurfaces, surfaces) {
+  assert(Array.isArray(nonSurfaces), 'UIFN_CATALOG_FIELD_MISSING', 'SwiftUI status needs the UIFnSwiftUI non-surface list.', { field: 'nonSurfaces' });
+  const byId = new Map(surfaces);
+  for (const entry of nonSurfaces) {
+    validateSwiftUIListEntry(entry, SWIFTUI_NON_SURFACE_FIELDS, 'non-surface', byId);
+    assert(typeof entry.reason === 'string' && entry.reason.trim().length > 0, 'UIFN_CATALOG_FIELD_MISSING', `SwiftUI non-surface ${entry.id} needs a reason.`, { id: entry.id, field: 'reason' });
+  }
 }
 
 function validateSwiftUIEntry(primitive, entry, surfaces) {
@@ -235,7 +255,7 @@ function validateSwiftUIEntry(primitive, entry, surfaces) {
   for (const field of SWIFTUI_ENTRY_FIELDS) {
     assert(Object.hasOwn(entry, field) && entry[field] !== undefined && entry[field] !== null, 'UIFN_CATALOG_FIELD_MISSING', `${primitive} is missing swiftui.${field}.`, { primitive, field: `swiftui.${field}` });
   }
-  const extra = Object.keys(entry).filter((field) => !SWIFTUI_ENTRY_FIELDS.includes(field));
+  const extra = Object.keys(entry).filter((field) => !SWIFTUI_ENTRY_FIELDS.has(field));
   assert(extra.length === 0, 'UIFN_CATALOG_UNSUPPORTED_VALUE', `${primitive} has unknown swiftui fields.`, { primitive, fields: extra });
   assert(SWIFTUI_STATUSES.includes(entry.status), 'UIFN_CATALOG_UNSUPPORTED_VALUE', `${primitive} has an unknown SwiftUI status.`, { primitive, field: 'swiftui.status', value: entry.status, allowed: SWIFTUI_STATUSES });
   validateSwiftUINames(entry, 'controls', primitive, SWIFTUI_CONTROL_PATTERN);
@@ -259,6 +279,7 @@ export function validateSwiftUIStatus(source = SWIFTUI_STATUS_SOURCE) {
   assert(isPlainObject(source) && source.schemaVersion === SWIFTUI_STATUS_SCHEMA_VERSION, 'UIFN_CATALOG_SCHEMA_INVALID', 'SwiftUI status schema version is unsupported.', { actual: source?.schemaVersion });
   assertExactArray(source.statuses, SWIFTUI_STATUSES, 'SwiftUI statuses', 'swiftui');
   const surfaces = validateSwiftUISurfaces(source.surfaces);
+  validateSwiftUINonSurfaces(source.nonSurfaces, surfaces);
   assert(isPlainObject(source.primitives), 'UIFN_CATALOG_FIELD_MISSING', 'SwiftUI status needs an entry per primitive.', { field: 'primitives' });
   const unknown = Object.keys(source.primitives).filter((name) => !EXPECTED_PRIMITIVE_NAMES.includes(name));
   assert(unknown.length === 0, 'UIFN_CATALOG_NAME_SET_INVALID', 'SwiftUI status names primitives outside the catalog.', { unknown });
@@ -272,43 +293,209 @@ export function validateSwiftUIStatus(source = SWIFTUI_STATUS_SOURCE) {
   return { ok: true, primitiveCount: EXPECTED_PRIMITIVE_NAMES.length, surfaceCount: surfaces.size };
 }
 
-// The styles and components UIFnSwiftUI declares in Styles and Components.
-// The kind follows the declaration, not the directory:
-// - a public struct conforming to a SwiftUI style protocol (`...Style`) is a
-//   style;
-// - a public struct conforming to View, ViewModifier or a protocol that
-//   refines View (Shape, InsettableShape and the UIKit/AppKit view and view
-//   controller representables) is a component, so a UIFnSwiftUI view that
-//   stands in for a system control is a component;
-// - in Components, a public function in an extension of View (a view
-//   modifier) is a component.
-// A struct's conformance counts whether it is in the declaration or in an
-// extension in either directory. Nested public structs count by their own
-// name. Both directories are scanned recursively, because the package
-// compiles every file under UIFnSwiftUI. Classes, enums, protocols and View-extension functions in Styles
-// (such as the uifnTheme environment modifier) are not surfaces.
-const SWIFT_ATTRIBUTES = String.raw`(?:@\w+(?:\([^)\n]*\))?\s+)*`;
-const SWIFT_GENERICS = String.raw`(?:<[^>{]*>)?`;
+// The UIFnSwiftUI declarations the verify script checks the SwiftUI surface
+// and non-surface lists against. Every .swift file under Styles and
+// Components, at any depth, is read as the compiler sees it: comments and
+// string literals are blanked first, so a commented-out type does not count.
+// A scope walk then finds
+// - each public struct, class or actor at any nesting depth, by its qualified
+//   name (UIFnTimeline.Row). A member of a public extension is public unless
+//   it says otherwise, and a type nested in a non-public type is not public;
+// - each public func or var in an extension of View (a view modifier).
+// The kind follows the declaration, not the directory. A conformance to a
+// SwiftUI style protocol (`...Style`) makes a style. View, ViewModifier,
+// Shape, InsettableShape, the view and view controller representables, or a
+// protocol declared in these sources that refines one of them, makes a
+// component, as does a View-extension member in Components. Conformances
+// added by an extension in any scanned file count. An enum or protocol counts
+// only as a style or component. Any other public struct, class or actor, and
+// any View-extension member in Styles, is unclassified and has to be listed
+// as a non-surface, so the scan fails closed.
+const SWIFT_STYLE_PROTOCOL = /^[A-Z]\w*Style$/;
+const SWIFT_COMPONENT_PROTOCOLS = new Set(['View', 'ViewModifier', 'Shape', 'InsettableShape', 'UIViewRepresentable', 'NSViewRepresentable', 'UIViewControllerRepresentable', 'NSViewControllerRepresentable']);
+const SWIFT_TYPE_KEYWORDS = new Set(['struct', 'class', 'actor', 'enum', 'protocol', 'extension']);
+const SWIFT_SURFACE_TYPE_KEYWORDS = new Set(['struct', 'class', 'actor']);
+const SWIFT_MEMBER_KEYWORDS = new Set(['func', 'var', 'let', 'case', 'typealias', 'associatedtype', 'init', 'subscript']);
+const SWIFT_ACCESS_MODIFIERS = new Set(['open', 'public', 'package', 'internal', 'fileprivate', 'private']);
+const SWIFT_DECLARATION_WORDS = new Set([...SWIFT_MEMBER_KEYWORDS, ...SWIFT_ACCESS_MODIFIERS, 'class', 'static', 'final', 'override', 'nonisolated', 'mutating', 'convenience', 'required', 'dynamic', 'lazy']);
+const SWIFT_TOKEN = /`[^`\n]+`|[A-Za-z_]\w*|#\w+|->|\d[\w.]*|[^\s\w]/g;
+const SWIFT_IDENTIFIER = /^[A-Za-z_]\w*$/;
+const SWIFT_STRING_START = /#*"/y;
 
-function swiftConformances(clause) {
-  return (clause ?? '').split(/\bwhere\b/)[0].split(/[,&]/).map((value) => value.trim().replace(/^SwiftUI\./, '')).filter(Boolean);
+// The text with comments and string literals (multi-line, raw and
+// interpolated ones too) replaced by spaces; line breaks are kept.
+function swiftCodeOnly(text) {
+  const out = text.split('');
+  const blank = (from, to) => {
+    for (let index = from; index < to; index += 1) if (out[index] !== '\n') out[index] = ' ';
+  };
+  const commentEnd = (start) => {
+    if (text.startsWith('//', start)) return text.includes('\n', start) ? text.indexOf('\n', start) : text.length;
+    let depth = 0;
+    let index = start;
+    while (index < text.length) {
+      if (text.startsWith('/*', index)) depth += 1;
+      else if (text.startsWith('*/', index)) depth -= 1;
+      else { index += 1; continue; }
+      index += 2;
+      if (depth === 0) return index;
+    }
+    return index;
+  };
+  const stringEnd = (start) => {
+    let index = start;
+    while (text[index] === '#') index += 1;
+    const hashes = text.slice(start, index);
+    const multiline = text.startsWith('"""', index);
+    const close = `${multiline ? '"""' : '"'}${hashes}`;
+    const escape = `\\${hashes}`;
+    index += multiline ? 3 : 1;
+    while (index < text.length && (multiline || text[index] !== '\n')) {
+      if (text.startsWith(close, index)) return index + close.length;
+      if (!text.startsWith(escape, index)) index += 1;
+      else if (text[index + escape.length] === '(') index = codeEnd(index + escape.length + 1, true);
+      else index += escape.length + 1;
+    }
+    return index;
+  };
+  // Scans code from `start`; in a string interpolation, stops after its `)`.
+  function codeEnd(start, interpolation) {
+    let depth = 0;
+    let index = start;
+    while (index < text.length) {
+      SWIFT_STRING_START.lastIndex = index;
+      const end = text.startsWith('//', index) || text.startsWith('/*', index) ? commentEnd(index) : SWIFT_STRING_START.test(text) && stringEnd(index);
+      if (end) {
+        blank(index, end);
+        index = end;
+        continue;
+      }
+      if (interpolation && text[index] === ')' && depth === 0) return index + 1;
+      if (interpolation && text[index] === '(') depth += 1;
+      if (interpolation && text[index] === ')') depth -= 1;
+      index += 1;
+    }
+    return index;
+  }
+  codeEnd(0, false);
+  return out.join('');
 }
 
-const SWIFT_COMPONENT_PROTOCOLS = [
-  'View',
-  'ViewModifier',
-  'Shape',
-  'InsettableShape',
-  'UIViewRepresentable',
-  'NSViewRepresentable',
-  'UIViewControllerRepresentable',
-  'NSViewControllerRepresentable',
-];
+function skipBalanced(tokens, index, open, close) {
+  let depth = 0;
+  for (let cursor = index; cursor < tokens.length; cursor += 1) {
+    if (tokens[cursor] === open) depth += 1;
+    if (tokens[cursor] === close) depth -= 1;
+    if (depth === 0) return cursor + 1;
+  }
+  return tokens.length;
+}
 
-function swiftSurfaceKind(conformances) {
-  if (conformances.some((value) => /^[A-Z]\w*Style$/.test(value))) return 'style';
-  if (conformances.some((value) => SWIFT_COMPONENT_PROTOCOLS.includes(value))) return 'component';
-  return undefined;
+function swiftTypeName(value) {
+  return value.replace(/^SwiftUI\./, '');
+}
+
+// Reads `Name<...>: A, B & C<...> where ... {` from the name on, and returns
+// the name, its conformances and the index after `{`.
+function readSwiftTypeHeader(tokens, index) {
+  let cursor = index + 1;
+  while (tokens[cursor] === '.' && SWIFT_IDENTIFIER.test(tokens[cursor + 1] ?? '')) cursor += 2;
+  const name = swiftTypeName(tokens.slice(index, cursor).join(''));
+  if (tokens[cursor] === '<') cursor = skipBalanced(tokens, cursor, '<', '>');
+  const conformances = [];
+  let current = '';
+  let depth = 0;
+  for (cursor += tokens[cursor] === ':' ? 1 : 0; cursor < tokens.length && tokens[cursor] !== '{'; cursor += 1) {
+    const token = tokens[cursor];
+    if (token === '<' || token === '>') depth += token === '<' ? 1 : -1;
+    else if (depth > 0) continue;
+    else if (token === 'where') break;
+    else if (token === '@') cursor += 1;
+    else if (token === ',' || token === '&') {
+      conformances.push(current);
+      current = '';
+    } else current += token;
+  }
+  while (cursor < tokens.length && tokens[cursor] !== '{') cursor += 1;
+  return { name, conformances: [...conformances, current].filter(Boolean).map(swiftTypeName), next: cursor + 1 };
+}
+
+function isSwiftPublic(modifiers, scope) {
+  const access = modifiers.find((value) => SWIFT_ACCESS_MODIFIERS.has(value));
+  if (access) return access === 'public' || access === 'open';
+  return scope?.kind === 'extension' && scope.membersPublic;
+}
+
+function readSwiftTypeDeclaration(state, index) {
+  const { tokens, scopes, model, source } = state;
+  const keyword = tokens[index];
+  const scope = scopes.at(-1);
+  const header = readSwiftTypeHeader(tokens, index + 1);
+  if (keyword === 'extension') {
+    model.extensions.set(header.name, [...(model.extensions.get(header.name) ?? []), ...header.conformances]);
+    scopes.push({ kind: 'extension', name: header.name, isPublic: true, membersPublic: state.modifiers.includes('public') || state.modifiers.includes('open') });
+    return header.next;
+  }
+  const id = [...scopes.map((entry) => entry.name), header.name].join('.');
+  const isPublic = isSwiftPublic(state.modifiers, scope) && scopes.every((entry) => entry.isPublic);
+  if (keyword === 'protocol') {
+    model.protocols.set(header.name, header.conformances);
+    model.protocols.set(id, header.conformances);
+  } else if (isPublic) model.found.push({ id, keyword, source, conformances: header.conformances });
+  scopes.push({ kind: 'type', name: header.name, isPublic });
+  return header.next;
+}
+
+function readSwiftMember(state, index) {
+  const { tokens, scopes, model, source } = state;
+  const scope = scopes.at(-1);
+  const name = tokens[index + 1] ?? '';
+  if (['func', 'var'].includes(tokens[index]) && scope?.kind === 'extension' && scope.name === 'View' && SWIFT_IDENTIFIER.test(name) && isSwiftPublic(state.modifiers, scope)) {
+    model.found.push({ id: name, keyword: tokens[index], source, member: true });
+  }
+  return index + 2;
+}
+
+// Reads one token in a type or extension body (or at file level); skips
+// function and property bodies. Modifiers gather up to the declaration they
+// qualify.
+function stepSwiftDeclarations(state, index) {
+  const { tokens, scopes } = state;
+  const token = tokens[index];
+  const next = tokens[index + 1] ?? '';
+  if (token === '{' || token === '}') {
+    if (token === '{') scopes.push({ kind: 'body' });
+    else scopes.pop();
+    state.modifiers = [];
+    return index + 1;
+  }
+  if (scopes.at(-1)?.kind === 'body') return index + 1;
+  if (token === '@') return tokens[index + 2] === '(' ? skipBalanced(tokens, index + 2, '(', ')') : index + 2;
+  // `private(set)` limits only the setter.
+  if (SWIFT_ACCESS_MODIFIERS.has(token) && next === '(') return skipBalanced(tokens, index + 1, '(', ')');
+  let end = index + 1;
+  if (SWIFT_TYPE_KEYWORDS.has(token) && SWIFT_IDENTIFIER.test(next) && !SWIFT_DECLARATION_WORDS.has(next)) end = readSwiftTypeDeclaration(state, index);
+  else if (SWIFT_MEMBER_KEYWORDS.has(token)) end = readSwiftMember(state, index);
+  else if (SWIFT_IDENTIFIER.test(token)) {
+    state.modifiers.push(token);
+    return end;
+  }
+  state.modifiers = [];
+  return end;
+}
+
+function walkSwiftDeclarations(text, source, model) {
+  const tokens = (swiftCodeOnly(text).match(SWIFT_TOKEN) ?? []).map((token) => token.replaceAll('`', ''));
+  const state = { tokens, scopes: [], model, source, modifiers: [] };
+  for (let index = 0; index < tokens.length;) index = stepSwiftDeclarations(state, index);
+}
+
+function swiftSurfaceKind(conformances, protocols, seen = new Set()) {
+  if (conformances.some((value) => SWIFT_STYLE_PROTOCOL.test(value))) return 'style';
+  if (conformances.some((value) => SWIFT_COMPONENT_PROTOCOLS.has(value))) return 'component';
+  const refined = conformances.filter((value) => protocols.has(value) && !seen.has(value));
+  for (const value of refined) seen.add(value);
+  return refined.map((value) => swiftSurfaceKind(protocols.get(value), protocols, seen)).find(Boolean);
 }
 
 function swiftSurfaceDirectory(relativePath) {
@@ -316,81 +503,74 @@ function swiftSurfaceDirectory(relativePath) {
 }
 
 // `files` is a list of { path, text }, path relative to the repository root.
+// Returns every public declaration in scan order as { id, kind, source }, kind
+// 'style', 'component' or 'unclassified'. An id repeats when it is declared
+// more than once, as #if alternatives or overloads are.
 export function parseSwiftUISurfaceDeclarations(files) {
-  const found = [];
-  const extensionConformances = new Map();
+  const model = { found: [], extensions: new Map(), protocols: new Map() };
   for (const { path: relativePath, text } of files) {
-    const directory = swiftSurfaceDirectory(relativePath);
-    if (!directory) continue;
-    const structs = new RegExp(String.raw`^[ \t]*${SWIFT_ATTRIBUTES}public\s+(?:final\s+)?struct\s+(\w+)\s*${SWIFT_GENERICS}\s*(?::([^{]+))?\{`, 'gm');
-    for (const match of text.matchAll(structs)) {
-      found.push({ id: match[1], source: relativePath, conformances: swiftConformances(match[2]) });
-    }
-    const conformingExtensions = new RegExp(String.raw`^[ \t]*${SWIFT_ATTRIBUTES}(?:(?:public|internal|fileprivate|private)\s+)?extension\s+(?:\w+\.)*(\w+)\s*${SWIFT_GENERICS}\s*:([^{]+)\{`, 'gm');
-    for (const match of text.matchAll(conformingExtensions)) {
-      extensionConformances.set(match[1], [...(extensionConformances.get(match[1]) ?? []), ...swiftConformances(match[2])]);
-    }
-    if (directory === 'Components') {
-      const extensions = new RegExp(String.raw`^${SWIFT_ATTRIBUTES}(public\s+)?extension\s+(?:SwiftUI\.)?View\b[^{]*\{([\s\S]*?)^\}`, 'gm');
-      const functions = new RegExp(String.raw`^[ \t]*${SWIFT_ATTRIBUTES}((?:(?:public|private|fileprivate|internal|nonisolated|static)\s+)*)func\s+(\w+)\s*[<(]`, 'gm');
-      for (const block of text.matchAll(extensions)) {
-        for (const match of block[2].matchAll(functions)) {
-          const modifiers = match[1].split(/\s+/);
-          const isPublic = modifiers.includes('public') || (Boolean(block[1]) && !modifiers.some((value) => ['private', 'fileprivate', 'internal'].includes(value)));
-          if (isPublic) found.push({ id: match[2], source: relativePath, kind: 'component' });
-        }
-      }
-    }
+    if (swiftSurfaceDirectory(relativePath)) walkSwiftDeclarations(text, relativePath, model);
   }
-  return found.flatMap(({ id, source, kind, conformances }) => {
-    const resolved = kind ?? swiftSurfaceKind([...conformances, ...(extensionConformances.get(id) ?? [])]);
-    return resolved ? [{ id, kind: resolved, source }] : [];
+  return model.found.flatMap(({ id, keyword, source, conformances, member }) => {
+    if (member) return [{ id, kind: swiftSurfaceDirectory(source) === 'Components' ? 'component' : 'unclassified', source }];
+    const kind = swiftSurfaceKind([...conformances, ...(model.extensions.get(id) ?? [])], model.protocols);
+    if (kind) return [{ id, kind, source }];
+    return SWIFT_SURFACE_TYPE_KEYWORDS.has(keyword) ? [{ id, kind: 'unclassified', source }] : [];
   });
 }
 
 async function listSwiftFiles(repoRoot, relativeDirectory) {
   const entries = await readdir(path.join(repoRoot, relativeDirectory), { withFileTypes: true });
-  const files = [];
-  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+  entries.sort((left, right) => left.name.localeCompare(right.name));
+  const nested = await Promise.all(entries.map((entry) => {
     const relativePath = `${relativeDirectory}/${entry.name}`;
-    if (entry.isDirectory()) files.push(...await listSwiftFiles(repoRoot, relativePath));
-    else if (entry.isFile() && entry.name.endsWith('.swift')) files.push(relativePath);
-  }
-  return files;
+    if (entry.isDirectory()) return listSwiftFiles(repoRoot, relativePath);
+    return entry.isFile() && entry.name.endsWith('.swift') ? [relativePath] : [];
+  }));
+  return nested.flat();
 }
 
 export async function readSwiftUISurfaceDeclarations(repoRoot) {
-  const files = [];
-  for (const directory of SWIFTUI_SURFACE_DIRECTORIES) {
+  const paths = await Promise.all(SWIFTUI_SURFACE_DIRECTORIES.map(async (directory) => {
     const relativeDirectory = `${SWIFTUI_SOURCES_ROOT}/${directory}`;
-    let paths;
     try {
-      paths = await listSwiftFiles(repoRoot, relativeDirectory);
+      return await listSwiftFiles(repoRoot, relativeDirectory);
     } catch (error) {
       if (error.code === 'ENOENT') fail('UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `UIFnSwiftUI source directory is missing: ${relativeDirectory}`, { directory: relativeDirectory });
       throw error;
     }
-    for (const relativePath of paths) {
-      files.push({ path: relativePath, text: await readFile(path.join(repoRoot, relativePath), 'utf8') });
-    }
-  }
+  }));
+  const files = await Promise.all(paths.flat().map(async (relativePath) => ({ path: relativePath, text: await readFile(path.join(repoRoot, relativePath), 'utf8') })));
   return parseSwiftUISurfaceDeclarations(files);
 }
 
-export function verifySwiftUISurfaceDeclarations(declarations, source = SWIFTUI_STATUS_SOURCE) {
+// Repeats of one id with the same kind and source (#if alternatives,
+// overloads) are one declaration; a repeat with another kind or source is drift.
+function coalesceSwiftUIDeclarations(declarations) {
   const declared = new Map();
   for (const declaration of declarations) {
-    assert(!declared.has(declaration.id), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `UIFnSwiftUI declares ${declaration.id} more than once.`, { id: declaration.id });
-    declared.set(declaration.id, declaration);
+    const earlier = declared.get(declaration.id);
+    assert(!earlier || (earlier.kind === declaration.kind && earlier.source === declaration.source), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `UIFnSwiftUI declares ${declaration.id} more than once, with a different kind or source.`, { id: declaration.id, declarations: [earlier, declaration] });
+    declared.set(declaration.id, { id: declaration.id, kind: declaration.kind, source: declaration.source });
   }
-  const listed = new Map(source.surfaces.map((surface) => [surface.id, surface]));
-  const unlisted = [...declared.keys()].filter((id) => !listed.has(id));
+  return declared;
+}
+
+export function verifySwiftUISurfaceDeclarations(declarations, source = SWIFTUI_STATUS_SOURCE) {
+  const declared = coalesceSwiftUIDeclarations(declarations);
+  const listed = new Map([
+    ...source.surfaces.map((surface) => [surface.id, { kind: surface.kind, source: surface.source }]),
+    ...source.nonSurfaces.map((entry) => [entry.id, { kind: 'unclassified', source: entry.source }]),
+  ]);
+  const notListed = [...declared.values()].filter((declaration) => !listed.has(declaration.id));
+  const unlisted = notListed.filter((declaration) => declaration.kind !== 'unclassified').map((declaration) => declaration.id);
+  const unclassified = notListed.filter((declaration) => declaration.kind === 'unclassified').map((declaration) => declaration.id);
   const undeclared = [...listed.keys()].filter((id) => !declared.has(id));
-  const moved = [...listed.values()]
-    .filter((surface) => declared.has(surface.id) && (declared.get(surface.id).source !== surface.source || declared.get(surface.id).kind !== surface.kind))
-    .map((surface) => ({ id: surface.id, listed: { kind: surface.kind, source: surface.source }, declared: { kind: declared.get(surface.id).kind, source: declared.get(surface.id).source } }));
-  assert(unlisted.length === 0 && undeclared.length === 0 && moved.length === 0, 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', 'The SwiftUI status surface list differs from the UIFnSwiftUI sources.', { unlisted, undeclared, moved });
-  return { ok: true, surfaceCount: declared.size };
+  const moved = [...listed]
+    .filter(([id, entry]) => declared.has(id) && (declared.get(id).source !== entry.source || declared.get(id).kind !== entry.kind))
+    .map(([id, entry]) => ({ id, listed: entry, declared: { kind: declared.get(id).kind, source: declared.get(id).source } }));
+  assert(unlisted.length === 0 && unclassified.length === 0 && undeclared.length === 0 && moved.length === 0, 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', 'The SwiftUI status lists differ from the UIFnSwiftUI sources. List a public style, view or view modifier as a surface, and any other public type or Styles View-extension member as a non-surface.', { unlisted, unclassified, undeclared, moved });
+  return { ok: true, surfaceCount: source.surfaces.length, nonSurfaceCount: source.nonSurfaces.length };
 }
 
 function swiftuiStatusOutput(catalog, source, metadata) {
@@ -400,9 +580,12 @@ function swiftuiStatusOutput(catalog, source, metadata) {
     swiftuiStatusSchemaVersion: source.schemaVersion,
     statuses: [...source.statuses],
     statusCounts: Object.fromEntries(source.statuses.map((status) => [status, catalog.primitives.filter((primitive) => byName[primitive.name].status === status).length])),
-    surfaces: source.surfaces.map((surface) => ({
-      ...surface,
-      primitives: catalog.primitives.filter((primitive) => byName[primitive.name].surfaces.includes(surface.id)).map((primitive) => primitive.id),
+    surfaces: source.surfaces.map(({ id, kind, issue, source: file }) => ({
+      id,
+      kind,
+      issue,
+      source: file,
+      primitives: catalog.primitives.filter((primitive) => byName[primitive.name].surfaces.includes(id)).map((primitive) => primitive.id),
     })),
     primitives: catalog.primitives.map((primitive) => ({ id: primitive.id, name: primitive.name, swiftui: structuredClone(byName[primitive.name]) })),
   };

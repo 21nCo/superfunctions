@@ -23,13 +23,16 @@ export const SWIFTUI_SOURCES_ROOT = 'uifn/swift/Sources/UIFnSwiftUI';
 const styles = `${SWIFTUI_SOURCES_ROOT}/Styles`;
 const components = `${SWIFTUI_SOURCES_ROOT}/Components`;
 
-// Every public style and component UIFnSwiftUI declares. A surface's kind
-// follows its declaration, not its directory: a style conforms to a SwiftUI
-// style protocol; a component is a View (or a protocol refining View, such as
-// Shape or a view representable), a ViewModifier or a View-extension
-// function. Files in subdirectories of Styles and Components count too. The verify script checks this list, kinds included, against the
-// Swift sources, so a new style or component has to be listed here and mapped
-// to a primitive below.
+// Every public style and component UIFnSwiftUI declares in Styles and
+// Components, at any depth. A surface's kind follows its declaration, not its
+// directory: a style conforms to a SwiftUI style protocol; a component is a
+// View (or a protocol refining View, such as Shape, a view representable or
+// one declared in these sources), a ViewModifier or a public View-extension
+// function in Components. A nested type is listed by its qualified name, such
+// as UIFnTimeline.Row. The verify script checks this list and
+// SWIFTUI_NON_SURFACES, kinds and sources included, against the Swift
+// sources, so a new style or component has to be listed here and mapped to a
+// primitive below.
 export const SWIFTUI_SURFACES = [
   { id: 'UIFnButtonStyle', kind: 'style', issue: 'UIF-24', source: `${styles}/UIFnButtonStyle.swift` },
   { id: 'UIFnSwitchToggleStyle', kind: 'style', issue: 'UIF-24', source: `${styles}/UIFnToggleStyles.swift` },
@@ -47,6 +50,16 @@ export const SWIFTUI_SURFACES = [
   { id: 'UIFnEmptyState', kind: 'component', issue: 'UIF-26', source: `${components}/UIFnEmptyState.swift` },
   { id: 'UIFnSkeleton', kind: 'component', issue: 'UIF-26', source: `${components}/UIFnSkeleton.swift` },
   { id: 'UIFnSkeletonBlock', kind: 'component', issue: 'UIF-26', source: `${components}/UIFnSkeleton.swift` },
+];
+
+// Every other public struct, class or actor in Styles and Components, and
+// every public View-extension member in Styles. The scan fails closed: a
+// public type it cannot classify as a style or component, such as a value
+// type or a Layout, has to be listed here with the reason it is not one.
+export const SWIFTUI_NON_SURFACES = [
+  { id: 'UIFnBannerDismiss', source: `${components}/UIFnBanner.swift`, reason: 'The dismiss button a UIFnBanner shows; a value, not a view.' },
+  { id: 'UIFnToast', source: `${components}/UIFnBanner.swift`, reason: 'The toast uifnToast presents; a value, not a view.' },
+  { id: 'uifnTheme', source: `${styles}/UIFnStyleEnvironment.swift`, reason: 'Sets the theme the UIFn styles draw with; an environment setting, not a style.' },
 ];
 
 function native(controls, note, surfaces = []) {
@@ -75,7 +88,7 @@ export const SWIFTUI_PRIMITIVES = {
   Autocomplete: native(['.searchable', '.searchSuggestions'], 'Suggestions under a search field; UIFnEmptyState can show the empty part when nothing matches. SwiftUI offers no suggestions for a plain text field.', ['UIFnEmptyState']),
   Avatar: none('SwiftUI has no avatar view, and UIFnSwiftUI has none either.'),
   Button: styled(['Button'], ['UIFnButtonStyle'], 'Button with .uifnPrimary, .uifnSecondary, .uifnGhost or .uifnDestructive.'),
-  Carousel: none('TabView pages only on iOS (.page style), so there is no carousel on both platforms, and UIFnSwiftUI has none.'),
+  Carousel: native(['TabView'], 'TabView with the .page style pages through views on iOS; macOS has no page style. UIFnSwiftUI has no carousel.'),
   Checkbox: styled(['Toggle'], ['UIFnCheckboxToggleStyle'], 'Toggle with .uifnCheckbox.'),
   CheckboxGroup: styled(['Toggle'], ['UIFnCheckboxToggleStyle'], 'A group of .uifnCheckbox toggles; a parent Toggle(sources:isOn:) shows the mixed state.'),
   Clipboard: styled(['Button'], ['UIFnButtonStyle', 'uifnToast'], 'A uifn-styled Button that writes to the pasteboard, with uifnToast to confirm the copy. SwiftUI has no copy control.'),
@@ -144,5 +157,6 @@ export const SWIFTUI_STATUS_SOURCE = {
   schemaVersion: SWIFTUI_STATUS_SCHEMA_VERSION,
   statuses: [...SWIFTUI_STATUSES],
   surfaces: SWIFTUI_SURFACES,
+  nonSurfaces: SWIFTUI_NON_SURFACES,
   primitives: SWIFTUI_PRIMITIVES,
 };

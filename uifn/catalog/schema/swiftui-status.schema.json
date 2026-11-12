@@ -28,7 +28,7 @@
       "items": {
         "type": "object", "additionalProperties": false, "required": ["id", "kind", "issue", "source", "primitives"],
         "properties": {
-          "id": { "type": "string", "pattern": "^(?:UIFn|uifn)[A-Za-z0-9]+$" },
+          "id": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*$" },
           "kind": { "enum": ["style", "component"] },
           "issue": { "type": "string", "pattern": "^UIF-[0-9]+$" },
           "source": { "type": "string", "pattern": "^uifn/swift/Sources/UIFnSwiftUI/(?:Styles|Components)/(?:[A-Za-z0-9+]+/)*[A-Za-z0-9+]+\\.swift$" },
@@ -48,8 +48,8 @@
             "properties": {
               "status": { "enum": ["native", "uifn-style", "uifn-component", "none"] },
               "controls": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^\\.?[A-Za-z][A-Za-z0-9]*$" } },
-              "surfaces": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^(?:UIFn|uifn)[A-Za-z0-9]+$" } },
-              "note": { "type": "string", "minLength": 1 }
+              "surfaces": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*$" } },
+              "note": { "type": "string", "pattern": "\\S" }
             }
           }
         }

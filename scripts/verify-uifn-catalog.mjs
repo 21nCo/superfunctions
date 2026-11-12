@@ -68,8 +68,8 @@ try {
   verifySwiftUISurfaceDeclarations(swiftuiDeclarations);
   const swiftuiStatus = JSON.parse(first.outputs['swiftui-status.json']);
   const swiftuiNegativeCodes = [];
-  for (const file of swiftuiStatusFixtures) {
-    const { mutation, expectedErrorCodes } = JSON.parse(await readFile(path.join(fixtureDirectory, file), 'utf8'));
+  const swiftuiFixtures = await Promise.all(swiftuiStatusFixtures.map(async (file) => JSON.parse(await readFile(path.join(fixtureDirectory, file), 'utf8'))));
+  for (const { mutation, expectedErrorCodes } of swiftuiFixtures) {
     const mutated = structuredClone(SWIFTUI_STATUS_SOURCE);
     const entry = mutated.primitives[mutation.swiftuiPrimitive];
     if (mutation.deleteField) delete entry[mutation.deleteField];
@@ -115,6 +115,7 @@ try {
       statusCounts: swiftuiStatus.statusCounts,
       primitivesWithStatus: swiftuiStatus.primitives.length,
       surfaceCount: swiftuiStatus.surfaces.length,
+      nonSurfaceCount: SWIFTUI_STATUS_SOURCE.nonSurfaces.length,
       unmappedSurfaces: swiftuiStatus.surfaces.filter((surface) => surface.primitives.length === 0).map((surface) => surface.id),
       declaredSurfacesMatchSources: true,
       negativeVectors: swiftuiNegativeCodes,
