@@ -55,12 +55,15 @@ describe('offline replay transport', () => {
   beforeEach(() => {
     persisted.clear();
     vi.stubGlobal('fetch', globalFetch);
+    // Node 21+ has a global navigator; older supported runtimes do not, and a
+    // real navigator's onLine is a getter, so give each test its own object.
+    vi.stubGlobal('navigator', {});
+    setOnline(true);
     globalFetch.mockClear();
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
-    setOnline(true);
   });
 
   it('replays an upload staged before a reload through the new client fetch, headers and credentials', async () => {
@@ -81,10 +84,10 @@ describe('offline replay transport', () => {
 
     // Reload: a fresh client with a fresh CSRF token, now online.
     setOnline(true);
-    const calls: Array<{ url: string; method: string; headers: Headers; credentials?: RequestCredentials }> = [];
+    const calls: Array<{ url: string; method: string; headers: Headers; credentials?: RequestCredentials; body?: BodyInit | null }> = [];
     const replayFetch = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
       const url = String(input);
-      calls.push({ url, method: init.method ?? 'GET', headers: new Headers(init.headers), credentials: init.credentials });
+      calls.push({ url, method: init.method ?? 'GET', headers: new Headers(init.headers), credentials: init.credentials, body: init.body });
       if (url.endsWith('/upload/init')) {
         return envelope({ uploadSessionId: 'sess_1', uploadSessionToken: 'upls_1', uploadMode: 'proxy', chunkSizeBytes: 100, totalParts: 1 });
       }
@@ -119,5 +122,8 @@ describe('offline replay transport', () => {
       expect(call.headers.get('x-csrf-token')).toBe('csrf-after-reload');
       expect(call.credentials).toBe('include');
     }
+    // The replayed part carries the bytes staged before the reload.
+    const partPut = calls.find((c) => c.method === 'PUT');
+    expect(await new Response(partPut?.body).text()).toBe('hello');
   });
 });

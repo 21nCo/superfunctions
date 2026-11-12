@@ -26,7 +26,7 @@ const { fileId, versionId } = await upload.done();
 | `credentials` | `'same-origin'` | `RequestCredentials` mode for requests sent to FileFn. |
 | `getAuthHeaders` | none | Headers added to every request sent to FileFn. Called for each request and each retry attempt. |
 
-When `fetch` and `getAuthHeaders` are both given, the headers from `getAuthHeaders` are merged onto every request passed to that fetch. Request-specific headers (the JSON `Content-Type`, signed part headers, `x-upload-session-token`) are applied after them and replace an auth header with the same name in any letter case. Leaving out every option keeps the previous behavior: the global `fetch` with `same-origin` credentials.
+When `fetch` and `getAuthHeaders` are both given, the headers from `getAuthHeaders` are merged onto every request that fetch sends to FileFn (storage part uploads never get them; see [Part uploads](#part-uploads)). Request-specific headers (the JSON `Content-Type`, signed part headers, `x-upload-session-token`) are applied after them and replace an auth header with the same name in any letter case. Leaving out every option keeps the previous behavior: the global `fetch` with `same-origin` credentials.
 
 The injected `fetch` is called without a `this` binding, so `window.fetch` can be passed directly. If no `fetch` is given, the global `fetch` is looked up when each request is sent.
 
@@ -40,7 +40,7 @@ const files = createFileFnClient({
 });
 ```
 
-A cross-origin API must answer CORS requests with `Access-Control-Allow-Credentials: true` and allow the CSRF header.
+A cross-origin API must answer CORS requests with `Access-Control-Allow-Credentials: true`, set `Access-Control-Allow-Origin` to your app's explicit origin (browsers reject `*` for credentialed requests), and allow the CSRF header.
 
 ### Bearer token
 
@@ -64,8 +64,8 @@ const files = createFileFnClient({
 
 A part URL returned by the sign endpoint is sent through the same `fetch`:
 
-- A proxy upload URL under `baseUrl` (a relative path, or an absolute URL with the same origin and path prefix) is a FileFn request. It gets the `getAuthHeaders` headers and the configured `credentials`. A `baseUrl` of `'/'` or `''` means the page origin root, so every same-origin path is under it.
-- Any other URL (for example an R2 bucket presigned URL, or a protocol-relative `//host/...` URL) gets only its signed headers and the upload session token, with `credentials: 'omit'`. Your auth headers and cookies are never sent to storage.
+- A proxy upload URL under `baseUrl` (a root-relative path, which is appended to `baseUrl`, or an absolute URL with the same origin and path prefix) is a FileFn request. Dot segments (`..`, including `%2e%2e`) are resolved before this check, so a path that climbs out of `baseUrl` is not a FileFn request. It gets the `getAuthHeaders` headers and the configured `credentials`. A `baseUrl` of `'/'` or `''` means the page origin root, so every same-origin path is under it.
+- Any other URL (for example an R2 bucket presigned URL, or a protocol-relative `//host/...` URL, which is sent to that host unchanged) gets only its signed headers and the upload session token, with `credentials: 'omit'`. Your auth headers and cookies are never sent to storage.
 
 ### Offline replay
 

@@ -325,6 +325,60 @@ describe('client transport options', () => {
     expect(init.credentials).toBe(toFileFn ? 'include' : 'omit');
   });
 
+  it.each([
+    [undefined, '/../storage/part', false],
+    [undefined, '/%2e%2e/storage/part', false],
+    [undefined, '/.%2E/storage/part', false],
+    [undefined, '/upload/../../storage/part', false],
+    [undefined, '/upload/sess_1/../sess_1/parts/1', true],
+    ['https://app.example/dashboard', '/../storage/part', false],
+    ['https://app.example/dashboard', '/%2e%2e/storage/part', false],
+    ['https://app.example/dashboard', '/upload/sess_1/parts/1', true],
+  ])('normalizes dot segments before matching a part URL under baseUrl /api/files (location %s, %s, %s)', async (href, url, toFileFn) => {
+    if (href) vi.stubGlobal('location', { href });
+    else expect(globalThis.location).toBeUndefined();
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 200, headers: { ETag: '"e"' } }));
+    const http = createHttpClient({
+      baseUrl: '/api/files',
+      fetch: fetchImpl as unknown as typeof fetch,
+      credentials: 'include',
+      getAuthHeaders: () => ({ Authorization: 'Bearer secret' }),
+    });
+
+    await http.uploadPartToSignedUrl(url, { 'content-type': 'text/plain' }, tenBytes());
+
+    const init = (fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1];
+    expect(new Headers(init.headers).get('authorization')).toBe(toFileFn ? 'Bearer secret' : null);
+    expect(init.credentials).toBe(toFileFn ? 'include' : 'omit');
+  });
+
+  it.each([
+    [BASE, undefined, '//bucket.example/obj'],
+    [BASE, 'https://app.example/dashboard', '//bucket.example/obj'],
+    [BASE, undefined, '/\\bucket.example/obj'],
+    ['/api/files', undefined, '//bucket.example/obj'],
+    ['/api/files', 'https://app.example/dashboard', '//bucket.example/obj'],
+    ['/api/files', 'https://app.example/dashboard', '/\\bucket.example/obj'],
+  ])('sends a protocol-relative part URL to its own host under baseUrl %s (location %s, %s)', async (baseUrl, href, url) => {
+    if (href) vi.stubGlobal('location', { href });
+    else expect(globalThis.location).toBeUndefined();
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 200, headers: { ETag: '"e"' } }));
+    const http = createHttpClient({
+      baseUrl,
+      fetch: fetchImpl as unknown as typeof fetch,
+      credentials: 'include',
+      getAuthHeaders: () => ({ Authorization: 'Bearer secret' }),
+    });
+
+    await http.uploadPartToSignedUrl(url, { 'content-type': 'text/plain' }, tenBytes());
+
+    const [dispatched, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect(dispatched).toBe(url);
+    expect(new Headers(init.headers).get('authorization')).toBeNull();
+    expect(new Headers(init.headers).get('content-type')).toBe('text/plain');
+    expect(init.credentials).toBe('omit');
+  });
+
   it('defaults to the global fetch, resolved per request, and same-origin credentials', async () => {
     const client = createFileFnClient({ baseUrl: BASE });
     const lateFetch = vi.fn(async () => envelope({ fileId: 'file_1' }));
