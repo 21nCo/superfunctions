@@ -376,7 +376,9 @@ const describeProcess = (entry) => {
   return `process ${entry.pid} (group ${entry.pgid}${entry.cwd ? `, cwd ${entry.cwd}` : ""}): ${command}`;
 };
 
-const describeLock = (lock) => `${lock.directory}, a machine-wide lock held by process ${lock.pid}, which ended without releasing it`;
+const describeLock = (lock) => `${lock.directory}, a machine-wide lock held by process ${lock.pid}, which ended without releasing it${lock.kept
+  ? `; it was left in place, since at ${Math.round(lock.age / 1_000)} s old a waiter may already be recovering it (withFileLock recovers a dead holder's lock after ${Math.round(lock.staleMs / 1_000)} s)`
+  : ""}`;
 
 const listed = (items, describe, noun) => [
   ...items.slice(0, MAX_LISTED).map((item) => `  ${describe(item)}`),
@@ -591,14 +593,23 @@ function registeredDirectories(root) {
  * process holding it is killed before it releases the lock (an interrupted run, or a worker
  * stopped at the run's end), the run's cleanup finds it here.
  */
-export function recordMachineLock(lockPath) {
+export function recordMachineLock(lockPath, { staleMs = DEFAULT_LOCK_STALE_MS } = {}) {
   const root = process.env[ROOT_VARIABLE];
   if (!root) return;
-  try { appendFileSync(path.join(root, LOCK_RECORD), `${JSON.stringify({ lock: path.resolve(lockPath), pid: process.pid, at: Date.now() })}\n`); }
+  try { appendFileSync(path.join(root, LOCK_RECORD), `${JSON.stringify({ lock: path.resolve(lockPath), pid: process.pid, at: Date.now(), staleMs })}\n`); }
   catch { /* the run has ended; there is nothing left to clean up for */ }
 }
 
-/** The machine-wide locks the run's tests named: each lock with the processes that named it and when each first did. */
+/** withFileLock's (@devfn/ports) default: it recovers a lock whose holder is dead once the lock is this old. */
+const DEFAULT_LOCK_STALE_MS = 300_000;
+// The guard removes a dead holder's lock only while it is younger than this share of its
+// recovery age, so no waiter can be recovering it at the same time (see removeAbandonedLocks).
+const REMOVABLE_SHARE = 0.8;
+
+/**
+ * The machine-wide locks the run's tests named: each lock with the processes that named it and
+ * when each first did, and the shortest recovery age any of them gave it.
+ */
 function recordedLocks(root) {
   let text;
   try { text = readFileSync(path.join(root, LOCK_RECORD), "utf8"); } catch { return new Map(); }
@@ -607,9 +618,11 @@ function recordedLocks(root) {
     let entry;
     try { entry = line ? JSON.parse(line) : undefined; } catch { continue; /* a line another worker is still writing */ }
     if (typeof entry?.lock !== "string" || !Number.isSafeInteger(entry.pid) || !Number.isFinite(entry.at)) continue;
-    const namers = locks.get(entry.lock) ?? new Map();
-    namers.set(entry.pid, Math.min(namers.get(entry.pid) ?? Infinity, entry.at));
-    locks.set(entry.lock, namers);
+    const named = locks.get(entry.lock) ?? { namers: new Map(), staleMs: DEFAULT_LOCK_STALE_MS };
+    named.namers.set(entry.pid, Math.min(named.namers.get(entry.pid) ?? Infinity, entry.at));
+    // A record from before recovery ages were recorded uses withFileLock's default.
+    if (Number.isFinite(entry.staleMs) && entry.staleMs >= 0) named.staleMs = Math.min(named.staleMs, entry.staleMs);
+    locks.set(entry.lock, named);
   }
   return locks;
 }
@@ -623,7 +636,7 @@ function recordedLocks(root) {
  */
 function runLocks(root) {
   const held = [];
-  for (const [lock, namers] of recordedLocks(root)) {
+  for (const [lock, { namers, staleMs }] of recordedLocks(root)) {
     const parent = path.dirname(lock);
     const base = path.basename(lock);
     let names;
@@ -631,12 +644,13 @@ function runLocks(root) {
     for (const name of names) {
       if (name !== base && !name.startsWith(`${base}.released.`)) continue;
       const directory = path.join(parent, name);
+      let record;
       let owner;
-      try { owner = JSON.parse(readFileSync(path.join(directory, "owner.json"), "utf8")); } catch { continue; }
+      try { record = readFileSync(path.join(directory, "owner.json"), "utf8"); owner = JSON.parse(record); } catch { continue; }
       const pid = owner?.pid;
       const created = Date.parse(owner?.createdAt);
       if (!Number.isSafeInteger(pid) || !namers.has(pid) || !(created >= namers.get(pid))) continue;
-      held.push({ directory, released: name !== base, pid });
+      held.push({ directory, released: name !== base, pid, record, created, staleMs });
     }
   }
   return held;
@@ -673,6 +687,15 @@ const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),
  * when it is about to exit. Synchronous, so it can run as the process exits.
  *
  * The lock is moved aside first, as withFileLock releases one, so its path is freed in one step.
+ *
+ * withFileLock lets any waiter take over a lock whose holder is dead once it is `staleMs` old,
+ * replacing its owner record in place. The guard must never move such a lock away under a waiter
+ * that has just taken it over. So it removes a lock only while its owner record is younger than
+ * REMOVABLE_SHARE of that age (240 s of the default 300 s), checked against a fresh read of the
+ * record just before the move, which also skips a lock whose record changed. A waiter judges a
+ * lock recoverable only after it is `staleMs` old, a clear margin after the guard's last check.
+ * An older lock is left in place for withFileLock to recover, and listed as kept, so the run
+ * still fails. A released copy (`<lock>.released.*`) is never taken over, so it goes at any age.
  */
 function removeAbandonedLocks(root, { graceMs, ending } = {}) {
   let held = runLocks(root);
@@ -689,6 +712,15 @@ function removeAbandonedLocks(root, { graceMs, ending } = {}) {
     if (!dead(lock.pid)) continue;
     let target = lock.directory;
     if (!lock.released) {
+      let current;
+      try { current = readFileSync(path.join(lock.directory, "owner.json"), "utf8"); } catch { continue; }
+      // Released, or taken over, since it was read: it is no longer the dead holder's.
+      if (current !== lock.record) continue;
+      const age = Date.now() - lock.created;
+      if (!(age < lock.staleMs * REMOVABLE_SHARE)) {
+        removed.push({ ...lock, kept: true, age });
+        continue;
+      }
       target = `${lock.directory}.released.leak-guard-${newToken()}`;
       try { renameSync(lock.directory, target); } catch { continue; }
     }

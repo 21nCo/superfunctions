@@ -397,6 +397,35 @@ writeFileSync(path.join(lock, "owner.json"), JSON.stringify({ token: "fixture", 
     }
   });
 
+  it("leaves in place, and lists, a dead holder's machine-wide lock old enough that a waiter may be recovering it", async () => {
+    // withFileLock lets a waiter take over a dead holder's lock once it is staleMs old, rewriting
+    // its owner record in place; moving the lock away then would take it from under that waiter.
+    // The test names the lock with a 2 s recovery age, so it is past 80% of that before it hangs.
+    const name = `devfn-leak-guard-lock-${randomUUID()}`;
+    const lock = machineLock(name);
+    const { dir, record } = project(`test("holds the lock past most of its recovery age and hangs", async () => {
+  const { machineLockPath } = await import(${JSON.stringify(locks)});
+  const lock = machineLockPath(${JSON.stringify(name)}, { staleMs: 2_000 });
+  mkdirSync(lock);
+  writeFileSync(path.join(lock, "owner.json"), JSON.stringify({ token: "fixture", pid: process.pid, createdAt: new Date().toISOString() }));
+  await sleep(1_800);
+  record({ pid: process.pid, dir: lock });
+  await new Promise(() => {});
+}, 60_000);`);
+    try {
+      const { code, output, recorded } = await runProject(dir, record, "signal");
+      expect(code).not.toBe(0);
+      expect(alive(recorded.pid!)).toBe(false);
+      expect(output).toContain(`${lock}, a machine-wide lock held by process ${recorded.pid}, which ended without releasing it; it was left in place`);
+      expect(JSON.parse(readFileSync(path.join(lock, "owner.json"), "utf8"))).toMatchObject({ token: "fixture", pid: recorded.pid });
+      expect(existsSync(recorded.root)).toBe(false);
+      // The lock's own recovery then takes it over.
+      await expect(withFileLock(lock, async () => "recovered", { staleMs: 2_000, timeoutMs: 10_000 })).resolves.toBe("recovered");
+    } finally {
+      rmSync(lock, { recursive: true, force: true });
+    }
+  });
+
   it("removes and lists a machine-wide lock whose holder died without releasing it before the run ended", async () => {
     const name = `devfn-leak-guard-lock-${randomUUID()}`;
     const lock = machineLock(name);

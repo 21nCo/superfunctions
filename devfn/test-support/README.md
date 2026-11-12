@@ -82,6 +82,14 @@ leftover. Otherwise a killed holder's lock would block every later run until it 
 enough to recover. A lock held by another run's process, or by a process still running, is
 never touched.
 
+withFileLock (`@devfn/ports`) lets any waiter take over a dead holder's lock once it is
+`staleMs` old (300 s by default), replacing its `owner.json` in place. So the guard removes
+such a lock only while its owner record is younger than 80% of that age (240 s by default),
+and only if a fresh read of `owner.json` just before it moves the lock aside still shows the
+dead holder's record. An older lock is left in place for withFileLock to recover and is still
+listed, so the run fails. A fixture that passes withFileLock a different `staleMs` passes the
+same value to `machineLockPath(name, { staleMs })`.
+
 The guard lists processes with `/proc` on Linux and `ps` and `lsof` on macOS. On other
 platforms it checks only temp entries, and says so.
 
