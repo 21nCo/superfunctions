@@ -141,7 +141,8 @@ function listLinux() {
     // Field 22 of stat, the start time in clock ticks since boot.
     const elapsed = uptime === undefined ? undefined : Math.max(0, Math.floor(uptime - Number(fields[19]) / linuxClockTicks()));
     // `command` is the arguments joined with spaces, for reports and matching a program name.
-    processes.push({ pid, ppid: Number(fields[1]), pgid: Number(fields[2]), elapsed, command: argv.replaceAll("\0", " ").trim(), argv, environment: read("environ"), separated: true, cwd });
+    // `started`, field 22 itself, tells this process from a later one given its ID (stillRunning).
+    processes.push({ pid, ppid: Number(fields[1]), pgid: Number(fields[2]), elapsed, started: Number(fields[19]), command: argv.replaceAll("\0", " ").trim(), argv, environment: read("environ"), separated: true, cwd });
   }
   return processes;
 }
@@ -157,13 +158,15 @@ function listDarwin(sinceMs) {
     return match ? [[Number(match[1]), { ppid: Number(match[2]), pgid: Number(match[3]), elapsed: elapsedSeconds(match[4]), state: match[5], text: match[6] }]] : [];
   }));
   const commands = parse(plain.stdout);
+  const now = Math.round(Date.now() / 1000);
   const environments = parse(withEnvironment.stdout);
   const processes = [];
   for (const [pid, entry] of commands) {
     // The listing shows the ps that made it, a child of this process.
     if (entry.state.startsWith("Z") || pid === plain.pid || pid === withEnvironment.pid) continue;
     const full = environments.get(pid)?.text ?? "";
-    processes.push({ pid, ppid: entry.ppid, pgid: entry.pgid, elapsed: entry.elapsed, command: entry.text.trim(), environment: full.startsWith(entry.text) ? full.slice(entry.text.length) : "", cwd: undefined });
+    // `started`, in seconds since the epoch, tells this process from a later one given its ID (stillRunning).
+    processes.push({ pid, ppid: entry.ppid, pgid: entry.pgid, elapsed: entry.elapsed, started: now - entry.elapsed, command: entry.text.trim(), environment: full.startsWith(entry.text) ? full.slice(entry.text.length) : "", cwd: undefined });
   }
   // Working directories come from lsof, for processes started since the run began only.
   const window = Math.ceil((Date.now() - sinceMs) / 1000) + 5;
@@ -224,7 +227,7 @@ const LIST_SEPARATOR = ":";
 const ASSIGNMENT = /^[^/=:]*=/;
 const LIST_VARIABLES = new Set(["PATH", "NODE_PATH", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH", "LIBRARY_PATH", "MANPATH", "PYTHONPATH", "CLASSPATH", "PKG_CONFIG_PATH", "GOPATH"]);
 // What may come between the start of a value and a path in it.
-const isValuePrefix = (text) => text.endsWith(LIST_SEPARATOR) || /^(?:[^/=:]*=)?(?:file:\/\/)?$/.test(text);
+const isValuePrefix = (text) => text.endsWith(LIST_SEPARATOR) || /^(?:[^/=:]*=)?(?:file:\/\/)?$/i.test(text);
 
 /** The value without trailing slashes, keeping a lone `/`. Linear, unlike a trailing-slash regex. */
 function trimTrailingSlashes(value) {
@@ -354,7 +357,8 @@ function namedPaths(text, root, { separated = false, environment = false } = {})
     // From the end of `root`, so a root with a space in it still matches.
     let end = at + root.length;
     while (end < text.length && !SEPARATOR.test(text[end]) && text[end] !== LIST_SEPARATOR) end += 1;
-    const url = /file:\/\/$/i.test(prefix) ? "file://" : "";
+    // A value after a `file:` or `file://` scheme, in any case, is read as that URL.
+    const url = /file:(?:\/\/)?$/i.exec(prefix)?.[0] ?? "";
     const readings = [text.slice(at, end), ...(end < text.length ? continuations(text, at, end) : [])]
       .map((reading) => ({ reading, ...classifyValue(`${url}${reading}`, root) }));
     const under = readings.filter(({ kind }) => kind !== "none");
@@ -526,29 +530,77 @@ export async function stopProcesses(processes, find) {
 }
 
 /**
- * Wraps `classify`, which lists a scope's processes by kind ({ owned, ambiguous, ... }), or returns
- * undefined when they cannot be listed. Once a listing has succeeded, a failed one never reads as
- * the processes having exited: the wrapper returns the last good result instead, without those
- * that have since exited, and sets `stale` until a listing succeeds again. A scope whose last
- * result is stale fails, since a process may have appeared that the guard could not see.
+ * Whether `entry`, from an earlier listing, is still that same process and running, read for its
+ * process ID alone, so that it can be told while a full listing fails: false once it has exited or
+ * is a zombie, or when its ID now belongs to a process started at another time; undefined when
+ * that cannot be read.
  */
-function keepingLast(classify) {
+function stillRunning(entry) {
+  if (entry.started === undefined) return undefined;
+  if (process.platform === "linux") {
+    let stat;
+    try { stat = readFileSync(`/proc/${entry.pid}/stat`, "utf8"); } catch (error) { return error?.code === "ENOENT" ? false : undefined; }
+    const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+    return !/^[ZX]/.test(fields[0]) && Number(fields[19]) === entry.started;
+  }
+  if (process.platform !== "darwin") return undefined;
+  const result = run("ps", ["-o", "etime=", "-o", "stat=", "-p", String(entry.pid)]);
+  if (!result || result.signal) return undefined;
+  const match = /^\s*(\S+)\s+(\S+)/.exec(result.stdout);
+  // ps lists nothing, and exits 1, for a process that is gone.
+  if (!match) return result.status === 1 ? false : undefined;
+  // `ps -o etime` counts whole seconds, so the two readings of one start may differ by a second or two.
+  return !match[2].startsWith("Z") && Math.abs(Math.round(Date.now() / 1000) - elapsedSeconds(match[1]) - entry.started) <= 2;
+}
+
+/**
+ * An earlier classification checked again process by process (stillRunning): those that have
+ * exited go, and an owned one that cannot be told to be the same process still becomes one the
+ * guard only reports (ambiguous), since the guard signals only a process it can tell is its own.
+ */
+function recheck(classified) {
+  const kept = {};
+  const unverified = [];
+  for (const [kind, processes] of Object.entries(classified)) {
+    kept[kind] = [];
+    for (const entry of processes) {
+      const running = stillRunning(entry);
+      if (running === false) continue;
+      if (kind === "owned" && running !== true) unverified.push(entry);
+      else kept[kind].push(entry);
+    }
+  }
+  kept.ambiguous = [...(kept.ambiguous ?? []), ...unverified];
+  return kept;
+}
+
+/**
+ * Wraps `classify`, which lists a scope's processes by kind ({ owned, ambiguous, ... }), or returns
+ * undefined when they cannot be listed. Once a listing has succeeded (or `seed` gives an earlier
+ * one), a failed one never reads as the processes having exited: the wrapper returns the last good
+ * result instead, checked again process by process (recheck), and sets `stale` until a listing
+ * succeeds again. A scope whose last result is stale fails, since a process may have appeared that
+ * the guard could not see.
+ */
+function keepingLast(classify, seed = () => undefined) {
   let last;
   const find = () => {
     const listed = classify();
-    find.stale = listed === undefined && last !== undefined;
-    if (find.stale) {
-      const running = runningPids();
-      const live = (entry) => (running ? running.has(entry.pid) : alive(entry.pid));
-      last = Object.fromEntries(Object.entries(last).map(([kind, processes]) => [kind, processes.filter(live)]));
-    } else last = listed;
+    if (listed !== undefined) {
+      find.stale = false;
+      last = listed;
+      return last;
+    }
+    last ??= seed();
+    find.stale = last !== undefined;
+    if (find.stale) last = recheck(last);
     return last;
   };
   find.stale = false;
   return find;
 }
 
-const STALE_NOTE = "Listing processes failed after an earlier listing had succeeded, so the guard could not tell which processes remain: it lists those the last listing found that may still run, and fails.";
+const STALE_NOTE = "Listing processes failed after an earlier listing had succeeded, so the guard could not tell which processes remain: it lists those the last listing found that still run, stops only those it can tell are still the same processes, and fails.";
 
 /**
  * Waits up to `graceMs` for the processes `find` lists, by kind ({ owned, ambiguous, ... }), to
@@ -696,8 +748,9 @@ export async function setup(project) {
   // Shared by the exit cleanup and the teardown. The exit cleanup stays armed until the teardown
   // has finished, so a run interrupted during the teardown (turbo cancelling a package while it
   // waits for processes to exit) still stops, removes and reports everything. `found` holds what
-  // the teardown has already found, so that report names it even once it is stopped.
-  const state = { cleanedUp: false, tornDown: false, found: { processes: new Map(), entries: new Set() } };
+  // the teardown has already found, so that report names it even once it is stopped, and `listed`
+  // the teardown's last good classification.
+  const state = { cleanedUp: false, tornDown: false, found: { processes: new Map(), entries: new Set() }, listed: undefined };
   // Interrupted runs (Ctrl-C, or turbo stopping sibling tasks after a failure) never reach the
   // teardown, or never finish it, so the process exit stops what the run started and removes its
   // root synchronously.
@@ -712,10 +765,11 @@ export async function setup(project) {
     // The run is ending, so its own pool workers, which a hung test may keep alive, go too. What it
     // only reports, ambiguous processes and worktree orphans, comes from the latest listing, or
     // from the last one that succeeded when a later one fails.
+    // A run interrupted during its teardown starts from what the teardown last listed.
     const classify = keepingLast(() => {
       const listing = listProcesses(startedAt);
       return listing && classifyRun(listing, { marker, roots: allRoots, parent: process.pid }, { worktree, startedAt, root });
-    });
+    }, () => state.listed);
     let classified = { owned: [], ambiguous: [], orphans: [] };
     const find = () => attempt(() => {
       classified = classify() ?? classified;
@@ -788,6 +842,7 @@ export async function setup(project) {
       if (!listing) return undefined;
       const classified = classifyRun(listing, scope(), { worktree, startedAt, root });
       found(classified.owned);
+      state.listed = classified;
       return classified;
     });
     const listed = classify();

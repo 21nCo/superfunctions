@@ -241,6 +241,8 @@ describe("pathsNamedUnder", () => {
     const outside = [
       linux(9_000_701, `node\0file://${run}/%2e%2e/out.mjs\0`), linux(9_000_702, `node\0--import=file://${run}/%2E%2E/out.mjs\0`),
       linux(9_000_703, "node\0", `TMPDIR=file://${run}/%2e%2e\0`), macos(9_000_704, `node file://${run}/%2e%2e/x`),
+      // A file: URL without slashes, as macOS lists it too.
+      macos(9_000_705, `node --import=file:${run}/%2e%2e/out.mjs`),
     ];
     // <run>/link/../x is <run>/deep/x through the link and <run>/x as written: under the run either way.
     const owned = [linux(9_000_711, `node\0file://${run}/sub/%2e%2e/x.mjs\0`), linux(9_000_712, `node\0${run}/link/../x.mjs\0`)];
@@ -249,6 +251,8 @@ describe("pathsNamedUnder", () => {
       linux(9_000_721, `node\0file://${run}%2Fx\0`), linux(9_000_722, `node\0${run}/missing/../x\0`),
       // <run>/.. alone is outside the run, but the value may be "<run>/.. sibling/server.mjs".
       macos(9_000_723, `node ${run}/.. sibling/server.mjs`),
+      // A scheme in capitals is still a file: URL.
+      macos(9_000_724, `node FILE://${run}/x`),
     ];
     expect(attributeProcesses([...outside, ...owned, ...ambiguous], { roots: pathAliases(run) })).toEqual({ owned, ambiguous });
     rmSync(path.join(run, ".. sibling"), { recursive: true });
@@ -929,6 +933,8 @@ const wait = setInterval(() => {
   // Makes this process's process listings fail once `allowed` of them have succeeded, from outside
   // the guard: it replaces the Node functions the guard lists with (ps on macOS, /proc on Linux).
   // As a global setup, it does so in the run's main process before the guard's teardown runs.
+  // From then on, a process whose ID a test wrote to replaced.pid shows a later start when read
+  // on its own, as a process that reused the ID would.
   const failListing = `const childProcess = require("node:child_process");
 const fs = require("node:fs");
 export function failListingsAfter(allowed) {
@@ -936,10 +942,23 @@ export function failListingsAfter(allowed) {
   const fails = () => (listings += 1) > allowed;
   const failure = () => Object.assign(new Error("process listing failed (test)"), { code: "EIO" });
   const { spawnSync } = childProcess;
-  const { readdirSync } = fs;
-  // A macOS listing runs ps -A -ww once without -E and once with it; it counts once.
-  childProcess.spawnSync = (command, args, ...rest) => command === "ps" && args?.includes("-ww") && !args.includes("-E") && fails() ? { error: failure() } : spawnSync(command, args, ...rest);
+  const { readdirSync, readFileSync: read } = fs;
+  const replaced = () => listings > allowed && existsSync("replaced.pid") ? read("replaced.pid", "utf8").trim() : undefined;
+  childProcess.spawnSync = (command, args, ...rest) => {
+    // A macOS listing runs ps -A -ww once without -E and once with it; it counts once.
+    if (command === "ps" && args?.includes("-ww") && !args.includes("-E") && fails()) return { error: failure() };
+    if (command === "ps" && args?.includes("etime=") && args.at(-1) === replaced()) return { pid: 0, status: 0, signal: null, stdout: "1-00:00:00 S\\n", stderr: "" };
+    return spawnSync(command, args, ...rest);
+  };
   fs.readdirSync = (target, ...rest) => { if (target === "/proc" && fails()) throw failure(); return readdirSync(target, ...rest); };
+  fs.readFileSync = (target, ...rest) => {
+    const text = read(target, ...rest);
+    if (target !== "/proc/" + replaced() + "/stat") return text;
+    const at = text.lastIndexOf(")") + 2;
+    const fields = text.slice(at).split(" ");
+    fields[19] = String(Number(fields[19]) + 100000);
+    return text.slice(0, at) + fields.join(" ");
+  };
   require("node:module").syncBuiltinESMExports();
 }
 export default () => { failListingsAfter(1); };`;
@@ -988,6 +1007,25 @@ test("leaves processes, and then listing them fails", () => {
       expect(existsSync(recorded.root)).toBe(false);
     } finally {
       if (named) try { process.kill(named, "SIGKILL"); } catch { /* already gone */ }
+    }
+  });
+
+  it("never signals a process the run owned once listing processes fails and its process ID shows a process started at another time", async () => {
+    const { dir, record } = project(`test("leaves a process in the run's root", () => {
+  const pid = ${orphanProcess("process.env.SFN_TEST_LEAK_GUARD_ROOT")};
+  writeFileSync("replaced.pid", String(pid));
+  record({ pid });
+});`, { files: { "fail-listing.mjs": failListing }, options: `, globalSetup: [${JSON.stringify(guard)}, "./fail-listing.mjs"]` });
+    let pid: number | undefined;
+    try {
+      const { code, output, recorded } = await runProject(dir, record);
+      pid = recorded.pid;
+      expect(code, output).not.toBe(0);
+      expect(output).toContain("Listing processes failed after an earlier listing had succeeded");
+      // The process the ID now names is someone else's.
+      expect(alive(pid!)).toBe(true);
+    } finally {
+      if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
     }
   });
 
