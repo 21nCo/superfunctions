@@ -83,12 +83,13 @@ const readOrNull = (load) => {
   }
 };
 
-export function inspectPhase16() {
+// `readTrustRootPem` reads the pinned trust root; tests inject an unusable root here instead of writing the tracked PEM.
+export function inspectPhase16({ readTrustRootPem = () => read('uifn/registry/trust/registry-ed25519-public.pem') } = {}) {
   const failures = [];
   const catalog = json('uifn/registry/generated/catalog.json');
   const delivery = json('uifn/registry/generated/delivery-manifest.json');
   const signature = readOrNull(() => json('uifn/registry/generated/catalog-signature.json'));
-  const publicKey = readOrNull(() => read('uifn/registry/trust/registry-ed25519-public.pem')) ?? '';
+  const publicKey = readOrNull(readTrustRootPem) ?? '';
   const catalogSource = read('uifn/registry/generated/catalog.json');
   const anatomy = json('uifn/catalog/generated/anatomy-types.json');
   const expectedComponentCount = anatomy.primitives.length;

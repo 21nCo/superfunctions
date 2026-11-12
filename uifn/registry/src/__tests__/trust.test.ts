@@ -48,6 +48,29 @@ function withAlteredPadBits(signatureBase64: string): string {
   return `${signatureBase64.slice(0, index)}${altered}${signatureBase64.slice(index + 1)}`;
 }
 
+/** A built-in object carrying the valid envelope's fields, with its prototype reset so only internal slots remain. */
+function builtinCarrier(target: object, prototype: object | null): unknown {
+  return Object.setPrototypeOf(Object.assign(target, envelopeFor(root, catalog)), prototype);
+}
+
+/** Built-ins with internal slots that must not pass as a plain envelope, whatever their prototype. */
+const nonPlainBuiltins = (): [string, unknown][] => [
+    ['a Date with Object.prototype', builtinCarrier(new Date(), Object.prototype)],
+    ['a Date with a null prototype', builtinCarrier(new Date(), null)],
+    ['a Map with a null prototype', builtinCarrier(new Map(), null)],
+    ['a Set with Object.prototype', builtinCarrier(new Set(), Object.prototype)],
+    ['a RegExp with Object.prototype', builtinCarrier(/x/, Object.prototype)],
+    ['a boxed number', builtinCarrier(new Number(1), null)],
+    ['a boxed string', builtinCarrier(new String(''), Object.prototype)],
+    ['a boxed boolean', builtinCarrier(new Boolean(false), null)],
+    ['a typed array', builtinCarrier(new Uint8Array(0), null)],
+    ['an ArrayBuffer', builtinCarrier(new ArrayBuffer(0), Object.prototype)],
+    ['a promise', builtinCarrier(Promise.resolve(), null)],
+    ['an error', builtinCarrier(new Error('x'), null)],
+    ['a WeakRef', builtinCarrier(new WeakRef({}), null)],
+    ['a FinalizationRegistry', builtinCarrier(new FinalizationRegistry(() => undefined), Object.prototype)],
+];
+
 /** Envelopes the schema-v2 verifier must reject as malformed. */
 const malformedEnvelopes = (): [string, unknown][] => [
     ['null', null],
@@ -68,6 +91,9 @@ const malformedEnvelopes = (): [string, unknown][] => [
     ['a 63-byte signature', { ...envelopeFor(root, catalog), signatureBase64: Buffer.alloc(63).toString('base64') }],
     ['an empty signature', { ...envelopeFor(root, catalog), signatureBase64: '' }],
     ['noncanonical signature pad bits', { ...envelopeFor(root, catalog), signatureBase64: withAlteredPadBits(envelopeFor(root, catalog).signatureBase64) }],
+    ['an 89-character signature', { ...envelopeFor(root, catalog), signatureBase64: `${envelopeFor(root, catalog).signatureBase64}A` }],
+    ['an 8 MiB signature', { ...envelopeFor(root, catalog), signatureBase64: 'A'.repeat(8 * 1024 * 1024) }],
+    ...nonPlainBuiltins(),
 ];
 
 describe('schema-v2 registry signature verification', () => {
@@ -232,6 +258,9 @@ describe('schema-v2 registry signature verification', () => {
         .toMatchObject({ ...INVALID, reason: 'envelope-malformed', keyId: PINNED_KEY_ID });
       expect(verifyRegistrySignatureEnvelope(catalog, recording(Object.assign(Object.create(null), valid())), root.pem))
         .toMatchObject({ ...INVALID, reason: 'envelope-malformed' });
+      // A proxy further up the prototype chain is never reached either.
+      const proxyPrototype = Object.create(recording({}), Object.getOwnPropertyDescriptors(valid()));
+      expect(verifyRegistrySignatureEnvelope(catalog, proxyPrototype, root.pem)).toMatchObject({ ...INVALID, reason: 'envelope-malformed' });
       expect(traps).toEqual([]);
     });
 
@@ -243,6 +272,16 @@ describe('schema-v2 registry signature verification', () => {
       expect(verifyRegistrySignatureEnvelope(catalog, envelope, root.pem)).toMatchObject({ ok: true });
       expect(verifyRegistrySignatureEnvelope(catalog, { ...envelope, signatureBase64: altered }, root.pem))
         .toMatchObject({ ...INVALID, reason: 'envelope-malformed' });
+    });
+
+    it('rejects a signature that is not exactly 88 characters before any pattern match or decoding, without throwing', () => {
+      const signatureBase64 = valid().signatureBase64;
+      expect(signatureBase64).toHaveLength(88);
+      for (const candidate of [signatureBase64.slice(0, 87), `${signatureBase64}=`, 'A'.repeat(8 * 1024 * 1024), 'A'.repeat(32 * 1024 * 1024)]) {
+        let result: ReturnType<typeof verifyRegistrySignatureEnvelope> | undefined;
+        expect(() => { result = verifyRegistrySignatureEnvelope(catalog, { ...valid(), signatureBase64: candidate }, root.pem); }).not.toThrow();
+        expect(result).toMatchObject({ ...INVALID, reason: 'envelope-malformed' });
+      }
     });
 
     it('fails closed when a proxy trap throws', () => {
@@ -378,17 +417,23 @@ describe('phase-16 static signature check', () => {
   it('reports UIFN_REGISTRY_SIGNATURE_INVALID from inspectPhase16 instead of throwing on an unusable trust root', async () => {
     const phase16 = await import(pathToFileURL(path.join(repoRoot, 'scripts/verify-uifn-phase-16.mjs')).href);
     const pemPath = path.join(packageRoot, 'trust/registry-ed25519-public.pem');
-    const pinned = readFileSync(pemPath, 'utf8');
-    try {
-      writeFileSync(pemPath, '-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----\n');
-      let inspection: { failures: { code: string; reason?: string }[]; signature: { valid: boolean } } | undefined;
-      expect(() => { inspection = phase16.inspectPhase16(); }).not.toThrow();
-      expect(inspection?.signature.valid).toBe(false);
-      expect(inspection?.failures).toContainEqual({ code: 'UIFN_REGISTRY_SIGNATURE_INVALID', reason: 'trust-root-invalid' });
-    } finally {
-      writeFileSync(pemPath, pinned);
+    const pinned = readFileSync(pemPath);
+    type Inspection = { failures: { code: string; reason?: string }[]; signature: { valid: boolean; keyId: string } };
+    // The unusable root is injected; the tracked PEM is never written.
+    const unusableRoots: [string, () => string][] = [
+      ['malformed PEM', () => '-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----\n'],
+      ['unreadable PEM', () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); }],
+    ];
+    for (const [label, readTrustRootPem] of unusableRoots) {
+      let inspection: Inspection | undefined;
+      expect(() => { inspection = phase16.inspectPhase16({ readTrustRootPem }); }, label).not.toThrow();
+      expect(inspection?.signature, label).toMatchObject({ valid: false, keyId: '' });
+      expect(inspection?.failures, label).toContainEqual({ code: 'UIFN_REGISTRY_SIGNATURE_INVALID', reason: 'trust-root-invalid' });
     }
-    expect(readFileSync(pemPath, 'utf8')).toBe(pinned);
+    const pinnedInspection: Inspection = phase16.inspectPhase16();
+    expect(pinnedInspection.signature).toMatchObject({ valid: true, keyId: PINNED_KEY_ID });
+    expect(pinnedInspection.failures.filter((failure) => failure.code === 'UIFN_REGISTRY_SIGNATURE_INVALID')).toEqual([]);
+    expect(readFileSync(pemPath).equals(pinned)).toBe(true);
   });
 });
 

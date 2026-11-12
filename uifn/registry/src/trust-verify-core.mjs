@@ -14,6 +14,8 @@ const SHA256_HEX = /^[0-9a-f]{64}$/;
 const KEY_ID = /^[0-9a-f]{24}$/;
 const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 const ED25519_SIGNATURE_BYTES = 64;
+/** Padded Base64 length of a 64-byte Ed25519 signature; checked before any regex or decoding runs. */
+const ED25519_SIGNATURE_BASE64_LENGTH = 88;
 const INVALID = 'UIFN_REGISTRY_SIGNATURE_INVALID';
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest();
@@ -42,17 +44,45 @@ function readTrustRoot(trustRootPem) {
   }
 }
 
+// Every node:util brand predicate except isProxy (checked first): Date, RegExp, Map, Set, WeakMap, WeakSet, boxed
+// primitives, errors, promises, array buffers, typed arrays, DataView, iterators and the like. They inspect internal
+// slots, so they run no user code and are unaffected by a reset prototype.
+const BUILTIN_BRAND_CHECKS = Object.entries(types)
+  .filter(([name]) => name !== 'isProxy')
+  .map(([, isBrand]) => isBrand);
+
+/** True when `method` accepts `value` as its receiver; WeakRef and FinalizationRegistry have no node:util predicate. */
+function passesBrandCheck(method, value, ...args) {
+  try {
+    method.call(value, ...args);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** True for objects with built-in internal slots, whatever their prototype now is. */
+function isNonPlainBuiltin(value) {
+  if (BUILTIN_BRAND_CHECKS.some((isBrand) => isBrand(value))) return true;
+  if (typeof WeakRef === 'function' && passesBrandCheck(WeakRef.prototype.deref, value)) return true;
+  return typeof FinalizationRegistry === 'function' && passesBrandCheck(FinalizationRegistry.prototype.unregister, value, {});
+}
+
 /**
  * Copies the envelope's own data properties into a plain record. A Proxy is rejected before any reflective
- * operation, so none of its traps run. Only own property descriptors are read, so an accessor property is rejected
- * instead of being invoked. A value that is not a plain object with exactly the schema-v2 fields is malformed; an
- * envelope whose schemaVersion is not 2 (such as a v1 envelope, which has no domain field) is an unsupported schema.
+ * operation, so none of its traps run. A built-in with internal slots (Date, Map, a typed array, a boxed primitive and
+ * so on) is rejected even when its prototype was reset to Object.prototype or null. Only own property descriptors are
+ * read, so an accessor property is rejected instead of being invoked. A value that is not a plain object with exactly
+ * the schema-v2 fields is malformed; an envelope whose schemaVersion is not 2 (such as a v1 envelope, which has no
+ * domain field) is an unsupported schema.
  */
 function readEnvelope(value) {
   if (value === null || typeof value !== 'object' || types.isProxy(value)) return { reason: 'envelope-malformed' };
   if (Array.isArray(value)) return { reason: 'envelope-malformed' };
   const prototype = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) return { reason: 'envelope-malformed' };
+  // After the prototype check, so a brand predicate's lookup can only reach Object.prototype, never caller code.
+  if (isNonPlainBuiltin(value)) return { reason: 'envelope-malformed' };
   const schema = Object.getOwnPropertyDescriptor(value, 'schemaVersion');
   if (!schema || !('value' in schema)) return { reason: 'envelope-malformed' };
   if (schema.value !== REGISTRY_SIGNATURE_SCHEMA_VERSION) return { reason: 'schema-unsupported' };
@@ -98,10 +128,12 @@ export function verifyRegistrySignatureEnvelope(catalog, envelope, trustRootPem)
   if (fields.keyId !== keyId) return fail('key-mismatch');
   if (typeof fields.catalogSha256 !== 'string' || !SHA256_HEX.test(fields.catalogSha256)) return fail('envelope-malformed');
   if (fields.catalogSha256 !== catalogSha256) return fail('digest-mismatch');
-  if (typeof fields.signatureBase64 !== 'string' || !BASE64.test(fields.signatureBase64)) return fail('envelope-malformed');
-  const signature = Buffer.from(fields.signatureBase64, 'base64');
+  const { signatureBase64 } = fields;
+  if (typeof signatureBase64 !== 'string' || signatureBase64.length !== ED25519_SIGNATURE_BASE64_LENGTH) return fail('envelope-malformed');
+  if (!BASE64.test(signatureBase64)) return fail('envelope-malformed');
+  const signature = Buffer.from(signatureBase64, 'base64');
   // Canonical encoding only: Buffer.from ignores nonzero unused pad bits, so the decoded bytes must re-encode exactly.
-  if (signature.length !== ED25519_SIGNATURE_BYTES || signature.toString('base64') !== fields.signatureBase64) {
+  if (signature.length !== ED25519_SIGNATURE_BYTES || signature.toString('base64') !== signatureBase64) {
     return fail('envelope-malformed');
   }
 
