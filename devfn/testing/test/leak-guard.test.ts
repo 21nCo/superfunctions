@@ -3,7 +3,7 @@
 // Vitest project in a child process and checks its exit, its report and what is left.
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -13,7 +13,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { processBirthSignature } from "@devfn/config";
 import { withFileLock } from "@devfn/ports";
 
-import { attributeProcesses, ORIGINAL_TEMP_VARIABLE, ownedProcesses, pathsNamedUnder } from "../../test-support/leak-guard.mjs";
+import { attributeProcesses, ORIGINAL_TEMP_VARIABLE, ownedProcesses, pathAliases, pathsNamedUnder } from "../../test-support/leak-guard.mjs";
 import { temporaryDirectories } from "../../test-support/temp-directories.mjs";
 
 const tempDir = temporaryDirectories(afterEach);
@@ -203,6 +203,20 @@ describe("pathsNamedUnder", () => {
     const inside = [linux(9_000_511, `node\0${root}/a/../b/x\0`), macos(9_000_512, `node ${root}/a/../b/x`)];
     expect(attributeProcesses([...outside, ...inside], { roots: [root] })).toEqual({ owned: [inside[0]], ambiguous: [inside[1]] });
     expect(pathsNamedUnder(`node ${root}/a/..//b/ ${root}/..`, root)).toEqual([`${root}/b`]);
+  });
+
+  it("resolves '..' through a symbolic link as the system does, so a path that only reads as under the root is not", () => {
+    const run = tempDir("devfn-leak-guard-links-");
+    const outside = tempDir("devfn-leak-guard-elsewhere-");
+    mkdirSync(path.join(outside, "deep"));
+    symlinkSync(path.join(outside, "deep"), path.join(run, "link"));
+    mkdirSync(path.join(run, "real"));
+    const linux = (pid: number, argv: string, environment = "") => ({ pid, ppid: 1, pgid: pid, elapsed: 0, command: argv.replaceAll("\0", " ").trim(), argv, environment, separated: true, cwd: "/" });
+    const macos = (pid: number, command: string) => ({ pid, ppid: 1, pgid: pid, elapsed: 0, command, environment: "", cwd: undefined });
+    // <run>/link/.. is the outside folder, not <run>.
+    const outsideRun = [linux(9_000_601, `node\0${run}/link/../x\0`), linux(9_000_602, "node\0", `TMPDIR=${run}/link/..\0`), macos(9_000_603, `node ${run}/link/../x`)];
+    const inside = [linux(9_000_611, `node\0${run}/real/../x\0`), linux(9_000_612, `node\0${run}/missing/../x\0`), macos(9_000_613, `node ${run}/real/../x`)];
+    expect(attributeProcesses([...outsideRun, ...inside], { roots: pathAliases(run) })).toEqual({ owned: inside.slice(0, 2), ambiguous: inside.slice(2) });
   });
 
   it("decides which processes name a path under a run or registered directory on complete path values, and owns from a macOS listing only by working directory", () => {
@@ -804,6 +818,42 @@ setTimeout(() => {
     }
   });
 
+  it("stops, and lists, a process that appears in the run's root while the run's teardown waits once it has stopped the others", async () => {
+    // A worktree orphan, which the guard never signals, starts a process in the run's root once
+    // the teardown has stopped the run's own leftover. Hex-encoded, so the orphan names neither.
+    const { dir, record } = project(`test("leaves a process in the root and a worktree orphan that waits for it to stop", () => {
+  const hex = (value) => Buffer.from(value).toString("hex");
+  const pid = ${orphanProcess("process.env.SFN_TEST_LEAK_GUARD_ROOT")};
+  record({ pid, nested: ${orphan('"/"', ['path.join(process.cwd(), "starter.cjs")', "String(pid)", "hex(process.env.SFN_TEST_LEAK_GUARD_ROOT)", 'hex(path.join(process.cwd(), "child.pid"))'])} });
+});`);
+    writeFileSync(path.join(dir, "starter.cjs"), `const [pid, root, pidFile] = [process.argv[2], ...process.argv.slice(3).map((value) => Buffer.from(value, "hex").toString())];
+// Once the guard has stopped that process and finished listing for what stopping it started.
+const wait = setInterval(() => {
+  try { process.kill(Number(pid), 0); return; } catch { clearInterval(wait); }
+  setTimeout(() => {
+    const child = require("node:child_process").spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore", cwd: root, env: { PATH: process.env.PATH } });
+    child.unref();
+    require("node:fs").writeFileSync(pidFile, String(child.pid));
+  }, 1_000);
+  setInterval(() => {}, 1000);
+}, 50);
+`);
+    mkdirSync(path.join(dir, ".git"));
+    const childPid = () => existsSync(path.join(dir, "child.pid")) ? Number(readFileSync(path.join(dir, "child.pid"), "utf8")) : undefined;
+    let starter: number | undefined;
+    try {
+      const { code, output, recorded } = await runProject(dir, record);
+      starter = recorded.nested;
+      expect(code, output).not.toBe(0);
+      expect(childPid()).toBeDefined();
+      for (const pid of [recorded.pid, childPid()]) expect(output).toContain(`process ${pid} `);
+      for (const pid of [recorded.pid, childPid()]) expect(await gone(pid!)).toBe(true);
+      expect(alive(starter!)).toBe(true);
+    } finally {
+      for (const pid of [starter, childPid()]) if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+    }
+  });
+
   // Directories beside the worktree whose names continue its name across a separator.
   const besides = ["-sibling", " sibling", ":sibling", "'sibling"];
 
@@ -814,7 +864,8 @@ setTimeout(() => {
   const nested = path.join(process.cwd(), ".worktrees", "other", "package");
   const own = path.join(process.cwd(), "package");
   record({
-    siblings: ${JSON.stringify(besides)}.map((suffix) => process.cwd() + suffix).map((sibling) => ${orphanProcess("sibling", 'path.join(sibling, "server.mjs")')}),
+    // Each names the sibling as a path and on its own, followed by more arguments.
+    siblings: ${JSON.stringify(besides)}.map((suffix) => process.cwd() + suffix).map((sibling) => ${orphanProcess("sibling", 'path.join(sibling, "server.mjs")', "sibling", '"--flag"', '"x"')}),
     nested: ${orphanProcess("nested", 'path.join(nested, "server.mjs")')},
     pid: ${orphanProcess("own", 'path.join(own, "server.mjs")')},
     // Named only in its arguments, from outside the worktree, as a wrapper's script is.

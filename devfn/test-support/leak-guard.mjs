@@ -235,9 +235,39 @@ function trimTrailingSlashes(value) {
 }
 
 const isPathUnder = (value, root) => value === root || value.startsWith(`${root}/`);
-// An absolute value with its `.` and `..` segments and repeated slashes resolved, as the system
-// resolves it, so `<root>/../other` is not under `<root>`. Every named path goes through this.
-const normalPath = (value) => trimTrailingSlashes(value.startsWith("/") ? path.posix.normalize(value) : value);
+/**
+ * An absolute value with its `.` and `..` segments and repeated slashes resolved as the system
+ * resolves them, so `<root>/../other` is not under `<root>`: `..` goes up from where the path so
+ * far really is, through a symbolic link where one is, and only where nothing is there yet, from
+ * the path as written. Every named path goes through this.
+ */
+function normalPath(value) {
+  if (!value.startsWith("/")) return value;
+  let current = "/";
+  for (const segment of value.split("/")) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") {
+      try { current = realpathSync.native(current); } catch { /* nothing there, so not a link */ }
+      current = path.posix.dirname(current);
+    } else current = path.posix.join(current, segment);
+  }
+  return current;
+}
+
+const DOT_DOT = /(?:^|\/)\.\.(?:\/|$)/;
+
+/**
+ * The path `raw` names (see normalPath) when it is at or under `root`, spelled from `root`, or
+ * undefined. A `..` resolved through a link gives the real spelling, such as macOS's /private/var
+ * for /var, so that path is compared with each spelling of `root`.
+ */
+function pathUnder(raw, root) {
+  const value = normalPath(raw);
+  if (isPathUnder(value, root)) return value;
+  if (!DOT_DOT.test(raw)) return undefined;
+  const alias = pathAliases(root).find((spelling) => isPathUnder(value, spelling));
+  return alias === undefined ? undefined : `${root}${value.slice(alias.length)}`;
+}
 
 /** The values of a NUL-separated /proc listing that may be paths. */
 function separatedValues(text, environment) {
@@ -247,17 +277,18 @@ function separatedValues(text, environment) {
     if (at <= 0) return [];
     const value = field.slice(at + 1);
     return LIST_VARIABLES.has(field.slice(0, at)) ? value.split(LIST_SEPARATOR) : [value];
-  }).map((value) => normalPath(value.replace(/^file:\/\//, "")));
+  }).map((value) => value.replace(/^file:\/\//, ""));
 }
 
 /**
  * The paths at or under `root` that `text` names, each `ambiguous` when it comes from a
  * space-joined listing, which cannot show where a value starts or ends, and `cut` when it is
  * `root` itself cut short there at a separator (`<root> copy/x` lists as `<root>`). A cut path
- * also gives `beside`, the text from `root` to the next `/`, which may be a sibling such as `<root> copy`.
+ * also gives `besides`, the texts from `root` to each later separator up to the next `/`, any of
+ * which may name a sibling, such as `<root> copy` in `<root> copy --flag` or `PWD=<root> copy HOME=`.
  */
 function namedPaths(text, root, { separated = false, environment = false } = {}) {
-  if (separated) return separatedValues(text, environment).filter((value) => isPathUnder(value, root)).map((value) => ({ path: value, ambiguous: false }));
+  if (separated) return separatedValues(text, environment).flatMap((raw) => { const value = pathUnder(raw, root); return value === undefined ? [] : [{ path: value, ambiguous: false }]; });
   const paths = [];
   for (let at = text.indexOf(root); at !== -1; at = text.indexOf(root, at + 1)) {
     let start = at;
@@ -266,12 +297,22 @@ function namedPaths(text, root, { separated = false, environment = false } = {})
     // From the end of `root`, so a root with a space in it still matches.
     let end = at + root.length;
     while (end < text.length && !SEPARATOR.test(text[end]) && text[end] !== LIST_SEPARATOR) end += 1;
-    const value = normalPath(text.slice(at, end));
+    const value = pathUnder(text.slice(at, end), root);
     const cut = end === at + root.length && end < text.length;
-    const slash = text.indexOf("/", end);
-    if (isPathUnder(value, root)) paths.push({ path: value, ambiguous: true, cut, beside: cut ? text.slice(at, slash === -1 ? text.length : slash) : undefined });
+    if (value !== undefined) paths.push({ path: value, ambiguous: true, cut, besides: cut ? continuations(text, at, end) : [] });
   }
   return paths;
+}
+
+const MAX_CONTINUATIONS = 32;
+
+/** The texts from `at` to each separator after `end`, then to the next `/` or the end of `text`. */
+function continuations(text, at, end) {
+  const slash = text.indexOf("/", end);
+  const stop = slash === -1 ? text.length : slash;
+  const ends = [];
+  for (let index = end + 1; index < stop && ends.length < MAX_CONTINUATIONS; index += 1) if (SEPARATOR.test(text[index]) || text[index] === LIST_SEPARATOR) ends.push(index);
+  return [...ends, stop].map((index) => text.slice(at, index));
 }
 
 /**
@@ -426,6 +467,27 @@ async function settle(find, graceMs, found = find()) {
   const pending = () => found && Object.values(found).some((processes) => processes.length > 0);
   for (const deadline = Date.now() + graceMs; pending() && Date.now() < deadline; found = find()) await pause(200);
   return found;
+}
+
+/**
+ * Stops the owned processes in `settled`, what `classify` lists by kind, and takes what the guard
+ * only reports from one listing once stopping is done, after a short while for a process the
+ * stopped ones left behind to exit. An owned process that appears meanwhile is stopped as well,
+ * up to EXIT_ROUNDS times. Returns every process stopped, those still running and that listing.
+ */
+async function stopAndReport(classify, settled) {
+  const stopped = new Map();
+  const find = () => { const remaining = classify()?.owned; for (const entry of remaining ?? []) stopped.set(entry.pid, entry); return remaining; };
+  let reported = settled;
+  let unstopped = [];
+  for (let round = 0; reported?.owned.length > 0 && round < EXIT_ROUNDS; round += 1) {
+    for (const entry of reported.owned) stopped.set(entry.pid, entry);
+    unstopped = await stopProcesses(reported.owned, find);
+    reported = await settle(classify, STOP_GRACE_MS);
+  }
+  if (reported) unstopped = reported.owned;
+  for (const entry of unstopped) stopped.set(entry.pid, entry);
+  return { owned: [...stopped.values()], unstopped, reported };
 }
 
 /** Entries left in a temp folder, ignoring tool caches and the guard's own records. */
@@ -636,17 +698,12 @@ export async function setup(project) {
     // Every process the run left, those the guard only reports too, gets the same while to exit.
     const settled = listed ? await settle(classify, RUN_GRACE_MS, listed) ?? none : none;
     // Everything stopped, including what a stopping process started, is reported.
-    const stopped = new Map(settled.owned.map((entry) => [entry.pid, entry]));
-    const unstopped = settled.owned.length > 0 ? await stopProcesses(settled.owned, () => { const remaining = classify()?.owned; for (const entry of remaining ?? []) stopped.set(entry.pid, entry); return remaining; }) : [];
-    const owned = [...stopped.values()];
+    const { owned, unstopped, reported } = await stopAndReport(classify, settled);
+    const { ambiguous, orphans } = reported ?? none;
     if (unstopped.length > 0) notes.push(`Still running after SIGKILL: ${unstopped.map((entry) => entry.pid).join(", ")}.`);
     // Every test has finished, so a lock this run's processes still hold, this one included, is abandoned.
     const locks = removeAbandonedLocks(root, { graceMs: STOP_GRACE_MS, ending: process.pid });
     for (const lock of locks) state.found.entries.add(describeLock(lock));
-    // What the guard only reports comes from one listing taken once stopping is done, when a
-    // process the stopped ones left behind gets a short while to exit.
-    const reported = settled.owned.length > 0 ? await settle(() => { const latest = classify(); return latest && { ambiguous: latest.ambiguous, orphans: latest.orphans }; }, STOP_GRACE_MS) ?? none : settled;
-    const { ambiguous, orphans } = reported;
     const containers = composeContainers(roots());
     for (const container of containers) run("docker", ["rm", "-f", "-v", container.id], 30_000);
     const entries = runLeftovers(root);
@@ -984,8 +1041,8 @@ function worktreeOrphans(processes, { worktree, startedAt, attributed, root }) {
   const worktreeRoots = pathAliases(worktree);
   const checkouts = new Map();
   // A cut match is the sibling beside the worktree whose name continues across the separator
-  // (`<worktree> copy`) only when that sibling exists; otherwise it may be the worktree itself.
-  const inThisWorktree = (named, worktreeRoot, match) => !inNestedCheckout(named, worktreeRoot, checkouts) && !(match?.cut && existsSync(match.beside));
+  // (`<worktree> copy`) only when such a sibling exists; otherwise it may be the worktree itself.
+  const inThisWorktree = (named, worktreeRoot, match) => !inNestedCheckout(named, worktreeRoot, checkouts) && !(match?.cut && match.besides.some((beside) => existsSync(beside)));
   return processes.filter((entry) => entry.pid !== process.pid && !ancestors.has(entry.pid) && !attributed.has(entry.pid) && recent(entry) &&
     namesPathUnder(entry, worktreeRoots, inThisWorktree) !== undefined && !/\bturbo(?:\.exe)?\b.*\bdaemon\b/.test(entry.command) &&
     !siblings.some((sibling) => entry.environment.includes(sibling.marker) || namesPathUnder(entry, sibling.roots)) && orphaned(entry));
@@ -1053,11 +1110,8 @@ export function guardTestFile({ beforeEach, afterEach, afterAll }) {
     const classify = () => { const listing = listProcesses(startedAt); return listing && attributeProcesses(listing, scope()); };
     // Ambiguous processes, which the guard only reports, get the same while to exit as owned ones.
     const settled = await settle(classify, FILE_GRACE_MS) ?? { owned: [], ambiguous: [] };
-    const stopped = new Map(settled.owned.map((entry) => [entry.pid, entry]));
-    const unstopped = settled.owned.length > 0 ? await stopProcesses(settled.owned, () => { const remaining = classify()?.owned; for (const entry of remaining ?? []) stopped.set(entry.pid, entry); return remaining; }) : [];
-    const owned = [...stopped.values()];
-    // Reported from one listing taken once stopping is done.
-    const ambiguous = settled.owned.length > 0 ? (await settle(() => { const latest = classify(); return latest && { ambiguous: latest.ambiguous }; }, STOP_GRACE_MS))?.ambiguous ?? [] : settled.ambiguous;
+    const { owned, unstopped, reported } = await stopAndReport(classify, settled);
+    const ambiguous = reported?.ambiguous ?? [];
     const entries = tempLeftovers(folder).map((entry) => path.join(folder, entry));
     const removed = removeTree(folder);
     for (const directory of guardedDirectories()) {
