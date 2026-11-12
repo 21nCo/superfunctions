@@ -92,14 +92,16 @@ calls `guardTestFile` as a setup file.
   signals it only when it still runs, is not a zombie and started exactly when the listing
   read: a different start means the ID names a later process, which is never signalled, nor
   is its group. One whose start cannot be read is not signalled; it is listed and fails the
-  file or run. Once a leader has exited, what it started on its way out (a wrapper's SIGTERM
-  handler starting a child, say) is still in its group, so the group is still signalled while
-  it has a member started no earlier than the leader and the guard saw the leader as itself at
-  most 5 seconds before. A group ID in use is never given to a new process, so that group can
-  be another only if the system ran through its whole range of process IDs in that while, the
-  same bound the start comparison relies on. The guard then lists the scope's processes again
-  and kills what is left, until nothing is, 10 seconds have passed, or a round signals nothing
-  and the same processes remain; anything still running fails the run or the file.
+  file or run. Before signalling a group, the guard records which processes are in it, read
+  between two reads that show its leader is still itself. Once the leader has exited, its
+  group is signalled only while a process recorded in it is still that process and still in
+  it, which shows the group has not ended and its ID been given to another. Otherwise the
+  processes in it, such as one the leader started on its way out (a wrapper's SIGTERM handler
+  starting a child, say) after the guard last saw it, are listed and fail the file or run,
+  but are never signalled. A start that cannot be read is read again, up to three rounds in a
+  row, before the guard gives up on it. The guard then lists the scope's processes again
+  and kills what is left, until nothing is, 10 seconds have passed, or three rounds in a row
+  signal nothing and the same processes remain; anything still running fails the run or the file.
 
 A directory a test creates outside the temp folder, such as one under the package's
 `node_modules/.cache`, is added to the file's guard with `guardDirectory(directory)` before

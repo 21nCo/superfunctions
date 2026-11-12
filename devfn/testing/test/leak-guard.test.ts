@@ -425,7 +425,7 @@ describe.skipIf(process.platform === "win32")("DevFn test leak guard", { timeout
   it.each([
     ["the run's temp root, where only the run's teardown finds it", "process.env.SFN_TEST_LEAK_GUARD_ROOT"],
     ["its test file's folder", 'mkdtempSync(path.join(tmpdir(), "devfn-leader-"))'],
-  ])("stops what a leftover process starts as it is stopped, left in %s", async (_, where) => {
+  ])("stops what a leftover process starts as it is stopped, or lists what it cannot tell is in its group, left in %s", async (_, where) => {
     const { dir, record } = project("");
     const leader = path.join(dir, "leader.cjs");
     const stopped = path.join(dir, "stopped.json");
@@ -454,7 +454,10 @@ test("leaves a process that starts more as it stops", async () => {
       expect(code).not.toBe(0);
       expect(output).toContain(`process ${recorded.pid} `);
       expect(await gone(recorded.pid!)).toBe(true);
-      expect(await gone(started!.sameGroup)).toBe(true);
+      // Started in the leader's group once the guard had last seen the leader, it cannot be told
+      // from a process in a later group with that ID, so it is stopped with the group only if the
+      // guard saw the leader again first, and is otherwise listed, but never signalled.
+      if (!(await gone(started!.sameGroup))) expect(output).toMatch(new RegExp(`Not stopped: (?:\\d+, )*${started!.sameGroup}\\b`));
       expect(await gone(started!.ownGroup)).toBe(true);
       expect(existsSync(recorded.root)).toBe(false);
     } finally {
@@ -1207,23 +1210,24 @@ describe.skipIf(!["linux", "darwin"].includes(process.platform))("stopProcesses"
   });
 
   /**
-   * From the read after the first `after` on, this process's reads of `pid`'s own start (ps -p on
-   * macOS, /proc/<pid>/stat on Linux), the ones the guard makes before signalling, fail or show a
-   * later start, as when the ID has been reused. The self-test's own liveness check is unaffected.
+   * From the read after the first `after` on, up to the `until`-th, this process's reads of
+   * `pid`'s own start (ps -p on macOS, /proc/<pid>/stat on Linux), the ones the guard makes before
+   * signalling, fail or show a later start, as when the ID has been reused. The self-test's own
+   * liveness check is unaffected.
    */
-  function alterStartReads(pid: number, mode: "unreadable" | "later", after = 0) {
+  function alterStartReads(pid: number, mode: "unreadable" | "later", after = 0, until = Infinity) {
     let reads = 0;
     const { spawnSync } = childProcess;
     const { readFileSync } = fs;
     const failure = () => Object.assign(new Error("reading the start failed (test)"), { code: "EIO" });
     (childProcess as { spawnSync: unknown }).spawnSync = (command: string, args: string[], ...rest: unknown[]) => {
       const result = (spawnSync as (...all: unknown[]) => { stdout: string })(command, args, ...rest);
-      if (command !== "ps" || !args?.includes("-p") || args.at(-1) !== String(pid) || (reads += 1) <= after) return result;
+      if (command !== "ps" || !args?.includes("-p") || args.at(-1) !== String(pid) || (reads += 1) <= after || reads > until) return result;
       return mode === "unreadable" ? { error: failure() } : { ...result, stdout: later(result.stdout) };
     };
     (fs as { readFileSync: unknown }).readFileSync = (target: unknown, ...rest: unknown[]) => {
       const text = (readFileSync as (...all: unknown[]) => string)(target, ...rest);
-      if (target !== `/proc/${pid}/stat` || (reads += 1) <= after) return text;
+      if (target !== `/proc/${pid}/stat` || (reads += 1) <= after || reads > until) return text;
       if (mode === "unreadable") throw failure();
       const at = text.lastIndexOf(")") + 2;
       const fields = text.slice(at).split(" ");
@@ -1272,6 +1276,15 @@ describe.skipIf(!["linux", "darwin"].includes(process.platform))("stopProcesses"
     expect(alive(pid)).toBe(true);
   });
 
+  it("reads a start that could not be read again, and stops the process once a read shows it is the one listed", async () => {
+    const { pid } = await start(ignoresSigterm);
+    const entry = listed(pid);
+    // The reads before SIGTERM and before the first SIGKILL fail; later ones succeed.
+    alterStartReads(pid, "unreadable", 0, 2);
+    expect(await stopProcesses([entry], () => (alive(pid) ? [entry] : []))).toEqual([]);
+    expect(await gone(pid)).toBe(true);
+  });
+
   it("sends SIGKILL after SIGTERM only while the process ID still shows the start listed", async () => {
     const { pid, output } = await start(ignoresSigterm);
     const entry = listed(pid);
@@ -1283,27 +1296,39 @@ describe.skipIf(!["linux", "darwin"].includes(process.platform))("stopProcesses"
     expect(alive(pid)).toBe(true);
   });
 
-  it.each([
-    ["stops it, with what the leader started on its way out, when the guard saw the leader as itself just before", 0, true],
-    ["never signals it, stopping only the process listed, when the guard last saw the leader a minute before", 60_000, false],
-  ])("for a group whose leader has exited while a process listed in it runs, %s", async (_, seenBefore, groupStopped) => {
+  it("stops the group of a leader that exits on SIGTERM while a process the guard saw in that group as the leader ran is still in it", async () => {
+    // The leader starts two processes in its group that outlive SIGTERM, and exits on SIGTERM.
+    const { pid: leader, output } = await start(`const { spawn } = require("node:child_process");
+const keep = () => spawn(process.execPath, ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"], { stdio: "ignore" });
+const members = [keep(), keep()];
+process.on("SIGTERM", () => process.exit(0));
+setTimeout(() => process.stdout.write(members.map((member) => member.pid).join(" ") + "\\n"), 500);
+setInterval(() => {}, 1000);`);
+    const members = output().trim().split(" ").map(Number);
+    pids.push(...members);
+    const entry = listed(leader);
+    expect(entry.pgid).toBe(leader);
+    // Only the leader is listed: the members are reached through its group, after it has exited.
+    expect(await stopProcesses([entry])).toEqual([]);
+    for (const member of members) expect(await gone(member)).toBe(true);
+  });
+
+  it("never signals the group of a leader that exited before the guard saw it, and returns the processes in that group", async () => {
     // The leader starts two processes in its group, then exits once its input closes.
     const { child, pid: leader, output } = await start(`const { spawn } = require("node:child_process");
 const keep = () => spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
-const [listedChild, unlisted] = [keep(), keep()];
-process.stdout.write(listedChild.pid + " " + unlisted.pid + "\\n");
+const members = [keep(), keep()];
+process.stdout.write(members.map((member) => member.pid).join(" ") + "\\n");
 process.stdin.on("end", () => process.exit(0));
 process.stdin.resume();`);
-    const [member, unlisted] = output().trim().split(" ").map(Number);
-    pids.push(member!, unlisted!);
-    const entries = [listed(leader), listed(member!)].map((entry) => ({ ...entry, listedAt: Date.now() - seenBefore }));
-    expect(entries.map((entry) => entry.pgid)).toEqual([leader, leader]);
+    const members = output().trim().split(" ").map(Number);
+    pids.push(...members);
+    const entry = listed(leader);
     const exited = new Promise((resolve) => child.once("exit", resolve));
     child.stdin!.end();
     await exited;
-    expect(await stopProcesses(entries)).toEqual([]);
-    expect(await gone(member!)).toBe(true);
-    if (groupStopped) expect(await gone(unlisted!)).toBe(true);
-    else expect(alive(unlisted!)).toBe(true);
+    // As far as the guard can tell, the group may by now be another one with the same ID.
+    expect((await stopProcesses([entry])).map((left) => left.pid).sort()).toEqual([...members].sort());
+    for (const member of members) expect(alive(member)).toBe(true);
   });
 });
