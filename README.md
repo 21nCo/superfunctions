@@ -106,19 +106,31 @@ the artifact without `id-token` permission; a separate `publish` job downloads
 that exact tarball and runs `npm publish` with npm 11.21.0 and `id-token: write`.
 Every published package has a GitHub Actions trusted publisher on npm with
 organization/user `21nCo`, repository `superfunctions`, workflow filename
-`publish-tag.yml` and no environment name. The publish step still passes
-`NPM_TOKEN` as a fallback, which npm uses only when the OIDC exchange fails, so a
-package's first publish (before a trusted publisher can be added) keeps working.
-After a new package's first release, add its trusted publisher with **Allow npm
-publish** enabled (npm defaults new connections to staged publishing only) and
-release it again within 2 days: npm expires a trusted publisher configuration
-that has not completed a successful publish within 2 days of creation.
+`publish-tag.yml` and no environment name. The workflow has no npm token. npm
+can only attach a trusted publisher to a package that already exists, so before
+a new package's first release tag a maintainer claims the name with a `0.0.0`
+placeholder: in a new empty directory outside the repository, write a
+`package.json` containing only the package's `"name"` and `"version": "0.0.0"`,
+check that `npm pack --dry-run` lists only `package.json`, then run
+`npm publish --access public` with 2FA (`--access public` because a scoped
+package defaults to restricted; never the real version, whose tag would then fail
+because that version already exists). Then add its trusted publisher with
+**Allow npm publish** enabled (npm defaults new connections to staged publishing
+only) and push the release tag within 2 days: npm expires a trusted publisher
+configuration that has not completed a successful publish within 2 days of
+creation. After that release, deprecate the placeholder with
+`npm deprecate <name>@0.0.0 "Name placeholder; install a released version"`.
+The placeholder keeps `latest` until the package's first stable release, so make
+the first release a stable version. Don't move `latest` to a prerelease by hand:
+`reconcile-channel` removes `latest` from a prerelease. After a prerelease-only
+first release, an unqualified install gets the empty placeholder and users have
+to install by the prerelease's dist-tag.
 npm attaches a provenance attestation to every OIDC publish from this public
 repository. The registry accepts it only when the packed `package.json`
 `repository.url` is `git+https://github.com/21nCo/superfunctions.git`, so every
 release target must declare that URL with its own `directory`.
-Prerelease tag reconciliation runs in a separate job that also uses OIDC and
-does not receive `NPM_TOKEN`; it needs **Allow npm dist-tag** enabled on the
+Prerelease tag reconciliation runs in a separate job that also uses OIDC; it
+needs **Allow npm dist-tag** enabled on the
 package's trusted publisher.
 See [npm's dist-tag OIDC requirements](https://docs.npmjs.com/trusted-publishers#managing-dist-tags-with-trusted-publishing).
 Publish authorization does not imply dist-tag authorization. A denied cleanup

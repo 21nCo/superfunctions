@@ -144,7 +144,6 @@ jobs:
           fi
           npm publish "${tarballs[0]}" --access public --tag "${DIST_TAG}" --ignore-scripts
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           DIST_TAG: ${{ needs.build.outputs.dist_tag }}
 
   verify-registry:
