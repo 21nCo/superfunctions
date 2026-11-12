@@ -1,0 +1,3 @@
+# Local run evidence (Playwright traces, screenshots, generator scratch output).
+# Generated on every run; never committed.
+.conduct/
