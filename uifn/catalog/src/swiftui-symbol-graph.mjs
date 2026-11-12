@@ -3,9 +3,11 @@
 // text: the compiler has already resolved comments, #if branches, access,
 // nesting and conformances, implied ones included. scripts/uifn-swiftui-
 // inventory.mjs builds UIFnSwiftUI for macOS, iOS devices and the iOS
-// simulator, each in debug and release, with -emit-symbol-graph down to
-// internal access and SPI included (so underscored, @_spi and
-// @_documentation-hidden declarations are seen), and commits the result as
+// simulator, each in debug and release, with SWIFTUI_SYMBOL_GRAPH_FLAGS:
+// every access level and SPI, so underscored, @_spi and
+// @_documentation(visibility: internal or private) declarations are in the
+// graph, and the access filter below drops the non-public ones. It commits
+// the result as
 // uifn/catalog/swiftui-surface-inventory.json, which the verify script checks
 // the lists against on any platform.
 //
@@ -17,7 +19,9 @@
 // - an enum that is a style or a component;
 // - a top-level function, variable or type alias;
 // - a member of an extension of a UIFnSwiftUI protocol, by protocol and name
-//   (UIFnPanelView.uifnGlow); or
+//   (UIFnPanelView.uifnGlow), a default implementation of one of its
+//   requirements included (the graph links that to the requirement, not to
+//   the protocol); or
 // - a member of an extension of a type from another module: of View by its
 //   name (uifnToast), of any other type by type and name (Text.uifnBold).
 // A member of an extension constrained to Self == a UIFnSwiftUI type, such as
@@ -40,6 +44,16 @@ import { CatalogError } from './compiler.mjs';
 import { SWIFTUI_SOURCES_ROOT } from './swiftui-status.mjs';
 
 export const SWIFTUI_MODULE = 'UIFnSwiftUI';
+
+// The Xcode tools by absolute path, so that PATH cannot substitute them; run
+// swift and swiftc through it. DEVELOPER_DIR still selects the Xcode.
+export const XCRUN = '/usr/bin/xcrun';
+
+// The swiftc flags, after -emit-symbol-graph-dir <directory>, that both the
+// inventory script and the fixture generator emit graphs with. The minimum
+// access level is private because @_documentation(visibility: private) hides
+// a public declaration from every graph above it.
+export const SWIFTUI_SYMBOL_GRAPH_FLAGS = ['-emit-symbol-graph', '-symbol-graph-minimum-access-level', 'private', '-include-spi-symbols'];
 
 const VIEW = 's:7SwiftUI4ViewP';
 const COMPONENT_PROTOCOLS = new Set([VIEW, 's:7SwiftUI12ViewModifierP']);
@@ -75,9 +89,18 @@ function symbolGraphIndex(graphs) {
   const symbols = new Map(ownGraphs.flatMap((graph) => graph.symbols).map((symbol) => [symbol.identifier.precise, symbol]));
   const parents = new Map();
   const conformances = new Map();
+  const defaults = [];
   for (const relationship of ownGraphs.flatMap((graph) => graph.relationships ?? [])) {
     if (PARENT_RELATIONSHIPS.has(relationship.kind)) parents.set(relationship.source, relationship);
     if (relationship.kind === 'conformsTo') conformances.set(relationship.source, [...(conformances.get(relationship.source) ?? []), relationship]);
+    if (relationship.kind === 'defaultImplementationOf') defaults.push(relationship);
+  }
+  // A default implementation of a UIFnSwiftUI protocol's requirement is a
+  // member of that protocol's extension, though the graph links it only to
+  // the requirement. (One of another module's requirement has a memberOf.)
+  for (const { source, target } of defaults) {
+    const owner = parents.get(target);
+    if (!parents.has(source) && owner) parents.set(source, { kind: 'memberOf', source, target: owner.target });
   }
   return { symbols, parents, conformances };
 }
@@ -106,7 +129,8 @@ function memberKind(index, symbol, parent, directory) {
 function symbolDeclaration(index, precise, symbol, source, directory) {
   const kind = symbol.kind.identifier;
   const names = symbol.pathComponents;
-  const name = names.at(-1).replace(/\(.*$/s, '');
+  const last = names.at(-1);
+  const name = last.includes('(') ? last.slice(0, last.indexOf('(')) : last;
   const qualified = [...names.slice(0, -1), name].join('.');
   if (TYPE_KINDS.has(kind)) {
     const surface = surfaceKind(index.conformances.get(precise));

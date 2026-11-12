@@ -47,23 +47,24 @@ inventory does not have, or with the wrong kind or file, fails too.
 `node scripts/uifn-swiftui-inventory.mjs --write` (macOS with Xcode) rebuilds
 the inventory: it builds UIFnSwiftUI for macOS, iOS devices and the iOS
 simulator, each in debug and release, with `-emit-symbol-graph` down to
-internal access and SPI included, and reads the graphs with
+private access and SPI included (`SWIFTUI_SYMBOL_GRAPH_FLAGS`, which the
+fixture generator uses too), and reads the graphs with
 `src/swiftui-symbol-graph.mjs`, so a declaration in any of those `#if`
 branches counts, and so do underscored, `@_spi` and `@_documentation`-hidden
-ones. Code in an `#if` clause no build compiles is not in any graph, so it
+ones, whatever their documentation visibility. Code in an `#if` clause no build compiles is not in any graph, so it
 also fails when an `#if`, `#elseif` or `#else` clause in `Styles` or
 `Components`, as `scripts/uifn-swiftui-if-clauses.swift` lists them with the
 Swift parser, is compiled by none of those builds, or uses a condition other
 than `os(macOS)`, `os(iOS)`, `canImport(SwiftUI|UIKit|AppKit)`, `DEBUG` and
 `targetEnvironment(simulator)` with `!`, `&&` and `||`. Without `--write` it fails when
 the committed inventory differs; the Swift workflow's macOS job runs that
-check. The compiler has already resolved comments, `#if`,
+check. The Swift compiler has already resolved comments, `#if`,
 access, nesting and conformances, implied ones included. A declaration is
 public or open and nested only in public types: a struct, class or actor at
 any nesting depth, listed by its qualified name such as `UIFnTimeline.Row`; an
 enum that is a style or component; a top-level function, variable or type
 alias; a member of an extension of a UIFnSwiftUI protocol, by protocol and
-name; or a member of an extension of another module's type, listed by name for `View` (`uifnToast`) and by type and
+name, a default implementation of one of its requirements included; or a member of an extension of another module's type, listed by name for `View` (`uifnToast`) and by type and
 name otherwise (`EnvironmentValues.uifnTheme`). A member of an extension
 constrained to `Self ==` a UIFnSwiftUI type, such as `ButtonStyle.uifnPrimary`,
 belongs to that type. A conformance to a SwiftUI protocol whose name ends in

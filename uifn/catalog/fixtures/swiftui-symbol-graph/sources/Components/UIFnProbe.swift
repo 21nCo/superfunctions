@@ -22,12 +22,14 @@ public extension UIFnBox {
 }
 
 public struct UIFnRing: Shape {
-    public func path(in rect: CGRect) -> Path { Path() }
+    public func path(in _: CGRect) -> Path { Path() }
 }
 
 public struct UIFnFlow: Layout {
-    public func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize { .zero }
-    public func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {}
+    public func sizeThatFits(proposal _: ProposedViewSize, subviews _: Subviews, cache _: inout ()) -> CGSize { .zero }
+    public func placeSubviews(in _: CGRect, proposal _: ProposedViewSize, subviews _: Subviews, cache _: inout ()) {
+        // A fixture: there is nothing to place.
+    }
 }
 
 public actor UIFnWorker {}
@@ -50,7 +52,7 @@ public enum UIFnPlaceholder: View {
 extension View {
     public nonisolated(unsafe) static var uifnDefault: Int { 0 }
     public func uifnDim() -> some View { modifier(UIFnDim()) }
-    public func uifnDim(_ amount: Double) -> some View { modifier(UIFnDim()) }
+    public func uifnDim(_: Double) -> some View { modifier(UIFnDim()) }
     func uifnInternal() -> some View { self }
 }
 
@@ -79,8 +81,10 @@ let uifnRatio = [8].reduce(1, /) / 5
 
 #if os(iOS)
 public struct UIFnHosted: UIViewRepresentable {
-    public func makeUIView(context: Context) -> UIView { UIView() }
-    public func updateUIView(_ view: UIView, context: Context) {}
+    public func makeUIView(context _: Context) -> UIView { UIView() }
+    public func updateUIView(_: UIView, context _: Context) {
+        // A fixture: there is nothing to update.
+    }
 }
 
 public struct UIFnPhoneOnly: View {
@@ -88,8 +92,10 @@ public struct UIFnPhoneOnly: View {
 }
 #else
 public struct UIFnHosted: NSViewRepresentable {
-    public func makeNSView(context: Context) -> NSView { NSView() }
-    public func updateNSView(_ view: NSView, context: Context) {}
+    public func makeNSView(context _: Context) -> NSView { NSView() }
+    public func updateNSView(_: NSView, context _: Context) {
+        // A fixture: there is nothing to update.
+    }
 }
 #endif
 
@@ -104,6 +110,20 @@ public struct _UIFnRow: View {
 
 @_documentation(visibility: internal) public struct UIFnDocCard: View {
     public var body: some View { EmptyView() }
+}
+
+// Only a graph down to private access has this one.
+@_documentation(visibility: private) public struct UIFnHiddenCard: View {
+    public var body: some View { EmptyView() }
+}
+
+// Not public: never declarations, though the graph has them.
+private struct UIFnPrivateView: View {
+    var body: some View { EmptyView() }
+}
+
+fileprivate struct UIFnFilePrivateView: View {
+    var body: some View { EmptyView() }
 }
 
 // Public, but nested in an internal type.
@@ -124,6 +144,21 @@ public protocol UIFnSizing {
 
 extension UIFnSizing {
     public func uifnDoubled() -> Int { size() * 2 }
+    // A default implementation of the requirement, unclassified.
+    public func size() -> Int { 1 }
+}
+
+// Default implementations of requirements of a protocol refining View: the
+// graph links them to the requirement only. A public one is a component; an
+// internal one is not a declaration.
+public protocol UIFnGlowing: View {
+    func uifnHalo() -> Int
+    func uifnShade() -> Int
+}
+
+extension UIFnGlowing {
+    public func uifnHalo() -> Int { 1 }
+    func uifnShade() -> Int { 0 }
 }
 
 // Declarations in debug-only, release-only and device-only builds.

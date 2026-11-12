@@ -10,7 +10,7 @@ import { CATALOG_SOURCE, EXPECTED_PRIMITIVE_NAMES } from '../uifn/catalog/src/ca
 import { compareGeneratedOutputs, createGeneratedOutputs, createSwiftUISurfaceInventory, stableStringify, validateCatalogSource, validateSwiftUIStatus, validateSwiftUISurfaceInventory, verifyGeneratedDirectory, verifySwiftUISurfaceDeclarations, writeGeneratedOutputs } from '../uifn/catalog/src/compiler.mjs';
 import { migrateCatalogDocument } from '../uifn/catalog/src/migrations.mjs';
 import { SWIFTUI_STATUS_SOURCE, SWIFTUI_STATUSES } from '../uifn/catalog/src/swiftui-status.mjs';
-import { readSwiftUISymbolGraphs, swiftUIDeclarationsFromSymbolGraphs, uncoveredSwiftClauses } from '../uifn/catalog/src/swiftui-symbol-graph.mjs';
+import { readSwiftUISymbolGraphs, SWIFTUI_SYMBOL_GRAPH_FLAGS, swiftUIDeclarationsFromSymbolGraphs, uncoveredSwiftClauses } from '../uifn/catalog/src/swiftui-symbol-graph.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fixtureRoot = path.join(repoRoot, 'uifn/catalog/fixtures/negative');
@@ -262,6 +262,12 @@ test('the compiler symbol graphs give every public declaration in Styles and Com
     // @_documentation(visibility: internal) is still public.
     { id: 'UIFnDocCard', kind: 'component', source: at('Components/UIFnProbe.swift') },
     { id: 'UIFnFlow', kind: 'unclassified', source: at('Components/UIFnProbe.swift') },
+    // A default implementation of a requirement of a protocol refining View,
+    // which the graph links to the requirement, not to the protocol.
+    { id: 'UIFnGlowing.uifnHalo', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    // @_documentation(visibility: private), in a graph down to private only.
+    { id: 'UIFnHiddenCard', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    { id: 'UIFnHiddenStyle', kind: 'style', source: at('Styles/UIFnHiddenStyle.swift') },
     // The iOS UIViewRepresentable and the macOS NSViewRepresentable.
     { id: 'UIFnHosted', kind: 'component', source: at('Components/UIFnProbe.swift') },
     { id: 'UIFnList', kind: 'component', source: at('Components/UIFnProbe.swift') },
@@ -275,6 +281,8 @@ test('the compiler symbol graphs give every public declaration in Styles and Com
     // protocol refining View, unclassified otherwise.
     { id: 'UIFnRenderable.uifnGlow', kind: 'component', source: at('Components/UIFnProbe.swift') },
     { id: 'UIFnRing', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    // A default implementation of a requirement of a protocol that does not.
+    { id: 'UIFnSizing.size', kind: 'unclassified', source: at('Components/UIFnProbe.swift') },
     { id: 'UIFnSizing.uifnDoubled', kind: 'unclassified', source: at('Components/UIFnProbe.swift') },
     // @_spi and an underscored name are public API too.
     { id: 'UIFnSpiCard', kind: 'component', source: at('Components/UIFnProbe.swift') },
@@ -286,14 +294,18 @@ test('the compiler symbol graphs give every public declaration in Styles and Com
     { id: 'uifnMakeView', kind: 'unclassified', source: at('Components/UIFnProbe.swift') },
     { id: 'uifnStyled', kind: 'unclassified', source: at('Styles/UIFnCR.swift') },
   ]);
-  // Not declarations: internal and commented-out types, a public type nested
-  // in an internal one (UIFnInternal.Inner), protocols and their
-  // requirements, a plain enum, Tokens, ButtonStyle.uifnChip (Self ==
-  // UIFnChipStyle) and the copies of uifnDim the graph adds to each view.
+  // Not declarations: private, fileprivate, internal and commented-out types,
+  // a public type nested in an internal one (UIFnInternal.Inner), protocols
+  // and their requirements, an internal default implementation
+  // (UIFnGlowing.uifnShade), a plain enum, Tokens, ButtonStyle.uifnChip (Self
+  // == UIFnChipStyle) and the copies of uifnDim the graph adds to each view.
   const [mac, ios] = await fixtureGraphs();
   const has = (graphs, id) => graphs[0].symbols.some((symbol) => symbol.pathComponents.join('.') === id);
+  const count = (graphs, id) => graphs[0].symbols.filter((symbol) => symbol.pathComponents.join('.') === id).length;
   assert.ok(mac[0].symbols.some((symbol) => symbol.identifier.precise.includes('::SYNTHESIZED::') && symbol.pathComponents.at(-1).startsWith('uifnDim')));
-  assert.ok(has(mac, 'UIFnInternal.Inner') && has(mac, 'UIFnSizing.size()'));
+  assert.ok(has(mac, 'UIFnInternal.Inner') && has(mac, 'UIFnPrivateView') && has(mac, 'UIFnFilePrivateView'));
+  // Requirement and default implementation are both in the graph.
+  for (const id of ['UIFnSizing.size()', 'UIFnGlowing.uifnHalo()', 'UIFnGlowing.uifnShade()']) assert.equal(count(mac, id), 2, id);
   for (const id of ['UIFnPhoneOnly', 'UIFnDeviceOnly', 'UIFnReleaseOnly']) assert.ok(has(ios, id) && !has(mac, id), id);
   assert.ok(has(mac, 'UIFnDebugOnly') && !has(ios, 'UIFnDebugOnly'));
   // Each one has to be listed: unlisted it is drift against the real lists.
@@ -304,6 +316,28 @@ test('the compiler symbol graphs give every public declaration in Styles and Com
   const listed = listedWith(inventory.declarations);
   validateSwiftUIStatus(swiftuiSourceWith((source) => { source.nonSurfaces = listed.nonSurfaces; }));
   verifySwiftUISurfaceDeclarations([...real, ...inventory.declarations], listed);
+});
+
+test('the inventory and its fixtures come from graphs down to private access, with one set of flags', async () => {
+  const flags = SWIFTUI_SYMBOL_GRAPH_FLAGS;
+  assert.equal(flags[flags.indexOf('-symbol-graph-minimum-access-level') + 1], 'private');
+  assert.ok(flags.includes('-include-spi-symbols'));
+  for (const file of ['scripts/uifn-swiftui-inventory.mjs', 'uifn/catalog/fixtures/swiftui-symbol-graph/regenerate.mjs']) {
+    const text = await readFile(path.join(repoRoot, file), 'utf8');
+    assert.match(text, /\.\.\.SWIFTUI_SYMBOL_GRAPH_FLAGS/, file);
+    assert.doesNotMatch(text, /symbol-graph-minimum-access-level|'-include-spi-symbols'|'xcrun'|\['swift'|'swiftc',\s*\[/, file);
+  }
+  // A documentation-hidden component or style and a default implementation
+  // on a View-refining protocol have to be listed, with their kind: a
+  // component or style parked in nonSurfaces is drift.
+  const inventory = await fixtureInventory();
+  const real = await committedDeclarations();
+  for (const id of ['UIFnHiddenCard', 'UIFnHiddenStyle', 'UIFnGlowing.uifnHalo']) {
+    const declaration = inventory.declarations.find((entry) => entry.id === id);
+    assert.ok(declaration && declaration.kind !== 'unclassified', id);
+    expectCatalogCode(() => verifySwiftUISurfaceDeclarations([...real, declaration]), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
+    expectCatalogCode(() => verifySwiftUISurfaceDeclarations([...real, declaration], listedWith([{ ...declaration, kind: 'unclassified' }])), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
+  }
 });
 
 test('repeats of one declaration coalesce; a conflicting kind or source is drift', async () => {

@@ -8,6 +8,7 @@
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/scripts/uifn-swiftui-inventory.mjs",
+        "$TURBO_ROOT$/scripts/uifn-swiftui-if-clauses.swift",
         "$TURBO_ROOT$/scripts/verify-uifn-catalog.mjs",
         "$TURBO_ROOT$/scripts/verify-uifn-catalog.test.mjs",
         "$TURBO_ROOT$/scripts/generate-uifn-catalog.mjs"

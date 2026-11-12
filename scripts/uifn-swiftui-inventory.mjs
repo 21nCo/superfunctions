@@ -18,7 +18,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { CatalogError, createSwiftUISurfaceInventory, stableStringify } from '../uifn/catalog/src/compiler.mjs';
-import { readSwiftUISymbolGraphs, SWIFTUI_MODULE, swiftUIDeclarationsFromSymbolGraphs, uncoveredSwiftClauses } from '../uifn/catalog/src/swiftui-symbol-graph.mjs';
+import { readSwiftUISymbolGraphs, SWIFTUI_MODULE, SWIFTUI_SYMBOL_GRAPH_FLAGS, swiftUIDeclarationsFromSymbolGraphs, uncoveredSwiftClauses, XCRUN } from '../uifn/catalog/src/swiftui-symbol-graph.mjs';
 import { SWIFTUI_SOURCES_ROOT } from '../uifn/catalog/src/swiftui-status.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -46,8 +46,8 @@ async function swiftFiles(directory) {
 // compiles.
 async function checkConditions() {
   const files = (await Promise.all(['Styles', 'Components'].map((name) => swiftFiles(path.join(repoRoot, SWIFTUI_SOURCES_ROOT, name))))).flat();
-  const host = path.join(path.dirname(execFileSync('xcrun', ['--find', 'swift'], { encoding: 'utf8' }).trim()), '../lib/swift/host');
-  const clauses = JSON.parse(execFileSync('xcrun', [
+  const host = path.join(path.dirname(execFileSync(XCRUN, ['--find', 'swift'], { encoding: 'utf8' }).trim()), '../lib/swift/host');
+  const clauses = JSON.parse(execFileSync(XCRUN, [
     'swift', '-I', host, '-L', host, '-lSwiftParser', '-lSwiftSyntax', '-Xlinker', '-rpath', '-Xlinker', host,
     path.join(repoRoot, 'scripts/uifn-swiftui-if-clauses.swift'), ...files,
   ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 2], maxBuffer: 64 * 1024 * 1024 }));
@@ -59,7 +59,7 @@ async function checkConditions() {
 
 function emitSymbolGraphs(temporaryRoot) {
   const arch = process.arch === 'x64' ? 'x86_64' : process.arch;
-  const sdk = (name) => execFileSync('xcrun', ['--sdk', name, '--show-sdk-path'], { encoding: 'utf8' }).trim();
+  const sdk = (name) => execFileSync(XCRUN, ['--sdk', name, '--show-sdk-path'], { encoding: 'utf8' }).trim();
   const platforms = [
     ['macos', []],
     ['ios', ['--triple', 'arm64-apple-ios16.0', '--sdk', sdk('iphoneos')]],
@@ -69,13 +69,11 @@ function emitSymbolGraphs(temporaryRoot) {
     const name = `${platform}-${configuration}`;
     const graphs = path.join(temporaryRoot, `${name}-symbol-graphs`);
     // A fresh scratch path builds every file, so the compiler writes a graph.
-    // Internal access and SPI are emitted so that underscored, @_spi and
-    // @_documentation-hidden public declarations are in the graph. Release
-    // keeps its conditions (no DEBUG) but skips optimization, which does not
-    // change declarations.
-    const flags = ['-emit-symbol-graph', '-emit-symbol-graph-dir', graphs, '-symbol-graph-minimum-access-level', 'internal', '-include-spi-symbols', ...(configuration === 'release' ? ['-Onone'] : [])];
-    execFileSync('swift', [
-      'build', '--target', SWIFTUI_MODULE, '--configuration', configuration, '--scratch-path', path.join(temporaryRoot, `${name}-build`), ...platformArgs,
+    // Release keeps its conditions (no DEBUG) but skips optimization, which
+    // does not change declarations.
+    const flags = ['-emit-symbol-graph-dir', graphs, ...SWIFTUI_SYMBOL_GRAPH_FLAGS, ...(configuration === 'release' ? ['-Onone'] : [])];
+    execFileSync(XCRUN, [
+      'swift', 'build', '--target', SWIFTUI_MODULE, '--configuration', configuration, '--scratch-path', path.join(temporaryRoot, `${name}-build`), ...platformArgs,
       ...flags.flatMap((flag) => ['-Xswiftc', flag]),
     ], { cwd: repoRoot, stdio: ['ignore', 2, 2] });
     return graphs;
@@ -89,8 +87,8 @@ try {
     await checkConditions();
     directories = emitSymbolGraphs(temporaryRoot);
   }
-  const declarations = [];
-  for (const directory of directories) declarations.push(...swiftUIDeclarationsFromSymbolGraphs(await readSwiftUISymbolGraphs(directory)));
+  const graphs = await Promise.all(directories.map((directory) => readSwiftUISymbolGraphs(directory)));
+  const declarations = graphs.flatMap((build) => swiftUIDeclarationsFromSymbolGraphs(build));
   const inventory = createSwiftUISurfaceInventory(declarations);
   const contents = stableStringify(inventory);
   if (write) {

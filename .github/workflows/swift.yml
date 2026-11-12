@@ -15,6 +15,8 @@ on:
       - "uifn/examples/swiftui-workbench/**"
       - "uifn/catalog/swiftui-surface-inventory.json"
       - "uifn/catalog/src/swiftui-symbol-graph.mjs"
+      - "uifn/catalog/src/swiftui-status.mjs"
+      - "uifn/catalog/src/compiler.mjs"
       - "scripts/uifn-swiftui-inventory.mjs"
       - "scripts/uifn-swiftui-if-clauses.swift"
   pull_request:
@@ -30,6 +32,8 @@ on:
       - "uifn/examples/swiftui-workbench/**"
       - "uifn/catalog/swiftui-surface-inventory.json"
       - "uifn/catalog/src/swiftui-symbol-graph.mjs"
+      - "uifn/catalog/src/swiftui-status.mjs"
+      - "uifn/catalog/src/compiler.mjs"
       - "scripts/uifn-swiftui-inventory.mjs"
       - "scripts/uifn-swiftui-if-clauses.swift"
 

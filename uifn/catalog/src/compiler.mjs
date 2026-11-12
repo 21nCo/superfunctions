@@ -300,13 +300,14 @@ export function validateSwiftUIStatus(source = SWIFTUI_STATUS_SOURCE) {
 // 'style', 'component' or 'unclassified'. A name or path the SwiftUI status
 // lists cannot hold fails here rather than being dropped.
 export const SWIFTUI_SURFACE_INVENTORY_VERSION = 1;
-const SWIFTUI_DECLARATION_KINDS = [...SWIFTUI_SURFACE_KINDS, 'unclassified'];
+const SWIFTUI_DECLARATION_KINDS = new Set([...SWIFTUI_SURFACE_KINDS, 'unclassified']);
+const SWIFTUI_INVENTORY_ENTRY_KEYS = ['id', 'kind', 'source'];
 
 export function createSwiftUISurfaceInventory(declarations) {
   for (const { id, kind, source } of declarations) {
     assert(typeof id === 'string' && SWIFTUI_SURFACE_ID_PATTERN.test(id), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `UIFnSwiftUI declares ${id} in ${source}, a name the SwiftUI status lists cannot hold. Give public UIFnSwiftUI types and members ASCII names.`, { id, source });
     assert(typeof source === 'string' && SWIFTUI_SOURCE_PATTERN.test(source), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `UIFnSwiftUI declares ${id} in ${source}, a path the SwiftUI status lists cannot hold. Use letters, digits and + in its directory and file names.`, { id, source });
-    assert(SWIFTUI_DECLARATION_KINDS.includes(kind), 'UIFN_CATALOG_UNSUPPORTED_VALUE', `UIFnSwiftUI declaration ${id} has an unknown kind.`, { id, value: kind });
+    assert(SWIFTUI_DECLARATION_KINDS.has(kind), 'UIFN_CATALOG_UNSUPPORTED_VALUE', `UIFnSwiftUI declaration ${id} has an unknown kind.`, { id, value: kind });
   }
   const declared = [...coalesceSwiftUIDeclarations(declarations).values()];
   declared.sort((left, right) => (left.id < right.id ? -1 : 1));
@@ -318,10 +319,10 @@ export function createSwiftUISurfaceInventory(declarations) {
 export function validateSwiftUISurfaceInventory(inventory) {
   assert(isPlainObject(inventory) && inventory.inventoryVersion === SWIFTUI_SURFACE_INVENTORY_VERSION && Array.isArray(inventory.declarations), 'UIFN_CATALOG_SCHEMA_INVALID', 'The UIFnSwiftUI surface inventory is not a version 1 inventory.', { actual: inventory?.inventoryVersion });
   for (const entry of inventory.declarations) {
-    assert(isPlainObject(entry) && Object.keys(entry).sort().join() === 'id,kind,source', 'UIFN_CATALOG_UNSUPPORTED_VALUE', 'A UIFnSwiftUI surface inventory entry needs exactly an id, kind and source.', { entry });
+    assert(isPlainObject(entry) && Object.keys(entry).length === SWIFTUI_INVENTORY_ENTRY_KEYS.length && SWIFTUI_INVENTORY_ENTRY_KEYS.every((key) => Object.hasOwn(entry, key)), 'UIFN_CATALOG_UNSUPPORTED_VALUE', 'A UIFnSwiftUI surface inventory entry needs exactly an id, kind and source.', { entry });
   }
   const canonical = createSwiftUISurfaceInventory(inventory.declarations);
-  assert(stableStringify(canonical) === stableStringify(inventory), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', 'The UIFnSwiftUI surface inventory is not in canonical form. Regenerate it with node scripts/uifn-swiftui-inventory.mjs --write.');
+  assert(stableStringify(canonical) === stableStringify(inventory), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', 'The UIFnSwiftUI surface inventory is not in canonical form. Regenerate it on macOS with Xcode: node scripts/uifn-swiftui-inventory.mjs --write.');
   return canonical.declarations;
 }
 

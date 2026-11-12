@@ -3260,6 +3260,567 @@
     "displayName": "Structure"
    },
    "identifier": {
+    "precise": "s:11UIFnSwiftUI0A10HiddenCardV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnHiddenCard"
+   ],
+   "names": {
+    "title": "UIFnHiddenCard"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.type.property",
+    "displayName": "Type Property"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A10HiddenCardV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnHiddenCard",
+    "uifnDefault"
+   ],
+   "names": {
+    "title": "uifnDefault"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A10HiddenCardV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnHiddenCard",
+    "uifnDim()"
+   ],
+   "names": {
+    "title": "uifnDim()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A10HiddenCardV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnHiddenCard",
+    "uifnDim(_:)"
+   ],
+   "names": {
+    "title": "uifnDim(_:)"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A10HiddenCardV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnHiddenCard",
+    "uifnInternal()"
+   ],
+   "names": {
+    "title": "uifnInternal()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A10HiddenCardV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnHiddenCard",
+    "uifnStyled()"
+   ],
+   "names": {
+    "title": "uifnStyled()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnCR.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.property",
+    "displayName": "Instance Property"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A10HiddenCardV4bodyQrvp",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnHiddenCard",
+    "body"
+   ],
+   "names": {
+    "title": "body"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.init",
+    "displayName": "Initializer"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A10HiddenCardVACycfc",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnHiddenCard",
+    "init()"
+   ],
+   "names": {
+    "title": "init()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.struct",
+    "displayName": "Structure"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A11PrivateView33_073F08EB21D0A6045D359F0708D9083BLLV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPrivateView"
+   ],
+   "names": {
+    "title": "UIFnPrivateView"
+   },
+   "accessLevel": "private",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.type.property",
+    "displayName": "Type Property"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A11PrivateView33_073F08EB21D0A6045D359F0708D9083BLLV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPrivateView",
+    "uifnDefault"
+   ],
+   "names": {
+    "title": "uifnDefault"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A11PrivateView33_073F08EB21D0A6045D359F0708D9083BLLV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPrivateView",
+    "uifnDim()"
+   ],
+   "names": {
+    "title": "uifnDim()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A11PrivateView33_073F08EB21D0A6045D359F0708D9083BLLV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPrivateView",
+    "uifnDim(_:)"
+   ],
+   "names": {
+    "title": "uifnDim(_:)"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A11PrivateView33_073F08EB21D0A6045D359F0708D9083BLLV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPrivateView",
+    "uifnInternal()"
+   ],
+   "names": {
+    "title": "uifnInternal()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A11PrivateView33_073F08EB21D0A6045D359F0708D9083BLLV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPrivateView",
+    "uifnStyled()"
+   ],
+   "names": {
+    "title": "uifnStyled()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnCR.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.property",
+    "displayName": "Instance Property"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A11PrivateView33_073F08EB21D0A6045D359F0708D9083BLLV4bodyQrvp",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPrivateView",
+    "body"
+   ],
+   "names": {
+    "title": "body"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.init",
+    "displayName": "Initializer"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A11PrivateView33_073F08EB21D0A6045D359F0708D9083BLLVADycfc",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnPrivateView",
+    "init()"
+   ],
+   "names": {
+    "title": "init()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.struct",
+    "displayName": "Structure"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A15FilePrivateView33_073F08EB21D0A6045D359F0708D9083BLLV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnFilePrivateView"
+   ],
+   "names": {
+    "title": "UIFnFilePrivateView"
+   },
+   "accessLevel": "fileprivate",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.type.property",
+    "displayName": "Type Property"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A15FilePrivateView33_073F08EB21D0A6045D359F0708D9083BLLV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnFilePrivateView",
+    "uifnDefault"
+   ],
+   "names": {
+    "title": "uifnDefault"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A15FilePrivateView33_073F08EB21D0A6045D359F0708D9083BLLV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnFilePrivateView",
+    "uifnDim()"
+   ],
+   "names": {
+    "title": "uifnDim()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A15FilePrivateView33_073F08EB21D0A6045D359F0708D9083BLLV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnFilePrivateView",
+    "uifnDim(_:)"
+   ],
+   "names": {
+    "title": "uifnDim(_:)"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A15FilePrivateView33_073F08EB21D0A6045D359F0708D9083BLLV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnFilePrivateView",
+    "uifnInternal()"
+   ],
+   "names": {
+    "title": "uifnInternal()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A15FilePrivateView33_073F08EB21D0A6045D359F0708D9083BLLV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnFilePrivateView",
+    "uifnStyled()"
+   ],
+   "names": {
+    "title": "uifnStyled()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnCR.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUICore",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.property",
+    "displayName": "Instance Property"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A15FilePrivateView33_073F08EB21D0A6045D359F0708D9083BLLV4bodyQrvp",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnFilePrivateView",
+    "body"
+   ],
+   "names": {
+    "title": "body"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.init",
+    "displayName": "Initializer"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A15FilePrivateView33_073F08EB21D0A6045D359F0708D9083BLLVADycfc",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnFilePrivateView",
+    "init()"
+   ],
+   "names": {
+    "title": "init()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.struct",
+    "displayName": "Structure"
+   },
+   "identifier": {
     "precise": "s:11UIFnSwiftUI0A8InternalV",
     "interfaceLanguage": "swift"
    },
@@ -3573,6 +4134,143 @@
     "title": "uifnDoubled()"
    },
    "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "UIFnSwiftUI",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A6SizingPAAE4sizeSiyF",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnSizing",
+    "size()"
+   ],
+   "names": {
+    "title": "size()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "UIFnSwiftUI",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.protocol",
+    "displayName": "Protocol"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A7GlowingP",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnGlowing"
+   ],
+   "names": {
+    "title": "UIFnGlowing"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A7GlowingP8uifnHaloSiyF",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnGlowing",
+    "uifnHalo()"
+   ],
+   "names": {
+    "title": "uifnHalo()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A7GlowingP9uifnShadeSiyF",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnGlowing",
+    "uifnShade()"
+   ],
+   "names": {
+    "title": "uifnShade()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A7GlowingPAAE8uifnHaloSiyF",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnGlowing",
+    "uifnHalo()"
+   ],
+   "names": {
+    "title": "uifnHalo()"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "UIFnSwiftUI",
+    "typeKind": "swift.protocol"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A7GlowingPAAE9uifnShadeSiyF",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnGlowing",
+    "uifnShade()"
+   ],
+   "names": {
+    "title": "uifnShade()"
+   },
+   "accessLevel": "internal",
    "location": {
     "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Components/UIFnProbe.swift"
    },
@@ -4235,6 +4933,68 @@
    "accessLevel": "internal",
    "location": {
     "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnCR.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.struct",
+    "displayName": "Structure"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A11HiddenStyleV",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnHiddenStyle"
+   ],
+   "names": {
+    "title": "UIFnHiddenStyle"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnHiddenStyle.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.method",
+    "displayName": "Instance Method"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A11HiddenStyleV8makeBody13configurationQr0bC006ButtonE13ConfigurationV_tF",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnHiddenStyle",
+    "makeBody(configuration:)"
+   ],
+   "names": {
+    "title": "makeBody(configuration:)"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnHiddenStyle.swift"
+   }
+  },
+  {
+   "kind": {
+    "identifier": "swift.init",
+    "displayName": "Initializer"
+   },
+   "identifier": {
+    "precise": "s:11UIFnSwiftUI0A11HiddenStyleVACycfc",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "UIFnHiddenStyle",
+    "init()"
+   ],
+   "names": {
+    "title": "init()"
+   },
+   "accessLevel": "internal",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnHiddenStyle.swift"
    }
   },
   {
@@ -5333,6 +6093,159 @@
    "target": "s:11UIFnSwiftUI0A7DocCardV"
   },
   {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A10HiddenCardV",
+   "target": "s:11UIFnSwiftUI0A10HiddenCardV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A10HiddenCardV",
+   "target": "s:11UIFnSwiftUI0A10HiddenCardV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A10HiddenCardV",
+   "target": "s:11UIFnSwiftUI0A10HiddenCardV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A10HiddenCardV",
+   "target": "s:11UIFnSwiftUI0A10HiddenCardV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A10HiddenCardV",
+   "target": "s:11UIFnSwiftUI0A10HiddenCardV"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A10HiddenCardV",
+   "target": "s:7SwiftUI4ViewP",
+   "targetFallback": "SwiftUICore.View"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A10HiddenCardV",
+   "target": "s:s8SendableP",
+   "targetFallback": "Swift.Sendable"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A10HiddenCardV4bodyQrvp",
+   "target": "s:11UIFnSwiftUI0A10HiddenCardV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A10HiddenCardVACycfc",
+   "target": "s:11UIFnSwiftUI0A10HiddenCardV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A11PrivateView33_073F08EB21D0A6045D359F0708D9083BLLV",
+   "target": "s:11UIFnSwiftUI0A11PrivateView33_073F08EB21D0A6045D359F0708D9083BLLV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A11PrivateView33_073F08EB21D0A6045D359F0708D9083BLLV",
+   "target": "s:11UIFnSwiftUI0A11PrivateView33_073F08EB21D0A6045D359F0708D9083BLLV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A11PrivateView33_073F08EB21D0A6045D359F0708D9083BLLV",
+   "target": "s:11UIFnSwiftUI0A11PrivateView33_073F08EB21D0A6045D359F0708D9083BLLV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A11PrivateView33_073F08EB21D0A6045D359F0708D9083BLLV",
+   "target": "s:11UIFnSwiftUI0A11PrivateView33_073F08EB21D0A6045D359F0708D9083BLLV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A11PrivateView33_073F08EB21D0A6045D359F0708D9083BLLV",
+   "target": "s:11UIFnSwiftUI0A11PrivateView33_073F08EB21D0A6045D359F0708D9083BLLV"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A11PrivateView33_073F08EB21D0A6045D359F0708D9083BLLV",
+   "target": "s:7SwiftUI4ViewP",
+   "targetFallback": "SwiftUICore.View"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A11PrivateView33_073F08EB21D0A6045D359F0708D9083BLLV",
+   "target": "s:s8SendableP",
+   "targetFallback": "Swift.Sendable"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A11PrivateView33_073F08EB21D0A6045D359F0708D9083BLLV",
+   "target": "s:s15BitwiseCopyableP",
+   "targetFallback": "Swift.BitwiseCopyable"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A11PrivateView33_073F08EB21D0A6045D359F0708D9083BLLV4bodyQrvp",
+   "target": "s:11UIFnSwiftUI0A11PrivateView33_073F08EB21D0A6045D359F0708D9083BLLV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A11PrivateView33_073F08EB21D0A6045D359F0708D9083BLLVADycfc",
+   "target": "s:11UIFnSwiftUI0A11PrivateView33_073F08EB21D0A6045D359F0708D9083BLLV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E11uifnDefaultSivpZ::SYNTHESIZED::s:11UIFnSwiftUI0A15FilePrivateView33_073F08EB21D0A6045D359F0708D9083BLLV",
+   "target": "s:11UIFnSwiftUI0A15FilePrivateView33_073F08EB21D0A6045D359F0708D9083BLLV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimQryF::SYNTHESIZED::s:11UIFnSwiftUI0A15FilePrivateView33_073F08EB21D0A6045D359F0708D9083BLLV",
+   "target": "s:11UIFnSwiftUI0A15FilePrivateView33_073F08EB21D0A6045D359F0708D9083BLLV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E7uifnDimyQrSdF::SYNTHESIZED::s:11UIFnSwiftUI0A15FilePrivateView33_073F08EB21D0A6045D359F0708D9083BLLV",
+   "target": "s:11UIFnSwiftUI0A15FilePrivateView33_073F08EB21D0A6045D359F0708D9083BLLV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E12uifnInternalQryF::SYNTHESIZED::s:11UIFnSwiftUI0A15FilePrivateView33_073F08EB21D0A6045D359F0708D9083BLLV",
+   "target": "s:11UIFnSwiftUI0A15FilePrivateView33_073F08EB21D0A6045D359F0708D9083BLLV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI4ViewP04UIFnaB0E10uifnStyledQryF::SYNTHESIZED::s:11UIFnSwiftUI0A15FilePrivateView33_073F08EB21D0A6045D359F0708D9083BLLV",
+   "target": "s:11UIFnSwiftUI0A15FilePrivateView33_073F08EB21D0A6045D359F0708D9083BLLV"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A15FilePrivateView33_073F08EB21D0A6045D359F0708D9083BLLV",
+   "target": "s:7SwiftUI4ViewP",
+   "targetFallback": "SwiftUICore.View"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A15FilePrivateView33_073F08EB21D0A6045D359F0708D9083BLLV",
+   "target": "s:s8SendableP",
+   "targetFallback": "Swift.Sendable"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A15FilePrivateView33_073F08EB21D0A6045D359F0708D9083BLLV",
+   "target": "s:s15BitwiseCopyableP",
+   "targetFallback": "Swift.BitwiseCopyable"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A15FilePrivateView33_073F08EB21D0A6045D359F0708D9083BLLV4bodyQrvp",
+   "target": "s:11UIFnSwiftUI0A15FilePrivateView33_073F08EB21D0A6045D359F0708D9083BLLV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A15FilePrivateView33_073F08EB21D0A6045D359F0708D9083BLLVADycfc",
+   "target": "s:11UIFnSwiftUI0A15FilePrivateView33_073F08EB21D0A6045D359F0708D9083BLLV"
+  },
+  {
    "kind": "conformsTo",
    "source": "s:11UIFnSwiftUI0A8InternalV",
    "target": "s:s8SendableP",
@@ -5421,6 +6334,37 @@
    "kind": "memberOf",
    "source": "s:11UIFnSwiftUI0A6SizingPAAE11uifnDoubledSiyF",
    "target": "s:11UIFnSwiftUI0A6SizingP"
+  },
+  {
+   "kind": "defaultImplementationOf",
+   "source": "s:11UIFnSwiftUI0A6SizingPAAE4sizeSiyF",
+   "target": "s:11UIFnSwiftUI0A6SizingP4sizeSiyF"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A7GlowingP",
+   "target": "s:7SwiftUI4ViewP",
+   "targetFallback": "SwiftUICore.View"
+  },
+  {
+   "kind": "requirementOf",
+   "source": "s:11UIFnSwiftUI0A7GlowingP8uifnHaloSiyF",
+   "target": "s:11UIFnSwiftUI0A7GlowingP"
+  },
+  {
+   "kind": "requirementOf",
+   "source": "s:11UIFnSwiftUI0A7GlowingP9uifnShadeSiyF",
+   "target": "s:11UIFnSwiftUI0A7GlowingP"
+  },
+  {
+   "kind": "defaultImplementationOf",
+   "source": "s:11UIFnSwiftUI0A7GlowingPAAE8uifnHaloSiyF",
+   "target": "s:11UIFnSwiftUI0A7GlowingP8uifnHaloSiyF"
+  },
+  {
+   "kind": "defaultImplementationOf",
+   "source": "s:11UIFnSwiftUI0A7GlowingPAAE9uifnShadeSiyF",
+   "target": "s:11UIFnSwiftUI0A7GlowingP9uifnShadeSiyF"
   },
   {
    "kind": "memberOf",
@@ -5589,6 +6533,28 @@
    "kind": "memberOf",
    "source": "s:11UIFnSwiftUI0A9ChipStyleVACycfc",
    "target": "s:11UIFnSwiftUI0A9ChipStyleV"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A11HiddenStyleV",
+   "target": "s:7SwiftUI11ButtonStyleP",
+   "targetFallback": "SwiftUI.ButtonStyle"
+  },
+  {
+   "kind": "conformsTo",
+   "source": "s:11UIFnSwiftUI0A11HiddenStyleV",
+   "target": "s:s8SendableP",
+   "targetFallback": "Swift.Sendable"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A11HiddenStyleV8makeBody13configurationQr0bC006ButtonE13ConfigurationV_tF",
+   "target": "s:11UIFnSwiftUI0A11HiddenStyleV"
+  },
+  {
+   "kind": "memberOf",
+   "source": "s:11UIFnSwiftUI0A11HiddenStyleVACycfc",
+   "target": "s:11UIFnSwiftUI0A11HiddenStyleV"
   },
   {
    "kind": "memberOf",
