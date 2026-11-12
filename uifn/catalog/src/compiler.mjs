@@ -325,63 +325,96 @@ const SWIFT_TOKEN = /`[^`\n]+`|[\p{L}_][\p{L}\p{N}_]*|#\w+|->|\d[\w.]*|[^\s\p{L}
 const SWIFT_IDENTIFIER = /^[\p{L}_][\p{L}\p{N}_]*$/u;
 const SWIFT_STRING_START = /#*"/y;
 
-// The text with comments and string literals (multi-line, raw and
-// interpolated ones too) replaced by spaces; line breaks are kept.
-function swiftCodeOnly(text) {
-  const out = text.split('');
-  const blank = (from, to) => {
-    for (let index = from; index < to; index += 1) if (out[index] !== '\n') out[index] = ' ';
-  };
-  const commentEnd = (start) => {
-    if (text.startsWith('//', start)) return text.includes('\n', start) ? text.indexOf('\n', start) : text.length;
-    let depth = 0;
-    let index = start;
-    while (index < text.length) {
-      if (text.startsWith('/*', index)) depth += 1;
-      else if (text.startsWith('*/', index)) depth -= 1;
-      else { index += 1; continue; }
-      index += 2;
-      if (depth === 0) return index;
-    }
-    return index;
-  };
-  const stringEnd = (start) => {
-    let index = start;
-    while (text[index] === '#') index += 1;
-    const hashes = text.slice(start, index);
-    const multiline = text.startsWith('"""', index);
-    const close = `${multiline ? '"""' : '"'}${hashes}`;
-    const escape = `\\${hashes}`;
-    index += multiline ? 3 : 1;
-    while (index < text.length && (multiline || text[index] !== '\n')) {
-      if (text.startsWith(close, index)) return index + close.length;
-      if (!text.startsWith(escape, index)) index += 1;
-      else if (text[index + escape.length] === '(') index = codeEnd(index + escape.length + 1, true);
-      else index += escape.length + 1;
-    }
-    return index;
-  };
-  // Scans code from `start`; in a string interpolation, stops after its `)`.
-  function codeEnd(start, interpolation) {
-    let depth = 0;
-    let index = start;
-    while (index < text.length) {
-      SWIFT_STRING_START.lastIndex = index;
-      const end = text.startsWith('//', index) || text.startsWith('/*', index) ? commentEnd(index) : SWIFT_STRING_START.test(text) && stringEnd(index);
-      if (end) {
-        blank(index, end);
-        index = end;
-        continue;
-      }
-      if (interpolation && text[index] === ')' && depth === 0) return index + 1;
-      if (interpolation && text[index] === '(') depth += 1;
-      if (interpolation && text[index] === ')') depth -= 1;
-      index += 1;
-    }
-    return index;
+// Swift's lexical forms that hold arbitrary text: comments, string literals
+// (multi-line, raw and interpolated ones too) and regex literals. A bare
+// `/.../` counts as a regex only where an operand is expected, as in Swift.
+const SWIFT_REGEX_START = /#+\/|\/(?![\s/*])/y;
+const SWIFT_OPERAND_BEFORE = new Set(['', '=', '(', '[', '{', ',', ':', ';', '!', '&', '|', '?', '^', '~', '<', '>', '+', '-', '*', '%']);
+
+function blankSwift(context, from, to) {
+  for (let index = from; index < to; index += 1) if (context.out[index] !== '\n') context.out[index] = ' ';
+}
+
+function swiftCommentEnd(text, start) {
+  if (text.startsWith('//', start)) return text.includes('\n', start) ? text.indexOf('\n', start) : text.length;
+  let depth = 0;
+  for (let index = start; index < text.length; index += 1) {
+    if (text.startsWith('/*', index)) depth += 1;
+    else if (text.startsWith('*/', index)) depth -= 1;
+    else continue;
+    index += 1;
+    if (depth === 0) return index + 1;
   }
-  codeEnd(0, false);
-  return out.join('');
+  return text.length;
+}
+
+function swiftStringEnd(context, start) {
+  const { text } = context;
+  let index = start;
+  while (text[index] === '#') index += 1;
+  const hashes = text.slice(start, index);
+  const multiline = text.startsWith('"""', index);
+  const close = `${multiline ? '"""' : '"'}${hashes}`;
+  const escape = `\\${hashes}`;
+  index += multiline ? 3 : 1;
+  while (index < text.length && (multiline || text[index] !== '\n')) {
+    if (text.startsWith(close, index)) return index + close.length;
+    if (!text.startsWith(escape, index)) index += 1;
+    else if (text[index + escape.length] === '(') index = swiftCodeEnd(context, index + escape.length + 1, true);
+    else index += escape.length + 1;
+  }
+  return index;
+}
+
+function swiftRegexEnd(text, start) {
+  let index = start;
+  while (text[index] === '#') index += 1;
+  const close = `/${text.slice(start, index)}`;
+  const bare = close === '/';
+  if (bare) {
+    const before = text.slice(0, start).trimEnd();
+    if (!SWIFT_OPERAND_BEFORE.has(before.at(-1) ?? '') && !/\breturn$/.test(before)) return 0;
+  }
+  for (index += 1; index < text.length && !(bare && text[index] === '\n'); index += 1) {
+    if (text.startsWith(close, index)) return index + close.length;
+    if (text[index] === '\\') index += 1;
+  }
+  return bare ? 0 : text.length;
+}
+
+function swiftLiteralEnd(context, index) {
+  const { text } = context;
+  if (text.startsWith('//', index) || text.startsWith('/*', index)) return swiftCommentEnd(text, index);
+  SWIFT_STRING_START.lastIndex = index;
+  if (SWIFT_STRING_START.test(text)) return swiftStringEnd(context, index);
+  SWIFT_REGEX_START.lastIndex = index;
+  return SWIFT_REGEX_START.test(text) ? swiftRegexEnd(text, index) : 0;
+}
+
+// Scans code from `start`; in a string interpolation, stops after its `)`.
+function swiftCodeEnd(context, start, interpolation) {
+  let depth = 0;
+  for (let index = start; index < context.text.length;) {
+    const end = swiftLiteralEnd(context, index);
+    if (end) {
+      blankSwift(context, index, end);
+      index = end;
+      continue;
+    }
+    const char = context.text[index];
+    if (interpolation && char === ')' && depth === 0) return index + 1;
+    if (interpolation) depth += { '(': 1, ')': -1 }[char] ?? 0;
+    index += 1;
+  }
+  return context.text.length;
+}
+
+// The text with comments and string and regex literals replaced by spaces;
+// line breaks are kept.
+function swiftCodeOnly(text) {
+  const context = { text, out: text.split('') };
+  swiftCodeEnd(context, 0, false);
+  return context.out.join('');
 }
 
 function skipBalanced(tokens, index, open, close) {
@@ -445,6 +478,7 @@ function readSwiftTypeDeclaration(state, index) {
     model.protocols.set(header.name, header.conformances);
     model.protocols.set(id, header.conformances);
   } else if (isPublic) model.found.push({ id, keyword, source, conformances: header.conformances });
+  else model.hidden.add(id);
   scopes.push({ kind: 'type', name: header.name, isPublic });
   return header.next;
 }
@@ -459,6 +493,32 @@ function readSwiftMember(state, index) {
   return index + 2;
 }
 
+function stepSwiftBrace(state, index) {
+  const { scopes, source } = state;
+  assert(state.tokens[index] === '{' || scopes.length > 0, 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `Cannot read the declarations in ${source}: a } has no {.`, { source });
+  if (state.tokens[index] === '{') scopes.push({ kind: 'body' });
+  else scopes.pop();
+  state.modifiers = [];
+  return index + 1;
+}
+
+// Skips text that qualifies no declaration: `import struct Foundation.URL`,
+// a member name such as `.private` in a default value, an attribute, and the
+// `(set)` of `private(set)`. Returns undefined for any other token.
+function skipSwiftNonDeclaration(state, index) {
+  const { tokens } = state;
+  const token = tokens[index];
+  const next = tokens[index + 1] ?? '';
+  if (token === '@') return next && tokens[index + 2] === '(' ? skipBalanced(tokens, index + 2, '(', ')') : index + 2;
+  if (SWIFT_ACCESS_MODIFIERS.has(token) && next === '(') return skipBalanced(tokens, index + 1, '(', ')');
+  if (token !== '.' && token !== 'import') return undefined;
+  state.modifiers = [];
+  if (token === '.') return SWIFT_IDENTIFIER.test(next) ? index + 2 : index + 1;
+  let end = SWIFT_IMPORT_KINDS.has(next) ? index + 2 : index + 1;
+  while (tokens[end + 1] === '.') end += 2;
+  return end + 1;
+}
+
 // Reads one token in a type or extension body (or at file level); skips
 // function and property bodies. Modifiers gather up to the declaration they
 // qualify.
@@ -466,38 +526,19 @@ function stepSwiftDeclarations(state, index) {
   const { tokens, scopes } = state;
   const token = tokens[index];
   const next = tokens[index + 1] ?? '';
-  if (token === '{' || token === '}') {
-    assert(token === '{' || scopes.length > 0, 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `Cannot read the declarations in ${state.source}: a } has no {.`, { source: state.source });
-    if (token === '{') scopes.push({ kind: 'body' });
-    else scopes.pop();
-    state.modifiers = [];
-    return index + 1;
-  }
+  if (token === '{' || token === '}') return stepSwiftBrace(state, index);
   if (scopes.at(-1)?.kind === 'body') return index + 1;
-  // `import struct Foundation.URL` declares nothing here; `.private` in a
-  // default value is a member name, not a modifier.
-  if (token === '.') {
+  const skipped = skipSwiftNonDeclaration(state, index);
+  if (skipped !== undefined) return skipped;
+  const isTypeKeyword = SWIFT_TYPE_KEYWORDS.has(token) && SWIFT_IDENTIFIER.test(next) && !SWIFT_DECLARATION_WORDS.has(next);
+  if (isTypeKeyword || SWIFT_MEMBER_KEYWORDS.has(token)) {
+    const end = isTypeKeyword ? readSwiftTypeDeclaration(state, index) : readSwiftMember(state, index);
     state.modifiers = [];
-    return SWIFT_IDENTIFIER.test(next) ? index + 2 : index + 1;
-  }
-  if (token === 'import') {
-    let end = SWIFT_IMPORT_KINDS.has(next) ? index + 2 : index + 1;
-    while (tokens[end + 1] === '.') end += 2;
-    state.modifiers = [];
-    return end + 1;
-  }
-  if (token === '@') return tokens[index + 2] === '(' ? skipBalanced(tokens, index + 2, '(', ')') : index + 2;
-  // `private(set)` limits only the setter.
-  if (SWIFT_ACCESS_MODIFIERS.has(token) && next === '(') return skipBalanced(tokens, index + 1, '(', ')');
-  let end = index + 1;
-  if (SWIFT_TYPE_KEYWORDS.has(token) && SWIFT_IDENTIFIER.test(next) && !SWIFT_DECLARATION_WORDS.has(next)) end = readSwiftTypeDeclaration(state, index);
-  else if (SWIFT_MEMBER_KEYWORDS.has(token)) end = readSwiftMember(state, index);
-  else if (SWIFT_MODIFIER_WORDS.has(token)) {
-    state.modifiers.push(token);
     return end;
   }
-  state.modifiers = [];
-  return end;
+  if (SWIFT_MODIFIER_WORDS.has(token)) state.modifiers.push(token);
+  else state.modifiers = [];
+  return index + 1;
 }
 
 function walkSwiftDeclarations(text, source, model) {
@@ -525,16 +566,22 @@ function swiftSurfaceDirectory(relativePath) {
 // 'style', 'component' or 'unclassified'. An id repeats when it is declared
 // more than once, as #if alternatives or overloads are.
 export function parseSwiftUISurfaceDeclarations(files) {
-  const model = { found: [], extensions: new Map(), protocols: new Map() };
+  const model = { found: [], extensions: new Map(), protocols: new Map(), hidden: new Set() };
   for (const { path: relativePath, text } of files) {
     if (swiftSurfaceDirectory(relativePath)) walkSwiftDeclarations(text, relativePath, model);
   }
-  return model.found.flatMap(({ id, keyword, source, conformances, member }) => {
+  // A type nested, through an extension too, in a non-public type is not public.
+  const hidden = (id) => id.split('.').slice(0, -1).some((_, index, outer) => model.hidden.has(outer.slice(0, index + 1).join('.')));
+  const declarations = model.found.filter(({ id }) => !hidden(id)).flatMap(({ id, keyword, source, conformances, member }) => {
     if (member) return [{ id, kind: swiftSurfaceDirectory(source) === 'Components' ? 'component' : 'unclassified', source }];
     const kind = swiftSurfaceKind([...conformances, ...(model.extensions.get(id) ?? [])], model.protocols);
     if (kind) return [{ id, kind, source }];
     return SWIFT_SURFACE_TYPE_KEYWORDS.has(keyword) ? [{ id, kind: 'unclassified', source }] : [];
   });
+  for (const { id, source } of declarations) {
+    assert(SWIFTUI_SURFACE_ID_PATTERN.test(id), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `UIFnSwiftUI declares ${id} in ${source}, a name the SwiftUI status lists cannot hold. Give public UIFnSwiftUI types and modifiers ASCII names.`, { id, source });
+  }
+  return declarations;
 }
 
 async function listSwiftFiles(repoRoot, relativeDirectory) {

@@ -489,15 +489,17 @@ test('imports, default values and unreadable text do not hide a public declarati
     ['access-qualified imports', 'internal import Foundation\npublic struct UIFnProbe: View {}\npublic import SwiftUI\nstruct UIFnInternal: View {}\nextension View {\n    func uifnHidden() -> some View { self }\n}\n', [['UIFnProbe', 'component']]],
     ['a default value of .private', 'public let uifnDefault: Access = .internal\npublic struct UIFnPager: View {\n    var scope: Access = .private\n    public struct Row: View {}\n}\n', [['UIFnPager', 'component'], ['UIFnPager.Row', 'component']]],
     ['SwiftUI refinements of View and ViewModifier', 'public struct UIFnShake: GeometryEffect {}\npublic struct UIFnFade: SwiftUI.AnimatableModifier {}\n', [['UIFnShake', 'component'], ['UIFnFade', 'component']]],
-    ['a non-ASCII name', 'public struct Ünit: View {\n    public struct Row: View {}\n}\n', [['Ünit', 'component'], ['Ünit.Row', 'component']]],
+    ['an extension of a non-public type', 'struct UIFnInternal {}\nextension UIFnInternal {\n    public struct Inner: View {}\n}\npublic struct UIFnProbe: View {}\n', [['UIFnProbe', 'component']]],
+    ['regex literals', 'let opening = #/[{]/#\nlet closing = /[}]/\nlet ratio = width/2 + height / 2\npublic struct UIFnProbe: View { public var body: some View { EmptyView() } }\nlet multi = #/\n  [}]\n/#\n', [['UIFnProbe', 'component']]],
   ];
   for (const [name, text, expected] of cases) {
     const declarations = parseSwiftUISurfaceDeclarations([{ path: probe, text }]);
     assert.deepEqual(declarations.map((declaration) => [declaration.id, declaration.kind]), expected, name);
     expectCatalogCode(() => verifySwiftUISurfaceDeclarations([...real, ...declarations]), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
   }
-  // Braces the scan cannot pair, as in a regex literal, fail closed.
-  for (const text of ['let pattern = /[{]/\npublic struct UIFnAfter: View {}\n', '}\npublic struct UIFnAfter: View {}\n']) {
+  // Text the scan cannot read, and a public name the lists cannot hold, fail
+  // closed rather than drop the declaration.
+  for (const text of ['let pattern = foo(/[{]\npublic struct UIFnAfter: View {}\n', '}\npublic struct UIFnAfter: View {}\n', 'public struct Ünit: View {}\n', 'public extension View {\n    func uifnÜbersicht() -> some View { self }\n}\n']) {
     expectCatalogCode(() => parseSwiftUISurfaceDeclarations([{ path: probe, text }]), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
   }
 });
