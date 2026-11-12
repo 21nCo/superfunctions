@@ -106,19 +106,19 @@ the artifact without `id-token` permission; a separate `publish` job downloads
 that exact tarball and runs `npm publish` with npm 11.21.0 and `id-token: write`.
 Every published package has a GitHub Actions trusted publisher on npm with
 organization/user `21nCo`, repository `superfunctions`, workflow filename
-`publish-tag.yml` and no environment name. The publish step still passes
-`NPM_TOKEN` as a fallback, which npm uses only when the OIDC exchange fails, so a
-package's first publish (before a trusted publisher can be added) keeps working.
-After a new package's first release, add its trusted publisher with **Allow npm
-publish** enabled (npm defaults new connections to staged publishing only) and
-release it again within 2 days: npm expires a trusted publisher configuration
-that has not completed a successful publish within 2 days of creation.
+`publish-tag.yml` and no environment name. The workflow has no npm token. A
+package that has never been published has no trusted publisher, so a maintainer
+publishes its first version by hand (`npm publish` with 2FA). Then add its
+trusted publisher with **Allow npm publish** enabled (npm defaults new
+connections to staged publishing only) and release it through the workflow
+within 2 days: npm expires a trusted publisher configuration that has not
+completed a successful publish within 2 days of creation.
 npm attaches a provenance attestation to every OIDC publish from this public
 repository. The registry accepts it only when the packed `package.json`
 `repository.url` is `git+https://github.com/21nCo/superfunctions.git`, so every
 release target must declare that URL with its own `directory`.
-Prerelease tag reconciliation runs in a separate job that also uses OIDC and
-does not receive `NPM_TOKEN`; it needs **Allow npm dist-tag** enabled on the
+Prerelease tag reconciliation runs in a separate job that also uses OIDC; it
+needs **Allow npm dist-tag** enabled on the
 package's trusted publisher.
 See [npm's dist-tag OIDC requirements](https://docs.npmjs.com/trusted-publishers#managing-dist-tags-with-trusted-publishing).
 Publish authorization does not imply dist-tag authorization. A denied cleanup
