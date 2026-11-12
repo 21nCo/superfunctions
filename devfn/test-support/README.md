@@ -39,8 +39,11 @@ calls `guardTestFile` as a setup file.
   in a sibling directory whose name merely starts with the worktree's (`repo-dev-42` beside
   `repo`). A command, environment or working directory names a path under a root only
   through a complete path value equal to the root or starting with `root/`. Values are
-  split only at structural boundaries: whitespace, quotes and NUL, a `KEY=` or `--option=`
-  prefix, `file://`, and `:` list separators. Shell punctuation such as `;`, `,`, `(`,
+  split only at structural boundaries: the boundary between arguments or variables, a
+  `KEY=` or `--option=` prefix, `file://`, and `:` list separators. On Linux, `/proc` keeps
+  each argument and variable whole, NUL-separated, so an argument with a space in it is one
+  value. On macOS, the `ps` listing joins arguments with spaces and cannot show where one
+  with a space or `:` in it ends, so whitespace and quotes end a value there too. Shell punctuation such as `;`, `,`, `(`,
   `&`, `|` or `<`, like `-`, `.`, `[` or a non-ASCII letter, can be part of a file name,
   so `/x/repo;other` is not under `/x/repo`. A process a shell started that way is still
   attributed by its marker, working directory or parent. The same rule decides which
@@ -52,6 +55,11 @@ calls `guardTestFile` as a setup file.
   interrupted while the teardown waits for leftovers still cleans up and reports them.
 - A temp root or file folder the guard cannot remove fails the run, or the file, and is
   named, like any other leftover.
+- Stopping sends SIGTERM, then SIGKILL to each process and to every process group one of
+  them led, even once the leader has exited, since what it started on its way out (a
+  wrapper's SIGTERM handler starting a child, say) is still in that group. The guard then
+  lists the scope's processes again and kills what is left, until nothing is or 10 seconds
+  have passed; anything still running fails the run or the file.
 
 A directory a test creates outside the temp folder, such as one under the package's
 `node_modules/.cache`, is added to the file's guard with `guardDirectory(directory)` before

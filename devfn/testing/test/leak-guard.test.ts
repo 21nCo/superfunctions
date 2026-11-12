@@ -21,6 +21,11 @@ const locks = fileURLToPath(new URL("../../test-support/shared-locks.mjs", impor
 const vitest = path.join(path.dirname(createRequire(import.meta.url).resolve("vitest/package.json")), "vitest.mjs");
 
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+// Whether the process has gone within a short while: a killed orphan is reaped by init.
+const gone = async (pid: number) => {
+  for (const deadline = Date.now() + 2_000; alive(pid) && Date.now() < deadline;) await new Promise((resolve) => setTimeout(resolve, 50));
+  return !alive(pid);
+};
 
 // A detached process with no inherited environment, as a DevFn wrapper is, kept alive.
 const leakProcess = (cwd: string) => `(() => {
@@ -121,6 +126,18 @@ describe("pathsNamedUnder", () => {
     expect(pathsNamedUnder(text, root)).toEqual([]);
   });
 
+  it("keeps an argument or variable whole where the listing separates them with NUL, as Linux's /proc does", () => {
+    expect(pathsNamedUnder(`node\0${root} sibling/x\0`, root, { separated: true })).toEqual([]);
+    expect(pathsNamedUnder(`TMPDIR=${root} sibling\0HOME=/home/x\0`, root, { separated: true })).toEqual([]);
+    expect(pathsNamedUnder(`node\0${root}/server.mjs\0--flag\0`, root, { separated: true })).toEqual([`${root}/server.mjs`]);
+    expect(pathsNamedUnder(`HOME=/home/x\0TMPDIR=${root}\0`, root, { separated: true })).toEqual([root]);
+    expect(pathsNamedUnder("node\0/tmp/my repo/server.mjs\0", "/tmp/my repo", { separated: true })).toEqual(["/tmp/my repo/server.mjs"]);
+    const listed = (pid: number, argv: string, environment = "") => ({ pid, ppid: 1, pgid: pid, elapsed: 0, command: argv.replaceAll("\0", " ").trim(), argv, environment, separated: true, cwd: undefined });
+    const owned = listed(9_000_201, `node\0${root}/server.mjs\0`);
+    const foreign = [listed(9_000_202, `node\0${root} sibling/server.mjs\0`), listed(9_000_203, "node\0server.mjs\0", `TMPDIR=${root} sibling\0`)];
+    expect(ownedProcesses([owned, ...foreign], { roots: [root] }).map(({ pid }) => pid)).toEqual([owned.pid]);
+  });
+
   it("decides which processes a run or registered directory owns, and so may signal, on complete path values", () => {
     const entry = (pid: number, command: string, environment = "", cwd?: string) => ({ pid, ppid: 1, pgid: pid, elapsed: 0, command, environment, cwd });
     const owned = [
@@ -182,6 +199,49 @@ describe.skipIf(process.platform === "win32")("DevFn test leak guard", { timeout
     expect(output).toContain(`process ${recorded.pid} `);
     expect(alive(recorded.pid!)).toBe(false);
     expect(existsSync(recorded.root)).toBe(false);
+  });
+
+  // A detached group leader whose SIGTERM handler starts two processes and exits: one in its own
+  // group that names no path of the run, which only killing the group stops, and one detached in
+  // a group of its own in the leader's working directory, which only listing again finds.
+  it.each([
+    ["the run's temp root, where only the run's teardown finds it", "process.env.SFN_TEST_LEAK_GUARD_ROOT"],
+    ["its test file's folder", 'mkdtempSync(path.join(tmpdir(), "devfn-leader-"))'],
+  ])("stops what a leftover process starts as it is stopped, left in %s", async (_, where) => {
+    const { dir, record } = project("");
+    const leader = path.join(dir, "leader.cjs");
+    const stopped = path.join(dir, "stopped.json");
+    writeFileSync(leader, `const { spawn } = require("node:child_process");
+process.on("SIGTERM", () => {
+  const keep = [process.execPath, ["-e", "setInterval(() => {}, 1000)"]];
+  const sameGroup = spawn(...keep, { stdio: "ignore", cwd: "/", env: { PATH: process.env.PATH } });
+  const ownGroup = spawn(...keep, { detached: true, stdio: "ignore", env: { PATH: process.env.PATH } });
+  require("node:fs").writeFileSync(process.argv[2], JSON.stringify({ sameGroup: sameGroup.pid, ownGroup: ownGroup.pid }));
+  process.exit(0);
+});
+setInterval(() => {}, 1000);
+`);
+    writeFileSync(path.join(dir, "fixture.test.mjs"), `${readFileSync(path.join(dir, "fixture.test.mjs"), "utf8")}
+test("leaves a process that starts more as it stops", async () => {
+  const start = 'const child = require("node:child_process").spawn(process.execPath, process.argv.slice(1), { detached: true, stdio: "ignore", env: { PATH: process.env.PATH } }); child.unref(); process.stdout.write(String(child.pid));';
+  const pid = Number(require("node:child_process").spawnSync(process.execPath, ["-e", start, ${JSON.stringify(leader)}, ${JSON.stringify(stopped)}], { cwd: ${where}, encoding: "utf8", env: { PATH: process.env.PATH } }).stdout);
+  record({ pid });
+  // Long enough for the leader to install its SIGTERM handler.
+  await sleep(500);
+});`);
+    let started: { sameGroup: number; ownGroup: number } | undefined;
+    try {
+      const { code, output, recorded } = await runProject(dir, record);
+      started = JSON.parse(readFileSync(stopped, "utf8"));
+      expect(code).not.toBe(0);
+      expect(output).toContain(`process ${recorded.pid} `);
+      expect(await gone(recorded.pid!)).toBe(true);
+      expect(await gone(started!.sameGroup)).toBe(true);
+      expect(await gone(started!.ownGroup)).toBe(true);
+      expect(existsSync(recorded.root)).toBe(false);
+    } finally {
+      for (const pid of [started?.sameGroup, started?.ownGroup]) if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* stopped */ }
+    }
   });
 
   it("stops what a timed-out test started before the next test runs, although its finally never ran", async () => {

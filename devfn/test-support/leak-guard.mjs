@@ -70,6 +70,10 @@ function linkToolCaches(directory, original) {
 const FILE_GRACE_MS = 3_000;
 const RUN_GRACE_MS = 5_000;
 const STOP_GRACE_MS = 2_000;
+// How long the guard keeps stopping processes that appear while it stops a scope's processes.
+const STOP_DEADLINE_MS = 10_000;
+// How many times the exit cleanup lists and kills the run's processes.
+const EXIT_ROUNDS = 3;
 const MAX_LISTED = 40;
 
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -80,8 +84,14 @@ const TOOL_PATH = ["/bin", "/usr/bin", "/usr/sbin", "/sbin", process.env.PATH].f
 const toolEnv = () => ({ PATH: TOOL_PATH, LC_ALL: "C" });
 
 function run(command, args, timeout = 15_000) {
-  const result = spawnSync(command, args, { encoding: "utf8", env: toolEnv(), timeout, maxBuffer: 64 * 1024 * 1024 });
-  return result.error ? undefined : result;
+  // A signal sent to this process's group, as turbo cancels a task, also reaches a tool the guard
+  // is running then. A listing cut short that way would read as nothing left, so the tool runs
+  // again. A tool that times out reports an error instead and is not run again.
+  for (let attempt = 1; ; attempt += 1) {
+    const result = spawnSync(command, args, { encoding: "utf8", env: toolEnv(), timeout, maxBuffer: 64 * 1024 * 1024 });
+    if (result.error) return undefined;
+    if (!result.signal || attempt === 3) return result;
+  }
 }
 
 /** The spellings of a directory a process can show: as given, resolved, and with or without macOS's /private prefix. */
@@ -122,12 +132,15 @@ function listLinux() {
     try { stat = readFileSync(`/proc/${pid}/stat`, "utf8"); } catch { continue; }
     const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
     if (fields[0] === "Z" || fields[0] === "X") continue;
-    const read = (file) => { try { return readFileSync(`/proc/${pid}/${file}`, "utf8").replaceAll("\0", " ").trim(); } catch { return ""; } };
+    // Arguments and variables stay NUL-separated, so a value with a space in it stays one value.
+    const read = (file) => { try { return readFileSync(`/proc/${pid}/${file}`, "utf8"); } catch { return ""; } };
+    const argv = read("cmdline");
     let cwd;
     try { cwd = readlinkSync(`/proc/${pid}/cwd`); } catch { /* another user's process */ }
     // Field 22 of stat, the start time in clock ticks since boot.
     const elapsed = uptime === undefined ? undefined : Math.max(0, Math.floor(uptime - Number(fields[19]) / linuxClockTicks()));
-    processes.push({ pid, ppid: Number(fields[1]), pgid: Number(fields[2]), elapsed, command: read("cmdline"), environment: read("environ"), cwd });
+    // `command` is the arguments joined with spaces, for reports and matching a program name.
+    processes.push({ pid, ppid: Number(fields[1]), pgid: Number(fields[2]), elapsed, command: argv.replaceAll("\0", " ").trim(), argv, environment: read("environ"), separated: true, cwd });
   }
   return processes;
 }
@@ -193,12 +206,15 @@ function descendantsOf(pid, processes) {
   return descendants;
 }
 
-// Characters that separate values in a command line or environment as the guard lists them:
-// whitespace and quotes in macOS's ps listing, NUL in Linux's /proc. A value may also be a
-// `KEY=` or `--option=` assignment, a `file://` URL, or a `:`-separated list such as PATH.
-// Nothing else ends a path: `;`, `(`, `[`, `-`, `.` and non-ASCII letters may all be part of a
-// file name, so `/x/repo;other` and `/x/repo-dev-42` are not under `/x/repo`.
+// Characters that separate values in a command line or environment as the guard lists them.
+// Linux's /proc keeps each argument and variable whole, NUL-separated, so NUL alone separates
+// them there. macOS's ps listing joins them with spaces and cannot show where one with a space
+// in it ends, so whitespace and quotes separate them too. A value may also be a `KEY=` or
+// `--option=` assignment, a `file://` URL, or a `:`-separated list such as PATH. Nothing else
+// ends a path: `;`, `(`, `[`, `-`, `.` and non-ASCII letters may all be part of a file name, so
+// `/x/repo;other` and `/x/repo-dev-42` are not under `/x/repo`.
 const SEPARATOR = /[\s"'`\0]/;
+const STRUCTURAL_SEPARATOR = /\0/;
 const LIST_SEPARATOR = ":";
 // What may come between the start of a value and a path in it.
 const VALUE_PREFIX = /^(?:[^/=:]*=)?(?:file:\/\/)?$|:$/;
@@ -208,16 +224,19 @@ const VALUE_PREFIX = /^(?:[^/=:]*=)?(?:file:\/\/)?$|:$/;
  * value does (after a separator, a `KEY=` or `--option=` prefix, `file://` or a `:` list
  * separator) and runs to the next separator or `:`. It is named when it equals `root` or starts
  * with `root/`; a value that merely starts with `root`'s text names a different path.
+ * With `separated`, the text is NUL-separated, as Linux's /proc keeps it, and only NUL
+ * separates values.
  */
-export function pathsNamedUnder(text, root) {
+export function pathsNamedUnder(text, root, { separated = false } = {}) {
+  const separator = separated ? STRUCTURAL_SEPARATOR : SEPARATOR;
   const paths = [];
   for (let at = text.indexOf(root); at !== -1; at = text.indexOf(root, at + 1)) {
     let start = at;
-    while (start > 0 && !SEPARATOR.test(text[start - 1])) start -= 1;
+    while (start > 0 && !separator.test(text[start - 1])) start -= 1;
     if (!VALUE_PREFIX.test(text.slice(start, at))) continue;
     // From the end of `root`, so a root with a space in it still matches.
     let end = at + root.length;
-    while (end < text.length && !SEPARATOR.test(text[end]) && text[end] !== LIST_SEPARATOR) end += 1;
+    while (end < text.length && !separator.test(text[end]) && text[end] !== LIST_SEPARATOR) end += 1;
     const value = text.slice(at, end).replace(/(?<=.)\/+$/, "");
     if (value === root || value.startsWith(`${root}/`)) paths.push(value);
   }
@@ -229,8 +248,8 @@ export function pathsNamedUnder(text, root) {
  * directory. `accept(path, root)` can reject a named path, such as one inside a nested checkout.
  */
 const namesPathUnder = (entry, roots, accept = () => true) => roots.some((root) =>
-  pathsNamedUnder(entry.command, root).some((named) => accept(named, root)) ||
-  pathsNamedUnder(entry.environment, root).some((named) => accept(named, root)) ||
+  pathsNamedUnder(entry.argv ?? entry.command, root, { separated: entry.separated }).some((named) => accept(named, root)) ||
+  pathsNamedUnder(entry.environment, root, { separated: entry.separated }).some((named) => accept(named, root)) ||
   (entry.cwd !== undefined && isUnder(entry.cwd, [root]) && accept(entry.cwd, root)));
 
 /**
@@ -264,36 +283,66 @@ export function ownedProcesses(processes, { marker, roots, parent, excluded = ()
 
 /**
  * Stops every process that runs from, or names, a path under the given directories, with the
- * detached process group it leads. `sinceMs` bounds the working-directory lookup to processes
- * started since then. Returns the processes still running afterwards.
+ * detached process group it leads, and any such process that appears while they stop. `sinceMs`
+ * bounds the working-directory lookup to processes started since then. Returns the processes
+ * still running afterwards.
  */
 export async function stopProcessesUnder(directories, sinceMs = 0) {
-  const listed = listProcesses(sinceMs);
-  if (!listed) return [];
-  const owned = ownedProcesses(listed, { roots: directories.flatMap(pathAliases) });
-  return owned.length > 0 ? await stopProcesses(owned) : [];
+  const roots = directories.flatMap(pathAliases);
+  const find = () => { const listed = listProcesses(sinceMs); return listed && ownedProcesses(listed, { roots }); };
+  const owned = find();
+  return owned && owned.length > 0 ? await stopProcesses(owned, find) : [];
 }
 
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (error) { return error?.code === "EPERM"; } };
 
+let ownGroup;
+/** This process's group, which the guard never signals: the runner and its siblings are in it. */
+function ownProcessGroup() {
+  ownGroup ??= Number(run("ps", ["-o", "pgid=", "-p", String(process.pid)])?.stdout.trim()) || undefined;
+  return ownGroup;
+}
+
+/**
+ * Signals each process. A process that leads its own group (a detached wrapper) is signalled with
+ * its whole group, which holds only what it started, even once the leader itself has exited: what
+ * it started on its way out is still in that group. Any other process is signalled on its own,
+ * and only while it is still running, so a reused process ID is not hit.
+ */
 function signalAll(processes, signal) {
-  const ownGroup = run("ps", ["-o", "pgid=", "-p", String(process.pid)])?.stdout.trim() ?? "";
+  const group = ownProcessGroup();
   for (const entry of processes) {
-    // A process that leads its own group (a detached wrapper) is stopped with its whole group,
-    // which holds only its own children. Any other process is stopped on its own.
-    const target = entry.pgid === entry.pid && String(entry.pgid) !== ownGroup ? -entry.pid : entry.pid;
-    try { process.kill(target, signal); } catch { /* already gone */ }
+    const leads = entry.pgid === entry.pid && entry.pgid !== group;
+    if (!leads && !alive(entry.pid)) continue;
+    try { process.kill(leads ? -entry.pid : entry.pid, signal); } catch { /* ESRCH: already gone */ }
   }
 }
 
-/** Stops the given processes: SIGTERM to each (its group when it leads one), then SIGKILL to survivors. */
-export async function stopProcesses(processes) {
+async function waitForExit(processes, graceMs) {
+  for (const deadline = Date.now() + graceMs; Date.now() < deadline && processes.some((entry) => alive(entry.pid));) await pause(100);
+}
+
+/**
+ * Stops the given processes: SIGTERM to each (its group when it leads one), then SIGKILL to each
+ * and to every group one of them led. A process may start another as it stops, such as a
+ * wrapper's SIGTERM handler, so with `find`, which lists the scope's processes again, it keeps
+ * killing whatever the scope still holds until nothing is left or STOP_DEADLINE_MS has passed.
+ * Returns the processes still running: what `find` still lists, or else those of the given ones
+ * still alive.
+ */
+export async function stopProcesses(processes, find) {
+  const deadline = Date.now() + STOP_DEADLINE_MS;
   signalAll(processes, "SIGTERM");
-  for (const deadline = Date.now() + STOP_GRACE_MS; Date.now() < deadline && processes.some((entry) => alive(entry.pid));) await pause(100);
-  const survivors = processes.filter((entry) => alive(entry.pid));
-  signalAll(survivors, "SIGKILL");
-  for (const deadline = Date.now() + STOP_GRACE_MS; Date.now() < deadline && survivors.some((entry) => alive(entry.pid));) await pause(100);
-  return processes.filter((entry) => alive(entry.pid));
+  await waitForExit(processes, STOP_GRACE_MS);
+  for (let pending = processes; ;) {
+    // Stragglers found by listing again started while the scope was stopping, so they get no grace.
+    signalAll(pending, "SIGKILL");
+    await waitForExit(pending, STOP_GRACE_MS);
+    if (!find) return pending.filter((entry) => alive(entry.pid));
+    const remaining = find() ?? pending.filter((entry) => alive(entry.pid));
+    if (remaining.length === 0 || Date.now() >= deadline) return remaining;
+    pending = remaining;
+  }
 }
 
 /** Waits up to `graceMs` for owned processes to exit by themselves and returns those still running. */
@@ -412,9 +461,17 @@ export async function setup(project) {
     const directories = attempt(runDirectories) ?? [];
     const allRoots = [...rootAliases, ...directories.flatMap(pathAliases)];
     // The run is ending, so its own pool workers, which a hung test may keep alive, go too.
-    const owned = attempt(() => ownedProcesses(listProcesses(startedAt) ?? [], { marker, roots: allRoots, parent: process.pid })) ?? [];
+    const find = () => attempt(() => ownedProcesses(listProcesses(startedAt) ?? [], { marker, roots: allRoots, parent: process.pid })) ?? [];
+    const owned = new Map();
     // A cancelling runner may SIGKILL this process shortly after its signal, so there is no grace.
-    if (owned.length > 0) attempt(() => signalAll(owned, "SIGKILL"));
+    // SIGKILL leaves a process no time to start another, but one may have just started; the
+    // listing is taken again, a bounded number of times, to stop it too.
+    for (let round = 0, pending = find(); pending.length > 0 && round < EXIT_ROUNDS; round += 1) {
+      for (const entry of pending) owned.set(entry.pid, entry);
+      attempt(() => signalAll(pending, "SIGKILL"));
+      sleepSync(100);
+      if (round + 1 < EXIT_ROUNDS) pending = find();
+    }
     for (const container of attempt(() => composeContainers(allRoots)) ?? []) attempt(() => run("docker", ["rm", "-f", "-v", container.id], 30_000));
     // A worker killed above may have held a machine-wide lock; this process is exiting too.
     const locks = attempt(() => removeAbandonedLocks(root, { graceMs: 1_000, ending: process.pid })) ?? [];
@@ -422,7 +479,7 @@ export async function setup(project) {
     attempt(() => removeTree(root));
     if (runnerTemp) attempt(() => removeTree(runnerTemp));
     const leaked = new Map(state.found.processes);
-    for (const entry of owned) if (!isRunnerChild(entry)) leaked.set(entry.pid, entry);
+    for (const entry of owned.values()) if (!isRunnerChild(entry)) leaked.set(entry.pid, entry);
     const entries = [...state.found.entries, ...locks.map(describeLock)];
     // The process is exiting, so only a synchronous write reaches a piped stderr.
     if (leaked.size > 0 || entries.length > 0) attempt(() => writeSync(2, `${report("This interrupted test run", [...leaked.values()], entries, [])}\n`));
@@ -462,8 +519,12 @@ export async function setup(project) {
     const notes = [];
     const listed = listProcesses(startedAt);
     if (!listed) notes.push(`Processes were not checked: the guard cannot list processes on ${process.platform}.`);
-    const owned = listed ? await settle(() => found(ownedProcesses(listProcesses(startedAt) ?? [], scope())), RUN_GRACE_MS) ?? [] : [];
-    const unstopped = owned.length > 0 ? await stopProcesses(owned) : [];
+    const find = () => { const processes = listProcesses(startedAt); return processes && found(ownedProcesses(processes, scope())); };
+    const settled = listed ? await settle(find, RUN_GRACE_MS) ?? [] : [];
+    // Everything stopped, including what a stopping process started, is reported.
+    const stopped = new Map(settled.map((entry) => [entry.pid, entry]));
+    const unstopped = settled.length > 0 ? await stopProcesses(settled, () => { const remaining = find(); for (const entry of remaining ?? []) stopped.set(entry.pid, entry); return remaining; }) : [];
+    const owned = [...stopped.values()];
     if (unstopped.length > 0) notes.push(`Still running after SIGKILL: ${unstopped.map((entry) => entry.pid).join(", ")}.`);
     // Every test has finished, so a lock this run's processes still hold, this one included, is abandoned.
     const locks = removeAbandonedLocks(root, { graceMs: STOP_GRACE_MS, ending: process.pid });
@@ -750,13 +811,17 @@ export function guardTestFile({ beforeEach, afterEach, afterAll }) {
     // Tests that run concurrently share the snapshot, so what each started cannot be told apart.
     if (context?.task?.result?.state !== "fail" || context.task.concurrent || !before?.pids) return;
     const { at, pids, entries } = before;
-    const started = ownedProcesses(listProcesses(at) ?? [], scope()).filter((entry) => !pids.has(entry.pid));
-    if (started.length > 0) await stopProcesses(started);
+    const find = () => { const listed = listProcesses(at); return listed && ownedProcesses(listed, scope()).filter((entry) => !pids.has(entry.pid)); };
+    const started = find() ?? [];
+    if (started.length > 0) await stopProcesses(started, find);
     for (const entry of tempLeftovers(folder)) if (!entries.has(entry)) removeTree(path.join(folder, entry));
   }, 60_000);
   afterAll(async (suite) => {
-    const owned = await settle(() => ownedProcesses(listProcesses(startedAt) ?? [], scope()), FILE_GRACE_MS) ?? [];
-    const unstopped = owned.length > 0 ? await stopProcesses(owned) : [];
+    const find = () => { const listed = listProcesses(startedAt); return listed && ownedProcesses(listed, scope()); };
+    const settled = await settle(find, FILE_GRACE_MS) ?? [];
+    const stopped = new Map(settled.map((entry) => [entry.pid, entry]));
+    const unstopped = settled.length > 0 ? await stopProcesses(settled, () => { const remaining = find(); for (const entry of remaining ?? []) stopped.set(entry.pid, entry); return remaining; }) : [];
+    const owned = [...stopped.values()];
     const entries = tempLeftovers(folder).map((entry) => path.join(folder, entry));
     const removed = removeTree(folder);
     for (const directory of guardedDirectories()) {
