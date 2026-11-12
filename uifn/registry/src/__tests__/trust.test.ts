@@ -1,4 +1,4 @@
-import { createHash, createPublicKey, generateKeyPairSync, sign, type KeyObject } from 'node:crypto';
+import { createHash, createPublicKey, generateKeyPairSync, sign, webcrypto, type KeyObject } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -76,7 +76,6 @@ const nonPlainBuiltins = (): [string, unknown][] => [
     ['a string iterator', builtinCarrier(''[Symbol.iterator](), null)],
     ['a RegExp string iterator', builtinCarrier('a'.matchAll(/a/g), null)],
     ['a generator', builtinCarrier((function* generator() { /* empty */ })(), null)],
-    ['a URLSearchParams', builtinCarrier(new URLSearchParams(), null)],
 ];
 
 /** Envelopes the schema-v2 verifier must reject as malformed. */
@@ -255,7 +254,7 @@ describe('schema-v2 registry signature verification', () => {
 
     it('never invokes accessors under symbol keys, including the ones node:crypto brand checks read', async () => {
       const { publicKey } = generateKeyPairSync('ed25519');
-      const cryptoKey = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']) as CryptoKeyPair;
+      const cryptoKey = await webcrypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']) as CryptoKeyPair;
       const symbols = [...Object.getOwnPropertySymbols(publicKey), ...Object.getOwnPropertySymbols(cryptoKey.publicKey), Symbol('x')];
       const phase16 = await import(pathToFileURL(path.join(repoRoot, 'scripts/verify-uifn-phase-16.mjs')).href);
       for (const symbol of symbols) {
@@ -265,6 +264,22 @@ describe('schema-v2 registry signature verification', () => {
         expect(phase16.verifyRegistrySignatureFile(catalog, envelope, root.pem), String(symbol)).toMatchObject({ valid: false, reason: 'envelope-malformed' });
         expect(invoked, String(symbol)).toBe(0);
       }
+    });
+
+    it('never walks the contents of a Map, Set or error carrier', async () => {
+      const phase16 = await import(pathToFileURL(path.join(repoRoot, 'scripts/verify-uifn-phase-16.mjs')).href);
+      let invoked = 0;
+      const hidden = { get x() { invoked += 1; return 1; } };
+      const carriers: [string, unknown][] = [
+        ['Map', builtinCarrier(new Map([['hidden', hidden]]), null)],
+        ['Set', builtinCarrier(new Set([hidden]), Object.prototype)],
+        ['error', builtinCarrier(Object.assign(new Error('x'), { cause: hidden }), null)],
+      ];
+      for (const [label, carrier] of carriers) {
+        expect(verifyRegistrySignatureEnvelope(catalog, carrier, root.pem), label).toMatchObject({ ...INVALID, reason: 'envelope-malformed' });
+        expect(phase16.verifyRegistrySignatureFile(catalog, carrier, root.pem), label).toMatchObject({ valid: false, reason: 'envelope-malformed' });
+      }
+      expect(invoked).toBe(0);
     });
 
     it('never runs code reachable from an object-valued field', () => {

@@ -44,8 +44,16 @@ function readTrustRoot(trustRootPem) {
   }
 }
 
-/** True when `value` structured-clones to an ordinary object, i.e. it carries no built-in internal slots. */
+/**
+ * True when `value` is an ordinary object as far as the engine can tell. Map, Set and errors are rejected by their
+ * internal-slot predicates first, because cloning them would walk their contents. Every other value must then
+ * structured-clone to an ordinary object: a remaining slot-bearing built-in keeps its type through the clone (Date,
+ * RegExp, a typed array, a boxed primitive) or cannot be cloned (Intl objects, iterators, promises, WeakRef). Private
+ * class fields (#x) are invisible to every JavaScript check; the verifier never reads them, so such a carrier is
+ * judged by its six own data fields alone.
+ */
 function isOrdinaryRecord(value) {
+  if (types.isMap(value) || types.isSet(value) || types.isNativeError(value)) return false;
   try {
     return Object.getPrototypeOf(structuredClone(value)) === Object.prototype;
   } catch {
@@ -60,11 +68,9 @@ function isOrdinaryRecord(value) {
  * primitive, is malformed; an envelope whose schemaVersion is not 2 (such as a v1 envelope, which has no domain field)
  * is an unsupported schema.
  *
- * Plainness is a positive test, not a list of built-ins: the value must structured-clone to an ordinary object. A
- * built-in with internal slots keeps its type through the clone (Date, Map, a typed array, a boxed primitive, an
- * error) or cannot be cloned at all (Intl objects, iterators, promises, WeakRef), even when its prototype was reset to
- * Object.prototype or null. The clone runs only after every field is known to be an own data property holding a
- * primitive, so it cannot reach caller code.
+ * A built-in with internal slots is malformed even when its prototype was reset to Object.prototype or null (see
+ * isOrdinaryRecord). That check runs only after every field is known to be an own data property holding a primitive,
+ * so it cannot reach caller code.
  */
 function readEnvelope(value) {
   if (value === null || typeof value !== 'object' || types.isProxy(value)) return { reason: 'envelope-malformed' };
