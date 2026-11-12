@@ -425,15 +425,30 @@ describe.skipIf(process.platform === "win32")("DevFn test leak guard", { timeout
   it.each([
     ["the run's temp root, where only the run's teardown finds it", "process.env.SFN_TEST_LEAK_GUARD_ROOT"],
     ["its test file's folder", 'mkdtempSync(path.join(tmpdir(), "devfn-leader-"))'],
-  ])("stops what a leftover process starts as it is stopped, left in %s", async (_, where) => {
+  ])("stops what a leftover process starts in a group of its own as it is stopped, and lists, but never signals, what it starts in its stopped group, across every round, left in %s", async (_, where) => {
     const { dir, record } = project("");
     const leader = path.join(dir, "leader.cjs");
     const stopped = path.join(dir, "stopped.json");
+    // Not the scope's, until it starts a process that is, a second after the first stop round
+    // has killed `ownGroup`, so that a second round stops it.
+    const later = `const { live } = require(${JSON.stringify(liveness)});
+const [, ownGroup, where, file] = process.argv;
+const wait = setInterval(() => {
+  if (live(Number(ownGroup))) return;
+  clearInterval(wait);
+  setTimeout(() => {
+    const late = require("node:child_process").spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore", cwd: Buffer.from(where, "hex").toString(), env: { PATH: process.env.PATH } });
+    require("node:fs").writeFileSync(file, String(late.pid));
+    process.exit(0);
+  }, 1_000);
+}, 50);`;
     writeFileSync(leader, `const { spawn } = require("node:child_process");
 process.on("SIGTERM", () => {
   const keep = [process.execPath, ["-e", "setInterval(() => {}, 1000)"]];
-  const sameGroup = spawn(...keep, { stdio: "ignore", cwd: "/", env: { PATH: process.env.PATH } });
-  const ownGroup = spawn(...keep, { detached: true, stdio: "ignore", env: { PATH: process.env.PATH } });
+  const env = { PATH: process.env.PATH };
+  const sameGroup = spawn(...keep, { stdio: "ignore", cwd: "/", env });
+  const ownGroup = spawn(...keep, { detached: true, stdio: "ignore", env });
+  spawn(process.execPath, ["-e", ${JSON.stringify(later)}, String(ownGroup.pid), Buffer.from(process.cwd()).toString("hex"), process.argv[2] + ".late"], { detached: true, stdio: "ignore", cwd: "/", env });
   require("node:fs").writeFileSync(process.argv[2], JSON.stringify({ sameGroup: sameGroup.pid, ownGroup: ownGroup.pid }));
   process.exit(0);
 });
@@ -441,25 +456,29 @@ setInterval(() => {}, 1000);
 `);
     writeFileSync(path.join(dir, "fixture.test.mjs"), `${readFileSync(path.join(dir, "fixture.test.mjs"), "utf8")}
 test("leaves a process that starts more as it stops", async () => {
+  const where = ${where};
   const start = 'const child = require("node:child_process").spawn(process.execPath, process.argv.slice(1), { detached: true, stdio: "ignore", env: { PATH: process.env.PATH } }); child.unref(); process.stdout.write(String(child.pid));';
-  const pid = Number(require("node:child_process").spawnSync(process.execPath, ["-e", start, ${JSON.stringify(leader)}, ${JSON.stringify(stopped)}], { cwd: ${where}, encoding: "utf8", env: { PATH: process.env.PATH } }).stdout);
-  record({ pid });
+  const pid = Number(require("node:child_process").spawnSync(process.execPath, ["-e", start, ${JSON.stringify(leader)}, ${JSON.stringify(stopped)}], { cwd: where, encoding: "utf8", env: { PATH: process.env.PATH } }).stdout);
+  // A process the scope only reports keeps it waiting after each stop round, while the second one starts.
+  record({ pid, named: ${orphanProcess('"/"', 'where + "/missing/../server.mjs"')} });
   // Long enough for the leader to install its SIGTERM handler.
   await sleep(500);
 });`);
-    let started: { sameGroup: number; ownGroup: number } | undefined;
+    let started: { sameGroup: number; ownGroup: number; late?: number; named?: number } | undefined;
     try {
       const { code, output, recorded } = await runProject(dir, record);
-      started = JSON.parse(readFileSync(stopped, "utf8"));
+      started = { ...JSON.parse(readFileSync(stopped, "utf8")), named: recorded.named };
+      started!.late = Number(readFileSync(`${stopped}.late`, "utf8"));
       expect(code).not.toBe(0);
-      expect(output).toContain(`process ${recorded.pid} `);
-      expect(await gone(recorded.pid!)).toBe(true);
-      // Started in the leader's group just after the guard last saw the leader, it is stopped with that group.
-      expect(await gone(started!.sameGroup)).toBe(true);
-      expect(await gone(started!.ownGroup)).toBe(true);
+      for (const pid of [recorded.pid, started!.late, started!.sameGroup]) expect(output, output).toContain(`process ${pid} `);
+      for (const pid of [recorded.pid, started!.ownGroup, started!.late]) expect(await gone(pid!)).toBe(true);
+      // Started in the leader's group after the guard last read that group, it is linked to the
+      // leader by nothing the guard saw: it is listed from the first round on, and never signalled.
+      expect(output).toMatch(new RegExp(`Not stopped: (?:\\d+, )*${started!.sameGroup}\\b`));
+      expect(alive(started!.sameGroup)).toBe(true);
       expect(existsSync(recorded.root)).toBe(false);
     } finally {
-      for (const pid of [started?.sameGroup, started?.ownGroup]) if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* stopped */ }
+      for (const pid of [started?.sameGroup, started?.ownGroup, started?.late, started?.named]) if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* stopped */ }
     }
   });
 
@@ -1254,6 +1273,50 @@ describe.skipIf(!["linux", "darwin"].includes(process.platform))("stopProcesses"
     while (!output.includes("\n")) await sleep(20);
     return { child, pid: child.pid!, output: () => output };
   }
+  /**
+   * Makes this process's reads of a group's processes fail: the first `times` listings of a whole
+   * group (ps -A without etime= on macOS, the /proc listing on Linux), and on Linux, in every such
+   * listing, the reads of `files` (`/proc/<pid>/<file>` to an error code), which it also lists.
+   */
+  function failGroupReads(times = Infinity, files: Record<string, string> = {}) {
+    let listings = 0;
+    const { spawnSync } = childProcess;
+    const { readdirSync, readFileSync } = fs;
+    const failure = (code = "EIO") => Object.assign(new Error("reading the group failed (test)"), { code });
+    const inGroupRead = () => new Error().stack?.includes("groupMembers") === true;
+    (childProcess as { spawnSync: unknown }).spawnSync = (command: string, args: string[], ...rest: unknown[]) =>
+      command === "ps" && args?.includes("-A") && !args.includes("etime=") && (listings += 1) <= times ? { error: failure() } : (spawnSync as (...all: unknown[]) => unknown)(command, args, ...rest);
+    (fs as { readdirSync: unknown }).readdirSync = (target: unknown, ...rest: unknown[]) => {
+      if (target === "/proc" && inGroupRead() && (listings += 1) <= times) throw failure();
+      const names = (readdirSync as (...all: unknown[]) => string[])(target, ...rest);
+      return target === "/proc" && inGroupRead() ? [...new Set([...names, ...Object.keys(files).map((file) => file.split("/")[2])])] : names;
+    };
+    (fs as { readFileSync: unknown }).readFileSync = (target: unknown, ...rest: unknown[]) => {
+      if (typeof target === "string" && files[target] && inGroupRead()) throw failure(files[target]);
+      return (readFileSync as (...all: unknown[]) => unknown)(target, ...rest);
+    };
+    syncBuiltinESMExports();
+    restore = () => {
+      Object.assign(childProcess, { spawnSync });
+      Object.assign(fs, { readdirSync, readFileSync });
+      syncBuiltinESMExports();
+    };
+  }
+  /** A detached leader with one process in its group, which has exited once this returns: the process in its group and the leader as listed. */
+  async function exitedLeader() {
+    const { child, pid: leader, output } = await start(`const { spawn } = require("node:child_process");
+const member = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+process.stdout.write(member.pid + "\\n");
+process.stdin.on("end", () => process.exit(0));
+process.stdin.resume();`);
+    const member = Number(output().trim());
+    pids.push(member);
+    const entry = listed(leader);
+    const exited = new Promise((resolve) => child.once("exit", resolve));
+    child.stdin!.end();
+    await exited;
+    return { member, entry };
+  }
   const listed = (pid: number) => {
     const entry = listProcesses(Date.now())?.find((candidate) => candidate.pid === pid);
     expect(entry?.started, `process ${pid} is listed with its start`).toBeDefined();
@@ -1289,34 +1352,34 @@ describe.skipIf(!["linux", "darwin"].includes(process.platform))("stopProcesses"
   });
 
   it("returns the leader of a group it cannot read once that leader has exited, never taking the group for an empty one", async () => {
-    const { child, pid: leader, output } = await start(`const { spawn } = require("node:child_process");
-const member = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
-process.stdout.write(member.pid + "\\n");
-process.stdin.on("end", () => process.exit(0));
-process.stdin.resume();`);
-    const member = Number(output().trim());
-    pids.push(member);
-    const entry = listed(leader);
+    const { member, entry } = await exitedLeader();
+    failGroupReads();
+    expect((await stopProcesses([entry])).map((left) => left.pid)).toEqual([entry.pid]);
+    expect(alive(member)).toBe(true);
+  });
+
+  it("clears an exited leader's group it could not read once a later read shows nothing left in it", async () => {
+    const { child, pid } = await start(`process.stdout.write("ready\\n"); process.stdin.on("end", () => process.exit(0)); process.stdin.resume();`);
+    const entry = listed(pid);
     const exited = new Promise((resolve) => child.once("exit", resolve));
     child.stdin!.end();
     await exited;
-    // Reading the processes in a group fails: ps -A without etime= on macOS, the /proc listing it reads on Linux.
-    const { spawnSync } = childProcess;
-    const { readdirSync } = fs;
-    const failure = () => Object.assign(new Error("listing the group failed (test)"), { code: "EIO" });
-    (childProcess as { spawnSync: unknown }).spawnSync = (command: string, args: string[], ...rest: unknown[]) =>
-      command === "ps" && args?.includes("-A") && !args.includes("etime=") ? { error: failure() } : (spawnSync as (...all: unknown[]) => unknown)(command, args, ...rest);
-    (fs as { readdirSync: unknown }).readdirSync = (target: unknown, ...rest: unknown[]) => {
-      if (target === "/proc" && new Error().stack?.includes("groupMembers")) throw failure();
-      return (readdirSync as (...all: unknown[]) => unknown)(target, ...rest);
-    };
-    syncBuiltinESMExports();
-    restore = () => {
-      (childProcess as { spawnSync: unknown }).spawnSync = spawnSync;
-      (fs as { readdirSync: unknown }).readdirSync = readdirSync;
-      syncBuiltinESMExports();
-    };
-    expect((await stopProcesses([entry])).map((left) => left.pid)).toEqual([leader]);
+    // The reads in the SIGTERM and SIGKILL rounds fail; the one before the guard reports succeeds.
+    failGroupReads(2);
+    expect(await stopProcesses([entry])).toEqual([]);
+  });
+
+  it.runIf(process.platform === "linux")("lists a process in an exited leader's group whose command line cannot be read, and skips one that has exited", async () => {
+    const { member, entry } = await exitedLeader();
+    failGroupReads(0, { [`/proc/${member}/cmdline`]: "EIO", "/proc/2147483646/stat": "ENOENT" });
+    expect((await stopProcesses([entry], () => [])).map((left) => left.pid)).toEqual([member]);
+    expect(alive(member)).toBe(true);
+  });
+
+  it.runIf(process.platform === "linux")("returns the leader of an exited leader's group in which a process's stat cannot be read, never taking the group for one without it", async () => {
+    const { member, entry } = await exitedLeader();
+    failGroupReads(0, { [`/proc/${member}/stat`]: "EIO" });
+    expect((await stopProcesses([entry], () => [])).map((left) => left.pid)).toEqual([entry.pid]);
     expect(alive(member)).toBe(true);
   });
 
@@ -1367,6 +1430,23 @@ setInterval(() => {}, 1000);`);
     // Only the leader is listed: the members are reached through its group, after it has exited.
     expect(await stopProcesses([entry])).toEqual([]);
     for (const member of members) expect(await gone(member)).toBe(true);
+  });
+
+  it("never signals a process its leader starts in its group as it exits on SIGTERM, after the guard last read that group, and returns it", async () => {
+    const { pid: leader, output } = await start(`const { spawn } = require("node:child_process");
+process.on("SIGTERM", () => {
+  const member = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+  require("node:fs").writeSync(1, member.pid + "\\n");
+  process.exit(0);
+});
+process.stdout.write("ready\\n");
+setInterval(() => {}, 1000);`);
+    const entry = listed(leader);
+    const left = await stopProcesses([entry]);
+    const member = Number(output().trim().split("\n")[1]);
+    pids.push(member);
+    expect(left.map((process) => process.pid)).toEqual([member]);
+    expect(alive(member)).toBe(true);
   });
 
   it("never signals the group of a leader that exited before the guard saw it, and returns the processes in that group", async () => {

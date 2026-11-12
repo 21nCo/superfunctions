@@ -92,19 +92,20 @@ calls `guardTestFile` as a setup file.
   signals it only when it still runs, is not a zombie and started exactly when the listing
   read: a different start means the ID names a later process, which is never signalled, nor
   is its group. One whose start cannot be read is not signalled; it is listed and fails the
-  file or run. Before sending SIGTERM to a group, the guard records which processes are in
-  it, and signals it only if its leader is still itself after that. Once the leader has
-  exited, its group is signalled only while it holds a process the guard can link to the
-  leader, recorded in the group or started within 2 seconds of a read that last showed the
-  leader running, at most 3 seconds ago (as what a wrapper's SIGTERM handler starts on its
-  way out is), and a read
-  of that process's own, just before the signal, shows it is still that process and still in
-  the group. A group ID in use is never given to a new process, so that group could be
-  another only if the system ran through its whole range of process IDs in that while, the
-  bound the exact start comparison relies on too. Otherwise the processes in the group are
-  listed and fail the file or run, but are never signalled; so is whatever the stop after a
-  failed test leaves running. A start that cannot be read is read again, up to three rounds
-  in a row, before the guard gives up on it. The guard then lists the scope's processes again
+  file or run. Before each signal to a group, the guard records which processes are in it,
+  and signals it only if its leader is still itself after that. Once the leader has exited,
+  its group is signalled only while it holds a process the guard recorded in it so, and a
+  read of that process's own, just before the signal, shows it is still that process and
+  still in the group. Nothing else, such as when a process started, links it to the leader:
+  a process the leader started after the guard last read its group, such as one its SIGTERM
+  handler starts, is listed and fails the file or run, but is never signalled. So are the
+  other processes in the group, and whatever the stop after a failed test leaves running.
+  A group that cannot be read in full (a process's `/proc` stat fails for any reason but
+  that it has exited) is not taken for all of it: it is read again before the guard gives
+  up on it, and only a read that shows no process left in it clears it. Every process a
+  stop leaves stays listed, from one round to the next, until a read shows it has exited or
+  that its ID names another process. A start that cannot be read is read again, up to three
+  rounds in a row, before the guard gives up on it. The guard then lists the scope's processes again
   and kills what is left, until nothing is, 10 seconds have passed, or three rounds in a row
   signal nothing and the same processes remain; anything still running fails the run or the file.
 
