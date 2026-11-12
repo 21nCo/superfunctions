@@ -109,12 +109,19 @@ organization/user `21nCo`, repository `superfunctions`, workflow filename
 `publish-tag.yml` and no environment name. The workflow has no npm token. npm
 can only attach a trusted publisher to a package that already exists, so before
 a new package's first release tag a maintainer claims the name by publishing a
-`0.0.0` placeholder by hand with 2FA (not the real version, whose tag would then
-fail because that version already exists). Then add its trusted publisher with
-**Allow npm publish** enabled (npm defaults new connections to staged publishing
-only) and push the release tag within 2 days: npm expires a trusted publisher
-configuration that has not completed a successful publish within 2 days of
-creation.
+`0.0.0` placeholder by hand with `npm publish --access public` and 2FA (not the
+real version, whose tag would then fail because that version already exists; and
+always `--access public`, because a scoped package defaults to restricted). Then
+add its trusted publisher with **Allow npm publish** enabled (npm defaults new
+connections to staged publishing only) and push the release tag within 2 days:
+npm expires a trusted publisher configuration that has not completed a
+successful publish within 2 days of creation. After that release, deprecate the
+placeholder with
+`npm deprecate <name>@0.0.0 "Name placeholder; install a released version"`.
+The placeholder is the package's first version, so it holds `latest` until the
+first stable release; if the first release is a prerelease, point `latest` at it
+by hand (`npm dist-tag add <name>@<version> latest`) if it should be the default
+install.
 npm attaches a provenance attestation to every OIDC publish from this public
 repository. The registry accepts it only when the packed `package.json`
 `repository.url` is `git+https://github.com/21nCo/superfunctions.git`, so every
