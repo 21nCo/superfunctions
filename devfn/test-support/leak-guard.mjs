@@ -120,6 +120,27 @@ function linuxClockTicks() {
   return clockTicks;
 }
 
+// The states proc(5) lists for a Linux process; a stat line showing any other is not well formed.
+const LINUX_STATES = /^[RSDZTtWXxKPI]$/;
+const WHOLE = /^\d+$/;
+
+/**
+ * /proc/<pid>/stat read: the process ID, parent, group, start (field 22, in clock ticks since
+ * boot) and whether it is a zombie. Undefined when the text is not well formed: no " (" and ")"
+ * around the name, too few fields, an ID or start that is not a whole number, an unknown state.
+ * Every reader of stat takes such a line as a read that failed, never as an answer.
+ */
+function parseStat(text) {
+  const open = text.indexOf(" (");
+  const close = text.lastIndexOf(")");
+  if (open < 1 || close < open || text[close + 1] !== " ") return undefined;
+  const fields = text.slice(close + 2).trimEnd().split(" ");
+  const numbers = [text.slice(0, open), fields[1], fields[2], fields[19]];
+  if (!LINUX_STATES.test(fields[0]) || !numbers.every((value) => WHOLE.test(value ?? ""))) return undefined;
+  const [pid, ppid, pgid, started] = numbers.map(Number);
+  return { pid, ppid, pgid, started, zombie: /^[ZXx]$/.test(fields[0]) };
+}
+
 function listLinux() {
   let names;
   try { names = readdirSync("/proc"); } catch { return undefined; }
@@ -131,18 +152,20 @@ function listLinux() {
     const pid = Number(name);
     let stat;
     try { stat = readFileSync(`/proc/${pid}/stat`, "utf8"); } catch { continue; }
-    const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-    if (fields[0] === "Z" || fields[0] === "X") continue;
+    // A stat read but not well formed fails the listing: the process it names may still run.
+    const parsed = parseStat(stat);
+    if (parsed?.pid !== pid) return undefined;
+    if (parsed.zombie) continue;
     // Arguments and variables stay NUL-separated, so a value with a space in it stays one value.
     const read = (file) => { try { return readFileSync(`/proc/${pid}/${file}`, "utf8"); } catch { return ""; } };
     const argv = read("cmdline");
     let cwd;
     try { cwd = readlinkSync(`/proc/${pid}/cwd`); } catch { /* another user's process */ }
-    // Field 22 of stat, the start time in clock ticks since boot.
-    const elapsed = uptime === undefined ? undefined : Math.max(0, Math.floor(uptime - Number(fields[19]) / linuxClockTicks()));
+    const { ppid, pgid, started } = parsed;
+    const elapsed = uptime === undefined ? undefined : Math.max(0, Math.floor(uptime - started / linuxClockTicks()));
     // `command` is the arguments joined with spaces, for reports and matching a program name.
-    // `started`, field 22 itself, tells this process from a later one given its ID (stillRunning).
-    processes.push({ pid, ppid: Number(fields[1]), pgid: Number(fields[2]), elapsed, started: Number(fields[19]), command: argv.replaceAll("\0", " ").trim(), argv, environment: read("environ"), separated: true, cwd });
+    // `started`, field 22 of stat, tells this process from a later one given its ID (stillRunning).
+    processes.push({ pid, ppid, pgid, elapsed, started, command: argv.replaceAll("\0", " ").trim(), argv, environment: read("environ"), separated: true, cwd });
   }
   return processes;
 }
@@ -153,6 +176,19 @@ function listLinux() {
 const UTC_TOOL_ENV = () => ({ ...toolEnv(), TZ: "UTC0" });
 const LSTART = String.raw`(\S+\s+\S+\s+\d+\s+\d+:\d+:\d+\s+\d+)`;
 const darwinStart = (lstart) => `darwin-utc:${lstart.replaceAll(/\s+/g, " ")}`;
+// ps -o pid=,ppid=,pgid=,stat=,lstart= and, optionally, command=. stat starts with one of the states ps(1) lists.
+const PS_LINE = new RegExp(String.raw`^\s*(\d+)\s+(\d+)\s+(\d+)\s+([IRSTUZ]\S*)\s+${LSTART}(?:\s(.*))?$`);
+
+/**
+ * A line of that ps output read: as parseStat reads a Linux stat, or undefined when it is not
+ * well formed, which every reader takes as a read that failed. ps escapes a newline in a command.
+ */
+function parsePsLine(line) {
+  const match = PS_LINE.exec(line);
+  if (!match) return undefined;
+  const [pid, ppid, pgid] = match.slice(1, 4).map(Number);
+  return { pid, ppid, pgid, started: darwinStart(match[5]), zombie: match[4].startsWith("Z"), command: (match[6] ?? "").trim() };
+}
 
 function listDarwin(sinceMs) {
   const columns = ["-o", "pid=", "-o", "ppid=", "-o", "pgid=", "-o", "etime=", "-o", "stat=", "-o", "lstart=", "-o", "command="];
@@ -160,10 +196,14 @@ function listDarwin(sinceMs) {
   // -E appends each process's initial environment to its command; it is read only to find the marker.
   const withEnvironment = run("ps", ["-A", "-ww", "-E", ...columns], 15_000, UTC_TOOL_ENV());
   if (!plain || plain.status !== 0 || !withEnvironment) return undefined;
-  const parse = (output) => new Map(output.split("\n").flatMap((line) => {
-    const match = new RegExp(`^\\s*(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\S+)\\s+(\\S+)\\s+${LSTART}\\s(.*)$`).exec(line);
-    return match ? [[Number(match[1]), { ppid: Number(match[2]), pgid: Number(match[3]), elapsed: elapsedSeconds(match[4]), state: match[5], started: darwinStart(match[6]), text: match[7] }]] : [];
+  const line = new RegExp(`^\\s*(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\S+)\\s+(\\S+)\\s+${LSTART}(?:\\s(.*))?$`);
+  const parse = (output) => new Map(output.split("\n").flatMap((text) => {
+    const match = line.exec(text);
+    return match ? [[Number(match[1]), { ppid: Number(match[2]), pgid: Number(match[3]), elapsed: elapsedSeconds(match[4]), state: match[5], started: darwinStart(match[6]), text: match[7] ?? "" }]] : [];
   }));
+  // A line of the plain listing that is not well formed fails it: the process it names may still run.
+  // (ps escapes a newline in a command; one in an environment may split the -E listing, which only adds to the plain one.)
+  if (plain.stdout.split("\n").some((text) => text.trim() && !line.test(text))) return undefined;
   const commands = parse(plain.stdout);
   const environments = parse(withEnvironment.stdout);
   const processes = [];
@@ -504,18 +544,26 @@ function ownProcessGroup() {
  * its leader may exit and leave the group behind, the guard records which processes are in it
  * (witnessGroup) and signals it only if the leader is still itself after that. SIGKILL goes to
  * the group at once: it ends all of it together, leaving nothing to link to the leader later,
- * and a read of the group first would only give the leader time to exit. Once a leader has exited, its group is signalled only while it holds a process the guard
- * recorded in it so (inLeadersGroup) that a read of its own, just before the signal, shows is
- * still that process and still in the group. The group's other processes are otherwise added to
- * `held`, keyed by process ID and start, to be reported, never signalled, and a group read only
- * in part is held as unresolved. A process ID that now names a process started at another time
- * is never signalled, nor is its group, and nor is a process whose start cannot be read. Returns
- * those it signalled.
+ * and a read of the group first would only give the leader time to exit. Once a leader has
+ * exited, its group is signalled only while it holds a process the guard recorded in it so
+ * (inLeadersGroup) that a read of its own, just before the signal, shows is still that process
+ * and still in the group; otherwise none of it is. Every process the guard read or recorded in a
+ * group it reached, signalled or not, goes to `held`, the scope's registry keyed by process ID
+ * and start, which keeps it until a well-formed read shows it gone (resolveHeld): a signal can
+ * fail, and one the guard did not send has no reason to end it. A group read only in part is held
+ * as unresolved. A process ID that now names a process started at another time is never
+ * signalled, nor is its group, and nor is a process whose start cannot be read. Returns those it
+ * signalled, with the processes it held in a group it signalled.
  */
 function signalAll(processes, signal, held = new Map()) {
   const group = ownProcessGroup();
   const signalled = [];
-  const send = (entry, target) => { signalled.push(entry); try { process.kill(target, signal); } catch { /* ESRCH: already gone */ } };
+  const hold = (members) => { for (const member of members) held.set(keyOf(member), member); };
+  const send = (entry, target, members = []) => {
+    hold(members);
+    signalled.push(entry, ...members);
+    try { process.kill(target, signal); } catch { /* ESRCH: already gone; EPERM: what it reaches stays held */ }
+  };
   let states = processStates(processes.map((entry) => entry.pid));
   for (const [index, entry] of processes.entries()) {
     const leads = entry.pgid === entry.pid && entry.pgid !== group;
@@ -525,10 +573,10 @@ function signalAll(processes, signal, held = new Map()) {
     if (current?.same && leads && current.pgid === entry.pid) {
       // The signal follows the last read of the leader at once. A leader that exits while its
       // group is read is taken as what a read of it now shows.
-      const verified = signal !== "SIGTERM" || witnessGroup(entry);
-      if (verified) send(entry, -entry.pid);
+      const members = signal === "SIGTERM" ? witnessGroup(entry) : [...(groupWitnesses.get(keyOf(entry))?.values() ?? [])];
+      if (members) send(entry, -entry.pid, members);
       if (signal === "SIGTERM") reread();
-      if (verified) continue;
+      if (members) continue;
       current = identityOf(entry);
     } else if (current?.same) {
       send(entry, entry.pid);
@@ -536,8 +584,8 @@ function signalAll(processes, signal, held = new Map()) {
     }
     if (leads && current?.exited) {
       const { members, complete } = groupMembers(entry.pid);
-      if (members.some((member) => inLeadersGroup(entry, member) && identityOf(member)?.pgid === entry.pid)) send(entry, -entry.pid);
-      else for (const member of members) held.set(keyOf(member), member);
+      if (members.some((member) => inLeadersGroup(entry, member) && identityOf(member)?.pgid === entry.pid)) send(entry, -entry.pid, members);
+      else hold(members);
       // A group read only in part is not taken for all of it: its leader stands for the rest, as unresolved.
       if (complete) held.delete(keyOf(entry));
       else held.set(keyOf(entry), { ...entry, unresolvedGroup: true });
@@ -549,7 +597,7 @@ function signalAll(processes, signal, held = new Map()) {
 
 const keyOf = (entry) => `${entry.pid}:${entry.started}`;
 
-// Per group leader (keyOf): the processes (keyOf) a read showed in its group while it was itself.
+// Per group leader (keyOf): the processes, by keyOf, a read showed in its group while it was itself.
 const groupWitnesses = new Map();
 
 /**
@@ -562,22 +610,24 @@ function inLeadersGroup(leader, member) {
 
 /**
  * Records which processes are in the group `entry` leads, as far as they can be read, and
- * whether `entry` is, after reading them, still itself: only then was the group read the one it leads.
+ * returns them once `entry` is, after reading them, still itself: only then was the group read
+ * the one it leads. Undefined otherwise.
  */
 function witnessGroup(entry) {
   const { members } = groupMembers(entry.pid);
-  if (!identityOf(entry)?.same) return false;
-  const seen = groupWitnesses.get(keyOf(entry)) ?? new Set();
-  for (const member of members) if (member.pid !== entry.pid) seen.add(keyOf(member));
+  if (!identityOf(entry)?.same) return undefined;
+  const seen = groupWitnesses.get(keyOf(entry)) ?? new Map();
+  for (const member of members) if (member.pid !== entry.pid) seen.set(keyOf(member), member);
   groupWitnesses.set(keyOf(entry), seen);
-  return true;
+  return members.filter((member) => member.pid !== entry.pid);
 }
 
 /**
  * The running processes in group `pgid`, as listings record them, and whether that is all of
- * them: not when the listing fails or, on Linux, a process's stat cannot be read for any reason
- * but that it has exited (ENOENT, ESRCH). A process whose stat was read is kept even when its
- * command line cannot be.
+ * them: not when the listing fails, a line of it or a process's stat is not well formed
+ * (parsePsLine, parseStat) or, on Linux, a stat cannot be read for any reason but that its
+ * process has exited (ENOENT, ESRCH). A process whose stat was read is kept even when its command
+ * line cannot be.
  */
 function groupMembers(pgid) {
   if (process.platform === "linux") {
@@ -590,11 +640,12 @@ function groupMembers(pgid) {
         if (!["ENOENT", "ESRCH"].includes(error?.code)) complete = false;
         return [];
       }
-      const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-      if (Number(fields[2]) !== pgid || /^[ZX]/.test(fields[0])) return [];
+      const parsed = parseStat(stat);
+      if (parsed?.pid !== Number(name)) complete = false;
+      if (parsed?.pid !== Number(name) || parsed.pgid !== pgid || parsed.zombie) return [];
       let command = "";
       try { command = readFileSync(`/proc/${name}/cmdline`, "utf8").replaceAll("\0", " ").trim(); } catch { /* listed without its command */ }
-      return [{ pid: Number(name), ppid: Number(fields[1]), pgid, started: Number(fields[19]), command, environment: "" }];
+      return [{ pid: parsed.pid, ppid: parsed.ppid, pgid, started: parsed.started, command, environment: "" }];
     });
     return { members, complete };
   }
@@ -602,43 +653,53 @@ function groupMembers(pgid) {
     ? run("ps", ["-A", "-ww", "-o", "pid=", "-o", "ppid=", "-o", "pgid=", "-o", "stat=", "-o", "lstart=", "-o", "command="], 15_000, UTC_TOOL_ENV())
     : undefined;
   if (!listing || listing.status !== 0) return { members: [], complete: false };
+  let complete = true;
   const members = listing.stdout.split("\n").flatMap((line) => {
-    const match = new RegExp(`^\\s*(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\S+)\\s+${LSTART}\\s(.*)$`).exec(line);
-    if (!match || Number(match[3]) !== pgid || match[4].startsWith("Z") || Number(match[1]) === listing.pid) return [];
-    return [{ pid: Number(match[1]), ppid: Number(match[2]), pgid, started: darwinStart(match[5]), command: match[6].trim(), environment: "" }];
+    const parsed = line.trim() ? parsePsLine(line) : null;
+    if (parsed === undefined) complete = false;
+    if (!parsed || parsed.pgid !== pgid || parsed.zombie || parsed.pid === listing.pid) return [];
+    return [{ pid: parsed.pid, ppid: parsed.ppid, pgid, started: parsed.started, command: parsed.command, environment: "" }];
   });
-  return { members, complete: true };
+  return { members, complete };
 }
 
 /** Whether `entry` may still run: not when its ID names no process, a zombie or a process started at another time. */
 const mayRun = (entry, states) => alive(entry.pid) && stillRunning(entry, states) !== false;
 
 /**
- * Of the processes a stop left (held back or still running), those still to report: each that
- * may run, and for an exited leader whose group was read only in part (unresolvedGroup), that
- * group read again, up to IDENTITY_TRIES times, until a read is complete: then a group with no
- * running process left is cleared, and otherwise the leader stands for the rest. Every process
- * any of those reads found stays as long as it may run, even once it has left the group.
+ * The registry `held` (keyed by keyOf) brought up to date and returned as a list: what a listing
+ * still shows (`listed`), which joins it as listed, and every process held already that may still
+ * run. Each leaves only once a well-formed read shows it exited or its ID naming another start
+ * (mayRun). For an exited leader whose group was read only in part (unresolvedGroup), the leader
+ * is read first: while it cannot be, it stands for its group as it is; once its ID names another
+ * start, the group may be a new one with the same ID, so it leaves and only what earlier reads
+ * found stays; once it has exited, its group is read again, up to IDENTITY_TRIES times, until a
+ * read is complete, and every process those reads find is held. An unresolved leader leaves only
+ * with a complete read.
  */
-function stillHeld(entries) {
-  const states = processStates(entries.filter((entry) => !entry.unresolvedGroup).map((entry) => entry.pid));
-  const left = new Map();
-  for (const entry of entries) {
+function resolveHeld(held, listed = []) {
+  const keys = new Set(listed.map(keyOf));
+  const all = [...held.values()].filter((entry) => entry.unresolvedGroup || !keys.has(keyOf(entry)));
+  const states = processStates(all.map((entry) => entry.pid));
+  for (const entry of all) {
+    const key = keyOf(entry);
     if (!entry.unresolvedGroup) {
-      if (mayRun(entry, states)) left.set(keyOf(entry), entry);
+      if (!mayRun(entry, states)) held.delete(key);
       continue;
     }
-    const found = new Map();
+    const leader = identityOf(entry, states);
+    if (leader?.other) held.delete(key);
+    if (!leader?.exited) continue;
     let complete = false;
     for (let tries = 0; tries < IDENTITY_TRIES && !complete; tries += 1) {
       const read = groupMembers(entry.pid);
-      for (const member of read.members) found.set(keyOf(member), member);
+      for (const member of read.members) if (mayRun(member)) held.set(keyOf(member), member);
       complete = read.complete;
     }
-    for (const [key, member] of found) if (mayRun(member)) left.set(key, member);
-    if (!complete) left.set(keyOf(entry), entry);
+    if (complete) held.delete(key);
   }
-  return [...left.values()];
+  for (const entry of listed) if (!held.get(keyOf(entry))?.unresolvedGroup) held.set(keyOf(entry), entry);
+  return [...held.values()];
 }
 
 async function waitForExit(processes, graceMs) {
@@ -665,13 +726,13 @@ const IDENTITY_TRIES = 3;
  * listed. A process may start another as it stops, such as a wrapper's SIGTERM handler, so with
  * `find`, which lists the scope's processes again, it keeps killing whatever the scope still holds
  * until nothing is left, STOP_DEADLINE_MS has passed, or IDENTITY_TRIES rounds in a row have
- * signalled nothing and the listing still shows the same processes (`refused`). `remaining` holds
- * the processes still running: what `find` still lists (`listed`), or else those of the given ones
- * that may still run, and the processes of an exited leader's group signalAll held back.
+ * signalled nothing and the listing still shows the same processes (`refused`). What `find` still
+ * lists (`listed`), or else those of the given ones that may still run, joins `held`, the scope's
+ * registry, with what signalAll held in a group, and `remaining` is what the registry still holds
+ * (resolveHeld): what an earlier stop of the same scope left as well.
  */
-async function stopRounds(processes, find) {
+async function stopRounds(processes, find, held = new Map()) {
   const deadline = Date.now() + STOP_DEADLINE_MS;
-  const held = new Map();
   // Only a process signalled is waited for: one the guard did not signal has no reason to exit now.
   await waitForExit(signalAll(processes, "SIGTERM", held), STOP_GRACE_MS);
   for (let pending = processes, idle = 0; ;) {
@@ -681,17 +742,16 @@ async function stopRounds(processes, find) {
     const listed = (find && find()) ?? pending.filter((entry) => mayRun(entry));
     idle = signalled.length === 0 && sameProcesses(listed, pending) ? idle + 1 : 0;
     if (!find || listed.length === 0 || Date.now() >= deadline || idle >= IDENTITY_TRIES) {
-      const keys = new Set(listed.map(keyOf));
-      return { listed, refused: idle >= IDENTITY_TRIES, remaining: [...listed, ...stillHeld([...held.values()]).filter((entry) => !keys.has(keyOf(entry)))] };
+      return { listed, refused: idle >= IDENTITY_TRIES, remaining: resolveHeld(held, listed) };
     }
     if (idle > 0) await pause(250);
     pending = listed;
   }
 }
 
-/** Stops the given processes (stopRounds) and returns those still running. */
-export async function stopProcesses(processes, find) {
-  return (await stopRounds(processes, find)).remaining;
+/** Stops the given processes (stopRounds, keeping what is left in `held`) and returns those still running. */
+export async function stopProcesses(processes, find, held) {
+  return (await stopRounds(processes, find, held)).remaining;
 }
 
 /** The note for processes stopProcesses left running. */
@@ -720,31 +780,30 @@ function identityOf(entry, states = processStates([entry.pid])) {
 
 /**
  * Each process's start (as the listings record it), group and whether it is a zombie, by ID: null
- * when no process has the ID, undefined when that cannot be read. macOS reads them all with one ps.
+ * when no process has the ID, undefined when that cannot be read or the read is not well formed
+ * (parseStat, parsePsLine). macOS reads them all with one ps.
  */
 function processStates(pids) {
   const states = new Map();
   if (process.platform === "linux") {
     for (const pid of pids) {
       let stat;
-      try { stat = readFileSync(`/proc/${pid}/stat`, "utf8"); } catch (error) { states.set(pid, error?.code === "ENOENT" ? null : undefined); continue; }
-      const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-      states.set(pid, { started: Number(fields[19]), pgid: Number(fields[2]), zombie: /^[ZX]/.test(fields[0]) });
+      try { stat = readFileSync(`/proc/${pid}/stat`, "utf8"); } catch (error) { states.set(pid, ["ENOENT", "ESRCH"].includes(error?.code) ? null : undefined); continue; }
+      const parsed = parseStat(stat);
+      states.set(pid, parsed?.pid === pid ? parsed : undefined);
     }
     return states;
   }
   const unique = [...new Set(pids)];
   const result = process.platform === "darwin" && unique.length > 0
-    ? run("ps", ["-o", "pid=", "-o", "lstart=", "-o", "stat=", "-o", "pgid=", "-p", unique.join(",")], 15_000, UTC_TOOL_ENV())
+    ? run("ps", ["-o", "pid=", "-o", "ppid=", "-o", "pgid=", "-o", "stat=", "-o", "lstart=", "-p", unique.join(",")], 15_000, UTC_TOOL_ENV())
     : undefined;
   // ps lists the processes that run, says nothing of the others, and exits 1 when none of them runs.
-  const complete = result && !result.signal && [0, 1].includes(result.status) && !result.stderr.trim();
-  const read = new Map();
-  for (const line of complete ? result.stdout.split("\n") : []) {
-    const pid = /^\s*(\d+)\s/.exec(line)?.[1];
-    const match = new RegExp(`^\\s*\\d+\\s+${LSTART}\\s+(\\S+)\\s+(\\d+)`).exec(line);
-    if (pid) read.set(Number(pid), match ? { started: darwinStart(match[1]), pgid: Number(match[3]), zombie: match[2].startsWith("Z") } : undefined);
-  }
+  const lines = result?.stdout.split("\n").filter((line) => line.trim()) ?? [];
+  const parsed = lines.map(parsePsLine);
+  // One line not well formed leaves every answer unread: the process it was for cannot be told.
+  const complete = result && !result.signal && [0, 1].includes(result.status) && !result.stderr.trim() && !parsed.includes(undefined);
+  const read = new Map(complete ? parsed.map((state) => [state.pid, state]) : []);
   for (const pid of unique) states.set(pid, !complete ? undefined : read.has(pid) ? read.get(pid) : null);
   return states;
 }
@@ -831,27 +890,24 @@ async function settle(find, graceMs, found = find()) {
  * Stops the owned processes in `settled`, what `classify` lists by kind, and takes what the guard
  * only reports from one listing once stopping is done, after a short while for a process the
  * stopped ones left behind to exit. An owned process that appears meanwhile is stopped as well,
- * up to EXIT_ROUNDS times. What each round leaves, held back or still running, is kept until a
- * read shows it gone (stillHeld). Returns every process stopped, those still running and that listing.
+ * up to EXIT_ROUNDS times. What each round leaves, held back or still running, stays in `held`, the
+ * scope's registry, which the exit cleanup reads too, until a read shows it gone (resolveHeld).
+ * Returns every process stopped, those still running and that listing.
  */
-async function stopAndReport(classify, settled) {
+async function stopAndReport(classify, settled, held = new Map()) {
   const stopped = new Map();
-  const find = () => { const remaining = classify()?.owned; for (const entry of remaining ?? []) stopped.set(entry.pid, entry); return remaining; };
+  const find = () => { const remaining = classify()?.owned; for (const entry of remaining ?? []) stopped.set(keyOf(entry), entry); return remaining; };
   let reported = settled;
-  const left = new Map();
   for (let round = 0; reported?.owned.length > 0 && round < EXIT_ROUNDS; round += 1) {
-    for (const entry of reported.owned) stopped.set(entry.pid, entry);
-    const { listed, refused, remaining } = await stopRounds(reported.owned, find);
-    for (const entry of remaining) left.set(keyOf(entry), entry);
+    for (const entry of reported.owned) stopped.set(keyOf(entry), entry);
+    const { listed, refused } = await stopRounds(reported.owned, find, held);
     reported = await settle(classify, STOP_GRACE_MS);
     // Stopping again would change nothing only once every process left was read, again and again,
     // and could not be told to be the one listed.
     if (refused && reported && sameProcesses(reported.owned, listed)) break;
   }
-  const running = reported?.owned ?? [];
-  const keys = new Set(running.map(keyOf));
-  const unstopped = [...running, ...stillHeld([...left.values()]).filter((entry) => !keys.has(keyOf(entry)))];
-  for (const entry of unstopped) stopped.set(entry.pid, entry);
+  const unstopped = resolveHeld(held, reported?.owned ?? []);
+  for (const entry of unstopped) stopped.set(keyOf(entry), entry);
   return { owned: [...stopped.values()], unstopped, reported };
 }
 
@@ -969,9 +1025,9 @@ export async function setup(project) {
   // Shared by the exit cleanup and the teardown. The exit cleanup stays armed until the teardown
   // has finished, so a run interrupted during the teardown (turbo cancelling a package while it
   // waits for processes to exit) still stops, removes and reports everything. `found` holds what
-  // the teardown has already found, so that report names it even once it is stopped, and `listed`
-  // the teardown's last good classification.
-  const state = { cleanedUp: false, tornDown: false, found: { processes: new Map(), entries: new Set() }, listed: undefined };
+  // the teardown has already found, so that report names it even once it is stopped, `held` what
+  // its stops left or held back (resolveHeld), and `listed` the teardown's last good classification.
+  const state = { cleanedUp: false, tornDown: false, found: { processes: new Map(), entries: new Set() }, held: new Map(), listed: undefined };
   // Interrupted runs (Ctrl-C, or turbo stopping sibling tasks after a failure) never reach the
   // teardown, or never finish it, so the process exit stops what the run started and removes its
   // root synchronously.
@@ -997,13 +1053,12 @@ export async function setup(project) {
       return classified.owned;
     }) ?? [];
     const owned = new Map();
-    const held = new Map();
     // A cancelling runner may SIGKILL this process shortly after its signal, so there is no grace.
     // SIGKILL leaves a process no time to start another, but one may have just started; the
     // listing is taken again, a bounded number of times, to stop it too.
     for (let round = 0, pending = find(); pending.length > 0 && round < EXIT_ROUNDS; round += 1) {
       for (const entry of pending) owned.set(keyOf(entry), entry);
-      attempt(() => signalAll(pending, "SIGKILL", held));
+      attempt(() => signalAll(pending, "SIGKILL", state.held));
       sleepSync(100);
       if (round + 1 < EXIT_ROUNDS) pending = find();
     }
@@ -1015,10 +1070,11 @@ export async function setup(project) {
     const unremoved = [...directories, root].filter((directory) => attempt(() => removeTree(directory)) !== true);
     if (runnerTemp) attempt(() => removeTree(runnerTemp));
     // A process signalAll could not tell was still the one listed, or still in its group, was never signalled.
-    const unstopped = attempt(() => stillHeld([...owned.values(), ...held.values()])) ?? [];
+    // Held as well is what an interrupted teardown's stop had left or held back.
+    for (const [key, entry] of owned) if (!state.held.get(key)?.unresolvedGroup) state.held.set(key, entry);
+    const unstopped = attempt(() => resolveHeld(state.held)) ?? [...state.held.values()];
     const leaked = new Map(state.found.processes);
-    for (const entry of owned.values()) if (!isRunnerChild(entry)) leaked.set(entry.pid, entry);
-    for (const entry of unstopped) if (!leaked.has(entry.pid) && !isRunnerChild(entry)) leaked.set(entry.pid, entry);
+    for (const entry of [...owned.values(), ...unstopped]) if (!isRunnerChild(entry)) leaked.set(keyOf(entry), entry);
     const entries = [...new Set([...state.found.entries, ...leftovers]), ...locks.map(describeLock), ...unremoved.map((directory) => `${directory}, which could not be removed`)];
     const { ambiguous, orphans } = classified;
     const notes = classify.stale ? [STALE_NOTE] : [];
@@ -1061,7 +1117,7 @@ export async function setup(project) {
   };
 
   async function check() {
-    const found = (processes) => { for (const entry of processes) state.found.processes.set(entry.pid, entry); return processes; };
+    const found = (processes) => { for (const entry of processes) state.found.processes.set(keyOf(entry), entry); return processes; };
     const notes = [];
     const classify = keepingLast(() => {
       const listing = listProcesses(startedAt);
@@ -1077,7 +1133,7 @@ export async function setup(project) {
     // Every process the run left, those the guard only reports too, gets the same while to exit.
     const settled = listed ? await settle(classify, RUN_GRACE_MS, listed) : none;
     // Everything stopped, including what a stopping process started, is reported.
-    const { owned, unstopped, reported } = await stopAndReport(classify, settled);
+    const { owned, unstopped, reported } = await stopAndReport(classify, settled, state.held);
     const { ambiguous, orphans } = reported ?? none;
     if (unstopped.length > 0) notes.push(unstoppedNote(unstopped));
     if (classify.stale) notes.push(STALE_NOTE);
@@ -1476,9 +1532,9 @@ export function guardTestFile({ beforeEach, afterEach, afterAll }) {
   setTempDirectory(folder);
 
   let before;
-  // What the stop after a failed test left running, which the file's check lists even when it no
-  // longer finds it as the file's, such as a process held back in an exited leader's group.
-  const leftBehind = new Map();
+  // The file's registry (resolveHeld): what a stop after a failed test left or held back, which the
+  // file's check lists even when it no longer finds it as the file's, such as a process in an exited leader's group.
+  const held = new Map();
   // Setup-file hooks are registered first: Vitest runs these before-hooks before the file's own,
   // and these after-hooks after the file's own.
   beforeEach(() => { before = { at: Date.now(), pids: listPids(), entries: new Set(tempLeftovers(folder)) }; });
@@ -1488,20 +1544,14 @@ export function guardTestFile({ beforeEach, afterEach, afterAll }) {
     const { at, pids, entries } = before;
     const find = () => { const listed = listProcesses(at); return listed && ownedProcesses(listed, scope()).filter((entry) => !pids.has(entry.pid)); };
     const started = find() ?? [];
-    if (started.length > 0) for (const entry of await stopProcesses(started, find)) leftBehind.set(keyOf(entry), entry);
+    if (started.length > 0) await stopProcesses(started, find, held);
     for (const entry of tempLeftovers(folder)) if (!entries.has(entry)) removeTree(path.join(folder, entry));
   }, 60_000);
   afterAll(async (suite) => {
     const classify = keepingLast(() => { const listing = listProcesses(startedAt); return listing && attributeProcesses(listing, scope()); });
     // Ambiguous processes, which the guard only reports, get the same while to exit as owned ones.
     const settled = await settle(classify, FILE_GRACE_MS) ?? { owned: [], ambiguous: [] };
-    const { owned, unstopped, reported } = await stopAndReport(classify, settled);
-    const keys = new Set(owned.map(keyOf));
-    for (const entry of stillHeld([...leftBehind.values()])) {
-      if (keys.has(keyOf(entry))) continue;
-      owned.push(entry);
-      unstopped.push(entry);
-    }
+    const { owned, unstopped, reported } = await stopAndReport(classify, settled, held);
     const ambiguous = reported?.ambiguous ?? [];
     const entries = tempLeftovers(folder).map((entry) => path.join(folder, entry));
     const removed = removeTree(folder);

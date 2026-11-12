@@ -102,10 +102,18 @@ calls `guardTestFile` as a setup file.
   handler starts, is listed and fails the file or run, but is never signalled. So are the
   other processes in the group, and whatever the stop after a failed test leaves running.
   A group that cannot be read in full (a process's `/proc` stat fails for any reason but
-  that it has exited) is not taken for all of it: it is read again before the guard gives
-  up on it, and only a read that shows no process left in it clears it. Every process a
-  stop leaves stays listed, from one round to the next, until a read shows it has exited or
-  that its ID names another process. A start that cannot be read is read again, up to three
+  that it has exited, or a stat or `ps` line is not well formed) is not taken for all of it:
+  its leader is read first, and while that leader has exited the group is read again before
+  the guard gives up on it, and only a complete read that shows no process left in it clears
+  it; once the leader's ID names another process, the group may be another one, so only what
+  earlier reads found stays listed. One invariant holds every process the guard has found
+  (listed, read in a group, recorded in it or left by a stop), keyed by its ID and start, in
+  the scope's registry until a complete, well-formed read shows it has exited or that its ID
+  names another process: a read that fails, is partial or is not well formed only keeps or
+  adds. That holds from one round to the next, from the stop after a failed test to the
+  file's check, and into the exit cleanup of a run interrupted during its teardown, and it
+  holds whether or not a signal to its group was sent or took effect: a process that
+  survives one is listed and fails the file or run. A start that cannot be read is read again, up to three
   rounds in a row, before the guard gives up on it. The guard then lists the scope's processes again
   and kills what is left, until nothing is, 10 seconds have passed, or three rounds in a row
   signal nothing and the same processes remain; anything still running fails the run or the file.

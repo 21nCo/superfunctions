@@ -570,6 +570,40 @@ test("leaves a guarded directory", () => {
     expect(existsSync(recorded.root)).toBe(false);
   });
 
+  // A leader that, on SIGTERM, starts a process in its group and exits. That process, which runs
+  // from "/" and so is found only through the leader's group, interrupts the run 300 ms later.
+  const interruptingLeader = `const [dir, main] = process.argv.slice(1);
+process.on("SIGTERM", () => {
+  const script = "setTimeout(() => process.kill(" + main + ", 'SIGTERM'), 300); setInterval(() => {}, 1000)";
+  const member = require("node:child_process").spawn(process.execPath, ["-e", script], { stdio: "ignore", cwd: "/", env: { PATH: process.env.PATH } });
+  require("node:fs").writeFileSync(require("node:path").join(dir, "member.pid"), String(member.pid));
+  process.exit(0);
+});
+setInterval(() => {}, 1000);`;
+
+  it("names a process its stop held in an exited leader's group when the run is interrupted before its teardown ends", async () => {
+    // The leader's stop holds the process in its group, never signalled. The teardown then waits for
+    // a process it can only report to exit, and the interruption lands in that wait.
+    const { dir, record } = project(`test("leaves a leader and a process the guard can only report", () => {
+  const pid = ${orphan("process.env.SFN_TEST_LEAK_GUARD_ROOT", ['"-e"', JSON.stringify(interruptingLeader), "process.cwd()", "process.env.SFN_TEST_LEAK_GUARD_MAIN_PID"])};
+  record({ pid, named: ${orphanProcess('"/"', 'process.env.SFN_TEST_LEAK_GUARD_ROOT + "/missing/../server.mjs"')} });
+});`);
+    let named: number | undefined;
+    let member: number | undefined;
+    try {
+      const { code, output, recorded } = await runProject(dir, record);
+      named = recorded.named;
+      member = Number(readFileSync(path.join(dir, "member.pid"), "utf8"));
+      expect(code, output).not.toBe(0);
+      expect(output).toContain("DevFn test leak guard: This interrupted test run left these behind.");
+      expect(output).toContain(`process ${member} `);
+      expect(output).toMatch(new RegExp(`Not stopped: (?:\\d+, )*${member}\\b`));
+      expect(alive(recorded.pid!)).toBe(false);
+    } finally {
+      for (const pid of [named, member]) if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+    }
+  });
+
   // Permissions do not stop root from removing the folder.
   it.skipIf(process.getuid?.() === 0)("fails a run whose temp root cannot be removed and names it", async () => {
     // The run's temp folder is made read-only once the run has started, so its root cannot be unlinked from it.
@@ -1538,5 +1572,163 @@ process.stdin.resume();`);
     // As far as the guard can tell, the group may by now be another one with the same ID.
     expect((await stopProcesses([entry])).map((left) => left.pid).sort()).toEqual([...members].sort());
     for (const member of members) expect(alive(member)).toBe(true);
+  });
+
+  /** Makes this process's signals to the group `pgid` fail with EPERM: every one, or only `only`. */
+  function refuseGroupSignals(pgid: number, only?: string) {
+    const { kill } = process;
+    process.kill = ((target: number, signal?: string | number) => {
+      if (target === -pgid && (!only || signal === only)) throw Object.assign(new Error("not permitted (test)"), { code: "EPERM" });
+      return kill.call(process, target, signal);
+    }) as typeof process.kill;
+    restore = () => { process.kill = kill; };
+  }
+  // The leader starts a process in its group that outlives SIGTERM, and exits on SIGTERM.
+  const leaderOfSurvivor = `const member = require("node:child_process").spawn(process.execPath, ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"], { stdio: "ignore" });
+process.on("SIGTERM", () => process.exit(0));
+setTimeout(() => process.stdout.write(member.pid + "\\n"), 500);
+setInterval(() => {}, 1000);`;
+
+  it.each([
+    ["with no listing", undefined],
+    ["with a listing that does not show it", () => []],
+  ])("keeps returning a process it saw in a group it signalled once the leader has exited, while the process survives that signal, %s", async (_, find) => {
+    const { pid: leader, output } = await start(leaderOfSurvivor);
+    const member = Number(output().trim());
+    pids.push(member);
+    const entry = listed(leader);
+    refuseGroupSignals(leader, "SIGKILL");
+    expect((await stopProcesses([entry], find)).map((left) => left.pid)).toEqual([member]);
+    expect(alive(member)).toBe(true);
+  });
+
+  it("keeps returning a process it saw in the group of a leader still itself while both survive SIGKILL to that group", async () => {
+    const { pid: leader, output } = await start(leaderOfSurvivor);
+    const member = Number(output().trim());
+    pids.push(member);
+    const entry = listed(leader);
+    refuseGroupSignals(leader);
+    expect((await stopProcesses([entry])).map((left) => left.pid).sort()).toEqual([leader, member].sort());
+    expect(alive(member)).toBe(true);
+  });
+
+  /**
+   * Changes the reads of `pid` that `reader` (groupMembers or processStates) makes: its
+   * /proc/<pid>/stat text on Linux, its line of ps output on macOS.
+   */
+  function alterReads(pid: number, reader: "groupMembers" | "processStates", change: (text: string) => string) {
+    const { spawnSync } = childProcess;
+    const { readFileSync } = fs;
+    const inReader = () => new Error().stack?.includes(reader) === true;
+    (childProcess as { spawnSync: unknown }).spawnSync = (command: string, args: string[], ...rest: unknown[]) => {
+      const result = (spawnSync as (...all: unknown[]) => { stdout: string })(command, args, ...rest);
+      if (command !== "ps" || !inReader() || !result.stdout) return result;
+      return { ...result, stdout: result.stdout.split("\n").map((line) => (line.trim().startsWith(`${pid} `) ? change(line) : line)).join("\n") };
+    };
+    (fs as { readFileSync: unknown }).readFileSync = (target: unknown, ...rest: unknown[]) => {
+      const text = (readFileSync as (...all: unknown[]) => string)(target, ...rest);
+      return target === `/proc/${pid}/stat` && inReader() ? change(text) : text;
+    };
+    syncBuiltinESMExports();
+    restore = () => {
+      Object.assign(childProcess, { spawnSync });
+      Object.assign(fs, { readFileSync });
+      syncBuiltinESMExports();
+    };
+  }
+  const statField = (index: number, value: string) => (text: string) => {
+    const at = text.lastIndexOf(")") + 2;
+    const fields = text.slice(at).split(" ");
+    fields[index] = value;
+    return text.slice(0, at) + fields.join(" ");
+  };
+  // Reads that are not well formed: a Linux stat, or a macOS ps line.
+  const malformed: [string, (text: string) => string][] = process.platform === "linux" ? [
+    ["with no ')' after its name", (text) => text.replace(/\)(?=[^)]*$)/, "")],
+    ["with too few fields", (text) => text.slice(0, text.lastIndexOf(")") + 2) + "S 1"],
+    ["with a group that is not a number", statField(2, "x")],
+    ["with a start that is not a number", statField(19, "x")],
+  ] : [
+    ["with no start", (line) => line.replace(/\S+\s+\S+\s+\d+\s+\d+:\d+:\d+\s+\d+/, "")],
+    ["with nothing after its ID", (line) => line.replace(/^(\s*\d+).*$/, "$1")],
+  ];
+
+  it.each(malformed)("returns the leader of an exited leader's group whose read shows a process %s, never taking the group for one without it", async (_, change) => {
+    const { member, entry } = await exitedLeader();
+    alterReads(member, "groupMembers", change);
+    expect((await stopProcesses([entry], () => [])).map((left) => left.pid)).toEqual([entry.pid]);
+    expect(alive(member)).toBe(true);
+  });
+
+  it.each(malformed)("keeps returning a process held in an exited leader's group whose own read shows it %s, never taking it for another process", async (_, change) => {
+    const { member, entry } = await exitedLeader();
+    alterReads(member, "processStates", change);
+    expect((await stopProcesses([entry], () => [])).map((left) => left.pid)).toEqual([member]);
+    expect(alive(member)).toBe(true);
+  });
+
+  /**
+   * Of an exited `leader`'s group, the first read is partial and the second fails. After them, a
+   * read of the leader's own start shows another process's (`"other"`) or fails (`"unreadable"`),
+   * and every read of the group shows `joins`, when given, in it too, as a new group with the same
+   * ID would.
+   */
+  function rereadAfterFailures(leader: number, after: "other" | "unreadable", joins?: number) {
+    let reads = 0;
+    const { spawnSync } = childProcess;
+    const { readdirSync, readFileSync } = fs;
+    const failure = () => Object.assign(new Error("reading failed (test)"), { code: "EIO" });
+    const inGroupRead = () => new Error().stack?.includes("groupMembers") === true;
+    const regroup = (line: string) => (joins && line.trim().startsWith(`${joins} `) ? line.replace(/^(\s*\d+\s+\d+\s+)\d+/, `$1${leader}`) : line);
+    (childProcess as { spawnSync: unknown }).spawnSync = (command: string, args: string[], ...rest: unknown[]) => {
+      const real = (spawnSync as (...all: unknown[]) => { stdout: string })(command, args, ...rest);
+      if (command === "ps" && args?.includes("-A") && !args.includes("etime=")) {
+        if ((reads += 1) === 2) return { error: failure() };
+        return { ...real, stdout: reads === 1 ? `${real.stdout}not a process line\n` : real.stdout.split("\n").map(regroup).join("\n") };
+      }
+      const asked = command === "ps" && args?.includes("-p") ? String(args.at(-1)).split(",") : [];
+      if (reads < 2 || !asked.includes(String(leader))) return real;
+      if (after === "unreadable") return { error: failure() };
+      // This process's line, under the leader's ID: the ID names a process with another start.
+      const own = (spawnSync as (...all: unknown[]) => { stdout: string })(command, [...args.slice(0, -1), String(process.pid)], ...rest).stdout.replace(/^(\s*)\d+/, `$1${leader}`);
+      return { ...real, status: 0, stdout: real.stdout + own };
+    };
+    (fs as { readdirSync: unknown }).readdirSync = (target: unknown, ...rest: unknown[]) => {
+      const names = (readdirSync as (...all: unknown[]) => string[])(target, ...rest);
+      if (target !== "/proc" || !inGroupRead()) return names;
+      if ((reads += 1) === 2) throw failure();
+      return reads === 1 ? [...names, "2147483646"] : names;
+    };
+    (fs as { readFileSync: unknown }).readFileSync = (target: unknown, ...rest: unknown[]) => {
+      if (target === "/proc/2147483646/stat") throw failure();
+      if (target === `/proc/${leader}/stat` && reads >= 2 && !inGroupRead()) {
+        if (after === "unreadable") throw failure();
+        return (readFileSync as (...all: unknown[]) => string)(`/proc/${process.pid}/stat`, ...rest).replace(/^\d+/, String(leader));
+      }
+      const text = (readFileSync as (...all: unknown[]) => string)(target, ...rest);
+      return joins && reads >= 3 && target === `/proc/${joins}/stat` && inGroupRead() ? statField(2, String(leader))(text) : text;
+    };
+    syncBuiltinESMExports();
+    restore = () => {
+      Object.assign(childProcess, { spawnSync });
+      Object.assign(fs, { readdirSync, readFileSync });
+      syncBuiltinESMExports();
+    };
+  }
+
+  it("reports none of a new group with an unresolved exited leader's ID once the leader's ID names another process, but keeps what an earlier read of its group found", async () => {
+    const { pid: stranger } = await start(`process.stdout.write("ready\\n"); setInterval(() => {}, 1000);`);
+    const { member, entry } = await exitedLeader();
+    rereadAfterFailures(entry.pid, "other", stranger);
+    expect((await stopProcesses([entry], () => [])).map((left) => left.pid)).toEqual([member]);
+    expect(alive(member)).toBe(true);
+    expect(alive(stranger)).toBe(true);
+  });
+
+  it("keeps returning an unresolved exited leader whose own start cannot be read, without trusting a read of its group", async () => {
+    const { member, entry } = await exitedLeader();
+    rereadAfterFailures(entry.pid, "unreadable");
+    expect((await stopProcesses([entry], () => [])).map((left) => left.pid).sort()).toEqual([member, entry.pid].sort());
+    expect(alive(member)).toBe(true);
   });
 });
