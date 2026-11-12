@@ -435,6 +435,19 @@ function swiftTypeName(value) {
   return value.replace(/^SwiftUI\./, '');
 }
 
+// `where Self: View` refines a protocol as `: View` does.
+function readSwiftSelfConstraints(tokens, start) {
+  const constraints = [];
+  for (let index = start; index < tokens.length && tokens[index] !== '{'; index += 1) {
+    if (tokens[index] !== 'Self' || tokens[index + 1] !== ':') continue;
+    let name = '';
+    for (index += 2; SWIFT_IDENTIFIER.test(tokens[index] ?? '') || tokens[index] === '.'; index += 1) name += tokens[index];
+    constraints.push(name);
+    index -= 1;
+  }
+  return constraints;
+}
+
 // Reads `Name<...>: A, B & C<...> where ... {` from the name on, and returns
 // the name, its conformances and the index after `{`.
 function readSwiftTypeHeader(tokens, index) {
@@ -456,8 +469,9 @@ function readSwiftTypeHeader(tokens, index) {
       current = '';
     } else current += token;
   }
+  conformances.push(current, ...readSwiftSelfConstraints(tokens, cursor));
   while (cursor < tokens.length && tokens[cursor] !== '{') cursor += 1;
-  return { name, conformances: [...conformances, current].filter(Boolean).map(swiftTypeName), next: cursor + 1 };
+  return { name, conformances: conformances.filter(Boolean).map(swiftTypeName), next: cursor + 1 };
 }
 
 function isSwiftPublic(modifiers, scope) {
@@ -479,8 +493,8 @@ function readSwiftTypeDeclaration(state, index) {
   const id = [...scopes.map((entry) => entry.name), header.name].join('.');
   const isPublic = isSwiftPublic(state.modifiers, scope) && scopes.every((entry) => entry.isPublic);
   if (keyword === 'protocol') {
-    model.protocols.set(header.name, header.conformances);
-    model.protocols.set(id, header.conformances);
+    // #if alternatives add up; a nested protocol keeps its qualified name.
+    model.protocols.set(id, [...(model.protocols.get(id) ?? []), ...header.conformances]);
   } else if (isPublic) model.found.push({ id, keyword, source, conformances: header.conformances });
   else model.hidden.add(id);
   if (isPublic) model.visible.add(id);
@@ -552,7 +566,9 @@ function stepSwiftDeclarations(state, index) {
   }
   // A name the scan cannot read (`Raw Name`, an emoji) fails closed.
   assert(!SWIFT_NAMED_KEYWORDS.has(token) || SWIFT_IDENTIFIER.test(next), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `Cannot read the name after ${token} in ${state.source}: ${next}`, { source: state.source, name: next });
-  const isTypeKeyword = SWIFT_TYPE_KEYWORDS.has(token) && SWIFT_IDENTIFIER.test(next) && !SWIFT_DECLARATION_WORDS.has(next);
+  // Only `class` and `actor` can also open a member (`class func`); after the
+  // other keywords any name, `dynamic` too, is the type's.
+  const isTypeKeyword = SWIFT_TYPE_KEYWORDS.has(token) && SWIFT_IDENTIFIER.test(next) && !(['class', 'actor'].includes(token) && SWIFT_DECLARATION_WORDS.has(next));
   if (isTypeKeyword || SWIFT_MEMBER_KEYWORDS.has(token)) {
     const end = isTypeKeyword ? readSwiftTypeDeclaration(state, index) : readSwiftMember(state, index);
     state.modifiers = [];
