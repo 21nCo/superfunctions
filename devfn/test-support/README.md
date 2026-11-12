@@ -43,11 +43,13 @@ calls `guardTestFile` as a setup file.
   argument (after a `KEY=` or `--option=` prefix and `file://`) or a whole variable's
   value; only a variable known to hold a list (`PATH`, `NODE_PATH`, `LD_LIBRARY_PATH`...) is split at
   `:`. An argument `<root>:x` or `<root> x` is never under the root there. On macOS, the
-  `ps` listing joins arguments with spaces and cannot show where one with a space or `:` in
-  it ends, so whitespace, quotes and `:` end a value. A value that is the root itself cut
-  short there may be the start of another path (`<root> copy`, `<root>:x`), whether or not
-  it exists: a process whose only link to the run is such a value fails the run and is
-  listed, but is never signalled. Shell punctuation such as `;`,
+  `ps` listing joins arguments with spaces and cannot show where one with a space, quote or
+  `:` in it starts or ends (`node /x <root>/y` may be one argument `/x <root>/y`), whether or
+  not such a path exists. So there a process whose only link to the run is a path in its
+  command or environment fails the run and is listed, but is never signalled: the guard
+  signals it only with independent evidence, its marker, its working directory or its
+  descent (for `temporaryDirectories`, also the file's or run's marker or descent from the
+  test's worker). Shell punctuation such as `;`,
   `,`, `(`, `&`, `|` or `<`, like `-`, `.`, `[` or a non-ASCII letter, can be part of a
   file name, so `/x/repo;other` is not under `/x/repo`. A process a shell started that way
   is still attributed by its marker, working directory or parent. The same rule decides
@@ -93,7 +95,9 @@ its takeover markers (`owner.takeover.<record hash>.<generation>`, see `recoverL
 marker itself, passing a generation only when its taker is dead, and while holding it moves
 the lock aside only if `owner.json` still shows the dead holder's record. A waiter can then
 neither take the lock over nor be moved away mid-takeover, whatever the lock's age. A lock
-another live process holds a marker for is left in place and listed, so the run fails.
+another live process holds a marker for is left in place and listed, so the run fails. The
+guard's marker carries its birth signature, as withFileLock's records do, so a guard killed
+while holding it never blocks a waiter, even once its process ID is reused.
 
 The guard lists processes with `/proc` on Linux and `ps` and `lsof` on macOS. On other
 platforms it checks only temp entries, and says so.

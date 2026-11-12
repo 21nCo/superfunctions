@@ -84,12 +84,12 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const TOOL_PATH = ["/bin", "/usr/bin", "/usr/sbin", "/sbin", process.env.PATH].filter(Boolean).join(path.delimiter);
 const toolEnv = () => ({ PATH: TOOL_PATH, LC_ALL: "C" });
 
-function run(command, args, timeout = 15_000) {
+function run(command, args, timeout = 15_000, env = toolEnv()) {
   // A signal sent to this process's group, as turbo cancels a task, also reaches a tool the guard
   // is running then. A listing cut short that way would read as nothing left, so the tool runs
   // again. A tool that times out reports an error instead and is not run again.
   for (let attempt = 1; ; attempt += 1) {
-    const result = spawnSync(command, args, { encoding: "utf8", env: toolEnv(), timeout, maxBuffer: 64 * 1024 * 1024 });
+    const result = spawnSync(command, args, { encoding: "utf8", env, timeout, maxBuffer: 64 * 1024 * 1024 });
     if (result.error) return undefined;
     if (!result.signal || attempt === 3) return result;
   }
@@ -214,10 +214,10 @@ function descendantsOf(pid, processes) {
 //
 // macOS's ps listing joins arguments and variables with spaces, so there a value starts after
 // whitespace, a quote, an assignment prefix, `file://` or a `:` list separator, and runs to the
-// next of those. Such a listing cannot show where a value with a space or `:` in it ends: a
-// value that is the root itself, cut short at a separator, may be the start of another path
-// (`<root> copy/x`, `<root>:x`), whether or not that path exists. Such a match is ambiguous.
-// Nothing else ends a path: `;`, `(`, `[`, `-`, `.` and non-ASCII letters may all be part of a
+// next of those. Such a listing cannot show where a value with a space, quote or `:` in it starts
+// or ends: `node /x <root>/y` may be one argument `/x <root>/y`, and `<root> copy/y` another
+// path, whether or not those paths exist. So every match there is ambiguous: it fails a run, but
+// owns a process only with independent evidence (see attributeProcesses). Nothing else ends a path: `;`, `(`, `[`, `-`, `.` and non-ASCII letters may all be part of a
 // file name, so `/x/repo;other` and `/x/repo-dev-42` are not under `/x/repo`.
 const SEPARATOR = /[\s"'`]/;
 const LIST_SEPARATOR = ":";
@@ -247,11 +247,11 @@ function separatedValues(text, environment) {
 }
 
 /**
- * The paths at or under `root` that `text` names, each with `cut`: the separator a value that is
- * `root` itself was cut short at in a space-joined listing, or undefined when the value is whole.
+ * The paths at or under `root` that `text` names, each `ambiguous` when it comes from a
+ * space-joined listing, which cannot show where a value starts or ends.
  */
 function namedPaths(text, root, { separated = false, environment = false } = {}) {
-  if (separated) return separatedValues(text, environment).filter((value) => isPathUnder(value, root)).map((value) => ({ path: value }));
+  if (separated) return separatedValues(text, environment).filter((value) => isPathUnder(value, root)).map((value) => ({ path: value, ambiguous: false }));
   const paths = [];
   for (let at = text.indexOf(root); at !== -1; at = text.indexOf(root, at + 1)) {
     let start = at;
@@ -261,8 +261,7 @@ function namedPaths(text, root, { separated = false, environment = false } = {})
     let end = at + root.length;
     while (end < text.length && !SEPARATOR.test(text[end]) && text[end] !== LIST_SEPARATOR) end += 1;
     const value = trimTrailingSlashes(text.slice(at, end));
-    const cut = end === at + root.length && end < text.length ? text[end] : undefined;
-    if (isPathUnder(value, root)) paths.push({ path: value, cut });
+    if (isPathUnder(value, root)) paths.push({ path: value, ambiguous: true });
   }
   return paths;
 }
@@ -277,7 +276,7 @@ export function pathsNamedUnder(text, root, options) {
 
 /**
  * How a process names a path under the given roots in its command, environment or working
- * directory: "exact", "ambiguous" when its only such value is a root cut short at a separator,
+ * directory: "exact", "ambiguous" when its only such values come from a space-joined listing,
  * or undefined. `accept(path, root)` can reject a named path, such as one inside a nested checkout.
  */
 function namesPathUnder(entry, roots, accept = () => true) {
@@ -288,7 +287,7 @@ function namesPathUnder(entry, roots, accept = () => true) {
       ...namedPaths(entry.argv ?? entry.command, root, { separated: entry.separated }),
       ...namedPaths(entry.environment, root, { separated: entry.separated, environment: true }),
     ].filter(({ path: value }) => accept(value, root));
-    if (named.some(({ cut }) => cut === undefined)) return "exact";
+    if (named.some(({ ambiguous }) => !ambiguous)) return "exact";
     if (named.length > 0) found = "ambiguous";
   }
   return found;
@@ -314,11 +313,11 @@ export function inNestedCheckout(candidate, root, cache = new Map()) {
  * The processes a scope owns, which it may signal: those carrying its marker, descending from its
  * `parent` process, or running from a path under its roots or naming one in their command or
  * environment (DevFn passes TMPDIR on to what it starts). `ambiguous` holds those whose only link
- * is an ambiguous path (see namesPathUnder): they are reported, never signalled. The guard's own
- * process and its ancestors are never included, nor are `excluded` processes, though their
- * descendants may be.
+ * is an ambiguous path (see namesPathUnder), unless `vouch(entry)` gives independent evidence:
+ * they are reported, never signalled. The guard's own process and its ancestors are never
+ * included, nor are `excluded` processes, though their descendants may be.
  */
-export function attributeProcesses(processes, { marker, roots, parent, excluded = () => false }) {
+export function attributeProcesses(processes, { marker, roots, parent, excluded = () => false, vouch = () => false }) {
   const ancestors = ancestorsOf(process.pid, processes);
   const descendants = parent === undefined ? new Set() : descendantsOf(parent, processes);
   const owned = [];
@@ -326,7 +325,7 @@ export function attributeProcesses(processes, { marker, roots, parent, excluded 
   for (const entry of processes) {
     if (entry.pid === process.pid || ancestors.has(entry.pid) || excluded(entry)) continue;
     const named = (marker !== undefined && entry.environment.includes(marker)) || descendants.has(entry.pid) ? "exact" : namesPathUnder(entry, roots);
-    if (named === "exact") owned.push(entry);
+    if (named === "exact" || (named === "ambiguous" && vouch(entry))) owned.push(entry);
     else if (named === "ambiguous") ambiguous.push(entry);
   }
   return { owned, ambiguous };
@@ -339,13 +338,20 @@ export function ownedProcesses(processes, scope) {
 
 /**
  * Stops every process that runs from, or names, a path under the given directories, with the
- * detached process group it leads, and any such process that appears while they stop. `sinceMs`
- * bounds the working-directory lookup to processes started since then. Returns the processes
- * still running afterwards.
+ * detached process group it leads, and any such process that appears while they stop. One that
+ * names them only in a macOS listing is stopped when it also carries this file's or run's marker
+ * or descends from this process. `sinceMs` bounds the working-directory lookup to processes
+ * started since then. Returns the processes still running afterwards.
  */
 export async function stopProcessesUnder(directories, sinceMs = 0) {
   const roots = directories.flatMap(pathAliases);
-  const find = () => { const listed = listProcesses(sinceMs); return listed && ownedProcesses(listed, { roots }); };
+  const markers = [FILE_MARKER, RUN_MARKER].filter((name) => process.env[name]).map((name) => `${name}=${process.env[name]}`);
+  const find = () => {
+    const listed = listProcesses(sinceMs);
+    if (!listed) return listed;
+    const descendants = descendantsOf(process.pid, listed);
+    return ownedProcesses(listed, { roots, vouch: (entry) => descendants.has(entry.pid) || markers.some((marker) => entry.environment.includes(marker)) });
+  };
   const owned = find();
   return owned && owned.length > 0 ? await stopProcesses(owned, find) : [];
 }
@@ -525,7 +531,12 @@ export async function setup(project) {
     const directories = attempt(runDirectories) ?? [];
     const allRoots = [...rootAliases, ...directories.flatMap(pathAliases)];
     // The run is ending, so its own pool workers, which a hung test may keep alive, go too.
-    const find = () => attempt(() => ownedProcesses(listProcesses(startedAt) ?? [], { marker, roots: allRoots, parent: process.pid })) ?? [];
+    let ambiguous = [];
+    const find = () => attempt(() => {
+      const attributed = attributeProcesses(listProcesses(startedAt) ?? [], { marker, roots: allRoots, parent: process.pid });
+      ({ ambiguous } = attributed);
+      return attributed.owned;
+    }) ?? [];
     const owned = new Map();
     // A cancelling runner may SIGKILL this process shortly after its signal, so there is no grace.
     // SIGKILL leaves a process no time to start another, but one may have just started; the
@@ -546,12 +557,12 @@ export async function setup(project) {
     const leaked = new Map(state.found.processes);
     for (const entry of owned.values()) if (!isRunnerChild(entry)) leaked.set(entry.pid, entry);
     const entries = [...new Set([...state.found.entries, ...leftovers]), ...locks.map(describeLock), ...unremoved.map((directory) => `${directory}, which could not be removed`)];
-    if (leaked.size === 0 && entries.length === 0) return;
+    if (leaked.size === 0 && entries.length === 0 && ambiguous.length === 0) return;
     // The run fails even when it is exiting with success, such as through process.exit(0) or
     // Vitest's exit once a teardown outlasts its teardownTimeout.
     if (!process.exitCode) process.exitCode = 1;
     // The process is exiting, so only a synchronous write reaches a piped stderr.
-    attempt(() => writeSync(2, `${report("This interrupted test run", [...leaked.values()], entries, [])}\n`));
+    attempt(() => writeSync(2, `${report("This interrupted test run", [...leaked.values()], entries, [], { ambiguous })}\n`));
   };
   const onSignal = (signal) => {
     onExit();
@@ -750,14 +761,41 @@ const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),
  */
 const takeoverPrefix = (record) => `owner.takeover.${createHash("sha256").update(record).digest("hex").slice(0, 32)}.`;
 
-/** Whether a takeover marker records a taker that is no longer running. One that cannot be read may still be live. */
+/**
+ * A process's birth signature exactly as processBirthSignature (@devfn/config) reads it, so
+ * withFileLock can tell a reused process ID from the process that wrote a record. Undefined
+ * when it cannot be read.
+ */
+function birthSignature(pid) {
+  if (process.platform === "linux") {
+    try {
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      const start = stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/)[19];
+      return start ? `linux:${start}` : undefined;
+    } catch { return undefined; }
+  }
+  if (process.platform !== "darwin") return undefined;
+  const start = run("ps", ["-o", "lstart=", "-p", String(pid)], 15_000, { ...toolEnv(), TZ: "UTC0" })?.stdout.trim();
+  return start ? `darwin-utc:${start}` : undefined;
+}
+
+/**
+ * Whether a takeover marker records a taker that is no longer running: its process is gone, or
+ * its process ID now belongs to a process with another birth signature. One that cannot be read
+ * may still be live.
+ */
 function takerDead(marker) {
   let owner;
   try { owner = JSON.parse(readFileSync(marker, "utf8")); } catch { return false; }
   if (typeof owner?.token !== "string" || !Number.isSafeInteger(owner.pid) || owner.pid <= 0) return false;
   const running = runningPids();
-  return running ? !running.has(owner.pid) : !alive(owner.pid);
+  if (running ? !running.has(owner.pid) : !alive(owner.pid)) return true;
+  const current = typeof owner.birthSignature === "string" ? birthSignature(owner.pid) : undefined;
+  return current !== undefined && current.split(":")[0] === owner.birthSignature.split(":")[0] && current !== owner.birthSignature;
 }
+
+let ownSignature;
+const ownBirthSignature = () => (ownSignature ??= birthSignature(process.pid));
 
 // Test-only: set to a file path, the guard writes `<path>.held` once it holds a lock's takeover
 // marker and waits, up to 30 s, for `<path>` to exist, so a self-test can interleave a waiter.
@@ -785,7 +823,9 @@ function moveAbandonedLock({ directory, record }, target) {
   const prefix = takeoverPrefix(record);
   let marker;
   try {
-    writeFileSync(temp, JSON.stringify({ token, pid: process.pid, createdAt: new Date().toISOString() }), { mode: 0o600, flag: "wx" });
+    // With a birth signature, as withFileLock's own record has, so that once this process is gone
+    // a waiter counts the marker's taker dead even after its process ID is reused.
+    writeFileSync(temp, JSON.stringify({ token, pid: process.pid, birthSignature: ownBirthSignature(), createdAt: new Date().toISOString() }), { mode: 0o600, flag: "wx" });
     for (let generation = 0; marker === undefined; generation += 1) {
       const candidate = path.join(directory, `${prefix}${generation}`);
       try { linkSync(temp, candidate); marker = candidate; }

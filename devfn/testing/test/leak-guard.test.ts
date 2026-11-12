@@ -10,6 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { processBirthSignature } from "@devfn/config";
 import { withFileLock } from "@devfn/ports";
 
 import { attributeProcesses, ORIGINAL_TEMP_VARIABLE, ownedProcesses, pathsNamedUnder } from "../../test-support/leak-guard.mjs";
@@ -167,43 +168,44 @@ describe("pathsNamedUnder", () => {
     expect(ownedProcesses([...owned, ...foreign], { roots: [root] }).map(({ pid }) => pid)).toEqual(owned.map(({ pid }) => pid));
   });
 
-  it("never owns a macOS process whose only link is the root cut short at a separator, whether or not the longer path exists", () => {
+  it("never owns a process on a path in a macOS listing alone, which cannot show where a value starts or ends, whether or not another path exists", () => {
     const parent = tempDir("devfn-leak-guard-beside-");
     const run = path.join(parent, "run");
     mkdirSync(run);
     const entry = (pid: number, command: string, environment = "", cwd?: string) => ({ pid, ppid: 1, pgid: pid, elapsed: 0, command, environment, cwd });
-    const cut = [
+    const text = [
       entry(9_000_401, `node ${run} sibling/x`), entry(9_000_402, `node ${run}:sibling/x`), entry(9_000_403, `node '${run}'sibling/x`),
-      entry(9_000_404, "node server.mjs", `TMPDIR=${run} HOME=/home/x`),
+      entry(9_000_404, "node server.mjs", `TMPDIR=${run} HOME=/home/x`), entry(9_000_405, "node server.mjs", `HOME=/home/x TMPDIR=${run}`),
+      // A whole argument or variable "/foreign <run>/server.mjs" lists the same.
+      entry(9_000_406, `node /foreign ${run}/server.mjs`), entry(9_000_407, `node /foreign:${run}/server.mjs`), entry(9_000_408, "node", `CUSTOM=/foreign ${run}/server.mjs`),
     ];
-    expect(attributeProcesses(cut, { roots: [run] })).toEqual({ owned: [], ambiguous: cut });
+    expect(attributeProcesses(text, { roots: [run] })).toEqual({ owned: [], ambiguous: text });
     for (const name of ["run sibling", "run:sibling", "run'sibling"]) mkdirSync(path.join(parent, name));
-    expect(attributeProcesses(cut, { roots: [run] })).toEqual({ owned: [], ambiguous: cut });
-    // A marker, a working directory under the root or a whole path still owns one.
+    expect(attributeProcesses(text, { roots: [run] })).toEqual({ owned: [], ambiguous: text });
+    // A marker, a working directory under the root or other evidence (`vouch`) owns one.
     const corroborated = [
       entry(9_000_411, `node ${run} sibling/x`, "SFN_TEST_LEAK_GUARD_RUN=x"),
       entry(9_000_412, `node ${run} sibling/x`, "", path.join(run, "package")),
       entry(9_000_413, `node ${run}/server.mjs`),
-      entry(9_000_414, "node server.mjs", `HOME=/home/x TMPDIR=${run}`),
     ];
-    expect(attributeProcesses(corroborated, { roots: [run], marker: "SFN_TEST_LEAK_GUARD_RUN=x" })).toEqual({ owned: corroborated, ambiguous: [] });
+    expect(attributeProcesses(corroborated, { roots: [run], marker: "SFN_TEST_LEAK_GUARD_RUN=x", vouch: ({ pid }) => pid === 9_000_413 })).toEqual({ owned: corroborated, ambiguous: [] });
   });
 
-  it("decides which processes a run or registered directory owns, and so may signal, on complete path values", () => {
+  it("decides which processes name a path under a run or registered directory on complete path values, and owns from a macOS listing only by working directory", () => {
     const entry = (pid: number, command: string, environment = "", cwd?: string) => ({ pid, ppid: 1, pgid: pid, elapsed: 0, command, environment, cwd });
-    const owned = [
+    const named = [
       entry(9_000_001, `node ${root}/server.mjs`),
       entry(9_000_002, "node server.mjs", `HOME=/home/x TMPDIR=${root}`),
-      entry(9_000_003, "node server.mjs", "", `${root}/package`),
       entry(9_000_004, `node --state-dir=${root}/state server.mjs`),
       entry(9_000_005, "node server.mjs", `PATH=/usr/bin:${root}/bin`),
     ];
+    const owned = entry(9_000_003, "node server.mjs", "", `${root}/package`);
     const foreign = siblings.flatMap(([, sibling], index) => [
       entry(9_000_100 + 3 * index, `node ${sibling}/server.mjs`),
       entry(9_000_101 + 3 * index, "node server.mjs", `TMPDIR=${sibling} HOME=/home/x`),
       entry(9_000_102 + 3 * index, "node server.mjs", "", sibling),
     ]);
-    expect(ownedProcesses([...owned, ...foreign], { roots: [root] }).map(({ pid }) => pid)).toEqual(owned.map(({ pid }) => pid));
+    expect(attributeProcesses([owned, ...named, ...foreign], { roots: [root] })).toEqual({ owned: [owned], ambiguous: named });
   });
 });
 
@@ -274,17 +276,24 @@ describe.skipIf(process.platform === "win32")("DevFn test leak guard", { timeout
   it.each([
     ["a process", `record({ pid: ${orphanProcess("process.env.SFN_TEST_LEAK_GUARD_ROOT")} });`],
     ["only a temp directory", `record({ dir: mkdtempSync(path.join(process.env.SFN_TEST_LEAK_GUARD_ROOT, "devfn-leaked-")) });`],
+    // Only its argument names the root: whole on Linux, so it is stopped; ambiguous in macOS's ps listing, so it is only listed.
+    ["a process that only names it", `record({ pid: ${orphanProcess('"/"', 'path.join(process.env.SFN_TEST_LEAK_GUARD_ROOT, "server.mjs")')} });`],
   ])("fails a run that leaves %s in its root and exits with success before its teardown, as Vitest does after its teardownTimeout", async (_, leak) => {
     // A global setup listed after the guard's tears down first and ends the process with code 0.
     const { dir, record } = project(`test("leaks into the run root", () => {
   ${leak}
 });`, { files: { "exit.mjs": "export default () => () => process.exit(0);" }, options: `, globalSetup: [${JSON.stringify(guard)}, "./exit.mjs"]` });
     const { code, output, recorded } = await runProject(dir, record);
-    expect(code).not.toBe(0);
-    expect(output).toContain("DevFn test leak guard: This interrupted test run left these behind.");
-    expect(output).toContain(recorded.pid ? `process ${recorded.pid} ` : `temp entry ${recorded.dir}`);
-    if (recorded.pid) expect(await gone(recorded.pid)).toBe(true);
-    expect(existsSync(recorded.root)).toBe(false);
+    try {
+      expect(code).not.toBe(0);
+      expect(output).toContain("DevFn test leak guard: This interrupted test run left these behind.");
+      expect(output).toContain(recorded.pid ? `process ${recorded.pid} ` : `temp entry ${recorded.dir}`);
+      const listedOnly = leak.includes("server.mjs") && process.platform === "darwin";
+      if (recorded.pid) expect(listedOnly ? alive(recorded.pid) : await gone(recorded.pid)).toBe(true);
+      expect(existsSync(recorded.root)).toBe(false);
+    } finally {
+      if (recorded.pid) try { process.kill(recorded.pid, "SIGKILL"); } catch { /* already gone */ }
+    }
   });
 
   it("fails the run when a process escapes its test file's folder but still runs from the run's temp root", async () => {
@@ -503,7 +512,7 @@ writeFileSync(path.join(lock, "owner.json"), JSON.stringify({ token: "fixture", 
    * then, once it holds withFileLock's takeover marker for the dead holder's record, pauses (a
    * test-only hook) while `during` runs. A waiter whose staleMs has passed could recover the lock then.
    */
-  async function pausedLockCleanup(lock: string, during: (paused: { pid: number }) => Promise<void>, env: Record<string, string> = {}) {
+  async function pausedLockCleanup(lock: string, during: (paused: { pid: number; marker: string }) => Promise<void>, env: Record<string, string> = {}) {
     const release = path.join(tempDir("devfn-leak-guard-pause-"), "release");
     const { dir, record } = project(`test("holds the lock and hangs", async () => {
   ${takeLock(path.basename(lock))}
@@ -591,12 +600,20 @@ writeFileSync(path.join(lock, "owner.json"), JSON.stringify({ token: "fixture", 
     }
   });
 
-  it("lets withFileLock recover a dead holder's lock past the marker of a guard that died holding it", async () => {
+  it.each([["free"], ["reused by a live process"]])("lets withFileLock recover a dead holder's lock past the marker of a guard that died holding it, its process ID %s", async (reuse) => {
     const lock = machineLock(`devfn-leak-guard-lock-${randomUUID()}`);
     // The killed run leaves its temp root and Vitest's own folder behind, here.
     const parent = tempDir("devfn-leak-guard-parent-");
     try {
-      await pausedLockCleanup(lock, async ({ pid }) => { process.kill(pid, "SIGKILL"); }, { TMPDIR: parent, TMP: parent, TEMP: parent });
+      let guardMarker = "";
+      await pausedLockCleanup(lock, async ({ pid, marker }) => {
+        guardMarker = marker;
+        // The guard's marker identifies it as withFileLock's own records do.
+        expect(JSON.parse(readFileSync(marker, "utf8"))).toMatchObject({ pid, birthSignature: await processBirthSignature(pid) });
+        process.kill(pid, "SIGKILL");
+      }, { TMPDIR: parent, TMP: parent, TEMP: parent });
+      // This live process stands in for one that reused the dead guard's process ID.
+      if (reuse !== "free") writeFileSync(guardMarker, JSON.stringify({ ...JSON.parse(readFileSync(guardMarker, "utf8")), pid: process.pid }));
       expect(ownerRecord(lock)).toMatchObject({ token: "fixture" });
       await expect(withFileLock(lock, async () => ownerRecord(lock).pid, { staleMs: 100, timeoutMs: 10_000 })).resolves.toBe(process.pid);
     } finally {
