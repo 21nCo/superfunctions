@@ -428,7 +428,7 @@ function skipBalanced(tokens, index, open, close) {
     if (tokens[cursor] === close) depth -= 1;
     if (depth === 0) return cursor + 1;
   }
-  return tokens.length;
+  return tokens.length + 1;
 }
 
 function swiftTypeName(value) {
@@ -542,6 +542,14 @@ function stepSwiftDeclarations(state, index) {
   if (scopes.at(-1)?.kind === 'body') return index + 1;
   const skipped = skipSwiftNonDeclaration(state, index);
   if (skipped !== undefined) return skipped;
+  // No declaration starts inside parentheses: argument and tuple labels
+  // such as `class:` in a call, an enum case's values or a function type.
+  if (token === '(') {
+    const end = skipBalanced(tokens, index, '(', ')');
+    assert(end <= tokens.length, 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `Cannot read the declarations in ${state.source}: a ( is not closed.`, { source: state.source });
+    state.modifiers = [];
+    return end;
+  }
   // A name the scan cannot read (`Raw Name`, an emoji) fails closed.
   assert(!SWIFT_NAMED_KEYWORDS.has(token) || SWIFT_IDENTIFIER.test(next), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `Cannot read the name after ${token} in ${state.source}: ${next}`, { source: state.source, name: next });
   const isTypeKeyword = SWIFT_TYPE_KEYWORDS.has(token) && SWIFT_IDENTIFIER.test(next) && !SWIFT_DECLARATION_WORDS.has(next);
@@ -556,7 +564,9 @@ function stepSwiftDeclarations(state, index) {
 }
 
 function walkSwiftDeclarations(text, source, model) {
-  const tokens = (swiftCodeOnly(text).match(SWIFT_TOKEN) ?? []).map((token) => token.replaceAll('`', ''));
+  // A backticked keyword (`class`) stays a name, never a keyword.
+  const unquote = (token) => (SWIFT_DECLARATION_WORDS.has(token.slice(1, -1)) || SWIFT_TYPE_KEYWORDS.has(token.slice(1, -1)) ? token : token.replaceAll('`', ''));
+  const tokens = (swiftCodeOnly(text).match(SWIFT_TOKEN) ?? []).map(unquote);
   const state = { tokens, scopes: [], model, source, modifiers: [] };
   for (let index = 0; index < tokens.length;) index = stepSwiftDeclarations(state, index);
   // Text the scan cannot model (an unclosed scope) fails closed.
