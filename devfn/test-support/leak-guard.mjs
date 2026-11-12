@@ -529,12 +529,12 @@ function signalAll(processes, signal, held = new Map()) {
       if (witnessing) reread();
     } else if (leads && current?.exited) {
       const members = groupMembers(entry.pid);
-      reread();
       held.delete(entry.pid);
       // A group that cannot be read is not taken for an empty one: its leader stands for it, as unresolved.
       if (!members) held.set(entry.pid, { ...entry, unresolvedGroup: true });
       else if (members.some((member) => inLeadersGroup(entry, member) && identityOf(member)?.pgid === entry.pid)) send(entry, -entry.pid);
       else for (const member of members) held.set(member.pid, member);
+      reread();
     }
   }
   return signalled;
@@ -552,14 +552,18 @@ const REUSE_BOUND_SECONDS = 2;
 
 /**
  * Whether `member` of the group `leader` led is linked to that leader: seen in the group while the
- * leader was itself (witnessGroup), or started within REUSE_BOUND_SECONDS after a read last showed
- * the leader running, as what a wrapper starts as it exits does.
+ * leader was itself (witnessGroup), or started within REUSE_BOUND_SECONDS of a read that last
+ * showed the leader running, as what a wrapper starts as it exits does, when that read is itself
+ * that recent. (A whole second either side allows for macOS reading starts to the second.)
  */
 function inLeadersGroup(leader, member) {
   const key = `${leader.pid}:${leader.started}`;
   if (groupWitnesses.get(key)?.has(`${member.pid}:${member.started}`)) return true;
   const seen = leaderSeen.get(key);
-  return seen !== undefined && startSeconds(member.started) <= seen + REUSE_BOUND_SECONDS;
+  const now = clockSeconds();
+  const started = startSeconds(member.started);
+  return seen !== undefined && now !== undefined && now - seen <= REUSE_BOUND_SECONDS + 1
+    && started >= seen - REUSE_BOUND_SECONDS - 1 && started <= seen + REUSE_BOUND_SECONDS;
 }
 
 /** A start as listings record it, in seconds: since boot on Linux, since the epoch on macOS (a whole second). */

@@ -95,8 +95,9 @@ calls `guardTestFile` as a setup file.
   file or run. Before sending SIGTERM to a group, the guard records which processes are in
   it, and signals it only if its leader is still itself after that. Once the leader has
   exited, its group is signalled only while it holds a process the guard can link to the
-  leader, recorded in the group or started within 2 seconds after a read last showed the
-  leader running (as what a wrapper's SIGTERM handler starts on its way out is), and a read
+  leader, recorded in the group or started within 2 seconds of a read that last showed the
+  leader running, at most 3 seconds ago (as what a wrapper's SIGTERM handler starts on its
+  way out is), and a read
   of that process's own, just before the signal, shows it is still that process and still in
   the group. A group ID in use is never given to a new process, so that group could be
   another only if the system ran through its whole range of process IDs in that while, the
