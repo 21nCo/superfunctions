@@ -1,0 +1,59 @@
+{
+ "module": {
+  "name": "UIFnSwiftUI",
+  "platform": {
+   "architecture": "arm64",
+   "vendor": "apple",
+   "operatingSystem": {
+    "name": "macosx",
+    "minimumVersion": {
+     "major": 13,
+     "minor": 0
+    }
+   }
+  }
+ },
+ "symbols": [
+  {
+   "kind": {
+    "identifier": "swift.type.property",
+    "displayName": "Type Property"
+   },
+   "identifier": {
+    "precise": "s:7SwiftUI11ButtonStyleP04UIFnaB0AD0e4ChipD0VRszrlE04uifnF0AFvpZ",
+    "interfaceLanguage": "swift"
+   },
+   "pathComponents": [
+    "ButtonStyle",
+    "uifnChip"
+   ],
+   "names": {
+    "title": "uifnChip"
+   },
+   "accessLevel": "public",
+   "location": {
+    "uri": "file:///checkout/uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnCR.swift"
+   },
+   "swiftExtension": {
+    "extendedModule": "SwiftUI",
+    "typeKind": "swift.protocol",
+    "constraints": [
+     {
+      "kind": "sameType",
+      "lhs": "Self",
+      "rhs": "UIFnChipStyle",
+      "rhsPrecise": "s:11UIFnSwiftUI0A9ChipStyleV"
+     }
+    ]
+   }
+  }
+ ],
+ "relationships": [
+  {
+   "kind": "memberOf",
+   "source": "s:7SwiftUI11ButtonStyleP04UIFnaB0AD0e4ChipD0VRszrlE04uifnF0AFvpZ",
+   "target": "s:7SwiftUI11ButtonStyleP",
+   "targetFallback": "SwiftUI.ButtonStyle"
+  }
+ ]
+}

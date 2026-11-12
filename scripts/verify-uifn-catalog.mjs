@@ -6,12 +6,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { CATALOG_SOURCE } from '../uifn/catalog/src/catalog-source.mjs';
-import { CatalogError, compareGeneratedOutputs, createGeneratedOutputs, verifyGeneratedDirectory, writeGeneratedOutputs } from '../uifn/catalog/src/compiler.mjs';
+import { CatalogError, compareGeneratedOutputs, createGeneratedOutputs, validateSwiftUISurfaceInventory, verifyGeneratedDirectory, verifySwiftUISurfaceDeclarations, writeGeneratedOutputs } from '../uifn/catalog/src/compiler.mjs';
 import { migrateCatalogDocument } from '../uifn/catalog/src/migrations.mjs';
+import { SWIFTUI_STATUS_SOURCE } from '../uifn/catalog/src/swiftui-status.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const generatedDirectory = path.join(repoRoot, 'uifn/catalog/generated');
-const schemaFiles = ['primitive.schema.json', 'catalog.schema.json', 'generation-manifest.schema.json', 'migration.schema.json'];
+const schemaFiles = ['primitive.schema.json', 'catalog.schema.json', 'generation-manifest.schema.json', 'migration.schema.json', 'swiftui-status.schema.json'];
+const fixtureDirectory = path.join(repoRoot, 'uifn/catalog/fixtures/negative');
+const swiftuiStatusFixtures = ['missing-swiftui-status.json', 'unknown-swiftui-status.json', 'unmapped-swiftui-surface.json'];
 const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'uifn-catalog-verify-'));
 
 function expectCode(action, expectedCode) {
@@ -61,6 +64,23 @@ try {
     exportCode = error.code;
   }
 
+  // The compiler-derived inventory; the Swift workflow's macOS job checks it
+  // against the UIFnSwiftUI symbol graphs (scripts/uifn-swiftui-inventory.mjs).
+  const swiftuiDeclarations = validateSwiftUISurfaceInventory(JSON.parse(await readFile(path.join(repoRoot, 'uifn/catalog/swiftui-surface-inventory.json'), 'utf8')));
+  verifySwiftUISurfaceDeclarations(swiftuiDeclarations);
+  const swiftuiStatus = JSON.parse(first.outputs['swiftui-status.json']);
+  const swiftuiNegativeCodes = [];
+  const swiftuiFixtures = await Promise.all(swiftuiStatusFixtures.map(async (file) => JSON.parse(await readFile(path.join(fixtureDirectory, file), 'utf8'))));
+  for (const { mutation, expectedErrorCodes } of swiftuiFixtures) {
+    const mutated = structuredClone(SWIFTUI_STATUS_SOURCE);
+    const entry = mutated.primitives[mutation.swiftuiPrimitive];
+    if (mutation.deleteField) delete entry[mutation.deleteField];
+    else entry[mutation.setField] = mutation.value;
+    swiftuiNegativeCodes.push(expectCode(() => createGeneratedOutputs(CATALOG_SOURCE, mutated), expectedErrorCodes[0]));
+  }
+  const unlisted = JSON.parse(await readFile(path.join(fixtureDirectory, 'unlisted-swiftui-surface.json'), 'utf8'));
+  swiftuiNegativeCodes.push(expectCode(() => verifySwiftUISurfaceDeclarations([...swiftuiDeclarations, unlisted.mutation.addDeclaration]), unlisted.expectedErrorCodes[0]));
+
   const migrated = migrateCatalogDocument({ schemaVersion: 0, components: [{ id: 'example' }] });
   if (!migrated.ok || migrated.document.schemaVersion !== 1 || !Array.isArray(migrated.document.primitives) || migrated.document.components) {
     throw new CatalogError('UIFN_CATALOG_MIGRATION_FAILED', 'The v0-to-v1 migration was not lossless.');
@@ -90,6 +110,15 @@ try {
     cleanDiff: true,
     schemaFiles,
     migrationsApplied: migrated.applied,
+    swiftui: {
+      statusCounts: swiftuiStatus.statusCounts,
+      primitivesWithStatus: swiftuiStatus.primitives.length,
+      surfaceCount: swiftuiStatus.surfaces.length,
+      nonSurfaceCount: SWIFTUI_STATUS_SOURCE.nonSurfaces.length,
+      unmappedSurfaces: swiftuiStatus.surfaces.filter((surface) => surface.primitives.length === 0).map((surface) => surface.id),
+      declaredSurfacesMatchSources: true,
+      negativeVectors: swiftuiNegativeCodes,
+    },
     implementationEvidence: true,
   }, null, 2));
 } catch (error) {

@@ -1,0 +1,1021 @@
+{
+  "catalogSha256": "b7c6c8b5ad0c3d7746fb04f3648794a3e7799cdd82c77eade6b06a893213da55",
+  "catalogVersion": "1.0.0",
+  "generatorVersion": "1.0.0",
+  "implementationEvidence": true,
+  "primitives": [
+    {
+      "id": "accordion",
+      "name": "Accordion",
+      "swiftui": {
+        "controls": [
+          "DisclosureGroup"
+        ],
+        "note": "A stack of DisclosureGroup views, one per item. Whether more than one item can be open is up to the app.",
+        "status": "native",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "alert-dialog",
+      "name": "AlertDialog",
+      "swiftui": {
+        "controls": [
+          ".alert",
+          ".confirmationDialog"
+        ],
+        "note": "The system alert or confirmation dialog, with a button in the cancel role.",
+        "status": "native",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "angle-slider",
+      "name": "AngleSlider",
+      "swiftui": {
+        "controls": [],
+        "note": "SwiftUI has no rotary slider, and UIFnSwiftUI has no angle control.",
+        "status": "none",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "autocomplete",
+      "name": "Autocomplete",
+      "swiftui": {
+        "controls": [
+          ".searchable",
+          ".searchSuggestions"
+        ],
+        "note": "Suggestions under a search field; UIFnEmptyState can show the empty part when nothing matches. SwiftUI offers no suggestions for a plain text field.",
+        "status": "native",
+        "surfaces": [
+          "UIFnEmptyState"
+        ]
+      }
+    },
+    {
+      "id": "avatar",
+      "name": "Avatar",
+      "swiftui": {
+        "controls": [],
+        "note": "SwiftUI has no avatar view, and UIFnSwiftUI has none either.",
+        "status": "none",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "button",
+      "name": "Button",
+      "swiftui": {
+        "controls": [
+          "Button"
+        ],
+        "note": "Button with .uifnPrimary, .uifnSecondary, .uifnGhost or .uifnDestructive.",
+        "status": "uifn-style",
+        "surfaces": [
+          "UIFnButtonStyle"
+        ]
+      }
+    },
+    {
+      "id": "carousel",
+      "name": "Carousel",
+      "swiftui": {
+        "controls": [
+          "TabView"
+        ],
+        "note": "TabView with the .page style pages through views on iOS; macOS has no page style. UIFnSwiftUI has no carousel.",
+        "status": "native",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "checkbox",
+      "name": "Checkbox",
+      "swiftui": {
+        "controls": [
+          "Toggle"
+        ],
+        "note": "Toggle with .uifnCheckbox.",
+        "status": "uifn-style",
+        "surfaces": [
+          "UIFnCheckboxToggleStyle"
+        ]
+      }
+    },
+    {
+      "id": "checkbox-group",
+      "name": "CheckboxGroup",
+      "swiftui": {
+        "controls": [
+          "Toggle"
+        ],
+        "note": "A group of .uifnCheckbox toggles; a parent Toggle(sources:isOn:) shows the mixed state.",
+        "status": "uifn-style",
+        "surfaces": [
+          "UIFnCheckboxToggleStyle"
+        ]
+      }
+    },
+    {
+      "id": "clipboard",
+      "name": "Clipboard",
+      "swiftui": {
+        "controls": [
+          "Button"
+        ],
+        "note": "A uifn-styled Button that writes to the pasteboard, with uifnToast to confirm the copy. SwiftUI has no copy control.",
+        "status": "uifn-style",
+        "surfaces": [
+          "UIFnButtonStyle",
+          "uifnToast"
+        ]
+      }
+    },
+    {
+      "id": "collapsible",
+      "name": "Collapsible",
+      "swiftui": {
+        "controls": [
+          "DisclosureGroup"
+        ],
+        "note": "A DisclosureGroup.",
+        "status": "native",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "color-picker",
+      "name": "ColorPicker",
+      "swiftui": {
+        "controls": [
+          "ColorPicker"
+        ],
+        "note": "The system ColorPicker.",
+        "status": "native",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "combobox",
+      "name": "Combobox",
+      "swiftui": {
+        "controls": [],
+        "note": "SwiftUI has no editable combo box. For a choice without typing, see Select.",
+        "status": "none",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "context-menu",
+      "name": "ContextMenu",
+      "swiftui": {
+        "controls": [
+          ".contextMenu"
+        ],
+        "note": "The system context menu.",
+        "status": "native",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "date-input",
+      "name": "DateInput",
+      "swiftui": {
+        "controls": [
+          "DatePicker"
+        ],
+        "note": "DatePicker with the .field style on macOS or .compact on iOS.",
+        "status": "native",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "date-picker",
+      "name": "DatePicker",
+      "swiftui": {
+        "controls": [
+          "DatePicker"
+        ],
+        "note": "DatePicker with the .graphical style.",
+        "status": "native",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "dialog",
+      "name": "Dialog",
+      "swiftui": {
+        "controls": [
+          ".sheet"
+        ],
+        "note": "A sheet.",
+        "status": "native",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "drawer",
+      "name": "Drawer",
+      "swiftui": {
+        "controls": [
+          ".sheet",
+          ".presentationDetents"
+        ],
+        "note": "A sheet with detents on iOS; macOS sheets have no detents.",
+        "status": "native",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "editable",
+      "name": "Editable",
+      "swiftui": {
+        "controls": [],
+        "note": "SwiftUI has no inline-edit control; an app swaps Text for a TextField itself.",
+        "status": "none",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "field",
+      "name": "Field",
+      "swiftui": {
+        "controls": [
+          "LabeledContent"
+        ],
+        "note": "LabeledContent pairs a label with its control; the description and error text are up to the app.",
+        "status": "native",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "fieldset",
+      "name": "Fieldset",
+      "swiftui": {
+        "controls": [
+          "GroupBox"
+        ],
+        "note": "GroupBox with the .uifn style, titled with the legend. Inside a Form, a Section instead.",
+        "status": "uifn-style",
+        "surfaces": [
+          "UIFnGroupBoxStyle"
+        ]
+      }
+    },
+    {
+      "id": "file-upload",
+      "name": "FileUpload",
+      "swiftui": {
+        "controls": [
+          ".fileImporter",
+          ".dropDestination"
+        ],
+        "note": "The system file importer, with drop support where the app adds it.",
+        "status": "native",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "floating-panel",
+      "name": "FloatingPanel",
+      "swiftui": {
+        "controls": [],
+        "note": "SwiftUI has no floating panel on iOS 16 or macOS 13.",
+        "status": "none",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "form",
+      "name": "Form",
+      "swiftui": {
+        "controls": [
+          "Form"
+        ],
+        "note": "The system Form.",
+        "status": "native",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "hover-card",
+      "name": "HoverCard",
+      "swiftui": {
+        "controls": [],
+        "note": "SwiftUI has no hover card; .help shows only text.",
+        "status": "none",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "image-cropper",
+      "name": "ImageCropper",
+      "swiftui": {
+        "controls": [],
+        "note": "SwiftUI has no image cropper.",
+        "status": "none",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "input",
+      "name": "Input",
+      "swiftui": {
+        "controls": [
+          "TextField"
+        ],
+        "note": "TextField with the .uifn style.",
+        "status": "uifn-style",
+        "surfaces": [
+          "UIFnTextFieldStyle"
+        ]
+      }
+    },
+    {
+      "id": "listbox",
+      "name": "Listbox",
+      "swiftui": {
+        "controls": [
+          "List"
+        ],
+        "note": "A List with a selection binding.",
+        "status": "native",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "marquee",
+      "name": "Marquee",
+      "swiftui": {
+        "controls": [],
+        "note": "SwiftUI has no marquee.",
+        "status": "none",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "menu",
+      "name": "Menu",
+      "swiftui": {
+        "controls": [
+          "Menu"
+        ],
+        "note": "Menu with the .uifn style, which draws its label; the items stay the system menu's.",
+        "status": "uifn-style",
+        "surfaces": [
+          "UIFnMenuStyle"
+        ]
+      }
+    },
+    {
+      "id": "menubar",
+      "name": "Menubar",
+      "swiftui": {
+        "controls": [
+          "CommandMenu"
+        ],
+        "note": "Commands in the macOS menu bar; iOS has no menu bar.",
+        "status": "native",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "meter",
+      "name": "Meter",
+      "swiftui": {
+        "controls": [
+          "Gauge"
+        ],
+        "note": "Gauge with .uifnLinear or .uifnCircular; UIFnSegmentedMeter draws a meter in segments.",
+        "status": "uifn-style",
+        "surfaces": [
+          "UIFnGaugeStyle",
+          "UIFnSegmentedMeter"
+        ]
+      }
+    },
+    {
+      "id": "navigation-menu",
+      "name": "NavigationMenu",
+      "swiftui": {
+        "controls": [
+          "NavigationSplitView",
+          "NavigationLink"
+        ],
+        "note": "A NavigationSplitView sidebar of NavigationLink rows.",
+        "status": "native",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "number-input",
+      "name": "NumberInput",
+      "swiftui": {
+        "controls": [
+          "TextField",
+          "Stepper"
+        ],
+        "note": "A TextField with a number format in the .uifn style, beside a system Stepper.",
+        "status": "uifn-style",
+        "surfaces": [
+          "UIFnTextFieldStyle"
+        ]
+      }
+    },
+    {
+      "id": "pagination",
+      "name": "Pagination",
+      "swiftui": {
+        "controls": [],
+        "note": "SwiftUI has no pagination control.",
+        "status": "none",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "password-input",
+      "name": "PasswordInput",
+      "swiftui": {
+        "controls": [
+          "SecureField"
+        ],
+        "note": "SecureField as the system draws it; UIFnSwiftUI tests its text field style only on TextField.",
+        "status": "native",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "pin-input",
+      "name": "PinInput",
+      "swiftui": {
+        "controls": [],
+        "note": "SwiftUI has no one-time-code input.",
+        "status": "none",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "popover",
+      "name": "Popover",
+      "swiftui": {
+        "controls": [
+          ".popover"
+        ],
+        "note": "The system popover.",
+        "status": "native",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "progress",
+      "name": "Progress",
+      "swiftui": {
+        "controls": [
+          "ProgressView"
+        ],
+        "note": "ProgressView with .uifnLinear or .uifnCircular.",
+        "status": "uifn-style",
+        "surfaces": [
+          "UIFnProgressViewStyle"
+        ]
+      }
+    },
+    {
+      "id": "qr-code",
+      "name": "QRCode",
+      "swiftui": {
+        "controls": [],
+        "note": "SwiftUI draws no QR codes, and UIFnSwiftUI has no QR view.",
+        "status": "none",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "radio-group",
+      "name": "RadioGroup",
+      "swiftui": {
+        "controls": [
+          "Picker"
+        ],
+        "note": "Picker with the .radioGroup style on macOS or .inline on iOS; UIFnSwiftUI has no radio style.",
+        "status": "native",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "rating-group",
+      "name": "RatingGroup",
+      "swiftui": {
+        "controls": [],
+        "note": "SwiftUI has no rating control.",
+        "status": "none",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "scroll-area",
+      "name": "ScrollArea",
+      "swiftui": {
+        "controls": [
+          "ScrollView"
+        ],
+        "note": "A ScrollView.",
+        "status": "native",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "segment-group",
+      "name": "SegmentGroup",
+      "swiftui": {
+        "controls": [
+          "Picker"
+        ],
+        "note": "UIFnSegmentedPicker with the .segmented variant, a UIFnSwiftUI view that draws the segments; accessibility sees a system segmented Picker.",
+        "status": "uifn-component",
+        "surfaces": [
+          "UIFnSegmentedPicker"
+        ]
+      }
+    },
+    {
+      "id": "select",
+      "name": "Select",
+      "swiftui": {
+        "controls": [
+          "Picker",
+          "Menu"
+        ],
+        "note": "UIFnMenuPicker, a UIFnSwiftUI view: a system Picker inside a .uifn menu.",
+        "status": "uifn-component",
+        "surfaces": [
+          "UIFnMenuPicker",
+          "UIFnMenuStyle"
+        ]
+      }
+    },
+    {
+      "id": "separator",
+      "name": "Separator",
+      "swiftui": {
+        "controls": [
+          "Divider"
+        ],
+        "note": "A Divider.",
+        "status": "native",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "signature-pad",
+      "name": "SignaturePad",
+      "swiftui": {
+        "controls": [],
+        "note": "SwiftUI has no drawing canvas for signatures.",
+        "status": "none",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "slider",
+      "name": "Slider",
+      "swiftui": {
+        "controls": [
+          "Slider"
+        ],
+        "note": "The system Slider; SwiftUI has no public slider style.",
+        "status": "native",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "splitter",
+      "name": "Splitter",
+      "swiftui": {
+        "controls": [
+          "HSplitView",
+          "VSplitView"
+        ],
+        "note": "Split views on macOS; iOS has no resizable split, only NavigationSplitView columns.",
+        "status": "native",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "steps",
+      "name": "Steps",
+      "swiftui": {
+        "controls": [],
+        "note": "SwiftUI has no step indicator.",
+        "status": "none",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "switch",
+      "name": "Switch",
+      "swiftui": {
+        "controls": [
+          "Toggle"
+        ],
+        "note": "Toggle with .uifnSwitch.",
+        "status": "uifn-style",
+        "surfaces": [
+          "UIFnSwitchToggleStyle"
+        ]
+      }
+    },
+    {
+      "id": "tabs",
+      "name": "Tabs",
+      "swiftui": {
+        "controls": [
+          "Picker"
+        ],
+        "note": "UIFnSegmentedPicker with the .tabs variant, which switches content in place. For app sections, TabView.",
+        "status": "uifn-component",
+        "surfaces": [
+          "UIFnSegmentedPicker"
+        ]
+      }
+    },
+    {
+      "id": "tags-input",
+      "name": "TagsInput",
+      "swiftui": {
+        "controls": [],
+        "note": "SwiftUI shows tokens only in a search field (.searchable with tokens), not in a general input.",
+        "status": "none",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "timer",
+      "name": "Timer",
+      "swiftui": {
+        "controls": [
+          "Text",
+          "TimelineView"
+        ],
+        "note": "Text(timerInterval:) counts up or down; start, pause and reset are up to the app.",
+        "status": "native",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "toast",
+      "name": "Toast",
+      "swiftui": {
+        "controls": [],
+        "note": "uifnToast shows a UIFnBanner at the edge of a view and announces it.",
+        "status": "uifn-component",
+        "surfaces": [
+          "uifnToast",
+          "UIFnBanner"
+        ]
+      }
+    },
+    {
+      "id": "toggle",
+      "name": "Toggle",
+      "swiftui": {
+        "controls": [
+          "Toggle"
+        ],
+        "note": "Toggle with the .button style; UIFnSwiftUI has no pressed-button toggle style.",
+        "status": "native",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "toggle-group",
+      "name": "ToggleGroup",
+      "swiftui": {
+        "controls": [
+          "ControlGroup",
+          "Toggle"
+        ],
+        "note": "Button-style toggles in a ControlGroup. For a single choice, see SegmentGroup.",
+        "status": "native",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "toolbar",
+      "name": "Toolbar",
+      "swiftui": {
+        "controls": [
+          ".toolbar",
+          "ToolbarItem"
+        ],
+        "note": "The system toolbar.",
+        "status": "native",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "tooltip",
+      "name": "Tooltip",
+      "swiftui": {
+        "controls": [
+          ".help"
+        ],
+        "note": "Help text, which macOS shows as a tooltip.",
+        "status": "native",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "tour",
+      "name": "Tour",
+      "swiftui": {
+        "controls": [],
+        "note": "SwiftUI has no guided tour on iOS 16 or macOS 13.",
+        "status": "none",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "tree-view",
+      "name": "TreeView",
+      "swiftui": {
+        "controls": [
+          "List",
+          "OutlineGroup"
+        ],
+        "note": "A List with children, or an OutlineGroup.",
+        "status": "native",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "badge",
+      "name": "Badge",
+      "swiftui": {
+        "controls": [
+          ".badge"
+        ],
+        "note": "Badges on list rows and tab items; UIFnSwiftUI has no badge view.",
+        "status": "native",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "breadcrumb",
+      "name": "Breadcrumb",
+      "swiftui": {
+        "controls": [],
+        "note": "SwiftUI has no breadcrumb.",
+        "status": "none",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "card",
+      "name": "Card",
+      "swiftui": {
+        "controls": [
+          "GroupBox"
+        ],
+        "note": "GroupBox with the .uifn style.",
+        "status": "uifn-style",
+        "surfaces": [
+          "UIFnGroupBoxStyle"
+        ]
+      }
+    },
+    {
+      "id": "command",
+      "name": "Command",
+      "swiftui": {
+        "controls": [
+          "List",
+          ".searchable"
+        ],
+        "note": "A searchable List of commands; UIFnEmptyState can show the empty part. SwiftUI has no command palette.",
+        "status": "native",
+        "surfaces": [
+          "UIFnEmptyState"
+        ]
+      }
+    },
+    {
+      "id": "input-group",
+      "name": "InputGroup",
+      "swiftui": {
+        "controls": [],
+        "note": "SwiftUI has no input group; a .uifn TextField beside its addons draws no shared border.",
+        "status": "none",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "skeleton",
+      "name": "Skeleton",
+      "swiftui": {
+        "controls": [],
+        "note": "UIFnSkeleton around UIFnSkeletonBlock shapes.",
+        "status": "uifn-component",
+        "surfaces": [
+          "UIFnSkeleton",
+          "UIFnSkeletonBlock"
+        ]
+      }
+    },
+    {
+      "id": "table",
+      "name": "Table",
+      "swiftui": {
+        "controls": [
+          "Table"
+        ],
+        "note": "The system Table.",
+        "status": "native",
+        "surfaces": []
+      }
+    },
+    {
+      "id": "textarea",
+      "name": "Textarea",
+      "swiftui": {
+        "controls": [
+          "TextEditor"
+        ],
+        "note": "TextEditor; UIFnSwiftUI has no text editor style.",
+        "status": "native",
+        "surfaces": []
+      }
+    }
+  ],
+  "schemaVersion": 1,
+  "sourceSha256": "667f372d5fbba3ee294e8a4ab7918d65baead04d9938a2a62400b69475987250",
+  "statusCounts": {
+    "native": 34,
+    "none": 18,
+    "uifn-component": 5,
+    "uifn-style": 12
+  },
+  "statuses": [
+    "native",
+    "uifn-style",
+    "uifn-component",
+    "none"
+  ],
+  "surfaces": [
+    {
+      "id": "UIFnButtonStyle",
+      "issue": "UIF-24",
+      "kind": "style",
+      "primitives": [
+        "button",
+        "clipboard"
+      ],
+      "source": "uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnButtonStyle.swift"
+    },
+    {
+      "id": "UIFnSwitchToggleStyle",
+      "issue": "UIF-24",
+      "kind": "style",
+      "primitives": [
+        "switch"
+      ],
+      "source": "uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnToggleStyles.swift"
+    },
+    {
+      "id": "UIFnCheckboxToggleStyle",
+      "issue": "UIF-24",
+      "kind": "style",
+      "primitives": [
+        "checkbox",
+        "checkbox-group"
+      ],
+      "source": "uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnToggleStyles.swift"
+    },
+    {
+      "id": "UIFnTextFieldStyle",
+      "issue": "UIF-24",
+      "kind": "style",
+      "primitives": [
+        "input",
+        "number-input"
+      ],
+      "source": "uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnTextFieldStyle.swift"
+    },
+    {
+      "id": "UIFnGroupBoxStyle",
+      "issue": "UIF-24",
+      "kind": "style",
+      "primitives": [
+        "fieldset",
+        "card"
+      ],
+      "source": "uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnGroupBoxStyle.swift"
+    },
+    {
+      "id": "UIFnMenuStyle",
+      "issue": "UIF-25",
+      "kind": "style",
+      "primitives": [
+        "menu",
+        "select"
+      ],
+      "source": "uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnMenuStyle.swift"
+    },
+    {
+      "id": "UIFnMenuPicker",
+      "issue": "UIF-25",
+      "kind": "component",
+      "primitives": [
+        "select"
+      ],
+      "source": "uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnPickers.swift"
+    },
+    {
+      "id": "UIFnSegmentedPicker",
+      "issue": "UIF-25",
+      "kind": "component",
+      "primitives": [
+        "segment-group",
+        "tabs"
+      ],
+      "source": "uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnPickers.swift"
+    },
+    {
+      "id": "UIFnProgressViewStyle",
+      "issue": "UIF-25",
+      "kind": "style",
+      "primitives": [
+        "progress"
+      ],
+      "source": "uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnProgressViewStyle.swift"
+    },
+    {
+      "id": "UIFnGaugeStyle",
+      "issue": "UIF-25",
+      "kind": "style",
+      "primitives": [
+        "meter"
+      ],
+      "source": "uifn/swift/Sources/UIFnSwiftUI/Styles/UIFnGaugeStyle.swift"
+    },
+    {
+      "id": "UIFnSegmentedMeter",
+      "issue": "UIF-26",
+      "kind": "component",
+      "primitives": [
+        "meter"
+      ],
+      "source": "uifn/swift/Sources/UIFnSwiftUI/Components/UIFnSegmentedMeter.swift"
+    },
+    {
+      "id": "UIFnBanner",
+      "issue": "UIF-26",
+      "kind": "component",
+      "primitives": [
+        "toast"
+      ],
+      "source": "uifn/swift/Sources/UIFnSwiftUI/Components/UIFnBanner.swift"
+    },
+    {
+      "id": "uifnToast",
+      "issue": "UIF-26",
+      "kind": "component",
+      "primitives": [
+        "clipboard",
+        "toast"
+      ],
+      "source": "uifn/swift/Sources/UIFnSwiftUI/Components/UIFnBanner.swift"
+    },
+    {
+      "id": "UIFnEmptyState",
+      "issue": "UIF-26",
+      "kind": "component",
+      "primitives": [
+        "autocomplete",
+        "command"
+      ],
+      "source": "uifn/swift/Sources/UIFnSwiftUI/Components/UIFnEmptyState.swift"
+    },
+    {
+      "id": "UIFnSkeleton",
+      "issue": "UIF-26",
+      "kind": "component",
+      "primitives": [
+        "skeleton"
+      ],
+      "source": "uifn/swift/Sources/UIFnSwiftUI/Components/UIFnSkeleton.swift"
+    },
+    {
+      "id": "UIFnSkeletonBlock",
+      "issue": "UIF-26",
+      "kind": "component",
+      "primitives": [
+        "skeleton"
+      ],
+      "source": "uifn/swift/Sources/UIFnSwiftUI/Components/UIFnSkeleton.swift"
+    }
+  ],
+  "swiftuiStatusSchemaVersion": 1
+}
