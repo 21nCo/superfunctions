@@ -44,45 +44,33 @@ function readTrustRoot(trustRootPem) {
   }
 }
 
-// Every node:util brand predicate except isProxy (checked first): Date, RegExp, Map, Set, WeakMap, WeakSet, boxed
-// primitives, errors, promises, array buffers, typed arrays, DataView, iterators and the like. They inspect internal
-// slots, so they run no user code and are unaffected by a reset prototype.
-const BUILTIN_BRAND_CHECKS = Object.entries(types)
-  .filter(([name]) => name !== 'isProxy')
-  .map(([, isBrand]) => isBrand);
-
-/** True when `method` accepts `value` as its receiver; WeakRef and FinalizationRegistry have no node:util predicate. */
-function passesBrandCheck(method, value, ...args) {
+/** True when `value` structured-clones to an ordinary object, i.e. it carries no built-in internal slots. */
+function isOrdinaryRecord(value) {
   try {
-    method.call(value, ...args);
-    return true;
+    return Object.getPrototypeOf(structuredClone(value)) === Object.prototype;
   } catch {
     return false;
   }
 }
 
-/** True for objects with built-in internal slots, whatever their prototype now is. */
-function isNonPlainBuiltin(value) {
-  if (BUILTIN_BRAND_CHECKS.some((isBrand) => isBrand(value))) return true;
-  if (typeof WeakRef === 'function' && passesBrandCheck(WeakRef.prototype.deref, value)) return true;
-  return typeof FinalizationRegistry === 'function' && passesBrandCheck(FinalizationRegistry.prototype.unregister, value, {});
-}
-
 /**
  * Copies the envelope's own data properties into a plain record. A Proxy is rejected before any reflective
- * operation, so none of its traps run. A built-in with internal slots (Date, Map, a typed array, a boxed primitive and
- * so on) is rejected even when its prototype was reset to Object.prototype or null. Only own property descriptors are
- * read, so an accessor property is rejected instead of being invoked. A value that is not a plain object with exactly
- * the schema-v2 fields is malformed; an envelope whose schemaVersion is not 2 (such as a v1 envelope, which has no
- * domain field) is an unsupported schema.
+ * operation, so none of its traps run. Only own property descriptors are read, so an accessor property is rejected
+ * instead of being invoked. A value that is not a plain object with exactly the schema-v2 fields, each holding a
+ * primitive, is malformed; an envelope whose schemaVersion is not 2 (such as a v1 envelope, which has no domain field)
+ * is an unsupported schema.
+ *
+ * Plainness is a positive test, not a list of built-ins: the value must structured-clone to an ordinary object. A
+ * built-in with internal slots keeps its type through the clone (Date, Map, a typed array, a boxed primitive, an
+ * error) or cannot be cloned at all (Intl objects, iterators, promises, WeakRef), even when its prototype was reset to
+ * Object.prototype or null. The clone runs only after every field is known to be an own data property holding a
+ * primitive, so it cannot reach caller code.
  */
 function readEnvelope(value) {
   if (value === null || typeof value !== 'object' || types.isProxy(value)) return { reason: 'envelope-malformed' };
   if (Array.isArray(value)) return { reason: 'envelope-malformed' };
   const prototype = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) return { reason: 'envelope-malformed' };
-  // After the prototype check, so a brand predicate's lookup can only reach Object.prototype, never caller code.
-  if (isNonPlainBuiltin(value)) return { reason: 'envelope-malformed' };
   const schema = Object.getOwnPropertyDescriptor(value, 'schemaVersion');
   if (!schema || !('value' in schema)) return { reason: 'envelope-malformed' };
   if (schema.value !== REGISTRY_SIGNATURE_SCHEMA_VERSION) return { reason: 'schema-unsupported' };
@@ -92,8 +80,11 @@ function readEnvelope(value) {
   for (const field of ENVELOPE_FIELDS) {
     const descriptor = Object.getOwnPropertyDescriptor(value, field);
     if (!descriptor || !('value' in descriptor)) return { reason: 'envelope-malformed' };
-    fields[field] = descriptor.value;
+    const fieldValue = descriptor.value;
+    if (fieldValue !== null && (typeof fieldValue === 'object' || typeof fieldValue === 'function')) return { reason: 'envelope-malformed' };
+    fields[field] = fieldValue;
   }
+  if (!isOrdinaryRecord(value)) return { reason: 'envelope-malformed' };
   return { fields };
 }
 

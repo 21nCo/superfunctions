@@ -69,6 +69,14 @@ const nonPlainBuiltins = (): [string, unknown][] => [
     ['an error', builtinCarrier(new Error('x'), null)],
     ['a WeakRef', builtinCarrier(new WeakRef({}), null)],
     ['a FinalizationRegistry', builtinCarrier(new FinalizationRegistry(() => undefined), Object.prototype)],
+    ['an Intl.Collator', builtinCarrier(new Intl.Collator(), null)],
+    ['an Intl.NumberFormat', builtinCarrier(new Intl.NumberFormat(), Object.prototype)],
+    ['an Intl.Locale', builtinCarrier(new Intl.Locale('en'), null)],
+    ['an array iterator', builtinCarrier([].values(), Object.prototype)],
+    ['a string iterator', builtinCarrier(''[Symbol.iterator](), null)],
+    ['a RegExp string iterator', builtinCarrier('a'.matchAll(/a/g), null)],
+    ['a generator', builtinCarrier((function* generator() { /* empty */ })(), null)],
+    ['a URLSearchParams', builtinCarrier(new URLSearchParams(), null)],
 ];
 
 /** Envelopes the schema-v2 verifier must reject as malformed. */
@@ -92,6 +100,8 @@ const malformedEnvelopes = (): [string, unknown][] => [
     ['an empty signature', { ...envelopeFor(root, catalog), signatureBase64: '' }],
     ['noncanonical signature pad bits', { ...envelopeFor(root, catalog), signatureBase64: withAlteredPadBits(envelopeFor(root, catalog).signatureBase64) }],
     ['an 89-character signature', { ...envelopeFor(root, catalog), signatureBase64: `${envelopeFor(root, catalog).signatureBase64}A` }],
+    ['an object-valued algorithm', { ...envelopeFor(root, catalog), algorithm: { toString: () => 'Ed25519' } }],
+    ['a boxed-string key id', { ...envelopeFor(root, catalog), keyId: Object(root.keyId) }],
     ['an 8 MiB signature', { ...envelopeFor(root, catalog), signatureBase64: 'A'.repeat(8 * 1024 * 1024) }],
     ...nonPlainBuiltins(),
 ];
@@ -241,6 +251,29 @@ describe('schema-v2 registry signature verification', () => {
       Object.defineProperty(envelope, 'signatureBase64', { enumerable: true, get() { invoked = true; return valid().signatureBase64; } });
       expect(verifyRegistrySignatureEnvelope(catalog, envelope, root.pem)).toMatchObject({ ...INVALID, reason: 'envelope-malformed' });
       expect(invoked).toBe(false);
+    });
+
+    it('never invokes accessors under symbol keys, including the ones node:crypto brand checks read', async () => {
+      const { publicKey } = generateKeyPairSync('ed25519');
+      const cryptoKey = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']) as CryptoKeyPair;
+      const symbols = [...Object.getOwnPropertySymbols(publicKey), ...Object.getOwnPropertySymbols(cryptoKey.publicKey), Symbol('x')];
+      const phase16 = await import(pathToFileURL(path.join(repoRoot, 'scripts/verify-uifn-phase-16.mjs')).href);
+      for (const symbol of symbols) {
+        let invoked = 0;
+        const envelope = Object.defineProperty(valid(), symbol, { enumerable: true, get() { invoked += 1; return 1; } });
+        expect(verifyRegistrySignatureEnvelope(catalog, envelope, root.pem), String(symbol)).toMatchObject({ ...INVALID, reason: 'envelope-malformed' });
+        expect(phase16.verifyRegistrySignatureFile(catalog, envelope, root.pem), String(symbol)).toMatchObject({ valid: false, reason: 'envelope-malformed' });
+        expect(invoked, String(symbol)).toBe(0);
+      }
+    });
+
+    it('never runs code reachable from an object-valued field', () => {
+      let invoked = 0;
+      const field = { get value() { invoked += 1; return 'x'; }, toString() { invoked += 1; return 'Ed25519'; } };
+      for (const name of ['algorithm', 'domain', 'keyId', 'catalogSha256', 'signatureBase64']) {
+        expect(verifyRegistrySignatureEnvelope(catalog, { ...valid(), [name]: field }, root.pem), name).toMatchObject({ ...INVALID });
+      }
+      expect(invoked).toBe(0);
     });
 
     it('rejects a proxy without running any of its traps', () => {
