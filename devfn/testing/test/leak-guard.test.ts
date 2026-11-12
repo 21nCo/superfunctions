@@ -1288,6 +1288,38 @@ describe.skipIf(!["linux", "darwin"].includes(process.platform))("stopProcesses"
     expect(await gone(pid)).toBe(true);
   });
 
+  it("returns the leader of a group it cannot read once that leader has exited, never taking the group for an empty one", async () => {
+    const { child, pid: leader, output } = await start(`const { spawn } = require("node:child_process");
+const member = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+process.stdout.write(member.pid + "\\n");
+process.stdin.on("end", () => process.exit(0));
+process.stdin.resume();`);
+    const member = Number(output().trim());
+    pids.push(member);
+    const entry = listed(leader);
+    const exited = new Promise((resolve) => child.once("exit", resolve));
+    child.stdin!.end();
+    await exited;
+    // Reading the processes in a group fails: ps -A without etime= on macOS, the /proc listing it reads on Linux.
+    const { spawnSync } = childProcess;
+    const { readdirSync } = fs;
+    const failure = () => Object.assign(new Error("listing the group failed (test)"), { code: "EIO" });
+    (childProcess as { spawnSync: unknown }).spawnSync = (command: string, args: string[], ...rest: unknown[]) =>
+      command === "ps" && args?.includes("-A") && !args.includes("etime=") ? { error: failure() } : (spawnSync as (...all: unknown[]) => unknown)(command, args, ...rest);
+    (fs as { readdirSync: unknown }).readdirSync = (target: unknown, ...rest: unknown[]) => {
+      if (target === "/proc" && new Error().stack?.includes("groupMembers")) throw failure();
+      return (readdirSync as (...all: unknown[]) => unknown)(target, ...rest);
+    };
+    syncBuiltinESMExports();
+    restore = () => {
+      (childProcess as { spawnSync: unknown }).spawnSync = spawnSync;
+      (fs as { readdirSync: unknown }).readdirSync = readdirSync;
+      syncBuiltinESMExports();
+    };
+    expect((await stopProcesses([entry])).map((left) => left.pid)).toEqual([leader]);
+    expect(alive(member)).toBe(true);
+  });
+
   it("never signals a group whose leader shows another start once the processes in its group have been read", async () => {
     const { pid } = await start(`process.stdout.write("ready\\n"); setInterval(() => {}, 1000);`);
     const entry = listed(pid);

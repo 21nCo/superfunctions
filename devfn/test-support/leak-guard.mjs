@@ -522,14 +522,18 @@ function signalAll(processes, signal, held = new Map()) {
     const reread = () => { states = processStates(processes.slice(index + 1).map((later) => later.pid)); };
     if (current?.same) {
       const wholeGroup = leads && current.pgid === entry.pid;
-      const witnessed = !(wholeGroup && signal === "SIGTERM") || witnessGroup(entry);
-      if (wholeGroup && signal === "SIGTERM") reread();
-      // A leader that has just exited is left to the next round, which treats it as exited.
-      if (witnessed) send(entry, wholeGroup ? -entry.pid : entry.pid);
+      const witnessing = wholeGroup && signal === "SIGTERM";
+      // The signal follows the last read of the leader at once. A leader that has just exited is
+      // left to the next round, which treats it as exited.
+      if (!witnessing || witnessGroup(entry)) send(entry, wholeGroup ? -entry.pid : entry.pid);
+      if (witnessing) reread();
     } else if (leads && current?.exited) {
-      const members = groupMembers(entry.pid) ?? [];
+      const members = groupMembers(entry.pid);
       reread();
-      if (members.some((member) => inLeadersGroup(entry, member) && identityOf(member)?.pgid === entry.pid)) send(entry, -entry.pid);
+      held.delete(entry.pid);
+      // A group that cannot be read is not taken for an empty one: its leader stands for it, as unresolved.
+      if (!members) held.set(entry.pid, { ...entry, unresolvedGroup: true });
+      else if (members.some((member) => inLeadersGroup(entry, member) && identityOf(member)?.pgid === entry.pid)) send(entry, -entry.pid);
       else for (const member of members) held.set(member.pid, member);
     }
   }
@@ -614,6 +618,8 @@ function groupMembers(pgid) {
 
 /** Whether `entry` may still run: not when its ID names no process, a zombie or a process started at another time. */
 const mayRun = (entry, states) => alive(entry.pid) && stillRunning(entry, states) !== false;
+/** Whether a process signalAll held back is still to be reported: one that may run, or an exited leader whose group could not be read. */
+const stillHeld = (entry, states) => entry.unresolvedGroup === true || mayRun(entry, states);
 
 async function waitForExit(processes, graceMs) {
   const running = () => {
@@ -656,7 +662,7 @@ async function stopRounds(processes, find) {
     idle = signalled.length === 0 && sameProcesses(listed, pending) ? idle + 1 : 0;
     if (!find || listed.length === 0 || Date.now() >= deadline || idle >= IDENTITY_TRIES) {
       const pids = new Set(listed.map((entry) => entry.pid));
-      return { listed, refused: idle >= IDENTITY_TRIES, remaining: [...listed, ...[...held.values()].filter((entry) => !pids.has(entry.pid) && mayRun(entry))] };
+      return { listed, refused: idle >= IDENTITY_TRIES, remaining: [...listed, ...[...held.values()].filter((entry) => !pids.has(entry.pid) && stillHeld(entry))] };
     }
     if (idle > 0) await pause(250);
     pending = listed;
@@ -669,7 +675,7 @@ export async function stopProcesses(processes, find) {
 }
 
 /** The note for processes stopProcesses left running. */
-const unstoppedNote = (unstopped) => `Not stopped: ${unstopped.map((entry) => entry.pid).join(", ")}. Each still ran after SIGKILL, or the guard could not tell it was still the process it had listed, or that it was still in the group of a stopped process that has exited, so it did not signal it.`;
+const unstoppedNote = (unstopped) => `Not stopped: ${unstopped.map((entry) => entry.pid).join(", ")}. Each still ran after SIGKILL, or the guard could not tell it was still the process it had listed, or that it was still in the group of a stopped process that has exited (or, for an exited leader, could not read its group), so it did not signal it.`;
 
 /**
  * What a process ID names now, read for that ID alone (or taken from `states`, read for several
@@ -825,7 +831,7 @@ async function stopAndReport(classify, settled) {
   }
   if (reported) {
     const pids = new Set(reported.owned.map((entry) => entry.pid));
-    unstopped = [...reported.owned, ...unstopped.filter((entry) => !pids.has(entry.pid) && mayRun(entry))];
+    unstopped = [...reported.owned, ...unstopped.filter((entry) => !pids.has(entry.pid) && stillHeld(entry))];
   }
   for (const entry of unstopped) stopped.set(entry.pid, entry);
   return { owned: [...stopped.values()], unstopped, reported };
@@ -992,7 +998,7 @@ export async function setup(project) {
     if (runnerTemp) attempt(() => removeTree(runnerTemp));
     const leaked = new Map(state.found.processes);
     for (const entry of owned.values()) if (!isRunnerChild(entry)) leaked.set(entry.pid, entry);
-    for (const entry of held.values()) if (!leaked.has(entry.pid) && attempt(() => mayRun(entry))) leaked.set(entry.pid, entry);
+    for (const entry of held.values()) if (!leaked.has(entry.pid) && attempt(() => stillHeld(entry))) leaked.set(entry.pid, entry);
     const entries = [...new Set([...state.found.entries, ...leftovers]), ...locks.map(describeLock), ...unremoved.map((directory) => `${directory}, which could not be removed`)];
     const { ambiguous, orphans } = classified;
     const notes = classify.stale ? [STALE_NOTE] : [];
@@ -1000,7 +1006,7 @@ export async function setup(project) {
     const unstopped = attempt(() => {
       const kept = [...new Map([...owned, ...held]).values()];
       const states = processStates(kept.map((entry) => entry.pid));
-      return kept.filter((entry) => mayRun(entry, states));
+      return kept.filter((entry) => stillHeld(entry, states));
     }) ?? [];
     if (unstopped.length > 0) notes.push(unstoppedNote(unstopped));
     if (leaked.size === 0 && entries.length === 0 && ambiguous.length === 0 && orphans.length === 0 && notes.length === 0) return;
@@ -1478,7 +1484,7 @@ export function guardTestFile({ beforeEach, afterEach, afterAll }) {
     const { owned, unstopped, reported } = await stopAndReport(classify, settled);
     const pids = new Set(owned.map((entry) => entry.pid));
     for (const entry of leftBehind.values()) {
-      if (pids.has(entry.pid) || !mayRun(entry)) continue;
+      if (pids.has(entry.pid) || !stillHeld(entry)) continue;
       owned.push(entry);
       unstopped.push(entry);
     }
