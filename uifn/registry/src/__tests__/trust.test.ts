@@ -1,9 +1,11 @@
-import { createHash, createPublicKey, generateKeyPairSync, sign, webcrypto, type KeyObject } from 'node:crypto';
+import { createHash, createPublicKey, generateKeyPairSync, sign, verify as cryptoVerify, webcrypto, type KeyObject } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { afterEach, describe, expect, it } from 'vitest';
+import { types } from 'node:util';
+import vm from 'node:vm';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { REGISTRY_CATALOG_PAYLOAD_JSON } from '../generated/catalog';
 import { REGISTRY_SIGNATURE } from '../generated/signature';
 import { REGISTRY_TRUST_ROOT_KEY_ID, verifyRegistryCatalogSignature } from '../trust';
@@ -65,6 +67,9 @@ const nonPlainBuiltins = (): [string, unknown][] => [
     ['a boxed boolean', builtinCarrier(new Boolean(false), null)],
     ['a typed array', builtinCarrier(new Uint8Array(0), null)],
     ['an ArrayBuffer', builtinCarrier(new ArrayBuffer(0), Object.prototype)],
+    ['a SharedArrayBuffer', builtinCarrier(new SharedArrayBuffer(0), null)],
+    ['a DataView', builtinCarrier(new DataView(new ArrayBuffer(0)), Object.prototype)],
+    ['a WeakMap', builtinCarrier(new WeakMap(), null)],
     ['a promise', builtinCarrier(Promise.resolve(), null)],
     ['an error', builtinCarrier(new Error('x'), null)],
     ['a WeakRef', builtinCarrier(new WeakRef({}), null)],
@@ -76,6 +81,8 @@ const nonPlainBuiltins = (): [string, unknown][] => [
     ['a string iterator', builtinCarrier(''[Symbol.iterator](), null)],
     ['a RegExp string iterator', builtinCarrier('a'.matchAll(/a/g), null)],
     ['a generator', builtinCarrier((function* generator() { /* empty */ })(), null)],
+    ['an async generator', builtinCarrier((async function* generator() { /* empty */ })(), Object.prototype)],
+    ['an arguments object', builtinCarrier((function args() { return arguments; })(), null)],
 ];
 
 /** Envelopes the schema-v2 verifier must reject as malformed. */
@@ -280,6 +287,49 @@ describe('schema-v2 registry signature verification', () => {
         expect(phase16.verifyRegistrySignatureFile(catalog, carrier, root.pem), label).toMatchObject({ valid: false, reason: 'envelope-malformed' });
       }
       expect(invoked).toBe(0);
+    });
+
+    it('rejects binary carriers without cloning or copying their backing store', async () => {
+      const phase16 = await import(pathToFileURL(path.join(repoRoot, 'scripts/verify-uifn-phase-16.mjs')).href);
+      const size = 64 * 1024 * 1024;
+      const carriers: [string, object][] = [
+        ['a 64 MiB ArrayBuffer', builtinCarrier(new ArrayBuffer(size), Object.prototype) as object],
+        ['a zero-length view over a 64 MiB buffer', builtinCarrier(new Uint8Array(new ArrayBuffer(size), 0, 0), null) as object],
+      ];
+      const clone = vi.spyOn(globalThis, 'structuredClone');
+      try {
+        for (const [label, carrier] of carriers) {
+          const before = process.memoryUsage().arrayBuffers;
+          expect(verifyRegistrySignatureEnvelope(catalog, carrier, root.pem), label).toMatchObject({ ...INVALID, reason: 'envelope-malformed' });
+          expect(phase16.verifyRegistrySignatureFile(catalog, carrier, root.pem), label).toMatchObject({ valid: false, reason: 'envelope-malformed' });
+          expect(process.memoryUsage().arrayBuffers - before, label).toBeLessThan(size / 8);
+          expect(clone.mock.calls.some(([value]) => value === carrier), label).toBe(false);
+        }
+      } finally {
+        clone.mockRestore();
+      }
+    });
+
+    it('accepts a same-realm envelope when the core runs in another realm with the host structuredClone', () => {
+      // Evaluates the shared core as a script in a vm context; node:crypto and node:util come from the host.
+      const source = readFileSync(path.join(packageRoot, 'src/trust-verify-core.mjs'), 'utf8')
+        .replace(/^import \{([^}]*)\} from 'node:[a-z]+';$/gm, 'const {$1} = host;')
+        .replace(/^export /gm, '');
+      expect(source).not.toMatch(/^import /m);
+      const context = vm.createContext({ Buffer, structuredClone });
+      const load = vm.runInContext(`(host) => { ${source}\n return verifyRegistrySignatureEnvelope; }`, context) as
+        (host: object) => typeof verifyRegistrySignatureEnvelope;
+      const realmVerify = load({ createHash, createPublicKey, verify: cryptoVerify, types });
+      const fields = envelopeFor(root, catalog);
+      const inRealm = vm.runInContext('(fields) => [{ ...fields }, Object.assign(Object.create(null), fields)]', context) as (f: object) => object[];
+      for (const envelope of inRealm(fields)) {
+        expect(realmVerify(catalog, envelope, root.pem)).toEqual({ ok: true, keyId: root.keyId, catalogSha256: sha256Hex(catalog) });
+      }
+      const realmCarriers = vm.runInContext(`(fields) => [new Date(), new ArrayBuffer(8), new Map(), /x/]
+        .map((target) => Object.setPrototypeOf(Object.assign(target, fields), Object.prototype))`, context) as (f: object) => object[];
+      for (const carrier of [...realmCarriers(fields), fields, builtinCarrier(new Date(), Object.prototype) as object]) {
+        expect(realmVerify(catalog, carrier, root.pem)).toMatchObject({ ...INVALID, reason: 'envelope-malformed' });
+      }
     });
 
     it('never runs code reachable from an object-valued field', () => {

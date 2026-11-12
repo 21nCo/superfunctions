@@ -45,17 +45,47 @@ function readTrustRoot(trustRootPem) {
 }
 
 /**
- * True when `value` is an ordinary object as far as the engine can tell. Map, Set and errors are rejected by their
- * internal-slot predicates first, because cloning them would walk their contents. Every other value must then
- * structured-clone to an ordinary object: a remaining slot-bearing built-in keeps its type through the clone (Date,
- * RegExp, a typed array, a boxed primitive) or cannot be cloned (Intl objects, iterators, promises, WeakRef). Private
- * class fields (#x) are invisible to every JavaScript check; the verifier never reads them, so such a carrier is
- * judged by its six own data fields alone.
+ * Built-ins whose internal slots can hold caller storage (binary buffers, collections, error causes, strings, regular
+ * expressions) or that wrap engine or host state. They are rejected by their internal-slot predicates, which read no
+ * properties and run no caller code, before structuredClone could copy or walk them. These predicates work across
+ * realms.
+ */
+const SLOT_BEARING = [
+  types.isAnyArrayBuffer,
+  types.isArrayBufferView,
+  types.isMap,
+  types.isSet,
+  types.isWeakMap,
+  types.isWeakSet,
+  types.isNativeError,
+  types.isDate,
+  types.isRegExp,
+  types.isBoxedPrimitive,
+  types.isPromise,
+  types.isGeneratorObject,
+  types.isMapIterator,
+  types.isSetIterator,
+  types.isArgumentsObject,
+  types.isModuleNamespaceObject,
+  types.isKeyObject,
+  types.isCryptoKey,
+  types.isExternal,
+];
+
+/**
+ * True when `value` is an ordinary object as far as the engine can tell. The cheap internal-slot predicates in
+ * SLOT_BEARING run first, so no caller-owned storage is ever copied. The remaining value must then structured-clone to
+ * an ordinary object; by now it can hold only its six primitive own fields, so the clone is bounded by the envelope.
+ * Any other slot-bearing built-in keeps its type through the clone or cannot be cloned (Intl objects, other iterators,
+ * WeakRef, FinalizationRegistry). The clone's prototype is compared with that of a clone of {} made by the same
+ * structuredClone, not with this realm's Object.prototype, so the answer does not depend on which realm's
+ * structuredClone is in scope. Private class fields (#x) are invisible to every JavaScript check; the verifier never
+ * reads them, so such a carrier is judged by its six own data fields alone.
  */
 function isOrdinaryRecord(value) {
-  if (types.isMap(value) || types.isSet(value) || types.isNativeError(value)) return false;
+  if (SLOT_BEARING.some((isSlotBearing) => isSlotBearing(value))) return false;
   try {
-    return Object.getPrototypeOf(structuredClone(value)) === Object.prototype;
+    return Object.getPrototypeOf(structuredClone(value)) === Object.getPrototypeOf(structuredClone({}));
   } catch {
     return false;
   }
