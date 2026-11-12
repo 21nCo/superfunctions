@@ -138,9 +138,67 @@ export interface HttpClient {
   ): Promise<{ etag: string; recorded?: boolean }>;
 }
 
+const CREDENTIALS_MODES: readonly RequestCredentials[] = ["omit", "same-origin", "include"];
+
+function resolveTransport(config: FileFnClientConfig): {
+  send: (url: string, init: RequestInit) => Promise<Response>;
+  credentials: RequestCredentials;
+} {
+  const customFetch = config.fetch;
+  if (customFetch !== undefined && typeof customFetch !== "function") {
+    throw new TypeError("FileFnClientConfig.fetch must be a function");
+  }
+  const credentials = config.credentials ?? "same-origin";
+  if (!CREDENTIALS_MODES.includes(credentials)) {
+    throw new TypeError(
+      `FileFnClientConfig.credentials must be one of ${CREDENTIALS_MODES.join(", ")}`,
+    );
+  }
+
+  return {
+    // Call the injected fetch detached from `config` so browser fetch does not
+    // throw "Illegal invocation"; resolve the global per call so it can be
+    // replaced (polyfilled or stubbed) after the client is created.
+    send: (url, init) => (customFetch ? customFetch(url, init) : globalThis.fetch(url, init)),
+    credentials,
+  };
+}
+
+function resolveUrl(url: string): URL | undefined {
+  const pageUrl =
+    typeof globalThis.location?.href === "string" ? globalThis.location.href : undefined;
+  try {
+    return new URL(url, pageUrl);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Returns a predicate that tells whether a URL addresses the FileFn API under
+ * `baseUrl` (same origin and path prefix). Only those requests carry the
+ * configured auth headers and credentials mode.
+ */
+function createFileFnUrlMatcher(baseUrl: string): (url: string) => boolean {
+  const base = resolveUrl(baseUrl);
+  const basePath = base?.pathname.replace(/\/$/, "") ?? "";
+  return (url) => {
+    const target = resolveUrl(url);
+    if (!base || !target) {
+      return url.startsWith(`${baseUrl}/`);
+    }
+    return (
+      target.origin === base.origin &&
+      (target.pathname === basePath || target.pathname.startsWith(`${basePath}/`))
+    );
+  };
+}
+
 export function createHttpClient(config: FileFnClientConfig): HttpClient {
   const retryOptions = resolveRetryOptions(config.retryOptions);
   const baseUrl = config.baseUrl.replace(/\/$/, "");
+  const transport = resolveTransport(config);
+  const isFileFnUrl = createFileFnUrlMatcher(baseUrl);
 
   async function readResponseBody(response: Response): Promise<{
     rawBody: string;
@@ -210,10 +268,11 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
         if (extraHeaders) {
           Object.assign(headers, extraHeaders);
         }
-        const response = await fetch(`${baseUrl}${path}`, {
+        const response = await transport.send(`${baseUrl}${path}`, {
           method,
           headers,
           body: body ? JSON.stringify(body) : undefined,
+          credentials: transport.credentials,
           signal,
         });
 
@@ -392,15 +451,21 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
         async () => {
           // If URL is relative (proxy upload), prepend baseUrl
           const finalUrl = url.startsWith("/") ? `${baseUrl}${url}` : url;
+          // Proxy uploads under baseUrl go to FileFn and carry its auth
+          // headers and credentials mode. Any other URL (a presigned storage
+          // URL) gets only its signed headers and never ambient credentials.
+          const toFileFn = isFileFnUrl(finalUrl);
 
           const requestHeaders = {
+            ...(toFileFn ? await getHeaders() : {}),
             ...headers,
             ...(uploadSessionToken ? { "x-upload-session-token": uploadSessionToken } : {}),
           };
-          const response = await fetch(finalUrl, {
+          const response = await transport.send(finalUrl, {
             method: "PUT",
             headers: requestHeaders,
             body,
+            credentials: toFileFn ? transport.credentials : "omit",
             signal,
           });
 
