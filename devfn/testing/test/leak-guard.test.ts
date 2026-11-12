@@ -425,7 +425,7 @@ describe.skipIf(process.platform === "win32")("DevFn test leak guard", { timeout
   it.each([
     ["the run's temp root, where only the run's teardown finds it", "process.env.SFN_TEST_LEAK_GUARD_ROOT"],
     ["its test file's folder", 'mkdtempSync(path.join(tmpdir(), "devfn-leader-"))'],
-  ])("stops what a leftover process starts as it is stopped, or lists what it cannot tell is in its group, left in %s", async (_, where) => {
+  ])("stops what a leftover process starts as it is stopped, left in %s", async (_, where) => {
     const { dir, record } = project("");
     const leader = path.join(dir, "leader.cjs");
     const stopped = path.join(dir, "stopped.json");
@@ -454,10 +454,8 @@ test("leaves a process that starts more as it stops", async () => {
       expect(code).not.toBe(0);
       expect(output).toContain(`process ${recorded.pid} `);
       expect(await gone(recorded.pid!)).toBe(true);
-      // Started in the leader's group once the guard had last seen the leader, it cannot be told
-      // from a process in a later group with that ID, so it is stopped with the group only if the
-      // guard saw the leader again first, and is otherwise listed, but never signalled.
-      if (!(await gone(started!.sameGroup))) expect(output).toMatch(new RegExp(`Not stopped: (?:\\d+, )*${started!.sameGroup}\\b`));
+      // Started in the leader's group just after the guard last saw the leader, it is stopped with that group.
+      expect(await gone(started!.sameGroup)).toBe(true);
       expect(await gone(started!.ownGroup)).toBe(true);
       expect(existsSync(recorded.root)).toBe(false);
     } finally {
@@ -964,9 +962,13 @@ export function failListingsAfter(allowed) {
     }
     // A macOS listing runs ps -A -ww once without -E and once with it; it counts once.
     if (command === "ps" && args?.includes("-ww") && !args.includes("-E") && fails()) return { error: failure() };
-    if (command === "ps" && args?.includes("-p") && args.at(-1) === replaced()) {
+    // The guard reads several processes' starts with one ps -p; only this one's line changes.
+    if (command === "ps" && args?.includes("-p") && replaced() && String(args.at(-1)).split(",").includes(replaced())) {
       if (unreadable || always === "unreadable") { unreadable = false; return { error: failure() }; }
-      if (!process.env.UNREADABLE_ONCE) { const result = spawnSync(command, args, ...rest); return { ...result, stdout: later(result.stdout) }; }
+      if (!process.env.UNREADABLE_ONCE) {
+        const result = spawnSync(command, args, ...rest);
+        return { ...result, stdout: result.stdout.split("\\n").map((line) => line.trim().startsWith(replaced() + " ") ? later(line) : line).join("\\n") };
+      }
     }
     return spawnSync(command, args, ...rest);
   };
@@ -1212,7 +1214,7 @@ describe.skipIf(!["linux", "darwin"].includes(process.platform))("stopProcesses"
   /**
    * From the read after the first `after` on, up to the `until`-th, this process's reads of
    * `pid`'s own start (ps -p on macOS, /proc/<pid>/stat on Linux), the ones the guard makes before
-   * signalling, fail or show a later start, as when the ID has been reused. The self-test's own
+   * signalling (one, and for a group leader before SIGTERM a second once its group is read), fail or show a later start, as when the ID has been reused. The self-test's own
    * liveness check is unaffected.
    */
   function alterStartReads(pid: number, mode: "unreadable" | "later", after = 0, until = Infinity) {
@@ -1222,12 +1224,13 @@ describe.skipIf(!["linux", "darwin"].includes(process.platform))("stopProcesses"
     const failure = () => Object.assign(new Error("reading the start failed (test)"), { code: "EIO" });
     (childProcess as { spawnSync: unknown }).spawnSync = (command: string, args: string[], ...rest: unknown[]) => {
       const result = (spawnSync as (...all: unknown[]) => { stdout: string })(command, args, ...rest);
-      if (command !== "ps" || !args?.includes("-p") || args.at(-1) !== String(pid) || (reads += 1) <= after || reads > until) return result;
-      return mode === "unreadable" ? { error: failure() } : { ...result, stdout: later(result.stdout) };
+      if (command !== "ps" || !args?.includes("-p") || !String(args.at(-1)).split(",").includes(String(pid)) || (reads += 1) <= after || reads > until) return result;
+      return mode === "unreadable" ? { error: failure() } : { ...result, stdout: result.stdout.split("\n").map((line) => (line.trim().startsWith(`${pid} `) ? later(line) : line)).join("\n") };
     };
     (fs as { readFileSync: unknown }).readFileSync = (target: unknown, ...rest: unknown[]) => {
       const text = (readFileSync as (...all: unknown[]) => string)(target, ...rest);
-      if (target !== `/proc/${pid}/stat` || (reads += 1) <= after || reads > until) return text;
+      // Reading a group's processes reads every process's stat file too; those reads are left alone.
+      if (target !== `/proc/${pid}/stat` || new Error().stack?.includes("groupMembers") || (reads += 1) <= after || reads > until) return text;
       if (mode === "unreadable") throw failure();
       const at = text.lastIndexOf(")") + 2;
       const fields = text.slice(at).split(" ");
@@ -1285,11 +1288,20 @@ describe.skipIf(!["linux", "darwin"].includes(process.platform))("stopProcesses"
     expect(await gone(pid)).toBe(true);
   });
 
+  it("never signals a group whose leader shows another start once the processes in its group have been read", async () => {
+    const { pid } = await start(`process.stdout.write("ready\\n"); setInterval(() => {}, 1000);`);
+    const entry = listed(pid);
+    expect(entry.pgid).toBe(pid);
+    alterStartReads(pid, "later", 1);
+    expect(await stopProcesses([entry])).toEqual([]);
+    expect(alive(pid)).toBe(true);
+  });
+
   it("sends SIGKILL after SIGTERM only while the process ID still shows the start listed", async () => {
     const { pid, output } = await start(ignoresSigterm);
     const entry = listed(pid);
-    // The read before SIGTERM shows the start listed; every later one shows a later start.
-    alterStartReads(pid, "later", 1);
+    // The reads before SIGTERM (it leads its group) show the start listed; every later one shows a later start.
+    alterStartReads(pid, "later", 2);
     expect(await stopProcesses([entry])).toEqual([]);
     for (const deadline = Date.now() + 2_000; !output().includes("SIGTERM") && Date.now() < deadline;) await sleep(20);
     expect(output()).toContain("SIGTERM");
