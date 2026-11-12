@@ -1,0 +1,2 @@
+# UIFnCR.swift ends its lines with carriage returns on purpose.
+UIFnCR.swift -text -whitespace

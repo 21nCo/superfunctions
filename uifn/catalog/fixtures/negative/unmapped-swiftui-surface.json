@@ -1,0 +1,6 @@
+{
+  "id": "unmapped-swiftui-surface",
+  "description": "Drop UIFnSkeletonBlock, which only Skeleton names, so no primitive maps it.",
+  "mutation": { "swiftuiPrimitive": "Skeleton", "setField": "surfaces", "value": ["UIFnSkeleton"] },
+  "expectedErrorCodes": ["UIFN_CATALOG_SWIFTUI_SURFACE_UNMAPPED"]
+}

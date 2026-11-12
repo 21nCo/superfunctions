@@ -6,7 +6,7 @@
   "description": "Private canonical definition compiler for the uifn 1.0 primitive catalog",
   "scripts": {
     "generate": "node ../../scripts/generate-uifn-catalog.mjs --write",
-    "test": "node --test ../../scripts/verify-uifn-catalog.test.mjs",
+    "test": "node ../../scripts/verify-uifn-catalog.mjs && node --test ../../scripts/verify-uifn-catalog.test.mjs",
     "verify": "node ../../scripts/verify-uifn-catalog.mjs"
   }
 }

@@ -1,0 +1,6 @@
+{
+  "id": "unknown-swiftui-status",
+  "description": "Give Tooltip a SwiftUI status outside the versioned enum.",
+  "mutation": { "swiftuiPrimitive": "Tooltip", "setField": "status", "value": "web-view" },
+  "expectedErrorCodes": ["UIFN_CATALOG_UNSUPPORTED_VALUE"]
+}

@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uifn.dev/schema/catalog/v1/swiftui-status.schema.json",
+  "title": "uifn catalog SwiftUI status v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "catalogVersion", "generatorVersion", "sourceSha256", "catalogSha256", "implementationEvidence", "swiftuiStatusSchemaVersion", "statuses", "statusCounts", "surfaces", "primitives"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "catalogVersion": { "const": "1.0.0" },
+    "generatorVersion": { "const": "1.0.0" },
+    "sourceSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "catalogSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "implementationEvidence": { "const": true },
+    "swiftuiStatusSchemaVersion": { "const": 1 },
+    "statuses": { "const": ["native", "uifn-style", "uifn-component", "none"] },
+    "statusCounts": {
+      "type": "object", "additionalProperties": false, "required": ["native", "uifn-style", "uifn-component", "none"],
+      "properties": {
+        "native": { "type": "integer", "minimum": 0 },
+        "uifn-style": { "type": "integer", "minimum": 0 },
+        "uifn-component": { "type": "integer", "minimum": 0 },
+        "none": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "surfaces": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["id", "kind", "issue", "source", "primitives"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*$" },
+          "kind": { "enum": ["style", "component"] },
+          "issue": { "type": "string", "pattern": "^UIF-[0-9]+$" },
+          "source": { "type": "string", "pattern": "^uifn/swift/Sources/UIFnSwiftUI/(?:Styles|Components)/(?:[A-Za-z0-9+]+/)*[A-Za-z0-9+]+\\.swift$" },
+          "primitives": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$" } }
+        }
+      }
+    },
+    "primitives": {
+      "type": "array", "minItems": 69, "maxItems": 69,
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["id", "name", "swiftui"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$" },
+          "name": { "type": "string", "pattern": "^[A-Z][A-Za-z0-9]+$" },
+          "swiftui": {
+            "type": "object", "additionalProperties": false, "required": ["status", "controls", "surfaces", "note"],
+            "properties": {
+              "status": { "enum": ["native", "uifn-style", "uifn-component", "none"] },
+              "controls": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^\\.?[A-Za-z][A-Za-z0-9]*$" } },
+              "surfaces": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*$" } },
+              "note": { "type": "string", "pattern": "\\S" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

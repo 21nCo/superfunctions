@@ -1,0 +1,6 @@
+{
+  "id": "missing-swiftui-status",
+  "description": "Remove the SwiftUI status from Tooltip.",
+  "mutation": { "swiftuiPrimitive": "Tooltip", "deleteField": "status" },
+  "expectedErrorCodes": ["UIFN_CATALOG_FIELD_MISSING"]
+}

@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { CATALOG_SOURCE, EXPECTED_PRIMITIVE_NAMES } from '../uifn/catalog/src/catalog-source.mjs';
-import { compareGeneratedOutputs, createGeneratedOutputs, validateCatalogSource, verifyGeneratedDirectory, writeGeneratedOutputs } from '../uifn/catalog/src/compiler.mjs';
+import { compareGeneratedOutputs, createGeneratedOutputs, createSwiftUISurfaceInventory, stableStringify, validateCatalogSource, validateSwiftUIStatus, validateSwiftUISurfaceInventory, verifyGeneratedDirectory, verifySwiftUISurfaceDeclarations, writeGeneratedOutputs } from '../uifn/catalog/src/compiler.mjs';
 import { migrateCatalogDocument } from '../uifn/catalog/src/migrations.mjs';
+import { SWIFTUI_STATUS_SOURCE, SWIFTUI_STATUSES } from '../uifn/catalog/src/swiftui-status.mjs';
+import { readSwiftUISymbolGraphs, SWIFTUI_SYMBOL_GRAPH_FLAGS, swiftUIDeclarationsFromSymbolGraphs, uncoveredSwiftClauses, XCRUN } from '../uifn/catalog/src/swiftui-symbol-graph.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fixtureRoot = path.join(repoRoot, 'uifn/catalog/fixtures/negative');
@@ -98,4 +101,472 @@ test('catalog v0 migrates losslessly to schema v1 and unsupported versions fail 
   const unsupported = migrateCatalogDocument({ schemaVersion: 2, primitives: [] });
   assert.equal(unsupported.ok, false);
   assert.equal(unsupported.failures[0].code, 'UIFN_CATALOG_SCHEMA_VERSION_UNSUPPORTED');
+});
+
+function swiftuiSourceWith(mutate) {
+  const source = structuredClone(SWIFTUI_STATUS_SOURCE);
+  mutate(source);
+  return source;
+}
+
+function applySwiftUIFixture(descriptor) {
+  return swiftuiSourceWith((source) => {
+    const entry = source.primitives[descriptor.mutation.swiftuiPrimitive];
+    if (descriptor.mutation.deleteField) delete entry[descriptor.mutation.deleteField];
+    else entry[descriptor.mutation.setField] = descriptor.mutation.value;
+  });
+}
+
+test('every primitive has a SwiftUI status and every UIFnSwiftUI style and component maps to a primitive', async () => {
+  const { outputs } = createGeneratedOutputs();
+  const status = JSON.parse(outputs['swiftui-status.json']);
+  assert.deepEqual(status.primitives.map((primitive) => primitive.name), EXPECTED_PRIMITIVE_NAMES);
+  assert.ok(status.primitives.every((primitive) => SWIFTUI_STATUSES.includes(primitive.swiftui.status)));
+  assert.equal(Object.values(status.statusCounts).reduce((total, count) => total + count, 0), 69);
+  assert.deepEqual([...new Set(status.surfaces.map((surface) => surface.issue))].sort(), ['UIF-24', 'UIF-25', 'UIF-26']);
+  assert.deepEqual(status.surfaces.filter((surface) => surface.primitives.length === 0), []);
+  const declarations = await committedDeclarations();
+  assert.deepEqual(
+    [...new Set(declarations.map((declaration) => declaration.id))].sort(),
+    [...status.surfaces, ...SWIFTUI_STATUS_SOURCE.nonSurfaces].map((entry) => entry.id).sort(),
+  );
+  verifySwiftUISurfaceDeclarations(declarations);
+  // One platform policy: a control on only one platform is native, with the
+  // limit in its note (Menubar and Splitter on macOS, Carousel on iOS).
+  for (const name of ['Carousel', 'Menubar', 'Splitter']) assert.equal(SWIFTUI_STATUS_SOURCE.primitives[name].status, 'native', name);
+  assert.deepEqual(SWIFTUI_STATUS_SOURCE.primitives.Carousel.controls, ['TabView']);
+});
+
+test('SwiftUI status lives outside the hashed catalog definition', () => {
+  const baseline = createGeneratedOutputs().outputs;
+  const changed = createGeneratedOutputs(CATALOG_SOURCE, swiftuiSourceWith((source) => {
+    source.primitives.Tooltip.note = 'A different note.';
+  })).outputs;
+  for (const name of Object.keys(baseline).filter((file) => !['swiftui-status.json', 'generation-manifest.json'].includes(file))) {
+    assert.equal(changed[name], baseline[name], name);
+  }
+  assert.notEqual(changed['swiftui-status.json'], baseline['swiftui-status.json']);
+});
+
+test('missing, unknown, and unmapped SwiftUI status values fail closed', async () => {
+  for (const file of ['missing-swiftui-status.json', 'unknown-swiftui-status.json', 'unmapped-swiftui-surface.json']) {
+    const descriptor = await fixture(file);
+    const source = applySwiftUIFixture(descriptor);
+    expectCatalogCode(() => validateSwiftUIStatus(source), descriptor.expectedErrorCodes[0]);
+    expectCatalogCode(() => createGeneratedOutputs(CATALOG_SOURCE, source), descriptor.expectedErrorCodes[0]);
+  }
+  expectCatalogCode(() => validateSwiftUIStatus(swiftuiSourceWith((source) => { delete source.primitives.Tooltip; })), 'UIFN_CATALOG_FIELD_MISSING');
+  expectCatalogCode(() => validateSwiftUIStatus(swiftuiSourceWith((source) => { source.primitives.Tooltip.status = null; })), 'UIFN_CATALOG_FIELD_MISSING');
+  expectCatalogCode(() => validateSwiftUIStatus(swiftuiSourceWith((source) => { source.primitives.Tooltip.note = ' '; })), 'UIFN_CATALOG_FIELD_MISSING');
+  expectCatalogCode(() => validateSwiftUIStatus(swiftuiSourceWith((source) => { source.primitives.Tooltip.statsu = 'native'; })), 'UIFN_CATALOG_UNSUPPORTED_VALUE');
+  expectCatalogCode(() => validateSwiftUIStatus(swiftuiSourceWith((source) => { source.primitives.Tooltipp = structuredClone(source.primitives.Tooltip); })), 'UIFN_CATALOG_NAME_SET_INVALID');
+  expectCatalogCode(() => validateSwiftUIStatus(swiftuiSourceWith((source) => { source.primitives.Tooltip.surfaces = ['UIFnTooltipStyle']; })), 'UIFN_CATALOG_UNSUPPORTED_VALUE');
+  expectCatalogCode(() => validateSwiftUIStatus(swiftuiSourceWith((source) => { source.surfaces[0].kind = 'modifier'; })), 'UIFN_CATALOG_UNSUPPORTED_VALUE');
+});
+
+test('a SwiftUI status must agree with the controls and surfaces it names', () => {
+  const inconsistent = [
+    ['Tooltip', { status: 'native', surfaces: ['UIFnButtonStyle'] }],
+    ['Tooltip', { status: 'native', controls: [] }],
+    ['Tooltip', { status: 'uifn-style', surfaces: [] }],
+    ['Tooltip', { status: 'uifn-component', surfaces: ['UIFnButtonStyle'] }],
+    ['Tooltip', { status: 'none' }],
+    ['Avatar', { status: 'none', surfaces: ['UIFnEmptyState'] }],
+  ];
+  for (const [name, change] of inconsistent) {
+    const source = swiftuiSourceWith((draft) => Object.assign(draft.primitives[name], change));
+    expectCatalogCode(() => validateSwiftUIStatus(source), 'UIFN_CATALOG_SWIFTUI_STATUS_INCONSISTENT');
+  }
+});
+
+const inventoryPath = path.join(repoRoot, 'uifn/catalog/swiftui-surface-inventory.json');
+const symbolGraphRoot = path.join(repoRoot, 'uifn/catalog/fixtures/swiftui-symbol-graph');
+const swiftRoot = 'uifn/swift/Sources/UIFnSwiftUI';
+
+async function committedDeclarations() {
+  return validateSwiftUISurfaceInventory(JSON.parse(await readFile(inventoryPath, 'utf8')));
+}
+
+// The macOS debug and iOS device release graphs swiftc emits for
+// fixtures/swiftui-symbol-graph/sources.
+const fixturePlatforms = ['macos-debug', 'ios-release'];
+
+async function fixtureGraphs() {
+  return Promise.all(fixturePlatforms.map((platform) => readSwiftUISymbolGraphs(path.join(symbolGraphRoot, platform))));
+}
+
+async function fixtureInventory() {
+  return createSwiftUISurfaceInventory((await fixtureGraphs()).flatMap((graphs) => swiftUIDeclarationsFromSymbolGraphs(graphs)));
+}
+
+function listedWith(entries) {
+  return swiftuiSourceWith((source) => {
+    for (const entry of entries) {
+      if (entry.kind === 'unclassified') source.nonSurfaces.push({ id: entry.id, source: entry.source, reason: 'Test.' });
+      else source.surfaces.push({ id: entry.id, kind: entry.kind, issue: 'UIF-28', source: entry.source });
+    }
+  });
+}
+
+test('the SwiftUI surface list must match the styles and components UIFnSwiftUI declares', async () => {
+  const declarations = await committedDeclarations();
+  const descriptor = await fixture('unlisted-swiftui-surface.json');
+  expectCatalogCode(() => verifySwiftUISurfaceDeclarations([...declarations, descriptor.mutation.addDeclaration]), descriptor.expectedErrorCodes[0]);
+  expectCatalogCode(() => verifySwiftUISurfaceDeclarations(declarations.filter((declaration) => declaration.id !== 'UIFnGaugeStyle')), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
+  expectCatalogCode(() => verifySwiftUISurfaceDeclarations(declarations.filter((declaration) => declaration.id !== 'UIFnToast')), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
+  expectCatalogCode(() => verifySwiftUISurfaceDeclarations(declarations.map((declaration) => (
+    declaration.id === 'UIFnBanner' ? { ...declaration, source: `${swiftRoot}/Components/UIFnToast.swift` } : declaration
+  ))), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
+  // A listed kind must match the declaration: UIFnSegmentedPicker lives in
+  // Styles but is a View, so listing it as a style is drift.
+  assert.equal(declarations.find((declaration) => declaration.id === 'UIFnSegmentedPicker').kind, 'component');
+  expectCatalogCode(() => verifySwiftUISurfaceDeclarations(declarations, swiftuiSourceWith((source) => {
+    source.surfaces.find((surface) => surface.id === 'UIFnSegmentedPicker').kind = 'style';
+  })), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
+  // A listed surface may move into a subdirectory once it is listed with
+  // that path, and only then.
+  const moved = `${swiftRoot}/Components/Feedback/UIFnBanner.swift`;
+  const movedDeclarations = declarations.map((declaration) => (declaration.id === 'UIFnBanner' ? { ...declaration, source: moved } : declaration));
+  const movedSource = swiftuiSourceWith((source) => {
+    source.surfaces.find((surface) => surface.id === 'UIFnBanner').source = moved;
+  });
+  validateSwiftUIStatus(movedSource);
+  verifySwiftUISurfaceDeclarations(movedDeclarations, movedSource);
+  expectCatalogCode(() => verifySwiftUISurfaceDeclarations(movedDeclarations), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
+});
+
+test('the compiler symbol graphs give every public declaration in Styles and Components, fail closed', async () => {
+  const inventory = await fixtureInventory();
+  const at = (file) => `${swiftRoot}/${file}`;
+  assert.deepEqual(inventory.declarations, [
+    // A member of an extension of another module's type, by type and name.
+    { id: 'EnvironmentValues.uifnFlag', kind: 'unclassified', source: at('Styles/UIFnCR.swift') },
+    { id: 'Text.uifnBold', kind: 'unclassified', source: at('Components/UIFnProbe.swift') },
+    // Subdirectories count.
+    { id: 'UIFnAlert', kind: 'component', source: at('Components/Feedback/UIFnAlert.swift') },
+    { id: 'UIFnAlias', kind: 'unclassified', source: at('Components/UIFnProbe.swift') },
+    // Nested types by qualified name, a public extension's access, and a
+    // conformance to the file-scope protocol that refines View, not the
+    // shadowing UIFnBox.UIFnRenderable.
+    { id: 'UIFnBox.Bar', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    { id: 'UIFnBox.Item', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    { id: 'UIFnBox.Panel', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    // After a line comment that ends at a carriage return.
+    { id: 'UIFnCRView', kind: 'component', source: at('Styles/UIFnCR.swift') },
+    { id: 'UIFnChipStyle', kind: 'style', source: at('Styles/UIFnCR.swift') },
+    // #if DEBUG, in the debug build only.
+    { id: 'UIFnDebugOnly', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    // #if os(iOS) && !targetEnvironment(simulator).
+    { id: 'UIFnDeviceOnly', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    { id: 'UIFnDim', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    // @_documentation(visibility: internal) is still public.
+    { id: 'UIFnDocCard', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    { id: 'UIFnFlow', kind: 'unclassified', source: at('Components/UIFnProbe.swift') },
+    // A default implementation of a requirement of a protocol refining View,
+    // which the graph links to the requirement, not to the protocol.
+    { id: 'UIFnGlowing.uifnHalo', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    // @_documentation(visibility: private), in a graph down to private only.
+    { id: 'UIFnHiddenCard', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    { id: 'UIFnHiddenStyle', kind: 'style', source: at('Styles/UIFnHiddenStyle.swift') },
+    // The iOS UIViewRepresentable and the macOS NSViewRepresentable.
+    { id: 'UIFnHosted', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    { id: 'UIFnList', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    { id: 'UIFnPager', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    // A default implementation of View.body.
+    { id: 'UIFnPanelView.body', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    // Declared only in the #if os(iOS) branch.
+    { id: 'UIFnPhoneOnly', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    { id: 'UIFnPlaceholder', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    // #else of #if DEBUG, in the release build only.
+    { id: 'UIFnReleaseOnly', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    // Members of extensions of UIFnSwiftUI protocols: a View modifier for a
+    // protocol refining View, unclassified otherwise.
+    { id: 'UIFnRenderable.uifnGlow', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    { id: 'UIFnRing', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    // A default implementation of a requirement UIFnShiningView inherits from
+    // UIFnShining, which does not refine View, belongs to UIFnShiningView.
+    { id: 'UIFnShiningView.uifnShine', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    // A default implementation of a requirement of a protocol that does not.
+    { id: 'UIFnSizing.size', kind: 'unclassified', source: at('Components/UIFnProbe.swift') },
+    { id: 'UIFnSizing.uifnDoubled', kind: 'unclassified', source: at('Components/UIFnProbe.swift') },
+    // @_spi and an underscored name are public API too.
+    { id: 'UIFnSpiCard', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    { id: 'UIFnWorker', kind: 'unclassified', source: at('Components/UIFnProbe.swift') },
+    { id: '_UIFnRow', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    // public nonisolated(unsafe) static var in extension View.
+    { id: 'uifnDefault', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    { id: 'uifnDim', kind: 'component', source: at('Components/UIFnProbe.swift') },
+    { id: 'uifnMakeView', kind: 'unclassified', source: at('Components/UIFnProbe.swift') },
+    { id: 'uifnStyled', kind: 'unclassified', source: at('Styles/UIFnCR.swift') },
+  ]);
+  // Not declarations: private, fileprivate, internal and commented-out types,
+  // a public type nested in an internal one (UIFnInternal.Inner), protocols
+  // and their requirements, an internal default implementation
+  // (UIFnGlowing.uifnShade), a plain enum, Tokens and ButtonStyle.uifnChip
+  // (Self == UIFnChipStyle).
+  const [mac, ios] = await fixtureGraphs();
+  const has = (graphs, id) => graphs[0].symbols.some((symbol) => symbol.pathComponents.join('.') === id);
+  const count = (graphs, id) => graphs[0].symbols.filter((symbol) => symbol.pathComponents.join('.') === id).length;
+  assert.ok(has(mac, 'UIFnInternal.Inner') && has(mac, 'UIFnPrivateView') && has(mac, 'UIFnFilePrivateView'));
+  // Requirement and default implementation are both in the graph.
+  for (const id of ['UIFnSizing.size()', 'UIFnGlowing.uifnHalo()', 'UIFnGlowing.uifnShade()']) assert.equal(count(mac, id), 2, id);
+  // The graph has no memberOf for these default implementations.
+  for (const id of ['UIFnGlowing.uifnHalo()', 'UIFnShiningView.uifnShine()']) {
+    const precise = mac[0].symbols.filter((symbol) => symbol.pathComponents.join('.') === id).map((symbol) => symbol.identifier.precise);
+    const kinds = mac[0].relationships.filter((relationship) => precise.includes(relationship.source)).map((relationship) => relationship.kind);
+    assert.ok(kinds.includes('defaultImplementationOf') && !kinds.includes('memberOf'), id);
+  }
+  for (const id of ['UIFnPhoneOnly', 'UIFnDeviceOnly', 'UIFnReleaseOnly']) assert.ok(has(ios, id) && !has(mac, id), id);
+  assert.ok(has(mac, 'UIFnDebugOnly') && !has(ios, 'UIFnDebugOnly'));
+  // Each one has to be listed: unlisted it is drift against the real lists.
+  const real = await committedDeclarations();
+  for (const declaration of inventory.declarations) {
+    expectCatalogCode(() => verifySwiftUISurfaceDeclarations([...real, declaration]), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
+  }
+  const listed = listedWith(inventory.declarations);
+  validateSwiftUIStatus(swiftuiSourceWith((source) => { source.nonSurfaces = listed.nonSurfaces; }));
+  verifySwiftUISurfaceDeclarations([...real, ...inventory.declarations], listed);
+});
+
+test('the inventory and its fixtures come from graphs down to private access, with one set of flags', async () => {
+  const flags = SWIFTUI_SYMBOL_GRAPH_FLAGS;
+  assert.equal(flags[flags.indexOf('-symbol-graph-minimum-access-level') + 1], 'private');
+  assert.ok(flags.includes('-include-spi-symbols'));
+  // Each build's graph holds no synthesized copies, which at private access
+  // grow it to about 200 MB, yet still has the default implementations above:
+  // a UIFn protocol's own (UIFnGlowing.uifnHalo), an inherited one
+  // (UIFnShiningView.uifnShine) and one of View.body (UIFnPanelView.body).
+  assert.ok(flags.includes('-symbol-graph-skip-synthesized-members'));
+  for (const graphs of await fixtureGraphs()) {
+    assert.ok(graphs.every((graph) => graph.symbols.every((symbol) => !symbol.identifier.precise.includes('::SYNTHESIZED::'))));
+  }
+  for (const file of ['scripts/uifn-swiftui-inventory.mjs', 'uifn/catalog/fixtures/swiftui-symbol-graph/regenerate.mjs']) {
+    const text = await readFile(path.join(repoRoot, file), 'utf8');
+    assert.match(text, /\.\.\.SWIFTUI_SYMBOL_GRAPH_FLAGS/, file);
+    assert.doesNotMatch(text, /symbol-graph-minimum-access-level|'-include-spi-symbols'|'xcrun'|\['swift'|'swiftc',\s*\[/, file);
+  }
+  // A documentation-hidden component or style and a default implementation
+  // on a View-refining protocol have to be listed, with their kind: a
+  // component or style parked in nonSurfaces is drift.
+  const inventory = await fixtureInventory();
+  const real = await committedDeclarations();
+  for (const id of ['UIFnHiddenCard', 'UIFnHiddenStyle', 'UIFnGlowing.uifnHalo', 'UIFnShiningView.uifnShine', 'UIFnPanelView.body']) {
+    const declaration = inventory.declarations.find((entry) => entry.id === id);
+    assert.ok(declaration && declaration.kind !== 'unclassified', id);
+    expectCatalogCode(() => verifySwiftUISurfaceDeclarations([...real, declaration]), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
+    expectCatalogCode(() => verifySwiftUISurfaceDeclarations([...real, declaration], listedWith([{ ...declaration, kind: 'unclassified' }])), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
+  }
+});
+
+test('a default implementation whose protocol the graph does not have, or has twice, fails closed', async () => {
+  const [mac] = await fixtureGraphs();
+  const graphs = structuredClone(mac);
+  for (const symbol of graphs[0].symbols.filter((entry) => entry.pathComponents.join('.') === 'UIFnShiningView.uifnShine()')) symbol.pathComponents = ['UIFnElsewhere', 'uifnShine()'];
+  expectCatalogCode(() => swiftUIDeclarationsFromSymbolGraphs(graphs), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
+  // A private protocol in another file with the name of the extended one,
+  // before or after it: never resolved to either, never dropped.
+  for (const id of ['UIFnGlowing', 'UIFnShiningView', 'UIFnSizing']) {
+    for (const first of [true, false]) {
+      const shadowed = structuredClone(mac);
+      const protocol = shadowed[0].symbols.find((symbol) => symbol.pathComponents.join('.') === id && symbol.kind.identifier === 'swift.protocol');
+      const namesake = { ...structuredClone(protocol), accessLevel: 'private', identifier: { ...protocol.identifier, precise: `${protocol.identifier.precise}Namesake` }, location: { uri: `file:///checkout/${swiftRoot}/Components/UIFnOther.swift` } };
+      if (first) shadowed[0].symbols.unshift(namesake);
+      else shadowed[0].symbols.push(namesake);
+      expectCatalogCode(() => swiftUIDeclarationsFromSymbolGraphs(shadowed), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
+    }
+  }
+});
+
+test('a synthesized copy of a protocol-extension member is not a declaration', async () => {
+  // A graph emitted without -symbol-graph-skip-synthesized-members, as one
+  // passed with --symbol-graphs may be, copies uifnDim onto each view; a
+  // copy is never a declaration, even one linked to a protocol refining View.
+  const [mac] = await fixtureGraphs();
+  const graphs = structuredClone(mac);
+  const originals = graphs.flatMap((graph) => graph.symbols).filter((symbol) => symbol.pathComponents.at(-1).startsWith('uifnDim'));
+  assert.ok(originals.length > 0);
+  for (const owner of ['UIFnRing', 'UIFnPanelView']) {
+    const target = graphs[0].symbols.find((symbol) => symbol.pathComponents.join('.') === owner).identifier.precise;
+    for (const original of originals) {
+      const precise = `${original.identifier.precise}::SYNTHESIZED::${target}`;
+      graphs[0].symbols.push({ ...structuredClone(original), identifier: { ...original.identifier, precise }, pathComponents: [owner, original.pathComponents.at(-1)] });
+      graphs[0].relationships.push({ kind: 'memberOf', source: precise, target });
+    }
+  }
+  assert.ok(graphs[0].symbols.length > mac[0].symbols.length);
+  assert.deepEqual(swiftUIDeclarationsFromSymbolGraphs(graphs), swiftUIDeclarationsFromSymbolGraphs(mac));
+});
+
+test('repeats of one declaration coalesce; a conflicting kind or source is drift', async () => {
+  const [mac] = await fixtureGraphs();
+  const declarations = swiftUIDeclarationsFromSymbolGraphs(mac);
+  assert.equal(declarations.filter((declaration) => declaration.id === 'uifnDim').length, 2);
+  const uifnDim = declarations.find((declaration) => declaration.id === 'uifnDim');
+  expectCatalogCode(() => createSwiftUISurfaceInventory([...declarations, { ...uifnDim, kind: 'unclassified' }]), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
+  expectCatalogCode(() => createSwiftUISurfaceInventory([...declarations, { ...uifnDim, source: `${swiftRoot}/Components/Other.swift` }]), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
+});
+
+test('a declared name or path the lists cannot hold fails closed', async () => {
+  const [mac] = await fixtureGraphs();
+  const renamed = (change) => {
+    const graphs = structuredClone(mac);
+    change(graphs[0].symbols.find((symbol) => symbol.pathComponents.join('.') === 'UIFnRing'));
+    return swiftUIDeclarationsFromSymbolGraphs(graphs);
+  };
+  for (const name of ['Ünit', '🙂Card', 'UIFn Row']) {
+    expectCatalogCode(() => createSwiftUISurfaceInventory(renamed((symbol) => { symbol.pathComponents = [name]; })), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
+  }
+  for (const file of ['UIFn_Grid.swift', 'Data-Views/UIFnGrid.swift']) {
+    expectCatalogCode(() => createSwiftUISurfaceInventory(renamed((symbol) => { symbol.location.uri = `file:///checkout/${swiftRoot}/Components/${file}`; })), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
+  }
+});
+
+// Clauses as scripts/uifn-swiftui-if-clauses.swift lists them: '#if os(iOS)'
+// is { directive: '#if', condition: 'os(iOS)' }.
+function clauses(lines) {
+  return lines.map((text, index) => {
+    const [, directive, condition] = /^\s*(#\w+)\s*(.*)$/.exec(text);
+    return { line: index + 1, directive, condition };
+  });
+}
+
+test('an #if clause no inventory build compiles is reported', () => {
+  const check = (lines) => uncoveredSwiftClauses(clauses(lines)).map(({ line, reason }) => [line, reason]);
+  const none = 'no inventory build compiles this branch';
+  // Covered: every clause is compiled by some build.
+  assert.deepEqual(check(['#if os(iOS) && !targetEnvironment(simulator)', '#elseif canImport(AppKit)', '  #if !DEBUG', '  #endif', '#endif']), []);
+  assert.deepEqual(check(['#if os(macOS)', '#elseif canImport(UIKit)', '#endif']), []);
+  // Branches no build compiles, nesting included.
+  assert.deepEqual(check(['#if !os(macOS) && !os(iOS)', '#endif']), [[1, none]]);
+  assert.deepEqual(check(['#if os(macOS) || os(iOS)', '#else', '#endif']), [[2, none]]);
+  assert.deepEqual(check(['#if os(macOS)', '#elseif canImport(UIKit)', '#else', '#endif']), [[3, none]]);
+  assert.deepEqual(check(['#if os(macOS)', '  #if os(iOS)', '  #endif', '#endif']), [[2, none]]);
+  // Conditions the builds cannot decide.
+  assert.deepEqual(check(['#if os(macOS) && arch(x86_64)', '#elseif canImport(WatchKit)', '#endif']), [[1, 'unsupported condition'], [2, 'unsupported condition'], [2, none]]);
+  assert.deepEqual(check(['#if swift(>=6)', '#endif', '#if UIFN_EXPERIMENTAL', '#endif']), [[1, 'unsupported condition'], [3, 'unsupported condition']]);
+  // Unbalanced directives.
+  assert.deepEqual(check(['#endif']), [[1, 'unbalanced']]);
+  assert.deepEqual(check(['#if DEBUG']), [[1, 'unbalanced']]);
+});
+
+test('the Swift parser lists #if clauses, never text in comments or strings', { skip: process.platform !== 'darwin' && 'needs macOS with Xcode' }, async () => {
+  const host = path.join(path.dirname(spawnSync(XCRUN, ['--find', 'swift'], { encoding: 'utf8' }).stdout.trim()), '../lib/swift/host');
+  const temporary = await mkdtemp(path.join(os.tmpdir(), 'uifn-if-clauses-'));
+  try {
+    const file = path.join(temporary, 'Probe.swift');
+    await writeFile(file, [
+      '#if os(macOS) && arch(x86_64) // */ #if os(macOS)',
+      'public struct UIFnIntel {}',
+      '#elseif /* note */ os(iOS) // #else',
+      '#else',
+      '#endif',
+      'let text = """',
+      '#if os(macOS)',
+      '"""',
+      '/*',
+      '#else',
+      '*/',
+    ].join('\n'));
+    const listed = spawnSync(XCRUN, ['swift', '-I', host, '-L', host, '-lSwiftParser', '-lSwiftSyntax', '-Xlinker', '-rpath', '-Xlinker', host, path.join(repoRoot, 'scripts/uifn-swiftui-if-clauses.swift'), file], { encoding: 'utf8' });
+    assert.equal(listed.status, 0, listed.stderr);
+    const parsed = JSON.parse(listed.stdout)[file];
+    assert.deepEqual(parsed.map(({ line, directive, condition }) => [line, directive, condition.replaceAll(' ', '')]), [
+      [1, '#if', 'os(macOS)&&arch(x86_64)'],
+      [3, '#elseif', 'os(iOS)'],
+      [4, '#else', ''],
+      [5, '#endif', ''],
+    ]);
+    assert.deepEqual(uncoveredSwiftClauses(parsed).map(({ line, reason }) => [line, reason]), [[1, 'unsupported condition'], [3, 'no inventory build compiles this branch'], [4, 'no inventory build compiles this branch']]);
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test('the committed inventory is canonical and the verifier rejects a malformed one', async () => {
+  const text = await readFile(inventoryPath, 'utf8');
+  const committed = JSON.parse(text);
+  assert.equal(stableStringify(createSwiftUISurfaceInventory(committed.declarations)), text);
+  const invalid = [
+    [(inventory) => { inventory.inventoryVersion = 2; }, 'UIFN_CATALOG_SCHEMA_INVALID'],
+    [(inventory) => { inventory.declarations[0].notes = 'stray'; }, 'UIFN_CATALOG_UNSUPPORTED_VALUE'],
+    [(inventory) => { inventory.declarations[0].kind = 'modifier'; }, 'UIFN_CATALOG_UNSUPPORTED_VALUE'],
+    [(inventory) => { inventory.declarations.reverse(); }, 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT'],
+    [(inventory) => { inventory.declarations.push(structuredClone(inventory.declarations[0])); }, 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT'],
+    [(inventory) => { inventory.extra = true; }, 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT'],
+  ];
+  for (const [mutate, code] of invalid) {
+    const inventory = structuredClone(committed);
+    mutate(inventory);
+    expectCatalogCode(() => validateSwiftUISurfaceInventory(inventory), code);
+  }
+});
+
+test('the inventory script reports a stale inventory from symbol graphs', async () => {
+  const run = (directories) => spawnSync(process.execPath, [path.join(repoRoot, 'scripts/uifn-swiftui-inventory.mjs'), '--symbol-graphs', ...directories], { encoding: 'utf8' });
+  const stale = run(fixturePlatforms.map((platform) => path.join(symbolGraphRoot, platform)));
+  assert.equal(stale.status, 1);
+  const report = JSON.parse(stale.stderr);
+  assert.equal(report.code, 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
+  assert.ok(report.details.added.some((entry) => entry.id === 'UIFnPhoneOnly'));
+  assert.ok(report.details.removed.some((entry) => entry.id === 'UIFnBanner'));
+  const missing = run([path.join(symbolGraphRoot, 'sources')]);
+  assert.equal(missing.status, 1);
+  assert.equal(JSON.parse(missing.stderr).code, 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
+});
+
+test('SwiftUI surface and non-surface metadata reject unknown fields', () => {
+  const invalid = [
+    (source) => { source.surfaces[0].notes = 'stray'; },
+    (source) => { source.surfaces[0].id = 'UIFn Button'; },
+    (source) => { source.nonSurfaces[0].kind = 'component'; },
+    (source) => { source.nonSurfaces[0].source = 'uifn/swift/Sources/UIFnSwiftUI/Tokens/UIFnTheme.swift'; },
+    (source) => { source.nonSurfaces.push({ id: 'UIFnButtonStyle', source: source.surfaces[0].source, reason: 'Twice.' }); },
+  ];
+  for (const mutate of invalid) {
+    assert.throws(() => createGeneratedOutputs(CATALOG_SOURCE, swiftuiSourceWith(mutate)), (error) => ['UIFN_CATALOG_UNSUPPORTED_VALUE', 'UIFN_CATALOG_DUPLICATE'].includes(error.code));
+  }
+  expectCatalogCode(() => validateSwiftUIStatus(swiftuiSourceWith((source) => { source.nonSurfaces[0].reason = ' '; })), 'UIFN_CATALOG_FIELD_MISSING');
+  expectCatalogCode(() => validateSwiftUIStatus(swiftuiSourceWith((source) => { delete source.nonSurfaces; })), 'UIFN_CATALOG_FIELD_MISSING');
+});
+
+// Checks a value against the JSON Schema keywords swiftui-status.schema.json
+// uses, and returns the paths that fail.
+function schemaErrors(schema, value, at = '$') {
+  const errors = [];
+  const fail = (message) => errors.push(`${at}: ${message}`);
+  if (Object.hasOwn(schema, 'const') && JSON.stringify(schema.const) !== JSON.stringify(value)) fail('const');
+  if (schema.enum && !schema.enum.includes(value)) fail('enum');
+  if (schema.type === 'string' && (typeof value !== 'string' || (schema.pattern && !new RegExp(schema.pattern, 'u').test(value)) || value.length < (schema.minLength ?? 0))) fail('string');
+  if (schema.type === 'integer' && !(Number.isInteger(value) && value >= (schema.minimum ?? -Infinity))) fail('integer');
+  if (schema.type === 'array') {
+    if (!Array.isArray(value) || value.length < (schema.minItems ?? 0) || value.length > (schema.maxItems ?? Infinity)) fail('array');
+    else if (schema.uniqueItems && new Set(value.map((item) => JSON.stringify(item))).size !== value.length) fail('uniqueItems');
+    else value.forEach((item, index) => errors.push(...schemaErrors(schema.items ?? {}, item, `${at}[${index}]`)));
+  }
+  if (schema.type === 'object') {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return [...errors, `${at}: object`];
+    for (const key of schema.required ?? []) if (!Object.hasOwn(value, key)) fail(`missing ${key}`);
+    for (const [key, item] of Object.entries(value)) {
+      if (schema.properties?.[key]) errors.push(...schemaErrors(schema.properties[key], item, `${at}.${key}`));
+      else if (schema.additionalProperties === false) fail(`unknown ${key}`);
+    }
+  }
+  return errors;
+}
+
+test('the generated SwiftUI status conforms to its schema', async () => {
+  const schema = JSON.parse(await readFile(path.join(repoRoot, 'uifn/catalog/schema/swiftui-status.schema.json'), 'utf8'));
+  const generated = JSON.parse(createGeneratedOutputs().outputs['swiftui-status.json']);
+  assert.deepEqual(schemaErrors(schema, generated), []);
+  assert.deepEqual(schemaErrors(schema, JSON.parse(await readFile(path.join(generatedRoot, 'swiftui-status.json'), 'utf8'))), []);
+  const nested = structuredClone(generated);
+  nested.surfaces[0].id = 'UIFnTimeline.Row';
+  assert.deepEqual(schemaErrors(schema, nested), []);
+  const blank = structuredClone(generated);
+  blank.primitives[0].swiftui.note = '   ';
+  blank.surfaces[0].notes = 'stray';
+  assert.deepEqual(schemaErrors(schema, blank).sort(), ['$.primitives[0].swiftui.note: string', '$.surfaces[0]: unknown notes']);
+  const repeated = structuredClone(generated);
+  repeated.surfaces[0].primitives.push(repeated.surfaces[0].primitives[0]);
+  assert.deepEqual(schemaErrors(schema, repeated), ['$.surfaces[0].primitives: uniqueItems']);
 });
