@@ -321,8 +321,9 @@ const SWIFT_MODIFIER_WORDS = new Set([...SWIFT_ACCESS_MODIFIERS, 'class', 'stati
 const SWIFT_DECLARATION_WORDS = new Set([...SWIFT_MEMBER_KEYWORDS, ...SWIFT_MODIFIER_WORDS]);
 const SWIFT_IMPORT_KINDS = new Set(['struct', 'class', 'enum', 'protocol', 'typealias', 'func', 'var', 'let']);
 // Identifiers may use any letter, so a non-ASCII name is read, not skipped.
-const SWIFT_TOKEN = /`[^`\n]+`|[\p{L}_][\p{L}\p{N}_]*|#\w+|->|\d[\w.]*|[^\s\p{L}\p{N}_]/gu;
-const SWIFT_IDENTIFIER = /^[\p{L}_][\p{L}\p{N}_]*$/u;
+const SWIFT_TOKEN = /`[^`\n]+`|[\p{L}_][\p{L}\p{M}\p{N}_]*|#\w+|->|\d[\w.]*|[^\s\p{L}\p{M}\p{N}_]/gu;
+const SWIFT_IDENTIFIER = /^[\p{L}_][\p{L}\p{M}\p{N}_]*$/u;
+const SWIFT_NAMED_KEYWORDS = new Set(['struct', 'class', 'enum', 'protocol', 'extension']);
 const SWIFT_STRING_START = /#*"/y;
 
 // Swift's lexical forms that hold arbitrary text: comments, string literals
@@ -479,6 +480,7 @@ function readSwiftTypeDeclaration(state, index) {
     model.protocols.set(id, header.conformances);
   } else if (isPublic) model.found.push({ id, keyword, source, conformances: header.conformances });
   else model.hidden.add(id);
+  if (isPublic) model.visible.add(id);
   scopes.push({ kind: 'type', name: header.name, isPublic });
   return header.next;
 }
@@ -530,6 +532,8 @@ function stepSwiftDeclarations(state, index) {
   if (scopes.at(-1)?.kind === 'body') return index + 1;
   const skipped = skipSwiftNonDeclaration(state, index);
   if (skipped !== undefined) return skipped;
+  // A name the scan cannot read (`Raw Name`, an emoji) fails closed.
+  assert(!SWIFT_NAMED_KEYWORDS.has(token) || SWIFT_IDENTIFIER.test(next), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `Cannot read the name after ${token} in ${state.source}: ${next}`, { source: state.source, name: next });
   const isTypeKeyword = SWIFT_TYPE_KEYWORDS.has(token) && SWIFT_IDENTIFIER.test(next) && !SWIFT_DECLARATION_WORDS.has(next);
   if (isTypeKeyword || SWIFT_MEMBER_KEYWORDS.has(token)) {
     const end = isTypeKeyword ? readSwiftTypeDeclaration(state, index) : readSwiftMember(state, index);
@@ -566,12 +570,14 @@ function swiftSurfaceDirectory(relativePath) {
 // 'style', 'component' or 'unclassified'. An id repeats when it is declared
 // more than once, as #if alternatives or overloads are.
 export function parseSwiftUISurfaceDeclarations(files) {
-  const model = { found: [], extensions: new Map(), protocols: new Map(), hidden: new Set() };
+  const model = { found: [], extensions: new Map(), protocols: new Map(), hidden: new Set(), visible: new Set() };
   for (const { path: relativePath, text } of files) {
     if (swiftSurfaceDirectory(relativePath)) walkSwiftDeclarations(text, relativePath, model);
   }
-  // A type nested, through an extension too, in a non-public type is not public.
-  const hidden = (id) => id.split('.').slice(0, -1).some((_, index, outer) => model.hidden.has(outer.slice(0, index + 1).join('.')));
+  // A type nested, through an extension too, in a type that no #if
+  // alternative declares public is not public.
+  const isHidden = (outer) => model.hidden.has(outer) && !model.visible.has(outer);
+  const hidden = (id) => id.split('.').slice(0, -1).some((_, index, outer) => isHidden(outer.slice(0, index + 1).join('.')));
   const declarations = model.found.filter(({ id }) => !hidden(id)).flatMap(({ id, keyword, source, conformances, member }) => {
     if (member) return [{ id, kind: swiftSurfaceDirectory(source) === 'Components' ? 'component' : 'unclassified', source }];
     const kind = swiftSurfaceKind([...conformances, ...(model.extensions.get(id) ?? [])], model.protocols);
@@ -580,6 +586,7 @@ export function parseSwiftUISurfaceDeclarations(files) {
   });
   for (const { id, source } of declarations) {
     assert(SWIFTUI_SURFACE_ID_PATTERN.test(id), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `UIFnSwiftUI declares ${id} in ${source}, a name the SwiftUI status lists cannot hold. Give public UIFnSwiftUI types and modifiers ASCII names.`, { id, source });
+    assert(SWIFTUI_SOURCE_PATTERN.test(source), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `UIFnSwiftUI declares ${id} in ${source}, a path the SwiftUI status lists cannot hold. Use letters, digits and + in its directory and file names.`, { id, source });
   }
   return declarations;
 }

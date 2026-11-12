@@ -58,8 +58,11 @@ in `Styles` (such as `uifnTheme`), is a non-surface. Enums and protocols count
 only as styles or components. One declaration repeated with the same kind and
 file, as `#if` alternatives or overloads are, is listed once; keep a
 declaration's alternatives and overloads in one file. Only extensions of `View`
-itself are read for view modifiers, and a list entry's id is an ASCII Swift
-name. Text the scan cannot read, such as unpaired braces, fails verification.
+itself are read for view modifiers; public protocols, file-scope functions and
+members of extensions of other types are not read. A list entry's id is an
+ASCII Swift name and its file path uses letters, digits and `+`. A declared
+name or path the lists cannot hold, and text the scan cannot read, such as
+unpaired braces or a raw `` `Name` ``, fail verification.
 
 `npm test` in this package runs the verifier and its tests; turbo hashes the
 UIFnSwiftUI sources and these scripts as its inputs. The Swift workflow's Linux

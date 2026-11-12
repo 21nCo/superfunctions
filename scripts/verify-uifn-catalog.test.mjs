@@ -490,6 +490,7 @@ test('imports, default values and unreadable text do not hide a public declarati
     ['a default value of .private', 'public let uifnDefault: Access = .internal\npublic struct UIFnPager: View {\n    var scope: Access = .private\n    public struct Row: View {}\n}\n', [['UIFnPager', 'component'], ['UIFnPager.Row', 'component']]],
     ['SwiftUI refinements of View and ViewModifier', 'public struct UIFnShake: GeometryEffect {}\npublic struct UIFnFade: SwiftUI.AnimatableModifier {}\n', [['UIFnShake', 'component'], ['UIFnFade', 'component']]],
     ['an extension of a non-public type', 'struct UIFnInternal {}\nextension UIFnInternal {\n    public struct Inner: View {}\n}\npublic struct UIFnProbe: View {}\n', [['UIFnProbe', 'component']]],
+    ['a non-public #if alternative', '#if os(iOS)\npublic struct UIFnOuter {\n    public struct Row: View {}\n}\n#else\nstruct UIFnOuter {}\n#endif\nextension UIFnOuter {\n    public struct Cell: View {}\n}\n', [['UIFnOuter', 'unclassified'], ['UIFnOuter.Row', 'component'], ['UIFnOuter.Cell', 'component']]],
     ['regex literals', 'let opening = #/[{]/#\nlet closing = /[}]/\nlet ratio = width/2 + height / 2\npublic struct UIFnProbe: View { public var body: some View { EmptyView() } }\nlet multi = #/\n  [}]\n/#\n', [['UIFnProbe', 'component']]],
   ];
   for (const [name, text, expected] of cases) {
@@ -499,7 +500,10 @@ test('imports, default values and unreadable text do not hide a public declarati
   }
   // Text the scan cannot read, and a public name the lists cannot hold, fail
   // closed rather than drop the declaration.
-  for (const text of ['let pattern = foo(/[{]\npublic struct UIFnAfter: View {}\n', '}\npublic struct UIFnAfter: View {}\n', 'public struct Ünit: View {}\n', 'public extension View {\n    func uifnÜbersicht() -> some View { self }\n}\n']) {
+  for (const text of ['let pattern = foo(/[{]\npublic struct UIFnAfter: View {}\n', '}\npublic struct UIFnAfter: View {}\n', 'public struct Ünit: View {}\n', 'public extension View {\n    func uifnÜbersicht() -> some View { self }\n}\n', 'public struct `UIFn Row`: View {}\n', 'public struct 🙂Card: View {}\n', 'public struct UIFne\u0301Card: View {}\n']) {
     expectCatalogCode(() => parseSwiftUISurfaceDeclarations([{ path: probe, text }]), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
+  }
+  for (const file of ['UIFn_Grid.swift', 'Data-Views/UIFnGrid.swift']) {
+    expectCatalogCode(() => parseSwiftUISurfaceDeclarations([{ path: `${swiftComponents}/${file}`, text: 'public struct UIFnGrid: View {}\n' }]), 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT');
   }
 });
