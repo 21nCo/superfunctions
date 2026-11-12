@@ -16,6 +16,7 @@ on:
       - "uifn/catalog/swiftui-surface-inventory.json"
       - "uifn/catalog/src/swiftui-symbol-graph.mjs"
       - "scripts/uifn-swiftui-inventory.mjs"
+      - "scripts/uifn-swiftui-if-clauses.swift"
   pull_request:
     paths:
       - "Package.swift"
@@ -30,6 +31,7 @@ on:
       - "uifn/catalog/swiftui-surface-inventory.json"
       - "uifn/catalog/src/swiftui-symbol-graph.mjs"
       - "scripts/uifn-swiftui-inventory.mjs"
+      - "scripts/uifn-swiftui-if-clauses.swift"
 
 permissions:
   contents: read

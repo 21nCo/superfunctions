@@ -18,7 +18,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { CatalogError, createSwiftUISurfaceInventory, stableStringify } from '../uifn/catalog/src/compiler.mjs';
-import { readSwiftUISymbolGraphs, SWIFTUI_MODULE, swiftUIDeclarationsFromSymbolGraphs, uncoveredSwiftConditions } from '../uifn/catalog/src/swiftui-symbol-graph.mjs';
+import { readSwiftUISymbolGraphs, SWIFTUI_MODULE, swiftUIDeclarationsFromSymbolGraphs, uncoveredSwiftClauses } from '../uifn/catalog/src/swiftui-symbol-graph.mjs';
 import { SWIFTUI_SOURCES_ROOT } from '../uifn/catalog/src/swiftui-status.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -42,9 +42,16 @@ async function swiftFiles(directory) {
   return nested.flat().sort();
 }
 
+// Lists the #if clauses with the Swift parser and fails on one no build
+// compiles.
 async function checkConditions() {
   const files = (await Promise.all(['Styles', 'Components'].map((name) => swiftFiles(path.join(repoRoot, SWIFTUI_SOURCES_ROOT, name))))).flat();
-  const uncovered = (await Promise.all(files.map(async (file) => uncoveredSwiftConditions(await readFile(file, 'utf8')).map((entry) => ({ source: path.relative(repoRoot, file), ...entry }))))).flat();
+  const host = path.join(path.dirname(execFileSync('xcrun', ['--find', 'swift'], { encoding: 'utf8' }).trim()), '../lib/swift/host');
+  const clauses = JSON.parse(execFileSync('xcrun', [
+    'swift', '-I', host, '-L', host, '-lSwiftParser', '-lSwiftSyntax', '-Xlinker', '-rpath', '-Xlinker', host,
+    path.join(repoRoot, 'scripts/uifn-swiftui-if-clauses.swift'), ...files,
+  ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 2], maxBuffer: 64 * 1024 * 1024 }));
+  const uncovered = files.flatMap((file) => uncoveredSwiftClauses(clauses[file] ?? []).map((entry) => ({ source: path.relative(repoRoot, file), ...entry })));
   if (uncovered.length > 0) {
     throw new CatalogError('UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', 'An #if clause in UIFnSwiftUI Styles or Components is compiled by none of the inventory builds, or uses a condition they cannot decide. Use os(macOS), os(iOS), canImport(SwiftUI|UIKit|AppKit), DEBUG and targetEnvironment(simulator).', { uncovered });
   }

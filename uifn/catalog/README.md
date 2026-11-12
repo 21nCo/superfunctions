@@ -52,7 +52,8 @@ internal access and SPI included, and reads the graphs with
 branches counts, and so do underscored, `@_spi` and `@_documentation`-hidden
 ones. Code in an `#if` clause no build compiles is not in any graph, so it
 also fails when an `#if`, `#elseif` or `#else` clause in `Styles` or
-`Components` is compiled by none of those builds, or uses a condition other
+`Components`, as `scripts/uifn-swiftui-if-clauses.swift` lists them with the
+Swift parser, is compiled by none of those builds, or uses a condition other
 than `os(macOS)`, `os(iOS)`, `canImport(SwiftUI|UIKit|AppKit)`, `DEBUG` and
 `targetEnvironment(simulator)` with `!`, `&&` and `||`. Without `--write` it fails when
 the committed inventory differs; the Swift workflow's macOS job runs that
@@ -81,4 +82,6 @@ emits from the Swift files beside it.
 scripts as its inputs. The Swift workflow runs on every change under
 `uifn/swift`: its macOS job fails until the inventory is regenerated, and its
 Linux job runs the verifier, so a new or renamed style or component fails CI
-until it is listed and mapped here.
+until it is listed and mapped here. The Linux verifier checks the lists
+against the committed inventory only; the macOS job is the check that the
+inventory matches the Swift sources.

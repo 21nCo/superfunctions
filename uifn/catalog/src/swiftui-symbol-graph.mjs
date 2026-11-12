@@ -70,10 +70,7 @@ function surfaceKind(conformances = []) {
   return undefined;
 }
 
-// `graphs` are the symbol graphs of one build. Returns { id, kind, source }
-// per declaration, kind 'style', 'component' or 'unclassified'; an id repeats
-// for overloads.
-export function swiftUIDeclarationsFromSymbolGraphs(graphs) {
+function symbolGraphIndex(graphs) {
   const ownGraphs = graphs.filter((graph) => graph.module?.name === SWIFTUI_MODULE);
   const symbols = new Map(ownGraphs.flatMap((graph) => graph.symbols).map((symbol) => [symbol.identifier.precise, symbol]));
   const parents = new Map();
@@ -82,39 +79,59 @@ export function swiftUIDeclarationsFromSymbolGraphs(graphs) {
     if (PARENT_RELATIONSHIPS.has(relationship.kind)) parents.set(relationship.source, relationship);
     if (relationship.kind === 'conformsTo') conformances.set(relationship.source, [...(conformances.get(relationship.source) ?? []), relationship]);
   }
-  // Public or open, and so is every UIFnSwiftUI type it is nested in.
-  const isPublic = (precise) => {
-    const symbol = symbols.get(precise);
-    if (!symbol) return true;
-    const parent = parents.get(precise)?.target;
-    return ['public', 'open'].includes(symbol.accessLevel) && (parent === undefined || isPublic(parent));
-  };
+  return { symbols, parents, conformances };
+}
+
+// Public or open, and so is every UIFnSwiftUI type it is nested in.
+function isEffectivelyPublic(index, precise) {
+  const symbol = index.symbols.get(precise);
+  if (!symbol) return true;
+  if (!['public', 'open'].includes(symbol.accessLevel)) return false;
+  const parent = index.parents.get(precise)?.target;
+  return parent === undefined || isEffectivelyPublic(index, parent);
+}
+
+// The kind of a member of an extension, or undefined when it is not a
+// declaration (a requirement, a member of a UIFnSwiftUI type, or Self ==
+// sugar for one).
+function memberKind(index, symbol, parent, directory) {
+  const sugar = (symbol.swiftExtension?.constraints ?? []).some((constraint) => constraint.kind === 'sameType' && constraint.lhs === 'Self' && index.symbols.has(constraint.rhsPrecise));
+  const parentSymbol = index.symbols.get(parent.target);
+  if (parent.kind !== 'memberOf' || sugar) return undefined;
+  if (parentSymbol && parentSymbol.kind.identifier !== 'swift.protocol') return undefined;
+  const refinesView = parent.target === VIEW || (parentSymbol !== undefined && surfaceKind(index.conformances.get(parent.target)) === 'component');
+  return refinesView && directory === 'Components' ? 'component' : 'unclassified';
+}
+
+function symbolDeclaration(index, precise, symbol, source, directory) {
+  const kind = symbol.kind.identifier;
+  const names = symbol.pathComponents;
+  const name = names.at(-1).replace(/\(.*$/s, '');
+  const qualified = [...names.slice(0, -1), name].join('.');
+  if (TYPE_KINDS.has(kind)) {
+    const surface = surfaceKind(index.conformances.get(precise));
+    return surface || kind !== 'swift.enum' ? { id: names.join('.'), kind: surface ?? 'unclassified', source } : undefined;
+  }
+  if (kind === 'swift.protocol') return undefined;
+  const parent = index.parents.get(precise);
+  if (parent === undefined) return { id: qualified, kind: 'unclassified', source };
+  const member = memberKind(index, symbol, parent, directory);
+  if (member === undefined) return undefined;
+  return { id: parent.target === VIEW ? name : qualified, kind: member, source };
+}
+
+// `graphs` are the symbol graphs of one build. Returns { id, kind, source }
+// per declaration, kind 'style', 'component' or 'unclassified'; an id repeats
+// for overloads.
+export function swiftUIDeclarationsFromSymbolGraphs(graphs) {
+  const index = symbolGraphIndex(graphs);
   const declarations = [];
-  for (const [precise, symbol] of symbols) {
+  for (const [precise, symbol] of index.symbols) {
     const source = sourceOf(symbol);
     const directory = ['Styles', 'Components'].find((name) => source?.startsWith(`${SWIFTUI_SOURCES_ROOT}/${name}/`));
-    if (!directory || precise.includes('::SYNTHESIZED::') || !isPublic(precise)) continue;
-    const kind = symbol.kind.identifier;
-    const names = symbol.pathComponents;
-    const name = names.at(-1).replace(/\(.*$/s, '');
-    const qualified = [...names.slice(0, -1), name].join('.');
-    if (TYPE_KINDS.has(kind)) {
-      const surface = surfaceKind(conformances.get(precise));
-      if (surface || kind !== 'swift.enum') declarations.push({ id: names.join('.'), kind: surface ?? 'unclassified', source });
-      continue;
-    }
-    if (kind === 'swift.protocol') continue;
-    const parent = parents.get(precise);
-    if (parent === undefined) {
-      declarations.push({ id: qualified, kind: 'unclassified', source });
-      continue;
-    }
-    const sugar = (symbol.swiftExtension?.constraints ?? []).some((constraint) => constraint.kind === 'sameType' && constraint.lhs === 'Self' && symbols.has(constraint.rhsPrecise));
-    const parentSymbol = symbols.get(parent.target);
-    if (parent.kind !== 'memberOf' || sugar || (parentSymbol && parentSymbol.kind.identifier !== 'swift.protocol')) continue;
-    const refinesView = parent.target === VIEW || (parentSymbol && surfaceKind(conformances.get(parent.target)) === 'component');
-    const memberKind = refinesView && directory === 'Components' ? 'component' : 'unclassified';
-    declarations.push({ id: parent.target === VIEW ? name : qualified, kind: memberKind, source });
+    if (!directory || precise.includes('::SYNTHESIZED::') || !isEffectivelyPublic(index, precise)) continue;
+    const declaration = symbolDeclaration(index, precise, symbol, source, directory);
+    if (declaration) declarations.push(declaration);
   }
   return declarations;
 }
@@ -125,10 +142,8 @@ export function swiftUIDeclarationsFromSymbolGraphs(graphs) {
 // #else clause in Styles and Components has to be compiled by at least one
 // build, judged by evaluating its condition, nesting included, over these
 // atoms. Any other atom (arch(), swift(), a custom flag, canImport of another
-// module) fails, as does an unbalanced directive. A directive is a line whose
-// first token, after any block comments, is #if, #elseif, #else or #endif; a
-// line inside a multi-line string or comment that reads like one is checked
-// too, which can only fail closed.
+// module) fails, as does an unbalanced directive. The clauses come from the
+// Swift parser (scripts/uifn-swiftui-if-clauses.swift), not from the text.
 const SWIFT_BUILDS = { macOS: 0b000011, iOS: 0b111100, debug: 0b010101, simulator: 0b110000 };
 const ALL_BUILDS = 0b111111;
 const SWIFT_CONDITION_ATOMS = new Map([
@@ -144,11 +159,12 @@ const SWIFT_CONDITION_TOKEN = /\s*(&&|\|\||!|\(|\)|[A-Za-z]+\([A-Za-z]+\)|[A-Za-
 
 // Returns the builds a condition is true in, or undefined if it is not one
 // the builds can decide.
-function swiftConditionBuilds(condition) {
+function swiftConditionBuilds(text) {
+  const condition = text.replace(/\s+/g, '');
   const tokens = [];
   SWIFT_CONDITION_TOKEN.lastIndex = 0;
   for (let match = SWIFT_CONDITION_TOKEN.exec(condition); match; match = SWIFT_CONDITION_TOKEN.exec(condition)) tokens.push(match[1]);
-  if (tokens.join('') !== condition.replace(/\s/g, '')) return undefined;
+  if (tokens.join('') !== condition) return undefined;
   let index = 0;
   const unary = () => {
     const token = tokens[index++];
@@ -179,28 +195,27 @@ function swiftConditionBuilds(condition) {
   }
 }
 
-const SWIFT_DIRECTIVE = /^(?:.*?\*\/)?\s*(?:\/\*.*?\*\/\s*)*#(if|elseif|else|endif)\b(.*)$/;
-
-// Returns { line, condition, reason } for each clause in one file's text that
-// no inventory build compiles or that the builds cannot decide.
-export function uncoveredSwiftConditions(text) {
+// `clauses` are one file's { line, directive, condition } in source order,
+// directive '#if', '#elseif', '#else' or '#endif'. Returns
+// { line, condition, reason } for each clause no inventory build compiles or
+// whose condition the builds cannot decide.
+export function uncoveredSwiftClauses(clauses) {
   const uncovered = [];
   const frames = [];
   let active = ALL_BUILDS;
-  text.split(/\r\n|\r|\n/).forEach((line, index) => {
-    const match = SWIFT_DIRECTIVE.exec(line);
-    if (!match) return;
-    const [, directive, rest] = match;
-    const condition = rest.replace(/\/\*.*?\*\//g, ' ').replace(/\/\/.*$/, '').trim();
-    const report = (reason) => uncovered.push({ line: index + 1, condition: `#${directive} ${condition}`.trim(), reason });
-    if (directive === 'if') frames.push({ outer: active, taken: 0 });
+  for (const { line, directive, condition = '' } of clauses) {
+    const report = (reason) => uncovered.push({ line, condition: `${directive} ${condition}`.trim(), reason });
+    if (directive === '#if') frames.push({ outer: active, taken: 0 });
     const frame = frames.at(-1);
-    if (!frame) return report('unbalanced');
-    if (directive === 'endif') {
-      active = frames.pop().outer;
-      return undefined;
+    if (!frame) {
+      report('unbalanced');
+      continue;
     }
-    let builds = directive === 'else' ? ALL_BUILDS : swiftConditionBuilds(condition);
+    if (directive === '#endif') {
+      active = frames.pop().outer;
+      continue;
+    }
+    let builds = directive === '#else' ? ALL_BUILDS : swiftConditionBuilds(condition);
     if (builds === undefined) {
       report('unsupported condition');
       builds = ALL_BUILDS;
@@ -208,8 +223,7 @@ export function uncoveredSwiftConditions(text) {
     active = frame.outer & builds & ~frame.taken;
     frame.taken |= frame.outer & builds;
     if (active === 0) report('no inventory build compiles this branch');
-    return undefined;
-  });
-  if (frames.length > 0) uncovered.push({ line: text.split(/\r\n|\r|\n/).length, condition: '#endif', reason: 'unbalanced' });
+  }
+  if (frames.length > 0) uncovered.push({ line: clauses.at(-1).line, condition: '#endif', reason: 'unbalanced' });
   return uncovered;
 }

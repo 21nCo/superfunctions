@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -10,7 +10,7 @@ import { CATALOG_SOURCE, EXPECTED_PRIMITIVE_NAMES } from '../uifn/catalog/src/ca
 import { compareGeneratedOutputs, createGeneratedOutputs, createSwiftUISurfaceInventory, stableStringify, validateCatalogSource, validateSwiftUIStatus, validateSwiftUISurfaceInventory, verifyGeneratedDirectory, verifySwiftUISurfaceDeclarations, writeGeneratedOutputs } from '../uifn/catalog/src/compiler.mjs';
 import { migrateCatalogDocument } from '../uifn/catalog/src/migrations.mjs';
 import { SWIFTUI_STATUS_SOURCE, SWIFTUI_STATUSES } from '../uifn/catalog/src/swiftui-status.mjs';
-import { readSwiftUISymbolGraphs, swiftUIDeclarationsFromSymbolGraphs, uncoveredSwiftConditions } from '../uifn/catalog/src/swiftui-symbol-graph.mjs';
+import { readSwiftUISymbolGraphs, swiftUIDeclarationsFromSymbolGraphs, uncoveredSwiftClauses } from '../uifn/catalog/src/swiftui-symbol-graph.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fixtureRoot = path.join(repoRoot, 'uifn/catalog/fixtures/negative');
@@ -330,24 +330,65 @@ test('a declared name or path the lists cannot hold fails closed', async () => {
   }
 });
 
+// Clauses as scripts/uifn-swiftui-if-clauses.swift lists them: '#if os(iOS)'
+// is { directive: '#if', condition: 'os(iOS)' }.
+function clauses(lines) {
+  return lines.map((text, index) => {
+    const [, directive, condition] = /^\s*(#\w+)\s*(.*)$/.exec(text);
+    return { line: index + 1, directive, condition };
+  });
+}
+
 test('an #if clause no inventory build compiles is reported', () => {
-  const check = (lines) => uncoveredSwiftConditions(lines.join('\n')).map(({ line, reason }) => [line, reason]);
+  const check = (lines) => uncoveredSwiftClauses(clauses(lines)).map(({ line, reason }) => [line, reason]);
   const none = 'no inventory build compiles this branch';
   // Covered: every clause is compiled by some build.
-  assert.deepEqual(check(['#if os(iOS) && !targetEnvironment(simulator)', '#elseif canImport(AppKit) // macOS', '  #if !DEBUG', '  #endif', '#endif']), []);
-  assert.deepEqual(check(['#if os(macOS) /* supported OS */', '#elseif canImport(UIKit)', '#else', '  #if DEBUG', '  #endif', '#endif']).slice(0, 1), [[3, none]]);
+  assert.deepEqual(check(['#if os(iOS) && !targetEnvironment(simulator)', '#elseif canImport(AppKit)', '  #if !DEBUG', '  #endif', '#endif']), []);
   assert.deepEqual(check(['#if os(macOS)', '#elseif canImport(UIKit)', '#endif']), []);
   // Branches no build compiles, nesting included.
   assert.deepEqual(check(['#if !os(macOS) && !os(iOS)', '#endif']), [[1, none]]);
   assert.deepEqual(check(['#if os(macOS) || os(iOS)', '#else', '#endif']), [[2, none]]);
+  assert.deepEqual(check(['#if os(macOS)', '#elseif canImport(UIKit)', '#else', '#endif']), [[3, none]]);
   assert.deepEqual(check(['#if os(macOS)', '  #if os(iOS)', '  #endif', '#endif']), [[2, none]]);
-  // Conditions the builds cannot decide, after a block comment too.
-  assert.deepEqual(check(['/* platform */ #if arch(x86_64)', '#endif']), [[1, 'unsupported condition']]);
-  assert.deepEqual(check(['/*', ' note', '*/ #if canImport(WatchKit)', '#endif']), [[3, 'unsupported condition']]);
+  // Conditions the builds cannot decide.
+  assert.deepEqual(check(['#if os(macOS) && arch(x86_64)', '#elseif canImport(WatchKit)', '#endif']), [[1, 'unsupported condition'], [2, 'unsupported condition'], [2, none]]);
   assert.deepEqual(check(['#if swift(>=6)', '#endif', '#if UIFN_EXPERIMENTAL', '#endif']), [[1, 'unsupported condition'], [3, 'unsupported condition']]);
   // Unbalanced directives.
   assert.deepEqual(check(['#endif']), [[1, 'unbalanced']]);
   assert.deepEqual(check(['#if DEBUG']), [[1, 'unbalanced']]);
+});
+
+test('the Swift parser lists #if clauses, never text in comments or strings', { skip: process.platform !== 'darwin' && 'needs macOS with Xcode' }, async () => {
+  const host = path.join(path.dirname(spawnSync('xcrun', ['--find', 'swift'], { encoding: 'utf8' }).stdout.trim()), '../lib/swift/host');
+  const temporary = await mkdtemp(path.join(os.tmpdir(), 'uifn-if-clauses-'));
+  try {
+    const file = path.join(temporary, 'Probe.swift');
+    await writeFile(file, [
+      '#if os(macOS) && arch(x86_64) // */ #if os(macOS)',
+      'public struct UIFnIntel {}',
+      '#elseif /* note */ os(iOS) // #else',
+      '#else',
+      '#endif',
+      'let text = """',
+      '#if os(macOS)',
+      '"""',
+      '/*',
+      '#else',
+      '*/',
+    ].join('\n'));
+    const listed = spawnSync('xcrun', ['swift', '-I', host, '-L', host, '-lSwiftParser', '-lSwiftSyntax', '-Xlinker', '-rpath', '-Xlinker', host, path.join(repoRoot, 'scripts/uifn-swiftui-if-clauses.swift'), file], { encoding: 'utf8' });
+    assert.equal(listed.status, 0, listed.stderr);
+    const parsed = JSON.parse(listed.stdout)[file];
+    assert.deepEqual(parsed.map(({ line, directive, condition }) => [line, directive, condition.replaceAll(' ', '')]), [
+      [1, '#if', 'os(macOS)&&arch(x86_64)'],
+      [3, '#elseif', 'os(iOS)'],
+      [4, '#else', ''],
+      [5, '#endif', ''],
+    ]);
+    assert.deepEqual(uncoveredSwiftClauses(parsed).map(({ line, reason }) => [line, reason]), [[1, 'unsupported condition'], [3, 'no inventory build compiles this branch'], [4, 'no inventory build compiles this branch']]);
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
 });
 
 test('the committed inventory is canonical and the verifier rejects a malformed one', async () => {
