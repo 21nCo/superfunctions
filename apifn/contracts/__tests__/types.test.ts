@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
-import type { CatalogEncoding, CatalogParameter, CatalogSecurityScheme, OperationBinding } from "../src/index.js";
+import type { CatalogEncoding, CatalogIdempotency, CatalogParameter, CatalogSecurityScheme, OperationBinding } from "../src/index.js";
 
 // Compile-time contract: each @ts-expect-error fails `npm run typecheck` once the type accepts what the runtime rejects.
 // The assignments only need to typecheck; the test body checks the accepted forms are plain data.
 const accepted = {
   byOperationId: { id: "projects.list", operationId: "listProjects" } satisfies OperationBinding,
   byRoute: { id: "projects.list", method: "GET", path: "/projects" } satisfies OperationBinding,
+  idempotent: { id: "projects.create", operationId: "createProject", idempotency: { semantics: "server", key: { in: "header", name: "Idempotency-Key" } } } satisfies OperationBinding,
+  catalogIdempotency: { semantics: "server", key: null } satisfies CatalogIdempotency,
   parameterStyle: "deepObject" satisfies CatalogParameter["style"],
   encodingStyle: "form" satisfies CatalogEncoding["style"],
   scheme: { type: "oauth2", description: null, flows: { clientCredentials: { tokenUrl: "https://auth.example.test/token", scopes: [] } } } satisfies CatalogSecurityScheme,
@@ -39,11 +41,17 @@ export const rejected: unknown[] = [
   { type: "apiKey", description: null, in: "header", name: "X-Api-Key", flows: {} } satisfies CatalogSecurityScheme,
   // @ts-expect-error an http scheme needs its scheme
   { type: "http", description: null } satisfies CatalogSecurityScheme,
+  // @ts-expect-error "server" is the only idempotency semantics
+  { id: "projects.create", operationId: "createProject", idempotency: { semantics: "client" } } satisfies OperationBinding,
+  // @ts-expect-error idempotency keys are headers
+  { id: "projects.create", operationId: "createProject", idempotency: { semantics: "server", key: { in: "query", name: "key" } } } satisfies OperationBinding,
+  // @ts-expect-error a catalog declaration always states its key, or null
+  { semantics: "server" } satisfies CatalogIdempotency,
 ];
 
 describe("public contract types", () => {
   it("accept the forms the runtime accepts", () => {
     expect(JSON.parse(JSON.stringify(accepted))).toEqual(accepted);
-    expect(rejected).toHaveLength(12);
+    expect(rejected).toHaveLength(15);
   });
 });

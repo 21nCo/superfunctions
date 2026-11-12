@@ -208,7 +208,8 @@ describe.each(['plugin', 'cli'] as const)('%s API-key documentation HTTP boundar
     if (guide === 'cli') expect(generated).toContain(readBlock(text, "app.get('/projects'"));
   });
 
-  it.each([false, true])('typechecks the current public source with core build artifacts hidden: %s', (hideBuildArtifacts) => {
+  // A whole-program typecheck: the file's first one loads the TypeScript libraries cold and takes up to 4.7s on CI.
+  it.each([false, true])('typechecks the current public source with core build artifacts hidden: %s', { timeout: 30_000 }, (hideBuildArtifacts) => {
     const fileName = fileURLToPath(new URL(`../../__docs_scope_${guide}.ts`, import.meta.url)).replaceAll('\\', '/');
     const publicEntry = fileURLToPath(new URL('../index.ts', import.meta.url)).replaceAll('\\', '/');
     const buildDirectory = fileURLToPath(new URL('../../dist/', import.meta.url)).replaceAll('\\', '/');

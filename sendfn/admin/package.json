@@ -1,6 +1,6 @@
 {
   "name": "@sendfn/admin",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Function-owned Super Console administration capability for SendFn",
   "type": "module",
   "main": "./dist/index.js",
@@ -29,12 +29,17 @@
   ],
   "author": "21n",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "sendfn/admin"
+  },
   "publishConfig": {
     "access": "public"
   },
   "dependencies": {
     "@superfunctions/admin": "0.1.0",
-    "sendfn": "0.0.4"
+    "sendfn": "0.0.5"
   },
   "devDependencies": {
     "@superfunctions/db": "0.1.4",

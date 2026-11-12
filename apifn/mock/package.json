@@ -1,6 +1,6 @@
 {
   "name": "@apifn/mock",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Mock server for ApiFn",
   "type": "module",
   "main": "dist/index.cjs",
@@ -20,7 +20,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@apifn/core": "0.0.3"
+    "@apifn/core": "0.0.4"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
@@ -35,7 +35,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
     "directory": "apifn/mock"
   },
   "publishConfig": {

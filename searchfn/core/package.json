@@ -1,6 +1,6 @@
 {
   "name": "@searchfn/core",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Storage-neutral SearchFn algorithms for pipelines, indexing, scoring, querying, and posting codecs.",
   "license": "MIT",
   "type": "module",
@@ -40,7 +40,7 @@
   "author": "21n",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
     "directory": "searchfn/core"
   },
   "bugs": {

@@ -3,5 +3,6 @@ export { withFileLock, withRoutingLock } from "./lock.js";
 export { canonicalBirthSignature, isProcessId, parsePersistedProxyRoutes, type PersistedProxyRoute } from "./proxy-state.js";
 export { parseProxyOwner, proxyOwnerStatus, type ProxyOwner } from "./proxy-owner.js";
 export { renderPolicyInventory, resolvePolicy } from "./policy.js";
+export { isFetchBlockedPort } from "./blocked.js";
 export { FilePortRegistry, inspectContainerRunning, isProcessAlive, renderPortInventory } from "./registry.js";
 export * from "./types.js";

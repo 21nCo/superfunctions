@@ -1,6 +1,6 @@
 {
   "name": "@apifn/svelte",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Svelte UI components for ApiFn",
   "type": "module",
   "main": "dist/index.js",
@@ -47,7 +47,7 @@
     "test": "vitest run --config vitest.config.ts"
   },
   "dependencies": {
-    "@apifn/core": "0.0.3"
+    "@apifn/core": "0.0.4"
   },
   "peerDependencies": {
     "svelte": "^4.0.0 || ^5.0.0"
@@ -69,7 +69,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
     "directory": "apifn/svelte"
   },
   "publishConfig": {

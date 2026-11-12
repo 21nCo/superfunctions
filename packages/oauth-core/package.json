@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/oauth-core",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Core OAuth types and service contracts for Superfunctions",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -38,14 +38,14 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
     "directory": "packages/oauth-core"
   },
   "publishConfig": {
     "access": "public"
   },
   "dependencies": {
-    "@superfunctions/oauth-storage": "0.1.0"
+    "@superfunctions/oauth-storage": "0.1.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

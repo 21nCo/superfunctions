@@ -1,7 +1,12 @@
 {
   "name": "@searchfn/server",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Server SDK for SearchFn - Thin HTTP transport over SearchAdapter",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "searchfn/server"
+  },
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -13,14 +18,14 @@
   },
   "dependencies": {
     "@superfunctions/http": "0.2.0",
-    "@superfunctions/observability": "0.0.2",
-    "@searchfn/adapter-contracts": "0.4.0"
+    "@superfunctions/observability": "0.0.3",
+    "@searchfn/adapter-contracts": "0.4.1"
   },
   "devDependencies": {
-    "@searchfn/adapter-memory": "0.1.0",
+    "@searchfn/adapter-memory": "0.1.1",
     "typescript": "^5.0.0",
     "tsup": "^8.0.0",
-    "vitest": "^1.0.0"
+    "vitest": "^3.2.4"
   },
   "files": [
     "dist"

@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/http-fastify",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Fastify adapter for @superfunctions/http",
   "type": "module",
   "main": "./dist/index.js",
@@ -47,7 +47,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
     "directory": "packages/http-fastify"
   },
   "publishConfig": {

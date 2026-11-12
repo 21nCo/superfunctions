@@ -1,6 +1,6 @@
 {
   "name": "@apifn/core",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Core library for ApiFn — route introspection, schema conversion, OpenAPI generation, and diff",
   "type": "module",
   "main": "dist/index.cjs",
@@ -58,7 +58,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
     "directory": "apifn/core"
   },
   "publishConfig": {

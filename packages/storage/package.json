@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/storage",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Storage adapter system for FileFn",
   "type": "module",
   "main": "./dist/index.js",
@@ -42,12 +42,12 @@
   "bugs": { "url": "https://github.com/21nCo/super-functions/issues" },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
     "directory": "packages/storage"
   },
   "publishConfig": { "access": "public" },
   "dependencies": {
-    "@superfunctions/observability": "0.0.2",
+    "@superfunctions/observability": "0.0.3",
     "@aws-sdk/client-s3": "^3.600.0",
     "@aws-sdk/s3-request-presigner": "^3.600.0"
   },

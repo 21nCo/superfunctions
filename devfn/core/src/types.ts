@@ -18,7 +18,11 @@ export interface ProjectIdentity {
   branch?: string;
 }
 
-export interface InstanceIdentity extends ProjectIdentity { instanceId: string }
+export interface InstanceIdentity extends ProjectIdentity {
+  instanceId: string;
+  /** Named runtime of the checkout; absent for the default runtime. */
+  runtime?: string;
+}
 export interface RoutingIdentity extends InstanceIdentity {
   isPrimaryWorktree: boolean;
   /**
@@ -29,6 +33,8 @@ export interface RoutingIdentity extends InstanceIdentity {
   readableWorktreeLabel: string;
   /** Random identity of the DevFn state directory (readRuntimeId), present when the manifest declares resources. */
   runtimeId?: string;
+  /** Canonical runtime directory of this instance, under which `artifacts: "runtime"` processes receive theirs. */
+  runtimeDir?: string;
 }
 
 export interface LifecyclePlan {
@@ -45,6 +51,8 @@ export interface LifecycleReceipt {
   version: 1;
   projectId: string;
   instanceId: string;
+  /** Runtime name; absent in receipts of earlier releases, which all belong to the default runtime. */
+  runtime?: string;
   invocationId: string;
   profile: string;
   state: LifecycleState;
@@ -83,6 +91,8 @@ export interface LifecycleReceipt {
 
 export interface UpOptions {
   config: DevFnConfig; root: string; profile?: string; stateDir?: string; allowPublic?: boolean; replace?: boolean;
+  /** Named runtime of the checkout; omitted selects the default runtime. */
+  runtime?: string;
   /** Tasks to run on this start although their record would skip or block them. */
   rerunTasks?: string[];
   /** Aborting stops a running task and the startup, which then rolls back what it started. */

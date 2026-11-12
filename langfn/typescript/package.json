@@ -94,16 +94,16 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
     "directory": "langfn/typescript"
   },
   "publishConfig": {
     "access": "public"
   },
   "dependencies": {
-    "@mcpfn/core": "0.0.5",
+    "@mcpfn/core": "0.0.6",
     "@modelcontextprotocol/sdk": "1.29.0",
-    "@superfunctions/auth": "0.2.0",
+    "@superfunctions/auth": "0.2.1",
     "@superfunctions/db": "0.2.0",
     "@superfunctions/http": "0.2.0",
     "zod": "^3.23.8",

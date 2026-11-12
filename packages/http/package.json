@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/http",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Framework-agnostic HTTP abstraction layer for Superfunctions libraries",
   "type": "module",
   "main": "./dist/index.js",
@@ -46,14 +46,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
     "directory": "packages/http"
   },
   "publishConfig": {
     "access": "public"
   },
   "dependencies": {
-    "@superfunctions/observability": "0.0.2"
+    "@superfunctions/observability": "0.0.3"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

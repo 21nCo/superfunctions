@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/reviewfn-core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Evidence identity, policy, orchestration, validation, and report contracts for ReviewFn",
   "type": "module",
   "main": "./dist/index.js",
@@ -34,7 +34,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
     "directory": "reviewfn/core"
   },
   "bugs": {

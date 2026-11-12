@@ -1,6 +1,6 @@
 {
   "name": "@mailfn/core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Provider-neutral programmable mailbox domain for MailFn",
   "type": "module",
   "main": "./dist/index.js",
@@ -24,7 +24,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
     "directory": "mailfn/core"
   },
   "publishConfig": { "access": "public" },

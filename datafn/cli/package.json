@@ -27,8 +27,8 @@
     "test:watch": "vitest watch"
   },
   "dependencies": {
-    "@datafn/core": "0.1.1",
-    "@datafn/client": "0.1.1"
+    "@datafn/core": "0.1.2",
+    "@datafn/client": "0.1.2"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
@@ -45,7 +45,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
     "directory": "datafn/cli"
   },
   "publishConfig": {

@@ -1,6 +1,6 @@
 {
   "name": "@authfn/client",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Typed browser client for authfn",
   "type": "module",
   "main": "./dist/index.js",
@@ -21,6 +21,11 @@
   },
   "author": "21n",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "authfn/client"
+  },
   "publishConfig": {
     "access": "public"
   },
@@ -30,11 +35,11 @@
   },
   "devDependencies": {
     "@authfn/api-keys": "0.1.2",
-    "@authfn/email-otp": "0.1.2",
-    "@authfn/multi-region": "0.1.2",
+    "@authfn/email-otp": "0.1.3",
+    "@authfn/multi-region": "0.1.3",
     "@authfn/password": "0.1.2",
-    "@authfn/social-oauth": "0.1.2",
-    "@authfn/two-factor": "0.1.2",
+    "@authfn/social-oauth": "0.1.3",
+    "@authfn/two-factor": "0.1.3",
     "@types/node": "^22.0.0",
     "typescript": "^5.6.0",
     "vitest": "^3.2.4"

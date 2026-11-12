@@ -1,6 +1,6 @@
 {
   "name": "@mailfn/client",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Typed TypeScript client for remote MailFn deployments",
   "type": "module",
   "main": "./dist/index.js",
@@ -17,9 +17,9 @@
   "keywords": ["mailfn", "email", "client"],
   "author": "21n",
   "license": "MIT",
-  "repository": { "type": "git", "url": "git+https://github.com/21nCo/super-functions.git", "directory": "mailfn/client" },
+  "repository": { "type": "git", "url": "git+https://github.com/21nCo/superfunctions.git", "directory": "mailfn/client" },
   "publishConfig": { "access": "public" },
   "sideEffects": false,
-  "dependencies": { "@mailfn/core": "0.1.0" },
+  "dependencies": { "@mailfn/core": "0.1.1" },
   "devDependencies": { "typescript": "^5.6.0", "vitest": "3.2.4" }
 }

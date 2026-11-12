@@ -507,4 +507,4 @@ export function createMarkdownProjector(options: MarkdownOptions = {}): EditorPr
   };
 }
 
-export const MDFN_MARKDOWN_VERSION = "0.1.0" as const;
+export const MDFN_MARKDOWN_VERSION = "0.1.1" as const;

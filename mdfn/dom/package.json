@@ -1,6 +1,6 @@
 {
   "name": "@mdfn/dom",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Vanilla DOM visual editing, selection, history, clipboard, composition, drag-drop, and node views for mdfn",
   "type": "module",
   "main": "dist/index.cjs",
@@ -15,8 +15,8 @@
     "prepack": "npm run build"
   },
   "dependencies": {
-    "@mdfn/core": "0.1.0",
-    "@mdfn/markdown": "0.1.0",
+    "@mdfn/core": "0.1.1",
+    "@mdfn/markdown": "0.1.1",
     "prosemirror-commands": "^1.7.2",
     "prosemirror-dropcursor": "^1.8.3",
     "prosemirror-gapcursor": "^1.4.1",
@@ -28,11 +28,11 @@
     "prosemirror-tables": "^1.8.5",
     "prosemirror-view": "^1.42.2"
   },
-  "devDependencies": { "@mdfn/extensions": "0.1.0", "jsdom": "^26.0.0", "tsup": "^8.0.0", "typescript": "^5.3.0", "vitest": "3.2.4" },
+  "devDependencies": { "@mdfn/extensions": "0.1.1", "jsdom": "^26.0.0", "tsup": "^8.0.0", "typescript": "^5.3.0", "vitest": "3.2.4" },
   "files": ["dist", "README.md"],
   "license": "MIT",
   "engines": { "node": ">=20 <25" },
-  "repository": { "type": "git", "url": "git+https://github.com/21nCo/super-functions.git", "directory": "mdfn/dom" },
+  "repository": { "type": "git", "url": "git+https://github.com/21nCo/superfunctions.git", "directory": "mdfn/dom" },
   "publishConfig": { "access": "public" },
   "sideEffects": false,
   "mdfn": { "status": "stable-candidate", "layer": "browser", "schemaVersion": 1, "kernel": "prosemirror" }

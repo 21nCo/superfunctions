@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 
-import { createHash, createPublicKey, verify } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { verifyRegistrySignatureEnvelope } from '../uifn/registry/src/trust-verify-core.mjs';
 import { DELIVERY_GENERATOR_VERSION } from './uifn-delivery-generator.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -66,12 +67,29 @@ function latestParityTraceRoot() {
   return candidates.map((name) => path.join(evidenceRoot, name, 'traces')).find((candidate) => existsSync(path.join(candidate, 'package-react.json')) && existsSync(path.join(candidate, 'source-solid.json')));
 }
 
-export function inspectPhase16() {
+// Delegates to the runtime verifier's implementation (uifn/registry/src/trust-verify-core.mjs), so the static gate
+// and @uifn/registry accept exactly the same signatures. It never throws: an unusable trust root, an unreadable
+// signature file or a malformed envelope is an invalid result with the runtime's failure reason.
+export function verifyRegistrySignatureFile(catalogSource, signature, publicKeyPem) {
+  const { ok, keyId, catalogSha256, reason } = verifyRegistrySignatureEnvelope(catalogSource, signature, publicKeyPem);
+  return ok ? { valid: true, keyId, catalogSha256 } : { valid: false, keyId, catalogSha256, reason };
+}
+
+const readOrNull = (load) => {
+  try {
+    return load();
+  } catch {
+    return null;
+  }
+};
+
+// `readTrustRootPem` reads the pinned trust root; tests inject an unusable root here instead of writing the tracked PEM.
+export function inspectPhase16({ readTrustRootPem = () => read('uifn/registry/trust/registry-ed25519-public.pem') } = {}) {
   const failures = [];
   const catalog = json('uifn/registry/generated/catalog.json');
   const delivery = json('uifn/registry/generated/delivery-manifest.json');
-  const signature = json('uifn/registry/generated/catalog-signature.json');
-  const publicKey = read('uifn/registry/trust/registry-ed25519-public.pem');
+  const signature = readOrNull(() => json('uifn/registry/generated/catalog-signature.json'));
+  const publicKey = readOrNull(readTrustRootPem) ?? '';
   const catalogSource = read('uifn/registry/generated/catalog.json');
   const anatomy = json('uifn/catalog/generated/anatomy-types.json');
   const expectedComponentCount = anatomy.primitives.length;
@@ -126,14 +144,10 @@ export function inspectPhase16() {
   const legacyCatalogCount = existsSync(legacyCatalogRoot) ? readdirSync(legacyCatalogRoot).filter((name) => name.endsWith('.json')).length : 0;
   if (legacyCatalogCount) failures.push({ code: 'UIFN_REGISTRY_DUPLICATE_CATALOG', count: legacyCatalogCount });
 
-  const catalogSha256 = sha256(catalogSource);
-  const keyId = sha256(createPublicKey(publicKey).export({ format: 'der', type: 'spki' })).slice(0, 24);
-  const signatureValid = signature.catalogSha256 === catalogSha256
-    && signature.keyId === keyId
-    && verify(null, Buffer.from(catalogSource), publicKey, Buffer.from(signature.signatureBase64, 'base64'));
-  if (!signatureValid) failures.push({ code: 'UIFN_REGISTRY_SIGNATURE_INVALID' });
+  const { valid: signatureValid, keyId, catalogSha256, reason } = verifyRegistrySignatureFile(catalogSource, signature, publicKey);
+  if (!signatureValid) failures.push({ code: 'UIFN_REGISTRY_SIGNATURE_INVALID', reason });
 
-  const registrySources = ['schema.ts', 'trust.ts', 'build-registry.ts', 'plan.ts', 'transaction.ts', 'add.ts', 'diff.ts', 'update.ts', 'remove.ts', 'lockfile.ts', 'cli.ts'];
+  const registrySources = ['schema.ts', 'trust.ts', 'trust-verify.ts', 'trust-verify-core.mjs', 'trust-root.ts', 'build-registry.ts', 'plan.ts', 'transaction.ts', 'add.ts', 'diff.ts', 'update.ts', 'remove.ts', 'lockfile.ts', 'cli.ts'];
   registrySources.forEach((name) => {
     const pathname = path.join(root, 'uifn/registry/src', name);
     if (!existsSync(pathname) || !statSync(pathname).isFile()) failures.push({ code: 'UIFN_REGISTRY_RUNTIME_MISSING', path: `uifn/registry/src/${name}` });

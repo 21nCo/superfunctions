@@ -1,7 +1,12 @@
 {
   "name": "@devfn/config",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Validated project manifests, organization policies, discovery, and trust contracts for DevFn",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "devfn/config"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -14,7 +19,7 @@
     "lint": "echo 'lint not configured'",
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
   },
-  "dependencies": { "@clifn/core": "0.1.0", "@types/node": "^22.0.0", "typescript": "^5.6.0" },
+  "dependencies": { "@clifn/core": "0.1.1", "@types/node": "^22.0.0", "typescript": "^5.6.0" },
   "devDependencies": { "vitest": "^3.2.4" },
   "engines": { "node": ">=22" },
   "license": "MIT"

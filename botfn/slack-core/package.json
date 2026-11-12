@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/botfn-slack-core",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Slack integration core utilities",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -30,7 +30,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
     "directory": "botfn/slack-core"
   },
   "publishConfig": {

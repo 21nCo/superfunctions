@@ -1,6 +1,6 @@
 {
   "name": "@mcpfn/testing",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "Protocol, authentication, Playwright, contract, scenario, and official conformance testing for MCP servers",
   "type": "module",
   "main": "dist/index.cjs",
@@ -30,9 +30,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@mcpfn/auth": "0.0.5",
-    "@mcpfn/client": "0.0.4",
-    "@mcpfn/core": "0.0.5",
+    "@mcpfn/auth": "0.0.6",
+    "@mcpfn/client": "0.0.5",
+    "@mcpfn/core": "0.0.6",
     "@modelcontextprotocol/sdk": "1.29.0",
     "@superfunctions/oauth-core": "0.1.1",
     "ajv": "^8.17.1"
@@ -56,7 +56,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
     "directory": "mcpfn/testing"
   },
   "publishConfig": { "access": "public" },

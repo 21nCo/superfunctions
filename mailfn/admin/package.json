@@ -1,6 +1,6 @@
 {
   "name": "@mailfn/admin",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Function-owned Super Console administration capability for MailFn",
   "type": "module",
   "main": "./dist/index.js",
@@ -29,11 +29,16 @@
   ],
   "author": "21n",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "mailfn/admin"
+  },
   "publishConfig": {
     "access": "public"
   },
   "dependencies": {
-    "@mailfn/core": "0.1.0",
+    "@mailfn/core": "0.1.1",
     "@superfunctions/admin": "0.1.0"
   },
   "devDependencies": {

@@ -1,6 +1,6 @@
 {
   "name": "@filefn/client",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "FileFn client SDK for browser file uploads",
   "type": "module",
   "main": "./dist/index.js",
@@ -34,7 +34,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
     "directory": "filefn/client"
   },
   "publishConfig": {

@@ -17,7 +17,8 @@ func registerSnapshotFont() throws {
     )
 }
 
-/// Each control style variant the snapshot tests render through the public styles.
+/// Each control style variant and component the snapshot tests render
+/// through the public styles and views.
 enum UIFnStyleSubject: String, CaseIterable, CustomTestStringConvertible {
     case buttonPrimary = "button-primary"
     case buttonSecondary = "button-secondary"
@@ -42,8 +43,16 @@ enum UIFnStyleSubject: String, CaseIterable, CustomTestStringConvertible {
     case progressCircularIndeterminate = "progress-circular-indeterminate"
     case gaugeLinear = "gauge-linear"
     case gaugeCircular = "gauge-circular"
+    case segmentedMeter = "segmented-meter"
+    case banner = "banner"
+    case emptyState = "empty-state"
+    case skeleton = "skeleton"
 
     var testDescription: String { rawValue }
+
+    /// Whether the subject draws text, which grows with Dynamic Type. A
+    /// skeleton draws only blocks of the sizes it is given.
+    var drawsText: Bool { self != .skeleton }
 
     @MainActor @ViewBuilder
     var view: some View {
@@ -119,6 +128,39 @@ enum UIFnStyleSubject: String, CaseIterable, CustomTestStringConvertible {
         case .gaugeCircular:
             Gauge(value: 0.6) { Text("Storage") } currentValueLabel: { Text("60") } minimumValueLabel: { Text("0") } maximumValueLabel: { Text("100") }
                 .gaugeStyle(.uifnCircular)
+        case .segmentedMeter:
+            UIFnSegmentedMeter(value: 0.6, segments: 5) { Text("Storage") } currentValueLabel: { Text("60%") }
+                .frame(width: 220)
+        case .banner:
+            UIFnBanner("Upload failed", message: "Try again", tone: .danger, dismiss: UIFnBannerDismiss("Dismiss") {}) {
+                Button("Retry") { /* The snapshot only draws the banner. */ }
+            }
+            .frame(width: 320)
+        // A drawn icon, since symbol glyphs change between OS releases.
+        case .emptyState:
+            UIFnEmptyState("No files", message: "Files you add appear here") {
+                Circle().strokeBorder(lineWidth: 2).frame(width: 32, height: 32)
+            } actions: {
+                Button("Add") { /* The snapshot only draws the empty state. */ }.buttonStyle(.uifnPrimary)
+            }
+            .frame(width: 260)
+        // A skeleton's highlight draws where it is when it renders, so this
+        // snapshot draws it at a fixed point in its sweep.
+        case .skeleton:
+            UIFnSkeletonAppearance(placeholder: UIFnSkeletonSample(), phase: 0.5)
+        }
+    }
+}
+
+/// A placeholder laid out like a row with an avatar and two lines of text.
+struct UIFnSkeletonSample: View {
+    var body: some View {
+        HStack(spacing: 12) {
+            UIFnSkeletonBlock(.circle).frame(width: 40, height: 40)
+            VStack(alignment: .leading, spacing: 8) {
+                UIFnSkeletonBlock(.capsule).frame(width: 160, height: 12)
+                UIFnSkeletonBlock(.rectangle).frame(width: 100, height: 12)
+            }
         }
     }
 }

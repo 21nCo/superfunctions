@@ -8,60 +8,84 @@ Status: `ga-candidate`. The stable catalog contains the 69 canonical components 
 
 Package exports and copied-source modules are generated together from the canonical uifn anatomy. A source template is byte-identical to its package source before installation. The generated catalog records the canonical version, generator version, definition hash, generator hash, template hashes, output hashes, MIT license, dependency requirements, and clean-room provenance.
 
-The bundled catalog is verified with a detached Ed25519 signature before it is used. It does not require a registry network request, and the signing private key is never shipped in the package or repository.
+The bundled catalog is verified with a detached Ed25519 signature (envelope schema v2) before it is used. It does not require a registry network request, and the signing private key never leaves AWS KMS: it is not in the package, the repository or any maintainer machine.
 
-## Maintainer signing
+## Trust root and verification
 
-The repository contains only the pinned public key, catalog digest, and detached signature. Never place the private key in the checkout, an `.env` file, shell history, command arguments, CI logs, or a persistent temporary file.
+The package pins the public half of the AWS KMS release-signing key:
 
-### Interim macOS Keychain custody
+- Key ID: `a72cc93c0e85e7af79cf582c` (the first 24 hex characters of SHA-256 over the SPKI DER public key)
+- Public key: `trust/registry-ed25519-public.pem`, also compiled into `src/trust-root.ts`
+- KMS key: `ECC_NIST_EDWARDS25519`, `SIGN_VERIFY`, origin `AWS_KMS`, signing algorithm `ED25519_SHA_512`, message type `RAW`
 
-Until release signing moves to shared infrastructure, the development key is held as a device-only generic-password item in the login Keychain:
-
-- Service: `uifn-registry-signing-key`
-- Account: `local-release-signer`
-- Expected key ID: `af26384964522699ef39dd80`
-
-On the authorized Mac, sign from `zsh` without materializing a PEM file:
-
-```bash
-PATH=/opt/homebrew/opt/node@22/bin:$PATH node scripts/sign-uifn-registry.mjs \
-  --private-key <(security find-generic-password \
-    -a local-release-signer \
-    -s uifn-registry-signing-key \
-    -w 2>/dev/null | xxd -r -p)
-```
-
-The `xxd` step decodes the hexadecimal representation emitted by `security` for the multiline PEM value. Confirm that the command reports key ID `af26384964522699ef39dd80`, review both generated signature files, and run the repository-wide stable gate before committing them. A missing item, a different key ID, or a Keychain access denial is a hard failure; do not generate a replacement key merely to make verification pass.
-
-### AWS KMS migration
-
-Before signing becomes a team operation, replace the local key with an AWS KMS asymmetric signing key configured as:
-
-- Key spec: `ECC_NIST_EDWARDS25519`
-- Key usage: `SIGN_VERIFY`
-- Origin: `AWS_KMS` (preferred over importing the temporary development key)
-- Signing algorithm: `ED25519_SHA_512`
-- `Sign` message type: `RAW`
-
-AWS KMS accepts at most 4,096 bytes per `Sign` request, while the generated registry catalog is substantially larger. The KMS cutover therefore requires signature-envelope schema v2. Sign this domain-separated digest rather than the complete catalog bytes:
+AWS KMS accepts at most 4,096 bytes per `Sign` request, so the key signs a domain-separated digest of the catalog rather than the catalog itself:
 
 ```text
 UTF8("uifn-registry-v2\0") || SHA-256(catalog-bytes)
 ```
 
-Pure Ed25519 signs that small byte sequence in KMS and remains independently verifiable offline with the public key returned by `GetPublicKey`. The verifier must recompute the catalog digest and domain-separated payload itself; it must never trust a digest supplied only by the signature envelope.
+The verifier (`src/trust-verify.ts`) recomputes the catalog SHA-256 and that 49-byte input itself; it never trusts a digest supplied only by the envelope. It accepts only a plain (non-Proxy) envelope with exactly the schema-v2 data fields, `schemaVersion: 2`, `algorithm: "Ed25519"`, `domain: "uifn-registry-v2"`, the pinned key ID, a `catalogSha256` equal to the recomputed digest, and a canonically Base64-encoded 64-byte signature that verifies against the pinned key. Anything else, including a schema-v1 envelope, fails with `UIFN_REGISTRY_SIGNATURE_INVALID` and a `reason`.
 
-The migration is complete only when all of the following are true:
+Schema-v1 signatures from the retired local development key are not accepted by this or later versions. Versions published before the KMS cutover bundle their own pinned key and v1 signature and keep verifying as before.
 
-1. Schema-v2 signing and offline-verification tests cover payload tampering, digest tampering, wrong domains, wrong keys, malformed envelopes, and legacy-schema handling.
-2. A dedicated release role is the only principal allowed to call `kms:Sign`, restricted to the exact key and `ED25519_SHA_512` algorithm.
-3. The signing job runs only in a protected release environment after review. Pull-request code, forked workflows, and ordinary build jobs cannot invoke it.
-4. The new public key, key ID, schema-v2 verifier, catalog signature, and generated TypeScript signature are reviewed and landed atomically.
-5. `PATH=/opt/homebrew/opt/node@22/bin:$PATH node scripts/verify-uifn-stable.mjs` passes against the final signed catalog, and the KMS signing event is present in CloudTrail.
-6. The old Keychain item is retained only for a bounded rollback window, then deleted after all supported releases trust the KMS key.
+## Maintainer signing
 
-AWS KMS supports importing asymmetric key material, so preserving the existing key through BYOK is possible. Prefer a newly generated KMS key for the team trust root because the current key originated as a temporary development credential. See the AWS documentation for [Ed25519 asymmetric keys](https://docs.aws.amazon.com/kms/latest/developerguide/asymmetric-key-specs.html), [the `Sign` API and message-size limit](https://docs.aws.amazon.com/kms/latest/APIReference/API_Sign.html), and [imported key material](https://docs.aws.amazon.com/kms/latest/developerguide/importing-keys.html).
+The repository contains only the pinned public key, the catalog digest and the detached signature. Signing happens only through the release-signing workflow below; there is no local signing path, and no private key may be placed in the checkout, an `.env` file, shell history, command arguments, CI logs or a temporary file.
+
+### AWS KMS migration (complete)
+
+The registry moved from the interim local development key (key ID `af26384964522699ef39dd80`) to the KMS key above. The migration criteria are met:
+
+1. Schema-v2 signing and offline-verification tests cover payload tampering, digest tampering, wrong domains, wrong keys, wrong algorithms, malformed envelopes and legacy-schema handling (`src/__tests__/trust.test.ts`, `scripts/sign-uifn-registry-kms.test.mjs`).
+2. A dedicated release role is the only principal allowed to call `kms:Sign`, restricted to the exact key and the `ED25519_SHA_512` algorithm.
+3. The signing job runs only in the protected `uifn-release` environment after review. Pull-request code, forked workflows and ordinary build jobs cannot invoke it.
+4. The KMS public key, key ID, schema-v2 verifier, catalog signature and generated TypeScript signature landed together, with the signature produced by the release-signing workflow.
+5. `node scripts/verify-uifn-stable.mjs` passes against the KMS-signed catalog, and the KMS signing event is present in CloudTrail.
+6. The local private-key signer has been removed from the repository, and the previous local key is no longer available. No version after the cutover trusts it.
+
+### Release signing (KMS)
+
+The `uifn registry sign (KMS)` workflow (`.github/workflows/uifn-registry-sign.yml`) signs a branch's catalog with the KMS key. The private key never leaves KMS. It is started by hand only (`workflow_dispatch`), from `dev`, with two inputs:
+
+- `ref`: the branch to sign. It receives the signature commit, so it must be a feature branch, never `dev`, `next` or `main`.
+- `expected_sha`: the full commit SHA that the branch head must equal. The run fails if the branch has moved.
+
+The signing configuration lives only in variables of the protected `uifn-release` environment, so a dispatcher cannot change it:
+
+- `UIFN_REGISTRY_SIGNING_ROLE_ARN`: the AWS role assumed through GitHub OIDC.
+- `UIFN_REGISTRY_KMS_KEY_ID` and `UIFN_REGISTRY_KMS_REGION`: the KMS signing key and its region.
+- `UIFN_REGISTRY_EXPECTED_KEY_ID`: the registry key ID of that KMS key (the first 24 hex characters of SHA-256 over the SPKI DER public key). The signer refuses to sign if KMS returns a different public key, so repointing `UIFN_REGISTRY_KMS_KEY_ID` alone cannot change the signing key. A repository admin sets it once, from the key's public key:
+
+  ```bash
+  aws kms get-public-key --key-id "$UIFN_REGISTRY_KMS_KEY_ID" --region "$UIFN_REGISTRY_KMS_REGION" \
+    --query PublicKey --output text | base64 --decode | shasum -a 256 | cut -c1-24
+  ```
+
+The sign job fails before requesting credentials if any of these variables is missing or the key ID is malformed.
+
+The workflow runs two jobs:
+
+1. **Check branch catalog** has no credentials. It checks out the branch, confirms its head is `expected_sha`, and fails unless regenerating the catalog reproduces the committed files exactly. Only `dev`'s generator may vouch for the catalog: the job fails if the branch's generator scripts (`generate-uifn-registry.mjs` and the modules it loads) differ from the workflow's `dev` commit or are symlinks, so land generator changes on `dev` before signing. It also fails if the branch tracks any signer sidecar file (`*.kms-sign.*`).
+2. **Sign registry catalog** runs in the protected `uifn-release` environment. It waits until a maintainer approves the run, and the environment accepts deployments from `dev` only. It gets short-lived AWS credentials through GitHub OIDC for the role in `vars.UIFN_REGISTRY_SIGNING_ROLE_ARN`. The signer runs from the workflow's own `dev` commit, never from the branch: inside the branch checkout it runs `node ../signer/scripts/sign-uifn-registry-kms.mjs`, which signs the checkout in its working directory and accepts no arguments. The key comes from `vars.UIFN_REGISTRY_KMS_KEY_ID` and the region from `vars.UIFN_REGISTRY_KMS_REGION`. The job confirms that the branch head is still `expected_sha`, then commits whichever of `generated/catalog-signature.json` and `src/generated/signature.ts` changed (any other change fails the job) to the branch as a new commit, without force-pushing. Ed25519 signatures are deterministic, so re-signing an unchanged, already signed branch with the same key produces no change; the job then reports that the branch is already signed and commits nothing. The job summary records the ref, signed head, signature commit, catalog SHA-256 and key ID.
+
+The job holds only `id-token: write` and `contents: write`. No `pull_request` or `pull_request_target` event can start it.
+
+`scripts/sign-uifn-registry-kms.mjs` builds the 49-byte schema-v2 input `UTF8("uifn-registry-v2\0") || SHA-256(catalog-bytes)` and calls KMS `Sign` with `MessageType: RAW` and `SigningAlgorithm: ED25519_SHA_512`. It fetches the public key with `GetPublicKey` and checks the key ID before signing. It then verifies the returned signature locally against that public key. Only after all of these checks pass does it write the schema-v2 envelope:
+
+```json
+{
+  "schemaVersion": 2,
+  "algorithm": "Ed25519",
+  "domain": "uifn-registry-v2",
+  "keyId": "<first 24 hex of SHA-256(SPKI DER)>",
+  "catalogSha256": "<hex SHA-256 of catalog.json>",
+  "signatureBase64": "<64-byte Ed25519 signature>"
+}
+```
+
+If any check fails, the signer writes nothing and exits non-zero. Replacing the two files is best-effort atomic. A journal (`generated/catalog-signature.json.kms-sign.journal`) is created first, and each original is kept as a `.kms-sign.bak` backup until both files are replaced. If a step fails, the originals are restored. If that restore also fails, or the run is interrupted, the journal and backups stay behind and the error lists them. Once both files are replaced, the journal is rewritten as published before any backup is released. The next signing run settles the pair before it writes anything: it keeps the new pair if the journal says published, and otherwise restores the originals, so it never leaves a mixed pair. A file lookup that fails for any reason other than the file not existing stops the run and keeps the journal and backups. It refuses to start while another live run holds the journal, and it never acts on a journal that is unreadable or names other files. Recovering a dead run's journal assumes no other signer starts on the same checkout at that moment; the workflow runs one signer per fresh checkout. This covers failed or killed runs, not power loss.
+
+A push made with the workflow's `GITHUB_TOKEN` does not start other workflows. After the signature commit lands, re-run the pull request's checks, for example by pushing a reviewed follow-up commit, so CI covers the signed head.
 
 ## CLI
 
@@ -118,8 +142,8 @@ generator and React fixture source; it needs the full source checkout but no
 root-installed toolchain or built sibling packages. After changing canonical
 source or adapter dependency versions, run `npm run generate` and commit the
 generated catalog, templates, delivery manifest, and preset fixture source.
-If catalog bytes changed, re-sign them with the pinned maintainer key using
-the procedure above before running the gates. Never edit generated output
+If catalog bytes changed, re-sign them through the release-signing workflow
+above before running the gates. Never edit generated output
 or replace signature validation to bypass drift. The packed runtime bundles
 its catalog, detached signature, and fixture source and does not read sibling
 packages or repository generator scripts in a consumer install.

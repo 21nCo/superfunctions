@@ -1,6 +1,6 @@
 {
   "name": "@mcpfn/auth",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "Web Standard OAuth protected-resource middleware and enterprise-managed authorization helpers for MCP",
   "type": "module",
   "main": "dist/index.cjs",
@@ -23,7 +23,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
     "@superfunctions/oauth-core": "0.1.1",
-    "@superfunctions/oauth-storage": "0.1.0"
+    "@superfunctions/oauth-storage": "0.1.1"
   },
   "peerDependencies": {
     "@superfunctions/auth": ">=0.1.2"
@@ -34,7 +34,7 @@
     }
   },
   "devDependencies": {
-    "@superfunctions/auth": "0.2.0",
+    "@superfunctions/auth": "0.2.1",
     "@types/node": "^20.0.0",
     "tsup": "^8.5.0",
     "typescript": "^5.9.3",
@@ -45,7 +45,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
     "directory": "mcpfn/auth"
   },
   "publishConfig": { "access": "public" },

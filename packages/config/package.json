@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/config",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Typed env loading helpers for Superfunctions",
   "type": "module",
   "main": "./dist/index.js",
@@ -25,7 +25,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
     "directory": "packages/config"
   },
   "publishConfig": { "access": "public" },

@@ -1,6 +1,6 @@
 {
   "name": "@searchfn/client",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Thin search client over SearchAdapter for browser and server apps.",
   "license": "MIT",
   "type": "module",
@@ -50,7 +50,7 @@
   "author": "21n",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
     "directory": "searchfn/client"
   },
   "bugs": {
@@ -61,7 +61,7 @@
   },
   "sideEffects": false,
   "dependencies": {
-    "@searchfn/core": "0.3.0",
+    "@searchfn/core": "0.3.1",
     "@searchfn/adapter-contracts": "^0.4.0",
     "@searchfn/adapter-memory": "^0.1.0",
     "@searchfn/adapter-indexeddb": "^0.1.0"

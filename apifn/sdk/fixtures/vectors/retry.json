@@ -1,5 +1,5 @@
 {
-  "description": "Retry budget with maxAttempts 3 and no backoff delay. The server answers attempts in order with `responses` (status, optional headers, JSON body {}). Reads (GET, HEAD, OPTIONS) retry on network errors, timeouts and 408, 429, 500, 502, 503 and 504; writes retry only when the catalog declares that the server makes them idempotent, never because the method is PUT or DELETE, because an Idempotency-Key is sent, or because an SDK config says so. Catalog v1 has no idempotency field, so no write is retried; targets test their declared-idempotent path directly against their runtime. `expect.attempts` is the number of requests the server receives.",
+  "description": "Retry budget with maxAttempts 3 and no backoff delay. The server answers attempts in order with `responses` (status, optional headers, JSON body {}). Reads (GET, HEAD, OPTIONS) retry on network errors, timeouts and 408, 429, 500, 502, 503 and 504. Writes retry on the same failures only when the catalog declares that the server makes them idempotent (the operation's `idempotency` member: tasks.attachment.upload without a key, tasks.create with the Idempotency-Key header as its key, which a call must send, non-empty, to be retried); never because the method is PUT or DELETE, because an Idempotency-Key is sent to an operation that does not declare it (tasks.replace), or because an SDK config says so. A body sent as a stream is never retried, even for a declared write; streams have no JSON form, so targets test that against their generated client. `expect.attempts` is the number of requests the server receives.",
   "cases": [
     {
       "name": "a read retries within the budget",
@@ -31,10 +31,10 @@
     },
     {
       "name": "a write with an Idempotency-Key is not retried without a declaration",
-      "operation": "tasks.create",
-      "parameters": { "path": { "projectId": "p1" }, "header": { "Idempotency-Key": "key-1" } },
+      "operation": "tasks.replace",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" }, "header": { "Idempotency-Key": "key-1" } },
       "body": { "title": "x" },
-      "responses": [{ "status": 503 }, { "status": 201 }],
+      "responses": [{ "status": 503 }, { "status": 200 }],
       "expect": { "attempts": 1, "outcome": "error", "status": 503 }
     },
     {
@@ -57,6 +57,62 @@
       "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
       "body": { "title": "x" },
       "responses": [{ "status": 503 }, { "status": 200 }],
+      "expect": { "attempts": 1, "outcome": "error", "status": 503 }
+    },
+    {
+      "name": "a declared-idempotent byte-body write retries within the budget",
+      "operation": "tasks.attachment.upload",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "bodyBytes": [1, 2],
+      "responses": [{ "status": 503 }, { "status": 500 }, { "status": 200 }],
+      "expect": { "attempts": 3, "outcome": "success" }
+    },
+    {
+      "name": "a declared-idempotent write stops at the budget",
+      "operation": "tasks.attachment.upload",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "bodyBytes": [1, 2],
+      "responses": [{ "status": 503 }, { "status": 502 }, { "status": 504 }, { "status": 200 }],
+      "expect": { "attempts": 3, "outcome": "error", "status": 504 }
+    },
+    {
+      "name": "a declared-idempotent write honors 429 with Retry-After",
+      "operation": "tasks.attachment.upload",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "bodyBytes": [1, 2],
+      "responses": [{ "status": 429, "headers": { "retry-after": "0" } }, { "status": 200 }],
+      "expect": { "attempts": 2, "outcome": "success" }
+    },
+    {
+      "name": "a declared-idempotent write is not retried after a client error",
+      "operation": "tasks.attachment.upload",
+      "parameters": { "path": { "projectId": "p1", "taskId": "t1" } },
+      "bodyBytes": [1, 2],
+      "responses": [{ "status": 400 }, { "status": 200 }],
+      "expect": { "attempts": 1, "outcome": "error", "status": 400 }
+    },
+    {
+      "name": "a write declared with a key retries when the call sends the key",
+      "operation": "tasks.create",
+      "parameters": { "path": { "projectId": "p1" }, "header": { "Idempotency-Key": "key-1" } },
+      "body": { "title": "x" },
+      "responses": [{ "status": 503 }, { "status": 502 }, { "status": 201 }],
+      "expect": { "attempts": 3, "outcome": "success" }
+    },
+    {
+      "name": "a write declared with a key is not retried when the call omits the key",
+      "operation": "tasks.create",
+      "parameters": { "path": { "projectId": "p1" } },
+      "body": { "title": "x" },
+      "responses": [{ "status": 503 }, { "status": 201 }],
+      "expect": { "attempts": 1, "outcome": "error", "status": 503 }
+    },
+    {
+      "name": "a write declared with a key is not retried when the key is empty",
+      "operation": "tasks.create",
+      "parameters": { "path": { "projectId": "p1" }, "header": { "Idempotency-Key": "" } },
+      "body": { "title": "x" },
+      "responses": [{ "status": 503 }, { "status": 201 }],
       "expect": { "attempts": 1, "outcome": "error", "status": 503 }
     }
   ]

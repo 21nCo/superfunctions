@@ -1,6 +1,6 @@
 {
   "name": "@apifn/admin",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Function-owned Super Console administration capability for ApiFn",
   "type": "module",
   "main": "./dist/index.js",
@@ -29,17 +29,22 @@
   ],
   "author": "21n",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "apifn/admin"
+  },
   "publishConfig": {
     "access": "public"
   },
   "dependencies": {
-    "@apifn/core": "0.0.3"
+    "@apifn/core": "0.0.4"
   },
   "peerDependencies": {
     "@superfunctions/admin": "^0.1.4"
   },
   "devDependencies": {
-    "@apifn/collections": "0.0.2",
+    "@apifn/collections": "0.0.3",
     "@superfunctions/admin": "^0.1.4",
     "typescript": "^5.6.0",
     "vitest": "^3.2.4"

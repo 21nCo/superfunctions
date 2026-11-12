@@ -29,16 +29,21 @@
   ],
   "author": "21n",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "filefn/admin"
+  },
   "publishConfig": {
     "access": "public"
   },
   "dependencies": {
-    "@filefn/server": "0.2.0",
+    "@filefn/server": "0.2.1",
     "@superfunctions/admin": "0.1.0"
   },
   "devDependencies": {
     "@superfunctions/db": "0.2.0",
-    "@superfunctions/storage-local": "0.2.0",
+    "@superfunctions/storage-local": "0.2.1",
     "@types/node": "^22.0.0",
     "typescript": "^5.6.0",
     "vitest": "^3.2.4"

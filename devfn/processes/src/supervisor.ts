@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { closeSync, constants, fchmodSync, mkdirSync, openSync } from "node:fs";
-import { lstat, mkdir } from "node:fs/promises";
+import { closeSync, constants, fchmodSync, fstatSync, ftruncateSync, mkdirSync, openSync, type Stats } from "node:fs";
+import { lstat, mkdir, realpath, unlink } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -26,24 +26,97 @@ async function openLaunchGate(child: ChildProcess): Promise<void> {
   });
 }
 
-export async function prepareProcessLog(logPath: string, resetSensitiveHistory: boolean): Promise<{ logFd: number; logOffset: number }> {
-  const existing = await lstat(logPath).catch((error) => {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+const LOG_FLAGS = constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | (constants.O_NOFOLLOW ?? 0);
+// A log name that keeps gaining other hard links is refused after this many detaches.
+const MAX_LOG_DETACHES = 3;
+// Preparations of one log (by its canonical directory and case-folded name,
+// so aliases meet on case-insensitive filesystems too) in this process run
+// one after another, so one never detaches the fresh log another just
+// created in its place. Across processes, callers hold the lock that owns
+// the runtime and name.
+const logPreparations = new Map<string, Promise<void>>();
+
+async function presentEntry(file: string): Promise<Stats | undefined> {
+  return await lstat(file).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return undefined;
     throw error;
   });
-  if (existing?.isSymbolicLink()) throw new ProcessError("DEVFN_PROCESS_START_FAILED", `Refusing symlinked process log ${logPath}.`);
-  const logOffset = resetSensitiveHistory ? 0 : existing?.size ?? 0;
-  const flags = constants.O_WRONLY | constants.O_CREAT | (resetSensitiveHistory ? constants.O_TRUNC : constants.O_APPEND) | (constants.O_NOFOLLOW ?? 0);
-  let logFd: number | undefined;
+}
+
+/** The opened unshared log, or the stat of the multiply-linked inode the name led to. */
+async function openUnsharedLog(logPath: string, resetSensitiveHistory: boolean): Promise<{ logFd: number; logOffset: number } | Stats> {
+  if ((await presentEntry(logPath))?.isSymbolicLink()) throw new ProcessError("DEVFN_PROCESS_START_FAILED", `Refusing symlinked process log ${logPath}.`);
+  const logFd = openSync(logPath, LOG_FLAGS, 0o600);
+  let kept = false;
   try {
-    logFd = openSync(logPath, flags, 0o600);
+    const opened = fstatSync(logFd);
+    if (opened.nlink > 1) return opened;
+    if (resetSensitiveHistory) ftruncateSync(logFd, 0);
     fchmodSync(logFd, 0o600);
-    return { logFd, logOffset };
+    kept = true;
+    return { logFd, logOffset: resetSensitiveHistory ? 0 : opened.size };
+  } finally {
+    if (!kept) closeSync(logFd);
+  }
+}
+
+/** Remove the log name, only while it still names the multiply-linked inode that was opened. */
+async function detachLinkedLog(logPath: string, opened: Stats): Promise<void> {
+  const current = await presentEntry(logPath);
+  if (current?.dev !== opened.dev || current.ino !== opened.ino) return;
+  await unlink(logPath).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; });
+}
+
+async function openProcessLog(logPath: string, resetSensitiveHistory: boolean): Promise<{ logFd: number; logOffset: number }> {
+  for (let attempt = 0; attempt <= MAX_LOG_DETACHES; attempt += 1) {
+    const result = await openUnsharedLog(logPath, resetSensitiveHistory);
+    if ("logFd" in result) return result;
+    if (attempt < MAX_LOG_DETACHES) await detachLinkedLog(logPath, result);
+  }
+  throw new ProcessError("DEVFN_PROCESS_START_FAILED", `Refusing process log ${logPath}, which keeps gaining other hard links.`);
+}
+
+/**
+ * Open a process log for a new process. A log with another name (a hard
+ * link, perhaps to another runtime's log) is never written through: its name
+ * here is removed, only while it still names the inode found shared, and a
+ * new log begins; the other name keeps everything it holds. A reset
+ * truncates the log in place, so the caller owns its runtime and name: no
+ * other live process of its own still writes the log (the orchestrator stops
+ * a process under its lifecycle lock before starting it again, tasks run
+ * under their scope lock, and a tunnel moves its predecessor's log aside
+ * before a reset).
+ */
+export async function prepareProcessLog(logPath: string, resetSensitiveHistory: boolean): Promise<{ logFd: number; logOffset: number }> {
+  const canonical = await realpath(path.dirname(logPath)).then((dir) => path.join(dir, path.basename(logPath)), () => logPath);
+  const key = canonical.normalize("NFC").toLowerCase();
+  const previous = logPreparations.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const done = new Promise<void>((resolve) => { release = resolve; });
+  const turn = previous.then(() => done);
+  logPreparations.set(key, turn);
+  await previous;
+  try {
+    return await openProcessLog(logPath, resetSensitiveHistory);
   } catch (error) {
-    if (logFd !== undefined) closeSync(logFd);
     if (error instanceof ProcessError) throw error;
     throw new ProcessError("DEVFN_PROCESS_START_FAILED", `Unable to open process log ${logPath} safely.`, { cause: error instanceof Error ? error.message : String(error) });
+  } finally {
+    release();
+    if (logPreparations.get(key) === turn) logPreparations.delete(key);
   }
+}
+
+/**
+ * The logs directory of a process, which stays inside its runtime directory:
+ * one linked out of it (to another runtime's logs) is refused. Callers that
+ * move a log aside check it here first.
+ */
+export async function processLogsDirectory(runtimeDir: string, name: string): Promise<string> {
+  await mkdir(runtimeDir, { recursive: true, mode: 0o700 });
+  return await resolveContainedPath(runtimeDir, "logs", `processes.${name}.logs`).catch((error) => {
+    throw new ProcessError("DEVFN_PROCESS_START_FAILED", `Process logs directory of ${name} leaves its runtime directory ${runtimeDir}.`, { cause: error instanceof Error ? error.message : String(error) });
+  });
 }
 
 // A process a finite command left behind can hold its output open after the
@@ -183,7 +256,7 @@ export class ProcessSupervisor {
     const cwd = await resolveContainedPath(input.root, input.cwd ?? ".", `processes.${input.name}.cwd`).catch((error) => {
       throw new ProcessError("DEVFN_PROCESS_START_FAILED", `Process cwd escapes repository: ${input.cwd ?? "."}`, { cause: error instanceof Error ? error.message : String(error) });
     });
-    const logsDir = path.join(input.runtimeDir, "logs");
+    const logsDir = await processLogsDirectory(input.runtimeDir, input.name);
     await mkdir(logsDir, { recursive: true, mode: 0o700 });
     if (!/^[A-Za-z0-9_.-]+$/.test(input.name) || input.name !== input.name.trim()) throw new ProcessError("DEVFN_PROCESS_START_FAILED", `Invalid process name ${input.name}.`);
     const logPath = path.join(logsDir, `${input.name}.log`);

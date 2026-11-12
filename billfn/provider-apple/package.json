@@ -1,6 +1,6 @@
 {
   "name": "@billfn/provider-apple",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Apple provider adapter for billfn",
   "type": "module",
   "main": "./dist/index.js",
@@ -22,11 +22,16 @@
   },
   "author": "21n",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "billfn/provider-apple"
+  },
   "publishConfig": {
     "access": "public"
   },
   "dependencies": {
-    "@billfn/core": "^0.0.1"
+    "@billfn/core": "^0.0.2"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

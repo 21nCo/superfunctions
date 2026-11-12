@@ -1,7 +1,10 @@
 import { execFile, spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { expect, it, vi } from "vitest";
 
@@ -70,12 +73,22 @@ async function withLifecycle(prefix: string, action: (fixture: { root: string; s
   }
 }
 
+/** The installed @devfn/processes entry, which the spawned helper CLIs load directly. */
+const PROCESSES_ENTRY = pathToFileURL(path.join(installedPackageDir("@devfn/processes"), "dist", "index.js")).href;
+
+/** Find a dependency's directory the way Node would look it up from this test. */
+function installedPackageDir(name: string): string {
+  const packageDir = createRequire(import.meta.url).resolve.paths(name)?.map((base) => path.join(base, name)).find((candidate) => existsSync(path.join(candidate, "package.json")));
+  if (!packageDir) throw new Error(`${name} is not installed.`);
+  return packageDir;
+}
+
 /** Start a gated launch from a CLI process that dies once the launch runs, as an interrupted devfn up would. */
 async function launchFromDyingCli(root: string): Promise<{ pid: number; birthSignature?: string }> {
   const launcherFile = path.join(root, "launcher.json");
   // The launched command keeps a child standing in for the Compose plugin.
   const command = "require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' }); setTimeout(() => {}, 60000);";
-  await writeFile(path.join(root, "launch-cli.mjs"), `import { runGatedCommand } from ${JSON.stringify(new URL("../../processes/dist/index.js", import.meta.url).href)};
+  await writeFile(path.join(root, "launch-cli.mjs"), `import { runGatedCommand } from ${JSON.stringify(PROCESSES_ENTRY)};
 import { writeFileSync } from "node:fs";
 await runGatedCommand(process.execPath, ["-e", ${JSON.stringify(command)}], { onLaunched: async (launcher) => {
   writeFileSync(${JSON.stringify(launcherFile)}, JSON.stringify(launcher));
@@ -93,7 +106,7 @@ it("runs a process command only after its identity is recorded, so an interrupte
   try {
     const marker = path.join(root, "command-ran");
     // The CLI dies while it records the identity of a node it just spawned.
-    const cli = `import { ProcessSupervisor } from ${JSON.stringify(new URL("../../processes/dist/index.js", import.meta.url).href)};
+    const cli = `import { ProcessSupervisor } from ${JSON.stringify(PROCESSES_ENTRY)};
 import { writeFileSync } from "node:fs";
 await new ProcessSupervisor().start({ name: "app", root: ${JSON.stringify(root)}, runtimeDir: ${JSON.stringify(path.join(root, "runtime"))}, ports: {},
   spec: { adapter: "command", command: [process.execPath, "-e", ${JSON.stringify(`require("node:fs").writeFileSync(${JSON.stringify(marker)}, "ran"); setInterval(() => undefined, 1000)`)}] },

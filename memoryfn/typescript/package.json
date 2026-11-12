@@ -1,6 +1,6 @@
 {
   "name": "@memoryfn/core",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Self-hostable AI memory system for agents and applications",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -42,7 +42,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@mcpfn/core": "0.0.5",
+    "@mcpfn/core": "0.0.6",
     "@modelcontextprotocol/sdk": "1.29.0",
     "@superfunctions/db": "0.2.0",
     "drizzle-orm": "^0.45.1",
@@ -52,7 +52,7 @@
     "openai": "^4.0.0"
   },
   "peerDependencies": {
-    "@superfunctions/auth": "0.2.0",
+    "@superfunctions/auth": "0.2.1",
     "@watchfn/core": "0.0.3",
     "secfn": "*"
   },
@@ -70,7 +70,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
     "directory": "memoryfn/typescript"
   },
   "publishConfig": {

@@ -1,7 +1,12 @@
 {
   "name": "@superfunctions/admin",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Shared administration contracts and runtime for Superfunctions",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "packages/admin"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -23,7 +28,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@mcpfn/core": "0.0.5"
+    "@mcpfn/core": "0.0.6"
   },
   "devDependencies": {
     "typescript": "^5.7.2",

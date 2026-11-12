@@ -125,14 +125,14 @@ for (const node of nodes) {
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
   manifests.set(node.name, manifest);
   if (manifest.name !== node.name) fail("MDFN_GRAPH_NAME_MISMATCH", { package: node.name, actual: manifest.name });
-  if (manifest.version !== "0.1.0") fail("MDFN_GRAPH_VERSION_INVALID", { package: node.name, actual: manifest.version });
+  if (manifest.version !== "0.1.1") fail("MDFN_GRAPH_VERSION_INVALID", { package: node.name, actual: manifest.version });
   if (manifest.private === true) fail("MDFN_GRAPH_PRIVATE_PACKAGE", { package: node.name });
   const expectedStatus = stableNames.has(node.name) ? "stable-candidate" : "optional";
   const requiredMetadata = {
     type: "module",
     license: "MIT",
     engines: { node: ">=20 <25" },
-    repository: { type: "git", url: "git+https://github.com/21nCo/super-functions.git", directory: node.path },
+    repository: { type: "git", url: "git+https://github.com/21nCo/superfunctions.git", directory: node.path },
     publishConfig: { access: "public" },
     mdfn: { status: expectedStatus, layer: node.layer, schemaVersion: 1 },
   };

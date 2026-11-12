@@ -27,6 +27,7 @@ import {
   type CatalogOAuthFlow,
   type CatalogOperation,
   type CatalogEncoding,
+  type CatalogIdempotency,
   type CatalogParameter,
   type CatalogResponse,
   type CatalogSecurityScheme,
@@ -46,6 +47,8 @@ type SecuritySchemeDraft = { type: CatalogSecurityScheme["type"]; description: s
 };
 
 const METHODS: HttpMethod[] = ["get", "put", "post", "delete", "options", "head", "patch", "trace"];
+/** Methods an idempotency declaration may cover: the writes. The others are safe methods (RFC 9110 section 9.2.1). */
+const IDEMPOTENT_METHODS = new Set<HttpMethod>(["post", "put", "patch", "delete"]);
 const PARAMETER_LOCATIONS = ["path", "query", "header", "cookie"] as const;
 const PARAMETER_STYLES: Record<CatalogParameter["in"], Array<CatalogParameter["style"]>> = {
   path: ["simple"],
@@ -60,7 +63,32 @@ function isOneOf<T extends string>(list: readonly T[], value: string): value is 
   return (list as readonly string[]).includes(value);
 }
 /** OpenAPI ignores header parameters with these names (OAS 3.1 §4.8.12.1). */
-const IGNORED_HEADERS = new Set(["accept", "content-type", "authorization"]);
+const IGNORED_HEADERS: ReadonlySet<string> = new Set(["accept", "content-type", "authorization"]);
+/**
+ * Whether OpenAPI ignores a header parameter of this name (OAS 3.1 §4.8.12.1): `Accept`, `Content-Type` and
+ * `Authorization` in any ASCII case. The catalog never publishes one; the request's media types and security
+ * schemes own those headers, so a client sets them itself.
+ */
+export function isIgnoredHeaderParameter(name: string): boolean {
+  return IGNORED_HEADERS.has(name.replace(/[A-Z]/g, (letter) => letter.toLowerCase()));
+}
+/** Fetch's forbidden request-header names (Fetch Standard, "forbidden request-header"), lowercase. */
+const FETCH_FORBIDDEN_HEADERS: ReadonlySet<string> = new Set([
+  "accept-charset", "accept-encoding", "access-control-request-headers", "access-control-request-method", "connection",
+  "content-length", "cookie", "cookie2", "date", "dnt", "expect", "host", "keep-alive", "origin", "referer", "set-cookie",
+  "te", "trailer", "transfer-encoding", "upgrade", "via",
+  // Forbidden only for some values (a CONNECT, TRACE or TRACK method); a per-call key could be any value.
+  "x-http-method", "x-http-method-override", "x-method-override",
+]);
+/**
+ * Whether Fetch controls a request header of this name, in any ASCII case: a forbidden request-header name, or one
+ * starting `Sec-` or `Proxy-`. Browsers drop such a header and Node's fetch may overwrite it (`Sec-Fetch-Mode`), so
+ * the server need not receive the value a client set; it can never be a per-call idempotency key.
+ */
+export function isFetchControlledHeader(name: string): boolean {
+  const lower = name.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+  return FETCH_FORBIDDEN_HEADERS.has(lower) || lower.startsWith("sec-") || lower.startsWith("proxy-");
+}
 /** Request media types whose properties can carry an Encoding Object. */
 const FORM_MEDIA_TYPES = new Set(["application/x-www-form-urlencoded", "multipart/form-data"]);
 const RESPONSE_STATUS = /^(?:[1-5](?:\d\d|XX)|default)$/;
@@ -1529,7 +1557,7 @@ class CatalogBuilder {
       const { value, pointer } = resolved;
       const location = value.in as CatalogParameter["in"];
       const name = value.name as string;
-      if (location === "header" && IGNORED_HEADERS.has(name.toLowerCase())) continue;
+      if (location === "header" && isIgnoredHeaderParameter(name)) continue;
       // Every REQUIRED member and value first, so a parameter skipped below still reports each problem. A parameter
       // lacking schema and content is still declared, so the path template check does not report it again.
       this.schemaOrContent(value, pointer, `Parameter ${quote(name)} of operation ${quote(id)}`, id);
@@ -1697,7 +1725,8 @@ class CatalogBuilder {
     tags.forEach((tag, index) => {
       if (typeof tag !== "string") this.report("INVALID_SPEC", `${entry.pointer}/tags/${index}`, `Tag ${index} of operation ${quote(binding.id)} must be a string.`, { operation: binding.id });
     });
-    return {
+    const parameters = this.parameters(entry, binding.id);
+    const operation: CatalogOperation = {
       id: binding.id,
       name,
       openapiOperationId: entry.operationId,
@@ -1706,7 +1735,7 @@ class CatalogBuilder {
       summary: this.text(own(op, "summary"), `${entry.pointer}/summary`),
       description: this.text(own(op, "description"), `${entry.pointer}/description`),
       tags: sortStrings(tags.flatMap((tag, index) => (typeof tag === "string" ? [this.text(tag, `${entry.pointer}/tags/${index}`) as string] : []))),
-      parameters: this.parameters(entry, binding.id),
+      parameters,
       requestBody: requestBody
         ? {
             // once reported a non-boolean.
@@ -1734,6 +1763,49 @@ class CatalogBuilder {
       },
       executionPolicyRef: binding.executionPolicy ?? null,
     };
+    const idempotency = this.idempotency(entry, binding, parameters, `${bindingPointer}/idempotency`);
+    // Absent unless declared, so a catalog without declarations keeps its bytes and digest.
+    if (idempotency) operation.idempotency = idempotency;
+    return operation;
+  }
+
+  /**
+   * The manifest's reviewed idempotency declaration, checked against the operation. Only writes take one
+   * (GET, HEAD, OPTIONS and TRACE are safe methods, which clients already retry), and a key must be a header
+   * parameter the catalog publishes for the operation, emitted with the spec's spelling of its name.
+   */
+  private idempotency(entry: SpecOperation, binding: OperationBinding, parameters: CatalogParameter[], pointer: string): CatalogIdempotency | null {
+    const declaration = binding.idempotency;
+    if (declaration === undefined) return null;
+    if (!IDEMPOTENT_METHODS.has(entry.method)) {
+      this.report("INVALID_MANIFEST", pointer, `Operation ${quote(binding.id)} is a ${entry.method.toUpperCase()}, which HTTP defines as safe; idempotency is declared only for POST, PUT, PATCH and DELETE.`, { source: "manifest", operation: binding.id });
+      return null;
+    }
+    if (declaration.key === undefined) return { semantics: "server", key: null };
+    // The client sets these itself, so no caller value could tell calls apart.
+    if (isIgnoredHeaderParameter(declaration.key.name)) {
+      this.report("INVALID_MANIFEST", `${pointer}/key/name`, `Operation ${quote(binding.id)} declares idempotency key header ${quote(declaration.key.name)}, which OpenAPI ignores as a parameter and clients set themselves; it is never published as a key.`, { source: "manifest", operation: binding.id });
+      return null;
+    }
+    // The transport may drop or overwrite these, so the server would not see the caller's key.
+    if (isFetchControlledHeader(declaration.key.name)) {
+      this.report("INVALID_MANIFEST", `${pointer}/key/name`, `Operation ${quote(binding.id)} declares idempotency key header ${quote(declaration.key.name)}, which Fetch forbids or overwrites, so a client cannot send it as a per-call key.`, { source: "manifest", operation: binding.id });
+      return null;
+    }
+    // HTTP field names ignore ASCII case only, so a non-token spelling (a Kelvin sign for "K") never matches.
+    const asciiLower = (text: string) => text.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+    const wanted = asciiLower(declaration.key.name);
+    const parameter = parameters.find((candidate) => candidate.in === "header" && asciiLower(candidate.name) === wanted);
+    if (!parameter) {
+      this.report("INVALID_MANIFEST", `${pointer}/key/name`, `Operation ${quote(binding.id)} declares idempotency key header ${quote(declaration.key.name)}, which is not one of its header parameters; declare the parameter in the spec.`, { source: "manifest", operation: binding.id });
+      return null;
+    }
+    // A credential header (an apiKey scheme's, or a credential-like name) is the same on every call, so it never tells calls apart.
+    if (this.isCredentialParameter("header", parameter.name)) {
+      this.report("INVALID_MANIFEST", `${pointer}/key/name`, `Operation ${quote(binding.id)} declares idempotency key header ${quote(declaration.key.name)}, which is a credential field; the key must be a per-call header parameter.`, { source: "manifest", operation: binding.id });
+      return null;
+    }
+    return { semantics: "server", key: { in: "header", name: parameter.name } };
   }
 
   securitySchemes(): Record<string, CatalogSecurityScheme> {

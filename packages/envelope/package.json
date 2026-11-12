@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/envelope",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Canonical response envelope constructors and compatibility helpers",
   "type": "module",
   "main": "./dist/index.js",
@@ -31,7 +31,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
     "directory": "packages/envelope"
   },
   "publishConfig": {

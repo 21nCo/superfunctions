@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/auth",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Framework-agnostic authentication abstraction layer for Superfunctions libraries",
   "type": "module",
   "main": "./dist/index.js",
@@ -40,7 +40,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
     "directory": "packages/auth"
   },
   "publishConfig": {

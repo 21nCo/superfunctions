@@ -252,4 +252,4 @@ export function runToolbarAction(controller: EditorController, action: ToolbarAc
   return action.command ? controller.run(action.command) : false;
 }
 
-export const MDFN_COMPONENTS_VERSION = "0.1.0" as const;
+export const MDFN_COMPONENTS_VERSION = "0.1.1" as const;

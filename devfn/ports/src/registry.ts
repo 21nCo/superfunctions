@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 
 import { processExists, processGroupStatus, processIdentityStatus } from "@devfn/processes";
 
+import { isFetchBlockedPort } from "./blocked.js";
 import { allocateEphemeralPort, bindProbe, connectionRefused, isPortAvailable, scanListenerState } from "./listeners.js";
 import { withFileLock, withRoutingLock } from "./lock.js";
 import { PortRegistryError, type ComposeLaunchRecord, type LifecycleOwner, type PortAllocation, type RegistryInvocation, type RegistryState, type ReservationInput, type ReservationRequest } from "./types.js";
@@ -325,11 +326,25 @@ function stableOffset(value: string, size: number): number {
   return Number.parseInt(createHash("sha256").update(value).digest("hex").slice(0, 8), 16) % size;
 }
 
-function candidates(start: number, end: number, seed: string): number[] {
+/**
+ * Whether fetch() and browsers refuse this port for the protocol. The Fetch
+ * Standard's bad ports are a TCP (HTTP) rule; a UDP port is never refused.
+ */
+function fetchRefuses(port: number, protocol: "tcp" | "udp"): boolean {
+  return protocol === "tcp" && isFetchBlockedPort(port);
+}
+
+/** The ports of a range, from a seeded offset. */
+function seededOrder(start: number, end: number, seed: string): number[] {
   if (end < start) return [];
   const values = Array.from({ length: end - start + 1 }, (_, index) => start + index);
   const offset = stableOffset(seed, values.length);
   return [...values.slice(offset), ...values.slice(0, offset)];
+}
+
+/** The candidate ports of a range, without those fetch refuses for the protocol: DevFn never picks one itself. */
+function candidates(start: number, end: number, seed: string, protocol: "tcp" | "udp"): number[] {
+  return seededOrder(start, end, seed).filter((port) => !fetchRefuses(port, protocol));
 }
 
 function active(allocation: PortAllocation): boolean {
@@ -451,7 +466,7 @@ export class FilePortRegistry {
         if (spec.ephemeral) {
           for (let attempt = 0; attempt < 100; attempt += 1) {
             const port = await this.ephemeralAllocator(host, spec.protocol);
-            if (!occupied.has(occupancyKey(port, protocol))) return { port, source: "ephemeral" };
+            if (!occupied.has(occupancyKey(port, protocol)) && !fetchRefuses(port, protocol)) return { port, source: "ephemeral" };
           }
           throw new PortRegistryError("DEVFN_PORT_CONFLICT", `Unable to allocate an unleased ephemeral port for ${name}.`, { service: name });
         }
@@ -478,13 +493,14 @@ export class FilePortRegistry {
           return { port: spec.preferred, source: "exact" };
         }
         const prior = stable.get(name);
-        if (prior?.protocol === protocol && !occupied.has(occupancyKey(prior.port, protocol)) && await availableForReplacement(prior.port, protocol, host)) return { port: prior.port, source: "stable" };
+        // A fetch-blocked lease is renewed only as the configured preferred port, never as one DevFn chose.
+        if (prior?.protocol === protocol && (!fetchRefuses(prior.port, protocol) || prior.port === spec.preferred) && !occupied.has(occupancyKey(prior.port, protocol)) && await availableForReplacement(prior.port, protocol, host)) return { port: prior.port, source: "stable" };
         const pools: Array<{ values: number[]; source: PortAllocation["source"] }> = [];
         if (spec.preferred !== undefined) pools.push({ values: [spec.preferred], source: "preferred" });
-        if (spec.range) pools.push({ values: candidates(spec.range[0], spec.range[1], `${input.instanceId}:${name}`), source: "range" });
-        if (input.preferredRange) pools.push({ values: candidates(input.preferredRange[0], input.preferredRange[1], `${input.instanceId}:${name}:policy`), source: "preferred" });
+        if (spec.range) pools.push({ values: candidates(spec.range[0], spec.range[1], `${input.instanceId}:${name}`, protocol), source: "range" });
+        if (input.preferredRange) pools.push({ values: candidates(input.preferredRange[0], input.preferredRange[1], `${input.instanceId}:${name}:policy`, protocol), source: "preferred" });
         const fallback = input.fallbackRange ?? [4100, 4999];
-        pools.push({ values: candidates(fallback[0], fallback[1], `${input.instanceId}:${name}:fallback`), source: "fallback" });
+        pools.push({ values: candidates(fallback[0], fallback[1], `${input.instanceId}:${name}:fallback`, protocol), source: "fallback" });
         for (const pool of pools) {
           for (const port of pool.values) {
             if (occupied.has(occupancyKey(port, protocol))) continue;
@@ -531,8 +547,10 @@ export class FilePortRegistry {
           }
           for (let rangeIndex = 0; rangeIndex < ranges.length && !chosen; rangeIndex += 1) {
             const { value: range, source } = ranges[rangeIndex];
-            for (const start of candidates(range[0], range[1] - group.length + 1, `${input.instanceId}:${block}:${rangeIndex}`)) {
+            for (const start of seededOrder(range[0], range[1] - group.length + 1, `${input.instanceId}:${block}:${rangeIndex}`)) {
               const ports = group.map((_, index) => start + index);
+              // A member keeps its own configured preferred port; only a port DevFn chose for it must not be fetch-blocked.
+              if (ports.some((port, index) => port !== group[index].spec.preferred && fetchRefuses(port, group[index].spec.protocol ?? "tcp"))) continue;
               if (ports.some((port, index) => group[index].spec.range && (port < group[index].spec.range![0] || port > group[index].spec.range![1]))) continue;
               if (ports.some((port, index) => occupied.has(occupancyKey(port, group[index].spec.protocol ?? "tcp")))) continue;
               if ((await Promise.all(ports.map((port, index) => availableForReplacement(port, group[index].spec.protocol ?? "tcp", group[index].spec.exposure === "public" ? "0.0.0.0" : "127.0.0.1")))).every(Boolean)) {

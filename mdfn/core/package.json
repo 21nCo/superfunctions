@@ -1,6 +1,6 @@
 {
   "name": "@mdfn/core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Environment-neutral document, transaction, command, history, extension, and migration engine for mdfn",
   "type": "module",
   "main": "dist/index.cjs",
@@ -18,7 +18,7 @@
   "files": ["dist", "README.md"],
   "license": "MIT",
   "engines": { "node": ">=20 <25" },
-  "repository": { "type": "git", "url": "git+https://github.com/21nCo/super-functions.git", "directory": "mdfn/core" },
+  "repository": { "type": "git", "url": "git+https://github.com/21nCo/superfunctions.git", "directory": "mdfn/core" },
   "publishConfig": { "access": "public" },
   "sideEffects": false,
   "mdfn": { "status": "stable-candidate", "layer": "core", "schemaVersion": 1 }

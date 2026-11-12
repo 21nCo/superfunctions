@@ -68,7 +68,11 @@ struct UIFnControlStyleSnapshotTests {
         #if os(macOS)
         #expect(Set(heights).count == 1, "\(heights)")
         #else
-        #expect(heights[0] < heights[1] && heights[1] < heights[2], "\(heights)")
+        if subject.drawsText {
+            #expect(heights[0] < heights[1] && heights[1] < heights[2], "\(heights)")
+        } else {
+            #expect(Set(heights).count == 1, "\(heights)")
+        }
         #endif
     }
 }

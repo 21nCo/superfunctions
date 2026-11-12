@@ -26,7 +26,7 @@
       "post": {
         "operationId": "createTask",
         "summary": "Create a task",
-        "description": "Accepts an Idempotency-Key header, which does not by itself make retries safe.",
+        "description": "The server recognizes repeated calls by their Idempotency-Key header, so clients retry calls that send one.",
         "security": [{ "bearerAuth": [] }],
         "parameters": [{ "name": "Idempotency-Key", "in": "header", "schema": { "type": "string", "maxLength": 64 } }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskInput" } } } },
@@ -61,7 +61,9 @@
       "put": {
         "operationId": "replaceTask",
         "summary": "Replace a task",
+        "description": "Accepts an Idempotency-Key header, which does not by itself make retries safe.",
         "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "Idempotency-Key", "in": "header", "schema": { "type": "string", "maxLength": 64 } }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskInput" } } } },
         "responses": { "200": { "description": "Replaced", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Task" } } } } }
       },

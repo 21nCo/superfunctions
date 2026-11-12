@@ -16,16 +16,16 @@
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
   },
   "dependencies": {
-    "@superfunctions/reviewfn-context-composio": "0.1.0",
-    "@superfunctions/reviewfn-core": "0.1.0",
-    "@superfunctions/reviewfn-github": "0.1.0",
-    "@superfunctions/reviewfn-harness-codex": "0.1.0",
-    "@superfunctions/reviewfn-testing": "0.1.0"
+    "@superfunctions/reviewfn-context-composio": "0.1.1",
+    "@superfunctions/reviewfn-core": "0.1.1",
+    "@superfunctions/reviewfn-github": "0.1.1",
+    "@superfunctions/reviewfn-harness-codex": "0.1.1",
+    "@superfunctions/reviewfn-testing": "0.1.1"
   },
   "devDependencies": { "@types/node": "^22.0.0", "typescript": "^5.6.0", "vitest": "^3.2.4" },
   "engines": { "node": ">=22" },
   "license": "MIT",
-  "repository": { "type": "git", "url": "git+https://github.com/21nCo/super-functions.git", "directory": "reviewfn/cli" },
+  "repository": { "type": "git", "url": "git+https://github.com/21nCo/superfunctions.git", "directory": "reviewfn/cli" },
   "bugs": { "url": "https://github.com/21nCo/super-functions/issues" },
   "sideEffects": false,
   "publishConfig": { "access": "public" }

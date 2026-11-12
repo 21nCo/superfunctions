@@ -1,6 +1,6 @@
 {
   "name": "@billfn/core",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Core billfn contracts, persistence, router, and entitlements",
   "type": "module",
   "main": "./dist/index.js",
@@ -23,6 +23,11 @@
   },
   "author": "21n",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "billfn/core"
+  },
   "publishConfig": {
     "access": "public"
   },

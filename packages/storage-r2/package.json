@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/storage-r2",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Cloudflare R2 storage adapter for @superfunctions/storage",
   "type": "module",
   "main": "./dist/index.js",
@@ -24,14 +24,14 @@
   "bugs": { "url": "https://github.com/21nCo/super-functions/issues" },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
     "directory": "packages/storage-r2"
   },
   "publishConfig": { "access": "public" },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.600.0",
     "@aws-sdk/s3-request-presigner": "^3.600.0",
-    "@superfunctions/storage": "0.2.0"
+    "@superfunctions/storage": "0.2.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

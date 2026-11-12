@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/botfn-admin",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Function-owned Super Console administration capability for BotFn",
   "type": "module",
   "main": "./dist/index.js",
@@ -29,6 +29,11 @@
   ],
   "author": "21n",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "botfn/admin"
+  },
   "publishConfig": {
     "access": "public"
   },

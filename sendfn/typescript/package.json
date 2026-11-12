@@ -1,6 +1,6 @@
 {
   "name": "sendfn",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "Unified communications platform SDK for email and push notifications",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -70,7 +70,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
     "directory": "sendfn/typescript"
   },
   "publishConfig": {
@@ -89,7 +89,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-ses": "^3.400.0",
-    "@superfunctions/delivery": "0.1.0",
+    "@superfunctions/delivery": "0.1.1",
     "@superfunctions/db": "0.1.4",
     "@superfunctions/http": "0.1.2",
     "apns2": "^11.0.0",

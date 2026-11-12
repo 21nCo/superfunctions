@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
 import { processBirthSignature } from "@devfn/processes";
-import { allocateEphemeralPort, FilePortRegistry, isPortAvailable, renderPolicyInventory, resolvePolicy, withFileLock } from "../src/index.js";
+import { allocateEphemeralPort, FilePortRegistry, isFetchBlockedPort, isPortAvailable, renderPolicyInventory, resolvePolicy, withFileLock } from "../src/index.js";
 import { inspectContainerRunning } from "../src/registry.js";
 
 // Fixtures that need the fixed Caddy admin port 127.0.0.1:2019 free share one
@@ -995,5 +995,107 @@ esac
   it("escapes backslashes, pipes, and carriage returns in policy tables", () => {
     const output = renderPolicyInventory({ version: 1, ports: [{ name: "a\\|b\rc", kind: "protected", port: 4100 }] });
     expect(output).toContain("a\\\\\\|b c");
+  });
+});
+
+// fetch() and browsers refuse a fetch-blocked port before connecting, so a
+// lease there fails every HTTP readiness check; 4190 is in the fallback range.
+describe("fetch-blocked ports", () => {
+  const withRegistry = async <T>(action: (registry: FilePortRegistry) => Promise<T>, ephemeral?: () => Promise<number>): Promise<T> => {
+    const dir = await mkdtemp(path.join(tmpdir(), "devfn-blocked-port-"));
+    // Every candidate binds, so only the allocator's own choice decides.
+    try { return await action(new FilePortRegistry(path.join(dir, "registry.json"), ephemeral, async () => true)); }
+    finally { await rm(dir, { recursive: true, force: true }); }
+  };
+  const reserve = async (registry: FilePortRegistry, instanceId: string, invocationId: string, requests: Array<{ name: string; spec: Record<string, unknown> }>,
+    ranges: { fallbackRange?: [number, number]; preferredRange?: [number, number] } = {}) =>
+    Object.fromEntries((await registry.reserve({ projectId: "app", instanceId, invocationId, profile: "default", requests, ...ranges })).map((item) => [item.service, item.port]));
+
+  it("agrees with this runtime's fetch on every port it names and across the default fallback range", async () => {
+    // fetch() checks the port before it dispatches; this dispatcher fails every
+    // request it receives, so no probe ever opens a connection.
+    let dispatched = 0;
+    const dispatcher = { dispatch() { dispatched += 1; throw new Error("not connecting"); } };
+    const refuses = async (port: number) => await fetch(`http://127.0.0.1:${port}/`, { dispatcher } as RequestInit)
+      .then(() => false, (error: Error) => (error.cause as Error | undefined)?.message === "bad port");
+    // One request proves the runtime honours the dispatcher before any other port is probed.
+    expect(await refuses(4191)).toBe(false);
+    expect(dispatched).toBe(1);
+    const named = Array.from({ length: 65_535 }, (_, index) => index + 1).filter(isFetchBlockedPort);
+    for (const port of named) expect({ port, refused: await refuses(port) }).toEqual({ port, refused: true });
+    const fallback = Array.from({ length: 900 }, (_, index) => 4100 + index);
+    const refused: number[] = [];
+    for (const port of fallback) if (await refuses(port)) refused.push(port);
+    expect(refused).toEqual([4190]);
+    expect(fallback.filter(isFetchBlockedPort)).toEqual(refused);
+  });
+
+  it("never chooses one from a range, the policy range, the fallback range, a block or the OS", async () => {
+    for (let index = 0; index < 8; index += 1) {
+      const instanceId = `instance-${index}`;
+      // A range or policy range of only the blocked port falls through to the fallback range.
+      await withRegistry(async (registry) => expect(await reserve(registry, instanceId, "ranged", [{ name: "ranged", spec: { range: [4190, 4190] } }],
+        { fallbackRange: [4191, 4191] })).toEqual({ ranged: 4191 }));
+      await withRegistry(async (registry) => expect(await reserve(registry, instanceId, "policy", [{ name: "policy", spec: {} }],
+        { preferredRange: [4190, 4190], fallbackRange: [4191, 4191] })).toEqual({ policy: 4191 }));
+      // Without the exclusion the seeded offset starts some of these instances at 4190.
+      await withRegistry(async (registry) => expect(await reserve(registry, instanceId, "fallback", [{ name: "fallback", spec: {} }],
+        { fallbackRange: [4190, 4191] })).toEqual({ fallback: 4191 }));
+      await withRegistry(async (registry) => expect(await reserve(registry, instanceId, "block", [{ name: "first", spec: { block: "pair" } }, { name: "second", spec: { block: "pair" } }],
+        { fallbackRange: [4189, 4192] })).toEqual({ first: 4191, second: 4192 }));
+    }
+    const offered = [4190, 4191];
+    await withRegistry(async (registry) => expect(await reserve(registry, "os", "ephemeral", [{ name: "ephemeral", spec: { ephemeral: true } }])).toEqual({ ephemeral: 4191 }),
+      async () => offered.shift()!);
+    await withRegistry(async (registry) => await expect(reserve(registry, "only", "none", [{ name: "only", spec: {} }], { fallbackRange: [4190, 4190] }))
+      .rejects.toMatchObject({ code: "DEVFN_PORT_CONFLICT" }));
+  }, 120_000);
+
+  it("keeps one configured exactly or as preferred, and renews a lease on one only as its preferred port", async () => {
+    await withRegistry(async (registry) => {
+      expect(await reserve(registry, "exact", "exact", [{ name: "web", spec: { preferred: 4190, exact: true } }])).toEqual({ web: 4190 });
+      await registry.release({ invocationId: "exact" });
+      expect(await reserve(registry, "preferred", "preferred", [{ name: "web", spec: { preferred: 4190 } }])).toEqual({ web: 4190 });
+      await registry.release({ invocationId: "preferred" });
+      expect(await reserve(registry, "preferred", "renewed", [{ name: "web", spec: { preferred: 4190 } }], { fallbackRange: [4191, 4191] })).toEqual({ web: 4190 });
+      // Once 4190 is no longer preferred, the earlier lease on it is not renewed, as for one an older DevFn chose from the fallback range.
+      await registry.release({ invocationId: "renewed" });
+      expect(await reserve(registry, "preferred", "moved", [{ name: "web", spec: {} }], { fallbackRange: [4190, 4191] })).toEqual({ web: 4191 });
+    });
+  });
+
+  it("keeps a block member's own preferred port while still skipping one chosen for an unpreferred member", async () => {
+    // Not every member prefers a port, so the block is walked from a range; 4190 is the start the walk offers.
+    const partly = [{ name: "first", spec: { block: "pair", preferred: 4190 } }, { name: "second", spec: { block: "pair" } }];
+    await withRegistry(async (registry) => expect(await reserve(registry, "partly", "partly", partly, { fallbackRange: [4190, 4191] })).toEqual({ first: 4190, second: 4191 }));
+    // The same walk puts 4190 on a member that did not prefer it, so it is still refused.
+    const reversed = [{ name: "first", spec: { block: "pair" } }, { name: "second", spec: { block: "pair", preferred: 4190 } }];
+    await withRegistry(async (registry) => await expect(reserve(registry, "partly", "reversed", reversed, { fallbackRange: [4190, 4191] }))
+      .rejects.toMatchObject({ code: "DEVFN_PORT_CONFLICT" }));
+    // A member preferring a different port gets no exemption for 4190 either.
+    const other = [{ name: "first", spec: { block: "pair", preferred: 4191 } }, { name: "second", spec: { block: "pair" } }];
+    await withRegistry(async (registry) => expect(await reserve(registry, "partly", "other", other, { fallbackRange: [4189, 4192] })).toEqual({ first: 4191, second: 4192 }));
+    // UDP members were never excluded and are unchanged.
+    const udp = [{ name: "first", spec: { block: "pair", protocol: "udp", preferred: 4190 } }, { name: "second", spec: { block: "pair", protocol: "udp" } }];
+    await withRegistry(async (registry) => expect(await reserve(registry, "partly", "udp", udp, { fallbackRange: [4189, 4190] })).toEqual({ first: 4189, second: 4190 }));
+  });
+
+  it("is a TCP rule: a UDP port is chosen from any range, block or the OS and renewed as before", async () => {
+    const udp = { protocol: "udp" };
+    // 5060 and 4190 are fetch-blocked; fetch never speaks UDP, so neither is excluded for it.
+    await withRegistry(async (registry) => expect(await reserve(registry, "udp", "ranged", [{ name: "sip", spec: { ...udp, range: [5060, 5060] } }],
+      { fallbackRange: [5062, 5062] })).toEqual({ sip: 5060 }));
+    await withRegistry(async (registry) => {
+      expect(await reserve(registry, "udp", "fallback", [{ name: "game", spec: udp }], { fallbackRange: [4190, 4190] })).toEqual({ game: 4190 });
+      await registry.release({ invocationId: "fallback" });
+      expect(await reserve(registry, "udp", "renewed", [{ name: "game", spec: udp }], { fallbackRange: [4190, 4191] })).toEqual({ game: 4190 });
+    });
+    await withRegistry(async (registry) => expect(await reserve(registry, "udp", "ephemeral", [{ name: "game", spec: { ...udp, ephemeral: true } }])).toEqual({ game: 4190 }),
+      async () => 4190);
+    // A mixed block excludes a blocked port only for its TCP member.
+    await withRegistry(async (registry) => expect(await reserve(registry, "udp", "block", [{ name: "media", spec: { ...udp, block: "pair" } }, { name: "control", spec: { block: "pair" } }],
+      { fallbackRange: [4190, 4191] })).toEqual({ media: 4190, control: 4191 }));
+    await withRegistry(async (registry) => await expect(reserve(registry, "udp", "reversed", [{ name: "control", spec: { block: "pair" } }, { name: "media", spec: { ...udp, block: "pair" } }],
+      { fallbackRange: [4190, 4191] })).rejects.toMatchObject({ code: "DEVFN_PORT_CONFLICT" }));
   });
 });

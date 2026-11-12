@@ -1,6 +1,6 @@
 {
   "name": "@extfn/core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Code-first browser extension config and runtime contracts for Superfunctions",
   "type": "module",
   "main": "./dist/index.js",
@@ -38,7 +38,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
     "directory": "extfn/core"
   },
   "publishConfig": {

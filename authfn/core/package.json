@@ -55,6 +55,11 @@
   ],
   "author": "21n",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "authfn/core"
+  },
   "publishConfig": {
     "access": "public"
   },
@@ -66,20 +71,20 @@
     ]
   },
   "dependencies": {
-    "@superfunctions/auth": "0.2.0",
-    "@superfunctions/delivery": "0.1.0",
+    "@superfunctions/auth": "0.2.1",
+    "@superfunctions/delivery": "0.1.1",
     "@superfunctions/db": "0.2.0",
     "@superfunctions/http": "0.2.0",
-    "@superfunctions/http-openapi": "0.1.0",
-    "@superfunctions/oauth-storage": "0.1.0",
-    "@superfunctions/observability": "0.0.2"
+    "@superfunctions/http-openapi": "0.1.1",
+    "@superfunctions/oauth-storage": "0.1.1",
+    "@superfunctions/observability": "0.0.3"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.10.4",
     "@superfunctions/oauth-core": "0.1.1",
-    "@superfunctions/oauth-flow": "0.1.0",
+    "@superfunctions/oauth-flow": "0.1.1",
     "@superfunctions/oauth-http": "0.1.0",
-    "@superfunctions/oauth-providers": "0.1.0",
+    "@superfunctions/oauth-providers": "0.1.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
     "better-sqlite3": "^12.5.0",

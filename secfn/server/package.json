@@ -1,6 +1,6 @@
 {
   "name": "@secfn/server",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Adapter-backed SecFn server, vault, audit, RBAC, and runtime APIs",
   "type": "module",
   "main": "./dist/index.js",
@@ -37,9 +37,9 @@
   "author": "21n",
   "license": "MIT",
   "dependencies": {
-    "@secfn/core": "0.0.3",
+    "@secfn/core": "0.0.4",
     "@superfunctions/http": "0.2.0",
-    "@superfunctions/middleware": "0.3.0"
+    "@superfunctions/middleware": "0.3.1"
   },
   "peerDependencies": {
     "@superfunctions/db": "0.3.2"
@@ -55,7 +55,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
     "directory": "secfn/server"
   },
   "publishConfig": {

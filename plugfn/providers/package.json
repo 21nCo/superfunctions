@@ -1,6 +1,6 @@
 {
   "name": "@plugfn/providers",
-  "version": "0.0.1",
+  "version": "0.0.3",
   "description": "First-party provider implementations for PlugFn",
   "type": "module",
   "main": "./dist/index.js",
@@ -66,14 +66,19 @@
   },
   "author": "21n",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "plugfn/providers"
+  },
   "publishConfig": {
     "access": "public"
   },
   "dependencies": {
-    "@superfunctions/oauth-providers": "0.1.0",
+    "@superfunctions/oauth-providers": "0.1.1",
     "imapflow": "^1.7.0",
     "jose": "^5.10.0",
-    "plugfn": "0.2.0",
+    "plugfn": "0.2.1",
     "zod": "^3.22.4"
   },
   "devDependencies": {

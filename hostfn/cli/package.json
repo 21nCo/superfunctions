@@ -1,6 +1,6 @@
 {
   "name": "hostfn",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "license": "MIT",
   "description": "Universal application deployment CLI",
   "type": "module",
@@ -51,7 +51,7 @@
   "author": "21n",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
     "directory": "hostfn/cli"
   },
   "bugs": {

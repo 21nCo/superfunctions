@@ -55,12 +55,12 @@ const CLIENT_MEMBERS = new Map<string, string>([["aclose", "the method that clos
 const ANNOTATION_BUILTINS = new Set(["bool", "bytearray", "bytes", "dict", "float", "int", "list", "memoryview", "object", "str"]);
 
 /**
- * Whether the catalog declares that the server makes repeated calls of a write operation safe. Catalog v1
- * has no such field (method, schema and an `Idempotency-Key` parameter grant none), so no write is
- * retried; a later catalog version supplies the declaration here, not the SDK config.
+ * Whether the catalog declares that the server makes repeated calls of a write operation safe: only its
+ * reviewed `idempotency` member does. Method, schema, an `Idempotency-Key` parameter and the SDK config grant
+ * nothing. With a declared key, the runtime retries only calls that send that header.
  */
-function declaresIdempotency(_operation: CatalogOperation): boolean {
-  return false;
+function declaresIdempotency(operation: CatalogOperation): boolean {
+  return operation.idempotency?.semantics === "server";
 }
 
 function header(context: SdkTargetContext<PythonOptions>): string {
@@ -282,6 +282,7 @@ export function emitPython(context: SdkTargetContext<PythonOptions>): SdkTargetO
         `        errors=${tuple(shape.errors.map((entry) => `_ErrorSpec(status=${pyString(entry.status)}, kinds=${kinds(entry.shape)})`), "        ")},`,
         `        security=${tuple(terms, "        ")},`,
         `        retry=${pyString(retry)},`,
+        ...(retry === "idempotent" && operation.idempotency?.key ? [`        idempotency_key=${pyString(operation.idempotency.key.name)},`] : []),
         `    ),`,
       ].join("\n")
     );
@@ -525,7 +526,7 @@ asyncio.run(main())
 
 - Requests go only to \`base_url\` (${options.baseUrl === null ? "required" : `default \`${options.baseUrl}\``}); spec servers are never used and redirects are not followed.
 - Non-2xx responses, including documented redirects, raise \`ApiHttpError\`; \`is_declared_error(error, operation_id)\` narrows its body to the documented types. Timeouts raise \`ApiTimeoutError\`; cancelling the calling task cancels the call.
-- Reads are retried up to ${options.retry.maxAttempts} attempts on network errors, timeouts and HTTP 408, 429, 500, 502, 503 and 504; writes are never retried.
+- Reads are retried up to ${options.retry.maxAttempts} attempts on network errors, timeouts and HTTP 408, 429, 500, 502, 503 and 504. A write is retried the same way only when the API's catalog declares that its server makes repeated calls safe; when that declaration names a key header, only calls that send it with a non-empty value are retried, and every attempt sends the same value. Other writes, and calls with a body given as an async iterable (a stream), are never retried.
 - \`transport\` replaces the default httpx transport; \`on_failure\` receives an apifn.client-failure/v1 observation per failed call, and nothing is observed unless it is set.
 
 Requires Python 3.10 or later. Provenance is in \`apifn.sdk-manifest.json\`, which the wheel installs inside the package.

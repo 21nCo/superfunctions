@@ -1,8 +1,10 @@
+import { existsSync } from "node:fs";
 import { connect } from "node:net";
 import { fileURLToPath } from "node:url";
 import { defineWorkersConfig } from "@cloudflare/vitest-pool-workers/config";
 
 const packageDir = fileURLToPath(new URL(".", import.meta.url));
+const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const contracts = (path: string) => fileURLToPath(new URL(`../adapter-contracts/src/${path}`, import.meta.url));
 const pgUrl = process.env.SEARCHFN_PG_URL ?? "postgres://searchfn:searchfn_test@localhost:5433/searchfn_test";
 
@@ -29,13 +31,15 @@ function reachable(url: string, timeoutMs = 2000): Promise<boolean> {
  * not a live Hyperdrive check. It is bound only when the server is reachable: a failed connection
  * attempt inside workerd surfaces as an unhandled socket error that fails the run.
  *
- * The project root is the repository root because `searchfn/node_modules` holds a Vitest 1.x
- * toolchain that would otherwise shadow the root Vitest 3 packages the Workers pool loads.
+ * In the repository workspace the project root is the repository root, so a stale
+ * `searchfn/node_modules` Vitest toolchain cannot shadow the root Vitest 3 packages the Workers
+ * pool loads. A standalone install of this package (the release build) has no repository-root
+ * `node_modules`, so the pool resolves from the package directory instead.
  */
 export default defineWorkersConfig(async () => {
   const postgresUp = await reachable(pgUrl);
   return {
-    root: fileURLToPath(new URL("../..", import.meta.url)),
+    root: existsSync(new URL("../../node_modules/@cloudflare/vitest-pool-workers", import.meta.url)) ? repoRoot : packageDir,
     resolve: {
       alias: {
         "@searchfn/adapter-contracts/testing": contracts("testing.ts"),

@@ -1,6 +1,6 @@
 {
   "name": "@extfn/cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Canonical extfn CLI for development and release workflows",
   "type": "module",
   "main": "./dist/index.js",
@@ -34,9 +34,9 @@
   "author": "21n",
   "license": "MIT",
   "dependencies": {
-    "@extfn/vite": "0.1.2",
-    "@clifn/core": "0.1.0",
-    "@extfn/core": "0.1.0",
+    "@extfn/vite": "0.1.3",
+    "@clifn/core": "0.1.1",
+    "@extfn/core": "0.1.1",
     "commander": "^12.1.0",
     "fflate": "^0.8.2",
     "vite": "^5.4.21"
@@ -48,7 +48,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
     "directory": "extfn/cli"
   },
   "publishConfig": {

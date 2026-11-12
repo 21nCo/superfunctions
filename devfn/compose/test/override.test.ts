@@ -1,15 +1,26 @@
 import { execFile, spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { fileURLToPath } from "node:url";
+import { pathToFileURL } from "node:url";
 import { checkReadinessNow, gatedLauncherStatus, processBirthSignature, runGatedCommand } from "@devfn/processes";
 import { describe, expect, it } from "vitest";
 import { ComposeController, composeProjectName, type ComposeLaunch, createComposeEnvironment, createComposeReadinessEnvironment, effectiveComposeServiceNetworks, fingerprintComposeSource, renderComposeOverride, type ManagedComposeService } from "../src/index.js";
 import { assertComposeSourceGraphBounded } from "../src/source-files.js";
 
 const execFileAsync = promisify(execFile);
+/** The installed @devfn/processes build, which the spawned helper processes load directly. */
+const PROCESSES_DIST = installedPackageDist("@devfn/processes");
+
+/** Find a dependency's build directory the way Node would look it up from this test. */
+function installedPackageDist(name: string): string {
+  const packageDir = createRequire(import.meta.url).resolve.paths(name)?.map((base) => path.join(base, name)).find((candidate) => existsSync(path.join(candidate, "package.json")));
+  if (!packageDir) throw new Error(`${name} is not installed.`);
+  return path.join(packageDir, "dist");
+}
 const MOCK_COMPOSE_HASH = "a".repeat(64);
 // No such process or group exists, so it never signals anything real.
 const ABSENT_LAUNCHER = { pid: 2_147_483_646 };
@@ -50,7 +61,7 @@ async function launchFromDyingCli(): Promise<{ pid: number; birthSignature?: str
   try {
     const launcherFile = path.join(dir, "launcher.json");
     const command = "require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' }); setTimeout(() => {}, 60000);";
-    await writeFile(path.join(dir, "cli.mjs"), `import { runGatedCommand } from ${JSON.stringify(new URL("../../processes/dist/index.js", import.meta.url).href)};
+    await writeFile(path.join(dir, "cli.mjs"), `import { runGatedCommand } from ${JSON.stringify(pathToFileURL(path.join(PROCESSES_DIST, "index.js")).href)};
 import { writeFileSync } from "node:fs";
 await runGatedCommand(process.execPath, ["-e", ${JSON.stringify(command)}], { onLaunched: async (launcher) => {
   writeFileSync(${JSON.stringify(launcherFile)}, JSON.stringify(launcher));
@@ -1129,7 +1140,7 @@ describe("gated Compose launcher", () => {
     const root = await mkdtemp(path.join(tmpdir(), "devfn-ungated-"));
     const marker = path.join(root, "ran");
     try {
-      const wrapper = spawn(process.execPath, [fileURLToPath(new URL("../../processes/dist/wrapper.js", import.meta.url))], {
+      const wrapper = spawn(process.execPath, [path.join(PROCESSES_DIST, "wrapper.js")], {
         env: { ...process.env, DEVFN_WRAPPED_COMMAND: JSON.stringify([process.execPath, "-e", `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'x')`]), DEVFN_REDACT_KEYS: "[]" },
         stdio: "ignore",
       });

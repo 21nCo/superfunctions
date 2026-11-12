@@ -13,6 +13,9 @@ npx @devfn/cli up --profile default
 npx @devfn/cli status --json
 npx @devfn/cli logs app
 npx @devfn/cli down
+npx @devfn/cli up --runtime review --profile default
+npx @devfn/cli runtimes --json
+npx @devfn/cli down --runtime review
 npx @devfn/cli domains register dev.example.test --tls internal
 npx @devfn/cli domains list
 ```
@@ -20,6 +23,8 @@ npx @devfn/cli domains list
 Registering a domain requires it to resolve already, and only to loopback addresses (`127.0.0.1`, or `::1` where available). A reserved name such as `dev.example.test` does not resolve until you configure local DNS for it yourself; DevFn never edits resolver, hosts or trust-store configuration.
 
 Profiles that declare public processes or ports require `--allow-public` on every start.
+
+`--runtime <name>` selects a named runtime of the checkout for `up`, `down`, `restart`, `status`, `logs`, `doctor`, `url` and `tunnel urls`; any other command rejects it. Without it a command selects the default runtime. `devfn runtimes` lists every runtime of the checkout that has a receipt, with its instance ID, state and profile.
 `devfn ports gc` reconciles leases and retires listener claims with conclusive evidence. It removes the proxy routes of an instance only when its recorded process and container owners, including those of failed or interrupted starts, are all verified dead (for example a deleted worktree); an owner whose identity cannot be read counts as running. Finally, gc collects released records.
 `devfn restart` validates the selected profile and registered domains, then reserves replacement ports before stopping a ready instance. A rejected domain, route, or port selection leaves that instance running. After those checks it stops the instance and starts it again from the current working tree. If that start fails, the previous processes are not relaunched and the error says so. Cleanup of the failed start can itself fail and leave some of its new processes or containers running; when the error reports cleanup errors, run `devfn down` again.
 

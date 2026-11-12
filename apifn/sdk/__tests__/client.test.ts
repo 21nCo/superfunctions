@@ -15,7 +15,7 @@ import { buildFixtureSdk, cleanupTemp, compile, fixtureCatalog, fixtureConfig, F
 const catalog = fixtureCatalog();
 const server = new FixtureServer();
 let sdk: any;
-/** The generated package's runtime module, for operation specs catalog v1 cannot produce. */
+/** The generated package's runtime module, for operation specs the fixture catalog does not produce. */
 let runtime: any;
 
 beforeAll(async () => {
@@ -47,7 +47,7 @@ const META = {
   defaultRetry: { maxAttempts: 3, baseDelayMs: 0, maxDelayMs: 0 },
 };
 
-/** A runtime operation spec; `retry: "idempotent"` stands for a write a future catalog declares idempotent. */
+/** A runtime operation spec for a write the catalog declares idempotent (`retry: "idempotent"`), without a key unless overridden. */
 function operationSpec(overrides: Record<string, unknown> = {}) {
   return {
     id: "files.put",
@@ -203,13 +203,68 @@ describe("shared retry vectors", () => {
     expect(server.requests).toHaveLength(2);
   });
 
-  it("never retries a write under catalog v1, whatever its method or body", async () => {
+  it("never retries a stream body of a write the catalog declares idempotent", async () => {
     server.reset([{ status: 503 }, { status: 200, headers: { "content-type": "application/json" }, body: '{"size":2}' }]);
-    const error = await client()
-      .uploadAttachment({ projectId: "p", taskId: "t", body: new Uint8Array([1, 2]) })
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1, 2]));
+        controller.close();
+      },
+    });
+    const error = await client({ credentials: { bearerAuth: "t" } })
+      .uploadAttachment({ projectId: "p", taskId: "t", body })
       .catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(sdk.ApiHttpError);
+    expect(error.attempts).toBe(1);
     expect(server.requests).toHaveLength(1);
+    // The same write with a byte body is retried, so only the stream stopped it.
+    server.reset([{ status: 503 }, { status: 200, headers: { "content-type": "application/json" }, body: '{"size":2}' }]);
+    await expect(client({ credentials: { bearerAuth: "t" } }).uploadAttachment({ projectId: "p", taskId: "t", body: new Uint8Array([1, 2]) })).resolves.toEqual({ size: 2 });
+    expect(server.requests).toHaveLength(2);
+  });
+
+  it("retries a write declared with a key only while the call sends the key, matching its name in any case", async () => {
+    const keyed = operationSpec({
+      parameters: [{ key: "idempotencyKey", name: "Idempotency-Key", in: "header", required: false, style: "simple", explode: false, allowReserved: false }],
+      idempotencyKey: "idempotency-key",
+    });
+    server.reset([{ status: 503 }, { status: 503 }, { status: 200, headers: { "content-type": "application/json" }, body: "{}" }]);
+    await expect(directRuntime().request(keyed, { body: new Uint8Array([1]), idempotencyKey: "k-1" })).resolves.toEqual({});
+    expect(server.requests.map((request) => request.headers["idempotency-key"])).toEqual(["k-1", "k-1", "k-1"]);
+    server.reset([{ status: 503 }, { status: 200 }]);
+    const error = await directRuntime()
+      .request(keyed, { body: new Uint8Array([1]) })
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(runtime.ApiHttpError);
+    expect(server.requests).toHaveLength(1);
+  });
+
+  it("delivers each call's own key on every attempt through the default fetch", async () => {
+    // Separate calls of a keyed write must reach the server under separate keys, retries included; a key the
+    // transport rewrote (Sec-Fetch-Mode) would collapse them, so generation refuses such keys.
+    const created = { status: 201, headers: { "content-type": "application/json" }, body: "{}" };
+    server.reset([{ status: 503 }, created, { status: 503 }, created]);
+    for (const key of ["call-1", "call-2"]) await client().createTask({ projectId: "p", idempotencyKey: key, body: { title: "x" } });
+    expect(server.requests.map((request) => request.headers["idempotency-key"])).toEqual(["call-1", "call-1", "call-2", "call-2"]);
+  });
+
+  it("copies byte bodies only for calls that may be retried", async () => {
+    const sent: unknown[] = [];
+    const fetch = (input: string | URL | Request, init?: RequestInit) => {
+      sent.push(init?.body);
+      return globalThis.fetch(input, init);
+    };
+    for (const input of [new Uint8Array([1, 2]), new Uint8Array([1, 2]).buffer]) {
+      server.reset([{ status: 200, headers: { "content-type": "application/json" }, body: "{}" }]);
+      sent.length = 0;
+      await directRuntime({ fetch }).request(operationSpec({ retry: "never" }), { body: input });
+      expect(sent[0]).toBe(input);
+      server.reset([{ status: 200, headers: { "content-type": "application/json" }, body: "{}" }]);
+      sent.length = 0;
+      await directRuntime({ fetch }).request(operationSpec(), { body: input });
+      expect(sent[0]).not.toBe(input);
+      expect([...new Uint8Array(sent[0] as Uint8Array)]).toEqual([1, 2]);
+    }
   });
 
   it("retries a declared-idempotent write within the budget, replaying its byte body", async () => {
@@ -223,6 +278,28 @@ describe("shared retry vectors", () => {
     server.reset([{ status: 504 }, { status: 200, headers: { "content-type": "application/json" }, body: '{"size":2}' }]);
     await expect(directRuntime().request(operationSpec(), { body: new Uint8Array([1, 2]) })).resolves.toEqual({ size: 2 });
     expect(server.requests).toHaveLength(2);
+  });
+
+  it("replays the bytes the call was given even when the caller changes its buffer between attempts", async () => {
+    const sources: Array<[string, () => { body: Uint8Array | ArrayBuffer; change: () => void }]> = [
+      ["a Uint8Array", () => { const body = new Uint8Array([1, 2]); return { body, change: () => body.fill(9) }; }],
+      ["a Uint8Array view of a larger buffer", () => { const whole = new Uint8Array([7, 1, 2, 7]); return { body: whole.subarray(1, 3), change: () => whole.fill(9) }; }],
+      ["a Buffer", () => { const body = Buffer.from([1, 2]); return { body, change: () => body.fill(9) }; }],
+      ["an ArrayBuffer", () => { const body = new Uint8Array([1, 2]).buffer; return { body, change: () => new Uint8Array(body).fill(9) }; }],
+    ];
+    for (const [name, source] of sources) {
+      const { body, change } = source();
+      let calls = 0;
+      // The caller rewrites its buffer once the first attempt has gone out; the retry must still send [1, 2].
+      const fetch = async (input: string | URL | Request, init?: RequestInit) => {
+        const response = await globalThis.fetch(input, init);
+        if (++calls === 1) change();
+        return response;
+      };
+      server.reset([{ status: 503 }, { status: 200, headers: { "content-type": "application/json" }, body: '{"size":2}' }]);
+      await expect(directRuntime({ fetch }).request(operationSpec(), { body }), name).resolves.toEqual({ size: 2 });
+      expect(server.requests.map((request) => [...request.body]), name).toEqual([[1, 2], [1, 2]]);
+    }
   });
 
   it("never retries a stream body, even for a declared-idempotent write", async () => {

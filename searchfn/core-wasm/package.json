@@ -1,8 +1,13 @@
 {
   "name": "@searchfn/core-wasm",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Experimental WASM engine wrapper for SearchFn.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "searchfn/core-wasm"
+  },
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",
@@ -28,7 +33,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@searchfn/core": "0.3.0"
+    "@searchfn/core": "0.3.1"
   },
   "devDependencies": {
     "@types/node": "^24.9.1",

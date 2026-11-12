@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/oauth-http",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "OAuth HTTP transport contracts for Superfunctions",
   "type": "module",
   "main": "./dist/index.js",
@@ -31,14 +31,14 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
     "directory": "packages/oauth-http"
   },
   "publishConfig": {
     "access": "public"
   },
   "dependencies": {
-    "@superfunctions/oauth-core": "0.2.0"
+    "@superfunctions/oauth-core": "0.2.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

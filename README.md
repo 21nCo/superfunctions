@@ -54,7 +54,10 @@
 Release tags must point to the reviewed commit containing the exact package
 version and all prerequisite fixes. Manual dispatch requires an **existing tag**:
 the workflows check out `refs/tags/<release_tag>`, not the dispatching branch,
-and reject a deleted or moved tag before publication. Do not retag releases.
+and reject a deleted or moved tag before publication. A dispatch that publishes
+an npm package must also run on that tag (`gh workflow run publish-tag.yml
+--ref <release_tag> -f release_tag=<release_tag>`), because npm provenance
+records the commit the run was dispatched from. Do not retag releases.
 The commands below validate/build locally; they do not publish.
 
 ### npm libraries
@@ -97,15 +100,38 @@ channels fail rather than overwriting stable installations. The workflow removes
 existing stable `latest`. For an already-published prerelease, dispatch its
 immutable release tag with `channel_only=true`: this verifies registry identity
 and reconciles tags without installing, packing or republishing the artifact.
-`@uifn/patterns` and `@uifn/sf` remain experimental. Publication retains the
-existing `NPM_TOKEN`/`NODE_AUTH_TOKEN` mechanism for direct publication.
-Prerelease tag reconciliation runs in a separate job using npm 11.21.0 and
-`id-token: write`; package install/build/test steps receive no OIDC permission.
-The channel job does not receive `NPM_TOKEN`. For each prerelease package, enroll
-a GitHub Actions trusted publisher on npm with organization/user `21nCo`,
-repository `super-functions`, workflow filename `publish-tag.yml`, no environment
-name, and **Allow npm dist-tag** enabled. Direct `npm publish` permission is not
-needed for this connection; preserve the existing token publishing policy.
+`@uifn/patterns` and `@uifn/sf` remain experimental. Packages publish through
+npm trusted publishing (OIDC). The `build` job installs, builds, tests and packs
+the artifact without `id-token` permission; a separate `publish` job downloads
+that exact tarball and runs `npm publish` with npm 11.21.0 and `id-token: write`.
+Every published package has a GitHub Actions trusted publisher on npm with
+organization/user `21nCo`, repository `superfunctions`, workflow filename
+`publish-tag.yml` and no environment name. The workflow has no npm token. npm
+can only attach a trusted publisher to a package that already exists, so before
+a new package's first release tag a maintainer claims the name with a `0.0.0`
+placeholder: in a new empty directory outside the repository, write a
+`package.json` containing only the package's `"name"` and `"version": "0.0.0"`,
+check that `npm pack --dry-run` lists only `package.json`, then run
+`npm publish --access public` with 2FA (`--access public` because a scoped
+package defaults to restricted; never the real version, whose tag would then fail
+because that version already exists). Then add its trusted publisher with
+**Allow npm publish** enabled (npm defaults new connections to staged publishing
+only) and push the release tag within 2 days: npm expires a trusted publisher
+configuration that has not completed a successful publish within 2 days of
+creation. After that release, deprecate the placeholder with
+`npm deprecate <name>@0.0.0 "Name placeholder; install a released version"`.
+The placeholder keeps `latest` until the package's first stable release, so make
+the first release a stable version. Don't move `latest` to a prerelease by hand:
+`reconcile-channel` removes `latest` from a prerelease. After a prerelease-only
+first release, an unqualified install gets the empty placeholder and users have
+to install by the prerelease's dist-tag.
+npm attaches a provenance attestation to every OIDC publish from this public
+repository. The registry accepts it only when the packed `package.json`
+`repository.url` is `git+https://github.com/21nCo/superfunctions.git`, so every
+release target must declare that URL with its own `directory`.
+Prerelease tag reconciliation runs in a separate job that also uses OIDC; it
+needs **Allow npm dist-tag** enabled on the
+package's trusted publisher.
 See [npm's dist-tag OIDC requirements](https://docs.npmjs.com/trusted-publishers#managing-dist-tags-with-trusted-publishing).
 Publish authorization does not imply dist-tag authorization. A denied cleanup
 fails the workflow even if the artifact was published; verify its registry

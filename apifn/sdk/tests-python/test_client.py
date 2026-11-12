@@ -251,15 +251,50 @@ def test_retries_a_read_after_a_dropped_connection(server: FixtureServer) -> Non
     assert len(server.requests) == 2
 
 
-def test_never_retries_a_write_under_catalog_v1(server: FixtureServer) -> None:
+def test_never_retries_a_stream_body_of_a_declared_idempotent_write(server: FixtureServer) -> None:
     server.reset([scripted({"status": 503}), scripted({"status": 200, "headers": {"content-type": "application/json"}, "body": '{"size":2}'})])
-    outcome, _ = run(run_case(server.base_url, {"operation": "tasks.attachment.upload", "parameters": {"path": {"projectId": "p", "taskId": "t"}}, "bodyBytes": [1, 2]}, credentials={"bearerAuth": "t"}))
-    assert (outcome["kind"], outcome["status"]) == ("http", 503)
-    assert len(server.requests) == 1
+
+    async def body() -> AsyncIterator[bytes]:
+        yield b"\x01"
+        yield b"\x02"
+
+    async def main() -> None:
+        async with client(server, credentials={"bearerAuth": "t"}) as tasks:
+            stream = body()
+            with pytest.raises(pkg.ApiHttpError) as caught:
+                await tasks.upload_attachment(project_id="p", task_id="t", body=stream)
+            assert caught.value.attempts == 1
+            assert len(server.requests) == 1
+            # The same write with a byte body is retried, so only the stream stopped it.
+            server.reset([scripted({"status": 503}), scripted({"status": 200, "headers": {"content-type": "application/json"}, "body": '{"size":2}'})])
+            assert await tasks.upload_attachment(project_id="p", task_id="t", body=b"\x01\x02") == {"size": 2}
+            assert len(server.requests) == 2
+
+    run(main())
+
+
+def test_retries_a_write_declared_with_a_key_only_while_the_call_sends_it(server: FixtureServer) -> None:
+    keyed = operation_spec(
+        parameters=(runtime.ParameterSpec(key="idempotency_key", name="Idempotency-Key", location="header", style="simple", explode=False, allow_reserved=False, required=False),),
+        idempotency_key="idempotency-key",
+    )
+    server.reset([scripted({"status": 503}), scripted({"status": 503}), scripted({"status": 200, "headers": {"content-type": "application/json"}, "body": "{}"})])
+
+    async def main() -> None:
+        target = direct_runtime(server)
+        assert await target.request(keyed, {"body": b"\x01", "idempotency_key": "k-1"}) == {}
+        assert [request.headers["idempotency-key"] for request in server.requests] == ["k-1"] * 3
+        server.reset([scripted({"status": 503}), scripted({"status": 200})])
+        with pytest.raises(pkg.ApiHttpError):
+            await target.request(keyed, {"body": b"\x01"})
+        assert len(server.requests) == 1
+        await target.aclose()
+
+    run(main())
 
 
 def operation_spec(**overrides: Any) -> Any:
-    """A runtime operation spec; retry="idempotent" stands for a write a future catalog declares idempotent."""
+    """A runtime operation spec for a write the catalog declares idempotent (retry="idempotent"), without a key unless overridden."""
     fields: dict[str, Any] = {
         "id": "files.put",
         "name": "putFile",

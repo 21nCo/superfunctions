@@ -1,6 +1,6 @@
 {
   "name": "@mdfn/source",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Source editor, diagnostics, and source-visual synchronization for mdfn",
   "type": "module",
   "main": "dist/index.cjs",
@@ -22,15 +22,15 @@
     "@codemirror/search": "^6.7.1",
     "@codemirror/state": "^6.7.1",
     "@codemirror/view": "^6.43.8",
-    "@mdfn/core": "0.1.0",
-    "@mdfn/markdown": "0.1.0",
-    "@mdfn/render": "0.1.0"
+    "@mdfn/core": "0.1.1",
+    "@mdfn/markdown": "0.1.1",
+    "@mdfn/render": "0.1.1"
   },
   "devDependencies": { "jsdom": "^26.0.0", "tsup": "^8.0.0", "typescript": "^5.3.0", "vitest": "3.2.4" },
   "files": ["dist", "README.md"],
   "license": "MIT",
   "engines": { "node": ">=20 <25" },
-  "repository": { "type": "git", "url": "git+https://github.com/21nCo/super-functions.git", "directory": "mdfn/source" },
+  "repository": { "type": "git", "url": "git+https://github.com/21nCo/superfunctions.git", "directory": "mdfn/source" },
   "publishConfig": { "access": "public" },
   "sideEffects": false,
   "mdfn": { "status": "stable-candidate", "layer": "browser", "schemaVersion": 1, "kernel": "codemirror" }

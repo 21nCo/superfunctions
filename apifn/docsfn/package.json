@@ -1,6 +1,6 @@
 {
   "name": "@apifn/docsfn",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "docsfn plugin for ApiFn API reference",
   "type": "module",
   "main": "dist/index.cjs",
@@ -29,9 +29,9 @@
     "test": "vitest --run"
   },
   "dependencies": {
-    "@apifn/core": "0.0.3",
-    "@apifn/react": "0.0.3",
-    "@apifn/svelte": "0.0.3"
+    "@apifn/core": "0.0.4",
+    "@apifn/react": "0.0.4",
+    "@apifn/svelte": "0.0.4"
   },
   "peerDependencies": {
     "docsfn": "*",
@@ -67,7 +67,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
     "directory": "apifn/docsfn"
   },
   "publishConfig": {

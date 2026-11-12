@@ -1,6 +1,6 @@
 {
   "name": "@billfn/svelte",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Svelte wrappers for billfn client",
   "type": "module",
   "main": "./dist/index.js",
@@ -20,17 +20,22 @@
   },
   "author": "21n",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "billfn/svelte"
+  },
   "publishConfig": {
     "access": "public"
   },
   "peerDependencies": {
-    "@billfn/client": "^0.0.2",
-    "@billfn/core": "^0.0.1",
+    "@billfn/client": "^0.0.3",
+    "@billfn/core": "^0.0.2",
     "svelte": "^5.0.0"
   },
   "devDependencies": {
-    "@billfn/client": "^0.0.2",
-    "@billfn/core": "^0.0.1",
+    "@billfn/client": "^0.0.3",
+    "@billfn/core": "^0.0.2",
     "@types/node": "^22.0.0",
     "svelte": "^5.0.0",
     "typescript": "^5.6.0",

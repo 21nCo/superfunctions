@@ -1,0 +1,89 @@
+# SwiftUI workbench
+
+A macOS and iOS app that shows every `UIFnSwiftUI` style and component, one screen each, drawn with the default `uifn` theme. Its UI tests run Xcode's automated accessibility audit on every screen.
+
+| Group | Screen | Shows |
+| --- | --- | --- |
+| Styles | Buttons | `.uifnPrimary`, `.uifnSecondary`, `.uifnGhost` and `.uifnDestructive`, enabled and disabled |
+| Styles | Toggles | `.uifnSwitch` and `.uifnCheckbox` on, off, mixed, disabled and with the label hidden |
+| Styles | Text fields | `.uifn` text fields with a prompt, a value and disabled |
+| Styles | Group boxes and menus | `.uifn` group box and menus (with and without the indicator), `UIFnMenuPicker` with and without a selection |
+| Styles | Segmented pickers | `UIFnSegmentedPicker` in the `.segmented` (also disabled) and `.tabs` variants |
+| Styles | Progress and gauges | `.uifnLinear` and `.uifnCircular` progress views, determinate and indeterminate, and gauges |
+| Components | Segmented meters | `UIFnSegmentedMeter` in each tone, and with a current value label |
+| Components | Banners | `UIFnBanner` in each tone, and with actions and a dismiss button |
+| Components | Toasts | Toasts from `uifnToast` in two tones |
+| Components | Empty states | `UIFnEmptyState` with an icon, message and actions, a message only, and actions only |
+| Components | Skeletons | `UIFnSkeleton` placeholders for text, an avatar row and an image |
+
+## Run it
+
+Open `SwiftUIWorkbench.xcodeproj` in Xcode 16 or later and run the `SwiftUIWorkbench` scheme on My Mac (macOS 14 or later) or an iPhone or iPad simulator (iOS 17 or later). The project uses the `UIFnSwiftUI` product of the repository's `Package.swift` as a local package, so changes to `uifn/swift` show up on the next build.
+
+Launch arguments pick the first screen and the color scheme:
+
+- `-UIFnWorkbenchScreen <screen>`, where `<screen>` is `buttons`, `toggles`, `text-fields`, `menus`, `segmented-pickers`, `progress`, `segmented-meters`, `banners`, `toasts`, `empty-states` or `skeletons`. Without it the app opens on the list of screens.
+- `-UIFnWorkbenchColorScheme light` or `dark`. Without it the app follows the system.
+
+## Accessibility audits
+
+`SwiftUIWorkbenchUITests` launches the app on each screen, and on the list of screens, in light and then dark, and calls `performAccessibilityAudit()` with every audit type the platform has. On the toasts screen it shows a toast first. The audit judges contrast from the pixels on screen, so each test first checks that the whole screen fits in its window (an iPhone at the default text size, or the app's default 960 by 680 point window on macOS), and the screen list that its rows do; a screen that grows taller fails until it is split. An issue fails its test unless a waiver matches it. Another test checks that the screens in the app's list are exactly the audited ones, each with its own test, and that each opens from the list, so a new screen cannot go unaudited.
+
+```bash
+cd uifn/examples/swiftui-workbench
+xcodebuild test -project SwiftUIWorkbench.xcodeproj -scheme SwiftUIWorkbench -destination 'platform=macOS'
+xcodebuild test -project SwiftUIWorkbench.xcodeproj -scheme SwiftUIWorkbench -destination 'platform=iOS Simulator,name=<iPhone simulator>'
+```
+
+Use any iPhone simulator with iOS 17 or later; `xcrun simctl list devices available` lists them.
+
+On CI, `TEST_RUNNER_UIFN_WORKBENCH_REQUIRE_README=1` makes the waiver table test fail, rather than skip, if the test runner cannot read this README.
+
+macOS UI tests need Automation Mode. Xcode asks for it the first time; from the command line, run `sudo automationmodetool enable-automationmode-without-authentication` once. The `workbench` job of the Swift workflow (`.github/workflows/swift.yml`) runs both, on the newest iPhone simulator with iOS 17 or later, and uploads each result bundle. It boots the simulator before building the tests, and waits up to six minutes for followupd, the process that posts the notification a new iOS 26 simulator shows a few minutes after it first boots ("Ready for Apple Intelligence"), to add a notification request; the banner would cover the app, and any followupd request ends the wait. On iOS each audit also first waits out any notification banner, and its test fails if one stays for 30 seconds, shows while the audit reports an issue, or covers the app when the audit ends. Before each audit the test waits until the screen's elements stop moving, apart from progress and activity indicators, which an indeterminate one never does. An audit that XCTest gives up on for taking too long runs once more in a new launch of the app, with a note attached, and a second timeout fails the test. What the unfinished audit saw (unwaived and waived issues, a banner, contrast evidence) is reported with the second audit's, without repeating an identical report, so a retry never clears an issue or hides a waiver. On macOS each launch ignores the windows the last one left, so every launch opens the app's window.
+
+### Waivers
+
+The waivers are in `UITests/WorkbenchAuditWaiver.swift`, and a test checks that this table and the contrast table below list the same ids and reasons. Each waived issue is attached to its test's result. The segmented picker's clipping was real when the audit first found it: at accessibility text sizes `UIFnSegmentedPicker` truncated every segment label to an ellipsis. Its segments now stop growing at `.xxxLarge` and, on iOS, show their label in the Large Content Viewer on a long press, as the system segmented control does (see the UIFnSwiftUI README). The waiver covers only the audit's prediction, which does not change.
+
+The macOS audit also reports elements that SwiftUI and AppKit make around the app's views (window and column containers, the full-screen button, the window's title, the CI Mac's Touch Bar), and two that SwiftUI makes for UIFn controls: a gauge with a custom style has no macOS role, and the button-style menu's button has no press action. The macOS waivers cover those. The framework's elements are found by their place in the app's tree on every screen and in both color schemes. A contrast issue is waived only when it is on one of the two lists below: [contrast reports outside UIFn's control](#contrast-reports-outside-uifns-control) and [known contrast misreads](#known-contrast-misreads). The waiver tests (`UITests/WorkbenchAuditWaiverTests.swift`) check that app elements outside them are not waived. Every contrast issue, waived or not, attaches the element's screenshot, on macOS the ratio Apple's engine gives that screenshot, and a screenshot of the window, to check what the audit judged. Its first run on CI also found issues in the workbench and in `UIFnSwiftUI`, which are fixed rather than waived. The macOS list rows are tagged rows instead of navigation links, which had no role, and the macOS sidebar draws its rows in the theme's text color on an opaque theme surface, because over the sidebar's own translucent material the audit failed the contrast of a different set of legible rows from run to run. The app also draws the selected row (the theme's subtle accent, a solid accent bar and a semibold title) over AppKit's selection, whose accent color left the primary text at 3.4:1. Because that hides AppKit's focused selection, the selected row gets a solid accent outline while the list has keyboard focus in the key window (3.8:1 against the subtle accent and 4.0:1 against the sidebar in light, 5.5:1 and 7.7:1 in dark), and a test checks that it comes and goes with focus. The app reads the colors for its window's display, the theme's sRGB values on an sRGB screen. Each text field names itself, because a macOS field gives accessibility neither its title nor its prompt. And the UIFn segmented and menu pickers no longer give accessibility a label text beside the control where nothing is drawn; the label is now the control's own. `UIFnEmptyState` starts its title and message at whole points: centered at a half point on CI's 1x display, the message “Files you add appear here.” failed the macOS audit in dark, though Apple's engine passes its screenshot (11.29:1) and the colors it exposes to accessibility (11.26:1).
+
+| Waiver | Screens | Platform | Audit type | Elements | Reason |
+| --- | --- | --- | --- | --- | --- |
+| `segmented-picker-text-clipped` | Segmented pickers | iOS | Text clipped | The segments | The segments share the picker's width, so they stop growing at the largest text size before the accessibility sizes and shrink a label that still does not fit; at the largest accessibility size every label shows in full. The audit predicts clipping from the segment's frame and does not see that the segments stop growing. |
+| `text-field-hit-region` | Text fields | iOS | Hit region | Text fields | The audit measures the system text field inside the style's padding. A tap anywhere in the padded field focuses it, so the touch target is the whole field. |
+| `text-field-text-clipped` | Text fields | iOS | Text clipped | Text fields | Text fields are one line, like the system's, and grow taller with Dynamic Type. A value wider than the field scrolls while it is edited and truncates otherwise; the audit also flags values that fit at every size, such as "Design". |
+| `macos-window-groups` | All | macOS | Element description, parent/child | The window's, the split view's columns', the sidebar section headers' and the full-screen button's unlabeled groups | SwiftUI and AppKit make these unlabeled groups around the app's views: the hosting views of the window, its sidebar and detail columns and the list's section headers, and the group inside the window's full-screen button. They are not elements VoiceOver stops on. Each is found by its place in the app's tree, and one whose frame an element of the app's own shares is still audited, as is any other unlabeled group. |
+| `macos-touch-bar` | All | macOS | Element description, action | The Touch Bar and its items | The CI Mac shows a Touch Bar, and AppKit fills it, adding items such as "emoji & symbols" while a text field has focus. They are not the app's views. Only the Touch Bar and the elements in it are waived, and not one whose frame an element of the app's own shares. |
+| `macos-elementless-parent-child` | Text fields | macOS | Parent/child | No element | With a text field focused, the audit reports a parent/child mismatch on no element, so there is no view of the app's to fix. The fields themselves are audited. |
+| `swiftui-gauge-role` | Progress and gauges | macOS | Element description | The gauges “Storage” and “Battery” | SwiftUI gives a gauge with a custom style an element with no macOS role, whatever the style's body or accessibility representation, even a system gauge or progress view. The gauge reads its label, current value label and value, which UIFnSwiftUI's tests check. |
+| `swiftui-menu-action` | Group boxes and menus | macOS | Action | The menus “Options” and “Share” | The menu is SwiftUI's own, in the system button menu style; the UIFn style only draws its label. The audit finds no press action on the menu button SwiftUI makes. Opening it with VoiceOver and Full Keyboard Access is checked under UIF-29. |
+| `contrast-misread` | All | Both | Contrast | The texts in the known contrast misreads table, each on its platform and screens and in its color scheme | Apple's contrast engine samples five rows of a text's screenshot and compares only its two most frequent exact colors, so it can fail text whose colors pass. Only the texts in the known contrast misreads table are waived, each on its platform and screens and in its color scheme: an offline run of the engine on the screenshot CI failed reproduces the reported ratio, and the text's theme tokens give at least 4.5:1. Any other contrast issue fails, as does the selected sidebar row. |
+
+### Contrast reports outside UIFn's control
+
+Two kinds of contrast report are outside UIFn's control: text in disabled controls, which WCAG exempts, and the window's title, which AppKit draws. Each audit checks that every control listed here is on its screen and disabled. Any contrast report that is not on this list or on the known contrast misreads list fails.
+
+| Waiver | Screens | Platform | Elements | Justification |
+| --- | --- | --- | --- | --- |
+| `disabled-contrast` | Buttons, Toggles, Text fields, Segmented pickers | Both | The controls the screens disable, named in the justification, each only while the audit reports it disabled | Disabled controls fade so they read as unavailable, and WCAG 2.2 success criterion 1.4.3 exempts text in inactive controls. Only the controls the screens disable are waived, each only when the audit reports it disabled, and each audit first checks that they are on its screen and disabled: Buttons “Save”, “Cancel”, “More”, “Delete”; Toggles “Sync (disabled)”, “Accept terms (disabled)”; Text fields “Workspace (disabled)”; Segmented pickers “Day”, “Week”, “Month”. |
+| `macos-window-title` | All | macOS | The window's title, a text that is a child of the window or its toolbar | AppKit draws the window's title in its toolbar in its own colors (light text at 15.7:1 on the dark toolbar), so neither the app nor UIFn sets them. Only a text that is a child of the window or its toolbar is waived, and not one whose type and frame an element of the app's own shares. |
+
+### Known contrast misreads
+
+The macOS audit judges contrast with Apple's contrast engine (`AXAuditContrastDetectionManager` in the private AccessibilityAudit framework). It samples five rows of the text's screenshot and compares only the two most frequent exact colors, so a background shade one unit off, the anti-aliased edge of the glyphs, or a control drawn beside the text can outnumber the text's own color. The audit then reports text that meets 4.5:1 as failing, and gives no ratio; nor does the iOS audit. The iOS entries are its unchecked checkboxes, whose screenshots span the box: the engine compares the canvas with the box's raised fill. A text is listed here only when an offline run of the same engine on the screenshot the audit failed on CI reproduces the reported ratio, and the tokens the text is drawn in give at least 4.5:1 in sRGB, the values the app draws on CI's display. `testAppleEngineReproducesEachKnownContrastMisread` reruns the engine on macOS on each committed screenshot (`UITests/contrast-*.png`), `testEachKnownContrastMisreadsTokensReach4_5To1` computes each token ratio from the `uifn` theme, and a test checks that this table matches `WorkbenchContrastMisread.all`. Any contrast issue not listed here fails, as does the selected sidebar row (3.36:1, which the engine reproduces and which is a real failure).
+
+| Misread | Platform | Screens | Color scheme | Element | Reported ratio | Tokens | Token ratio |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `toasts-row` | macOS | All but Toasts | light | The unselected sidebar row “Toasts” | 4.35:1 | `text.primary` on `surface.sunken` | 15.19:1 |
+| `toggles-alerts` | macOS | Toggles | light | The switch label “Alerts” | 1.01:1 | `text.primary` on `surface.canvas` | 17.09:1 |
+| `toast-link-copied` | macOS | Toasts | dark | The toast “Link copied” with its message | 1.01:1 | `text.primary` and `text.secondary` on `success.subtle` | 8.20:1 |
+| `send-me-news-light` | iOS | Toggles | light | The unchecked checkbox “Send me news” | 1.06:1 | `text.primary` on `surface.canvas` | 17.09:1 |
+| `send-me-news-dark` | iOS | Toggles | dark | The unchecked checkbox “Send me news” | 1.09:1 | `text.primary` on `surface.canvas` | 17.01:1 |
+| `archive-light` | iOS | Toggles | light | The unchecked checkbox “Archive” | 1.06:1 | `text.primary` on `surface.canvas` | 17.09:1 |
+| `archive-dark` | iOS | Toggles | dark | The unchecked checkbox “Archive” | 1.09:1 | `text.primary` on `surface.canvas` | 17.01:1 |
+
+### Not covered
+
+The audit's findings depend on the OS version. CI audits on the runner's macOS and its newest iOS simulator (macOS 26 and iOS 26 on the current `macos-latest` image). An iOS 18 simulator reports issues that iOS 26 does not: toggle and segmented picker labels whose accessibility frames differ from what is drawn. Those failures on iOS 17 and 18 have moved to [UIF-45](https://linear.app/21n/issue/UIF-45), which tracks fixing those frames and adding an iOS 18 simulator to the CI job. They are not waived, so an iOS 17 or 18 run is expected to fail on them, and these tests do not show that iOS 17 and 18 pass. Any other iOS 17 or 18 failure is not covered by that move.
+
+The audit checks what Xcode can check automatically. It does not replace using the screens with VoiceOver, Voice Control or Full Keyboard Access, or under Increase Contrast, Reduce Motion, Reduce Transparency and larger text sizes. Those checks are deferred to [UIF-29](https://linear.app/21n/issue/UIF-29) and are not part of these tests.

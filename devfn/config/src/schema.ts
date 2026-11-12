@@ -204,6 +204,18 @@ function assertFiniteTask(input: RecordValue, field: string, keys: readonly stri
   for (const key of keys) if (input[key] !== undefined) fail(`${field}.${key} cannot be declared by a task; a task is ready when it exits successfully.`, `${field}.${key}`);
 }
 
+/**
+ * Adapters whose tools keep build output, caches or local state at fixed
+ * checkout paths, which every runtime of the checkout would share: a named
+ * runtime starts them only with an explicit `artifacts` choice.
+ */
+export const CHECKOUT_STATE_ADAPTERS: ReadonlySet<string> = new Set(["wrangler", "xcode", "extfn"]);
+const ARTIFACT_DIRECTORY_HINTS: Readonly<Record<string, string>> = {
+  wrangler: "for example --persist-to",
+  xcode: "for example -derivedDataPath",
+  extfn: "extfn dev has no output-directory option and writes dist/<target>-dev; declare artifacts \"shared\" unless the command passes the directory",
+};
+
 function processSpec(value: unknown, field: string): ProcessSpec {
   const input = record(value, field);
   const adapter = string(input.adapter, `${field}.adapter`) as ProcessSpec["adapter"];
@@ -222,6 +234,12 @@ function processSpec(value: unknown, field: string): ProcessSpec {
   const parsedHealth = health(input.health, `${field}.health`);
   const task = taskSpec(input.task, `${field}.task`);
   if (task) assertFiniteTask(input, field, ["ports", "health"]);
+  const artifacts = optionalString(input.artifacts, `${field}.artifacts`);
+  if (artifacts !== undefined && artifacts !== "runtime" && artifacts !== "shared") fail(`${field}.artifacts must be runtime or shared.`, `${field}.artifacts`);
+  // DevFn never rewrites adapter flags: a per-runtime directory isolates these adapters only when their command passes it.
+  if (artifacts === "runtime" && CHECKOUT_STATE_ADAPTERS.has(adapter) && !command?.some((part) => part.includes("{{env.DEVFN_ARTIFACT_DIR}}"))) {
+    fail(`${field}.artifacts "runtime" requires its ${adapter} command to pass {{env.DEVFN_ARTIFACT_DIR}} (${ARTIFACT_DIRECTORY_HINTS[adapter]}).`, `${field}.artifacts`);
+  }
   if (task && exposure === "public") fail(`${field}.exposure cannot be public for a task; a task serves nothing.`, `${field}.exposure`);
   return {
     adapter,
@@ -236,6 +254,7 @@ function processSpec(value: unknown, field: string): ProcessSpec {
     ...(parsedHealth ? { health: parsedHealth } : {}),
     ...(input.shutdownTimeoutMs === undefined ? {} : { shutdownTimeoutMs: integer(input.shutdownTimeoutMs, `${field}.shutdownTimeoutMs`, 1, 3_600_000) }),
     ...(task ? { task } : {}),
+    ...(artifacts ? { artifacts } : {}),
   };
 }
 
@@ -532,15 +551,95 @@ function prerequisites(value: unknown): RuntimePrerequisite[] | undefined {
   });
 }
 
+/** A runtime name as a command selects it (see selectRuntime in @devfn/core): 1 to 24 of [a-z0-9-], alphanumeric at both ends. */
+const RUNTIME_NAME_LENGTH = 24;
+const isRuntimeNameCharacter = (character: string): boolean => /^[a-z0-9-]$/.test(character);
+
+/** One position of a file-name matcher: a literal character, or the runtime name slot with how much of a name it has read. */
+type OutputState = { index: number; read: number; hyphen: boolean };
+
+/**
+ * Whether two environment-output file names can name one file, each `{runtime}`
+ * token standing for any runtime name, the default runtime's "default"
+ * included. The names are compared case-folded, as a case-insensitive file
+ * system does. A product of the two small matchers decides it exactly.
+ */
+function outputNamesOverlap(first: string, second: string): boolean {
+  const patterns = [first, second].map((name) => {
+    // Only the exact token is the slot; a literal {RUNTIME} folds like any other text.
+    const [prefix, suffix] = name.split("{runtime}").map((segment) => segment.toLowerCase());
+    return suffix === undefined ? [...prefix] : [...prefix, null, ...suffix];
+  });
+  const closure = (pattern: Array<string | null>, state: OutputState): OutputState[] =>
+    pattern[state.index] === null && state.read > 0 && !state.hyphen ? [state, { index: state.index + 1, read: 0, hyphen: false }] : [state];
+  const step = (pattern: Array<string | null>, state: OutputState, character: string): OutputState | undefined => {
+    const expected = pattern[state.index];
+    if (expected === undefined) return undefined;
+    if (expected !== null) return expected === character ? { index: state.index + 1, read: 0, hyphen: false } : undefined;
+    if (!isRuntimeNameCharacter(character) || state.read === RUNTIME_NAME_LENGTH || (state.read === 0 && character === "-")) return undefined;
+    return { index: state.index, read: state.read + 1, hyphen: character === "-" };
+  };
+  const alphabet = new Set([...first.toLowerCase(), ...second.toLowerCase(), ..."abcdefghijklmnopqrstuvwxyz0123456789-"]);
+  const key = (a: OutputState, b: OutputState) => `${a.index}:${a.read}:${a.hyphen ? 1 : 0}|${b.index}:${b.read}:${b.hyphen ? 1 : 0}`;
+  const seen = new Set<string>();
+  const queue: Array<[OutputState, OutputState]> = [];
+  const visit = (a: OutputState, b: OutputState) => {
+    for (const left of closure(patterns[0], a)) for (const right of closure(patterns[1], b)) {
+      if (!seen.has(key(left, right))) { seen.add(key(left, right)); queue.push([left, right]); }
+    }
+  };
+  visit({ index: 0, read: 0, hyphen: false }, { index: 0, read: 0, hyphen: false });
+  while (queue.length) {
+    const [left, right] = queue.shift()!;
+    if (left.index === patterns[0].length && right.index === patterns[1].length) return true;
+    for (const character of alphabet) {
+      const a = step(patterns[0], left, character), b = step(patterns[1], right, character);
+      if (a && b) visit(a, b);
+    }
+  }
+  return false;
+}
+
+/**
+ * Every runtime writes its own files: two `{runtime}` outputs must never
+ * resolve to one file for any two runtimes, or one runtime would overwrite
+ * another's. An output without the token is written only by the default
+ * runtime (a named runtime refuses to start with one), so it must differ from
+ * the default runtime's file of each `{runtime}` output; two outputs without
+ * the token keep the behavior of earlier releases.
+ */
+function assertDisjointEnvironmentOutputs(outputs: readonly EnvironmentOutput[]): void {
+  const split = outputs.map((output) => {
+    const normalized = path.normalize(output.path);
+    return { directory: path.dirname(normalized).toLowerCase(), name: path.basename(normalized) };
+  });
+  for (let first = 0; first < split.length; first += 1) {
+    for (let second = first + 1; second < split.length; second += 1) {
+      const [a, b] = [split[first], split[second]];
+      const templates = [a, b].filter((item) => item.name.includes("{runtime}")).length;
+      if (templates === 0 || a.directory !== b.directory) continue;
+      const overlap = templates === 2 ? outputNamesOverlap(a.name, b.name)
+        : a.name.replace("{runtime}", "default").toLowerCase() === b.name.replace("{runtime}", "default").toLowerCase();
+      if (overlap) {
+        fail(`environmentOutputs[${first}].path ${outputs[first].path} and environmentOutputs[${second}].path ${outputs[second].path} can name one file; make their names differ outside {runtime} so no runtime name turns one into the other.`, `environmentOutputs[${second}].path`);
+      }
+    }
+  }
+}
+
 function environmentOutputs(value: unknown): EnvironmentOutput[] | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) fail("environmentOutputs must be an array.", "environmentOutputs");
-  return value.map((item, index) => {
+  const outputs = value.map((item, index) => {
     const input = record(item, `environmentOutputs[${index}]`);
     const format = input.format === undefined ? "dotenv" : string(input.format, `environmentOutputs[${index}].format`);
     if (format !== "dotenv" && format !== "json") fail("Environment output format must be dotenv or json.");
+    const outputPath = relativePath(input.path, `environmentOutputs[${index}].path`);
+    // Each runtime's file sits next to the others; only its name varies.
+    if (path.dirname(outputPath).includes("{runtime}")) fail(`environmentOutputs[${index}].path may carry {runtime} only in its file name.`, `environmentOutputs[${index}].path`);
+    if (outputPath.split("{runtime}").length > 2) fail(`environmentOutputs[${index}].path may carry {runtime} once.`, `environmentOutputs[${index}].path`);
     return {
-      path: relativePath(input.path, `environmentOutputs[${index}].path`),
+      path: outputPath,
       format,
       ...(input.mode === undefined ? {} : { mode: (() => {
         const mode = integer(input.mode, `environmentOutputs[${index}].mode`, 0, 0o777);
@@ -549,6 +648,8 @@ function environmentOutputs(value: unknown): EnvironmentOutput[] | undefined {
       })() }),
     } as EnvironmentOutput;
   });
+  assertDisjointEnvironmentOutputs(outputs);
+  return outputs;
 }
 
 function named<T>(value: unknown, field: string, parser: (item: unknown, itemField: string) => T): Record<string, T> {

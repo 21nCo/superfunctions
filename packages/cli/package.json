@@ -34,16 +34,16 @@
     "jiti": "^2.0.0"
   },
   "devDependencies": {
-    "@superfunctions/auth": "0.2.0",
+    "@superfunctions/auth": "0.2.1",
     "@superfunctions/http": "0.2.0",
-    "@superfunctions/http-openapi": "0.1.0",
+    "@superfunctions/http-openapi": "0.1.1",
     "@superfunctions/oauth-core": "0.1.1",
-    "@superfunctions/oauth-flow": "0.1.0",
+    "@superfunctions/oauth-flow": "0.1.1",
     "@superfunctions/oauth-http": "0.1.0",
-    "@superfunctions/oauth-providers": "0.1.0",
-    "@superfunctions/oauth-storage": "0.1.0",
+    "@superfunctions/oauth-providers": "0.1.1",
+    "@superfunctions/oauth-storage": "0.1.1",
     "@types/node": "^22.0.0",
-    "authfn": "0.2.0",
+    "authfn": "0.4.1",
     "jose": "^5.10.0",
     "typescript": "^5.6.0",
     "vitest": "^3.2.4"
