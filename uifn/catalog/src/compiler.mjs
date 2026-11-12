@@ -377,7 +377,7 @@ function swiftRegexEnd(context, start) {
   if (bare) {
     // The code before it, with comments already blanked.
     const before = context.out.slice(0, start).join('').trimEnd();
-    if (!SWIFT_OPERAND_BEFORE.has(before.at(-1) ?? '') && !/\breturn$/.test(before)) return 0;
+    if (!SWIFT_OPERAND_BEFORE.has(before.at(-1) ?? '') && !/\b(?:return|in|throw|try|await|case|where|if|guard|while)$/.test(before)) return 0;
   }
   for (index += 1; index < text.length && !(bare && text[index] === '\n'); index += 1) {
     if (text.startsWith(close, index)) return index + close.length;
@@ -491,7 +491,7 @@ function readSwiftTypeDeclaration(state, index) {
 function readSwiftMember(state, index) {
   const { tokens, scopes, model, source } = state;
   const scope = scopes.at(-1);
-  const name = tokens[index + 1] ?? '';
+  const name = (tokens[index + 1] ?? '').replaceAll('`', '');
   if (['func', 'var'].includes(tokens[index]) && scope?.kind === 'extension' && scope.name === 'View' && SWIFT_IDENTIFIER.test(name) && isSwiftPublic(state.modifiers, scope)) {
     model.found.push({ id: name, keyword: tokens[index], source, member: true });
   }
@@ -568,9 +568,10 @@ function walkSwiftDeclarations(text, source, model) {
   const unquote = (token) => (SWIFT_DECLARATION_WORDS.has(token.slice(1, -1)) || SWIFT_TYPE_KEYWORDS.has(token.slice(1, -1)) ? token : token.replaceAll('`', ''));
   const tokens = (swiftCodeOnly(text).match(SWIFT_TOKEN) ?? []).map(unquote);
   const state = { tokens, scopes: [], model, source, modifiers: [] };
-  for (let index = 0; index < tokens.length;) index = stepSwiftDeclarations(state, index);
-  // Text the scan cannot model (an unclosed scope) fails closed.
-  assert(state.scopes.length === 0, 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `Cannot read the declarations in ${source}: a { is not closed.`, { source });
+  let index = 0;
+  while (index < tokens.length) index = stepSwiftDeclarations(state, index);
+  // Text the scan cannot model (an unclosed scope or group) fails closed.
+  assert(state.scopes.length === 0 && index === tokens.length, 'UIFN_CATALOG_SWIFTUI_SURFACE_DRIFT', `Cannot read the declarations in ${source}: a { or ( is not closed.`, { source });
 }
 
 function swiftSurfaceKind(conformances, protocols, seen = new Set()) {
