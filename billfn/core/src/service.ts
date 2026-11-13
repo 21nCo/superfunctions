@@ -3123,7 +3123,9 @@ async function processParsedWebhookEvent(
         metadataBillingAccountId: readBillingAccountMetadata(event, state)
       });
       if (windowUnread) {
-        throw windowUnread.error;
+        // The replay that replaced the reference closed the window, so the unread event is now skipped;
+        // this delivery's redelivery would no longer reach the subscription, so it is replayed here.
+        await replayUnlinkedWebhookEventsOrThrow(deps, projection.subscription);
       }
       return null;
     }

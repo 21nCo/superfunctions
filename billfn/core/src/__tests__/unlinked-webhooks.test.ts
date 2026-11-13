@@ -2713,6 +2713,31 @@ describe('mutation windows, replaced references and regained references (PR #308
     expect(retained).toMatchObject({ providerEventId: 'evt_replay_newer_inside', status: 'skipped' });
   });
 
+  it('settles an unread window event in the same delivery when the replay before it replaces the delivered event\'s charge', async () => {
+    const env = await committedMutation('disp_window', { read: recoveringRead({ value: true }, 'throws', 'canceled'), chargeless: true });
+    const [subscription] = await env.db.findMany<BillFnSubscription>({ model: 'subscriptions', where: [], namespace: 'billfn' });
+    const setReferences = (data: Partial<BillFnSubscription>) =>
+      env.db.updateMany({ model: 'subscriptions', where: [{ field: 'id', operator: 'eq', value: subscription.id }], data, namespace: 'billfn' });
+    // Retain a renewal for the subscription (while its id is unlinked) that moves it to pay_disp_window_2,
+    // and a cancellation inside the window for pay_disp_window_1; then link pay_disp_window_1 without replaying.
+    await setReferences({ providerSubscriptionId: 'sub_disp_window_unlinked' });
+    await deliver(env.billfn, [at('disp_window', 'renewal', 'active', '06.000', { chargeId: 'pay_disp_window_2' })]);
+    await setReferences({ providerSubscriptionId: 'sub_disp_window' });
+    await deliver(env.billfn, [at('disp_window', 'inside', 'canceled', '02.000', { chargeId: 'pay_disp_window_1', withSubscription: false })]);
+    await setReferences({ providerChargeId: 'pay_disp_window_1' });
+
+    const delivered = await deliver(env.billfn, [at('disp_window', 'payment', 'past_due', '07.000', { chargeId: 'pay_disp_window_1', withSubscription: false })]);
+
+    expect(delivered.ok).toBe(true);
+    expect(await env.stored()).toMatchObject({ status: 'active', providerChargeId: 'pay_disp_window_2' });
+    expect((await env.db.findMany<BillFnUnlinkedWebhookEvent>({ model: 'unlinkedWebhookEvents', where: [], orderBy: [{ field: 'providerEventId', direction: 'asc' }], namespace: 'billfn' })).map((row) => [row.providerEventId, row.status, row.reason, row.error ?? null])).toEqual([
+      // It names only the replaced charge too: retained as replaced, its read error cleared, replayed if the charge is regained.
+      ['evt_disp_window_inside', 'unlinked', 'provider_reference_replaced', null],
+      ['evt_disp_window_payment', 'unlinked', 'provider_reference_replaced', null],
+      ['evt_disp_window_renewal', 'replayed', 'billing_account_metadata_missing', null]
+    ]);
+  });
+
   it('bootstraps from metadata when the event names a product several prices of one plan share', async () => {
     const pro = catalog.plans[0];
     const shared = (priceId: string, currency: string) => ({ ...pro.prices[0], priceId, providerProductId: 'pdt_pro_shared', currency });
