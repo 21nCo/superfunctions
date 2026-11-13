@@ -31,15 +31,10 @@ interface Observation {
 
 type Listener = (observation: Observation) => void;
 
-/**
- * The method and URL of an XMLHttpRequest's current open(). `input` is the
- * URL argument as passed; `url` is filled in from it only after the page's
- * open() has read it.
- */
+/** The method and URL (as sent, not yet redacted) of an XMLHttpRequest's current open(). */
 interface XhrRecord {
   method: string;
-  input: unknown;
-  url?: string;
+  url: string;
 }
 
 let listeners = new Set<Listener>();
@@ -78,7 +73,6 @@ function intrinsic(prototype: object | undefined, key: PropertyKey, kind: "get" 
 // when this module loads: a getter or method the page patches later never runs.
 const URL_PROTOTYPE = prototypeOf(platform.URL);
 const URL_HREF = intrinsic(URL_PROTOTYPE, "href");
-const URL_TO_STRING = intrinsic(URL_PROTOTYPE, "toString", "value");
 const REQUEST_PROTOTYPE = prototypeOf(platform.Request);
 const REQUEST_URL = intrinsic(REQUEST_PROTOTYPE, "url");
 const REQUEST_METHOD = intrinsic(REQUEST_PROTOTYPE, "method");
@@ -97,6 +91,27 @@ const REMOVE_LISTENER = intrinsic(EVENT_TARGET_PROTOTYPE, "removeEventListener",
 const XHR_PROTOTYPE = prototypeOf(platform.XMLHttpRequest);
 const XHR_STATUS = intrinsic(XHR_PROTOTYPE, "status");
 const XHR_STATUS_TEXT = intrinsic(XHR_PROTOTYPE, "statusText");
+
+/**
+ * Whether the captured `href` getter's brand check runs no Proxy trap on this
+ * runtime, probed once at load with Proxies whose every trap lookup is
+ * recorded. Browsers and current Node check an internal slot; Node 18.17's
+ * getter calls hasOwnProperty, which runs a trap, so there it is not used
+ * before the page's call.
+ */
+const URL_HREF_TRAP_FREE = ((): boolean => {
+  if (!URL_HREF || typeof Proxy !== "function" || typeof platform.URL !== "function") return false;
+  let trapped = false;
+  const handler = new Proxy({}, { get: () => void (trapped = true) });
+  for (const target of [new (platform.URL as typeof URL)("http://localhost/"), {}]) {
+    try {
+      apply(URL_HREF, new Proxy(target, handler), []);
+    } catch {
+      /* Not a platform URL, as expected. */
+    }
+  }
+  return !trapped;
+})();
 
 function text(value: string): string {
   return truncateToBytes(value, MAX_ENTRY_BYTES) ?? "";
@@ -229,47 +244,26 @@ function captureHeaders(value: Field): Record<string, string> | undefined {
 }
 
 /**
- * Whether converting `value` to a string runs only the platform's URL
- * `toString`: no `Symbol.toPrimitive`, and no own, inherited or replaced
- * `toString` anywhere on its prototype chain.
+ * The URL as sent, read before the page's call: a string, or a platform `URL`
+ * through the captured `href` getter when its brand check runs no Proxy trap.
+ * Undefined for anything else.
  */
-function convertsIntrinsically(value: object): boolean {
-  let target: object | null = value;
-  let toString: PropertyDescriptor | undefined;
-  for (let depth = 0; target !== null; depth += 1) {
-    if (depth > 16 || Object.getOwnPropertyDescriptor(target, Symbol.toPrimitive)) return false;
-    toString ??= Object.getOwnPropertyDescriptor(target, "toString");
-    target = Object.getPrototypeOf(target) as object | null;
-  }
-  return toString !== undefined && "value" in toString && toString.value === URL_TO_STRING;
+function sentUrl(input: unknown): string | undefined {
+  if (typeof input === "string") return input;
+  if (!URL_HREF_TRAP_FREE) return undefined;
+  const href = platformRead(URL_HREF, input);
+  return typeof href === "string" ? href : undefined;
 }
 
 /**
- * The URL a call sent, read after the page's call: a string; a platform
- * `URL`, through the captured `href` getter, when its conversion runs no
- * application code that could have changed it; or, for fetch, a platform
- * `Request`, through the captured `url` getter. Anything else is recorded as
- * {@link UNREAD_URL}.
+ * The URL of a fetch input that {@link sentUrl} did not read, read after the
+ * page's call: a platform `Request`, whose URL cannot change, through the
+ * captured `url` getter. Anything else, including a `URL` that could have
+ * changed since it was sent, is recorded as {@link UNREAD_URL}.
  */
-function inputUrl(input: unknown, allowRequest = true): string {
-  if (typeof input === "string") return input;
-  try {
-    const href = platformRead(URL_HREF, input);
-    if (typeof href === "string") return convertsIntrinsically(input as object) ? href : UNREAD_URL;
-    const url = allowRequest ? platformRead(REQUEST_URL, input) : UNREADABLE;
-    return typeof url === "string" ? url : UNREAD_URL;
-  } catch {
-    return UNREAD_URL;
-  }
-}
-
-/** An XMLHttpRequest record's URL, read from its input once, after the page's open() has read it. */
-function recordUrl(record: XhrRecord): string {
-  if (record.url === undefined) {
-    record.url = captureUrl(inputUrl(record.input, false));
-    record.input = undefined;
-  }
-  return record.url;
+function requestUrl(input: unknown): string {
+  const url = platformRead(REQUEST_URL, input);
+  return typeof url === "string" ? url : UNREAD_URL;
 }
 
 /** Method and headers of a platform `Request` input, through the captured getters. */
@@ -303,7 +297,7 @@ function readFetchRequest(input: unknown, init: unknown, url: string | undefined
   }
   return {
     method: typeof method === "string" ? text(method) : UNREAD_METHOD,
-    url: captureUrl(url ?? inputUrl(input)),
+    url: captureUrl(url ?? requestUrl(input)),
     requestHeaders: captureHeaders(headers),
   };
 }
@@ -320,39 +314,20 @@ function thenOf(value: unknown): Intrinsic | undefined {
 }
 
 /**
- * Observes how the page's `pending` settles and returns what the caller gets.
- * When the page's own `then` returns a thenable, that chained result goes back:
- * it settles as `pending` does, with the same value or reason, so an unhandled
- * rejection stays unhandled. Otherwise `pending` itself goes back unchanged
- * (not a thenable, a `then` that cannot be read or called or that returns no
- * other thenable, or a rejection reported before `then` returned), and the
- * observation side chain then never raises.
+ * Observes how the page's `pending` settles, on a side chain that never
+ * raises. The caller gets `pending` itself, unchanged (SFNS-56 owner
+ * amendment 2026-11-13). Observing a promise marks it handled, so a
+ * rejection the application leaves unhandled is not reported as unhandled
+ * while a collector runs.
  */
-function chainSettlement<T>(pending: T, onSettle: (response?: unknown) => void): T {
+function observeSettlement(pending: unknown, onSettle: (response?: unknown) => void): void {
   const then = thenOf(pending);
-  if (!then) return pending;
-  let returned = false; // whether the chained result is the caller's
-  let rejectedEarly = false;
-  const onFulfilled = (response: unknown) => {
-    onSettle(response);
-    return response;
-  };
-  const onRejected = (reason: unknown) => {
-    onSettle();
-    if (returned) throw reason;
-    rejectedEarly = true;
-    return undefined;
-  };
-  let chained: unknown;
+  if (!then) return;
   try {
-    chained = apply(then, pending, [onFulfilled, onRejected]);
+    apply(then, pending, [(response: unknown) => onSettle(response), () => onSettle()]);
   } catch {
-    return pending; // An unusual thenable: hand it back as is.
+    /* An unusual thenable: nothing to observe. */
   }
-  // A `then` that returns the page's value itself leaves this a side chain too.
-  if (rejectedEarly || chained === pending || !thenOf(chained)) return pending;
-  returned = true;
-  return chained as T;
 }
 
 function duration(since: number): number {
@@ -383,10 +358,10 @@ function subscribe(listener: Listener): () => void {
         if (current.size === 0) return apply(original, this ?? globalThis, args) as Promise<Response>;
         const timestamp = Date.now();
         // The page's fetch runs first, with the application's own arguments
-        // and receiver. Before it, observation reads only a string input, as
-        // sent; every object argument is read after it returns.
+        // and receiver. Before it, observation reads only the URL as sent (see
+        // sentUrl); every other argument is read after it returns.
         // See readFetchRequest for what that ordering does and does not cover.
-        const url = typeof args[0] === "string" ? args[0] : undefined;
+        const url = sentUrl(args[0]);
         const pending = apply(original, this ?? globalThis, args) as Promise<Response>;
         let observed: Observation;
         try {
@@ -394,7 +369,7 @@ function subscribe(listener: Listener): () => void {
         } catch {
           return pending; // Unreadable input: the application's call is already made.
         }
-        return chainSettlement(pending, (response) => {
+        observeSettlement(pending, (response) => {
           try {
             const settled: Observation = { ...observed, duration: duration(timestamp) };
             // Only a platform Response is read, and only through the captured getters.
@@ -412,6 +387,7 @@ function subscribe(listener: Listener): () => void {
             /* Observation never raises into, or alongside, the application's promise. */
           }
         });
+        return pending;
       };
       globalThis.fetch = wrapper as typeof fetch;
       cleanups.push(() => {
@@ -440,12 +416,11 @@ function subscribe(listener: Listener): () => void {
       const open = function (this: XMLHttpRequest, ...args: unknown[]) {
         if (current.size === 0) return apply(originalOpen, this, args);
         const [method, url] = args;
-        // Before the call, only string arguments are read, which runs no
-        // application code; any other URL is read once the page's open() has
-        // read it. The record is in place before the call, so a send() made
-        // from open()'s own readystatechange belongs to this request (or to a
-        // nested open()).
-        const record: XhrRecord = { method: typeof method === "string" ? text(method) : UNREAD_METHOD, input: url };
+        // Read before the call, which runs no application code: a string, or
+        // a platform URL through the captured, trap-free href getter. The
+        // record is in place before the call, so a send() made from open()'s
+        // own readystatechange belongs to this request (or to a nested open()).
+        const record: XhrRecord = { method: typeof method === "string" ? text(method) : UNREAD_METHOD, url: sentUrl(url) ?? UNREAD_URL };
         let previous: XhrRecord | undefined;
         let tracked = false;
         try {
@@ -466,11 +441,6 @@ function subscribe(listener: Listener): () => void {
           }
           throw error;
         }
-        try {
-          recordUrl(record);
-        } catch {
-          /* Read again when the request completes. */
-        }
         return result;
       } as typeof prototype.open;
       const send = function (this: XMLHttpRequest, ...args: unknown[]) {
@@ -489,7 +459,7 @@ function subscribe(listener: Listener): () => void {
         const timestamp = Date.now();
         const complete = () => {
           try {
-            const settled: Observation = { transport: "xhr", method: observed.method, url: recordUrl(observed), timestamp, duration: duration(timestamp) };
+            const settled: Observation = { transport: "xhr", method: observed.method, url: captureUrl(observed.url), timestamp, duration: duration(timestamp) };
             const status = field(xhr, "status");
             if (Number.isSafeInteger(status) && (status as number) >= 0) settled.status = status as number;
             const statusText = field(xhr, "statusText");

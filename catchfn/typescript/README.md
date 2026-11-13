@@ -66,15 +66,17 @@ arguments pass through untouched (a `null` or `undefined` receiver of `fetch`
 becomes `globalThis`), and observation never runs the application's
 iterators, getters or conversions. The page's `fetch` and
 `XMLHttpRequest.prototype.open` run first. Before they run, observation reads
-only a string URL argument; it reads a `URL`, `Request`, `init` or headers
-argument only after the call returns. `send` reads nothing from its arguments.
-A native `fetch`, or a wrapper that calls one synchronously, has read the
-request by then. Platform objects are read through the `URL`, `Request`,
-`Response`, `Headers`, `XMLHttpRequest` and `EventTarget` getters and methods
-captured when catchfn loads, so a getter or method that the page patches later
-never runs. A `URL` argument whose string conversion runs application code
-(an own or patched `toString`, or a `Symbol.toPrimitive`) is recorded as
-`[UNREAD_URL]`, because the call may have changed it.
+only a string URL argument, or a platform `URL` argument through the `href`
+getter captured when catchfn loads. The `URL` is read only where that
+getter's brand check runs no Proxy trap, which a probe checks at load.
+Browsers and current Node check an internal slot, which runs none. On Node 18.17 the brand check runs a trap, so there
+a `URL` argument is recorded as `[UNREAD_URL]`. A `Request`, `init` or headers
+argument is read only after the call returns, and `send` reads nothing from
+its arguments. A native `fetch`, or a wrapper that calls one synchronously,
+has read the request by then. Platform objects are read through the `URL`,
+`Request`, `Response`, `Headers`, `XMLHttpRequest` and `EventTarget` getters
+and methods captured at load, so a getter or method that the page patches
+later never runs.
 
 Known limit, deferred to SFNS-60 (SFNS-56 owner scope amendment of
 2026-11-13): no script can tell a Proxy apart, so a stateful Proxy `init` or
@@ -83,13 +85,12 @@ wrong after the input is consumed through a `fetch` installed before `start()`
 that defers the native call, or through a reused `init` or `Request`,
 including values an earlier wrapper changed.
 
-`fetch` returns what the page's `fetch` returned. When the page's own `then`
-returns another thenable, `fetch` returns that chained promise. It settles
-with the same response or rejection reason, so an unhandled rejection stays
-unhandled. Otherwise the page's value comes back unchanged, and observing it
-never raises. This covers a value that is not a thenable, and a `then` that
-cannot be read or called or that returns no other thenable. A stopped wrapper
-reads nothing at all. What observation then records:
+`fetch` returns exactly what the page's `fetch` returned, the same promise
+or thenable (SFNS-56 owner amendment of 2026-11-13). Observation watches it on
+a side chain that never raises. Observing a promise marks it handled, so
+while a collector runs, a fetch rejection that the application never handles
+is not reported as an unhandled rejection. A stopped wrapper reads nothing at
+all. What observation then records:
 
 - Request headers are captured only from a platform `Headers` object (not a
   subclass), a plain array of `[name, value]` string pairs or a plain record of

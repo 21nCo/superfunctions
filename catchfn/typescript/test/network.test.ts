@@ -84,7 +84,7 @@ describe("NetworkCollector fetch capture", () => {
     expect(collector.collect().map((event) => event.requestHeaders)).toEqual([undefined, undefined, undefined]);
   });
 
-  it("leaves an unhandled fetch rejection unhandled, once, with its original reason", async () => {
+  it("returns the page's own promise, and observing it adds no unhandled rejection", async () => {
     const reason = new TypeError("offline");
     const seen: unknown[] = [];
     const record = (value: unknown) => seen.push(value);
@@ -92,16 +92,26 @@ describe("NetworkCollector fetch capture", () => {
     process.removeAllListeners("unhandledRejection");
     process.on("unhandledRejection", record);
     try {
-      pageFetch.mockImplementation(() => Promise.reject(reason));
+      const page = Object.assign(Promise.resolve(new Response("ok", { status: 200 })), { abort: () => "aborted" });
+      pageFetch.mockReturnValueOnce(page);
       collector.start();
+      const returned = fetch("/own") as typeof page;
+      expect(returned).toBe(page);
+      expect(returned.abort()).toBe("aborted");
+      await returned;
+      pageFetch.mockImplementation(() => Promise.reject(reason));
+      await fetch("/handled").catch(() => undefined);
+      // Observing the page's promise marks it handled (owner amendment
+      // 2026-11-13: the page's promise comes back unchanged), so one the
+      // application leaves unhandled is not reported either.
       void fetch("/unhandled");
       await new Promise((resolve) => setTimeout(resolve, 20));
-      expect(seen).toEqual([reason]);
-      seen.length = 0;
-      await fetch("/handled").catch(() => undefined);
-      await new Promise((resolve) => setTimeout(resolve, 20));
       expect(seen).toEqual([]);
-      expect(collector.size()).toBe(2);
+      expect(collector.collect().map((event) => [event.url, event.status])).toEqual([
+        ["/own", 200],
+        ["/handled", undefined],
+        ["/unhandled", undefined],
+      ]);
     } finally {
       process.off("unhandledRejection", record);
       for (const listener of saved) process.on("unhandledRejection", listener);
@@ -579,22 +589,38 @@ describe("NetworkCollector at a native Request boundary", () => {
     }
   });
 
-  it("records a URL input whose conversion runs application code as unread, never as changed", async () => {
-    collector.start();
-    const input = new URL("https://example.com/sent?token=u-secret");
-    Object.defineProperty(input, "toString", {
-      value(this: URL) {
-        const href = this.href;
-        this.pathname = "/mutated";
-        return href;
+  it("records a URL input as it was sent, even if it changes after the platform read it", async () => {
+    const changing = (path: string, removeOverride: boolean) => {
+      const input = new URL(`https://example.com/sent/${path}?token=u-secret`);
+      Object.defineProperty(input, "toString", {
+        configurable: true,
+        value(this: URL) {
+          const href = this.href;
+          this.pathname = "/mutated";
+          if (removeOverride) delete (this as { toString?: unknown }).toString;
+          return href;
+        },
+      });
+      return input;
+    };
+    const plain = new URL("https://example.com/sent/getter?token=u-secret");
+    const init = {
+      get headers() {
+        plain.pathname = "/mutated";
+        return { "x-a": "1" };
       },
-    });
-    await fetch(input);
-    // A URL whose conversion is the platform's own is read after the call.
-    await fetch(new URL("https://example.com/plain?token=u-secret&ok=1"));
-    expect(sent.map((request) => request.url)).toEqual(["https://example.com/sent?token=u-secret", "https://example.com/plain?token=u-secret&ok=1"]);
+    };
+    collector.start();
+    await fetch(changing("own", false));
+    await fetch(changing("removed", true));
+    await fetch(plain, init);
+    expect(sent.map((request) => request.url)).toEqual([
+      "https://example.com/sent/own?token=u-secret",
+      "https://example.com/sent/removed?token=u-secret",
+      "https://example.com/sent/getter?token=u-secret",
+    ]);
     const urls = collector.collect().map((event) => event.url);
-    expect(urls).toEqual([UNREAD_URL, expect.stringContaining("https://example.com/plain?")]);
+    expect(urls).toEqual(["own", "removed", "getter"].map((path) => expect.stringContaining(`https://example.com/sent/${path}?`)));
     expect(urls.join(" ")).not.toContain("u-secret");
   });
 
@@ -786,6 +812,28 @@ describe("NetworkCollector XMLHttpRequest after stop()", () => {
       expectValidEvents(events);
       expect(events.map((event) => event.url)).toEqual([expect.stringContaining("https://example.com/api/obj")]);
       expect(events[0]!.url).not.toContain("t-secret");
+    } finally {
+      pageOpen.mockImplementation(function (this: FakeXhr, ...args: unknown[]) {
+        this.opened = args;
+      });
+    }
+  });
+
+  it("records a URL object as open() read it, even if it changes in open()'s readystatechange", () => {
+    pageOpen.mockImplementation(function (this: FakeXhr, ...args: unknown[]) {
+      this.opened = [args[0], String(args[1])];
+      this.dispatchEvent(new Event("readystatechange"));
+    });
+    try {
+      collector.start();
+      const fake = new XMLHttpRequest() as unknown as FakeXhr;
+      const url = new URL("https://example.com/sent?token=t-secret");
+      fake.addEventListener("readystatechange", () => (url.pathname = "/different"), { once: true });
+      (fake as unknown as XMLHttpRequest).open("GET", url as unknown as string);
+      (fake as unknown as XMLHttpRequest).send();
+      fake.respond(200, "OK");
+      expect(fake.opened).toEqual(["GET", "https://example.com/sent?token=t-secret"]);
+      expect(collector.collect().map((event) => event.url)).toEqual([expect.stringContaining("https://example.com/sent?")]);
     } finally {
       pageOpen.mockImplementation(function (this: FakeXhr, ...args: unknown[]) {
         this.opened = args;
