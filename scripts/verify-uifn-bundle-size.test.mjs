@@ -106,6 +106,8 @@ test("adapter sources may not import the @uifn/core root barrel, even for types"
   write("uifn/solid/src/split-dynamic.ts", "export const load = () => import(\n  '@uifn/core'\n);\n");
   write("uifn/svelte/lib/split.ts", "export * from\n\"@uifn/core\";\nexport type Core = typeof import(\n'@uifn/core');\nimport core = require(\n'@uifn/core');\n");
   write("uifn/svelte/lib/internal/Part.svelte", "<div></div>\n<script lang=\"ts\">\n  import type { UIFnController } from\n    '@uifn/core';\n</script>\n");
+  // Template expressions load modules too, and a `generics` attribute may contain `>`.
+  write("uifn/svelte/lib/internal/Lazy.svelte", "<script lang=\"ts\" generics=\"T extends Map<string, number>\">\n  let { value }: { value: T } = $props();\n</script>\n<button onclick={async () => console.log(await import('@uifn/core'))}>Load</button>\n{#await import(\n  \"@uifn/core\"\n) then core}{core}{/await}\n");
   // Strings and comments that mention the root barrel load nothing, and subpaths are allowed.
   write("uifn/react/src/text.ts", "// import x from '@uifn/core';\nexport const note = \"from '@uifn/core'\";\nimport { a } from '@uifn/core/parts';\n");
   assert.deepEqual(findRootBarrelImports(root).sort(), [
@@ -113,6 +115,8 @@ test("adapter sources may not import the @uifn/core root barrel, even for types"
     "uifn/react/src/split-from.ts:2",
     "uifn/solid/src/internal/compound.tsx:3",
     "uifn/solid/src/split-dynamic.ts:2",
+    "uifn/svelte/lib/internal/Lazy.svelte:4",
+    "uifn/svelte/lib/internal/Lazy.svelte:6",
     "uifn/svelte/lib/internal/Part.svelte:4",
     "uifn/svelte/lib/internal/Root.svelte:2",
     "uifn/svelte/lib/split.ts:2",

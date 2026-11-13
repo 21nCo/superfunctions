@@ -74,3 +74,25 @@ export function svelteDomBindingSpecs(target: { readonly name: string; readonly 
   if (RANGE_GESTURE[name]) specs.push(described('rangeGestureDomBinding', 'createUIFnRangeGestureAdapterBinding', RANGE_GESTURE[name]));
   return specs;
 }
+
+/**
+ * The binding one public installer wires for a definition named `name`, whatever its family. Overlay, menu and
+ * navigation-menu installers work for any name; a popup without catalog parts toggles and anchors to `trigger`;
+ * roving focus and range gestures need the catalog primitive's parts, so other names get none.
+ */
+export function svelteDomBindingSpecFor(installer: SvelteDomBindingKind, name: string): SvelteDomBindingSpec | null {
+  switch (installer) {
+    case 'overlayDomBinding':
+      return { installer, ready: name === 'Tour' ? 'uifnTourOverlayAdapterBinding' : 'uifnOverlayAdapterBinding' };
+    case 'menuDomBinding':
+      return { installer, ready: 'uifnMenuAdapterBinding' };
+    case 'navigationMenuDomBinding':
+      return { installer, ready: 'uifnNavigationMenuAdapterBinding' };
+    case 'popupDomBinding':
+      return described(installer, 'createUIFnPopupAdapterBinding', POPUP[name] ?? { trigger: 'trigger', reference: ['trigger'] });
+    case 'rovingFocusDomBinding':
+      return ROVING_FOCUS[name] ? described(installer, 'createUIFnRovingFocusAdapterBinding', ROVING_FOCUS[name]) : null;
+    case 'rangeGestureDomBinding':
+      return RANGE_GESTURE[name] ? described(installer, 'createUIFnRangeGestureAdapterBinding', RANGE_GESTURE[name]) : null;
+  }
+}

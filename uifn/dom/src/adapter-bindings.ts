@@ -12,7 +12,8 @@ import { createUIFnPopupDomBinding } from './popup';
 // The DOM wiring the headless adapters (@uifn/react, @uifn/svelte, @uifn/solid) install for a mounted primitive.
 // Each generated definition lists the installers its primitive needs, with that primitive's parts and state keys
 // as arguments, so an installer never branches on a primitive name and a one-primitive app bundles only the
-// installers and descriptors it uses.
+// installers and descriptors it uses. (createUIFnRangeGestureDomBinding, which the range-gesture installer calls,
+// still selects its pointer handling by `primitive`.)
 
 type AnyRecord = Record<string, unknown>;
 

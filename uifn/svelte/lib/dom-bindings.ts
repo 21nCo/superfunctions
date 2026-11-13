@@ -13,7 +13,12 @@ import {
   type UIFnAdapterDomBinding,
 } from '@uifn/dom';
 import type { SvelteDomBindingInstaller } from './internal/compound.js';
-import { svelteDomBindingSpecs, type SvelteDomBindingKind, type SvelteDomBindingSpec } from './internal/dom-binding-plan.js';
+import {
+  svelteDomBindingSpecFor,
+  svelteDomBindingSpecs,
+  type SvelteDomBindingKind,
+  type SvelteDomBindingSpec,
+} from './internal/dom-binding-plan.js';
 
 export type {
   SvelteDomBindingContext,
@@ -50,12 +55,11 @@ function bindingFor(spec: SvelteDomBindingSpec): UIFnAdapterDomBinding {
   return FACTORIES[spec.factory!]!((spec.target ? ROVING_TARGETS[spec.target] : spec.descriptor) as never);
 }
 
-/** Installs the mounted definition's binding of one kind, looked up by the definition's `name` and `family`. */
+/** Installs one kind of binding for the mounted definition, with the parts its `name` uses in the catalog. */
 function installerOf(kind: SvelteDomBindingKind): SvelteDomBindingInstaller {
   return (context) => {
-    for (const spec of svelteDomBindingSpecs(context.bridge.definition)) {
-      if (spec.installer === kind) bindingFor(spec)(context);
-    }
+    const spec = svelteDomBindingSpecFor(kind, context.bridge.definition.name);
+    if (spec) bindingFor(spec)(context);
   };
 }
 

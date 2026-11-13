@@ -226,7 +226,10 @@ export async function buildFixture(fixture) {
 export const ADAPTER_SOURCE_ROOTS = Object.freeze(["uifn/react/src", "uifn/solid/src", "uifn/svelte/lib"]);
 const ADAPTER_SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".svelte"]);
 const ROOT_BARREL = "@uifn/core";
-const SVELTE_SCRIPT = /<script\b[^>]*>([\s\S]*?)<\/script>/g;
+// A Svelte <script> element; quoted attribute values (`generics="T extends A<B>"`) may contain `>`.
+const SVELTE_SCRIPT = /<script\b(?:[^>"']|"[^"]*"|'[^']*')*>([\s\S]*?)<\/script>/g;
+// Markup can load a module only through an `import(...)` expression; the specifier may follow on a later line.
+const MARKUP_ROOT_BARREL = /\bimport\s*\(\s*["']@uifn\/core["']/g;
 
 function adapterSources(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -267,13 +270,17 @@ export function findRootBarrelImports(root = repoRoot, sourceRoots = ADAPTER_SOU
   for (const sourceRoot of sourceRoots) {
     for (const file of adapterSources(path.join(root, sourceRoot))) {
       const text = readFileSync(file, "utf8");
-      const blocks = file.endsWith(".svelte")
-        ? [...text.matchAll(SVELTE_SCRIPT)].map((match) => ({ code: match[1], offset: match.index + match[0].indexOf(match[1]) }))
+      const lineAt = (offset) => text.slice(0, offset).split("\n").length;
+      const scripts = file.endsWith(".svelte")
+        ? [...text.matchAll(SVELTE_SCRIPT)].map((match) => ({ code: match[1], offset: match.index + match[0].length - match[1].length - "</script>".length }))
         : [{ code: text, offset: 0 }];
-      for (const { code, offset } of blocks) {
-        const lineOffset = text.slice(0, offset).split("\n").length - 1;
-        for (const line of rootBarrelLines(code, file)) hits.push(`${path.relative(root, file)}:${line + lineOffset}`);
+      const lines = scripts.flatMap(({ code, offset }) => rootBarrelLines(code, file).map((line) => line + lineAt(offset) - 1));
+      if (file.endsWith(".svelte")) {
+        // Blank the script blocks (keeping offsets), then scan the template expressions that remain.
+        const markup = text.replace(SVELTE_SCRIPT, (block) => block.replace(/[^\n]/g, " "));
+        for (const match of markup.matchAll(MARKUP_ROOT_BARREL)) lines.push(lineAt(match.index + match[0].indexOf("@uifn/core")));
       }
+      for (const line of lines.sort((left, right) => left - right)) hits.push(`${path.relative(root, file)}:${line}`);
     }
   }
   return hits;
