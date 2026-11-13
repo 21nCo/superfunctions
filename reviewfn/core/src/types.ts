@@ -282,6 +282,11 @@ export interface HarnessInput {
   configuration: ReviewFnConfig;
   testReceipts: TestReceipt[];
   prompt: string;
+  /**
+   * Structured-output JSON Schema for this run, such as the panel's `lensOutputSchema`. Absent means the 0.1
+   * `harnessOutputSchema`. Outputs without `requirements` or `assessments` normalize them to empty arrays.
+   */
+  outputSchema?: Readonly<Record<string, unknown>>;
   signal?: AbortSignal;
 }
 

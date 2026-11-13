@@ -17,3 +17,6 @@ export * from "./safe-files.js";
 export * from "./executable.js";
 
 export * from "./git-environment.js";
+export * from "./panel/types.js";
+export * from "./panel/schema.js";
+export * from "./panel/validate.js";
