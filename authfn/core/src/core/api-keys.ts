@@ -11,6 +11,7 @@ import {
   AUTHFN_LEGACY_USER_REFERENCE_MAX_LENGTH,
   assertAuthFnDatabaseKeyLength
 } from './limits.js';
+import { assertRegisteredScopes, readStoredScopeGrant } from './scopes.js';
 import { hashSecret } from './sessions.js';
 import { findUserById } from './users.js';
 
@@ -18,6 +19,11 @@ export interface CreateApiKeyInput {
   /** Explicit null creates an unowned key for a trusted service principal. */
   userId: string | null;
   name: string;
+  /**
+   * Each entry must be a scope from `config.scopes`, `<owner>:*` for a
+   * registered owner, or `*`; anything else is rejected with
+   * `AUTHFN_VALIDATION_ERROR`. Omitted scopes grant nothing.
+   */
   scopes?: string[];
   metadata?: Record<string, unknown>;
   expiresAt?: Date;
@@ -43,12 +49,15 @@ export interface SanitizedApiKey {
 }
 
 export async function createApiKey(
-  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
+  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace' | 'scopes'>,
   input: CreateApiKeyInput,
   options?: { now?: () => Date; secretPrefix?: string }
 ): Promise<CreatedApiKey> {
   assertValidApiKeyName(input.name);
   assertValidApiKeyExpiry(input.expiresAt);
+  const scopes = input.scopes === undefined
+    ? undefined
+    : assertRegisteredScopes(config.scopes, input.scopes);
   let userId = input.userId;
   if (userId !== null) {
     const userIdLength = Array.from(userId).length;
@@ -75,7 +84,7 @@ export async function createApiKey(
     userId,
     name: input.name,
     secretHash: hashSecret(secret),
-    scopes: input.scopes,
+    scopes,
     metadata: input.metadata,
     expiresAt: input.expiresAt ?? null,
     revokedAt: null,
@@ -152,7 +161,7 @@ export async function revokeApiKeyById(
 }
 
 export async function authenticateApiKey(
-  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
+  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace' | 'scopes'>,
   secret: string,
   options?: { now?: () => Date }
 ): Promise<AuthFnSession | null> {
@@ -197,6 +206,16 @@ export async function authenticateApiKey(
     namespace: namespace(config)
   });
 
+  // Keys stored before 0.6.0 may hold any JSON. The session grant keeps only
+  // entries the current registry could grant, and `requireScopes` expands
+  // them: a stored `*` covers every registered scope and `<owner>:*` every
+  // action of that registered owner. Unregistered entries grant nothing.
+  const grantedScopes = readStoredScopeGrant(config.scopes, updatedRecord.scopes);
+  // Deprecated `metadata.scopes` keeps every stored string for display; it is
+  // never a grant (`requireScopes` reads only `session.scopes`).
+  const storedScopes = Array.isArray(updatedRecord.scopes)
+    ? updatedRecord.scopes.filter((scope): scope is string => typeof scope === 'string')
+    : [];
   const actor = owner
     ? { actorId: owner.id, actorType: 'user' as const }
     : { actorId: updatedRecord.id, actorType: 'api-key' as const };
@@ -209,12 +228,14 @@ export async function authenticateApiKey(
     credential: { type: 'api-key', id: updatedRecord.id },
     resourceIds: [],
     methods: ['api-key'],
+    scopes: [...grantedScopes],
     expiresAt: updatedRecord.expiresAt ?? undefined,
     metadata: {
       ...(updatedRecord.metadata ?? {}),
       // Deprecated: kept for one minor version; read `actorId` instead.
       ownerUserId: owner?.id,
-      scopes: updatedRecord.scopes ?? []
+      // Deprecated: read `session.scopes` (checked by `requireScopes`).
+      scopes: storedScopes
     }
   };
 }

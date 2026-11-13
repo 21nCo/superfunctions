@@ -158,6 +158,7 @@ describe('authfn integration browser flows', () => {
     const auth = createTestServer({
       database: memoryAdapter({ debug: false }),
       namespace: 'authfn',
+      scopes: { account: ['read'] },
       environment: authFnMultiRegionEnvironment({
         regions: [
           {
@@ -409,7 +410,7 @@ describe('authfn integration browser flows', () => {
       },
       body: {
         name: 'server-to-server',
-        scopes: ['read']
+        scopes: ['account:read']
       }
     });
     expect(createdApiKey.status).toBe(201);
@@ -422,7 +423,7 @@ describe('authfn integration browser flows', () => {
     expect(listedApiKeysBody.data.keys).toEqual([
       expect.objectContaining({
         id: createdApiKeyBody.data.keyId,
-        scopes: ['read']
+        scopes: ['account:read']
       })
     ]);
 

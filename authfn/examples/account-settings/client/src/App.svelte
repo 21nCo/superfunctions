@@ -178,7 +178,7 @@
     await withRequest('Created an API key for deterministic bearer checks.', async () => {
       const response = await auth.createApiKey({
         name: apiKeyName,
-        scopes: ['read']
+        scopes: ['account:read']
       });
       if (!response.ok) {
         authError = response;

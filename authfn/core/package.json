@@ -1,6 +1,6 @@
 {
   "name": "authfn",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Core authfn contracts and plugin composition primitives",
   "type": "module",
   "main": "./dist/index.js",

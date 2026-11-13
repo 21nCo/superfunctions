@@ -5,14 +5,27 @@ import { describe, expect, it, vi } from 'vitest';
 import { authFnApiKeyPlugin } from '@authfn/api-keys';
 import { createRouter } from '@superfunctions/http';
 import { memoryAdapter } from '../../../../packages/db/src/adapters/memory/index.js';
-import type { AuthFnRuntimeConfig, AuthFnServer, AuthFnSession } from '../index.js';
+import { AuthFnError, requireScopes, type AuthFnRuntimeConfig, type AuthFnServer, type AuthFnSession } from '../index.js';
 import { createApiKey, revokeApiKeyById } from '../core/api-keys.js';
+import { issueSession } from '../core/sessions.js';
 import { createUser } from '../core/users.js';
 import { createAuthFnRouter } from '../http/router.js';
 import { createTestServer } from './test-server.js';
 
 type Handler = (request: Request) => Promise<Response>;
 type ProtectedWork = (request: Request) => Response;
+
+const SCOPES = { repo: ['read', 'write'], projects: ['read', 'write'] } as const;
+const PLUGIN_EXAMPLE = 'async function handleRepositoryRequest';
+const CLI_EXAMPLE = "app.get('/projects'";
+
+function createConfig(): AuthFnRuntimeConfig {
+  return { database: memoryAdapter({ debug: false }), namespace: 'authfn', scopes: SCOPES, plugins: [authFnApiKeyPlugin()] };
+}
+
+function requiredScope(guide: 'plugin' | 'cli'): string {
+  return guide === 'plugin' ? 'repo:read' : 'projects:read';
+}
 
 function readGuide(guide: 'plugin' | 'cli'): string {
   const path = guide === 'plugin' ? 'plugins/api-keys.md' : 'recipes/cli-auth.md';
@@ -28,24 +41,24 @@ function readBlock(text: string, prefix: string): string {
 }
 
 function compile(code: string): string {
-  // Type-only imports are checked separately and have no runtime dependency.
-  return ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } })
+  // The example's `authfn` import is checked by the typecheck test below and
+  // injected as Function parameters here.
+  const output = ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } })
     .outputText.replace(/^export \{\};\s*$/gm, '');
+  const imports = output.match(/^import .*$/gm) ?? [];
+  expect(imports).toEqual(["import { AuthFnError, requireScopes } from 'authfn';"]);
+  return output.replace(/^import .*$/gm, '');
 }
 
 function scopeExample(guide: 'plugin' | 'cli'): string {
-  const text = readGuide(guide);
-  const helper = readBlock(text, 'function hasScope');
-  if (guide === 'plugin') return helper;
-  const route = readBlock(text, "app.get('/projects'");
-  return route === helper ? route : `${helper}\n${route}`;
+  return readBlock(readGuide(guide), guide === 'plugin' ? PLUGIN_EXAMPLE : CLI_EXAMPLE);
 }
 
 function documentedHandler(guide: 'plugin' | 'cli', auth: AuthFnServer, protectedWork: ProtectedWork): Handler {
-  const text = readGuide(guide);
-  const helper = readBlock(text, 'function hasScope');
   if (guide === 'plugin') {
-    return new Function('auth', 'handleAuthorizedRequest', `${compile(helper)}\nreturn handleRepositoryRequest;`)(auth, protectedWork);
+    return new Function('auth', 'handleAuthorizedRequest', 'AuthFnError', 'requireScopes', `${compile(scopeExample(guide))}\nreturn handleRepositoryRequest;`)(
+      auth, protectedWork, AuthFnError, requireScopes
+    );
   }
 
   type Context = { req: { raw: Request }; json: (data: unknown, status?: number) => Response };
@@ -55,7 +68,7 @@ function documentedHandler(guide: 'plugin' | 'cli', auth: AuthFnServer, protecte
       handler = incoming;
     }
   };
-  new Function('app', 'auth', compile(scopeExample(guide)))(app, auth);
+  new Function('app', 'auth', 'AuthFnError', 'requireScopes', compile(scopeExample(guide)))(app, auth, AuthFnError, requireScopes);
   return async (request) => {
     if (!handler) throw new Error('CLI example did not register its route');
     return handler({
@@ -70,16 +83,16 @@ function documentedHandler(guide: 'plugin' | 'cli', auth: AuthFnServer, protecte
 
 describe.each(['plugin', 'cli'] as const)('%s API-key documentation HTTP boundary', (guide) => {
   it.each([null, 'user:docs'])('distinguishes invalid credentials from valid keys at the host HTTP boundary (owner %s)', async (userId) => {
-    const config: AuthFnRuntimeConfig = { database: memoryAdapter({ debug: false }), namespace: 'authfn', plugins: [authFnApiKeyPlugin()] };
+    const config = createConfig();
     const auth = createTestServer(config);
     const protectedWork = vi.fn(() => Response.json({ allowed: true }));
     const handler = documentedHandler(guide, auth, protectedWork);
     const onError = vi.fn(async () => Response.json({ error: 'internal' }, { status: 500 }));
     const router = createRouter({ basePath: '/app', routes: [{ method: 'GET', path: '/doc-example', handler }], onError });
     if (userId) await createUser(config, { id: userId, primaryEmail: 'docs@example.com' });
-    const revoked = await createApiKey(config, { userId, name: 'revoked', scopes: ['repo:read', 'read'] });
+    const revoked = await createApiKey(config, { userId, name: 'revoked', scopes: ['repo:read', 'projects:read'] });
     await revokeApiKeyById(config, revoked.keyId);
-    const expired = await createApiKey(config, { userId, name: 'expired', scopes: ['repo:read', 'read'], expiresAt: new Date(0) });
+    const expired = await createApiKey(config, { userId, name: 'expired', scopes: ['repo:read', 'projects:read'], expiresAt: new Date(0) });
 
     for (const authorization of [`Bearer ${revoked.secret}`, `Api-Key ${revoked.secret}`, `Bearer ${expired.secret}`, 'Bearer unknown-key', 'Basic invalid', undefined]) {
       const request = new Request('https://example.com/app/doc-example', {
@@ -92,7 +105,7 @@ describe.each(['plugin', 'cli'] as const)('%s API-key documentation HTTP boundar
       expect(onError).not.toHaveBeenCalled();
     }
 
-    const valid = await createApiKey(config, { userId, name: 'valid-control', scopes: ['repo:read', 'read'] });
+    const valid = await createApiKey(config, { userId, name: 'valid-control', scopes: ['repo:read', 'projects:read'] });
     const response = await router.handle(new Request('https://example.com/app/doc-example', {
       headers: { authorization: `Bearer ${valid.secret}` }
     }));
@@ -102,13 +115,13 @@ describe.each(['plugin', 'cli'] as const)('%s API-key documentation HTTP boundar
   });
 
   it('propagates unexpected authentication and protected-handler failures to the host', async () => {
-    const config: AuthFnRuntimeConfig = { database: memoryAdapter({ debug: false }), namespace: 'authfn', plugins: [authFnApiKeyPlugin()] };
+    const config = createConfig();
     const auth = createTestServer(config);
     const protectedWork = vi.fn(() => Response.json({ allowed: true }));
     const handler = documentedHandler(guide, auth, protectedWork);
     const onError = vi.fn(async (_error: unknown) => Response.json({ error: 'internal' }, { status: 500 }));
     const router = createRouter({ basePath: '/app', routes: [{ method: 'GET', path: '/doc-example', handler }], onError });
-    const key = await createApiKey(config, { userId: null, name: 'valid', scopes: ['repo:read', 'read'] });
+    const key = await createApiKey(config, { userId: null, name: 'valid', scopes: ['repo:read', 'projects:read'] });
     const request = () => new Request('https://example.com/app/doc-example', { headers: { authorization: `Bearer ${key.secret}` } });
     const failure = new Error('database unavailable');
     const database = vi.spyOn(config.database, 'findOne').mockRejectedValue(failure);
@@ -128,28 +141,39 @@ describe.each(['plugin', 'cli'] as const)('%s API-key documentation HTTP boundar
     expect(onError.mock.calls[1]?.[0]).toBe(applicationFailure);
   });
 
-  it.each([null, 'user:docs'])('returns 403 without protected work for denied scopes (owner %s)', async (userId) => {
-    const config: AuthFnRuntimeConfig = { database: memoryAdapter({ debug: false }), namespace: 'authfn', plugins: [authFnApiKeyPlugin()] };
+  it.each([null, 'user:docs'])('grants exact, owner-wildcard and full scopes and returns 403 otherwise (owner %s)', async (userId) => {
+    const config = createConfig();
     const auth = createTestServer(config);
     const protectedWork = vi.fn(() => Response.json({ allowed: true }));
     const handler = documentedHandler(guide, auth, protectedWork);
     const router = createAuthFnRouter(config, {}, [{ method: 'GET', path: '/doc-example', handler }]);
-    const required = guide === 'plugin' ? 'repo:read' : 'read';
+    const required = requiredScope(guide);
+    const [owner] = required.split(':');
+    const otherOwner = owner === 'repo' ? 'projects' : 'repo';
     if (userId) await createUser(config, { id: userId, primaryEmail: 'docs@example.com' });
 
-    for (const scopes of [undefined, [], [`${required}:other`], [required]]) {
+    const cases: Array<[string[] | undefined, boolean]> = [
+      [undefined, false],
+      [[], false],
+      [[`${owner}:write`], false],
+      [[`${otherOwner}:read`, `${otherOwner}:*`], false],
+      [[required], true],
+      [[`${owner}:*`], true],
+      [['*'], true]
+    ];
+    for (const [scopes, allowed] of cases) {
       protectedWork.mockClear();
       const key = await createApiKey(config, {
         userId,
         name: 'docs-example',
         scopes,
-        metadata: { scopes: [required] }
+        // Caller-supplied metadata is never a grant.
+        metadata: { scopes: [required, '*'] }
       });
       const response = await router.handle(new Request('https://example.com/auth/doc-example', {
         headers: { authorization: `Bearer ${key.secret}` }
       }));
-      const allowed = scopes?.includes(required) ?? false;
-      expect(response.status).toBe(allowed ? 200 : 403);
+      expect({ scopes, status: response.status }).toEqual({ scopes, status: allowed ? 200 : 403 });
       expect(protectedWork).toHaveBeenCalledTimes(allowed ? 1 : 0);
       if (!allowed) expect(await response.json()).toEqual({ error: 'forbidden' });
     }
@@ -160,16 +184,17 @@ describe.each(['plugin', 'cli'] as const)('%s API-key documentation HTTP boundar
     expect(protectedWork).not.toHaveBeenCalled();
   });
 
-  it('returns 403 for malformed scope metadata even when subject attributes claim a grant', async () => {
-    const config: AuthFnRuntimeConfig = { database: memoryAdapter({ debug: false }), plugins: [authFnApiKeyPlugin()] };
+  it('returns 403 when session scopes are malformed even if metadata and attributes claim a grant', async () => {
+    const config = createConfig();
     const auth = createTestServer(config);
     const protectedWork = vi.fn(() => Response.json({ allowed: true }));
-    const required = guide === 'plugin' ? 'repo:read' : 'read';
-    for (const scopes of [undefined, null, required, {}]) {
+    const required = requiredScope(guide);
+    for (const scopes of [undefined, null, required, {}, [7]]) {
       const authenticate = vi.spyOn(auth.provider, 'authenticate').mockResolvedValue({
         id: 'key', type: 'api-key', actorType: 'api-key', actorId: 'key', resourceIds: [], methods: ['api-key'],
+        scopes: scopes as unknown as string[],
         subject: { actorType: 'api-key', actorId: 'key', attributes: { scopes: [required] } },
-        metadata: { scopes }
+        metadata: { scopes: [required] }
       });
       try {
         const handler = documentedHandler(guide, auth, protectedWork);
@@ -184,20 +209,28 @@ describe.each(['plugin', 'cli'] as const)('%s API-key documentation HTTP boundar
     }
   });
 
-  it('rejects user sessions even if their metadata contains matching scopes', async () => {
-    const config: AuthFnRuntimeConfig = { database: memoryAdapter({ debug: false }), plugins: [authFnApiKeyPlugin()] };
+  it('lets an interactive bearer session through and denies one whose scopes were narrowed', async () => {
+    const config = createConfig();
     const auth = createTestServer(config);
-    const session: AuthFnSession = {
-      id: 'session', type: 'session', actorType: 'user', actorId: 'user', resourceIds: [], methods: ['password'],
-      subject: { actorType: 'user', actorId: 'user' }, metadata: { scopes: ['repo:read', 'read'] }
-    };
-    const authenticate = vi.spyOn(auth.provider, 'authenticate').mockResolvedValue(session);
+    const protectedWork = vi.fn(() => Response.json({ allowed: true }));
+    const handler = documentedHandler(guide, auth, protectedWork);
+    const router = createAuthFnRouter(config, {}, [{ method: 'GET', path: '/doc-example', handler }]);
+    const user = await createUser(config, { primaryEmail: 'docs@example.com' });
+    const issued = await issueSession(config, {}, { userId: user.id, methods: ['password'] });
+    expect(issued.session.scopes).toEqual(['*']);
+
+    const response = await router.handle(new Request('https://example.com/auth/doc-example', {
+      headers: { authorization: `Bearer ${issued.sessionToken}` }
+    }));
+    expect(response.status).toBe(200);
+    expect(protectedWork).toHaveBeenCalledTimes(1);
+
+    protectedWork.mockClear();
+    const narrowed: AuthFnSession = { ...issued.session, scopes: [], metadata: { scopes: ['*'] } };
+    const authenticate = vi.spyOn(auth.provider, 'authenticate').mockResolvedValue(narrowed);
     try {
-      const protectedWork = vi.fn(() => Response.json({ allowed: true }));
-      const handler = documentedHandler(guide, auth, protectedWork);
-      const router = createAuthFnRouter(config, {}, [{ method: 'GET', path: '/doc-example', handler }]);
-      const response = await router.handle(new Request('https://example.com/auth/doc-example'));
-      expect(response.status).toBe(401);
+      const denied = await router.handle(new Request('https://example.com/auth/doc-example'));
+      expect(denied.status).toBe(403);
       expect(protectedWork).not.toHaveBeenCalled();
     } finally {
       authenticate.mockRestore();
@@ -206,9 +239,7 @@ describe.each(['plugin', 'cli'] as const)('%s API-key documentation HTTP boundar
 
   it('keeps executable scope examples synchronized in the generated reference', () => {
     const generated = readFileSync(new URL('../../../docs/static/llms-full.txt', import.meta.url), 'utf8');
-    const text = readGuide(guide);
-    expect(generated).toContain(readBlock(text, 'function hasScope'));
-    if (guide === 'cli') expect(generated).toContain(readBlock(text, "app.get('/projects'"));
+    expect(generated).toContain(scopeExample(guide));
   });
 
   // A whole-program typecheck: the file's first one loads the TypeScript libraries cold and takes up to 4.7s on CI.
