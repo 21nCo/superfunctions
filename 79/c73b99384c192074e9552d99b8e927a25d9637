@@ -1,0 +1,23 @@
+billfn/core/src/service.ts
+  s_76f13912076b6a::t_899c5ce7a4a691 1713-1714,1729,1731-1732,3109-3111,3125-3127,3137-3140,3767-3768,3770-3774,3785,3938,3963-3965,3970-3971,3985-3987,4306-4309
+billfn/core/src/__tests__/unlinked-webhooks.test.ts
+  s_76f13912076b6a::t_afb57417d13c9d 4,2703-2740,2745,2782,3009-3017,3034,3036
+billfn/docs/content/docs/server/reconciliation.mdx
+  s_76f13912076b6a::t_17195f5a6aa22f 38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "79c73b99384c192074e9552d99b8e927a25d9637",
+  "prompts": {},
+  "sessions": {
+    "s_76f13912076b6a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3dce53e9-a2d9-44f0-affa-ba9ddd60aa48",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
