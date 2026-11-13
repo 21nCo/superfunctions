@@ -15,8 +15,12 @@ export function createAccountSettingsPlugins() {
   );
 }
 
+// API keys may be granted only these scopes (plus `account:*` and `*`).
+export const ACCOUNT_SETTINGS_SCOPES = { account: ['read', 'write'] } as const;
+
 export const accountSettingsAuthApp = authfn({
   namespace: ACCOUNT_SETTINGS_NAMESPACE,
+  scopes: ACCOUNT_SETTINGS_SCOPES,
   plugins: createAccountSettingsPlugins()
 });
 

@@ -97,6 +97,8 @@ if (!session) {
 }
 ```
 
+To authorize, call `requireScopes(session, 'memotron:read')`: it throws `AUTHFN_UNAUTHENTICATED` (401) without a session and `AUTHFN_INSUFFICIENT_SCOPE` (403) when the session lacks a needed scope. `hasScopes` returns the same answer as a boolean. Scopes come from the `scopes` registry on `authfn()`; see [Plugins → API keys → Scopes](../plugins/api-keys#scopes).
+
 ## Placement-bound auth context
 
 Trusted gateway code can derive an immutable, privacy-preserving routing context after a valid session. This is opt-in and is not a public AuthFn route. See [Placement-bound auth context](../recipes/placement-bound-auth-context).
@@ -146,6 +148,7 @@ Core types and the canonical error hierarchy are exported from `authfn`:
 ```ts
 import {
   AuthFnConfigError,
+  AuthFnInsufficientScopeError,
   AuthFnInvalidCredentialsError,
   AuthFnPluginAbortedError,
   AuthFnRateLimitedError,

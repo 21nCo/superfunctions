@@ -1,6 +1,6 @@
 {
   "name": "@authfn/password",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Password authentication plugin for AuthFn",
   "repository": {
     "type": "git",
@@ -26,7 +26,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "authfn": "0.5.0",
+    "authfn": "0.6.0",
     "@superfunctions/http": "0.2.0"
   },
   "devDependencies": {

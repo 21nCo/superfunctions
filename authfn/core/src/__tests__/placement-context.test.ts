@@ -514,7 +514,7 @@ describe('AuthFn placement-bound auth context', () => {
 
   it('rejects a disabled-owner API key before any consumer runs or assertion is issued', async () => {
     const bound = await setupIssuer();
-    const owned = await createApiKey(bound.config, { userId: bound.user.id, name: 'cli', scopes: ['sync'] });
+    const owned = await createApiKey(bound.config, { userId: bound.user.id, name: 'cli', scopes: ['*'] });
     const keyRequest = () => new Request('https://account.example.com/auth/session', {
       headers: { authorization: `Bearer ${owned.secret}` }
     });

@@ -22,6 +22,7 @@ import type {
   AuthFnSession
 } from './types.js';
 import { AuthFnConfigError, AuthFnUnauthenticatedError } from './types.js';
+import { assertValidScopeRegistry } from './core/scopes.js';
 
 const superfunctionsAppMetadata = Symbol.for('superfunctions.app');
 
@@ -57,6 +58,7 @@ export {
   AuthFnCsrfInvalidError,
   AuthFnEmailNotVerifiedError,
   AuthFnError,
+  AuthFnInsufficientScopeError,
   AuthFnInternalError,
   AuthFnInvalidCredentialsError,
   AuthFnNotFoundError,
@@ -93,6 +95,20 @@ export {
   getSchema
 } from './schema.js';
 export { createAuthFnOpenApiDocument } from './openapi.js';
+export {
+  AUTHFN_ALL_SCOPES,
+  assertRegisteredScopes,
+  assertValidScopeRegistry,
+  defineAuthFnScopes,
+  hasScopes,
+  requireScopes
+} from './core/scopes.js';
+export type {
+  AuthFnGrantableScope,
+  AuthFnRegisteredScope,
+  AuthFnRequireScopesOptions,
+  AuthFnScopeRegistry
+} from './core/scopes.js';
 export {
   createAuthFnPlacementContextIssuer,
   createAuthFnPlacementContextVerifier,
@@ -144,6 +160,9 @@ function createServer(
   const plugins = config.plugins;
   if (!Array.isArray(plugins)) {
     throw new AuthFnConfigError('authfn plugins must be provided as an array');
+  }
+  if (config.scopes !== undefined) {
+    assertValidScopeRegistry(config.scopes);
   }
 
   const schema = getSchema(config);

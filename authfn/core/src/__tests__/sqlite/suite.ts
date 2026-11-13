@@ -62,8 +62,10 @@ export function describeAuthFnSqliteConformance(
     beforeEach(async () => {
       harness = await createHarness();
       await harness.exec(migrationStatements);
-      // Wired the way docs/recipes/self-hosting-sqlite-d1 shows.
+      // Wired the way docs/recipes/self-hosting-sqlite-d1 shows, plus the scope
+      // registry the API-key tests request scopes from.
       const authApp = authfn({
+        scopes: { bookmarks: ['read', 'write'] },
         plugins: authFnPlugins(authFnPasswordPlugin(), authFnApiKeyPlugin())
       });
       auth = authApp.createServer({

@@ -10,6 +10,28 @@ npm install authfn
 
 Install only the plugin packages you use (`@authfn/password`, `@authfn/email-otp`, `@authfn/social-oauth`, `@authfn/api-keys`, `@authfn/two-factor`, `@authfn/multi-region`, `@authfn/native-handoff`) plus `@authfn/client` for browsers.
 
+## 0.6.0 release
+
+Scopes are now enforced. Declare the scopes your app accepts as a registry on `authfn()`, then call `requireScopes` before protected work:
+
+```ts
+import { authfn, authFnPlugins, defineAuthFnScopes, requireScopes } from 'authfn';
+import { authFnApiKeyPlugin } from '@authfn/api-keys';
+
+const scopes = defineAuthFnScopes({ memotron: ['read', 'write'], pointron: ['read', 'write'] });
+const authApp = authfn({ scopes, plugins: authFnPlugins(authFnApiKeyPlugin()) });
+
+const session = await auth.provider.authenticate(request);
+requireScopes(session, 'memotron:read'); // 401 without a session, 403 AUTHFN_INSUFFICIENT_SCOPE without the scope
+```
+
+- Every session carries `scopes: string[]`. Cookie and bearer user sessions get `['*']`; API-key sessions get the key's stored scopes.
+- A scope is `<owner>:<action>`. `<owner>:*` grants every action of that owner and `*` grants every registered scope.
+- API-key creation (the `POST /auth/api-keys` route and `createApiKey`) rejects any scope outside the registry with `400 AUTHFN_VALIDATION_ERROR` and `details.unknownScopes`. Without a registry only `*` is accepted. Trusted code calling `createApiKey` directly passes the registry as `config.scopes`.
+- `session.metadata.scopes` is deprecated; read `session.scopes`.
+
+Migration: declare a registry before creating keys with scopes. Existing keys keep their stored scopes; a key stored without scopes grants nothing under `requireScopes`. `@authfn/api-keys` 0.2.0 and `@authfn/password` 0.1.5 depend on `authfn` 0.6.0.
+
 ## 0.5.0 release
 
 A session authenticated by a user-owned API key now acts as the key's owner: `actorType` is `'user'`, `actorId` is the owner's user ID, and the new `credential` field is `{ type: 'api-key', id: <keyId> }`. A host that keys data by `actorId` reaches the owner's data with the key. `type` stays `'api-key'`.
@@ -33,7 +55,7 @@ The core API key helper accepts `userId: null` to create an unowned key for a tr
 import { createApiKey } from 'authfn/core/api-keys';
 
 const key = await createApiKey(
-  { database, namespace: 'authfn' },
+  { database, namespace: 'authfn', scopes: { skills: ['read'] } }, // 0.6.0+: pass the app's registry
   {
     userId: null,
     name: 'service-worker',

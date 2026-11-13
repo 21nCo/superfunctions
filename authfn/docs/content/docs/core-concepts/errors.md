@@ -37,6 +37,7 @@ interface AuthFnErrorEnvelope {
 | `AUTHFN_CSRF_INVALID` | 403 | no | CSRF token missing, malformed, or doesn't match. |
 | `AUTHFN_DELIVERY_FAILED` | 503 | yes | Mail delivery for an OTP failed. Safe to retry. |
 | `AUTHFN_EMAIL_NOT_VERIFIED` | 403 | no | The action requires a verified email address. |
+| `AUTHFN_INSUFFICIENT_SCOPE` | 403 | no | `requireScopes` found a needed scope the session does not grant. `details.missingScopes` lists them. |
 | `AUTHFN_INTERNAL_ERROR` | 500 | yes | Generic kernel error. Logged with full context. |
 | `AUTHFN_INVALID_CREDENTIALS` | 401 | no | Password/email pair is wrong. |
 | `AUTHFN_NOT_FOUND` | 404 | no | The targeted resource doesn't exist. |

@@ -87,14 +87,18 @@ function createApiKeyRoutes(
         assertValidCsrf(request, state);
         const body = await request.json() as {
           name?: string;
-          scopes?: string[];
+          scopes?: unknown;
           metadata?: Record<string, unknown>;
           expiresAt?: string;
         };
         const created = await createApiKey(ctx.config, {
           userId: state.user.id,
           name: body.name ?? 'api-key',
-          scopes: body.scopes,
+          // createApiKey rejects scopes outside ctx.config.scopes with HTTP 400
+          // before anything is stored.
+          scopes: body.scopes === undefined || body.scopes === null
+            ? undefined
+            : body.scopes as string[],
           metadata: body.metadata,
           expiresAt: body.expiresAt ? new Date(body.expiresAt) : undefined
         }, {
@@ -110,7 +114,7 @@ function createApiKeyRoutes(
           outcome: 'created',
           metadata: {
             keyId: created.keyId,
-            scopes: body.scopes ?? []
+            scopes: created.record.scopes ?? []
           }
         });
 

@@ -20,6 +20,7 @@ function createConfig(overrides: Partial<AuthFnRuntimeConfig> = {}): AuthFnRunti
   return {
     database: memoryAdapter({ debug: false }),
     namespace: 'authfn',
+    scopes: { memotron: ['read', 'write'] },
     plugins: [authFnApiKeyPlugin(), authFnPasswordPlugin()],
     ...overrides
   };
@@ -96,6 +97,7 @@ describe('AUTH-5: API-key sessions act as their owning user', () => {
       credential: { type: 'api-key', id: key.keyId },
       resourceIds: [],
       methods: ['api-key'],
+      scopes: ['memotron:read'],
       expiresAt: undefined,
       metadata: {
         actorId: 'forged-user',
