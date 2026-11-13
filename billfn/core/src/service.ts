@@ -180,8 +180,8 @@ type ProjectionResult = {
   checkoutSession: BillFnCheckoutSession | undefined;
   subscription: BillFnSubscription;
   entitlements: BillFnEntitlementSnapshot;
-  /** Set when a provider event was applied while a committed provider mutation was in flight. */
-  providerStateRaced?: boolean;
+  /** Set when a provider event was applied while a committed provider mutation was in flight: the price it had written. */
+  providerStateRaced?: { priceId: string };
 };
 type ReconciliationLeaseGuard = () => Promise<void>;
 type ParsedProviderEvent = {
@@ -403,24 +403,26 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
       provider: projection.subscription.provider,
       subscriptionId: projection.subscription.id
     });
-    return (await reconcileCommittedMutation(projection.subscription)) ?? projection;
+    return (await reconcileCommittedMutation(projection.subscription, projection.providerStateRaced.priceId)) ?? projection;
   }
 
   /**
    * Reads the subscription from the provider after a mutation an event raced:
    * a queued sync job when a queue is configured, otherwise an inline sync. It
    * never repeats the mutation and never fails it. Returns the inline result.
+   * The price the raced event wrote is the read's candidate (`fetchLiveSubscription`).
    */
-  async function reconcileCommittedMutation(subscription: BillFnSubscription): Promise<ProjectionResult | null> {
+  async function reconcileCommittedMutation(subscription: BillFnSubscription, racedPriceId: string): Promise<ProjectionResult | null> {
+    const candidate = findCatalogPriceReference(deps.catalog, subscription.provider, [racedPriceId]) ?? undefined;
     try {
       if (deps.queue) {
-        await scheduleSubscriptionSync(subscription);
+        await scheduleSubscriptionSync(subscription, candidate);
         return null;
       }
       if (typeof deps.providers[subscription.provider]?.fetchSubscription !== 'function') {
         return null;
       }
-      return await syncSubscriptionById(subscription.id);
+      return await applyLiveProviderState(deps, await readProviderSubscription(subscription.id, candidate));
     } catch (error) {
       deps.metrics.track('subscription.mutation.reconcile_failed', {
         provider: subscription.provider,
@@ -2367,7 +2369,7 @@ async function applyVerificationState(
   let subscription: BillFnSubscription | null = null;
   let timestamp = toIsoString(deps.now());
   let liveStateSuperseded = false;
-  let providerStateRaced = false;
+  let providerStateRaced: { priceId: string } | undefined;
   // A read is superseded by an event newer than its start; a committed mutation only by one after its commit.
   const supersededBefore = input.committedAt ?? input.liveStateObservedAt;
 
@@ -2399,12 +2401,13 @@ async function applyVerificationState(
         isProviderEventOlderThanSubscription(baseSubscription, supersededBefore)
     );
     // An event applied while a committed mutation was in flight is reconciled by the caller.
-    providerStateRaced = Boolean(
+    providerStateRaced =
       baseSubscription &&
-        input.committedAt &&
-        input.liveStateObservedAt &&
-        isProviderEventOlderThanSubscription(baseSubscription, input.liveStateObservedAt)
-    );
+      input.committedAt &&
+      input.liveStateObservedAt &&
+      isProviderEventOlderThanSubscription(baseSubscription, input.liveStateObservedAt)
+        ? { priceId: baseSubscription.priceId }
+        : undefined;
     timestamp = nextSubscriptionUpdatedAt(deps.now(), baseSubscription?.updatedAt);
     if (baseSubscription && liveStateSuperseded) {
       const linked = linkLiveReadReferences(baseSubscription, input, timestamp);

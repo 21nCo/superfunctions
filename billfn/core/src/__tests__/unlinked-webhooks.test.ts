@@ -3073,6 +3073,34 @@ describe('mutation windows, replaced references and regained references (PR #308
     expect(entitlements.ok && entitlements.data.entitlements?.limits).toMatchObject({ storage: 5000 });
   });
 
+  it('reconciles a renewal into another product that raced a committed cancellation when the provider reads only the live product', async () => {
+    let billfn!: ReturnType<typeof createBillFn>;
+    let current = new Date('2026-11-01T00:00:01.000Z');
+    const reads: string[] = [];
+    const base = createProvider({});
+    const provider: BillFnProviderAdapter = {
+      ...base,
+      capabilities: { ...base.capabilities, cancelSubscription: true, syncSubscription: true },
+      async cancelSubscription() {
+        current = new Date('2026-11-01T00:00:02.000Z');
+        await deliver(billfn, [at('raced_apple', 'renewed', 'active', '02.000', { productId: 'pdt_team_month' })]);
+        current = new Date('2026-11-01T00:00:03.000Z');
+        return { operationStatus: 'applied', billingState: { subscriptionStatus: 'canceled', checkoutStatus: 'succeeded', providerSubscriptionId: 'sub_raced_apple', autoRenew: false } };
+      },
+      fetchSubscription: committedPriceRead(reads, 'price_team_dodo_month', APPLE_SUBSCRIPTION_PAYLOAD)
+    };
+    billfn = createBillFn({ db: memoryAdapter({ debug: false }), catalog, now: () => current, providers: { dodo: provider } });
+    await billfn.quotaProvider.recordUsage({ principalId: 'raced_apple_user', bytes: 0 });
+    await deliver(billfn, [bootstrapEvent('raced_apple')]);
+
+    const response = await billfn.cancelSubscription({ subject: { principalId: 'raced_apple_user' } });
+
+    expect(reads).toEqual(['price_pro_dodo_month', 'price_team_dodo_month']);
+    expect(response.ok && response.data.subscription).toMatchObject({ planKey: 'team', priceId: 'price_team_dodo_month', status: 'active' });
+    const entitlements = await billfn.getEntitlements({ principalId: 'raced_apple_user' });
+    expect(entitlements.ok && entitlements.data.entitlements?.limits).toMatchObject({ storage: 5000 });
+  });
+
   it('selects the exact catalog price a live record names when two prices share its product, and keeps the stored one when only the product is named', async () => {
     const shared = (planKey: string, priceId: string, amount: number) => ({
       ...catalog.plans.find((plan) => plan.planKey === planKey)!,
