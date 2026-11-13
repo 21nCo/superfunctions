@@ -1,6 +1,6 @@
 {
   "name": "@authfn/svelte",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Svelte wrappers for authfn client",
   "type": "module",
   "main": "./dist/index.js",
@@ -29,11 +29,11 @@
     "access": "public"
   },
   "peerDependencies": {
-    "@authfn/client": "0.2.4",
+    "@authfn/client": "0.3.0",
     "svelte": "^5.0.0"
   },
   "devDependencies": {
-    "@authfn/client": "^0.2.1",
+    "@authfn/client": "^0.3.0",
     "@types/node": "^22.0.0",
     "svelte": "^5.0.0",
     "typescript": "^5.6.0",

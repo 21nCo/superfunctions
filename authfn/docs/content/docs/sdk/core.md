@@ -25,6 +25,7 @@ interface AuthFnConfig<TPlugins> {
   accountLinking?: AuthFnAccountLinkingConfig;
   plugins: TPlugins;
   openApi?: boolean | { title: string; version: string };
+  scopes?: AuthFnScopeRegistry;
 }
 ```
 

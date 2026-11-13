@@ -210,6 +210,8 @@ if (result.ok) {
 }
 ```
 
+From `@authfn/client` 0.3.0, `AuthFnSession` has `scopes?: string[]`, the scopes the server checks with `requireScopes`. Servers on `authfn` 0.6.0 and later always send it (`['*']` for user sessions); older servers omit it.
+
 For convenience, the `AuthFnErrorCode` literal type is available from `authfn/core/errors` if you want to narrow further.
 
 ## Errors and retries

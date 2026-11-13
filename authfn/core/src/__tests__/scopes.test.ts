@@ -136,10 +136,13 @@ describe('API-key scope validation at creation', () => {
       body: JSON.stringify(body)
     }));
 
-    for (const scopes of [['memotron:read', 'billing:read'], ['unknown:*'], 'memotron:read', [null]]) {
+    // `null` is malformed, not omitted: only a missing `scopes` creates an unscoped key.
+    for (const scopes of [['memotron:read', 'billing:read'], ['unknown:*'], 'memotron:read', [null], null]) {
       const rejected = await create({ name: 'cli', scopes });
       expect(rejected.status).toBe(400);
-      expect((await rejected.json()).error.code).toBe('AUTHFN_VALIDATION_ERROR');
+      const { error } = await rejected.json();
+      expect(error.code).toBe('AUTHFN_VALIDATION_ERROR');
+      expect(error.details.field).toBe('scopes');
     }
     expect(await listApiKeysForUser(config, user.id)).toEqual([]);
 

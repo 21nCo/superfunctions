@@ -587,7 +587,8 @@ export interface AuthFnConfig<TPlugins extends AuthFnPluginList = AuthFnPluginLi
   /**
    * Scope registry: each owner maps to its actions, so `{ memotron: ['read', 'write'] }`
    * registers `memotron:read` and `memotron:write`. API-key creation rejects any
-   * scope outside it other than `*` and `<owner>:*`. Omit to allow only `*`.
+   * scope outside it other than `*` and `<owner>:*` for a registered owner.
+   * Omit to allow only `*`.
    */
   scopes?: AuthFnScopeRegistry;
 }

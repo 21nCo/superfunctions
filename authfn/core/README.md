@@ -23,7 +23,7 @@ const authApp = authfn({ scopes, plugins: authFnPlugins(authFnApiKeyPlugin()) })
 const auth = authApp.createServer({ database }); // database: your @superfunctions/db adapter
 
 const session = await auth.provider.authenticate(request);
-requireScopes(session, 'memotron:read'); // 401 without a session, 403 AUTHFN_INSUFFICIENT_SCOPE without the scope
+requireScopes(session, 'memotron:read', { registry: scopes }); // 401 without a session, 403 AUTHFN_INSUFFICIENT_SCOPE without the scope
 ```
 
 - Every session carries `scopes: string[]`. Cookie and bearer user sessions get `['*']`; API-key sessions get the key's stored scopes that the registry can grant.

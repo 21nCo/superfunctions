@@ -94,11 +94,10 @@ function createApiKeyRoutes(
         const created = await createApiKey(ctx.config, {
           userId: state.user.id,
           name: body.name ?? 'api-key',
-          // createApiKey rejects scopes outside ctx.config.scopes with HTTP 400
-          // before anything is stored.
-          scopes: body.scopes === undefined || body.scopes === null
-            ? undefined
-            : body.scopes as string[],
+          // createApiKey rejects scopes outside ctx.config.scopes, and any
+          // value other than an array of strings (including null), with HTTP
+          // 400 before anything is stored. Only an omitted field means none.
+          scopes: body.scopes as string[] | undefined,
           metadata: body.metadata,
           expiresAt: body.expiresAt ? new Date(body.expiresAt) : undefined
         }, {

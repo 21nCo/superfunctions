@@ -79,7 +79,8 @@ The plaintext follows `<secretPrefix><base64url(random)>`. Display it once, then
 A scope is `<owner>:<action>`: the owner is an app or API (`repo`, `memotron`) and the action is what it allows (`read`, `write`). Declare every scope your app accepts as a registry on `authfn()`; each owner maps to its actions:
 
 ```ts
-import { authfn, defineAuthFnScopes } from 'authfn';
+import { authfn, authFnPlugins, defineAuthFnScopes } from 'authfn';
+import { authFnApiKeyPlugin } from '@authfn/api-keys';
 
 const scopes = defineAuthFnScopes({
   repo: ['read', 'write'],
@@ -181,7 +182,7 @@ After revocation, `auth.provider.authenticate(request)` rejects with `AUTHFN_API
 
 | Code | When |
 | --- | --- |
-| `AUTHFN_VALIDATION_ERROR` | Invalid name or expiresAt, `scopes` that is not an array of strings (`details.field` is `scopes`), or a scope outside the registry (`details.unknownScopes`). |
+| `AUTHFN_VALIDATION_ERROR` | Invalid name or expiresAt, `scopes` that is present but not an array of strings, `null` included (`details.field` is `scopes`), or a scope outside the registry (`details.unknownScopes`). |
 | `AUTHFN_INSUFFICIENT_SCOPE` | `requireScopes` found a needed scope the session does not grant (`details.missingScopes`). |
 | `AUTHFN_UNAUTHENTICATED` | Caller is not signed in (key creation requires a session). |
 | `AUTHFN_API_KEY_REVOKED` | Key was used after revocation. |
