@@ -501,6 +501,26 @@ describe("NetworkCollector at a native Request boundary", () => {
     }
   });
 
+  it("records a URL input as it was sent, even if converting it changes it", async () => {
+    const filtered = new NetworkCollector(5, { allowUrls: ["/sent"] });
+    filtered.start();
+    const input = new URL("https://example.com/sent?token=u-secret");
+    Object.defineProperty(input, "toString", {
+      value(this: URL) {
+        const href = this.href;
+        this.pathname = "/mutated";
+        return href;
+      },
+    });
+    await fetch(input);
+    const events = filtered.collect();
+    filtered.stop();
+    expect(sent.map((request) => request.url)).toEqual(["https://example.com/sent?token=u-secret"]);
+    expect(events.map((event) => event.url)).toEqual([expect.stringContaining("https://example.com/sent?")]);
+    expect(events[0]!.url).not.toContain("u-secret");
+    expectValidEvents(events);
+  });
+
   it("runs no trap of the application's arguments before the page's fetch has run", async () => {
     const trapped: string[] = [];
     const traps = ["getPrototypeOf", "ownKeys", "getOwnPropertyDescriptor", "has", "get"] as const;

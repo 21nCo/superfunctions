@@ -66,9 +66,9 @@ arguments pass through untouched (a `null` or `undefined` receiver of `fetch`
 becomes `globalThis`), and observation never runs the application's
 iterators, getters or conversions. The page's `fetch` and
 `XMLHttpRequest.prototype.open` run first, and observation reads object
-arguments only after they return (a string or platform `URL` passed to `open`
-is read before it, which runs no application code); `send` reads nothing from
-its arguments. A native
+arguments only after they return (a string or platform `URL` argument for the URL is
+read before the call, as sent, which runs no application code); `send` reads
+nothing from its arguments. A native
 `fetch`, or a wrapper that calls one synchronously, has read the request by
 then. No script can tell a Proxy apart, so a Proxy's traps still run when
 observation reads it: if the `fetch` that was installed before `start()`

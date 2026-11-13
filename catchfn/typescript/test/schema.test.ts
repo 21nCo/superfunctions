@@ -86,6 +86,18 @@ describe("evidence event v1 schema", () => {
       expect(validateEvidenceEvent(event), label).not.toEqual([]);
       expect(isEvidenceEvent(event), label).toBe(false);
     }
+    // The event object itself follows the same rule.
+    const hookedEvents: Array<[string, unknown]> = [
+      ["an event with a hidden toJSON", withHook({ ...valid.console })],
+      ["an event inheriting toJSON", Object.assign(Object.create(withHook(Object.create(null))), valid.console)],
+      ["a Date event", Object.assign(new Date(0), valid.console)],
+      ["a class-instance event", Object.assign(new Box(), valid.breadcrumb)],
+    ];
+    for (const [label, event] of hookedEvents) {
+      expect(validateEvidenceEvent(event), label).toEqual(["event must be a plain object"]);
+      expect(isEvidenceEvent(event), label).toBe(false);
+    }
+    expect(validateEvidenceEvent(Object.assign(Object.create(null), valid.network))).toEqual([]);
     // A toJSON key holding data is kept by JSON.stringify, and both validators accept it.
     const dataKey = { ...valid.breadcrumb, data: { toJSON: "keep", nested: [{ toJSON: null }] } };
     expect(validateEvidenceEvent(dataKey)).toEqual([]);

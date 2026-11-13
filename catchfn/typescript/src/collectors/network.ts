@@ -227,7 +227,7 @@ function requestDefaults(input: unknown): { method: Field; headers: Field } {
  * can tell a Proxy apart), which a wrapper that defers the native call, or a
  * later call that reuses a stateful Proxy, could observe.
  */
-function readFetchRequest(input: unknown, init: unknown): Pick<Observation, "method" | "url" | "requestHeaders"> {
+function readFetchRequest(input: unknown, init: unknown, url: string | undefined): Pick<Observation, "method" | "url" | "requestHeaders"> {
   let { method, headers } = requestDefaults(input);
   if (typeof init === "object" || typeof init === "function") {
     if (init !== null) {
@@ -241,7 +241,7 @@ function readFetchRequest(input: unknown, init: unknown): Pick<Observation, "met
   }
   return {
     method: typeof method === "string" ? text(method) : UNREAD_METHOD,
-    url: captureUrl(inputUrl(input)),
+    url: captureUrl(url ?? inputUrl(input)),
     requestHeaders: captureHeaders(headers),
   };
 }
@@ -309,10 +309,13 @@ function subscribe(listener: Listener): () => void {
         // The page's fetch runs first, with the application's own arguments
         // and receiver, before observation reads anything from them.
         // See readFetchRequest for what that ordering does and does not cover.
+        // A string or platform URL input is read first, as sent: that runs no
+        // application code, and the conversion inside the call cannot alter it.
+        const url = typeof args[0] === "string" ? args[0] : platformHref(args[0]);
         const pending = original.apply(this ?? globalThis, args);
         let observed: Observation;
         try {
-          observed = { transport: "fetch", timestamp, ...readFetchRequest(args[0], args[1]) };
+          observed = { transport: "fetch", timestamp, ...readFetchRequest(args[0], args[1], url) };
         } catch {
           return pending; // Unreadable input: the application's call is already made.
         }

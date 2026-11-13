@@ -212,7 +212,8 @@ const ownCheck = (table: Record<string, Check>, field: string): Check | undefine
   Object.hasOwn(table, field) ? table[field] : undefined;
 
 function problems(value: unknown): string[] {
-  if (!isRecord(value)) return ["event must be an object"];
+  // The event itself must keep its JSON form too: plain, with no callable toJSON.
+  if (!isPlainRecord(value)) return ["event must be a plain object"];
   const kind = Object.hasOwn(value, "kind") ? value.kind : undefined;
   if (typeof kind !== "string" || !(EVIDENCE_KINDS as readonly string[]).includes(kind)) {
     return [`kind must be one of ${EVIDENCE_KINDS.join(", ")}`];
