@@ -3314,35 +3314,51 @@ describe('mutation windows, replaced references and regained references (PR #308
     await expectNeverBootstraps(env, 'held', inside);
   });
 
-  it('keeps the retained events of a charge a write would drop when that write loses to a concurrent one that keeps it', async () => {
-    const lose = { armed: false };
-    const memory = memoryAdapter({ debug: false });
-    const db = interceptDb(memory, {
-      updateMany: async (params, next) => {
-        if (params.model === 'subscriptions' && lose.armed && params.where.some((clause) => clause.field === 'updatedAt')) {
-          lose.armed = false;
-          // A newer event keeping pay_race_1 commits first.
-          const [current] = await memory.findMany<BillFnSubscription>({ model: 'subscriptions', where: [], namespace: 'billfn' });
-          await memory.updateMany({
-            model: 'subscriptions',
-            where: [{ field: 'id', operator: 'eq', value: current.id }],
-            data: { updatedAt: '2026-11-01T00:00:09.000Z', metadata: { ...current.metadata, billfnProviderEventOccurredAt: '2026-11-01T00:00:07.000Z' } },
-            namespace: 'billfn'
-          });
+  it.each(['keeps it', 'also replaces it'] as const)(
+    'never bootstraps the retained events of a charge a write drops when it loses to a concurrent write that %s, and replays them where kept',
+    async (winner) => {
+      const lose = { armed: false };
+      const memory = memoryAdapter({ debug: false });
+      const db = interceptDb(memory, {
+        updateMany: async (params, next) => {
+          if (params.model === 'subscriptions' && lose.armed && params.where.some((clause) => clause.field === 'updatedAt')) {
+            lose.armed = false;
+            // A newer event commits first, keeping pay_race_1 or also moving to pay_race_2.
+            const [current] = await memory.findMany<BillFnSubscription>({ model: 'subscriptions', where: [], namespace: 'billfn' });
+            await memory.updateMany({
+              model: 'subscriptions',
+              where: [{ field: 'id', operator: 'eq', value: current.id }],
+              data: {
+                updatedAt: '2026-11-01T00:00:09.000Z',
+                providerChargeId: winner === 'keeps it' ? 'pay_race_1' : 'pay_race_2',
+                metadata: { ...current.metadata, billfnProviderEventOccurredAt: '2026-11-01T00:00:07.000Z' }
+              },
+              namespace: 'billfn'
+            });
+          }
+          return next();
         }
-        return next();
+      });
+      const failing = { value: true };
+      const env = await committedMutation('race', { read: recoveringRead(failing, 'throws', 'canceled'), chargeless: true, db });
+      const { inside, row } = await retainUnreadChargeCancellation(env, 'race');
+
+      lose.armed = true;
+      const renewal = at('race', 'renewal', 'active', '06.000', { chargeId: 'pay_race_2' });
+      // Retried against the newer state while the mutation window is open, the renewal cannot be read either.
+      await expect(deliver(env.billfn, [renewal])).rejects.toThrow('provider read unavailable');
+      expect(await row()).toMatchObject({ status: 'unlinked', reason: 'provider_reference_replaced' });
+
+      if (winner === 'keeps it') {
+        // Its reference is still held, so it is still reconciled on the subscription once the read recovers.
+        failing.value = false;
+        expect((await deliver(env.billfn, [renewal])).ok).toBe(true);
+        expect(await row()).toMatchObject({ status: expect.stringMatching(/^(replayed|skipped)$/), subscriptionId: (await env.stored())?.id });
+        return;
       }
-    });
-    const env = await committedMutation('race', { read: recoveringRead({ value: true }, 'throws', 'canceled'), chargeless: true, db });
-    const { row } = await retainUnreadChargeCancellation(env, 'race');
-
-    lose.armed = true;
-    // The renewal is then older than the state, and the window event on the kept charge is still unread.
-    await expect(deliver(env.billfn, [at('race', 'renewal', 'active', '06.000', { chargeId: 'pay_race_2' })])).rejects.toThrow('provider read unavailable');
-
-    expect(await env.stored()).toMatchObject({ providerChargeId: 'pay_race_1' });
-    expect(await row()).toMatchObject({ status: 'unlinked', reason: 'billing_account_not_found' });
-  });
+      await expectNeverBootstraps(env, 'race', inside);
+    }
+  );
 
   it.each([
     { failing: 'before and after the write', account: 'cmt_user', recovery: 'redelivered' },
