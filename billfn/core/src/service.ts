@@ -1,7 +1,6 @@
 import { DuplicateKeyError, type Adapter, type WhereClause } from '@superfunctions/db';
 import { ok } from '@superfunctions/envelope';
 import { createNamespacedEmitter, createMetricsEmitter, type MetricsEmitter } from '@superfunctions/metrics';
-import type { QueueAdapter } from '@superfunctions/queue';
 import { createBillFnError } from './errors.js';
 import {
   createDefaultBillingAccountResolver,
@@ -31,6 +30,7 @@ import type {
   BillFnGetReconciliationJobRequest,
   BillFnPriceDefinition,
   BillFnProviderAdapter,
+  BillFnQueueAdapter,
   BillFnQueuedJob,
   BillFnReconciliationCursor,
   BillFnReconciliationJob,
@@ -122,7 +122,7 @@ type ServiceDeps = {
   now: () => Date;
   generateId: (prefix: string) => string;
   metrics: MetricsEmitter;
-  queue?: QueueAdapter<BillFnQueuedJob>;
+  queue?: BillFnQueueAdapter<BillFnQueuedJob>;
 };
 
 type VerifiedBillingState = NonNullable<Awaited<ReturnType<NonNullable<BillFnProviderAdapter['verifyCheckout']>>>>;

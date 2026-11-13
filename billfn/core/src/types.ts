@@ -2,7 +2,6 @@ import type { Adapter, TableSchema } from '@superfunctions/db';
 import type { Envelope } from '@superfunctions/envelope';
 import type { Router } from '@superfunctions/http';
 import type { MetricsEmitter } from '@superfunctions/metrics';
-import type { QueueAdapter } from '@superfunctions/queue';
 
 export type BillingProviderName =
   | 'dodo'
@@ -455,6 +454,27 @@ export type BillFnQueuedJob =
   | BillFnNotificationHistoryQueuedJob
   | BillFnWebhookReplayQueuedJob;
 
+/**
+ * The queue operations BillFn calls, declared structurally so the published
+ * declarations do not import the optional `@superfunctions/queue` peer. A
+ * `QueueAdapter<BillFnQueuedJob>` from `@superfunctions/queue` satisfies it.
+ */
+export interface BillFnQueueAdapter<TPayload = BillFnQueuedJob> {
+  enqueue(queueName: string, payload: TPayload, options?: { delayMs?: number; dedupeKey?: string }): Promise<unknown>;
+  claim(
+    queueName: string,
+    options: { leaseMs: number }
+  ): Promise<{ id: string; payload: TPayload; attempt: number } | null>;
+  ack(id: string, fence?: { attempt?: number }): Promise<void>;
+  fail(
+    id: string,
+    options:
+      | { retryAt: Date | number; reason?: string; attempt?: number }
+      | { deadLetter: true; reason: string; attempt?: number }
+  ): Promise<void>;
+  extendLease(id: string, leaseMs: number, fence?: { attempt?: number }): Promise<void>;
+}
+
 export interface BillFnConfig {
   db: Adapter;
   catalog: BillFnCatalog;
@@ -463,7 +483,7 @@ export interface BillFnConfig {
   providers?: Partial<Record<BillingProviderName, BillFnProviderAdapter>>;
   billingAccountResolver?: BillingAccountResolver;
   metrics?: MetricsEmitter;
-  queue?: QueueAdapter<BillFnQueuedJob>;
+  queue?: BillFnQueueAdapter<BillFnQueuedJob>;
   auth?: {
     resolveSubject?: (request: Request) => Promise<BillableSubject | null> | BillableSubject | null;
   };

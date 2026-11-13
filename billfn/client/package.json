@@ -1,6 +1,6 @@
 {
   "name": "@billfn/client",
-  "version": "0.0.3",
+  "version": "0.1.0",
   "description": "Typed browser client for billfn",
   "type": "module",
   "main": "./dist/index.js",
@@ -31,8 +31,8 @@
     "access": "public"
   },
   "dependencies": {
-    "@billfn/core": "^0.0.2",
-    "@superfunctions/envelope": "*"
+    "@billfn/core": "^0.1.0",
+    "@superfunctions/envelope": "^0.0.2"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
