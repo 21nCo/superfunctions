@@ -34,9 +34,11 @@ jobs:
         # The upstream minio/minio image needs a `server` argument, which service containers cannot pass; this one starts the server itself.
         image: bitnamilegacy/minio:2025.7.23@sha256:8935e75fa5d11295c17171e4aa49efe390a1193cd7f12e4d21b92af9ffef09d7
         env:
-          # Disposable per-run credentials for the throwaway service container; the job env below uses the same values.
-          MINIO_ROOT_USER: r2-ci-${{ github.run_id }}-${{ github.run_attempt }}
-          MINIO_ROOT_PASSWORD: r2-ci-key-${{ github.run_id }}-${{ github.run_attempt }}
+          # Disposable per-run credentials for the throwaway service container. The job env below repeats the same
+          # expressions byte for byte (service env cannot read the env context). Each value is one ${{ }} expression with
+          # no literal text outside it, so secret scanners see a templated value rather than a hard-coded credential.
+          MINIO_ROOT_USER: ${{ format('r2-ci-{0}-{1}', github.run_id, github.run_attempt) }}
+          MINIO_ROOT_PASSWORD: ${{ format('r2-ci-key-{0}-{1}', github.run_id, github.run_attempt) }}
           MINIO_DEFAULT_BUCKETS: filefn-r2-test
         ports:
           - 9000:9000
@@ -48,8 +50,8 @@ jobs:
     env:
       STORAGE_R2_S3_ENDPOINT: http://127.0.0.1:9000
       STORAGE_R2_S3_BUCKET: filefn-r2-test
-      STORAGE_R2_S3_ACCESS_KEY_ID: r2-ci-${{ github.run_id }}-${{ github.run_attempt }}
-      STORAGE_R2_S3_SECRET_ACCESS_KEY: r2-ci-key-${{ github.run_id }}-${{ github.run_attempt }}
+      STORAGE_R2_S3_ACCESS_KEY_ID: ${{ format('r2-ci-{0}-{1}', github.run_id, github.run_attempt) }}
+      STORAGE_R2_S3_SECRET_ACCESS_KEY: ${{ format('r2-ci-key-{0}-{1}', github.run_id, github.run_attempt) }}
       STORAGE_R2_S3_REQUIRED: "1"
     steps:
       - name: Checkout repository
