@@ -1,0 +1,233 @@
+import { describe, expect, it } from 'vitest';
+import { memoryAdapter } from '../../../../packages/db/src/adapters/memory/index.js';
+import { authfn } from 'authfn';
+import { authFnOAuthProviderPlugin } from '../index.js';
+import {
+  MCP_HOST,
+  MEMOTRON,
+  ORIGIN,
+  POINTRON,
+  RESOURCES,
+  RFC6749_CLIENT,
+  RFC7636_VERIFIER,
+  RHOMBUS,
+  createProviderApp,
+  setupProvider
+} from './harness.js';
+
+describe('metadata (RFC 8414)', () => {
+  it('advertises PKCE S256 only, the code grant with refresh, and every endpoint', async () => {
+    const provider = await setupProvider();
+    const response = await provider.handle('/auth/.well-known/oauth-authorization-server');
+    expect(await response.json()).toMatchObject({
+      issuer: ORIGIN,
+      authorization_endpoint: `${ORIGIN}/auth/oauth/authorize`,
+      token_endpoint: `${ORIGIN}/auth/oauth/token`,
+      revocation_endpoint: `${ORIGIN}/auth/oauth/revoke`,
+      introspection_endpoint: `${ORIGIN}/auth/oauth/introspect`,
+      response_types_supported: ['code'],
+      grant_types_supported: ['authorization_code', 'refresh_token'],
+      code_challenge_methods_supported: ['S256'],
+      scopes_supported: ['memotron:read', 'memotron:write', 'pointron:read', 'pointron:write'],
+      authorization_response_iss_parameter_supported: true
+    });
+  });
+});
+
+describe('authorization endpoint', () => {
+  it('never redirects to an unverified client or redirect URI (RFC 6749 4.1.2.1, 3.1)', async () => {
+    const provider = await setupProvider();
+    const cases = [
+      provider.authorizeQuery({ client_id: 'unknown' }),
+      provider.authorizeQuery({ redirect_uri: 'https://attacker.example.com/cb' }),
+      provider.authorizeQuery({ redirect_uri: undefined }),
+      new URLSearchParams(`${provider.authorizeQuery()}&redirect_uri=https%3A%2F%2Fattacker.example.com%2Fcb`)
+    ];
+    for (const query of cases) {
+      const response = await provider.getAuthorize(query);
+      expect(response.status).toBe(400);
+      expect(response.headers.get('location')).toBeNull();
+      expect(await response.json()).toMatchObject({ error: 'invalid_request' });
+    }
+    expect(provider.consents).toHaveLength(0);
+  });
+
+  it('returns other request errors to the client with state and iss (RFC 6749 4.1.2.1, RFC 9207)', async () => {
+    const provider = await setupProvider();
+    const cases: Array<[Record<string, string | undefined>, string]> = [
+      [{ response_type: 'token' }, 'unsupported_response_type'],
+      [{ scope: 'memotron:admin' }, 'invalid_scope'],
+      [{ scope: 'pointron:read' }, 'invalid_scope']
+    ];
+    for (const [overrides, error] of cases) {
+      const location = new URL((await provider.getAuthorize(provider.authorizeQuery(overrides))).headers.get('location')!);
+      expect(location.origin + location.pathname).toBe('https://client.example.com/cb');
+      expect(Object.fromEntries(location.searchParams)).toMatchObject({ error, state: 'xyz', iss: ORIGIN });
+    }
+  });
+
+  it('hands an unauthenticated request to the login hook with a return URL', async () => {
+    const provider = await setupProvider();
+    const query = provider.authorizeQuery();
+    const response = await provider.getAuthorize(query, false);
+    expect(response.status).toBe(401);
+    expect(provider.logins[0].returnTo).toBe(`${ORIGIN}/auth/oauth/authorize?${query}`);
+  });
+
+  it('records a denial as access_denied and requires the CSRF token for a decision', async () => {
+    const provider = await setupProvider();
+    await provider.getAuthorize(provider.authorizeQuery());
+    const params = { ...provider.consents[0].params };
+
+    const forged = await provider.decide(params, 'approve', 'wrong-csrf');
+    expect(forged.status).toBe(403);
+
+    const denied = await provider.decide(params, 'deny');
+    const location = new URL((await denied.json() as { data: { redirectTo: string } }).data.redirectTo);
+    expect(location.searchParams.get('error')).toBe('access_denied');
+    expect(location.searchParams.get('state')).toBe('xyz');
+    expect(location.searchParams.has('code')).toBe(false);
+
+    // A tampered decision is validated again like the original request.
+    const tampered = await provider.decide({ ...params, redirect_uri: 'https://attacker.example.com/cb' }, 'approve');
+    expect(tampered.status).toBe(400);
+    expect(await tampered.json()).toMatchObject({ error: 'invalid_request' });
+  });
+
+  it('asks a trusted client for consent once per resource, and an untrusted client every time', async () => {
+    const provider = await setupProvider();
+    const rhombus = { redirect_uri: RHOMBUS.redirectUris[0], client_id: RHOMBUS.clientId, scope: 'memotron:read' };
+    await provider.authorize(rhombus, RHOMBUS);
+    expect(provider.consents).toHaveLength(1);
+    expect(provider.consents[0].client).toEqual({ clientId: 'rhombus', name: 'Rhombus', trusted: true });
+
+    const remembered = await provider.getAuthorize(provider.authorizeQuery(rhombus, RHOMBUS));
+    expect(remembered.status).toBe(302);
+    expect(new URL(remembered.headers.get('location')!).searchParams.get('code')).toEqual(expect.any(String));
+
+    await provider.getAuthorize(provider.authorizeQuery({ ...rhombus, scope: 'memotron:read memotron:write' }, RHOMBUS));
+    await provider.getAuthorize(provider.authorizeQuery({ ...rhombus, resource: POINTRON, scope: 'pointron:read' }, RHOMBUS));
+    expect(provider.consents).toHaveLength(3);
+
+    await provider.authorize();
+    await provider.getAuthorize(provider.authorizeQuery());
+    expect(provider.consents).toHaveLength(5);
+  });
+
+  it('accepts a loopback redirect on any port (RFC 8252 7.3)', async () => {
+    const provider = await setupProvider();
+    const callback = await provider.authorize({ redirect_uri: 'http://127.0.0.1:53682/callback' }, MCP_HOST);
+    expect(callback.port).toBe('53682');
+
+    const response = await provider.token({
+      grant_type: 'authorization_code',
+      client_id: MCP_HOST.clientId,
+      code: callback.searchParams.get('code')!,
+      redirect_uri: 'http://127.0.0.1:53682/callback',
+      code_verifier: RFC7636_VERIFIER
+    });
+    expect(response.status).toBe(200);
+
+    const otherPath = await provider.getAuthorize(provider.authorizeQuery({ redirect_uri: 'http://127.0.0.1:53682/other' }, MCP_HOST));
+    expect(otherPath.status).toBe(400);
+  });
+});
+
+describe('token endpoint', () => {
+  it('authenticates clients and binds codes to the client and redirect URI (RFC 6749 2.3.1, 4.1.3)', async () => {
+    const provider = await setupProvider();
+    const code = (await provider.authorize()).searchParams.get('code')!;
+
+    const wrongSecret = await provider.exchange(code, {}, { authorization: `Basic ${btoa('s6BhdRkqt3:nope')}` });
+    expect(wrongSecret.status).toBe(401);
+    expect(wrongSecret.headers.get('www-authenticate')).toContain('Basic');
+    expect(await wrongSecret.json()).toMatchObject({ error: 'invalid_client' });
+
+    const noSecret = await provider.exchange(code, { client_id: RFC6749_CLIENT.clientId }, {} as { authorization: string });
+    expect(await noSecret.json()).toMatchObject({ error: 'invalid_client' });
+
+    const otherClient = await provider.exchange(code, { client_id: MCP_HOST.clientId }, {} as { authorization: string });
+    expect(await otherClient.json()).toMatchObject({ error: 'invalid_grant' });
+
+    const otherRedirect = await provider.exchange(code, { redirect_uri: 'https://client.example.com/other' });
+    expect(await otherRedirect.json()).toMatchObject({ error: 'invalid_grant' });
+
+    const unsupported = await provider.token({ grant_type: 'password' }, { authorization: 'Basic czZCaGRSa3F0MzpnWDFmQmF0M2JW' });
+    expect(await unsupported.json()).toMatchObject({ error: 'unsupported_grant_type' });
+
+    const json = await provider.handle('/auth/oauth/token', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ grant_type: 'authorization_code', code })
+    });
+    expect(await json.json()).toMatchObject({ error: 'invalid_request' });
+
+    expect((await provider.exchange(code)).status).toBe(200);
+  });
+
+  it('narrows a refresh to a subset of the granted scopes only', async () => {
+    const provider = await setupProvider();
+    const issued = await provider.obtainTokens();
+    const wider = await provider.refresh(issued.refresh_token, { scope: 'memotron:read pointron:read' });
+    expect(await wider.json()).toMatchObject({ error: 'invalid_scope' });
+
+    const narrowed = await (await provider.refresh(issued.refresh_token, { scope: 'memotron:read' })).json() as {
+      access_token: string;
+      refresh_token: string;
+      scope: string;
+    };
+    expect(narrowed.scope).toBe('memotron:read');
+    expect((await provider.introspect(narrowed.access_token)).body.scope).toBe('memotron:read');
+    expect(await (await provider.refresh(narrowed.refresh_token)).json()).toMatchObject({ scope: 'memotron:read memotron:write' });
+  });
+
+  it('stops honouring tokens of a user who was deleted or disabled', async () => {
+    const provider = await setupProvider();
+    const issued = await provider.obtainTokens();
+    await provider.database.update({
+      model: 'users',
+      where: [{ field: 'id', operator: 'eq', value: provider.user.id }],
+      data: { metadata: { disabled: true } },
+      namespace: 'authfn'
+    });
+    expect((await provider.introspect(issued.access_token)).body).toEqual({ active: false });
+    expect(await (await provider.refresh(issued.refresh_token)).json()).toMatchObject({ error: 'invalid_grant' });
+  });
+});
+
+describe('introspection (RFC 7662)', () => {
+  it('requires a resource server credential', async () => {
+    const provider = await setupProvider();
+    const issued = await provider.obtainTokens();
+    const unauthenticated = await provider.introspect(issued.access_token, 'not-a-secret');
+    expect(unauthenticated.status).toBe(401);
+    expect(unauthenticated.body).toMatchObject({ error: 'invalid_token' });
+    expect((await provider.introspect(issued.refresh_token)).body).toEqual({ active: false });
+  });
+});
+
+describe('configuration', () => {
+  const hooks = { loginRequired: () => new Response(null), consent: () => new Response(null) };
+
+  it('rejects a provider whose resources offer scopes outside the AuthFn registry', () => {
+    const create = (resources: typeof RESOURCES) => createProviderApp().createServer({
+      database: memoryAdapter({ debug: false }),
+      pluginRuntime: { oauthProvider: { clients: [], resources, ...hooks } }
+    });
+    expect(() => create([{ resource: MEMOTRON, scopes: ['memotron:admin'] }]))
+      .toThrow(expect.objectContaining({ code: 'AUTHFN_CONFIG_INVALID' }));
+    expect(() => create([{ resource: 'not a uri', scopes: ['memotron:read'] }]))
+      .toThrow(expect.objectContaining({ code: 'AUTHFN_CONFIG_INVALID' }));
+    expect(() => create(RESOURCES)).not.toThrow();
+  });
+
+  it('declares its tables in the AuthFn schema', () => {
+    const tables = authfn({ plugins: [authFnOAuthProviderPlugin()] }).getSchema().schemas.map((table) => table.modelName);
+    expect(tables).toEqual(expect.arrayContaining([
+      'oauth_provider_grants',
+      'oauth_provider_codes',
+      'oauth_provider_tokens',
+      'oauth_provider_consents'
+    ]));
+  });
+});
