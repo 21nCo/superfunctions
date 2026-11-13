@@ -2059,10 +2059,21 @@ describe('@billfn/core', () => {
     const firstClaimGate = new Promise<void>((resolve) => {
       releaseFirstClaim = resolve;
     });
+    let subscriptionWrites = 0;
     const gatedDb = {
       ...db,
+      async update<T>(params: Parameters<typeof db.update>[0]): Promise<T | null> {
+        const updated = await db.update<T>(params);
+        if (params.model === 'subscriptions' && updated) {
+          subscriptionWrites += 1;
+        }
+        return updated;
+      },
       async updateMany(params: Parameters<typeof db.updateMany>[0]): Promise<number> {
         const affected = await db.updateMany(params);
+        if (params.model === 'subscriptions' && affected === 1) {
+          subscriptionWrites += 1;
+        }
         if (
           params.model === 'webhookReceipts' &&
           String(params.data.processingJobId).startsWith(`${firstReplayJobId}:attempt:`) &&
@@ -2108,7 +2119,10 @@ describe('@billfn/core', () => {
       where: [{ field: 'type', operator: 'eq', value: 'billfn.subscription.active' }],
       namespace: 'billfn'
     });
-    expect(eventsAfter).toHaveLength(eventsBefore.length + 1);
+    // Only the claim holder applies the event; its lifecycle entry is keyed by the provider event, which
+    // the original delivery already recorded.
+    expect(subscriptionWrites).toBe(1);
+    expect(eventsAfter).toHaveLength(eventsBefore.length);
   });
 
   it('skips already processed notification-history receipts during replay', async () => {

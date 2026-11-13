@@ -2229,3 +2229,220 @@ describe('ordered replay and committed provider mutations (PR #308 round 1)', ()
     expect(await billingEventTypes(store)).toContain('billfn.subscription.past_due');
   });
 });
+
+describe('committed mutation window and concurrent replay (PR #308 round 1 delta review)', () => {
+  async function bootstrapped(principalId: string, subscriptionId: string, provider: BillFnProviderAdapter) {
+    const db = memoryAdapter({ debug: false });
+    const clock = { current: new Date('2026-11-01T00:00:01.000Z') };
+    const billfn = createBillFn({ db, catalog, now: () => clock.current, providers: { dodo: provider } });
+    await billfn.quotaProvider.recordUsage({ principalId, bytes: 0 });
+    await deliver(billfn, [
+      subscriptionEvent({
+        eventId: `evt_${principalId}_bootstrap`,
+        subscriptionId,
+        status: 'active',
+        occurredAt: '2026-10-30T00:00:00.000Z',
+        billingAccountId: `ba_user_${principalId}`
+      })
+    ]);
+    const stored = async () =>
+      (await db.findMany<BillFnSubscription>({ model: 'subscriptions', where: [], namespace: 'billfn' }))[0];
+    return { db, clock, billfn, stored };
+  }
+
+  it.each([
+    ['changeSubscription', 'subscriptionChangeRequests'],
+    ['refundCharge', 'refunds']
+  ] as const)(
+    'keeps an event that occurred after %s returned and was applied while its record was written',
+    async (operation, recordModel) => {
+      const clock = { current: new Date('2026-11-01T00:00:01.000Z') };
+      let billfn!: ReturnType<typeof createBillFn>;
+      // The provider call returns at t3; a cancellation occurring at t4 is applied while the mutation
+      // writes its own record, before it applies the returned state at t5.
+      const committed = async () => {
+        clock.current = new Date('2026-11-01T00:00:03.000Z');
+        return {
+          operationStatus: 'applied' as const,
+          providerRefundId: 're_window',
+          billingState: { subscriptionStatus: 'active' as const, checkoutStatus: 'succeeded' as const, providerSubscriptionId: 'sub_record', autoRenew: true }
+        };
+      };
+      const base = createProvider({});
+      const provider: BillFnProviderAdapter = {
+        ...base,
+        capabilities: { ...base.capabilities, changeSubscription: true, refundCharge: true },
+        changeSubscription: committed,
+        refundCharge: committed
+      };
+      const inner = memoryAdapter({ debug: false });
+      const db = interceptDb(inner, {
+        create: async (params, next) => {
+          const created = await next();
+          if (params.model === recordModel) {
+            clock.current = new Date('2026-11-01T00:00:04.000Z');
+            await deliver(billfn, [
+              subscriptionEvent({ eventId: `evt_record_${operation}`, subscriptionId: 'sub_record', status: 'canceled', occurredAt: clock.current.toISOString() })
+            ]);
+            clock.current = new Date('2026-11-01T00:00:05.000Z');
+          }
+          return created;
+        }
+      });
+      billfn = createBillFn({ db, catalog, now: () => clock.current, providers: { dodo: provider } });
+      await billfn.quotaProvider.recordUsage({ principalId: 'record_user', bytes: 0 });
+      await deliver(billfn, [
+        subscriptionEvent({
+          eventId: 'evt_record_bootstrap',
+          subscriptionId: 'sub_record',
+          chargeId: 'pay_record',
+          status: 'active',
+          occurredAt: '2026-10-30T00:00:00.000Z',
+          billingAccountId: 'ba_user_record_user'
+        })
+      ]);
+      const subject = { principalId: 'record_user' };
+
+      const response =
+        operation === 'changeSubscription'
+          ? await billfn.changeSubscription({ subject, targetPriceId: 'price_pro_dodo_month' })
+          : await billfn.refundCharge({ subject });
+
+      expect(response.ok && response.data.subscription).toMatchObject({ status: 'canceled' });
+      const [stored] = await inner.findMany<BillFnSubscription>({ model: 'subscriptions', where: [], namespace: 'billfn' });
+      expect(stored).toMatchObject({
+        status: 'canceled',
+        metadata: expect.objectContaining({ billfnProviderEventOccurredAt: '2026-11-01T00:00:04.000Z' })
+      });
+      const entitlements = await billfn.getEntitlements(subject);
+      expect(entitlements.ok && entitlements.data.entitlements?.status).toBe('inactive');
+    }
+  );
+
+  it('reconciles with a provider read when an event inside a committed mutation window arrives after it', async () => {
+    const providerCalls: string[] = [];
+    const base = createProvider({});
+    const provider: BillFnProviderAdapter = {
+      ...base,
+      capabilities: { ...base.capabilities, resumeSubscription: true, syncSubscription: true },
+      async resumeSubscription() {
+        providerCalls.push('resumeSubscription');
+        env.clock.current = new Date('2026-11-01T00:00:03.000Z');
+        return {
+          operationStatus: 'applied',
+          billingState: { subscriptionStatus: 'active', checkoutStatus: 'succeeded', providerSubscriptionId: 'sub_window', autoRenew: true }
+        };
+      },
+      async fetchSubscription(input: { subscription: BillFnSubscription }) {
+        providerCalls.push('fetchSubscription');
+        return {
+          subscriptionStatus: 'past_due' as const,
+          checkoutStatus: 'succeeded' as const,
+          providerSubscriptionId: input.subscription.providerSubscriptionId,
+          autoRenew: true,
+          raw: { synced: true }
+        };
+      }
+    };
+    const env = await bootstrapped('window_user', 'sub_window', provider);
+
+    const resumed = await env.billfn.resumeSubscription({ subject: { principalId: 'window_user' } });
+    expect(resumed.ok && resumed.data.subscription).toMatchObject({ status: 'active' });
+
+    // An event older than the call start is ordinary out-of-order delivery: skipped, no provider read.
+    env.clock.current = new Date('2026-11-01T00:00:04.000Z');
+    await deliver(env.billfn, [
+      subscriptionEvent({ eventId: 'evt_window_before', subscriptionId: 'sub_window', status: 'canceled', occurredAt: '2026-11-01T00:00:00.500Z' })
+    ]);
+    expect(await env.stored()).toMatchObject({ status: 'active' });
+    expect(providerCalls).toEqual(['resumeSubscription']);
+
+    // An event between the call start (t1) and its return (t3) cannot be ordered against the resume.
+    env.clock.current = new Date('2026-11-01T00:00:05.000Z');
+    const delivered = await deliver(env.billfn, [
+      subscriptionEvent({ eventId: 'evt_window_inside', subscriptionId: 'sub_window', status: 'past_due', occurredAt: '2026-11-01T00:00:02.000Z' })
+    ]);
+
+    expect(delivered.ok).toBe(true);
+    expect(providerCalls).toEqual(['resumeSubscription', 'fetchSubscription']);
+    expect(await env.stored()).toMatchObject({ status: 'past_due' });
+    const entitlements = await env.billfn.getEntitlements({ principalId: 'window_user' });
+    expect(entitlements.ok && entitlements.data.entitlements?.status).toBe('grace');
+
+    // The read closed the window: another in-window event is skipped without a second read.
+    await deliver(env.billfn, [
+      subscriptionEvent({ eventId: 'evt_window_inside_again', subscriptionId: 'sub_window', status: 'canceled', occurredAt: '2026-11-01T00:00:02.500Z' })
+    ]);
+    expect(providerCalls).toEqual(['resumeSubscription', 'fetchSubscription']);
+    expect(await env.stored()).toMatchObject({ status: 'past_due' });
+  });
+
+  it('applies an event inside a committed mutation window when the provider cannot be read', async () => {
+    const base = createProvider({});
+    const provider: BillFnProviderAdapter = {
+      ...base,
+      capabilities: { ...base.capabilities, resumeSubscription: true },
+      async resumeSubscription() {
+        env.clock.current = new Date('2026-11-01T00:00:03.000Z');
+        return {
+          operationStatus: 'applied',
+          billingState: { subscriptionStatus: 'active', checkoutStatus: 'succeeded', providerSubscriptionId: 'sub_unread', autoRenew: true }
+        };
+      }
+    };
+    const env = await bootstrapped('unread_user', 'sub_unread', provider);
+    await env.billfn.resumeSubscription({ subject: { principalId: 'unread_user' } });
+    env.clock.current = new Date('2026-11-01T00:00:04.000Z');
+
+    await deliver(env.billfn, [
+      subscriptionEvent({ eventId: 'evt_unread_inside', subscriptionId: 'sub_unread', status: 'past_due', occurredAt: '2026-11-01T00:00:02.000Z' })
+    ]);
+
+    expect(await env.stored()).toMatchObject({ status: 'past_due' });
+  });
+
+  it('replays events for a reference another replay run linked before it finished', async () => {
+    let interfered = false;
+    const inner = memoryAdapter({ debug: false });
+    const db = interceptDb(inner, {
+      updateMany: async (params, next) => {
+        const data = params.data as { status?: string };
+        const id = params.where.find((clause) => clause.field === 'id')?.value;
+        if (!interfered && params.model === 'unlinkedWebhookEvents' && data.status === 'replaying' && String(id).includes('ZXZ0X2NvbmN1cl8x')) {
+          // Another run applies the first row, linking pay_concur, and stops before replaying that charge.
+          interfered = true;
+          const [subscription] = await inner.findMany<BillFnSubscription>({ model: 'subscriptions', where: [], namespace: 'billfn' });
+          await inner.updateMany({ model: 'subscriptions', where: [{ field: 'id', operator: 'eq', value: subscription.id }], data: { providerChargeId: 'pay_concur' }, namespace: 'billfn' });
+          await inner.updateMany({ model: 'unlinkedWebhookEvents', where: [{ field: 'id', operator: 'eq', value: String(id) }], data: { status: 'replayed' }, namespace: 'billfn' });
+        }
+        return next();
+      }
+    });
+    const { billfn, subscriptions, unlinked, advance } = setup({ db });
+    await billfn.quotaProvider.recordUsage({ principalId: 'concur_user', bytes: 0 });
+    await deliver(billfn, [
+      subscriptionEvent({ eventId: 'evt_concur_1', subscriptionId: 'sub_concur', chargeId: 'pay_concur', status: 'active', occurredAt: '2026-10-31T00:00:00.000Z' })
+    ]);
+    await deliver(billfn, [
+      subscriptionEvent({ eventId: 'evt_concur_2', chargeId: 'pay_concur', status: 'canceled', occurredAt: '2026-10-31T12:00:00.000Z' })
+    ]);
+    advance(1000);
+
+    await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_concur_0',
+        subscriptionId: 'sub_concur',
+        status: 'active',
+        occurredAt: '2026-10-30T00:00:00.000Z',
+        billingAccountId: 'ba_user_concur_user'
+      })
+    ]);
+
+    expect(interfered).toBe(true);
+    expect((await unlinked()).map((row) => [row.providerEventId, row.status])).toEqual([
+      ['evt_concur_1', 'replayed'],
+      ['evt_concur_2', 'replayed']
+    ]);
+    expect(await subscriptions()).toEqual([expect.objectContaining({ status: 'canceled', providerChargeId: 'pay_concur' })]);
+  });
+});

@@ -87,6 +87,8 @@ const TABLES = {
 } as const;
 
 const PROVIDER_EVENT_OCCURRED_AT_METADATA_KEY = 'billfnProviderEventOccurredAt';
+/** When the committed provider mutation that set the provider-state time started; it opens that mutation's window. */
+const PROVIDER_MUTATION_STARTED_AT_METADATA_KEY = 'billfnProviderMutationStartedAt';
 const WEBHOOK_RECEIPT_CLAIM_LEASE_MS = 15 * 60 * 1000;
 const RECONCILIATION_JOB_CLAIM_LEASE_MS = 15 * 60 * 1000;
 /** Unlinked webhook events are kept this long for a later link to replay them. */
@@ -134,6 +136,8 @@ type ServiceDeps = {
   generateId: (prefix: string) => string;
   metrics: MetricsEmitter;
   queue?: BillFnQueueAdapter<BillFnQueuedJob>;
+  /** Reconciles a subscription with a provider read (a sync job with a queue, otherwise inline); never throws. */
+  reconcileProviderState?: (subscription: BillFnSubscription) => Promise<void>;
 };
 
 type VerifiedBillingState = NonNullable<Awaited<ReturnType<NonNullable<BillFnProviderAdapter['verifyCheckout']>>>>;
@@ -161,7 +165,7 @@ type ApplyVerificationStateInput = {
    * with this provider-state time.
    */
   committedAt?: string;
-  /** A retained provider event being replayed, which keys its lifecycle billing event so a re-apply records it once. */
+  /** The applied provider event, which keys its lifecycle billing event so a redelivery or replay records it once. */
   providerEventId?: string;
 };
 type ProjectionResult = {
@@ -208,6 +212,9 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
     generateId,
     metrics,
     queue: config.queue
+  };
+  deps.reconcileProviderState = async (subscription) => {
+    await reconcileCommittedMutation(subscription);
   };
 
   const subscriptionProvider = {
@@ -347,20 +354,17 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
 
   /**
    * Applies the provider state a committed provider mutation (cancel, change,
-   * resume, refund) returned, called as soon as the provider call returns.
+   * resume, refund) returned. `committedAt` is taken as soon as the provider
+   * call returns, before any other write.
    * Retained events that cannot be replayed now do not fail the mutation; with a
    * queue and a provider that supports sync, a subscription-sync job is enqueued
    * to replay them. When a provider event was applied while the mutation was in
    * flight, the subscription is reconciled with an authoritative provider read.
    */
   async function applyMutationProviderState(
-    input: ApplyVerificationStateInput & { occurredAt?: undefined; liveStateObservedAt: string }
+    input: ApplyVerificationStateInput & { occurredAt?: undefined; liveStateObservedAt: string; committedAt: string }
   ) {
-    const projection = await applyLiveProviderState(
-      deps,
-      { ...input, committedAt: toIsoString(deps.now()) },
-      { onReplayDeferred: scheduleSubscriptionSync }
-    );
+    const projection = await applyLiveProviderState(deps, input, { onReplayDeferred: scheduleSubscriptionSync });
     if (!projection.providerStateRaced) {
       return projection;
     }
@@ -425,6 +429,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
     entitlementPlan: ReturnType<typeof requirePlan>;
     operation: Pick<BillFnProviderOperationResult, 'operationStatus' | 'billingState'> & { clientAction?: BillFnProviderOperationResult['clientAction'] };
     liveStateObservedAt: string;
+    /** When the provider call returned, taken before any other write; the mutation's commit time. */
     timestamp: string;
     eventType: string;
     eventPayload: Record<string, unknown>;
@@ -437,7 +442,8 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
           price: input.price,
           subscription,
           state: operation.billingState,
-          liveStateObservedAt: input.liveStateObservedAt
+          liveStateObservedAt: input.liveStateObservedAt,
+          committedAt: input.timestamp
         })
       : {
           subscription,
@@ -789,6 +795,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
           currentPeriodEnd: subscription.currentPeriodEnd
         }
       };
+      const committedAt = toIsoString(deps.now());
 
       return ok(
         await finishSubscriptionMutation({
@@ -799,7 +806,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
           entitlementPlan: plan,
           operation,
           liveStateObservedAt,
-          timestamp: toIsoString(deps.now()),
+          timestamp: committedAt,
           eventType: 'billfn.subscription.cancel.requested',
           eventPayload: { reason: input.reason }
         })
@@ -878,6 +885,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
       const operation = await provider.resumeSubscription({
         subscription
       });
+      const committedAt = toIsoString(deps.now());
 
       return ok(
         await finishSubscriptionMutation({
@@ -888,7 +896,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
           entitlementPlan: plan,
           operation,
           liveStateObservedAt,
-          timestamp: toIsoString(deps.now()),
+          timestamp: committedAt,
           eventType: 'billfn.subscription.resume.requested',
           eventPayload: {}
         })
@@ -955,7 +963,8 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
           price,
           subscription,
           state: operation.billingState,
-          liveStateObservedAt
+          liveStateObservedAt,
+          committedAt: timestamp
         });
         projectedSubscription = projection.subscription;
         projectedEntitlements = projection.entitlements;
@@ -2301,13 +2310,10 @@ async function applyVerificationState(
         message: 'Provider billing reference belongs to a different billing account'
       });
     }
-    if (
-      baseSubscription &&
-      input.occurredAt &&
-      isProviderEventOlderThanSubscription(baseSubscription, input.occurredAt)
-    ) {
+    const order = baseSubscription && input.occurredAt ? orderProviderEvent(deps, baseSubscription, input.occurredAt) : 'apply';
+    if (baseSubscription && order !== 'apply') {
       // The older event's state is skipped, but a reference it adds still belongs to this subscription.
-      await linkSkippedEventReferences(deps, baseSubscription, input.state);
+      await skipOlderProviderEvent(deps, baseSubscription, input.state, order);
       return null;
     }
 
@@ -2357,12 +2363,14 @@ async function applyVerificationState(
       await Promise.resolve();
       continue;
     }
-    const mergedMetadata = mergeJson(baseSubscription?.metadata, input.state.raw);
+    // A state write closes the window of an earlier committed mutation; a committed mutation opens its own.
+    const mergedMetadata = withoutMutationWindow(mergeJson(baseSubscription?.metadata, input.state.raw));
     const providerStateAt = providerStateTimeFor(input.occurredAt, supersededBefore, baseSubscription);
     const metadata = providerStateAt
       ? {
           ...mergedMetadata,
-          [PROVIDER_EVENT_OCCURRED_AT_METADATA_KEY]: providerStateAt
+          [PROVIDER_EVENT_OCCURRED_AT_METADATA_KEY]: providerStateAt,
+          ...(input.committedAt ? { [PROVIDER_MUTATION_STARTED_AT_METADATA_KEY]: input.liveStateObservedAt } : {})
         }
       : mergedMetadata;
 
@@ -3067,15 +3075,14 @@ async function applyParsedWebhookEvent(
   deps: ServiceDeps,
   providerName: BillingProviderName,
   event: ParsedProviderEvent & { billingState: VerifiedBillingState },
-  projection: ProviderProjectionContext,
-  options: { keyBillingEventByProviderEvent?: boolean } = {}
+  projection: ProviderProjectionContext
 ) {
-  if (
-    projection.subscription &&
-    event.occurredAt &&
-    isProviderEventOlderThanSubscription(projection.subscription, event.occurredAt)
-  ) {
-    await linkSkippedEventReferences(deps, projection.subscription, event.billingState);
+  const order =
+    projection.subscription && event.occurredAt
+      ? orderProviderEvent(deps, projection.subscription, event.occurredAt)
+      : 'apply';
+  if (projection.subscription && order !== 'apply') {
+    await skipOlderProviderEvent(deps, projection.subscription, event.billingState, order);
     deps.metrics.track('reconciliation.event.skipped', {
       provider: providerName,
       providerEventId: event.providerEventId,
@@ -3092,7 +3099,8 @@ async function applyParsedWebhookEvent(
     subscription: projection.subscription ?? undefined,
     state: event.billingState,
     occurredAt: event.occurredAt,
-    providerEventId: options.keyBillingEventByProviderEvent ? event.providerEventId : undefined
+    // The provider event keys its lifecycle entry, so a delivery and a replay of it record it once.
+    providerEventId: event.providerEventId
   });
   if (!applied) {
     deps.metrics.track('reconciliation.event.skipped', {
@@ -3347,12 +3355,11 @@ async function replayUnlinkedWebhookEvents(
       result.pending = queue.remaining() + 1;
       break;
     }
-    if (step === 'finished') {
-      // Applied events, and skipped ones that linked a missing reference, can add a reference.
-      const current = await getSubscriptionById(deps, subscription.id);
-      if (current) {
-        await queue.discover(current);
-      }
+    // Applied events, skipped ones that linked a missing reference, and events another run finished
+    // (which may have stopped before replaying what they linked) can add a reference.
+    const current = await getSubscriptionById(deps, subscription.id);
+    if (current) {
+      await queue.discover(current);
     }
   }
   if (!result.held && !result.failure && queue.remaining() > 0) {
@@ -3421,6 +3428,7 @@ async function findUnlinkedWebhookEventsForReferences(
  * Claims and applies one retained event, then finishes or releases its row.
  * `finished`: applied or skipped; `continue`: finished by another run, or no
  * longer resolves and stays unlinked; `stopped`: held by another run or failed.
+ * The caller looks for newly linked references after every step but `stopped`.
  */
 async function replayUnlinkedWebhookEvent(
   deps: ServiceDeps,
@@ -3531,9 +3539,7 @@ async function applyUnlinkedWebhookEvent(deps: ServiceDeps, row: BillFnUnlinkedW
     deps,
     row.provider,
     { ...event, occurredAt, billingState: state },
-    projection,
-    // A replay taken over after an interrupted run applies the event again; its lifecycle entry is recorded once.
-    { keyBillingEventByProviderEvent: true }
+    projection
   );
   return {
     status: applied ? ('replayed' as const) : ('skipped' as const),
@@ -3915,6 +3921,54 @@ function isProviderEventOlderThanSubscription(subscription: BillFnSubscription, 
   const incomingTime = parseProviderEventTime(occurredAt);
   const currentTime = parseProviderEventTime(lastOccurredAt);
   return incomingTime !== null && currentTime !== null && incomingTime < currentTime;
+}
+
+/**
+ * Orders an event against the subscription's provider state. A newer event is
+ * applied and an older one skipped. An event inside the window of the committed
+ * provider mutation that set that state (after the provider call started, not
+ * after it returned) cannot be ordered against the mutation: it is skipped and
+ * the subscription reconciled with a provider read, or applied (the later write
+ * wins) when the provider cannot be read.
+ */
+function orderProviderEvent(
+  deps: ServiceDeps,
+  subscription: BillFnSubscription,
+  occurredAt: string
+): 'apply' | 'skip' | 'reconcile' {
+  if (!isProviderEventOlderThanSubscription(subscription, occurredAt)) {
+    return 'apply';
+  }
+  const metadata = asRecord(subscription.metadata);
+  const startedAt = metadata ? readString(metadata, PROVIDER_MUTATION_STARTED_AT_METADATA_KEY) : null;
+  const startTime = startedAt ? parseProviderEventTime(startedAt) : null;
+  const incomingTime = parseProviderEventTime(occurredAt);
+  if (startTime === null || incomingTime === null || incomingTime <= startTime) {
+    return 'skip';
+  }
+  return typeof deps.providers[subscription.provider]?.fetchSubscription === 'function' ? 'reconcile' : 'apply';
+}
+
+function withoutMutationWindow(metadata: Record<string, unknown> | undefined) {
+  if (!metadata || !(PROVIDER_MUTATION_STARTED_AT_METADATA_KEY in metadata)) {
+    return metadata;
+  }
+  const { [PROVIDER_MUTATION_STARTED_AT_METADATA_KEY]: _closed, ...rest } = metadata;
+  return rest;
+}
+
+/** Skips an older event: links its missing references and, inside a committed mutation's window, reconciles. */
+async function skipOlderProviderEvent(
+  deps: ServiceDeps,
+  subscription: BillFnSubscription,
+  state: Pick<VerifiedBillingState, 'providerSubscriptionId' | 'providerChargeId'>,
+  order: 'skip' | 'reconcile'
+) {
+  const linked = await linkSkippedEventReferences(deps, subscription, state);
+  if (order === 'reconcile') {
+    deps.metrics.track('subscription.mutation.window_event', { provider: linked.provider, subscriptionId: linked.id });
+    await deps.reconcileProviderState?.(linked);
+  }
 }
 
 function nextSubscriptionUpdatedAt(now: Date, previous?: string) {
