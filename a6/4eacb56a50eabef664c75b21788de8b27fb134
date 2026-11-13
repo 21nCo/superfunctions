@@ -1,0 +1,23 @@
+filefn/client/src/types.ts
+  s_5094774efed4fe::t_6b2239ea031982 59-62,64-65,67-68
+filefn/server/src/__tests__/client-file-ids.test.ts
+  s_5094774efed4fe::t_8bb09d8bdb9b4d 27,75-82,124-134,140-142,147-149,160-170,228-248,333-348,350-402,404-406,408-410,412-415,448-456
+filefn/server/src/upload-sessions/service.ts
+  s_5094774efed4fe::t_6d44e0fe7ac309 97,250-251,267,269-276,278,283-285,287-288,302-345,859-862,864-880,882-892,895-902,904-909,911-930,932-939,943-948,950-952,956-977,982-1010
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a64eacb56a50eabef664c75b21788de8b27fb134",
+  "prompts": {},
+  "sessions": {
+    "s_5094774efed4fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_5094774efed4fe",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
