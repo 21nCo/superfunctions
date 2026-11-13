@@ -1,0 +1,23 @@
+billfn/core/src/__tests__/unlinked-webhooks.test.ts
+  s_c719faa707762b::t_8463cf8188000a 12,36-53,302-412,801-802,833,848-849,874,1324-1325,1327,1360-1362,1392-1399,1769-1777,1781,1884,2001-2002,2004,2017,2390,2459-2461,2476,2493,2498-2500,2518-2818
+billfn/core/src/service.ts
+  s_c719faa707762b::t_f42c1c86fc8b9d 139-144,146,221-222,320-326,341-342,347-348,356-367,445-446,2329,2335-2338,2549,2556-2557,2600,2609,2629-2665,3112,3187-3189,3356-3357,3365-3369,3394-3397,3408,3421-3426,3429,3434-3437,3440,3445,3684-3686,3690-3705,3760,3801-3810,4006-4007,4009,4020,4033-4037,4042,4044-4052
+billfn/docs/content/docs/server/reconciliation.mdx
+  s_c719faa707762b::t_4228c764a2c10e 38,42,46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b93ed383acdf926ef5e018aa363101d08e37b966",
+  "prompts": {},
+  "sessions": {
+    "s_c719faa707762b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0d229937-ba84-4ae8-ba85-eced28f5d576",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
