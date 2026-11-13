@@ -31,10 +31,15 @@ interface Observation {
 
 type Listener = (observation: Observation) => void;
 
-/** The method and URL of an XMLHttpRequest's current open(). */
+/**
+ * The method and URL of an XMLHttpRequest's current open(). `input` is the
+ * URL argument as passed; `url` is filled in from it only after the page's
+ * open() has read it.
+ */
 interface XhrRecord {
   method: string;
-  url: string;
+  input: unknown;
+  url?: string;
 }
 
 let listeners = new Set<Listener>();
@@ -54,6 +59,44 @@ type Field = unknown;
 // The intrinsics a plain array uses when the platform iterates it.
 const ARRAY_ITERATOR = Array.prototype[Symbol.iterator];
 const ARRAY_ITERATOR_NEXT = Object.getPrototypeOf([][Symbol.iterator]()).next as unknown;
+
+type Intrinsic = (...values: unknown[]) => unknown;
+const { apply } = Reflect;
+const platform = globalThis as Record<string, unknown>;
+
+function prototypeOf(constructor: unknown): object | undefined {
+  return typeof constructor === "function" ? (constructor.prototype as object) : undefined;
+}
+
+/** A prototype's own getter (or, with "value", method). */
+function intrinsic(prototype: object | undefined, key: PropertyKey, kind: "get" | "value" = "get"): Intrinsic | undefined {
+  const found: unknown = prototype && Object.getOwnPropertyDescriptor(prototype, key)?.[kind];
+  return typeof found === "function" ? (found as Intrinsic) : undefined;
+}
+
+// The platform getters and methods observation reads through, captured once
+// when this module loads: a getter or method the page patches later never runs.
+const URL_PROTOTYPE = prototypeOf(platform.URL);
+const URL_HREF = intrinsic(URL_PROTOTYPE, "href");
+const URL_TO_STRING = intrinsic(URL_PROTOTYPE, "toString", "value");
+const REQUEST_PROTOTYPE = prototypeOf(platform.Request);
+const REQUEST_URL = intrinsic(REQUEST_PROTOTYPE, "url");
+const REQUEST_METHOD = intrinsic(REQUEST_PROTOTYPE, "method");
+const REQUEST_HEADERS = intrinsic(REQUEST_PROTOTYPE, "headers");
+const RESPONSE_PROTOTYPE = prototypeOf(platform.Response);
+const RESPONSE_STATUS = intrinsic(RESPONSE_PROTOTYPE, "status");
+const RESPONSE_STATUS_TEXT = intrinsic(RESPONSE_PROTOTYPE, "statusText");
+const RESPONSE_HEADERS = intrinsic(RESPONSE_PROTOTYPE, "headers");
+const HEADERS = typeof platform.Headers === "function" ? (platform.Headers as typeof Headers) : undefined;
+const HEADERS_PROTOTYPE = prototypeOf(HEADERS);
+const HEADERS_FOR_EACH = intrinsic(HEADERS_PROTOTYPE, "forEach", "value");
+const HEADERS_ITERATOR = intrinsic(HEADERS_PROTOTYPE, Symbol.iterator, "value");
+const EVENT_TARGET_PROTOTYPE = prototypeOf(platform.EventTarget);
+const ADD_LISTENER = intrinsic(EVENT_TARGET_PROTOTYPE, "addEventListener", "value");
+const REMOVE_LISTENER = intrinsic(EVENT_TARGET_PROTOTYPE, "removeEventListener", "value");
+const XHR_PROTOTYPE = prototypeOf(platform.XMLHttpRequest);
+const XHR_STATUS = intrinsic(XHR_PROTOTYPE, "status");
+const XHR_STATUS_TEXT = intrinsic(XHR_PROTOTYPE, "statusText");
 
 function text(value: string): string {
   return truncateToBytes(value, MAX_ENTRY_BYTES) ?? "";
@@ -80,15 +123,17 @@ function optionField(target: object, key: string): Field {
   return key in target ? UNREADABLE : undefined;
 }
 
-function isInstance(value: unknown, constructor: unknown): value is object {
-  return typeof constructor === "function" && typeof value === "object" && value !== null && value instanceof constructor;
-}
-
-/** Reads a platform attribute through the platform's own getter, never an override. */
-function platformRead(constructor: unknown, key: string, target: object): Field {
-  if (typeof constructor !== "function") return UNREADABLE;
-  const get = Object.getOwnPropertyDescriptor(constructor.prototype, key)?.get;
-  return get ? get.call(target) : UNREADABLE;
+/**
+ * Reads a platform attribute through its captured getter, whose brand check
+ * also rejects anything that is not that platform object: unreadable then.
+ */
+function platformRead(get: Intrinsic | undefined, target: unknown): Field {
+  if (!get || typeof target !== "object" || target === null) return UNREADABLE;
+  try {
+    return apply(get, target, []);
+  } catch {
+    return UNREADABLE;
+  }
 }
 
 /** An array the platform iterates with the built-in array iterator. */
@@ -102,14 +147,17 @@ function isPlainArray(value: unknown): value is unknown[] {
   );
 }
 
-/** Pairs of a platform `Headers` that is not a subclass, read through the platform's `forEach`. */
-function platformHeaderPairs(value: Headers): Array<[string, string]> | undefined {
-  // A subclass or an own iterator may make the platform send other pairs.
-  if (Object.getPrototypeOf(value) !== Headers.prototype || Object.getOwnPropertyDescriptor(value, Symbol.iterator)) return undefined;
+/** Pairs of a platform `Headers` that is not a subclass, read through the captured `forEach`. */
+function platformHeaderPairs(value: object): Array<[string, string]> | undefined {
+  // An own or replaced iterator may make the platform send other pairs.
+  if (!HEADERS_FOR_EACH || Object.getOwnPropertyDescriptor(value, Symbol.iterator)) return undefined;
+  if (intrinsic(HEADERS_PROTOTYPE, Symbol.iterator, "value") !== HEADERS_ITERATOR) return undefined;
   const pairs: Array<[string, string]> = [];
-  Headers.prototype.forEach.call(value, (entry: string, name: string) => {
-    if (pairs.length <= MAX_HEADER_PAIRS) pairs.push([name, entry]);
-  });
+  apply(HEADERS_FOR_EACH, value, [
+    (entry: string, name: string) => {
+      if (pairs.length <= MAX_HEADER_PAIRS) pairs.push([name, entry]);
+    },
+  ]);
   return pairs.length > MAX_HEADER_PAIRS ? undefined : pairs;
 }
 
@@ -155,21 +203,24 @@ function recordHeaderPairs(value: object): Array<[string, string]> | undefined {
  */
 function readHeaderPairs(value: Field): Array<[string, string]> | undefined {
   if (typeof value !== "object" || value === null) return undefined;
-  if (typeof Headers === "function" && isInstance(value, Headers)) return platformHeaderPairs(value as Headers);
+  // A subclass of Headers is neither of the other forms either, so it is unread.
+  if (HEADERS_PROTOTYPE && Object.getPrototypeOf(value) === HEADERS_PROTOTYPE) return platformHeaderPairs(value);
   if (isPlainArray(value)) return arrayHeaderPairs(value);
   return recordHeaderPairs(value);
 }
 
 function captureHeaders(value: Field): Record<string, string> | undefined {
-  if (typeof Headers !== "function") return undefined;
+  if (!HEADERS || !HEADERS_FOR_EACH) return undefined;
   try {
     const pairs = readHeaderPairs(value);
     if (!pairs) return undefined;
     // Headers built from our own copy validates and normalizes the names.
     const result: Record<string, string> = {};
-    new Headers(pairs).forEach((entry, name) => {
-      Object.defineProperty(result, name, { value: entry, enumerable: true, writable: true, configurable: true });
-    });
+    apply(HEADERS_FOR_EACH, new HEADERS(pairs), [
+      (entry: string, name: string) => {
+        Object.defineProperty(result, name, { value: entry, enumerable: true, writable: true, configurable: true });
+      },
+    ]);
     // A plain record of strings serializes to a record of (possibly cut) strings.
     return serializeEntry(redactHeaders(result)) as Record<string, string>;
   } catch {
@@ -178,54 +229,65 @@ function captureHeaders(value: Field): Record<string, string> | undefined {
 }
 
 /**
- * The address of a platform `URL`, through the platform's `href` getter. Its
- * brand check runs no application code, not even a Proxy trap; anything that
- * is not a platform `URL` is unread.
+ * Whether converting `value` to a string runs only the platform's URL
+ * `toString`: no `Symbol.toPrimitive`, and no own, inherited or replaced
+ * `toString` anywhere on its prototype chain.
  */
-function platformHref(value: unknown): string | undefined {
-  if (typeof value !== "object" || value === null || typeof URL !== "function") return undefined;
-  try {
-    const href = Object.getOwnPropertyDescriptor(URL.prototype, "href")?.get?.call(value);
-    return typeof href === "string" ? href : undefined;
-  } catch {
-    return undefined; // Not a platform URL.
+function convertsIntrinsically(value: object): boolean {
+  let target: object | null = value;
+  let toString: PropertyDescriptor | undefined;
+  for (let depth = 0; target !== null; depth += 1) {
+    if (depth > 16 || Object.getOwnPropertyDescriptor(target, Symbol.toPrimitive)) return false;
+    toString ??= Object.getOwnPropertyDescriptor(target, "toString");
+    target = Object.getPrototypeOf(target) as object | null;
   }
+  return toString !== undefined && "value" in toString && toString.value === URL_TO_STRING;
 }
 
 /**
- * A URL string, a platform `URL` or, for fetch, a platform `Request`;
- * anything else is recorded as {@link UNREAD_URL}.
+ * The URL a call sent, read after the page's call: a string; a platform
+ * `URL`, through the captured `href` getter, when its conversion runs no
+ * application code that could have changed it; or, for fetch, a platform
+ * `Request`, through the captured `url` getter. Anything else is recorded as
+ * {@link UNREAD_URL}.
  */
 function inputUrl(input: unknown, allowRequest = true): string {
   if (typeof input === "string") return input;
-  const href = platformHref(input);
-  if (href !== undefined) return href;
-  if (!allowRequest) return UNREAD_URL;
   try {
-    const url = typeof Request === "function" && isInstance(input, Request) ? platformRead(Request, "url", input) : UNREADABLE;
+    const href = platformRead(URL_HREF, input);
+    if (typeof href === "string") return convertsIntrinsically(input as object) ? href : UNREAD_URL;
+    const url = allowRequest ? platformRead(REQUEST_URL, input) : UNREADABLE;
     return typeof url === "string" ? url : UNREAD_URL;
   } catch {
     return UNREAD_URL;
   }
 }
 
-/** Method and headers of a platform `Request` input, through the platform's getters. */
-function requestDefaults(input: unknown): { method: Field; headers: Field } {
-  if (typeof Request !== "function" || !isInstance(input, Request)) return { method: "GET", headers: UNREADABLE };
-  try {
-    return { method: platformRead(Request, "method", input), headers: platformRead(Request, "headers", input) };
-  } catch {
-    return { method: UNREADABLE, headers: UNREADABLE };
+/** An XMLHttpRequest record's URL, read from its input once, after the page's open() has read it. */
+function recordUrl(record: XhrRecord): string {
+  if (record.url === undefined) {
+    record.url = captureUrl(inputUrl(record.input, false));
+    record.input = undefined;
   }
+  return record.url;
+}
+
+/** Method and headers of a platform `Request` input, through the captured getters. */
+function requestDefaults(input: unknown): { method: Field; headers: Field } {
+  if (platformRead(REQUEST_URL, input) === UNREADABLE) return { method: "GET", headers: UNREADABLE };
+  return { method: platformRead(REQUEST_METHOD, input), headers: platformRead(REQUEST_HEADERS, input) };
 }
 
 /**
  * What a `fetch(input, init)` call sent, read without running application
  * getters, iterators or conversions. Called only after the page's fetch has
  * returned: a native fetch, and a wrapper that calls one synchronously, has
- * read its arguments by then. A Proxy's traps can still run here (no script
- * can tell a Proxy apart), which a wrapper that defers the native call, or a
- * later call that reuses a stateful Proxy, could observe.
+ * read its arguments by then. Known limit, deferred to SFNS-60 by the owner
+ * (SFNS-56 scope amendment 2026-11-13): a Proxy's traps still run here (no
+ * script can tell a Proxy apart), so a stateful Proxy can observe these reads,
+ * and what is recorded can differ from what was sent when a wrapper installed
+ * before start() defers the native call, or the init or Request is reused,
+ * including values an earlier wrapper changed.
  */
 function readFetchRequest(input: unknown, init: unknown, url: string | undefined): Pick<Observation, "method" | "url" | "requestHeaders"> {
   let { method, headers } = requestDefaults(input);
@@ -246,36 +308,50 @@ function readFetchRequest(input: unknown, init: unknown, url: string | undefined
   };
 }
 
+/** The `then` of a thenable, read once, or undefined. */
+function thenOf(value: unknown): Intrinsic | undefined {
+  if ((typeof value !== "object" || value === null) && typeof value !== "function") return undefined;
+  try {
+    const then: unknown = (value as { then?: unknown }).then;
+    return typeof then === "function" ? (then as Intrinsic) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
- * Hands back `pending` chained through `onSettle`, so the caller's promise
- * settles exactly as the page's does: same value, same reason, and an
- * unhandled rejection stays unhandled. A value that is not a thenable, or
- * whose `then` cannot be read or called, is handed back as is.
+ * Observes how the page's `pending` settles and returns what the caller gets.
+ * When the page's own `then` returns a thenable, that chained result goes back:
+ * it settles as `pending` does, with the same value or reason, so an unhandled
+ * rejection stays unhandled. Otherwise `pending` itself goes back unchanged
+ * (not a thenable, a `then` that cannot be read or called or that returns no
+ * other thenable, or a rejection reported before `then` returned), and the
+ * observation side chain then never raises.
  */
 function chainSettlement<T>(pending: T, onSettle: (response?: unknown) => void): T {
-  const candidate: unknown = pending;
-  if ((typeof candidate !== "object" || candidate === null) && typeof candidate !== "function") return pending;
-  let then: unknown;
-  try {
-    then = (candidate as { then?: unknown }).then;
-  } catch {
-    return pending;
-  }
-  if (typeof then !== "function") return pending;
+  const then = thenOf(pending);
+  if (!then) return pending;
+  let returned = false; // whether the chained result is the caller's
+  let rejectedEarly = false;
   const onFulfilled = (response: unknown) => {
     onSettle(response);
     return response;
   };
   const onRejected = (reason: unknown) => {
     onSettle();
-    throw reason;
+    if (returned) throw reason;
+    rejectedEarly = true;
+    return undefined;
   };
-  let chained: unknown = pending;
+  let chained: unknown;
   try {
-    chained = Reflect.apply(then, candidate, [onFulfilled, onRejected]);
+    chained = apply(then, pending, [onFulfilled, onRejected]);
   } catch {
-    chained = pending; // An unusual thenable: hand it back as is.
+    return pending; // An unusual thenable: hand it back as is.
   }
+  // A `then` that returns the page's value itself leaves this a side chain too.
+  if (rejectedEarly || chained === pending || !thenOf(chained)) return pending;
+  returned = true;
   return chained as T;
 }
 
@@ -304,15 +380,14 @@ function subscribe(listener: Listener): () => void {
     if (typeof globalThis.fetch === "function") {
       const original = globalThis.fetch;
       const wrapper = function (this: unknown, ...args: Parameters<typeof fetch>): Promise<Response> {
-        if (current.size === 0) return original.apply(this ?? globalThis, args);
+        if (current.size === 0) return apply(original, this ?? globalThis, args) as Promise<Response>;
         const timestamp = Date.now();
         // The page's fetch runs first, with the application's own arguments
-        // and receiver, before observation reads anything from them.
+        // and receiver. Before it, observation reads only a string input, as
+        // sent; every object argument is read after it returns.
         // See readFetchRequest for what that ordering does and does not cover.
-        // A string or platform URL input is read first, as sent: that runs no
-        // application code, and the conversion inside the call cannot alter it.
-        const url = typeof args[0] === "string" ? args[0] : platformHref(args[0]);
-        const pending = original.apply(this ?? globalThis, args);
+        const url = typeof args[0] === "string" ? args[0] : undefined;
+        const pending = apply(original, this ?? globalThis, args) as Promise<Response>;
         let observed: Observation;
         try {
           observed = { transport: "fetch", timestamp, ...readFetchRequest(args[0], args[1], url) };
@@ -322,15 +397,15 @@ function subscribe(listener: Listener): () => void {
         return chainSettlement(pending, (response) => {
           try {
             const settled: Observation = { ...observed, duration: duration(timestamp) };
-            // Only a platform Response is read, and only through its own getters.
-            if (typeof Response === "function" && isInstance(response, Response)) {
-              const status = platformRead(Response, "status", response);
+            // Only a platform Response is read, and only through the captured getters.
+            const status = platformRead(RESPONSE_STATUS, response);
+            if (status !== UNREADABLE) {
               if (Number.isSafeInteger(status) && (status as number) >= 0) {
                 settled.status = status as number;
-                const statusText = platformRead(Response, "statusText", response);
+                const statusText = platformRead(RESPONSE_STATUS_TEXT, response);
                 if (typeof statusText === "string") settled.statusText = text(statusText);
               }
-              settled.responseHeaders = captureHeaders(platformRead(Response, "headers", response));
+              settled.responseHeaders = captureHeaders(platformRead(RESPONSE_HEADERS, response));
             }
             emit(settled);
           } catch {
@@ -349,21 +424,28 @@ function subscribe(listener: Listener): () => void {
       const originalOpen = prototype.open as (...values: unknown[]) => unknown;
       const originalSend = prototype.send as (...values: unknown[]) => unknown;
       const records = new WeakMap<object, XhrRecord>();
-      const target = typeof EventTarget === "function" ? EventTarget.prototype : undefined;
+      // The getters captured when this module loaded, or, for an
+      // XMLHttpRequest defined later, when the wrappers are installed.
+      const loaded = prototype === XHR_PROTOTYPE;
+      const getters: Record<string, Intrinsic | undefined> = {
+        status: loaded ? XHR_STATUS : intrinsic(prototype, "status"),
+        statusText: loaded ? XHR_STATUS_TEXT : intrinsic(prototype, "statusText"),
+      };
       // A platform attribute is read through the platform getter; a stand-in
       // without one is read only from an own data property.
-      const field = (xhr: object, key: string): Field => {
-        const get = Object.getOwnPropertyDescriptor(prototype, key)?.get;
-        return get ? get.call(xhr) : dataValue(xhr, key);
+      const field = (xhr: object, key: "status" | "statusText"): Field => {
+        const get = getters[key];
+        return get ? apply(get, xhr, []) : dataValue(xhr, key);
       };
       const open = function (this: XMLHttpRequest, ...args: unknown[]) {
-        if (current.size === 0) return originalOpen.apply(this, args);
+        if (current.size === 0) return apply(originalOpen, this, args);
         const [method, url] = args;
-        // Read before the call, which runs no application code: a string, or
-        // a platform URL through its brand-checked getter. The record is in
-        // place before the call, so a send() made from open()'s own
-        // readystatechange belongs to this request (or to a nested open()).
-        const record: XhrRecord = { method: typeof method === "string" ? text(method) : UNREAD_METHOD, url: captureUrl(inputUrl(url, false)) };
+        // Before the call, only string arguments are read, which runs no
+        // application code; any other URL is read once the page's open() has
+        // read it. The record is in place before the call, so a send() made
+        // from open()'s own readystatechange belongs to this request (or to a
+        // nested open()).
+        const record: XhrRecord = { method: typeof method === "string" ? text(method) : UNREAD_METHOD, input: url };
         let previous: XhrRecord | undefined;
         let tracked = false;
         try {
@@ -375,7 +457,7 @@ function subscribe(listener: Listener): () => void {
         }
         let result: unknown;
         try {
-          result = originalOpen.apply(this, args);
+          result = apply(originalOpen, this, args);
         } catch (error) {
           // A rejected open() leaves the earlier request, and its record, in place.
           if (tracked && records.get(this) === record) {
@@ -384,17 +466,22 @@ function subscribe(listener: Listener): () => void {
           }
           throw error;
         }
+        try {
+          recordUrl(record);
+        } catch {
+          /* Read again when the request completes. */
+        }
         return result;
       } as typeof prototype.open;
       const send = function (this: XMLHttpRequest, ...args: unknown[]) {
-        if (current.size === 0) return originalSend.apply(this, args);
+        if (current.size === 0) return apply(originalSend, this, args);
         let record: XhrRecord | undefined;
         try {
           record = records.get(this);
         } catch {
           record = undefined;
         }
-        if (!record || !target) return originalSend.apply(this, args);
+        if (!record || !ADD_LISTENER) return apply(originalSend, this, args);
         // send() reads nothing from its arguments. The loadend listener goes
         // on first because a synchronous request completes inside send().
         const observed = record;
@@ -402,7 +489,7 @@ function subscribe(listener: Listener): () => void {
         const timestamp = Date.now();
         const complete = () => {
           try {
-            const settled: Observation = { transport: "xhr", ...observed, timestamp, duration: duration(timestamp) };
+            const settled: Observation = { transport: "xhr", method: observed.method, url: recordUrl(observed), timestamp, duration: duration(timestamp) };
             const status = field(xhr, "status");
             if (Number.isSafeInteger(status) && (status as number) >= 0) settled.status = status as number;
             const statusText = field(xhr, "statusText");
@@ -414,17 +501,17 @@ function subscribe(listener: Listener): () => void {
         };
         let listening = false;
         try {
-          target.addEventListener.call(xhr, "loadend", complete, { once: true });
+          apply(ADD_LISTENER, xhr, ["loadend", complete, { once: true }]);
           listening = true;
         } catch {
           listening = false; // Not an event target: send without observing.
         }
         try {
-          return originalSend.apply(xhr, args);
+          return apply(originalSend, xhr, args);
         } catch (error) {
-          if (listening) {
+          if (listening && REMOVE_LISTENER) {
             try {
-              target.removeEventListener.call(xhr, "loadend", complete);
+              apply(REMOVE_LISTENER, xhr, ["loadend", complete]);
             } catch {
               /* Nothing more to undo. */
             }

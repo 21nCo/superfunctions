@@ -65,18 +65,31 @@ The network collector never changes the application's request: the original
 arguments pass through untouched (a `null` or `undefined` receiver of `fetch`
 becomes `globalThis`), and observation never runs the application's
 iterators, getters or conversions. The page's `fetch` and
-`XMLHttpRequest.prototype.open` run first, and observation reads object
-arguments only after they return (a string or platform `URL` argument for the URL is
-read before the call, as sent, which runs no application code); `send` reads
-nothing from its arguments. A native
-`fetch`, or a wrapper that calls one synchronously, has read the request by
-then. No script can tell a Proxy apart, so a Proxy's traps still run when
-observation reads it: if the `fetch` that was installed before `start()`
-defers the native call, or the application reuses a stateful Proxy in a later
-request, those traps can observe the reads. `fetch` returns a promise chained from the page's
-that settles with the same response or rejection reason, so an unhandled
-rejection stays unhandled; a result that is not a thenable is returned as is.
-A stopped wrapper reads nothing at all. What observation then records:
+`XMLHttpRequest.prototype.open` run first. Before they run, observation reads
+only a string URL argument; it reads a `URL`, `Request`, `init` or headers
+argument only after the call returns. `send` reads nothing from its arguments.
+A native `fetch`, or a wrapper that calls one synchronously, has read the
+request by then. Platform objects are read through the `URL`, `Request`,
+`Response`, `Headers`, `XMLHttpRequest` and `EventTarget` getters and methods
+captured when catchfn loads, so a getter or method that the page patches later
+never runs. A `URL` argument whose string conversion runs application code
+(an own or patched `toString`, or a `Symbol.toPrimitive`) is recorded as
+`[UNREAD_URL]`, because the call may have changed it.
+
+Known limit, deferred to SFNS-60 (SFNS-56 owner scope amendment of
+2026-11-13): no script can tell a Proxy apart, so a stateful Proxy `init` or
+headers object can observe the reads made after the call. Attribution can be
+wrong after the input is consumed through a `fetch` installed before `start()`
+that defers the native call, or through a reused `init` or `Request`,
+including values an earlier wrapper changed.
+
+`fetch` returns what the page's `fetch` returned. When the page's own `then`
+returns another thenable, `fetch` returns that chained promise. It settles
+with the same response or rejection reason, so an unhandled rejection stays
+unhandled. Otherwise the page's value comes back unchanged, and observing it
+never raises. This covers a value that is not a thenable, and a `then` that
+cannot be read or called or that returns no other thenable. A stopped wrapper
+reads nothing at all. What observation then records:
 
 - Request headers are captured only from a platform `Headers` object (not a
   subclass), a plain array of `[name, value]` string pairs or a plain record of

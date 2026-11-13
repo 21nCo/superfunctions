@@ -146,6 +146,84 @@ describe("NetworkCollector fetch capture", () => {
     expect(collector.size()).toBe(0);
   });
 
+  it("returns the page's own thenable when its then returns no thenable, and never raises beside it", async () => {
+    const reason = new TypeError("offline");
+    const thrown: unknown[] = [];
+    const fulfilling = {
+      then(resolve: (value: unknown) => void) {
+        resolve(new Response("ok", { status: 200 }));
+        return undefined;
+      },
+    };
+    const rejecting = {
+      then(_resolve: unknown, reject: (reason: unknown) => void) {
+        queueMicrotask(() => {
+          try {
+            reject(reason);
+          } catch (error) {
+            thrown.push(error);
+          }
+        });
+        return this;
+      },
+    };
+    pageFetch.mockReturnValueOnce(fulfilling).mockReturnValueOnce(rejecting);
+    collector.start();
+    expect(fetch("/fulfilling")).toBe(fulfilling);
+    expect(fetch("/rejecting")).toBe(rejecting);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(thrown).toEqual([]);
+    expect(collector.collect().map((event) => [event.url, event.status])).toEqual([
+      ["/fulfilling", 200],
+      ["/rejecting", undefined],
+    ]);
+  });
+
+  it("never runs a platform getter or method the page patched after catchfn loaded", async () => {
+    const calls: string[] = [];
+    const patch = (prototype: object, key: PropertyKey, kind: "get" | "value") => {
+      const descriptor = Object.getOwnPropertyDescriptor(prototype, key)!;
+      const original = descriptor[kind] as (...values: unknown[]) => unknown;
+      Object.defineProperty(prototype, key, {
+        ...descriptor,
+        [kind](this: unknown, ...values: unknown[]) {
+          // Count only what catchfn calls itself, not the platform's own internals.
+          if (new Error().stack?.split("\n")[2]?.includes("/src/")) calls.push(String(key));
+          return original.apply(this, values);
+        },
+      });
+      return () => Object.defineProperty(prototype, key, descriptor);
+    };
+    collector.start();
+    const restores = [
+      patch(URL.prototype, "href", "get"),
+      ...["url", "method", "headers"].map((key) => patch(Request.prototype, key, "get")),
+      ...["status", "statusText", "headers"].map((key) => patch(Response.prototype, key, "get")),
+      patch(Headers.prototype, "forEach", "value"),
+      patch(EventTarget.prototype, "addEventListener", "value"),
+    ];
+    try {
+      await fetch(new URL("https://example.com/u?token=secret&ok=1"));
+      await fetch(new Request("https://example.com/r", { method: "PUT", headers: { "x-trace": "r" } }));
+      await fetch("https://example.com/h", { headers: new Headers({ "x-h": "h" }) });
+      const xhr = new XMLHttpRequest() as unknown as FakeXhr;
+      (xhr as unknown as XMLHttpRequest).open("GET", "/x");
+      (xhr as unknown as XMLHttpRequest).send();
+      xhr.respond(200, "OK");
+    } finally {
+      for (const restore of restores) restore();
+    }
+    expect(calls).toEqual([]);
+    // Read through the getters captured at load instead.
+    expect(collector.collect().map(({ method, url, status, requestHeaders }) => [method, url, status, requestHeaders])).toEqual([
+      ["GET", expect.stringContaining("ok=1"), 201, undefined],
+      ["PUT", "https://example.com/r", 201, { "x-trace": "r" }],
+      ["GET", "https://example.com/h", 201, { "x-h": "h" }],
+      ["GET", "/x", 200, undefined],
+    ]);
+    expect(collector.collect()[0]!.responseHeaders).toMatchObject({ "set-cookie": "[REDACTED]", "x-trace": "t" });
+  });
+
   it("redacts every listed sensitive request and response header", async () => {
     collector.start();
     const headers = Object.fromEntries(SENSITIVE_HEADERS.map((name) => [name, `${name}-secret`]));
@@ -501,9 +579,8 @@ describe("NetworkCollector at a native Request boundary", () => {
     }
   });
 
-  it("records a URL input as it was sent, even if converting it changes it", async () => {
-    const filtered = new NetworkCollector(5, { allowUrls: ["/sent"] });
-    filtered.start();
+  it("records a URL input whose conversion runs application code as unread, never as changed", async () => {
+    collector.start();
     const input = new URL("https://example.com/sent?token=u-secret");
     Object.defineProperty(input, "toString", {
       value(this: URL) {
@@ -513,12 +590,12 @@ describe("NetworkCollector at a native Request boundary", () => {
       },
     });
     await fetch(input);
-    const events = filtered.collect();
-    filtered.stop();
-    expect(sent.map((request) => request.url)).toEqual(["https://example.com/sent?token=u-secret"]);
-    expect(events.map((event) => event.url)).toEqual([expect.stringContaining("https://example.com/sent?")]);
-    expect(events[0]!.url).not.toContain("u-secret");
-    expectValidEvents(events);
+    // A URL whose conversion is the platform's own is read after the call.
+    await fetch(new URL("https://example.com/plain?token=u-secret&ok=1"));
+    expect(sent.map((request) => request.url)).toEqual(["https://example.com/sent?token=u-secret", "https://example.com/plain?token=u-secret&ok=1"]);
+    const urls = collector.collect().map((event) => event.url);
+    expect(urls).toEqual([UNREAD_URL, expect.stringContaining("https://example.com/plain?")]);
+    expect(urls.join(" ")).not.toContain("u-secret");
   });
 
   it("runs no trap of the application's arguments before the page's fetch has run", async () => {
