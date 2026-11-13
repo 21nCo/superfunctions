@@ -232,6 +232,23 @@ export interface BillFnUnlinkedWebhookEvent {
   updatedAt: string;
 }
 
+/**
+ * A provider reference a subscription write dropped (for example the previous
+ * charge after a renewal). While no subscription holds it, no event naming it
+ * bootstraps or links another subscription.
+ */
+export interface BillFnReplacedProviderReference {
+  id: string;
+  provider: BillingProviderName;
+  providerReference: string;
+  /** The subscription whose latest write dropped the reference. */
+  subscriptionId: string;
+  billingAccountId: string;
+  replacedAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface BillFnBillingEvent {
   id: string;
   billingAccountId: string;

@@ -313,6 +313,27 @@ def get_schema() -> Dict[str, Any]:
         ],
     }
 
+    replaced_provider_references: Dict[str, Any] = {
+        "modelName": "replacedProviderReferences",
+        "fields": {
+            "id": {"type": "string", "required": True, "unique": True},
+            "provider": {"type": "string", "required": True},
+            "providerReference": {"type": "string", "required": True},
+            "subscriptionId": {"type": "string", "required": True},
+            "billingAccountId": {"type": "string", "required": True},
+            "replacedAt": {"type": "string", "required": True},
+            "createdAt": {"type": "string", "required": True},
+            "updatedAt": {"type": "string", "required": True},
+        },
+        "indexes": [
+            {
+                "name": "replaced_provider_references_provider_reference_idx",
+                "fields": ["provider", "providerReference"],
+                "unique": True,
+            },
+        ],
+    }
+
     schemas: List[Dict[str, Any]] = [
         billing_accounts,
         subscriptions,
@@ -327,6 +348,7 @@ def get_schema() -> Dict[str, Any]:
         reconciliation_jobs,
         reconciliation_cursors,
         unlinked_webhook_events,
+        replaced_provider_references,
     ]
 
     return {"version": BILLFN_SCHEMA_VERSION, "schemas": schemas}

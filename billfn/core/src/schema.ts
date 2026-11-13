@@ -172,6 +172,23 @@ export function getSchema(_options: BillFnSchemaOptions = {}): { version: number
     ]
   };
 
+  const replacedProviderReferences: TableSchema = {
+    modelName: 'replacedProviderReferences',
+    fields: {
+      id: { type: 'string', required: true, unique: true },
+      provider: { type: 'string', required: true },
+      providerReference: { type: 'string', required: true },
+      subscriptionId: { type: 'string', required: true },
+      billingAccountId: { type: 'string', required: true },
+      replacedAt: { type: 'string', required: true },
+      createdAt: { type: 'string', required: true },
+      updatedAt: { type: 'string', required: true }
+    },
+    indexes: [
+      { name: 'replaced_provider_references_provider_reference_idx', fields: ['provider', 'providerReference'], unique: true }
+    ]
+  };
+
   const billingEvents: TableSchema = {
     modelName: 'billingEvents',
     fields: {
@@ -285,7 +302,8 @@ export function getSchema(_options: BillFnSchemaOptions = {}): { version: number
     subscriptionChangeRequests,
     reconciliationJobs,
     reconciliationCursors,
-    unlinkedWebhookEvents
+    unlinkedWebhookEvents,
+    replacedProviderReferences
   ];
 
   return {

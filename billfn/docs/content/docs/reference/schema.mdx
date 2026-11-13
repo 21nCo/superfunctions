@@ -3,7 +3,7 @@ title: Schema
 description: The normalized BillFn persistence model in the current TypeScript core.
 ---
 
-`getSchema()` in `@billfn/core` currently returns version `4` with thirteen table definitions.
+`getSchema()` in `@billfn/core` currently returns version `4` with fourteen table definitions.
 
 ## Tables
 
@@ -22,6 +22,7 @@ description: The normalized BillFn persistence model in the current TypeScript c
 | `reconciliationJobs` | Operational replay and sync jobs |
 | `reconciliationCursors` | Provider backfill cursors |
 | `unlinkedWebhookEvents` | Verified webhook events waiting for their provider reference to be linked, kept 90 days |
+| `replacedProviderReferences` | Provider references a subscription write dropped, so no event naming them bootstraps another subscription |
 
 ## Important Indexes
 
@@ -38,6 +39,7 @@ Phase 1 relies on a few critical indexes:
 - `unlinkedWebhookEvents.provider + providerEventId` as a unique dedupe key
 - `unlinkedWebhookEvents.provider + providerReference + status` and `provider + providerSecondaryReference + status` for replay on link
 - `unlinkedWebhookEvents.expiresAt` for the 90-day retention purge
+- `replacedProviderReferences.provider + providerReference` as a unique key
 
 ## Example
 
@@ -49,13 +51,15 @@ console.log(schema.version);
 console.log(schema.schemas.map((table) => table.modelName));
 ```
 
-The Python SDK mirrors schema version `4`. Both helpers expose the same thirteen logical model names and mark record identifiers as unique.
+The Python SDK mirrors schema version `4`. Both helpers expose the same fourteen logical model names and mark record identifiers as unique.
 
 ## Migrations
 
 ### Schema 3 to 4 (`@billfn/core` 0.2.0)
 
-Version `4` adds one table, `unlinkedWebhookEvents`, and changes no existing table. Create it with its four indexes before deploying `@billfn/core` 0.2.0; webhook processing writes to it as soon as an event names a provider reference BillFn has not linked. The migration is additive, so rolling back to 0.1.x leaves the table unused.
+Version `4` adds two tables, `unlinkedWebhookEvents` and `replacedProviderReferences`, and changes no existing table. Create both with their indexes before deploying `@billfn/core` 0.2.0: webhook processing writes to `unlinkedWebhookEvents` as soon as an event names a provider reference BillFn has not linked, and every subscription write that drops a provider reference writes to `replacedProviderReferences` first. The migration is additive, so rolling back to 0.1.x leaves the tables unused.
+
+#### `unlinkedWebhookEvents`
 
 | Field | Type | Required |
 | --- | --- | --- |
@@ -80,3 +84,18 @@ Version `4` adds one table, `unlinkedWebhookEvents`, and changes no existing tab
 | `updatedAt` | string | yes |
 
 Indexes: unique `unlinked_webhook_events_provider_event_idx` on `provider, providerEventId`; `unlinked_webhook_events_provider_reference_idx` on `provider, providerReference, status`; `unlinked_webhook_events_provider_secondary_reference_idx` on `provider, providerSecondaryReference, status`; `unlinked_webhook_events_expires_idx` on `expiresAt`.
+
+#### `replacedProviderReferences`
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `id` | string, unique | yes |
+| `provider` | string | yes |
+| `providerReference` | string | yes |
+| `subscriptionId` | string | yes |
+| `billingAccountId` | string | yes |
+| `replacedAt` | string | yes |
+| `createdAt` | string | yes |
+| `updatedAt` | string | yes |
+
+Index: unique `replaced_provider_references_provider_reference_idx` on `provider, providerReference`.

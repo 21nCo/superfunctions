@@ -20,6 +20,7 @@ def test_schema_exposes_expected_version_and_tables() -> None:
         "reconciliationJobs",
         "reconciliationCursors",
         "unlinkedWebhookEvents",
+        "replacedProviderReferences",
     ]
 
 
@@ -52,6 +53,10 @@ def test_schema_includes_webhook_and_usage_uniqueness_indexes() -> None:
     unlinked_index_fields = [index["fields"] for index in tables["unlinkedWebhookEvents"]["indexes"]]
     assert ["provider", "providerReference", "status"] in unlinked_index_fields
     assert ["provider", "providerSecondaryReference", "status"] in unlinked_index_fields
+    assert any(
+        index.get("unique") and index["fields"] == ["provider", "providerReference"]
+        for index in tables["replacedProviderReferences"]["indexes"]
+    )
 
 
 def test_schema_includes_lifecycle_and_reconciliation_indexes() -> None:

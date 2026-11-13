@@ -223,6 +223,10 @@ describe('@billfn/core', () => {
     expect(unlinked?.indexes?.some(
       (index) => index.fields.join(',') === 'provider,providerReference,status'
     )).toBe(true);
+    const replaced = schema.schemas.find((table) => table.modelName === 'replacedProviderReferences');
+    expect(replaced?.indexes?.find(
+      (index) => index.fields.join(',') === 'provider,providerReference'
+    )?.unique).toBe(true);
   });
 
   it('creates, verifies, and reads entitlements for a Dodo checkout', async () => {
