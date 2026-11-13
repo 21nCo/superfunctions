@@ -153,39 +153,55 @@ describe("NetworkCollector fetch capture", () => {
     expect(fetch("/plain")).toBe(plain);
     expect(fetch("/throwing")).toBe(throwing);
     expect(fetch("/refusing")).toBe(refusing);
-    expect(collector.size()).toBe(0);
+    // Recorded as called, without a settlement it does not read.
+    expect(collector.collect().map(({ url, status, duration }) => [url, status, duration])).toEqual([
+      ["/plain", undefined, undefined],
+      ["/throwing", undefined, undefined],
+      ["/refusing", undefined, undefined],
+    ]);
   });
 
-  it("returns the page's own thenable when its then returns no thenable, and never raises beside it", async () => {
-    const reason = new TypeError("offline");
-    const thrown: unknown[] = [];
-    const fulfilling = {
-      then(resolve: (value: unknown) => void) {
-        resolve(new Response("ok", { status: 200 }));
-        return undefined;
-      },
+  it("returns the page's own thenable and leaves its then to the application alone", async () => {
+    // A lazy thenable, as a fetch wrapper installed before start() may
+    // return: every then() call sends the request again.
+    const lazy = () => {
+      const counter = {
+        sends: 0,
+        then(resolve: (value: unknown) => void, reject: (reason: unknown) => void) {
+          counter.sends += 1;
+          return Promise.resolve(new Response("ok", { status: 200 })).then(resolve, reject);
+        },
+      };
+      return counter;
     };
-    const rejecting = {
-      then(_resolve: unknown, reject: (reason: unknown) => void) {
-        queueMicrotask(() => {
-          try {
-            reject(reason);
-          } catch (error) {
-            thrown.push(error);
-          }
-        });
-        return this;
-      },
-    };
-    pageFetch.mockReturnValueOnce(fulfilling).mockReturnValueOnce(rejecting);
+    let thenCalls = 0;
+    class Counted extends Promise<Response> {
+      override then<A = Response, B = never>(...args: Parameters<Promise<Response>["then"]>): Promise<A | B> {
+        thenCalls += 1;
+        return super.then(...args) as Promise<A | B>;
+      }
+    }
+    // A plain function, not a mock: a mock calls then() on what it returns.
+    const results: unknown[] = [];
+    globalThis.fetch = (() => results.shift()) as unknown as typeof fetch;
+    const without = lazy();
+    results.push(without);
+    await fetch("/baseline");
+    expect(without.sends).toBe(1);
+    const thenable = lazy();
+    const derived = new Counted((resolve) => resolve(new Response("ok", { status: 200 })));
+    results.push(thenable, derived);
     collector.start();
-    expect(fetch("/fulfilling")).toBe(fulfilling);
-    expect(fetch("/rejecting")).toBe(rejecting);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(thrown).toEqual([]);
-    expect(collector.collect().map((event) => [event.url, event.status])).toEqual([
-      ["/fulfilling", 200],
-      ["/rejecting", undefined],
+    const returned = fetch("/lazy");
+    expect(returned).toBe(thenable);
+    expect(thenable.sends).toBe(0);
+    expect((await returned).status).toBe(200);
+    expect(thenable.sends).toBe(1);
+    expect(fetch("/subclass")).toBe(derived);
+    expect(thenCalls).toBe(0);
+    expect(collector.collect().map(({ url, status }) => [url, status])).toEqual([
+      ["/lazy", undefined],
+      ["/subclass", undefined],
     ]);
   });
 

@@ -91,6 +91,10 @@ const REMOVE_LISTENER = intrinsic(EVENT_TARGET_PROTOTYPE, "removeEventListener",
 const XHR_PROTOTYPE = prototypeOf(platform.XMLHttpRequest);
 const XHR_STATUS = intrinsic(XHR_PROTOTYPE, "status");
 const XHR_STATUS_TEXT = intrinsic(XHR_PROTOTYPE, "statusText");
+const PROMISE = typeof platform.Promise === "function" ? (platform.Promise as PromiseConstructor) : undefined;
+const PROMISE_PROTOTYPE = prototypeOf(PROMISE);
+const PROMISE_THEN = intrinsic(PROMISE_PROTOTYPE, "then", "value");
+const PROMISE_SPECIES = intrinsic(PROMISE, Symbol.species);
 
 /**
  * Whether the captured `href` getter's brand check runs no Proxy trap on this
@@ -302,31 +306,37 @@ function readFetchRequest(input: unknown, init: unknown, url: string | undefined
   };
 }
 
-/** The `then` of a thenable, read once, or undefined. */
-function thenOf(value: unknown): Intrinsic | undefined {
-  if ((typeof value !== "object" || value === null) && typeof value !== "function") return undefined;
-  try {
-    const then: unknown = (value as { then?: unknown }).then;
-    return typeof then === "function" ? (then as Intrinsic) : undefined;
-  } catch {
-    return undefined;
-  }
+/**
+ * Whether the captured `then` on `value` runs no application code: a
+ * platform Promise that is not a subclass, with no own `constructor`, while
+ * Promise's `constructor` and species are still the platform's.
+ */
+function isPlainPromise(value: unknown): boolean {
+  if (!PROMISE || !PROMISE_THEN || typeof value !== "object" || value === null) return false;
+  return (
+    Object.getPrototypeOf(value) === PROMISE_PROTOTYPE &&
+    !Object.getOwnPropertyDescriptor(value, "constructor") &&
+    Object.getOwnPropertyDescriptor(PROMISE_PROTOTYPE, "constructor")?.value === PROMISE &&
+    intrinsic(PROMISE, Symbol.species) === PROMISE_SPECIES
+  );
 }
 
 /**
  * Observes how the page's `pending` settles, on a side chain that never
- * raises. The caller gets `pending` itself, unchanged (SFNS-56 owner
- * amendment 2026-11-13). Observing a promise marks it handled, so a
- * rejection the application leaves unhandled is not reported as unhandled
- * while a collector runs.
+ * raises, and only for a plain platform Promise through the captured `then`:
+ * any other value's own `then` runs only when the application calls it.
+ * Returns whether it observes. The caller gets `pending` itself, unchanged
+ * (SFNS-56 owner amendment 2026-11-13). Observing a promise marks it handled,
+ * so a rejection the application leaves unhandled is not reported as
+ * unhandled while a collector runs.
  */
-function observeSettlement(pending: unknown, onSettle: (response?: unknown) => void): void {
-  const then = thenOf(pending);
-  if (!then) return;
+function observeSettlement(pending: unknown, onSettle: (response?: unknown) => void): boolean {
+  if (!isPlainPromise(pending)) return false;
   try {
-    apply(then, pending, [(response: unknown) => onSettle(response), () => onSettle()]);
+    apply(PROMISE_THEN as Intrinsic, pending, [(response: unknown) => onSettle(response), () => onSettle()]);
+    return true;
   } catch {
-    /* An unusual thenable: nothing to observe. */
+    return false; // Not a platform Promise after all.
   }
 }
 
@@ -369,7 +379,7 @@ function subscribe(listener: Listener): () => void {
         } catch {
           return pending; // Unreadable input: the application's call is already made.
         }
-        observeSettlement(pending, (response) => {
+        const observing = observeSettlement(pending, (response) => {
           try {
             const settled: Observation = { ...observed, duration: duration(timestamp) };
             // Only a platform Response is read, and only through the captured getters.
@@ -387,6 +397,8 @@ function subscribe(listener: Listener): () => void {
             /* Observation never raises into, or alongside, the application's promise. */
           }
         });
+        // Any other result is recorded as called, without its settlement.
+        if (!observing) emit(observed);
         return pending;
       };
       globalThis.fetch = wrapper as typeof fetch;
