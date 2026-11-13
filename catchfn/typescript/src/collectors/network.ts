@@ -331,12 +331,12 @@ function isPlainPromise(value: unknown): boolean {
  * unhandled while a collector runs.
  */
 function observeSettlement(pending: unknown, onSettle: (response?: unknown) => void): boolean {
-  if (!isPlainPromise(pending)) return false;
   try {
+    if (!isPlainPromise(pending)) return false;
     apply(PROMISE_THEN as Intrinsic, pending, [(response: unknown) => onSettle(response), () => onSettle()]);
     return true;
   } catch {
-    return false; // Not a platform Promise after all.
+    return false; // A throwing Proxy trap, or not a platform Promise after all.
   }
 }
 

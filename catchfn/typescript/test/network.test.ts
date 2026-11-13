@@ -26,6 +26,10 @@ const pageSend = vi.fn(function (this: FakeXhr, body?: unknown) {
 const proto = FakeXhr.prototype as unknown as { open: unknown; send: unknown };
 Object.assign(proto, { open: pageOpen, send: pageSend });
 
+function raise(): never {
+  throw new Error("trap");
+}
+
 const savedFetch = globalThis.fetch;
 let pageFetch: ReturnType<typeof vi.fn>;
 let collector: NetworkCollector;
@@ -93,17 +97,19 @@ describe("NetworkCollector fetch capture", () => {
     process.on("unhandledRejection", record);
     try {
       const page = Object.assign(Promise.resolve(new Response("ok", { status: 200 })), { abort: () => "aborted" });
-      pageFetch.mockReturnValueOnce(page);
+      // A plain function, not a mock: a mock calls then() on what it returns.
+      const results: Array<() => unknown> = [() => page, () => Promise.reject(reason), () => Promise.reject(reason)];
+      globalThis.fetch = (() => results.shift()!()) as unknown as typeof fetch;
       collector.start();
       const returned = fetch("/own") as typeof page;
       expect(returned).toBe(page);
       expect(returned.abort()).toBe("aborted");
       await returned;
-      pageFetch.mockImplementation(() => Promise.reject(reason));
       await fetch("/handled").catch(() => undefined);
       // Observing the page's promise marks it handled (owner amendment
       // 2026-11-13: the page's promise comes back unchanged), so one the
-      // application leaves unhandled is not reported either.
+      // application leaves unhandled is not reported either. This pins the
+      // documented trade-off; see the README.
       void fetch("/unhandled");
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(seen).toEqual([]);
@@ -199,9 +205,20 @@ describe("NetworkCollector fetch capture", () => {
     expect(thenable.sends).toBe(1);
     expect(fetch("/subclass")).toBe(derived);
     expect(thenCalls).toBe(0);
+    // Classifying the result never throws instead of returning it.
+    for (const trap of ["getPrototypeOf", "getOwnPropertyDescriptor"] as const) {
+      const hostile = new Proxy(Promise.resolve(new Response("ok")), {
+        getPrototypeOf: (target) => (trap === "getPrototypeOf" ? raise() : Reflect.getPrototypeOf(target)),
+        getOwnPropertyDescriptor: (target, key) => (trap === "getOwnPropertyDescriptor" ? raise() : Reflect.getOwnPropertyDescriptor(target, key)),
+      });
+      results.push(hostile);
+      expect(fetch(`/${trap}`)).toBe(hostile);
+    }
     expect(collector.collect().map(({ url, status }) => [url, status])).toEqual([
       ["/lazy", undefined],
       ["/subclass", undefined],
+      ["/getPrototypeOf", undefined],
+      ["/getOwnPropertyDescriptor", undefined],
     ]);
   });
 
