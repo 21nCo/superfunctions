@@ -9433,7 +9433,7 @@ The context is frozen and contains:
 | `issuedAt` / `expiresAt` | Context lifetime. Capped by both `ttlSeconds` and session expiry. |
 | `audience` | Consumer allowlist entry such as `nucleum-datafn`. |
 | `assurance` | AuthFn methods on the session (`password`, `email-otp`, …). |
-| `scopes` | Present for user-owned API keys: the key's stored scopes that the host [scope registry](../plugins/api-keys#scopes) can grant, the same list as the API-key session's `scopes`. Absent for interactive user sessions. |
+| `scopes` | Present for user-owned API keys: the key's stored scopes that the host [scope registry](../plugins/api-keys#scopes) can grant, the same list as the API-key session's `scopes` (`@authfn/multi-region` 0.1.4 or later, which uses `authfn` 0.6.0). Absent for interactive user sessions. |
 | `requestId` | Correlation id. |
 | `actorType` | `user` or `api-key`. |
 | `userId` | Omitted unless `includeUserId: true`. |
