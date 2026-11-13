@@ -29,6 +29,13 @@ import {
   extractRelationRecordDeltasFromDB,
 } from "../mutation/relations.js";
 import { executeSchemaAwareMerge } from "../mutation/merge-decision.js";
+import {
+  isKvMergeUnsupportedError,
+  isKvResource,
+  isKvValueMerge,
+  snapshotKvChange,
+  updateKvRecordMerging,
+} from "../mutation/kv-merge.js";
 import { stripReadonlyCapabilityFields } from "../mutation/execute.js";
 import {
   executeShare,
@@ -362,6 +369,45 @@ export async function executePush(
     return allocation.pool.shift()!;
   }
 
+  /**
+   * The serverSeq, op and record to store for a pending change.
+   *
+   * Clients apply a record's highest-serverSeq change as its state, but seqs
+   * in the reserved pool were allocated before the writes that use them, so:
+   * - A change on a KV record takes a fresh serverSeq after its write and then
+   *   records the stored state (snapshotKvChange), so the record's latest
+   *   change reflects its stored state across concurrent requests too.
+   * - Taking a fresh serverSeq drops the rest of the reserved pool: no later
+   *   change in this request may take a reserved seq below it, so serverSeqs
+   *   stay increasing in write order within the request.
+   * Changes on other resources keep using the reserved pool, as before.
+   */
+  async function sequenceChange(
+    change: PendingChange,
+    allocation: SequenceAllocationState,
+    targetDb: Adapter,
+    targetChangeTracking = changeTracking,
+  ): Promise<{ seq: number; op: PendingChange["op"]; record: Record<string, unknown> | null }> {
+    if (!isKvResource(change.resource)) {
+      return {
+        seq: await takeNextServerSeq(allocation, targetChangeTracking),
+        op: change.op,
+        record: change.record,
+      };
+    }
+    allocation.initialBatchAllocated = true;
+    allocation.pool = [];
+    const seq = await targetChangeTracking.getNextServerSeq();
+    const snapshot = await snapshotKvChange({
+      db: targetDb,
+      id: change.id,
+      namespace,
+      op: change.op,
+      record: change.record,
+    });
+    return { seq, ...snapshot };
+  }
+
   // Pending change entries for a mutation that executed successfully
   type PendingChange = {
     resource: string;
@@ -483,9 +529,24 @@ export async function executePush(
         );
         const strictUpdateNotFound =
           targetDb.capabilities?.operations?.strictUpdateNotFound === true;
+        const kvValueMerge = isKvValueMerge(mut);
+        // The complete stored KV record written by a KV value merge, which
+        // the change record must carry so a pull never applies a bare patch.
+        let kvMergedData: Record<string, unknown> | undefined;
         const mergeResult = await executeSchemaAwareMerge({
           schema, resource: mut.resource, id: mut.id, delta: createData,
           update: async () => {
+            if (kvValueMerge) {
+              kvMergedData = await updateKvRecordMerging({
+                db: targetDb,
+                resource: mut.resource,
+                id: mut.id,
+                namespace,
+                data: updateData,
+                inTransaction: hasTransaction,
+              });
+              return;
+            }
             const updated = await targetDb.update({ model: mut.resource, where: [{ field: "id", operator: "eq", value: mut.id }], data: updateData, namespace });
             if (strictUpdateNotFound && updated === undefined) {
               throw { name: "NotFoundError", message: "Record not found after update" };
@@ -502,7 +563,7 @@ export async function executePush(
         });
         if (mergeResult.ok) {
           const changeRecordData =
-            mergeResult.mode === "create" ? createData : updateData;
+            mergeResult.mode === "create" ? createData : kvMergedData ?? updateData;
           const propagationChanges = await collectPropagationChanges(
             targetDb,
             [{ resource: mut.resource, id: mut.id }],
@@ -510,12 +571,21 @@ export async function executePush(
           return {
             ok: true,
             changes: [
-              { resource: mut.resource, id: mut.id, op: "merge", record: { id: mut.id, ...changeRecordData } },
+              {
+                resource: mut.resource,
+                id: mut.id,
+                op: "merge",
+                record: { id: mut.id, ...changeRecordData },
+              },
               ...propagationChanges,
             ],
           };
         }
         if (mergeResult.code === "NOT_FOUND") return { ok: false, code: "NOT_FOUND", message: `Record not found: ${mut.id}`, path: "id" };
+        if (isKvMergeUnsupportedError(mergeResult.error)) {
+          // Retrying cannot help an adapter that cannot run the KV merge.
+          return { ok: false, code: "DFQL_UNSUPPORTED", message: (mergeResult.error as Error).message, path: "record.value" };
+        }
         logger?.error("Push merge failed", { error: String(mergeResult.error), operation: mut.operation, resource: mut.resource, id: mut.id });
         return { ok: false, code: "INTERNAL", message: "Internal error", path: "$" };
       }
@@ -1161,7 +1231,12 @@ export async function executePush(
           // transaction-bound service callback and publish only after commit.
           const txChangeTracking = changeTracking.withDb(txDb, false);
           for (const change of changes) {
-            const seq = await takeNextServerSeq(txSequenceAllocation, txChangeTracking);
+            const { seq, op, record } = await sequenceChange(
+              change,
+              txSequenceAllocation,
+              txDb,
+              txChangeTracking,
+            );
             mutationLatestSeq = Math.max(mutationLatestSeq, seq);
             mutationResourceSeqs[change.resource] = Math.max(
               mutationResourceSeqs[change.resource] || 0,
@@ -1169,7 +1244,7 @@ export async function executePush(
             );
             // FIX-REL-002: retry within transaction
             await recordChangeWithRetry(txChangeTracking, {
-              serverSeq: seq, resource: change.resource, id: change.id, op: change.op, record: change.record,
+              serverSeq: seq, resource: change.resource, id: change.id, op, record,
             }, 2, logger);
             pendingChangeEvents.push(seq);
           }
@@ -1261,11 +1336,11 @@ export async function executePush(
         let changeTrackingFailed = false;
         try {
           for (const change of changes) {
-            const seq = await takeNextServerSeq(sequenceAllocation);
+            const { seq, op, record } = await sequenceChange(change, sequenceAllocation, db);
             latestSeq = Math.max(latestSeq, seq);
             resourceSeqs[change.resource] = Math.max(resourceSeqs[change.resource] || 0, seq);
             await recordChangeWithRetry(changeTracking, {
-              serverSeq: seq, resource: change.resource, id: change.id, op: change.op, record: change.record,
+              serverSeq: seq, resource: change.resource, id: change.id, op, record,
             }, 2, logger);
           }
         } catch (error) {

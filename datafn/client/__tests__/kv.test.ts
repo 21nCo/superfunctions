@@ -3,7 +3,11 @@
  * Tests TV-KV-001, TV-KV-001N, TV-KV-002, TV-KV-002N, TV-DEB-002, TV-DEB-002N
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+// @datafn/server resolves to its source through the alias in vitest.config.ts:
+// it already dev-depends on @datafn/client, so the client cannot declare it.
+import { createDatafnServer } from "@datafn/server";
+import { memoryAdapter } from "@superfunctions/db/adapters";
 import { createDatafnClient } from "../src/client.js";
 import { MemoryStorageAdapter } from "../src/adapters/memoryStorage.js";
 import type { DatafnSchema } from "@datafn/core";
@@ -696,5 +700,140 @@ describe("KV API - TV-KV-001, TV-KV-001N, TV-KV-002, TV-KV-002N", () => {
       // Should return defaults
       expect(value).toEqual({ a: 1 });
     });
+  });
+});
+
+/**
+ * DATA-8: devices sync KV merges through an in-memory DataFn server
+ * (`@datafn/server` over the memory adapter, reached through `sync.http.fetch`).
+ */
+describe("DATA-8: KV merge keeps every key across devices", () => {
+  type Server = Awaited<ReturnType<typeof createDatafnServer>>;
+  type Device = {
+    client: ReturnType<typeof createDatafnClient>;
+    storage: MemoryStorageAdapter;
+    /** Path of every request the device sent, e.g. "/datafn/push". */
+    requests: string[];
+  };
+
+  let server: Server;
+  let devices: Device[] = [];
+
+  beforeEach(async () => {
+    server = await createDatafnServer({
+      schema: testSchema,
+      database: memoryAdapter(),
+      allowUnknownResources: true,
+    });
+  });
+
+  afterEach(async () => {
+    for (const device of devices) device.client.sync.stop();
+    devices = [];
+    await server.close();
+  });
+
+  function connectDevice(name: string): Device {
+    const storage = new MemoryStorageAdapter();
+    const requests: string[] = [];
+    const client = createDatafnClient({
+      clientId: `client:${name}`,
+      schema: testSchema,
+      storage,
+      sync: {
+        offlinability: true,
+        remote: "http://datafn.test/datafn",
+        http: {
+          fetch: (input: RequestInfo | URL, init?: RequestInit) => {
+            const request = new Request(input, init);
+            requests.push(new URL(request.url).pathname);
+            return server.router.handle(request);
+          },
+        },
+      },
+    });
+    const device = { client, storage, requests };
+    devices.push(device);
+    return device;
+  }
+
+  /**
+   * Wait until every write the device made has reached the server: flush
+   * debounced KV writes, then wait for the changelog to drain. A device that
+   * has not hydrated sends each write straight to /mutation and never uses the
+   * changelog; a hydrated device writes locally and pushes the changelog
+   * through /push.
+   */
+  async function settled(device: Device) {
+    await device.client.kv.flush();
+    await vi.waitFor(async () => {
+      expect(await device.storage.changelogList({ limit: 100 })).toEqual([]);
+    });
+  }
+
+  // The Nucleum reproduction: name, then appearance profiles, then appearance.
+  const patches: Array<Record<string, unknown>> = [
+    { name: "Ada", appearance: { theme: "dark" } },
+    { appearanceProfiles: [{ id: "p1", theme: "dark" }], appliedAppearanceProfileId: "p1" },
+    { appearance: { theme: "light" } },
+  ];
+  const full = {
+    name: "Ada",
+    appearance: { theme: "light" },
+    appearanceProfiles: [{ id: "p1", theme: "dark" }],
+    appliedAppearanceProfileId: "p1",
+  };
+
+  // Not hydrated: kv.merge goes straight to /mutation. Hydrated (cloned
+  // first): kv.merge writes locally and the changelog goes out over /push.
+  const routes = [
+    { hydrated: false, sentTo: "/datafn/mutation", notSentTo: "/datafn/push" },
+    { hydrated: true, sentTo: "/datafn/push", notSentTo: "/datafn/mutation" },
+  ];
+  const cases = routes.flatMap((route) =>
+    [undefined, 20].map((debounceMs) => ({ ...route, debounceMs })),
+  );
+
+  for (const { hydrated, sentTo, notSentTo, debounceMs } of cases) {
+    it(`a fresh device pulls every merged key and the writer keeps them after its own pull (via ${sentTo}, debounceMs: ${debounceMs ?? "none"})`, async () => {
+      const deviceA = connectDevice("a");
+      if (hydrated) await deviceA.client.sync.cloneNow();
+      deviceA.requests.length = 0;
+      for (const patch of patches) {
+        const result = await deviceA.client.kv.merge("prefs", patch, debounceMs ? { debounceMs } : undefined);
+        expect(result.ok).toBe(true);
+        // Each patch reaches the server before the next one, as on a device
+        // that syncs between edits.
+        await settled(deviceA);
+      }
+      expect(deviceA.requests).toContain(sentTo);
+      expect(deviceA.requests).not.toContain(notSentTo);
+      expect(await deviceA.client.kv.get("prefs")).toEqual(full);
+
+      const deviceB = connectDevice("b");
+      await deviceB.client.sync.pullNow();
+      expect(await deviceB.client.kv.get("prefs")).toEqual(full);
+
+      await deviceA.client.sync.pullNow();
+      expect(await deviceA.client.kv.get("prefs")).toEqual(full);
+
+      // A fresh device that clones gets the full value too.
+      const deviceC = connectDevice("c");
+      await deviceC.client.sync.cloneNow();
+      expect(await deviceC.client.kv.get("prefs")).toEqual(full);
+    });
+  }
+
+  it("merges from two devices into one record keep both devices' keys", async () => {
+    const deviceA = connectDevice("a");
+    const deviceB = connectDevice("b");
+    await deviceA.client.kv.merge("prefs", { fromA: 1 });
+    await deviceB.client.kv.merge("prefs", { fromB: 2 });
+    await Promise.all([settled(deviceA), settled(deviceB)]);
+
+    await deviceA.client.sync.pullNow();
+    await deviceB.client.sync.pullNow();
+    expect(await deviceA.client.kv.get("prefs")).toEqual({ fromA: 1, fromB: 2 });
+    expect(await deviceB.client.kv.get("prefs")).toEqual({ fromA: 1, fromB: 2 });
   });
 });
