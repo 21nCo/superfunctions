@@ -30,6 +30,7 @@ import {
 } from "../mutation/relations.js";
 import { executeSchemaAwareMerge } from "../mutation/merge-decision.js";
 import {
+  isKvMergeUnsupportedError,
   isKvResource,
   isKvValueMerge,
   snapshotKvChange,
@@ -581,6 +582,10 @@ export async function executePush(
           };
         }
         if (mergeResult.code === "NOT_FOUND") return { ok: false, code: "NOT_FOUND", message: `Record not found: ${mut.id}`, path: "id" };
+        if (isKvMergeUnsupportedError(mergeResult.error)) {
+          // Retrying cannot help an adapter that cannot run the KV merge.
+          return { ok: false, code: "DFQL_UNSUPPORTED", message: (mergeResult.error as Error).message, path: "record.value" };
+        }
         logger?.error("Push merge failed", { error: String(mergeResult.error), operation: mut.operation, resource: mut.resource, id: mut.id });
         return { ok: false, code: "INTERNAL", message: "Internal error", path: "$" };
       }

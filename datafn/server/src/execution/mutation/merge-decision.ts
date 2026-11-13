@@ -11,6 +11,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function isNotFoundError(error: any): boolean {
+  // A KV merge's own failures are never a missing record, whatever key their
+  // message names (kv-merge.ts).
+  if (error?.name === "KvMergeContentionError" || error?.name === "KvMergeUnsupportedError") {
+    return false;
+  }
   const message = String(error?.message || "").toLowerCase();
   return error?.name === "NotFoundError" || message.includes("not found") || message.includes("zero rows");
 }

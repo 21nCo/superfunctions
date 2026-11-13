@@ -45,6 +45,51 @@ export function isKvMergeContentionError(error: unknown): boolean {
   return (error as { name?: unknown } | null)?.name === "KvMergeContentionError";
 }
 
+/**
+ * Misses in a row, each with the stored value unchanged when read again, after
+ * which the adapter is taken to be unable to compare the value column.
+ */
+const KV_MERGE_MAX_UNCHANGED_MISSES = 3;
+
+/**
+ * The adapter cannot make the conditional write a KV merge needs without
+ * transactions: its update never matched the value it had just returned (for
+ * example it compares JSON objects by identity) or updateMany returned no row
+ * count. Nothing was written, and retrying cannot help.
+ */
+export class KvMergeUnsupportedError extends Error {
+  constructor(reason: string) {
+    super(`KV merge is not supported by this adapter without transactions: ${reason}`);
+    this.name = "KvMergeUnsupportedError";
+  }
+}
+
+/** True when the adapter cannot run a KV merge (see KvMergeUnsupportedError). */
+export function isKvMergeUnsupportedError(error: unknown): boolean {
+  return (error as { name?: unknown } | null)?.name === "KvMergeUnsupportedError";
+}
+
+/** Order-independent JSON equality, to tell a changed value from a missed compare. */
+function sameJsonValue(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((item, index) => sameJsonValue(item, right[index]))
+    );
+  }
+  if (!isPlainObject(left) || !isPlainObject(right)) return false;
+  const keys = Object.keys(left);
+  return (
+    keys.length === Object.keys(right).length &&
+    keys.every(
+      (key) => Object.prototype.hasOwnProperty.call(right, key) && sameJsonValue(left[key], right[key]),
+    )
+  );
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -129,7 +174,11 @@ function isTransactionUnsupportedError(error: unknown): boolean {
  *   detects a miss through update(); any other adapter through the row count
  *   updateMany returns. The merge never writes unconditionally. After
  *   KV_MERGE_MAX_ATTEMPTS misses it throws a KvMergeContentionError having
- *   written nothing, which callers report as retryable.
+ *   written nothing, which callers report as retryable. An adapter whose
+ *   conditional write misses although the value reads back unchanged (it
+ *   cannot compare the JSON value), or whose updateMany returns no count,
+ *   gets a KvMergeUnsupportedError instead, which callers reject as
+ *   DFQL_UNSUPPORTED without retrying.
  *
  * Known limit: the locked read is an ordinary read. On a database whose
  * transactions read from a snapshot taken at their first read (MySQL InnoDB at
@@ -226,22 +275,40 @@ export async function updateKvRecordMerging(params: {
     updateData: Record<string, unknown>,
   ): Promise<boolean> => {
     if (strictUpdateNotFound) return tryUpdate(db, updateWhere, updateData);
-    const count = await db.updateMany({
+    const count: unknown = await db.updateMany({
       model: resource,
       where: updateWhere,
       data: updateData,
       namespace,
     });
+    if (typeof count !== "number") {
+      throw new KvMergeUnsupportedError("updateMany returned no row count");
+    }
     return count > 0;
   };
 
   // Every attempt is a compare-and-swap on the value it read, so a write never
   // lands on a value it did not merge from. A miss means another writer
   // changed the record in between; read again and retry (a deleted record
-  // then reads as not found, so the caller creates it).
+  // then reads as not found, so the caller creates it). A miss after which
+  // the value reads back unchanged was not caused by a writer; several in a
+  // row mean the adapter cannot compare the value, which is reported as
+  // unsupported rather than as contention.
+  let missedValue: { value: unknown } | undefined;
+  let unchangedMisses = 0;
   for (let attempt = 0; attempt < KV_MERGE_MAX_ATTEMPTS; attempt += 1) {
     const stored = await readStored(db);
     const current = stored.value ?? null;
+    if (missedValue && sameJsonValue(missedValue.value, current)) {
+      unchangedMisses += 1;
+      if (unchangedMisses >= KV_MERGE_MAX_UNCHANGED_MISSES) {
+        throw new KvMergeUnsupportedError(
+          "a conditional update on the value never matched the value it returned",
+        );
+      }
+    } else {
+      unchangedMisses = 0;
+    }
     const written = withMergedValue(stored);
     const updateWhere: WhereClause[] = [
       ...where,
@@ -250,6 +317,7 @@ export async function updateKvRecordMerging(params: {
     if (await tryConditionalUpdate(updateWhere, written)) {
       return written;
     }
+    missedValue = { value: current };
   }
 
   throw new KvMergeContentionError(id);

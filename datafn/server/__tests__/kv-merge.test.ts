@@ -465,11 +465,21 @@ describe("DATA-8: KV merge does not depend on how the database compares JSON", (
  * - `holdWrites(n)`: the next n writes of a KV value wait until all n have
  *   arrived, so each merge read the record before any of them wrote.
  * - `missValueWrites`: that many conditional writes (a where on `value`)
- *   miss, as if another writer changed the value each time.
+ *   miss because another writer changed the value just before each.
  * - `failValueWrites`: every KV value write throws a permanent error.
+ * - `detached`: reads return deep copies, and `eq` compares objects by
+ *   identity, so a conditional write on a JSON value never matches.
+ * - `noRowCount`: updateMany resolves without a row count.
  */
 function withoutTransactions(base: Adapter, strictUpdateNotFound: boolean) {
-  const control = { missValueWrites: 0, failValueWrites: false, holdWrites };
+  const control = {
+    missValueWrites: 0,
+    failValueWrites: false,
+    detached: false,
+    noRowCount: false,
+    holdWrites,
+  };
+  let concurrentWrites = 0;
   let held: Array<() => void> | undefined;
   let holdCount = 0;
   function holdWrites(count: number) {
@@ -499,14 +509,34 @@ function withoutTransactions(base: Adapter, strictUpdateNotFound: boolean) {
           transactions: { ...value.transactions, supported: false },
         };
       }
+      if (property === "findOne") {
+        return async (params: Parameters<Adapter["findOne"]>[0]) => {
+          const row = await (value as Adapter["findOne"]).call(target, params);
+          return control.detached ? structuredClone(row) : row;
+        };
+      }
       if (property !== "update" && property !== "updateMany") return value;
       return async (params: WriteParams) => {
+        const conditional = (params.where ?? []).some((clause) => clause.field === "value");
         if (params.model === "kv" && params.data && "value" in params.data) {
           await gate();
           if (control.failValueWrites) throw new Error("disk I/O error");
-          if (control.missValueWrites > 0 && (params.where ?? []).some((clause) => clause.field === "value")) {
+          if (control.missValueWrites > 0 && conditional) {
             control.missValueWrites -= 1;
+            // Another writer changes the value just before this write.
+            const idClause = (params.where ?? []).find((clause) => clause.field === "id") as { value?: unknown };
+            const row = await target.findOne<Json>({ model: "kv", where: [{ field: "id", operator: "eq", value: idClause.value }] });
+            await target.update({
+              model: "kv",
+              where: [{ field: "id", operator: "eq", value: idClause.value }],
+              data: { value: { ...row?.value, concurrent: (concurrentWrites += 1) } },
+            });
             return property === "updateMany" ? 0 : undefined;
+          }
+          if (control.detached && conditional) return property === "updateMany" ? 0 : undefined;
+          if (control.noRowCount && property === "updateMany") {
+            await (value as (params: WriteParams) => Promise<unknown>).call(target, params);
+            return undefined;
           }
         }
         return (value as (params: WriteParams) => Promise<unknown>).call(target, params);
@@ -560,25 +590,49 @@ describe.each([
   it("reports a merge that gave up under contention as retryable, and its retry succeeds", async () => {
     const { db, control } = withoutTransactions(memoryAdapter(), strictUpdateNotFound);
     const { send, call, storedValue } = await serve(db);
-    await call("mutation", kvMutation({ seed: true }));
+    // A key whose text reads like a not-found error is still contention.
+    const id = "kv:not found";
+    await call("mutation", kvMutation({ seed: true }, { id }));
 
-    // Every conditional write misses until the merge gives up, writing nothing.
+    // Another writer changes the value before every conditional write, until
+    // the merge gives up having written nothing.
     control.missValueWrites = 1000;
-    const viaMutation = kvMutation({ a: 1 });
+    const viaMutation = kvMutation({ a: 1 }, { id });
     const failed = await call("mutation", viaMutation);
     expect(failed.result.ok).toBe(false);
     expect(failed.result.errors[0]).toMatchObject({ code: "INTERNAL", retryable: true });
-    const viaPush = { clientId: "client:a", mutations: [kvMutation({ b: 2 })] };
+    const viaPush = { clientId: "client:a", mutations: [kvMutation({ b: 2 }, { id })] };
     const failedPush = await send("push", viaPush);
     expect(failedPush.body.result.errors[0]).toMatchObject({ code: "INTERNAL", retryable: true });
-    expect(await storedValue()).toEqual({ seed: true });
+    expect(await storedValue(id)).not.toHaveProperty("a");
+    expect(await storedValue(id)).not.toHaveProperty("b");
 
     // Retrying the same mutations once the contention ends applies them.
     control.missValueWrites = 0;
     expect((await call("mutation", viaMutation)).result.ok).toBe(true);
     expect((await call("push", viaPush)).result.ok).toBe(true);
-    expect(await storedValue()).toEqual({ seed: true, a: 1, b: 2 });
-    await expectLatestKvChangeCarries(call, { seed: true, a: 1, b: 2 });
+    expect(await storedValue(id)).toMatchObject({ seed: true, a: 1, b: 2 });
+  });
+
+  it("rejects a merge as unsupported when the adapter cannot compare the stored value", async () => {
+    const { db, control } = withoutTransactions(memoryAdapter(), strictUpdateNotFound);
+    const { send, call, storedValue } = await serve(db);
+    await call("mutation", kvMutation({ seed: true }));
+
+    // No concurrent writer: the conditional write misses only because the
+    // adapter cannot match the value it returned. That is not contention.
+    control.detached = true;
+    await expect(
+      updateKvRecordMerging({ db, resource: "kv", id: "kv:prefs", data: { value: { a: 1 } }, inTransaction: false }),
+    ).rejects.toMatchObject({ name: "KvMergeUnsupportedError" });
+    const failed = await call("mutation", kvMutation({ a: 1 }));
+    expect(failed.result.errors[0]).toMatchObject({ code: "DFQL_UNSUPPORTED", retryable: false });
+    const failedPush = await send("push", { clientId: "client:a", mutations: [kvMutation({ b: 2 })] });
+    expect(failedPush.body.result.errors[0]).toMatchObject({ code: "DFQL_UNSUPPORTED", retryable: false });
+    expect(await storedValue()).toEqual({ seed: true });
+    // A missing record is still created with the patch.
+    expect((await call("mutation", kvMutation({ only: true }, { id: "kv:new" }))).result.ok).toBe(true);
+    expect(await storedValue("kv:new")).toEqual({ only: true });
   });
 
   it("keeps a permanent write failure terminal on /mutation", async () => {
@@ -592,5 +646,15 @@ describe.each([
     expect(failed.result.errors[0]).toMatchObject({ code: "INTERNAL", retryable: false });
     control.failValueWrites = false;
     expect(await storedValue()).toEqual({ seed: true });
+  });
+
+  it("rejects a merge as unsupported when updateMany returns no row count", async () => {
+    if (strictUpdateNotFound) return; // update() reports misses; updateMany is unused.
+    const { db, control } = withoutTransactions(memoryAdapter(), strictUpdateNotFound);
+    const { call, storedValue } = await serve(db);
+    await call("mutation", kvMutation({ seed: true }));
+    control.noRowCount = true;
+    const failed = await call("mutation", kvMutation({ a: 1 }));
+    expect(failed.result.errors[0]).toMatchObject({ code: "DFQL_UNSUPPORTED", retryable: false });
   });
 });

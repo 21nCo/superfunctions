@@ -21,6 +21,7 @@ import {
 import { executeSchemaAwareMerge } from "./merge-decision.js";
 import {
   isKvMergeContentionError,
+  isKvMergeUnsupportedError,
   isKvResource,
   isKvValueMerge,
   snapshotKvChange,
@@ -386,15 +387,22 @@ async function executeMutationCore(
                 resource: mutation.resource,
               });
             }
-            opResult = {
-              ok: false,
-              code: mergeResult.code,
-              message: mergeResult.message,
-              path: mergeResult.path,
-              // A KV merge that gave up under contention wrote nothing; the
-              // same mutation can succeed when retried.
-              retryable: isKvMergeContentionError(mergeResult.error),
-            };
+            opResult = isKvMergeUnsupportedError(mergeResult.error)
+              ? {
+                  ok: false,
+                  code: "DFQL_UNSUPPORTED",
+                  message: (mergeResult.error as Error).message,
+                  path: "record.value",
+                }
+              : {
+                  ok: false,
+                  code: mergeResult.code,
+                  message: mergeResult.message,
+                  path: mergeResult.path,
+                  // A KV merge that gave up under contention wrote nothing;
+                  // the same mutation can succeed when retried.
+                  retryable: isKvMergeContentionError(mergeResult.error),
+                };
           }
         }
         break;
