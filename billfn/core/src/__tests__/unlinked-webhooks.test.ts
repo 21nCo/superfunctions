@@ -1424,6 +1424,239 @@ describe('webhook events for subscriptions BillFn has not seen', () => {
     ]);
   });
 
+  it('links the charge an earlier-dated payment event names after a verification linked only the subscription', async () => {
+    const { billfn, subscriptions, unlinked, advance, checkout, receipt } = setup({ verifiedSubscriptionId: 'sub_vc' });
+    // A cancellation naming only the charge, older than the verification, is retained.
+    await deliver(billfn, [
+      subscriptionEvent({ eventId: 'evt_vc_old', chargeId: 'pay_vc', status: 'canceled', occurredAt: '2026-10-31T00:00:00.000Z' })
+    ]);
+    advance(1000);
+    const session = await checkout('vc_user');
+    advance(1000);
+    const verified = await billfn.verifyCheckout({
+      subject: { principalId: 'vc_user' },
+      checkoutSessionId: session.checkoutSessionId
+    });
+    expect(verified.ok && verified.data.subscription).toMatchObject({ status: 'active', providerChargeId: undefined });
+    advance(1000);
+
+    // The first payment event occurred before the verification read the provider: its state is stale, its charge is not.
+    const response = await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_vc_payment',
+        subscriptionId: 'sub_vc',
+        chargeId: 'pay_vc',
+        status: 'expired',
+        occurredAt: '2026-11-01T00:00:01.000Z'
+      })
+    ]);
+
+    expect(response.ok && response.data.processed).toBe(1);
+    expect((await receipt('evt_vc_payment'))?.processedAt).toBeTruthy();
+    const [subscription, ...others] = await subscriptions();
+    expect(others).toHaveLength(0);
+    expect(subscription).toMatchObject({ providerSubscriptionId: 'sub_vc', providerChargeId: 'pay_vc', status: 'active' });
+    expect(subscription?.metadata?.billfnProviderEventOccurredAt).toBe('2026-11-01T00:00:02.000Z');
+    const entitlements = await billfn.getEntitlements({ principalId: 'vc_user' });
+    expect(entitlements.ok && entitlements.data.entitlements?.status).toBe('active');
+    // The retained charge event is older than the verification, so linking its charge replays it as skipped.
+    expect(await unlinked()).toEqual([
+      expect.objectContaining({ providerEventId: 'evt_vc_old', status: 'skipped', subscriptionId: subscription?.id })
+    ]);
+  });
+
+  it('replays a newer retained charge event once an earlier-dated payment event links that charge', async () => {
+    const { billfn, subscriptions, unlinked, advance, checkout } = setup({ verifiedSubscriptionId: 'sub_vn' });
+    const session = await checkout('vn_user');
+    advance(1000);
+    await billfn.verifyCheckout({ subject: { principalId: 'vn_user' }, checkoutSessionId: session.checkoutSessionId });
+    advance(1000);
+    // A payment failure naming only the charge, after the verification, is retained: no subscription carries the charge.
+    await deliver(billfn, [
+      subscriptionEvent({ eventId: 'evt_vn_failed', chargeId: 'pay_vn', status: 'past_due', occurredAt: '2026-11-01T00:00:05.000Z' })
+    ]);
+    expect(await unlinked()).toEqual([expect.objectContaining({ providerEventId: 'evt_vn_failed', status: 'unlinked' })]);
+    advance(1000);
+
+    const response = await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_vn_payment',
+        subscriptionId: 'sub_vn',
+        chargeId: 'pay_vn',
+        status: 'active',
+        occurredAt: '2026-11-01T00:00:00.500Z'
+      })
+    ]);
+
+    expect(response.ok && response.data.processed).toBe(1);
+    expect(await subscriptions()).toEqual([
+      expect.objectContaining({ providerChargeId: 'pay_vn', status: 'past_due' })
+    ]);
+    const entitlements = await billfn.getEntitlements({ principalId: 'vn_user' });
+    expect(entitlements.ok && entitlements.data.entitlements?.status).toBe('grace');
+    expect(await unlinked()).toEqual([expect.objectContaining({ providerEventId: 'evt_vn_failed', status: 'replayed' })]);
+  });
+
+  it('links the charge of a retained event older than the live state and replays the events stored for it', async () => {
+    const { billfn, subscriptions, unlinked, advance, checkout } = setup({ verifiedSubscriptionId: 'sub_rc' });
+    // Retained before the subscription exists: an older event naming the subscription and its charge, an older
+    // charge-only cancellation, and a payment failure for the charge dated after the verification below.
+    await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_rc_1_link',
+        subscriptionId: 'sub_rc',
+        chargeId: 'pay_rc',
+        status: 'expired',
+        occurredAt: '2026-10-31T00:00:00.000Z'
+      })
+    ]);
+    advance(1000);
+    await deliver(billfn, [
+      subscriptionEvent({ eventId: 'evt_rc_2_cancel', chargeId: 'pay_rc', status: 'canceled', occurredAt: '2026-10-31T12:00:00.000Z' })
+    ]);
+    advance(1000);
+    await deliver(billfn, [
+      subscriptionEvent({ eventId: 'evt_rc_3_failed', chargeId: 'pay_rc', status: 'past_due', occurredAt: '2026-11-01T00:01:00.000Z' })
+    ]);
+    advance(1000);
+    const session = await checkout('rc_user');
+    advance(1000);
+
+    const verified = await billfn.verifyCheckout({
+      subject: { principalId: 'rc_user' },
+      checkoutSessionId: session.checkoutSessionId
+    });
+
+    // The live read links only the subscription. Its older retained event is skipped but links the charge, so the
+    // charge's events replay too: the older cancellation is skipped and the newer payment failure applies.
+    if (!verified.ok) {
+      throw new Error('expected verification');
+    }
+    expect(verified.data.subscription).toMatchObject({ providerChargeId: 'pay_rc', status: 'past_due' });
+    expect(verified.data.entitlements.status).toBe('grace');
+    expect(await subscriptions()).toEqual([expect.objectContaining({ providerChargeId: 'pay_rc', status: 'past_due' })]);
+    expect(await unlinked()).toEqual([
+      expect.objectContaining({ providerEventId: 'evt_rc_1_link', status: 'skipped' }),
+      expect.objectContaining({ providerEventId: 'evt_rc_2_cancel', status: 'skipped' }),
+      expect.objectContaining({ providerEventId: 'evt_rc_3_failed', status: 'replayed' })
+    ]);
+  });
+
+  it('does not link a charge another subscription holds from an event older than the subscription state', async () => {
+    const { billfn, subscriptions, unlinked } = setup();
+    await billfn.quotaProvider.recordUsage({ principalId: 'own_a', bytes: 0 });
+    await billfn.quotaProvider.recordUsage({ principalId: 'own_b', bytes: 0 });
+    await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_own_a',
+        subscriptionId: 'sub_own_a',
+        status: 'active',
+        occurredAt: '2026-10-31T00:00:00.000Z',
+        billingAccountId: 'ba_user_own_a'
+      }),
+      subscriptionEvent({
+        eventId: 'evt_own_b',
+        subscriptionId: 'sub_own_b',
+        chargeId: 'pay_own_b',
+        status: 'active',
+        occurredAt: '2026-10-31T00:00:00.000Z',
+        billingAccountId: 'ba_user_own_b'
+      })
+    ]);
+
+    // An older event pairs the first subscription with the charge the second already holds.
+    const response = await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_own_stale',
+        subscriptionId: 'sub_own_a',
+        chargeId: 'pay_own_b',
+        status: 'expired',
+        occurredAt: '2026-10-30T00:00:00.000Z'
+      })
+    ]);
+
+    expect(response.ok).toBe(true);
+    const rows = await subscriptions();
+    expect(rows.find((row) => row.providerSubscriptionId === 'sub_own_a')).toMatchObject({
+      status: 'active',
+      providerChargeId: undefined
+    });
+    expect(rows.filter((row) => row.providerChargeId === 'pay_own_b')).toEqual([
+      expect.objectContaining({ providerSubscriptionId: 'sub_own_b', status: 'active' })
+    ]);
+    expect(await unlinked()).toHaveLength(0);
+  });
+
+  it('returns the state a committed cancellation wrote when reading it back fails', async () => {
+    const fault = { armed: false };
+    const providerCalls: string[] = [];
+    const db = interceptDb(memoryAdapter({ debug: false }), {
+      create: async (params, next) => {
+        const type = (params.data as { type?: string }).type;
+        if (params.model === 'billingEvents' && type === 'billfn.subscription.canceled') {
+          fault.armed = true;
+        }
+        if (params.model === 'billingEvents' && type === 'billfn.subscription.cancel.requested') {
+          fault.armed = false;
+        }
+        return next();
+      },
+      findOne: async (params, next) => {
+        if (fault.armed && params.model === 'subscriptions') {
+          throw new Error('injected subscription read failure');
+        }
+        return next();
+      }
+    });
+    const base = createProvider({});
+    const billfn = createBillFn({
+      db,
+      catalog,
+      now: () => new Date('2026-11-01T00:00:00.000Z'),
+      providers: {
+        dodo: {
+          ...base,
+          capabilities: { ...base.capabilities, cancelSubscription: true },
+          async cancelSubscription(input) {
+            providerCalls.push('cancelSubscription');
+            return {
+              operationStatus: 'applied',
+              billingState: {
+                subscriptionStatus: 'canceled',
+                checkoutStatus: 'succeeded',
+                providerSubscriptionId: input.subscription.providerSubscriptionId,
+                autoRenew: false
+              }
+            };
+          }
+        }
+      }
+    });
+    await billfn.quotaProvider.recordUsage({ principalId: 'rf_user', bytes: 0 });
+    await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_rf_bootstrap',
+        subscriptionId: 'sub_rf',
+        status: 'active',
+        occurredAt: '2026-10-30T00:00:00.000Z',
+        billingAccountId: 'ba_user_rf_user'
+      })
+    ]);
+
+    const response = await billfn.cancelSubscription({ subject: { principalId: 'rf_user' } });
+
+    expect(response.ok).toBe(true);
+    expect(response.ok && response.data.subscription).toMatchObject({ providerSubscriptionId: 'sub_rf', status: 'canceled' });
+    expect(response.ok && response.data.entitlements.status).toBe('inactive');
+    expect(providerCalls).toEqual(['cancelSubscription']);
+    const requested = await db.findMany<{ type: string }>({
+      model: 'billingEvents',
+      where: [{ field: 'type', operator: 'eq', value: 'billfn.subscription.cancel.requested' }],
+      namespace: 'billfn'
+    });
+    expect(requested).toHaveLength(1);
+  });
+
   it.each([
     ['cancelSubscription', 'billfn.subscription.cancel.requested'],
     ['changeSubscription', 'billfn.subscription.change.requested'],

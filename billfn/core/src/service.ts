@@ -2286,6 +2286,8 @@ async function applyVerificationState(
       input.occurredAt &&
       isProviderEventOlderThanSubscription(baseSubscription, input.occurredAt)
     ) {
+      // The older event's state is skipped, but a reference it adds still belongs to this subscription.
+      await linkSkippedEventReferences(deps, baseSubscription, input.state);
       return null;
     }
 
@@ -2505,6 +2507,100 @@ function linkLiveReadReferences(
     return null;
   }
   return { ...subscription, providerSubscriptionId, providerCheckoutId, providerChargeId, updatedAt: timestamp };
+}
+
+/**
+ * Links the provider references of an event skipped as older than the
+ * subscription's provider state (the last applied event or a live provider
+ * read). The state, entitlements and provider-state time are kept; only a
+ * missing provider subscription or charge id is filled, never replaced, and a
+ * reference another subscription already holds is left alone. The write is
+ * ordered against the row it was computed from. Returns the subscription after
+ * the write, or the current row when nothing was added; the caller replays the
+ * events retained for an added reference.
+ */
+async function linkSkippedEventReferences(
+  deps: ServiceDeps,
+  subscription: BillFnSubscription,
+  state: Pick<VerifiedBillingState, 'providerSubscriptionId' | 'providerChargeId'>
+): Promise<BillFnSubscription> {
+  let current = subscription;
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const data: Partial<Pick<BillFnSubscription, 'providerSubscriptionId' | 'providerChargeId'>> = {};
+    if (
+      !current.providerSubscriptionId &&
+      state.providerSubscriptionId &&
+      !(await isProviderReferenceHeldElsewhere(deps, current, 'providerSubscriptionId', state.providerSubscriptionId))
+    ) {
+      data.providerSubscriptionId = state.providerSubscriptionId;
+    }
+    if (
+      !current.providerChargeId &&
+      state.providerChargeId &&
+      !(await isProviderReferenceHeldElsewhere(deps, current, 'providerChargeId', state.providerChargeId))
+    ) {
+      data.providerChargeId = state.providerChargeId;
+    }
+    if (Object.keys(data).length === 0) {
+      return current;
+    }
+    const linked: BillFnSubscription = {
+      ...current,
+      ...data,
+      updatedAt: nextSubscriptionUpdatedAt(deps.now(), current.updatedAt)
+    };
+    let updated = 0;
+    try {
+      updated = await deps.db.updateMany({
+        model: TABLES.subscriptions,
+        where: [
+          { field: 'id', operator: 'eq', value: current.id },
+          { field: 'updatedAt', operator: 'eq', value: current.updatedAt }
+        ],
+        data: linked,
+        namespace: deps.namespace
+      });
+    } catch (error) {
+      // Another subscription took the reference between the check and the write: re-check it.
+      if (!isDuplicateRecordError(error)) {
+        throw error;
+      }
+    }
+    if (updated === 1) {
+      deps.metrics.track('reconciliation.event.references_linked', {
+        provider: current.provider,
+        subscriptionId: current.id
+      });
+      return linked;
+    }
+    const reread = await getSubscriptionById(deps, current.id);
+    if (!reread) {
+      return current;
+    }
+    current = reread;
+    await Promise.resolve();
+  }
+  throw createBillFnError({
+    code: 'BILLFN_CONFLICT',
+    message: 'Unable to link provider references after multiple retries'
+  });
+}
+
+async function isProviderReferenceHeldElsewhere(
+  deps: ServiceDeps,
+  subscription: BillFnSubscription,
+  field: 'providerSubscriptionId' | 'providerChargeId',
+  reference: string
+) {
+  const holder = await deps.db.findOne<BillFnSubscription>({
+    model: TABLES.subscriptions,
+    where: [
+      { field: 'provider', operator: 'eq', value: subscription.provider },
+      { field, operator: 'eq', value: reference }
+    ],
+    namespace: deps.namespace
+  });
+  return Boolean(holder && holder.id !== subscription.id);
 }
 
 async function upsertEntitlements(
@@ -2869,9 +2965,12 @@ async function processParsedWebhookEvent(
     }
     const linkedBefore = projection.subscription;
     const applied = await applyParsedWebhookEvent(deps, providerName, { ...event, billingState: state }, projection);
-    // An event that adds a provider reference links the events stored for it.
-    if (applied && addsProviderReference(linkedBefore, applied.subscription)) {
-      await replayUnlinkedWebhookEventsOrThrow(deps, applied.subscription);
+    // An event that adds a provider reference links the events stored for it, including an event
+    // skipped as older than the subscription's state, which still links its missing references.
+    const linkedAfter =
+      applied?.subscription ?? (linkedBefore ? await getSubscriptionById(deps, linkedBefore.id) : null);
+    if (linkedAfter && addsProviderReference(linkedBefore, linkedAfter)) {
+      await replayUnlinkedWebhookEventsOrThrow(deps, linkedAfter);
     }
     return applied;
   }
@@ -2904,6 +3003,7 @@ async function applyParsedWebhookEvent(
     event.occurredAt &&
     isProviderEventOlderThanSubscription(projection.subscription, event.occurredAt)
   ) {
+    await linkSkippedEventReferences(deps, projection.subscription, event.billingState);
     deps.metrics.track('reconciliation.event.skipped', {
       provider: providerName,
       providerEventId: event.providerEventId,
@@ -3163,9 +3263,10 @@ async function replayUnlinkedWebhookEvents(
     }
     queried = references;
     const stopped = await replayUnlinkedWebhookEventsForReferences(deps, current, references, result);
-    if (stopped || result.applied === 0) {
+    if (stopped) {
       break;
     }
+    // Applied events, and skipped ones that linked a missing reference, can change the reference set.
     current = await getSubscriptionById(deps, current.id);
   }
 
@@ -3305,6 +3406,7 @@ async function applyUnlinkedWebhookEvent(deps: ServiceDeps, row: BillFnUnlinkedW
   }
   // An event without a provider time is ordered by when it was stored.
   if (!event.occurredAt && isProviderEventOlderThanSubscription(projection.subscription, row.createdAt)) {
+    await linkSkippedEventReferences(deps, projection.subscription, state);
     deps.metrics.track('reconciliation.event.skipped', {
       provider: row.provider,
       providerEventId: row.providerEventId,
@@ -3452,7 +3554,24 @@ async function applyLiveProviderState(
   } else {
     await replayUnlinkedWebhookEventsOrThrow(deps, result.subscription);
   }
-  // Another run may have replayed events for these references since the write, so the state is read again.
+  if (!options.onReplayDeferred) {
+    return refreshProjectionAfterReplay(deps, result);
+  }
+  try {
+    return await refreshProjectionAfterReplay(deps, result);
+  } catch (error) {
+    // The provider mutation and its state are committed; a failed re-read returns the written state.
+    deps.metrics.track('webhook.unlinked.replay_refresh_failed', {
+      provider: result.subscription.provider,
+      subscriptionId: result.subscription.id,
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return result;
+  }
+}
+
+/** Another run may have replayed events for these references since the write, so the state is read again. */
+async function refreshProjectionAfterReplay(deps: ServiceDeps, result: ProjectionResult): Promise<ProjectionResult> {
   const subscription = (await getSubscriptionById(deps, result.subscription.id)) ?? result.subscription;
   const entitlements = (await findEntitlementSnapshot(deps, subscription.billingAccountId)) ?? result.entitlements;
   const checkoutSession = result.checkoutSession
