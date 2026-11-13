@@ -3,7 +3,7 @@ import { verifyChangeDetail, type ChangeDetailVerification } from "../change.js"
 import { ReviewFnError } from "../errors.js";
 import { harnessOutputSchema } from "../schema.js";
 import type { ArtifactStore, CodeAnchor, ContextManifest, Evidence, ReviewPolicy, ReviewReport, SourceControlAdapter, SourceReference, Verdict } from "../types.js";
-import { deriveVerdict, reproductionVerified, sinceAncestryError, sourceReferenceChecker, validateReport, waiverReferenceValid } from "../validator.js";
+import { anchorCommitChecker, deriveVerdict, reproductionVerified, sinceAncestryError, sourceReferenceChecker, validateReport, verifiedDeltaOf, waiverReferenceValid } from "../validator.js";
 import { PANEL_CREDENTIAL_FINGERPRINT_PATTERN, PANEL_DIGEST_PATTERN, PANEL_NONBLANK_PATTERN, PANEL_SLOT_ID_PATTERN, PANEL_TIMESTAMP_PATTERN, panelSchemaDefs } from "./schema.js";
 import { PANEL_DEFAULT_MAX_CONCURRENT_SLOTS } from "./types.js";
 import type { PanelFinding, PanelPolicy, PanelReport, PanelReportIssueCode, PanelReportValidationResult, PanelSlot, PanelValidationCode, PanelValidationIssue, PanelValidationResult, SlotIdentity, SlotRun } from "./types.js";
@@ -22,7 +22,7 @@ function pointer(path: string, key: string | number): string {
   return `${path}/${String(key).replaceAll("~", "~0").replaceAll("/", "~1")}`;
 }
 function add(issues: Issues, code: PanelReportIssueCode, path: string, message: string): void {
-  issues.push({ code, path: path || "/", message });
+  issues.push({ code, path, message });
 }
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -345,8 +345,7 @@ interface EvidenceContext {
 
 async function evidenceIssues({ report, options, referenceValid, detail }: EvidenceContext, issues: Issues): Promise<Map<string, Evidence>> {
   const { artifacts } = options;
-  const since = report.changeDetail?.since;
-  const verifiedDelta = detail.errors.length === 0 && since !== undefined && detail.delta?.baseCommit === since && detail.delta.headCommit === report.change.headCommit ? detail.delta : undefined;
+  const verifiedDelta = verifiedDeltaOf(report as unknown as ReviewReport, detail);
   const changedPaths = new Set([...report.change.changedPaths, ...(verifiedDelta?.files.map(file => file.path) ?? [])]);
   for (const { index, key } of duplicates(report.evidence, item => item.id)) add(issues, "REVIEWFN_PANEL_FINDING_INVALID", `/evidence/${index}/id`, `Evidence ${key} is declared more than once.`);
   for (const [index, item] of report.evidence.entries()) {
@@ -413,16 +412,32 @@ async function findingIssues(context: EvidenceContext, policy: ReviewPolicy, slo
   });
 }
 
-/** Code anchors cite the reviewed head, or the merge base for on-base code, and are verified through source control; without it they fail closed. */
-async function anchorIssues(report: PanelReport, options: PanelReportValidationOptions, issues: Issues): Promise<void> {
+/**
+ * Evidence cited only as on-base evidence: by at least one verification whose `onBase` is `present` or `absent`, and
+ * by no finding. Only this evidence may anchor at the merge base on any path, because it describes the base itself.
+ */
+function onBaseEvidenceIds(report: PanelReport): Set<string> {
+  const findingCited = new Set(report.findings.flatMap(finding => finding.evidenceIds));
+  const baseCited = new Set(report.findings.flatMap(finding => finding.verification && finding.verification.onBase !== "not_checked" ? finding.verification.evidenceIds : []));
+  const otherCited = new Set(report.findings.flatMap(finding => finding.verification?.onBase === "not_checked" ? finding.verification.evidenceIds : []));
+  return new Set([...baseCited].filter(id => !findingCited.has(id) && !otherCited.has(id)));
+}
+
+/**
+ * Code anchors follow the 0.1 commit rule (`anchorCommitChecker`), with one narrow allowance for on-base evidence, and
+ * are verified through source control; without it they fail closed.
+ */
+async function anchorIssues({ report, options, detail }: EvidenceContext, issues: Issues): Promise<void> {
   const { sourceControl, root } = options;
-  const commits = new Set([report.change.headCommit, report.change.mergeBaseCommit]);
-  const anchors: Array<{ anchor: CodeAnchor; path: string }> = [
-    ...report.evidence.flatMap((item, index) => item.code ? [{ anchor: item.code, path: `/evidence/${index}/code` }] : []),
-    ...report.findings.flatMap((finding, index) => finding.anchor ? [{ anchor: finding.anchor, path: `/findings/${index}/anchor` }] : []),
+  const allowedCommit = anchorCommitChecker(report as unknown as ReviewReport, verifiedDeltaOf(report as unknown as ReviewReport, detail), sourceControl, root);
+  const onBase = onBaseEvidenceIds(report);
+  const anchors: Array<{ anchor: CodeAnchor; path: string; onBase: boolean }> = [
+    ...report.evidence.flatMap((item, index) => item.code ? [{ anchor: item.code, path: `/evidence/${index}/code`, onBase: onBase.has(item.id) }] : []),
+    ...report.findings.flatMap((finding, index) => finding.anchor ? [{ anchor: finding.anchor, path: `/findings/${index}/anchor`, onBase: false }] : []),
   ];
-  for (const { anchor, path } of anchors) {
-    if (!commits.has(anchor.commit)) add(issues, "REVIEWFN_PANEL_FINDING_INVALID", path, `Anchor commit ${anchor.commit} is neither the reviewed head nor the merge base.`);
+  for (const { anchor, path, onBase: baseEvidence } of anchors) {
+    const allowed = (baseEvidence && anchor.commit === report.change.mergeBaseCommit) || await allowedCommit(anchor);
+    if (!allowed) add(issues, "REVIEWFN_PANEL_FINDING_INVALID", path, `Anchor ${anchor.path}@${anchor.commit} does not reference the reviewed head; the merge base or since commit is allowed only for a changed path verified absent at head${baseEvidence ? "" : ", or for on-base verification evidence at the merge base"}.`);
     else if (!sourceControl || !root) add(issues, "REVIEWFN_PANEL_FINDING_INVALID", path, `Anchor ${anchor.path} cannot be verified without source control.`);
     else if (!(await sourceControl.verifyAnchor(root, anchor))) add(issues, "REVIEWFN_PANEL_FINDING_INVALID", path, `Anchor ${anchor.path} is not valid at ${anchor.commit}.`);
   }
@@ -452,7 +467,7 @@ export async function validatePanelReport(value: unknown, policy: ReviewPolicy, 
   slotRunIssues(report, slots, issues);
   const evidence = await evidenceIssues(evidenceContext, issues);
   await findingIssues(evidenceContext, policy, slots, evidence, issues);
-  await anchorIssues(report, options, issues);
+  await anchorIssues(evidenceContext, issues);
 
   if (requirements) {
     if (stableStringify(requirements.change) !== stableStringify(report.change)) add(issues, "REVIEWFN_REPORT_INVALID", "/requirementsReport/change", "The requirements report reviewed a different change than the panel.");

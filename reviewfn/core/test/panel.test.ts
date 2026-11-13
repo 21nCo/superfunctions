@@ -77,7 +77,7 @@ function panelReport(): PanelReport {
     evidence: [
       { id: "E1", kind: "code", description: "the unguarded loop", code: { commit: head, path: "src/value.ts", startLine: 1 } },
       { id: "V1", kind: "code", description: "verifier reproduction of the unguarded loop", code: { commit: head, path: "src/value.ts", startLine: 1 } },
-      { id: "V2", kind: "code", description: "the guard the refuted finding missed", code: { commit: mergeBase, path: "src/value.ts", startLine: 1 } },
+      { id: "V2", kind: "code", description: "the guard the refuted finding missed", code: { commit: head, path: "src/value.ts", startLine: 1 } },
     ],
     findings: [
       finding("f-confirmed", { verification: { verdict: "confirmed", slotId: "verifier", evidenceIds: ["V1"], onBase: "absent", reason: "The loop has no guard at head." } }),
@@ -356,7 +356,59 @@ describe("panel claims are verified like 0.1 claims", () => {
     expect(codes(result.issues)).toEqual(["REVIEWFN_PANEL_FINDING_INVALID", "REVIEWFN_REPORT_INVALID"]);
     expect(result.issues.filter(issue => issue.code === "REVIEWFN_PANEL_FINDING_INVALID").map(issue => issue.path)).toEqual(["/evidence/0/code", "/evidence/1/code", "/evidence/2/code", "/findings/0/anchor", "/findings/1/anchor", "/findings/2/anchor"]);
     const stale = mutate(panelReport(), report => { report.evidence[0].code!.commit = "c".repeat(40); });
-    expect((await validatePanelReport(stale, policy, { context })).issues.find(issue => issue.path === "/evidence/0/code")?.message).toMatch(/neither the reviewed head nor the merge base/);
+    expect((await validatePanelReport(stale, policy, { context })).issues.find(issue => issue.path === "/evidence/0/code")?.message).toMatch(/does not reference the reviewed head/);
+  });
+
+  it("applies the 0.1 anchor commit rule to finding anchors and evidence", async () => {
+    // src/gone.ts is absent at head; every other path exists there.
+    const absent = (paths: string[]) => ({ ...options, sourceControl: { ...sourceControl, pathExists: async (_root: string, _commit: string, path: string) => !paths.includes(path) } });
+    const anchoredAt = (commit: string, path: string) => (report: PanelReport) => { report.evidence[0].code = { commit, path, startLine: 1 }; report.findings[0].anchor = { commit, path, startLine: 1 }; };
+    const anchorIssuePaths = async (value: PanelReport, opts: Parameters<typeof validatePanelReport>[2]) => (await validatePanelReport(value, policy, opts)).issues.filter(issue => issue.code === "REVIEWFN_PANEL_FINDING_INVALID").map(issue => issue.path);
+    // Merge base on an unchanged path: rejected for both the finding and its evidence, as 0.1 rejects it.
+    const unchanged = mutate(panelReport(), anchoredAt(mergeBase, "src/other.ts"));
+    expect(await anchorIssuePaths(unchanged, absent(["src/other.ts"]))).toEqual(["/evidence/0/code", "/findings/0/anchor"]);
+    const legacy = requirementsReport();
+    legacy.evidence[0].code = { commit: mergeBase, path: "src/other.ts", startLine: 1 };
+    expect((await validateReport(legacy, policy, absent(["src/other.ts"]).sourceControl, ".", context)).errors).toContain(`Evidence E1 does not reference reviewed head ${head}.`);
+    // Merge base on a changed path: accepted only once the path is verified absent at head.
+    const deleted = mutate(panelReport(), anchoredAt(mergeBase, "src/value.ts"));
+    expect((await validatePanelReport(deleted, policy, absent(["src/value.ts"]))).issues).toEqual([]);
+    expect(await anchorIssuePaths(deleted, absent([]))).toEqual(["/evidence/0/code", "/findings/0/anchor"]);
+    expect(await anchorIssuePaths(deleted, options)).toEqual(["/evidence/0/code", "/findings/0/anchor"]);
+
+    // A since anchor: accepted only for a path the verified delta removed that is absent at head.
+    const since = "c".repeat(40);
+    const store = new MemoryStore();
+    const hunks = await store.put("change-hunks", serializeChangeHunks({ version: 1, baseCommit: mergeBase, headCommit: head, files: [{ path: "src/value.ts", status: "modified", hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1 }] }] }));
+    const deltaHunks = await store.put("change-hunks", serializeChangeHunks({ version: 1, baseCommit: since, headCommit: head, files: [{ path: "src/gone.ts", status: "deleted", hunks: [{ oldStart: 1, oldLines: 1, newStart: 0, newLines: 0 }] }] }));
+    const incremental = (change: (report: PanelReport) => void) => panelOnly(report => { report.changeDetail = { hunksArtifact: hunks.id, hunksDigest: hunks.digest, since, deltaHunksArtifact: deltaHunks.id, deltaHunksDigest: deltaHunks.digest, deltaPaths: ["src/gone.ts"] }; change(report); });
+    const removed = incremental(anchoredAt(since, "src/gone.ts"));
+    expect((await validatePanelReport(removed, policy, { ...absent(["src/gone.ts"]), artifacts: store })).issues).toEqual([]);
+    expect(await anchorIssuePaths(removed, { ...absent([]), artifacts: store })).toEqual(["/evidence/0/code", "/findings/0/anchor"]);
+    // Without the verified delta (no artifact store), the since commit is not allowed.
+    expect(await anchorIssuePaths(removed, absent(["src/gone.ts"]))).toEqual(["/evidence/0/code", "/findings/0/anchor"]);
+    // A since anchor on a path the delta did not remove is rejected.
+    expect(await anchorIssuePaths(incremental(anchoredAt(since, "src/value.ts")), { ...absent(["src/value.ts"]), artifacts: store })).toEqual(["/evidence/0/code", "/findings/0/anchor"]);
+  });
+
+  it("allows merge-base anchors only for on-base verification evidence", async () => {
+    const onBase = { id: "B1", kind: "code" as const, description: "the base has no such loop", code: { commit: mergeBase, path: "src/other.ts", startLine: 1 } };
+    const cited = (change: (report: PanelReport) => void = () => {}) => mutate(panelReport(), report => { report.evidence.push(onBase); report.findings[0].verification!.evidenceIds.push("B1"); change(report); });
+    expect((await validatePanelReport(cited(), policy, options)).issues).toEqual([]);
+    expect((await validatePanelReport(cited(), policy, { context })).issues.find(issue => issue.path === "/evidence/3/code")?.message).toMatch(/cannot be verified without source control/);
+    const rejected = [expect.objectContaining({ code: "REVIEWFN_PANEL_FINDING_INVALID", path: "/evidence/3/code" })];
+    // Also cited by a finding: it is implementation evidence and must follow the head rule.
+    expect((await validatePanelReport(cited(report => { report.findings[0].evidenceIds.push("B1"); }), policy, options)).issues).toEqual(rejected);
+    // Cited by a verification that did not check the base.
+    expect((await validatePanelReport(cited(report => { report.findings[0].verification!.onBase = "not_checked"; }), policy, options)).issues).toEqual(rejected);
+    expect((await validatePanelReport(cited(report => { report.findings[1].verification!.evidenceIds.push("B1"); }), policy, options)).issues).toEqual(rejected);
+    // The allowance names the merge base only.
+    expect((await validatePanelReport(cited(report => { report.evidence[3].code!.commit = "c".repeat(40); }), policy, options)).issues).toEqual(rejected);
+  });
+
+  it("reports root-level issues at the empty JSON Pointer", async () => {
+    expect((await validatePanelReport(null, policy, options)).issues).toEqual([expect.objectContaining({ code: "REVIEWFN_PANEL_SCHEMA", path: "" })]);
+    expect(validatePanelPolicy([]).issues).toEqual([expect.objectContaining({ code: "REVIEWFN_PANEL_SCHEMA", path: "" })]);
   });
 
   it("verifies source, diff and artifact evidence", async () => {

@@ -255,7 +255,7 @@ The report is `{ schemaVersion: 1, kind: "reviewfn-panel", runId, createdAt, cha
 - `contextManifestDigest` is the digest of the frozen context the run used. When a requirements report is present it must be equal to that report's digest, and it may be omitted. Source references are verified only against a supplied context with this digest (or the requirements report's). Without such a context they fail closed.
 - `gateReceipts` are 0.1 test receipts from the trusted gates.
 - `evidence` holds the 0.1 evidence items that panel findings and verifications cite. Each item is verified as in 0.1, and every check fails closed when the source control, context or artifact store it needs is not supplied:
-  - Code anchors on evidence and findings cite the reviewed head, or the merge base for on-base code. Source control must confirm them.
+  - Code anchors on findings and evidence follow the 0.1 commit rule (`anchorCommitChecker`). An anchor cites the reviewed head. It may cite the merge base only for a changed path that source control reports absent at head, and `changeDetail.since` only for a path the verified delta removed that is absent at head. One narrow allowance exists for on-base evidence: evidence cited by at least one verification whose `onBase` is `present` or `absent`, and by no finding and no verification whose `onBase` is `not_checked`, may anchor at the merge base on any path. Every anchor must then be confirmed by `sourceControl.verifyAnchor`. Without source control, only head anchors and on-base evidence pass the commit rule, and they still fail as unverifiable.
   - Diff evidence lies in the changed paths or the verified delta paths.
   - Source evidence cites a verifiable source in the frozen context.
   - Test evidence names exactly one gate receipt at the reviewed head.
@@ -269,17 +269,17 @@ The report is `{ schemaVersion: 1, kind: "reviewfn-panel", runId, createdAt, cha
 
 ## Validation codes
 
-`validatePanelReport(report, policy, { sourceControl?, root?, context?, artifacts? })` returns `{ valid, issues: [{ code, path, message }], verdict }`. `policy` is the 0.1 `ReviewPolicy` (blocking severities, source authority and limits), not the panel policy. `path` is a JSON Pointer. Structural problems are reported alone. `validatePanelPolicy(policy)` checks a panel policy, including that `requirementsSlot` names a stage-1 or stage-2 slot. The codes form a closed set:
+`validatePanelReport(report, policy, { sourceControl?, root?, context?, artifacts? })` returns `{ valid, issues: [{ code, path, message }], verdict }`. `policy` is the 0.1 `ReviewPolicy` (blocking severities, source authority and limits), not the panel policy. `path` is an RFC 6901 JSON Pointer, and the empty string `""` is the document root. Structural problems are reported alone. `validatePanelPolicy(policy)` checks a panel policy, including that `requirementsSlot` names a stage-1 or stage-2 slot. The codes form a closed set:
 
 | Code | Meaning |
 | --- | --- |
 | `REVIEWFN_PANEL_SCHEMA` | The document does not match its JSON Schema, a timestamp is not a real time, or a run contradicts its slot (identity, model mismatch not voided with `model_mismatch`, `model_mismatch` without a mismatch, finish before start). |
 | `REVIEWFN_PANEL_SLOT_DUPLICATE` | A slot ID is declared twice, a slot has two runs, a second completed run of an identity in a stage is not collapsed, or a collapsed run has no earlier completed run of its identity in its stage. |
 | `REVIEWFN_PANEL_SLOT_UNKNOWN` | A run or verification names no such slot (`validatePanelPolicy` also reports an unknown `requirementsSlot`). |
-| `REVIEWFN_PANEL_FINDING_INVALID` | `info` severity, a lifecycle other than `new`, a duplicate fingerprint or origin, missing, unknown or unverifiable evidence, unknown requirements, an unverified reproduction, an anchor that is not at the head or merge base or cannot be verified, or an invalid cluster. |
+| `REVIEWFN_PANEL_FINDING_INVALID` | `info` severity, a lifecycle other than `new`, a duplicate fingerprint or origin, missing, unknown or unverifiable evidence, unknown requirements, an unverified reproduction, an anchor whose commit the anchor rule above does not allow or that source control cannot confirm, or an invalid cluster. |
 | `REVIEWFN_PANEL_ORIGIN_UNKNOWN` | An origin is not a completed stage-1 or stage-2 slot with that lens. |
 | `REVIEWFN_PANEL_VERIFICATION_INVALID` | The verifier is not a completed verifier slot, shares an origin slot's identity, or cites missing or unknown evidence. |
-| `REVIEWFN_PANEL_DISPOSITION_INVALID` | Dropped without a refuted verification, suppressed without a verifiable waiver-authority reference, or not reported without a reason. |
+| `REVIEWFN_PANEL_DISPOSITION_INVALID` | Dropped without a refuted verification, suppressed without a verifiable waiver-authority reference, a `suppressionReference` on a finding that is not suppressed, or dropped or suppressed without a reason. |
 | `REVIEWFN_PANEL_VERDICT_MISMATCH` | `verdict` differs from the derived verdict. |
 
 Errors from the 0.1 checks keep their 0.1 meaning: `REVIEWFN_CHANGE_DETAIL_MISMATCH` and `REVIEWFN_SINCE_NOT_ANCESTOR` keep their codes, and every other 0.1 error, including a requirements report for a different change, change detail or context, is `REVIEWFN_REPORT_INVALID`. Calendar validity of timestamps is a validator check beyond the JSON Schema pattern. `panelStructureIssues(kind, value)` is the structural TypeScript mirror of each JSON Schema. The tests check that it agrees with Ajv on every fixture and on systematic structural variants of each fixture.

@@ -167,7 +167,7 @@ export type PanelReportIssueCode = PanelValidationCode | "REVIEWFN_REPORT_INVALI
 
 export interface PanelValidationIssue<Code extends string = PanelReportIssueCode> {
   code: Code;
-  /** JSON Pointer into the validated document. */
+  /** RFC 6901 JSON Pointer into the validated document; the empty string is the document root. */
   path: string;
   message: string;
 }

@@ -1,6 +1,6 @@
 import { sha256 } from "./canonical.js";
-import { sinceRangeError, verifyChangeDetail } from "./change.js";
-import type { CodeAnchor, ArtifactStore, ContextManifest, SourceReference, Assessment, Evidence, ReportPublisher, ReviewPolicy, ReviewReport, SourceControlAdapter, TestReceipt, Verdict } from "./types.js";
+import { sinceRangeError, verifyChangeDetail, type ChangeDetailVerification } from "./change.js";
+import type { ChangeHunks, CodeAnchor, ArtifactStore, ContextManifest, SourceReference, Assessment, Evidence, ReportPublisher, ReviewPolicy, ReviewReport, SourceControlAdapter, TestReceipt, Verdict } from "./types.js";
 
 export interface ValidationResult {
   valid: boolean;
@@ -74,6 +74,26 @@ export async function sinceAncestryError(report: Pick<ReviewReport, "change" | "
   return reason ? `REVIEWFN_SINCE_NOT_ANCESTOR: ${reason}` : undefined;
 }
 
+/** The delta `since..head` when `changeDetail` verified and records that exact range; otherwise undefined. */
+export function verifiedDeltaOf(report: Pick<ReviewReport, "change" | "changeDetail">, detail: ChangeDetailVerification): ChangeHunks | undefined {
+  const since = report.changeDetail?.since;
+  return detail.errors.length === 0 && since !== undefined && detail.delta?.baseCommit === since && detail.delta.headCommit === report.change.headCommit ? detail.delta : undefined;
+}
+
+/**
+ * Which commit a code anchor may cite: the reviewed head; the merge base only for a changed path absent at head;
+ * `since` only for a path the verified delta removed that is absent at head. Absence needs `sourceControl.pathExists`,
+ * so without source control only head anchors pass. This checks the commit only; `verifyAnchor` checks the lines.
+ */
+export function anchorCommitChecker(report: Pick<ReviewReport, "change" | "changeDetail">, verifiedDelta: ChangeHunks | undefined, sourceControl?: SourceControlAdapter, root?: string): (anchor: CodeAnchor) => Promise<boolean> {
+  const since = report.changeDetail?.since;
+  const deltaRemoved = new Set(verifiedDelta?.files.filter(file => file.status === "deleted" || file.status === "binary").map(file => file.path) ?? []);
+  const absentAtHead = async (path: string): Promise<boolean> => !!sourceControl?.pathExists && root !== undefined && !(await sourceControl.pathExists(root, report.change.headCommit, path));
+  return async (anchor: CodeAnchor): Promise<boolean> => anchor.commit === report.change.headCommit
+    || (anchor.commit === report.change.mergeBaseCommit && report.change.changedPaths.includes(anchor.path) && await absentAtHead(anchor.path))
+    || (verifiedDelta !== undefined && anchor.commit === since && deltaRemoved.has(anchor.path) && await absentAtHead(anchor.path));
+}
+
 export async function validateReport(report: ReviewReport, policy: ReviewPolicy, sourceControl?: SourceControlAdapter, root?: string, context?: ContextManifest, artifacts?: ArtifactStore): Promise<ValidationResult> {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -81,7 +101,7 @@ export async function validateReport(report: ReviewReport, policy: ReviewPolicy,
   const since = report.changeDetail?.since;
   // Paths the verified delta `since..head` lists: removed paths (deleted, or binary) may exist only at `since`,
   // e.g. a file added after the merge base and deleted by a fix push, which the full change never lists.
-  const verifiedDelta = changeDetail.errors.length === 0 && since !== undefined && changeDetail.delta?.baseCommit === since && changeDetail.delta.headCommit === report.change.headCommit ? changeDetail.delta : undefined;
+  const verifiedDelta = verifiedDeltaOf(report, changeDetail);
   const deltaPathSet = new Set(verifiedDelta?.files.map(file => file.path) ?? []);
   const deltaRemoved = new Set(verifiedDelta?.files.filter(file => file.status === "deleted" || file.status === "binary").map(file => file.path) ?? []);
   if (context && context.digest !== report.contextManifestDigest) errors.push("Frozen context digest does not match the report.");
@@ -174,10 +194,7 @@ export async function validateReport(report: ReviewReport, policy: ReviewPolicy,
     }
   }
   if (sourceControl && root) {
-    const absentAtHead = async (path: string): Promise<boolean> => !!sourceControl.pathExists && !(await sourceControl.pathExists(root, report.change.headCommit, path));
-    const allowedCommit = async (anchor: CodeAnchor): Promise<boolean> => anchor.commit === report.change.headCommit
-      || (anchor.commit === report.change.mergeBaseCommit && report.change.changedPaths.includes(anchor.path) && await absentAtHead(anchor.path))
-      || (verifiedDelta !== undefined && anchor.commit === since && deltaRemoved.has(anchor.path) && await absentAtHead(anchor.path));
+    const allowedCommit = anchorCommitChecker(report, verifiedDelta, sourceControl, root);
     for (const inspected of report.inspectedPaths) {
       const inHead = await sourceControl.verifyAnchor(root, { commit: report.change.headCommit, path: inspected, startLine: 1 });
       const deletedFromBase = !inHead && report.change.changedPaths.includes(inspected) && await sourceControl.verifyAnchor(root, { commit: report.change.mergeBaseCommit, path: inspected, startLine: 1 });
