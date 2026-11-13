@@ -7,10 +7,11 @@ import {
   createUIFnNativeFormResetBinding,
   createUIFnPortal,
   focusUIFnElement,
+  type UIFnAdapterDomBindingContext,
+  type UIFnAdapterDomBindingHandle,
   type UIFnDomResourceSnapshot,
   type UIFnPortalTarget,
 } from '@uifn/dom';
-import type { SvelteDomBindingInstaller } from './dom-bindings.js';
 import type { Snippet } from 'svelte';
 import type { SvelteHTMLElements } from 'svelte/elements';
 
@@ -18,6 +19,12 @@ export type AnyRecord = Record<string, unknown>;
 type AnyController = UIFnController<AnyRecord, AnyRecord, AnyRecord, AnyRecord>;
 type AnyStaticContract = UIFnStaticPrimitiveContract<AnyRecord, AnyRecord, AnyRecord>;
 export type SvelteElementName = Extract<keyof SvelteHTMLElements, string>;
+
+/** What a DOM binding installer receives when the bridge mounts: the bridge, its controller and DOM platform. */
+export type SvelteDomBindingContext = UIFnAdapterDomBindingContext<SveltePrimitiveBridge<any>>;
+export type SvelteDomBindingHandle = UIFnAdapterDomBindingHandle;
+/** Wires one kind of @uifn/dom behavior for a mounted primitive; the @uifn/dom adapter installers fit here. */
+export type SvelteDomBindingInstaller = (context: SvelteDomBindingContext) => void;
 
 export interface SveltePrimitiveDefinition<TInputs extends object = AnyRecord> {
   readonly name: string;
@@ -553,8 +560,17 @@ export class SveltePrimitiveBridge<TInputs extends object = AnyRecord> {
           restoreOnDestroy: true,
         }));
       }
+      const portalManagedExternally = this.getElement('portal') !== null;
       for (const install of this.definition.domBindings ?? []) {
-        install({ bridge: this, controller, platform: lease.platform, root, add: (binding) => bindings.push(binding) });
+        install({
+          bridge: this,
+          controller,
+          platform: lease.platform,
+          root,
+          portalManagedExternally,
+          lateChildRegistration: true,
+          add: (binding) => bindings.push(binding),
+        });
       }
     } catch (error) {
       bindings.reverse().forEach((binding) => binding.destroy());

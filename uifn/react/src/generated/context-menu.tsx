@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { createContextMenuController, type ContextMenuProps, type ContextMenuController } from '@uifn/core/primitives/context-menu';
-import { menuDomBinding } from '../internal/dom-bindings';
+import { uifnMenuAdapterBinding } from '@uifn/dom';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -23,7 +23,7 @@ const ContextMenuDefinition: ReactPrimitiveDefinition<ContextMenuProps> = {
   inputNames: ["open","defaultOpen","dir","loop"],
   context: ContextMenuContext,
   createController: createContextMenuController as never,
-  domBindings: [menuDomBinding],
+  domBindings: [uifnMenuAdapterBinding],
 };
 
 export type ContextMenuRootProps = ReactPrimitiveRootProps<ContextMenuProps, 'div'>;

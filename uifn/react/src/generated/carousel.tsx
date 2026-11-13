@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { createCarouselController, type CarouselProps, type CarouselController } from '@uifn/core/primitives/carousel';
-import { rangeGestureDomBinding } from '../internal/dom-bindings';
+import { createUIFnRangeGestureAdapterBinding } from '@uifn/dom';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -23,7 +23,7 @@ const CarouselDefinition: ReactPrimitiveDefinition<CarouselProps> = {
   inputNames: ["index","defaultIndex","itemCount","loop","orientation","autoplayDelay","dir"],
   context: CarouselContext,
   createController: createCarouselController as never,
-  domBindings: [rangeGestureDomBinding],
+  domBindings: [/* @__PURE__ */ createUIFnRangeGestureAdapterBinding({"parts":["viewport"]})],
 };
 
 export type CarouselRootProps = ReactPrimitiveRootProps<CarouselProps, 'section'>;

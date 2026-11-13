@@ -1,6 +1,6 @@
 import { createToggleGroupController, type ToggleGroupProps } from '@uifn/core/primitives/toggle-group';
 import type { SveltePrimitiveDefinition } from '../../internal/compound.js';
-import { rovingFocusDomBinding } from '../../internal/dom-bindings.js';
+import { createUIFnRovingFocusAdapterBinding } from '@uifn/dom';
 
 export const ToggleGroupDefinition: SveltePrimitiveDefinition<ToggleGroupProps> = {
   name: 'ToggleGroup',
@@ -10,5 +10,5 @@ export const ToggleGroupDefinition: SveltePrimitiveDefinition<ToggleGroupProps> 
   inputNames: ["value","defaultValue","type","orientation","loop","disabled"],
   contextKey: Symbol('uifn.ToggleGroup'),
   createController: createToggleGroupController as never,
-  domBindings: [rovingFocusDomBinding],
+  domBindings: [/* @__PURE__ */ createUIFnRovingFocusAdapterBinding({"stateKey":"focusedItem","parts":["itemControl","item"]})],
 };

@@ -1,6 +1,6 @@
 import { createFloatingPanelController, type FloatingPanelProps } from '@uifn/core/primitives/floating-panel';
 import type { SveltePrimitiveDefinition } from '../../internal/compound.js';
-import { overlayDomBinding } from '../../internal/dom-bindings.js';
+import { uifnOverlayAdapterBinding } from '@uifn/dom';
 
 export const FloatingPanelDefinition: SveltePrimitiveDefinition<FloatingPanelProps> = {
   name: 'FloatingPanel',
@@ -10,5 +10,5 @@ export const FloatingPanelDefinition: SveltePrimitiveDefinition<FloatingPanelPro
   inputNames: ["open","defaultOpen","modal","placement","draggable","resizable"],
   contextKey: Symbol('uifn.FloatingPanel'),
   createController: createFloatingPanelController as never,
-  domBindings: [overlayDomBinding],
+  domBindings: [uifnOverlayAdapterBinding],
 };

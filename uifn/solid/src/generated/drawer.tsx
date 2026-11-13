@@ -1,6 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createDrawerController, type DrawerProps, type DrawerController } from '@uifn/core/primitives/drawer';
-import { overlayDomBinding } from '../internal/dom-bindings.js';
+import { uifnOverlayAdapterBinding } from '@uifn/dom';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -20,7 +20,7 @@ export const DrawerDefinition: SolidPrimitiveDefinition<DrawerProps> = {
   inputNames: ["open","defaultOpen","side","modal","dismissThreshold"],
   context: DrawerContext,
   createController: createDrawerController as never,
-  domBindings: [overlayDomBinding],
+  domBindings: [uifnOverlayAdapterBinding],
 };
 
 function DrawerRootElement(props: JSX.IntrinsicElements['div']): JSX.Element {

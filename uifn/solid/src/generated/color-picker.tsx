@@ -1,6 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createColorPickerController, type ColorPickerProps, type ColorPickerController } from '@uifn/core/primitives/color-picker';
-import { popupDomBinding, rovingFocusDomBinding, rangeGestureDomBinding } from '../internal/dom-bindings.js';
+import { createUIFnPopupAdapterBinding, createUIFnRangeGestureAdapterBinding, createUIFnRovingFocusAdapterBinding, uifnPopupTriggerRovingTarget } from '@uifn/dom';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -20,7 +20,7 @@ export const ColorPickerDefinition: SolidPrimitiveDefinition<ColorPickerProps> =
   inputNames: ["value","defaultValue","open","defaultOpen","colorSpace","alpha","name","disabled","readOnly"],
   context: ColorPickerContext,
   createController: createColorPickerController as never,
-  domBindings: [popupDomBinding, rovingFocusDomBinding, rangeGestureDomBinding],
+  domBindings: [/* @__PURE__ */ createUIFnPopupAdapterBinding({"trigger":"trigger","reference":["control","input","trigger"]}), /* @__PURE__ */ createUIFnRovingFocusAdapterBinding(uifnPopupTriggerRovingTarget), /* @__PURE__ */ createUIFnRangeGestureAdapterBinding({"parts":["area"],"entries":["channelSlider"]})],
 };
 
 function ColorPickerRootElement(props: JSX.IntrinsicElements['div']): JSX.Element {

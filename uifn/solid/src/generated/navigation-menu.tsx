@@ -1,6 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createNavigationMenuController, type NavigationMenuProps, type NavigationMenuController } from '@uifn/core/primitives/navigation-menu';
-import { navigationMenuDomBinding, rovingFocusDomBinding } from '../internal/dom-bindings.js';
+import { createUIFnRovingFocusAdapterBinding, uifnNavigationMenuAdapterBinding } from '@uifn/dom';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -20,7 +20,7 @@ export const NavigationMenuDefinition: SolidPrimitiveDefinition<NavigationMenuPr
   inputNames: ["value","defaultValue","orientation","delayDuration","skipDelayDuration","dir"],
   context: NavigationMenuContext,
   createController: createNavigationMenuController as never,
-  domBindings: [navigationMenuDomBinding, rovingFocusDomBinding],
+  domBindings: [uifnNavigationMenuAdapterBinding, /* @__PURE__ */ createUIFnRovingFocusAdapterBinding({"stateKey":"focusedItem","parts":["trigger"]})],
 };
 
 function NavigationMenuRootElement(props: JSX.IntrinsicElements['nav']): JSX.Element {

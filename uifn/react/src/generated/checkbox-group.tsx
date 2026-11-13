@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { createCheckboxGroupController, type CheckboxGroupProps, type CheckboxGroupController } from '@uifn/core/primitives/checkbox-group';
-import { rovingFocusDomBinding } from '../internal/dom-bindings';
+import { createUIFnRovingFocusAdapterBinding } from '@uifn/dom';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -23,7 +23,7 @@ const CheckboxGroupDefinition: ReactPrimitiveDefinition<CheckboxGroupProps> = {
   inputNames: ["value","defaultValue","name","disabled","readOnly","required"],
   context: CheckboxGroupContext,
   createController: createCheckboxGroupController as never,
-  domBindings: [rovingFocusDomBinding],
+  domBindings: [/* @__PURE__ */ createUIFnRovingFocusAdapterBinding({"stateKey":"focusedItem","parts":["itemControl","item"]})],
 };
 
 export type CheckboxGroupRootProps = ReactPrimitiveRootProps<CheckboxGroupProps, 'fieldset'>;

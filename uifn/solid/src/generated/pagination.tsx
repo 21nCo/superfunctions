@@ -1,6 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createPaginationController, type PaginationProps, type PaginationController } from '@uifn/core/primitives/pagination';
-import { rovingFocusDomBinding } from '../internal/dom-bindings.js';
+import { createUIFnRovingFocusAdapterBinding } from '@uifn/dom';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -20,7 +20,7 @@ export const PaginationDefinition: SolidPrimitiveDefinition<PaginationProps> = {
   inputNames: ["page","defaultPage","count","pageSize","siblingCount","disabled"],
   context: PaginationContext,
   createController: createPaginationController as never,
-  domBindings: [rovingFocusDomBinding],
+  domBindings: [/* @__PURE__ */ createUIFnRovingFocusAdapterBinding({"stateKey":"focusedPage","parts":["pageTrigger"]})],
 };
 
 function PaginationRootElement(props: JSX.IntrinsicElements['nav']): JSX.Element {

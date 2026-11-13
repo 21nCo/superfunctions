@@ -1,6 +1,6 @@
 import { createColorPickerController, type ColorPickerProps } from '@uifn/core/primitives/color-picker';
 import type { SveltePrimitiveDefinition } from '../../internal/compound.js';
-import { popupDomBinding, rovingFocusDomBinding, rangeGestureDomBinding } from '../../internal/dom-bindings.js';
+import { createUIFnPopupAdapterBinding, createUIFnRangeGestureAdapterBinding, createUIFnRovingFocusAdapterBinding, uifnPopupTriggerRovingTarget } from '@uifn/dom';
 
 export const ColorPickerDefinition: SveltePrimitiveDefinition<ColorPickerProps> = {
   name: 'ColorPicker',
@@ -10,5 +10,5 @@ export const ColorPickerDefinition: SveltePrimitiveDefinition<ColorPickerProps> 
   inputNames: ["value","defaultValue","open","defaultOpen","colorSpace","alpha","name","disabled","readOnly"],
   contextKey: Symbol('uifn.ColorPicker'),
   createController: createColorPickerController as never,
-  domBindings: [popupDomBinding, rovingFocusDomBinding, rangeGestureDomBinding],
+  domBindings: [/* @__PURE__ */ createUIFnPopupAdapterBinding({"trigger":"trigger","reference":["control","input","trigger"]}), /* @__PURE__ */ createUIFnRovingFocusAdapterBinding(uifnPopupTriggerRovingTarget), /* @__PURE__ */ createUIFnRangeGestureAdapterBinding({"parts":["area"],"entries":["channelSlider"]})],
 };

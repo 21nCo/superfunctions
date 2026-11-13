@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { createSignaturePadController, type SignaturePadProps, type SignaturePadController } from '@uifn/core/primitives/signature-pad';
-import { rangeGestureDomBinding } from '../internal/dom-bindings';
+import { createUIFnRangeGestureAdapterBinding } from '@uifn/dom';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -23,7 +23,7 @@ const SignaturePadDefinition: ReactPrimitiveDefinition<SignaturePadProps> = {
   inputNames: ["value","defaultValue","name","disabled","readOnly","required"],
   context: SignaturePadContext,
   createController: createSignaturePadController as never,
-  domBindings: [rangeGestureDomBinding],
+  domBindings: [/* @__PURE__ */ createUIFnRangeGestureAdapterBinding({"parts":["canvas"]})],
 };
 
 export type SignaturePadRootProps = ReactPrimitiveRootProps<SignaturePadProps, 'div'>;

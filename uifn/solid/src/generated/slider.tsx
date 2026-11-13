@@ -1,6 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createSliderController, type SliderProps, type SliderController } from '@uifn/core/primitives/slider';
-import { rangeGestureDomBinding } from '../internal/dom-bindings.js';
+import { createUIFnRangeGestureAdapterBinding } from '@uifn/dom';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -20,7 +20,7 @@ export const SliderDefinition: SolidPrimitiveDefinition<SliderProps> = {
   inputNames: ["value","defaultValue","min","max","step","minStepsBetweenThumbs","orientation","dir","name","disabled","readOnly"],
   context: SliderContext,
   createController: createSliderController as never,
-  domBindings: [rangeGestureDomBinding],
+  domBindings: [/* @__PURE__ */ createUIFnRangeGestureAdapterBinding({"parts":["control"]})],
 };
 
 function SliderRootElement(props: JSX.IntrinsicElements['div']): JSX.Element {

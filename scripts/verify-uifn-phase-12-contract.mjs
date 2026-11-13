@@ -3,6 +3,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { adapterDomBindingWiringIssues, sharedAdapterInstallerIssues } from './uifn-adapter-dom-bindings.mjs';
 
 const repoRoot = process.cwd();
 const requireDist = process.argv.includes('--require-dist');
@@ -52,6 +53,7 @@ export function verifyPhase12Contract(options = {}) {
     }
     const index = readFileSync(indexPath, 'utf8');
     const definition = readFileSync(definitionPath, 'utf8');
+    for (const problem of adapterDomBindingWiringIssues(primitive, definition)) add('UIFN_SVELTE_DOM_OWNERSHIP_MISSING', problem);
     if (!index.includes(`export const ${primitive.name}`) || !index.includes(`Provider: ${primitive.name}Provider`)) {
       add('UIFN_SVELTE_COMPOUND_NAMESPACE_MISSING', primitive.name);
     }
@@ -101,9 +103,11 @@ export function verifyPhase12Contract(options = {}) {
   if (!updateBody.includes('this.current?.update(') || updateBody.includes('this.create(')) {
     add(PHASE_12_MUTATION_CODES.recreateControllerOnUpdate, 'bridge.update does not delegate directly to controller.update');
   }
-  // The bridge installs each definition's DOM bindings, which live in internal/dom-bindings so a one-primitive
-  // bundle carries only its own; DOM ownership spans both modules.
-  const ownershipSource = `${bridgeSource}\n${readFileSync(path.join(repoRoot, 'uifn/svelte/lib/internal/dom-bindings.ts'), 'utf8')}`;
+  // The bridge installs each definition's DOM bindings: the @uifn/dom adapter installers each generated definition
+  // lists (checked above), so DOM ownership spans the bridge and those installers.
+  const installers = readFileSync(path.join(repoRoot, 'uifn/dom/src/adapter-bindings.ts'), 'utf8');
+  const ownershipSource = `${bridgeSource}\n${installers}`;
+  for (const problem of sharedAdapterInstallerIssues(installers, catalog.primitives)) add('UIFN_SVELTE_DOM_OWNERSHIP_MISSING', problem);
   if (!bridgeSource.includes('definition.domBindings')) add('UIFN_SVELTE_DOM_OWNERSHIP_MISSING', 'definition.domBindings');
   for (const token of ['acquireUIFnDomPlatform', 'createUIFnOverlayDomBinding', 'createUIFnRangeGestureDomBinding', 'createUIFnNativeFormResetBinding', 'createUIFnPortal']) {
     if (!ownershipSource.includes(token)) add('UIFN_SVELTE_DOM_OWNERSHIP_MISSING', token);

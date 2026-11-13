@@ -1,6 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createComboboxController, type ComboboxProps, type ComboboxController } from '@uifn/core/primitives/combobox';
-import { popupDomBinding } from '../internal/dom-bindings.js';
+import { createUIFnPopupAdapterBinding } from '@uifn/dom';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -20,7 +20,7 @@ export const ComboboxDefinition: SolidPrimitiveDefinition<ComboboxProps> = {
   inputNames: ["value","defaultValue","inputValue","items","multiple","name","disabled","readOnly","required"],
   context: ComboboxContext,
   createController: createComboboxController as never,
-  domBindings: [popupDomBinding],
+  domBindings: [/* @__PURE__ */ createUIFnPopupAdapterBinding({"trigger":"trigger","reference":["control","input","trigger"],"matchReferenceWidth":true})],
 };
 
 function ComboboxRootElement(props: JSX.IntrinsicElements['div']): JSX.Element {

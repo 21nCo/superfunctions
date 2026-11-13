@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { createSegmentGroupController, type SegmentGroupProps, type SegmentGroupController } from '@uifn/core/primitives/segment-group';
-import { rovingFocusDomBinding } from '../internal/dom-bindings';
+import { createUIFnRovingFocusAdapterBinding } from '@uifn/dom';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -23,7 +23,7 @@ const SegmentGroupDefinition: ReactPrimitiveDefinition<SegmentGroupProps> = {
   inputNames: ["value","defaultValue","name","orientation","disabled","readOnly","required"],
   context: SegmentGroupContext,
   createController: createSegmentGroupController as never,
-  domBindings: [rovingFocusDomBinding],
+  domBindings: [/* @__PURE__ */ createUIFnRovingFocusAdapterBinding({"stateKey":"focusedItem","parts":["itemControl","item"]})],
 };
 
 export type SegmentGroupRootProps = ReactPrimitiveRootProps<SegmentGroupProps, 'div'>;

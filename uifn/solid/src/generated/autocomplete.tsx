@@ -1,6 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createAutocompleteController, type AutocompleteProps, type AutocompleteController } from '@uifn/core/primitives/autocomplete';
-import { popupDomBinding } from '../internal/dom-bindings.js';
+import { createUIFnPopupAdapterBinding } from '@uifn/dom';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -20,7 +20,7 @@ export const AutocompleteDefinition: SolidPrimitiveDefinition<AutocompleteProps>
   inputNames: ["value","defaultValue","items","filter","disabled","readOnly"],
   context: AutocompleteContext,
   createController: createAutocompleteController as never,
-  domBindings: [popupDomBinding],
+  domBindings: [/* @__PURE__ */ createUIFnPopupAdapterBinding({"trigger":"input","reference":["control","input","trigger"],"matchReferenceWidth":true})],
 };
 
 function AutocompleteRootElement(props: JSX.IntrinsicElements['div']): JSX.Element {

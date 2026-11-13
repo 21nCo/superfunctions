@@ -1,6 +1,6 @@
 import { createEditableController, type EditableProps } from '@uifn/core/primitives/editable';
 import type { SveltePrimitiveDefinition } from '../../internal/compound.js';
-import { rovingFocusDomBinding } from '../../internal/dom-bindings.js';
+import { createUIFnRovingFocusAdapterBinding, uifnEditableRovingTarget } from '@uifn/dom';
 
 export const EditableDefinition: SveltePrimitiveDefinition<EditableProps> = {
   name: 'Editable',
@@ -10,5 +10,5 @@ export const EditableDefinition: SveltePrimitiveDefinition<EditableProps> = {
   inputNames: ["value","defaultValue","editing","defaultEditing","name","disabled","readOnly","required"],
   contextKey: Symbol('uifn.Editable'),
   createController: createEditableController as never,
-  domBindings: [rovingFocusDomBinding],
+  domBindings: [/* @__PURE__ */ createUIFnRovingFocusAdapterBinding(uifnEditableRovingTarget)],
 };

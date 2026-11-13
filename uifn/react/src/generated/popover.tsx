@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { createPopoverController, type PopoverProps, type PopoverController } from '@uifn/core/primitives/popover';
-import { overlayDomBinding } from '../internal/dom-bindings';
+import { uifnOverlayAdapterBinding } from '@uifn/dom';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -23,7 +23,7 @@ const PopoverDefinition: ReactPrimitiveDefinition<PopoverProps> = {
   inputNames: ["open","defaultOpen","modal","placement","closeOnEscape","closeOnInteractOutside"],
   context: PopoverContext,
   createController: createPopoverController as never,
-  domBindings: [overlayDomBinding],
+  domBindings: [uifnOverlayAdapterBinding],
 };
 
 export type PopoverRootProps = ReactPrimitiveRootProps<PopoverProps, 'div'>;

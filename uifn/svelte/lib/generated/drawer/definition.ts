@@ -1,6 +1,6 @@
 import { createDrawerController, type DrawerProps } from '@uifn/core/primitives/drawer';
 import type { SveltePrimitiveDefinition } from '../../internal/compound.js';
-import { overlayDomBinding } from '../../internal/dom-bindings.js';
+import { uifnOverlayAdapterBinding } from '@uifn/dom';
 
 export const DrawerDefinition: SveltePrimitiveDefinition<DrawerProps> = {
   name: 'Drawer',
@@ -10,5 +10,5 @@ export const DrawerDefinition: SveltePrimitiveDefinition<DrawerProps> = {
   inputNames: ["open","defaultOpen","side","modal","dismissThreshold"],
   contextKey: Symbol('uifn.Drawer'),
   createController: createDrawerController as never,
-  domBindings: [overlayDomBinding],
+  domBindings: [uifnOverlayAdapterBinding],
 };

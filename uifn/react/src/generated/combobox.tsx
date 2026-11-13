@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { createComboboxController, type ComboboxProps, type ComboboxController } from '@uifn/core/primitives/combobox';
-import { popupDomBinding } from '../internal/dom-bindings';
+import { createUIFnPopupAdapterBinding } from '@uifn/dom';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -23,7 +23,7 @@ const ComboboxDefinition: ReactPrimitiveDefinition<ComboboxProps> = {
   inputNames: ["value","defaultValue","inputValue","items","multiple","name","disabled","readOnly","required"],
   context: ComboboxContext,
   createController: createComboboxController as never,
-  domBindings: [popupDomBinding],
+  domBindings: [/* @__PURE__ */ createUIFnPopupAdapterBinding({"trigger":"trigger","reference":["control","input","trigger"],"matchReferenceWidth":true})],
 };
 
 export type ComboboxRootProps = ReactPrimitiveRootProps<ComboboxProps, 'div'>;

@@ -1,6 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createToolbarController, type ToolbarProps, type ToolbarController } from '@uifn/core/primitives/toolbar';
-import { rovingFocusDomBinding } from '../internal/dom-bindings.js';
+import { createUIFnRovingFocusAdapterBinding } from '@uifn/dom';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -20,7 +20,7 @@ export const ToolbarDefinition: SolidPrimitiveDefinition<ToolbarProps> = {
   inputNames: ["orientation","loop","dir","disabled"],
   context: ToolbarContext,
   createController: createToolbarController as never,
-  domBindings: [rovingFocusDomBinding],
+  domBindings: [/* @__PURE__ */ createUIFnRovingFocusAdapterBinding({"stateKey":"focusedItem","parts":["button","link"]})],
 };
 
 function ToolbarRootElement(props: JSX.IntrinsicElements['div']): JSX.Element {

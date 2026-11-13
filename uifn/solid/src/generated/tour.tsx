@@ -1,6 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createTourController, type TourProps, type TourController } from '@uifn/core/primitives/tour';
-import { overlayDomBinding } from '../internal/dom-bindings.js';
+import { uifnTourOverlayAdapterBinding } from '@uifn/dom';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -20,7 +20,7 @@ export const TourDefinition: SolidPrimitiveDefinition<TourProps> = {
   inputNames: ["open","defaultOpen","step","defaultStep","steps","modal"],
   context: TourContext,
   createController: createTourController as never,
-  domBindings: [overlayDomBinding],
+  domBindings: [uifnTourOverlayAdapterBinding],
 };
 
 function TourRootElement(props: JSX.IntrinsicElements['div']): JSX.Element {

@@ -1,6 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createScrollAreaController, type ScrollAreaProps, type ScrollAreaController } from '@uifn/core/primitives/scroll-area';
-import { rangeGestureDomBinding } from '../internal/dom-bindings.js';
+import { createUIFnRangeGestureAdapterBinding } from '@uifn/dom';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -20,7 +20,7 @@ export const ScrollAreaDefinition: SolidPrimitiveDefinition<ScrollAreaProps> = {
   inputNames: ["type","scrollHideDelay","orientation","dir"],
   context: ScrollAreaContext,
   createController: createScrollAreaController as never,
-  domBindings: [rangeGestureDomBinding],
+  domBindings: [/* @__PURE__ */ createUIFnRangeGestureAdapterBinding({"entries":["thumb"]})],
 };
 
 function ScrollAreaRootElement(props: JSX.IntrinsicElements['div']): JSX.Element {

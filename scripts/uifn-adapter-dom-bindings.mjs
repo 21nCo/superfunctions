@@ -1,39 +1,112 @@
 // The @uifn/dom bindings each headless adapter primitive wires, shared by the React (phase 11), Svelte (phase 12)
-// and Solid (phase 13) generators. Each generated definition imports only the installers listed here, so an app
-// that imports one primitive bundles only that primitive's DOM bindings (and floating-ui only when one of them
-// positions a popup). The installers live in each adapter's internal/dom-bindings module, under these names, and
-// run in this order; the predicates are the conditions the adapter compounds used before installers existed.
+// and Solid (phase 13) generators. The installers live in @uifn/dom (src/adapter-bindings.ts) and never branch on
+// a primitive name: each generated definition passes its own parts and state keys, so an app that imports one
+// primitive bundles only that primitive's installers and descriptors (and floating-ui only when one of them
+// positions a popup). Installers run in the order listed here.
 
-const ROVING_FOCUS_PRIMITIVES = new Set([
-  'CheckboxGroup', 'ColorPicker', 'Editable', 'Listbox', 'Menubar', 'NavigationMenu', 'Pagination', 'PinInput',
-  'RadioGroup', 'SegmentGroup', 'Tabs', 'ToggleGroup', 'Toolbar', 'TreeView',
-]);
-const RANGE_GESTURE_PRIMITIVES = new Set([
-  'AngleSlider', 'Carousel', 'ColorPicker', 'ImageCropper', 'ScrollArea', 'SignaturePad', 'Slider', 'Splitter',
-]);
-const POPUP_PRIMITIVES = new Set(['Autocomplete', 'ColorPicker', 'Combobox', 'DatePicker', 'Select']);
+const ITEM_CONTROLS = Object.freeze({ stateKey: 'focusedItem', parts: ['itemControl', 'item'] });
+
+// Roving focus: a { stateKey, parts } descriptor, or the @uifn/dom target for state-dependent parts.
+const ROVING_FOCUS = Object.freeze({
+  CheckboxGroup: ITEM_CONTROLS,
+  ColorPicker: 'uifnPopupTriggerRovingTarget',
+  Editable: 'uifnEditableRovingTarget',
+  Listbox: ITEM_CONTROLS,
+  Menubar: 'uifnMenubarRovingTarget',
+  NavigationMenu: { stateKey: 'focusedItem', parts: ['trigger'] },
+  Pagination: { stateKey: 'focusedPage', parts: ['pageTrigger'] },
+  PinInput: 'uifnPinInputRovingTarget',
+  RadioGroup: ITEM_CONTROLS,
+  SegmentGroup: ITEM_CONTROLS,
+  Tabs: { stateKey: 'focusedItem', parts: ['trigger'] },
+  ToggleGroup: ITEM_CONTROLS,
+  Toolbar: { stateKey: 'focusedItem', parts: ['button', 'link'] },
+  TreeView: { stateKey: 'focusedItem', parts: ['item'] },
+});
+// Range gestures: single-element surface parts, then many-part entries (with their values).
+const RANGE_GESTURE = Object.freeze({
+  AngleSlider: { parts: ['track'] },
+  Carousel: { parts: ['viewport'] },
+  ColorPicker: { parts: ['area'], entries: ['channelSlider'] },
+  ImageCropper: { parts: ['cropArea'], entries: ['handle'] },
+  ScrollArea: { entries: ['thumb'] },
+  SignaturePad: { parts: ['canvas'] },
+  Slider: { parts: ['control'] },
+  Splitter: { entries: ['resizeHandle'], numericEntryValues: true },
+});
+const CONTROL_REFERENCE = Object.freeze(['control', 'input', 'trigger']);
+// Popups: the part that toggles them and the parts they are positioned against, first registered wins.
+const POPUP = Object.freeze({
+  Autocomplete: { trigger: 'input', reference: CONTROL_REFERENCE, matchReferenceWidth: true },
+  ColorPicker: { trigger: 'trigger', reference: CONTROL_REFERENCE },
+  Combobox: { trigger: 'trigger', reference: CONTROL_REFERENCE, matchReferenceWidth: true },
+  DatePicker: { trigger: 'trigger', reference: ['input', 'trigger'] },
+  Select: { trigger: 'trigger', reference: CONTROL_REFERENCE, matchReferenceWidth: true },
+});
 const MENU_PRIMITIVES = new Set(['ContextMenu', 'Menu']);
 
-export const UIFN_ADAPTER_DOM_BINDINGS = Object.freeze([
-  { installer: 'overlayDomBinding', applies: (primitive) => primitive.behaviorFamily === 'modal-overlay' },
-  { installer: 'menuDomBinding', applies: (primitive) => MENU_PRIMITIVES.has(primitive.name) },
-  { installer: 'popupDomBinding', applies: (primitive) => POPUP_PRIMITIVES.has(primitive.name) },
-  { installer: 'navigationMenuDomBinding', applies: (primitive) => primitive.name === 'NavigationMenu' },
-  { installer: 'rovingFocusDomBinding', applies: (primitive) => ROVING_FOCUS_PRIMITIVES.has(primitive.name) },
-  { installer: 'rangeGestureDomBinding', applies: (primitive) => RANGE_GESTURE_PRIMITIVES.has(primitive.name) },
-]);
+const binding = (installer, ready) => ({ installer, ready });
+const described = (installer, factory, descriptor) => (
+  typeof descriptor === 'string'
+    ? { installer, factory, target: descriptor }
+    : { installer, factory, descriptor }
+);
 
-/** Installer names for a catalog primitive, in installation order. */
-export function adapterDomBindings(primitive) {
-  return UIFN_ADAPTER_DOM_BINDINGS.filter((entry) => entry.applies(primitive)).map((entry) => entry.installer);
+/**
+ * The bindings a catalog primitive's generated definition lists, in installation order. `installer` names the
+ * kind; the definition uses `ready` (a @uifn/dom installer) or calls `factory` with `descriptor` (inline data)
+ * or `target` (a @uifn/dom roving target).
+ */
+export function adapterDomBindingSpecs(primitive) {
+  const specs = [];
+  if (primitive.behaviorFamily === 'modal-overlay') {
+    specs.push(binding('overlayDomBinding', primitive.name === 'Tour' ? 'uifnTourOverlayAdapterBinding' : 'uifnOverlayAdapterBinding'));
+  }
+  if (MENU_PRIMITIVES.has(primitive.name)) specs.push(binding('menuDomBinding', 'uifnMenuAdapterBinding'));
+  if (POPUP[primitive.name]) specs.push(described('popupDomBinding', 'createUIFnPopupAdapterBinding', POPUP[primitive.name]));
+  if (primitive.name === 'NavigationMenu') specs.push(binding('navigationMenuDomBinding', 'uifnNavigationMenuAdapterBinding'));
+  if (ROVING_FOCUS[primitive.name]) specs.push(described('rovingFocusDomBinding', 'createUIFnRovingFocusAdapterBinding', ROVING_FOCUS[primitive.name]));
+  if (RANGE_GESTURE[primitive.name]) specs.push(described('rangeGestureDomBinding', 'createUIFnRangeGestureAdapterBinding', RANGE_GESTURE[primitive.name]));
+  return specs;
 }
 
-/** The import statement and definition field a generated adapter module needs, or empty strings for none. */
-export function adapterDomBindingsSource(primitive, specifier) {
-  const installers = adapterDomBindings(primitive);
-  if (!installers.length) return { importLine: '', field: '' };
+/** Installer kinds for a catalog primitive, in installation order. */
+export function adapterDomBindings(primitive) {
+  return adapterDomBindingSpecs(primitive).map((spec) => spec.installer);
+}
+
+function expression(spec) {
+  if (spec.ready) return spec.ready;
+  return `/* @__PURE__ */ ${spec.factory}(${spec.target ?? JSON.stringify(spec.descriptor)})`;
+}
+
+/** The @uifn/dom import and definition field a generated adapter module needs, or empty strings for none. */
+export function adapterDomBindingsSource(primitive) {
+  const specs = adapterDomBindingSpecs(primitive);
+  if (!specs.length) return { importLine: '', field: '' };
+  const imports = [...new Set(specs.flatMap((spec) => [spec.ready, spec.factory, spec.target].filter(Boolean)))].sort();
   return {
-    importLine: `import { ${installers.join(', ')} } from '${specifier}';\n`,
-    field: `\n  domBindings: [${installers.join(', ')}],`,
+    importLine: `import { ${imports.join(', ')} } from '@uifn/dom';\n`,
+    field: `\n  domBindings: [${specs.map(expression).join(', ')}],`,
   };
+}
+
+/**
+ * Wiring issues for one generated adapter definition: every planned binding must be reached from the
+ * definition's `domBindings`, and nothing else may be listed there.
+ */
+export function adapterDomBindingWiringIssues(primitive, source) {
+  const { importLine, field } = adapterDomBindingsSource(primitive);
+  const listed = /\n {2}domBindings: \[.*\],/.exec(source)?.[0] ?? '';
+  const issues = [];
+  if (listed !== field) issues.push(`${primitive.name} domBindings must be ${field.trim() || 'absent'}, found ${listed.trim() || 'none'}`);
+  if (importLine && !source.includes(importLine)) issues.push(`${primitive.name} must import ${importLine.trim()}`);
+  return issues;
+}
+
+/** Issues in the shared @uifn/dom installer module, which must never name (and so never branch on) a primitive. */
+export function sharedAdapterInstallerIssues(source, primitives) {
+  return primitives
+    .filter((primitive) => source.includes(`'${primitive.name}'`) || source.includes(`"${primitive.name}"`))
+    .map((primitive) => `uifn/dom/src/adapter-bindings.ts names the ${primitive.name} primitive`);
 }

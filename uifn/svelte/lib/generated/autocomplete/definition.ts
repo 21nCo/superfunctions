@@ -1,6 +1,6 @@
 import { createAutocompleteController, type AutocompleteProps } from '@uifn/core/primitives/autocomplete';
 import type { SveltePrimitiveDefinition } from '../../internal/compound.js';
-import { popupDomBinding } from '../../internal/dom-bindings.js';
+import { createUIFnPopupAdapterBinding } from '@uifn/dom';
 
 export const AutocompleteDefinition: SveltePrimitiveDefinition<AutocompleteProps> = {
   name: 'Autocomplete',
@@ -10,5 +10,5 @@ export const AutocompleteDefinition: SveltePrimitiveDefinition<AutocompleteProps
   inputNames: ["value","defaultValue","items","filter","disabled","readOnly"],
   contextKey: Symbol('uifn.Autocomplete'),
   createController: createAutocompleteController as never,
-  domBindings: [popupDomBinding],
+  domBindings: [/* @__PURE__ */ createUIFnPopupAdapterBinding({"trigger":"input","reference":["control","input","trigger"],"matchReferenceWidth":true})],
 };

@@ -1,24 +1,25 @@
 import {
-  menuDomBinding,
-  navigationMenuDomBinding,
-  overlayDomBinding,
-  popupDomBinding,
-  rangeGestureDomBinding,
-  rovingFocusDomBinding,
-  type SvelteDomBindingInstaller,
-} from './internal/dom-bindings.js';
+  createUIFnPopupAdapterBinding,
+  createUIFnRangeGestureAdapterBinding,
+  createUIFnRovingFocusAdapterBinding,
+  uifnEditableRovingTarget,
+  uifnMenuAdapterBinding,
+  uifnMenubarRovingTarget,
+  uifnNavigationMenuAdapterBinding,
+  uifnOverlayAdapterBinding,
+  uifnPinInputRovingTarget,
+  uifnPopupTriggerRovingTarget,
+  uifnTourOverlayAdapterBinding,
+  type UIFnAdapterDomBinding,
+} from '@uifn/dom';
+import type { SvelteDomBindingInstaller } from './internal/compound.js';
+import { svelteDomBindingSpecs, type SvelteDomBindingKind, type SvelteDomBindingSpec } from './internal/dom-binding-plan.js';
 
-export {
-  menuDomBinding,
-  navigationMenuDomBinding,
-  overlayDomBinding,
-  popupDomBinding,
-  rangeGestureDomBinding,
-  rovingFocusDomBinding,
-  type SvelteDomBindingContext,
-  type SvelteDomBindingHandle,
-  type SvelteDomBindingInstaller,
-} from './internal/dom-bindings.js';
+export type {
+  SvelteDomBindingContext,
+  SvelteDomBindingHandle,
+  SvelteDomBindingInstaller,
+} from './internal/compound.js';
 
 /** The fields of a primitive definition that decide which @uifn/dom bindings it wires. */
 export interface SvelteDomBindingPlanTarget {
@@ -26,32 +27,61 @@ export interface SvelteDomBindingPlanTarget {
   readonly family: string;
 }
 
-const ROVING_FOCUS_PRIMITIVES: ReadonlySet<string> = new Set([
-  'CheckboxGroup', 'ColorPicker', 'Editable', 'Listbox', 'Menubar', 'NavigationMenu', 'Pagination', 'PinInput',
-  'RadioGroup', 'SegmentGroup', 'Tabs', 'ToggleGroup', 'Toolbar', 'TreeView',
-]);
-const RANGE_GESTURE_PRIMITIVES: ReadonlySet<string> = new Set([
-  'AngleSlider', 'Carousel', 'ColorPicker', 'ImageCropper', 'ScrollArea', 'SignaturePad', 'Slider', 'Splitter',
-]);
-const POPUP_PRIMITIVES: ReadonlySet<string> = new Set(['Autocomplete', 'ColorPicker', 'Combobox', 'DatePicker', 'Select']);
-const MENU_PRIMITIVES: ReadonlySet<string> = new Set(['ContextMenu', 'Menu']);
+const READY: Readonly<Record<string, UIFnAdapterDomBinding>> = {
+  uifnMenuAdapterBinding,
+  uifnNavigationMenuAdapterBinding,
+  uifnOverlayAdapterBinding,
+  uifnTourOverlayAdapterBinding,
+};
+const FACTORIES: Readonly<Record<string, (descriptor: never) => UIFnAdapterDomBinding>> = {
+  createUIFnPopupAdapterBinding,
+  createUIFnRangeGestureAdapterBinding,
+  createUIFnRovingFocusAdapterBinding,
+};
+const ROVING_TARGETS: Readonly<Record<string, unknown>> = {
+  uifnEditableRovingTarget,
+  uifnMenubarRovingTarget,
+  uifnPinInputRovingTarget,
+  uifnPopupTriggerRovingTarget,
+};
 
-const PLAN: ReadonlyArray<readonly [SvelteDomBindingInstaller, (target: SvelteDomBindingPlanTarget) => boolean]> = [
-  [overlayDomBinding, (target) => target.family === 'modal-overlay'],
-  [menuDomBinding, (target) => MENU_PRIMITIVES.has(target.name)],
-  [popupDomBinding, (target) => POPUP_PRIMITIVES.has(target.name)],
-  [navigationMenuDomBinding, (target) => target.name === 'NavigationMenu'],
-  [rovingFocusDomBinding, (target) => ROVING_FOCUS_PRIMITIVES.has(target.name)],
-  [rangeGestureDomBinding, (target) => RANGE_GESTURE_PRIMITIVES.has(target.name)],
-];
+function bindingFor(spec: SvelteDomBindingSpec): UIFnAdapterDomBinding {
+  if (spec.ready) return READY[spec.ready]!;
+  return FACTORIES[spec.factory!]!((spec.target ? ROVING_TARGETS[spec.target] : spec.descriptor) as never);
+}
+
+/** Installs the mounted definition's binding of one kind, looked up by the definition's `name` and `family`. */
+function installerOf(kind: SvelteDomBindingKind): SvelteDomBindingInstaller {
+  return (context) => {
+    for (const spec of svelteDomBindingSpecs(context.bridge.definition)) {
+      if (spec.installer === kind) bindingFor(spec)(context);
+    }
+  };
+}
+
+export const overlayDomBinding: SvelteDomBindingInstaller = installerOf('overlayDomBinding');
+export const menuDomBinding: SvelteDomBindingInstaller = installerOf('menuDomBinding');
+export const popupDomBinding: SvelteDomBindingInstaller = installerOf('popupDomBinding');
+export const navigationMenuDomBinding: SvelteDomBindingInstaller = installerOf('navigationMenuDomBinding');
+export const rovingFocusDomBinding: SvelteDomBindingInstaller = installerOf('rovingFocusDomBinding');
+export const rangeGestureDomBinding: SvelteDomBindingInstaller = installerOf('rangeGestureDomBinding');
+
+const INSTALLERS: Readonly<Record<SvelteDomBindingKind, SvelteDomBindingInstaller>> = {
+  overlayDomBinding,
+  menuDomBinding,
+  popupDomBinding,
+  navigationMenuDomBinding,
+  rovingFocusDomBinding,
+  rangeGestureDomBinding,
+};
 
 /**
  * The installers the generated definition for a catalog primitive lists, in installation order, for a
  * hand-built `SveltePrimitiveDefinition` that reuses a catalog primitive's `name` and `family`. The bridge wires
  * only `definition.domBindings`, so a hand-built definition without them gets no focus trap, roving focus, popup
- * positioning or gesture handling. Importing this helper bundles every installer; import the installers you need
- * directly to keep a bundle to one primitive's bindings.
+ * positioning or gesture handling. Each installer looks up the mounted definition's parts by its `name`, so this
+ * module bundles every primitive's binding; generated definitions import their @uifn/dom installers directly.
  */
 export function svelteDomBindingsFor(target: SvelteDomBindingPlanTarget): readonly SvelteDomBindingInstaller[] {
-  return PLAN.filter(([, applies]) => applies(target)).map(([installer]) => installer);
+  return svelteDomBindingSpecs(target).map((spec) => INSTALLERS[spec.installer]);
 }

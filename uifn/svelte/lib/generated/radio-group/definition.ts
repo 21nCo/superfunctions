@@ -1,6 +1,6 @@
 import { createRadioGroupController, type RadioGroupProps } from '@uifn/core/primitives/radio-group';
 import type { SveltePrimitiveDefinition } from '../../internal/compound.js';
-import { rovingFocusDomBinding } from '../../internal/dom-bindings.js';
+import { createUIFnRovingFocusAdapterBinding } from '@uifn/dom';
 
 export const RadioGroupDefinition: SveltePrimitiveDefinition<RadioGroupProps> = {
   name: 'RadioGroup',
@@ -10,5 +10,5 @@ export const RadioGroupDefinition: SveltePrimitiveDefinition<RadioGroupProps> = 
   inputNames: ["value","defaultValue","name","orientation","loop","disabled","readOnly","required"],
   contextKey: Symbol('uifn.RadioGroup'),
   createController: createRadioGroupController as never,
-  domBindings: [rovingFocusDomBinding],
+  domBindings: [/* @__PURE__ */ createUIFnRovingFocusAdapterBinding({"stateKey":"focusedItem","parts":["itemControl","item"]})],
 };

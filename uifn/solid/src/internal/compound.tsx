@@ -27,10 +27,10 @@ import {
   acquireUIFnDomPlatform,
   createUIFnNativeFormResetBinding,
   createUIFnPortal,
+  type UIFnAdapterDomBinding,
   type UIFnDomResourceSnapshot,
   type UIFnPortalTarget,
 } from '@uifn/dom';
-import type { SolidDomBindingInstaller } from './dom-bindings.js';
 import {
   createSolidPartPropsBinding,
   toSolidSpreadProps,
@@ -69,7 +69,7 @@ export interface SolidPrimitiveDefinition<TInputs extends object = AnyRecord> {
   readonly createController?: (inputs: TInputs, environment: UIFnEnvironment) => AnyController;
   readonly contract?: AnyStaticContract;
   /** The @uifn/dom behaviors this primitive wires, in installation order; none when absent. */
-  readonly domBindings?: readonly SolidDomBindingInstaller[];
+  readonly domBindings?: readonly UIFnAdapterDomBinding[];
 }
 
 export interface SolidPrimitiveRenderPayload {
@@ -473,8 +473,9 @@ export class SolidPrimitiveBridge<TInputs extends object = AnyRecord> {
           restoreOnDestroy: true,
         }));
       }
+      const portalManagedExternally = this.getElement('portal') !== null;
       for (const install of this.definition.domBindings ?? []) {
-        install({ bridge: this, controller, platform: lease.platform, root, add: (binding) => bindings.push(binding) });
+        install({ bridge: this, controller, platform: lease.platform, root, portalManagedExternally, add: (binding) => bindings.push(binding) });
       }
     } catch (error) {
       bindings.reverse().forEach((binding) => binding.destroy());

@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createTabsController, type TabsProps } from '@uifn/core/primitives/tabs';
 import catalog from '../../catalog/generated/catalog.json';
-import { adapterDomBindings } from '../../../scripts/uifn-adapter-dom-bindings.mjs';
+import { adapterDomBindingSpecs, adapterDomBindings } from '../../../scripts/uifn-adapter-dom-bindings.mjs';
+import { svelteDomBindingSpecs } from '../lib/internal/dom-binding-plan.js';
 import { SveltePrimitiveBridge, type SveltePrimitiveDefinition } from '../lib/index.js';
 import * as publicBindings from '../lib/dom-bindings.js';
 import packageJson from '../package.json';
@@ -81,6 +82,13 @@ describe('@uifn/svelte/dom-bindings public subpath', () => {
         .svelteDomBindingsFor({ name: primitive.name, family: primitive.behaviorFamily })
         .map(installerName);
       expect(planned, primitive.name).toEqual(adapterDomBindings(primitive));
+    }
+  });
+
+  it('looks up the same parts, state keys and @uifn/dom targets as the generated definitions', () => {
+    for (const primitive of catalog.primitives) {
+      expect(svelteDomBindingSpecs({ name: primitive.name, family: primitive.behaviorFamily }), primitive.name)
+        .toEqual(adapterDomBindingSpecs(primitive));
     }
   });
 

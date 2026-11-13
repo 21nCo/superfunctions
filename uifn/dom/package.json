@@ -39,7 +39,7 @@
     "vite-plugin-solid": "2.11.12",
     "vitest": "^3.2.4"
   },
-  "files": ["dist", "README.md", "DEPENDENCIES.md"],
+  "files": ["dist", "README.md", "DEPENDENCIES.md", "CHANGELOG.md"],
   "author": "21n",
   "license": "MIT",
   "engines": { "node": ">=20 <25" },

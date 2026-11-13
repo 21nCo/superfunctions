@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
-import { adapterDomBindings, adapterDomBindingsSource } from "./uifn-adapter-dom-bindings.mjs";
+import {
+  adapterDomBindingWiringIssues,
+  adapterDomBindings,
+  adapterDomBindingsSource,
+  sharedAdapterInstallerIssues,
+} from "./uifn-adapter-dom-bindings.mjs";
 
 const catalog = JSON.parse(readFileSync(new URL("../uifn/catalog/generated/catalog.json", import.meta.url), "utf8"));
 
@@ -54,10 +59,40 @@ test("each catalog primitive gets exactly the DOM bindings the adapter compounds
   }
 });
 
-test("a primitive without DOM bindings gets no import and no definition field", () => {
-  assert.deepEqual(adapterDomBindingsSource({ name: "Badge", behaviorFamily: "display" }, "../internal/dom-bindings"), { importLine: "", field: "" });
-  assert.deepEqual(adapterDomBindingsSource({ name: "NavigationMenu", behaviorFamily: "menu-navigation" }, "./x.js"), {
-    importLine: "import { navigationMenuDomBinding, rovingFocusDomBinding } from './x.js';\n",
-    field: "\n  domBindings: [navigationMenuDomBinding, rovingFocusDomBinding],",
+test("a definition imports its @uifn/dom installers and passes its own parts; one without bindings gets none", () => {
+  assert.deepEqual(adapterDomBindingsSource({ name: "Badge", behaviorFamily: "display" }), { importLine: "", field: "" });
+  assert.deepEqual(adapterDomBindingsSource({ name: "NavigationMenu", behaviorFamily: "menu-navigation" }), {
+    importLine: "import { createUIFnRovingFocusAdapterBinding, uifnNavigationMenuAdapterBinding } from '@uifn/dom';\n",
+    field: '\n  domBindings: [uifnNavigationMenuAdapterBinding, /* @__PURE__ */ createUIFnRovingFocusAdapterBinding({"stateKey":"focusedItem","parts":["trigger"]})],',
   });
+  assert.equal(adapterDomBindingsSource({ name: "Tour", behaviorFamily: "modal-overlay" }).field, "\n  domBindings: [uifnTourOverlayAdapterBinding],");
+  assert.equal(adapterDomBindingsSource({ name: "Menubar", behaviorFamily: "menu-navigation" }).field, "\n  domBindings: [/* @__PURE__ */ createUIFnRovingFocusAdapterBinding(uifnMenubarRovingTarget)],");
+});
+
+test("no generated definition carries another primitive's parts, so Tabs never names a PinInput or Splitter part", () => {
+  const tabs = adapterDomBindingsSource({ name: "Tabs", behaviorFamily: "menu-navigation" });
+  for (const foreign of ["Menubar", "PinInput", "Editable", "pageTrigger", "resizeHandle", "cropArea", "uifnPinInputRovingTarget"]) {
+    assert.ok(!`${tabs.importLine}${tabs.field}`.includes(foreign), foreign);
+  }
+});
+
+test("the wiring check fails a definition whose domBindings were disconnected, changed or added", () => {
+  const tabs = { name: "Tabs", behaviorFamily: "menu-navigation" };
+  const badge = { name: "Badge", behaviorFamily: "display" };
+  const { importLine, field } = adapterDomBindingsSource(tabs);
+  const wired = `${importLine}const TabsDefinition = {\n  name: 'Tabs',${field}\n};\n`;
+  assert.deepEqual(adapterDomBindingWiringIssues(tabs, wired), []);
+  assert.equal(adapterDomBindingWiringIssues(tabs, wired.replace(field, "")).length, 1);
+  assert.equal(adapterDomBindingWiringIssues(tabs, wired.replace(importLine, "")).length, 1);
+  assert.equal(adapterDomBindingWiringIssues(tabs, wired.replace('"trigger"', '"item"')).length, 1);
+  assert.equal(adapterDomBindingWiringIssues(badge, wired).length, 1);
+});
+
+test("the shared installers fail the check when they name a primitive", () => {
+  const primitives = catalog.primitives;
+  const installers = readFileSync(new URL("../uifn/dom/src/adapter-bindings.ts", import.meta.url), "utf8");
+  assert.deepEqual(sharedAdapterInstallerIssues(installers, primitives), []);
+  assert.deepEqual(sharedAdapterInstallerIssues("if (bridge.definition.name === 'Menubar') focus();", primitives), [
+    "uifn/dom/src/adapter-bindings.ts names the Menubar primitive",
+  ]);
 });

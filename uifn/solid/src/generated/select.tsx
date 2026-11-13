@@ -1,6 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createSelectController, type SelectProps, type SelectController } from '@uifn/core/primitives/select';
-import { popupDomBinding } from '../internal/dom-bindings.js';
+import { createUIFnPopupAdapterBinding } from '@uifn/dom';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -20,7 +20,7 @@ export const SelectDefinition: SolidPrimitiveDefinition<SelectProps> = {
   inputNames: ["value","defaultValue","items","multiple","name","disabled","readOnly","required"],
   context: SelectContext,
   createController: createSelectController as never,
-  domBindings: [popupDomBinding],
+  domBindings: [/* @__PURE__ */ createUIFnPopupAdapterBinding({"trigger":"trigger","reference":["control","input","trigger"],"matchReferenceWidth":true})],
 };
 
 function SelectRootElement(props: JSX.IntrinsicElements['div']): JSX.Element {

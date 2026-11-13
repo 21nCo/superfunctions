@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { gzipSync } from "node:zlib";
+import ts from "typescript";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const FIXTURE_ROOT = path.join(repoRoot, "uifn/examples/size-fixtures");
@@ -51,6 +52,17 @@ export const UNRELATED_PRIMITIVE_MARKERS = Object.freeze({
     "create menu DOM binding", // @uifn/dom menu binding (Menu, ContextMenu)
     "Menu DOM binding requires a content element.",
   ]),
+  // Primitive names and part names from the definitions that carry their own roving-focus, gesture or popup
+  // descriptors. An adapter that looks those up by primitive name ships every one of them in a one-primitive app.
+  tabs: Object.freeze(['"Tabs"']),
+  "pin-input": Object.freeze(['"PinInput"']),
+  editable: Object.freeze(['"Editable"']),
+  pagination: Object.freeze(['"Pagination"', '"pageTrigger"']),
+  "tree-view": Object.freeze(['"TreeView"']),
+  "segment-group": Object.freeze(['"SegmentGroup"']),
+  "image-cropper": Object.freeze(['"ImageCropper"', '"cropArea"']),
+  splitter: Object.freeze(['"Splitter"', '"resizeHandle"']),
+  "date-picker": Object.freeze(['"DatePicker"']),
 });
 
 // Each adapter's fixtures build with the Vite and framework plugin its Workbench declares. The framework runtime
@@ -213,7 +225,8 @@ export async function buildFixture(fixture) {
 // import that keeps no binding (`import { type X }` under verbatimModuleSyntax) still loads every primitive.
 export const ADAPTER_SOURCE_ROOTS = Object.freeze(["uifn/react/src", "uifn/solid/src", "uifn/svelte/lib"]);
 const ADAPTER_SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".svelte"]);
-const ROOT_BARREL_IMPORT = /(?:\bfrom|\bimport)\s*\(?\s*["']@uifn\/core["']/;
+const ROOT_BARREL = "@uifn/core";
+const SVELTE_SCRIPT = /<script\b[^>]*>([\s\S]*?)<\/script>/g;
 
 function adapterSources(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -224,14 +237,43 @@ function adapterSources(directory) {
   });
 }
 
-/** `path:line` of every adapter source line that imports the @uifn/core root barrel. */
+/** The module specifier a node loads, for static and dynamic imports, re-exports, `import =` and import types. */
+function loadedSpecifier(node) {
+  if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier) return node.moduleSpecifier;
+  if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) return node.moduleReference.expression;
+  if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) return node.arguments[0];
+  if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) return node.argument.literal;
+  return undefined;
+}
+
+/** 1-based lines, within `code`, of every specifier that loads the @uifn/core root barrel. */
+function rootBarrelLines(code, fileName) {
+  const source = ts.createSourceFile(fileName, code, ts.ScriptTarget.Latest, true, fileName.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+  const lines = [];
+  const visit = (node) => {
+    const specifier = loadedSpecifier(node);
+    if (specifier && ts.isStringLiteralLike(specifier) && specifier.text === ROOT_BARREL) {
+      lines.push(source.getLineAndCharacterOfPosition(specifier.getStart(source)).line + 1);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return lines;
+}
+
+/** `path:line` of every adapter import of the @uifn/core root barrel, however its statement is laid out. */
 export function findRootBarrelImports(root = repoRoot, sourceRoots = ADAPTER_SOURCE_ROOTS) {
   const hits = [];
   for (const sourceRoot of sourceRoots) {
     for (const file of adapterSources(path.join(root, sourceRoot))) {
-      readFileSync(file, "utf8").split("\n").forEach((line, index) => {
-        if (ROOT_BARREL_IMPORT.test(line)) hits.push(`${path.relative(root, file)}:${index + 1}`);
-      });
+      const text = readFileSync(file, "utf8");
+      const blocks = file.endsWith(".svelte")
+        ? [...text.matchAll(SVELTE_SCRIPT)].map((match) => ({ code: match[1], offset: match.index + match[0].indexOf(match[1]) }))
+        : [{ code: text, offset: 0 }];
+      for (const { code, offset } of blocks) {
+        const lineOffset = text.slice(0, offset).split("\n").length - 1;
+        for (const line of rootBarrelLines(code, file)) hits.push(`${path.relative(root, file)}:${line + lineOffset}`);
+      }
     }
   }
   return hits;
@@ -339,8 +381,10 @@ async function main() {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main().catch((error) => {
+  try {
+    await main();
+  } catch (error) {
     console.error(error instanceof Error ? error.stack ?? error.message : error);
     process.exit(1);
-  });
+  }
 }

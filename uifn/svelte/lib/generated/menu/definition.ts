@@ -1,6 +1,6 @@
 import { createMenuController, type MenuProps } from '@uifn/core/primitives/menu';
 import type { SveltePrimitiveDefinition } from '../../internal/compound.js';
-import { menuDomBinding } from '../../internal/dom-bindings.js';
+import { uifnMenuAdapterBinding } from '@uifn/dom';
 
 export const MenuDefinition: SveltePrimitiveDefinition<MenuProps> = {
   name: 'Menu',
@@ -10,5 +10,5 @@ export const MenuDefinition: SveltePrimitiveDefinition<MenuProps> = {
   inputNames: ["open","defaultOpen","orientation","loop","dir"],
   contextKey: Symbol('uifn.Menu'),
   createController: createMenuController as never,
-  domBindings: [menuDomBinding],
+  domBindings: [uifnMenuAdapterBinding],
 };

@@ -63,7 +63,7 @@ ${component}.displayName = '${component}';`;
     ...(primitive.name === 'Accordion' ? ['type'] : []),
     ...(primitive.name === 'Carousel' ? ['dir'] : []),
   ];
-  const domBindings = adapterDomBindingsSource(primitive, '../internal/dom-bindings');
+  const domBindings = adapterDomBindingsSource(primitive);
   return `'use client';
 
 import * as React from 'react';

@@ -1,6 +1,6 @@
 import { createSegmentGroupController, type SegmentGroupProps } from '@uifn/core/primitives/segment-group';
 import type { SveltePrimitiveDefinition } from '../../internal/compound.js';
-import { rovingFocusDomBinding } from '../../internal/dom-bindings.js';
+import { createUIFnRovingFocusAdapterBinding } from '@uifn/dom';
 
 export const SegmentGroupDefinition: SveltePrimitiveDefinition<SegmentGroupProps> = {
   name: 'SegmentGroup',
@@ -10,5 +10,5 @@ export const SegmentGroupDefinition: SveltePrimitiveDefinition<SegmentGroupProps
   inputNames: ["value","defaultValue","name","orientation","disabled","readOnly","required"],
   contextKey: Symbol('uifn.SegmentGroup'),
   createController: createSegmentGroupController as never,
-  domBindings: [rovingFocusDomBinding],
+  domBindings: [/* @__PURE__ */ createUIFnRovingFocusAdapterBinding({"stateKey":"focusedItem","parts":["itemControl","item"]})],
 };

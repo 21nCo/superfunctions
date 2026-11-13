@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { createMenubarController, type MenubarProps, type MenubarController } from '@uifn/core/primitives/menubar';
-import { rovingFocusDomBinding } from '../internal/dom-bindings';
+import { createUIFnRovingFocusAdapterBinding, uifnMenubarRovingTarget } from '@uifn/dom';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -23,7 +23,7 @@ const MenubarDefinition: ReactPrimitiveDefinition<MenubarProps> = {
   inputNames: ["value","defaultValue","loop","dir"],
   context: MenubarContext,
   createController: createMenubarController as never,
-  domBindings: [rovingFocusDomBinding],
+  domBindings: [/* @__PURE__ */ createUIFnRovingFocusAdapterBinding(uifnMenubarRovingTarget)],
 };
 
 export type MenubarRootProps = ReactPrimitiveRootProps<MenubarProps, 'div'>;

@@ -1,6 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createMenuController, type MenuProps, type MenuController } from '@uifn/core/primitives/menu';
-import { menuDomBinding } from '../internal/dom-bindings.js';
+import { uifnMenuAdapterBinding } from '@uifn/dom';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -20,7 +20,7 @@ export const MenuDefinition: SolidPrimitiveDefinition<MenuProps> = {
   inputNames: ["open","defaultOpen","orientation","loop","dir"],
   context: MenuContext,
   createController: createMenuController as never,
-  domBindings: [menuDomBinding],
+  domBindings: [uifnMenuAdapterBinding],
 };
 
 function MenuRootElement(props: JSX.IntrinsicElements['div']): JSX.Element {

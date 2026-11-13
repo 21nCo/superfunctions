@@ -1,6 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createRadioGroupController, type RadioGroupProps, type RadioGroupController } from '@uifn/core/primitives/radio-group';
-import { rovingFocusDomBinding } from '../internal/dom-bindings.js';
+import { createUIFnRovingFocusAdapterBinding } from '@uifn/dom';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -20,7 +20,7 @@ export const RadioGroupDefinition: SolidPrimitiveDefinition<RadioGroupProps> = {
   inputNames: ["value","defaultValue","name","orientation","loop","disabled","readOnly","required"],
   context: RadioGroupContext,
   createController: createRadioGroupController as never,
-  domBindings: [rovingFocusDomBinding],
+  domBindings: [/* @__PURE__ */ createUIFnRovingFocusAdapterBinding({"stateKey":"focusedItem","parts":["itemControl","item"]})],
 };
 
 function RadioGroupRootElement(props: JSX.IntrinsicElements['fieldset']): JSX.Element {

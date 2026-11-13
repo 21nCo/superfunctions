@@ -3,6 +3,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { adapterDomBindingWiringIssues, sharedAdapterInstallerIssues } from './uifn-adapter-dom-bindings.mjs';
 
 const repoRoot = process.cwd();
 const requireDist = process.argv.includes('--require-dist');
@@ -69,6 +70,7 @@ export function verifyPhase13Contract(options = {}) {
       continue;
     }
     const source = readFileSync(sourcePath, 'utf8');
+    for (const problem of adapterDomBindingWiringIssues(primitive, source)) add('UIFN_SOLID_LIFECYCLE_OR_DOM_OWNERSHIP_MISSING', problem);
     const hostPart = primitive.name === 'Toast'
       ? primitive.anatomy.find((part) => part.id === 'viewport')
       : primitive.anatomy.find((part) => part.id === 'root') ?? primitive.anatomy[0];
@@ -146,10 +148,12 @@ export function verifyPhase13Contract(options = {}) {
     || /(?:const|let)\s+\{[^}]+\}\s*=\s*(?:props|runtime\.props|source\(\))/.test(bridgeSource)) {
     add(PHASE_13_MUTATION_CODES.staleReactiveInput, 'root input projection destructures or does not read live accessors');
   }
-  // The bridge installs each definition's DOM bindings, which live in internal/dom-bindings so a one-primitive
-  // bundle carries only its own; DOM ownership spans both modules.
-  const bindingsPath = path.join(repoRoot, 'uifn/solid/src/internal/dom-bindings.ts');
-  const ownershipSource = `${bridgeSource}\n${existsSync(bindingsPath) ? readFileSync(bindingsPath, 'utf8') : ''}`;
+  // The bridge installs each definition's DOM bindings: the @uifn/dom adapter installers each generated definition
+  // lists (checked above), so DOM ownership spans the bridge and those installers.
+  const installersPath = path.join(repoRoot, 'uifn/dom/src/adapter-bindings.ts');
+  const installers = existsSync(installersPath) ? readFileSync(installersPath, 'utf8') : '';
+  const ownershipSource = `${bridgeSource}\n${installers}`;
+  for (const problem of sharedAdapterInstallerIssues(installers, catalog.primitives)) add('UIFN_SOLID_LIFECYCLE_OR_DOM_OWNERSHIP_MISSING', problem);
   if (!bridgeSource.includes('definition.domBindings')) add('UIFN_SOLID_LIFECYCLE_OR_DOM_OWNERSHIP_MISSING', 'definition.domBindings');
   for (const token of ['createEffect', 'onCleanup', 'createSolidPartPropsBinding', 'acquireUIFnDomPlatform', 'createUIFnOverlayDomBinding', 'createUIFnRangeGestureDomBinding', 'createUIFnNativeFormResetBinding', 'createUIFnPortal']) {
     if (!ownershipSource.includes(token)) add('UIFN_SOLID_LIFECYCLE_OR_DOM_OWNERSHIP_MISSING', token);

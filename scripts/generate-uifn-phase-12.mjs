@@ -51,7 +51,7 @@ function definitionModule(primitive) {
   const runtimeField = interactive
     ? `createController: create${name}Controller as never,`
     : `contract: ${name}Contract as never,`;
-  const domBindings = adapterDomBindingsSource(primitive, '../../internal/dom-bindings.js');
+  const domBindings = adapterDomBindingsSource(primitive);
   return `import { ${runtimeImport}, type ${input} } from '@uifn/core/primitives/${primitive.id}';
 import type { SveltePrimitiveDefinition } from '../../internal/compound.js';
 ${domBindings.importLine}

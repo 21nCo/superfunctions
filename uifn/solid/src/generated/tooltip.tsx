@@ -1,6 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createTooltipController, type TooltipProps, type TooltipController } from '@uifn/core/primitives/tooltip';
-import { overlayDomBinding } from '../internal/dom-bindings.js';
+import { uifnOverlayAdapterBinding } from '@uifn/dom';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -20,7 +20,7 @@ export const TooltipDefinition: SolidPrimitiveDefinition<TooltipProps> = {
   inputNames: ["open","defaultOpen","openDelay","closeDelay","placement","disabled"],
   context: TooltipContext,
   createController: createTooltipController as never,
-  domBindings: [overlayDomBinding],
+  domBindings: [uifnOverlayAdapterBinding],
 };
 
 function TooltipRootElement(props: JSX.IntrinsicElements['span']): JSX.Element {

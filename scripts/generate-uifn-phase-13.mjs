@@ -86,7 +86,7 @@ export function ${component}(props: ${component}Props): JSX.Element {
     ...(primitive.name === 'Accordion' ? ['type'] : []),
     ...(primitive.name === 'Carousel' ? ['dir'] : []),
   ];
-  const domBindings = adapterDomBindingsSource(primitive, '../internal/dom-bindings.js');
+  const domBindings = adapterDomBindingsSource(primitive);
   return `import { createContext, type JSX } from 'solid-js';
 import { ${coreTypeImports} } from '@uifn/core/primitives/${primitive.id}';
 ${domBindings.importLine}import {

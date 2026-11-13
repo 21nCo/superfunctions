@@ -1,6 +1,6 @@
 import { createContextMenuController, type ContextMenuProps } from '@uifn/core/primitives/context-menu';
 import type { SveltePrimitiveDefinition } from '../../internal/compound.js';
-import { menuDomBinding } from '../../internal/dom-bindings.js';
+import { uifnMenuAdapterBinding } from '@uifn/dom';
 
 export const ContextMenuDefinition: SveltePrimitiveDefinition<ContextMenuProps> = {
   name: 'ContextMenu',
@@ -10,5 +10,5 @@ export const ContextMenuDefinition: SveltePrimitiveDefinition<ContextMenuProps> 
   inputNames: ["open","defaultOpen","dir","loop"],
   contextKey: Symbol('uifn.ContextMenu'),
   createController: createContextMenuController as never,
-  domBindings: [menuDomBinding],
+  domBindings: [uifnMenuAdapterBinding],
 };

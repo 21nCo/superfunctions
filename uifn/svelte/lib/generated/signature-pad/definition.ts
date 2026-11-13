@@ -1,6 +1,6 @@
 import { createSignaturePadController, type SignaturePadProps } from '@uifn/core/primitives/signature-pad';
 import type { SveltePrimitiveDefinition } from '../../internal/compound.js';
-import { rangeGestureDomBinding } from '../../internal/dom-bindings.js';
+import { createUIFnRangeGestureAdapterBinding } from '@uifn/dom';
 
 export const SignaturePadDefinition: SveltePrimitiveDefinition<SignaturePadProps> = {
   name: 'SignaturePad',
@@ -10,5 +10,5 @@ export const SignaturePadDefinition: SveltePrimitiveDefinition<SignaturePadProps
   inputNames: ["value","defaultValue","name","disabled","readOnly","required"],
   contextKey: Symbol('uifn.SignaturePad'),
   createController: createSignaturePadController as never,
-  domBindings: [rangeGestureDomBinding],
+  domBindings: [/* @__PURE__ */ createUIFnRangeGestureAdapterBinding({"parts":["canvas"]})],
 };

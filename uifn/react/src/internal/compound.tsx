@@ -13,10 +13,11 @@ import type { UIFnStaticPrimitiveContract } from '@uifn/core/primitives';
 import {
   acquireUIFnDomPlatform,
   createUIFnNativeFormResetBinding,
+  type UIFnAdapterDomBinding,
+  type UIFnAdapterDomBindingHandle,
   type UIFnDomResourceSnapshot,
 } from '@uifn/dom';
 import { toReactPartProps } from '../core-props';
-import type { ReactDomBinding, ReactDomBindingInstaller } from './dom-bindings';
 import { Portal } from '../portal';
 import { Slot, composeReactRefs } from '../utils/slot';
 
@@ -38,7 +39,7 @@ export interface ReactPrimitiveDefinition<TInputs extends object = AnyRecord> {
   readonly createController?: (inputs: TInputs, environment: UIFnEnvironment) => AnyController;
   readonly contract?: AnyStaticContract;
   /** The @uifn/dom behaviors this primitive wires, in installation order; none when absent. */
-  readonly domBindings?: readonly ReactDomBindingInstaller[];
+  readonly domBindings?: readonly UIFnAdapterDomBinding[];
 }
 
 export interface ReactPrimitiveCompositionProps {
@@ -440,14 +441,15 @@ function useDomOwnership<TInputs extends object>(bridge: ReactPrimitiveBridge<TI
     const root = bridge.getElement(bridge.definition.rootPart);
     if (!root) return undefined;
     const lease = acquireUIFnDomPlatform({ root: root.ownerDocument });
-    const bindings: ReactDomBinding[] = [];
+    const bindings: UIFnAdapterDomBindingHandle[] = [];
     const controller = bridge.getController();
     const reset = controller?.actions.reset;
     if (typeof reset === 'function') {
       bindings.push(createUIFnNativeFormResetBinding(lease.platform.scope, root, () => reset()));
     }
+    const portalManagedExternally = bridge.getElement('portal') !== null || AUTOMATIC_PORTAL_PRIMITIVES.has(bridge.definition.name);
     for (const install of bridge.definition.domBindings ?? []) {
-      install({ bridge, controller, platform: lease.platform, root, add: (binding) => bindings.push(binding) });
+      install({ bridge, controller, platform: lease.platform, root, portalManagedExternally, add: (binding) => bindings.push(binding) });
     }
     bridge.recordDomBindingAcquire();
     return () => {

@@ -101,10 +101,23 @@ test("adapter sources may not import the @uifn/core root barrel, even for types"
   write("uifn/react/src/__tests__/core.test.tsx", "import { createTabsController } from '@uifn/core';\n");
   write("uifn/react/src/test/setup.ts", "import '@uifn/core';\n");
   write("uifn/solid/src/toggle.test.tsx", "import { createToggleController } from '@uifn/core';\n");
+  // The specifier on the line after `from`, or after `import(`, is still a root-barrel import.
+  write("uifn/react/src/split-from.ts", "import { type UIFnController } from\n  '@uifn/core';\n");
+  write("uifn/solid/src/split-dynamic.ts", "export const load = () => import(\n  '@uifn/core'\n);\n");
+  write("uifn/svelte/lib/split.ts", "export * from\n\"@uifn/core\";\nexport type Core = typeof import(\n'@uifn/core');\nimport core = require(\n'@uifn/core');\n");
+  write("uifn/svelte/lib/internal/Part.svelte", "<div></div>\n<script lang=\"ts\">\n  import type { UIFnController } from\n    '@uifn/core';\n</script>\n");
+  // Strings and comments that mention the root barrel load nothing, and subpaths are allowed.
+  write("uifn/react/src/text.ts", "// import x from '@uifn/core';\nexport const note = \"from '@uifn/core'\";\nimport { a } from '@uifn/core/parts';\n");
   assert.deepEqual(findRootBarrelImports(root).sort(), [
     "uifn/react/src/hooks/use-controller.ts:1",
+    "uifn/react/src/split-from.ts:2",
     "uifn/solid/src/internal/compound.tsx:3",
+    "uifn/solid/src/split-dynamic.ts:2",
+    "uifn/svelte/lib/internal/Part.svelte:4",
     "uifn/svelte/lib/internal/Root.svelte:2",
+    "uifn/svelte/lib/split.ts:2",
+    "uifn/svelte/lib/split.ts:4",
+    "uifn/svelte/lib/split.ts:6",
   ]);
 });
 
@@ -185,4 +198,36 @@ test("the DOM-binding markers find Dialog, Select, Slider and Menu wiring in a r
       assert.ok(hits[primitive]?.length >= 1, `${framework}: expected ${primitive} markers, found ${JSON.stringify(hits)}`);
     }
   }
+});
+
+test("the descriptor markers find other primitives' roving, gesture and popup wiring in a real build of every adapter", async (t) => {
+  requireBuiltAdapters();
+  const imports = {
+    tabs: "Tabs", "pin-input": "PinInput", editable: "Editable", pagination: "Pagination", "tree-view": "TreeView",
+    "segment-group": "SegmentGroup", "image-cropper": "ImageCropper", splitter: "Splitter", "date-picker": "DatePicker",
+  };
+  for (const framework of ["react", "svelte", "solid"]) {
+    const directory = tempDir(t, ".binding-marker-check-", path.join(FIXTURE_ROOT, framework));
+    const entry = path.join(directory, framework === "svelte" ? "entry.ts" : "entry.tsx");
+    writeFileSync(entry, [
+      ...Object.entries(imports).map(([id, name]) => `import { ${name} } from '@uifn/${framework}/${id}';`),
+      `console.log(${Object.values(imports).join(", ")});`,
+      "",
+    ].join("\n"));
+    const { source } = await buildFixture({ id: `${framework}/descriptor-marker-check`, framework, primitive: "menu", entry });
+    const hits = Object.fromEntries(findUnrelatedPrimitiveCode(source, "menu").map((hit) => [hit.primitive, hit.markers]));
+    for (const primitive of Object.keys(imports)) {
+      assert.ok(hits[primitive]?.length >= 1, `${framework}: expected ${primitive} markers, found ${JSON.stringify(hits)}`);
+    }
+  }
+});
+
+test("a Tabs fixture that bundles another primitive's descriptor fails the check", () => {
+  const source = 'const d={name:"Tabs"};const r={parts:["resizeHandle"]};const n="Splitter";';
+  assert.deepEqual(evaluateFixture({ id: "solid/tabs", primitive: "tabs", gzipBytes: 1, budget: 2, source }), [
+    { code: "UIFN_BUNDLE_UNRELATED_PRIMITIVE", fixture: "solid/tabs", primitive: "splitter", markers: ['"Splitter"', '"resizeHandle"'] },
+  ]);
+  assert.deepEqual(evaluateFixture({ id: "solid/menu", primitive: "menu", gzipBytes: 1, budget: 2, source: 'x={name:"Tabs"}' }), [
+    { code: "UIFN_BUNDLE_UNRELATED_PRIMITIVE", fixture: "solid/menu", primitive: "tabs", markers: ['"Tabs"'] },
+  ]);
 });

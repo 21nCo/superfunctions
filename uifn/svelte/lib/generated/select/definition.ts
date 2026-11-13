@@ -1,6 +1,6 @@
 import { createSelectController, type SelectProps } from '@uifn/core/primitives/select';
 import type { SveltePrimitiveDefinition } from '../../internal/compound.js';
-import { popupDomBinding } from '../../internal/dom-bindings.js';
+import { createUIFnPopupAdapterBinding } from '@uifn/dom';
 
 export const SelectDefinition: SveltePrimitiveDefinition<SelectProps> = {
   name: 'Select',
@@ -10,5 +10,5 @@ export const SelectDefinition: SveltePrimitiveDefinition<SelectProps> = {
   inputNames: ["value","defaultValue","items","multiple","name","disabled","readOnly","required"],
   contextKey: Symbol('uifn.Select'),
   createController: createSelectController as never,
-  domBindings: [popupDomBinding],
+  domBindings: [/* @__PURE__ */ createUIFnPopupAdapterBinding({"trigger":"trigger","reference":["control","input","trigger"],"matchReferenceWidth":true})],
 };

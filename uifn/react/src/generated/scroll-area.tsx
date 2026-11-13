@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { createScrollAreaController, type ScrollAreaProps, type ScrollAreaController } from '@uifn/core/primitives/scroll-area';
-import { rangeGestureDomBinding } from '../internal/dom-bindings';
+import { createUIFnRangeGestureAdapterBinding } from '@uifn/dom';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -23,7 +23,7 @@ const ScrollAreaDefinition: ReactPrimitiveDefinition<ScrollAreaProps> = {
   inputNames: ["type","scrollHideDelay","orientation","dir"],
   context: ScrollAreaContext,
   createController: createScrollAreaController as never,
-  domBindings: [rangeGestureDomBinding],
+  domBindings: [/* @__PURE__ */ createUIFnRangeGestureAdapterBinding({"entries":["thumb"]})],
 };
 
 export type ScrollAreaRootProps = ReactPrimitiveRootProps<ScrollAreaProps, 'div'>;
