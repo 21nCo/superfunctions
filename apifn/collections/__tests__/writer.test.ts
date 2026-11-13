@@ -1,16 +1,15 @@
-import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { readCollection } from "../src/reader.js";
 import { validateCollection } from "../src/validator.js";
 import { writeCollection } from "../src/writer.js";
+import { tempDir } from "./temp-dirs.js";
 
 describe("writeCollection + validateCollection", () => {
   it("TV-COLL-002: round-trip write then read preserves structure", async () => {
     const fixture = path.resolve(__dirname, "fixtures/test-collection");
     const source = await readCollection(fixture);
 
-    const outDir = await mkdtemp(path.join(tmpdir(), "apifn-collection-"));
+    const outDir = await tempDir("apifn-collection-");
     const toWrite = { ...source, rootDir: outDir };
 
     await writeCollection(toWrite);
@@ -61,7 +60,7 @@ describe("writeCollection + validateCollection", () => {
   it("rejects request and folder paths that escape the collection root", async () => {
     const fixture = path.resolve(__dirname, "fixtures/test-collection");
     const source = await readCollection(fixture);
-    const outDir = await mkdtemp(path.join(tmpdir(), "apifn-collection-"));
+    const outDir = await tempDir("apifn-collection-");
 
     await expect(
       writeCollection({
@@ -82,7 +81,7 @@ describe("writeCollection + validateCollection", () => {
   it("rejects environment names that are unsafe path segments", async () => {
     const fixture = path.resolve(__dirname, "fixtures/test-collection");
     const source = await readCollection(fixture);
-    const outDir = await mkdtemp(path.join(tmpdir(), "apifn-collection-"));
+    const outDir = await tempDir("apifn-collection-");
 
     await expect(
       writeCollection({

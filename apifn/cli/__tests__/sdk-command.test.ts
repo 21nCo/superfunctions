@@ -1,9 +1,9 @@
 import { existsSync, readdirSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { runCli } from "../src/index.js";
+import { tempDir } from "./temp-dirs.js";
 
 const require = createRequire(import.meta.url);
 const fixture = (name: string) => require.resolve(`@apifn/sdk/fixtures/${name}`);
@@ -17,7 +17,7 @@ async function run(argv: string[], cwd: string) {
 
 describe("apifn sdk generate", () => {
   it("writes the package and manifest from a catalog, then reports it up to date", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "apifn-cli-sdk-"));
+    const cwd = await tempDir("apifn-cli-sdk-");
     const args = ["sdk", "generate", "--sdk-config", fixture("typescript/sdk.config.json"), "--catalog", fixture("catalog/catalog.json"), "--out", "tasks-sdk"];
     const generated = await run([...args, "--no-color"], cwd);
     expect(generated.code).toBe(0);
@@ -41,7 +41,7 @@ describe("apifn sdk generate", () => {
   });
 
   it("reports output conflicts apart from generation failures", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "apifn-cli-sdk-"));
+    const cwd = await tempDir("apifn-cli-sdk-");
     const args = ["sdk", "generate", "--sdk-config", fixture("typescript/sdk.config.json"), "--catalog", fixture("catalog/catalog.json"), "--out", "out", "--no-color"];
     await mkdir(path.join(cwd, "out"));
     await writeFile(path.join(cwd, "out/README.md"), "mine\n");
@@ -57,7 +57,7 @@ describe("apifn sdk generate", () => {
   });
 
   it("exits 1 without writing while another run holds the output directory", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "apifn-cli-sdk-"));
+    const cwd = await tempDir("apifn-cli-sdk-");
     const args = ["sdk", "generate", "--sdk-config", fixture("typescript/sdk.config.json"), "--catalog", fixture("catalog/catalog.json"), "--out", "out", "--no-color"];
     await mkdir(path.join(cwd, "out"));
     const held = `${JSON.stringify({ pid: 4242, hostname: "build-host", startedAt: "2026-10-22T00:00:00.000Z", nonce: "other" })}\n`;
@@ -78,7 +78,7 @@ describe("apifn sdk generate", () => {
   const permissionsApply = process.platform !== "win32" && process.getuid?.() !== 0;
 
   it.skipIf(!permissionsApply)("checks a read-only output directory without writing to it", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "apifn-cli-sdk-"));
+    const cwd = await tempDir("apifn-cli-sdk-");
     const args = ["sdk", "generate", "--sdk-config", fixture("typescript/sdk.config.json"), "--catalog", fixture("catalog/catalog.json"), "--out", "out", "--no-color"];
     expect((await run(args, cwd)).code).toBe(0);
     const out = path.join(cwd, "out");
@@ -110,7 +110,7 @@ describe("apifn sdk generate", () => {
   });
 
   it.skipIf(!permissionsApply)("prints one JSON result with an error diagnostic when the output directory cannot be read or written", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "apifn-cli-sdk-"));
+    const cwd = await tempDir("apifn-cli-sdk-");
     const args = ["sdk", "generate", "--sdk-config", fixture("typescript/sdk.config.json"), "--catalog", fixture("catalog/catalog.json"), "--out", "out", "--format", "json"];
     expect((await run(args, cwd)).code).toBe(0);
     const out = path.join(cwd, "out");
@@ -148,7 +148,7 @@ describe("apifn sdk generate", () => {
   });
 
   it("builds the catalog from --spec and --manifest with the same result", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "apifn-cli-sdk-"));
+    const cwd = await tempDir("apifn-cli-sdk-");
     const config = fixture("typescript/sdk.config.json");
     expect((await run(["sdk", "generate", "--sdk-config", config, "--catalog", fixture("catalog/catalog.json"), "--out", "a"], cwd)).code).toBe(0);
     const fromSpec = await run(
@@ -163,7 +163,7 @@ describe("apifn sdk generate", () => {
   });
 
   it("fails without writing when generation has errors", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "apifn-cli-sdk-"));
+    const cwd = await tempDir("apifn-cli-sdk-");
     const config = JSON.parse(await readFile(fixture("typescript/sdk.config.json"), "utf8"));
     delete config.unsupported;
     await writeFile(path.join(cwd, "sdk.config.json"), JSON.stringify(config));
@@ -175,7 +175,7 @@ describe("apifn sdk generate", () => {
   });
 
   it("rejects unknown actions and incomplete arguments with exit code 2", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "apifn-cli-sdk-"));
+    const cwd = await tempDir("apifn-cli-sdk-");
     const config = fixture("typescript/sdk.config.json");
     const catalog = fixture("catalog/catalog.json");
     for (const argv of [

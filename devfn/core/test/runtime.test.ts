@@ -1,14 +1,17 @@
-import { mkdir, mkdtemp, symlink } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, symlink } from "node:fs/promises";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { readReceipt, writeReceipt } from "../src/index.js";
 import type { LifecycleReceipt } from "../src/types.js";
+import { temporaryDirectories } from "../../test-support/temp-directories.mjs";
+
+// Removed after each test, whether it passes, fails or times out.
+const tempDir = temporaryDirectories(afterEach);
 
 describe("runtime receipts", () => {
   it("keeps a running receipt discoverable after runtimeDir changes", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "devfn-runtime-"));
+    const root = tempDir("devfn-runtime-");
     const receipt: LifecycleReceipt = {
       version: 1,
       projectId: "app",
@@ -33,8 +36,8 @@ describe("runtime receipts", () => {
   });
 
   it("rejects a stable receipt directory symlinked outside the repository", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "devfn-runtime-"));
-    const outside = await mkdtemp(path.join(tmpdir(), "devfn-outside-"));
+    const root = tempDir("devfn-runtime-");
+    const outside = tempDir("devfn-outside-");
     await mkdir(path.join(root, ".devfn"));
     await symlink(outside, path.join(root, ".devfn", "receipts"));
     const receipt: LifecycleReceipt = {

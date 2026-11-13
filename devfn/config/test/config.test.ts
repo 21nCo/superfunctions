@@ -3,9 +3,13 @@ import { access, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { classifyLegacyDarwinIdentity, classifyProcessIdentity, processBirthSignature, processIdentityStatus, discoverProject, isCredentialKey, loadTrustedDevFnConfig, trustProject, validateDevFnConfig, validateDevFnPolicy } from "../src/index.js";
+import { temporaryDirectories } from "../../test-support/temp-directories.mjs";
+
+// Removed after each test, whether it passes, fails or times out.
+const tempDir = temporaryDirectories(afterEach);
 
 describe("DevFn configuration", () => {
   it("validates resource kinds, targets and namespaces without reading secrets", () => {
@@ -375,7 +379,7 @@ describe("DevFn configuration", () => {
   });
 
   it("does not map unsupported package managers to npm", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "devfn-yarn-"));
+    const root = tempDir("devfn-yarn-");
     await writeFile(path.join(root, "package.json"), JSON.stringify({ scripts: { dev: "vite" } }));
     await writeFile(path.join(root, "yarn.lock"), "");
     const result = await discoverProject(root);
@@ -385,13 +389,13 @@ describe("DevFn configuration", () => {
   });
 
   it("honors unsupported package-manager declarations without lockfiles", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "devfn-bun-"));
+    const root = tempDir("devfn-bun-");
     await writeFile(path.join(root, "package.json"), JSON.stringify({ packageManager: "bun@1.2.0", scripts: { dev: "vite" } }));
     expect((await discoverProject(root)).config.processes).toEqual({});
   });
 
   it("rejects commented dynamic imports in trusted executable manifests", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "devfn-trusted-"));
+    const root = tempDir("devfn-trusted-");
     const stateDir = path.join(root, "state");
     const configPath = path.join(root, "devfn.config.mjs");
     await writeFile(configPath, 'await import /* comment */ ("node:fs");\nexport default { version: 1, project: { id: "x" }, profiles: { default: {} } };\n');
@@ -400,7 +404,7 @@ describe("DevFn configuration", () => {
   });
 
   it("rejects CommonJS require property access in trusted manifests", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "devfn-trusted-"));
+    const root = tempDir("devfn-trusted-");
     const stateDir = path.join(root, "state");
     const configPath = path.join(root, "devfn.config.cjs");
     await writeFile(configPath, 'module.require("node:fs");\nmodule.exports = { version: 1, project: { id: "x" }, profiles: { default: {} } };\n');
@@ -409,7 +413,7 @@ describe("DevFn configuration", () => {
   });
 
   it("evaluates declarative TypeScript manifests in a restricted context", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "devfn-trusted-"));
+    const root = tempDir("devfn-trusted-");
     const stateDir = path.join(root, "state");
     const configPath = path.join(root, "devfn.config.ts");
     await writeFile(configPath, 'const project: string = "restricted"; export default { version: 1 as const, project: { id: project }, profiles: { default: {} } };\n');
@@ -424,7 +428,7 @@ describe("DevFn configuration", () => {
       () => 'Function("return process")()',
       () => 'module["re" + "quire"]("node:fs")',
     ]) {
-      const root = await mkdtemp(path.join(tmpdir(), "devfn-restricted-"));
+      const root = tempDir("devfn-restricted-");
       const stateDir = path.join(root, "state");
       const configPath = path.join(root, "devfn.config.ts");
       const marker = path.join(root, "escape");
@@ -436,7 +440,7 @@ describe("DevFn configuration", () => {
   });
 
   it("keeps scheduled manifest microtasks inside the evaluation timeout", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "devfn-microtasks-"));
+    const root = tempDir("devfn-microtasks-");
     const stateDir = path.join(root, "state");
     const configPath = path.join(root, "devfn.config.ts");
     await writeFile(configPath, 'Promise.resolve().then(() => { const deadline = Date.now() + 1500; while (Date.now() < deadline) {} }); export default { version: 1, project: { id: "x" }, profiles: { default: {} } };\n');
@@ -445,7 +449,7 @@ describe("DevFn configuration", () => {
   });
 
   it("loads JSON only from a matching trusted snapshot", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "devfn-json-trusted-"));
+    const root = tempDir("devfn-json-trusted-");
     const stateDir = path.join(root, "state");
     const configPath = path.join(root, "devfn.config.json");
     await writeFile(configPath, JSON.stringify({ version: 1, project: { id: "x" }, profiles: { default: {} } }));
@@ -457,7 +461,7 @@ describe("DevFn configuration", () => {
   });
 
   it("serializes concurrent stale trust-lock recovery", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "devfn-stale-trust-"));
+    const root = tempDir("devfn-stale-trust-");
     const stateDir = path.join(root, "state");
     const first = path.join(root, "first.json");
     const second = path.join(root, "second.json");
@@ -472,7 +476,7 @@ describe("DevFn configuration", () => {
   });
 
   it("retires a stale corrupt trust-lock ticket", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "devfn-ownerless-ticket-"));
+    const root = tempDir("devfn-ownerless-ticket-");
     const stateDir = path.join(root, "state");
     const configPath = path.join(root, "devfn.config.json");
     const lockPath = path.join(stateDir, "trust.lock");
@@ -486,7 +490,7 @@ describe("DevFn configuration", () => {
   });
 
   it("fails closed on a fresh corrupt trust-lock ticket", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "devfn-fresh-ownerless-ticket-"));
+    const root = tempDir("devfn-fresh-ownerless-ticket-");
     const stateDir = path.join(root, "state");
     const configPath = path.join(root, "devfn.config.json");
     const lockPath = path.join(stateDir, "trust.lock");
@@ -497,7 +501,7 @@ describe("DevFn configuration", () => {
   });
 
   it("recovers stale tickets when a PID has been reused", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "devfn-reused-pid-"));
+    const root = tempDir("devfn-reused-pid-");
     const stateDir = path.join(root, "state");
     const configPath = path.join(root, "devfn.config.json");
     const lockPath = path.join(stateDir, "trust.lock");

@@ -14,6 +14,7 @@ import {
   OAUTH_RELAY_OWNER_ID, OAuthRelayClient, oauthRelayStatus, readRelayService, recoverOAuthRelayRoute, startOAuthRelay, stopOAuthRelay, type OAuthRelayProxy,
 } from "../src/oauth-relay/index.js";
 import { createFakeProvider, createOAuthClientApp, FixtureBrowser } from "./fixtures/oauth.js";
+import { caddyAdminLockPath } from "../../test-support/shared-locks.mjs";
 
 const DOMAIN = "dev.example.test";
 const loopback = (async () => [{ address: "127.0.0.1", family: 4 }]) as never;
@@ -195,7 +196,7 @@ it("writes nothing but its readiness line, whatever callbacks it serves", async 
 // Opt-in local observation through the real DevFn-owned Caddy, internal TLS,
 // the relay process and two worktree apps. The provider is still a fixture.
 it.skipIf(process.env.DEVFN_REAL_PROXY !== "1")("completes two worktree sign-ins through real Caddy and one relay hostname", async () => await withFileLock(
-  path.join(os.tmpdir(), "devfn-test-caddy-admin.lock"), async () => {
+  caddyAdminLockPath(), async () => {
     const stateDir = await registeredState();
     const original = { XDG_DATA_HOME: process.env.XDG_DATA_HOME, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME };
     process.env.XDG_DATA_HOME = path.join(stateDir, "data");

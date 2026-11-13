@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import ts from "typescript";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { guardDirectory } from "../../test-support/leak-guard.mjs";
 
 const execFileAsync = promisify(execFile);
 const packageDir = fileURLToPath(new URL("..", import.meta.url));
@@ -15,6 +16,8 @@ let dir: string;
 beforeAll(async () => {
   await mkdir(path.join(packageDir, "node_modules", ".cache"), { recursive: true });
   dir = await mkdtemp(path.join(packageDir, "node_modules", ".cache", "devfn-launch-"));
+  // Outside the temp folder, so the leak guard is told to watch it.
+  guardDirectory(dir);
   await writeFile(path.join(dir, "package.json"), '{ "type": "module" }');
   for (const name of await readdir(path.join(packageDir, "src"))) {
     const source = await readFile(path.join(packageDir, "src", name), "utf8");

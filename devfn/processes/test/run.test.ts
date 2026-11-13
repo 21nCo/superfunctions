@@ -10,6 +10,7 @@ import { processExists } from "@devfn/config";
 
 import type { runGatedCommand as GatedRunner } from "../src/gated.js";
 import type { ProcessSupervisor as Supervisor } from "../src/supervisor.js";
+import { guardDirectory } from "../../test-support/leak-guard.mjs";
 
 const packageDir = fileURLToPath(new URL("..", import.meta.url));
 const exists = async (file: string) => await stat(file).then(() => true, () => false);
@@ -26,6 +27,8 @@ let runGatedCommand: typeof GatedRunner;
 beforeAll(async () => {
   await mkdir(path.join(packageDir, "node_modules", ".cache"), { recursive: true });
   dir = await mkdtemp(path.join(packageDir, "node_modules", ".cache", "devfn-run-"));
+  // Outside the temp folder, so the leak guard is told to watch it.
+  guardDirectory(dir);
   await writeFile(path.join(dir, "package.json"), '{ "type": "module" }');
   for (const name of await readdir(path.join(packageDir, "src"))) {
     const source = await readFile(path.join(packageDir, "src", name), "utf8");

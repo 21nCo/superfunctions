@@ -9,11 +9,12 @@ import { expect, it } from "vitest";
 
 import { isPortAvailable, withFileLock } from "@devfn/ports";
 import { CaddyProxyController, proxyListenerPorts, renderCaddyfile, type ProxyRoute } from "../src/index.js";
+import { caddyAdminLockPath } from "../../test-support/shared-locks.mjs";
 
 // Fixtures that need the fixed Caddy admin port 127.0.0.1:2019 free share one
 // machine-wide lock with other DevFn packages' fixtures that bind it.
 const withCaddyAdminPort = async <T>(action: () => Promise<T>): Promise<T> =>
-  await withFileLock(path.join(os.tmpdir(), "devfn-test-caddy-admin.lock"), action, { timeoutMs: 120_000 });
+  await withFileLock(caddyAdminLockPath(), action, { timeoutMs: 120_000 });
 
 /** Stop a DevFn-started Caddy: its process group on POSIX, the process on Windows. */
 function stopOwnerGroup(pid: number): void {

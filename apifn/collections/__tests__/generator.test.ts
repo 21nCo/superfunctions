@@ -1,9 +1,8 @@
-import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRouter } from "@superfunctions/http";
 import { fromRouter } from "@apifn/core";
 import { openAPIToCollection, readCollection, routerToCollection, validateCollection, writeCollection } from "../src/index.js";
+import { tempDir } from "./temp-dirs.js";
 
 function flattenRequests(items: Array<{ kind: string; children?: unknown[]; path: string }>): string[] {
   const result: string[] = [];
@@ -99,7 +98,7 @@ describe("collection generator", () => {
 
     expect(validateCollection(collection)).toEqual([]);
 
-    const outDir = await mkdtemp(path.join(tmpdir(), "apifn-gen-"));
+    const outDir = await tempDir("apifn-gen-");
     await writeCollection({ ...collection, rootDir: outDir });
     const reRead = await readCollection(outDir);
     expect(flattenRequests(reRead.items)).toHaveLength(3);

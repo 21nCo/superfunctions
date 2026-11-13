@@ -11,6 +11,7 @@ import { parsePersistedProxyRoutes, withFileLock } from "@devfn/ports";
 import { PUBLIC_ORIGIN_PORT, proxyListenerPortsFor, renderCaddyfile, type ProxyRoute } from "../src/index.js";
 import { CloudflareTunnelProvider, caddyInternalRoot, ownershipMarker, probePublicOrigin } from "../src/tunnel/index.js";
 import { fixtureBinding } from "./fixtures/tunnel.js";
+import { caddyAdminLockPath } from "../../test-support/shared-locks.mjs";
 
 const PUBLIC_HOST = "web-w1-0123456789abcdef0123.tunnel.example.test";
 const route = (overrides: Partial<ProxyRoute>): ProxyRoute => ({ id: "w1:web", instanceId: "w1", hostname: "web-w1.localhost", targetHost: "127.0.0.1", targetPort: 3000, tls: "internal", updatedAt: "now", ...overrides });
@@ -173,7 +174,7 @@ async function rawRequest(port: number, servername: string, host: string, ca: st
 }
 
 it.skipIf(process.env.DEVFN_REAL_PROXY !== "1")("denies private routes, forged Host and unknown names on a real Caddy public origin", async () => {
-  await withFileLock(path.join(os.tmpdir(), "devfn-test-caddy-admin.lock"), async () => {
+  await withFileLock(caddyAdminLockPath(), async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "devfn-public-origin-"));
     // The public application refuses anonymous requests at /: routing is verified independently of its status.
     const upstreams = await Promise.all(["PRIVATE", "PUBLIC"].map(async (body) => {

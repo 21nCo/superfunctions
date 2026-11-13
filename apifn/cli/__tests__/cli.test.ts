@@ -1,9 +1,9 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { runCli } from "../src/index.js";
+import { tempDir } from "./temp-dirs.js";
 
 async function createRouterFixture(cwd: string): Promise<string> {
   const routerPath = path.join(cwd, "router.ts");
@@ -40,7 +40,7 @@ describe("cli commands", () => {
   });
 
   it("TV-CLI-001: init --yes scaffolds collection", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "apifn-cli-init-"));
+    const cwd = await tempDir("apifn-cli-init-");
     const target = path.join(cwd, "test-col");
     const code = await runCli(["init", target, "--yes"], { cwd });
 
@@ -50,7 +50,7 @@ describe("cli commands", () => {
   });
 
   it("TV-CLI-002 + TV-CLI-003: generate and export OpenAPI", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "apifn-cli-generate-"));
+    const cwd = await tempDir("apifn-cli-generate-");
     await createRouterFixture(cwd);
 
     await writeFile(
@@ -81,7 +81,7 @@ describe("cli commands", () => {
   });
 
   it("TV-CLI-009: validate returns 0 for valid spec and 1 for invalid spec", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "apifn-cli-validate-"));
+    const cwd = await tempDir("apifn-cli-validate-");
     const validPath = path.join(cwd, "valid.yml");
     const invalidPath = path.join(cwd, "invalid.yml");
 
@@ -123,7 +123,7 @@ describe("cli commands", () => {
   });
 
   it("CI-003: validate --format json returns parseable machine output", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "apifn-cli-validate-json-"));
+    const cwd = await tempDir("apifn-cli-validate-json-");
     const validPath = path.join(cwd, "valid.yml");
     const invalidPath = path.join(cwd, "invalid.yml");
 
@@ -163,7 +163,7 @@ describe("cli commands", () => {
   });
 
   it("imports an OpenAPI URL into an OpenCollection", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "apifn-cli-import-"));
+    const cwd = await tempDir("apifn-cli-import-");
     const spec = {
       openapi: "3.1.0",
       info: { title: "Import API", version: "1.0.0" },
@@ -214,7 +214,7 @@ describe("cli commands", () => {
   });
 
   it("import --force replaces generated collection files without deleting unrelated files", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "apifn-cli-import-force-"));
+    const cwd = await tempDir("apifn-cli-import-force-");
     const outputDir = path.join(cwd, "collection");
     const firstSpecPath = path.join(cwd, "first.json");
     const secondSpecPath = path.join(cwd, "second.json");

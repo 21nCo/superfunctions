@@ -51,6 +51,8 @@ const B2 = "api-b-0123456789abcdef0123.tunnel.example.test";
 const A2 = "api-a-0123456789abcdef0123.tunnel.example.test";
 
 let dir: string;
+// The folder beforeEach created; dir may move inside it.
+let base: string;
 let provider: FakeTunnelProvider;
 let options: TunnelServiceOptions;
 let probed: string[];
@@ -79,7 +81,7 @@ const connectorHostnames = async (): Promise<string[]> => {
 };
 
 beforeEach(async () => {
-  dir = await mkdtemp(path.join(os.tmpdir(), "devfn-tunnel-"));
+  dir = base = await mkdtemp(path.join(os.tmpdir(), "devfn-tunnel-"));
   provider = new FakeTunnelProvider(await writeConnectorScript(dir));
   probed = [];
   await writeFile(path.join(dir, "credentials.json"), "{}", { mode: 0o600 });
@@ -94,7 +96,8 @@ afterEach(async () => {
   delete afterRead.run;
   const state = await readTunnelState(dir, "preview").catch(() => undefined);
   for (const record of [state?.connector, ...(state?.retired ?? [])]) if (record) { try { process.kill(-record.pid, "SIGKILL"); } catch { /* gone */ } }
-  await rm(dir, { recursive: true, force: true });
+  // A test may point dir at a folder inside the one this hook created, so remove that one.
+  await rm(base, { recursive: true, force: true });
 });
 
 describe("tunnel bindings", () => {
