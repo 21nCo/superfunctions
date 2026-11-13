@@ -135,7 +135,8 @@ function defineEntry(target: Record<string, SerializedValue>, key: string, value
 }
 
 function errorKeys(error: Error): string[] {
-  return [...new Set(["name", "message", "stack", ...Object.getOwnPropertyNames(error)])];
+  const standard = ["name", "message", "stack"].filter((key) => key in error);
+  return [...new Set([...standard, ...Object.getOwnPropertyNames(error)])];
 }
 
 function readProperty(source: object, key: string): unknown {

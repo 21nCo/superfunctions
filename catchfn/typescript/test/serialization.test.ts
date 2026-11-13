@@ -28,6 +28,9 @@ describe("serialization closed set: one vector per form", () => {
     const value = serializeEntry(error) as Record<string, unknown>;
     expect(value).toMatchObject({ name: "TypeError", message: "bad input", code: "E_INPUT" });
     expect(value.stack).toContain("bad input");
+    const bare = new Error("no stack");
+    delete (bare as { stack?: string }).stack;
+    expect(serializeEntry(bare)).toEqual({ name: "Error", message: "no stack" });
   });
 
   it("copies plain objects, null-prototype objects and arrays", () => {
