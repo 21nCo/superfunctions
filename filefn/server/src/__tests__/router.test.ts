@@ -200,11 +200,13 @@ describe('normalizeBasePath', () => {
     ['/files', '/files'],
     ['/files/', '/files'],
     ['/a/b-c_d.e~f/%20g', '/a/b-c_d.e~f/%20g'],
+    ['/a%20b', '/a%20b'],
+    ['/%E2%82%AC/%e2%82%ac', '/%E2%82%AC/%e2%82%ac'],
   ])('normalizes %j to %j', (input, expected) => {
     expect(normalizeBasePath(input)).toBe(expected);
   });
 
-  it.each(['files', 'https://example.com/files', '//files', '/files//', '/a//b', '/a/./b', '/a/../b', '/..', '/files?x=1', '/files#top', '/my files', '/a\\b', '/fïles'])(
+  it.each(['files', 'https://example.com/files', '//files', '/files//', '/a//b', '/a/./b', '/a/../b', '/..', '/files?x=1', '/files#top', '/my files', '/a\\b', '/fïles', '/%zz', '/%4', '/%4g', '/a%', '/a%/b', '/%%20'])(
     'rejects %j',
     (input) => {
       expect(() => normalizeBasePath(input)).toThrow(/^FILEFN_BASE_PATH_INVALID/);

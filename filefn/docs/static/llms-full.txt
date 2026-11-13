@@ -6526,7 +6526,7 @@ The Worker creates filefn per request so that `runtime.defer` uses that request'
 
 ## Background work and `runtime.defer`
 
-`runtime.defer(work)` receives each piece of background work as a promise that has already started and never rejects. It is called while the request that triggered the work is still being handled, so `ctx.waitUntil` accepts it. Failures are logged through filefn's logger. If the hook itself throws, filefn logs the error and the work still runs, but Workers may cancel it.
+`runtime.defer(work)` receives each piece of background work as a promise that has already started and never rejects. filefn calls it as a method, `runtime.defer(work)`, so a hook can read its context through `this`. It is called while the request that triggered the work is still being handled. It is also called from deferred work after the response: processing emits events, and their delivery is deferred while the processing is still pending. `ctx.waitUntil` accepts both. Failures are logged through filefn's logger, and a logger that throws does not break the request or the work. If the hook itself throws, filefn logs the error and the work still runs, but Workers may cancel it.
 
 Without `runtime`, filefn behaves as on Node: processing starts on a `setImmediate` turn after the request and runs detached. On Workers, configure the hook, or configure a processing queue through `processing.flowFn` so processing does not run in the request at all.
 
@@ -6536,11 +6536,11 @@ Without `runtime`, filefn behaves as on Node: processing starts on a `setImmedia
 
 ## IDs
 
-filefn generates upload, file, version and artifact IDs as `<prefix>_<random>`. The random part is 20 base32 characters (100 bits) from the `crypto` module's CSPRNG (`randomFillSync`), which does not need a global Web Crypto object, for example `file_8h3k2m9q4x7c1v5t0bnr`. IDs are opaque. IDs from earlier versions (`file_<time>_<random>`) remain valid.
+filefn generates upload, file, version and artifact IDs as `<prefix>_<random>`. The random part is 20 base32 characters (100 bits) from the `node:crypto` CSPRNG (`randomFillSync`), which does not need a global Web Crypto object, for example `file_8h3k2m9q4x7c1v5t0bnr`. IDs are opaque. IDs from earlier versions (`file_<time>_<random>`) remain valid.
 
 ## What is verified
 
-The `@filefn/server` test suite bundles a Hono Worker like the one above with Wrangler's deploy bundler. It runs the bundle in workerd through Miniflare, with in-memory database and storage adapters. The test drives init, part upload, complete and download under `/files`. It checks that processing deferred through `ctx.waitUntil` finishes, and it fires the cron trigger. Live R2, Queues, Containers and cron on a Cloudflare account are not covered by that test.
+The `@filefn/server` test suite bundles a Hono Worker like the one above with Wrangler's deploy bundler. It runs the bundle in workerd through Miniflare, with in-memory database and storage adapters. The test drives init, part upload, complete and download under `/files`. It checks that processing is registered with `ctx.waitUntil` and finishes, and it fires the cron trigger to delete an expired session. Live R2, Queues, Containers and cron on a Cloudflare account are not covered by that test.
 
 
 ---

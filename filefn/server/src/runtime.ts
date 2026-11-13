@@ -9,9 +9,13 @@ import type { Logger } from './observability/logger.js';
 export interface FileFnRuntime {
   /**
    * Receives each piece of background work as an already-started promise that
-   * never rejects. Called synchronously while the request that triggered the
-   * work is still being handled. Without it, work runs detached (on Node it is
-   * scheduled with `setImmediate`, as before this hook existed).
+   * never rejects. FileFn calls it as a method (`runtime.defer(work)`), so a
+   * hook may use `this`. It is called synchronously while the triggering
+   * request is handled, and also from deferred work itself: processing emits
+   * events whose fan-out is deferred after the response, while the earlier
+   * deferred work is still pending (Workers' `ctx.waitUntil` accepts that).
+   * Without it, work runs detached (on Node it is scheduled with
+   * `setImmediate`, as before this hook existed).
    */
   defer?(work: Promise<unknown>): void;
 }
@@ -34,26 +38,29 @@ function nextTurn(): Promise<void> {
   });
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.stack ?? error.message : String(error);
-}
-
 export function createBackgroundScheduler(runtime?: FileFnRuntime, logger?: Logger): BackgroundScheduler {
-  const defer = runtime?.defer;
+  /** Logs a background failure; never throws, so it cannot reject work or break a request. */
+  function report(message: string, error: unknown): void {
+    try {
+      const detail = error instanceof Error ? error.stack ?? error.message : String(error);
+      logger?.error(message, { error: detail });
+    } catch {
+      // A failing logger must not turn a logged failure into a new one.
+    }
+  }
 
   function hand(work: Promise<unknown>): void {
     const settled = work.then(
       () => undefined,
-      (error: unknown) => {
-        logger?.error('background work failed', { error: errorMessage(error) });
-      },
+      (error: unknown) => report('background work failed', error),
     );
-    if (!defer) return;
+    if (typeof runtime?.defer !== 'function') return;
     try {
-      defer(settled);
+      // Called on `runtime` so a method-style hook keeps its receiver.
+      runtime.defer(settled);
     } catch (error) {
       // The work is already running; a failing hook only loses lifetime extension.
-      logger?.error('runtime.defer hook failed', { error: errorMessage(error) });
+      report('runtime.defer hook failed', error);
     }
   }
 

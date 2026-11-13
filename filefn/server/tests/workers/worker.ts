@@ -5,10 +5,14 @@
  * its `runtime.defer` hook is that request's `ctx.waitUntil`; the adapters live
  * at module scope, so state persists for the isolate's lifetime, which the
  * smoke test relies on across requests. A cron trigger runs session cleanup.
+ * The hook is a method that reads `ctx` through `this`, and it counts each
+ * `waitUntil` registration so the test can assert lifetime extension directly.
+ * A second mount at /expiring issues sessions that expire at once, which the
+ * cron test cleans up.
  */
 import { Hono } from 'hono';
 import { memoryAdapter } from '@superfunctions/db/adapters/memory';
-import { createFileFn, type FileFnConfig, type Processor } from '@filefn/server';
+import { createFileFn, type FileFnConfig, type FileFnRuntime, type Processor } from '@filefn/server';
 import { createMemoryStorage } from './memory-storage.js';
 
 interface ExecutionContextLike {
@@ -18,6 +22,16 @@ interface ExecutionContextLike {
 const database = memoryAdapter();
 const storage = createMemoryStorage();
 let lastCleanup: unknown = null;
+let waitUntilRegistrations = 0;
+
+class WaitUntilRuntime implements FileFnRuntime {
+  constructor(private readonly ctx: ExecutionContextLike) {}
+
+  defer(work: Promise<unknown>): void {
+    this.ctx.waitUntil(work);
+    waitUntilRegistrations += 1;
+  }
+}
 
 const uppercase: Processor = {
   name: 'uppercase',
@@ -38,11 +52,11 @@ const uppercase: Processor = {
   },
 };
 
-function fileFnFor(ctx: ExecutionContextLike) {
+function fileFnFor(ctx: ExecutionContextLike, mount: { basePath: string; uploadSessionTtlSeconds?: number } = { basePath: '/files' }) {
   const config: FileFnConfig = {
     database,
     storage,
-    basePath: '/files',
+    ...mount,
     namespace: 'smoke',
     policies: [{ name: 'note', contentTypes: ['text/plain'], visibility: 'private' }],
     auth: {
@@ -53,7 +67,7 @@ function fileFnFor(ctx: ExecutionContextLike) {
       },
     },
     processing: { enabled: true, processors: [uppercase] },
-    runtime: { defer: (work) => ctx.waitUntil(work) },
+    runtime: new WaitUntilRuntime(ctx),
   };
   return createFileFn(config);
 }
@@ -64,7 +78,13 @@ app.all('/files/*', async (c) => {
   const response = await fileFnFor(c.executionCtx).router.handle(c.req.raw);
   return response ?? c.notFound();
 });
+app.all('/expiring/*', async (c) => {
+  const fileFn = fileFnFor(c.executionCtx, { basePath: '/expiring', uploadSessionTtlSeconds: 0 });
+  const response = await fileFn.router.handle(c.req.raw);
+  return response ?? c.notFound();
+});
 app.get('/__smoke/last-cleanup', (c) => c.json(lastCleanup));
+app.get('/__smoke/wait-until', (c) => c.json({ registrations: waitUntilRegistrations }));
 
 export default {
   fetch: app.fetch,

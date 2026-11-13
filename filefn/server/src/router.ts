@@ -22,7 +22,8 @@ export interface FileFnRouterConfig {
  * Normalizes a mount prefix to `''` (root) or `/segment[/segment...]` without a
  * trailing slash. Throws FILEFN_BASE_PATH_INVALID unless the value is an
  * absolute, already-encoded URL path: a leading `/`, no empty or dot segment,
- * and no query, fragment, whitespace or other byte `URL` would percent-encode.
+ * every `%` starting a two-hex-digit escape, and no query, fragment,
+ * whitespace or other byte `URL` would percent-encode.
  */
 export function normalizeBasePath(basePath: string | undefined): string {
   if (basePath === undefined || basePath === '' || basePath === '/') {
@@ -37,9 +38,14 @@ export function normalizeBasePath(basePath: string | undefined): string {
   if (trimmed.slice(1).split('/').includes('')) {
     throw invalid();
   }
+  // URL#pathname keeps malformed escapes such as `%zz` or a trailing `%4` as is.
+  if (/%(?![0-9A-Fa-f]{2})/.test(trimmed)) {
+    throw invalid();
+  }
   // Request paths are compared as URL#pathname reports them, so the prefix must
   // already be in that form: no query, fragment, dot segment, or unencoded byte.
-  if (new URL(trimmed, 'http://filefn.invalid').pathname !== trimmed) {
+  // The base URL only anchors parsing; nothing is fetched from it.
+  if (new URL(trimmed, 'https://filefn.invalid').pathname !== trimmed) {
     throw invalid();
   }
   return trimmed;

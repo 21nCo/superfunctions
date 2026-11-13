@@ -151,8 +151,6 @@ export class FileFnEventEmitter extends EventEmitter {
     const fanOut = this.observability?.events.emit(fileObservationEvent(event, payload));
     if (fanOut && this.background) {
       this.background.track(fanOut);
-    } else {
-      void fanOut;
     }
     return super.emit(event, payload);
   }

@@ -3,7 +3,8 @@
  * bundle it and served by workerd (Miniflare). Every request goes through the
  * Hono host app into FileFn mounted at /files. It drives a proxy upload end to
  * end (init, sign, part upload, part complete, complete, download), checks the
- * processing FileFn deferred through ctx.waitUntil, and fires the cron trigger.
+ * processing FileFn deferred through ctx.waitUntil (counting the registrations),
+ * and fires the cron trigger against a session that has expired.
  */
 import { execFile } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -89,6 +90,11 @@ function postJson(path: string, payload: unknown, headers: Record<string, string
   });
 }
 
+async function waitUntilRegistrations(): Promise<number> {
+  const response = await mf.dispatchFetch(`${ORIGIN}/__smoke/wait-until`);
+  return ((await response.json()) as { registrations: number }).registrations;
+}
+
 /** A returned FileFn URL is relative to the mount, the way @filefn/client resolves it. */
 function underMount(url: string): string {
   expect(url.startsWith('/')).toBe(true);
@@ -142,8 +148,11 @@ describe('FileFn on workerd under Hono at /files', () => {
     );
     expect(part.status).toBe(200);
 
+    const registrationsBefore = await waitUntilRegistrations();
     const completed = await postJson(`/upload/${session.uploadSessionId}/complete`, {}, token(session));
     expect(completed.status).toBe(200);
+    // Completing hands queue-less processing to the method-style hook, which registered it with ctx.waitUntil.
+    expect(await waitUntilRegistrations()).toBeGreaterThan(registrationsBefore);
     const { fileId, versionId } = completed.body.data;
     expect(fileId).toMatch(/^file_[0-9a-hjkmnp-tv-z]{20}$/);
     expect(versionId).toMatch(/^ver_[0-9a-hjkmnp-tv-z]{20}$/);
@@ -178,11 +187,25 @@ describe('FileFn on workerd under Hono at /files', () => {
   });
 
   it('runs expired-session cleanup from a cron trigger', async () => {
+    const expiring = await call(`${ORIGIN}/expiring/upload/init`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ policy: 'note', fileName: 'stale.txt', size: 5, mimeType: 'text/plain' }),
+    });
+    expect(expiring.status).toBe(200);
+    // The session expires on creation; let the clock move past its expiresAt.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
     const worker = await mf.getWorker();
     const result = await worker.scheduled({ cron: '0 * * * *' });
     expect(result.outcome).toBe('ok');
 
     const cleanup = await mf.dispatchFetch(`${ORIGIN}/__smoke/last-cleanup`);
-    expect(await cleanup.json()).toEqual({ deletedSessions: 0, abortedMultipart: 0 });
+    expect(await cleanup.json()).toEqual({ deletedSessions: 1, abortedMultipart: 0 });
+
+    const gone = await call(`${ORIGIN}/expiring/upload/${expiring.body.data.uploadSessionId}/status`, {
+      headers: expiring.body.data.uploadSessionToken ? { 'x-upload-session-token': expiring.body.data.uploadSessionToken } : {},
+    });
+    expect(gone.status).toBe(404);
   });
 });

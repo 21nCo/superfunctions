@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-// Spy on the `crypto` module's CSPRNG while keeping its real behaviour.
+// Spy on the `node:crypto` CSPRNG while keeping its real behaviour.
 const cryptoMock = vi.hoisted(() => ({ randomFillSync: vi.fn() }));
 
-vi.mock('crypto', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('crypto')>();
+vi.mock('node:crypto', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:crypto')>();
   cryptoMock.randomFillSync.mockImplementation(actual.randomFillSync);
   return { ...actual, default: actual, randomFillSync: cryptoMock.randomFillSync };
 });
@@ -64,7 +64,7 @@ describe('generateFileFnId', () => {
     for (const id of ids) expect(id).toMatch(/^upl_[0-9a-hjkmnp-tv-z]{20}$/);
   });
 
-  it('maps every random byte onto the alphabet, so each symbol is reachable', () => {
+  it('maps each random byte to the alphabet symbol of its low five bits', () => {
     const seen = new Set<string>();
     cryptoMock.randomFillSync.mockImplementationOnce(<T extends NodeJS.ArrayBufferView>(array: T) => {
       const bytes = array as unknown as Uint8Array;
