@@ -74,12 +74,16 @@ Browsers and current Node check an internal slot, which runs none. On Node
 `[UNREAD_URL]`. A `Request`, `init` or headers
 argument is read only after the call returns, and `send` reads nothing from
 its arguments. A native `fetch`, or a wrapper that calls one synchronously,
-has read the request by then. Platform objects are read through the `URL`,
-`Request`, `Response`, `Headers`, `Promise`, `XMLHttpRequest` and
-`EventTarget` getters and methods captured at load, so a getter or method that
-the page patches later never runs. The one exception is an `XMLHttpRequest`
-defined or replaced after catchfn loads: its getters are captured when
-`start()` installs the wrappers.
+has read the request by then. The application's own arguments and results
+are read through the `URL`, `Request`, `Response`, `Headers`, `Promise`,
+`XMLHttpRequest` and `EventTarget` getters and methods captured at load, so a
+patch the page makes to those later never runs on them. Two exceptions:
+
+- An `XMLHttpRequest` defined or replaced after catchfn loads has its getters
+  captured when `start()` installs the wrappers.
+- Redacting the captured URL string after the call uses the live `URL` and
+  `URLSearchParams` API (see Redaction), so a page that patches it can run
+  code at that point.
 
 Known limit, deferred to SFNS-60 (SFNS-56 owner scope amendment of
 2026-11-13): no script can tell a Proxy apart, so a stateful Proxy `init` or
