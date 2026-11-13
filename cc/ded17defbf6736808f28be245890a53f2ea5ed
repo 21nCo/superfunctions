@@ -1,0 +1,41 @@
+cmsfn/.conduct/studio-audit-shell-readiness.md
+  s_e1c5fc1a65c0cf::t_f52c01075b6b04 1-22
+cmsfn/.conduct/studio-browser-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_c35f29b302f420 14,27-29,33,57,166-196,199-200
+cmsfn/studio/README.md
+  s_e1c5fc1a65c0cf::t_2ddfe4eb451eb6 39-43
+cmsfn/studio/src/__tests__/auditShell.test.tsx
+  s_e1c5fc1a65c0cf::t_213ad2a7799c70 1-53
+cmsfn/studio/src/app.tsx
+  s_5b8a2d038459c0::t_69eefec1970441 14-15,35,93,95,105-107,111
+cmsfn/studio/src/panes/audit/EventsPane.tsx
+  s_e1c5fc1a65c0cf::t_d553985c175fe4 5,14-20,24,26,30,38,40-42
+cmsfn/studio/src/panes/audit/WebhooksPane.tsx
+  s_e1c5fc1a65c0cf::t_536c3e6f1d155e 5,15-18,22,24,28,36,38-40,44-45
+cmsfn/studio/src/panes/audit/useAuditPage.ts
+  s_5b8a2d038459c0::t_aeb392d6e74f69 1-43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ccded17defbf6736808f28be245890a53f2ea5ed",
+  "prompts": {},
+  "sessions": {
+    "s_5b8a2d038459c0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7470a11b-0a30-4130-b85f-c0c32b8a9541",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

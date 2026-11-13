@@ -1,0 +1,61 @@
+testfn/python/.gitignore
+  s_e1c5fc1a65c0cf::t_80d63531cca234 1-10
+testfn/python/LICENSE
+  s_e1c5fc1a65c0cf::t_96340e7cf52e25 1-21
+testfn/python/README.md
+  s_e1c5fc1a65c0cf::t_c4d45519778369 1-146
+testfn/python/pyproject.toml
+  s_e1c5fc1a65c0cf::t_e87f69e369bfd8 1-82
+testfn/python/scripts/packed_consumer.py
+  s_e1c5fc1a65c0cf::t_d12a8c85cb0b99 1-39
+testfn/python/testfn/__init__.py
+  s_e1c5fc1a65c0cf::t_74ce173e3d74c9 1-45
+testfn/python/testfn/_pytest_plugin.py
+  s_e1c5fc1a65c0cf::t_2989f81902f02f 1-50
+testfn/python/testfn/adapters/pytest.py
+  s_e1c5fc1a65c0cf::t_c8d58187c6cdc0 1-215
+testfn/python/testfn/analytics.py
+  s_e1c5fc1a65c0cf::t_bb72be8b147e88 1-99
+testfn/python/testfn/core.py
+  s_e1c5fc1a65c0cf::t_82d694479ddd9f 1-40
+testfn/python/testfn/reporters.py
+  s_e1c5fc1a65c0cf::t_f73365de3eefb3 1-54
+testfn/python/testfn/runner.py
+  s_e1c5fc1a65c0cf::t_2aa1e8bfcd6f36 1-119
+testfn/python/testfn/storage.py
+  s_e1c5fc1a65c0cf::t_59495fc976a582 1-201
+testfn/python/testfn/types.py
+  s_e1c5fc1a65c0cf::t_61c31c815df562 1-80
+testfn/python/testfn/visual.py
+  s_e1c5fc1a65c0cf::t_7169714a681f9d 1-80
+testfn/python/tests/fixtures/dummy.py
+  s_e1c5fc1a65c0cf::t_2f00a03d5b0c5d 1-12
+testfn/python/tests/test_analytics_contract.py
+  s_e1c5fc1a65c0cf::t_c47a9182890f7e 1-27
+testfn/python/tests/test_execution_contract.py
+  s_e1c5fc1a65c0cf::t_eab9c63ec7f87a 1-155
+testfn/python/tests/test_runner.py
+  s_e1c5fc1a65c0cf::t_e3c32820282934 1-100
+testfn/python/tests/test_runner_reporting.py
+  s_e1c5fc1a65c0cf::t_e7068aa7c52b0a 1-42
+testfn/python/tests/test_storage_isolation.py
+  s_e1c5fc1a65c0cf::t_55c27f5b678f9f 1-38
+testfn/python/tests/test_visual.py
+  s_e1c5fc1a65c0cf::t_bbdad2204171a5 1-58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "276e0a3d68c866675e8d2d87dc170ba3cbd84ad9",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

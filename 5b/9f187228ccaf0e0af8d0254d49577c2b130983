@@ -1,0 +1,23 @@
+watchfn/.conduct/errors-lifecycle-readiness.md
+  s_e1c5fc1a65c0cf::t_880bf6bbbfdaf6 1-19
+watchfn/typescript/src/collectors/errors/exception-handler.ts
+  s_e1c5fc1a65c0cf::t_0b3c952b6be414 1,4-9,11-14,16,18-62,66-68,71-72
+watchfn/typescript/tests/collectors/exception-lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_91b58e3ec8ee7b 1-108
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5b9f187228ccaf0e0af8d0254d49577c2b130983",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

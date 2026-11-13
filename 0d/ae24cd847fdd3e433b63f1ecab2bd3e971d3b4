@@ -1,0 +1,41 @@
+cachefn/.conduct/coverage-integration-acceptance.md
+  s_e1c5fc1a65c0cf::t_7cacf0fcb511d6 1-58
+cachefn/.conduct/coverage-summary.json
+  s_e1c5fc1a65c0cf::t_ce0f00b64bdc0c 1-38
+cachefn/.conduct/release-contract.md
+  s_e1c5fc1a65c0cf::t_91805d23196077 1-53
+cachefn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_503f50fa2e83af 24-28,574-598
+cachefn/typescript/__tests__/boundary-contracts.test.ts
+  s_e1c5fc1a65c0cf::t_0a74f042a22106 1-91
+cachefn/typescript/__tests__/factory-convenience.test.ts
+  s_e1c5fc1a65c0cf::t_643bf2b718237a 3,55-69
+cachefn/typescript/__tests__/offline-cache.test.ts
+  s_e1c5fc1a65c0cf::t_59c98ef8d8f02f 95-113
+cachefn/typescript/examples/ecosystem.ts
+  s_e1c5fc1a65c0cf::t_d2a8e466bc59d4 1-62
+cachefn/typescript/package.json
+  s_e1c5fc1a65c0cf::t_414082ba822cba 32-34,64
+cachefn/typescript/scripts/ecosystem-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_83397d2df80dd4 1-37
+cachefn/typescript/scripts/ecosystem-scenarios.ts
+  s_e1c5fc1a65c0cf::t_c4d7aa5458b998 1-49
+package-lock.json
+  s_e1c5fc1a65c0cf::t_44407e06263381 8831,10112
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0dae24cd847fdd3e433b63f1ecab2bd3e971d3b4",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

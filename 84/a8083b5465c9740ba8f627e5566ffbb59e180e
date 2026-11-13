@@ -1,0 +1,23 @@
+docsfn/cli/src/migrate-docusaurus.ts
+  s_cb0a23fc57336c::t_2c38555c00b223 608-610
+docsfn/examples/sveltekit-docs-site/src/app.html
+  s_cb0a23fc57336c::t_ce8ae5ae5c2850 3
+docsfn/examples/sveltekit-hybrid-site/src/app.html
+  s_cb0a23fc57336c::t_19bc4fa4e82a15 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "84a8083b5465c9740ba8f627e5566ffbb59e180e",
+  "prompts": {},
+  "sessions": {
+    "s_cb0a23fc57336c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8653454c-6c39-4675-8049-d1a77f7a3d3b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,31 @@
+flowfn/.conduct/typescript-queue-clock-readiness.md
+  s_e1c5fc1a65c0cf::t_8c59ac494795f2 1-37
+flowfn/typescript/docs/queue-ownership.md
+  s_e1c5fc1a65c0cf::t_f0b443474f478c 74-93
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_e1c5fc1a65c0cf::t_a188e479044b88 178-179,192-194,210,219,223-226
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_e1c5fc1a65c0cf::t_c9012f54254244 1,39-42
+flowfn/typescript/src/adapters/redis.test.ts
+  s_e1c5fc1a65c0cf::t_e172d6564dfea0 1,39-42
+flowfn/typescript/src/adapters/redis.ts
+  s_e1c5fc1a65c0cf::t_02187e49c0540e 90,102-103,124-125,156,165,191,195
+flowfn/typescript/src/storage/queue-clock-contract.ts
+  s_e1c5fc1a65c0cf::t_5f1505b8b6ed99 1-40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7fa2449e624360800549908dd95dd0eba7002a5b",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

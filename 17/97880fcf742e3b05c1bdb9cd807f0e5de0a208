@@ -1,0 +1,55 @@
+contentfn/.conduct/audit-readiness.md
+  s_e1c5fc1a65c0cf::t_c2a6c24cc9bbc9 1-16
+contentfn/.conduct/packed-acceptance.py
+  s_e1c5fc1a65c0cf::t_d2c630319bdbc8 22
+contentfn/.conduct/packed-runtime.mjs
+  s_e1c5fc1a65c0cf::t_9839e2ede3a839 28-33
+contentfn/README.md
+  s_e1c5fc1a65c0cf::t_016f9bbf69a1dc 179-207
+contentfn/client/src/client.test.ts
+  s_e1c5fc1a65c0cf::t_0fc89ab33f999d 22-31
+contentfn/client/src/index.ts
+  s_e1c5fc1a65c0cf::t_9536be16c78948 1-2,66
+contentfn/core/src/audit.ts
+  s_e1c5fc1a65c0cf::t_24436c2050d7fa 1-15
+contentfn/core/src/index.ts
+  s_e1c5fc1a65c0cf::t_727da500edf157 46-47
+contentfn/server/package.json
+  s_e1c5fc1a65c0cf::t_1f09621fb0fcf9 36
+contentfn/server/src/__tests__/audit.integration.test.ts
+  s_e1c5fc1a65c0cf::t_20717021bd2cf3 1-92
+contentfn/server/src/__tests__/schema-discovery.test.ts
+  s_e1c5fc1a65c0cf::t_5abbadb1e52202 8
+contentfn/server/src/auth/authorize.ts
+  s_e1c5fc1a65c0cf::t_aecbd4044c1ad9 47
+contentfn/server/src/http/endpoints/status.ts
+  s_e1c5fc1a65c0cf::t_4d8255ca0fdc4c 25
+contentfn/server/src/http/router.ts
+  s_e1c5fc1a65c0cf::t_6e86a324f627ac 1,38
+contentfn/server/src/index.ts
+  s_e1c5fc1a65c0cf::t_72966b2ee9d31a 45-47
+contentfn/server/src/server.ts
+  s_e1c5fc1a65c0cf::t_669dcb2cacb047 1-2,54,189-193,196
+contentfn/server/src/storage/audit.ts
+  s_e1c5fc1a65c0cf::t_815c006eabea3b 1-37
+contentfn/server/src/storage/schedules.ts
+  s_e1c5fc1a65c0cf::t_1a2f28f2e46150 1,49
+contentfn/server/src/storage/schema.ts
+  s_e1c5fc1a65c0cf::t_4a27614f155026 179-185,187,232
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1797880fcf742e3b05c1bdb9cd807f0e5de0a208",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

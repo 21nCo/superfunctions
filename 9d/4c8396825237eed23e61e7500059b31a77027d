@@ -1,0 +1,27 @@
+mcpfn/docs/README.md
+  s_7d0a48f0aaecda::t_94b6d5af37ab7e 23
+mcpfn/docs/content/docs/reference/architecture.md
+  s_7d0a48f0aaecda::t_d4f9bfcc740c6e 108
+mcpfn/docs/content/docs/reference/testing.md
+  s_7d0a48f0aaecda::t_8f14e60195ce7f 60
+mcpfn/docs/src/routes/docs/[...slug]/+page.svelte
+  s_7d0a48f0aaecda::t_a69f9a352ac433 18-22
+mcpfn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_e0e26faa5315e7 346,1273
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9d4c8396825237eed23e61e7500059b31a77027d",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,39 @@
+package-lock.json
+  s_e1c5fc1a65c0cf::t_ff45c76bed7394 64516-64517
+userfn/.conduct/flag-config-service-readiness.md
+  s_e1c5fc1a65c0cf::t_31fc9b03e00506 1-75
+userfn/.conduct/flag-context-readiness.md
+  s_e1c5fc1a65c0cf::t_7c1ba53ef14fcb 144-147
+userfn/service/README.md
+  s_e1c5fc1a65c0cf::t_ca7a4a7583f672 93-142
+userfn/service/package.json
+  s_e1c5fc1a65c0cf::t_b5826032ab294b 4,21,27-28
+userfn/service/src/flag-config.ts
+  s_e1c5fc1a65c0cf::t_e8ab0ab6fc0fc8 1-87
+userfn/service/src/index.ts
+  s_e1c5fc1a65c0cf::t_b6344b6e6ad016 1-2,16-17,107,111
+userfn/service/src/schema.ts
+  s_e1c5fc1a65c0cf::t_24ec3d87e4f14c 5-15
+userfn/service/tests/flag-config-http.test.ts
+  s_e1c5fc1a65c0cf::t_f48952a0ec0368 1-121
+userfn/service/tests/python_config_wire_acceptance.py
+  s_e1c5fc1a65c0cf::t_a0bf6812dd7bdc 1-25
+userfn/typescript/src/operator.ts
+  s_e1c5fc1a65c0cf::t_290a5afa15e93d 2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "971f0f25a01f5781c41dfbf458278445977c69a5",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

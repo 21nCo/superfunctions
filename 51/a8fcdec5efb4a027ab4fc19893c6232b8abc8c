@@ -1,0 +1,39 @@
+flowfn/python/README.md
+  s_e1c5fc1a65c0cf::t_0ff18215c3cf51 197-200
+flowfn/python/flowfn/adapters/memory.py
+  s_e1c5fc1a65c0cf::t_df8bb205cf6958 360-362
+flowfn/python/flowfn/adapters/memory_stream.py
+  s_c1093e7194f7e3::t_bfadc24efd2a28 11,18,71-72,95-96
+flowfn/python/flowfn/adapters/redis.py
+  s_e1c5fc1a65c0cf::t_6769139a70d149 146-147,157,179,181
+flowfn/python/flowfn/stream/stream.py
+  s_e1c5fc1a65c0cf::t_2640a53255f92b 3,12,27-31,54,73,104,108-111,114,126,142,189,196,204-205
+flowfn/python/flowfn/stream/types.py
+  s_e1c5fc1a65c0cf::t_d3e7ff4ba37c22 7-13,78
+flowfn/python/tests/test_stream_retention.py
+  s_e1c5fc1a65c0cf::t_36d28eee244071 1-115
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "51a8fcdec5efb4a027ab4fc19893c6232b8abc8c",
+  "prompts": {},
+  "sessions": {
+    "s_c1093e7194f7e3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "203316bd-9c88-41f4-b037-58d76f8b6cd9",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

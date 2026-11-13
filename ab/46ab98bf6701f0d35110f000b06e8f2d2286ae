@@ -1,0 +1,47 @@
+probefn/.conduct/physical-scratch-next-steps.md
+  s_e1c5fc1a65c0cf::t_ed0503f74c61a9 58-59,61,68-69
+probefn/.conduct/trace-scratch-registry-readiness.md
+  s_e1c5fc1a65c0cf::t_c2ccb406752d40 1-160
+probefn/docs/artifacts.md
+  s_e1c5fc1a65c0cf::t_6d0748a3a43e7b 126-128,231-268
+probefn/packages/browser-runner/src/browser-runner.ts
+  s_e1c5fc1a65c0cf::t_ba406b2f3b695c 61,247,253-256,259
+probefn/packages/browser-runner/src/trace.ts
+  s_e1c5fc1a65c0cf::t_22bd7326be3383 11,58-86
+probefn/packages/browser-runner/test/scratch-cleanup.test.ts
+  s_e1c5fc1a65c0cf::t_6e755f54b0b256 17-19,74,77,81,87,160,166,174,177-181
+probefn/packages/mcp-server/src/server.ts
+  s_e1c5fc1a65c0cf::t_c73abc4caba584 324
+probefn/packages/storage/src/artifact-store.ts
+  s_e1c5fc1a65c0cf::t_da7950fb234b33 2,204,221-266,299,308
+probefn/packages/storage/src/capture-scratch.ts
+  s_e1c5fc1a65c0cf::t_8d6a630ed71a97 1-282
+probefn/packages/storage/src/run-quota.ts
+  s_e1c5fc1a65c0cf::t_3458d6e40be9e6 27-30,77-81,100,177-192
+probefn/packages/storage/test/capture-scratch.test.ts
+  s_e1c5fc1a65c0cf::t_c291c63d0bd131 1-186
+probefn/packages/storage/test/durable-quota.test.ts
+  s_e1c5fc1a65c0cf::t_f3155f995434d6 101,103-106,109-112
+probefn/packages/storage/test/fixtures/scratch-crash-child.mjs
+  s_e1c5fc1a65c0cf::t_179a7459b5df7a 1-65
+probefn/scripts/installed-scratch-consumer.mjs
+  s_e1c5fc1a65c0cf::t_30f5a94f236688 1-60
+probefn/scripts/verify-distribution.mjs
+  s_e1c5fc1a65c0cf::t_3c3edaeeacaf73 85-86,91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ab46ab98bf6701f0d35110f000b06e8f2d2286ae",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

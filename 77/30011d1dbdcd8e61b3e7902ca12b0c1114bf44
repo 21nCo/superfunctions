@@ -1,0 +1,35 @@
+flowfn/typescript/docs/queue-ownership.md
+  s_e1c5fc1a65c0cf::t_1e2cfb60f219b6 23-25,36-40,57-67
+flowfn/typescript/src/queue/queue.ts
+  s_e1c5fc1a65c0cf::t_1e2cfb60f219b6 22,72,76,78-80,82,86-89,165,179-180,236,251,294,324,517-520
+flowfn/typescript/src/queue/leases.test.ts
+  s_e1c5fc1a65c0cf::t_4446e8660f9f22 56-90
+flowfn/typescript/scripts/provider-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_b8aaf3ac28cb96 51,78
+flowfn/typescript/scripts/queue-benchmark.mjs
+  s_e1c5fc1a65c0cf::t_a0781eb600990a 1-71
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_e1c5fc1a65c0cf::t_8d9f95d50f7e8e 172-182,246-251,479,482,484,500,535-536,574,577-579,622,636-637,647
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_e1c5fc1a65c0cf::t_edd04fd8c07abd 31-56
+flowfn/typescript/src/adapters/redis.test.ts
+  s_e1c5fc1a65c0cf::t_026cb46d8d935d 26-54
+flowfn/typescript/src/adapters/redis.ts
+  s_e1c5fc1a65c0cf::t_20851d9942c59e 16-40,65-67,70,81-85,101-109,111-128,130,137,140-141,150,167-169,172,188,196,201,205-209
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7730011d1dbdcd8e61b3e7902ca12b0c1114bf44",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

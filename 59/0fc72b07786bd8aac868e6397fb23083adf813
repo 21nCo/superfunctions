@@ -1,0 +1,57 @@
+devfn/core/src/orchestrator.ts
+  s_16b1ac760f0715::t_87ab34c0b79450 18,327-332,360-363,630-635,802,804-813,988-989,992-994
+devfn/core/src/tunnel.ts
+  s_16b1ac760f0715::t_099f428d480036 92,95-98,128-136,138,141-146
+devfn/core/test/tunnel-ngrok-lifecycle.test.ts
+  s_16b1ac760f0715::t_980070fe354a9b 23,133-134,138-175,195,198,202-208,210-211
+devfn/docs/configuration.md
+  s_16b1ac760f0715::t_b47440ddf61f1a 138,140
+devfn/proxy/src/tunnel/index.ts
+  s_cac43c9bf9a348::t_c72cba100acb8e 6-7
+devfn/proxy/src/tunnel/state.ts
+  s_e59c76123dc00d::t_0513504be17ea0 136-139,246,249-250,269,310-331,335
+devfn/core/test/tunnel-lifecycle.test.ts
+  s_e59c76123dc00d::t_c3a774814778a4 24,255-256,261,298
+devfn/proxy/src/tunnel/ngrok-connector.ts
+  s_e59c76123dc00d::t_799b26d4053b83 7-8,11,15,25-28,41,44-46,66-75,77,80,85,87-93
+devfn/proxy/src/tunnel/ngrok.ts
+  s_e59c76123dc00d::t_aa650c24a8a338 10,234,236
+devfn/proxy/src/tunnel/service.ts
+  s_e59c76123dc00d::t_f82a0a23186324 9,15,55,78,83,89-90,177-198,200-234,236-237,338,353,355,365,368-370,376,389,414,459,479-480,484,503-505,508,519,678
+devfn/proxy/test/fixtures/tunnel.ts
+  s_e59c76123dc00d::t_c488e4f1200678 116-117,142
+devfn/proxy/test/tunnel-ngrok.test.ts
+  s_e59c76123dc00d::t_eb02e24541643b 118-120,470-538,553
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "590fc72b07786bd8aac868e6397fb23083adf813",
+  "prompts": {},
+  "sessions": {
+    "s_16b1ac760f0715": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a163a1-e97c-7a33-9f84-04e1c85c0a27",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_cac43c9bf9a348": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "2a9309ab-b8ef-4c04-93c8-ee25546eebd3",
+        "model": "grok-4.7"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e59c76123dc00d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f1889500-b328-4374-8cb8-48aecec81cfc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

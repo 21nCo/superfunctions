@@ -1,0 +1,45 @@
+cifn/.conduct/per-job-container-readiness.md
+  s_e1c5fc1a65c0cf::t_c1d2ec0ff01da1 1-35
+cifn/README.md
+  s_e1c5fc1a65c0cf::t_416e6690bff77d 104,408,411,413,415,417,419,421,423-425,429,432
+cifn/typescript/control-plane/scripts/verify-packed-logs.mjs
+  s_e1c5fc1a65c0cf::t_a12d4f0607b188 35,38-55,58
+cifn/typescript/runner/scripts/verify-per-job-docker.mjs
+  s_e1c5fc1a65c0cf::t_a027dca14b3800 1-257
+cifn/typescript/runner/src/__tests__/fake-docker-engine.ts
+  s_e1c5fc1a65c0cf::t_00390af06bd6e5 1-102
+cifn/typescript/runner/src/docker-engine.test.ts
+  s_e1c5fc1a65c0cf::t_add9536c850b76 1-117
+cifn/typescript/runner/src/docker-engine.ts
+  s_e1c5fc1a65c0cf::t_ea2f2a3db4f535 1-183
+cifn/typescript/runner/src/index.ts
+  s_e1c5fc1a65c0cf::t_ea0f44e6a9568f 29
+cifn/typescript/runner/src/owned-docker-executor.test.ts
+  s_e1c5fc1a65c0cf::t_a5ae5d2c1ab08a 1,54,110
+cifn/typescript/runner/src/owned-docker-executor.ts
+  s_e1c5fc1a65c0cf::t_ce1107c5c9b2a3 1-7,84-90,132-189
+cifn/typescript/runner/src/owned-docker-job.test.ts
+  s_e1c5fc1a65c0cf::t_f94d833a7fce86 1-163
+cifn/typescript/runner/src/owned-docker-job.ts
+  s_e1c5fc1a65c0cf::t_a7bd065e6d6611 1-371
+cifn/typescript/runner/src/runner.ts
+  s_e1c5fc1a65c0cf::t_f7d3eebf732011 1,227,592-597,619-627,629-631,639
+cifn/typescript/runner/tsconfig.remote.json
+  s_e1c5fc1a65c0cf::t_2ad2ed97bd6c6f 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7e1705f9ec4e7222b3895bf4fd288bbab152ff28",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

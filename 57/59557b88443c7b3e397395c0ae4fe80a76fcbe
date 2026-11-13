@@ -1,0 +1,31 @@
+cifn/.conduct/process-group-probe-readiness.md
+  s_92427ff18a8304::t_50b54284778b94 1-19
+cifn/typescript/runner/src/executor/owned-shell.ts
+  s_e1c5fc1a65c0cf::t_cd19068317b338 23-27
+cifn/typescript/runner/src/remote-runner.test.ts
+  s_e1c5fc1a65c0cf::t_4225f8a359b821 224-256
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5759557b88443c7b3e397395c0ae4fe80a76fcbe",
+  "prompts": {},
+  "sessions": {
+    "s_92427ff18a8304": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26336501-b0e6-4534-a7c2-345f5528a4ba",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

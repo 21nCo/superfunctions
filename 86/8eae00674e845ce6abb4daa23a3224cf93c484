@@ -1,0 +1,45 @@
+flowfn/typescript/docs/queue-ownership.md
+  s_e1c5fc1a65c0cf::t_538d9a204a0312 1-50
+flowfn/typescript/scripts/provider-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_e2796ea240310c 71-74
+flowfn/typescript/src/adapters/base.ts
+  s_e1c5fc1a65c0cf::t_11ff2e96ec5b86 15-16,18-22
+flowfn/typescript/src/adapters/memory.ts
+  s_e1c5fc1a65c0cf::t_f13c2d4bca45b6 1,31-39,41-43,45,52,72,78,80-106,111,113,116,120,122,124
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_e1c5fc1a65c0cf::t_05307f7d5ef50b 171-182,190-196,199,202,211,220-233,235-260,267,270,276,279-281
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_e1c5fc1a65c0cf::t_7f5cc10d1cf3e0 31-93
+flowfn/typescript/src/adapters/redis.test.ts
+  s_e1c5fc1a65c0cf::t_861f83720fbf96 26-88
+flowfn/typescript/src/adapters/redis.ts
+  s_e1c5fc1a65c0cf::t_55512ef2747251 1,40-58,66,69,86,97-98,102-152,158,161,167,170,173
+flowfn/typescript/src/core/flow-fn.ts
+  s_e1c5fc1a65c0cf::t_08fbc263c00307 114-116
+flowfn/typescript/src/queue/job.ts
+  s_e1c5fc1a65c0cf::t_2f1089048938e7 13-15,86-87,95-96
+flowfn/typescript/src/queue/leases.test.ts
+  s_e1c5fc1a65c0cf::t_889a39a8ca57db 1-60
+flowfn/typescript/src/queue/queue.ts
+  s_e1c5fc1a65c0cf::t_abd76b08e9689f 29-30,38,59-87,161-168,216-229,232,239,243,271-272,323,328,330,335-340,367,423-426,435,440,442,492-497
+flowfn/typescript/src/queue/types.ts
+  s_e1c5fc1a65c0cf::t_edc002d2c59af4 10-11,58-61,132-134
+flowfn/typescript/src/queue/worker.ts
+  s_e1c5fc1a65c0cf::t_9c41bcbc9a03ef 9,40-42,52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "868eae00674e845ce6abb4daa23a3224cf93c484",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

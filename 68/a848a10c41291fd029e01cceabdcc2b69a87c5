@@ -1,0 +1,49 @@
+cifn/.conduct/dependency-readiness.md
+  s_e1c5fc1a65c0cf::t_d94f1801d3d8c0 1-79
+cifn/README.md
+  s_e1c5fc1a65c0cf::t_8a2c0538d6f61c 192-209
+cifn/typescript/control-plane/scripts/verify-dependency-consumer.mjs
+  s_e1c5fc1a65c0cf::t_3ed51c3ab6928b 1-51
+cifn/typescript/control-plane/src/filefn/memory-filefn.ts
+  s_e1c5fc1a65c0cf::t_8d18954774f10b 1,24
+cifn/typescript/control-plane/src/integrations/filefn.ts
+  s_e1c5fc1a65c0cf::t_505de007f1e19c 1,18
+cifn/typescript/control-plane/src/store/memory-store.ts
+  s_e1c5fc1a65c0cf::t_289f9862007cf9 3,154
+cifn/typescript/control-plane/src/store/records.ts
+  s_e1c5fc1a65c0cf::t_ae94144f367807 1,6,10,12
+cifn/typescript/runner/package.json
+  s_e1c5fc1a65c0cf::t_f9a2bf39ad26f9 33
+cifn/typescript/runner/src/index.ts
+  s_e1c5fc1a65c0cf::t_58065e489aa5f2 18
+cifn/typescript/runner/src/steps/testfn-run.ts
+  s_e1c5fc1a65c0cf::t_10c04a7f75d610 1,24-27,51
+cifn/typescript/runner/src/testfn-integration.test.ts
+  s_e1c5fc1a65c0cf::t_9d1c2c2c1db89f 1-25
+package-lock.json
+  s_7572bbf6321786::t_6e9137c121a6d6 6409,6957-6958,12361,18356,18535,18547,18555,18567,18575,22254,22272,22294,22320,22341,22364,23729,24905,24913,24933,24999,26122,26732,26919,26971,26976,26985,27017,27034,27051,27068,27085,27102,27119,27136,27153,27170,27187,27204,27221,27238,27255,27272,27286,27302,27319,27336,27353,29042,29059,29076,29093,29110,29127,29144,29161,29178,29195,29212,29229,29246,29263,29280,32654,32733,33943,33963,35033,36501,36756,36795,36809,37258,37272,37285,37295,37377,39989,40740,41005,41027,41775,41816,43378,43416,43429,43442,43452,43464,45165,46293,46344,48501,49900,50850,51534,52707,53195,53712,53723,53775,54432,54449,54466,54483,54498,54515,54532,54549,54566,54583,54600,54617,54634,54651,54668,54685,54702,54719,54736,54753,54770,54787,54804,54821,54838,54855,55035,55700,56826,57896,57919,61015
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "68a848a10c41291fd029e01cceabdcc2b69a87c5",
+  "prompts": {},
+  "sessions": {
+    "s_7572bbf6321786": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a16274-bf3b-7d30-8b9b-ba488e95c36f",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

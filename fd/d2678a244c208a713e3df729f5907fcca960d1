@@ -1,0 +1,55 @@
+contentfn/.conduct/draft-perspective-http.mjs
+  s_e1c5fc1a65c0cf::t_68d0d4901e9b63 1-47
+contentfn/.conduct/studio-perspective-prerequisite.md
+  s_e1c5fc1a65c0cf::t_95ebca1da80dfb 1-19
+contentfn/client/src/index.ts
+  s_e1c5fc1a65c0cf::t_c353a868b1e46a 80
+contentfn/core/src/cursor/types.ts
+  s_e1c5fc1a65c0cf::t_ac000b131ccc66 17-18
+contentfn/core/src/query/types.ts
+  s_e1c5fc1a65c0cf::t_28c1e4c3e926ac 46-47
+contentfn/core/src/query/validateCfql.ts
+  s_e1c5fc1a65c0cf::t_2bede52e5a4b79 149-151
+contentfn/server/README.md
+  s_e1c5fc1a65c0cf::t_a2511ad4aaa358 23-30
+contentfn/server/src/__tests__/draft-fork.test.ts
+  s_e1c5fc1a65c0cf::t_eec27d03ce438e 1-67
+contentfn/server/src/__tests__/query-perspective.test.ts
+  s_e1c5fc1a65c0cf::t_783e8eb4aae24e 1-78
+contentfn/server/src/__tests__/sqlite-readiness.test.ts
+  s_e1c5fc1a65c0cf::t_b48739058be452 41-48
+contentfn/server/src/auth/authorize.ts
+  s_e1c5fc1a65c0cf::t_640272938e6302 30,40
+contentfn/server/src/http/endpoints/docs.ts
+  s_e1c5fc1a65c0cf::t_d6a3e364a295ac 7,37-43
+contentfn/server/src/http/router.ts
+  s_e1c5fc1a65c0cf::t_c85e0ddd14bba2 11,52
+contentfn/server/src/http/validateInput.ts
+  s_e1c5fc1a65c0cf::t_969400a164a350 7
+contentfn/server/src/query/cursor.ts
+  s_e1c5fc1a65c0cf::t_6605b76d52e2aa 15
+contentfn/server/src/query/executeCfql.ts
+  s_e1c5fc1a65c0cf::t_b8759ccd6184c5 1,175-180,182,199-200,215,230
+contentfn/server/src/query/expand.ts
+  s_e1c5fc1a65c0cf::t_ce2c71bc6632e0 15,33-34,36-42,139
+contentfn/server/src/server.ts
+  s_e1c5fc1a65c0cf::t_c1596db4eb7190 20,71,187-188,202,207,213
+contentfn/server/src/storage/docs.ts
+  s_e1c5fc1a65c0cf::t_d3dd891cf4126c 152-174
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fdd2678a244c208a713e3df729f5907fcca960d1",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,83 @@
+devfn/core/src/endpoints.ts
+  s_e1c5fc1a65c0cf::t_51315ef75d26eb 24-27,816-854,1105,1120
+devfn/core/src/orchestrator.ts
+  s_e1c5fc1a65c0cf::t_5a851f409d8e1d 18,67-69,71,77,89-90,95,107,320-321,520-523,526,595,719-721
+devfn/core/src/types.ts
+  s_e1c5fc1a65c0cf::t_0d036f16491100 61-68
+devfn/proxy/src/tunnel/cloudflare.ts
+  s_e1c5fc1a65c0cf::t_8c107bec8ee11d 8,15-20,23,27,72-73,125-127,131,176,222
+devfn/proxy/src/tunnel/index.ts
+  s_e1c5fc1a65c0cf::t_c53a44b7daf607 2-4,6-7
+devfn/proxy/src/tunnel/ngrok-bridge.ts
+  s_e1c5fc1a65c0cf::t_d7319eb4058e32 1-102
+devfn/proxy/src/tunnel/ngrok-connector.ts
+  s_e1c5fc1a65c0cf::t_b8dacc3862a82e 1-60
+devfn/proxy/src/tunnel/service.ts
+  s_e1c5fc1a65c0cf::t_8a8fb90d611c9b 13,15-16,38-60,63,71-72,83,215-218,228,235,243-244,617,622
+devfn/proxy/src/tunnel/state.ts
+  s_e1c5fc1a65c0cf::t_c111e669c5b8b6 18,20,26-36,40-63,67-72,132-135,152-178,189-190,236-242,262,372-374
+devfn/SPEC.md
+  s_e1c5fc1a65c0cf::t_53c0b2fba572c0 21
+devfn/cli/README.md
+  s_e1c5fc1a65c0cf::t_644a15fe5494b6 25
+devfn/cli/SECURITY.md
+  s_e1c5fc1a65c0cf::t_be068181abd368 6
+devfn/cli/src/index.ts
+  s_10842b7fe57156::t_142083279ac5e3 18,39,41,79,81-84,88-89,102,126,247-270,275,278
+devfn/core/src/index.ts
+  s_10842b7fe57156::t_a49b372f77403e 7
+devfn/core/src/tunnel.ts
+  s_10842b7fe57156::t_b1d5805c1a8807 8-9,22-33,36,40-44,46-51,59-65,68,78-103,105,109-112,114,120-121,135-136,138,142-143
+devfn/core/test/endpoints.test.ts
+  s_e1c5fc1a65c0cf::t_9db01c0c432422 1755-1798
+devfn/cli/test/cli.test.ts
+  s_92427ff18a8304::t_eea1eb7dbf11ea 331,335-336,356-392
+devfn/config/src/schema.ts
+  s_92427ff18a8304::t_fa4cdd50c19be0 247,252-253
+devfn/config/src/types.ts
+  s_92427ff18a8304::t_cd53ff3f039f1b 67-72
+devfn/core/test/tunnel-lifecycle.test.ts
+  s_92427ff18a8304::t_d7e5c50d570d7b 243-245
+devfn/core/test/tunnel-ngrok-lifecycle.test.ts
+  s_92427ff18a8304::t_76dd5f2037c28a 1-132
+devfn/docs/configuration.md
+  s_92427ff18a8304::t_1271a0e6229617 123,133-141
+devfn/proxy/src/tunnel/ngrok.ts
+  s_92427ff18a8304::t_3b718f2bcae02f 1-255
+devfn/proxy/test/fixtures/tunnel.ts
+  s_92427ff18a8304::t_ee2eb1a006de26 4,25,103-143
+devfn/proxy/test/tunnel-ngrok.test.ts
+  s_92427ff18a8304::t_c76130e151223f 1-367
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d2bc867ea87b1e31c8b630d76f7d04e7fc3f2030",
+  "prompts": {},
+  "sessions": {
+    "s_10842b7fe57156": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a16274-df23-7ab0-9634-10005b5c4151",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_92427ff18a8304": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26336501-b0e6-4534-a7c2-345f5528a4ba",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

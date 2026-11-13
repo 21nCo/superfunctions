@@ -1,0 +1,27 @@
+devfn/cli/SECURITY.md
+  s_19b27e5426eb8b::t_d696ff4bb8497a 19
+devfn/ports/src/proxy-state.ts
+  s_19b27e5426eb8b::t_a94e0d8a1e398c 18-29,70
+devfn/proxy/README.md
+  s_19b27e5426eb8b::t_a30d3c6ad6e368 10
+devfn/proxy/src/index.ts
+  s_19b27e5426eb8b::t_06a8d8caac237b 218-219,298-307,325,329,343,346,519-520,523,549,572-590,859,863-868,873-874,892
+devfn/proxy/test/proxy.test.ts
+  s_19b27e5426eb8b::t_1b0708f6b82c5a 2,208-236,246-248,251,268-269,271,273,309-310,314-316,318,321,580-612
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d3624b68c52fa63fc8f597b56bfb7ef9a0bb8f22",
+  "prompts": {},
+  "sessions": {
+    "s_19b27e5426eb8b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_19b27e5426eb8b",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

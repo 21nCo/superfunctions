@@ -1,0 +1,45 @@
+flowfn/python/README.md
+  s_e1c5fc1a65c0cf::t_1a83f70a5aa698 137,144,150,165,181-189
+flowfn/python/flowfn/adapters/base.py
+  s_e1c5fc1a65c0cf::t_1b3a3d9b9df421 96-99
+flowfn/python/flowfn/adapters/memory.py
+  s_e1c5fc1a65c0cf::t_24ffc5928fb073 357,363-370
+flowfn/python/flowfn/adapters/postgres.py
+  s_e1c5fc1a65c0cf::t_979259770b363c 72,79-92
+flowfn/python/flowfn/adapters/redis.py
+  s_e1c5fc1a65c0cf::t_be21b45e61d344 71,78-98
+flowfn/python/flowfn/adapters/workflow_state.py
+  s_e1c5fc1a65c0cf::t_2e5577e4f85271 1-65
+flowfn/python/flowfn/core/flow.py
+  s_e1c5fc1a65c0cf::t_d7b49416fe2e9b 47
+flowfn/python/flowfn/scheduler/__init__.py
+  s_e1c5fc1a65c0cf::t_6b39430ab743ff 5-6,13-15,36-41,59,85,89,100-106,135-251,253-256,260-265,268-273,276-278,289-300
+flowfn/python/flowfn/workflow/builder.py
+  s_e1c5fc1a65c0cf::t_17aab08654d378 18-31,71
+flowfn/python/flowfn/workflow/types.py
+  s_e1c5fc1a65c0cf::t_22aa0637fa8e9e 23-26
+flowfn/python/flowfn/workflow/workflow.py
+  s_e1c5fc1a65c0cf::t_c79da4d2fd8708 15-18,24-26,29-43,48-71,84-85,93-95,102-127,130-131,134-135,139,143-160,167-172,174,178,194-197,199-200,209-211,226-227,230,232-234,241,244,247,250-255,271,276,284-292,304,311-315,317-318,321-322,325,335-338,355-356,398-406,410,416,421-422,476
+flowfn/python/tests/test_scheduler_recovery.py
+  s_e1c5fc1a65c0cf::t_1fbefd0456f60a 1-106
+flowfn/python/tests/test_workflow_discovery.py
+  s_e1c5fc1a65c0cf::t_f5e02e8a9c05de 56-139
+flowfn/python/tests/test_workflow_recovery.py
+  s_e1c5fc1a65c0cf::t_2dd18569eea3ab 1-110
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b02693080940144cc9b46eeca3cb819a41f459a6",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

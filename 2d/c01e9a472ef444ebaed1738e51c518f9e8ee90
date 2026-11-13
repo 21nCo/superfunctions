@@ -1,0 +1,33 @@
+reviewfn/core/src/change.ts
+  s_57e886b389d039::t_d7993c052032a1 27-28,208-213,232
+reviewfn/core/test/change.test.ts
+  s_57e886b389d039::t_33104e060d7a09 136-146
+reviewfn/github/src/git.ts
+  s_57e886b389d039::t_35a3ccb3da9cbd 78-82,86-92,162-164,167,190
+reviewfn/github/test/change-hunks.test.ts
+  s_f0094ac685a7a5::t_c486b79e13318c 8,82-144
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2dc01e9a472ef444ebaed1738e51c518f9e8ee90",
+  "prompts": {},
+  "sessions": {
+    "s_57e886b389d039": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7ab7d8d5-d5a5-48b6-94aa-845d47f6876e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_f0094ac685a7a5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d276337d-6910-4e30-8257-20047dd53ef5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

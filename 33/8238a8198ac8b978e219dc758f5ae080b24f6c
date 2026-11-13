@@ -1,0 +1,25 @@
+cachefn/.conduct/testfn-fixture-readiness.md
+  s_e1c5fc1a65c0cf::t_c79580277a7c03 1-35
+cachefn/README.md
+  s_e1c5fc1a65c0cf::t_aff875742e5be8 176-180
+cachefn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_118d61ed66c767 597-610,614
+cachefn/typescript/scripts/testfn-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_d968481b02042f 1-52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "338238a8198ac8b978e219dc758f5ae080b24f6c",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

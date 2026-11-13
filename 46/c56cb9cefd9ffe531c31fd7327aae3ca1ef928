@@ -1,0 +1,33 @@
+userfn/.conduct/original-requirements-status.md
+  s_e1c5fc1a65c0cf::t_1e970f09f8da6a 14-17
+userfn/.conduct/renderer-content-readiness.md
+  s_e1c5fc1a65c0cf::t_59604ee46f30f1 1-56
+userfn/service/scripts/verify-renderer-browser.mjs
+  s_e1c5fc1a65c0cf::t_f514cab042f5ad 1-49
+userfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_3e435cae8dfc8d 312-324
+userfn/typescript/src/__tests__/campaign-url.test.ts
+  s_e1c5fc1a65c0cf::t_69522ae924aa9f 1-13
+userfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_3f88783edf12f3 1,87-88
+userfn/typescript/src/ui/campaign-url.ts
+  s_e1c5fc1a65c0cf::t_4cd0e2eeca9c5b 1-8
+userfn/typescript/src/ui/renderer.ts
+  s_e1c5fc1a65c0cf::t_f1113764b0c4d8 1,234-240,252,255,309
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "46c56cb9cefd9ffe531c31fd7327aae3ca1ef928",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

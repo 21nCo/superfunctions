@@ -1,0 +1,41 @@
+userfn/typescript/src/core/survey-journal.ts
+  s_e1c5fc1a65c0cf::t_825b87eb6f0016 1-80
+  s_e1c5fc1a65c0cf::t_616b2acfc3a26e 81
+userfn/typescript/src/core/surveys.ts
+  s_e1c5fc1a65c0cf::t_825b87eb6f0016 7,55,58,67-74
+  s_e1c5fc1a65c0cf::t_b8bb40761ff43f 23-24,31-33
+userfn/typescript/src/types.ts
+  s_e1c5fc1a65c0cf::t_825b87eb6f0016 2,129-130
+userfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_825b87eb6f0016 4-5,37,74,155-157,177-184,209
+  s_e1c5fc1a65c0cf::t_b8bb40761ff43f 158-159
+userfn/typescript/src/__tests__/survey-journal.test.ts
+  s_e1c5fc1a65c0cf::t_fd2352fc1f6ea3 1-18,20-62
+  s_e1c5fc1a65c0cf::t_0020b8e0c179c6 19
+  s_e1c5fc1a65c0cf::t_54b1fe69c59f4a 63-100
+userfn/typescript/scripts/verify-survey-renderer.mjs
+  s_e1c5fc1a65c0cf::t_b45df6557dc2a4 59-60,63,65-66,68-76,248-291
+  s_e1c5fc1a65c0cf::t_bbee9eedf829af 40
+userfn/.conduct/survey-journal-readiness.md
+  s_e1c5fc1a65c0cf::t_ab860d53dd6dd6 1-78
+userfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_3c2b4b0955b5d7 541-543,545-546,573,584-642
+userfn/typescript/scripts/verify-survey-journal-package.mjs
+  s_e1c5fc1a65c0cf::t_88eb1b755203fd 1-27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b3c1d2df96beea94ca1caa4b917b4fbb22ebabe0",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

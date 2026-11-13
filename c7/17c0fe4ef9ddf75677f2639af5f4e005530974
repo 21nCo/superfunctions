@@ -1,0 +1,51 @@
+docs/content/docs/authentication/oauth-router.mdx
+  s_e1c5fc1a65c0cf::t_de81b88255654f 39-49,52-65,72-80,82,88,90-94,97,107,110,121-128
+docs/content/docs/getting-started.mdx
+  s_e1c5fc1a65c0cf::t_8d63484392192a 37
+docs/content/docs/http/http-openapi.mdx
+  s_e1c5fc1a65c0cf::t_57d4a5e4d81aa9 1-105
+docs/content/docs/http/index.mdx
+  s_e1c5fc1a65c0cf::t_9b6dea2ab3d446 29-30
+docs/content/docs/http/meta.json
+  s_e1c5fc1a65c0cf::t_03c3cd4fd4127e 10-11
+docs/content/docs/middleware-runtime/delivery.mdx
+  s_e1c5fc1a65c0cf::t_b91c6d373daba9 1-106
+docs/content/docs/middleware-runtime/index.mdx
+  s_e1c5fc1a65c0cf::t_97b9fcd8a5bbbc 30-32
+docs/content/docs/middleware-runtime/meta.json
+  s_e1c5fc1a65c0cf::t_6f680cd31bbe79 11-13
+docs/content/docs/middleware-runtime/observability.mdx
+  s_e1c5fc1a65c0cf::t_34df65c88d5f79 1-108
+docs/content/docs/python/python-core.mdx
+  s_e1c5fc1a65c0cf::t_127e0022e0c870 6,12,18,25
+docs/content/docs/python/python-fastapi.mdx
+  s_e1c5fc1a65c0cf::t_795e06de13bbbf 25
+docs/content/docs/python/python-flask.mdx
+  s_e1c5fc1a65c0cf::t_abdf86ad506386 25
+docs/content/docs/python/python-sqlalchemy.mdx
+  s_e1c5fc1a65c0cf::t_321206a2949c0c 25
+docs/content/docs/tooling/admin.mdx
+  s_e1c5fc1a65c0cf::t_306e22970613dc 1-112
+docs/content/docs/tooling/index.mdx
+  s_e1c5fc1a65c0cf::t_486549e7c2d500 23-24,31-32
+docs/content/docs/tooling/meta.json
+  s_e1c5fc1a65c0cf::t_4fb78e7b05aabe 6-7
+docs/lib/package-catalog.ts
+  s_e1c5fc1a65c0cf::t_1e84f8091b0341 243,259,394,465-470,545,591-593
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c717c0fe4ef9ddf75677f2639af5f4e005530974",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

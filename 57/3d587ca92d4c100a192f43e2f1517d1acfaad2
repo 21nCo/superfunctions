@@ -1,0 +1,31 @@
+flowfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_557c5ec7eb093e 96-106
+flowfn/typescript/scripts/workflow-cancel-worker.mjs
+  s_e1c5fc1a65c0cf::t_b9cb67283e9051 1-27
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_e1c5fc1a65c0cf::t_70b09a77a6b228 1,25
+flowfn/typescript/src/adapters/redis.test.ts
+  s_e1c5fc1a65c0cf::t_70e33d10165951 1,25
+flowfn/typescript/src/storage/workflow-cancel-contract.ts
+  s_e1c5fc1a65c0cf::t_65c995f63a48f5 1-51
+flowfn/typescript/src/workflow/lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_bb89c2e29a46e5 381-397
+flowfn/typescript/src/workflow/workflow.ts
+  s_e1c5fc1a65c0cf::t_8982657812a65b 382-384,579,584,657,852-853,862,875-880,947-948,950-957
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "573d587ca92d4c100a192f43e2f1517d1acfaad2",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,27 @@
+watchfn/.conduct/browser-discard-readiness.md
+  s_e1c5fc1a65c0cf::t_74940a6c578920 1-19
+watchfn/agents/browser/README.md
+  s_e1c5fc1a65c0cf::t_0d00394be133a8 34-37
+watchfn/agents/browser/src/index.ts
+  s_e1c5fc1a65c0cf::t_dac82942b42c69 27-46,52-53,72-84,168,172,189-193,204-205,216-217,222,224,228-229,244-245,247-252,258-259,261-266
+watchfn/agents/browser/tests/discard-browser-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_030b817c2c5503 1-59
+watchfn/agents/browser/tests/discard.test.ts
+  s_e1c5fc1a65c0cf::t_c7f47dd8eb6827 1-80
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "07becf2cb5a396bd1d3199cfff263cb3b5013fac",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

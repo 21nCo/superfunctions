@@ -1,0 +1,29 @@
+watchfn/.conduct/public-api-gaps-20261025.md
+  s_e1c5fc1a65c0cf::t_214f1a3d8d894a 19-24
+watchfn/typescript/scripts/verify-alert-package.mjs
+  s_e1c5fc1a65c0cf::t_2ecc45cef11ccf 62-64
+watchfn/typescript/src/core/watch-fn.ts
+  s_e1c5fc1a65c0cf::t_89cc1ae1167ab8 16,317-318
+watchfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_0ee32669db7d19 105-106
+watchfn/typescript/src/query/logs.ts
+  s_e1c5fc1a65c0cf::t_aa06bf324deb4a 1-36
+watchfn/typescript/tests/alerts/public-manager.test.ts
+  s_e1c5fc1a65c0cf::t_0c2b38bbce2bdc 325-352
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c493759f6a294b656507b5f46daa90b14214bd05",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

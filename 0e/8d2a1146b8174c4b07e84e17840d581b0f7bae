@@ -1,0 +1,33 @@
+package-lock.json
+  s_e1c5fc1a65c0cf::t_0dc1b8593a0f8d 24242-24245,52957
+probefn/.conduct/workspace-readiness.md
+  s_e1c5fc1a65c0cf::t_a7e8366ec26dbb 17,20-21
+probefn/README.md
+  s_e1c5fc1a65c0cf::t_93ae8f9a428530 38,41-42,45,53-56,69-75
+probefn/docs/agent-consumption.md
+  s_e1c5fc1a65c0cf::t_b624ce212c95d1 21,42,73,100
+probefn/docs/baselines.md
+  s_e1c5fc1a65c0cf::t_dccacbddd069da 10,16,26
+probefn/docs/getting-started.md
+  s_e1c5fc1a65c0cf::t_27502a7bf84c91 24,30-31,39,54-57,63-64,85-86
+probefn/package.json
+  s_e1c5fc1a65c0cf::t_bd4b6e6556a9b2 2
+probefn/scripts/test-vectors.ts
+  s_e1c5fc1a65c0cf::t_ae731f0dbda63b 151,157,169,179,185,191,197,203,209,215,490,513
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0e8d2a1146b8174c4b07e84e17840d581b0f7bae",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
