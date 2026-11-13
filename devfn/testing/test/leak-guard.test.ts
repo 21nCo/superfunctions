@@ -25,31 +25,53 @@ const vitest = path.join(path.dirname(createRequire(import.meta.url).resolve("vi
 // The same check runs in every script this file generates, which require it from here.
 const liveness = fileURLToPath(new URL("./liveness.cjs", import.meta.url));
 type Fixture = { pid: number; started?: string };
-const { live: alive, started, stop } = createRequire(import.meta.url)(liveness) as { live: (pid: number) => boolean; started: (pid: number) => string | undefined; stop: (fixture: Fixture) => boolean };
+type Liveness = { live: (pid: number) => boolean; started: (pid: number) => string | undefined; stop: (fixture: Fixture) => "stopped" | "gone" | "unknown"; system: Record<"readFileSync" | "spawnSync", unknown> };
+const livenessModule = createRequire(import.meta.url)(liveness) as Liveness;
+const { live: alive, started, stop } = livenessModule;
 
 // The processes the fixtures start, each with the start it showed while it ran ({ pid, started }),
 // which a test tracks once it knows they run or which files the fixtures wrote name. After each
 // test however it ends, a timeout included, and in the finally of a test that leaves them, each is
 // sent SIGKILL only while its ID still shows that start (stop); never one whose start is unknown.
+// Each stays registered until a read shows it gone (exited, or its ID naming another process):
+// one that cannot be told so fails the test, which lists it.
 // Registered after temporaryDirectories, so this runs first, while the files are still there.
 const fixtures: Fixture[] = [];
 const fixtureFiles: string[] = [];
 /** Tracks the process `pid` names now, which the caller knows to be the fixture it started, still running. */
 const track = (pid: number) => { fixtures.push({ pid, started: started(pid) }); return pid; };
-/** Every { pid, started } a fixture file's JSON holds, at any depth. */
+/** Every { pid, started } a fixture file's JSON holds, at any depth, with its start or with one that could not be read. */
 const namedIn = (value: unknown): Fixture[] => {
   if (Array.isArray(value)) return value.flatMap(namedIn);
   if (!value || typeof value !== "object") return [];
   const { pid, started: start } = value as Fixture;
-  return [...(typeof pid === "number" && typeof start === "string" ? [{ pid, started: start }] : []), ...Object.values(value).flatMap(namedIn)];
+  const named = typeof pid === "number" && "started" in value ? [{ pid, started: typeof start === "string" ? start : undefined }] : [];
+  return [...named, ...Object.values(value).flatMap(namedIn)];
 };
-function stopFixtures() {
+/**
+ * Stops every fixture registered, and every one the fixture files name, through stop, until a
+ * read shows each gone or `graceMs` has passed. Returns those it could not tell were gone, which
+ * stay registered for the next call.
+ */
+async function stopFixtures(graceMs = 2_000): Promise<Fixture[]> {
   for (const file of fixtureFiles.splice(0)) {
-    try { fixtures.push(...namedIn(JSON.parse(readFileSync(file, "utf8")))); } catch { /* not written, or not yet in full */ }
+    let text: string;
+    try { text = readFileSync(file, "utf8"); } catch { continue; }
+    // A file being written is read again by the next call.
+    try { fixtures.push(...namedIn(JSON.parse(text))); } catch { fixtureFiles.push(file); }
   }
-  for (const fixture of fixtures.splice(0)) stop(fixture);
+  for (const deadline = Date.now() + graceMs; ;) {
+    const left = fixtures.splice(0).filter((fixture) => stop(fixture) !== "gone");
+    fixtures.push(...left);
+    if (left.length === 0 || Date.now() >= deadline) return left;
+    await sleep(100);
+  }
 }
-afterEach(stopFixtures);
+afterEach(async () => {
+  const left = await stopFixtures();
+  fixtures.splice(0);
+  if (left.length > 0) throw new Error(`The self-test could not tell these fixtures were gone, so it did not signal them: ${left.map(({ pid, started: start }) => `${pid} (${start ?? "start unknown"})`).join(", ")}`);
+});
 /** The process ID a fixture file names, once it is written. */
 const pidIn = (file: string) => { try { return JSON.parse(readFileSync(file, "utf8")).pid as number; } catch { return undefined; } };
 
@@ -384,7 +406,7 @@ describe.skipIf(process.platform === "win32")("DevFn test leak guard", { timeout
       } else expect(result.code, result.output).toBe(0);
       expect(alive(recorded.pid!)).toBe(true);
     } finally {
-      stopFixtures();
+      await stopFixtures();
     }
   });
 
@@ -433,7 +455,7 @@ describe.skipIf(process.platform === "win32")("DevFn test leak guard", { timeout
       if (recorded.pid) expect(listedOnly ? alive(recorded.pid) : await gone(recorded.pid)).toBe(true);
       expect(existsSync(recorded.root)).toBe(false);
     } finally {
-      stopFixtures();
+      await stopFixtures();
     }
   });
 
@@ -514,7 +536,7 @@ test("leaves a process that starts more as it stops", async () => {
       expect(alive(sameGroup)).toBe(true);
       expect(existsSync(recorded.root)).toBe(false);
     } finally {
-      stopFixtures();
+      await stopFixtures();
     }
   });
 
@@ -642,7 +664,7 @@ setInterval(() => {}, 1000);`;
       expect(await gone(member!)).toBe(true);
       expect(alive(recorded.pid!)).toBe(false);
     } finally {
-      stopFixtures();
+      await stopFixtures();
     }
   });
 
@@ -663,7 +685,7 @@ setInterval(() => {}, 1000);`;
       expect(output).toMatch(new RegExp(`Not stopped: (?:\\d+, )*${member}\\b`));
       expect(alive(recorded.pid!)).toBe(false);
     } finally {
-      stopFixtures();
+      await stopFixtures();
     }
   });
 
@@ -935,7 +957,7 @@ test("names the locks", async () => {
       expect(alive(orphan!)).toBe(true);
       expect(existsSync(recorded.root)).toBe(false);
     } finally {
-      stopFixtures();
+      await stopFixtures();
     }
   });
 
@@ -959,7 +981,7 @@ test("names the locks", async () => {
       for (const pid of [recorded.pid, recorded.named]) expect(result.output).toContain(`process ${pid} `);
       for (const pid of [recorded.pid, recorded.named]) expect(alive(pid!)).toBe(true);
     } finally {
-      stopFixtures();
+      await stopFixtures();
     }
   });
 
@@ -979,7 +1001,7 @@ test("names the locks", async () => {
       expect(output).toContain(`process ${named} `);
       expect(alive(named!)).toBe(true);
     } finally {
-      stopFixtures();
+      await stopFixtures();
     }
   });
 
@@ -1012,7 +1034,7 @@ setTimeout(() => {
       for (const pid of [orphaned, latePid()]) expect(alive(pid!)).toBe(true);
     } finally {
       await sleep(2_500);
-      stopFixtures();
+      await stopFixtures();
     }
   });
 
@@ -1051,7 +1073,7 @@ const wait = setInterval(() => {
       for (const pid of [recorded.pid, childPid()]) expect(await gone(pid!)).toBe(true);
       expect(alive(starter!)).toBe(true);
     } finally {
-      stopFixtures();
+      await stopFixtures();
     }
   });
 
@@ -1129,7 +1151,7 @@ test("leaves processes, and then listing them fails", () => {
       expect(await gone(recorded.pid!)).toBe(true);
       expect(alive(named!)).toBe(true);
     } finally {
-      stopFixtures();
+      await stopFixtures();
     }
   });
 
@@ -1153,7 +1175,7 @@ test("leaves processes, and then listing them fails", () => {
       expect(alive(named!)).toBe(true);
       expect(existsSync(recorded.root)).toBe(false);
     } finally {
-      stopFixtures();
+      await stopFixtures();
     }
   });
 
@@ -1187,7 +1209,7 @@ test("cannot list processes", () => {
       // The process the ID now names is someone else's.
       expect(alive(pid!)).toBe(true);
     } finally {
-      stopFixtures();
+      await stopFixtures();
     }
   });
 
@@ -1213,7 +1235,7 @@ test("cannot list processes", () => {
       // Signalled by neither the teardown's SIGTERM and SIGKILL nor the exit cleanup's SIGKILL.
       expect(alive(pid!)).toBe(true);
     } finally {
-      stopFixtures();
+      await stopFixtures();
     }
   });
 
@@ -1246,7 +1268,7 @@ test("leaves a process, and then listing it fails", () => {
       expect(scoped).not.toContain("so it has not stopped them");
       expect(await gone(pid!)).toBe(true);
     } finally {
-      stopFixtures();
+      await stopFixtures();
     }
   });
 
@@ -1263,7 +1285,7 @@ test("leaves a process, and then listing it fails", () => {
       expect(output).toContain(`process ${pid} `);
       expect(await gone(pid!)).toBe(true);
     } finally {
-      stopFixtures();
+      await stopFixtures();
     }
   });
 
@@ -1300,7 +1322,7 @@ test("leaves a process, and then listing it fails", () => {
       for (const pid of [...recorded!.siblings!, recorded!.nested]) expect(result.output).not.toContain(`process ${pid} `);
       for (const pid of [recorded!.pid, recorded!.named, ...recorded!.siblings!, recorded!.nested]) expect(alive(pid!)).toBe(true);
     } finally {
-      stopFixtures();
+      await stopFixtures();
       for (const suffix of besides) rmSync(`${dir}${suffix}`, { recursive: true, force: true });
     }
   });
@@ -2030,34 +2052,76 @@ describe.skipIf(process.platform === "win32")("the self-test's fixture cleanup",
     return pid!;
   }
 
-  it("never signals a process a fixture file names under a start it did not have, as when its ID was reused", () => {
+  it("never signals a process a fixture file names under a start it did not have, as when its ID was reused", async () => {
     const pid = stranger();
     const file = path.join(tempDir("devfn-leak-guard-cleanup-"), "record.json");
     writeFileSync(file, JSON.stringify({ named: pid, fixtures: [{ pid, started: `${started(pid)} (earlier)` }] }));
     fixtureFiles.push(file);
-    stopFixtures();
+    expect(await stopFixtures()).toEqual([]);
     expect(alive(pid)).toBe(true);
-    expect(stop({ pid, started: "linux:1" })).toBe(false);
+    expect(stop({ pid, started: "linux:1" })).toBe("gone");
     expect(alive(pid)).toBe(true);
   });
 
-  it("never signals a fixture whose start could not be read while it ran", () => {
+  it("never signals, and keeps listing, a fixture whose start could not be read while it ran", async () => {
     const pid = stranger();
     fixtures.push({ pid, started: undefined });
     const file = path.join(tempDir("devfn-leak-guard-cleanup-"), "member.pid");
     writeFileSync(file, JSON.stringify({ pid, started: null }));
     fixtureFiles.push(file);
-    stopFixtures();
+    expect((await stopFixtures(300)).map((left) => left.pid)).toEqual([pid, pid]);
+    expect((await stopFixtures(0)).map((left) => left.pid)).toEqual([pid, pid]);
     expect(alive(pid)).toBe(true);
+    // Listed by the cleanup after this test otherwise, which would fail it.
+    fixtures.splice(0);
   });
 
   it("stops a fixture once, however often cleanup runs", async () => {
     const pid = track(stranger());
     const fixture = { pid, started: started(pid) };
-    stopFixtures();
-    expect(await gone(pid)).toBe(true);
-    stopFixtures();
-    expect(stop(fixture)).toBe(false);
+    expect(await stopFixtures()).toEqual([]);
+    expect(alive(pid)).toBe(false);
+    expect(await stopFixtures()).toEqual([]);
+    expect(stop(fixture)).toBe("gone");
+  });
+
+  /** Makes liveness's reads of `pid` fail: the first `times` of them, or every one until restored. */
+  function failReadsOf(pid: number, times = Infinity) {
+    const { system } = livenessModule;
+    const { readFileSync: read, spawnSync: run } = system as { readFileSync: (...all: unknown[]) => unknown; spawnSync: (...all: unknown[]) => unknown };
+    let failed = 0;
+    const fails = () => (failed += 1) <= times;
+    system.readFileSync = (target: unknown, ...rest: unknown[]) => {
+      if (target === `/proc/${pid}/stat` && fails()) throw Object.assign(new Error("reading failed (test)"), { code: "EIO" });
+      return read(target, ...rest);
+    };
+    system.spawnSync = (command: unknown, args: string[], ...rest: unknown[]) => args.at(-1) === String(pid) && fails() ? { error: new Error("ps failed (test)"), status: null, stdout: "" } : run(command, args, ...rest);
+    return () => Object.assign(system, { readFileSync: read, spawnSync: run });
+  }
+
+  it("stops a fixture whose start cannot be read once as the cleanup checks it, reading it again", async () => {
+    const pid = track(stranger());
+    const restore = failReadsOf(pid, 1);
+    try {
+      expect(await stopFixtures()).toEqual([]);
+    } finally {
+      restore();
+    }
+    expect(alive(pid)).toBe(false);
+  });
+
+  it("keeps a fixture whose start cannot be read as the cleanup checks it, never signalling it, until a later cleanup can read it and stops it", async () => {
+    const pid = track(stranger());
+    const restore = failReadsOf(pid);
+    try {
+      expect((await stopFixtures(300)).map((left) => left.pid)).toEqual([pid]);
+    } finally {
+      restore();
+    }
+    // Read once reads work again, as liveness reads it: never signalled meanwhile.
+    expect(alive(pid)).toBe(true);
+    expect(await stopFixtures()).toEqual([]);
+    expect(alive(pid)).toBe(false);
   });
 
   let timedOut: number | undefined;
