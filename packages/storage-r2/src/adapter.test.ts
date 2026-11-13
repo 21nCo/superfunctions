@@ -51,6 +51,25 @@ function scriptedFetch(...replies: Array<() => Reply>) {
   return { fetch, requests };
 }
 
+/** A response whose body stream fails partway, as when the connection drops mid-body. */
+function brokenBody(status: number, error: Error = new TypeError('terminated')): Response {
+  const encoder = new TextEncoder();
+  let sent = false;
+  return new Response(
+    new ReadableStream({
+      pull(controller) {
+        if (!sent) {
+          sent = true;
+          controller.enqueue(encoder.encode('<?xml version="1.0" encoding="UTF-8"?>\n   '));
+        } else {
+          controller.error(error);
+        }
+      },
+    }),
+    { status }
+  );
+}
+
 const NO_DELAY = { retry: { baseDelayMs: 0 } };
 const COMPLETE_RESULT =
   '<?xml version="1.0" encoding="UTF-8"?>\n<CompleteMultipartUploadResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><ETag>"x-2"</ETag></CompleteMultipartUploadResult>';
@@ -327,6 +346,14 @@ describe('@superfunctions/storage-r2', () => {
       await expect(createR2StorageAdapter({ ...BASE, fetch }).createMultipartUpload!({ key: 'k' })).rejects.toMatchObject({
         name: 'AccessDenied',
       });
+      const missing = recordingFetch(
+        () => new Response('<InitiateMultipartUploadResult/>', { headers: { 'x-amz-request-id': 'req-1' } })
+      );
+      const error = await createR2StorageAdapter({ ...BASE, fetch: missing.fetch })
+        .createMultipartUpload!({ key: 'k' })
+        .catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(R2RequestError);
+      expect(error).toMatchObject({ statusCode: 200, message: expect.stringContaining('no UploadId'), $metadata: { requestId: 'req-1' } });
     });
 
     it('parses namespaced error documents on failed responses', async () => {
@@ -383,6 +410,7 @@ describe('@superfunctions/storage-r2', () => {
       ['HTTP 503 SlowDown', () => new Response(xmlError('SlowDown', 'slow'), { status: 503 })],
       ['HTTP 429', () => new Response(null, { status: 429 })],
       ['HTTP 400 RequestTimeout', () => new Response(xmlError('RequestTimeout', 'idle'), { status: 400 })],
+      ['an error body that fails mid-read', () => brokenBody(400)],
     ];
 
     const operations: Array<[string, () => Response, (adapter: ReturnType<typeof createR2StorageAdapter>) => Promise<unknown>]> = [
@@ -435,6 +463,50 @@ describe('@superfunctions/storage-r2', () => {
       expect(requests.map((request) => request.headers['x-amz-date'])).toEqual(['20260101T000000Z', '20260101T010000Z']);
       expect(requests[0].headers.authorization).not.toBe(requests[1].headers.authorization);
     });
+
+    const bodyReaders: Array<[string, () => Response, (adapter: ReturnType<typeof createR2StorageAdapter>) => Promise<unknown>]> = [
+      [
+        'createMultipartUpload',
+        () => new Response('<InitiateMultipartUploadResult><UploadId>u</UploadId></InitiateMultipartUploadResult>'),
+        (a) => a.createMultipartUpload!({ key: 'k' }),
+      ],
+      [
+        'completeMultipartUpload',
+        () => new Response(COMPLETE_RESULT),
+        (a) => a.completeMultipartUpload!({ key: 'k', uploadId: 'u', parts: PARTS }),
+      ],
+    ];
+
+    for (const [operation, success, run] of bodyReaders) {
+      it(`${operation} retries, re-signed, when its 200 body fails mid-read`, async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+        const { fetch, requests } = scriptedFetch(() => {
+          vi.setSystemTime(new Date('2026-01-01T00:05:00Z'));
+          return brokenBody(200);
+        }, success);
+        await expect(run(createR2StorageAdapter({ ...BASE, ...NO_DELAY, fetch }))).resolves.toEqual(
+          operation === 'createMultipartUpload' ? { uploadId: 'u' } : undefined
+        );
+        expect(requests).toHaveLength(2);
+        expect(requests.map((request) => request.headers['x-amz-date'])).toEqual(['20260101T000000Z', '20260101T000500Z']);
+        expect(requests[1].body).toBe(requests[0].body);
+      });
+
+      it(`${operation} surfaces the read failure once every attempt's body fails`, async () => {
+        const { fetch, requests } = scriptedFetch(() => brokenBody(200));
+        await expect(run(createR2StorageAdapter({ ...BASE, ...NO_DELAY, fetch }))).rejects.toThrow('terminated');
+        expect(requests).toHaveLength(3);
+      });
+
+      it(`${operation} does not retry an abort while reading its body`, async () => {
+        const { fetch, requests } = scriptedFetch(() => brokenBody(200, new DOMException('aborted', 'AbortError')), success);
+        await expect(run(createR2StorageAdapter({ ...BASE, ...NO_DELAY, fetch }))).rejects.toMatchObject({
+          name: 'AbortError',
+        });
+        expect(requests).toHaveLength(1);
+      });
+    }
 
     it('retries a completion whose 200 response carries a retryable error code', async () => {
       const { fetch, requests } = scriptedFetch(
@@ -506,6 +578,30 @@ describe('@superfunctions/storage-r2', () => {
       random.mockReturnValue(0.25);
       expect(await run(500, undefined)).toEqual([25, 50]);
       vi.restoreAllMocks();
+    });
+
+    it('applies the default for each retry field left undefined', async () => {
+      const delays: number[] = [];
+      vi.spyOn(globalThis, 'setTimeout').mockImplementation(((callback: () => void, delay?: number) => {
+        delays.push(delay ?? 0);
+        callback();
+        return 0;
+      }) as typeof setTimeout);
+      vi.spyOn(Math, 'random').mockReturnValue(1);
+      const { fetch, requests } = scriptedFetch(() => new Response(null, { status: 500 }));
+      const retry = { maxAttempts: undefined, baseDelayMs: undefined, maxDelayMs: undefined };
+      await expect(createR2StorageAdapter({ ...BASE, retry, fetch }).deleteObject({ key: 'k' })).rejects.toMatchObject({
+        statusCode: 500,
+      });
+      expect(requests).toHaveLength(3);
+      expect(delays).toEqual([100, 200]);
+
+      delays.length = 0;
+      const capped = scriptedFetch(() => new Response(null, { status: 500 }));
+      await createR2StorageAdapter({ ...BASE, retry: { maxAttempts: 4, baseDelayMs: 20_000, maxDelayMs: undefined }, fetch: capped.fetch })
+        .deleteObject({ key: 'k' })
+        .catch(() => undefined);
+      expect(delays).toEqual([20_000, 20_000, 20_000]);
     });
 
     it('rejects an invalid retry policy', () => {

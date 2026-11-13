@@ -45,11 +45,12 @@ export interface R2StorageConfig {
 }
 
 /**
- * Bounded retry for transient failures: network errors, HTTP 5xx and 429, S3
- * throttling and timeout error codes, and a completion that reports such an
- * error inside a 200 response. Each attempt is signed afresh. Delays use full
- * jitter: a random wait up to `baseDelayMs * 2^(attempt - 1)` (five times the
- * base for 429 and 503), capped at `maxDelayMs`.
+ * Bounded retry for transient failures: network errors (including a response
+ * body that fails mid-read), HTTP 5xx and 429, S3 throttling and timeout error
+ * codes, and a completion that reports such an error inside a 200 response.
+ * Each attempt is signed afresh. Delays use full jitter: a random wait up to
+ * `baseDelayMs * 2^(attempt - 1)` (five times the base for 429 and 503),
+ * capped at `maxDelayMs`.
  */
 export interface R2RetryOptions {
   /** Total attempts per request, including the first. Defaults to 3; 1 disables retries. */
@@ -141,7 +142,12 @@ const RETRYABLE_CODES = new Set([
 ]);
 
 function resolveRetry(options: R2RetryOptions | undefined): Required<R2RetryOptions> {
-  const retry = { maxAttempts: 3, baseDelayMs: 100, maxDelayMs: 20_000, ...options };
+  // Per-field defaults, so an explicit `undefined` still means "use the default".
+  const retry = {
+    maxAttempts: options?.maxAttempts ?? 3,
+    baseDelayMs: options?.baseDelayMs ?? 100,
+    maxDelayMs: options?.maxDelayMs ?? 20_000,
+  };
   if (!Number.isInteger(retry.maxAttempts) || retry.maxAttempts < 1) {
     throw createStorageError('R2 retry.maxAttempts must be a positive integer', 'STORAGE_CONFIG_INVALID');
   }
@@ -225,40 +231,41 @@ export function createR2StorageAdapter(config: R2StorageConfig): StorageAdapter 
       .join('&')}`;
   }
 
-  async function toError(operation: string, response: Response): Promise<R2RequestError> {
-    let body = '';
-    try {
-      body = await response.text();
-    } catch {
-      // The status alone still describes the failure.
-    }
+  function toError(operation: string, response: Response, text: string): R2RequestError {
     return new R2RequestError(
       operation,
       response.status,
-      xmlElement(body, 'Code'),
-      xmlElement(body, 'Message'),
-      response.headers.get('x-amz-request-id') ?? xmlElement(body, 'RequestId')
+      xmlElement(text, 'Code'),
+      xmlElement(text, 'Message'),
+      response.headers.get('x-amz-request-id') ?? xmlElement(text, 'RequestId')
     );
   }
 
   interface SendOptions {
     headers?: Record<string, string>;
     body?: string;
-    /** Also retry a 200 whose body is an S3 error document with a retryable code. */
+    /** Read a successful response's body inside the retry loop and return it as `text`. */
+    readBody?: boolean;
+    /** Also retry a 200 whose body is an S3 error document with a retryable code. Implies `readBody`. */
     inspectOkBody?: boolean;
   }
 
-  async function isRetryable(response: Response, inspectOkBody: boolean): Promise<boolean> {
+  interface SendResult {
+    response: Response;
+    /**
+     * The body, read inside the retry loop. Set for every non-2xx response and
+     * for a 2xx response when `readBody` or `inspectOkBody` is set; otherwise
+     * the body is left unread for the caller.
+     */
+    text?: string;
+  }
+
+  function isRetryable(response: Response, text: string | undefined, inspectOkBody: boolean): boolean {
     if (response.status >= 500 || response.status === 429) return true;
     if (response.ok ? !inspectOkBody : response.status === 404) return false;
-    // Error bodies and completion results are small, so reading a copy is cheap
-    // and leaves the original body for the caller.
-    const text = await response
-      .clone()
-      .text()
-      .catch(() => '');
-    if (response.ok && xmlRootName(text) !== 'Error') return false;
-    return RETRYABLE_CODES.has(xmlElement(text, 'Code') ?? '');
+    const body = text ?? '';
+    if (response.ok && xmlRootName(body) !== 'Error') return false;
+    return RETRYABLE_CODES.has(xmlElement(body, 'Code') ?? '');
   }
 
   function backoff(attempt: number, status?: number): Promise<void> {
@@ -268,37 +275,47 @@ export function createR2StorageAdapter(config: R2StorageConfig): StorageAdapter 
   }
 
   /**
-   * Sign and send a request, retrying transient failures. Returns the first
-   * non-retryable response, or the last response once attempts run out.
+   * Sign and send a request, retrying transient failures. Every part of the
+   * response the adapter consumes itself (status, headers, and the body of an
+   * error or of a `readBody` request) is read inside the loop, so a connection
+   * that drops while a body is streaming is retried like any network error.
+   * Only a successful response whose body belongs to the caller leaves the
+   * loop unread. Returns the first non-retryable response, or the last one
+   * once attempts run out; a transport failure on the last attempt, or any
+   * abort, is thrown.
    */
-  async function send(method: string, url: string, options: SendOptions = {}): Promise<Response> {
+  async function send(method: string, url: string, options: SendOptions = {}): Promise<SendResult> {
     const payloadHash = options.body === undefined ? undefined : await sha256Hex(options.body);
+    const inspectOkBody = options.inspectOkBody ?? false;
+    const readOkBody = inspectOkBody || (options.readBody ?? false);
     for (let attempt = 1; ; attempt += 1) {
       const lastAttempt = attempt >= retry.maxAttempts;
       // Sign each attempt so a retry after a long backoff carries a fresh date.
       const headers = await signRequest(credentials, scope, { method, url, headers: options.headers, payloadHash });
       let response: Response;
+      let text: string | undefined;
       try {
         response = await doFetch(url, { method, headers, body: options.body });
+        // Error documents and the results the adapter parses are small.
+        if (readOkBody || !response.ok) text = await response.text();
       } catch (error) {
         if (lastAttempt || isAbortError(error)) throw error;
         await backoff(attempt);
         continue;
       }
-      if (lastAttempt || !(await isRetryable(response, options.inspectOkBody ?? false))) {
-        return response;
+      if (lastAttempt || !isRetryable(response, text, inspectOkBody)) {
+        return { response, text };
       }
-      await response.body?.cancel().catch(() => undefined);
       await backoff(attempt, response.status);
     }
   }
 
-  async function sendOk(operation: string, method: string, url: string, options?: SendOptions): Promise<Response> {
-    const response = await send(method, url, options);
-    if (!response.ok) {
-      throw await toError(operation, response);
+  async function sendOk(operation: string, method: string, url: string, options?: SendOptions): Promise<SendResult> {
+    const result = await send(method, url, options);
+    if (!result.response.ok) {
+      throw toError(operation, result.response, result.text ?? '');
     }
-    return response;
+    return result;
   }
 
   async function presign(
@@ -323,12 +340,12 @@ export function createR2StorageAdapter(config: R2StorageConfig): StorageAdapter 
     capabilities: { ...CAPABILITIES },
 
     async statObject(input: { key: string }): Promise<StorageObjectStat> {
-      const response = await send('HEAD', objectUrl(input.key));
+      const { response, text } = await send('HEAD', objectUrl(input.key));
       if (response.status === 404) {
         throw createNotFoundError();
       }
       if (!response.ok) {
-        throw await toError('HeadObject', response);
+        throw toError('HeadObject', response, text ?? '');
       }
       const lastModified = response.headers.get('last-modified');
       const lastModifiedDate = lastModified ? new Date(lastModified) : undefined;
@@ -343,7 +360,7 @@ export function createR2StorageAdapter(config: R2StorageConfig): StorageAdapter 
     },
 
     async deleteObject(input: { key: string }): Promise<void> {
-      const response = await sendOk('DeleteObject', 'DELETE', objectUrl(input.key));
+      const { response } = await sendOk('DeleteObject', 'DELETE', objectUrl(input.key));
       await response.body?.cancel();
     },
 
@@ -384,22 +401,24 @@ export function createR2StorageAdapter(config: R2StorageConfig): StorageAdapter 
       for (const [name, value] of Object.entries(input.metadata ?? {})) {
         headers[`x-amz-meta-${name.toLowerCase()}`] = value;
       }
-      const response = await sendOk('CreateMultipartUpload', 'POST', objectUrl(input.key, [['uploads', '']]), {
-        headers,
-      });
-      const text = await response.text();
+      const { response, text = '' } = await sendOk(
+        'CreateMultipartUpload',
+        'POST',
+        objectUrl(input.key, [['uploads', '']]),
+        { headers, readBody: true }
+      );
       if (xmlRootName(text) === 'Error') {
-        throw new R2RequestError(
-          'CreateMultipartUpload',
-          response.status,
-          xmlElement(text, 'Code'),
-          xmlElement(text, 'Message'),
-          response.headers.get('x-amz-request-id') ?? xmlElement(text, 'RequestId')
-        );
+        throw toError('CreateMultipartUpload', response, text);
       }
       const uploadId = xmlElement(text, 'UploadId');
       if (!uploadId) {
-        throw new Error('Failed to create multipart upload: no UploadId returned');
+        throw new R2RequestError(
+          'CreateMultipartUpload',
+          response.status,
+          undefined,
+          'response has no UploadId',
+          response.headers.get('x-amz-request-id') ?? undefined
+        );
       }
       return { uploadId };
     },
@@ -440,7 +459,7 @@ export function createR2StorageAdapter(config: R2StorageConfig): StorageAdapter 
           .map((part) => `<Part><PartNumber>${part.partNumber}</PartNumber><ETag>${escapeXml(part.etag)}</ETag></Part>`)
           .join('') +
         '</CompleteMultipartUpload>';
-      const response = await sendOk(
+      const { response, text = '' } = await sendOk(
         'CompleteMultipartUpload',
         'POST',
         objectUrl(input.key, [['uploadId', input.uploadId]]),
@@ -448,7 +467,6 @@ export function createR2StorageAdapter(config: R2StorageConfig): StorageAdapter 
       );
       // S3 can report a failed completion inside a 200 response, so only a
       // CompleteMultipartUploadResult document counts as success.
-      const text = await response.text();
       if (xmlRootName(text) !== 'CompleteMultipartUploadResult') {
         const code = xmlElement(text, 'Code');
         throw new R2RequestError(
@@ -462,7 +480,7 @@ export function createR2StorageAdapter(config: R2StorageConfig): StorageAdapter 
     },
 
     async abortMultipartUpload(input: { key: string; uploadId: string }): Promise<void> {
-      const response = await sendOk(
+      const { response } = await sendOk(
         'AbortMultipartUpload',
         'DELETE',
         objectUrl(input.key, [['uploadId', input.uploadId]])
@@ -479,15 +497,16 @@ export function createR2StorageAdapter(config: R2StorageConfig): StorageAdapter 
       // Ask for the stored bytes as-is. An object uploaded with a
       // Content-Encoding (for example gzip) would otherwise be decoded by
       // fetch, so the stream would not match the stored size or byte ranges.
-      const response = await send('GET', objectUrl(input.key, [['response-content-encoding', 'identity']]), {
-        headers,
-      });
+      const { response, text } = await send(
+        'GET',
+        objectUrl(input.key, [['response-content-encoding', 'identity']]),
+        { headers }
+      );
       if (response.status === 404) {
-        await response.body?.cancel();
         throw createNotFoundError();
       }
       if (!response.ok) {
-        throw await toError('GetObject', response);
+        throw toError('GetObject', response, text ?? '');
       }
       return response.body ?? emptyStream();
     },

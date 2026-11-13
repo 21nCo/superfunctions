@@ -31,10 +31,14 @@ produce.
   uploader must send the returned `headers`, and a body of a different length
   is rejected by R2.
 - A missing object (`statObject`, `openDownloadStream`) throws
-  `STORAGE_NOT_FOUND`; other API failures throw `R2RequestError`, whose `name`
-  is the S3 error code and whose `statusCode` is the HTTP status.
+  `STORAGE_NOT_FOUND`; other API failures, including a 2xx response the adapter
+  cannot use (an embedded error document, or a multipart initiation without an
+  `UploadId`), throw `R2RequestError`, whose `name` is the S3 error code (or
+  `R2RequestError` when there is none) and whose `statusCode` is the HTTP
+  status. Network failures and aborts are rethrown as `fetch` raised them.
 - Transient failures are retried up to 3 attempts in total, each signed
-  afresh, with jittered exponential backoff: network errors, HTTP 5xx and 429,
+  afresh, with jittered exponential backoff: network errors (including a
+  response body that fails while the adapter reads it), HTTP 5xx and 429,
   S3 throttling and timeout codes (`SlowDown`, `RequestTimeout`, ...), and a
   multipart completion whose 200 response carries such an error. Other 4xx
   responses are not retried.
