@@ -1,10 +1,23 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+// Spy on the `crypto` module's CSPRNG while keeping its real behaviour.
+const cryptoMock = vi.hoisted(() => ({ randomFillSync: vi.fn() }));
+
+vi.mock('crypto', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('crypto')>();
+  cryptoMock.randomFillSync.mockImplementation(actual.randomFillSync);
+  return { ...actual, default: actual, randomFillSync: cryptoMock.randomFillSync };
+});
+
 import { generateFileFnId, type FileFnIdPrefix } from '../ids.js';
 
 const PREFIXES: FileFnIdPrefix[] = ['upl', 'file', 'ver', 'art'];
 
 afterEach(() => {
-  vi.restoreAllMocks();
+  // Not vi.restoreAllMocks(): it would drop the delegating implementation of
+  // the hoisted randomFillSync spy.
+  vi.unstubAllGlobals();
+  cryptoMock.randomFillSync.mockClear();
 });
 
 describe('generateFileFnId', () => {
@@ -25,19 +38,35 @@ describe('generateFileFnId', () => {
     expect(ids.size).toBe(10_000);
   });
 
-  it('draws from crypto.getRandomValues, not Math.random', () => {
-    const getRandomValues = vi.spyOn(globalThis.crypto, 'getRandomValues');
+  it('draws from the crypto module CSPRNG, not Math.random', () => {
     const mathRandom = vi.spyOn(Math, 'random');
 
-    generateFileFnId('file');
+    try {
+      generateFileFnId('file');
 
-    expect(getRandomValues).toHaveBeenCalledTimes(1);
-    expect(mathRandom).not.toHaveBeenCalled();
+      expect(cryptoMock.randomFillSync).toHaveBeenCalledTimes(1);
+      expect(mathRandom).not.toHaveBeenCalled();
+    } finally {
+      mathRandom.mockRestore();
+    }
+  });
+
+  it('works without a global Web Crypto object (Node 18 default)', () => {
+    vi.stubGlobal('crypto', undefined);
+    expect(globalThis.crypto).toBeUndefined();
+
+    const ids = new Set<string>();
+    for (let index = 0; index < 100; index += 1) {
+      ids.add(generateFileFnId('upl'));
+    }
+
+    expect(ids.size).toBe(100);
+    for (const id of ids) expect(id).toMatch(/^upl_[0-9a-hjkmnp-tv-z]{20}$/);
   });
 
   it('maps every random byte onto the alphabet, so each symbol is reachable', () => {
     const seen = new Set<string>();
-    vi.spyOn(globalThis.crypto, 'getRandomValues').mockImplementation(<T extends ArrayBufferView | null>(array: T) => {
+    cryptoMock.randomFillSync.mockImplementationOnce(<T extends NodeJS.ArrayBufferView>(array: T) => {
       const bytes = array as unknown as Uint8Array;
       bytes.forEach((_, index) => {
         bytes[index] = 255 - index;

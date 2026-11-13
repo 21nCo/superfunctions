@@ -6522,7 +6522,7 @@ The Worker creates filefn per request so that `runtime.defer` uses that request'
 
 - `basePath: "/files"` serves `GET /files` (list), `POST /files/upload/init`, `GET /files/:fileId/download`, `GET /files/proxy/files/:fileId/download` and the rest. For requests outside the prefix, `router.handle` returns `null`. Without `basePath`, routes stay at the root, as before.
 - The value must be an absolute, already-encoded path (`/files`, `/api/v1/files`). A trailing slash is ignored. Matching is case-sensitive and stops at a segment boundary, so `/filesx` does not match. An invalid value makes `createFileFn` throw `FILEFN_BASE_PATH_INVALID`.
-- Proxy upload, proxy download and artifact URLs in responses stay relative to the mount, for example `/upload/:id/parts/1` and `/proxy/files/:fileId/download`. Configure clients with the mount as their base URL, for example `createFileFnClient({ baseUrl: "https://api.example.com/files" })`. The client puts its base URL in front of root-relative URLs.
+- Proxy upload, proxy download and artifact URLs in responses stay relative to the mount, for example `/upload/:id/parts/1` and `/proxy/files/:fileId/download`. Configure clients with the mount as their base URL, for example `createFileFnClient({ baseUrl: "https://api.example.com/files" })`. The client puts its base URL in front of root-relative part-upload URLs only. It returns the download and artifact URLs from `downloadUrl` and `downloadArtifact` unchanged, so resolve a root-relative `/proxy/...` URL against the mount yourself, for example `new URL("/files" + url, origin)`.
 
 ## Background work and `runtime.defer`
 
@@ -6536,7 +6536,7 @@ Without `runtime`, filefn behaves as on Node: processing starts on a `setImmedia
 
 ## IDs
 
-filefn generates upload, file, version and artifact IDs as `<prefix>_<random>`. The random part is 20 base32 characters (100 bits) from `crypto.getRandomValues`, for example `file_8h3k2m9q4x7c1v5t0bnr`. IDs are opaque. IDs from earlier versions (`file_<time>_<random>`) remain valid.
+filefn generates upload, file, version and artifact IDs as `<prefix>_<random>`. The random part is 20 base32 characters (100 bits) from the `crypto` module's CSPRNG (`randomFillSync`), which does not need a global Web Crypto object, for example `file_8h3k2m9q4x7c1v5t0bnr`. IDs are opaque. IDs from earlier versions (`file_<time>_<random>`) remain valid.
 
 ## What is verified
 
