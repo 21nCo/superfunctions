@@ -124,7 +124,7 @@ if session is None:
     return Response(status_code=401)
 ```
 
-`AuthFnSession` has these fields: `id`, `actor_id`, `actor_type`, `methods`, `primary_email`, `expires_at`, `metadata`, `region_id`. API-key sessions are the exception; see below.
+`AuthFnSession` has these fields: `id`, `type`, `subject`, `actor_type`, `actor_id`, `tenant_id`, `region_id`, `resource_ids`, `methods`, `primary_email`, `expires_at`, `metadata`. API-key sessions differ from the TypeScript shape; see below.
 
 The Python SDK has no typed scopes yet. Its `AuthFnSession` has no `scopes` field for cookie or API-key sessions, and there is no scope registry or `requireScopes` check; those exist only in the TypeScript `authfn` package (0.6.0 and later). See [Plugins → API keys → Scopes](../plugins/api-keys#scopes).
 

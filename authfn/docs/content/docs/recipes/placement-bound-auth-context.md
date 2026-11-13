@@ -85,7 +85,7 @@ The context is frozen and contains:
 | `issuedAt` / `expiresAt` | Context lifetime. Capped by both `ttlSeconds` and session expiry. |
 | `audience` | Consumer allowlist entry such as `nucleum-datafn`. |
 | `assurance` | AuthFn methods on the session (`password`, `email-otp`, …). |
-| `scopes` | API-key contexts only; absent for interactive user sessions. TypeScript issuer (`authfn` 0.6.0+, `@authfn/multi-region` 0.1.4+ only): always present for user-owned API keys and holds the key's stored scopes that the host [scope registry](../plugins/api-keys#scopes) can grant, the same list as the API-key session's `scopes`. The Python issuer does not filter yet: it signs every stored string scope, including unregistered ones such as `legacy:*`, and omits the claim when the key has no stored scope list. Verifiers must not treat a Python-signed `scopes` claim as registry-filtered. |
+| `scopes` | API-key contexts only; absent for interactive user sessions. TypeScript issuer (`authfn` 0.6.0+, `@authfn/multi-region` 0.2.0+ only): always present for user-owned API keys and holds the key's stored scopes that the host [scope registry](../plugins/api-keys#scopes) can grant, the same list as the API-key session's `scopes`. The Python issuer does not filter yet: it signs every stored string scope, including unregistered ones such as `legacy:*`, and omits the claim when the key has no stored scope list. Verifiers must not treat a Python-signed `scopes` claim as registry-filtered. |
 | `requestId` | Correlation id. |
 | `actorType` | `user` or `api-key`. |
 | `userId` | Omitted unless `includeUserId: true`. |
@@ -120,7 +120,7 @@ remote = create_placement_context_verifier(
 verified = remote.verify_signed(issued["assertion"])
 ```
 
-The Python issuer does not apply the host scope registry yet: its `scopes` claim lists every stored string scope of the API key, or is omitted when the key has no stored scope list. Only the TypeScript issuer (`authfn` 0.6.0+, `@authfn/multi-region` 0.1.4+) signs registry-filtered scopes. Re-check scopes against your registry before trusting a Python-signed claim.
+The Python issuer does not apply the host scope registry yet: its `scopes` claim lists every stored string scope of the API key, or is omitted when the key has no stored scope list. Only the TypeScript issuer (`authfn` 0.6.0+, `@authfn/multi-region` 0.2.0+) signs registry-filtered scopes. Re-check scopes against your registry before trusting a Python-signed claim.
 
 ## Opaque subject lifecycle
 

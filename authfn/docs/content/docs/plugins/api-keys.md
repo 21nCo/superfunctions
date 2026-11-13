@@ -181,7 +181,7 @@ After revocation, `auth.provider.authenticate(request)` rejects with `AUTHFN_API
 
 | Code | When |
 | --- | --- |
-| `AUTHFN_VALIDATION_ERROR` | Invalid name or expiresAt, or a scope outside the registry (`details.unknownScopes`). |
+| `AUTHFN_VALIDATION_ERROR` | Invalid name or expiresAt, `scopes` that is not an array of strings (`details.field` is `scopes`), or a scope outside the registry (`details.unknownScopes`). |
 | `AUTHFN_INSUFFICIENT_SCOPE` | `requireScopes` found a needed scope the session does not grant (`details.missingScopes`). |
 | `AUTHFN_UNAUTHENTICATED` | Caller is not signed in (key creation requires a session). |
 | `AUTHFN_API_KEY_REVOKED` | Key was used after revocation. |
