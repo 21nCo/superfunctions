@@ -1,6 +1,6 @@
 {
   "name": "@billfn/core",
-  "version": "0.0.2",
+  "version": "0.1.0",
   "description": "Core billfn contracts, persistence, router, and entitlements",
   "type": "module",
   "main": "./dist/index.js",
@@ -16,9 +16,12 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "vitest run",
+    "test": "npm run test:node && npm run test:db-0.2 && npm run test:workers",
+    "test:node": "vitest run",
+    "test:db-0.2": "vitest run --config test/db-0.2/vitest.config.ts",
+    "test:workers": "vitest run --config test/workers/vitest.config.ts",
     "test:watch": "vitest --watch",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p test/db-0.2/tsconfig.json && tsc -p test/tsconfig.json",
     "clean": "rm -rf dist"
   },
   "author": "21n",
@@ -32,16 +35,32 @@
     "access": "public"
   },
   "dependencies": {
-    "@superfunctions/db": "0.3.2",
-    "@superfunctions/envelope": "*",
-    "@superfunctions/errors": "*",
-    "@superfunctions/http": "*",
-    "@superfunctions/metrics": "*",
-    "@superfunctions/queue": "0.2.0"
+    "@superfunctions/envelope": "^0.0.2",
+    "@superfunctions/errors": "^0.0.2",
+    "@superfunctions/http": "^0.3.1",
+    "@superfunctions/metrics": "^0.1.1"
   },
   "devDependencies": {
+    "@superfunctions/db": "0.3.2",
+    "@superfunctions/db-0.2": "npm:@superfunctions/db@0.2.1",
+    "@superfunctions/queue": "0.2.0",
+    "@superfunctions/webhooks": "^0.1.1",
     "@types/node": "^22.0.0",
+    "@types/semver": "^7.7.0",
+    "hono": "4.11.9",
+    "miniflare": "4.20251113.0",
+    "semver": "^7.7.0",
     "typescript": "^5.6.0",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "wrangler": "4.49.0"
+  },
+  "peerDependencies": {
+    "@superfunctions/db": "^0.2.0 || ^0.3.0",
+    "@superfunctions/queue": "^0.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@superfunctions/queue": {
+      "optional": true
+    }
   }
 }
