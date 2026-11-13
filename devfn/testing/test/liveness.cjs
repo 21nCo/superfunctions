@@ -54,6 +54,16 @@ const live = (pid) => identity(pid)?.started !== undefined;
 const started = (pid) => identity(pid)?.started;
 
 /**
+ * How a fixture names the process `pid` while it knows it runs, for stop: { pid, started }, with
+ * started null when its start cannot be read (which stop never signals, and the self-test lists
+ * as not shown gone), or { pid, gone } when no process runs as `pid` (nothing to stop).
+ */
+function fixture(pid) {
+  const current = identity(pid);
+  return current?.gone ? { pid, gone: true } : { pid, started: current?.started ?? null };
+}
+
+/**
  * Sends `fixture` ({ pid, started }, its start read while it ran) SIGKILL only when a read just
  * before shows its ID still running with that start. Returns "stopped" once it has; "gone" when no
  * process runs as its ID or the ID names a process started at another time (never signalled);
@@ -68,4 +78,4 @@ function stop(fixture) {
   try { process.kill(fixture.pid, "SIGKILL"); return "stopped"; } catch (error) { return error?.code === "ESRCH" ? "gone" : "unknown"; }
 }
 
-module.exports = { live, started, stop, system };
+module.exports = { fixture, live, started, stop, system };

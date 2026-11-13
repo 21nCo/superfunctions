@@ -25,7 +25,7 @@ const vitest = path.join(path.dirname(createRequire(import.meta.url).resolve("vi
 // The same check runs in every script this file generates, which require it from here.
 const liveness = fileURLToPath(new URL("./liveness.cjs", import.meta.url));
 type Fixture = { pid: number; started?: string };
-type Liveness = { live: (pid: number) => boolean; started: (pid: number) => string | undefined; stop: (fixture: Fixture) => "stopped" | "gone" | "unknown"; system: Record<"readFileSync" | "spawnSync", unknown> };
+type Liveness = { fixture: (pid: number) => { pid: number; started?: string | null; gone?: true }; live: (pid: number) => boolean; started: (pid: number) => string | undefined; stop: (fixture: Fixture) => "stopped" | "gone" | "unknown"; system: Record<"readFileSync" | "spawnSync", unknown> };
 const livenessModule = createRequire(import.meta.url)(liveness) as Liveness;
 const { live: alive, started, stop } = livenessModule;
 
@@ -38,9 +38,10 @@ const { live: alive, started, stop } = livenessModule;
 // Registered after temporaryDirectories, so this runs first, while the files are still there.
 const fixtures: Fixture[] = [];
 const fixtureFiles: string[] = [];
-/** Tracks the process `pid` names now, which the caller knows to be the fixture it started, still running. */
-const track = (pid: number) => { fixtures.push({ pid, started: started(pid) }); return pid; };
-/** Every { pid, started } a fixture file's JSON holds, at any depth, with its start or with one that could not be read. */
+/**
+ * Every process a fixture named (liveness's fixture: { pid, started }, at any depth of its JSON),
+ * with its start, or with none when that could not be read; not one it found gone ({ pid, gone }).
+ */
 const namedIn = (value: unknown): Fixture[] => {
   if (Array.isArray(value)) return value.flatMap(namedIn);
   if (!value || typeof value !== "object") return [];
@@ -48,29 +49,44 @@ const namedIn = (value: unknown): Fixture[] => {
   const named = typeof pid === "number" && "started" in value ? [{ pid, started: typeof start === "string" ? start : undefined }] : [];
   return [...named, ...Object.values(value).flatMap(namedIn)];
 };
+/** Tracks the process `pid` names now, which the caller knows to be the fixture it started, still running. */
+const track = (pid: number) => { fixtures.push(...namedIn(livenessModule.fixture(pid))); return pid; };
 /**
  * Stops every fixture registered, and every one the fixture files name, through stop, until a
  * read shows each gone or `graceMs` has passed. Returns those it could not tell were gone, which
  * stay registered for the next call.
  */
 async function stopFixtures(graceMs = 2_000): Promise<Fixture[]> {
-  for (const file of fixtureFiles.splice(0)) {
-    let text: string;
-    try { text = readFileSync(file, "utf8"); } catch { continue; }
-    // A file being written is read again by the next call.
-    try { fixtures.push(...namedIn(JSON.parse(text))); } catch { fixtureFiles.push(file); }
-  }
   for (const deadline = Date.now() + graceMs; ;) {
+    for (const file of fixtureFiles.splice(0)) {
+      let text: string;
+      try { text = readFileSync(file, "utf8"); } catch { continue; }
+      // A file not yet written in full is read again, and listed by finishFixtures if it never is.
+      try { fixtures.push(...namedIn(JSON.parse(text))); } catch { fixtureFiles.push(file); }
+    }
     const left = fixtures.splice(0).filter((fixture) => stop(fixture) !== "gone");
     fixtures.push(...left);
-    if (left.length === 0 || Date.now() >= deadline) return left;
+    if ((left.length === 0 && fixtureFiles.length === 0) || Date.now() >= deadline) return left;
     await sleep(100);
   }
 }
-afterEach(async () => {
-  const left = await stopFixtures();
+/**
+ * The cleanup after each test (stopFixtures), which then forgets every fixture: the failure that
+ * lists what it could not tell was gone, and the fixture files it could not read in full, if any.
+ */
+async function finishFixtures(graceMs?: number): Promise<string | undefined> {
+  const left = await stopFixtures(graceMs);
+  const unread = fixtureFiles.splice(0);
   fixtures.splice(0);
-  if (left.length > 0) throw new Error(`The self-test could not tell these fixtures were gone, so it did not signal them: ${left.map(({ pid, started: start }) => `${pid} (${start ?? "start unknown"})`).join(", ")}`);
+  if (left.length === 0 && unread.length === 0) return undefined;
+  return `The self-test could not tell these fixtures were gone, so it did not signal them: ${[
+    ...left.map(({ pid, started: start }) => `process ${pid} (${start ?? "start unknown"})`),
+    ...unread.map((file) => `the processes ${file} names, which could not be read in full`),
+  ].join(", ")}`;
+}
+afterEach(async () => {
+  const failure = await finishFixtures();
+  if (failure) throw new Error(failure);
 });
 /** The process ID a fixture file names, once it is written. */
 const pidIn = (file: string) => { try { return JSON.parse(readFileSync(file, "utf8")).pid as number; } catch { return undefined; } };
@@ -115,10 +131,10 @@ const { existsSync, mkdirSync, mkdtempSync, readFileSync, rmdirSync, writeFileSy
 const { tmpdir } = require("node:os");
 const path = require("node:path");
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const { live, started } = require(${JSON.stringify(liveness)});
+const { fixture, live } = require(${JSON.stringify(liveness)});
 // Each process ID it records, with its start while it runs, so that the self-test signals only that process.
 const record = (value) => writeFileSync(${JSON.stringify(record)}, JSON.stringify({ root: process.env.SFN_TEST_LEAK_GUARD_ROOT, ...value,
-  fixtures: Object.values(value).flat().filter(Number.isInteger).map((pid) => ({ pid, started: started(pid) })) }));
+  fixtures: Object.values(value).flat().filter(Number.isInteger).map(fixture) }));
 ${content}
 `);
   }
@@ -484,7 +500,7 @@ describe.skipIf(process.platform === "win32")("DevFn test leak guard", { timeout
     const stopped = path.join(dir, "stopped.json");
     // Not the scope's, until it starts a process that is, a second after the first stop round
     // has killed `ownGroup`, so that a second round stops it.
-    const later = `const { live, started } = require(${JSON.stringify(liveness)});
+    const later = `const { fixture, live } = require(${JSON.stringify(liveness)});
 const [, ownGroup, where, file] = process.argv;
 setTimeout(() => process.exit(1), 30_000);
 const wait = setInterval(() => {
@@ -492,19 +508,19 @@ const wait = setInterval(() => {
   clearInterval(wait);
   setTimeout(() => {
     const late = require("node:child_process").spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore", cwd: Buffer.from(where, "hex").toString(), env: { PATH: process.env.PATH } });
-    require("node:fs").writeFileSync(file, JSON.stringify({ pid: late.pid, started: started(late.pid) }));
+    require("node:fs").writeFileSync(file, JSON.stringify(fixture(late.pid)));
     process.exit(0);
   }, 1_000);
 }, 50);`;
     writeFileSync(leader, `const { spawn } = require("node:child_process");
-const { started } = require(${JSON.stringify(liveness)});
+const { fixture } = require(${JSON.stringify(liveness)});
 process.on("SIGTERM", () => {
   const keep = [process.execPath, ["-e", "setInterval(() => {}, 1000)"]];
   const env = { PATH: process.env.PATH };
   const sameGroup = spawn(...keep, { stdio: "ignore", cwd: "/", env });
   const ownGroup = spawn(...keep, { detached: true, stdio: "ignore", env });
   const watcher = spawn(process.execPath, ["-e", ${JSON.stringify(later)}, String(ownGroup.pid), Buffer.from(process.cwd()).toString("hex"), process.argv[2] + ".late"], { detached: true, stdio: "ignore", cwd: "/", env });
-  const fixtures = [sameGroup, ownGroup, watcher].map(({ pid }) => ({ pid, started: started(pid) }));
+  const fixtures = [sameGroup, ownGroup, watcher].map(({ pid }) => fixture(pid));
   require("node:fs").writeFileSync(process.argv[2], JSON.stringify({ sameGroup: sameGroup.pid, ownGroup: ownGroup.pid, watcher: watcher.pid, fixtures }));
   process.exit(0);
 });
@@ -628,11 +644,11 @@ test("leaves a guarded directory", () => {
   // A leader that, on SIGTERM, starts a process in its group and exits. That process, which runs
   // from "/" and so is found only through the leader's group, interrupts the run 300 ms later.
   const interruptingLeader = `const [dir, main] = process.argv.slice(1);
-const { started } = require(${JSON.stringify(liveness)});
+const { fixture } = require(${JSON.stringify(liveness)});
 process.on("SIGTERM", () => {
   const script = "setTimeout(() => process.kill(" + main + ", 'SIGTERM'), 300); setInterval(() => {}, 1000)";
   const member = require("node:child_process").spawn(process.execPath, ["-e", script], { stdio: "ignore", cwd: "/", env: { PATH: process.env.PATH } });
-  require("node:fs").writeFileSync(require("node:path").join(dir, "member.pid"), JSON.stringify({ pid: member.pid, started: started(member.pid) }));
+  require("node:fs").writeFileSync(require("node:path").join(dir, "member.pid"), JSON.stringify(fixture(member.pid)));
   process.exit(0);
 });
 setInterval(() => {}, 1000);`;
@@ -640,11 +656,11 @@ setInterval(() => {}, 1000);`;
   // A leader whose group holds a process found only through it, which runs from "/" and outlives
   // SIGTERM. The leader exits on SIGTERM; 300 ms after SIGTERM, that process interrupts the run.
   const leaderOfInterrupter = `const [dir, main] = process.argv.slice(1);
-const { started } = require(${JSON.stringify(liveness)});
+const { fixture } = require(${JSON.stringify(liveness)});
 const script = "process.on('SIGTERM', () => setTimeout(() => process.kill(" + main + ", 'SIGTERM'), 300)); setInterval(() => {}, 1000)";
 const member = require("node:child_process").spawn(process.execPath, ["-e", script], { stdio: "ignore", cwd: "/", env: { PATH: process.env.PATH } });
 process.on("SIGTERM", () => process.exit(0));
-setTimeout(() => require("node:fs").writeFileSync(require("node:path").join(dir, "member.pid"), JSON.stringify({ pid: member.pid, started: started(member.pid) })), 300);
+setTimeout(() => require("node:fs").writeFileSync(require("node:path").join(dir, "member.pid"), JSON.stringify(fixture(member.pid))), 300);
 setInterval(() => {}, 1000);`;
 
   it("stops, through its group, a process its stop saw in a leader's group when the run is interrupted after the leader exits", async () => {
@@ -1013,11 +1029,11 @@ test("names the locks", async () => {
 });`);
     // Hex-encoded, so the starter itself names neither the root nor a path of the late process.
     writeFileSync(path.join(dir, "late.cjs"), `const [named, pidFile] = process.argv.slice(2).map((value) => Buffer.from(value, "hex").toString());
-const { started } = require(${JSON.stringify(liveness)});
+const { fixture } = require(${JSON.stringify(liveness)});
 setTimeout(() => {
   const child = require("node:child_process").spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", named], { detached: true, stdio: "ignore", cwd: "/", env: { PATH: process.env.PATH } });
   child.unref();
-  require("node:fs").writeFileSync(pidFile, JSON.stringify({ pid: child.pid, started: started(child.pid) }));
+  require("node:fs").writeFileSync(pidFile, JSON.stringify(fixture(child.pid)));
 }, 2000);
 `);
     mkdirSync(path.join(dir, ".git"));
@@ -1047,7 +1063,7 @@ setTimeout(() => {
   record({ pid, nested: ${orphan('"/"', ['path.join(process.cwd(), "starter.cjs")', "String(pid)", "hex(process.env.SFN_TEST_LEAK_GUARD_ROOT)", 'hex(path.join(process.cwd(), "child.pid"))'])} });
 });`);
     writeFileSync(path.join(dir, "starter.cjs"), `const [pid, root, pidFile] = [process.argv[2], ...process.argv.slice(3).map((value) => Buffer.from(value, "hex").toString())];
-const { live, started } = require(${JSON.stringify(liveness)});
+const { fixture, live } = require(${JSON.stringify(liveness)});
 // Once the guard has stopped that process, which may stay a zombie, and finished listing for what stopping it started.
 const wait = setInterval(() => {
   if (live(Number(pid))) return;
@@ -1055,7 +1071,7 @@ const wait = setInterval(() => {
   setTimeout(() => {
     const child = require("node:child_process").spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore", cwd: root, env: { PATH: process.env.PATH } });
     child.unref();
-    require("node:fs").writeFileSync(pidFile, JSON.stringify({ pid: child.pid, started: started(child.pid) }));
+    require("node:fs").writeFileSync(pidFile, JSON.stringify(fixture(child.pid)));
   }, 1_000);
   setInterval(() => {}, 1000);
 }, 50);
@@ -1460,12 +1476,11 @@ process.stdin.resume();`);
     expect(entry?.started, `process ${pid} is listed with its start`).toBeDefined();
     return entry!;
   };
-  /** The ID in a line "<pid> <start>" a leader wrote as it started that process in its SIGTERM handler, which is tracked with that start. */
+  /** The ID in the line a leader wrote (liveness's fixture, as JSON) as it started that process in its SIGTERM handler, which is tracked as that names it. */
   const memberStarted = (line: string) => {
-    // The start itself may hold spaces (macOS: "ps:Fri Nov 13 06:42:52 2026").
-    const pid = Number(line.slice(0, line.indexOf(" ")));
-    fixtures.push({ pid, started: line.slice(line.indexOf(" ") + 1) });
-    return pid;
+    const named = JSON.parse(line) as { pid: number };
+    fixtures.push(...namedIn(named));
+    return named.pid;
   };
   const ignoresSigterm = `process.on("SIGTERM", () => process.stdout.write("SIGTERM\\n")); process.stdout.write("ready\\n"); setInterval(() => {}, 1000);`;
 
@@ -1638,7 +1653,7 @@ process.stdin.resume();`);
     // The leader outlives SIGTERM, and starts a process in its group when it gets it.
     const { pid: leader, output } = await start(`process.on("SIGTERM", () => {
   const member = require("node:child_process").spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
-  require("node:fs").writeSync(1, member.pid + " " + require(${JSON.stringify(liveness)}).started(member.pid) + "\\n");
+  require("node:fs").writeSync(1, JSON.stringify(require(${JSON.stringify(liveness)}).fixture(member.pid)) + "\\n");
 });
 process.stdout.write("ready\\n");
 setInterval(() => {}, 1000);`);
@@ -1691,7 +1706,7 @@ setInterval(() => {}, 1000);`);
     const { pid: leader, output } = await start(`const { spawn } = require("node:child_process");
 process.on("SIGTERM", () => {
   const member = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
-  require("node:fs").writeSync(1, member.pid + " " + require(${JSON.stringify(liveness)}).started(member.pid) + "\\n");
+  require("node:fs").writeSync(1, JSON.stringify(require(${JSON.stringify(liveness)}).fixture(member.pid)) + "\\n");
   process.exit(0);
 });
 process.stdout.write("ready\\n");
@@ -2122,6 +2137,36 @@ describe.skipIf(process.platform === "win32")("the self-test's fixture cleanup",
     expect(alive(pid)).toBe(true);
     expect(await stopFixtures()).toEqual([]);
     expect(alive(pid)).toBe(false);
+  });
+
+  it("never signals, and lists, a fixture a writer named while its start could not be read, as JSON in a file or on a line of output", async () => {
+    const pid = stranger();
+    const restore = failReadsOf(pid);
+    let named: unknown;
+    try {
+      named = livenessModule.fixture(pid);
+    } finally {
+      restore();
+    }
+    const file = path.join(tempDir("devfn-leak-guard-cleanup-"), "record.json");
+    writeFileSync(file, JSON.stringify({ pid, fixtures: [named] }));
+    fixtureFiles.push(file);
+    fixtures.push(...namedIn(JSON.parse(JSON.stringify(named))));
+    expect(await finishFixtures(300)).toBe(`The self-test could not tell these fixtures were gone, so it did not signal them: process ${pid} (start unknown), process ${pid} (start unknown)`);
+    expect(alive(pid)).toBe(true);
+  });
+
+  it("names nothing to stop for a process a writer found gone", async () => {
+    const { pid } = spawnSync(process.execPath, ["-e", ""]);
+    expect(livenessModule.fixture(pid!)).toEqual({ pid, gone: true });
+    expect(namedIn(livenessModule.fixture(pid!))).toEqual([]);
+  });
+
+  it("lists, at the cleanup after a test, a fixture file it could not read in full", async () => {
+    const file = path.join(tempDir("devfn-leak-guard-cleanup-"), "member.pid");
+    writeFileSync(file, '{"pid": 1');
+    fixtureFiles.push(file);
+    expect(await finishFixtures(300)).toBe(`The self-test could not tell these fixtures were gone, so it did not signal them: the processes ${file} names, which could not be read in full`);
   });
 
   let timedOut: number | undefined;
