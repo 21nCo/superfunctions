@@ -20,6 +20,7 @@ Both modes use the same `authfn_sessions` table and the same lifecycle — only 
 interface AuthFnSession {
   id: string;                                  // session id (stable across rotations)
   type: 'session' | 'api-key';
+  credential?: { type: 'api-key'; id: string }; // set when an API key authenticated the request
   subject: {
     actorId: string;
     actorType: 'user' | 'api-key';
@@ -29,7 +30,7 @@ interface AuthFnSession {
     attributes?: Record<string, unknown>;
   };
   actorType: 'user' | 'api-key';
-  actorId: string;                             // user id or api-key id
+  actorId: string;                             // user id (an owned key's owner) or unowned api-key id
   tenantId?: string;
   regionId?: string;                           // present when multi-region is enabled
   methods: AuthFnAuthMethod[];                 // ['password'], ['email-otp'], ['oauth-google', 'two-factor'], …
@@ -153,7 +154,7 @@ Index on `userId`, `tokenHash`, `expiresAt`. Your migrations from `auth.getSchem
 
 ## API key sessions
 
-When a request authenticates via `Authorization: Bearer ak_…` (with the API keys plugin enabled), authfn issues a synthetic session: `type: 'api-key'`, `actorType: 'api-key'`, `methods: ['api-key']`. API key sessions are not persisted in `authfn_sessions`; the API key record itself is the source of truth. Revoking the key invalidates all of its sessions immediately.
+When a request authenticates via `Authorization: Bearer ak_…` (with the API keys plugin enabled), authfn issues a synthetic session: `type: 'api-key'`, `methods: ['api-key']`, `credential: { type: 'api-key', id }`. A user-owned key acts as its owner (`actorType: 'user'`, `actorId` = owner's user ID); a key whose owner was deleted or is disabled authenticates as no one. An unowned service key keeps `actorType: 'api-key'` with the key ID as `actorId`. API key sessions are not persisted in `authfn_sessions`; the API key record itself is the source of truth. Revoking the key invalidates all of its sessions immediately.
 
 ## Related
 

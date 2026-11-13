@@ -3695,6 +3695,7 @@ Both modes use the same `authfn_sessions` table and the same lifecycle — only 
 interface AuthFnSession {
   id: string;                                  // session id (stable across rotations)
   type: 'session' | 'api-key';
+  credential?: { type: 'api-key'; id: string }; // set when an API key authenticated the request
   subject: {
     actorId: string;
     actorType: 'user' | 'api-key';
@@ -3704,7 +3705,7 @@ interface AuthFnSession {
     attributes?: Record<string, unknown>;
   };
   actorType: 'user' | 'api-key';
-  actorId: string;                             // user id or api-key id
+  actorId: string;                             // user id (an owned key's owner) or unowned api-key id
   tenantId?: string;
   regionId?: string;                           // present when multi-region is enabled
   methods: AuthFnAuthMethod[];                 // ['password'], ['email-otp'], ['oauth-google', 'two-factor'], …
@@ -3828,7 +3829,7 @@ Index on `userId`, `tokenHash`, `expiresAt`. Your migrations from `auth.getSchem
 
 ## API key sessions
 
-When a request authenticates via `Authorization: Bearer ak_…` (with the API keys plugin enabled), authfn issues a synthetic session: `type: 'api-key'`, `actorType: 'api-key'`, `methods: ['api-key']`. API key sessions are not persisted in `authfn_sessions`; the API key record itself is the source of truth. Revoking the key invalidates all of its sessions immediately.
+When a request authenticates via `Authorization: Bearer ak_…` (with the API keys plugin enabled), authfn issues a synthetic session: `type: 'api-key'`, `methods: ['api-key']`, `credential: { type: 'api-key', id }`. A user-owned key acts as its owner (`actorType: 'user'`, `actorId` = owner's user ID); a key whose owner was deleted or is disabled authenticates as no one. An unowned service key keeps `actorType: 'api-key'` with the key ID as `actorId`. API key sessions are not persisted in `authfn_sessions`; the API key record itself is the source of truth. Revoking the key invalidates all of its sessions immediately.
 
 ## Related
 
@@ -5171,13 +5172,18 @@ When a request carries `Authorization: Bearer <secret>`, the kernel:
 1. Looks up the key by `secretHash`; returns `null` if no key matches.
 2. Throws `AUTHFN_API_KEY_REVOKED` if `revokedAt` is set.
 3. Returns `null` if `expiresAt` is at or before the current time.
-4. Updates `lastUsedAt`.
-5. Synthesizes an `AuthFnSession` with `type: 'api-key'`, `actorType: 'api-key'`, `methods: ['api-key']`.
+4. For a user-owned key, loads the owner; returns `null` if the owner was deleted or is disabled (`metadata.disabled === true` on the user record).
+5. Updates `lastUsedAt`.
+6. Synthesizes an `AuthFnSession` with `type: 'api-key'`, `methods: ['api-key']`, and `credential: { type: 'api-key', id: <keyId> }`.
 
-The synthesized session is what `auth.provider.authenticate(request)` returns. Your application authorization logic should branch on `session.actorType`:
+A user-owned key acts as its owner: the session carries `actorType: 'user'` and `actorId` set to the owner's user ID, so data you key by `actorId` is the owner's data. An unowned service key keeps `actorType: 'api-key'` with the key ID as `actorId`. AuthFn looks up the key and loads its owner only in the configured `namespace`; with an adapter that isolates namespaces, a key or owner from another tenant authenticates as no one.
+
+`session.metadata.ownerUserId` still carries the owner's user ID for one more minor version. It is deprecated; read `session.actorId` instead.
+
+The synthesized session is what `auth.provider.authenticate(request)` returns. To tell a key apart from an interactive sign-in, branch on `session.type` (or `session.credential`), not on `session.actorType`:
 
 ```ts
-if (session.actorType === 'api-key') {
+if (session.type === 'api-key') {
   const scopes = session.metadata?.scopes;
   if (!Array.isArray(scopes) || !scopes.includes('repo:read')) {
     return Response.json({ error: 'forbidden' }, { status: 403 });
@@ -5223,7 +5229,7 @@ async function handleRepositoryRequest(request: Request): Promise<Response> {
     }
     throw error;
   }
-  if (!session || session.actorType !== 'api-key') {
+  if (!session || session.type !== 'api-key') {
     return Response.json({ error: 'unauthorized' }, { status: 401 });
   }
   if (!hasScope(session, 'repo:read')) {
@@ -5259,9 +5265,11 @@ await revokeApiKeyById(config, serviceKey.keyId);
 // Update your inventory and audit the successful revocation.
 ```
 
-These keys persist a null owner, use the same hashed-secret, expiry, and revocation behavior, and authenticate as `actorType: 'api-key'` with the key ID as their actor ID. Authentication exposes the stored scopes in `session.metadata.scopes` and leaves `session.metadata.ownerUserId` undefined. Your application must authorize service-principal issuance and use and enforce scopes; the helper does not create a user identity.
+These keys persist a null owner, use the same hashed-secret, expiry, and revocation behavior, and authenticate as `actorType: 'api-key'` with the key ID as their actor ID. Host routes that require `actorType: 'user'` reject them. Authentication exposes the stored scopes in `session.metadata.scopes` and leaves `session.metadata.ownerUserId` undefined. Your application must authorize service-principal issuance and use and enforce scopes; the helper does not create a user identity.
 
 Unowned keys authenticate through the normal `auth.provider.authenticate` path only. The opt-in [placement-context issuer](../recipes/placement-bound-auth-context) (`createAuthFnPlacementContextIssuer`) binds each API-key grant to its owning user's placement, so it rejects an unowned key with `AUTHFN_UNAUTHENTICATED`. Use a user-owned key when a service must derive placement-bound context.
+
+AuthFn's own account routes (`GET /auth/session`, `GET`/`DELETE /auth/account`), password linking during sign-up, and the operator console accept only interactive sessions (`type: 'session'`), so a user-owned key cannot manage its owner's account even though it acts as that user.
 
 The cookie-session routes above remain user-owned: creation always uses the signed-in user's ID, and user listing and revocation exclude unowned keys. Manage unowned keys through trusted server code after applying your application's authorization policy.
 
@@ -8489,13 +8497,14 @@ app.get('/projects', async (c) => {
     }
     throw error;
   }
-  if (!session || session.actorType !== 'api-key') {
+  if (!session || session.type !== 'api-key') {
     return c.json({ error: 'unauthorized' }, 401);
   }
   if (!hasScope(session, 'read')) {
     return c.json({ error: 'forbidden' }, 403);
   }
-  // session.actorId === api key id
+  // session.actorId === the key owner's user id (the key id for an unowned key)
+  // session.credential.id === api key id
   // session.metadata.scopes === ['read', 'write']
   return c.json({ projects: [] }); // Replace with your application's project data.
 });

@@ -1,5 +1,10 @@
 import { randomBytes } from 'node:crypto';
-import type { AuthFnApiKeyRecord, AuthFnRuntimeConfig, AuthFnSession } from '../types.js';
+import type {
+  AuthFnApiKeyRecord,
+  AuthFnRuntimeConfig,
+  AuthFnSession,
+  AuthFnUserRecord
+} from '../types.js';
 import { AuthFnApiKeyRevokedError, AuthFnNotFoundError, AuthFnValidationError } from './errors.js';
 import {
   AUTHFN_DATABASE_KEY_MAX_LENGTH,
@@ -172,6 +177,16 @@ export async function authenticateApiKey(
     return null;
   }
 
+  // An owned key acts as its owner, so the owner must still be able to act:
+  // a deleted or disabled owner leaves the key authenticating as no one.
+  let owner: AuthFnUserRecord | null = null;
+  if (record.userId != null) {
+    owner = await findUserById(config, record.userId);
+    if (!owner || isAuthFnUserDisabled(owner)) {
+      return null;
+    }
+  }
+
   const updatedRecord = await config.database.update<AuthFnApiKeyRecord>({
     model: 'api_keys',
     where: [{ field: 'id', operator: 'eq', value: record.id }],
@@ -182,24 +197,35 @@ export async function authenticateApiKey(
     namespace: namespace(config)
   });
 
+  const actor = owner
+    ? { actorId: owner.id, actorType: 'user' as const }
+    : { actorId: updatedRecord.id, actorType: 'api-key' as const };
+
   return {
     id: updatedRecord.id,
     type: 'api-key',
-    subject: {
-      actorId: updatedRecord.id,
-      actorType: 'api-key'
-    },
-    actorType: 'api-key',
-    actorId: updatedRecord.id,
+    subject: { ...actor },
+    ...actor,
+    credential: { type: 'api-key', id: updatedRecord.id },
     resourceIds: [],
     methods: ['api-key'],
     expiresAt: updatedRecord.expiresAt ?? undefined,
     metadata: {
       ...(updatedRecord.metadata ?? {}),
-      ownerUserId: updatedRecord.userId ?? undefined,
+      // Deprecated: kept for one minor version; read `actorId` instead.
+      ownerUserId: owner?.id,
       scopes: updatedRecord.scopes ?? []
     }
   };
+}
+
+/**
+ * AuthFn has no user status column; a host disables a user by setting
+ * `metadata.disabled` to `true` on the user record. Only API-key sessions
+ * check it today.
+ */
+export function isAuthFnUserDisabled(user: Pick<AuthFnUserRecord, 'metadata'>): boolean {
+  return user.metadata?.disabled === true;
 }
 
 export function sanitizeApiKeyRecord(record: AuthFnApiKeyRecord): SanitizedApiKey {
