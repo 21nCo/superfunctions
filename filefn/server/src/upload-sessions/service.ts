@@ -14,6 +14,7 @@ import type { ProcessingService } from '../processing/service.js';
 import * as errors from '../errors.js';
 import { createHash, randomBytes } from 'crypto';
 import { generateFileFnId } from '../ids.js';
+import { parseClientFileId } from './file-id.js';
 import {
   createUploadStartedEvent,
   createPartRecordedEvent,
@@ -57,7 +58,13 @@ export interface CreateSessionInput {
   fileName: string;
   size: number;
   mimeType: string;
-  fileId?: string;
+  /**
+   * Client-chosen file ID (`file_[A-Za-z0-9_-]{8,64}`). A new ID creates the
+   * file owned by the caller when the session completes; an existing ID
+   * replaces the file and needs write permission on it. Omit to let the
+   * server generate one.
+   */
+  fileId?: string | null;
   metadata?: Record<string, unknown>;
   idempotencyKey?: string;
 }
@@ -85,6 +92,12 @@ export interface UploadSession {
   completionVersionId?: string | null;
   uploadSessionToken?: string | null;
   uploadSessionTokenHash?: string | null;
+}
+
+interface RacedFileRecord {
+  fileId: string;
+  ownerId: string;
+  tenantId?: string | null;
 }
 
 function generateDefaultId(): string {
@@ -234,6 +247,52 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     }
   }
 
+  async function findFileRecord(fileId: string): Promise<RacedFileRecord | null> {
+    return db.findOne<RacedFileRecord>({
+      model: 'files',
+      where: [{ field: 'fileId', operator: 'eq', value: fileId }],
+      namespace,
+    });
+  }
+
+  async function updateFileRecord(fileId: string, data: Record<string, unknown>): Promise<void> {
+    await db.update({
+      model: 'files',
+      where: [{ field: 'fileId', operator: 'eq', value: fileId }],
+      data,
+      namespace,
+    });
+  }
+
+  async function deleteObjectBestEffort(key: string, target: string | undefined): Promise<void> {
+    if (!storage.deleteObject) return;
+    try {
+      await storage.deleteObject({ key, target });
+    } catch {
+      // Best-effort cleanup.
+    }
+  }
+
+  /**
+   * Whether the caller may turn its session into a new version of a file that
+   * another session created after this one passed its write check. Without a
+   * configured checker only the same named owner in the same tenant may.
+   */
+  async function canReplaceRacedFile(
+    file: RacedFileRecord,
+    session: UploadSession,
+    ctx: FileProviderContext
+  ): Promise<boolean> {
+    if (fileWriteChecker) {
+      return fileWriteChecker.canWriteFile(file.fileId, ctx);
+    }
+    return (
+      !isAnonymousSession(session) &&
+      file.ownerId === session.ownerId &&
+      (file.tenantId ?? null) === (session.tenantId ?? null)
+    );
+  }
+
   return {
     assertSessionAccess(session: UploadSession, ctx: FileProviderContext, uploadSessionToken?: string): void {
       // Legacy safety: pre-binding records may not carry ownerId.
@@ -279,6 +338,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       uploadSessionToken?: string;
     }> {
       const warnings: string[] = [];
+      const clientFileId = parseClientFileId(input.fileId);
 
       // Check idempotency
       if (input.idempotencyKey) {
@@ -344,11 +404,13 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         throw errors.policyMaxSizeExceeded(input.policy, policy.maxSizeBytes, input.size);
       }
 
-      // Check authorization for replace-by-fileId
-      if (input.fileId && fileWriteChecker) {
-        const canWrite = await fileWriteChecker.canWriteFile(input.fileId, ctx);
+      // A client-chosen ID that already names a file replaces it, which needs
+      // write permission. A new ID is bound to this caller; the first session to
+      // complete creates the file (see completeSession).
+      if (clientFileId && fileWriteChecker) {
+        const canWrite = await fileWriteChecker.canWriteFile(clientFileId, ctx);
         if (!canWrite) {
-          throw errors.forbidden({ fileId: input.fileId, operation: 'replace' });
+          throw errors.forbidden({ fileId: clientFileId, operation: 'replace' });
         }
       }
 
@@ -376,7 +438,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       const uploadSessionId = generateId();
       const now = new Date();
       const expiresAt = new Date(now.getTime() + uploadSessionTtlSeconds * 1000).toISOString();
-      const fileId = input.fileId || generateFileFnId('file');
+      const fileId = clientFileId ?? generateFileFnId('file');
       const versionId = generateFileFnId('ver');
 
       const storageKey = computeStorageKey(policy, {
@@ -858,41 +920,53 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         }
       }
 
-      // Create or update file
-      const existingFile = session.fileId ? await db.findOne({ model: 'files', where: [{ field: 'fileId', operator: 'eq', value: session.fileId }], namespace }) : null;
+      // Create or update file. files.fileId is unique, so when sessions race to
+      // create the same new ID exactly one insert succeeds: the first writer owns
+      // the file and the others become replacements that need write permission.
+      const fileUpdate = {
+        currentVersionId: versionId,
+        size: session.size,
+        mimeType: session.mimeType,
+        metadata,
+        updatedAt: now,
+      };
+      const existingFile = session.fileId ? await findFileRecord(session.fileId) : null;
 
       if (existingFile) {
-        await db.update({
-          model: 'files',
-          where: [{ field: 'fileId', operator: 'eq', value: fileId }],
-          data: {
-            currentVersionId: versionId,
-            size: session.size,
-            mimeType: session.mimeType,
-            metadata,
-            updatedAt: now,
-          },
-          namespace,
-        });
+        await updateFileRecord(fileId, fileUpdate);
       } else {
-        await db.create({
-          model: 'files',
-          data: {
-            fileId,
-            currentVersionId: versionId,
-            ownerId: session.ownerId,
-            tenantId: session.tenantId,
-            visibility: policy?.visibility || 'private',
-            policy: session.policy,
-            mimeType: session.mimeType,
-            size: session.size,
-            name: session.fileName,
-            metadata,
-            createdAt: now,
-            updatedAt: now,
-          },
-          namespace,
-        });
+        try {
+          await db.create({
+            model: 'files',
+            data: {
+              fileId,
+              currentVersionId: versionId,
+              ownerId: session.ownerId,
+              tenantId: session.tenantId,
+              visibility: policy?.visibility || 'private',
+              policy: session.policy,
+              mimeType: session.mimeType,
+              size: session.size,
+              name: session.fileName,
+              metadata,
+              createdAt: now,
+              updatedAt: now,
+            },
+            namespace,
+          });
+        } catch (createError) {
+          const winner = session.fileId ? await findFileRecord(session.fileId) : null;
+          if (!winner) throw createError;
+          if (!(await canReplaceRacedFile(winner, session, ctx))) {
+            // The default key embeds this session's own version ID, so the object
+            // is ours alone; a custom storagePath may share the winner's key.
+            if (!isDeduplicated && !policy?.storagePath) {
+              await deleteObjectBestEffort(session.storageKey, policyStorageTarget);
+            }
+            throw errors.forbidden({ fileId, operation: 'replace' });
+          }
+          await updateFileRecord(fileId, fileUpdate);
+        }
       }
 
       // Create version

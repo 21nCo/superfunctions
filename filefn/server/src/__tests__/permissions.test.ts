@@ -565,7 +565,7 @@ describe('@filefn/server permissions', () => {
 
       await db.create({
         model: 'files',
-        data: createMockFile({ fileId: 'file_replace', ownerId: 'user_123', currentVersionId: 'ver_old' }),
+        data: createMockFile({ fileId: 'file_replace01', ownerId: 'user_123', currentVersionId: 'ver_old' }),
         namespace: 'filefn',
       });
 
@@ -595,7 +595,7 @@ describe('@filefn/server permissions', () => {
           fileName: 'avatar.png',
           size: 1000,
           mimeType: 'image/png',
-          fileId: 'file_replace',
+          fileId: 'file_replace01',
         },
         ctx,
       );

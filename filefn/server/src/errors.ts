@@ -33,6 +33,7 @@ export const ErrorCodes = {
   RATE_LIMITED: 'FILEFN_RATE_LIMITED',
   INVALID_PART_NUMBER: 'FILEFN_INVALID_PART_NUMBER',
   INVALID_ETAG: 'FILEFN_INVALID_ETAG',
+  INVALID_FILE_ID: 'FILEFN_INVALID_FILE_ID',
   UPLOAD_INCOMPLETE: 'FILEFN_UPLOAD_INCOMPLETE',
   UPLOAD_EXPIRED: 'FILEFN_UPLOAD_EXPIRED',
   UPLOAD_ABORTED: 'FILEFN_UPLOAD_ABORTED',
@@ -109,6 +110,14 @@ export function invalidPartNumber(): FileFnError {
 
 export function invalidEtag(): FileFnError {
   return new FileFnError(ErrorCodes.INVALID_ETAG, 'Invalid etag', 400);
+}
+
+export function invalidFileId(): FileFnError {
+  return new FileFnError(
+    ErrorCodes.INVALID_FILE_ID,
+    'fileId must match file_[A-Za-z0-9_-]{8,64}',
+    400,
+  );
 }
 
 export function uploadIncomplete(): FileFnError {
