@@ -32,7 +32,9 @@ A verified webhook whose subscription or payment reference matches no local subs
 
 Unlinked events are kept for 90 days. Storing a new unlinked event deletes rows past their `expiresAt`, and an expired event is never replayed.
 
-When a reference is later linked, by checkout verification, a restored purchase, a metadata bootstrap, or the next event for that reference, BillFn replays its unexpired unlinked events in provider event-time order (events without a provider time go last). An event older than the subscription's current provider state is marked `skipped`; an applied event is marked `replayed`. A replay stops at an event it cannot apply and leaves it and the later events `unlinked`, with the error recorded, for the next link or event on that reference.
+When a reference is later linked, by checkout verification, a restored purchase, a metadata bootstrap, an event that links it through its checkout session, or the next event for that reference, BillFn replays its unexpired unlinked events in provider event-time order (events without a provider time go last). An event older than the subscription's current provider state is marked `skipped`; an applied event is marked `replayed`. Checkout verification and restore read the provider's live state, so an unlinked event that occurred before that read (or, without a provider time, was stored before it) is marked `skipped` rather than applied over the live state.
+
+A replay stops at an event it cannot apply and leaves it and the later events `unlinked`, with the error recorded. The operation that triggered the replay then fails with that error, so it is retried: the webhook receipt stays unprocessed and the provider redelivers it (with a queue, the webhook job fails and can be rerun with `webhook-replay`), and checkout verification or restore can be called again. An event held by a concurrent replay is left to that replay.
 
 ## Worker
 

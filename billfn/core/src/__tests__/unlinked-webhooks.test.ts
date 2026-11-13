@@ -36,11 +36,18 @@ const catalog: BillFnCatalog = {
 
 const DAY = 24 * 60 * 60 * 1000;
 
+type ProviderOptions = {
+  verifiedSubscriptionId?: string;
+  /** Runs while the provider is read live, before verification or restore returns. */
+  duringLiveRead?: () => Promise<void>;
+};
+
 /**
  * A Dodo-shaped provider whose webhook body is the JSON list of parsed events,
  * so each test states exactly which verified events a delivery carries.
  */
-function createProvider(verifiedSubscriptionId?: string): BillFnProviderAdapter {
+function createProvider(options: ProviderOptions): BillFnProviderAdapter {
+  const verifiedSubscriptionId = options.verifiedSubscriptionId;
   return {
     provider: 'dodo',
     capabilities: {
@@ -48,7 +55,7 @@ function createProvider(verifiedSubscriptionId?: string): BillFnProviderAdapter 
       verifyCheckout: true,
       cancelSubscription: false,
       syncSubscription: false,
-      restorePurchases: false,
+      restorePurchases: true,
       webhookIngestion: true
     },
     async createCheckout(input) {
@@ -59,6 +66,7 @@ function createProvider(verifiedSubscriptionId?: string): BillFnProviderAdapter 
       };
     },
     async verifyCheckout() {
+      await options.duringLiveRead?.();
       return {
         subscriptionStatus: 'active',
         checkoutStatus: 'succeeded',
@@ -66,6 +74,18 @@ function createProvider(verifiedSubscriptionId?: string): BillFnProviderAdapter 
         autoRenew: true,
         raw: { verified: true }
       };
+    },
+    async restorePurchases() {
+      await options.duringLiveRead?.();
+      return [
+        {
+          subscriptionStatus: 'active',
+          checkoutStatus: 'succeeded',
+          providerSubscriptionId: verifiedSubscriptionId,
+          autoRenew: true,
+          raw: { restored: true }
+        }
+      ];
     },
     async parseWebhook(input) {
       return JSON.parse(input.rawBody) as BillFnParsedWebhookEvent[];
@@ -80,6 +100,7 @@ function subscriptionEvent(input: {
   occurredAt: string;
   billingAccountId?: string;
   productId?: string;
+  checkoutReferenceId?: string;
 }): BillFnParsedWebhookEvent {
   const data: Record<string, unknown> = {
     subscription_id: input.subscriptionId,
@@ -96,6 +117,7 @@ function subscriptionEvent(input: {
     occurredAt: input.occurredAt,
     priceId: input.productId ?? 'pdt_pro_month',
     providerSubscriptionId: input.subscriptionId,
+    checkoutReferenceId: input.checkoutReferenceId,
     billingState: {
       subscriptionStatus: input.status,
       checkoutStatus: 'succeeded',
@@ -111,13 +133,13 @@ function deliver(billfn: ReturnType<typeof createBillFn>, events: BillFnParsedWe
   return billfn.handleWebhook({ provider: 'dodo', rawBody: JSON.stringify(events), headers: new Headers() });
 }
 
-function setup(options: { verifiedSubscriptionId?: string; db?: ReturnType<typeof memoryAdapter> } = {}) {
+function setup(options: ProviderOptions & { db?: ReturnType<typeof memoryAdapter> } = {}) {
   const db = options.db ?? memoryAdapter({ debug: false });
   let now = new Date('2026-11-01T00:00:00.000Z');
   const billfn = createBillFn({
     db,
     catalog,
-    providers: { dodo: createProvider(options.verifiedSubscriptionId) },
+    providers: { dodo: createProvider(options) },
     now: () => now
   });
   return {
@@ -125,6 +147,18 @@ function setup(options: { verifiedSubscriptionId?: string; db?: ReturnType<typeo
     billfn,
     advance(ms: number) {
       now = new Date(now.getTime() + ms);
+    },
+    async checkout(principalId: string) {
+      const created = await billfn.createCheckout({
+        subject: { principalId },
+        planKey: 'pro',
+        provider: 'dodo',
+        interval: 'month'
+      });
+      if (!created.ok) {
+        throw new Error('expected checkout');
+      }
+      return created.data.checkoutSession;
     },
     async subscriptions() {
       return db.findMany<BillFnSubscription>({ model: 'subscriptions', where: [], namespace: 'billfn' });
@@ -174,6 +208,20 @@ function withSubscriptionReferenceUniqueness(db: ReturnType<typeof memoryAdapter
       });
       lock = run.catch(() => undefined);
       return run;
+    }
+  } as ReturnType<typeof memoryAdapter>;
+}
+
+/** Fails the next subscription update while `armed` is set, as a transient database error would. */
+function withFailingSubscriptionUpdate(db: ReturnType<typeof memoryAdapter>, fault: { armed: boolean }) {
+  return {
+    ...db,
+    async updateMany(params: Parameters<typeof db.updateMany>[0]) {
+      if (params.model === 'subscriptions' && fault.armed) {
+        fault.armed = false;
+        throw new Error('injected subscription write failure');
+      }
+      return db.updateMany(params);
     }
   } as ReturnType<typeof memoryAdapter>;
 }
@@ -290,19 +338,8 @@ describe('webhook events for subscriptions BillFn has not seen', () => {
     ]);
   });
 
-  it('replays unlinked events in provider event-time order when a checkout links the reference', async () => {
-    const { billfn, subscriptions, unlinked, advance } = setup({ verifiedSubscriptionId: 'sub_linked_later' });
-
-    // Delivered newest first; replay must apply them oldest first.
-    await deliver(billfn, [
-      subscriptionEvent({
-        eventId: 'evt_link_b',
-        subscriptionId: 'sub_linked_later',
-        status: 'past_due',
-        occurredAt: '2026-10-31T00:00:00.000Z'
-      })
-    ]);
-    advance(1000);
+  it('skips unlinked events older than the live state a checkout verification links', async () => {
+    const { billfn, subscriptions, unlinked, advance, checkout } = setup({ verifiedSubscriptionId: 'sub_linked_later' });
     await deliver(billfn, [
       subscriptionEvent({
         eventId: 'evt_link_a',
@@ -311,40 +348,36 @@ describe('webhook events for subscriptions BillFn has not seen', () => {
         occurredAt: '2026-10-30T00:00:00.000Z'
       })
     ]);
+    advance(1000);
+    await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_link_b',
+        subscriptionId: 'sub_linked_later',
+        status: 'past_due',
+        occurredAt: '2026-10-31T00:00:00.000Z'
+      })
+    ]);
     expect(await subscriptions()).toHaveLength(0);
-    expect((await unlinked()).map((row) => row.status)).toEqual(['unlinked', 'unlinked']);
 
     advance(1000);
-    const checkout = await billfn.createCheckout({
-      subject: { principalId: 'link_user' },
-      planKey: 'pro',
-      provider: 'dodo',
-      interval: 'month'
-    });
-    if (!checkout.ok) {
-      throw new Error('expected checkout');
-    }
+    const session = await checkout('link_user');
     const verified = await billfn.verifyCheckout({
       subject: { principalId: 'link_user' },
-      checkoutSessionId: checkout.data.checkoutSession.checkoutSessionId
+      checkoutSessionId: session.checkoutSessionId
     });
 
-    expect(verified.ok).toBe(true);
+    // The provider reported the subscription active just now; the stored past_due is stale.
     if (!verified.ok) {
       throw new Error('expected verification');
     }
-    // The response reflects the replayed state, not the pre-replay snapshot.
-    expect(verified.data.subscription.status).toBe('past_due');
-    expect(verified.data.entitlements.status).toBe('grace');
-    const [subscription] = await subscriptions();
-    expect(subscription).toMatchObject({
-      billingAccountId: 'ba_user_link_user',
-      status: 'past_due',
-      metadata: expect.objectContaining({ billfnProviderEventOccurredAt: '2026-10-31T00:00:00.000Z' })
-    });
+    expect(verified.data.subscription.status).toBe('active');
+    expect(verified.data.entitlements.status).toBe('active');
+    const [subscription, ...others] = await subscriptions();
+    expect(others).toHaveLength(0);
+    expect(subscription).toMatchObject({ billingAccountId: 'ba_user_link_user', status: 'active' });
     expect(await unlinked()).toEqual([
-      expect.objectContaining({ providerEventId: 'evt_link_a', status: 'replayed', subscriptionId: subscription?.id }),
-      expect.objectContaining({ providerEventId: 'evt_link_b', status: 'replayed', subscriptionId: subscription?.id })
+      expect.objectContaining({ providerEventId: 'evt_link_a', status: 'skipped', subscriptionId: subscription?.id }),
+      expect.objectContaining({ providerEventId: 'evt_link_b', status: 'skipped', subscriptionId: subscription?.id })
     ]);
 
     // A later event for the linked reference applies directly and leaves nothing unlinked.
@@ -353,16 +386,193 @@ describe('webhook events for subscriptions BillFn has not seen', () => {
       subscriptionEvent({
         eventId: 'evt_link_c',
         subscriptionId: 'sub_linked_later',
-        status: 'active',
-        occurredAt: '2026-11-01T00:00:00.000Z'
+        status: 'past_due',
+        occurredAt: '2026-11-01T00:00:10.000Z'
       })
     ]);
-    expect((await subscriptions())[0]?.status).toBe('active');
+    expect((await subscriptions())[0]?.status).toBe('past_due');
     expect(await unlinked()).toHaveLength(2);
   });
 
+  it('applies an unlinked event that occurred after the live read a checkout verification links', async () => {
+    let during: () => Promise<void> = async () => undefined;
+    const { billfn, subscriptions, unlinked, advance, checkout } = setup({
+      verifiedSubscriptionId: 'sub_in_flight',
+      duringLiveRead: () => during()
+    });
+    await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_flight_old',
+        subscriptionId: 'sub_in_flight',
+        status: 'expired',
+        occurredAt: '2026-10-31T00:00:00.000Z'
+      })
+    ]);
+    advance(1000);
+    const session = await checkout('flight_user');
+    // The provider sends a cancellation while BillFn is still reading the checkout.
+    during = async () => {
+      advance(1000);
+      await deliver(billfn, [
+        subscriptionEvent({
+          eventId: 'evt_flight_new',
+          subscriptionId: 'sub_in_flight',
+          status: 'canceled',
+          occurredAt: '2026-11-01T00:00:02.000Z'
+        })
+      ]);
+    };
+
+    const verified = await billfn.verifyCheckout({
+      subject: { principalId: 'flight_user' },
+      checkoutSessionId: session.checkoutSessionId
+    });
+
+    if (!verified.ok) {
+      throw new Error('expected verification');
+    }
+    expect(verified.data.subscription.status).toBe('canceled');
+    expect(verified.data.entitlements.status).toBe('inactive');
+    const [subscription] = await subscriptions();
+    expect(subscription?.status).toBe('canceled');
+    expect(await unlinked()).toEqual([
+      expect.objectContaining({ providerEventId: 'evt_flight_new', status: 'replayed' }),
+      expect.objectContaining({ providerEventId: 'evt_flight_old', status: 'skipped' })
+    ]);
+  });
+
+  it('skips unlinked events older than the live state a restored purchase links', async () => {
+    const { billfn, subscriptions, unlinked, advance } = setup({ verifiedSubscriptionId: 'sub_restored' });
+    await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_restore_old',
+        subscriptionId: 'sub_restored',
+        status: 'expired',
+        occurredAt: '2026-10-31T00:00:00.000Z'
+      })
+    ]);
+    advance(1000);
+
+    const restored = await billfn.restorePurchases({
+      subject: { principalId: 'restore_user' },
+      provider: 'dodo',
+      planKey: 'pro'
+    });
+
+    if (!restored.ok) {
+      throw new Error('expected restore');
+    }
+    expect(restored.data.subscription.status).toBe('active');
+    expect(restored.data.entitlements.status).toBe('active');
+    const [subscription] = await subscriptions();
+    expect(subscription).toMatchObject({ billingAccountId: 'ba_user_restore_user', status: 'active' });
+    expect(await unlinked()).toEqual([
+      expect.objectContaining({ providerEventId: 'evt_restore_old', status: 'skipped', subscriptionId: subscription?.id })
+    ]);
+  });
+
+  it('replays unlinked events in event-time order after an event links the reference through its checkout', async () => {
+    const { billfn, subscriptions, unlinked, advance, checkout } = setup();
+    await billfn.quotaProvider.recordUsage({ principalId: 'checkout_ref_user', bytes: 0 });
+    // Delivered newest first; replay must apply them oldest first.
+    await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_ref_cancel',
+        subscriptionId: 'sub_checkout_ref',
+        status: 'canceled',
+        occurredAt: '2026-10-31T12:00:00.000Z'
+      })
+    ]);
+    advance(1000);
+    await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_ref_past_due',
+        subscriptionId: 'sub_checkout_ref',
+        status: 'past_due',
+        occurredAt: '2026-10-31T06:00:00.000Z'
+      })
+    ]);
+    advance(1000);
+    const session = await checkout('checkout_ref_user');
+
+    // The oldest event names the checkout, so it creates the subscription and links the reference.
+    const response = await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_ref_active',
+        subscriptionId: 'sub_checkout_ref',
+        status: 'active',
+        occurredAt: '2026-10-30T00:00:00.000Z',
+        checkoutReferenceId: session.providerCheckoutId
+      })
+    ]);
+
+    expect(response.ok && response.data.processed).toBe(1);
+    const [subscription, ...others] = await subscriptions();
+    expect(others).toHaveLength(0);
+    expect(subscription).toMatchObject({
+      billingAccountId: 'ba_user_checkout_ref_user',
+      status: 'canceled',
+      metadata: expect.objectContaining({ billfnProviderEventOccurredAt: '2026-10-31T12:00:00.000Z' })
+    });
+    const entitlements = await billfn.getEntitlements({ principalId: 'checkout_ref_user' });
+    expect(entitlements.ok && entitlements.data.entitlements?.status).toBe('inactive');
+    expect(await unlinked()).toEqual([
+      expect.objectContaining({ providerEventId: 'evt_ref_cancel', status: 'replayed', subscriptionId: subscription?.id }),
+      expect.objectContaining({ providerEventId: 'evt_ref_past_due', status: 'replayed', subscriptionId: subscription?.id })
+    ]);
+  });
+
+  it('keeps the linking webhook retryable when replaying an unlinked event fails', async () => {
+    const fault = { armed: false };
+    const db = withFailingSubscriptionUpdate(memoryAdapter({ debug: false }), fault);
+    const { billfn, subscriptions, unlinked, receipt, advance } = setup({ db });
+    await billfn.quotaProvider.recordUsage({ principalId: 'retry_user', bytes: 0 });
+    await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_retry_cancel',
+        subscriptionId: 'sub_retry',
+        status: 'canceled',
+        occurredAt: '2026-10-31T12:00:00.000Z'
+      })
+    ]);
+    advance(1000);
+    const bootstrap = subscriptionEvent({
+      eventId: 'evt_retry_active',
+      subscriptionId: 'sub_retry',
+      status: 'active',
+      occurredAt: '2026-10-31T00:00:00.000Z',
+      billingAccountId: 'ba_user_retry_user'
+    });
+
+    // The bootstrap creates the subscription; replaying the cancellation onto it fails once.
+    fault.armed = true;
+    await expect(deliver(billfn, [bootstrap])).rejects.toThrow('injected subscription write failure');
+
+    expect((await receipt('evt_retry_active'))?.processedAt).toBeFalsy();
+    expect(await unlinked()).toEqual([
+      expect.objectContaining({
+        providerEventId: 'evt_retry_cancel',
+        status: 'unlinked',
+        error: 'injected subscription write failure'
+      })
+    ]);
+
+    // The provider redelivers the unacknowledged event and the retained cancellation is applied.
+    advance(1000);
+    const redelivered = await deliver(billfn, [bootstrap]);
+
+    expect(redelivered.ok && redelivered.data.processed).toBe(1);
+    expect((await receipt('evt_retry_active'))?.processedAt).toBeTruthy();
+    const [subscription, ...others] = await subscriptions();
+    expect(others).toHaveLength(0);
+    expect(subscription).toMatchObject({ billingAccountId: 'ba_user_retry_user', status: 'canceled' });
+    expect(await unlinked()).toEqual([
+      expect.objectContaining({ providerEventId: 'evt_retry_cancel', status: 'replayed', error: null })
+    ]);
+  });
+
   it('does not replay unlinked events older than 90 days and purges them', async () => {
-    const { billfn, subscriptions, unlinked, advance } = setup({ verifiedSubscriptionId: 'sub_expired' });
+    const { billfn, subscriptions, unlinked, advance, checkout } = setup({ verifiedSubscriptionId: 'sub_expired' });
     await deliver(billfn, [
       subscriptionEvent({
         eventId: 'evt_expired',
@@ -373,18 +583,10 @@ describe('webhook events for subscriptions BillFn has not seen', () => {
     ]);
 
     advance(91 * DAY);
-    const checkout = await billfn.createCheckout({
-      subject: { principalId: 'expired_user' },
-      planKey: 'pro',
-      provider: 'dodo',
-      interval: 'month'
-    });
-    if (!checkout.ok) {
-      throw new Error('expected checkout');
-    }
+    const session = await checkout('expired_user');
     await billfn.verifyCheckout({
       subject: { principalId: 'expired_user' },
-      checkoutSessionId: checkout.data.checkoutSession.checkoutSessionId
+      checkoutSessionId: session.checkoutSessionId
     });
     expect((await subscriptions())[0]?.status).toBe('active');
     expect((await unlinked())[0]?.status).toBe('unlinked');
