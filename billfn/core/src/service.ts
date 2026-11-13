@@ -138,10 +138,13 @@ type ServiceDeps = {
   queue?: BillFnQueueAdapter<BillFnQueuedJob>;
   /**
    * Reconciles an event inside a committed mutation's window with an inline
-   * provider read; throws only when applying a successful read fails.
+   * provider read. A failed read without a queue throws a window-read error.
    */
-  reconcileProviderState?: (subscription: BillFnSubscription, providerEventId: string | undefined) => Promise<void>;
+  reconcileProviderState?: (subscription: BillFnSubscription, event: WindowEvent) => Promise<void>;
 };
+type CatalogSelection = { plan: ReturnType<typeof requirePlan>; price: BillFnPriceDefinition };
+/** An event inside a committed mutation's window: its lifecycle key and the catalog price it names. */
+type WindowEvent = { providerEventId?: string; selection: CatalogSelection };
 
 type VerifiedBillingState = NonNullable<Awaited<ReturnType<NonNullable<BillFnProviderAdapter['verifyCheckout']>>>>;
 type ApplyVerificationStateInput = {
@@ -218,7 +221,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
     metrics,
     queue: config.queue
   };
-  deps.reconcileProviderState = (subscription, providerEventId) => reconcileWindowEvent(subscription, providerEventId);
+  deps.reconcileProviderState = (subscription, event) => reconcileWindowEvent(subscription, event);
 
   const subscriptionProvider = {
     getActiveSubscription: async (subject: BillableSubject) => {
@@ -315,8 +318,12 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
     }
   };
 
-  /** Reads the subscription from the provider with its stored (committed) catalog selection. */
-  async function readProviderSubscription(subscriptionId: string) {
+  /**
+   * Reads the subscription from the provider for `requested` (default: its
+   * stored selection). The catalog price the live record names, if any, is
+   * the selection applied.
+   */
+  async function readProviderSubscription(subscriptionId: string, requested?: CatalogSelection) {
     const subscription = await getSubscriptionById(deps, subscriptionId);
     if (!subscription) {
       throw createBillFnError({
@@ -331,14 +338,14 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         message: 'Billing account not found'
       });
     }
-    const plan = requirePlan(deps.catalog, subscription.planKey);
-    const price = requirePriceById(plan, subscription.priceId);
+    const storedPlan = requirePlan(deps.catalog, subscription.planKey);
+    const selection = requested ?? { plan: storedPlan, price: requirePriceById(storedPlan, subscription.priceId) };
     const provider = requireProvider(deps, subscription.provider, 'fetchSubscription');
     const liveStateObservedAt = toIsoString(deps.now());
     const verification = await provider.fetchSubscription({
       subscription,
-      plan,
-      price
+      plan: selection.plan,
+      price: selection.price
     });
     if (!verification) {
       throw createBillFnError({
@@ -346,7 +353,8 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         message: 'Provider did not return subscription state'
       });
     }
-    return { billingAccount, plan, price, subscription, state: verification, liveStateObservedAt };
+    const live = await liveCatalogSelection(deps, subscription.provider, verification, selection);
+    return { billingAccount, ...live, subscription, state: verification, liveStateObservedAt };
   }
 
   async function syncSubscriptionById(subscriptionId: string): Promise<ProjectionResult> {
@@ -355,42 +363,48 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
 
   /**
    * Reconciles an event inside a committed mutation's window with a provider
-   * read. The read keeps the committed plan and price unless the live record
-   * names another catalog price. When the read fails or returns nothing, the
-   * committed state stands (the provider returned it after the event occurred)
-   * and a subscription-sync job is enqueued when a queue is configured. The
-   * window stays open until the read's entitlements and its lifecycle entry,
-   * keyed by the event, are written, so a retry after a failure there
-   * reconciles again and records the entry once.
+   * read for the committed plan and price; when that read fails and the event
+   * names another price, a read the provider accepts for the event's price
+   * confirms it. The catalog price the live record names wins. When no read
+   * succeeds, the committed state stands: with a queue a subscription-sync job
+   * is enqueued, otherwise a window-read error is thrown so a delivery is
+   * retried (a replay leaves the event retained). The window stays open until
+   * the read's entitlements and its lifecycle entry, keyed by the event, are
+   * written, so a retry after a failure there reconciles again.
    */
-  async function reconcileWindowEvent(subscription: BillFnSubscription, providerEventId: string | undefined) {
-    let read: Awaited<ReturnType<typeof readProviderSubscription>>;
-    try {
-      read = await readProviderSubscription(subscription.id);
-    } catch (error) {
+  async function reconcileWindowEvent(subscription: BillFnSubscription, event: WindowEvent) {
+    let read: Awaited<ReturnType<typeof readProviderSubscription>> | null = null;
+    let failure: unknown;
+    for (const requested of [undefined, event.selection]) {
+      if (requested && requested.price.priceId === subscription.priceId) {
+        break;
+      }
+      try {
+        read = await readProviderSubscription(subscription.id, requested);
+        break;
+      } catch (error) {
+        failure ??= error;
+      }
+    }
+    if (!read) {
       deps.metrics.track('subscription.mutation.window_event_unreconciled', {
         provider: subscription.provider,
         subscriptionId: subscription.id,
         reason: 'read_failed',
-        error: error instanceof Error ? error.message : String(error)
+        error: failure instanceof Error ? failure.message : String(failure)
       });
+      if (!deps.queue) {
+        throw windowReadFailed(failure);
+      }
       await scheduleSubscriptionSync(subscription);
       return;
     }
-    const live = await resolveProviderEventPriceReference(
-      deps,
-      read.subscription.provider,
-      { type: 'subscription.read', billingState: read.state },
-      null
-    );
     await applyVerificationState(deps, {
       ...read,
-      plan: live?.plan ?? read.plan,
-      price: live?.price ?? read.price,
       keepMutationWindow: true,
-      providerEventId: providerEventId ? `${providerEventId}#window-read` : undefined
+      providerEventId: event.providerEventId ? `${event.providerEventId}#window-read` : undefined
     });
-    await closeMutationWindow(deps, subscription.id);
+    await closeMutationWindow(deps, subscription.id, readMutationStartedAt(subscription));
   }
 
   /**
@@ -1716,8 +1730,7 @@ async function syncSubscriptionByIdForJob(
   await assertLease();
   await applyLiveProviderState(deps, {
     billingAccount,
-    plan,
-    price,
+    ...(await liveCatalogSelection(deps, subscription.provider, verification, { plan, price })),
     subscription,
     state: verification,
     liveStateObservedAt
@@ -2359,7 +2372,7 @@ async function applyVerificationState(
       return null;
     }
     if (baseSubscription && order === 'reconcile') {
-      // Never applied over the committed mutation; a failed read fails this call, so it is retried.
+      // Never applied over the committed mutation; without a queue a failed read fails this call, so it is retried.
       await reconcileMutationWindowEvent(deps, baseSubscription, input);
       return null;
     }
@@ -3618,12 +3631,16 @@ async function applyUnlinkedWebhookEvent(deps: ServiceDeps, row: BillFnUnlinkedW
   }
   // An event without a provider time is ordered by when it was stored, through the same ordered write.
   const occurredAt = event.occurredAt ?? row.createdAt;
-  const applied = await applyParsedWebhookEvent(
-    deps,
-    row.provider,
-    { ...event, occurredAt, billingState: state },
-    projection
-  );
+  let applied: ProjectionResult | null;
+  try {
+    applied = await applyParsedWebhookEvent(deps, row.provider, { ...event, occurredAt, billingState: state }, projection);
+  } catch (error) {
+    // An unread event inside a mutation window stays retained without holding back the events after it.
+    if (isWindowReadFailure(error)) {
+      return null;
+    }
+    throw error;
+  }
   return {
     status: applied ? ('replayed' as const) : ('skipped' as const),
     subscriptionId: applied?.subscription.id ?? projection.subscription.id
@@ -4046,14 +4063,47 @@ function orderProviderEvent(subscription: BillFnSubscription, occurredAt: string
   if (!isProviderEventOlderThanSubscription(subscription, occurredAt)) {
     return 'apply';
   }
-  const metadata = asRecord(subscription.metadata);
-  const startedAt = metadata ? readString(metadata, PROVIDER_MUTATION_STARTED_AT_METADATA_KEY) : null;
+  const startedAt = readMutationStartedAt(subscription);
   const startTime = startedAt ? parseProviderEventTime(startedAt) : null;
   const incomingTime = parseProviderEventTime(occurredAt);
   if (startTime === null || incomingTime === null || incomingTime <= startTime) {
     return 'skip';
   }
   return 'reconcile';
+}
+
+function readMutationStartedAt(subscription: BillFnSubscription) {
+  const metadata = asRecord(subscription.metadata);
+  return metadata ? readString(metadata, PROVIDER_MUTATION_STARTED_AT_METADATA_KEY) : null;
+}
+
+const windowReadFailures = new WeakSet<object>();
+
+/** No provider read succeeded for an event inside a committed mutation's window and no sync could be queued. */
+function windowReadFailed(cause: unknown) {
+  const error = createBillFnError({
+    code: 'BILLFN_PROVIDER_ERROR',
+    message: `Provider read for an event inside a committed mutation window failed: ${
+      cause instanceof Error ? cause.message : String(cause)
+    }`
+  });
+  windowReadFailures.add(error);
+  return error;
+}
+
+function isWindowReadFailure(error: unknown) {
+  return typeof error === 'object' && error !== null && windowReadFailures.has(error);
+}
+
+/** The catalog price the live provider record names, else `fallback`. */
+async function liveCatalogSelection(
+  deps: ServiceDeps,
+  provider: BillingProviderName,
+  state: VerifiedBillingState,
+  fallback: CatalogSelection
+): Promise<CatalogSelection> {
+  const live = await resolveProviderEventPriceReference(deps, provider, { type: 'subscription.read', billingState: state }, null);
+  return live ?? fallback;
 }
 
 function withoutMutationWindow(metadata: Record<string, unknown> | undefined) {
@@ -4073,7 +4123,7 @@ function withoutMutationWindow(metadata: Record<string, unknown> | undefined) {
 async function reconcileMutationWindowEvent(
   deps: ServiceDeps,
   subscription: BillFnSubscription,
-  input: Pick<ApplyVerificationStateInput, 'state' | 'providerEventId'>
+  input: Pick<ApplyVerificationStateInput, 'state' | 'providerEventId' | 'plan' | 'price'>
 ) {
   const linked = await linkSkippedEventReferences(deps, subscription, input.state);
   const readable = Boolean(deps.reconcileProviderState) && typeof deps.providers[linked.provider]?.fetchSubscription === 'function';
@@ -4082,16 +4132,22 @@ async function reconcileMutationWindowEvent(
     subscriptionId: linked.id
   });
   if (readable) {
-    await deps.reconcileProviderState?.(linked, input.providerEventId);
+    await deps.reconcileProviderState?.(linked, {
+      providerEventId: input.providerEventId,
+      selection: { plan: input.plan, price: input.price }
+    });
   }
 }
 
-/** Closes a committed mutation's window once a reconcile read's effects are recorded. */
-async function closeMutationWindow(deps: ServiceDeps, subscriptionId: string) {
+/**
+ * Closes the committed mutation window a reconcile read covered, once its
+ * effects are recorded; a newer mutation's window is left open.
+ */
+async function closeMutationWindow(deps: ServiceDeps, subscriptionId: string, startedAt: string | null) {
   for (let attempt = 0; attempt < 50; attempt += 1) {
     const current = await getSubscriptionById(deps, subscriptionId);
     const metadata = asRecord(current?.metadata);
-    if (!current || !metadata || !(PROVIDER_MUTATION_STARTED_AT_METADATA_KEY in metadata)) {
+    if (!current || !metadata || !startedAt || readMutationStartedAt(current) !== startedAt) {
       return;
     }
     const closed = {

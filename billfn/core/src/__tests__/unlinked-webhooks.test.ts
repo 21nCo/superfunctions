@@ -2537,7 +2537,8 @@ describe('mutation windows, replaced references and regained references (PR #308
     const db = options.db ?? memoryAdapter({ debug: false });
     const clock = { current: new Date('2026-11-01T00:00:01.000Z') };
     const committed = async () => {
-      clock.current = new Date(COMMITTED_AT);
+      // The first mutation returns at t3; a later one two seconds after it started.
+      clock.current = new Date(Math.max(Date.parse(COMMITTED_AT), clock.current.getTime() + 2000));
       return {
         operationStatus: 'applied' as const,
         providerRefundId: `re_${name}`,
@@ -2583,7 +2584,7 @@ describe('mutation windows, replaced references and regained references (PR #308
   }
 
   /** A provider read that fails while `failing.value` is set (throwing, or returning nothing), then returns `status`. */
-  function recoveringRead(failing: { value: boolean }, mode: 'throws' | 'returns nothing', status: SubscriptionStatus): Read {
+  function recoveringRead(failing: { value: boolean }, mode: 'throws' | 'returns nothing', status: SubscriptionStatus, raw: Record<string, unknown> = { live: true }): Read {
     return async (input) => {
       if (failing.value && mode === 'throws') {
         throw new Error('provider read unavailable');
@@ -2591,7 +2592,7 @@ describe('mutation windows, replaced references and regained references (PR #308
       if (failing.value) {
         return null;
       }
-      return { subscriptionStatus: status, checkoutStatus: 'succeeded', providerSubscriptionId: input.subscription.providerSubscriptionId, autoRenew: false, raw: { live: true } };
+      return { subscriptionStatus: status, checkoutStatus: 'succeeded', providerSubscriptionId: input.subscription.providerSubscriptionId, autoRenew: false, raw };
     };
   }
 
@@ -2600,22 +2601,37 @@ describe('mutation windows, replaced references and regained references (PR #308
     async (mode) => {
       const failing = { value: true };
       const name = mode === 'throws' ? 'window_throw' : 'window_null';
-      const env = await committedMutation(name, { read: recoveringRead(failing, mode, 'canceled'), queued: true });
+      const env = await committedMutation(name, { read: recoveringRead(failing, mode, 'canceled', { product_id: 'pdt_team_month' }), queued: true });
 
-      await deliver(env.billfn, [at(name, 'inside', 'canceled', '02.000')]);
+      await deliver(env.billfn, [at(name, 'inside', 'canceled', '02.000', { productId: 'pdt_team_month' })]);
       expect(await env.worker?.runNext()).toMatchObject({ kind: 'webhook-event', status: 'succeeded' });
 
       expect(await env.stored()).toMatchObject({ status: 'active' });
       expect(await env.watermark()).toBe(COMMITTED_AT);
       expect(await entitlementStatus(env.billfn, `${name}_user`)).toBe('active');
 
-      // The enqueued sync reads the provider once it recovers; the in-window event itself is never applied.
+      // The enqueued sync reads the provider once it recovers and applies the product the live record names.
       failing.value = false;
       expect(await env.worker?.runNext()).toMatchObject({ kind: 'subscription-sync', status: 'succeeded' });
-      expect(await env.stored()).toMatchObject({ status: 'canceled' });
+      expect(await env.stored()).toMatchObject({ status: 'canceled', planKey: 'team', priceId: 'price_team_dodo_month' });
       expect(await entitlementStatus(env.billfn, `${name}_user`)).toBe('inactive');
     }
   );
+
+  it('fails a delivered event inside a committed mutation window retryably without a queue until the read recovers', async () => {
+    const failing = { value: true };
+    const env = await committedMutation('unqueued', { read: recoveringRead(failing, 'throws', 'canceled') });
+
+    await expect(deliver(env.billfn, [at('unqueued', 'inside', 'canceled', '02.000')])).rejects.toMatchObject({ code: 'BILLFN_PROVIDER_ERROR' });
+
+    expect(await env.processed('evt_unqueued_inside')).toBe(false);
+    expect(await env.stored()).toMatchObject({ status: 'active' });
+    expect(await env.watermark()).toBe(COMMITTED_AT);
+    failing.value = false;
+    expect((await deliver(env.billfn, [at('unqueued', 'inside', 'canceled', '02.000')])).ok).toBe(true);
+    expect(await env.stored()).toMatchObject({ status: 'canceled' });
+    expect(await entitlementStatus(env.billfn, 'unqueued_user')).toBe('inactive');
+  });
 
   it('keeps the committed state over events inside its window when the provider cannot be read', async () => {
     const env = await committedMutation('unread');
@@ -2645,7 +2661,7 @@ describe('mutation windows, replaced references and regained references (PR #308
     }
   );
 
-  it('resolves a replayed event inside a committed mutation window without blocking later events while the read keeps failing', async () => {
+  it('keeps a replayed event inside a committed mutation window retained without blocking later events while the read keeps failing', async () => {
     const env = await committedMutation('replay_window', { read: recoveringRead({ value: true }, 'throws', 'canceled'), chargeless: true });
     // A cancellation inside the window that names only a charge no subscription carries yet is retained.
     await deliver(env.billfn, [at('replay_window', 'inside', 'canceled', '02.000', { chargeId: 'pay_replay_window_next', withSubscription: false })]);
@@ -2654,7 +2670,7 @@ describe('mutation windows, replaced references and regained references (PR #308
 
     expect(await env.stored()).toMatchObject({ status: 'active', providerChargeId: 'pay_replay_window_next' });
     const [retained] = await env.db.findMany<BillFnUnlinkedWebhookEvent>({ model: 'unlinkedWebhookEvents', where: [], namespace: 'billfn' });
-    expect(retained).toMatchObject({ providerEventId: 'evt_replay_window_inside', status: 'skipped' });
+    expect(retained).toMatchObject({ providerEventId: 'evt_replay_window_inside', status: 'unlinked' });
 
     // A later event for the subscription is applied and closes the window.
     expect((await deliver(env.billfn, [at('replay_window', 'after', 'past_due', '06.000')])).ok).toBe(true);
@@ -2700,6 +2716,44 @@ describe('mutation windows, replaced references and regained references (PR #308
     expect(await env.stored()).toMatchObject({ planKey: 'team', priceId: 'price_team_dodo_month' });
     const entitlements = await env.billfn.getEntitlements({ principalId: 'changed_user' });
     expect(entitlements.ok && entitlements.data.entitlements?.limits).toMatchObject({ storage: 5000 });
+  });
+
+  it('reconciles an in-window renewal into another product when the provider only reads the live product', async () => {
+    const reads: string[] = [];
+    const env = await committedMutation('apple_like', { read: committedPriceRead(reads, 'price_team_dodo_month', {}) });
+
+    expect((await deliver(env.billfn, [at('apple_like', 'renewed', 'active', '02.000', { productId: 'pdt_team_month' })])).ok).toBe(true);
+
+    expect(reads).toEqual(['price_pro_dodo_month', 'price_team_dodo_month']);
+    expect(await env.stored()).toMatchObject({ planKey: 'team', priceId: 'price_team_dodo_month' });
+    const entitlements = await env.billfn.getEntitlements({ principalId: 'apple_like_user' });
+    expect(entitlements.ok && entitlements.data.entitlements?.limits).toMatchObject({ storage: 5000 });
+  });
+
+  it('leaves open the window of a mutation that commits while an earlier window event is reconciled', async () => {
+    let reads = 0;
+    const holder: { billfn?: ReturnType<typeof createBillFn>; clock?: { current: Date } } = {};
+    const read: Read = async (input) => {
+      reads += 1;
+      if (reads === 1 && holder.billfn && holder.clock) {
+        // A second resume starts at t5 and returns at t7 while this read is in flight.
+        holder.clock.current = new Date('2026-11-01T00:00:05.000Z');
+        await holder.billfn.resumeSubscription({ subject: { principalId: 'overlap_user' } });
+      }
+      return { subscriptionStatus: reads === 1 ? 'active' : 'canceled', checkoutStatus: 'succeeded', providerSubscriptionId: input.subscription.providerSubscriptionId, autoRenew: true, raw: {} };
+    };
+    const env = await committedMutation('overlap', { read });
+    holder.billfn = env.billfn;
+    holder.clock = env.clock;
+
+    await deliver(env.billfn, [at('overlap', 'first_window', 'past_due', '02.000')]);
+    expect(await env.stored()).toMatchObject({ metadata: expect.objectContaining({ billfnProviderMutationStartedAt: '2026-11-01T00:00:05.000Z' }) });
+
+    // An event inside the second mutation's window is reconciled with a read, not skipped.
+    await deliver(env.billfn, [at('overlap', 'second_window', 'canceled', '06.000')]);
+    expect(reads).toBe(2);
+    expect(await env.stored()).toMatchObject({ status: 'canceled' });
+    expect(await entitlementStatus(env.billfn, 'overlap_user')).toBe('inactive');
   });
 
   it.each([
