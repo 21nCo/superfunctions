@@ -232,6 +232,18 @@ describe('configuration', () => {
     expect(() => create(RESOURCES)).not.toThrow();
   });
 
+  it('rejects an introspection secret shared by two resources', () => {
+    const create = (resources: typeof RESOURCES) => createProviderApp().createServer({
+      database: memoryAdapter({ debug: false }),
+      pluginRuntime: { oauthProvider: { clients: [], resources, ...hooks } }
+    });
+    const shared = RESOURCES.map((resource) => ({ ...resource, introspectionSecret: 'shared-secret' }));
+    expect(() => create(shared)).toThrow(expect.objectContaining({ code: 'AUTHFN_CONFIG_INVALID' }));
+    const empty = [{ ...RESOURCES[0], introspectionSecret: '' }];
+    expect(() => create(empty)).toThrow(expect.objectContaining({ code: 'AUTHFN_CONFIG_INVALID' }));
+    expect(() => create([RESOURCES[0], { ...RESOURCES[1], introspectionSecret: undefined }])).not.toThrow();
+  });
+
   it('declares its tables in the AuthFn schema', () => {
     const tables = authfn({ plugins: [authFnOAuthProviderPlugin()] }).getSchema().schemas.map((table) => table.modelName);
     expect(tables).toEqual(expect.arrayContaining([

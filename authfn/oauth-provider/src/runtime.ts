@@ -70,11 +70,21 @@ export function readOAuthProviderRuntimeConfig(config: AuthFnRuntimeConfig): OAu
   }
 
   const resourceIds = new Set<string>();
+  const introspectionSecrets = new Set<string>();
   for (const resource of runtime.resources) {
     if (!isAbsoluteUriWithoutFragment(resource?.resource) || resourceIds.has(resource.resource)) {
       throw configError('Each OAuth resource must be a unique absolute URI without a fragment');
     }
     resourceIds.add(resource.resource);
+    // Introspection identifies the calling resource server by its secret, so
+    // a shared secret would make one resource answer for another's audience.
+    const secret = resource.introspectionSecret;
+    if (secret !== undefined) {
+      if (typeof secret !== 'string' || secret.length === 0 || introspectionSecrets.has(secret)) {
+        throw configError(`OAuth resource ${resource.resource} needs a unique, non-empty introspectionSecret`);
+      }
+      introspectionSecrets.add(secret);
+    }
     if (!Array.isArray(resource.scopes) || resource.scopes.length === 0) {
       throw configError(`OAuth resource ${resource.resource} needs at least one scope`);
     }

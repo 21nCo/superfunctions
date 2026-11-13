@@ -15,8 +15,10 @@ Every token is bound to one resource (RFC 8707) and carries the scopes the user 
 import { authfn } from 'authfn';
 import { authFnOAuthProviderPlugin } from '@authfn/oauth-provider';
 
+const scopes = { memotron: ['read', 'write'] } as const;
+
 const app = authfn({
-  scopes: { memotron: ['read', 'write'] },
+  scopes,
   plugins: [authFnOAuthProviderPlugin()]
 });
 
@@ -49,7 +51,7 @@ const auth = app.createServer({
 
 ## Host responsibilities
 
-**Metadata path.** RFC 8414 clients look for `/.well-known/oauth-authorization-server` at the issuer's origin. Route that path to `{basePath}/.well-known/oauth-authorization-server`. The issuer is the AuthFn environment's `issuer` (the request origin by default).
+**Metadata path.** RFC 8414 clients look for `/.well-known/oauth-authorization-server` at the issuer's origin, followed by the issuer's path when it has one (RFC 8414 3.1): for the issuer `https://auth.example.com/tenant` that is `https://auth.example.com/.well-known/oauth-authorization-server/tenant`. Route that path to `{basePath}/.well-known/oauth-authorization-server`. The issuer is the AuthFn environment's `issuer` (the request origin by default).
 
 **Consent page.** `consent` receives the user, client, resource, scopes, the validated `params` and a `decisionUrl`. The page POSTs `{ ...params, decision: 'approve' | 'deny' }` as JSON to `decisionUrl` with the session cookie and the `x-authfn-csrf` header, then sends the browser to `data.redirectTo`.
 
@@ -62,9 +64,9 @@ import { verifyOAuthAccessToken } from '@authfn/oauth-provider';
 // Use the same database and namespace as the AuthFn server (`namespace` defaults to 'authfn').
 const store = { database, namespace: 'authfn' };
 const token = await verifyOAuthAccessToken(store, bearer, { resource: 'https://memotron.example.com/mcp' });
-requireScopes(token, 'memotron:read');
+requireScopes(token, 'memotron:read', { registry: scopes });
 ```
 
-`revokeOAuthGrant(store, grantId, { userId })` revokes a grant, for example when a user disconnects an app. It also removes the user's consent for that client and resource, so even a trusted client shows the consent page again.
+**Disconnecting an app.** `disconnectOAuthClient(store, { userId, clientId, resource })` removes the user's consent for that client and resource, so even a trusted client shows the consent page again, and revokes every grant the user gave that client for that resource: each authorization creates its own grant, so a client signed in on two devices holds two. Every code, access token and refresh token under those grants stops working. `revokeOAuthGrant(store, grantId, { userId })` does the same for the client and resource of one grant, for example the `grantId` that `verifyOAuthAccessToken` returns.
 
 Account deletion in `authfn` does not yet delete this plugin's rows. Tokens of a deleted user stop working, but the rows remain.

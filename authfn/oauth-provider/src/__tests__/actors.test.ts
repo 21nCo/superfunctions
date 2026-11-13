@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { requireScopes } from 'authfn';
-import { revokeOAuthGrant, verifyOAuthAccessToken } from '../index.js';
+import { disconnectOAuthClient, revokeOAuthGrant, verifyOAuthAccessToken } from '../index.js';
 import {
   MCP_HOST,
   MEMOTRON,
@@ -201,32 +201,74 @@ describe('in-scope actors', () => {
     expect((await provider.introspect(disconnected.access_token)).body).toEqual({ active: false });
     expect(await (await provider.refresh(disconnected.refresh_token)).json()).toMatchObject({ error: 'invalid_grant' });
 
-    // Disconnecting a trusted client also forgets its consent: the next
-    // authorization shows the consent page instead of issuing a code.
-    const rhombus = { client_id: RHOMBUS.clientId, redirect_uri: RHOMBUS.redirectUris[0] };
-    const callback = await provider.authorize(rhombus, RHOMBUS);
-    const rhombusTokens = await (await provider.token({
+    // Disconnecting a trusted client: every authorization makes its own grant,
+    // so Rhombus signed in twice holds two grants plus a pending code. All of
+    // them stop working, its consent is forgotten, and the user's other
+    // clients and resources are untouched.
+    const rhombus = (resource = MEMOTRON) => ({
+      client_id: RHOMBUS.clientId,
+      redirect_uri: RHOMBUS.redirectUris[0],
+      resource
+    });
+    const rhombusCode = async (resource = MEMOTRON) =>
+      (await provider.authorize(rhombus(resource), RHOMBUS)).searchParams.get('code')!;
+    const rhombusExchange = (code: string) => provider.token({
       grant_type: 'authorization_code',
       client_id: RHOMBUS.clientId,
-      code: callback.searchParams.get('code')!,
+      code,
       redirect_uri: RHOMBUS.redirectUris[0],
       code_verifier: RFC7636_VERIFIER
-    })).json() as { access_token: string };
-    const remembered = await provider.getAuthorize(provider.authorizeQuery(rhombus, RHOMBUS));
-    expect(new URL(remembered.headers.get('location')!).searchParams.get('code')).toEqual(expect.any(String));
-    const rhombusGrant = await verifyOAuthAccessToken({ database: provider.database }, rhombusTokens.access_token, {
-      resource: MEMOTRON,
-      now: provider.now
     });
-    expect(await revokeOAuthGrant({ database: provider.database }, rhombusGrant!.grantId, {
-      userId: provider.user.id
-    })).toBe(true);
+    const rhombusRefresh = (refreshToken: string) =>
+      provider.token({ grant_type: 'refresh_token', client_id: RHOMBUS.clientId, refresh_token: refreshToken });
+    type Tokens = { access_token: string; refresh_token: string };
+    const rhombusTokens = async (resource = MEMOTRON) =>
+      await (await rhombusExchange(await rhombusCode(resource))).json() as Tokens;
+    const verify = (token: string, resource = MEMOTRON) =>
+      verifyOAuthAccessToken({ database: provider.database }, token, { resource, now: provider.now });
+
     const consentsBefore = provider.consents.length;
-    const afterDisconnect = await provider.getAuthorize(provider.authorizeQuery(rhombus, RHOMBUS));
+    const laptop = await rhombusTokens();
+    const phone = await rhombusTokens();
+    const pending = await rhombusCode();
+    expect(provider.consents).toHaveLength(consentsBefore + 1);
+    const pointron = await rhombusTokens(POINTRON);
+    const otherClient = await provider.obtainTokens();
+    const laptopGrant = (await verify(laptop.access_token))!.grantId;
+    expect((await verify(phone.access_token))!.grantId).not.toBe(laptopGrant);
+
+    expect(await revokeOAuthGrant({ database: provider.database }, laptopGrant, { userId: provider.user.id })).toBe(true);
+    for (const tokens of [laptop, phone]) {
+      expect((await provider.introspect(tokens.access_token)).body).toEqual({ active: false });
+      expect(await verify(tokens.access_token)).toBeNull();
+      const refreshed = await rhombusRefresh(tokens.refresh_token);
+      expect(refreshed.status).toBe(400);
+      expect(await refreshed.json()).toMatchObject({ error: 'invalid_grant' });
+    }
+    expect(await (await rhombusExchange(pending)).json()).toMatchObject({ error: 'invalid_grant' });
+
+    const consentsAtDisconnect = provider.consents.length;
+    const afterDisconnect = await provider.getAuthorize(provider.authorizeQuery(rhombus(), RHOMBUS));
     expect(afterDisconnect.status).toBe(200);
     expect(afterDisconnect.headers.get('location')).toBeNull();
-    expect(provider.consents).toHaveLength(consentsBefore + 1);
-    expect(provider.consents[consentsBefore].client.clientId).toBe(RHOMBUS.clientId);
+    expect(provider.consents).toHaveLength(consentsAtDisconnect + 1);
+    expect(provider.consents[consentsAtDisconnect]).toMatchObject({ client: { clientId: RHOMBUS.clientId }, resource: MEMOTRON });
+
+    expect(await verify(pointron.access_token, POINTRON)).not.toBeNull();
+    expect((await rhombusRefresh(pointron.refresh_token)).status).toBe(200);
+    expect((await provider.introspect(otherClient.access_token)).body.active).toBe(true);
+    expect((await provider.refresh(otherClient.refresh_token)).status).toBe(200);
+    const silent = await provider.getAuthorize(provider.authorizeQuery(rhombus(POINTRON), RHOMBUS));
+    expect(new URL(silent.headers.get('location')!).searchParams.get('code')).toEqual(expect.any(String));
+
+    // The same disconnect, keyed by user, client and resource.
+    expect(await disconnectOAuthClient({ database: provider.database }, {
+      userId: provider.user.id,
+      clientId: RHOMBUS.clientId,
+      resource: POINTRON
+    })).toBeGreaterThan(0);
+    expect(await verify(pointron.access_token, POINTRON)).toBeNull();
+    expect((await provider.getAuthorize(provider.authorizeQuery(rhombus(POINTRON), RHOMBUS))).status).toBe(200);
   });
 });
 

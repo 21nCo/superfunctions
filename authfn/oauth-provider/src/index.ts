@@ -17,7 +17,7 @@ export { OAUTH_INTROSPECTION_PATH } from './introspection/index.js';
 export { OAUTH_METADATA_PATH } from './metadata/index.js';
 export { OAUTH_REVOCATION_PATH } from './revocation/index.js';
 export { OAUTH_TOKEN_PATH } from './token/index.js';
-export { revokeOAuthGrant, verifyOAuthAccessToken, type OAuthStore } from './store.js';
+export { disconnectOAuthClient, revokeOAuthGrant, verifyOAuthAccessToken, type OAuthStore } from './store.js';
 export * from './types.js';
 
 /**

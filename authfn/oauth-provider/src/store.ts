@@ -350,10 +350,43 @@ export async function verifyOAuthAccessToken(
 }
 
 /**
- * Revokes a grant by ID, for account settings that let a user disconnect an
- * app. With `userId`, only that user's grant is revoked. The user's consent
- * for the grant's client and resource is removed too, so a trusted client
- * shows the consent page again on its next authorization request. Returns
+ * Disconnects an app: the user's access for `clientId` at `resource`. The
+ * consent is removed, so even a trusted client shows the consent page again,
+ * and every live grant of that user, client and resource is revoked, with
+ * every code, access token and refresh token issued under them. Returns the
+ * number of grants revoked.
+ */
+export async function disconnectOAuthClient(
+  store: OAuthStore,
+  input: { userId: string; clientId: string; resource: string; now?: () => Date }
+): Promise<number> {
+  const { userId, clientId, resource } = input;
+  // Consent goes first: if revoking a grant then fails, a retry still finds
+  // the grant, while consent left behind would silently re-authorize.
+  await deleteConsent(store, userId, clientId, resource);
+  const grants = await store.database.findMany<OAuthGrantRecord>({
+    model: MODELS.grants,
+    where: [
+      { field: 'userId', operator: 'eq', value: userId },
+      { field: 'clientId', operator: 'eq', value: clientId }
+    ],
+    namespace: namespace(store)
+  });
+  const now = input.now?.() ?? new Date();
+  let revoked = 0;
+  for (const grant of grants) {
+    if (grant.resource === resource && !grant.revokedAt && (await revokeGrant(store, grant.id, 'revoked', now))) {
+      revoked += 1;
+    }
+  }
+  return revoked;
+}
+
+/**
+ * Disconnects the app a grant belongs to, by grant ID (for example from a
+ * token's `grantId`). With `userId`, only that user's grant is accepted. Like
+ * `disconnectOAuthClient`, it revokes every live grant of the same user,
+ * client and resource, not only `grantId`, and removes the consent. Returns
  * whether a live grant was revoked.
  */
 export async function revokeOAuthGrant(
@@ -365,10 +398,8 @@ export async function revokeOAuthGrant(
   if (!grant || (options?.userId !== undefined && grant.userId !== options.userId)) {
     return false;
   }
-  // Consent goes first: if revoking the grant then fails, a retry still finds
-  // the grant, while consent left behind would silently re-authorize.
-  await deleteConsent(store, grant.userId, grant.clientId, grant.resource);
-  return revokeGrant(store, grantId, 'revoked', options?.now?.() ?? new Date());
+  const { userId, clientId, resource } = grant;
+  return (await disconnectOAuthClient(store, { userId, clientId, resource, now: options?.now })) > 0;
 }
 
 async function deleteConsent(store: OAuthStore, userId: string, clientId: string, resource: string): Promise<void> {
