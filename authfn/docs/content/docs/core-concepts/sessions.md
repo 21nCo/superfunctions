@@ -154,7 +154,7 @@ Index on `userId`, `tokenHash`, `expiresAt`. Your migrations from `auth.getSchem
 
 ## API key sessions
 
-When a request authenticates via `Authorization: Bearer ak_…` (with the API keys plugin enabled), authfn issues a synthetic session: `type: 'api-key'`, `methods: ['api-key']`, `credential: { type: 'api-key', id }`. A user-owned key acts as its owner (`actorType: 'user'`, `actorId` = owner's user ID); a key whose owner was deleted or is disabled authenticates as no one. An unowned service key keeps `actorType: 'api-key'` with the key ID as `actorId`. API key sessions are not persisted in `authfn_sessions`; the API key record itself is the source of truth. Revoking the key invalidates all of its sessions immediately.
+When a request authenticates via `Authorization: Bearer ak_…` (with the API keys plugin enabled), authfn issues a synthetic session: `type: 'api-key'`, `methods: ['api-key']`. In the TypeScript `authfn` package (0.5.0 and later), the session also carries `credential: { type: 'api-key', id }`, a user-owned key acts as its owner (`actorType: 'user'`, `actorId` = owner's user ID), and a key whose owner was deleted or is disabled authenticates as no one. An unowned service key keeps `actorType: 'api-key'` with the key ID as `actorId`. The Python SDK does not do this yet; see [SDKs → Python](../sdk/python#api-key-sessions). API key sessions are not persisted in `authfn_sessions`; the API key record itself is the source of truth. Revoking the key invalidates all of its sessions immediately.
 
 ## Related
 

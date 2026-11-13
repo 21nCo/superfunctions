@@ -3829,7 +3829,7 @@ Index on `userId`, `tokenHash`, `expiresAt`. Your migrations from `auth.getSchem
 
 ## API key sessions
 
-When a request authenticates via `Authorization: Bearer ak_…` (with the API keys plugin enabled), authfn issues a synthetic session: `type: 'api-key'`, `methods: ['api-key']`, `credential: { type: 'api-key', id }`. A user-owned key acts as its owner (`actorType: 'user'`, `actorId` = owner's user ID); a key whose owner was deleted or is disabled authenticates as no one. An unowned service key keeps `actorType: 'api-key'` with the key ID as `actorId`. API key sessions are not persisted in `authfn_sessions`; the API key record itself is the source of truth. Revoking the key invalidates all of its sessions immediately.
+When a request authenticates via `Authorization: Bearer ak_…` (with the API keys plugin enabled), authfn issues a synthetic session: `type: 'api-key'`, `methods: ['api-key']`. In the TypeScript `authfn` package (0.5.0 and later), the session also carries `credential: { type: 'api-key', id }`, a user-owned key acts as its owner (`actorType: 'user'`, `actorId` = owner's user ID), and a key whose owner was deleted or is disabled authenticates as no one. An unowned service key keeps `actorType: 'api-key'` with the key ID as `actorId`. The Python SDK does not do this yet; see [SDKs → Python](../sdk/python#api-key-sessions). API key sessions are not persisted in `authfn_sessions`; the API key record itself is the source of truth. Revoking the key invalidates all of its sessions immediately.
 
 ## Related
 
@@ -5167,7 +5167,7 @@ const authApp = authfn({
 
 ## Authentication via API key
 
-When a request carries `Authorization: Bearer <secret>`, the kernel:
+When a request carries `Authorization: Bearer <secret>`, the TypeScript `authfn` kernel (0.5.0 and later):
 
 1. Looks up the key by `secretHash`; returns `null` if no key matches.
 2. Throws `AUTHFN_API_KEY_REVOKED` if `revokedAt` is set.
@@ -5176,9 +5176,11 @@ When a request carries `Authorization: Bearer <secret>`, the kernel:
 5. Updates `lastUsedAt`.
 6. Synthesizes an `AuthFnSession` with `type: 'api-key'`, `methods: ['api-key']`, and `credential: { type: 'api-key', id: <keyId> }`.
 
-A user-owned key acts as its owner: the session carries `actorType: 'user'` and `actorId` set to the owner's user ID, so data you key by `actorId` is the owner's data. An unowned service key keeps `actorType: 'api-key'` with the key ID as `actorId`. AuthFn looks up the key and loads its owner only in the configured `namespace`; with an adapter that isolates namespaces, a key or owner from another tenant authenticates as no one.
+In the TypeScript `authfn` package (0.5.0 and later), a user-owned key acts as its owner: the session carries `actorType: 'user'` and `actorId` set to the owner's user ID, so data you key by `actorId` is the owner's data. An unowned service key keeps `actorType: 'api-key'` with the key ID as `actorId`. AuthFn looks up the key and loads its owner only in the configured `namespace`; with an adapter that isolates namespaces, a key or owner from another tenant authenticates as no one.
 
 `session.metadata.ownerUserId` still carries the owner's user ID for one more minor version. It is deprecated; read `session.actorId` instead.
+
+> **Python SDK:** the Python `authfn` package has not adopted these rules yet. Its API-key sessions keep `actor_type` `'api-key'` with the key ID as `actor_id`, expose the owner only through `metadata.ownerUserId` (which metadata stored on the key can override), have no `credential` field, and do not check whether the owner was deleted or disabled. Disabling a user does not cut off their keys in a Python host; revoke the keys as well. See [SDKs → Python](../sdk/python#api-key-sessions).
 
 The synthesized session is what `auth.provider.authenticate(request)` returns. To tell a key apart from an interactive sign-in, branch on `session.type` (or `session.credential`), not on `session.actorType`:
 
@@ -9490,7 +9492,7 @@ fixtures; it is not a claim of exhaustive parity for every Unicode hostname.
 | Logout, session revoke, API-key revoke | Fail closed (`AUTHFN_SESSION_REVOKED` / `AUTHFN_API_KEY_REVOKED`) | Remain verifiable until `expiresAt`. Bind DataFn tickets to `sessionVersion` and keep TTL short. |
 | Session expiry | `AUTHFN_SESSION_EXPIRED` | Same bounded expiry. |
 | Identity deleted / missing user row | `AUTHFN_UNAUTHENTICATED` | Existing grants expire; do not mint new tickets. |
-| API-key owner disabled (`metadata.disabled === true`) | `AUTHFN_UNAUTHENTICATED` | Existing grants expire; re-enabling the owner restores the key. |
+| API-key owner disabled (`metadata.disabled === true`; TypeScript `authfn` 0.5.0+ only, the Python issuer does not check it yet) | `AUTHFN_UNAUTHENTICATED` | Existing grants expire; re-enabling the owner restores the key. |
 | Placement `moving` or `deleting` | `AUTHFN_PLACEMENT_MOVING` | Downstream cells should fence on epoch. Re-bootstrap through the canonical gateway. |
 | Tombstone / missing placement | `AUTHFN_REGION_NOT_FOUND` | Fail closed. |
 | Directory unavailable | `AUTHFN_PLACEMENT_DIRECTORY_UNAVAILABLE` | Fail closed. Do not guess a region. |
@@ -11215,7 +11217,17 @@ if session is None:
     return Response(status_code=401)
 ```
 
-`AuthFnSession` mirrors the TypeScript shape: `id`, `actor_id`, `actor_type`, `methods`, `primary_email`, `expires_at`, `metadata`, `region_id`.
+`AuthFnSession` mirrors the TypeScript shape: `id`, `actor_id`, `actor_type`, `methods`, `primary_email`, `expires_at`, `metadata`, `region_id`. API-key sessions are the exception; see below.
+
+### API key sessions
+
+API-key sessions in the Python SDK differ from the TypeScript `authfn` package (0.5.0 and later):
+
+- `actor_type` is `'api-key'` and `actor_id` is the key ID, even for a user-owned key. The session exposes the owner only through `metadata["ownerUserId"]`, and metadata stored on the key when it was created is merged over that entry, so do not rely on it to authorize access to the owner's data.
+- There is no `credential` field; check `session.type == "api-key"` to detect a key.
+- A key whose owner was disabled (`metadata.disabled` is `True` on the user record) still authenticates, and so does a key whose owner was deleted. The Python placement-context issuer also skips the disabled check. Disabling a user does not cut off their keys; revoke the keys too.
+
+The TypeScript rules (owned keys act as their owner, `credential`, the owner check) are described in [Plugins → API keys](../plugins/api-keys#authentication-via-api-key).
 
 ## Hooks
 

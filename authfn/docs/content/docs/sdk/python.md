@@ -124,7 +124,17 @@ if session is None:
     return Response(status_code=401)
 ```
 
-`AuthFnSession` mirrors the TypeScript shape: `id`, `actor_id`, `actor_type`, `methods`, `primary_email`, `expires_at`, `metadata`, `region_id`.
+`AuthFnSession` mirrors the TypeScript shape: `id`, `actor_id`, `actor_type`, `methods`, `primary_email`, `expires_at`, `metadata`, `region_id`. API-key sessions are the exception; see below.
+
+### API key sessions
+
+API-key sessions in the Python SDK differ from the TypeScript `authfn` package (0.5.0 and later):
+
+- `actor_type` is `'api-key'` and `actor_id` is the key ID, even for a user-owned key. The session exposes the owner only through `metadata["ownerUserId"]`, and metadata stored on the key when it was created is merged over that entry, so do not rely on it to authorize access to the owner's data.
+- There is no `credential` field; check `session.type == "api-key"` to detect a key.
+- A key whose owner was disabled (`metadata.disabled` is `True` on the user record) still authenticates, and so does a key whose owner was deleted. The Python placement-context issuer also skips the disabled check. Disabling a user does not cut off their keys; revoke the keys too.
+
+The TypeScript rules (owned keys act as their owner, `credential`, the owner check) are described in [Plugins → API keys](../plugins/api-keys#authentication-via-api-key).
 
 ## Hooks
 

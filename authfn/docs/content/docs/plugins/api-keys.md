@@ -45,7 +45,7 @@ const authApp = authfn({
 
 ## Authentication via API key
 
-When a request carries `Authorization: Bearer <secret>`, the kernel:
+When a request carries `Authorization: Bearer <secret>`, the TypeScript `authfn` kernel (0.5.0 and later):
 
 1. Looks up the key by `secretHash`; returns `null` if no key matches.
 2. Throws `AUTHFN_API_KEY_REVOKED` if `revokedAt` is set.
@@ -54,9 +54,11 @@ When a request carries `Authorization: Bearer <secret>`, the kernel:
 5. Updates `lastUsedAt`.
 6. Synthesizes an `AuthFnSession` with `type: 'api-key'`, `methods: ['api-key']`, and `credential: { type: 'api-key', id: <keyId> }`.
 
-A user-owned key acts as its owner: the session carries `actorType: 'user'` and `actorId` set to the owner's user ID, so data you key by `actorId` is the owner's data. An unowned service key keeps `actorType: 'api-key'` with the key ID as `actorId`. AuthFn looks up the key and loads its owner only in the configured `namespace`; with an adapter that isolates namespaces, a key or owner from another tenant authenticates as no one.
+In the TypeScript `authfn` package (0.5.0 and later), a user-owned key acts as its owner: the session carries `actorType: 'user'` and `actorId` set to the owner's user ID, so data you key by `actorId` is the owner's data. An unowned service key keeps `actorType: 'api-key'` with the key ID as `actorId`. AuthFn looks up the key and loads its owner only in the configured `namespace`; with an adapter that isolates namespaces, a key or owner from another tenant authenticates as no one.
 
 `session.metadata.ownerUserId` still carries the owner's user ID for one more minor version. It is deprecated; read `session.actorId` instead.
+
+> **Python SDK:** the Python `authfn` package has not adopted these rules yet. Its API-key sessions keep `actor_type` `'api-key'` with the key ID as `actor_id`, expose the owner only through `metadata.ownerUserId` (which metadata stored on the key can override), have no `credential` field, and do not check whether the owner was deleted or disabled. Disabling a user does not cut off their keys in a Python host; revoke the keys as well. See [SDKs → Python](../sdk/python#api-key-sessions).
 
 The synthesized session is what `auth.provider.authenticate(request)` returns. To tell a key apart from an interactive sign-in, branch on `session.type` (or `session.credential`), not on `session.actorType`:
 
