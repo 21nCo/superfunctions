@@ -17,7 +17,7 @@ export const AngleSliderDefinition: SolidPrimitiveDefinition<AngleSliderProps> =
   family: 'range-gesture',
   kind: 'interactive-controller',
   rootPart: 'root',
-  inputNames: ["value","defaultValue","min","max","step","disabled","readOnly"],
+  inputNames: ["value","defaultValue","min","max","step","disabled","readOnly","name"],
   context: AngleSliderContext,
   createController: createAngleSliderController as never,
   domBindings: [/* @__PURE__ */ createUIFnRangeGestureAdapterBinding(uifnAngleSliderGestureDriver, {"parts":["track"]})],

@@ -662,9 +662,7 @@ export interface SolidPrimitiveRootRuntimeProps<TInputs extends object> {
 export function SolidPrimitiveRoot<TInputs extends object>(runtime: SolidPrimitiveRootRuntimeProps<TInputs>): JSX.Element {
   const uniqueId = runtime.hydrationId;
   const source = () => runtime.props as AnyRecord;
-  const inputNames = runtime.definition.name === 'AngleSlider'
-    ? [...runtime.definition.inputNames, 'name']
-    : runtime.definition.inputNames;
+  const inputNames = runtime.definition.inputNames;
   const initial = splitSolidRootProps(untrack(source), inputNames);
   const environment: UIFnEnvironment = {
     ...initial.environment,

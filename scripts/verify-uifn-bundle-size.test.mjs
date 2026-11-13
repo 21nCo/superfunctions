@@ -254,6 +254,18 @@ test("a Svelte Menubar build carries the Menubar marker that the Tabs and Menu f
   assert.ok(findUnrelatedPrimitiveCode(source, "tabs").some((hit) => hit.primitive === "menubar"));
 });
 
+test("an AngleSlider build carries the AngleSlider marker that the Tabs and Menu fixtures must not", async (t) => {
+  requireBuiltAdapters();
+  // AngleSlider's extra root input lives in its own generated definition, so only an AngleSlider app ships the name.
+  for (const framework of ["react", "svelte", "solid"]) {
+    const directory = tempDir(t, ".binding-marker-check-", path.join(FIXTURE_ROOT, framework));
+    const entry = path.join(directory, framework === "svelte" ? "entry.ts" : "entry.tsx");
+    writeFileSync(entry, `import { AngleSlider } from '@uifn/${framework}/angle-slider';\nconsole.log(AngleSlider);\n`);
+    const { source } = await buildFixture({ id: `${framework}/angle-slider-marker-check`, framework, primitive: "tabs", entry });
+    assert.ok(findUnrelatedPrimitiveCode(source, "tabs").some((hit) => hit.primitive === "angle-slider"), framework);
+  }
+});
+
 test("a Tabs fixture that bundles another primitive's descriptor fails the check", () => {
   const source = 'const d={name:"Tabs"};const r={parts:["resizeHandle"]};const n="Splitter";';
   assert.deepEqual(evaluateFixture({ id: "solid/tabs", primitive: "tabs", gzipBytes: 1, budget: 2, source }), [

@@ -64,8 +64,9 @@ export const UNRELATED_PRIMITIVE_MARKERS = Object.freeze({
   "image-cropper": Object.freeze(['"ImageCropper"', '"cropArea"']),
   splitter: Object.freeze(['"Splitter"', '"resizeHandle"']),
   "date-picker": Object.freeze(['"DatePicker"']),
-  // An adapter substrate that special-cases Menubar by name ships that handling with every primitive.
+  // An adapter substrate that special-cases Menubar or AngleSlider by name ships that handling with every primitive.
   menubar: Object.freeze(['"Menubar"']),
+  "angle-slider": Object.freeze(['"AngleSlider"']),
 });
 
 // Each adapter's fixtures build with the Vite and framework plugin its Workbench declares. The framework runtime

@@ -72,6 +72,8 @@ export const ${name}Definition: SveltePrimitiveDefinition<${input}> = {
     ...primitive.inputs.map((entry) => entry.name),
     ...(primitive.name === 'Accordion' ? ['type'] : []),
     ...(primitive.name === 'Carousel' ? ['dir'] : []),
+    // AngleSlider's root also takes the native form field name its hidden input submits.
+    ...(primitive.name === 'AngleSlider' ? ['name'] : []),
   ])},
   contextKey: Symbol('uifn.${name}'),
   ${runtimeField}${domBindings.field}${commitFocusField}

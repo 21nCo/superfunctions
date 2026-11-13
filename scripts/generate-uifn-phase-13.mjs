@@ -85,6 +85,8 @@ export function ${component}(props: ${component}Props): JSX.Element {
     ...primitive.inputs.map((entry) => entry.name),
     ...(primitive.name === 'Accordion' ? ['type'] : []),
     ...(primitive.name === 'Carousel' ? ['dir'] : []),
+    // AngleSlider's root also takes the native form field name its hidden input submits.
+    ...(primitive.name === 'AngleSlider' ? ['name'] : []),
   ];
   const domBindings = adapterDomBindingsSource(primitive);
   return `import { createContext, type JSX } from 'solid-js';

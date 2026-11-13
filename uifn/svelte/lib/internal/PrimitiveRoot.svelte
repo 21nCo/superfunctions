@@ -35,9 +35,7 @@
 
   const instanceId = $props.id();
   const initialDefinition = untrack(() => definition);
-  const inputNames = initialDefinition.name === 'AngleSlider'
-    ? [...initialDefinition.inputNames, 'name']
-    : initialDefinition.inputNames;
+  const inputNames = initialDefinition.inputNames;
   const initial = splitSvelteRootProps(untrack(() => runtimeProps), inputNames);
   const environment: UIFnEnvironment = {
     ...initial.environment,

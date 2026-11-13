@@ -500,10 +500,7 @@ export function ReactPrimitiveRoot<TInputs extends object>({
   props,
 }: ReactPrimitiveRootRuntimeProps<TInputs>): React.ReactElement {
   const { asChild, render, children, environment, ...rest } = props as ReactPrimitiveRootProps<TInputs, ElementName> & AnyRecord;
-  const inputNames = definition.name === 'AngleSlider'
-    ? [...definition.inputNames, 'name']
-    : definition.inputNames;
-  const split = splitRootProps(rest, inputNames);
+  const split = splitRootProps(rest, definition.inputNames);
   const bridge = useBridge(definition, split.inputs as TInputs, environment);
   useDomOwnership(bridge);
   const coreProps = bridge.getPartProps(definition.rootPart, undefined, split.dom);
