@@ -60,11 +60,22 @@ wrapper stays in that chain, passes calls through and records nothing.
 The network collector never changes the application's request: the original
 arguments and receiver pass through untouched. `fetch` returns a promise
 chained from the page's that settles with the same response or rejection
-reason, so an unhandled rejection stays unhandled. Request headers are captured
-only from a `Headers` object, an array of pairs or a plain record; any other
-iterable may be one-shot, so it is passed on unread and its headers are not
-recorded. The captured URL goes through `redactUrl` and the captured headers
-through `redactHeaders`.
+reason, so an unhandled rejection stays unhandled. Observation never runs the
+application's iterators, getters or conversions, and a stopped wrapper reads
+nothing at all:
+
+- Request headers are captured only from a platform `Headers` object (not a
+  subclass), a plain array of `[name, value]` string pairs or a plain record of
+  string data properties. Any other form (a generator, `Map.entries()`, an
+  accessor, a custom iterator, a non-string value) is passed on unread and the
+  request is recorded without `requestHeaders`.
+- `init.method` and `init.headers` are read only from own data properties.
+- The URL is read from a string, a platform `URL` or a platform `Request`;
+  any other input is recorded as `"[UNREAD_URL]"` (`UNREAD_URL`), and a method
+  that is not a string as `"[UNREAD_METHOD]"` (`UNREAD_METHOD`).
+
+The captured URL goes through `redactUrl` and the captured headers through
+`redactHeaders`.
 
 ## Serialization
 

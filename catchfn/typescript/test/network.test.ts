@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NetworkCollector } from "../src/collectors/network.js";
+import { NetworkCollector, UNREAD_METHOD, UNREAD_URL } from "../src/collectors/network.js";
 import { expectValidEvents } from "./schema-helper.js";
 
 const SENSITIVE_HEADERS = ["authorization", "cookie", "set-cookie", "x-api-key", "x-auth-token", "x-access-token"];
@@ -260,5 +260,202 @@ describe("NetworkCollector stop()", () => {
     expectValidEvents(next.collect());
     next.stop();
     expect(globalThis.fetch).toBe(laterFetch);
+  });
+});
+
+// Each case builds fresh application arguments whose reads are stateful: an
+// extra read by the collector changes what the platform sends.
+interface Case {
+  name: string;
+  args: () => [unknown, unknown?];
+  /** What the event records instead of the part it may not read. */
+  unread: "headers" | "url" | "method";
+}
+const CASES: Case[] = [
+  {
+    name: "an array of pairs with its own one-shot iterator",
+    unread: "headers",
+    args: () => {
+      const headers = [["authorization", "Bearer A"]];
+      let used = false;
+      Object.defineProperty(headers, Symbol.iterator, {
+        value(this: unknown[]) {
+          if (used) return [][Symbol.iterator]();
+          used = true;
+          return Array.prototype[Symbol.iterator].call(this);
+        },
+      });
+      return ["https://example.com/a", { headers }];
+    },
+  },
+  {
+    name: "an array holding a generator pair",
+    unread: "headers",
+    args: () => {
+      function* pair() {
+        yield "authorization";
+        yield "Bearer B";
+      }
+      return ["https://example.com/b", { headers: [pair()] }];
+    },
+  },
+  {
+    name: "a record with a stateful getter",
+    unread: "headers",
+    args: () => {
+      let reads = 0;
+      return ["https://example.com/c", { headers: { get authorization() { return reads++ === 0 ? "Bearer C" : ""; } } }];
+    },
+  },
+  {
+    name: "an init whose headers is an accessor",
+    unread: "headers",
+    args: () => {
+      let reads = 0;
+      return ["https://example.com/d", { get headers() { return reads++ === 0 ? { authorization: "Bearer D" } : {}; } }];
+    },
+  },
+  {
+    name: "an input object with a stateful toString",
+    unread: "url",
+    args: () => {
+      let reads = 0;
+      const input = { toString: () => (reads++ === 0 ? "https://example.com/e" : "https://other.example/e") };
+      return [input, { headers: { authorization: "Bearer E" } }];
+    },
+  },
+  {
+    name: "an init whose method is an accessor",
+    unread: "method",
+    args: () => {
+      let reads = 0;
+      return ["https://example.com/f", { get method() { return reads++ === 0 ? "POST" : "DELETE"; }, headers: { authorization: "Bearer F" } }];
+    },
+  },
+];
+
+describe("NetworkCollector at a native Request boundary", () => {
+  // The page's fetch builds a platform Request, as a real fetch does, and
+  // records what it would transmit.
+  let sent: Array<{ url: string; method: string; authorization: string | null }>;
+  beforeEach(() => {
+    sent = [];
+    pageFetch.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      sent.push({ url: request.url, method: request.method, authorization: request.headers.get("authorization") });
+      return new Response("ok", { status: 200 });
+    });
+  });
+
+  async function transmit(test: Case) {
+    const [input, init] = test.args();
+    await fetch(input as RequestInfo, init as RequestInit);
+    return sent.pop();
+  }
+
+  async function baseline(test: Case) {
+    expect(globalThis.fetch).toBe(pageFetch);
+    const result = await transmit(test);
+    expect(result?.authorization).toMatch(/^Bearer [A-F]$/);
+    return result;
+  }
+
+  for (const test of CASES) {
+    it(`sends the same request with the collector running: ${test.name}`, async () => {
+      const expected = await baseline(test);
+      collector.start();
+      expect(await transmit(test)).toEqual(expected);
+      const [event] = collector.collect();
+      // Recorded, without the parts it could not read safely.
+      expect(event).toMatchObject({ kind: "network", transport: "fetch", status: 200 });
+      if (test.unread === "headers") expect(event).not.toHaveProperty("requestHeaders");
+      else expect(event!.requestHeaders).toEqual({ authorization: "[REDACTED]" });
+      expect(event!.url === UNREAD_URL).toBe(test.unread === "url");
+      expect(event!.method === UNREAD_METHOD).toBe(test.unread === "method");
+    });
+
+    it(`sends the same request through a stopped wrapper a later patcher kept: ${test.name}`, async () => {
+      const expected = await baseline(test);
+      collector.start();
+      const ours = globalThis.fetch;
+      const later = vi.fn((...args: Parameters<typeof fetch>) => ours(...args));
+      globalThis.fetch = later as unknown as typeof fetch;
+      collector.stop();
+      expect(globalThis.fetch).toBe(later);
+      expect(await transmit(test)).toEqual(expected);
+      expect(later).toHaveBeenCalledTimes(1);
+      expect(collector.size()).toBe(0);
+    });
+  }
+
+  it("records a fixed placeholder for an input it does not read, and still reads a Request and a URL", async () => {
+    collector.start();
+    let reads = 0;
+    await fetch({ toString: () => (reads++, "https://example.com/plain?token=x") } as unknown as RequestInfo);
+    expect(reads).toBe(1); // only the platform's own conversion
+    await fetch(new URL("https://example.com/url?token=secret&ok=1"));
+    await fetch(new Request("https://example.com/req", { method: "PUT", headers: { "x-trace": "r" } }), { method: 7 as unknown as string });
+    const events = collector.collect();
+    expect(events.map((event) => event.url)).toEqual([UNREAD_URL, expect.stringContaining("ok=1"), "https://example.com/req"]);
+    expect(events[1]!.url).not.toContain("secret");
+    expect(events[2]).toMatchObject({ method: UNREAD_METHOD, requestHeaders: { "x-trace": "r" } });
+  });
+
+  it("captures plain arrays, plain records and platform Headers, but not a Headers subclass", async () => {
+    class Custom extends Headers {
+      *[Symbol.iterator](): HeadersIterator<[string, string]> {
+        yield ["authorization", "Bearer custom"];
+      }
+    }
+    collector.start();
+    await fetch("https://example.com/1", { headers: [["x-a", "1"]] });
+    await fetch("https://example.com/2", { headers: { "x-b": "2" } });
+    await fetch("https://example.com/3", { headers: new Headers({ "x-c": "3" }) });
+    await fetch("https://example.com/4", { headers: new Custom({ "x-d": "4" }) });
+    expect(collector.collect().map((event) => event.requestHeaders)).toEqual([{ "x-a": "1" }, { "x-b": "2" }, { "x-c": "3" }, undefined]);
+    expect(sent.map((request) => request.authorization)).toEqual([null, null, null, "Bearer custom"]);
+  });
+});
+
+describe("NetworkCollector XMLHttpRequest after stop()", () => {
+  it("passes open and send through unread when a later patcher kept the stopped wrappers", () => {
+    collector.start();
+    const ourOpen = proto.open as (...args: unknown[]) => void;
+    const ourSend = proto.send as (...args: unknown[]) => void;
+    proto.open = function (this: unknown, ...args: unknown[]) {
+      return ourOpen.apply(this, args);
+    };
+    proto.send = function (this: unknown, ...args: unknown[]) {
+      return ourSend.apply(this, args);
+    };
+    collector.stop();
+    const listen = vi.spyOn(EventTarget.prototype, "addEventListener");
+    try {
+      let reads = 0;
+      const method = { toString: () => (reads++, "GET") };
+      const url = { toString: () => (reads++, "/x") };
+      const xhr = new XMLHttpRequest() as unknown as FakeXhr;
+      (xhr as unknown as { open: (...args: unknown[]) => void }).open(method, url, true);
+      (xhr as unknown as { send: (...args: unknown[]) => void }).send("body", "extra");
+      expect(xhr.opened).toEqual([method, url, true]);
+      expect(pageSend.mock.calls).toEqual([["body", "extra"]]);
+      expect(reads).toBe(0);
+      expect(listen).not.toHaveBeenCalled();
+      xhr.respond(200, "OK");
+      expect(collector.size()).toBe(0);
+    } finally {
+      listen.mockRestore();
+    }
+  });
+
+  it("records a placeholder for a non-string method or URL without converting it", () => {
+    collector.start();
+    let reads = 0;
+    const xhr = new XMLHttpRequest() as unknown as FakeXhr;
+    (xhr as unknown as { open: (...args: unknown[]) => void }).open({ toString: () => (reads++, "GET") }, { toString: () => (reads++, "/x") });
+    (xhr as unknown as XMLHttpRequest).send();
+    xhr.respond(200, "OK");
+    expect(reads).toBe(0);
+    expect(collector.collect()[0]).toMatchObject({ method: UNREAD_METHOD, url: UNREAD_URL, status: 200 });
   });
 });

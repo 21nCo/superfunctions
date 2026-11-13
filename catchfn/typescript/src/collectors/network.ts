@@ -34,36 +34,124 @@ type Listener = (observation: Observation) => void;
 let listeners = new Set<Listener>();
 let restore: (() => void) | undefined;
 
-function text(value: unknown): string {
-  return truncateToBytes(String(value), MAX_ENTRY_BYTES) ?? "";
+/** Recorded for a request URL that is not a string, `URL` or `Request`. */
+export const UNREAD_URL = "[UNREAD_URL]";
+/** Recorded for a request method that is not a string data value. */
+export const UNREAD_METHOD = "[UNREAD_METHOD]";
+const MAX_HEADER_PAIRS = 200;
+
+/** Marks a value observation may not read without running application code. */
+const UNREADABLE: unique symbol = Symbol("unreadable");
+type Field = unknown | typeof UNREADABLE;
+
+// The intrinsics a plain array uses when the platform iterates it.
+const ARRAY_ITERATOR = Array.prototype[Symbol.iterator];
+const ARRAY_ITERATOR_NEXT = Object.getPrototypeOf([][Symbol.iterator]()).next as unknown;
+
+function text(value: string): string {
+  return truncateToBytes(value, MAX_ENTRY_BYTES) ?? "";
 }
 
-function captureUrl(value: unknown): string {
-  return text(redactUrl(String(value)));
+function captureUrl(url: string): string {
+  return url === UNREAD_URL ? url : text(redactUrl(url));
+}
+
+/** An own data property's value; a getter, a hole or an absent key is unreadable. */
+function dataValue(target: object, key: PropertyKey): Field {
+  const descriptor = Object.getOwnPropertyDescriptor(target, key);
+  return descriptor && "value" in descriptor ? descriptor.value : UNREADABLE;
 }
 
 /**
- * Only forms that can be read without side effects are captured: a `Headers`
- * object, an array of pairs and a plain record. Any other iterable (a
- * generator, `Map.entries()`, ...) may be one-shot, so reading it would take
- * the headers away from the application's own request; it is skipped.
+ * A `RequestInit` member as the platform would see it, read without running a
+ * getter: undefined when absent, unreadable when it is an accessor or is
+ * inherited (the platform would read the inherited value, observation does not).
  */
-function snapshotable(value: unknown): boolean {
-  if (typeof value !== "object" || value === null) return false;
-  if (typeof Headers !== "undefined" && value instanceof Headers) return true;
-  if (Array.isArray(value)) return true;
-  const prototype = Object.getPrototypeOf(value);
-  return (prototype === Object.prototype || prototype === null) && !(Symbol.iterator in value);
+function optionField(target: object, key: string): Field {
+  const descriptor = Object.getOwnPropertyDescriptor(target, key);
+  if (descriptor) return "value" in descriptor ? descriptor.value : UNREADABLE;
+  return key in target ? UNREADABLE : undefined;
 }
 
-function captureHeaders(read: () => unknown): Record<string, string> | undefined {
-  if (typeof Headers === "undefined") return undefined;
+function isInstance(value: unknown, constructor: unknown): value is object {
+  return typeof constructor === "function" && typeof value === "object" && value !== null && value instanceof constructor;
+}
+
+/** Reads a platform attribute through the platform's own getter, never an override. */
+function platformRead(constructor: unknown, key: string, target: object): Field {
+  if (typeof constructor !== "function") return UNREADABLE;
+  const get = Object.getOwnPropertyDescriptor(constructor.prototype, key)?.get;
+  return get ? get.call(target) : UNREADABLE;
+}
+
+/** An array the platform iterates with the built-in array iterator. */
+function isPlainArray(value: unknown): value is unknown[] {
+  return (
+    Array.isArray(value) &&
+    Object.getPrototypeOf(value) === Array.prototype &&
+    Object.getOwnPropertyDescriptor(value, Symbol.iterator) === undefined &&
+    Array.prototype[Symbol.iterator] === ARRAY_ITERATOR &&
+    Object.getPrototypeOf([][Symbol.iterator]()).next === ARRAY_ITERATOR_NEXT
+  );
+}
+
+/**
+ * Copies header pairs out of a `HeadersInit` without invoking any application
+ * iterator, getter or conversion: a platform `Headers` object that is not a
+ * subclass (read through the platform's `forEach`), a plain array of `[name, value]` string pairs or a
+ * plain record whose enumerable properties are string data values. Anything
+ * else (a generator, `Map.entries()`, an accessor, a non-string value, ...) is
+ * left unread and yields undefined.
+ */
+function readHeaderPairs(value: Field): Array<[string, string]> | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  if (typeof Headers === "function" && isInstance(value, Headers)) {
+    // A subclass or an own iterator may make the platform send other pairs.
+    if (Object.getPrototypeOf(value) !== Headers.prototype || Object.getOwnPropertyDescriptor(value, Symbol.iterator)) return undefined;
+    const pairs: Array<[string, string]> = [];
+    Headers.prototype.forEach.call(value, (entry: string, name: string) => {
+      pairs.push([name, entry]);
+    });
+    return pairs;
+  }
+  if (isPlainArray(value)) {
+    const length = dataValue(value, "length");
+    if (typeof length !== "number" || length > MAX_HEADER_PAIRS) return undefined;
+    const pairs: Array<[string, string]> = [];
+    for (let index = 0; index < length; index += 1) {
+      const pair = dataValue(value, index);
+      if (!isPlainArray(pair) || dataValue(pair, "length") !== 2) return undefined;
+      const name = dataValue(pair, 0);
+      const entry = dataValue(pair, 1);
+      if (typeof name !== "string" || typeof entry !== "string") return undefined;
+      pairs.push([name, entry]);
+    }
+    return pairs;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== null && (prototype !== Object.prototype || Symbol.iterator in Object.prototype)) return undefined;
+  const keys = Reflect.ownKeys(value);
+  if (keys.length > MAX_HEADER_PAIRS) return undefined;
+  const pairs: Array<[string, string]> = [];
+  for (const key of keys) {
+    if (typeof key !== "string") return undefined; // The platform rejects a symbol key.
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor?.enumerable) continue; // The platform skips it too.
+    if (!("value" in descriptor) || typeof descriptor.value !== "string") return undefined;
+    pairs.push([key, descriptor.value]);
+  }
+  return pairs;
+}
+
+function captureHeaders(value: Field): Record<string, string> | undefined {
+  if (typeof Headers !== "function") return undefined;
   try {
-    const value = read();
-    if (!snapshotable(value)) return undefined;
+    const pairs = readHeaderPairs(value);
+    if (!pairs) return undefined;
+    // Headers built from our own copy validates and normalizes the names.
     const result: Record<string, string> = {};
-    new Headers(value as HeadersInit).forEach((entry, key) => {
-      result[key] = entry;
+    new Headers(pairs).forEach((entry, name) => {
+      Object.defineProperty(result, name, { value: entry, enumerable: true, writable: true, configurable: true });
     });
     // A plain record of strings serializes to a record of (possibly cut) strings.
     return serializeEntry(redactHeaders(result)) as Record<string, string>;
@@ -72,11 +160,46 @@ function captureHeaders(read: () => unknown): Record<string, string> | undefined
   }
 }
 
-function requestUrl(input: unknown): string {
+/** A URL string, a platform `URL` or a platform `Request`; anything else is not read. */
+function inputUrl(input: unknown): string {
   if (typeof input === "string") return input;
-  if (typeof URL !== "undefined" && input instanceof URL) return input.href;
-  const url = (input as { url?: unknown } | null | undefined)?.url;
-  return typeof url === "string" ? url : String(input);
+  try {
+    let url: Field = UNREADABLE;
+    if (typeof URL === "function" && isInstance(input, URL)) url = platformRead(URL, "href", input);
+    else if (typeof Request === "function" && isInstance(input, Request)) url = platformRead(Request, "url", input);
+    return typeof url === "string" ? url : UNREAD_URL;
+  } catch {
+    return UNREAD_URL;
+  }
+}
+
+/** What a `fetch(input, init)` call sends, read without running application code. */
+function readFetchRequest(input: unknown, init: unknown): Pick<Observation, "method" | "url" | "requestHeaders"> {
+  let method: Field = "GET";
+  let headers: Field = UNREADABLE;
+  if (typeof Request === "function" && isInstance(input, Request)) {
+    try {
+      method = platformRead(Request, "method", input);
+      headers = platformRead(Request, "headers", input);
+    } catch {
+      method = UNREADABLE;
+    }
+  }
+  if (init !== undefined && init !== null) {
+    if (typeof init === "object" || typeof init === "function") {
+      const initMethod = optionField(init, "method");
+      if (initMethod !== undefined) method = initMethod;
+      const initHeaders = optionField(init, "headers");
+      if (initHeaders !== undefined) headers = initHeaders;
+    } else {
+      headers = UNREADABLE; // The platform rejects it; there is nothing to read.
+    }
+  }
+  return {
+    method: typeof method === "string" ? text(method) : UNREAD_METHOD,
+    url: captureUrl(inputUrl(input)),
+    requestHeaders: captureHeaders(headers),
+  };
 }
 
 function duration(since: number): number {
@@ -98,21 +221,17 @@ function subscribe(listener: Listener): () => void {
     };
     const cleanups: Array<() => void> = [];
 
+    // Every wrapper first checks `current`: once its collectors have all
+    // stopped it reads nothing and only passes the call through, so a wrapper
+    // another library keeps in its chain after stop() is inert.
     if (typeof globalThis.fetch === "function") {
       const original = globalThis.fetch;
       const wrapper = function (this: unknown, ...args: Parameters<typeof fetch>): Promise<Response> {
+        if (current.size === 0) return original.apply(this ?? globalThis, args);
         const timestamp = Date.now();
         let base: Observation | undefined;
         try {
-          const [input, init] = args;
-          const request = input as { method?: unknown; headers?: unknown } | undefined;
-          base = {
-            transport: "fetch",
-            method: text(init?.method ?? (typeof request?.method === "string" ? request.method : "GET")),
-            url: captureUrl(requestUrl(input)),
-            timestamp,
-            requestHeaders: captureHeaders(() => init?.headers ?? request?.headers),
-          };
+          base = { transport: "fetch", timestamp, ...readFetchRequest(args[0], args[1]) };
         } catch {
           base = undefined; // Unreadable input: still make the application's call.
         }
@@ -123,13 +242,15 @@ function subscribe(listener: Listener): () => void {
         const observe = (response?: unknown) => {
           try {
             const settled: Observation = { ...observed, duration: duration(timestamp) };
-            if (typeof response === "object" && response !== null) {
-              const { status, statusText } = response as { status?: unknown; statusText?: unknown };
+            // Only a platform Response is read, and only through its own getters.
+            if (typeof Response === "function" && isInstance(response, Response)) {
+              const status = platformRead(Response, "status", response);
               if (Number.isSafeInteger(status) && (status as number) >= 0) {
                 settled.status = status as number;
-                if (statusText !== undefined) settled.statusText = text(statusText);
+                const statusText = platformRead(Response, "statusText", response);
+                if (typeof statusText === "string") settled.statusText = text(statusText);
               }
-              settled.responseHeaders = captureHeaders(() => (response as { headers?: unknown }).headers);
+              settled.responseHeaders = captureHeaders(platformRead(Response, "headers", response));
             }
             emit(settled);
           } catch {
@@ -164,39 +285,88 @@ function subscribe(listener: Listener): () => void {
 
     if (typeof XMLHttpRequest !== "undefined") {
       const prototype = XMLHttpRequest.prototype;
-      const originalOpen = prototype.open;
-      const originalSend = prototype.send;
-      const records = new WeakMap<XMLHttpRequest, { method: string; url: string }>();
+      const originalOpen = prototype.open as (...values: unknown[]) => unknown;
+      const originalSend = prototype.send as (...values: unknown[]) => unknown;
+      const records = new WeakMap<object, { method: string; url: string }>();
+      const target = typeof EventTarget === "function" ? EventTarget.prototype : undefined;
+      // A platform attribute is read through the platform getter; a stand-in
+      // without one is read only from an own data property.
+      const field = (xhr: object, key: string): Field => {
+        const get = Object.getOwnPropertyDescriptor(prototype, key)?.get;
+        return get ? get.call(xhr) : dataValue(xhr, key);
+      };
       const open = function (this: XMLHttpRequest, ...args: unknown[]) {
+        if (current.size === 0) return originalOpen.apply(this, args);
         try {
-          records.set(this, { method: text(args[0]), url: captureUrl(args[1]) });
+          const [method, url] = args;
+          let address = UNREAD_URL;
+          if (typeof url === "string") address = url;
+          else if (typeof URL === "function" && isInstance(url, URL)) {
+            const href = platformRead(URL, "href", url);
+            if (typeof href === "string") address = href;
+          }
+          records.set(this, { method: typeof method === "string" ? text(method) : UNREAD_METHOD, url: captureUrl(address) });
         } catch {
-          records.delete(this);
+          try {
+            records.delete(this);
+          } catch {
+            /* Not an object: there is no record to drop. */
+          }
         }
-        return (originalOpen as (...values: unknown[]) => void).apply(this, args);
+        return originalOpen.apply(this, args);
       } as typeof prototype.open;
-      const send = function (this: XMLHttpRequest, body?: Document | XMLHttpRequestBodyInit | null) {
-        const record = records.get(this);
+      const send = function (this: XMLHttpRequest, ...args: unknown[]) {
+        if (current.size === 0) return originalSend.apply(this, args);
+        let record: { method: string; url: string } | undefined;
+        try {
+          record = records.get(this);
+        } catch {
+          record = undefined;
+        }
+        if (!record || !target) return originalSend.apply(this, args);
+        const observed = record;
+        const xhr = this;
         const timestamp = Date.now();
         const complete = () => {
-          if (!record) return;
-          emit({ transport: "xhr", ...record, timestamp, duration: duration(timestamp), status: this.status, statusText: text(this.statusText) });
+          try {
+            const settled: Observation = { transport: "xhr", ...observed, timestamp, duration: duration(timestamp) };
+            const status = field(xhr, "status");
+            if (Number.isSafeInteger(status) && (status as number) >= 0) settled.status = status as number;
+            const statusText = field(xhr, "statusText");
+            if (typeof statusText === "string") settled.statusText = text(statusText);
+            emit(settled);
+          } catch {
+            /* Observation never raises into the application's event dispatch. */
+          }
         };
-        this.addEventListener("loadend", complete, { once: true });
+        let listening = false;
         try {
-          return originalSend.call(this, body);
+          target.addEventListener.call(xhr, "loadend", complete, { once: true });
+          listening = true;
+        } catch {
+          listening = false; // Not an event target: send without observing.
+        }
+        try {
+          return originalSend.apply(xhr, args);
         } catch (error) {
-          this.removeEventListener("loadend", complete);
+          if (listening) {
+            try {
+              target.removeEventListener.call(xhr, "loadend", complete);
+            } catch {
+              /* Nothing more to undo. */
+            }
+          }
           throw error;
         }
-      };
+      } as typeof prototype.send;
       prototype.open = open;
       prototype.send = send;
       cleanups.push(() => {
-        if (prototype.open === open) prototype.open = originalOpen;
-        if (prototype.send === send) prototype.send = originalSend;
+        if (prototype.open === open) prototype.open = originalOpen as typeof prototype.open;
+        if (prototype.send === send) prototype.send = originalSend as typeof prototype.send;
       });
     }
+
 
     // Restore only what we replaced and still own; a wrapper another library
     // installed over ours keeps ours in its chain, inert once `current` empties.
