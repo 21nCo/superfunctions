@@ -34,7 +34,6 @@ export const ErrorCodes = {
   INVALID_PART_NUMBER: 'FILEFN_INVALID_PART_NUMBER',
   INVALID_ETAG: 'FILEFN_INVALID_ETAG',
   INVALID_FILE_ID: 'FILEFN_INVALID_FILE_ID',
-  FILE_BUSY: 'FILEFN_FILE_BUSY',
   UPLOAD_INCOMPLETE: 'FILEFN_UPLOAD_INCOMPLETE',
   UPLOAD_EXPIRED: 'FILEFN_UPLOAD_EXPIRED',
   UPLOAD_ABORTED: 'FILEFN_UPLOAD_ABORTED',
@@ -118,15 +117,6 @@ export function invalidFileId(): FileFnError {
     ErrorCodes.INVALID_FILE_ID,
     'fileId must match file_[A-Za-z0-9_-]{8,64}',
     400,
-  );
-}
-
-export function fileBusy(fileId: string): FileFnError {
-  return new FileFnError(
-    ErrorCodes.FILE_BUSY,
-    'Another upload of this file is completing; retry shortly',
-    409,
-    { fileId, retryable: true },
   );
 }
 

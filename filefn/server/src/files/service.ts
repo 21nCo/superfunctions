@@ -7,7 +7,6 @@ import type { QuotaProvider } from '../upload-sessions/service.js';
 import { resolveArtifactStorageTarget, resolveStorageTarget, type PolicyRegistry } from '../policies.js';
 import * as errors from '../errors.js';
 import { createFileDeletedEvent } from '../events.js';
-import { proxyPartKeys } from '../upload-sessions/part-keys.js';
 
 export interface FileRecord {
   fileId: string;
@@ -190,6 +189,10 @@ function tryParseCursor(cursor: string): CursorTuple | null {
     // Fall through for legacy/plain cursor support.
   }
   return null;
+}
+
+function proxyPartKey(storageKey: string, partNumber: number): string {
+  return `${storageKey}.part${partNumber}`;
 }
 
 function isImageMimeType(mimeType: string): boolean {
@@ -684,12 +687,10 @@ export function createFileService(config: FileServiceConfig) {
 
         if (session.uploadMode === 'proxy') {
           for (const part of parts) {
-            for (const key of proxyPartKeys(session.storageKey, session.uploadSessionId, part.partNumber)) {
-              try {
-                await storage.deleteObject({ key, target: sessionStorageTarget });
-              } catch {
-                // Best-effort cleanup for proxy temp parts.
-              }
+            try {
+              await storage.deleteObject({ key: proxyPartKey(session.storageKey, part.partNumber), target: sessionStorageTarget });
+            } catch {
+              // Best-effort cleanup for proxy temp parts.
             }
           }
         }

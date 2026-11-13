@@ -56,20 +56,20 @@ export interface UploadInput {
    *
    * - Must match `file_[A-Za-z0-9_-]{8,64}`; the server rejects any other value
    *   on `upload/init` with 400 `FILEFN_INVALID_FILE_ID`.
-   * - A new ID creates the file, owned by the caller, when the upload
-   *   completes. The server completes uploads of one file one at a time, and
-   *   the first to complete creates it. A later completion under that ID by
-   *   another caller is treated like a replacement (below): it fails with 403
-   *   `FILEFN_FORBIDDEN` unless that caller may write the file, and in either
-   *   case stores none of its bytes over the file's.
+   * - A new ID (no file yet) is reserved for the signed-in caller on
+   *   `upload/init`, and the file is created owned by that caller when the
+   *   upload completes. The first caller to init an ID keeps it: another
+   *   principal's `upload/init` (or completion) under it fails with 403
+   *   `FILEFN_FORBIDDEN`, before it uploads anything. An anonymous caller
+   *   cannot reserve an ID and also gets 403. The ID stays reserved to its
+   *   owner even if the file is later deleted.
    * - An existing ID replaces that file with a new version and needs write
-   *   permission on it; otherwise `upload/init` (or, if the file appeared after
-   *   init, the completion) fails with 403.
-   * - If another upload of the same file is still completing, the completion
-   *   fails with 409 `FILEFN_FILE_BUSY` (`details.retryable: true`); retry it.
-   * - Retrying an upload under the same ID is safe: pass the same
-   *   `idempotencyKey` to get the same upload session back. A retry without
-   *   it, by the same caller, becomes a new version of the same file.
+   *   permission on it; otherwise `upload/init` fails with 403, and a
+   *   completion fails with 403 if the permission was lost after init.
+   * - Retrying `upload/init` under the same ID is safe. With the same
+   *   `idempotencyKey` it returns the same upload session; without one, the
+   *   same caller gets a new session for the same ID, and each session that
+   *   completes adds a version of the one file.
    */
   fileId?: string;
   idempotencyKey?: string;
