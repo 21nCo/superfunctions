@@ -12,7 +12,26 @@ export interface RetryOptions {
 
 export interface FileFnClientConfig {
   baseUrl: string;
+  /**
+   * Headers added to every request sent to FileFn (API calls and proxy part
+   * uploads). Called again for each request and retry attempt, so it can
+   * return a fresh bearer token or CSRF token. Never sent to presigned
+   * storage URLs outside `baseUrl`.
+   */
   getAuthHeaders?: () => Promise<Record<string, string>> | Record<string, string>;
+  /**
+   * Fetch implementation used for every request the client makes, including
+   * part uploads and offline sync replay. Defaults to the global `fetch`,
+   * looked up when each request is sent. It is called without a `this`
+   * binding, so `window.fetch` can be passed directly.
+   */
+  fetch?: typeof fetch;
+  /**
+   * Credentials mode for requests sent to FileFn. Defaults to `same-origin`.
+   * Use `include` to send session cookies to a FileFn API on another origin.
+   * Part uploads to presigned URLs outside `baseUrl` always use `omit`.
+   */
+  credentials?: RequestCredentials;
   retryOptions?: RetryOptions;
   offline?: {
     enabled: boolean;
