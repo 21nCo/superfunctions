@@ -1,9 +1,9 @@
 import { digestJson, sha256, stableStringify } from "../canonical.js";
-import { verifyChangeDetail } from "../change.js";
+import { verifyChangeDetail, type ChangeDetailVerification } from "../change.js";
 import { ReviewFnError } from "../errors.js";
 import { harnessOutputSchema } from "../schema.js";
-import type { ArtifactStore, ContextManifest, Evidence, ReviewPolicy, ReviewReport, SourceControlAdapter, Verdict } from "../types.js";
-import { deriveVerdict, validateReport } from "../validator.js";
+import type { ArtifactStore, CodeAnchor, ContextManifest, Evidence, ReviewPolicy, ReviewReport, SourceControlAdapter, SourceReference, Verdict } from "../types.js";
+import { deriveVerdict, reproductionVerified, sinceAncestryError, sourceReferenceChecker, validateReport, waiverReferenceValid } from "../validator.js";
 import { PANEL_CREDENTIAL_FINGERPRINT_PATTERN, PANEL_DIGEST_PATTERN, PANEL_NONBLANK_PATTERN, PANEL_SLOT_ID_PATTERN, PANEL_TIMESTAMP_PATTERN, panelSchemaDefs } from "./schema.js";
 import { PANEL_DEFAULT_MAX_CONCURRENT_SLOTS } from "./types.js";
 import type { PanelFinding, PanelPolicy, PanelReport, PanelReportIssueCode, PanelReportValidationResult, PanelSlot, PanelValidationCode, PanelValidationIssue, PanelValidationResult, SlotIdentity, SlotRun } from "./types.js";
@@ -168,7 +168,7 @@ const panelFinding = object({
 }, defs.panelFinding.required);
 const panelReport = object({
   schemaVersion: oneOf([1]), kind: oneOf(["reviewfn-panel"]), runId: nonblank, createdAt: timestamp, change: changeSnapshot, changeDetail,
-  panelPolicyDigest: string(PANEL_DIGEST_PATTERN), slots: array(panelSlot, { min: 1 }), slotRuns: array(slotRun), requirementsReport: reviewReport,
+  contextManifestDigest: string(PANEL_DIGEST_PATTERN), panelPolicyDigest: string(PANEL_DIGEST_PATTERN), slots: array(panelSlot, { min: 1 }), slotRuns: array(slotRun), requirementsReport: reviewReport,
   gateReceipts: array(testReceipt), evidence: array(evidence), findings: array(panelFinding),
   clusters: array(object({ id: nonblank, findingFingerprints: array(text, { min: 1, unique: true }) }, defs.panelFindingCluster.required)),
   coverage: oneOf(defs.panelReport.properties.coverage.enum), coverageReasons: array(nonblank), verdict: oneOf(defs.panelReport.properties.verdict.enum),
@@ -275,10 +275,15 @@ export function derivePanelVerdict(report: Pick<PanelReport, "coverage" | "findi
 }
 
 export interface PanelReportValidationOptions {
+  /** Verifies code anchors and incremental-range ancestry; without it every code anchor fails closed. */
   sourceControl?: SourceControlAdapter;
   root?: string;
-  /** Frozen context of the run, required to validate a completed requirements report's sources. */
+  /**
+   * Frozen context of the run. Required to verify a completed requirements report, suppression references and source
+   * evidence; it is used only when its digest equals the report's `contextManifestDigest` (or the requirements report's).
+   */
   context?: ContextManifest;
+  /** Retained artifacts: change detail, reproduction logs and slot outputs fail closed without it. */
   artifacts?: ArtifactStore;
 }
 
@@ -289,58 +294,91 @@ function reportIssue(error: string, path: string): PanelValidationIssue<PanelRep
   return { code, path, message: match && code !== "REVIEWFN_REPORT_INVALID" ? match[2] : error };
 }
 
+/** A timestamp that matches the pattern and names a real calendar date (the pattern admits February 30). */
+function timestampExists(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T/.exec(value);
+  if (!match || Number.isNaN(Date.parse(value))) return false;
+  const [year, month, day] = match.slice(1).map(Number);
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
 function slotRunIssues(report: PanelReport, slots: Map<string, PanelSlot>, issues: Issues): void {
   const order = new Map([...slots.keys()].map((id, index) => [id, index]));
   for (const { index, key } of duplicates(report.slotRuns, run => run.slotId)) add(issues, "REVIEWFN_PANEL_SLOT_DUPLICATE", `/slotRuns/${index}/slotId`, `Slot ${key} has more than one run.`);
   const groups = new Map<string, Array<{ run: SlotRun; index: number }>>();
   report.slotRuns.forEach((run, index) => {
     const path = `/slotRuns/${index}`;
+    for (const key of ["startedAt", "finishedAt"] as const) if (!timestampExists(run[key])) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/${key}`, `${run[key]} is not a real UTC time.`);
+    if (timestampExists(run.startedAt) && timestampExists(run.finishedAt) && Date.parse(run.finishedAt) < Date.parse(run.startedAt)) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/finishedAt`, "A run cannot finish before it starts.");
     const slot = slots.get(run.slotId);
     if (!slot) return add(issues, "REVIEWFN_PANEL_SLOT_UNKNOWN", `${path}/slotId`, `Run references unknown slot ${run.slotId}.`);
     const { identity } = run;
     if (identity.harnessAdapter !== slot.harness.adapter || identity.provider !== slot.inference.provider || identity.auth !== slot.inference.auth) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/identity`, `Run identity does not match slot ${slot.id}'s harness adapter, provider or auth mode.`);
+    // One precedence: an observed model mismatch voids the run whatever else happened.
     const mismatch = slot.inference.model !== "configured" && identity.model !== slot.inference.model;
-    if (mismatch && (run.terminal === "completed" || run.terminal === "collapsed")) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/terminal`, `Resolved model ${identity.model} differs from configured model ${slot.inference.model}; the run must be void with model_mismatch.`);
+    if (mismatch && run.terminal !== "void") add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/terminal`, `Resolved model ${identity.model} differs from configured model ${slot.inference.model}; the run must be void with model_mismatch.`);
+    else if (mismatch && !run.voidReasons.includes("model_mismatch")) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/voidReasons`, `Resolved model ${identity.model} differs from configured model ${slot.inference.model}; the void reasons must include model_mismatch.`);
     if (!mismatch && run.voidReasons.includes("model_mismatch")) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/voidReasons`, "model_mismatch requires a resolved model that differs from the configured model.");
-    if (Date.parse(run.finishedAt) < Date.parse(run.startedAt)) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/finishedAt`, "A run cannot finish before it starts.");
     const group = `${String(slot.stage)}\u0000${slotIdentityKey(identity)}`;
     groups.set(group, [...(groups.get(group) ?? []), { run, index }]);
   });
-  // Within a stage, the first slot (in policy order) of each identity counts; every later one is collapsed.
+  // Within a stage, the first completed run of an identity (in policy order) counts. A later run of that identity that
+  // would also count is collapsed; runs that did not complete neither count nor collapse.
   for (const members of groups.values()) {
     const sorted = [...members].sort((left, right) => order.get(left.run.slotId)! - order.get(right.run.slotId)!);
+    const counted = sorted.findIndex(({ run }) => run.terminal === "completed");
     sorted.forEach(({ run, index }, position) => {
-      if (position === 0 && run.terminal === "collapsed") add(issues, "REVIEWFN_PANEL_SLOT_DUPLICATE", `/slotRuns/${index}/terminal`, `Slot ${run.slotId} is collapsed but no earlier slot in its stage has the same identity.`);
-      if (position > 0 && run.terminal !== "collapsed") add(issues, "REVIEWFN_PANEL_SLOT_DUPLICATE", `/slotRuns/${index}/terminal`, `Slot ${run.slotId} has the same identity as slot ${sorted[0].run.slotId} in its stage and must be collapsed.`);
+      if (run.terminal === "completed" && position > counted) add(issues, "REVIEWFN_PANEL_SLOT_DUPLICATE", `/slotRuns/${index}/terminal`, `Slot ${run.slotId} has the same identity as slot ${sorted[counted].run.slotId}, which counts for its stage; it must be collapsed.`);
+      if (run.terminal === "collapsed" && (counted < 0 || position < counted)) add(issues, "REVIEWFN_PANEL_SLOT_DUPLICATE", `/slotRuns/${index}/terminal`, `Slot ${run.slotId} is collapsed but no earlier completed slot in its stage has the same identity.`);
     });
   }
 }
 
-function evidenceIssues(report: PanelReport, issues: Issues): Map<string, Evidence> {
+interface EvidenceContext {
+  report: PanelReport;
+  options: PanelReportValidationOptions;
+  referenceValid: (ref: SourceReference) => boolean;
+  detail: ChangeDetailVerification;
+}
+
+async function evidenceIssues({ report, options, referenceValid, detail }: EvidenceContext, issues: Issues): Promise<Map<string, Evidence>> {
+  const { artifacts } = options;
+  const since = report.changeDetail?.since;
+  const verifiedDelta = detail.errors.length === 0 && since !== undefined && detail.delta?.baseCommit === since && detail.delta.headCommit === report.change.headCommit ? detail.delta : undefined;
+  const changedPaths = new Set([...report.change.changedPaths, ...(verifiedDelta?.files.map(file => file.path) ?? [])]);
   for (const { index, key } of duplicates(report.evidence, item => item.id)) add(issues, "REVIEWFN_PANEL_FINDING_INVALID", `/evidence/${index}/id`, `Evidence ${key} is declared more than once.`);
-  report.evidence.forEach((item, index) => {
-    if ((item.kind === "code" || item.kind === "diff") && !item.code) add(issues, "REVIEWFN_PANEL_FINDING_INVALID", `/evidence/${index}/code`, `Evidence ${item.id} has no code anchor.`);
-    if (item.kind === "test" && report.gateReceipts.filter(receipt => receipt.id === item.receiptId).length !== 1) add(issues, "REVIEWFN_PANEL_FINDING_INVALID", `/evidence/${index}/receiptId`, `Evidence ${item.id} references no single gate receipt.`);
-  });
+  for (const [index, item] of report.evidence.entries()) {
+    const path = `/evidence/${index}`;
+    if (item.sourceExclusionReason !== undefined && (item.kind !== "source" || !item.sourceExclusionReason.trim())) add(issues, "REVIEWFN_PANEL_FINDING_INVALID", `${path}/sourceExclusionReason`, `Evidence ${item.id} has an invalid source exclusion reason.`);
+    if (item.kind === "source" && (!item.source || !referenceValid(item.source))) add(issues, "REVIEWFN_PANEL_FINDING_INVALID", `${path}/source`, `Evidence ${item.id} has no source verifiable against the frozen context.`);
+    if ((item.kind === "code" || item.kind === "diff") && !item.code) add(issues, "REVIEWFN_PANEL_FINDING_INVALID", `${path}/code`, `Evidence ${item.id} has no code anchor.`);
+    if (item.kind === "diff" && item.code && !changedPaths.has(item.code.path)) add(issues, "REVIEWFN_PANEL_FINDING_INVALID", `${path}/code`, `Diff evidence ${item.id} is outside the changed paths.`);
+    if (item.kind === "test" && report.gateReceipts.filter(receipt => receipt.id === item.receiptId && receipt.commit === report.change.headCommit).length !== 1) add(issues, "REVIEWFN_PANEL_FINDING_INVALID", `${path}/receiptId`, `Evidence ${item.id} references no single gate receipt at the reviewed head.`);
+    if (item.kind === "artifact") {
+      // Panel artifact evidence cites a retained slot output by digest.
+      const run = report.slotRuns.find(candidate => candidate.outputArtifact !== undefined && candidate.outputDigest !== undefined && candidate.outputDigest === item.artifactDigest);
+      const bytes = run && artifacts ? await artifacts.get(run.outputArtifact!) : undefined;
+      if (!bytes || sha256(bytes) !== item.artifactDigest) add(issues, "REVIEWFN_PANEL_FINDING_INVALID", `${path}/artifactDigest`, `Evidence ${item.id} references no retained slot output with a matching digest.`);
+    }
+  }
   return new Map(report.evidence.map(item => [item.id, item]));
 }
 
-function findingIssues(report: PanelReport, slots: Map<string, PanelSlot>, evidence: Map<string, Evidence>, issues: Issues): void {
+async function findingIssues(context: EvidenceContext, policy: ReviewPolicy, slots: Map<string, PanelSlot>, evidence: Map<string, Evidence>, issues: Issues): Promise<void> {
+  const { report, options, referenceValid } = context;
   const runs = new Map(report.slotRuns.map(run => [run.slotId, run]));
   const requirementIds = new Set(report.requirementsReport?.requirements.map(requirement => requirement.id) ?? []);
-  const receipts = new Map(report.gateReceipts.map(receipt => [receipt.id, receipt]));
   for (const { index, key } of duplicates(report.findings, finding => finding.fingerprint)) add(issues, "REVIEWFN_PANEL_FINDING_INVALID", `/findings/${index}/fingerprint`, `Fingerprint ${key} is reported more than once; merge the origins into one finding.`);
-  report.findings.forEach((finding, index) => {
+  for (const [index, finding] of report.findings.entries()) {
     const path = `/findings/${index}`;
     intrinsicFindingIssues(finding, path, issues);
+    if (finding.disposition === "suppressed" && finding.suppressionReference && !waiverReferenceValid(finding.suppressionReference, referenceValid, policy)) add(issues, "REVIEWFN_PANEL_DISPOSITION_INVALID", `${path}/suppressionReference`, "The suppression reference does not cite a waiver authority verifiable against the frozen context.");
     if (!finding.evidenceIds.length) add(issues, "REVIEWFN_PANEL_FINDING_INVALID", `${path}/evidenceIds`, "A finding requires evidence.");
     for (const id of finding.evidenceIds) if (!evidence.has(id)) add(issues, "REVIEWFN_PANEL_FINDING_INVALID", `${path}/evidenceIds`, `Finding references unknown evidence ${id}.`);
     if (finding.evidenceIds.length && !finding.evidenceIds.some(id => ["code", "diff", "test"].includes(evidence.get(id)?.kind ?? ""))) add(issues, "REVIEWFN_PANEL_FINDING_INVALID", `${path}/evidenceIds`, "A finding requires code, diff or test evidence.");
-    if (finding.basis === "reproduced" && !finding.evidenceIds.some(id => {
-      const item = evidence.get(id);
-      const receipt = item?.kind === "test" && item.receiptId !== undefined ? receipts.get(item.receiptId) : undefined;
-      return !!receipt && receipt.commit === report.change.headCommit && receipt.exitCode !== null && !receipt.timedOut && !receipt.canceled;
-    })) add(issues, "REVIEWFN_PANEL_FINDING_INVALID", `${path}/basis`, "A reproduced finding requires test evidence from a completed gate receipt at the reviewed head.");
+    if (finding.basis === "reproduced" && !(await reproductionVerified(finding.evidenceIds, evidence, report.gateReceipts, report.change.headCommit, options.artifacts))) add(issues, "REVIEWFN_PANEL_FINDING_INVALID", `${path}/basis`, "A reproduced finding requires a completed gate receipt at the reviewed head with verified retained logs.");
     for (const id of finding.requirementIds) if (!requirementIds.has(id)) add(issues, "REVIEWFN_PANEL_FINDING_INVALID", `${path}/requirementIds`, `Finding references unknown requirement ${id}.`);
     finding.origins.forEach((origin, position) => {
       const slot = slots.get(origin.slotId);
@@ -348,9 +386,9 @@ function findingIssues(report: PanelReport, slots: Map<string, PanelSlot>, evide
       if (reason) add(issues, "REVIEWFN_PANEL_ORIGIN_UNKNOWN", `${path}/origins/${position}`, `Origin ${origin.slotId} ${reason}.`);
     });
     const verification = finding.verification;
-    if (!verification) return;
+    if (!verification) continue;
     const verifier = slots.get(verification.slotId);
-    if (!verifier) return add(issues, "REVIEWFN_PANEL_SLOT_UNKNOWN", `${path}/verification/slotId`, `Verification references unknown slot ${verification.slotId}.`);
+    if (!verifier) { add(issues, "REVIEWFN_PANEL_SLOT_UNKNOWN", `${path}/verification/slotId`, `Verification references unknown slot ${verification.slotId}.`); continue; }
     const verifierRun = runs.get(verifier.id);
     if (verifier.stage !== "verifier") add(issues, "REVIEWFN_PANEL_VERIFICATION_INVALID", `${path}/verification/slotId`, `Slot ${verifier.id} is not a verifier slot.`);
     if (verifierRun?.terminal !== "completed") add(issues, "REVIEWFN_PANEL_VERIFICATION_INVALID", `${path}/verification/slotId`, `Verifier slot ${verifier.id} has no completed run.`);
@@ -361,7 +399,7 @@ function findingIssues(report: PanelReport, slots: Map<string, PanelSlot>, evide
     }
     for (const id of verification.evidenceIds) if (!evidence.has(id)) add(issues, "REVIEWFN_PANEL_VERIFICATION_INVALID", `${path}/verification/evidenceIds`, `Verification references unknown evidence ${id}.`);
     if (verification.verdict !== "inconclusive" && !verification.evidenceIds.length) add(issues, "REVIEWFN_PANEL_VERIFICATION_INVALID", `${path}/verification/evidenceIds`, `A ${verification.verdict} verification requires evidence.`);
-  });
+  }
   const fingerprints = new Set(report.findings.map(finding => finding.fingerprint));
   const clustered = new Map<string, string>();
   for (const { index, key } of duplicates(report.clusters, cluster => cluster.id)) add(issues, "REVIEWFN_PANEL_FINDING_INVALID", `/clusters/${index}/id`, `Cluster ${key} is declared more than once.`);
@@ -375,17 +413,17 @@ function findingIssues(report: PanelReport, slots: Map<string, PanelSlot>, evide
   });
 }
 
+/** Code anchors cite the reviewed head, or the merge base for on-base code, and are verified through source control; without it they fail closed. */
 async function anchorIssues(report: PanelReport, options: PanelReportValidationOptions, issues: Issues): Promise<void> {
   const { sourceControl, root } = options;
-  if (!sourceControl || !root) return;
-  // Panel evidence cites the reviewed head, or the merge base for pre-existing (on-base) code.
   const commits = new Set([report.change.headCommit, report.change.mergeBaseCommit]);
-  const anchors = [
+  const anchors: Array<{ anchor: CodeAnchor; path: string }> = [
     ...report.evidence.flatMap((item, index) => item.code ? [{ anchor: item.code, path: `/evidence/${index}/code` }] : []),
     ...report.findings.flatMap((finding, index) => finding.anchor ? [{ anchor: finding.anchor, path: `/findings/${index}/anchor` }] : []),
   ];
   for (const { anchor, path } of anchors) {
     if (!commits.has(anchor.commit)) add(issues, "REVIEWFN_PANEL_FINDING_INVALID", path, `Anchor commit ${anchor.commit} is neither the reviewed head nor the merge base.`);
+    else if (!sourceControl || !root) add(issues, "REVIEWFN_PANEL_FINDING_INVALID", path, `Anchor ${anchor.path} cannot be verified without source control.`);
     else if (!(await sourceControl.verifyAnchor(root, anchor))) add(issues, "REVIEWFN_PANEL_FINDING_INVALID", path, `Anchor ${anchor.path} is not valid at ${anchor.commit}.`);
   }
 }
@@ -398,25 +436,34 @@ export async function validatePanelReport(value: unknown, policy: ReviewPolicy, 
   const issues = structural(panelReport, value);
   if (issues.length) return { valid: false, issues };
   const report = value as PanelReport;
+  if (!timestampExists(report.createdAt)) add(issues, "REVIEWFN_PANEL_SCHEMA", "/createdAt", `${report.createdAt} is not a real UTC time.`);
   const slots = new Map<string, PanelSlot>();
   report.slots.forEach((slot, index) => {
     if (slots.has(slot.id)) add(issues, "REVIEWFN_PANEL_SLOT_DUPLICATE", `/slots/${index}/id`, `Slot ${slot.id} is declared more than once.`);
     else slots.set(slot.id, slot);
   });
+  const requirements: ReviewReport | undefined = report.requirementsReport;
+  if (requirements && report.contextManifestDigest !== undefined && report.contextManifestDigest !== requirements.contextManifestDigest) add(issues, "REVIEWFN_REPORT_INVALID", "/requirementsReport/contextManifestDigest", "The requirements report used a different frozen context than the panel.");
+  // Source references are verifiable only against the frozen context the report records.
+  const contextDigest = report.contextManifestDigest ?? requirements?.contextManifestDigest;
+  const context = options.context && contextDigest !== undefined && options.context.digest === contextDigest ? options.context : undefined;
+  const evidenceContext: EvidenceContext = { report, options, referenceValid: sourceReferenceChecker(context, policy), detail: await verifyChangeDetail(report as unknown as ReviewReport, options.artifacts) };
+
   slotRunIssues(report, slots, issues);
-  const evidence = evidenceIssues(report, issues);
-  findingIssues(report, slots, evidence, issues);
+  const evidence = await evidenceIssues(evidenceContext, issues);
+  await findingIssues(evidenceContext, policy, slots, evidence, issues);
   await anchorIssues(report, options, issues);
 
-  const requirements: ReviewReport | undefined = report.requirementsReport;
   if (requirements) {
     if (stableStringify(requirements.change) !== stableStringify(report.change)) add(issues, "REVIEWFN_REPORT_INVALID", "/requirementsReport/change", "The requirements report reviewed a different change than the panel.");
     if (stableStringify(requirements.changeDetail ?? null) !== stableStringify(report.changeDetail ?? null)) add(issues, "REVIEWFN_REPORT_INVALID", "/requirementsReport/changeDetail", "The requirements report records different change detail than the panel.");
     const validation = await validateReport(requirements, policy, options.sourceControl, options.root, options.context, options.artifacts);
     issues.push(...validation.errors.map(error => reportIssue(error, "/requirementsReport")));
-  } else if (report.changeDetail) {
-    const detail = await verifyChangeDetail(report as unknown as ReviewReport, options.artifacts);
-    issues.push(...detail.errors.map(error => reportIssue(error, "/changeDetail")));
+  } else {
+    // The same change-detail and incremental-range checks 0.1 applies, on the panel's own change detail.
+    issues.push(...evidenceContext.detail.errors.map(error => reportIssue(error, "/changeDetail")));
+    const since = await sinceAncestryError(report, options.sourceControl, options.root);
+    if (since) issues.push(reportIssue(since, "/changeDetail/since"));
   }
 
   const verdict = derivePanelVerdict(report, policy);

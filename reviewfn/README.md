@@ -42,7 +42,7 @@ For a connection-free setup, retain only the `repository-markdown` context adapt
 - GitHub publication maintains one profile summary and idempotently updates the same run's check.
 - Advisory output uses a neutral GitHub check; gating remains a separately authorized, calibrated policy.
 
-See [configuration](./docs/configuration.md), [security](./docs/security.md), [GitHub setup](./docs/github-action.md), [report contract](./docs/report-schema.md), and [evaluation](./docs/evaluation.md).
+See [configuration](./docs/configuration.md), [security](./docs/security.md), [GitHub setup](./docs/github-action.md), [report contract](./docs/report-schema.md), [panel report contract](./docs/panel-report-schema.md), and [evaluation](./docs/evaluation.md).
 
 The release gate requires Docker and the pinned test image documented in `docs/security.md`. PR inference additionally requires the trusted Codex image and a credential-isolating proxy. Publication is a separate `reviewfn publish` command/job. See `docs/github-action.md` for identity checks, concurrency, retries and permissions.
 

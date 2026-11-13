@@ -37,14 +37,15 @@ export const PANEL_DEFAULT_MAX_CONCURRENT_SLOTS = 2;
 
 /**
  * Slot identity: (harness adapter, harness version, provider, resolved model, auth mode, credential fingerprint).
- * Two runs in one stage with the same identity count once toward quorum; the later one is `collapsed`.
+ * Within a stage, the first `completed` run of an identity in policy order counts toward quorum; a later run of the
+ * same identity that would also count is `collapsed`. Runs that do not complete neither count nor collapse.
  */
 export interface SlotIdentity {
   harnessAdapter: string;
   /** The harness-reported version. */
   harnessVersion: string;
   provider: string;
-  /** The model the harness actually resolved. */
+  /** The model the harness resolved; the configured model when the harness reported none. */
   model: string;
   auth: string;
   /** First 16 hex characters of the SHA-256 of the credential value or the harness-reported account identity; absent when neither was observed. */
@@ -52,7 +53,11 @@ export interface SlotIdentity {
 }
 
 export type SlotRunTerminal = "completed" | "failed" | "canceled" | "quota_exhausted" | "timed_out" | "malformed" | "void" | "collapsed";
-/** `model_mismatch`: resolved model differs from the configured model; `workspace_mutated`: the slot changed its checkout; `disallowed_tool_use`: the harness reported a forbidden tool. */
+/**
+ * `model_mismatch`: the resolved model differs from a configured model other than `configured`; such a run is always
+ * `void` with this reason, whatever else happened. `workspace_mutated`: the slot changed its checkout.
+ * `disallowed_tool_use`: the harness reported a forbidden tool.
+ */
 export type SlotVoidReason = "model_mismatch" | "workspace_mutated" | "disallowed_tool_use";
 
 export interface SlotRun {
@@ -117,6 +122,11 @@ export interface PanelReport {
   createdAt: string;
   change: ChangeSnapshot;
   changeDetail?: ChangeDetail;
+  /**
+   * Digest of the frozen context the run used; equal to the requirements report's when both are present. Source
+   * references (suppressions and source evidence) are verified only against a context with this digest.
+   */
+  contextManifestDigest?: string;
   /** `panelPolicyDigest(policy)` of the policy the run used. */
   panelPolicyDigest: string;
   slots: PanelSlot[];

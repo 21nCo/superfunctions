@@ -7,8 +7,11 @@ export const PANEL_SLOT_ID_PATTERN = "^[a-z0-9][a-z0-9-]{0,62}$";
 export const PANEL_NONBLANK_PATTERN = "\\S";
 export const PANEL_CREDENTIAL_FINGERPRINT_PATTERN = "^[0-9a-f]{16}$";
 export const PANEL_DIGEST_PATTERN = "^[0-9a-f]{64}$";
-/** RFC 3339 UTC timestamps as produced by `Date.prototype.toISOString`, with optional fractional seconds. */
-export const PANEL_TIMESTAMP_PATTERN = "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$";
+/**
+ * RFC 3339 UTC timestamps as produced by `Date.prototype.toISOString`, with optional fractional seconds and in-range
+ * fields. The validator also rejects calendar dates that do not exist, such as February 30.
+ */
+export const PANEL_TIMESTAMP_PATTERN = "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]{1,9})?Z$";
 
 const base = harnessOutputSchema.$defs;
 const nonblank = { type: "string", pattern: PANEL_NONBLANK_PATTERN } as const;
@@ -129,7 +132,8 @@ export const panelSchemaDefs = {
     required: ["schemaVersion", "kind", "runId", "createdAt", "change", "panelPolicyDigest", "slots", "slotRuns", "gateReceipts", "evidence", "findings", "clusters", "coverage", "coverageReasons"],
     properties: {
       schemaVersion: { const: 1 }, kind: { const: "reviewfn-panel" }, runId: nonblank, createdAt: timestamp,
-      change: { $ref: "#/$defs/changeSnapshot" }, changeDetail: { $ref: "#/$defs/changeDetail" }, panelPolicyDigest: { type: "string", pattern: PANEL_DIGEST_PATTERN },
+      change: { $ref: "#/$defs/changeSnapshot" }, changeDetail: { $ref: "#/$defs/changeDetail" }, contextManifestDigest: { type: "string", pattern: PANEL_DIGEST_PATTERN },
+      panelPolicyDigest: { type: "string", pattern: PANEL_DIGEST_PATTERN },
       slots: { type: "array", minItems: 1, items: { $ref: "#/$defs/panelSlot" } }, slotRuns: { type: "array", items: { $ref: "#/$defs/slotRun" } },
       requirementsReport: { $ref: "#/$defs/reviewReport" }, gateReceipts: { type: "array", items: { $ref: "#/$defs/testReceipt" } },
       evidence: { type: "array", items: { $ref: "#/$defs/evidence" } }, findings: { type: "array", items: { $ref: "#/$defs/panelFinding" } },

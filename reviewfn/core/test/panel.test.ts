@@ -3,18 +3,26 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEFAULT_POLICY, PANEL_PRIORITY_SEVERITY, PANEL_VALIDATION_CODES, credentialFingerprint, derivePanelVerdict, lensOutputSchema, panelFindingSchema,
-  panelPolicyDigest, panelPolicySchema, panelReportSchema, panelStructureIssues, slotIdentityKey, slotIdentitySchema, slotRunSchema,
+  panelPolicyDigest, panelPolicySchema, panelReportSchema, panelStructureIssues, serializeChangeHunks, sha256, slotIdentityKey, slotIdentitySchema, slotRunSchema,
   validatePanelFinding, validatePanelPolicy, validatePanelReport, validateReport, validateSlotIdentity, validateSlotRun,
-  type ContextManifest, type PanelFinding, type PanelPolicy, type PanelReport, type PanelStructure, type ReviewReport, type SourceControlAdapter,
+  type ArtifactStore, type ContextManifest, type PanelFinding, type PanelPolicy, type PanelReport, type PanelStructure, type ReviewReport, type SlotRun, type SourceControlAdapter,
 } from "../src/index.js";
 
 const head = "b".repeat(40);
 const mergeBase = "a".repeat(40);
-const policy = { ...DEFAULT_POLICY, requiredCategories: ["behavior" as const] };
+// issue:1 may waive or suppress: suppression references are verified like 0.1 waivers.
+const policy = { ...DEFAULT_POLICY, requiredCategories: ["behavior" as const], sourceAuthority: { ...DEFAULT_POLICY.sourceAuthority, waiverAuthorities: ["issue:1"] } };
 const change = { repositoryId: "repo", host: "local", targetBranch: "main", baseCommit: mergeBase, headCommit: head, mergeBaseCommit: mergeBase, diffDigest: "d".repeat(64), changedPaths: ["src/value.ts"], capturedAt: "2026-01-01T00:00:00.000Z" };
 const context: ContextManifest = { version: 1, sources: [{ id: "issue:1", type: "issue", status: "available", content: "Return the value", retrievedAt: "2026-01-01T00:00:00.000Z", digest: "d" }], selection: { candidates: [], selected: [], rule: "explicit" }, limits: { maxSources: 1, maxBytes: 100, maxDepth: 1 }, incompleteReasons: [], digest: "c".repeat(64) };
 const sourceControl: SourceControlAdapter = { id: "fixture", capture: async () => change, currentHead: async () => head, verifyAnchor: async () => true };
 const options = { sourceControl, root: ".", context };
+
+class MemoryStore implements ArtifactStore {
+  public readonly values = new Map<string, Uint8Array>();
+  public async put(kind: string, content: string | Uint8Array) { const bytes = Buffer.from(content); const digest = sha256(bytes); const id = `${kind}-${digest}`; this.values.set(id, bytes); return { digest, id }; }
+  public async get(id: string) { return this.values.get(id); }
+  public async deleteExpired() { return { deleted: [], errors: [] }; }
+}
 
 /** The unchanged 0.1 single-harness report, as in the 0.1 core tests. */
 function requirementsReport(): ReviewReport {
@@ -171,6 +179,7 @@ describe("panel report v1", () => {
   it("caps a panel without a requirements report at needs_verification", async () => {
     const value = mutate(panelReport(), report => {
       delete report.requirementsReport;
+      report.contextManifestDigest = context.digest;
       for (const item of report.findings) item.requirementIds = [];
       report.findings[0].severity = "low";
       report.verdict = "needs_verification";
@@ -218,6 +227,166 @@ describe("panel report v1", () => {
   it("checks panel anchors against the reviewed head or merge base when source control is supplied", async () => {
     const stale = mutate(panelReport(), report => { report.evidence[0].code!.commit = "c".repeat(40); });
     expect((await validatePanelReport(stale, policy, options)).issues).toEqual([expect.objectContaining({ code: "REVIEWFN_PANEL_FINDING_INVALID", path: "/evidence/0/code" })]);
+  });
+});
+
+/** The fixture without a requirements report; it records the frozen context digest itself. */
+function panelOnly(change: (report: PanelReport) => void = () => {}): PanelReport {
+  return mutate(panelReport(), report => {
+    delete report.requirementsReport;
+    report.contextManifestDigest = context.digest;
+    for (const item of report.findings) item.requirementIds = [];
+    report.findings[0].severity = "low";
+    report.verdict = "needs_verification";
+    change(report);
+  });
+}
+const run = (report: PanelReport, slotId: string): SlotRun => report.slotRuns.find(item => item.slotId === slotId)!;
+
+describe("slot run collapse and model mismatch", () => {
+  // lens-a and lens-b are stage-1 slots with the same identity, lens-a first in policy order.
+  const pair = (first: SlotRun["terminal"], second: SlotRun["terminal"]) => mutate(panelReport(), report => {
+    for (const [slotId, terminal] of [["lens-a", first], ["lens-b", second]] as const) {
+      Object.assign(run(report, slotId), { terminal, voidReasons: terminal === "void" ? ["workspace_mutated"] : [] });
+    }
+    // Findings name the counted slot as their origin; without one, no lens reported anything.
+    const origin = first === "completed" ? { slotId: "lens-a", lens: "general" } : { slotId: "lens-b", lens: "security" };
+    for (const item of report.findings) item.origins = [origin];
+    if (first !== "completed" && second !== "completed") Object.assign(report, { findings: [], clusters: [], verdict: "ready" });
+  });
+  const slotIssues = async (report: PanelReport) => (await validatePanelReport(report, policy, options)).issues.map(issue => `${issue.code} ${issue.path}`);
+
+  it.each([
+    ["failed", "completed"], ["void", "completed"], ["quota_exhausted", "completed"], ["timed_out", "completed"], ["malformed", "completed"], ["canceled", "completed"],
+    ["completed", "failed"], ["completed", "void"], ["completed", "collapsed"],
+  ] as const)("counts the first completed run of an identity: %s then %s is valid", async (first, second) => {
+    expect(await slotIssues(pair(first, second))).toEqual([]);
+  });
+
+  it.each([
+    ["completed", "completed", "/slotRuns/1/terminal"],
+    ["void", "collapsed", "/slotRuns/1/terminal"],
+    ["failed", "collapsed", "/slotRuns/1/terminal"],
+    ["collapsed", "completed", "/slotRuns/0/terminal"],
+  ] as const)("rejects %s then %s as a duplicate identity", async (first, second, path) => {
+    expect(await slotIssues(pair(first, second))).toEqual([`REVIEWFN_PANEL_SLOT_DUPLICATE ${path}`]);
+  });
+
+  it.each(["completed", "failed", "canceled", "quota_exhausted", "timed_out", "malformed", "collapsed"] as const)("requires a mismatched model to void a %s run", async terminal => {
+    const value = mutate(panelReport(), report => { Object.assign(run(report, "lens-c"), { terminal, voidReasons: [] }); });
+    expect(await slotIssues(value)).toEqual(expect.arrayContaining(["REVIEWFN_PANEL_SCHEMA /slotRuns/2/terminal"]));
+    expect(codes((await validatePanelReport(value, policy, options)).issues)).not.toContain("REVIEWFN_PANEL_FINDING_INVALID");
+  });
+
+  it("requires model_mismatch among a mismatched void run's reasons, and only then", async () => {
+    const without = mutate(panelReport(), report => { run(report, "lens-c").voidReasons = ["workspace_mutated"]; });
+    expect(await slotIssues(without)).toEqual(["REVIEWFN_PANEL_SCHEMA /slotRuns/2/voidReasons"]);
+    const both = mutate(panelReport(), report => { run(report, "lens-c").voidReasons = ["model_mismatch", "workspace_mutated"]; });
+    expect(await slotIssues(both)).toEqual([]);
+    const spurious = mutate(panelReport(), report => { Object.assign(run(report, "lens-a"), { terminal: "void", voidReasons: ["model_mismatch"] }); run(report, "lens-b").terminal = "completed"; for (const item of report.findings) item.origins = [{ slotId: "lens-b", lens: "security" }]; });
+    expect(await slotIssues(spurious)).toEqual(["REVIEWFN_PANEL_SCHEMA /slotRuns/0/voidReasons"]);
+  });
+
+  it("encodes two slots that resolve the same wrong model as two void runs", async () => {
+    const value = mutate(panelReport(), report => {
+      for (const slotId of ["lens-a", "lens-b"]) Object.assign(run(report, slotId), { identity: { ...run(report, slotId).identity, model: "gpt-6-mini" }, terminal: "void", voidReasons: ["model_mismatch"] });
+      report.findings = []; report.clusters = []; report.verdict = "ready";
+    });
+    expect(await slotIssues(value)).toEqual([]);
+  });
+
+  it("rejects timestamps that are not real UTC times, which Ajv's pattern also rejects when out of range", async () => {
+    for (const time of ["2026-99-99T99:99:99Z", "2026-01-01T24:00:00Z"]) {
+      const value = mutate(panelReport(), report => { report.slotRuns[0].startedAt = time; });
+      expect(ajvValid("panelReport", value)).toBe(false);
+      expect(codes((await validatePanelReport(value, policy, options)).issues)).toEqual(["REVIEWFN_PANEL_SCHEMA"]);
+    }
+    const leap = mutate(panelReport(), report => { report.slotRuns[0].finishedAt = "2026-02-30T00:00:00Z"; report.createdAt = "2026-02-29T00:00:00Z"; });
+    expect(ajvValid("panelReport", leap)).toBe(true);
+    expect((await validatePanelReport(leap, policy, options)).issues.map(issue => `${issue.code} ${issue.path}`)).toEqual(["REVIEWFN_PANEL_SCHEMA /createdAt", "REVIEWFN_PANEL_SCHEMA /slotRuns/0/finishedAt"]);
+    expect((await validatePanelReport(mutate(panelReport(), report => { report.createdAt = "2028-02-29T00:00:00.123456789Z"; }), policy, options)).valid).toBe(true);
+  });
+});
+
+describe("panel claims are verified like 0.1 claims", () => {
+  const critical = (change: (report: PanelReport) => void) => mutate(panelReport(), report => { report.findings[2].severity = "critical"; change(report); });
+
+  it("verifies suppression references as waivers against the frozen context", async () => {
+    const result = (value: PanelReport, extra = {}) => validatePanelReport(value, policy, { ...options, ...extra });
+    const fabricated = critical(report => { report.findings[2].suppressionReference = { sourceId: "nonexistent", anchor: "L1" }; });
+    expect((await result(fabricated)).issues).toEqual([expect.objectContaining({ code: "REVIEWFN_PANEL_DISPOSITION_INVALID", path: "/findings/2/suppressionReference" })]);
+    const outOfRange = critical(report => { report.findings[2].suppressionReference = { sourceId: "issue:1", anchor: "L9" }; });
+    expect(codes((await result(outOfRange)).issues)).toEqual(["REVIEWFN_PANEL_DISPOSITION_INVALID"]);
+    const unauthorized = await validatePanelReport(critical(() => {}), { ...policy, sourceAuthority: { ...policy.sourceAuthority, waiverAuthorities: [] } }, options);
+    expect(codes(unauthorized.issues)).toEqual(["REVIEWFN_PANEL_DISPOSITION_INVALID"]);
+    // Without a context, or with a context the report did not record, nothing can be verified: fail closed.
+    expect(codes((await validatePanelReport(panelOnly(), policy, { ...options, context: undefined })).issues)).toEqual(["REVIEWFN_PANEL_DISPOSITION_INVALID"]);
+    expect(codes((await validatePanelReport(panelOnly(), policy, { ...options, context: { ...context, digest: "f".repeat(64) } })).issues)).toEqual(["REVIEWFN_PANEL_DISPOSITION_INVALID"]);
+    expect(codes((await validatePanelReport(panelOnly(report => { delete report.contextManifestDigest; }), policy, options)).issues)).toEqual(["REVIEWFN_PANEL_DISPOSITION_INVALID"]);
+    expect((await validatePanelReport(panelOnly(), policy, options)).valid).toBe(true);
+  });
+
+  it("rejects a panel context digest that differs from the requirements report's", async () => {
+    const value = mutate(panelReport(), report => { report.contextManifestDigest = "f".repeat(64); });
+    // The supplied context matches neither digest, so the suppression reference fails closed as well.
+    expect((await validatePanelReport(value, policy, options)).issues.map(issue => `${issue.code} ${issue.path}`).sort()).toEqual(["REVIEWFN_PANEL_DISPOSITION_INVALID /findings/2/suppressionReference", "REVIEWFN_REPORT_INVALID /requirementsReport/contextManifestDigest"]);
+    expect((await validatePanelReport(mutate(panelReport(), report => { report.contextManifestDigest = context.digest; }), policy, options)).valid).toBe(true);
+  });
+
+  it("requires a reproduced finding's gate receipt logs to verify through the artifact store", async () => {
+    const store = new MemoryStore();
+    const stdout = await store.put("test-stdout", "FAIL empty input");
+    const stderr = await store.put("test-stderr", "");
+    const reproduced = (change: (report: PanelReport) => void = () => {}) => mutate(panelReport(), report => {
+      report.gateReceipts = [{ id: "T1", command: ["npm", "test"], cwd: ".", commit: head, startedAt: "s", finishedAt: "f", runtimeMs: 1, exitCode: 1, signal: null, timedOut: false, canceled: false, stdoutArtifact: stdout.id, stderrArtifact: stderr.id, stdoutDigest: stdout.digest, stderrDigest: stderr.digest, limitations: [] }];
+      report.evidence.push({ id: "T-E1", kind: "test", description: "the failing gate", receiptId: "T1" });
+      Object.assign(report.findings[0], { basis: "reproduced", evidenceIds: ["E1", "T-E1"] });
+      change(report);
+    });
+    expect((await validatePanelReport(reproduced(), policy, { ...options, artifacts: store })).issues).toEqual([]);
+    expect((await validatePanelReport(reproduced(), policy, options)).issues).toEqual([expect.objectContaining({ code: "REVIEWFN_PANEL_FINDING_INVALID", path: "/findings/0/basis" })]);
+    const tampered = reproduced(report => { report.gateReceipts[0].stdoutDigest = "0".repeat(64); });
+    expect((await validatePanelReport(tampered, policy, { ...options, artifacts: store })).issues).toEqual([expect.objectContaining({ code: "REVIEWFN_PANEL_FINDING_INVALID", path: "/findings/0/basis" })]);
+    const stale = reproduced(report => { report.gateReceipts[0].commit = mergeBase; });
+    expect(codes((await validatePanelReport(stale, policy, { ...options, artifacts: store })).issues)).toEqual(["REVIEWFN_PANEL_FINDING_INVALID"]);
+  });
+
+  it("fails closed on code anchors without source control, and still checks their commit", async () => {
+    const result = await validatePanelReport(panelReport(), policy, { context });
+    expect(codes(result.issues)).toEqual(["REVIEWFN_PANEL_FINDING_INVALID", "REVIEWFN_REPORT_INVALID"]);
+    expect(result.issues.filter(issue => issue.code === "REVIEWFN_PANEL_FINDING_INVALID").map(issue => issue.path)).toEqual(["/evidence/0/code", "/evidence/1/code", "/evidence/2/code", "/findings/0/anchor", "/findings/1/anchor", "/findings/2/anchor"]);
+    const stale = mutate(panelReport(), report => { report.evidence[0].code!.commit = "c".repeat(40); });
+    expect((await validatePanelReport(stale, policy, { context })).issues.find(issue => issue.path === "/evidence/0/code")?.message).toMatch(/neither the reviewed head nor the merge base/);
+  });
+
+  it("verifies source, diff and artifact evidence", async () => {
+    const withEvidence = (item: PanelReport["evidence"][number], change: (report: PanelReport) => void = () => {}) => mutate(panelReport(), report => { report.evidence.push(item); report.findings[0].verification!.evidenceIds.push(item.id); change(report); });
+    const sourced = { id: "S1", kind: "source" as const, description: "the issue", source: { sourceId: "issue:1", excerpt: "Return the value", anchor: "L1" } };
+    expect((await validatePanelReport(withEvidence(sourced), policy, options)).issues).toEqual([]);
+    expect((await validatePanelReport(withEvidence({ ...sourced, source: { sourceId: "issue:1", anchor: "intro" } }), policy, options)).issues).toEqual([expect.objectContaining({ code: "REVIEWFN_PANEL_FINDING_INVALID", path: "/evidence/3/source" })]);
+    expect(codes((await validatePanelReport(withEvidence({ ...sourced, source: undefined }), policy, options)).issues)).toEqual(["REVIEWFN_PANEL_FINDING_INVALID"]);
+    const diff = { id: "D1", kind: "diff" as const, description: "the change", code: { commit: head, path: "src/value.ts", startLine: 1 } };
+    expect((await validatePanelReport(withEvidence(diff), policy, options)).issues).toEqual([]);
+    expect((await validatePanelReport(withEvidence({ ...diff, code: { ...diff.code, path: "src/other.ts" } }), policy, options)).issues).toEqual([expect.objectContaining({ code: "REVIEWFN_PANEL_FINDING_INVALID", path: "/evidence/3/code" })]);
+    const store = new MemoryStore();
+    const output = await store.put("slot-output", "{\"findings\":[]}");
+    const artifact = { id: "A1", kind: "artifact" as const, description: "lens-a output", artifactDigest: output.digest };
+    const retained = (report: PanelReport) => Object.assign(run(report, "lens-a"), { outputArtifact: output.id, outputDigest: output.digest });
+    expect((await validatePanelReport(withEvidence(artifact, retained), policy, { ...options, artifacts: store })).issues).toEqual([]);
+    expect((await validatePanelReport(withEvidence(artifact, retained), policy, options)).issues).toEqual([expect.objectContaining({ code: "REVIEWFN_PANEL_FINDING_INVALID", path: "/evidence/3/artifactDigest" })]);
+    expect(codes((await validatePanelReport(withEvidence(artifact), policy, { ...options, artifacts: store })).issues)).toEqual(["REVIEWFN_PANEL_FINDING_INVALID"]);
+  });
+
+  it("checks the incremental range and change detail of a panel without a requirements report", async () => {
+    const since = "c".repeat(40);
+    const store = new MemoryStore();
+    const hunks = await store.put("change-hunks", serializeChangeHunks({ version: 1, baseCommit: mergeBase, headCommit: head, files: [{ path: "src/value.ts", status: "modified", hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1 }] }] }));
+    const deltaHunks = await store.put("change-hunks", serializeChangeHunks({ version: 1, baseCommit: since, headCommit: head, files: [{ path: "src/value.ts", status: "modified", hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1 }] }] }));
+    const value = panelOnly(report => { report.changeDetail = { hunksArtifact: hunks.id, hunksDigest: hunks.digest, since, deltaHunksArtifact: deltaHunks.id, deltaHunksDigest: deltaHunks.digest, deltaPaths: ["src/value.ts"] }; });
+    const ancestry = (sinceIsAncestor: boolean) => ({ ...options, artifacts: store, sourceControl: { ...sourceControl, isAncestor: async (_root: string, ancestor: string) => ancestor !== since || sinceIsAncestor } });
+    expect((await validatePanelReport(value, policy, ancestry(true))).issues).toEqual([]);
+    expect((await validatePanelReport(value, policy, ancestry(false))).issues).toEqual([expect.objectContaining({ code: "REVIEWFN_SINCE_NOT_ANCESTOR", path: "/changeDetail/since" })]);
+    expect(codes((await validatePanelReport(value, policy, options)).issues)).toEqual(["REVIEWFN_CHANGE_DETAIL_MISMATCH"]);
   });
 });
 
@@ -304,7 +473,7 @@ describe("JSON Schema and TypeScript validator agreement", () => {
   const panel = panelReport();
   const lensOutput = { findings: [panel.findings[0]].map(({ origins: _o, confidence: _c, ruleIds: _r, verification: _v, disposition: _d, ...item }) => item), evidence: panel.evidence, inspectedPaths: ["src/value.ts"], uninspected: [{ scope: "docs", reason: "out of scope" }] };
   const documents: Array<[PanelStructure, unknown]> = [
-    ["panelReport", panel], ["panelPolicy", { ...panelPolicy, maxConcurrentSlots: 4 }], ["slotIdentity", panel.slotRuns[0].identity],
+    ["panelReport", panel], ["panelReport", { ...panelOnly(), slotRuns: [panel.slotRuns[2]], findings: [], clusters: [], coverage: "incomplete", coverageReasons: ["lens-c was void"] }], ["panelPolicy", { ...panelPolicy, maxConcurrentSlots: 4 }], ["slotIdentity", panel.slotRuns[0].identity],
     ["slotRun", panel.slotRuns[0]], ["slotRun", panel.slotRuns[2]], ["panelFinding", panel.findings[1]], ["panelFinding", panel.findings[2]], ["lensOutput", lensOutput],
   ];
 

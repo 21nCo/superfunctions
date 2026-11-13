@@ -16,15 +16,15 @@ A slot is `{ id, stage: 1 | 2 | "verifier", harness: { adapter, version }, infer
 
 A slot's identity is the tuple (harness adapter, harness-reported version, provider, resolved model, auth mode, credential fingerprint). The fingerprint is the first 16 hex characters of the SHA-256 of the credential value, or of the harness-reported account identity (`credentialFingerprint(value)`). The value itself is never recorded. The fingerprint is absent when neither was observed. `slotIdentityKey(identity)` compares identities.
 
-Within one stage, slots with the same identity count once toward quorum. The first such slot in policy order is counted, and every later one is recorded with terminal `collapsed`. A stage-2 slot may share a stage-1 identity: stages have separate quorums.
+Within one stage, slots with the same identity count once toward quorum. The run that counts is the first `completed` run of that identity in policy order. A later run of the same identity that would also complete is recorded as `collapsed`, so a `collapsed` run always follows a counted run of its identity in its stage. Runs that end any other way (`failed`, `canceled`, `quota_exhausted`, `timed_out`, `malformed` or `void`) neither count nor collapse: if the first slot of an identity fails, a later slot of that identity can still complete and count. A stage-2 slot may share a stage-1 identity, because stages have separate quorums.
 
 A slot run is `{ slotId, identity, terminal, voidReasons, startedAt, finishedAt, outputArtifact?, outputDigest?, usage? }`. `terminal` is `completed`, `failed`, `canceled`, `quota_exhausted`, `timed_out`, `malformed`, `void` or `collapsed`. A `void` run lists at least one reason, and no other terminal lists any:
 
-- `model_mismatch`: the resolved model differs from a configured model other than `configured`. Such a run must be void.
+- `model_mismatch`: the resolved model differs from a configured model other than `configured`. This takes precedence over every other outcome: whenever the harness reports a resolved model that differs, the run is `void` and its reasons include `model_mismatch`, even if it also failed or timed out. When the harness reports no resolved model, `identity.model` records the configured model.
 - `workspace_mutated`: the slot changed its checkout.
 - `disallowed_tool_use`: the harness reported a forbidden tool.
 
-Usage values (`inputTokens`, `outputTokens`, `costUsd`) appear only when the harness observed them. Timestamps are RFC 3339 UTC.
+Usage values (`inputTokens`, `outputTokens`, `costUsd`) appear only when the harness observed them. Timestamps are RFC 3339 UTC with in-range fields. The validator also rejects dates that do not exist, such as February 30, and a run that finishes before it starts.
 
 ## Lens output
 
@@ -40,33 +40,40 @@ A panel finding is a 0.1 `Finding` plus the following fields:
 - `verification?: { verdict: "confirmed" | "refuted" | "inconclusive", slotId, evidenceIds, onBase: "present" | "absent" | "not_checked", reason }`.
 - `disposition: "reported" | "dropped" | "suppressed"`, with `dispositionReason` and, for suppression, `suppressionReference`.
 
-Verification comes from a completed `verifier` slot whose identity differs from every origin slot's identity. A confirmed or refuted verdict cites evidence. A dropped finding requires a refuted verification. A suppressed finding requires a `suppressionReference` (a source reference). Both require a `dispositionReason`. Dropped and suppressed findings stay in the report, so nothing disappears silently. Panel findings are lifecycle `new` until prior-finding provenance exists. Fingerprints are unique; agreement between slots is recorded in `origins`.
+Verification comes from a completed `verifier` slot whose identity differs from every origin slot's identity. A confirmed or refuted verdict cites evidence. A dropped finding requires a refuted verification. A suppressed finding requires a `suppressionReference`, which is checked like a 0.1 waiver: it must be a verifiable reference (a literal excerpt or a valid line range) to an available, accepted source in the frozen context, and that source must be one of the policy's `sourceAuthority.waiverAuthorities`. Dropped and suppressed findings both require a `dispositionReason`. Dropped and suppressed findings stay in the report, so nothing disappears silently. Panel findings are lifecycle `new` until prior-finding provenance exists. Fingerprints are unique; agreement between slots is recorded in `origins`.
 
 ## Panel report
 
-The report is `{ schemaVersion: 1, kind: "reviewfn-panel", runId, createdAt, change, changeDetail?, panelPolicyDigest, slots, slotRuns, requirementsReport?, gateReceipts, evidence, findings, clusters, coverage, coverageReasons, verdict? }`.
+The report is `{ schemaVersion: 1, kind: "reviewfn-panel", runId, createdAt, change, changeDetail?, contextManifestDigest?, panelPolicyDigest, slots, slotRuns, requirementsReport?, gateReceipts, evidence, findings, clusters, coverage, coverageReasons, verdict? }`.
 
+- `contextManifestDigest` is the digest of the frozen context the run used. When a requirements report is present it must be equal to that report's digest, and it may be omitted. Source references are verified only against a supplied context with this digest (or the requirements report's). Without such a context they fail closed.
 - `gateReceipts` are 0.1 test receipts from the trusted gates.
-- `evidence` holds the 0.1 evidence items that panel findings and verifications cite. Code anchors cite the reviewed head, or the merge base for on-base code, and are verified when source control is supplied. Test evidence names exactly one gate receipt. A reproduced finding cites a completed gate receipt at the reviewed head.
+- `evidence` holds the 0.1 evidence items that panel findings and verifications cite. Each item is verified as in 0.1, and every check fails closed when the source control, context or artifact store it needs is not supplied:
+  - Code anchors on evidence and findings cite the reviewed head, or the merge base for on-base code. Source control must confirm them.
+  - Diff evidence lies in the changed paths or the verified delta paths.
+  - Source evidence cites a verifiable source in the frozen context.
+  - Test evidence names exactly one gate receipt at the reviewed head.
+  - Artifact evidence names the digest of a slot run's retained `outputArtifact`.
+  - A reproduced finding needs a completed gate receipt at the reviewed head whose stdout and stderr artifacts match their digests in the artifact store.
 - `clusters` are `{ id, findingFingerprints }`. A finding belongs to at most one cluster.
-- `requirementsReport` must review the same change and change detail as the panel. Without it, the panel's own `changeDetail` is verified against its artifacts as in 0.1.
+- `requirementsReport` must review the same change and change detail as the panel, and is validated with the 0.1 validator. Without it, the panel's own `changeDetail` is verified against its artifacts, and `changeDetail.since` is checked against head and merge base ancestry when source control can answer it, as in 0.1.
 - Incomplete coverage states at least one reason.
 
 `verdict` uses 0.1's derivation (`derivePanelVerdict`). It runs over the requirements report plus the reported panel findings; dropped and suppressed findings are excluded. Coverage is complete only if both the panel and the requirements report are complete. Without a requirements report no requirement was assessed, so the verdict is at most `needs_verification`. A requirements report whose run did not complete leaves the verdict absent, as in 0.1. Panel output stays advisory.
 
 ## Validation codes
 
-`validatePanelReport(report, policy, { sourceControl?, root?, context?, artifacts? })` returns `{ valid, issues: [{ code, path, message }], verdict }`. `path` is a JSON Pointer. Structural problems are reported alone. The codes form a closed set:
+`validatePanelReport(report, policy, { sourceControl?, root?, context?, artifacts? })` returns `{ valid, issues: [{ code, path, message }], verdict }`. `policy` is the 0.1 `ReviewPolicy` (blocking severities, source authority and limits), not the panel policy. `path` is a JSON Pointer. Structural problems are reported alone. `validatePanelPolicy(policy)` checks a panel policy, including that `requirementsSlot` names a stage-1 or stage-2 slot. The codes form a closed set:
 
 | Code | Meaning |
 | --- | --- |
-| `REVIEWFN_PANEL_SCHEMA` | The document does not match its JSON Schema, or a run contradicts its slot (identity, model mismatch, finish before start). |
-| `REVIEWFN_PANEL_SLOT_DUPLICATE` | A slot ID is declared twice, a slot has two runs, or a duplicate identity is not collapsed (or a collapsed run has no earlier duplicate). |
-| `REVIEWFN_PANEL_SLOT_UNKNOWN` | A run, verification or `requirementsSlot` names no such slot. |
-| `REVIEWFN_PANEL_FINDING_INVALID` | `info` severity, a lifecycle other than `new`, a duplicate fingerprint or origin, missing or unknown evidence or requirements, a reproduced finding without a gate receipt, an invalid anchor, or an invalid cluster. |
+| `REVIEWFN_PANEL_SCHEMA` | The document does not match its JSON Schema, a timestamp is not a real time, or a run contradicts its slot (identity, model mismatch not voided with `model_mismatch`, `model_mismatch` without a mismatch, finish before start). |
+| `REVIEWFN_PANEL_SLOT_DUPLICATE` | A slot ID is declared twice, a slot has two runs, a second completed run of an identity in a stage is not collapsed, or a collapsed run has no earlier completed run of its identity in its stage. |
+| `REVIEWFN_PANEL_SLOT_UNKNOWN` | A run or verification names no such slot (`validatePanelPolicy` also reports an unknown `requirementsSlot`). |
+| `REVIEWFN_PANEL_FINDING_INVALID` | `info` severity, a lifecycle other than `new`, a duplicate fingerprint or origin, missing, unknown or unverifiable evidence, unknown requirements, an unverified reproduction, an anchor that is not at the head or merge base or cannot be verified, or an invalid cluster. |
 | `REVIEWFN_PANEL_ORIGIN_UNKNOWN` | An origin is not a completed stage-1 or stage-2 slot with that lens. |
 | `REVIEWFN_PANEL_VERIFICATION_INVALID` | The verifier is not a completed verifier slot, shares an origin slot's identity, or cites missing or unknown evidence. |
-| `REVIEWFN_PANEL_DISPOSITION_INVALID` | Dropped without a refuted verification, suppressed without a suppression reference, or not reported without a reason. |
+| `REVIEWFN_PANEL_DISPOSITION_INVALID` | Dropped without a refuted verification, suppressed without a verifiable waiver-authority reference, or not reported without a reason. |
 | `REVIEWFN_PANEL_VERDICT_MISMATCH` | `verdict` differs from the derived verdict. |
 
-Errors from validating the embedded requirements report keep their 0.1 meaning: `REVIEWFN_CHANGE_DETAIL_MISMATCH` and `REVIEWFN_SINCE_NOT_ANCESTOR` keep their codes, and every other 0.1 error is `REVIEWFN_REPORT_INVALID`. `panelStructureIssues(kind, value)` is the structural TypeScript mirror of each JSON Schema. The tests check that it agrees with Ajv on every fixture and on systematic structural variants of each fixture.
+Errors from the 0.1 checks keep their 0.1 meaning: `REVIEWFN_CHANGE_DETAIL_MISMATCH` and `REVIEWFN_SINCE_NOT_ANCESTOR` keep their codes, and every other 0.1 error, including a requirements report for a different change, change detail or context, is `REVIEWFN_REPORT_INVALID`. Calendar validity of timestamps is a validator check beyond the JSON Schema pattern. `panelStructureIssues(kind, value)` is the structural TypeScript mirror of each JSON Schema. The tests check that it agrees with Ajv on every fixture and on systematic structural variants of each fixture.
