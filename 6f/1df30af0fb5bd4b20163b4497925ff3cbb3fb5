@@ -1,0 +1,102 @@
+scripts/generate-uifn-phase-12.mjs
+  h_bdc5b81c173ee9 46-49,59-62,65,77
+scripts/uifn-adapter-dom-bindings.mjs
+  h_bdc5b81c173ee9 3-5,58,69-71,82-83,90-91
+scripts/verify-uifn-bundle-size.mjs
+  h_bdc5b81c173ee9 18,49-50,67-68,266-307,314
+scripts/verify-uifn-bundle-size.test.mjs
+  h_bdc5b81c173ee9 111-112,122-123,233-256
+scripts/verify-uifn-phase-11-contract.mjs
+  h_bdc5b81c173ee9 64
+scripts/verify-uifn-phase-12-contract.mjs
+  h_bdc5b81c173ee9 112
+scripts/verify-uifn-phase-13-contract.mjs
+  h_bdc5b81c173ee9 158
+uifn/dom/CHANGELOG.md
+  h_bdc5b81c173ee9 5-6
+uifn/dom/src/adapter-bindings.ts
+  h_bdc5b81c173ee9 2,15,226-230,244,246
+uifn/dom/src/gesture.ts
+  h_bdc5b81c173ee9 55-107,110-150,152-188,190,194-198,215-232
+uifn/evidence/generated/phase-11/phase-11-react-compounds.json
+  h_bdc5b81c173ee9 7
+uifn/evidence/generated/phase-12/phase-12-svelte-compounds.json
+  h_bdc5b81c173ee9 7
+uifn/evidence/generated/phase-13/phase-13-solid-compounds.json
+  h_bdc5b81c173ee9 7
+uifn/examples/size-fixtures/budgets.json
+  h_bdc5b81c173ee9 15-16,19-20
+uifn/react/src/generated/angle-slider.tsx
+  h_bdc5b81c173ee9 5,26
+uifn/react/src/generated/carousel.tsx
+  h_bdc5b81c173ee9 5,26
+uifn/react/src/generated/color-picker.tsx
+  h_bdc5b81c173ee9 5,26
+uifn/react/src/generated/image-cropper.tsx
+  h_bdc5b81c173ee9 5,26
+uifn/react/src/generated/scroll-area.tsx
+  h_bdc5b81c173ee9 5,26
+uifn/react/src/generated/signature-pad.tsx
+  h_bdc5b81c173ee9 5,26
+uifn/react/src/generated/slider.tsx
+  h_bdc5b81c173ee9 5,26
+uifn/react/src/generated/splitter.tsx
+  h_bdc5b81c173ee9 5,26
+uifn/solid/src/generated/angle-slider.tsx
+  h_bdc5b81c173ee9 3,23
+uifn/solid/src/generated/carousel.tsx
+  h_bdc5b81c173ee9 3,23
+uifn/solid/src/generated/color-picker.tsx
+  h_bdc5b81c173ee9 3,23
+uifn/solid/src/generated/image-cropper.tsx
+  h_bdc5b81c173ee9 3,23
+uifn/solid/src/generated/scroll-area.tsx
+  h_bdc5b81c173ee9 3,23
+uifn/solid/src/generated/signature-pad.tsx
+  h_bdc5b81c173ee9 3,23
+uifn/solid/src/generated/slider.tsx
+  h_bdc5b81c173ee9 3,23
+uifn/solid/src/generated/splitter.tsx
+  h_bdc5b81c173ee9 3,23
+uifn/svelte/CHANGELOG.md
+  h_bdc5b81c173ee9 6,9
+uifn/svelte/README.md
+  h_bdc5b81c173ee9 50
+uifn/svelte/lib/dom-bindings.ts
+  h_bdc5b81c173ee9 13-20,25,36,38-39,58-68,95-98
+uifn/svelte/lib/generated/angle-slider/definition.ts
+  h_bdc5b81c173ee9 3,13
+uifn/svelte/lib/generated/carousel/definition.ts
+  h_bdc5b81c173ee9 3,13
+uifn/svelte/lib/generated/color-picker/definition.ts
+  h_bdc5b81c173ee9 3,13
+uifn/svelte/lib/generated/image-cropper/definition.ts
+  h_bdc5b81c173ee9 3,13
+uifn/svelte/lib/generated/menubar/definition.ts
+  h_bdc5b81c173ee9 4,15
+uifn/svelte/lib/generated/scroll-area/definition.ts
+  h_bdc5b81c173ee9 3,13
+uifn/svelte/lib/generated/signature-pad/definition.ts
+  h_bdc5b81c173ee9 3,13
+uifn/svelte/lib/generated/slider/definition.ts
+  h_bdc5b81c173ee9 3,13
+uifn/svelte/lib/generated/splitter/definition.ts
+  h_bdc5b81c173ee9 3,13
+uifn/svelte/lib/internal/compound.ts
+  h_bdc5b81c173ee9 28-39,51-52,242,306-307,310,334,339-343,482,559
+uifn/svelte/lib/internal/dom-binding-plan.ts
+  h_bdc5b81c173ee9 21-22,76-78
+uifn/svelte/lib/internal/menubar-commit-focus.ts
+  h_bdc5b81c173ee9 1-65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6f1df30af0fb5bd4b20163b4497925ff3cbb3fb5",
+  "prompts": {},
+  "humans": {
+    "h_bdc5b81c173ee9": {
+      "author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
