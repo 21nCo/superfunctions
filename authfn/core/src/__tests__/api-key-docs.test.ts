@@ -7,6 +7,7 @@ import { createRouter } from '@superfunctions/http';
 import { memoryAdapter } from '../../../../packages/db/src/adapters/memory/index.js';
 import type { AuthFnRuntimeConfig, AuthFnServer, AuthFnSession } from '../index.js';
 import { createApiKey, revokeApiKeyById } from '../core/api-keys.js';
+import { createUser } from '../core/users.js';
 import { createAuthFnRouter } from '../http/router.js';
 import { createTestServer } from './test-server.js';
 
@@ -75,6 +76,7 @@ describe.each(['plugin', 'cli'] as const)('%s API-key documentation HTTP boundar
     const handler = documentedHandler(guide, auth, protectedWork);
     const onError = vi.fn(async () => Response.json({ error: 'internal' }, { status: 500 }));
     const router = createRouter({ basePath: '/app', routes: [{ method: 'GET', path: '/doc-example', handler }], onError });
+    if (userId) await createUser(config, { id: userId, primaryEmail: 'docs@example.com' });
     const revoked = await createApiKey(config, { userId, name: 'revoked', scopes: ['repo:read', 'read'] });
     await revokeApiKeyById(config, revoked.keyId);
     const expired = await createApiKey(config, { userId, name: 'expired', scopes: ['repo:read', 'read'], expiresAt: new Date(0) });
@@ -133,6 +135,7 @@ describe.each(['plugin', 'cli'] as const)('%s API-key documentation HTTP boundar
     const handler = documentedHandler(guide, auth, protectedWork);
     const router = createAuthFnRouter(config, {}, [{ method: 'GET', path: '/doc-example', handler }]);
     const required = guide === 'plugin' ? 'repo:read' : 'read';
+    if (userId) await createUser(config, { id: userId, primaryEmail: 'docs@example.com' });
 
     for (const scopes of [undefined, [], [`${required}:other`], [required]]) {
       protectedWork.mockClear();

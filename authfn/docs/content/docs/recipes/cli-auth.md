@@ -58,13 +58,14 @@ app.get('/projects', async (c) => {
     }
     throw error;
   }
-  if (!session || session.actorType !== 'api-key') {
+  if (!session || session.type !== 'api-key') {
     return c.json({ error: 'unauthorized' }, 401);
   }
   if (!hasScope(session, 'read')) {
     return c.json({ error: 'forbidden' }, 403);
   }
-  // session.actorId === api key id
+  // session.actorId === the key owner's user id (the key id for an unowned key)
+  // session.credential.id === api key id
   // session.metadata.scopes === ['read', 'write']
   return c.json({ projects: [] }); // Replace with your application's project data.
 });

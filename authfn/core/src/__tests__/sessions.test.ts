@@ -115,13 +115,14 @@ describe('authfn sessions', () => {
   it('authenticates api keys through the shared auth provider contract', async () => {
     const config = createConfig();
     const auth = createTestServer(config);
+    const owner = await createUser(config, { primaryEmail: 'owner@example.com' });
 
     await config.database.create({
       model: 'api_keys',
       namespace: 'authfn',
       data: {
         id: 'key_01',
-        userId: 'user_owner',
+        userId: owner.id,
         name: 'server',
         secretHash: hashSecret('secret_123'),
         scopes: ['read'],
@@ -139,8 +140,9 @@ describe('authfn sessions', () => {
     );
 
     expect(authenticated?.type).toBe('api-key');
-    expect(authenticated?.actorType).toBe('api-key');
-    expect(authenticated?.actorId).toBe('key_01');
+    expect(authenticated?.actorType).toBe('user');
+    expect(authenticated?.actorId).toBe(owner.id);
+    expect(authenticated?.credential).toEqual({ type: 'api-key', id: 'key_01' });
   });
 
   it('authenticates bearer-backed user sessions through the shared auth provider contract', async () => {

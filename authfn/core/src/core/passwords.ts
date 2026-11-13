@@ -175,7 +175,11 @@ async function linkPasswordCredentialForExistingUser(
   }
 ): Promise<PasswordSignUpResult> {
   const linkingPolicy = allowsPasswordForAuthenticatedUser(config);
-  const authenticatedUserId = context.authenticatedSession?.actorId;
+  // Only an interactive user session may add a sign-in method; an API key
+  // acts as its owner but must not mint a password for that account.
+  const authenticatedUserId = context.authenticatedSession?.type === 'session'
+    ? context.authenticatedSession.actorId
+    : undefined;
 
   if (!linkingPolicy.allowed || authenticatedUserId !== context.existingUser.id) {
     await emitAccountLinkingConflictEvent(config, {

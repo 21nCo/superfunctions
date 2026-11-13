@@ -45,18 +45,25 @@ const authApp = authfn({
 
 ## Authentication via API key
 
-When a request carries `Authorization: Bearer <secret>`, the kernel:
+When a request carries `Authorization: Bearer <secret>`, the TypeScript `authfn` kernel (0.5.0 and later):
 
 1. Looks up the key by `secretHash`; returns `null` if no key matches.
 2. Throws `AUTHFN_API_KEY_REVOKED` if `revokedAt` is set.
 3. Returns `null` if `expiresAt` is at or before the current time.
-4. Updates `lastUsedAt`.
-5. Synthesizes an `AuthFnSession` with `type: 'api-key'`, `actorType: 'api-key'`, `methods: ['api-key']`.
+4. For a user-owned key, loads the owner; returns `null` if the owner was deleted or is disabled (`metadata.disabled === true` on the user record).
+5. Updates `lastUsedAt`.
+6. Synthesizes an `AuthFnSession` with `type: 'api-key'`, `methods: ['api-key']`, and `credential: { type: 'api-key', id: <keyId> }`.
 
-The synthesized session is what `auth.provider.authenticate(request)` returns. Your application authorization logic should branch on `session.actorType`:
+In the TypeScript `authfn` package (0.5.0 and later), a user-owned key acts as its owner: the session carries `actorType: 'user'` and `actorId` set to the owner's user ID, so data you key by `actorId` is the owner's data. An unowned service key keeps `actorType: 'api-key'` with the key ID as `actorId`. AuthFn looks up the key and loads its owner only in the configured `namespace`; with an adapter that isolates namespaces, a key or owner from another tenant authenticates as no one.
+
+`session.metadata.ownerUserId` still carries the owner's user ID for one more minor version. It is deprecated; read `session.actorId` instead.
+
+> **Python SDK:** the Python `authfn` package has not adopted these rules yet. Its API-key sessions keep `actor_type` `'api-key'` with the key ID as `actor_id`, expose the owner only through `metadata.ownerUserId` (which metadata stored on the key can override), have no `credential` field, and do not check whether the owner was deleted or disabled. Disabling a user does not cut off their keys in a Python host; revoke the keys as well. See [SDKs → Python](../sdk/python#api-key-sessions).
+
+The synthesized session is what `auth.provider.authenticate(request)` returns. To tell a key apart from an interactive sign-in, branch on `session.type` (or `session.credential`), not on `session.actorType`:
 
 ```ts
-if (session.actorType === 'api-key') {
+if (session.type === 'api-key') {
   const scopes = session.metadata?.scopes;
   if (!Array.isArray(scopes) || !scopes.includes('repo:read')) {
     return Response.json({ error: 'forbidden' }, { status: 403 });
@@ -102,7 +109,7 @@ async function handleRepositoryRequest(request: Request): Promise<Response> {
     }
     throw error;
   }
-  if (!session || session.actorType !== 'api-key') {
+  if (!session || session.type !== 'api-key') {
     return Response.json({ error: 'unauthorized' }, { status: 401 });
   }
   if (!hasScope(session, 'repo:read')) {
@@ -138,9 +145,11 @@ await revokeApiKeyById(config, serviceKey.keyId);
 // Update your inventory and audit the successful revocation.
 ```
 
-These keys persist a null owner, use the same hashed-secret, expiry, and revocation behavior, and authenticate as `actorType: 'api-key'` with the key ID as their actor ID. Authentication exposes the stored scopes in `session.metadata.scopes` and leaves `session.metadata.ownerUserId` undefined. Your application must authorize service-principal issuance and use and enforce scopes; the helper does not create a user identity.
+These keys persist a null owner, use the same hashed-secret, expiry, and revocation behavior, and authenticate as `actorType: 'api-key'` with the key ID as their actor ID. Host routes that require `actorType: 'user'` reject them. Authentication exposes the stored scopes in `session.metadata.scopes` and leaves `session.metadata.ownerUserId` undefined. Your application must authorize service-principal issuance and use and enforce scopes; the helper does not create a user identity.
 
-Unowned keys authenticate through the normal `auth.provider.authenticate` path only. The opt-in [placement-context issuer](../recipes/placement-bound-auth-context) (`createAuthFnPlacementContextIssuer`) binds each API-key grant to its owning user's placement, so it rejects an unowned key with `AUTHFN_UNAUTHENTICATED`. Use a user-owned key when a service must derive placement-bound context.
+Unowned keys authenticate through the normal `auth.provider.authenticate` path only. The opt-in [placement-context issuer](../recipes/placement-bound-auth-context) (`createAuthFnPlacementContextIssuer`) binds each API-key grant to its owning user's placement, so it rejects an unowned key with `AUTHFN_UNAUTHENTICATED`. Use a user-owned key when a service must derive placement-bound context. The issuer applies the same owner check as `auth.provider.authenticate`: a key whose owner was deleted or is disabled fails with `AUTHFN_UNAUTHENTICATED` before any consumer runs or assertion is signed.
+
+AuthFn's own account routes (`GET /auth/session`, `GET`/`DELETE /auth/account`), password linking during sign-up, and the operator console accept only interactive sessions (`type: 'session'`), so a user-owned key cannot manage its owner's account even though it acts as that user.
 
 The cookie-session routes above remain user-owned: creation always uses the signed-in user's ID, and user listing and revocation exclude unowned keys. Manage unowned keys through trusted server code after applying your application's authorization policy.
 

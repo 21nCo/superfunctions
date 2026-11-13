@@ -62,9 +62,23 @@ export type AuthFnAuthMethod =
 export type AuthFnOtpPurpose = 'verify-email' | 'sign-in' | 'sign-up' | 'reset-password';
 export type AuthFnSocialProviderId = 'google' | 'apple' | 'github';
 
+/**
+ * The credential that authenticated a non-interactive session. An API key owned
+ * by a user acts as that user (`actorType: 'user'`, `actorId` = owner), so hosts
+ * that must tell a key apart from an interactive sign-in check `type` or
+ * `credential` rather than `actorType`.
+ */
+export interface AuthFnSessionCredential {
+  type: 'api-key';
+  /** The API key ID; never the secret. */
+  id: string;
+}
+
 export interface AuthFnSession extends AuthSession {
   id: string;
   type: 'session' | 'api-key';
+  /** Present when an API key authenticated the request. */
+  credential?: AuthFnSessionCredential;
   subject: {
     actorId: string;
     actorType: AuthFnActorType;

@@ -10,6 +10,17 @@ npm install authfn
 
 Install only the plugin packages you use (`@authfn/password`, `@authfn/email-otp`, `@authfn/social-oauth`, `@authfn/api-keys`, `@authfn/two-factor`, `@authfn/multi-region`, `@authfn/native-handoff`) plus `@authfn/client` for browsers.
 
+## 0.5.0 release
+
+A session authenticated by a user-owned API key now acts as the key's owner: `actorType` is `'user'`, `actorId` is the owner's user ID, and the new `credential` field is `{ type: 'api-key', id: <keyId> }`. A host that keys data by `actorId` reaches the owner's data with the key. `type` stays `'api-key'`.
+
+- A key whose owner was deleted or is disabled (`metadata.disabled === true` on the user record) authenticates as no one, through `auth.provider.authenticate` and through the placement-context issuer alike.
+- An unowned service key keeps `actorType: 'api-key'` with the key ID as `actorId`, so routes that require a user reject it.
+- `session.metadata.ownerUserId` is deprecated and stays for one more minor version; read `actorId`.
+- AuthFn's own account routes and password linking still accept only interactive sessions (`type: 'session'`).
+
+Migration: if your host detects API keys with `session.actorType === 'api-key'`, check `session.type === 'api-key'` (or `session.credential`) instead; owned keys no longer match the old check.
+
 ## 0.4.1 release
 
 Concurrent sign-ups for the same email now return `409 AUTHFN_CONFLICT` to every request except the one that creates the user. Before, a request that passed the existence check but lost the insert to the unique index got a retryable `500 AUTHFN_INTERNAL_ERROR`. Password sign-up gets the fix through `@authfn/password` 0.1.3, which depends on `authfn` 0.4.1; `@authfn/password` and `@authfn/api-keys` 0.1.2 pin `authfn` 0.3.0. A storage conformance suite now runs password sign-in, sessions and API keys on better-sqlite3 and on a local Cloudflare D1 database in workerd; see [Self-hosting authfn on SQLite and D1](https://github.com/21nCo/super-functions/blob/dev/authfn/docs/content/docs/recipes/self-hosting-sqlite-d1.md).
