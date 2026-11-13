@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
 import type { ObservationEvent, SuperfunctionObservability } from '@superfunctions/observability';
+import type { BackgroundScheduler } from './runtime.js';
 
 export interface FileFnEvent {
   type: string;
@@ -139,12 +140,18 @@ export type FileFnObservationEventMap = {
 export type FileFnObservationEvent = FileFnObservationEventMap[FileFnEventType];
 
 export class FileFnEventEmitter extends EventEmitter {
-  constructor(private readonly observability?: SuperfunctionObservability<FileFnObservationEvent>) {
+  constructor(
+    private readonly observability?: SuperfunctionObservability<FileFnObservationEvent>,
+    private readonly background?: BackgroundScheduler,
+  ) {
     super();
   }
 
   emit<K extends keyof FileFnEventTypes>(event: K, payload: FileFnEventTypes[K]): boolean {
-    void this.observability?.events.emit(fileObservationEvent(event, payload));
+    const fanOut = this.observability?.events.emit(fileObservationEvent(event, payload));
+    if (fanOut && this.background) {
+      this.background.track(fanOut);
+    }
     return super.emit(event, payload);
   }
 
@@ -210,9 +217,10 @@ export function createFileDeletedEvent(
 }
 
 export function createEventEmitter(
-  observability?: SuperfunctionObservability<FileFnObservationEvent>
+  observability?: SuperfunctionObservability<FileFnObservationEvent>,
+  background?: BackgroundScheduler,
 ): FileFnEventEmitter {
-  return new FileFnEventEmitter(observability);
+  return new FileFnEventEmitter(observability, background);
 }
 
 function fileObservationEvent<K extends FileFnEventType>(

@@ -80,6 +80,8 @@ Default authorizer reads `filefn_file_permissions` and respects ownership.
 | Field | Type | Default | Effect |
 | --- | --- | --- | --- |
 | `namespace` | `string` | `"filefn"` | Table prefix. |
+| `basePath` | `string` | root | Serve every route under this prefix, e.g. `"/files"`; invalid values throw `FILEFN_BASE_PATH_INVALID`. |
+| `runtime.defer` | `(work: Promise<unknown>) => void` | detached `setImmediate` | Keeps background work alive past the response, e.g. `ctx.waitUntil`. |
 | `observability` | `ObservabilityInput<FileFnObservationEvent>` | undefined | Structured logger, events, metrics, traces and request observations. |
 
 ## Example: production config
