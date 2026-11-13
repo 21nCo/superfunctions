@@ -6,7 +6,8 @@ import { describe, expect, it } from 'vitest';
 
 // package.json declares `"sideEffects": false`, which lets bundlers drop any @uifn/core module whose exports an
 // app does not use. That is only safe while importing a module does nothing but declare bindings, so this test
-// rejects top-level statements that could run observable code at import time.
+// rejects module-level code that could run at import time, including inside initializers and class
+// definitions (extends clauses, computed member names, decorators and static initializers).
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const sourceRoot = join(packageRoot, 'src');
@@ -50,18 +51,42 @@ const ASSIGNMENT_OPERATORS = new Set([
 ]);
 
 /**
- * Every part of a top-level initializer that runs code at import, at any depth: calls other than the allow-listed
- * pure builders (whose arguments are checked in turn), `new`, tagged templates, `await`, assignments, `++`/`--`,
- * `delete` and static class members. Function and method bodies are skipped because declaring them runs nothing.
+ * Walks the expressions a module evaluates when it loads and records each one that runs code, at any depth: calls
+ * other than the allow-listed pure builders (whose arguments are checked in turn), `new`, tagged templates, `await`,
+ * assignments, `++`/`--` and `delete`. Classes are walked the way JavaScript defines them: the `extends` expression,
+ * computed member names, decorators and static initializers all run at import. Function, method and accessor bodies,
+ * parameter defaults and instance field initializers are skipped because declaring them runs nothing.
  */
-function initializerEffects(
-  initializer: ts.Expression,
-  file: ts.SourceFile,
-  at: (node: ts.Node) => string,
-  pureCallees: ReadonlySet<string>,
-): string[] {
+function importTimeScanner(file: ts.SourceFile, at: (node: ts.Node) => string, pureCallees: ReadonlySet<string>) {
   const effects: string[] = [];
+
+  const visitClass = (node: ts.ClassLikeDeclaration): void => {
+    if (ts.getDecorators(node)?.length) effects.push(`${at(node)} class decorator runs at import`);
+    for (const clause of node.heritageClauses ?? []) {
+      // `implements` is type-only; `extends` evaluates its expression when the class is defined.
+      if (clause.token === ts.SyntaxKind.ExtendsKeyword) clause.types.forEach((type) => visit(type.expression));
+    }
+    for (const member of node.members) {
+      if (ts.canHaveDecorators(member) && ts.getDecorators(member)?.length) {
+        effects.push(`${at(member)} class member decorator runs at import`);
+      }
+      if (ts.isFunctionLike(member)) {
+        for (const parameter of member.parameters) {
+          if (ts.getDecorators(parameter)?.length) effects.push(`${at(parameter)} parameter decorator runs at import`);
+        }
+      }
+      if (member.name && ts.isComputedPropertyName(member.name)) visit(member.name.expression);
+      const isStatic = ts.isClassStaticBlockDeclaration(member)
+        || (ts.isPropertyDeclaration(member) && member.initializer && member.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword));
+      if (isStatic) effects.push(`${at(member)} static class initializer runs at import`);
+    }
+  };
+
   const visit = (node: ts.Node): void => {
+    if (ts.isClassExpression(node)) {
+      visitClass(node);
+      return;
+    }
     if (
       ts.isArrowFunction(node)
       || ts.isFunctionExpression(node)
@@ -101,23 +126,16 @@ function initializerEffects(
       effects.push(`${at(node)} initializer evaluates ${ts.SyntaxKind[node.kind]}`);
       return;
     }
-    if (ts.isClassExpression(node)) {
-      for (const member of node.members) {
-        const isStatic = ts.isClassStaticBlockDeclaration(member)
-          || (ts.isPropertyDeclaration(member) && member.initializer && member.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword));
-        if (isStatic) effects.push(`${at(member)} static class initializer runs at import`);
-      }
-      return;
-    }
     ts.forEachChild(node, visit);
   };
-  visit(initializer);
-  return effects;
+
+  return { effects, visit, visitClass };
 }
 
 /**
- * Module-level helpers that only forward their parameters to an allow-listed builder, such as
- * `function policy(value) { return Object.freeze(value); }`. Calling one is as pure as calling the builder.
+ * Module-level helpers that only forward their plain parameters (no defaults, no destructuring) to an allow-listed
+ * builder, such as `function policy(value) { return Object.freeze(value); }`. Calling one is as pure as calling the
+ * builder.
  */
 function pureLocalHelpers(file: ts.SourceFile): Set<string> {
   const helpers = new Set<string>();
@@ -127,6 +145,8 @@ function pureLocalHelpers(file: ts.SourceFile): Set<string> {
     if (!only || !ts.isReturnStatement(only) || !only.expression) continue;
     const returned = unwrap(only.expression);
     if (!ts.isCallExpression(returned) || !PURE_INITIALIZER_CALLEES.has(unwrap(returned.expression).getText(file))) continue;
+    // A parameter default or destructuring pattern runs code on every call, so such a helper is not pure.
+    if (statement.parameters.some((parameter) => parameter.initializer || !ts.isIdentifier(parameter.name))) continue;
     const parameters = new Set(statement.parameters.map((parameter) => parameter.name.getText(file)));
     if (returned.arguments.every((argument) => ts.isIdentifier(argument) && parameters.has(argument.text))) {
       helpers.add(statement.name.text);
@@ -138,9 +158,9 @@ function pureLocalHelpers(file: ts.SourceFile): Set<string> {
 /** Each top-level statement of `source` that could have an import-time side effect, described for the report. */
 function importTimeEffects(fileName: string, source: string): string[] {
   const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true);
-  const effects: string[] = [];
   const at = (node: ts.Node) => `${fileName}:${file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1}`;
   const pureCallees = new Set([...PURE_INITIALIZER_CALLEES, ...pureLocalHelpers(file)]);
+  const { effects, visit, visitClass } = importTimeScanner(file, at, pureCallees);
   for (const statement of file.statements) {
     if (ts.isImportDeclaration(statement)) {
       if (!statement.importClause) effects.push(`${at(statement)} side-effect import ${statement.moduleSpecifier.getText(file)}`);
@@ -154,17 +174,12 @@ function importTimeEffects(fileName: string, source: string): string[] {
       || ts.isModuleDeclaration(statement)
     ) continue;
     if (ts.isClassDeclaration(statement)) {
-      for (const member of statement.members) {
-        const isStatic = ts.isClassStaticBlockDeclaration(member)
-          || (ts.isPropertyDeclaration(member) && member.initializer && member.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword));
-        if (isStatic) effects.push(`${at(member)} static class initializer runs at import`);
-      }
-      if (ts.getDecorators(statement)?.length) effects.push(`${at(statement)} class decorator runs at import`);
+      visitClass(statement);
       continue;
     }
     if (ts.isVariableStatement(statement)) {
       for (const declaration of statement.declarationList.declarations) {
-        if (declaration.initializer) effects.push(...initializerEffects(declaration.initializer, file, at, pureCallees));
+        if (declaration.initializer) visit(declaration.initializer);
       }
       continue;
     }
@@ -210,6 +225,19 @@ describe('@uifn/core import-time side effects', () => {
       'export const wrapped = Object.freeze({ a: wrap({ b: 1 }), c: wrap({ d: register() }) });',
       'function leaky(value) { register(); return Object.freeze(value); }',
       'export const viaLeaky = leaky({});',
+      'export class Derived extends createBase() {}',
+      'export const Anonymous = class extends make() {};',
+      'class Keyed { [key()]() {} }',
+      'export const KeyedField = class { [slot()] = 1; };',
+      '@sealed class Sealed {}',
+      'class Members { @logged method() {} }',
+      'class Injected { constructor(@inject() dep: unknown) {} }',
+      'export const DecoratedMember = class { @logged method() {} };',
+      'function wrapDefault(value = register()) { return Object.freeze(value); }',
+      'export const viaDefault = wrapDefault();',
+      'function wrapPattern({ value }) { return Object.freeze(value); }',
+      'export const viaPattern = wrapPattern({ value: 1 });',
+      'export class Plain extends Base implements Shape { field = make(); method(value = register()) { return value; } }',
     ].join('\n');
     expect(importTimeEffects('fixture.ts', source)).toEqual([
       "fixture.ts:1 side-effect import './register'",
@@ -228,6 +256,16 @@ describe('@uifn/core import-time side effects', () => {
       'fixture.ts:17 initializer calls key',
       'fixture.ts:20 initializer calls register',
       'fixture.ts:22 initializer calls leaky',
+      'fixture.ts:23 initializer calls createBase',
+      'fixture.ts:24 initializer calls make',
+      'fixture.ts:25 initializer calls key',
+      'fixture.ts:26 initializer calls slot',
+      'fixture.ts:27 class decorator runs at import',
+      'fixture.ts:28 class member decorator runs at import',
+      'fixture.ts:29 parameter decorator runs at import',
+      'fixture.ts:30 class member decorator runs at import',
+      'fixture.ts:32 initializer calls wrapDefault',
+      'fixture.ts:34 initializer calls wrapPattern',
     ]);
   });
 });
