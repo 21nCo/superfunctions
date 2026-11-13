@@ -1,0 +1,93 @@
+name: Storage R2 S3-compatible Integration
+
+on:
+  push:
+    branches: [dev, next, main]
+    paths:
+      - "packages/storage-r2/**"
+      - "packages/storage/**"
+      - "packages/observability/**"
+      - "package-lock.json"
+      - ".github/workflows/storage-r2-minio.yml"
+  pull_request:
+    branches: [dev, next, main]
+    paths:
+      - "packages/storage-r2/**"
+      - "packages/storage/**"
+      - "packages/observability/**"
+      - "package-lock.json"
+      - ".github/workflows/storage-r2-minio.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: R2 adapter against a MinIO server (Node and workerd)
+    runs-on: ubuntu-24.04
+    services:
+      minio:
+        # The upstream minio/minio image needs a `server` argument, which service containers cannot pass; this one starts the server itself.
+        image: bitnamilegacy/minio:2025.7.23@sha256:8935e75fa5d11295c17171e4aa49efe390a1193cd7f12e4d21b92af9ffef09d7
+        env:
+          MINIO_ROOT_USER: r2testaccess
+          MINIO_ROOT_PASSWORD: r2testsecretkey123
+          MINIO_DEFAULT_BUCKETS: filefn-r2-test
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "curl -fsS http://localhost:9000/minio/health/live"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      STORAGE_R2_S3_ENDPOINT: http://127.0.0.1:9000
+      STORAGE_R2_S3_BUCKET: filefn-r2-test
+      STORAGE_R2_S3_ACCESS_KEY_ID: r2testaccess
+      STORAGE_R2_S3_SECRET_ACCESS_KEY: r2testsecretkey123
+      STORAGE_R2_S3_REQUIRED: "1"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install the storage-r2 workspace and its workspace dependencies from the root lockfile
+        run: >-
+          npm ci --ignore-scripts --include-workspace-root=false
+          --workspace @superfunctions/observability
+          --workspace @superfunctions/storage
+          --workspace @superfunctions/storage-r2
+
+      - name: Build trusted esbuild native binding
+        run: npm rebuild esbuild
+
+      - name: Ensure Rollup native package
+        run: node scripts/ci-install-rollup-native.mjs
+
+      - name: Build workspace dependencies (@superfunctions/storage exports resolve to dist/)
+        run: |
+          npm run build --workspace @superfunctions/observability
+          npm run build --workspace @superfunctions/storage
+
+      # The image creates the bucket after the server reports live; an anonymous request answers NoSuchBucket until then.
+      - name: Wait for the test bucket
+        run: |
+          for _ in $(seq 1 30); do
+            if ! curl -s "$STORAGE_R2_S3_ENDPOINT/$STORAGE_R2_S3_BUCKET" | grep -q NoSuchBucket; then exit 0; fi
+            sleep 2
+          done
+          echo "::error::bucket $STORAGE_R2_S3_BUCKET was not created" && exit 1
+
+      - name: Typecheck
+        run: npm run typecheck --workspace @superfunctions/storage-r2
+
+      - name: Run Node and workerd suites, including the MinIO conformance and Worker bundle checks
+        run: npm test --workspace @superfunctions/storage-r2
