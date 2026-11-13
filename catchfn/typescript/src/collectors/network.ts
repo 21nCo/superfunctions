@@ -42,14 +42,34 @@ function captureUrl(value: unknown): string {
   return text(redactUrl(String(value)));
 }
 
-function captureHeaders(value: unknown): Record<string, string> | undefined {
-  if (value === undefined || value === null || typeof Headers === "undefined") return undefined;
-  const result: Record<string, string> = {};
-  new Headers(value as HeadersInit).forEach((entry, key) => {
-    result[key] = entry;
-  });
-  // A plain record of strings serializes to a record of (possibly cut) strings.
-  return serializeEntry(redactHeaders(result)) as Record<string, string>;
+/**
+ * Only forms that can be read without side effects are captured: a `Headers`
+ * object, an array of pairs and a plain record. Any other iterable (a
+ * generator, `Map.entries()`, ...) may be one-shot, so reading it would take
+ * the headers away from the application's own request; it is skipped.
+ */
+function snapshotable(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  if (typeof Headers !== "undefined" && value instanceof Headers) return true;
+  if (Array.isArray(value)) return true;
+  const prototype = Object.getPrototypeOf(value);
+  return (prototype === Object.prototype || prototype === null) && !(Symbol.iterator in value);
+}
+
+function captureHeaders(read: () => unknown): Record<string, string> | undefined {
+  if (typeof Headers === "undefined") return undefined;
+  try {
+    const value = read();
+    if (!snapshotable(value)) return undefined;
+    const result: Record<string, string> = {};
+    new Headers(value as HeadersInit).forEach((entry, key) => {
+      result[key] = entry;
+    });
+    // A plain record of strings serializes to a record of (possibly cut) strings.
+    return serializeEntry(redactHeaders(result)) as Record<string, string>;
+  } catch {
+    return undefined; // Unreadable or invalid headers: record the request without them.
+  }
 }
 
 function requestUrl(input: unknown): string {
@@ -91,30 +111,50 @@ function subscribe(listener: Listener): () => void {
             method: text(init?.method ?? (typeof request?.method === "string" ? request.method : "GET")),
             url: captureUrl(requestUrl(input)),
             timestamp,
-            requestHeaders: captureHeaders(init?.headers ?? request?.headers),
+            requestHeaders: captureHeaders(() => init?.headers ?? request?.headers),
           };
         } catch {
           base = undefined; // Unreadable input: still make the application's call.
         }
-        // The application's own arguments, receiver and promise pass through
-        // untouched; capture hangs off the side of the same promise.
+        // The application's own arguments and receiver pass through untouched.
         const pending = original.apply(this ?? globalThis, args);
-        if (base && pending && typeof pending.then === "function") {
-          const observed = base;
-          pending.then(
-            (response) => {
-              let responseHeaders: Record<string, string> | undefined;
-              try {
-                responseHeaders = captureHeaders(response.headers);
-              } catch {
-                responseHeaders = undefined;
+        if (!base) return pending;
+        const observed = base;
+        const observe = (response?: unknown) => {
+          try {
+            const settled: Observation = { ...observed, duration: duration(timestamp) };
+            if (typeof response === "object" && response !== null) {
+              const { status, statusText } = response as { status?: unknown; statusText?: unknown };
+              if (Number.isSafeInteger(status) && (status as number) >= 0) {
+                settled.status = status as number;
+                if (statusText !== undefined) settled.statusText = text(statusText);
               }
-              emit({ ...observed, status: response.status, statusText: text(response.statusText), duration: duration(timestamp), responseHeaders });
+              settled.responseHeaders = captureHeaders(() => (response as { headers?: unknown }).headers);
+            }
+            emit(settled);
+          } catch {
+            /* Observation never raises into, or alongside, the application's promise. */
+          }
+        };
+        // The caller receives a promise derived from the page's that settles
+        // the same way with the same value or reason. Chaining, rather than a
+        // side branch, keeps an unhandled rejection unhandled: the caller's
+        // promise rejects with the original reason exactly when the page's would.
+        try {
+          if (!pending || typeof pending.then !== "function") return pending;
+          return pending.then(
+            (response) => {
+              observe(response);
+              return response;
             },
-            () => emit({ ...observed, duration: duration(timestamp) })
+            (reason: unknown) => {
+              observe();
+              throw reason;
+            }
           );
+        } catch {
+          return pending; // An unusual thenable: hand it back as is.
         }
-        return pending;
       };
       globalThis.fetch = wrapper as typeof fetch;
       cleanups.push(() => {

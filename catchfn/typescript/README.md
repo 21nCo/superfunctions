@@ -58,8 +58,13 @@ still installed: if another library wrapped them after `start()`, the catchfn
 wrapper stays in that chain, passes calls through and records nothing.
 
 The network collector never changes the application's request: the original
-arguments, receiver and returned promise pass through untouched. The captured
-URL goes through `redactUrl` and the captured headers through `redactHeaders`.
+arguments and receiver pass through untouched. `fetch` returns a promise
+chained from the page's that settles with the same response or rejection
+reason, so an unhandled rejection stays unhandled. Request headers are captured
+only from a `Headers` object, an array of pairs or a plain record; any other
+iterable may be one-shot, so it is passed on unread and its headers are not
+recorded. The captured URL goes through `redactUrl` and the captured headers
+through `redactHeaders`.
 
 ## Serialization
 

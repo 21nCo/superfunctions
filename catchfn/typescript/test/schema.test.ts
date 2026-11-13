@@ -40,6 +40,32 @@ describe("evidence event v1 schema", () => {
     expect(validateEvidenceEvent(strip(event)).length).toBeGreaterThan(0);
   });
 
+  // Object.prototype member names are not event fields; JSON.parse makes each an own key.
+  const inherited = ["toString", "constructor", "__proto__", "hasOwnProperty"].flatMap((field) =>
+    Object.entries(valid).map(([kind, event]) => [field, kind, JSON.parse(JSON.stringify(event).replace(/^\{/, `{"${field}":123,`))] as const)
+  );
+  it.each(inherited)("rejects an own %s field on a %s event in both validators", (field, _kind, event) => {
+    expect(Object.keys(event)).toContain(field);
+    expect(validateWithSchema(event)).toBe(false);
+    expect(validateEvidenceEvent(event)).toContain(`${field} is not a ${event.kind} event field`);
+    expect(isEvidenceEvent(event)).toBe(false);
+  });
+
+  it("does not read inherited fields as the event's own", () => {
+    // JSON has no inherited fields, so only the hand-written validator sees this case.
+    const event = Object.create(valid.console);
+    expect(isEvidenceEvent(event)).toBe(false);
+  });
+
+  it("reports an unreadable value instead of throwing", () => {
+    const throwing = new Proxy(valid.console, { ownKeys: () => { throw new Error("trap"); } });
+    expect(validateEvidenceEvent(throwing)).toEqual(["event could not be read"]);
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    expect(() => validateEvidenceEvent({ ...valid.breadcrumb, data: cyclic })).not.toThrow();
+    expect(isEvidenceEvent({ ...valid.breadcrumb, data: cyclic })).toBe(false);
+  });
+
   it("is exported with its validator from the package entry", () => {
     expect(api.evidenceEventSchema).toBe(evidenceEventSchema);
     expect(api.EVIDENCE_SCHEMA_VERSION).toBe(1);

@@ -181,8 +181,22 @@ const shapes: Record<EvidenceKind, { required: Record<string, Check>; optional: 
  * an empty list means the value is a valid v1 event.
  */
 export function validateEvidenceEvent(value: unknown): string[] {
+  try {
+    return problems(value);
+  } catch {
+    // A throwing getter, a proxy or a structure too deep to walk is not a v1 event.
+    return ["event could not be read"];
+  }
+}
+
+// Only own entries of a shape table count: `toString`, `constructor` and
+// `__proto__` are never event fields.
+const ownCheck = (table: Record<string, Check>, field: string): Check | undefined =>
+  Object.hasOwn(table, field) ? table[field] : undefined;
+
+function problems(value: unknown): string[] {
   if (!isRecord(value)) return ["event must be an object"];
-  const kind = value.kind;
+  const kind = Object.hasOwn(value, "kind") ? value.kind : undefined;
   if (typeof kind !== "string" || !(EVIDENCE_KINDS as readonly string[]).includes(kind)) {
     return [`kind must be one of ${EVIDENCE_KINDS.join(", ")}`];
   }
@@ -194,8 +208,8 @@ export function validateEvidenceEvent(value: unknown): string[] {
   }
   for (const field of Object.keys(value)) {
     if (Object.hasOwn(shape.required, field)) continue;
-    const check = shape.optional[field];
-    if (!check) errors.push(`${field} is not a ${kind} event field`);
+    const check = ownCheck(shape.optional, field);
+    if (typeof check !== "function") errors.push(`${field} is not a ${kind} event field`);
     else if (!check(value[field])) errors.push(`${field} is invalid`);
   }
   return errors;

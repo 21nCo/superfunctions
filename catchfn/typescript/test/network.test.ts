@@ -60,12 +60,74 @@ describe("NetworkCollector fetch capture", () => {
     expect(event).toMatchObject({ schemaVersion: 1, kind: "network", transport: "fetch", method: "GET", status: 201, statusText: "Created" });
   });
 
-  it("returns the page's own promise", async () => {
-    const pending = Promise.resolve(new Response("same"));
-    pageFetch.mockReturnValue(pending);
+  it("resolves to the page's own response object", async () => {
+    const response = new Response("same");
+    pageFetch.mockResolvedValue(response);
     collector.start();
-    expect(fetch("/same")).toBe(pending);
-    await pending;
+    expect(await fetch("/same")).toBe(response);
+  });
+
+  it("does not consume one-shot iterable headers the application passes", async () => {
+    collector.start();
+    function* pairs() {
+      yield ["authorization", "Bearer generated"] as [string, string];
+    }
+    const iterators: Array<Iterable<[string, string]>> = [
+      new Map([["authorization", "Bearer map"]]).entries(),
+      pairs(),
+      new Headers({ authorization: "Bearer headers" }).entries(),
+    ];
+    for (const headers of iterators) await fetch("/api", { headers: headers as unknown as HeadersInit });
+    const received = pageFetch.mock.calls.map(([, init]) => [...new Headers((init as RequestInit).headers)]);
+    expect(received).toEqual([[["authorization", "Bearer map"]], [["authorization", "Bearer generated"]], [["authorization", "Bearer headers"]]]);
+    // The request is still recorded, without the headers it could not read safely.
+    expect(collector.collect().map((event) => event.requestHeaders)).toEqual([undefined, undefined, undefined]);
+  });
+
+  it("leaves an unhandled fetch rejection unhandled, once, with its original reason", async () => {
+    const reason = new TypeError("offline");
+    const seen: unknown[] = [];
+    const record = (value: unknown) => seen.push(value);
+    const saved = process.listeners("unhandledRejection");
+    process.removeAllListeners("unhandledRejection");
+    process.on("unhandledRejection", record);
+    try {
+      pageFetch.mockImplementation(() => Promise.reject(reason));
+      collector.start();
+      void fetch("/unhandled");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(seen).toEqual([reason]);
+      seen.length = 0;
+      await fetch("/handled").catch(() => undefined);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(seen).toEqual([]);
+      expect(collector.size()).toBe(2);
+    } finally {
+      process.off("unhandledRejection", record);
+      for (const listener of saved) process.on("unhandledRejection", listener);
+    }
+  });
+
+  it("raises nothing of its own when the page's fetch resolves to a non-Response", async () => {
+    const seen: unknown[] = [];
+    const record = (value: unknown) => seen.push(value);
+    const saved = process.listeners("unhandledRejection");
+    process.removeAllListeners("unhandledRejection");
+    process.on("unhandledRejection", record);
+    try {
+      pageFetch.mockResolvedValueOnce(undefined).mockResolvedValueOnce({ status: "bad", get headers() { throw new Error("no"); } });
+      collector.start();
+      expect(await fetch("/nothing")).toBeUndefined();
+      await fetch("/odd-response");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(seen).toEqual([]);
+      const events = collector.collect();
+      expect(events).toHaveLength(2);
+      for (const event of events) expect(event).not.toHaveProperty("status");
+    } finally {
+      process.off("unhandledRejection", record);
+      for (const listener of saved) process.on("unhandledRejection", listener);
+    }
   });
 
   it("redacts every listed sensitive request and response header", async () => {
@@ -116,7 +178,9 @@ describe("NetworkCollector fetch capture", () => {
     collector.start();
     await fetch("/odd", { headers: [["bad header", "x"]] as unknown as HeadersInit });
     expect(pageFetch).toHaveBeenCalledTimes(1);
-    expect(collector.size()).toBe(0);
+    const [event] = collector.collect();
+    expect(event).toMatchObject({ url: "/odd", status: 201 });
+    expect(event).not.toHaveProperty("requestHeaders");
   });
 
   it("applies URL and header filters and the size bound", async () => {
