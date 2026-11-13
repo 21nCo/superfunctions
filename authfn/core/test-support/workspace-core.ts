@@ -1,6 +1,8 @@
 // Shared test support for authfn plugins that resolve the built `authfn`
-// core the way their published package does. Only Node built-ins are
-// imported: the release build installs a single package without the
+// core the way their published package does. It lives in the core package
+// directory (not published: core ships only dist) so that editing it changes
+// core's hash and reruns every dependent plugin's tests. Only Node built-ins
+// are imported: the release build installs a single package without the
 // workspace, so nothing here may resolve a package from this directory.
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
@@ -9,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 
 type Manifest = { version: string; dependencies: Record<string, string> };
 
-const authfnRoot = new URL('../', import.meta.url);
+const authfnRoot = new URL('../../', import.meta.url);
 const workspaceInstalled = (): boolean => existsSync(new URL('../node_modules/authfn', authfnRoot));
 
 /**

@@ -4,7 +4,7 @@ import type { AuthFnRuntimeConfig } from 'authfn';
 // this is the built `authfn` that `@authfn/password` depends on.
 import { signUpWithPassword } from 'authfn/core/passwords';
 import { memoryAdapter } from '../../../../packages/db/src/testing/index.js';
-import { describeAuthfnDependency } from '../../../test-support/workspace-core.js';
+import { describeAuthfnDependency } from '../../../core/test-support/workspace-core.js';
 
 describeAuthfnDependency({ describe, it, expect }, new URL('../../', import.meta.url));
 

@@ -10,13 +10,13 @@ describe('@authfn/client session scopes', () => {
         data: {
           session: {
             id: 'ses_1',
-            type: 'api-key',
-            subject: { actorId: 'key_1', actorType: 'api-key' },
-            actorType: 'api-key',
-            actorId: 'key_1',
+            type: 'session',
+            subject: { actorId: 'usr_1', actorType: 'user' },
+            actorType: 'user',
+            actorId: 'usr_1',
             resourceIds: [],
-            methods: ['api-key'],
-            scopes: ['memotron:read']
+            methods: ['password'],
+            scopes: ['*']
           }
         },
         requestId: 'req_1'
@@ -24,6 +24,6 @@ describe('@authfn/client session scopes', () => {
     });
 
     const result = await client.getSession();
-    expect(result.ok && result.data.session?.scopes).toEqual(['memotron:read']);
+    expect(result.ok && result.data.session?.scopes).toEqual(['*']);
   });
 });

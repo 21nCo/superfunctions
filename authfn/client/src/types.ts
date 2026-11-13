@@ -31,10 +31,10 @@ export interface AuthFnSession {
   resourceIds: string[];
   methods: AuthFnAuthMethod[];
   /**
-   * Scopes the session grants, as `requireScopes` checks them on the server
-   * (`<owner>:<action>`, `<owner>:*` or `*`). authfn 0.6.0+ servers always
-   * send it: user sessions carry `['*']` and API-key sessions carry the
-   * key's registry-grantable scopes. Servers before authfn 0.6.0 omit it.
+   * Scopes the session grants, as `requireScopes` checks them on the server.
+   * The client only receives user sessions (`getSession` returns `null` for
+   * an API-key credential), and authfn 0.6.0+ servers send them with
+   * `['*']`. Servers before authfn 0.6.0 omit it.
    */
   scopes?: string[];
   primaryEmail?: string;

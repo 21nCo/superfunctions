@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { authfn, type AuthFnDeliveryRequest, type AuthFnSession } from 'authfn';
 import { createUser } from 'authfn/core/users';
 import { memoryAdapter } from '../../../../packages/db/src/testing/index.js';
-import { describeAuthfnDependency } from '../../../test-support/workspace-core.js';
+import { describeAuthfnDependency } from '../../../core/test-support/workspace-core.js';
 import { authFnEmailOtpPlugin } from '../index.js';
 
 describeAuthfnDependency({ describe, it, expect }, new URL('../../', import.meta.url));
