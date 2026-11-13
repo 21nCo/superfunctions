@@ -19,6 +19,7 @@ import {
   extractRelationRecordDeltasFromDB,
 } from "./relations.js";
 import { executeSchemaAwareMerge } from "./merge-decision.js";
+import { isKvValueMerge, updateKvRecordMerging } from "./kv-merge.js";
 import {
   executeShare,
   executeUnshare,
@@ -208,6 +209,7 @@ async function executeMutationCore(
   actorId?: string,
   logger?: DatafnLogger,
   multiRegionRuntime?: DatafnMultiRegionRuntimeConfig | null,
+  inTransaction = false,
 ): Promise<MutationResult> {
   const resolvedCapabilities = resolveCapabilitiesForResource(schema, mutation.resource);
   let opResult:
@@ -310,12 +312,27 @@ async function executeMutationCore(
           );
           const strictUpdateNotFound =
             db.capabilities?.operations?.strictUpdateNotFound === true;
+          const kvValueMerge = isKvValueMerge(mutation);
+          // The complete stored KV record written by a KV value merge, which
+          // the change record must carry so a pull never applies a bare patch.
+          let kvMergedData: Record<string, unknown> | undefined;
           const mergeResult = await executeSchemaAwareMerge({
             schema,
             resource: mutation.resource,
             id: mutation.id,
             delta: mergeData,
             update: async () => {
+              if (kvValueMerge) {
+                kvMergedData = await updateKvRecordMerging({
+                  db,
+                  resource: mutation.resource,
+                  id: mutation.id,
+                  namespace,
+                  data: mergeData,
+                  inTransaction,
+                });
+                return;
+              }
               const updated = await db.update({
                 model: mutation.resource,
                 where: [{ field: "id", operator: "eq", value: mutation.id }],
@@ -346,7 +363,8 @@ async function executeMutationCore(
           });
 
           if (mergeResult.ok) {
-            resolvedRecord = mergeData;
+            resolvedRecord =
+              mergeResult.mode !== "create" && kvMergedData ? kvMergedData : mergeData;
             additionalChanges.push(...await applyInactivePropagation(
               db,
               schema,
@@ -1340,6 +1358,7 @@ export async function executeMutation(
           actorId,
           logger,
           multiRegionRuntime,
+          true,
         );
         if (txMutationResult.ok && shouldQueuePermissionDirectorySync) {
           await queuePermissionDirectorySync(txDb);
@@ -1461,6 +1480,7 @@ export async function executeMutation(
           actorId,
           logger,
           multiRegionRuntime,
+          true,
         );
         if (txMutationResult.ok && shouldQueuePermissionDirectorySync) {
           await queuePermissionDirectorySync(txDb);
@@ -1520,6 +1540,7 @@ export async function executeMutation(
       actorId,
       logger,
       multiRegionRuntime,
+      insideTransaction,
     );
   } catch (error) {
     await releasePermissionDirectoryTask();

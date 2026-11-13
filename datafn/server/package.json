@@ -1,6 +1,6 @@
 {
   "name": "@datafn/server",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "DataFn server runtime - HTTP endpoints for DFQL query, mutations, and sync",
   "license": "MIT",
   "type": "module",
@@ -62,7 +62,7 @@
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.10.4",
     "@datafn/cli": "0.1.2",
-    "@datafn/client": "0.1.2",
+    "@datafn/client": "0.1.3",
     "@superfunctions/http-hono": "0.2.2",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.9.1",

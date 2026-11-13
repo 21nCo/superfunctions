@@ -28,7 +28,7 @@
   },
   "dependencies": {
     "@datafn/core": "0.1.2",
-    "@datafn/client": "0.1.2"
+    "@datafn/client": "0.1.3"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

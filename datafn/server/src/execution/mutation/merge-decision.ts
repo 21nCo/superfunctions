@@ -10,7 +10,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isNotFoundError(error: any): boolean {
+export function isNotFoundError(error: any): boolean {
   const message = String(error?.message || "").toLowerCase();
   return error?.name === "NotFoundError" || message.includes("not found") || message.includes("zero rows");
 }

@@ -9,6 +9,7 @@ import { Hono } from "hono";
 import { drizzleAdapter } from "@superfunctions/db/adapters/drizzle";
 import { toHono } from "@superfunctions/http-hono";
 import type { SQLiteTable } from "drizzle-orm/sqlite-core";
+import type { Adapter } from "@superfunctions/db";
 import { createDatafnServer } from "../../src/index.js";
 import { isDatafnE2eeEnvelope } from "@datafn/core";
 import {
@@ -56,10 +57,10 @@ export function describeDrizzleSqliteConformance(
     });
 
     /** Serves DataFn over the harness database the way the Workers deploy guide wires it. */
-    async function serve(): Promise<Started> {
+    async function serve(wrap: (adapter: Adapter) => Adapter = (adapter) => adapter): Promise<Started> {
       const server = await createDatafnServer({
         schema: conformanceSchema,
-        db: drizzleAdapter({ db: harness.db, dialect: "sqlite" }),
+        db: wrap(drizzleAdapter({ db: harness.db, dialect: "sqlite" })),
         authorize: async () => true,
         allowUnknownResources: true,
         rest: true,
@@ -388,6 +389,80 @@ export function describeDrizzleSqliteConformance(
           (row) => Number(row.server_seq),
         );
         expect(seqs).toEqual(Array.from({ length: 12 }, (_, n) => n + 1));
+      });
+    });
+
+    describe("KV merge", () => {
+      let kvSequence = 0;
+      const kvMerge = (value: Json, clientId = "device-a") => ({
+        resource: "kv",
+        version: 1,
+        operation: "merge",
+        id: "kv:prefs",
+        clientId,
+        mutationId: `kv-merge-${(kvSequence += 1)}`,
+        record: { value },
+      });
+      const storedKvValue = async () =>
+        JSON.parse(String((await harness.all(`SELECT value FROM kv WHERE id = 'kv:prefs'`))[0]?.value));
+
+      it("keeps every top-level key across partial merges and pulls the full value", async () => {
+        const app = await start();
+        const first = await app.call("POST", "/datafn/mutation", kvMerge({ name: "Ada", appearance: { theme: "dark" } }));
+        expect(first.body.result.ok).toBe(true);
+        const second = await app.call("POST", "/datafn/push", {
+          clientId: "device-a",
+          mutations: [kvMerge({ appearanceProfiles: [{ id: "p1" }], appliedAppearanceProfileId: "p1" })],
+        });
+        expect(second.body.result.ok).toBe(true);
+        const third = await app.call("POST", "/datafn/mutation", kvMerge({ appearance: { theme: "light" } }));
+        expect(third.body.result.ok).toBe(true);
+
+        const full = {
+          name: "Ada",
+          appearance: { theme: "light" },
+          appearanceProfiles: [{ id: "p1" }],
+          appliedAppearanceProfileId: "p1",
+        };
+        expect(await storedKvValue()).toEqual(full);
+        const pulled = await app.call("POST", "/datafn/pull", { clientId: "device-b", cursor: "0" });
+        expect(pulled.body.result.changes.at(-1)).toMatchObject({ id: "kv:prefs", record: { value: full } });
+      });
+
+      it("keeps both keys when a merge on another server lands between a merge's read and write", async () => {
+        const other = await start();
+        await other.call("POST", "/datafn/mutation", kvMerge({ seed: true }));
+        // The second server shares no in-process state with the first, like a
+        // second Worker isolate. Its merge runs after the first server has read
+        // the record and before that server writes.
+        let interleave: (() => Promise<unknown>) | undefined = () =>
+          other.call("POST", "/datafn/mutation", kvMerge({ fromB: 2 }, "device-b"));
+        const app = await serve((adapter) => new Proxy(adapter, {
+          get(target, property, receiver) {
+            if (property !== "findOne") return Reflect.get(target, property, receiver);
+            return async (params: Parameters<Adapter["findOne"]>[0]) => {
+              const row = await target.findOne(params);
+              const run = params.model === "kv" ? interleave : undefined;
+              if (run) {
+                interleave = undefined;
+                await run();
+              }
+              return row;
+            };
+          },
+        }));
+
+        const merged = await app.call("POST", "/datafn/mutation", kvMerge({ fromA: 1 }));
+        expect(merged.body.result.ok).toBe(true);
+        expect(interleave).toBeUndefined();
+        expect(await storedKvValue()).toEqual({ seed: true, fromA: 1, fromB: 2 });
+
+        const concurrent = await Promise.all([
+          app.call("POST", "/datafn/push", { clientId: "device-a", mutations: [kvMerge({ pushA: 1 })] }),
+          other.call("POST", "/datafn/push", { clientId: "device-b", mutations: [kvMerge({ pushB: 2 }, "device-b")] }),
+        ]);
+        expect(concurrent.map((res) => res.body.result.ok)).toEqual([true, true]);
+        expect(await storedKvValue()).toEqual({ seed: true, fromA: 1, fromB: 2, pushA: 1, pushB: 2 });
       });
     });
 

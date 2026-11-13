@@ -29,6 +29,7 @@ import {
   extractRelationRecordDeltasFromDB,
 } from "../mutation/relations.js";
 import { executeSchemaAwareMerge } from "../mutation/merge-decision.js";
+import { isKvValueMerge, updateKvRecordMerging } from "../mutation/kv-merge.js";
 import { stripReadonlyCapabilityFields } from "../mutation/execute.js";
 import {
   executeShare,
@@ -483,9 +484,24 @@ export async function executePush(
         );
         const strictUpdateNotFound =
           targetDb.capabilities?.operations?.strictUpdateNotFound === true;
+        const kvValueMerge = isKvValueMerge(mut);
+        // The complete stored KV record written by a KV value merge, which
+        // the change record must carry so a pull never applies a bare patch.
+        let kvMergedData: Record<string, unknown> | undefined;
         const mergeResult = await executeSchemaAwareMerge({
           schema, resource: mut.resource, id: mut.id, delta: createData,
           update: async () => {
+            if (kvValueMerge) {
+              kvMergedData = await updateKvRecordMerging({
+                db: targetDb,
+                resource: mut.resource,
+                id: mut.id,
+                namespace,
+                data: updateData,
+                inTransaction: hasTransaction,
+              });
+              return;
+            }
             const updated = await targetDb.update({ model: mut.resource, where: [{ field: "id", operator: "eq", value: mut.id }], data: updateData, namespace });
             if (strictUpdateNotFound && updated === undefined) {
               throw { name: "NotFoundError", message: "Record not found after update" };
@@ -502,7 +518,7 @@ export async function executePush(
         });
         if (mergeResult.ok) {
           const changeRecordData =
-            mergeResult.mode === "create" ? createData : updateData;
+            mergeResult.mode === "create" ? createData : kvMergedData ?? updateData;
           const propagationChanges = await collectPropagationChanges(
             targetDb,
             [{ resource: mut.resource, id: mut.id }],
