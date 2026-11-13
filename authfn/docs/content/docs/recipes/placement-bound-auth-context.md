@@ -151,6 +151,7 @@ fixtures; it is not a claim of exhaustive parity for every Unicode hostname.
 | Logout, session revoke, API-key revoke | Fail closed (`AUTHFN_SESSION_REVOKED` / `AUTHFN_API_KEY_REVOKED`) | Remain verifiable until `expiresAt`. Bind DataFn tickets to `sessionVersion` and keep TTL short. |
 | Session expiry | `AUTHFN_SESSION_EXPIRED` | Same bounded expiry. |
 | Identity deleted / missing user row | `AUTHFN_UNAUTHENTICATED` | Existing grants expire; do not mint new tickets. |
+| API-key owner disabled (`metadata.disabled === true`) | `AUTHFN_UNAUTHENTICATED` | Existing grants expire; re-enabling the owner restores the key. |
 | Placement `moving` or `deleting` | `AUTHFN_PLACEMENT_MOVING` | Downstream cells should fence on epoch. Re-bootstrap through the canonical gateway. |
 | Tombstone / missing placement | `AUTHFN_REGION_NOT_FOUND` | Fail closed. |
 | Directory unavailable | `AUTHFN_PLACEMENT_DIRECTORY_UNAVAILABLE` | Fail closed. Do not guess a region. |

@@ -181,8 +181,8 @@ export async function authenticateApiKey(
   // a deleted or disabled owner leaves the key authenticating as no one.
   let owner: AuthFnUserRecord | null = null;
   if (record.userId != null) {
-    owner = await findUserById(config, record.userId);
-    if (!owner || isAuthFnUserDisabled(owner)) {
+    owner = await findActiveApiKeyOwner(config, record.userId);
+    if (!owner) {
       return null;
     }
   }
@@ -221,11 +221,28 @@ export async function authenticateApiKey(
 
 /**
  * AuthFn has no user status column; a host disables a user by setting
- * `metadata.disabled` to `true` on the user record. Only API-key sessions
- * check it today.
+ * `metadata.disabled` to `true` on the user record. Every API-key path
+ * (`authenticateApiKey` and the placement-context issuer) checks it through
+ * `findActiveApiKeyOwner`; interactive sessions do not check it today.
  */
 export function isAuthFnUserDisabled(user: Pick<AuthFnUserRecord, 'metadata'>): boolean {
   return user.metadata?.disabled === true;
+}
+
+/**
+ * Loads the owner an API key acts as. Returns `null` when the owner was
+ * deleted or is disabled, so the key authenticates as no one. Shared by every
+ * API-key authentication path so they cannot disagree on owner eligibility.
+ */
+export async function findActiveApiKeyOwner(
+  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
+  userId: string
+): Promise<AuthFnUserRecord | null> {
+  const owner = await findUserById(config, userId);
+  if (!owner || isAuthFnUserDisabled(owner)) {
+    return null;
+  }
+  return owner;
 }
 
 export function sanitizeApiKeyRecord(record: AuthFnApiKeyRecord): SanitizedApiKey {

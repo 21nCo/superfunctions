@@ -512,6 +512,37 @@ describe('AuthFn placement-bound auth context', () => {
     }))).rejects.toBeInstanceOf(AuthFnApiKeyRevokedError);
   });
 
+  it('rejects a disabled-owner API key before any consumer runs or assertion is issued', async () => {
+    const bound = await setupIssuer();
+    const owned = await createApiKey(bound.config, { userId: bound.user.id, name: 'cli', scopes: ['sync'] });
+    const keyRequest = () => new Request('https://account.example.com/auth/session', {
+      headers: { authorization: `Bearer ${owned.secret}` }
+    });
+    const setOwnerMetadata = (metadata: Record<string, unknown>) => bound.config.database.update({
+      model: 'users',
+      where: [{ field: 'id', operator: 'eq', value: bound.user.id }],
+      data: { metadata },
+      namespace: 'authfn'
+    });
+
+    // Enabled-owner control: the key derives a context for its owner.
+    await expect(bound.issuer.derive(keyRequest())).resolves.toMatchObject({ actorType: 'api-key' });
+
+    await setOwnerMetadata({ disabled: true });
+    await expect(bound.issuer.derive(keyRequest())).rejects.toBeInstanceOf(AuthFnUnauthenticatedError);
+    let consumerRan = false;
+    await expect(bound.issuer.withContext(keyRequest(), () => {
+      consumerRan = true;
+      return 'ran';
+    })).rejects.toBeInstanceOf(AuthFnUnauthenticatedError);
+    expect(consumerRan).toBe(false);
+    await expect(bound.issuer.issueSigned(keyRequest())).rejects.toBeInstanceOf(AuthFnUnauthenticatedError);
+
+    // Re-enabling the owner restores the key without reissuing it.
+    await setOwnerMetadata({ disabled: false });
+    await expect(bound.issuer.derive(keyRequest())).resolves.toMatchObject({ actorType: 'api-key' });
+  });
+
   it('falls back to a valid authorization credential when the cookie is stale', async () => {
     const stale = await setupIssuer();
     const fresh = await issueSession(stale.config, {}, {

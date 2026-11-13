@@ -14,7 +14,7 @@ Install only the plugin packages you use (`@authfn/password`, `@authfn/email-otp
 
 A session authenticated by a user-owned API key now acts as the key's owner: `actorType` is `'user'`, `actorId` is the owner's user ID, and the new `credential` field is `{ type: 'api-key', id: <keyId> }`. A host that keys data by `actorId` reaches the owner's data with the key. `type` stays `'api-key'`.
 
-- A key whose owner was deleted or is disabled (`metadata.disabled === true` on the user record) authenticates as no one.
+- A key whose owner was deleted or is disabled (`metadata.disabled === true` on the user record) authenticates as no one, through `auth.provider.authenticate` and through the placement-context issuer alike.
 - An unowned service key keeps `actorType: 'api-key'` with the key ID as `actorId`, so routes that require a user reject it.
 - `session.metadata.ownerUserId` is deprecated and stays for one more minor version; read `actorId`.
 - AuthFn's own account routes and password linking still accept only interactive sessions (`type: 'session'`).
