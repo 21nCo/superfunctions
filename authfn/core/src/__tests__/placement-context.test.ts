@@ -32,6 +32,8 @@ import { eventRequestId } from '../core/observability.js';
 import { hashSecret, issueSession, revokeSessionById } from '../core/sessions.js';
 import { createUser } from '../core/users.js';
 import type { AuthFnIdentityPlacement, AuthFnRoutingKeyring } from '../plugin-types.js';
+import type { AuthFnScopeRegistry } from '../core/scopes.js';
+import { createTestServer } from './test-server.js';
 
 const SUBJECT_SECRET = 'placement-subject-secret-with-enough-entropy';
 const keyring: AuthFnRoutingKeyring = {
@@ -442,7 +444,7 @@ describe('AuthFn placement-bound auth context', () => {
   });
 
   it('binds API-key grants to the owning user placement and rejects unbound keys', async () => {
-    const bound = await setupIssuer();
+    const bound = await setupIssuer({ scopes: { sync: ['read'] } });
     await bound.config.database.create({
       model: 'api_keys',
       namespace: 'authfn',
@@ -451,7 +453,7 @@ describe('AuthFn placement-bound auth context', () => {
         userId: bound.user.id,
         name: 'gateway',
         secretHash: hashSecret('secret_bound'),
-        scopes: ['sync'],
+        scopes: ['sync:read'],
         createdAt: new Date(),
         updatedAt: new Date()
       }
@@ -461,7 +463,7 @@ describe('AuthFn placement-bound auth context', () => {
     }));
     expect(context.actorType).toBe('api-key');
     expect(context.homeRegion).toBe('us-east-1');
-    expect(context.scopes).toEqual(['sync']);
+    expect(context.scopes).toEqual(['sync:read']);
 
     await bound.config.database.create({
       model: 'api_keys',
@@ -510,6 +512,37 @@ describe('AuthFn placement-bound auth context', () => {
     await expect(bound.issuer.derive(new Request('https://account.example.com/auth/session', {
       headers: { authorization: 'Bearer secret_bound' }
     }))).rejects.toBeInstanceOf(AuthFnApiKeyRevokedError);
+  });
+
+  it('carries only registry-grantable stored scopes into the session, context, and signed claim', async () => {
+    const bound = await setupIssuer({ scopes: { memotron: ['read', 'write'] } });
+    // A row written before 0.6.0, when stored scopes were never validated.
+    await bound.config.database.create({
+      model: 'api_keys',
+      namespace: 'authfn',
+      data: {
+        id: 'key_legacy',
+        userId: bound.user.id,
+        name: 'legacy',
+        secretHash: hashSecret('secret_legacy'),
+        scopes: ['legacy:*', 'billing:read', 'memotron:read'],
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }
+    });
+    const keyRequest = () => new Request('https://account.example.com/auth/session', {
+      headers: { authorization: 'Bearer secret_legacy' }
+    });
+
+    const session = await createTestServer(bound.config).provider.authenticate(keyRequest());
+    const context = await bound.issuer.derive(keyRequest());
+    const issued = await bound.issuer.issueSigned(keyRequest());
+    const claim = bound.issuer.verifySigned(issued.assertion);
+
+    expect(session?.scopes).toEqual(['memotron:read']);
+    expect(context.scopes).toEqual(session?.scopes);
+    expect(issued.context.scopes).toEqual(session?.scopes);
+    expect(claim.scopes).toEqual(session?.scopes);
   });
 
   it('rejects a disabled-owner API key before any consumer runs or assertion is issued', async () => {
@@ -649,7 +682,7 @@ describe('AuthFn placement-bound auth context', () => {
   });
 
   it('keeps API-key sessionVersion stable across reuse', async () => {
-    const bound = await setupIssuer();
+    const bound = await setupIssuer({ scopes: { sync: ['read'] } });
     await bound.config.database.create({
       model: 'api_keys',
       namespace: 'authfn',
@@ -658,7 +691,7 @@ describe('AuthFn placement-bound auth context', () => {
         userId: bound.user.id,
         name: 'gateway',
         secretHash: hashSecret('secret_stable'),
-        scopes: ['sync'],
+        scopes: ['sync:read'],
         createdAt: new Date('2026-08-01T00:00:00.000Z'),
         updatedAt: new Date('2026-08-01T00:00:00.000Z')
       }
@@ -805,11 +838,13 @@ async function setupIssuer(options?: {
   identityKey?: string;
   keyring?: AuthFnRoutingKeyring;
   now?: () => Date;
+  scopes?: AuthFnScopeRegistry;
 }) {
   const events: AuthFnEventInput[] = [];
   const config: AuthFnRuntimeConfig = {
     database: memoryAdapter({ debug: false }),
     namespace: 'authfn',
+    scopes: options?.scopes,
     plugins: [authFnApiKeyPlugin(), authFnMultiRegionPlugin()],
     environment: authFnMultiRegionEnvironment({
       routing: {

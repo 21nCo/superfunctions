@@ -9433,7 +9433,7 @@ The context is frozen and contains:
 | `issuedAt` / `expiresAt` | Context lifetime. Capped by both `ttlSeconds` and session expiry. |
 | `audience` | Consumer allowlist entry such as `nucleum-datafn`. |
 | `assurance` | AuthFn methods on the session (`password`, `email-otp`, …). |
-| `scopes` | Present for user-owned API keys. |
+| `scopes` | Present for user-owned API keys: the key's stored scopes that the host [scope registry](../plugins/api-keys#scopes) can grant, the same list as the API-key session's `scopes`. Absent for interactive user sessions. |
 | `requestId` | Correlation id. |
 | `actorType` | `user` or `api-key`. |
 | `userId` | Omitted unless `includeUserId: true`. |
@@ -11240,7 +11240,9 @@ if session is None:
     return Response(status_code=401)
 ```
 
-`AuthFnSession` mirrors the TypeScript shape: `id`, `actor_id`, `actor_type`, `methods`, `primary_email`, `expires_at`, `metadata`, `region_id`. API-key sessions are the exception; see below.
+`AuthFnSession` has these fields: `id`, `actor_id`, `actor_type`, `methods`, `primary_email`, `expires_at`, `metadata`, `region_id`. API-key sessions are the exception; see below.
+
+The Python SDK has no typed scopes yet. Its `AuthFnSession` has no `scopes` field for cookie or API-key sessions, and there is no scope registry or `requireScopes` check; those exist only in the TypeScript `authfn` package (0.6.0 and later). See [Plugins → API keys → Scopes](../plugins/api-keys#scopes).
 
 ### API key sessions
 
