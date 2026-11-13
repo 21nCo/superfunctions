@@ -38,13 +38,15 @@ export function getSchema(_options: BillFnSchemaOptions = {}): { version: number
       trialEnd: { type: 'string', required: false },
       autoRenew: { type: 'boolean', required: true },
       metadata: { type: 'json', required: false },
+      replacedReferencesPending: { type: 'boolean', required: false },
       createdAt: { type: 'string', required: true },
       updatedAt: { type: 'string', required: true }
     },
     indexes: [
       { name: 'subscriptions_billing_account_updated_idx', fields: ['billingAccountId', 'updatedAt'] },
       { name: 'subscriptions_provider_subscription_idx', fields: ['provider', 'providerSubscriptionId'], unique: true },
-      { name: 'subscriptions_provider_charge_idx', fields: ['provider', 'providerChargeId'], unique: true }
+      { name: 'subscriptions_provider_charge_idx', fields: ['provider', 'providerChargeId'], unique: true },
+      { name: 'subscriptions_replaced_references_pending_idx', fields: ['provider', 'replacedReferencesPending'] }
     ]
   };
 

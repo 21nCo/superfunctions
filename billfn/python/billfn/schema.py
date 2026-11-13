@@ -41,6 +41,7 @@ def get_schema() -> Dict[str, Any]:
             "trialEnd": {"type": "string", "required": False},
             "autoRenew": {"type": "boolean", "required": True},
             "metadata": {"type": "json", "required": False},
+            "replacedReferencesPending": {"type": "boolean", "required": False},
             "createdAt": {"type": "string", "required": True},
             "updatedAt": {"type": "string", "required": True},
         },
@@ -55,6 +56,10 @@ def get_schema() -> Dict[str, Any]:
                 "name": "subscriptions_provider_charge_idx",
                 "fields": ["provider", "providerChargeId"],
                 "unique": True,
+            },
+            {
+                "name": "subscriptions_replaced_references_pending_idx",
+                "fields": ["provider", "replacedReferencesPending"],
             },
         ],
     }

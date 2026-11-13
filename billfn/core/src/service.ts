@@ -91,6 +91,8 @@ const TABLES = {
 const PROVIDER_EVENT_OCCURRED_AT_METADATA_KEY = 'billfnProviderEventOccurredAt';
 /** When the committed provider mutation that set the provider-state time started; it opens that mutation's window. */
 const PROVIDER_MUTATION_STARTED_AT_METADATA_KEY = 'billfnProviderMutationStartedAt';
+/** References a committed mutation's write dropped but could not record as replaced (`replacedReferencesPending`). */
+const PENDING_REPLACED_REFERENCES_METADATA_KEY = 'billfnPendingReplacedReferences';
 const WEBHOOK_RECEIPT_CLAIM_LEASE_MS = 15 * 60 * 1000;
 const RECONCILIATION_JOB_CLAIM_LEASE_MS = 15 * 60 * 1000;
 /** Unlinked webhook events are kept this long for a later link to replay them. */
@@ -184,12 +186,8 @@ type ProjectionResult = {
   entitlements: BillFnEntitlementSnapshot;
   /** Set when a provider event was applied while a committed provider mutation was in flight: the price it had written. */
   providerStateRaced?: { priceId: string };
-  /** References a committed mutation's write dropped that could not be recorded as replaced, before or after it. */
-  unrecordedReplacements?: string[];
 };
 type ReconciliationLeaseGuard = () => Promise<void>;
-/** Defers an unfinished replay, with the dropped references a committed mutation could not record. */
-type ReplayDeferredHandler = (subscription: BillFnSubscription, replacedReferences: string[]) => Promise<void>;
 type ParsedProviderEvent = {
   providerEventId: string;
   type: string;
@@ -378,7 +376,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
       if (!deps.queue) {
         throw windowReadFailed(error_);
       }
-      await scheduleSubscriptionSync(subscription, { candidate: event.selection });
+      await scheduleSubscriptionSync(subscription, event.selection);
       return;
     }
     await applyVerificationState(deps, {
@@ -401,9 +399,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
   async function applyMutationProviderState(
     input: ApplyVerificationStateInput & { occurredAt?: undefined; liveStateObservedAt: string; committedAt: string }
   ) {
-    const projection = await applyLiveProviderState(deps, input, {
-      onReplayDeferred: (subscription, replacedReferences) => scheduleSubscriptionSync(subscription, { replacedReferences })
-    });
+    const projection = await applyLiveProviderState(deps, input, { onReplayDeferred: scheduleSubscriptionSync });
     if (!projection.providerStateRaced) {
       return projection;
     }
@@ -424,7 +420,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
     const candidate = findCatalogPriceReference(deps.catalog, subscription.provider, [racedPriceId]) ?? undefined;
     try {
       if (deps.queue) {
-        await scheduleSubscriptionSync(subscription, { candidate });
+        await scheduleSubscriptionSync(subscription, candidate);
         return null;
       }
       if (typeof deps.providers[subscription.provider]?.fetchSubscription !== 'function') {
@@ -508,27 +504,17 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
     };
   }
 
-  /**
-   * `candidate` is the catalog price an unreconciled window event names; the job reads it if the stored one fails.
-   * `replacedReferences` are references a committed mutation dropped but could not record; the job records them first.
-   */
-  async function scheduleSubscriptionSync(
-    subscription: BillFnSubscription,
-    options: { candidate?: CatalogSelection; replacedReferences?: string[] } = {}
-  ) {
+  /** `candidate` is the catalog price an unreconciled window event names; the job reads it if the stored one fails. */
+  async function scheduleSubscriptionSync(subscription: BillFnSubscription, candidate?: CatalogSelection) {
     if (!deps.queue || typeof deps.providers[subscription.provider]?.fetchSubscription !== 'function') {
       return;
     }
-    const payload = {
-      ...(options.candidate ? { candidatePriceId: options.candidate.price.priceId } : {}),
-      ...(options.replacedReferences?.length ? { replacedReferences: options.replacedReferences } : {})
-    };
     await enqueueReconciliationJobInternal({
       kind: 'subscription-sync',
       provider: subscription.provider,
       billingAccountId: subscription.billingAccountId,
       subscriptionId: subscription.id,
-      payload: Object.keys(payload).length > 0 ? payload : undefined
+      payload: candidate ? { candidatePriceId: candidate.price.priceId } : undefined
     });
   }
 
@@ -1535,11 +1521,7 @@ async function processReconciliationJob(
         });
       }
       const candidatePriceId = readString(job.payload ?? {}, 'candidatePriceId');
-      const replaced = job.payload?.replacedReferences;
-      const replacedReferences = Array.isArray(replaced)
-        ? replaced.filter((reference): reference is string => typeof reference === 'string')
-        : [];
-      await syncSubscriptionByIdForJob(deps, job.subscriptionId, assertLease, candidatePriceId, replacedReferences);
+      await syncSubscriptionByIdForJob(deps, job.subscriptionId, assertLease, candidatePriceId);
       return;
     }
     case 'account-scan': {
@@ -1714,20 +1696,12 @@ async function syncSubscriptionByIdForJob(
   deps: ServiceDeps,
   subscriptionId: string,
   assertLease: ReconciliationLeaseGuard,
-  candidatePriceId?: string | null,
-  replacedReferences: string[] = []
+  candidatePriceId?: string | null
 ) {
   const subscription = await getSubscriptionById(deps, subscriptionId);
   if (!subscription) {
     return;
   }
-  // A committed mutation's dropped references it could not record, unless the subscription holds one again.
-  const held = providerReferencesOf(subscription);
-  await recordReplacedProviderReferences(
-    deps,
-    subscription,
-    replacedReferences.filter((reference) => !held.includes(reference))
-  );
   const billingAccount = await getBillingAccountById(deps, subscription.billingAccountId);
   if (!billingAccount) {
     return;
@@ -2406,7 +2380,6 @@ async function applyVerificationState(
   let timestamp = toIsoString(deps.now());
   let liveStateSuperseded = false;
   let providerStateRaced: { priceId: string } | undefined;
-  let unrecordedReplacements: string[] = [];
   // A read is superseded by an event newer than its start; a committed mutation only by one after its commit.
   const supersededBefore = input.committedAt ?? input.liveStateObservedAt;
 
@@ -2512,8 +2485,10 @@ async function applyVerificationState(
 
     if (baseSubscription) {
       // A reference this write drops is recorded as replaced before it, so no failure or interruption
-      // after the write lets an event on it bootstrap or link another subscription.
-      unrecordedReplacements = await recordDroppedReferences(deps, baseSubscription, record, Boolean(input.committedAt));
+      // after the write lets an event on it bootstrap or link another subscription; one a committed
+      // mutation cannot record is saved pending with the write.
+      const pending = await recordDroppedReferences(deps, baseSubscription, record, Boolean(input.committedAt));
+      Object.assign(record, withPendingReplacements(record.metadata, pending));
       // A provider-state time is only written by an update ordered against the row it was computed from.
       if (providerStateAt) {
         const updated = await deps.db.updateMany({
@@ -2582,13 +2557,6 @@ async function applyVerificationState(
       message: 'Unable to apply provider event state after multiple retries'
     });
   }
-  if (unrecordedReplacements.length > 0) {
-    // Only a committed mutation gets here; it retries once now, and its caller defers the rest.
-    unrecordedReplacements = await recordReplacedProviderReferences(deps, subscription, unrecordedReplacements).then(
-      () => [],
-      () => unrecordedReplacements
-    );
-  }
 
   const checkoutSession = input.checkoutSession
     ? await updateCheckoutSession(deps, input.checkoutSession.checkoutSessionId, {
@@ -2643,8 +2611,7 @@ async function applyVerificationState(
     checkoutSession: checkoutSession ?? input.checkoutSession,
     subscription,
     entitlements,
-    providerStateRaced,
-    ...(unrecordedReplacements.length > 0 ? { unrecordedReplacements } : {})
+    providerStateRaced
   };
 }
 
@@ -3676,11 +3643,12 @@ async function recordReplacedReferenceEvents(deps: ServiceDeps, provider: Billin
 }
 
 /**
- * Before a write from `before` to `after`, records each reference it drops as
- * replaced (`recordReplacedProviderReferences`), then marks the retained events
- * on them. A failure throws, except during a committed provider mutation,
- * which is never failed by it: the references it could not record are returned
- * for a retry after the write, and the mutation defers what is left.
+ * Before a write from `before` to `after`, records each reference it drops, and
+ * each one `before` has pending that `after` does not hold, as replaced
+ * (`recordReplacedProviderReferences`), then marks the retained events on them.
+ * A failure throws, except during a committed provider mutation, which is never
+ * failed by it: the references it could not record are returned, and its write
+ * saves them pending (`withPendingReplacements`).
  */
 async function recordDroppedReferences(
   deps: ServiceDeps,
@@ -3689,7 +3657,9 @@ async function recordDroppedReferences(
   committed: boolean
 ): Promise<string[]> {
   const kept = providerReferencesOf(after);
-  const dropped = providerReferencesOf(before).filter((reference) => !kept.includes(reference));
+  const dropped = [...new Set([...providerReferencesOf(before), ...pendingReplacedReferencesOf(before)])].filter(
+    (reference) => !kept.includes(reference)
+  );
   if (dropped.length === 0) {
     return [];
   }
@@ -3755,11 +3725,30 @@ async function recordReplacedProviderReferences(
   );
 }
 
+/** The references a subscription's write saved pending, without any it holds again. */
+function pendingReplacedReferencesOf(subscription: BillFnSubscription) {
+  const pending = subscription.metadata?.[PENDING_REPLACED_REFERENCES_METADATA_KEY];
+  const held = new Set(providerReferencesOf(subscription));
+  return Array.isArray(pending)
+    ? pending.filter((reference): reference is string => typeof reference === 'string' && !held.has(reference))
+    : [];
+}
+
+/** A write's metadata and flag for the references it saves pending; both are cleared once none are. */
+function withPendingReplacements(metadata: Record<string, unknown> | undefined, pending: string[]) {
+  const { [PENDING_REPLACED_REFERENCES_METADATA_KEY]: _previous, ...rest } = metadata ?? {};
+  return pending.length > 0
+    ? { metadata: { ...rest, [PENDING_REPLACED_REFERENCES_METADATA_KEY]: pending }, replacedReferencesPending: true }
+    : { metadata: rest, replacedReferencesPending: null };
+}
+
 /**
  * Whether an event that resolves to no subscription names a replaced
- * reference: one a subscription write dropped, whatever its event id or the
- * account its metadata names, or the one it was retained on when a replay
- * replaced it. A reference a subscription holds again resolves to it first.
+ * reference, whatever its event id or the account its metadata names: one a
+ * subscription write dropped and recorded, one a committed mutation's write
+ * saved pending (any subscription of the provider), or the one it was
+ * retained on when a replay replaced it. A reference a subscription holds
+ * again resolves to it first.
  */
 async function namesReplacedReference(
   deps: ServiceDeps,
@@ -3770,7 +3759,8 @@ async function namesReplacedReference(
   const references = [state.providerSubscriptionId, state.providerChargeId].filter(
     (reference): reference is string => typeof reference === 'string' && reference.length > 0
   );
-  const [replaced, retained] = await Promise.all([
+  const named = new Set(references);
+  const [replaced, pending, retained] = await Promise.all([
     references.length > 0
       ? deps.db.findMany<BillFnReplacedProviderReference>({
           model: TABLES.replacedProviderReferences,
@@ -3781,13 +3771,27 @@ async function namesReplacedReference(
           namespace: deps.namespace
         })
       : [],
+    references.length > 0
+      ? deps.db.findMany<BillFnSubscription>({
+          model: TABLES.subscriptions,
+          where: [
+            { field: 'provider', operator: 'eq', value: provider },
+            { field: 'replacedReferencesPending', operator: 'eq', value: true }
+          ],
+          namespace: deps.namespace
+        })
+      : [],
     deps.db.findOne<BillFnUnlinkedWebhookEvent>({
       model: TABLES.unlinkedWebhookEvents,
       where: [{ field: 'id', operator: 'eq', value: buildUnlinkedWebhookEventId(provider, event.providerEventId) }],
       namespace: deps.namespace
     })
   ]);
-  return replaced.length > 0 || retained?.reason === 'provider_reference_replaced';
+  return (
+    replaced.length > 0 ||
+    pending.some((subscription) => pendingReplacedReferencesOf(subscription).some((reference) => named.has(reference))) ||
+    retained?.reason === 'provider_reference_replaced'
+  );
 }
 
 function namesAnyReference(row: BillFnUnlinkedWebhookEvent, references: string[]) {
@@ -4103,7 +4107,7 @@ function replayDeferredReason(error: unknown) {
 async function applyLiveProviderState(
   deps: ServiceDeps,
   input: ApplyVerificationStateInput & { occurredAt?: undefined; liveStateObservedAt: string },
-  options: { onReplayDeferred?: ReplayDeferredHandler } = {}
+  options: { onReplayDeferred?: (subscription: BillFnSubscription) => Promise<void> } = {}
 ): Promise<ProjectionResult> {
   const result = await applyVerificationState(deps, input);
   if (!options.onReplayDeferred) {
@@ -4124,38 +4128,23 @@ async function applyLiveProviderState(
   }
 }
 
-/**
- * A replay after a committed provider mutation that cannot finish now, or a
- * dropped reference its write could not record, is deferred, never failing
- * the mutation.
- */
+/** A replay after a committed provider mutation that cannot finish now is deferred, never failing the mutation. */
 async function replayAfterCommittedMutation(
   deps: ServiceDeps,
-  { subscription, unrecordedReplacements = [] }: ProjectionResult,
-  onReplayDeferred: ReplayDeferredHandler
+  { subscription }: ProjectionResult,
+  onReplayDeferred: (subscription: BillFnSubscription) => Promise<void>
 ) {
-  let deferred = unrecordedReplacements.length > 0;
-  if (deferred) {
-    deps.metrics.track('subscription.replaced_reference_deferred', {
-      provider: subscription.provider,
-      subscriptionId: subscription.id,
-      references: unrecordedReplacements.length
-    });
-  }
   try {
     await replayUnlinkedWebhookEventsOrThrow(deps, subscription);
   } catch (error) {
-    deferred = true;
     deps.metrics.track('webhook.unlinked.replay_deferred', {
       provider: subscription.provider,
       subscriptionId: subscription.id,
       reason: replayDeferredReason(error),
       error: error instanceof Error ? error.message : String(error)
     });
-  }
-  if (deferred) {
     try {
-      await onReplayDeferred(subscription, unrecordedReplacements);
+      await onReplayDeferred(subscription);
     } catch (deferError) {
       deps.metrics.track('webhook.unlinked.replay_defer_failed', {
         provider: subscription.provider,

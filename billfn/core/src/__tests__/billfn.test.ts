@@ -214,6 +214,10 @@ describe('@billfn/core', () => {
     expect(subscriptions?.indexes?.find(
       (index) => index.fields.join(',') === 'provider,providerChargeId'
     )?.unique).toBe(true);
+    expect(subscriptions?.fields.replacedReferencesPending).toEqual({ type: 'boolean', required: false });
+    expect(subscriptions?.indexes?.some(
+      (index) => index.fields.join(',') === 'provider,replacedReferencesPending'
+    )).toBe(true);
     const receipts = schema.schemas.find((table) => table.modelName === 'webhookReceipts');
     expect(receipts?.fields.processingClaimedAt).toEqual({ type: 'string', required: false });
     const unlinked = schema.schemas.find((table) => table.modelName === 'unlinkedWebhookEvents');

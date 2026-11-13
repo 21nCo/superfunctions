@@ -119,6 +119,11 @@ export interface BillFnSubscription {
   trialEnd?: string;
   autoRenew: boolean;
   metadata?: Record<string, unknown>;
+  /**
+   * Set while references a committed mutation's write dropped could not be
+   * recorded as replaced; they are saved in metadata and recorded by the next write.
+   */
+  replacedReferencesPending?: boolean | null;
   createdAt: string;
   updatedAt: string;
 }

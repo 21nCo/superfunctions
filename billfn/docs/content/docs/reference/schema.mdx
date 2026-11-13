@@ -40,6 +40,7 @@ Phase 1 relies on a few critical indexes:
 - `unlinkedWebhookEvents.provider + providerReference + status` and `provider + providerSecondaryReference + status` for replay on link
 - `unlinkedWebhookEvents.expiresAt` for the 90-day retention purge
 - `replacedProviderReferences.provider + providerReference` as a unique key
+- `subscriptions.provider + replacedReferencesPending` for the subscriptions holding references not yet recorded as replaced
 
 ## Example
 
@@ -57,7 +58,7 @@ The Python SDK mirrors schema version `4`. Both helpers expose the same fourteen
 
 ### Schema 3 to 4 (`@billfn/core` 0.2.0)
 
-Version `4` adds two tables, `unlinkedWebhookEvents` and `replacedProviderReferences`, and changes no existing table. Create both with their indexes before deploying `@billfn/core` 0.2.0: webhook processing writes to `unlinkedWebhookEvents` as soon as an event names a provider reference BillFn has not linked, and every subscription write that drops a provider reference writes to `replacedProviderReferences` first. The migration is additive, so rolling back to 0.1.x leaves the tables unused.
+Version `4` adds two tables, `unlinkedWebhookEvents` and `replacedProviderReferences`, and one optional boolean field to `subscriptions`, `replacedReferencesPending`, with the index `subscriptions_replaced_references_pending_idx` on `provider, replacedReferencesPending`. Create them before deploying `@billfn/core` 0.2.0: webhook processing writes to `unlinkedWebhookEvents` as soon as an event names a provider reference BillFn has not linked, every subscription write that drops a provider reference writes to `replacedProviderReferences` first, and a committed mutation that cannot do so sets `replacedReferencesPending`. Existing rows need no backfill (the field is null). The migration is additive, so rolling back to 0.1.x leaves the tables and the field unused.
 
 #### `unlinkedWebhookEvents`
 

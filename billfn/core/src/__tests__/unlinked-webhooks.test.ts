@@ -3546,56 +3546,69 @@ describe('provider-wide replaced references and bounded replay continuation (PR 
     }
   );
 
-  it('records a charge a committed cancellation dropped through its queued sync when recording fails before and after the write', async () => {
-    const fault = { armed: false };
-    const failRecord = async (params: { model: string }, next: () => Promise<unknown>) => {
-      if (params.model === 'replacedProviderReferences' && fault.armed) {
-        throw new Error('injected record failure');
-      }
-      return next();
-    };
-    const db = interceptDb(memoryAdapter({ debug: false }), { create: failRecord, updateMany: failRecord });
-    const canceledState = { subscriptionStatus: 'canceled' as const, checkoutStatus: 'succeeded' as const, providerSubscriptionId: 'sub_rec', providerChargeId: 'pay_rec_2', autoRenew: false };
-    const calls = { cancel: 0 };
-    const base = createProvider({});
-    const provider: BillFnProviderAdapter = {
-      ...base,
-      capabilities: { ...base.capabilities, cancelSubscription: true, syncSubscription: true },
-      async cancelSubscription() {
-        calls.cancel += 1;
-        fault.armed = true;
-        return { operationStatus: 'applied', billingState: canceledState };
-      },
-      fetchSubscription: async () => canceledState
-    };
-    const clock = { current: new Date('2026-11-01T00:00:01.000Z') };
-    const queue = new MemoryQueueAdapter<BillFnQueuedJob>({ now: () => clock.current.getTime() });
-    const config = { db, catalog, queue, now: () => clock.current, providers: { dodo: provider } };
-    const billfn = createBillFn(config);
-    const worker = createBillFnReconciliationWorker(config);
-    await billfn.quotaProvider.recordUsage({ principalId: 'rec_user', bytes: 0 });
-    await billfn.quotaProvider.recordUsage({ principalId: 'rec_other_user', bytes: 0 });
-    await deliver(billfn, [bootstrapEvent('rec', { chargeId: 'pay_rec_1' })]);
-    await drain(worker);
+  it.each(['rec_user', 'rec_other_user'] as const)(
+    'saves a charge a committed cancellation dropped pending when recording it fails, so no event on it bootstraps for %s, until the next write records it',
+    async (account) => {
+      const fault = { armed: false };
+      const failRecord = async (params: { model: string }, next: () => Promise<unknown>) => {
+        if (params.model === 'replacedProviderReferences' && fault.armed) {
+          throw new Error('injected record failure');
+        }
+        return next();
+      };
+      const db = interceptDb(memoryAdapter({ debug: false }), { create: failRecord, updateMany: failRecord });
+      const canceledState = { subscriptionStatus: 'canceled' as const, checkoutStatus: 'succeeded' as const, providerSubscriptionId: 'sub_rec', providerChargeId: 'pay_rec_2', autoRenew: false };
+      const calls = { cancel: 0 };
+      const base = createProvider({});
+      const provider: BillFnProviderAdapter = {
+        ...base,
+        capabilities: { ...base.capabilities, cancelSubscription: true },
+        async cancelSubscription() {
+          calls.cancel += 1;
+          fault.armed = true;
+          return { operationStatus: 'applied', billingState: canceledState };
+        }
+      };
+      // No queue: nothing is deferred, so only the subscription write keeps the dropped charge.
+      const config = { db, catalog, now: () => new Date('2026-11-01T00:00:01.000Z'), providers: { dodo: provider } };
+      const billfn = createBillFn(config);
+      await billfn.quotaProvider.recordUsage({ principalId: 'rec_user', bytes: 0 });
+      await billfn.quotaProvider.recordUsage({ principalId: 'rec_other_user', bytes: 0 });
+      await deliver(billfn, [bootstrapEvent('rec', { chargeId: 'pay_rec_1' })]);
 
-    const canceled = await billfn.cancelSubscription({ subject: { principalId: 'rec_user' } });
-    fault.armed = false;
-    expect(canceled.ok && canceled.data.subscription).toMatchObject({ status: 'canceled', providerChargeId: 'pay_rec_2' });
-    expect(await db.findMany({ model: 'replacedProviderReferences', where: [], namespace: 'billfn' })).toEqual([]);
+      const canceled = await billfn.cancelSubscription({ subject: { principalId: 'rec_user' } });
+      fault.armed = false;
+      expect(canceled.ok && canceled.data.subscription).toMatchObject({ status: 'canceled', providerChargeId: 'pay_rec_2' });
+      const stored = async () => (await db.findMany<BillFnSubscription>({ model: 'subscriptions', where: [], namespace: 'billfn' }))[0];
+      expect(await stored()).toMatchObject({ replacedReferencesPending: true, metadata: expect.objectContaining({ billfnPendingReplacedReferences: ['pay_rec_1'] }) });
+      expect(await db.findMany({ model: 'replacedProviderReferences', where: [], namespace: 'billfn' })).toEqual([]);
 
-    // The deferred sync job records the dropped charge; a first-time event for it then bootstraps nothing.
-    await drain(worker);
-    expect(await db.findMany({ model: 'replacedProviderReferences', where: [], namespace: 'billfn' })).toEqual([
-      expect.objectContaining({ providerReference: 'pay_rec_1', billingAccountId: 'ba_user_rec_user' })
-    ]);
-    await deliver(billfn, [subscriptionEvent({ eventId: 'evt_rec_late', chargeId: 'pay_rec_1', status: 'active', occurredAt: '2026-11-01T00:00:00.500Z', billingAccountId: 'ba_user_rec_other_user' })]);
-    await drain(worker);
-    expect(await db.findMany({ model: 'subscriptions', where: [], namespace: 'billfn' })).toEqual([
-      expect.objectContaining({ billingAccountId: 'ba_user_rec_user', status: 'canceled' })
-    ]);
-    expect(await entitlementStatus(billfn, 'rec_other_user')).not.toBe('active');
-    expect(calls.cancel).toBe(1);
-  });
+      // Another process gets a first-time event for the dropped charge, then replays it: nothing bootstraps.
+      const other = createBillFn(config);
+      await deliver(other, [subscriptionEvent({ eventId: 'evt_rec_late', chargeId: 'pay_rec_1', status: 'active', occurredAt: '2026-11-01T00:00:00.500Z', billingAccountId: `ba_user_${account}` })]);
+      const replay = await other.enqueueReconciliationJob({ kind: 'webhook-replay', provider: 'dodo', providerEventId: 'evt_rec_late' });
+      const run = replay.ok ? await other.runReconciliationJob({ jobId: replay.data.job.id }) : null;
+      expect(run?.ok && run.data.job.status).toBe('succeeded');
+      expect(await db.findMany({ model: 'subscriptions', where: [], namespace: 'billfn' })).toEqual([
+        expect.objectContaining({ billingAccountId: 'ba_user_rec_user', status: 'canceled' })
+      ]);
+      expect(await db.findMany({ model: 'unlinkedWebhookEvents', where: [], namespace: 'billfn' })).toEqual([
+        expect.objectContaining({ providerEventId: 'evt_rec_late', reason: 'provider_reference_replaced' })
+      ]);
+      expect(await entitlementStatus(billfn, 'rec_user')).toBe('inactive');
+      expect(await entitlementStatus(billfn, 'rec_other_user')).not.toBe('active');
+      expect(calls.cancel).toBe(1);
+
+      // The next write of the subscription records the charge and clears the pending one.
+      await deliver(other, [subscriptionEvent({ eventId: 'evt_rec_next', subscriptionId: 'sub_rec', chargeId: 'pay_rec_2', status: 'canceled', occurredAt: '2026-11-01T00:00:05.000Z' })]);
+      expect(await db.findMany({ model: 'replacedProviderReferences', where: [], namespace: 'billfn' })).toEqual([
+        expect.objectContaining({ providerReference: 'pay_rec_1', billingAccountId: 'ba_user_rec_user' })
+      ]);
+      const cleared = await stored();
+      expect(cleared?.replacedReferencesPending).toBeNull();
+      expect(cleared?.metadata).not.toHaveProperty('billfnPendingReplacedReferences');
+    }
+  );
 
   it('drains a backlog over several bounded replay passes through fresh queue messages after four lease conflicts', async () => {
     const clock = { current: new Date('2026-11-01T00:00:00.000Z') };
