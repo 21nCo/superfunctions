@@ -1,0 +1,33 @@
+authfn/core/README.md
+  s_0d85e5b70dc887::t_8a8a3998e17447 23,29,34
+authfn/core/src/__tests__/scopes.test.ts
+  s_0d85e5b70dc887::t_ae03787962dde8 1-2,183-185,189,192-221,293-334
+authfn/core/src/core/api-keys.ts
+  s_0d85e5b70dc887::t_1ad73e23f1e283 14,164,209-216,238
+authfn/core/src/core/scopes.ts
+  s_0d85e5b70dc887::t_01b0b18423e588 38-44,98-117,127,141-142,158
+authfn/core/src/types.ts
+  s_0d85e5b70dc887::t_3dd96a34d90a93 100
+authfn/docs/content/docs/core-concepts/sessions.md
+  s_0d85e5b70dc887::t_be39bb448bbf80 37,158
+authfn/docs/content/docs/plugins/api-keys.md
+  s_0d85e5b70dc887::t_0dc1e4574a74dd 58,104,106,156
+authfn/docs/static/llms-full.txt
+  s_0d85e5b70dc887::t_ebfc22c57686a5 3713,3834,5182,5228,5230,5280
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "150df272542225e4427c60046431b4b088db3953",
+  "prompts": {},
+  "sessions": {
+    "s_0d85e5b70dc887": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "37e3656b-fb3d-4769-b9a9-5d99c965fb6b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

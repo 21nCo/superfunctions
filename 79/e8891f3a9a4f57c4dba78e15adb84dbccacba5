@@ -1,0 +1,25 @@
+datafn/cli/package.json
+  s_0d85e5b70dc887::t_680891e6a07617 3
+datafn/server/package.json
+  s_0d85e5b70dc887::t_e3acec2a770dc8 64
+datafn/swift-bridge/package.json
+  s_0d85e5b70dc887::t_1251f72aa2dd2a 3
+package-lock.json
+  s_0d85e5b70dc887::t_426bb259b3071a 8708,10186,10463
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "79e8891f3a9a4f57c4dba78e15adb84dbccacba5",
+  "prompts": {},
+  "sessions": {
+    "s_0d85e5b70dc887": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "37e3656b-fb3d-4769-b9a9-5d99c965fb6b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
