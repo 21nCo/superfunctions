@@ -351,8 +351,10 @@ export async function verifyOAuthAccessToken(
 
 /**
  * Revokes a grant by ID, for account settings that let a user disconnect an
- * app. With `userId`, only that user's grant is revoked. Returns whether a
- * live grant was revoked.
+ * app. With `userId`, only that user's grant is revoked. The user's consent
+ * for the grant's client and resource is removed too, so a trusted client
+ * shows the consent page again on its next authorization request. Returns
+ * whether a live grant was revoked.
  */
 export async function revokeOAuthGrant(
   store: OAuthStore,
@@ -363,7 +365,22 @@ export async function revokeOAuthGrant(
   if (!grant || (options?.userId !== undefined && grant.userId !== options.userId)) {
     return false;
   }
+  // Consent goes first: if revoking the grant then fails, a retry still finds
+  // the grant, while consent left behind would silently re-authorize.
+  await deleteConsent(store, grant.userId, grant.clientId, grant.resource);
   return revokeGrant(store, grantId, 'revoked', options?.now?.() ?? new Date());
+}
+
+async function deleteConsent(store: OAuthStore, userId: string, clientId: string, resource: string): Promise<void> {
+  await store.database.deleteMany({
+    model: MODELS.consents,
+    where: [
+      { field: 'userId', operator: 'eq', value: userId },
+      { field: 'clientId', operator: 'eq', value: clientId },
+      { field: 'resource', operator: 'eq', value: resource }
+    ],
+    namespace: namespace(store)
+  });
 }
 
 export async function findConsent(

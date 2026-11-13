@@ -30,7 +30,8 @@ const auth = app.createServer({
         scopes: ['memotron:read', 'memotron:write'],
         introspectionSecret: env.MEMOTRON_INTROSPECTION_SECRET
       }],
-      loginRequired: ({ returnTo }) => Response.redirect(`/sign-in?returnTo=${encodeURIComponent(returnTo)}`, 302),
+      loginRequired: ({ request, returnTo }) =>
+        Response.redirect(new URL(`/sign-in?returnTo=${encodeURIComponent(returnTo)}`, request.url).toString(), 302),
       consent: (input) => renderConsentPage(input)
     }
   }
@@ -40,7 +41,7 @@ const auth = app.createServer({
 ## Rules
 
 - Access tokens live 1 hour. Refresh tokens live 30 days and rotate on every use. Presenting a rotated refresh token again revokes the whole grant.
-- An authorization code works once, for one minute. Presenting a used code again revokes the grant and every token issued from it.
+- An authorization code works once, for one minute. When the client it was issued to presents a used code again, with the matching `redirect_uri` and `code_verifier`, the grant and every token issued from it are revoked. Anyone else presenting a used code gets `invalid_grant` and the grant is untouched.
 - The authorization request must send `resource`, which must exactly match a configured resource. `scope` must name scopes that resource offers; without `scope` the client asks for all of them.
 - Redirect URIs match exactly, except that an `http://127.0.0.1` or `http://[::1]` redirect URI may use any port.
 - A `trusted` client asks for consent once per resource; later requests within the consented scopes skip the page. Any other client asks every time.
@@ -58,10 +59,12 @@ const auth = app.createServer({
 import { requireScopes } from 'authfn';
 import { verifyOAuthAccessToken } from '@authfn/oauth-provider';
 
-const token = await verifyOAuthAccessToken({ database }, bearer, { resource: 'https://memotron.example.com/mcp' });
+// Use the same database and namespace as the AuthFn server (`namespace` defaults to 'authfn').
+const store = { database, namespace: 'authfn' };
+const token = await verifyOAuthAccessToken(store, bearer, { resource: 'https://memotron.example.com/mcp' });
 requireScopes(token, 'memotron:read');
 ```
 
-`revokeOAuthGrant({ database }, grantId, { userId })` revokes a grant, for example when a user disconnects an app.
+`revokeOAuthGrant(store, grantId, { userId })` revokes a grant, for example when a user disconnects an app. It also removes the user's consent for that client and resource, so even a trusted client shows the consent page again.
 
 Account deletion in `authfn` does not yet delete this plugin's rows. Tokens of a deleted user stop working, but the rows remain.

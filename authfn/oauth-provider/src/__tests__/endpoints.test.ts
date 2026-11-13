@@ -92,6 +92,17 @@ describe('authorization endpoint', () => {
     const tampered = await provider.decide({ ...params, redirect_uri: 'https://attacker.example.com/cb' }, 'approve');
     expect(tampered.status).toBe(400);
     expect(await tampered.json()).toMatchObject({ error: 'invalid_request' });
+
+    // A decision body that is valid JSON but not an object is a client error.
+    for (const body of ['null', '[]', '"approve"', '42']) {
+      const response = await provider.handle('/auth/oauth/authorize', {
+        method: 'POST',
+        headers: { cookie: provider.cookie, 'content-type': 'application/json', 'x-authfn-csrf': provider.session.csrfToken },
+        body
+      });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: 'invalid_request' });
+    }
   });
 
   it('asks a trusted client for consent once per resource, and an untrusted client every time', async () => {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { requireScopes } from 'authfn';
 import { revokeOAuthGrant, verifyOAuthAccessToken } from '../index.js';
 import {
+  MCP_HOST,
   MEMOTRON,
   ORIGIN,
   POINTRON,
@@ -9,6 +10,7 @@ import {
   RFC6749_CLIENT,
   RFC7636_CHALLENGE,
   RFC7636_VERIFIER,
+  RHOMBUS,
   challengeFor,
   setupProvider
 } from './harness.js';
@@ -64,6 +66,26 @@ describe('in-scope actors', () => {
     const code = (await provider.authorize()).searchParams.get('code')!;
     const first = await (await provider.exchange(code)).json() as { access_token: string; refresh_token: string };
 
+    // A party that holds the spent code but is not bound to it (wrong
+    // verifier, another client, wrong redirect_uri) cannot revoke the grant.
+    for (const attempt of [
+      provider.exchange(code, { code_verifier: 'x'.repeat(43) }),
+      provider.exchange(code, { redirect_uri: 'https://client.example.com/other' }),
+      provider.token({
+        grant_type: 'authorization_code',
+        client_id: MCP_HOST.clientId,
+        code,
+        redirect_uri: RFC6749_CLIENT.redirectUris[0],
+        code_verifier: RFC7636_VERIFIER
+      })
+    ]) {
+      const response = await attempt;
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: 'invalid_grant' });
+    }
+    expect((await provider.introspect(first.access_token)).body.active).toBe(true);
+
+    // The client the code was issued to, replaying it with its verifier, does.
     const replay = await provider.exchange(code);
     expect(replay.status).toBe(400);
     expect(await replay.json()).toMatchObject({ error: 'invalid_grant' });
@@ -178,6 +200,33 @@ describe('in-scope actors', () => {
     expect(await revokeOAuthGrant({ database: provider.database }, info!.grantId, { userId: provider.user.id })).toBe(true);
     expect((await provider.introspect(disconnected.access_token)).body).toEqual({ active: false });
     expect(await (await provider.refresh(disconnected.refresh_token)).json()).toMatchObject({ error: 'invalid_grant' });
+
+    // Disconnecting a trusted client also forgets its consent: the next
+    // authorization shows the consent page instead of issuing a code.
+    const rhombus = { client_id: RHOMBUS.clientId, redirect_uri: RHOMBUS.redirectUris[0] };
+    const callback = await provider.authorize(rhombus, RHOMBUS);
+    const rhombusTokens = await (await provider.token({
+      grant_type: 'authorization_code',
+      client_id: RHOMBUS.clientId,
+      code: callback.searchParams.get('code')!,
+      redirect_uri: RHOMBUS.redirectUris[0],
+      code_verifier: RFC7636_VERIFIER
+    })).json() as { access_token: string };
+    const remembered = await provider.getAuthorize(provider.authorizeQuery(rhombus, RHOMBUS));
+    expect(new URL(remembered.headers.get('location')!).searchParams.get('code')).toEqual(expect.any(String));
+    const rhombusGrant = await verifyOAuthAccessToken({ database: provider.database }, rhombusTokens.access_token, {
+      resource: MEMOTRON,
+      now: provider.now
+    });
+    expect(await revokeOAuthGrant({ database: provider.database }, rhombusGrant!.grantId, {
+      userId: provider.user.id
+    })).toBe(true);
+    const consentsBefore = provider.consents.length;
+    const afterDisconnect = await provider.getAuthorize(provider.authorizeQuery(rhombus, RHOMBUS));
+    expect(afterDisconnect.status).toBe(200);
+    expect(afterDisconnect.headers.get('location')).toBeNull();
+    expect(provider.consents).toHaveLength(consentsBefore + 1);
+    expect(provider.consents[consentsBefore].client.clientId).toBe(RHOMBUS.clientId);
   });
 });
 

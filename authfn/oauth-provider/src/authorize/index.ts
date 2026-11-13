@@ -111,6 +111,10 @@ function errorRedirectValues(error: OAuthError, state: string | undefined): Reco
   return { error: error.error, error_description: error.description, state };
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 function redirect(location: string): Response {
   return new Response(null, { status: 302, headers: { location, 'cache-control': 'no-store' } });
 }
@@ -195,7 +199,10 @@ export function createAuthorizeRoutes(runtime: OAuthProviderRuntime): Route[] {
       handler: async (request) => {
         const session = await requireCookieSession(runtime.ctx.config, request);
         assertValidCsrf(request, session);
-        const body = await readOptionalJson<Record<string, unknown>>(request);
+        const body: unknown = await readOptionalJson<Record<string, unknown>>(request);
+        if (!isPlainObject(body)) {
+          return oauthErrorResponse(new OAuthError('invalid_request', 'The decision body must be a JSON object'));
+        }
         const params = new Map<string, string>();
         const validated = validateOrRespond(runtime, () => {
           for (const [name, value] of Object.entries(body)) {

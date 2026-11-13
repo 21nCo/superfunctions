@@ -10,8 +10,9 @@ function invalidGrant(description: string): OAuthError {
 
 /**
  * Authorization code grant (RFC 6749 4.1.3, RFC 7636 4.6). A code works once:
- * presenting a spent code again revokes the whole grant, so tokens already
- * issued from it stop working (RFC 6749 4.1.2, 10.5).
+ * when its own client presents a spent code again with the right
+ * redirect_uri and code_verifier, the whole grant is revoked, so tokens
+ * already issued from it stop working (RFC 6749 4.1.2, 10.5).
  */
 export async function exchangeAuthorizationCode(
   runtime: OAuthProviderRuntime,
@@ -25,21 +26,25 @@ export async function exchangeAuthorizationCode(
   if (!record) {
     throw invalidGrant('Authorization code is invalid');
   }
-  if (record.consumedAt) {
-    await revokeGrant(runtime.store, record.grantId, 'code_replay', now);
-    throw invalidGrant('Authorization code has already been used');
-  }
+  // Bind the presenter to the code before anything else: only the client the
+  // code was issued to, holding the PKCE verifier, may trigger replay
+  // revocation. Anyone else holding a spent code gets invalid_grant and the
+  // grant stays untouched.
   if (record.clientId !== client.clientId) {
     throw invalidGrant('Authorization code was issued to another client');
-  }
-  if (record.expiresAt.getTime() <= now.getTime()) {
-    throw invalidGrant('Authorization code has expired');
   }
   if (params.get('redirect_uri') !== record.redirectUri) {
     throw invalidGrant('redirect_uri does not match the authorization request');
   }
   if (!verifyS256(verifier, record.codeChallenge)) {
     throw invalidGrant('code_verifier does not match the code_challenge');
+  }
+  if (record.consumedAt) {
+    await revokeGrant(runtime.store, record.grantId, 'code_replay', now);
+    throw invalidGrant('Authorization code has already been used');
+  }
+  if (record.expiresAt.getTime() <= now.getTime()) {
+    throw invalidGrant('Authorization code has expired');
   }
   const resource = params.get('resource');
   if (resource !== undefined && resource !== record.resource) {
