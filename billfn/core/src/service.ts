@@ -182,6 +182,8 @@ type ProjectionResult = {
   entitlements: BillFnEntitlementSnapshot;
   /** Set when a provider event was applied while a committed provider mutation was in flight: the price it had written. */
   providerStateRaced?: { priceId: string };
+  /** References a committed mutation's write dropped whose events could not be recorded as replaced before it. */
+  unrecordedReferences?: string[];
 };
 type ReconciliationLeaseGuard = () => Promise<void>;
 type ParsedProviderEvent = {
@@ -2371,6 +2373,7 @@ async function applyVerificationState(
   let timestamp = toIsoString(deps.now());
   let liveStateSuperseded = false;
   let providerStateRaced: { priceId: string } | undefined;
+  let unrecordedReferences: string[] | undefined;
   // A read is superseded by an event newer than its start; a committed mutation only by one after its commit.
   const supersededBefore = input.committedAt ?? input.liveStateObservedAt;
 
@@ -2477,7 +2480,17 @@ async function applyVerificationState(
     if (baseSubscription) {
       // Events on a reference this write drops are recorded as replaced before it, so no failure or
       // interruption after the write leaves them able to bootstrap another subscription.
-      await recordReplacedReferenceEvents(deps, record.provider, droppedReferences(baseSubscription, record), providerReferencesOf(record));
+      const dropped = droppedReferences(baseSubscription, record);
+      try {
+        await recordReplacedReferenceEvents(deps, record.provider, dropped, providerReferencesOf(record));
+        unrecordedReferences = undefined;
+      } catch (error) {
+        // A committed provider mutation is never failed by this: they are recorded with its replay.
+        if (!input.committedAt) {
+          throw error;
+        }
+        unrecordedReferences = dropped;
+      }
       // A provider-state time is only written by an update ordered against the row it was computed from.
       if (providerStateAt) {
         const updated = await deps.db.updateMany({
@@ -2569,7 +2582,8 @@ async function applyVerificationState(
       checkoutSession: checkoutSession ?? input.checkoutSession,
       subscription,
       entitlements,
-      providerStateRaced
+      providerStateRaced,
+      unrecordedReferences
     };
   }
 
@@ -2599,7 +2613,8 @@ async function applyVerificationState(
     checkoutSession: checkoutSession ?? input.checkoutSession,
     subscription,
     entitlements,
-    providerStateRaced
+    providerStateRaced,
+    unrecordedReferences
   };
 }
 
@@ -3586,12 +3601,14 @@ function createUnlinkedReplayQueue(deps: ServiceDeps, provider: BillingProviderN
 }
 
 /**
- * Records every still-unlinked event stored for a reference a subscription
+ * Records every unfinished event stored for a reference a subscription
  * dropped, and naming none it kept, as `provider_reference_replaced`, whatever
- * it was left as (window-unread, unresolved or not visited), so it never
- * bootstraps another subscription. A regain still replays it, since discovery
- * ignores the reason. Each write is fenced on the row's state, so a row
- * another run claimed or finished since it was read is left alone.
+ * it was left as (window-unread, unresolved, not visited, or claimed by a
+ * replay run that may never release it), so it never bootstraps another
+ * subscription. Only the reason (and an unclaimed event's last error) is
+ * written, never on an event another run finished, so a run holding the event
+ * keeps its claim. A regain still replays
+ * it, since discovery ignores the reason.
  */
 async function recordReplacedReferenceEvents(deps: ServiceDeps, provider: BillingProviderName, dropped: string[], kept: string[]) {
   if (dropped.length === 0) {
@@ -3599,25 +3616,25 @@ async function recordReplacedReferenceEvents(deps: ServiceDeps, provider: Billin
   }
   const timestamp = toIsoString(deps.now());
   const rows = await findUnlinkedWebhookEventsForReferences(deps, provider, dropped, timestamp);
-  const stale = rows.filter(
-    (row) =>
-      row.status === 'unlinked' &&
-      (row.reason !== 'provider_reference_replaced' || row.error) &&
-      !namesAnyReference(row, kept)
-  );
+  const stale = rows.filter((row) => row.reason !== 'provider_reference_replaced' && !namesAnyReference(row, kept));
+  const replaced = { reason: 'provider_reference_replaced', updatedAt: timestamp };
+  const record = (row: BillFnUnlinkedWebhookEvent, statuses: string[], data: Record<string, unknown>) =>
+    deps.db.updateMany({
+      model: TABLES.unlinkedWebhookEvents,
+      where: [
+        { field: 'id', operator: 'eq', value: row.id },
+        { field: 'status', operator: 'in', value: statuses }
+      ],
+      data,
+      namespace: deps.namespace
+    });
+  // An unclaimed event also drops its last replay error; a claimed one gets only the reason.
   await Promise.all(
-    stale.map((row) =>
-      deps.db.updateMany({
-        model: TABLES.unlinkedWebhookEvents,
-        where: [
-          { field: 'id', operator: 'eq', value: row.id },
-          { field: 'status', operator: 'eq', value: 'unlinked' },
-          { field: 'updatedAt', operator: 'eq', value: row.updatedAt }
-        ],
-        data: { reason: 'provider_reference_replaced', error: null, updatedAt: timestamp },
-        namespace: deps.namespace
-      })
-    )
+    stale.map(async (row) => {
+      if ((await record(row, ['unlinked'], { ...replaced, error: null })) === 0) {
+        await record(row, ['unlinked', 'replaying'], replaced);
+      }
+    })
   );
 }
 
@@ -3934,7 +3951,7 @@ async function applyLiveProviderState(
     await replayUnlinkedWebhookEventsOrThrow(deps, result.subscription);
     return refreshProjectionAfterReplay(deps, result);
   }
-  await replayAfterCommittedMutation(deps, result.subscription, options.onReplayDeferred);
+  await replayAfterCommittedMutation(deps, result, options.onReplayDeferred);
   try {
     return { ...(await refreshProjectionAfterReplay(deps, result)), providerStateRaced: result.providerStateRaced };
   } catch (error) {
@@ -3951,10 +3968,11 @@ async function applyLiveProviderState(
 /** A replay after a committed provider mutation that cannot finish now is deferred, never failing the mutation. */
 async function replayAfterCommittedMutation(
   deps: ServiceDeps,
-  subscription: BillFnSubscription,
+  { subscription, unrecordedReferences = [] }: ProjectionResult,
   onReplayDeferred: (subscription: BillFnSubscription) => Promise<void>
 ) {
   try {
+    await recordReplacedReferenceEvents(deps, subscription.provider, unrecordedReferences, providerReferencesOf(subscription));
     await replayUnlinkedWebhookEventsOrThrow(deps, subscription);
   } catch (error) {
     deps.metrics.track('webhook.unlinked.replay_deferred', {

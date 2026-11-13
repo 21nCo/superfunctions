@@ -3191,7 +3191,8 @@ describe('mutation windows, replaced references and regained references (PR #308
    * Retains a cancellation inside the window naming only pay_<name>_1, whose metadata names <name>_other_user
    * (no account yet), after `before`; then links pay_<name>_1 to the subscription without replaying.
    */
-  async function retainUnreadChargeCancellation(env: Awaited<ReturnType<typeof committedMutation>>, name: string, before?: (setReferences: (data: Partial<BillFnSubscription>) => Promise<unknown>) => Promise<void>) {
+  type RetainEnv = Pick<Awaited<ReturnType<typeof committedMutation>>, 'billfn' | 'db'>;
+  async function retainUnreadChargeCancellation(env: RetainEnv, name: string, before?: (setReferences: (data: Partial<BillFnSubscription>) => Promise<unknown>) => Promise<void>) {
     const [subscription] = await env.db.findMany<BillFnSubscription>({ model: 'subscriptions', where: [], namespace: 'billfn' });
     const setReferences = (data: Partial<BillFnSubscription>) =>
       env.db.updateMany({ model: 'subscriptions', where: [{ field: 'id', operator: 'eq', value: subscription.id }], data, namespace: 'billfn' });
@@ -3212,7 +3213,7 @@ describe('mutation windows, replaced references and regained references (PR #308
     expect((await deliver(env.billfn, [at('lost', 'renewal', 'active', '06.000', { chargeId: 'pay_lost_2' })])).ok).toBe(true);
 
     expect(await env.stored()).toMatchObject({ status: 'active', providerChargeId: 'pay_lost_2' });
-    expect(await row()).toMatchObject({ status: 'unlinked', reason: 'provider_reference_replaced', error: null });
+    expect(await row()).toMatchObject({ status: 'unlinked', reason: 'provider_reference_replaced' });
     await env.billfn.quotaProvider.recordUsage({ principalId: 'lost_other_user', bytes: 0 });
     expect((await deliver(env.billfn, [inside])).ok).toBe(true);
     const replay = await env.billfn.enqueueReconciliationJob({ kind: 'webhook-replay', provider: 'dodo', providerEventId: 'evt_lost_inside' });
@@ -3240,11 +3241,11 @@ describe('mutation windows, replaced references and regained references (PR #308
     expect((await deliver(env.billfn, [at('inpass', 'older', 'active', '00.500')])).ok).toBe(true);
 
     expect(await env.stored()).toMatchObject({ status: 'active', providerChargeId: 'pay_inpass_2' });
-    expect(await row()).toMatchObject({ status: 'unlinked', reason: 'provider_reference_replaced', error: null });
+    expect(await row()).toMatchObject({ status: 'unlinked', reason: 'provider_reference_replaced' });
   });
 
   /** Redelivers and webhook-replays the retained event once its metadata account exists: no second subscription. */
-  async function expectNeverBootstraps(env: Awaited<ReturnType<typeof committedMutation>>, name: string, inside: BillFnParsedWebhookEvent) {
+  async function expectNeverBootstraps(env: RetainEnv, name: string, inside: BillFnParsedWebhookEvent) {
     await env.billfn.quotaProvider.recordUsage({ principalId: `${name}_other_user`, bytes: 0 });
     expect((await deliver(env.billfn, [inside])).ok).toBe(true);
     const replay = await env.billfn.enqueueReconciliationJob({ kind: 'webhook-replay', provider: 'dodo', providerEventId: inside.providerEventId });
@@ -3290,5 +3291,52 @@ describe('mutation windows, replaced references and regained references (PR #308
 
     expect((await deliver(env.billfn, [renewal])).ok).toBe(true);
     await expectNeverBootstraps(env, 'crash', inside);
+  });
+
+  it('records a retained event a replay run holds as replaced when a provider read replaces its charge, so it never bootstraps', async () => {
+    const live = { chargeId: 'pay_held_1' };
+    const read: Read = async (input) => ({ subscriptionStatus: 'active', checkoutStatus: 'succeeded', providerSubscriptionId: input.subscription.providerSubscriptionId, providerChargeId: live.chargeId, autoRenew: true, raw: {} });
+    const env = await committedMutation('held', { read, chargeless: true });
+    const { inside, row } = await retainUnreadChargeCancellation(env, 'held');
+    // A replay run claims the event and is interrupted without releasing it.
+    await holdRetainedEvent(env.db, 'evt_held_inside', '2026-11-01T00:00:04.000Z');
+
+    live.chargeId = 'pay_held_2';
+    expect((await env.billfn.syncSubscription({ subject: { principalId: 'held_user' } })).ok).toBe(true);
+
+    expect(await row()).toMatchObject({ status: 'replaying', replayClaimId: 'uwr_other', reason: 'provider_reference_replaced' });
+    await expectNeverBootstraps(env, 'held', inside);
+  });
+
+  it('keeps a committed cancellation that replaces the charge when recording the replaced events before its write fails, and records them after it', async () => {
+    const fault = { armed: false };
+    const db = interceptDb(memoryAdapter({ debug: false }), {
+      findMany: async (params, next) => {
+        if (params.model === 'unlinkedWebhookEvents' && fault.armed) {
+          fault.armed = false;
+          throw new Error('injected lookup failure');
+        }
+        return next();
+      }
+    });
+    const base = createProvider({});
+    const provider: BillFnProviderAdapter = {
+      ...base,
+      capabilities: { ...base.capabilities, cancelSubscription: true },
+      async cancelSubscription() {
+        fault.armed = true;
+        return { operationStatus: 'applied', billingState: { subscriptionStatus: 'canceled', checkoutStatus: 'succeeded', providerSubscriptionId: 'sub_cmt', providerChargeId: 'pay_cmt_2', autoRenew: false } };
+      }
+    };
+    const billfn = createBillFn({ db, catalog, now: () => new Date('2026-11-01T00:00:01.000Z'), providers: { dodo: provider } });
+    await billfn.quotaProvider.recordUsage({ principalId: 'cmt_user', bytes: 0 });
+    await deliver(billfn, [bootstrapEvent('cmt')]);
+    const { inside, row } = await retainUnreadChargeCancellation({ billfn, db }, 'cmt');
+
+    const canceled = await billfn.cancelSubscription({ subject: { principalId: 'cmt_user' } });
+
+    expect(canceled.ok && canceled.data.subscription).toMatchObject({ status: 'canceled', providerChargeId: 'pay_cmt_2' });
+    expect(await row()).toMatchObject({ status: 'unlinked', reason: 'provider_reference_replaced' });
+    await expectNeverBootstraps({ billfn, db }, 'cmt', inside);
   });
 });
