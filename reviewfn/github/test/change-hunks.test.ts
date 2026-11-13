@@ -6,7 +6,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_CONFIG, DEFAULT_POLICY, ReviewCoordinator, ReviewFnError, isolatedGitEnvironment, sha256, validateReport,
-  type ArtifactStore, type ContextAdapter, type ContextManifest, type ExecutionAdapter, type HarnessAdapter, type HarnessOutput, type ReviewReport,
+  type ArtifactStore, type ContextAdapter, type Evidence, type ContextManifest, type ExecutionAdapter, type HarnessAdapter, type HarnessOutput, type ReviewReport,
 } from "@superfunctions/reviewfn-core";
 import { GitSourceControlAdapter } from "../src/index.js";
 
@@ -104,7 +104,7 @@ const context: ContextAdapter = { id: "fixture", preflight: async () => ({ ok: t
 const execution: ExecutionAdapter = { id: "fake-execution", preflight: async () => ({ ok: true, diagnostics: [] }), run: async () => [] };
 const config = { ...DEFAULT_CONFIG, review: { ...DEFAULT_CONFIG.review, categories: ["behavior" as const] }, harness: { adapter: "fake", version: "1" }, inference: { provider: "fake", model: "fixture", auth: "none" }, context: [{ adapter: "fixture", issue: "ISS-1" }], execution: { ...DEFAULT_CONFIG.execution, adapter: "fake-execution" } };
 const policy = { ...DEFAULT_POLICY, requiredCategories: ["behavior" as const] };
-function harness(inspectedPaths: string[]): HarnessAdapter {
+function harness(inspectedPaths: string[], extraEvidence: (head: string) => Evidence[] = () => []): HarnessAdapter {
   return {
     capabilities: { id: "fake", version: "1", providers: ["fake"], authModes: ["none"], structuredOutput: true, observableEvents: true, usageMetrics: true, cancellation: true, toolControls: true, sandboxModes: ["isolated"] },
     preflight: async () => ({ ok: true, diagnostics: [] }),
@@ -112,7 +112,7 @@ function harness(inspectedPaths: string[]): HarnessAdapter {
       terminal: "completed", events: [], findings: [], uninspected: [], inspectedPaths,
       requirements: [{ id: "R1", statement: "Return value", sources: [{ sourceId: "issue:1", anchor: "L1" }], category: "behavior", scope: "api", classification: "mandatory", dependencies: [], extraction: { harness: "fake", promptDigest: "prompt" } }],
       assessments: [{ requirementId: "R1", status: "implemented", evidenceIds: ["E1"], reasoning: "present", gaps: [], confidence: 1 }],
-      evidence: [{ id: "E1", kind: "code", description: "value", code: { commit: input.change.headCommit, path: "value.ts", startLine: 1 } }],
+      evidence: [{ id: "E1", kind: "code", description: "value", code: { commit: input.change.headCommit, path: "value.ts", startLine: 1 } }, ...extraEvidence(input.change.headCommit)],
     } satisfies HarnessOutput),
   };
 }
@@ -136,14 +136,14 @@ async function incrementalFixture() {
   return { ...fixture, beforeMergeBase, mergeBase, unrelated, first, head };
 }
 
-async function review(root: string, since: string | undefined, inspectedPaths = ["fix.ts", "value.ts"], store = new MemoryStore()) {
+async function review(root: string, since: string | undefined, inspectedPaths = ["fix.ts", "value.ts"], store: ArtifactStore = new MemoryStore(), extraEvidence?: (head: string) => Evidence[]) {
   const sourceControl = new GitSourceControlAdapter();
-  const coordinator = new ReviewCoordinator({ sourceControl, contexts: [context], harness: harness(inspectedPaths), execution, artifacts: store });
+  const coordinator = new ReviewCoordinator({ sourceControl, contexts: [context], harness: harness(inspectedPaths, extraEvidence), execution, artifacts: store });
   const result = await coordinator.run({ root, base: "main", head: "HEAD", config, policy, issue: "ISS-1", since });
   return { ...result, store, sourceControl };
 }
 
-async function hunksOf(store: MemoryStore, id: string | undefined) { return JSON.parse(Buffer.from((await store.get(id!))!).toString("utf8")); }
+async function hunksOf(store: ArtifactStore, id: string | undefined) { return JSON.parse(Buffer.from((await store.get(id!))!).toString("utf8")); }
 
 describe("incremental review range", { timeout: 30_000 }, () => {
   it("records full-change hunks without since and keeps the report otherwise unchanged", async () => {
@@ -224,5 +224,43 @@ describe("incremental review range", { timeout: 30_000 }, () => {
     expect(report.coverage).toBe("incomplete");
     expect(report.changeDetail).toBeUndefined();
     expect(report.coverageReasons.join("\n")).toMatch(/Change diff [0-9a-f]+\.\.[0-9a-f]+ exceeds maxOutputBytes \(64\)[\s\S]*Incremental review since [0-9a-f]+ has no recorded change detail/);
+  });
+
+  it("completes a fix push that deletes a file added after the merge base", async () => {
+    const { root, git, write, commit } = await repository();
+    await write("base.txt", "base\n");
+    await commit("merge base");
+    await git("checkout", "-q", "-b", "feature");
+    await write("value.ts", "export const value = 1;\n");
+    await write("gone.ts", "export const gone = true;\n");
+    const first = await commit("first review");
+    await unlink(path.join(root, "gone.ts"));
+    await write("value.ts", "export const value = 2;\n");
+    await commit("fix push removes gone.ts");
+    const atSince = (file: string) => (): Evidence[] => [{ id: "E2", kind: "diff", description: "removed by the fix push", code: { commit: first, path: file, startLine: 1 } }];
+    const { report, store, sourceControl } = await review(root, first, ["gone.ts", "value.ts"], new MemoryStore(), atSince("gone.ts"));
+    expect(report.change.changedPaths).toEqual(["value.ts"]);
+    expect(report.changeDetail).toMatchObject({ since: first, deltaPaths: ["gone.ts", "value.ts"] });
+    expect(report.coverageReasons).toEqual([]);
+    expect(report.coverage).toBe("complete");
+    expect(report.verdict).toBe("ready");
+    expect((await validateReport(report, policy, sourceControl, root, { ...manifest, digest: report.contextManifestDigest }, store)).errors).toEqual([]);
+
+    // Anchors at since stay limited to paths the verified delta removed.
+    const kept = await review(root, first, ["gone.ts", "value.ts"], new MemoryStore(), atSince("value.ts"));
+    expect(kept.report.coverage).toBe("incomplete");
+    expect(kept.report.coverageReasons).toContain(`Evidence E2 does not reference reviewed head ${kept.report.change.headCommit}.`);
+  });
+
+  it("records incomplete coverage when the artifact store refuses the change hunks", async () => {
+    const { root, first } = await incrementalFixture();
+    const store = new MemoryStore();
+    const refusing: ArtifactStore = { put: async (kind, content) => { if (kind === "change-hunks") throw new ReviewFnError("REVIEWFN_ARTIFACT_UNSAFE", "Artifact exceeds the size limit."); return store.put(kind, content); }, get: id => store.get(id), deleteExpired: () => store.deleteExpired() };
+    const { report } = await review(root, first, ["fix.ts", "value.ts"], refusing);
+    expect(report.execution).toBe("completed");
+    expect(report.changeDetail).toBeUndefined();
+    expect(report.coverage).toBe("incomplete");
+    expect(report.verdict).toBe("needs_verification");
+    expect(report.coverageReasons).toEqual(expect.arrayContaining(["Change hunks could not be stored: Artifact exceeds the size limit.", `Incremental review since ${first} has no recorded change detail.`]));
   });
 });

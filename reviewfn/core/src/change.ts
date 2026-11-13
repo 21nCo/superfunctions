@@ -84,7 +84,8 @@ function gitHeaderPaths(rest: string, line: number): { oldPath?: string; newPath
   return {};
 }
 
-const HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: .*)?$/;
+// The function-name trailer may contain CR or Unicode line separators; lines are split on LF only.
+const HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: [^\n]*)?$/;
 const EXTENDED = /^(?:old mode|new mode|deleted file mode|new file mode|similarity index|dissimilarity index|index) /;
 
 interface PendingFile { oldPath?: string; newPath?: string; renameFrom?: string; renameTo?: string; minus?: string; plus?: string; added: boolean; deleted: boolean; binary: boolean; hunks: ChangeHunk[] }

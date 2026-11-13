@@ -243,11 +243,20 @@ export class ReviewCoordinator {
       if (since !== undefined) coverageReasons.push(`Incremental review since ${since} has no recorded change detail.`);
       return { coverageReasons, limitations: [] };
     }
-    const stored = await this.dependencies.artifacts.put(CHANGE_HUNKS_ARTIFACT_KIND, serializeChangeHunks(hunks), retentionDays);
-    const detail: ChangeDetail = { hunksArtifact: stored.id, hunksDigest: stored.digest };
-    if (since !== undefined && delta) {
-      const storedDelta = await this.dependencies.artifacts.put(CHANGE_HUNKS_ARTIFACT_KIND, serializeChangeHunks(delta), retentionDays);
-      Object.assign(detail, { since, deltaHunksArtifact: storedDelta.id, deltaHunksDigest: storedDelta.digest, deltaPaths: changeHunkPaths(delta) });
+    // The artifact store may refuse large documents (FileArtifactStore caps artifact size); that leaves the
+    // change detail unrecorded and coverage incomplete instead of failing a run that the diff alone allowed.
+    let detail: ChangeDetail;
+    try {
+      const stored = await this.dependencies.artifacts.put(CHANGE_HUNKS_ARTIFACT_KIND, serializeChangeHunks(hunks), retentionDays);
+      detail = { hunksArtifact: stored.id, hunksDigest: stored.digest };
+      if (since !== undefined && delta) {
+        const storedDelta = await this.dependencies.artifacts.put(CHANGE_HUNKS_ARTIFACT_KIND, serializeChangeHunks(delta), retentionDays);
+        Object.assign(detail, { since, deltaHunksArtifact: storedDelta.id, deltaHunksDigest: storedDelta.digest, deltaPaths: changeHunkPaths(delta) });
+      }
+    } catch (error) {
+      coverageReasons.push(`Change hunks could not be stored: ${error instanceof Error ? error.message : String(error)}`);
+      if (since !== undefined) coverageReasons.push(`Incremental review since ${since} has no recorded change detail.`);
+      return { coverageReasons, limitations: [] };
     }
     const limitations = [...new Set([...binaryChangePaths(hunks), ...(delta ? binaryChangePaths(delta) : [])])].map(path => `Binary file ${path} has no hunks; it is uninspectable for line-level evidence.`);
     return { detail, coverageReasons, limitations };

@@ -31,6 +31,13 @@ export function deriveVerdict(report: Pick<ReviewReport, "execution" | "coverage
 export async function validateReport(report: ReviewReport, policy: ReviewPolicy, sourceControl?: SourceControlAdapter, root?: string, context?: ContextManifest, artifacts?: ArtifactStore): Promise<ValidationResult> {
   const errors: string[] = [];
   const warnings: string[] = [];
+  const changeDetail = await verifyChangeDetail(report, artifacts);
+  const since = report.changeDetail?.since;
+  // Paths the verified delta `since..head` lists: removed paths (deleted, or binary) may exist only at `since`,
+  // e.g. a file added after the merge base and deleted by a fix push, which the full change never lists.
+  const verifiedDelta = changeDetail.errors.length === 0 && since !== undefined && changeDetail.delta?.baseCommit === since && changeDetail.delta.headCommit === report.change.headCommit ? changeDetail.delta : undefined;
+  const deltaPathSet = new Set(verifiedDelta?.files.map(file => file.path) ?? []);
+  const deltaRemoved = new Set(verifiedDelta?.files.filter(file => file.status === "deleted" || file.status === "binary").map(file => file.path) ?? []);
   if (context && context.digest !== report.contextManifestDigest) errors.push("Frozen context digest does not match the report.");
   const sources = new Map(context?.sources.map(source => [source.id, source]) ?? []);
   const referenceValid = (ref: SourceReference): boolean => {
@@ -114,7 +121,7 @@ export async function validateReport(report: ReviewReport, policy: ReviewPolicy,
     if (item.sourceExclusionReason !== undefined && (item.kind !== "source" || typeof item.sourceExclusionReason !== "string" || !item.sourceExclusionReason.trim())) errors.push(`Evidence ${item.id} has an invalid source exclusion reason.`);
     if (item.kind === "source" && (!item.source || !referenceValid(item.source))) errors.push(`Evidence ${item.id} has no verifiable source.`);
     if (["code", "diff"].includes(item.kind) && !item.code) errors.push(`Evidence ${item.id} has no code anchor.`);
-    if (item.kind === "diff" && item.code && !report.change.changedPaths.includes(item.code.path)) errors.push(`Diff evidence ${item.id} is outside changed paths.`);
+    if (item.kind === "diff" && item.code && !report.change.changedPaths.includes(item.code.path) && !deltaPathSet.has(item.code.path)) errors.push(`Diff evidence ${item.id} is outside changed paths.`);
     if (item.kind === "test" && !report.tests.some(test => test.id === item.receiptId && test.commit === report.change.headCommit)) errors.push(`Evidence ${item.id} references no reviewed test receipt.`);
     if (item.kind === "artifact") {
       const ids = [report.contextManifestArtifact, report.normalizedEventArtifact, report.redactedTranscriptArtifact].filter((id): id is string => !!id);
@@ -138,11 +145,15 @@ export async function validateReport(report: ReviewReport, policy: ReviewPolicy,
     }
   }
   if (sourceControl && root) {
-    const allowedCommit = async (anchor: CodeAnchor): Promise<boolean> => anchor.commit === report.change.headCommit || (anchor.commit === report.change.mergeBaseCommit && report.change.changedPaths.includes(anchor.path) && !!sourceControl.pathExists && !(await sourceControl.pathExists(root, report.change.headCommit, anchor.path)));
+    const absentAtHead = async (path: string): Promise<boolean> => !!sourceControl.pathExists && !(await sourceControl.pathExists(root, report.change.headCommit, path));
+    const allowedCommit = async (anchor: CodeAnchor): Promise<boolean> => anchor.commit === report.change.headCommit
+      || (anchor.commit === report.change.mergeBaseCommit && report.change.changedPaths.includes(anchor.path) && await absentAtHead(anchor.path))
+      || (verifiedDelta !== undefined && anchor.commit === since && deltaRemoved.has(anchor.path) && await absentAtHead(anchor.path));
     for (const inspected of report.inspectedPaths) {
       const inHead = await sourceControl.verifyAnchor(root, { commit: report.change.headCommit, path: inspected, startLine: 1 });
       const deletedFromBase = !inHead && report.change.changedPaths.includes(inspected) && await sourceControl.verifyAnchor(root, { commit: report.change.mergeBaseCommit, path: inspected, startLine: 1 });
-      if (!inHead && !deletedFromBase) errors.push(`Inspected path ${inspected} does not exist in the reviewed change.`);
+      const deletedSince = !inHead && !deletedFromBase && since !== undefined && deltaRemoved.has(inspected) && await sourceControl.verifyAnchor(root, { commit: since, path: inspected, startLine: 1 });
+      if (!inHead && !deletedFromBase && !deletedSince) errors.push(`Inspected path ${inspected} does not exist in the reviewed change.`);
     }
     for (const item of report.evidence) {
       if (item.code && !(await allowedCommit(item.code))) errors.push(`Evidence ${item.id} does not reference reviewed head ${report.change.headCommit}.`);
@@ -154,8 +165,7 @@ export async function validateReport(report: ReviewReport, policy: ReviewPolicy,
     }
   }
 
-  errors.push(...(await verifyChangeDetail(report, artifacts)).errors);
-  const since = report.changeDetail?.since;
+  errors.push(...changeDetail.errors);
   if (since !== undefined && sourceControl?.isAncestor && root) {
     const reason = await sinceRangeError(since, report.change.mergeBaseCommit, report.change.headCommit, (ancestor, descendant) => sourceControl.isAncestor!(root, ancestor, descendant));
     if (reason) errors.push(`REVIEWFN_SINCE_NOT_ANCESTOR: ${reason}`);

@@ -41,6 +41,11 @@ describe("parseChangeHunks", () => {
     ]);
   });
 
+  it("accepts hunk header function-name trailers that contain CR or Unicode line separators", () => {
+    const diff = ["diff --git a/f b/f", "index 1..2 100644", "--- a/f", "+++ b/f", "@@ -3 +3 @@ void run()\r", "-old\r", "+new\r", "@@ -8 +8 @@ label\u2028more\u2029end", "-x", "+y", ""].join("\n");
+    expect(parseChangeHunks(diff, BASE, HEAD).files).toEqual([{ path: "f", status: "modified", hunks: [{ oldStart: 3, oldLines: 1, newStart: 3, newLines: 1 }, { oldStart: 8, oldLines: 1, newStart: 8, newLines: 1 }] }]);
+  });
+
   it("accepts an empty diff", () => expect(parseChangeHunks("", BASE, HEAD).files).toEqual([]));
 
   it.each([
