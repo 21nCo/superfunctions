@@ -621,7 +621,9 @@ describe('@billfn/core', () => {
       catalog,
       providers: {
         dodo: provider
-      }
+      },
+      // The checkout is verified before the renewal event occurs.
+      now: () => new Date('2026-05-01T00:00:00.000Z')
     });
 
     const created = await billfn.createCheckout({
@@ -1155,7 +1157,9 @@ describe('@billfn/core', () => {
     const billfn = createBillFn({
       db: racingDb,
       catalog,
-      providers: { dodo: provider }
+      providers: { dodo: provider },
+      // The checkout is verified before any of the provider events below occur.
+      now: () => new Date('2026-05-01T00:00:00.000Z')
     });
     const created = await billfn.createCheckout({
       subject: { principalId: 'out_of_order_user' },
