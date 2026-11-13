@@ -23,7 +23,7 @@ const schema = {
 
 async function serve(database: Adapter = memoryAdapter()) {
   const server = await createDatafnServer({ schema, database, allowUnknownResources: true });
-  const call = async (route: string, body: unknown): Promise<Json> => {
+  const send = async (route: string, body: unknown): Promise<{ status: number; body: Json }> => {
     const res = await server.router.handle(
       new Request(`http://localhost/datafn/${route}`, {
         method: "POST",
@@ -31,8 +31,12 @@ async function serve(database: Adapter = memoryAdapter()) {
         body: JSON.stringify(body),
       }),
     );
+    return { status: res.status, body: (await res.json()) as Json };
+  };
+  const call = async (route: string, body: unknown): Promise<Json> => {
+    const res = await send(route, body);
     expect(res.status).toBe(200);
-    return (await res.json()) as Json;
+    return res.body;
   };
   const storedValue = async (id = "kv:prefs") => {
     const read = await call("query", {
@@ -43,7 +47,7 @@ async function serve(database: Adapter = memoryAdapter()) {
     });
     return read.result.data[0]?.value;
   };
-  return { server, call, storedValue };
+  return { server, send, call, storedValue };
 }
 
 let sequence = 0;
@@ -450,5 +454,143 @@ describe("DATA-8: KV merge does not depend on how the database compares JSON", (
     });
     expect(written.value).toEqual({ seed: true, fallback: 1 });
     expect(await storedValue()).toEqual({ seed: true, fallback: 1 });
+  });
+});
+
+/**
+ * An adapter without transactions, as the default capabilities declare. With
+ * `strictUpdateNotFound: false` (also the default) update() does not report a
+ * write that matched nothing, so a KV merge must detect a missed conditional
+ * write on its own.
+ * - `holdWrites(n)`: the next n writes of a KV value wait until all n have
+ *   arrived, so each merge read the record before any of them wrote.
+ * - `missValueWrites`: that many conditional writes (a where on `value`)
+ *   miss, as if another writer changed the value each time.
+ * - `failValueWrites`: every KV value write throws a permanent error.
+ */
+function withoutTransactions(base: Adapter, strictUpdateNotFound: boolean) {
+  const control = { missValueWrites: 0, failValueWrites: false, holdWrites };
+  let held: Array<() => void> | undefined;
+  let holdCount = 0;
+  function holdWrites(count: number) {
+    held = [];
+    holdCount = count;
+  }
+  const gate = async () => {
+    const waiting = held;
+    if (!waiting) return;
+    await new Promise<void>((resolve) => {
+      waiting.push(resolve);
+      if (waiting.length >= holdCount) {
+        held = undefined;
+        for (const release of waiting) release();
+      }
+    });
+  };
+  type WriteParams = { model: string; where?: Array<{ field: string }>; data?: Record<string, unknown> };
+  const db = new Proxy(base, {
+    get(target, property, receiver) {
+      if (property === "transaction") return undefined;
+      const value = Reflect.get(target, property, receiver);
+      if (property === "capabilities") {
+        return {
+          ...value,
+          operations: { ...value.operations, strictUpdateNotFound },
+          transactions: { ...value.transactions, supported: false },
+        };
+      }
+      if (property !== "update" && property !== "updateMany") return value;
+      return async (params: WriteParams) => {
+        if (params.model === "kv" && params.data && "value" in params.data) {
+          await gate();
+          if (control.failValueWrites) throw new Error("disk I/O error");
+          if (control.missValueWrites > 0 && (params.where ?? []).some((clause) => clause.field === "value")) {
+            control.missValueWrites -= 1;
+            return property === "updateMany" ? 0 : undefined;
+          }
+        }
+        return (value as (params: WriteParams) => Promise<unknown>).call(target, params);
+      };
+    },
+  }) as Adapter;
+  return { db, control };
+}
+
+describe.each([
+  ["neither transactions nor strictUpdateNotFound", false],
+  ["strictUpdateNotFound but no transactions", true],
+] as const)("DATA-8: KV merge on an adapter with %s", (_label, strictUpdateNotFound) => {
+  it("keeps both keys when two merges read the record before either writes", async () => {
+    const { db, control } = withoutTransactions(memoryAdapter(), strictUpdateNotFound);
+    const { call, storedValue } = await serve(db);
+    await call("mutation", kvMutation({ seed: true }));
+
+    control.holdWrites(2);
+    const merge = (value: Json) =>
+      updateKvRecordMerging({ db, resource: "kv", id: "kv:prefs", data: { value }, inTransaction: false });
+    const written = await Promise.all([merge({ a: 1 }), merge({ b: 2 })]);
+    expect(await storedValue()).toEqual({ seed: true, a: 1, b: 2 });
+    // The merge that wrote last reports the complete value it wrote.
+    expect(written.map((row) => row.value)).toContainEqual({ seed: true, a: 1, b: 2 });
+
+    control.holdWrites(2);
+    const results = await Promise.all([
+      call("mutation", kvMutation({ fromMutation: 1 })),
+      call("push", { clientId: "client:b", mutations: [kvMutation({ fromPush: 2 }, { clientId: "client:b" })] }),
+    ]);
+    expect(results.map((res) => res.result.ok)).toEqual([true, true]);
+    const full = { seed: true, a: 1, b: 2, fromMutation: 1, fromPush: 2 };
+    expect(await storedValue()).toEqual(full);
+    await expectLatestKvChangeCarries(call, full);
+  });
+
+  it("keeps every key for sequential merges over /mutation and /push", async () => {
+    const { db } = withoutTransactions(memoryAdapter(), strictUpdateNotFound);
+    const { call, storedValue } = await serve(db);
+    for (const [index, patch] of patches.entries()) {
+      const res = index % 2
+        ? await call("push", { clientId: "client:a", mutations: [kvMutation(patch)] })
+        : await call("mutation", kvMutation(patch));
+      expect(res.result.ok).toBe(true);
+    }
+    expect(await storedValue()).toEqual(mergedValue);
+    await expectLatestKvChangeCarries(call, mergedValue);
+  });
+
+  it("reports a merge that gave up under contention as retryable, and its retry succeeds", async () => {
+    const { db, control } = withoutTransactions(memoryAdapter(), strictUpdateNotFound);
+    const { send, call, storedValue } = await serve(db);
+    await call("mutation", kvMutation({ seed: true }));
+
+    // Every conditional write misses until the merge gives up, writing nothing.
+    control.missValueWrites = 1000;
+    const viaMutation = kvMutation({ a: 1 });
+    const failed = await call("mutation", viaMutation);
+    expect(failed.result.ok).toBe(false);
+    expect(failed.result.errors[0]).toMatchObject({ code: "INTERNAL", retryable: true });
+    const viaPush = { clientId: "client:a", mutations: [kvMutation({ b: 2 })] };
+    const failedPush = await send("push", viaPush);
+    expect(failedPush.body.result.errors[0]).toMatchObject({ code: "INTERNAL", retryable: true });
+    expect(await storedValue()).toEqual({ seed: true });
+
+    // Retrying the same mutations once the contention ends applies them.
+    control.missValueWrites = 0;
+    expect((await call("mutation", viaMutation)).result.ok).toBe(true);
+    expect((await call("push", viaPush)).result.ok).toBe(true);
+    expect(await storedValue()).toEqual({ seed: true, a: 1, b: 2 });
+    await expectLatestKvChangeCarries(call, { seed: true, a: 1, b: 2 });
+  });
+
+  it("keeps a permanent write failure terminal on /mutation", async () => {
+    const { db, control } = withoutTransactions(memoryAdapter(), strictUpdateNotFound);
+    const { call, storedValue } = await serve(db);
+    await call("mutation", kvMutation({ seed: true }));
+
+    control.failValueWrites = true;
+    const failed = await call("mutation", kvMutation({ a: 1 }));
+    expect(failed.result.ok).toBe(false);
+    expect(failed.result.errors[0]).toMatchObject({ code: "INTERNAL", retryable: false });
+    control.failValueWrites = false;
+    expect(await storedValue()).toEqual({ seed: true });
   });
 });

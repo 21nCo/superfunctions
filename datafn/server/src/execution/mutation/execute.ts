@@ -20,6 +20,7 @@ import {
 } from "./relations.js";
 import { executeSchemaAwareMerge } from "./merge-decision.js";
 import {
+  isKvMergeContentionError,
   isKvResource,
   isKvValueMerge,
   snapshotKvChange,
@@ -219,7 +220,7 @@ async function executeMutationCore(
   const resolvedCapabilities = resolveCapabilitiesForResource(schema, mutation.resource);
   let opResult:
     | { ok: true }
-    | { ok: false; code: string; message: string; path: string };
+    | { ok: false; code: string; message: string; path: string; retryable?: boolean };
   let resolvedRecord: Record<string, unknown> | undefined;
   let changeOverride:
     | {
@@ -390,6 +391,9 @@ async function executeMutationCore(
               code: mergeResult.code,
               message: mergeResult.message,
               path: mergeResult.path,
+              // A KV merge that gave up under contention wrote nothing; the
+              // same mutation can succeed when retried.
+              retryable: isKvMergeContentionError(mergeResult.error),
             };
           }
         }
@@ -964,7 +968,12 @@ async function executeMutationCore(
         ok: false,
         mutationId: effectiveMutationId,
         affectedIds: [],
-        errors: [{ code: opResult.code, message: opResult.message, path: opResult.path, retryable: false }],
+        errors: [{
+          code: opResult.code,
+          message: opResult.message,
+          path: opResult.path,
+          retryable: opResult.retryable === true,
+        }],
         deduped: false,
       };
   if (failedShareCompensation) {

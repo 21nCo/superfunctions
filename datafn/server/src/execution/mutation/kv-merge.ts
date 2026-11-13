@@ -26,6 +26,25 @@ export const KV_SET_MUTATION_ID_PREFIX = "kv-set-";
  */
 const KV_MERGE_MAX_ATTEMPTS = 16;
 
+/**
+ * A KV merge whose conditional writes all missed because other writers kept
+ * changing the record. Nothing was written, and the same merge can succeed
+ * when retried, so callers report it as retryable.
+ */
+export class KvMergeContentionError extends Error {
+  readonly retryable = true;
+
+  constructor(id: string) {
+    super(`KV merge of ${id} did not settle after ${KV_MERGE_MAX_ATTEMPTS} concurrent attempts`);
+    this.name = "KvMergeContentionError";
+  }
+}
+
+/** True for a KV merge that gave up under contention (see KvMergeContentionError). */
+export function isKvMergeContentionError(error: unknown): boolean {
+  return (error as { name?: unknown } | null)?.name === "KvMergeContentionError";
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -103,16 +122,14 @@ function isTransactionUnsupportedError(error: unknown): boolean {
  *   record. A caller outside a transaction gets its own transaction for this.
  *   Comparing the stored JSON is never needed there, so how a dialect compares
  *   a JSON column (MySQL never equals one to a string) does not matter.
- * - Adapters without transactions that report missed updates
- *   (strictUpdateNotFound, as Drizzle on SQLite and D1 does) use a
- *   compare-and-swap: every write is conditional on the value that was read
- *   and retries after a concurrent change. The compare-and-swap never falls
- *   back to an unconditional write.
- * - An adapter with neither transactions nor strictUpdateNotFound cannot
- *   detect a failed conditional write, so it gets a plain read-merge-write.
- *   That keeps the other keys of a merge that runs alone, but it is not
- *   atomic: a concurrent merge of the same record between the read and the
- *   write can be lost. No adapter in this repository takes this path.
+ * - Adapters without transactions use a compare-and-swap: every write is
+ *   conditional on the value that was read, and a miss means a concurrent
+ *   change, so the merge reads again and retries. An adapter that reports
+ *   missed updates (strictUpdateNotFound, as Drizzle on SQLite and D1 does)
+ *   detects a miss through update(); any other adapter through the row count
+ *   updateMany returns. The merge never writes unconditionally. After
+ *   KV_MERGE_MAX_ATTEMPTS misses it throws a KvMergeContentionError having
+ *   written nothing, which callers report as retryable.
  *
  * Known limit: the locked read is an ordinary read. On a database whose
  * transactions read from a snapshot taken at their first read (MySQL InnoDB at
@@ -199,17 +216,29 @@ export async function updateKvRecordMerging(params: {
     }
   }
 
-  if (!strictUpdateNotFound) {
-    // An adapter that reports no missed updates cannot detect a failed
-    // compare-and-swap, so the conditional write would be unsafe here.
-    const written = withMergedValue(await readStored(db));
-    if (!(await tryUpdate(db, where, written))) throw notFound();
-    return written;
-  }
+  /**
+   * Write only if the stored value is still `current`; false on a miss. An
+   * adapter without strictUpdateNotFound may report success from update()
+   * when nothing matched, so it uses the updateMany row count instead.
+   */
+  const tryConditionalUpdate = async (
+    updateWhere: WhereClause[],
+    updateData: Record<string, unknown>,
+  ): Promise<boolean> => {
+    if (strictUpdateNotFound) return tryUpdate(db, updateWhere, updateData);
+    const count = await db.updateMany({
+      model: resource,
+      where: updateWhere,
+      data: updateData,
+      namespace,
+    });
+    return count > 0;
+  };
 
   // Every attempt is a compare-and-swap on the value it read, so a write never
   // lands on a value it did not merge from. A miss means another writer
-  // changed the record in between; read again and retry.
+  // changed the record in between; read again and retry (a deleted record
+  // then reads as not found, so the caller creates it).
   for (let attempt = 0; attempt < KV_MERGE_MAX_ATTEMPTS; attempt += 1) {
     const stored = await readStored(db);
     const current = stored.value ?? null;
@@ -218,14 +247,12 @@ export async function updateKvRecordMerging(params: {
       ...where,
       { field: "value", operator: "eq", value: current },
     ];
-    if (await tryUpdate(db, updateWhere, written)) {
+    if (await tryConditionalUpdate(updateWhere, written)) {
       return written;
     }
   }
 
-  throw new Error(
-    `KV merge of ${id} did not settle after ${KV_MERGE_MAX_ATTEMPTS} concurrent attempts`,
-  );
+  throw new KvMergeContentionError(id);
 }
 
 /** True for a change on the built-in KV resource. */
