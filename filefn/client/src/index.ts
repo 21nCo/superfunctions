@@ -1,3 +1,5 @@
+import type { DownloadDescriptor, DownloadDescriptorOptions } from './types.js';
+export type { DownloadDescriptor, DownloadDescriptorOptions } from './types.js';
 import { createHttpClient, FileFnHttpError } from './client.js';
 import { UploadManager, generateFileId, prepareUploadInput } from './upload-manager.js';
 import type {
@@ -88,6 +90,7 @@ export {
 } from './offline/sync.js';
 
 export interface FileFnClient {
+  downloadDescriptor(fileId: string, options?: DownloadDescriptorOptions): Promise<DownloadDescriptor>;
   uploadFile(input: UploadInput): UploadHandleWithFileId;
   resumeUpload(
     uploadSessionId: string,
@@ -264,6 +267,7 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
   }
 
   return {
+    downloadDescriptor(fileId, options) { return httpClient.downloadDescriptor(fileId, options); },
     uploadFile(input: UploadInput): UploadHandleWithFileId {
       const normalizedInput: UploadInput = {
         ...input,

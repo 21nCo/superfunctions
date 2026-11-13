@@ -1,3 +1,5 @@
+import { descriptorOperation, descriptorHeaders, descriptorBody, descriptorIdentity, validateDescriptor, type DescriptorBounds } from './download-descriptor.js';
+import type { DownloadDescriptor, DownloadDescriptorOptions } from './types.js';
 import type {
   ArtifactDescriptor,
   RenderDescriptor,
@@ -51,6 +53,7 @@ export class FileFnHttpError extends Error {
 }
 
 export interface HttpClient {
+  downloadDescriptor(fileId: string, options?: DownloadDescriptorOptions): Promise<DownloadDescriptor>;
   initUpload(
     params: {
       policy: string;
@@ -202,11 +205,14 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
     signal?: AbortSignal,
     options: ResolvedRetryOptions = retryOptions,
     extraHeaders?: Record<string, string>,
+    bounds?: DescriptorBounds,
   ): Promise<T> {
     return withRetry(
       async () => {
         const hasJsonBody = body !== undefined;
-        const headers = await getHeaders(hasJsonBody);
+        bounds?.signal.throwIfAborted();
+        const headers = bounds ? await descriptorHeaders(getHeaders(hasJsonBody), bounds.signal) : await getHeaders(hasJsonBody);
+        bounds?.signal.throwIfAborted();
         if (extraHeaders) {
           Object.assign(headers, extraHeaders);
         }
@@ -215,8 +221,20 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
           headers,
           body: body ? JSON.stringify(body) : undefined,
           signal,
+          ...(bounds ? { redirect: "error" as const } : {}),
         });
 
+        if (bounds) {
+          const raw = await descriptorBody(response, bounds);
+          if (!response.ok) throw new FileFnHttpError(`Download descriptor HTTP ${response.status}`, response.status);
+          let parsed: unknown;
+          try { parsed = JSON.parse(raw); } catch { throw new Error('Invalid download descriptor JSON'); }
+          if (parsed && typeof parsed === 'object' && 'ok' in parsed) {
+            if (parsed.ok !== true || !('data' in parsed)) throw new Error('Download descriptor request failed');
+            return parsed.data as T;
+          }
+          return parsed as T;
+        }
         if (!response.ok) {
           const { rawBody, parsedBody, isJson } = await readResponseBody(response);
           const errorBody = rawBody ? (isJson ? parsedBody : rawBody) : parsedBody;
@@ -271,6 +289,20 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
   }
 
   return {
+    async downloadDescriptor(fileId, options = {}) {
+      const id = descriptorIdentity(fileId);
+      const version = options.versionId === undefined ? undefined : descriptorIdentity(options.versionId);
+      const path = version ? `/${id}/versions/${version}/download` : `/${id}/download`;
+      return descriptorOperation(options, async bounds => {
+        try { return validateDescriptor(await request<unknown>('GET', path, undefined, bounds.signal, { ...retryOptions, maxRetries: 0 }, undefined, bounds)); }
+        catch (error) {
+          if (error instanceof FileFnHttpError && Number.isInteger(error.status) && error.status >= 100 && error.status <= 599) throw new FileFnHttpError(`Download descriptor HTTP ${error.status}`, error.status);
+          if (bounds.signal.aborted) throw bounds.signal.reason;
+          // Do not expose fetch URLs, authentication callback errors or provider payloads.
+          throw new Error('Download descriptor request failed');
+        }
+      });
+    },
     async initUpload(params, signal) {
       return request<InitUploadResponse>(
         "POST",
