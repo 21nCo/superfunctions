@@ -69,6 +69,28 @@ export function mergeKvValue(stored: unknown, patch: unknown): unknown {
   return { ...stored, ...patch };
 }
 
+/** True when the adapter declares database transactions and exposes them. */
+function supportsTransactions(db: Adapter): boolean {
+  return (
+    db.capabilities?.transactions?.supported !== false &&
+    typeof db.transaction === "function"
+  );
+}
+
+/**
+ * True for an adapter that exposes transactions but refuses this call, such as
+ * Drizzle on SQLite rejecting async callbacks (the same signals push.ts uses).
+ */
+function isTransactionUnsupportedError(error: unknown): boolean {
+  if ((error as { name?: unknown })?.name === "OperationNotSupportedError") return true;
+  const message = String((error as { message?: unknown })?.message ?? error).toLowerCase();
+  return (
+    message.includes("cannot return a promise") ||
+    message.includes("not supported") ||
+    message.includes("not implemented")
+  );
+}
+
 /**
  * Update an existing KV record, merging `data.value` into the stored value.
  * Returns the data written, whose `value` is the complete merged value.
@@ -76,11 +98,25 @@ export function mergeKvValue(stored: unknown, patch: unknown): unknown {
  * create it with the patch.
  *
  * Atomicity per record:
- * - Inside a database transaction, a no-op update first takes the row lock, so
- *   the read and the write cannot interleave with another merge of the record.
- * - Without transactions (Drizzle on SQLite and D1), every write is
- *   conditional on the value that was read and retries after a concurrent
- *   change. It never falls back to an unconditional write.
+ * - On an adapter with transactions, a no-op update first takes the row lock,
+ *   so the read and the write cannot interleave with another merge of the
+ *   record. A caller outside a transaction gets its own transaction for this.
+ *   Comparing the stored JSON is never needed there, so how a dialect compares
+ *   a JSON column (MySQL never equals one to a string) does not matter.
+ * - Only adapters without transactions (Drizzle on SQLite and D1) use a
+ *   compare-and-swap: every write is conditional on the value that was read
+ *   and retries after a concurrent change. It never falls back to an
+ *   unconditional write.
+ *
+ * Known limit: the locked read is an ordinary read. On a database whose
+ * transactions read from a snapshot taken at their first read (MySQL InnoDB at
+ * its default REPEATABLE READ), a merge inside a transaction that read data
+ * before it (a mutation guard, or a query step earlier in an atomic transact)
+ * can read the record as of that snapshot. With the default database
+ * serverSeq allocation such a transaction fails and rolls back, because the
+ * concurrent merge also advanced the sequence row it then reads stale; with a
+ * custom sequence store it could commit a merge from the older value. Merges
+ * sent by kv.merge (/mutation, /push, REST) read nothing before the lock.
  */
 export async function updateKvRecordMerging(params: {
   db: Adapter;
@@ -95,8 +131,8 @@ export async function updateKvRecordMerging(params: {
   const strictUpdateNotFound =
     db.capabilities?.operations?.strictUpdateNotFound === true;
 
-  const readStored = async (): Promise<Record<string, unknown>> => {
-    const row = await db.findOne<Record<string, unknown>>({
+  const readStored = async (target: Adapter): Promise<Record<string, unknown>> => {
+    const row = await target.findOne<Record<string, unknown>>({
       model: resource,
       where,
       namespace,
@@ -107,11 +143,12 @@ export async function updateKvRecordMerging(params: {
 
   /** Returns false when the update matched no row. */
   const tryUpdate = async (
+    target: Adapter,
     updateWhere: WhereClause[],
     updateData: Record<string, unknown>,
   ): Promise<boolean> => {
     try {
-      const updated = await db.update({
+      const updated = await target.update({
         model: resource,
         where: updateWhere,
         data: updateData,
@@ -129,19 +166,38 @@ export async function updateKvRecordMerging(params: {
     value: mergeKvValue(stored.value, data.value),
   });
 
-  if (inTransaction) {
+  /** Lock the row, read it and write the merge, all in `trx`'s transaction. */
+  const mergeLocked = async (trx: Adapter): Promise<Record<string, unknown>> => {
     // Setting id to itself locks the row until the transaction settles.
-    if (!(await tryUpdate(where, { id }))) throw notFound();
-    const written = withMergedValue(await readStored());
-    if (!(await tryUpdate(where, written))) throw notFound();
+    if (!(await tryUpdate(trx, where, { id }))) throw notFound();
+    const written = withMergedValue(await readStored(trx));
+    if (!(await tryUpdate(trx, where, written))) throw notFound();
     return written;
+  };
+
+  if (inTransaction) {
+    return mergeLocked(db);
+  }
+
+  if (supportsTransactions(db)) {
+    let started = false;
+    try {
+      return await db.transaction(async (trx) => {
+        started = true;
+        return mergeLocked(trx as unknown as Adapter);
+      });
+    } catch (error) {
+      // Fall back to the compare-and-swap only when the adapter refused to
+      // start the transaction; an error from the merge itself propagates.
+      if (started || !isTransactionUnsupportedError(error)) throw error;
+    }
   }
 
   if (!strictUpdateNotFound) {
     // An adapter that reports no missed updates cannot detect a failed
     // compare-and-swap, so the conditional write would be unsafe here.
-    const written = withMergedValue(await readStored());
-    if (!(await tryUpdate(where, written))) throw notFound();
+    const written = withMergedValue(await readStored(db));
+    if (!(await tryUpdate(db, where, written))) throw notFound();
     return written;
   }
 
@@ -149,14 +205,14 @@ export async function updateKvRecordMerging(params: {
   // lands on a value it did not merge from. A miss means another writer
   // changed the record in between; read again and retry.
   for (let attempt = 0; attempt < KV_MERGE_MAX_ATTEMPTS; attempt += 1) {
-    const stored = await readStored();
+    const stored = await readStored(db);
     const current = stored.value ?? null;
     const written = withMergedValue(stored);
     const updateWhere: WhereClause[] = [
       ...where,
       { field: "value", operator: "eq", value: current },
     ];
-    if (await tryUpdate(updateWhere, written)) {
+    if (await tryUpdate(db, updateWhere, written)) {
       return written;
     }
   }

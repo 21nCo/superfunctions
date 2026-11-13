@@ -7,6 +7,7 @@ import { memoryAdapter } from "@superfunctions/db/adapters";
 import type { Adapter } from "@superfunctions/db";
 import { describe, expect, it } from "vitest";
 import { createDatafnServer } from "../src/server.js";
+import { updateKvRecordMerging } from "../src/execution/mutation/kv-merge.js";
 
 type Json = Record<string, any>;
 
@@ -338,5 +339,116 @@ describe("DATA-8: KV merge keeps every top-level key", () => {
     expect(pushed.result.ok).toBe(true);
     expect(await storedValue()).toBeUndefined();
     await expectKvRecordDeleted(call);
+  });
+});
+
+/**
+ * Wraps an adapter so a where clause on the KV `value` column never matches,
+ * as on MySQL, which never equals a JSON column to a string parameter. The
+ * wrapper keeps the base adapter's transaction support.
+ */
+function withMysqlJsonEquality(base: Adapter, calls = { transactions: 0 }): Adapter {
+  const matchesValue = (params: { where?: Array<{ field: string }> }) =>
+    (params.where ?? []).some((clause) => clause.field === "value");
+  return new Proxy(base, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver);
+      if (property === "findOne") {
+        return async (params: Parameters<Adapter["findOne"]>[0]) =>
+          matchesValue(params) ? null : (value as Adapter["findOne"]).call(target, params);
+      }
+      if (property === "findMany") {
+        return async (params: Parameters<Adapter["findMany"]>[0]) =>
+          matchesValue(params) ? [] : (value as Adapter["findMany"]).call(target, params);
+      }
+      if (property === "update") {
+        return async (params: Parameters<Adapter["update"]>[0]) => {
+          if (matchesValue(params)) throw { name: "NotFoundError", message: "Record not found" };
+          return (value as Adapter["update"]).call(target, params);
+        };
+      }
+      if (property === "transaction") {
+        return async (callback: (trx: Adapter) => Promise<unknown>, options?: unknown) => {
+          calls.transactions += 1;
+          return (value as Adapter["transaction"]).call(
+            target,
+            async (trx) => callback(withMysqlJsonEquality(trx as unknown as Adapter, calls)),
+            options as never,
+          );
+        };
+      }
+      return value;
+    },
+  }) as Adapter;
+}
+
+describe("DATA-8: KV merge does not depend on how the database compares JSON", () => {
+  it("merges outside a transaction on an adapter with transactions without comparing the value", async () => {
+    const calls = { transactions: 0 };
+    const base = memoryAdapter();
+    const db = withMysqlJsonEquality(base, calls);
+    const { call, storedValue } = await serve(base);
+    await call("mutation", kvMutation({ seed: true }));
+
+    // The entry point a caller outside a transaction uses: it must take its own
+    // transaction and lock the row instead of a compare-and-swap on the value.
+    const written = await updateKvRecordMerging({
+      db,
+      resource: "kv",
+      id: "kv:prefs",
+      data: { value: { direct: 1 } },
+      inTransaction: false,
+    });
+    expect(written.value).toEqual({ seed: true, direct: 1 });
+    expect(calls.transactions).toBe(1);
+    expect(await storedValue()).toEqual({ seed: true, direct: 1 });
+
+    // A missing record still reports not found, so the caller creates it.
+    await expect(
+      updateKvRecordMerging({
+        db,
+        resource: "kv",
+        id: "kv:missing",
+        data: { value: { a: 1 } },
+        inTransaction: false,
+      }),
+    ).rejects.toMatchObject({ name: "NotFoundError" });
+  });
+
+  it("keeps every key over /mutation and /push", async () => {
+    const { call, storedValue } = await serve(withMysqlJsonEquality(memoryAdapter()));
+    for (const [index, patch] of patches.entries()) {
+      const res = index % 2
+        ? await call("push", { clientId: "client:a", mutations: [kvMutation(patch)] })
+        : await call("mutation", kvMutation(patch));
+      expect(res.result.ok).toBe(true);
+    }
+    expect(await storedValue()).toEqual(mergedValue);
+    await expectLatestKvChangeCarries(call, mergedValue);
+  });
+
+  it("falls back to the compare-and-swap when the adapter refuses to start a transaction", async () => {
+    const base = memoryAdapter();
+    const { call, storedValue } = await serve(base);
+    await call("mutation", kvMutation({ seed: true }));
+    const refusing = new Proxy(base, {
+      get(target, property, receiver) {
+        if (property !== "transaction") return Reflect.get(target, property, receiver);
+        return async () => {
+          throw Object.assign(new Error("Transaction is not supported"), {
+            name: "OperationNotSupportedError",
+          });
+        };
+      },
+    }) as Adapter;
+    const written = await updateKvRecordMerging({
+      db: refusing,
+      resource: "kv",
+      id: "kv:prefs",
+      data: { value: { fallback: 1 } },
+      inTransaction: false,
+    });
+    expect(written.value).toEqual({ seed: true, fallback: 1 });
+    expect(await storedValue()).toEqual({ seed: true, fallback: 1 });
   });
 });
