@@ -91,6 +91,8 @@ const RECONCILIATION_JOB_CLAIM_LEASE_MS = 15 * 60 * 1000;
 /** Unlinked webhook events are kept this long for a later link to replay them. */
 const UNLINKED_WEBHOOK_EVENT_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 const UNLINKED_WEBHOOK_EVENT_REPLAY_LEASE_MS = 15 * 60 * 1000;
+/** Bounds replay passes when replayed events keep adding provider references to the subscription. */
+const UNLINKED_WEBHOOK_EVENT_REPLAY_MAX_PASSES = 4;
 /** Provider metadata key naming the billing account that owns a provider record. */
 const BILLING_ACCOUNT_METADATA_KEY = 'billfn_billing_account_id';
 /** Deliveries of one queue message refused by lease conflicts before it is dead-lettered. */
@@ -1617,13 +1619,16 @@ async function syncSubscriptionByIdForJob(
     return;
   }
   await assertLease();
-  await applyVerificationState(deps, {
+  const applied = await applyVerificationState(deps, {
     billingAccount,
     plan,
     price,
     subscription,
     state: verification
   });
+  if (addsProviderReference(subscription, applied.subscription)) {
+    await replayUnlinkedWebhookEventsOrThrow(deps, applied.subscription);
+  }
 }
 
 async function getOrCreateBillingAccount(
@@ -2242,6 +2247,7 @@ async function applyVerificationState(
     ));
   let subscription: BillFnSubscription | null = null;
   let timestamp = toIsoString(deps.now());
+  let liveStateSuperseded = false;
 
   for (let attempt = 0; attempt < 50; attempt += 1) {
     if (baseSubscription && baseSubscription.billingAccountId !== input.billingAccount.id) {
@@ -2258,7 +2264,45 @@ async function applyVerificationState(
       return null;
     }
 
+    // An event applied after a live read started is newer than what the read returned: the read
+    // only links its references and the subscription keeps the event's state.
+    liveStateSuperseded = Boolean(
+      baseSubscription &&
+        !input.occurredAt &&
+        input.liveStateObservedAt &&
+        isProviderEventOlderThanSubscription(baseSubscription, input.liveStateObservedAt)
+    );
     timestamp = nextSubscriptionUpdatedAt(deps.now(), baseSubscription?.updatedAt);
+    if (baseSubscription && liveStateSuperseded) {
+      const linked = linkLiveReadReferences(baseSubscription, input, timestamp);
+      if (!linked) {
+        subscription = baseSubscription;
+        break;
+      }
+      const updated = await deps.db.updateMany({
+        model: TABLES.subscriptions,
+        where: [
+          { field: 'id', operator: 'eq', value: baseSubscription.id },
+          { field: 'updatedAt', operator: 'eq', value: baseSubscription.updatedAt }
+        ],
+        data: linked,
+        namespace: deps.namespace
+      });
+      if (updated === 1) {
+        subscription = linked;
+        break;
+      }
+      const current = await getSubscriptionById(deps, baseSubscription.id);
+      if (!current) {
+        throw createBillFnError({
+          code: 'BILLFN_CONFLICT',
+          message: 'Subscription changed while applying provider state'
+        });
+      }
+      baseSubscription = current;
+      await Promise.resolve();
+      continue;
+    }
     const mergedMetadata = mergeJson(baseSubscription?.metadata, input.state.raw);
     const providerStateAt = input.occurredAt
       ? input.occurredAt
@@ -2373,6 +2417,22 @@ async function applyVerificationState(
       })
     : input.checkoutSession;
 
+  if (liveStateSuperseded) {
+    // The subscription's state did not change, so its entitlements stand and no lifecycle event is recorded.
+    const entitlements = await upsertEntitlements(
+      deps,
+      input.billingAccount.id,
+      requirePlan(deps.catalog, subscription.planKey),
+      subscription,
+      timestamp
+    );
+    return {
+      checkoutSession: checkoutSession ?? input.checkoutSession,
+      subscription,
+      entitlements
+    };
+  }
+
   const entitlements = await upsertEntitlements(deps, input.billingAccount.id, input.plan, subscription, timestamp);
 
   await recordBillingEvent(deps, {
@@ -2397,6 +2457,29 @@ async function applyVerificationState(
     subscription,
     entitlements
   };
+}
+
+/**
+ * The subscription row after a live provider read that an applied event has
+ * superseded: missing provider references from the read are added and every
+ * state field is kept. Returns null when the read adds no reference.
+ */
+function linkLiveReadReferences(
+  subscription: BillFnSubscription,
+  input: ApplyVerificationStateInput,
+  timestamp: string
+): BillFnSubscription | null {
+  const providerSubscriptionId = subscription.providerSubscriptionId ?? input.state.providerSubscriptionId;
+  const providerCheckoutId = subscription.providerCheckoutId ?? input.checkoutSession?.providerCheckoutId;
+  const providerChargeId = subscription.providerChargeId ?? input.state.providerChargeId;
+  if (
+    providerSubscriptionId === subscription.providerSubscriptionId &&
+    providerCheckoutId === subscription.providerCheckoutId &&
+    providerChargeId === subscription.providerChargeId
+  ) {
+    return null;
+  }
+  return { ...subscription, providerSubscriptionId, providerCheckoutId, providerChargeId, updatedAt: timestamp };
 }
 
 async function upsertEntitlements(
@@ -2759,7 +2842,13 @@ async function processParsedWebhookEvent(
           checkoutReferenceId: event.checkoutReferenceId
         })) ?? projection;
     }
-    return applyParsedWebhookEvent(deps, providerName, { ...event, billingState: state }, projection);
+    const linkedBefore = projection.subscription;
+    const applied = await applyParsedWebhookEvent(deps, providerName, { ...event, billingState: state }, projection);
+    // An event that adds a provider reference links the events stored for it.
+    if (applied && addsProviderReference(linkedBefore, applied.subscription)) {
+      await replayUnlinkedWebhookEventsOrThrow(deps, applied.subscription);
+    }
+    return applied;
   }
   // The event resolved only through a checkout session, so applying it links the reference:
   // events stored for it before now are replayed after it, newer ones applied and older ones skipped.
@@ -3037,11 +3126,41 @@ async function replayUnlinkedWebhookEvents(
   subscription: BillFnSubscription
 ): Promise<UnlinkedReplayResult> {
   const result: UnlinkedReplayResult = { applied: 0, skipped: 0, pending: 0 };
-  const references = [...new Set([subscription.providerSubscriptionId, subscription.providerChargeId])].filter(
-    (reference): reference is string => typeof reference === 'string' && reference.length > 0
-  );
+  let current: BillFnSubscription | null = subscription;
+  let queried: string[] = [];
+  // A replayed event can add a provider reference; the events stored for it are replayed in turn.
+  for (let pass = 0; current && pass < UNLINKED_WEBHOOK_EVENT_REPLAY_MAX_PASSES; pass += 1) {
+    const references = providerReferencesOf(current);
+    if (pass > 0 && references.every((reference) => queried.includes(reference))) {
+      break;
+    }
+    queried = references;
+    const stopped = await replayUnlinkedWebhookEventsForReferences(deps, current, references, result);
+    if (stopped || result.applied === 0) {
+      break;
+    }
+    current = await getSubscriptionById(deps, current.id);
+  }
+
+  if (result.applied > 0 || result.skipped > 0) {
+    deps.metrics.track('webhook.unlinked.replayed', {
+      provider: subscription.provider,
+      applied: result.applied,
+      skipped: result.skipped
+    });
+  }
+  return result;
+}
+
+/** One replay pass over the given references; returns true when it stopped at a held or failed event. */
+async function replayUnlinkedWebhookEventsForReferences(
+  deps: ServiceDeps,
+  subscription: BillFnSubscription,
+  references: string[],
+  result: UnlinkedReplayResult
+): Promise<boolean> {
   if (references.length === 0) {
-    return result;
+    return false;
   }
   const timestamp = toIsoString(deps.now());
   const candidates = (
@@ -3067,7 +3186,7 @@ async function replayUnlinkedWebhookEvents(
     if (claim === 'held') {
       result.pending = candidates.length - index;
       result.held = true;
-      break;
+      return true;
     }
     let outcome: { status: 'replayed' | 'skipped'; subscriptionId: string } | null = null;
     let failure: string | null = null;
@@ -3110,7 +3229,7 @@ async function replayUnlinkedWebhookEvents(
         reason: failure ? 'error' : 'not_linked'
       });
       result.pending = candidates.length - index;
-      break;
+      return true;
     }
     if (outcome.status === 'replayed') {
       result.applied += 1;
@@ -3118,15 +3237,19 @@ async function replayUnlinkedWebhookEvents(
       result.skipped += 1;
     }
   }
+  return false;
+}
 
-  if (result.applied > 0 || result.skipped > 0) {
-    deps.metrics.track('webhook.unlinked.replayed', {
-      provider: subscription.provider,
-      applied: result.applied,
-      skipped: result.skipped
-    });
-  }
-  return result;
+function providerReferencesOf(subscription: BillFnSubscription) {
+  return [...new Set([subscription.providerSubscriptionId, subscription.providerChargeId])].filter(
+    (reference): reference is string => typeof reference === 'string' && reference.length > 0
+  );
+}
+
+/** Whether a write gave the subscription a provider reference it did not have, linking events stored for it. */
+function addsProviderReference(before: BillFnSubscription | null | undefined, after: BillFnSubscription) {
+  const previous = before ? providerReferencesOf(before) : [];
+  return providerReferencesOf(after).some((reference) => !previous.includes(reference));
 }
 
 async function applyUnlinkedWebhookEvent(deps: ServiceDeps, row: BillFnUnlinkedWebhookEvent) {

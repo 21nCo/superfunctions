@@ -97,7 +97,9 @@ function createProvider(options: ProviderOptions): BillFnProviderAdapter {
 
 function subscriptionEvent(input: {
   eventId: string;
-  subscriptionId: string;
+  /** Omitted for a payment event that names only its charge. */
+  subscriptionId?: string;
+  chargeId?: string;
   status: SubscriptionStatus;
   occurredAt: string;
   billingAccountId?: string;
@@ -105,10 +107,15 @@ function subscriptionEvent(input: {
   checkoutReferenceId?: string;
 }): BillFnParsedWebhookEvent {
   const data: Record<string, unknown> = {
-    subscription_id: input.subscriptionId,
     product_id: input.productId ?? 'pdt_pro_month',
     status: input.status
   };
+  if (input.subscriptionId) {
+    data.subscription_id = input.subscriptionId;
+  }
+  if (input.chargeId) {
+    data.payment_id = input.chargeId;
+  }
   if (input.billingAccountId) {
     data.metadata = { billfn_billing_account_id: input.billingAccountId };
   }
@@ -119,11 +126,13 @@ function subscriptionEvent(input: {
     occurredAt: input.occurredAt,
     priceId: input.productId ?? 'pdt_pro_month',
     providerSubscriptionId: input.subscriptionId,
+    providerChargeId: input.chargeId,
     checkoutReferenceId: input.checkoutReferenceId,
     billingState: {
       subscriptionStatus: input.status,
       checkoutStatus: 'succeeded',
       providerSubscriptionId: input.subscriptionId,
+      providerChargeId: input.chargeId,
       autoRenew: input.status === 'active',
       raw: data
     },
@@ -959,5 +968,222 @@ describe('webhook events for subscriptions BillFn has not seen', () => {
     expect(all[0]).toMatchObject({ billingAccountId: 'ba_user_race_user', status: 'canceled' });
     expect((await receipt('evt_race_newer'))?.processedAt).toBeTruthy();
     expect((await receipt('evt_race_older'))?.processedAt).toBeTruthy();
+  });
+
+  it('replays a retained charge event once a later event adds that charge to the subscription', async () => {
+    const { billfn, subscriptions, unlinked, receipt, advance } = setup();
+    await billfn.quotaProvider.recordUsage({ principalId: 'charge_link_user', bytes: 0 });
+    // A payment failure names only its charge, which no subscription carries yet.
+    await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_charge_failed',
+        chargeId: 'pay_charge_link',
+        status: 'past_due',
+        occurredAt: '2026-10-31T03:00:00.000Z'
+      })
+    ]);
+    advance(1000);
+    await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_charge_bootstrap',
+        subscriptionId: 'sub_charge_link',
+        status: 'active',
+        occurredAt: '2026-10-31T01:00:00.000Z',
+        billingAccountId: 'ba_user_charge_link_user'
+      })
+    ]);
+    expect(await unlinked()).toEqual([expect.objectContaining({ providerEventId: 'evt_charge_failed', status: 'unlinked' })]);
+    advance(1000);
+
+    // This event links the charge to the existing subscription.
+    const response = await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_charge_active',
+        subscriptionId: 'sub_charge_link',
+        chargeId: 'pay_charge_link',
+        status: 'active',
+        occurredAt: '2026-10-31T02:00:00.000Z'
+      })
+    ]);
+
+    expect(response.ok && response.data.processed).toBe(1);
+    expect((await receipt('evt_charge_active'))?.processedAt).toBeTruthy();
+    const [subscription, ...others] = await subscriptions();
+    expect(others).toHaveLength(0);
+    expect(subscription).toMatchObject({ providerChargeId: 'pay_charge_link', status: 'past_due' });
+    const entitlements = await billfn.getEntitlements({ principalId: 'charge_link_user' });
+    expect(entitlements.ok && entitlements.data.entitlements?.status).toBe('grace');
+    expect(await unlinked()).toEqual([
+      expect.objectContaining({ providerEventId: 'evt_charge_failed', status: 'replayed', subscriptionId: subscription?.id })
+    ]);
+  });
+
+  it('replays a retained cancellation once a later event adds that subscription to a charge-only row', async () => {
+    const { billfn, subscriptions, unlinked, advance } = setup();
+    await billfn.quotaProvider.recordUsage({ principalId: 'sub_link_user', bytes: 0 });
+    await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_sub_link_cancel',
+        subscriptionId: 'sub_added_later',
+        status: 'canceled',
+        occurredAt: '2026-10-31T03:00:00.000Z'
+      })
+    ]);
+    advance(1000);
+    // The first payment bootstraps a row that knows only its charge.
+    await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_sub_link_payment',
+        chargeId: 'pay_first',
+        status: 'active',
+        occurredAt: '2026-10-31T01:00:00.000Z',
+        billingAccountId: 'ba_user_sub_link_user'
+      })
+    ]);
+    expect(await subscriptions()).toEqual([expect.objectContaining({ providerChargeId: 'pay_first', status: 'active' })]);
+    advance(1000);
+
+    const response = await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_sub_link_active',
+        subscriptionId: 'sub_added_later',
+        chargeId: 'pay_first',
+        status: 'active',
+        occurredAt: '2026-10-31T02:00:00.000Z'
+      })
+    ]);
+
+    expect(response.ok && response.data.processed).toBe(1);
+    const [subscription, ...others] = await subscriptions();
+    expect(others).toHaveLength(0);
+    expect(subscription).toMatchObject({ providerSubscriptionId: 'sub_added_later', status: 'canceled' });
+    const entitlements = await billfn.getEntitlements({ principalId: 'sub_link_user' });
+    expect(entitlements.ok && entitlements.data.entitlements?.status).toBe('inactive');
+    expect(await unlinked()).toEqual([
+      expect.objectContaining({ providerEventId: 'evt_sub_link_cancel', status: 'replayed', subscriptionId: subscription?.id })
+    ]);
+  });
+
+  it('replays events for a reference that a replayed event adds', async () => {
+    const { billfn, subscriptions, unlinked, advance, checkout } = setup({ verifiedSubscriptionId: 'sub_chain' });
+    // Neither event can be linked yet; the second only reaches the subscription through the charge the first adds.
+    await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_chain_a_renewed',
+        subscriptionId: 'sub_chain',
+        chargeId: 'pay_chain',
+        status: 'active',
+        occurredAt: '2026-11-01T00:00:10.000Z'
+      })
+    ]);
+    advance(1000);
+    await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_chain_b_charge_failed',
+        chargeId: 'pay_chain',
+        status: 'expired',
+        occurredAt: '2026-11-01T00:00:20.000Z'
+      })
+    ]);
+    advance(1000);
+    const session = await checkout('chain_user');
+
+    const verified = await billfn.verifyCheckout({
+      subject: { principalId: 'chain_user' },
+      checkoutSessionId: session.checkoutSessionId
+    });
+
+    if (!verified.ok) {
+      throw new Error('expected verification');
+    }
+    expect(verified.data.subscription).toMatchObject({ providerChargeId: 'pay_chain', status: 'expired' });
+    expect(verified.data.entitlements.status).toBe('inactive');
+    expect(await subscriptions()).toEqual([expect.objectContaining({ status: 'expired' })]);
+    expect((await unlinked()).map((row) => [row.providerEventId, row.status])).toEqual([
+      ['evt_chain_a_renewed', 'replayed'],
+      ['evt_chain_b_charge_failed', 'replayed']
+    ]);
+  });
+
+  it('keeps a cancellation a webhook bootstraps while checkout verification reads the provider', async () => {
+    let during: () => Promise<void> = async () => undefined;
+    const { billfn, subscriptions, unlinked, advance, checkout } = setup({
+      verifiedSubscriptionId: 'sub_verify_bootstrap',
+      duringLiveRead: () => during()
+    });
+    const session = await checkout('verify_bootstrap_user');
+    advance(1000);
+    during = async () => {
+      advance(1000);
+      const bootstrapped = await deliver(billfn, [
+        subscriptionEvent({
+          eventId: 'evt_verify_bootstrap_cancel',
+          subscriptionId: 'sub_verify_bootstrap',
+          status: 'canceled',
+          occurredAt: '2026-11-01T00:00:02.000Z',
+          billingAccountId: 'ba_user_verify_bootstrap_user'
+        })
+      ]);
+      expect(bootstrapped.ok && bootstrapped.data.processed).toBe(1);
+    };
+
+    const verified = await billfn.verifyCheckout({
+      subject: { principalId: 'verify_bootstrap_user' },
+      checkoutSessionId: session.checkoutSessionId
+    });
+
+    // The provider read started before the cancellation, so its active state is stale.
+    if (!verified.ok) {
+      throw new Error('expected verification');
+    }
+    expect(verified.data.subscription.status).toBe('canceled');
+    expect(verified.data.entitlements.status).toBe('inactive');
+    expect(verified.data.checkoutSession).toMatchObject({ status: 'succeeded', providerSubscriptionId: 'sub_verify_bootstrap' });
+    const [subscription, ...others] = await subscriptions();
+    expect(others).toHaveLength(0);
+    expect(subscription).toMatchObject({
+      status: 'canceled',
+      providerCheckoutId: session.providerCheckoutId,
+      metadata: expect.objectContaining({ billfnProviderEventOccurredAt: '2026-11-01T00:00:02.000Z' })
+    });
+    const entitlements = await billfn.getEntitlements({ principalId: 'verify_bootstrap_user' });
+    expect(entitlements.ok && entitlements.data.entitlements?.status).toBe('inactive');
+    expect(await unlinked()).toHaveLength(0);
+  });
+
+  it('keeps a cancellation a webhook bootstraps while a restore reads the provider', async () => {
+    let during: () => Promise<void> = async () => undefined;
+    const { billfn, subscriptions, advance } = setup({
+      verifiedSubscriptionId: 'sub_restore_bootstrap',
+      duringLiveRead: () => during()
+    });
+    await billfn.quotaProvider.recordUsage({ principalId: 'restore_bootstrap_user', bytes: 0 });
+    during = async () => {
+      advance(1000);
+      await deliver(billfn, [
+        subscriptionEvent({
+          eventId: 'evt_restore_bootstrap_cancel',
+          subscriptionId: 'sub_restore_bootstrap',
+          status: 'canceled',
+          occurredAt: '2026-11-01T00:00:01.000Z',
+          billingAccountId: 'ba_user_restore_bootstrap_user'
+        })
+      ]);
+    };
+
+    const restored = await billfn.restorePurchases({
+      subject: { principalId: 'restore_bootstrap_user' },
+      provider: 'dodo',
+      planKey: 'pro'
+    });
+
+    if (!restored.ok) {
+      throw new Error('expected restore');
+    }
+    expect(restored.data.subscription.status).toBe('canceled');
+    expect(restored.data.entitlements.status).toBe('inactive');
+    expect(await subscriptions()).toEqual([expect.objectContaining({ status: 'canceled' })]);
+    const entitlements = await billfn.getEntitlements({ principalId: 'restore_bootstrap_user' });
+    expect(entitlements.ok && entitlements.data.entitlements?.status).toBe('inactive');
   });
 });
