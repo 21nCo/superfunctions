@@ -1363,4 +1363,192 @@ describe('webhook events for subscriptions BillFn has not seen', () => {
     const [row] = await db.findMany<BillFnUnlinkedWebhookEvent>({ model: 'unlinkedWebhookEvents', where: [], namespace: 'billfn' });
     expect(row).toMatchObject({ providerEventId: 'evt_sync_retry_failed', status: 'replayed', subscriptionId: bootstrapped?.id });
   });
+
+  it('replays events after one whose reference an earlier replayed event replaced', async () => {
+    const { billfn, subscriptions, unlinked, advance, receipt } = setup();
+    await billfn.quotaProvider.recordUsage({ principalId: 'churn_user', bytes: 0 });
+    // Retained in delivery order: a renewal moves the subscription to charge pay_churn_2, a payment
+    // failure names only the earlier charge pay_churn_1, then the subscription is canceled.
+    await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_churn_1_renewed',
+        subscriptionId: 'sub_churn',
+        chargeId: 'pay_churn_2',
+        status: 'active',
+        occurredAt: '2026-10-30T00:00:00.000Z'
+      })
+    ]);
+    advance(1000);
+    await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_churn_2_failed',
+        chargeId: 'pay_churn_1',
+        status: 'past_due',
+        occurredAt: '2026-10-30T12:00:00.000Z'
+      })
+    ]);
+    advance(1000);
+    await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_churn_3_canceled',
+        subscriptionId: 'sub_churn',
+        status: 'canceled',
+        occurredAt: '2026-10-31T00:00:00.000Z'
+      })
+    ]);
+    advance(1000);
+
+    // The bootstrap links sub_churn with the earlier charge pay_churn_1.
+    const result = await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_churn_0_bootstrap',
+        subscriptionId: 'sub_churn',
+        chargeId: 'pay_churn_1',
+        status: 'active',
+        occurredAt: '2026-10-29T00:00:00.000Z',
+        billingAccountId: 'ba_user_churn_user'
+      })
+    ]);
+
+    expect(result.ok && result.data).toMatchObject({ accepted: true, processed: 1 });
+    expect((await receipt('evt_churn_0_bootstrap'))?.processedAt).toBeTruthy();
+    const [subscription] = await subscriptions();
+    expect(subscription).toMatchObject({ providerChargeId: 'pay_churn_2', status: 'canceled' });
+    const entitlements = await billfn.getEntitlements({ principalId: 'churn_user' });
+    expect(entitlements.ok && entitlements.data.entitlements?.status).toBe('inactive');
+    // The payment failure for the replaced charge stays unlinked, as it would have been delivered in order.
+    expect((await unlinked()).map((row) => [row.providerEventId, row.status])).toEqual([
+      ['evt_churn_1_renewed', 'replayed'],
+      ['evt_churn_2_failed', 'unlinked'],
+      ['evt_churn_3_canceled', 'replayed']
+    ]);
+  });
+
+  it.each([
+    ['cancelSubscription', 'billfn.subscription.cancel.requested'],
+    ['changeSubscription', 'billfn.subscription.change.requested'],
+    ['resumeSubscription', 'billfn.subscription.resume.requested'],
+    ['refundCharge', 'billfn.refund.requested']
+  ] as const)(
+    'completes %s once the provider applied it while a retained event is held, and replays the event later',
+    async (operation, billingEventType) => {
+      const db = memoryAdapter({ debug: false });
+      const clock = { current: new Date('2026-11-01T00:00:00.000Z') };
+      const queue = new MemoryQueueAdapter<BillFnQueuedJob>({ now: () => clock.current.getTime() });
+      const providerCalls: string[] = [];
+      // Each mutation's response carries the charge pay_mut_next, which a retained event names.
+      const operationResult = (status: SubscriptionStatus) => ({
+        operationStatus: 'applied' as const,
+        providerRefundId: 're_mut',
+        billingState: {
+          subscriptionStatus: status,
+          checkoutStatus: 'succeeded' as const,
+          providerSubscriptionId: 'sub_mut',
+          providerChargeId: 'pay_mut_next',
+          autoRenew: status === 'active'
+        }
+      });
+      const base = createProvider({ syncedChargeId: 'pay_mut_next' });
+      const provider: BillFnProviderAdapter = {
+        ...base,
+        capabilities: {
+          ...base.capabilities,
+          cancelSubscription: true,
+          changeSubscription: true,
+          resumeSubscription: true,
+          refundCharge: true
+        },
+        async cancelSubscription() {
+          providerCalls.push('cancelSubscription');
+          return operationResult('canceled');
+        },
+        async changeSubscription() {
+          providerCalls.push('changeSubscription');
+          return operationResult('active');
+        },
+        async resumeSubscription() {
+          providerCalls.push('resumeSubscription');
+          return operationResult('active');
+        },
+        async refundCharge() {
+          providerCalls.push('refundCharge');
+          return operationResult('active');
+        }
+      };
+      const config = { db, catalog, queue, now: () => clock.current, providers: { dodo: provider } };
+      const billfn = createBillFn(config);
+      const worker = createBillFnReconciliationWorker(config);
+      await billfn.quotaProvider.recordUsage({ principalId: 'mut_user', bytes: 0 });
+      await deliver(billfn, [
+        subscriptionEvent({
+          eventId: 'evt_mut_bootstrap',
+          subscriptionId: 'sub_mut',
+          chargeId: 'pay_mut_first',
+          status: 'active',
+          occurredAt: '2026-10-30T00:00:00.000Z',
+          billingAccountId: 'ba_user_mut_user'
+        })
+      ]);
+      await worker.runNext();
+      // An expiry for the next charge, dated after the mutation, retained because no subscription carries it yet.
+      await deliver(billfn, [
+        subscriptionEvent({
+          eventId: 'evt_mut_expired',
+          chargeId: 'pay_mut_next',
+          status: 'expired',
+          occurredAt: '2026-11-01T06:00:00.000Z'
+        })
+      ]);
+      await worker.runNext();
+      // Another replay run holds the retained event.
+      await db.updateMany({
+        model: 'unlinkedWebhookEvents',
+        where: [{ field: 'providerEventId', operator: 'eq', value: 'evt_mut_expired' }],
+        data: { status: 'replaying', replayClaimId: 'uwr_other', replayClaimedAt: clock.current.toISOString() },
+        namespace: 'billfn'
+      });
+      const subject = { principalId: 'mut_user' };
+
+      const response =
+        operation === 'cancelSubscription'
+          ? await billfn.cancelSubscription({ subject })
+          : operation === 'changeSubscription'
+            ? await billfn.changeSubscription({ subject, targetPriceId: 'price_pro_dodo_month' })
+            : operation === 'resumeSubscription'
+              ? await billfn.resumeSubscription({ subject })
+              : await billfn.refundCharge({ subject });
+
+      expect(response.ok).toBe(true);
+      expect(response.ok && response.data.subscription).toMatchObject({ providerChargeId: 'pay_mut_next' });
+      expect(providerCalls).toEqual([operation]);
+      const billingEvents = await db.findMany<{ type: string }>({
+        model: 'billingEvents',
+        where: [{ field: 'type', operator: 'eq', value: billingEventType }],
+        namespace: 'billfn'
+      });
+      expect(billingEvents).toHaveLength(1);
+      const [held] = await db.findMany<BillFnUnlinkedWebhookEvent>({
+        model: 'unlinkedWebhookEvents',
+        where: [{ field: 'providerEventId', operator: 'eq', value: 'evt_mut_expired' }],
+        namespace: 'billfn'
+      });
+      expect(held).toMatchObject({ status: 'replaying', replayClaimId: 'uwr_other' });
+
+      // The subscription sync the mutation enqueued replays the event once the other run's lease expires.
+      clock.current = new Date(clock.current.getTime() + REPLAY_LEASE_MS);
+      expect(await worker.runNext()).toMatchObject({ status: 'succeeded' });
+      expect(providerCalls).toEqual([operation]);
+      expect(await db.findMany<BillFnSubscription>({ model: 'subscriptions', where: [], namespace: 'billfn' })).toEqual([
+        expect.objectContaining({ providerChargeId: 'pay_mut_next', status: 'expired' })
+      ]);
+      const entitlements = await billfn.getEntitlements(subject);
+      expect(entitlements.ok && entitlements.data.entitlements?.status).toBe('inactive');
+      const [replayed] = await db.findMany<BillFnUnlinkedWebhookEvent>({
+        model: 'unlinkedWebhookEvents',
+        where: [{ field: 'providerEventId', operator: 'eq', value: 'evt_mut_expired' }],
+        namespace: 'billfn'
+      });
+      expect(replayed).toMatchObject({ status: 'replayed' });
+    }
+  );
 });

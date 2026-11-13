@@ -38,10 +38,14 @@ Linking covers every reference a subscription gains, not only the first one. Whe
 
 An event that finds no link is checked again before it is stored: if another delivery or a verification linked its reference in the meantime, the event is applied to that subscription instead. An event stored while a link commits is replayed right after it is stored.
 
-The operation that triggered a replay succeeds only once every retained event for the reference is `replayed` or `skipped`:
+A replayed event can replace one of the subscription's references, for example a renewal that moves it to a new charge. A retained event that names only the replaced reference then no longer resolves to the subscription. It stays `unlinked`, as it would have if the events had been delivered in order, and is replayed if its reference is linked again. The replay continues with the events after it.
 
-- A replay stops at an event it cannot apply and leaves it and the later events `unlinked`, with the error recorded. The operation then fails with that error: the webhook receipt stays unprocessed and the provider redelivers it (with a queue, the webhook job fails and can be rerun with `webhook-replay`), and checkout verification, restore, sync or the provider operation can be called again (a queued sync job is retried after a lease conflict like a webhook job).
+Except after a provider mutation (below), the operation that triggered a replay succeeds only once every retained event for the reference that still resolves to the subscription is `replayed` or `skipped`:
+
+- A replay stops at an event it cannot apply and leaves it and the later events `unlinked`, with the error recorded. The operation then fails with that error: the webhook receipt stays unprocessed and the provider redelivers it (with a queue, the webhook job fails and can be rerun with `webhook-replay`), and checkout verification, restore or sync can be called again (a queued sync job is retried after a lease conflict like a webhook job).
 - An event claimed by another replay run, including a run interrupted before it released the event, holds its claim for 15 minutes. The operation fails with `BILLFN_CONFLICT` until the claim is finished or expires, and the next attempt after expiry takes the claim over. Without a queue the provider redelivers the webhook; with a queue the webhook or sync job message is retried after the lease, like any lease conflict.
+
+Cancel, change, resume and refund are different: once the provider has applied the mutation, retrying the call would repeat it (a second refund, for example). They save the provider's state, record their `*.requested` billing event and return their result even when the replay does not finish. The unfinished events stay retained, the `webhook.unlinked.replay_deferred` metric is recorded, and with a queue and a provider that supports subscription sync a `subscription-sync` job is enqueued to replay them. Otherwise the next webhook, sync or live read for the subscription replays them.
 
 ## Worker
 
