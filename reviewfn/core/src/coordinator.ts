@@ -228,7 +228,7 @@ export class ReviewCoordinator {
       const range = `${from}..${change.headCommit}`;
       try {
         const captured = await changeHunks(root, from, change.headCommit, maxBytes, request.signal);
-        if (captured.status === "too_large") { coverageReasons.push(`${label} diff ${range} exceeds maxOutputBytes (${captured.limitBytes}); its hunks were not parsed.`); return undefined; }
+        if (captured.status === "too_large") { coverageReasons.push(`${label} diff ${range} exceeds maxOutputBytes (${captured.limitBytes}) as raw or decoded UTF-8 bytes; its hunks were not parsed.`); return undefined; }
         if (captured.hunks.baseCommit !== from || captured.hunks.headCommit !== change.headCommit) { coverageReasons.push(`${label} hunks do not cover ${range}.`); return undefined; }
         return captured.hunks;
       } catch (error) {

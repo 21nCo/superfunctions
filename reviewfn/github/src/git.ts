@@ -5,7 +5,9 @@ import { createHash } from "node:crypto";
 import { changeHunksDiffArguments, isolatedGitEnvironment, isCommitId, parseChangeHunks, resolveTrustedExecutable, compareCodePoints, sha256, type ChangeHunksCapture, type ChangeSnapshot, type CodeAnchor, type SourceControlAdapter } from "@superfunctions/reviewfn-core";
 
 const execFileAsync = promisify(execFile);
-export type GitRunner = (args: string[], cwd: string) => Promise<string>;
+/** Capture controls for a bounded read. A runner should stop its work when `signal` aborts, and once its output exceeds `maxBytes` it may stop and resolve that partial output (anything over `maxBytes` bytes is reported as too large, never parsed). */
+export interface GitRunOptions { signal?: AbortSignal; maxBytes?: number }
+export type GitRunner = (args: string[], cwd: string, options?: GitRunOptions) => Promise<string>;
 const defaultRunner: GitRunner = async (args, cwd) => {
   const [command, ...parameters] = args;
   const options = { cwd, env: isolatedGitEnvironment(), maxBuffer: 50 * 1024 * 1024 };
@@ -77,15 +79,16 @@ export class GitSourceControlAdapter implements SourceControlAdapter {
 
   /**
    * Hunk-level model of `from..to` in the owned checkout. One capture contract for both the subprocess
-   * and a configured runner: cancellation is checked before and after the capture, and the diff is not
-   * parsed when its raw bytes (where observable) or its decoded UTF-8 length exceed `maxBytes`.
+   * and a configured runner: both receive the abort signal and byte limit, an abort settles the capture
+   * without waiting for the runner, and the diff is not parsed when its raw bytes or its decoded UTF-8
+   * length exceed `maxBytes`.
    */
   public async changeHunks(root: string, from: string, to: string, maxBytes: number, signal?: AbortSignal): Promise<ChangeHunksCapture> {
     if (!isCommitId(from) || !isCommitId(to)) throw new Error("Change hunks require full commit IDs.");
     if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) throw new Error("Change hunks require a positive byte limit.");
     if (signal?.aborted) throw new Error(CAPTURE_CANCELED);
     const args = changeHunksDiffArguments(from, to);
-    const diff = this.options.runner ? await this.runner(["diff", ...args], root) : await boundedDiff(root, args, maxBytes, signal);
+    const diff = this.options.runner ? await untilAborted(this.runner(["diff", ...args], root, { signal, maxBytes }), signal) : await boundedDiff(root, args, maxBytes, signal);
     if (signal?.aborted) throw new Error(CAPTURE_CANCELED);
     // Decoding invalid UTF-8 substitutes U+FFFD (3 bytes per invalid byte), so the decoded text can outgrow the raw budget.
     if (diff === undefined || Buffer.byteLength(diff, "utf8") > maxBytes) return { status: "too_large", limitBytes: maxBytes };
@@ -160,6 +163,17 @@ async function streamDiffDigest(root: string, base: string, head: string): Promi
 }
 
 const CAPTURE_CANCELED = "Change hunk capture canceled.";
+
+/** Settle with a cancellation error as soon as `signal` aborts, without waiting for `work`. */
+function untilAborted<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return work;
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(new Error(CAPTURE_CANCELED));
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+    work.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
+}
 
 /** Run `git diff` and return its output, or undefined once its raw bytes exceed `maxBytes` (the process is stopped). */
 async function boundedDiff(root: string, args: string[], maxBytes: number, signal?: AbortSignal): Promise<string | undefined> {

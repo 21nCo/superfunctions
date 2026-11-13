@@ -8,7 +8,7 @@ import {
   DEFAULT_CONFIG, DEFAULT_POLICY, ReviewCoordinator, ReviewFnError, changeHunksDiffArguments, isolatedGitEnvironment, sha256, validateReport,
   type ArtifactStore, type ContextAdapter, type Evidence, type ContextManifest, type ExecutionAdapter, type HarnessAdapter, type HarnessOutput, type ReviewReport,
 } from "@superfunctions/reviewfn-core";
-import { GitSourceControlAdapter } from "../src/index.js";
+import { GitSourceControlAdapter, type GitRunOptions } from "../src/index.js";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
@@ -131,6 +131,23 @@ describe("GitSourceControlAdapter.changeHunks", { timeout: 30_000 }, () => {
     await expect(runnerWith("", () => during.abort()).changeHunks(".", from, to, 100, during.signal)).rejects.toThrow("Change hunk capture canceled.");
     expect(calls).toHaveLength(1);
     expect(await runnerWith("").changeHunks(".", from, to, 100)).toEqual({ status: "parsed", hunks: { version: 1, baseCommit: from, headCommit: to, files: [] } });
+  });
+
+  it("passes the signal and limit to a configured runner and settles an abort while the runner is pending", async () => {
+    const [from, to] = ["a".repeat(40), "b".repeat(40)];
+    let received: GitRunOptions | undefined;
+    let stopped = false;
+    const pending = new GitSourceControlAdapter({ runner: (_args, _cwd, options) => { received = options; return new Promise<string>(() => { options?.signal?.addEventListener("abort", () => { stopped = true; }); }); } });
+    const controller = new AbortController();
+    const capture = pending.changeHunks(".", from, to, 100, controller.signal);
+    await Promise.resolve();
+    expect(received).toEqual({ signal: controller.signal, maxBytes: 100 });
+    controller.abort();
+    await expect(capture).rejects.toThrow("Change hunk capture canceled.");
+    expect(stopped).toBe(true);
+    // A runner that stops at the limit resolves partial output; it is reported as too large, never parsed.
+    const bounded = new GitSourceControlAdapter({ runner: async (_args, _cwd, options) => "diff --git a/x".padEnd((options?.maxBytes ?? 0) + 1, "x") });
+    expect(await bounded.changeHunks(".", from, to, 100)).toEqual({ status: "too_large", limitBytes: 100 });
   });
 
   it("rejects an already-aborted capture without running git", async () => {
