@@ -1,0 +1,157 @@
+compfn/COMPFN_APPROACH.md
+  s_e1c5fc1a65c0cf::t_a51a214376d824 1-171
+compfn/LICENSE
+  s_e1c5fc1a65c0cf::t_86527d9a3b33f3 1-21
+compfn/README.md
+  s_e1c5fc1a65c0cf::t_d4c3bf85b62059 1-723
+compfn/admin/LICENSE
+  s_e1c5fc1a65c0cf::t_a2da8d77b2be17 1-21
+compfn/admin/README.md
+  s_e1c5fc1a65c0cf::t_b0eefaefe66767 1-11
+compfn/admin/package.json
+  s_e1c5fc1a65c0cf::t_957958c817134a 1-47
+compfn/admin/src/__tests__/admin.test.ts
+  s_e1c5fc1a65c0cf::t_cd36ee71a86341 1-130
+compfn/admin/src/__tests__/dispatcher.test.ts
+  s_e1c5fc1a65c0cf::t_b4b3b09dd51117 1-43
+compfn/admin/src/domain-service.ts
+  s_e1c5fc1a65c0cf::t_bc6210bb99fb33 1-110
+compfn/admin/src/index.ts
+  s_e1c5fc1a65c0cf::t_12ca038770df53 1-663
+compfn/admin/src/pagination.ts
+  s_e1c5fc1a65c0cf::t_84719daf52552c 1-84
+compfn/admin/tsconfig.json
+  s_e1c5fc1a65c0cf::t_048e81d89587c9 1-33
+compfn/admin/vitest.config.ts
+  s_e1c5fc1a65c0cf::t_f6d6e3e51e2720 1-8
+compfn/bundles/README.md
+  s_e1c5fc1a65c0cf::t_47f2512340d784 1-165
+compfn/bundles/soc2-type2.json
+  s_e1c5fc1a65c0cf::t_231a1c0e22ca13 1-593
+compfn/cli/src/commands/attest.ts
+  s_e1c5fc1a65c0cf::t_799d6acec38c3d 1-31
+compfn/cli/src/commands/export.ts
+  s_e1c5fc1a65c0cf::t_7fb790a5213418 1-34
+compfn/cli/src/commands/init.ts
+  s_e1c5fc1a65c0cf::t_6a3e7fd4a2bf4f 1-21
+compfn/cli/src/commands/run-checks.ts
+  s_e1c5fc1a65c0cf::t_1756293624e1d1 1-53
+compfn/cli/src/config.ts
+  s_e1c5fc1a65c0cf::t_3bc7f6baa3f633 1-66
+compfn/cli/src/index.ts
+  s_e1c5fc1a65c0cf::t_2c4abef4dc191a 1-46
+compfn/cli/tsconfig.json
+  s_e1c5fc1a65c0cf::t_c005d4e4ad10e3 1-9
+compfn/package.json
+  s_e1c5fc1a65c0cf::t_dcf3a8c35e4ccf 1-65
+compfn/scripts/packed-consumer.mjs
+  s_e1c5fc1a65c0cf::t_6c8c5764be2366 1-50
+compfn/src/__tests__/adapters.test.ts
+  s_e1c5fc1a65c0cf::t_48efb5f8164501 1-207
+compfn/src/__tests__/bundle.test.ts
+  s_e1c5fc1a65c0cf::t_b4f840dce40e0e 1-267
+compfn/src/__tests__/checks.test.ts
+  s_e1c5fc1a65c0cf::t_d0225d489abea9 1-308
+compfn/src/__tests__/cli-persistent.test.ts
+  s_e1c5fc1a65c0cf::t_13302d5fde2417 1-76
+compfn/src/__tests__/cli.test.ts
+  s_e1c5fc1a65c0cf::t_9046dac805c118 1-41
+compfn/src/__tests__/controls.test.ts
+  s_e1c5fc1a65c0cf::t_e37ad1b6496d19 1-158
+compfn/src/__tests__/evidence.test.ts
+  s_e1c5fc1a65c0cf::t_5204c4903bcefc 1-421
+compfn/src/__tests__/export.test.ts
+  s_e1c5fc1a65c0cf::t_bce1e43b3a139c 1-167
+compfn/src/__tests__/failure-envelopes.test.ts
+  s_e1c5fc1a65c0cf::t_6a727b61a542e7 1-71
+compfn/src/__tests__/frameworks.test.ts
+  s_e1c5fc1a65c0cf::t_ed7b94528f857b 1-261
+compfn/src/__tests__/http.test.ts
+  s_e1c5fc1a65c0cf::t_14c982e87185bd 1-374
+compfn/src/__tests__/observability.test.ts
+  s_e1c5fc1a65c0cf::t_1a99cf92f889d0 1-24
+compfn/src/__tests__/provider.test.ts
+  s_e1c5fc1a65c0cf::t_10aed291426786 1-139
+compfn/src/__tests__/readiness.test.ts
+  s_e1c5fc1a65c0cf::t_2c50c842ed784f 1-195
+compfn/src/__tests__/schema.test.ts
+  s_e1c5fc1a65c0cf::t_b0fd29c15c2a17 1-61
+compfn/src/adapters/authfn.ts
+  s_e1c5fc1a65c0cf::t_48700591296c77 1-86
+compfn/src/adapters/secfn.ts
+  s_e1c5fc1a65c0cf::t_375049646603e1 1-87
+compfn/src/adapters/types.ts
+  s_e1c5fc1a65c0cf::t_15f853ef43eea0 1-49
+compfn/src/api.ts
+  s_e1c5fc1a65c0cf::t_55eb2280b6029f 1-74
+compfn/src/bundles/loader.ts
+  s_e1c5fc1a65c0cf::t_04f20148f3207e 1-117
+compfn/src/check.ts
+  s_e1c5fc1a65c0cf::t_f5a5822503638c 1-24
+compfn/src/checks/service.ts
+  s_e1c5fc1a65c0cf::t_23be8479fa26fa 1-333
+compfn/src/compfn.ts
+  s_e1c5fc1a65c0cf::t_df737950a56375 1-111
+compfn/src/constants.ts
+  s_e1c5fc1a65c0cf::t_639719357e0319 1-18
+compfn/src/control.ts
+  s_e1c5fc1a65c0cf::t_4158d6e72e48e6 1-27
+compfn/src/controls/service.ts
+  s_e1c5fc1a65c0cf::t_acbec82401367d 1-282
+compfn/src/errors.ts
+  s_e1c5fc1a65c0cf::t_eeb71361bda949 1-32
+compfn/src/evidence.ts
+  s_e1c5fc1a65c0cf::t_bad30c4d14c6fe 1-62
+compfn/src/evidence/service.ts
+  s_e1c5fc1a65c0cf::t_5db733ad913b25 1-260
+compfn/src/export-types.ts
+  s_e1c5fc1a65c0cf::t_6101d93ddcfdad 1-16
+compfn/src/export/service.ts
+  s_e1c5fc1a65c0cf::t_231b9745173b3d 1-145
+compfn/src/framework.ts
+  s_e1c5fc1a65c0cf::t_dbc9f971e23da2 1-26
+compfn/src/frameworks/service.ts
+  s_e1c5fc1a65c0cf::t_8d2abfe62b56d8 1-305
+compfn/src/http/routes.ts
+  s_e1c5fc1a65c0cf::t_6cf4e17fba95c9 1-195
+compfn/src/index.ts
+  s_e1c5fc1a65c0cf::t_cd07db5da90f3f 1-27
+compfn/src/logger.ts
+  s_e1c5fc1a65c0cf::t_99f030cbdcded7 1-51
+compfn/src/readiness.ts
+  s_e1c5fc1a65c0cf::t_1f0a4f34e1aea9 1-20
+compfn/src/readiness/service.ts
+  s_e1c5fc1a65c0cf::t_49f98f0f3067c6 1-203
+compfn/src/storage/adapter.ts
+  s_e1c5fc1a65c0cf::t_e34f634157e54b 1-47
+compfn/src/storage/schema.ts
+  s_e1c5fc1a65c0cf::t_745d77d0f463f2 1-108
+compfn/src/types.ts
+  s_e1c5fc1a65c0cf::t_8c1425c9d0da8c 1-45
+compfn/src/validation.ts
+  s_e1c5fc1a65c0cf::t_985c6a347bf96d 1-609
+compfn/tsconfig.json
+  s_e1c5fc1a65c0cf::t_01caad01265111 1-20
+compfn/vitest.config.ts
+  s_e1c5fc1a65c0cf::t_adbadf04d44760 1-15
+package-lock.json
+  s_e1c5fc1a65c0cf::t_49fe4e5714bfd3 53-54,7537-9190,25569-25572,28570,37808-37811
+package.json
+  s_e1c5fc1a65c0cf::t_c05ca3b3fd672b 48-49
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "125f328c57e249ed49df7700e30b41d92667df79",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

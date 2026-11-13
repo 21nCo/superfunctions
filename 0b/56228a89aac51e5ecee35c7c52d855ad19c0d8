@@ -1,0 +1,25 @@
+logfn/.conduct/response-correlation-readiness.md
+  s_e1c5fc1a65c0cf::t_5fe36453a6a4de 5,16-31
+logfn/scripts/workerd-response-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_e670b9790122f5 1-58
+logfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_810a7ee22a5c2e 358
+logfn/typescript/src/http/middleware.ts
+  s_e1c5fc1a65c0cf::t_8000c2345f266b 108-111
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0b56228a89aac51e5ecee35c7c52d855ad19c0d8",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,163 @@
+cachefn/.conduct/pr-destination.md
+  s_e1c5fc1a65c0cf::t_8515fb2e0d1c2c 1-5
+cachefn/README.md
+  s_e1c5fc1a65c0cf::t_f51b5eec7b2bd4 9-11,15-21,29,36,53,63,65,79,81,85,96,98,100,110,139,144-180
+cachefn/SPEC.md
+  s_e1c5fc1a65c0cf::t_29bf517ed16736 9-10,50-52,62-64,74-76,86-88,153-154,324,346-348,392,973,1016,1020,1056,1061,1094,1100,1124,1129
+cachefn/V0_SPEC.md
+  s_e1c5fc1a65c0cf::t_c31f7092c40d1a 9-10,26-35,39-47,123,129,133,136,138,165,202,204,210,249,251,411,416-418,420,425,431,435,617,622,624-627,642-644,703,737,741,785,791,805,810
+cachefn/admin/LICENSE
+  s_e1c5fc1a65c0cf::t_e1bb829918560c 1-21
+cachefn/admin/README.md
+  s_e1c5fc1a65c0cf::t_25d5affffe5e24 1-67
+cachefn/admin/package.json
+  s_e1c5fc1a65c0cf::t_282b34829f2d83 36-37,40,42
+cachefn/admin/src/__tests__/dispatcher.test.ts
+  s_e1c5fc1a65c0cf::t_f9c413801561c6 1-60
+cachefn/python/README.md
+  s_e1c5fc1a65c0cf::t_3ea1fabadbbfd2 5,9-11,15-20,95,98,135,221,227-244
+cachefn/python/cachefn/__init__.py
+  s_e1c5fc1a65c0cf::t_1f836487026486 6,9,13,20,26,29
+cachefn/python/cachefn/core/cache.py
+  s_e1c5fc1a65c0cf::t_5e034a858d3f1f 5-6,45-46,114,135-136,176-177,189-190,284,287-313,334-337,342,365-367,404-406,412,455-456
+cachefn/python/cachefn/core/events.py
+  s_e1c5fc1a65c0cf::t_ab3ad1b0f2e459 6,32,43
+cachefn/python/cachefn/core/types.py
+  s_e1c5fc1a65c0cf::t_58dc754558f1d5 5,7,27,36,48,62,79,143
+cachefn/python/cachefn/memoization/memoize.py
+  s_e1c5fc1a65c0cf::t_9bb58df941c9c0 6-8,56-58,116,121-123,139,151-156,158-160,176,178-180,182,184-187,189-190,193-198,202,222-231,237,259-261,264
+cachefn/python/cachefn/storage/memory_storage.py
+  s_e1c5fc1a65c0cf::t_5ac7f4ede0e38c 7,24-27,31-32,34,76-80,91,169,180,193,198-202,212
+cachefn/python/cachefn/utils/hash.py
+  s_e1c5fc1a65c0cf::t_0b95683cc3605d 20-49
+cachefn/python/cachefn/utils/pattern.py
+  s_e1c5fc1a65c0cf::t_a11b6c579bffb4 45-47
+cachefn/python/tests/test_cache.py
+  s_e1c5fc1a65c0cf::t_8745201780c4fb 6,8-9
+cachefn/python/tests/test_eager_tasks.py
+  s_e1c5fc1a65c0cf::t_044be3e4aff64a 1-63
+cachefn/python/tests/test_memoize.py
+  s_e1c5fc1a65c0cf::t_c16833600f03f8 6,8,101,108
+cachefn/python/tests/test_readiness.py
+  s_e1c5fc1a65c0cf::t_569ec9480b4a3f 1-204
+cachefn/python/tests/test_utils.py
+  s_e1c5fc1a65c0cf::t_1afcb3f04d4aa7 8-12
+cachefn/typescript/HTTP_CACHING.md
+  s_e1c5fc1a65c0cf::t_45a3ae6dcbbc95 1-19
+cachefn/typescript/LICENSE
+  s_e1c5fc1a65c0cf::t_766f1cb0b59d4a 1-21
+cachefn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_9f8781ae54e9b1 9-15,20-23,25,28-32,38,55,67,70,88-91,96,126,147,200,203,299,301-303,306-327,329-338,340-346,348-535,544-623
+cachefn/typescript/SERIALIZATION.md
+  s_e1c5fc1a65c0cf::t_853fb9113444c8 1-31
+cachefn/typescript/__tests__/adaptive-memory.test.ts
+  s_e1c5fc1a65c0cf::t_e131b0bbd452d5 1-83
+cachefn/typescript/__tests__/auto-local-storage.test.ts
+  s_e1c5fc1a65c0cf::t_94393206851832 1-153
+cachefn/typescript/__tests__/boundary-contracts.test.ts
+  s_e1c5fc1a65c0cf::t_bccd63c65add55 1-91
+cachefn/typescript/__tests__/cache-access.test.ts
+  s_e1c5fc1a65c0cf::t_98658c01dd727b 1-80
+cachefn/typescript/__tests__/cache-fetch.test.ts
+  s_e1c5fc1a65c0cf::t_127e72a4cfca10 1-40
+cachefn/typescript/__tests__/factory-convenience.test.ts
+  s_e1c5fc1a65c0cf::t_5c21776e1b997a 1-75
+cachefn/typescript/__tests__/http-middleware.test.ts
+  s_e1c5fc1a65c0cf::t_bb39473da0b768 1-153
+cachefn/typescript/__tests__/indexeddb-storage.test.ts
+  s_e1c5fc1a65c0cf::t_d613864819b99f 1-122
+cachefn/typescript/__tests__/key-contract.test.ts
+  s_e1c5fc1a65c0cf::t_c8923a5634edc6 1-26
+cachefn/typescript/__tests__/memoize.test.ts
+  s_e1c5fc1a65c0cf::t_943039ce775ee3 1-89
+cachefn/typescript/__tests__/memory-concurrency.test.ts
+  s_e1c5fc1a65c0cf::t_94b924c5b567a6 1-48
+cachefn/typescript/__tests__/memory-storage-consistency.test.ts
+  s_e1c5fc1a65c0cf::t_d01325bdd3c760 1-83
+cachefn/typescript/__tests__/namespace.test.ts
+  s_e1c5fc1a65c0cf::t_b88fa6914e888e 1-70
+cachefn/typescript/__tests__/offline-cache.test.ts
+  s_e1c5fc1a65c0cf::t_9b72d313f8a49c 1-136
+cachefn/typescript/__tests__/serialization.test.ts
+  s_e1c5fc1a65c0cf::t_ac273ed4d3ab8b 1-78
+cachefn/typescript/examples/browser-app.html
+  s_e1c5fc1a65c0cf::t_22845d47d9942f 86
+cachefn/typescript/examples/ecosystem.ts
+  s_e1c5fc1a65c0cf::t_ede2d2a915ea3f 1-62
+cachefn/typescript/examples/express-api.ts
+  s_e1c5fc1a65c0cf::t_b3270d0e66299a 10-12,156
+cachefn/typescript/package.json
+  s_e1c5fc1a65c0cf::t_908b4f14800fdf 3,11-18,28,31-34,52,64-67,69-70,73
+cachefn/typescript/scripts/benchmark.mjs
+  s_e1c5fc1a65c0cf::t_9b773a517161b8 1-78
+cachefn/typescript/scripts/browser-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_60b14d5b380f2b 1-204
+cachefn/typescript/scripts/delivery-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_72355398c3cf43 1-45
+cachefn/typescript/scripts/ecosystem-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_3663ec54bc8f05 1-37
+cachefn/typescript/scripts/ecosystem-scenarios.ts
+  s_e1c5fc1a65c0cf::t_a410a4eb12c014 1-49
+cachefn/typescript/scripts/packed-consumer.mjs
+  s_e1c5fc1a65c0cf::t_1408b99513ec3d 1-47
+cachefn/typescript/src/core/cache.ts
+  s_e1c5fc1a65c0cf::t_17c0ad15b5a464 7-10,18-19,24,31-33,36-52,63-120,133,135,138,148,150,157,165,181,186,195-209,244-245,254,260-326,328-329,331-335,337-409,423-425,444-449,453,463-465,475-479,481,487-488,527,531-543,556,558,567-583
+cachefn/typescript/src/core/events.ts
+  s_e1c5fc1a65c0cf::t_344b0f51a21e53 39,53
+cachefn/typescript/src/core/types.ts
+  s_e1c5fc1a65c0cf::t_65c6f41abb3c49 8,13-22,24-34,39-44,57,64-85,90,133-134,184-219
+cachefn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_7c221827be03c6 11-17,27-28,32-35,46-47,75,82-83,88-103
+cachefn/typescript/src/memoization/compatible.ts
+  s_e1c5fc1a65c0cf::t_a79e9e910f593c 1-68
+cachefn/typescript/src/memoization/memoize.ts
+  s_e1c5fc1a65c0cf::t_bc75f4421a207c 1-2,4,6-18,20,24-28,30,33-46,48-69,72,74-75,80-81,84-85,88,93-104,106-115,117-127,129,131-133,135-136
+cachefn/typescript/src/middleware/express.ts
+  s_e1c5fc1a65c0cf::t_0d8e5aa0430ab4 1-3,5-6,10,12-22,25-46,48
+cachefn/typescript/src/middleware/fastify.ts
+  s_e1c5fc1a65c0cf::t_d97dbffd229b79 1-4,6-7,9,11-20,22-38
+cachefn/typescript/src/middleware/hono.ts
+  s_e1c5fc1a65c0cf::t_96ef578244ac55 1-3,5-6,10,12-21,23-48
+cachefn/typescript/src/middleware/http-cache.ts
+  s_e1c5fc1a65c0cf::t_e5de35261b6967 1-36
+cachefn/typescript/src/storage/auto-storage.ts
+  s_e1c5fc1a65c0cf::t_dfb5e2b3fb925d 1-119
+cachefn/typescript/src/storage/indexeddb-storage.ts
+  s_e1c5fc1a65c0cf::t_1150ccd5bb736a 1,6-7,20-21,23-49,51-52,54-68,71-75,79-81,83-85,87-94,96-101,106-107,112,116-120,125-139,144,147,150-151,155-158,163-166,171,175
+cachefn/typescript/src/storage/local-storage.ts
+  s_e1c5fc1a65c0cf::t_5333b6b2f3772b 1-94
+cachefn/typescript/src/storage/memory-storage.ts
+  s_e1c5fc1a65c0cf::t_fc8ed7b7048495 26,31-33,37-39,48,60-70,72-75,79,85,88,93,100,103,106-108,115,130,137,191-194,209-211,232,249,252,258-268,284,286-287,293-300,302
+cachefn/typescript/src/storage/storage-interface.ts
+  s_e1c5fc1a65c0cf::t_e7754f27abb3a6 11
+cachefn/typescript/src/strategies/ttl-manager.ts
+  s_e1c5fc1a65c0cf::t_d94e89da148d8a 11,31
+cachefn/typescript/src/utils/hash.ts
+  s_e1c5fc1a65c0cf::t_fb79301429b214 22-54
+cachefn/typescript/src/utils/pattern.ts
+  s_e1c5fc1a65c0cf::t_9573109bc16411 23-29
+cachefn/typescript/src/utils/serialize.ts
+  s_e1c5fc1a65c0cf::t_47b4de22a0a798 1-4,7-17,19-45,47-48,52-77,79-86,88-104,107-109,112,114-132
+cachefn/typescript/tsconfig.type-tests.json
+  s_e1c5fc1a65c0cf::t_9d56b150cdf991 1-6
+cachefn/typescript/type-tests/memoize.ts
+  s_e1c5fc1a65c0cf::t_58bc0323b8076a 1-22
+cachefn/typescript/type-tests/schema.ts
+  s_e1c5fc1a65c0cf::t_d5fcc3a8841219 1-48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4619ca91c09a46ef1e2d236eeb1b04be7b2eb676",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

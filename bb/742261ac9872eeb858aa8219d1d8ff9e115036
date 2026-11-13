@@ -1,0 +1,75 @@
+mdfn/docs/README.md
+  s_7d0a48f0aaecda::t_e6296322596ae7 25
+mdfn/docs/content/docs/reference/adapter-kit.md
+  s_7d0a48f0aaecda::t_615f3352fd2811 3
+mdfn/docs/content/docs/reference/ai.md
+  s_7d0a48f0aaecda::t_aea9753a15d333 3
+mdfn/docs/content/docs/reference/client.md
+  s_7d0a48f0aaecda::t_8c836026673edc 3
+mdfn/docs/content/docs/reference/collab.md
+  s_7d0a48f0aaecda::t_243893761cf719 3
+mdfn/docs/content/docs/reference/components-react.md
+  s_7d0a48f0aaecda::t_3a72b2c895c855 3
+mdfn/docs/content/docs/reference/components-solid.md
+  s_7d0a48f0aaecda::t_c85a2a47593503 3,7
+mdfn/docs/content/docs/reference/components-svelte.md
+  s_7d0a48f0aaecda::t_26eea31d624655 3
+mdfn/docs/content/docs/reference/components.md
+  s_7d0a48f0aaecda::t_528cce24b4a46d 3
+mdfn/docs/content/docs/reference/contentfn.md
+  s_7d0a48f0aaecda::t_d7138a4750f241 3
+mdfn/docs/content/docs/reference/core.md
+  s_7d0a48f0aaecda::t_4a5677ddbead85 3
+mdfn/docs/content/docs/reference/examples.md
+  s_7d0a48f0aaecda::t_288ed54b80a7f6 3
+mdfn/docs/content/docs/reference/extensions.md
+  s_7d0a48f0aaecda::t_6f43bea1bd7da8 3
+mdfn/docs/content/docs/reference/facade.md
+  s_7d0a48f0aaecda::t_f964d530a7ab8e 3
+mdfn/docs/content/docs/reference/filefn.md
+  s_7d0a48f0aaecda::t_67f7db607bb2a1 3
+mdfn/docs/content/docs/reference/index.md
+  s_7d0a48f0aaecda::t_d7105fc54ca288 8
+mdfn/docs/content/docs/reference/markdown.md
+  s_7d0a48f0aaecda::t_6d648099f4ee81 3
+mdfn/docs/content/docs/reference/overview.md
+  s_7d0a48f0aaecda::t_9209b9eb77046e 3,40
+mdfn/docs/content/docs/reference/react.md
+  s_7d0a48f0aaecda::t_cb4ca147049ebe 18-20,25
+mdfn/docs/content/docs/reference/registry.md
+  s_7d0a48f0aaecda::t_337aa0e7a76f65 3,6
+mdfn/docs/content/docs/reference/render.md
+  s_7d0a48f0aaecda::t_28e16b4719c5fe 3
+mdfn/docs/content/docs/reference/searchfn.md
+  s_7d0a48f0aaecda::t_f58bf2fc766ee8 3
+mdfn/docs/content/docs/reference/server.md
+  s_7d0a48f0aaecda::t_404fb83cc4a96c 3
+mdfn/docs/content/docs/reference/source.md
+  s_7d0a48f0aaecda::t_fd8501a91570d7 3
+mdfn/docs/content/docs/reference/testing.md
+  s_7d0a48f0aaecda::t_dd7f284ba3ca12 3
+mdfn/docs/content/docs/rendering-and-security.md
+  s_7d0a48f0aaecda::t_c012b2077c3574 6
+mdfn/docs/content/docs/server-and-storage.md
+  s_7d0a48f0aaecda::t_35b02efa4748ed 62,69,76,90
+mdfn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_d1bdfd2d4c5e01 120,132,142,158,189,202,206,214,226,241,257,303,332,344,356,381,388,401,438,485-487,492,517,520,527,541,551,618,663,686,768,775,782,796
+mdfn/docs/static/llms.txt
+  s_7d0a48f0aaecda::t_12a7262795a7fb 13-22,24-27,29-30,32-35,37,39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bb742261ac9872eeb858aa8219d1d8ff9e115036",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

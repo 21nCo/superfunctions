@@ -1,0 +1,41 @@
+testfn/.conduct/workspace-isolation.md
+  s_e1c5fc1a65c0cf::t_87803d53e3be22 1-40
+testfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_44e6f5cffa136a 272-292
+testfn/typescript/scripts/verify-workspaces.mjs
+  s_e1c5fc1a65c0cf::t_267b173e5e2247 1-39
+testfn/typescript/src/core/test-runner.ts
+  s_e1c5fc1a65c0cf::t_ebefa17fe692b0 1-2,48,68,77
+testfn/typescript/src/integrations/base-adapter.ts
+  s_e1c5fc1a65c0cf::t_b30ace1669567c 11-14
+testfn/typescript/src/integrations/jest-adapter.ts
+  s_e1c5fc1a65c0cf::t_e9a251b7eebf1f 8
+testfn/typescript/src/integrations/json-adapter.ts
+  s_e1c5fc1a65c0cf::t_c3f56a1e086c83 1,44-48,63,88-91,125-128
+testfn/typescript/src/integrations/playwright-adapter.ts
+  s_e1c5fc1a65c0cf::t_1a30512a15efc7 12,25,27,31,46,50-51
+testfn/typescript/src/integrations/process.ts
+  s_e1c5fc1a65c0cf::t_37f561e5bc3a70 14-19,41
+testfn/typescript/src/integrations/vitest-adapter.ts
+  s_e1c5fc1a65c0cf::t_8ccabe1d8c63a2 8
+testfn/typescript/src/types.ts
+  s_e1c5fc1a65c0cf::t_aee147a227b795 9-10,190-193,199-200
+testfn/typescript/tests/workspace.test.ts
+  s_e1c5fc1a65c0cf::t_bb1c9a02085607 1-62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "68e2dde643b18da9eb556075420830b1cca57381",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

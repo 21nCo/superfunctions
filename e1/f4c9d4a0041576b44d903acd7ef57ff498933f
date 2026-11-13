@@ -1,0 +1,65 @@
+devfn/docs/content/docs/reference/testing.md
+  s_e1c5fc1a65c0cf::t_1795b4364281d8 7-8
+devfn/testing/README.md
+  s_e1c5fc1a65c0cf::t_7d463c71490ee0 4-39
+devfn/testing/src/networking/approval.ts
+  s_e1c5fc1a65c0cf::t_c6797356ba210a 1-102
+devfn/testing/src/networking/cli.ts
+  s_e1c5fc1a65c0cf::t_e3f5b01ec56425 1-106
+devfn/testing/src/networking/drivers.ts
+  s_e1c5fc1a65c0cf::t_e6b530a4dd3445 1-522
+devfn/testing/src/networking/index.ts
+  s_e1c5fc1a65c0cf::t_b5c9cbf50aa221 1-8
+devfn/testing/src/networking/inventory.ts
+  s_e1c5fc1a65c0cf::t_a031e28dfbde43 1-110
+devfn/testing/src/networking/matrix.ts
+  s_e1c5fc1a65c0cf::t_2547dc715740ee 1-172
+devfn/testing/src/networking/receipt.ts
+  s_e1c5fc1a65c0cf::t_7e21e7d00ce6a9 1-90
+devfn/testing/src/networking/runner.ts
+  s_e1c5fc1a65c0cf::t_93ed6d20b38b0d 1-119
+devfn/testing/test/networking-qualification.test.ts
+  s_e1c5fc1a65c0cf::t_c68a232f61b796 1-254
+devfn/testing/package.json
+  s_e1c5fc1a65c0cf::t_1555fcf812749e 4,8,11
+devfn/testing/src/networking/live.ts
+  s_7572bbf6321786::t_d6d3cd87e39dd2 1-265
+devfn/testing/src/networking/prerequisites.ts
+  s_e1c5fc1a65c0cf::t_c46ea95655d356 1-142
+package-lock.json
+  s_e1c5fc1a65c0cf::t_f4b3db40069cb1 11019-11022
+devfn/docs/static/llms-full.txt
+  s_92427ff18a8304::t_1887c38857f9b1 479-480
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e1f4c9d4a0041576b44d903acd7ef57ff498933f",
+  "prompts": {},
+  "sessions": {
+    "s_7572bbf6321786": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a16274-bf3b-7d30-8b9b-ba488e95c36f",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_92427ff18a8304": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26336501-b0e6-4534-a7c2-345f5528a4ba",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,49 @@
+userfn/.conduct/survey-sdk-readiness.md
+  s_e1c5fc1a65c0cf::t_4c9422d81dcb18 1-53
+userfn/python/README.md
+  s_e1c5fc1a65c0cf::t_216253ea242ffc 410-434
+userfn/python/pyproject.toml
+  s_e1c5fc1a65c0cf::t_37f6f372f50984 12,16
+userfn/python/src/userfn/__init__.py
+  s_e1c5fc1a65c0cf::t_6d56f746dac476 1-2,10
+userfn/python/src/userfn/client.py
+  s_e1c5fc1a65c0cf::t_26c7b9e9d08fc5 1-2,20,41-45
+userfn/python/src/userfn/core/surveys_http.py
+  s_e1c5fc1a65c0cf::t_b8e1c530332cf8 1-77
+userfn/python/src/userfn/types.py
+  s_e1c5fc1a65c0cf::t_7c7348a47b60b3 129-130,258-265
+userfn/python/tests/test_surveys_http.py
+  s_e1c5fc1a65c0cf::t_faf9c2ac7cdf79 1-66
+userfn/service/README.md
+  s_e1c5fc1a65c0cf::t_317390ce3ebfec 235-236
+userfn/service/scripts/verify-survey-package.mjs
+  s_e1c5fc1a65c0cf::t_65cda6e5598a3d 1-71
+userfn/service/tests/surveys-http.test.ts
+  s_e1c5fc1a65c0cf::t_6c9e6787e0d580 1-4,36,43-44,89-114
+userfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_a24025096ec2d8 490-518
+userfn/typescript/src/__tests__/surveys-http.test.ts
+  s_e1c5fc1a65c0cf::t_a0157a179508b2 1-40
+userfn/typescript/src/core/surveys-http.ts
+  s_e1c5fc1a65c0cf::t_dd23b53fa1c33d 1-56
+userfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_e45249517632b3 1-2,31,61,163-168
+userfn/typescript/src/types.ts
+  s_e1c5fc1a65c0cf::t_a436ccdb895b72 126-127,237-238
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "584025f429629072ac4ecf792054c914b72437c2",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

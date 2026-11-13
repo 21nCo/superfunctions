@@ -1,0 +1,41 @@
+browsefn/.conduct/payload-cap-readiness.md
+  s_e1c5fc1a65c0cf::t_fdda189932542c 1-20
+browsefn/README.md
+  s_e1c5fc1a65c0cf::t_ad77064a66bc6b 330-339,438
+browsefn/python/browsefn/core/types.py
+  s_e1c5fc1a65c0cf::t_79c797f26ff183 359
+browsefn/python/browsefn/http/router.py
+  s_e1c5fc1a65c0cf::t_952e97499db5b8 24-25,47,51-57
+browsefn/python/browsefn/images/_transform.py
+  s_e1c5fc1a65c0cf::t_bd81a3b7f985ee 31-32
+browsefn/python/tests/test_payload_limits.py
+  s_e1c5fc1a65c0cf::t_a1cdcbaf5c8e8a 1-62
+browsefn/typescript/src/images/download.ts
+  s_e1c5fc1a65c0cf::t_506a891980a07d 17
+browsefn/typescript/src/images/transform.ts
+  s_e1c5fc1a65c0cf::t_a7b838ddd07975 21,30,81
+browsefn/typescript/src/router/http-router.ts
+  s_e1c5fc1a65c0cf::t_2b9ad52a140c8f 119-126
+browsefn/typescript/src/web/providers/browser-provider-utils.ts
+  s_e1c5fc1a65c0cf::t_a2bcb842a0f14b 1,61-67,86
+browsefn/typescript/tests/browser-isolation.acceptance.test.ts
+  s_e1c5fc1a65c0cf::t_7ba226beb7c289 32,108-112
+browsefn/typescript/tests/payload-limits.test.ts
+  s_e1c5fc1a65c0cf::t_fafe2b71f301d8 1-47
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "03344af2a778f3ace57f693a1d3c97d1c3af6994",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

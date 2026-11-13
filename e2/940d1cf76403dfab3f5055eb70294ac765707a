@@ -1,0 +1,129 @@
+flowfn/.conduct/python-ci-checkpoint-20261023.md
+  s_e1c5fc1a65c0cf::t_85362ca793cc00 1-90
+flowfn/python/benchmarks/native_queues.py
+  s_e1c5fc1a65c0cf::t_454216ed150dc9 16,46-51,84-86
+flowfn/python/flowfn/__init__.py
+  s_e1c5fc1a65c0cf::t_a8a0cb0a9389d8 7-8
+flowfn/python/flowfn/adapters/base.py
+  s_e1c5fc1a65c0cf::t_682cd74daf85c5 4,6-7
+flowfn/python/flowfn/adapters/durable_queues.py
+  s_e1c5fc1a65c0cf::t_2b57af952609f6 8-9,11-12
+flowfn/python/flowfn/adapters/memory.py
+  s_e1c5fc1a65c0cf::t_5b16a3e2ea0245 6,8-13,293,296,321-322,324-326
+flowfn/python/flowfn/adapters/memory_stream.py
+  s_e1c5fc1a65c0cf::t_0481c54becfde1 67,71
+flowfn/python/flowfn/adapters/native_queues.py
+  s_e1c5fc1a65c0cf::t_b890d1fbfd1e76 12,95
+flowfn/python/flowfn/adapters/postgres.py
+  s_e1c5fc1a65c0cf::t_c4d213c2286afd 6-8,14,107-115,127-129,149-164,178-182,226-237,241-248,279-280,282-283,288
+flowfn/python/flowfn/adapters/postgres_queues.py
+  s_e1c5fc1a65c0cf::t_5576c2fe995be9 3,6,11,93-94,171-173,180-188,216-217
+flowfn/python/flowfn/adapters/redis.py
+  s_e1c5fc1a65c0cf::t_8f33b35fa3fbf7 10-12,19-20,323-324,326-327,332
+flowfn/python/flowfn/adapters/redis_queues.py
+  s_e1c5fc1a65c0cf::t_586de823ceef74 4,11,15,71-72,139-140,188,255-256,299-300
+flowfn/python/flowfn/adapters/stream_lease.py
+  s_e1c5fc1a65c0cf::t_616c77949921d5 4-5
+flowfn/python/flowfn/adapters/workflow_state.py
+  s_e1c5fc1a65c0cf::t_96d45f58e4fbf0 3-5
+flowfn/python/flowfn/core/flow.py
+  s_e1c5fc1a65c0cf::t_b214a3f9154802 5-8,11-13,16,44-46,73
+flowfn/python/flowfn/core/lifecycle.py
+  s_e1c5fc1a65c0cf::t_0beb2beaf0e47e 3,5
+flowfn/python/flowfn/core/metrics.py
+  s_e1c5fc1a65c0cf::t_3998d45c94c9ae 4,7
+flowfn/python/flowfn/core/telemetry.py
+  s_e1c5fc1a65c0cf::t_cba9fa3e19d215 4,7-8,103
+flowfn/python/flowfn/monitoring/health.py
+  s_e1c5fc1a65c0cf::t_83d082688636cd 4-5,7-9,183-184
+flowfn/python/flowfn/patterns/batching.py
+  s_e1c5fc1a65c0cf::t_a12f51c61e0562 5-6
+flowfn/python/flowfn/patterns/priority.py
+  s_e1c5fc1a65c0cf::t_10b74840a8abdd 6,29
+flowfn/python/flowfn/patterns/rate_limit.py
+  s_e1c5fc1a65c0cf::t_843ce255db15dc 6
+flowfn/python/flowfn/queue/dlq.py
+  s_e1c5fc1a65c0cf::t_71054bf09bc636 3-4,7,10
+flowfn/python/flowfn/queue/queue.py
+  s_e1c5fc1a65c0cf::t_7049167543fa4f 3-13,15,17
+flowfn/python/flowfn/queue/types.py
+  s_e1c5fc1a65c0cf::t_890bbc1d469a1f 3,5-7
+flowfn/python/flowfn/scheduler/__init__.py
+  s_e1c5fc1a65c0cf::t_7d29754a0a5c34 6-7,10,14,16-17,196,205-206
+flowfn/python/flowfn/storage/event_log.py
+  s_e1c5fc1a65c0cf::t_175ea15ca44a00 3,5-9,93
+flowfn/python/flowfn/storage/job_storage.py
+  s_e1c5fc1a65c0cf::t_e10c4db2aec1dc 3,5,95-96
+flowfn/python/flowfn/storage/workflow_storage.py
+  s_e1c5fc1a65c0cf::t_a2461e35b2e02a 4-5
+flowfn/python/flowfn/stream/stream.py
+  s_e1c5fc1a65c0cf::t_2e0a4a0c4cb9d1 3-13,15,18,21-22
+flowfn/python/flowfn/stream/types.py
+  s_e1c5fc1a65c0cf::t_6583df22bf4ee6 3-5
+flowfn/python/flowfn/utils/ids.py
+  s_e1c5fc1a65c0cf::t_6f880ef13a1cb0 4-5
+flowfn/python/flowfn/utils/time.py
+  s_e1c5fc1a65c0cf::t_b5fdfb3cbdb751 6
+flowfn/python/flowfn/workflow/builder.py
+  s_e1c5fc1a65c0cf::t_17e67bf611e177 3-5
+flowfn/python/flowfn/workflow/types.py
+  s_e1c5fc1a65c0cf::t_0e37f9637408bc 3,5-7
+flowfn/python/flowfn/workflow/workflow.py
+  s_e1c5fc1a65c0cf::t_3ae0a0fafb5cf3 6-7,9-12,14-23,402
+flowfn/python/pyproject.toml
+  s_e1c5fc1a65c0cf::t_86bfda4bf06543 45-46,88-89
+flowfn/python/tests/conftest.py
+  s_e1c5fc1a65c0cf::t_f200aee4b857f8 1-3
+flowfn/python/tests/test_basic.py
+  s_e1c5fc1a65c0cf::t_af5453514f4293 4-6
+flowfn/python/tests/test_consumer_groups.py
+  s_e1c5fc1a65c0cf::t_ac34e8424327eb 2,4
+flowfn/python/tests/test_dlq_recovery.py
+  s_e1c5fc1a65c0cf::t_5e35720908ec8d 2,4
+flowfn/python/tests/test_durable_adapters.py
+  s_e1c5fc1a65c0cf::t_da6b21704a1283 9-10,41-45,106,161-162
+flowfn/python/tests/test_events.py
+  s_e1c5fc1a65c0cf::t_fa6847170b9f75 169
+flowfn/python/tests/test_health.py
+  s_e1c5fc1a65c0cf::t_15e1ccbfc0c397 7
+flowfn/python/tests/test_integration.py
+  s_e1c5fc1a65c0cf::t_dcedb8b803285b 4-6
+flowfn/python/tests/test_metrics.py
+  s_e1c5fc1a65c0cf::t_9fe80a9cc31877 9,12
+flowfn/python/tests/test_native_queues.py
+  s_e1c5fc1a65c0cf::t_4274cb5e855e0a 9,176-184
+flowfn/python/tests/test_queue_clocks.py
+  s_e1c5fc1a65c0cf::t_92ae91ae0c91b0 8,17-18
+flowfn/python/tests/test_queue_contract.py
+  s_e1c5fc1a65c0cf::t_c5fa2ca59b714b 2,4,107
+flowfn/python/tests/test_queue_lifecycle.py
+  s_e1c5fc1a65c0cf::t_eae1abdc15ca11 2,4,6
+flowfn/python/tests/test_scheduler_recovery.py
+  s_e1c5fc1a65c0cf::t_9316dbe5f16faf 3-4,6
+flowfn/python/tests/test_storage_contract.py
+  s_e1c5fc1a65c0cf::t_84341aec6fbbc6 2,5-6
+flowfn/python/tests/test_stream_lifecycle.py
+  s_e1c5fc1a65c0cf::t_d331f609141690 2,4
+flowfn/python/tests/test_workflow.py
+  s_e1c5fc1a65c0cf::t_5e24e073bd7c84 4-6
+flowfn/python/tests/test_workflow_discovery.py
+  s_e1c5fc1a65c0cf::t_b56b3beb9ec259 5
+flowfn/python/tests/test_workflow_lifecycle.py
+  s_e1c5fc1a65c0cf::t_7c8e67615b6708 2,4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e2940d1cf76403dfab3f5055eb70294ac765707a",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

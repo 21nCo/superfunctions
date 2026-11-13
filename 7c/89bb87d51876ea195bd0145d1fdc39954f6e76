@@ -1,0 +1,47 @@
+cifn/.conduct/original-requirement-audit-20261025.md
+  s_e1c5fc1a65c0cf::t_cc694d812b2ceb 1-22
+cifn/.conduct/original-requirement-map.csv
+  s_e1c5fc1a65c0cf::t_ca010e9ec55f18 1-160
+cifn/.conduct/workspace-archive-readiness.md
+  s_e1c5fc1a65c0cf::t_fbc17a038e535b 1-16
+cifn/README.md
+  s_e1c5fc1a65c0cf::t_54271a113d0989 457-477
+cifn/typescript/control-plane/scripts/verify-packed-logs.mjs
+  s_e1c5fc1a65c0cf::t_be7e64dc6612c2 58,72,97
+cifn/typescript/runner/scripts/verify-workspace-archives.mjs
+  s_e1c5fc1a65c0cf::t_71758672c477ab 1-190
+cifn/typescript/runner/src/archive-confinement.test.ts
+  s_e1c5fc1a65c0cf::t_cca4dab5fece74 1-349
+cifn/typescript/runner/src/index.ts
+  s_e1c5fc1a65c0cf::t_2b41e11921aa77 32-33
+cifn/typescript/runner/src/runner.ts
+  s_e1c5fc1a65c0cf::t_da9bfe60775185 1,47,81,109,349,394,437,477
+cifn/typescript/runner/src/steps/archive.ts
+  s_e1c5fc1a65c0cf::t_6a5e8420e46f8d 1-331
+cifn/typescript/runner/src/steps/artifact-download.ts
+  s_e1c5fc1a65c0cf::t_e7e172c972cd29 1,6,24,36,38,41
+cifn/typescript/runner/src/steps/artifact-upload.ts
+  s_e1c5fc1a65c0cf::t_56c5d5c8b87c56 1,7,35,37,39,42
+cifn/typescript/runner/src/steps/cache-restore.ts
+  s_e1c5fc1a65c0cf::t_9fe9e4a67ef21c 1,6,32,42,44,47
+cifn/typescript/runner/src/steps/cache-save.ts
+  s_e1c5fc1a65c0cf::t_866b4b2c408a5f 1,7,34-37,40
+cifn/typescript/runner/tsconfig.remote.json
+  s_e1c5fc1a65c0cf::t_d09b9000d50da0 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7c89bb87d51876ea195bd0145d1fdc39954f6e76",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

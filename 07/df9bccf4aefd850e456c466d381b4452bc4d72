@@ -1,0 +1,21 @@
+cmsfn/.conduct/studio-history-readiness.md
+  s_e1c5fc1a65c0cf::t_ce08e421e98071 56-73
+cmsfn/studio/README.md
+  s_e1c5fc1a65c0cf::t_4570487a2c2393 75-78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "07df9bccf4aefd850e456c466d381b4452bc4d72",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

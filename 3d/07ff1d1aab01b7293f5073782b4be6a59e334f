@@ -1,0 +1,33 @@
+watchfn/.conduct/python-buffer-aggregation-readiness.md
+  s_e1c5fc1a65c0cf::t_e5b4640ae72f54 1-9
+watchfn/python/pyproject.toml
+  s_e1c5fc1a65c0cf::t_86c5c0ea8a60f5 10
+watchfn/python/tests/core/test_metric_aggregator.py
+  s_e1c5fc1a65c0cf::t_4345da41f30a07 20,37,56,79,121-131
+watchfn/python/tests/test_batching.py
+  s_e1c5fc1a65c0cf::t_d35ddca95cac92 1-75
+watchfn/python/watchfn/client.py
+  s_e1c5fc1a65c0cf::t_0437541a4b4343 83
+watchfn/python/watchfn/core/context_manager.py
+  s_e1c5fc1a65c0cf::t_b23efa5dd1b807 7,61-62
+watchfn/python/watchfn/core/metric_aggregator.py
+  s_e1c5fc1a65c0cf::t_3d6482630242ff 42,78-79,91,146
+watchfn/python/watchfn/utils/batching.py
+  s_e1c5fc1a65c0cf::t_8fea3ebd3b724b 1-3,6-8,12-14,18-21,25-30,33-41,44-46,49-58,60-66,69,71,73-86
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3d07ff1d1aab01b7293f5073782b4be6a59e334f",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

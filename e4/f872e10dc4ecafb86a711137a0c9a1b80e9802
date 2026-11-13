@@ -1,0 +1,37 @@
+flowfn/.conduct/lease-reply-followup-20261023.md
+  s_e1c5fc1a65c0cf::t_2fea269c9f854c 1-168
+flowfn/python/flowfn/adapters/durable_queues.py
+  s_e1c5fc1a65c0cf::t_2db9be1ff7118f 196-199
+flowfn/python/flowfn/adapters/stream_lease.py
+  s_e1c5fc1a65c0cf::t_764a68075930e4 16-17,22,30,32-33,37
+flowfn/python/flowfn/workflow/workflow.py
+  s_e1c5fc1a65c0cf::t_ea13403faea2bb 175-176,181,190,192,196
+flowfn/python/tests/test_lease_reply_scheduling.py
+  s_e1c5fc1a65c0cf::t_f052c6c7526216 1-225
+flowfn/python/tests/test_queue_lease_cancellation.py
+  s_e1c5fc1a65c0cf::t_21c2c4f26a2542 7,137-138,142-155,164-165
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_e1c5fc1a65c0cf::t_2b9c823ba13c07 1,125-127
+flowfn/typescript/src/adapters/redis.test.ts
+  s_e1c5fc1a65c0cf::t_da14c368e27fb7 1,320-322
+flowfn/typescript/src/queue/queue.ts
+  s_e1c5fc1a65c0cf::t_5cd33edd682361 37,81,86,89-100,103-108,110-115,117-127,129,131,133,616
+flowfn/typescript/src/storage/queue-reply-lease-contract.ts
+  s_e1c5fc1a65c0cf::t_f82107941e7c99 1-120
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e4f872e10dc4ecafb86a711137a0c9a1b80e9802",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,37 @@
+recfn/.conduct/encrypted-capture-readiness.md
+  s_e1c5fc1a65c0cf::t_78cfab2f375ade 5-8
+recfn/.conduct/recording-scratch-cleanup-readiness.md
+  s_e1c5fc1a65c0cf::t_62ad255ff7396a 1-149
+recfn/README.md
+  s_e1c5fc1a65c0cf::t_87f14b131461ed 141-171
+recfn/server/__tests__/bot-lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_2421c98271783b 1,8-9,121,134,190,215-216,218-219,248
+recfn/server/__tests__/encrypted-capture-lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_302efdf0cffaef 3-4,28,35-38,52,54-58
+recfn/server/__tests__/recording-scratch.test.ts
+  s_e1c5fc1a65c0cf::t_5fe05ce6b47f1c 1-151
+recfn/server/src/index.ts
+  s_e1c5fc1a65c0cf::t_7bffb7f5d2cb8f 242-243
+recfn/server/src/recording/capture.ts
+  s_e1c5fc1a65c0cf::t_45e883ea6183d2 8,36-38,129,155-162,284,298,311
+recfn/server/src/recording/scratch.ts
+  s_e1c5fc1a65c0cf::t_71c61dae287d03 1-193
+recfn/server/src/worker/bot-worker.ts
+  s_e1c5fc1a65c0cf::t_086b1b748aef71 31-32,65-71,157
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c9c78d06184860a073d31c9acb09a3f583019205",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

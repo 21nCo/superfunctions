@@ -1,0 +1,33 @@
+contentfn/.conduct/publish-idempotency-packed.mjs
+  s_e1c5fc1a65c0cf::t_932d848b793a7c 1-28
+contentfn/.conduct/publish-idempotency-packed.py
+  s_e1c5fc1a65c0cf::t_1eb44668725173 1-16
+contentfn/.conduct/publish-idempotency-readiness.md
+  s_e1c5fc1a65c0cf::t_8af1e9a1a02a4b 1-27
+contentfn/server/README.md
+  s_e1c5fc1a65c0cf::t_71583754dd0d8a 31-56
+contentfn/server/src/__tests__/publish-idempotency.test.ts
+  s_e1c5fc1a65c0cf::t_f5603cf4ff8ee8 1-73
+contentfn/server/src/http/endpoints/status.ts
+  s_e1c5fc1a65c0cf::t_57eb1ed3f11443 9-10,30-31
+contentfn/server/src/server.ts
+  s_e1c5fc1a65c0cf::t_a091f8eb90dfc1 191,196,204
+contentfn/server/src/storage/idempotency.ts
+  s_e1c5fc1a65c0cf::t_4d1e7c1351596b 17,22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ea74ce3a84e662353dd8eaff3ae0676fa2127548",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,51 @@
+recfn/.conduct/bot-worker-ownership-readiness.md
+  s_e1c5fc1a65c0cf::t_9abcc0ff89f5a4 1-169
+recfn/.conduct/reproduce-duplicate-worker-join.mjs
+  s_e1c5fc1a65c0cf::t_2ceb633d65a85d 1-28
+recfn/README.md
+  s_e1c5fc1a65c0cf::t_43ffd9ca9df93d 67-70,81-82,85,87-88
+recfn/server/__tests__/bot-lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_e76c87903d36eb 1,123-124,136,194,304-305
+recfn/server/__tests__/bot-ownership-sqlite.test.ts
+  s_e1c5fc1a65c0cf::t_bbc7db98b4e77a 1-84
+recfn/server/__tests__/bot-ownership.test.ts
+  s_e1c5fc1a65c0cf::t_68240dc18fb945 1-107
+recfn/server/__tests__/native-store.ts
+  s_e1c5fc1a65c0cf::t_00eefd19ad75d1 1-30
+recfn/server/__tests__/recording-scratch.test.ts
+  s_e1c5fc1a65c0cf::t_72b4b409fbf9d9 1,15,22,103,106-108
+recfn/server/src/hosted-bot-poc.ts
+  s_e1c5fc1a65c0cf::t_95fd37ebb81877 90
+recfn/server/src/store/admission.ts
+  s_e1c5fc1a65c0cf::t_98827d8d013cbf 24-27
+recfn/server/src/store/bot-work.ts
+  s_e1c5fc1a65c0cf::t_d06174bcdbd448 1-76
+recfn/server/src/store/db.ts
+  s_e1c5fc1a65c0cf::t_735e02a0ab33c8 1,145,157,170-171,219,226-232,252-253
+recfn/server/src/store/deletion.ts
+  s_e1c5fc1a65c0cf::t_5bf44dade811a2 1,57
+recfn/server/src/store/schema.ts
+  s_e1c5fc1a65c0cf::t_07fac5a9d476db 4-13
+recfn/server/src/store/types.ts
+  s_e1c5fc1a65c0cf::t_99de4a545766c7 45,55
+recfn/server/src/worker/bot-worker.ts
+  s_e1c5fc1a65c0cf::t_b117fc4a4cf893 1,4,13,35-38,57,61-65,83-94,108,119-175,286,289-290,296,298-302,310,327,336,359-361,378,389-398,402-406,416-436,439-440,446,474,485,552,554-558,560-565,568-603,607,616-617,625
+recfn/server/src/worker/lifecycle.ts
+  s_e1c5fc1a65c0cf::t_fc29059bd92335 39,58-64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5a609e7443877215da5f1a6b71d43f3e6b42be2e",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

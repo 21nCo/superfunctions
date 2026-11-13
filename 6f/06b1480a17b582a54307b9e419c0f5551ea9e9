@@ -1,0 +1,31 @@
+flowfn/.conduct/python-independent-expiry-20261023.md
+  s_e1c5fc1a65c0cf::t_c99e9f1a8dcfc3 1-91
+flowfn/python/flowfn/adapters/durable_queues.py
+  s_e1c5fc1a65c0cf::t_4bfc3df677dcb8 11,22-23,36-40,42,138-140,160-162,183,185,192-194,215,229-231
+flowfn/python/flowfn/adapters/stream_lease.py
+  s_e1c5fc1a65c0cf::t_1a36b32c59da0f 7-8,34,45-47,51-52,58
+flowfn/python/flowfn/core/lease_expiry.py
+  s_e1c5fc1a65c0cf::t_4d80d0f357da62 1-51
+flowfn/python/flowfn/workflow/workflow.py
+  s_e1c5fc1a65c0cf::t_b9efe11fa15c58 14,62-63,162-168,171-174,190-223,499
+flowfn/python/tests/test_lease_expiry.py
+  s_e1c5fc1a65c0cf::t_344694d6060221 1-28
+flowfn/python/tests/test_lease_expiry_observer.py
+  s_e1c5fc1a65c0cf::t_a4dc305a02c85c 1-226
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6f06b1480a17b582a54307b9e419c0f5551ea9e9",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

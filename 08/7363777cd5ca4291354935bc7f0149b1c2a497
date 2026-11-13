@@ -1,0 +1,22 @@
+devfn/cli/src/index.ts
+  h_bdc5b81c173ee9 204-205,209,270-271
+devfn/cli/test/cli.test.ts
+  h_bdc5b81c173ee9 47-51
+devfn/config/src/process-identity.ts
+  h_bdc5b81c173ee9 209,211
+devfn/config/test/process-identity.test.ts
+  h_bdc5b81c173ee9 79-87
+devfn/proxy/test/oauth-relay-service.test.ts
+  h_bdc5b81c173ee9 11,557,579-580,627-628
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "087363777cd5ca4291354935bc7f0149b1c2a497",
+  "prompts": {},
+  "humans": {
+    "h_bdc5b81c173ee9": {
+      "author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

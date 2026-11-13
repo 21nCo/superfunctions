@@ -1,0 +1,27 @@
+cachefn/.conduct/python-memoize-readiness.md
+  s_e1c5fc1a65c0cf::t_25f1ae0bf7f41a 1-42
+cachefn/python/README.md
+  s_e1c5fc1a65c0cf::t_1004cee1654361 245-262
+cachefn/python/cachefn/memoization/memoize.py
+  s_e1c5fc1a65c0cf::t_8a1c57ce7e9cb7 161,188-189,198-200,202-208,213
+cachefn/python/scripts/memoize_benchmark.py
+  s_e1c5fc1a65c0cf::t_53f6ae8c843049 1-45
+cachefn/python/tests/test_memoize_sync_expiry.py
+  s_e1c5fc1a65c0cf::t_bdef6852e5d377 1-176
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a848e74b31c9b2fa37f0df556d4c23ac8c568b9c",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

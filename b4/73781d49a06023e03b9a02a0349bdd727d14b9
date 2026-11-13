@@ -1,0 +1,23 @@
+logfn/.conduct/native-safari-offline-20261023.json
+  s_e1c5fc1a65c0cf::t_c14ce798ac7873 1-50
+logfn/.conduct/native-safari-offline-readiness.md
+  s_e1c5fc1a65c0cf::t_5215d8d6c2d0d1 1-66
+logfn/scripts/safari-offline-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_4a1cc0d2b57ed1 1-120
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b473781d49a06023e03b9a02a0349bdd727d14b9",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,39 @@
+watchfn/.conduct/event-index-readiness.md
+  s_e1c5fc1a65c0cf::t_cb8879b4841778 1-54
+watchfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_6e7ad329c02382 81-86
+watchfn/typescript/src/integrations/botfn/store.ts
+  s_e1c5fc1a65c0cf::t_85ba09b003ffd3 4,71,113-114
+watchfn/typescript/src/query/query-engine.ts
+  s_e1c5fc1a65c0cf::t_957871ca8dee8d 48
+watchfn/typescript/src/storage/database.ts
+  s_e1c5fc1a65c0cf::t_22d3e5282d9002 2,4,51,71-101,103-116
+watchfn/typescript/src/storage/projection.ts
+  s_e1c5fc1a65c0cf::t_744808991d9fc7 1-52
+watchfn/typescript/src/storage/schema.ts
+  s_e1c5fc1a65c0cf::t_9b14e7cbf0f757 1,7,11-23
+watchfn/typescript/tests/integrations/botfn-sqlite.acceptance.ts
+  s_e1c5fc1a65c0cf::t_19ff1b5b466e00 161-162
+watchfn/typescript/tests/storage/event-indexes-sqlite.acceptance.ts
+  s_e1c5fc1a65c0cf::t_12b888b5f36ecc 1-82
+watchfn/typescript/tests/storage/event-indexes-sqlite.config.ts
+  s_e1c5fc1a65c0cf::t_f566beffc09ce5 1-2
+watchfn/typescript/tests/storage/event-indexes.test.ts
+  s_e1c5fc1a65c0cf::t_e47445cb9d1b2d 1-92
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0d365d417a5bb284ff132102323c90fb30531384",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

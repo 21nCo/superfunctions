@@ -1,0 +1,73 @@
+browsefn/.conduct/browser-isolation-readiness.md
+  s_e1c5fc1a65c0cf::t_b2c32ba8a756bc 100-102,119
+browsefn/.conduct/destination-policy-readiness.md
+  s_e1c5fc1a65c0cf::t_899d536f7d402d 12-13
+browsefn/.conduct/hostname-policy-readiness.md
+  s_e1c5fc1a65c0cf::t_0e26d566562c5e 1-106
+browsefn/README.md
+  s_e1c5fc1a65c0cf::t_8d321bd6418e1c 263-264,273-331
+browsefn/python/browsefn/__init__.py
+  s_e1c5fc1a65c0cf::t_509fd8ee6fc629 15-16
+browsefn/python/browsefn/core/browse_fn.py
+  s_e1c5fc1a65c0cf::t_deb8788a50f415 8,218,268,282
+browsefn/python/browsefn/core/types.py
+  s_e1c5fc1a65c0cf::t_ba3e0446bc4d8b 172-182,356,516-517,519
+browsefn/python/browsefn/http/router.py
+  s_e1c5fc1a65c0cf::t_eb0140ab4935df 90,111,148
+browsefn/python/browsefn/images/_download_utils.py
+  s_e1c5fc1a65c0cf::t_de91e843086f7a 2-3,52,56
+browsefn/python/browsefn/images/browser.py
+  s_e1c5fc1a65c0cf::t_ae8ceb051547af 17-18,24-25,58-59,97-98
+browsefn/python/browsefn/utils/destination_policy.py
+  s_e1c5fc1a65c0cf::t_8982616378dbbb 1-77
+browsefn/python/browsefn/web/public_page.py
+  s_e1c5fc1a65c0cf::t_145c10b7e4b824 9,36
+browsefn/python/browsefn/web/scraper.py
+  s_e1c5fc1a65c0cf::t_a90612fdabafd3 7-8,36-37,94,109,130
+browsefn/python/tests/test_hostname_policy.py
+  s_e1c5fc1a65c0cf::t_ebfd5d07950f12 1-120
+browsefn/typescript/src/core/browse-fn.ts
+  s_e1c5fc1a65c0cf::t_984676328d64ca 147-148,178-179
+browsefn/typescript/src/core/types.ts
+  s_e1c5fc1a65c0cf::t_71b189bcfc2638 138-141,484-485,487
+browsefn/typescript/src/images/browser.ts
+  s_e1c5fc1a65c0cf::t_3cbc172c227533 1-2,45-46,48,104,115
+browsefn/typescript/src/images/download.ts
+  s_e1c5fc1a65c0cf::t_60982c7827bdf5 6,22-23,33
+browsefn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_c1b894a5b2deae 29-30
+browsefn/typescript/src/router/http-router.ts
+  s_e1c5fc1a65c0cf::t_d0c23a605bb4da 185,208,246
+browsefn/typescript/src/utils/destination-policy.ts
+  s_e1c5fc1a65c0cf::t_136b3ff6710347 25-76
+browsefn/typescript/src/utils/public-page.ts
+  s_e1c5fc1a65c0cf::t_12654e0b0a0525 7,18-19,29
+browsefn/typescript/src/web/providers/playwright.ts
+  s_e1c5fc1a65c0cf::t_9c93f647e98354 4,84-86
+browsefn/typescript/src/web/providers/puppeteer.ts
+  s_e1c5fc1a65c0cf::t_d952abf997c327 4,81-83
+browsefn/typescript/src/web/scraper.ts
+  s_e1c5fc1a65c0cf::t_cc6aa01eb56f71 1-2,43-44,47,62,95,159,188,251
+browsefn/typescript/tests/browser-isolation.acceptance.test.ts
+  s_e1c5fc1a65c0cf::t_2793bb227b02fd 98-106
+browsefn/typescript/tests/destination-policy.test.ts
+  s_e1c5fc1a65c0cf::t_14f44688e59167 100-108
+browsefn/typescript/tests/hostname-policy.test.ts
+  s_e1c5fc1a65c0cf::t_bd3111defbb1b5 1-79
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "33d24cd1c5b924c107ae61ce97368f9488ba7698",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+contentfn/.conduct/webhook-durability-readiness.md
+  s_e1c5fc1a65c0cf::t_b5b7aaaada9302 18-20,36-88
+contentfn/.conduct/webhook-process-crash-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_4f8bd238c15a00 1-177
+contentfn/.conduct/webhook-process-crash-receipt-20261022.json
+  s_e1c5fc1a65c0cf::t_59542a9d5a9572 1-151
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8864e7abe98a69759d179cf6479e7e95682be9d2",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+catchfn/.conduct/readiness.md
+  s_e1c5fc1a65c0cf::t_6e568673b2add1 39-48
+catchfn/server/python/tests/sqlite_cross_language.py
+  s_e1c5fc1a65c0cf::t_7390ea1f7c592a 1-38
+catchfn/server/typescript/scripts/sqlite-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_1035307200f9e9 1-76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d3776b5d36af8727f580da5f69dc6176b82cba15",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

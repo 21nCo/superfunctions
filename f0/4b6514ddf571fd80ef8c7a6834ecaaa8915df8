@@ -1,0 +1,41 @@
+probefn/.conduct/checkpoint-video-readiness.md
+  s_e1c5fc1a65c0cf::t_c177de4ba2ab9c 1-26
+probefn/apps/cli/src/commands/checkpoint.ts
+  s_e1c5fc1a65c0cf::t_75ddffdf295812 28,37
+probefn/apps/cli/test/video.test.ts
+  s_e1c5fc1a65c0cf::t_30e51da13e34ec 1-30
+probefn/packages/browser-runner/src/browser-runner.ts
+  s_e1c5fc1a65c0cf::t_92d086c7af2958 2-3,22,56,96-97,99,250-253
+probefn/packages/browser-runner/src/index.ts
+  s_e1c5fc1a65c0cf::t_b39cc8462a2bd0 11-12
+probefn/packages/browser-runner/src/video.ts
+  s_e1c5fc1a65c0cf::t_93e7970bcf14d7 1-19
+probefn/packages/browser-runner/test/video.test.ts
+  s_e1c5fc1a65c0cf::t_7c3b0ce7bdb054 1-69
+probefn/packages/core/src/checkpoints.ts
+  s_e1c5fc1a65c0cf::t_711945f4bae733 25,38,64-65,101-108,120-121,133-134
+probefn/packages/mcp-server/src/server.ts
+  s_e1c5fc1a65c0cf::t_a0af4ae27a7a1d 1,313,348,824,837,846,861
+probefn/packages/mcp-server/src/tools/checkpoint.ts
+  s_e1c5fc1a65c0cf::t_f19497b7081c0a 18,33,41
+probefn/packages/storage/src/artifact-store.ts
+  s_e1c5fc1a65c0cf::t_1d2eb690a9b248 36,87
+probefn/packages/storage/test/__snapshots__/artifact-store.test.ts.snap
+  s_e1c5fc1a65c0cf::t_d362dc46a9c820 13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f04b6514ddf571fd80ef8c7a6834ecaaa8915df8",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

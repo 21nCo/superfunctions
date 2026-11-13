@@ -1,0 +1,57 @@
+.github/workflows/superfunctions-docs-cloudflare-deploy.yml
+  s_7d0a48f0aaecda::t_f776bad9830151 14,22,31,57
+.github/workflows/superfunctions-docs-cloudflare-routes.yml
+  s_7d0a48f0aaecda::t_03a032f6d6dec3 18,77
+package-lock.json
+  s_c1093e7194f7e3::t_dd4761f97ae9db 29772-29775,57581-57952
+plugfn/docs/content/docs/reference/release-gates.md
+  s_7d0a48f0aaecda::t_150ae41a8e57ea 29,108-132
+plugfn/docs/package.json
+  s_7d0a48f0aaecda::t_39d8ba35a44538 10,23-24
+plugfn/docs/scripts/generate-llms.mjs
+  s_7d0a48f0aaecda::t_5a7bc6501a8bd7 10,19-21
+plugfn/docs/src/lib/server/docs-site-source.ts
+  s_7d0a48f0aaecda::t_d8fffed85a492e 7
+plugfn/docs/src/routes/+error.svelte
+  s_7d0a48f0aaecda::t_173e9cfc00cc27 1-12
+plugfn/docs/src/routes/docs/llms-full.txt/+server.ts
+  s_7d0a48f0aaecda::t_ad91a2d39d9b2d 3-4,6
+plugfn/docs/src/routes/docs/llms.txt/+server.ts
+  s_7d0a48f0aaecda::t_e8f30213369760 3-4,6
+plugfn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_6aa17cce9b67f3 6,370,450-474
+plugfn/docs/tsconfig.json
+  s_7d0a48f0aaecda::t_c510ee4afdff59 26-57
+plugfn/docs/turbo.json
+  s_7d0a48f0aaecda::t_31ddbae4e5c1e7 1-20
+plugfn/docs/vite.config.ts
+  s_7d0a48f0aaecda::t_0e1ac0d68360d6 9
+scripts/cloudflare-docs/config.mjs
+  s_7d0a48f0aaecda::t_1b4de7f2a989a1 14-23
+scripts/cloudflare-docs/select-products.mjs
+  s_7d0a48f0aaecda::t_0536ea36ca3b8b 59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "64c6899cc6da39009013cb39f19eb691e8364f13",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_c1093e7194f7e3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "203316bd-9c88-41f4-b037-58d76f8b6cd9",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,117 @@
+.github/workflows/superfunctions-docs-cloudflare-deploy.yml
+  s_7d0a48f0aaecda::t_b5955c73401774 15,23,32,58
+.github/workflows/superfunctions-docs-cloudflare-routes.yml
+  s_7d0a48f0aaecda::t_f94b1d671ca858 19,78
+langfn/docs/.gitignore
+  s_7d0a48f0aaecda::t_95fda33a0e4cec 1-10
+langfn/docs/README.md
+  s_7d0a48f0aaecda::t_e251187ef0c43c 1-24
+langfn/docs/content/docs/getting-started.md
+  s_7d0a48f0aaecda::t_3ee4ab7389b744 1-22
+langfn/docs/content/docs/http.md
+  s_7d0a48f0aaecda::t_66babc173f735f 1-121
+langfn/docs/content/docs/index.md
+  s_7d0a48f0aaecda::t_300bf21f778a7d 1-8
+langfn/docs/content/docs/mcp.md
+  s_7d0a48f0aaecda::t_a86d6ae60b1edc 1-8
+langfn/docs/content/docs/memory-and-rag.md
+  s_7d0a48f0aaecda::t_a041e80618b8e4 1-12
+langfn/docs/content/docs/meta.json
+  s_7d0a48f0aaecda::t_9ed12efe82e292 1-4
+langfn/docs/content/docs/models-and-providers.md
+  s_7d0a48f0aaecda::t_2aa91764c45c16 1-65
+langfn/docs/content/docs/observability-and-evaluation.md
+  s_7d0a48f0aaecda::t_9fc2914a6f9cbb 1-10
+langfn/docs/content/docs/operations-and-limits.md
+  s_7d0a48f0aaecda::t_7f02da707f4ac5 1-10
+langfn/docs/content/docs/prompts-and-structured.md
+  s_7d0a48f0aaecda::t_dc5d13de713186 1-10
+langfn/docs/content/docs/reference/compatibility.md
+  s_7d0a48f0aaecda::t_23bf1f6bf328b2 1-24
+langfn/docs/content/docs/reference/index.md
+  s_7d0a48f0aaecda::t_a6efbac612583c 1-11
+langfn/docs/content/docs/reference/meta.json
+  s_7d0a48f0aaecda::t_30d83e01db1d21 1-4
+langfn/docs/content/docs/reference/package-exports.md
+  s_7d0a48f0aaecda::t_a0ed1a7b4e3867 1-26
+langfn/docs/content/docs/reference/release-gate.md
+  s_7d0a48f0aaecda::t_db4d1f5501ed02 1-17
+langfn/docs/content/docs/reference/typescript.md
+  s_7d0a48f0aaecda::t_e99210a8eb6fb7 1-65
+langfn/docs/content/docs/streaming-and-tools.md
+  s_7d0a48f0aaecda::t_5dae74b6bfde71 1-58
+langfn/docs/content/docs/workflows.md
+  s_7d0a48f0aaecda::t_de5d6f30fa497b 1-48
+langfn/docs/docsfn.config.ts
+  s_7d0a48f0aaecda::t_d6f907c1fa4d93 1-40
+langfn/docs/package.json
+  s_7d0a48f0aaecda::t_4ad1d10bfd865a 1-38
+langfn/docs/scripts/generate-llms.mjs
+  s_7d0a48f0aaecda::t_e2eddd307240ed 1-20
+langfn/docs/src/app.css
+  s_7d0a48f0aaecda::t_11b70077695a25 1-85
+langfn/docs/src/app.html
+  s_7d0a48f0aaecda::t_7118c80747e4e2 1-11
+langfn/docs/src/lib/components/DocsSiteSearch.svelte
+  s_7d0a48f0aaecda::t_467351f34e828a 1-5
+langfn/docs/src/lib/server/docs-site-source.ts
+  s_7d0a48f0aaecda::t_0706a0ea73dc19 1-14
+langfn/docs/src/routes/+error.svelte
+  s_7d0a48f0aaecda::t_347c26ede74199 1-12
+langfn/docs/src/routes/+layout.server.ts
+  s_7d0a48f0aaecda::t_57c6d3ee4511c0 1-13
+langfn/docs/src/routes/+layout.svelte
+  s_7d0a48f0aaecda::t_0486b776902aa2 1-86
+langfn/docs/src/routes/+page.svelte
+  s_7d0a48f0aaecda::t_f779dafcfa5619 1-28
+langfn/docs/src/routes/docs/[...slug]/+page.server.ts
+  s_7d0a48f0aaecda::t_6ad379ed0520ab 1-25
+langfn/docs/src/routes/docs/[...slug]/+page.svelte
+  s_7d0a48f0aaecda::t_f2942c8df87bc6 1-41
+langfn/docs/src/routes/docs/llms-full.txt/+server.ts
+  s_7d0a48f0aaecda::t_001abf53a8224d 1-7
+langfn/docs/src/routes/docs/llms.txt/+server.ts
+  s_7d0a48f0aaecda::t_8467b1353f1a53 1-7
+langfn/docs/src/routes/docs/search.json/+server.ts
+  s_7d0a48f0aaecda::t_dd08738c41543c 1-8
+langfn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_51b77c45ce3ab7 1-587
+langfn/docs/static/llms.txt
+  s_7d0a48f0aaecda::t_44d3c967d3c78b 1-22
+langfn/docs/svelte.config.js
+  s_7d0a48f0aaecda::t_0aafe4a2cdb7c4 1-26
+langfn/docs/tsconfig.json
+  s_7d0a48f0aaecda::t_9338d29aa570b6 1-59
+langfn/docs/turbo.json
+  s_7d0a48f0aaecda::t_843e48dfd698e0 1-20
+langfn/docs/vite.config.ts
+  s_7d0a48f0aaecda::t_379fd1b0940f92 1-12
+langfn/typescript/src/orchestration/chain.ts
+  s_7d0a48f0aaecda::t_2c0bacd26d3280 58-59
+langfn/typescript/tests/chain-router.test.ts
+  s_7d0a48f0aaecda::t_061fed62362263 1-22
+package-lock.json
+  s_7d0a48f0aaecda::t_bc38639ec5bc91 50,13689-14059,28087-28090
+package.json
+  s_7d0a48f0aaecda::t_833470261331c1 45
+scripts/cloudflare-docs/config.mjs
+  s_7d0a48f0aaecda::t_cc0f76742f5bd9 24-33
+scripts/cloudflare-docs/select-products.mjs
+  s_7d0a48f0aaecda::t_5b4d19d7df253f 60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "48c6ad4215cdcd8adc7cb6f6394c8bd22b25cb63",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

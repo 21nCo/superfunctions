@@ -1,0 +1,39 @@
+devfn/testing/README.md
+  s_92427ff18a8304::t_db94400327d200 19,22-25,40
+devfn/testing/src/networking/approval.ts
+  s_92427ff18a8304::t_ca1afad8b6c2ca 18-19,22-24,76-77,96-97
+devfn/testing/src/networking/cli.ts
+  s_92427ff18a8304::t_1e66f65670cc18 2,4,16,31,42-67,97,100-101,103-106,108-126,129,132,136
+devfn/testing/src/networking/drivers.ts
+  s_92427ff18a8304::t_37ddd851cc2268 2,9,12,14,63,69-71,82,101,117-118,148-151,160-161,257,261,267,274,277-278,292-293,295,301,315-320,323,325,329,350,357,359-361,368,388,390-399,403-405,433-435,438-439,451,456-457,500-505,528
+devfn/testing/src/networking/index.ts
+  s_92427ff18a8304::t_a290b7f6536673 1-2,4,6-7
+devfn/testing/src/networking/inventory.ts
+  s_92427ff18a8304::t_a1db618c4f844d 1,16-17,24-25,36-38,43,51-54,66,68,85,90,96-97,101-104
+devfn/testing/src/networking/live.ts
+  s_92427ff18a8304::t_f053c3756da0ba 10,12-13,16,22-24,31,40-81,88-89,93-98,100,102-104,111,123-128,145,155,169,172-176,182,185,189,206-222,225,228-229,231-233,236,243-245,248-250,252,256,260-261,263,282-303,305-310,315,320-321,323
+devfn/testing/src/networking/matrix.ts
+  s_92427ff18a8304::t_e60ed6cc15e88e 9-10,19,24,50,168-171
+devfn/testing/src/networking/prerequisites.ts
+  s_92427ff18a8304::t_6ee1cd0dda20e8 7,32-34,66-83,86,112
+devfn/testing/src/networking/receipt.ts
+  s_92427ff18a8304::t_a30f7c527b045e 2,7-9,17,24-25,54-56,62-65
+devfn/testing/test/networking-qualification.test.ts
+  s_92427ff18a8304::t_c3cc5786da6d58 1-2,6,9-11,13-15,26-31,101,112-113,122-129,131-132,145-161,236-252,273,276,278-279,295-305,321-424
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b76bca6a830e9973bf1f546075e98fec55a7b8d0",
+  "prompts": {},
+  "sessions": {
+    "s_92427ff18a8304": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26336501-b0e6-4534-a7c2-345f5528a4ba",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

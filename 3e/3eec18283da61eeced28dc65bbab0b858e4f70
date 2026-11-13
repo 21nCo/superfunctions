@@ -1,0 +1,163 @@
+.github/workflows/superfunctions-docs-cloudflare-deploy.yml
+  s_7d0a48f0aaecda::t_c72f8ac6670563 15,26,38,67
+.github/workflows/superfunctions-docs-cloudflare-routes.yml
+  s_7d0a48f0aaecda::t_824d29ea65a34d 19,81
+mdfn/collab/README.md
+  s_7d0a48f0aaecda::t_6572b3f3b9b6f0 9-10,16-21
+mdfn/docs/.gitignore
+  s_7d0a48f0aaecda::t_28aa3e8fefc631 1-10
+mdfn/docs/README.md
+  s_7d0a48f0aaecda::t_91199581183a46 1-25
+mdfn/docs/content/docs/collaboration.md
+  s_7d0a48f0aaecda::t_edd02bcfdb5307 1-8
+mdfn/docs/content/docs/extensions.md
+  s_7d0a48f0aaecda::t_642f9211fc6042 1-8
+mdfn/docs/content/docs/framework-editors.md
+  s_7d0a48f0aaecda::t_79c8d64d9ecabe 1-17
+mdfn/docs/content/docs/getting-started.md
+  s_7d0a48f0aaecda::t_e068989fbbac38 1-34
+mdfn/docs/content/docs/index.md
+  s_7d0a48f0aaecda::t_81c096ae5b8a02 1-8
+mdfn/docs/content/docs/integrations.md
+  s_7d0a48f0aaecda::t_00fc0eae49dfc7 1-8
+mdfn/docs/content/docs/meta.json
+  s_7d0a48f0aaecda::t_ec2b07b0b0b2d6 1-17
+mdfn/docs/content/docs/reference/adapter-kit.md
+  s_7d0a48f0aaecda::t_9e20c5ba2c4ffe 1-8
+mdfn/docs/content/docs/reference/ai.md
+  s_7d0a48f0aaecda::t_1f84831de2f757 1-6
+mdfn/docs/content/docs/reference/client.md
+  s_7d0a48f0aaecda::t_a19c6e4b29cfc4 1-12
+mdfn/docs/content/docs/reference/collab.md
+  s_7d0a48f0aaecda::t_63654761b30dc1 1-27
+mdfn/docs/content/docs/reference/components-react.md
+  s_7d0a48f0aaecda::t_783cd3e998d36f 1-9
+mdfn/docs/content/docs/reference/components-solid.md
+  s_7d0a48f0aaecda::t_454eb4472aa317 1-8
+mdfn/docs/content/docs/reference/components-svelte.md
+  s_7d0a48f0aaecda::t_733e68a62a0557 1-8
+mdfn/docs/content/docs/reference/components.md
+  s_7d0a48f0aaecda::t_5b13505878875c 1-11
+mdfn/docs/content/docs/reference/contentfn.md
+  s_7d0a48f0aaecda::t_c76005c7405e01 1-12
+mdfn/docs/content/docs/reference/core.md
+  s_7d0a48f0aaecda::t_85a6ce01128e75 1-10
+mdfn/docs/content/docs/reference/dom.md
+  s_7d0a48f0aaecda::t_72470f058c648e 1-28
+mdfn/docs/content/docs/reference/examples.md
+  s_7d0a48f0aaecda::t_4191028e6f060a 1-25
+mdfn/docs/content/docs/reference/extensions.md
+  s_7d0a48f0aaecda::t_e0325b4bbde936 1-8
+mdfn/docs/content/docs/reference/facade.md
+  s_7d0a48f0aaecda::t_923b0c46406f5e 1-8
+mdfn/docs/content/docs/reference/filefn.md
+  s_7d0a48f0aaecda::t_bd1d2f933bf46e 1-16
+mdfn/docs/content/docs/reference/index.md
+  s_7d0a48f0aaecda::t_41a12e75473948 1-8
+mdfn/docs/content/docs/reference/markdown.md
+  s_7d0a48f0aaecda::t_fbf8d6daf00a44 1-9
+mdfn/docs/content/docs/reference/meta.json
+  s_7d0a48f0aaecda::t_3cb6ddb941af61 1-32
+mdfn/docs/content/docs/reference/overview.md
+  s_7d0a48f0aaecda::t_5871ab19ae169c 1-65
+mdfn/docs/content/docs/reference/react.md
+  s_7d0a48f0aaecda::t_8acee469589cbc 1-43
+mdfn/docs/content/docs/reference/registry.md
+  s_7d0a48f0aaecda::t_9d11ba21af9ec0 1-6
+mdfn/docs/content/docs/reference/render.md
+  s_7d0a48f0aaecda::t_c6468fc28f5656 1-10
+mdfn/docs/content/docs/reference/searchfn.md
+  s_7d0a48f0aaecda::t_aa0882d7b30847 1-6
+mdfn/docs/content/docs/reference/server.md
+  s_7d0a48f0aaecda::t_9e500abc2daf24 1-32
+mdfn/docs/content/docs/reference/solid.md
+  s_7d0a48f0aaecda::t_be78e98b425d06 1-27
+mdfn/docs/content/docs/reference/source.md
+  s_7d0a48f0aaecda::t_e45345e19e4831 1-9
+mdfn/docs/content/docs/reference/svelte.md
+  s_7d0a48f0aaecda::t_f684334afb45e5 1-28
+mdfn/docs/content/docs/reference/testing.md
+  s_7d0a48f0aaecda::t_c4e43d177bc5ff 1-16
+mdfn/docs/content/docs/rendering-and-security.md
+  s_7d0a48f0aaecda::t_66afee20031370 1-10
+mdfn/docs/content/docs/review-and-sidecar.md
+  s_7d0a48f0aaecda::t_15c0ceb4b75143 1-8
+mdfn/docs/content/docs/server-and-storage.md
+  s_7d0a48f0aaecda::t_d9f21e871b679a 1-96
+mdfn/docs/content/docs/source-preservation.md
+  s_7d0a48f0aaecda::t_bebd43e13e406a 1-10
+mdfn/docs/content/docs/verification.md
+  s_7d0a48f0aaecda::t_e41fd8dae3960e 1-15
+mdfn/docs/docsfn.config.ts
+  s_7d0a48f0aaecda::t_03fa9ca0272d92 1-36
+mdfn/docs/package.json
+  s_7d0a48f0aaecda::t_6e80986e92ad4e 1-40
+mdfn/docs/scripts/generate-llms.mjs
+  s_7d0a48f0aaecda::t_fa002424b763aa 1-22
+mdfn/docs/src/app.css
+  s_7d0a48f0aaecda::t_89be9b2dae6bab 1-81
+mdfn/docs/src/app.html
+  s_7d0a48f0aaecda::t_b586f0096748ec 1-11
+mdfn/docs/src/lib/components/DocsSiteSearch.svelte
+  s_7d0a48f0aaecda::t_6b234abcff39a4 1-5
+mdfn/docs/src/lib/server/docs-site-source.ts
+  s_7d0a48f0aaecda::t_2719c4e48fef32 1-14
+mdfn/docs/src/routes/+error.svelte
+  s_7d0a48f0aaecda::t_2ac920138ec882 1-12
+mdfn/docs/src/routes/+layout.server.ts
+  s_7d0a48f0aaecda::t_1315c542f84435 1-13
+mdfn/docs/src/routes/+layout.svelte
+  s_7d0a48f0aaecda::t_322a19d9b6406d 1-86
+mdfn/docs/src/routes/+page.svelte
+  s_7d0a48f0aaecda::t_3fc82a773f3ab0 1-28
+mdfn/docs/src/routes/docs/[...slug]/+page.server.ts
+  s_7d0a48f0aaecda::t_2145d1dae9944f 1-25
+mdfn/docs/src/routes/docs/[...slug]/+page.svelte
+  s_7d0a48f0aaecda::t_7901670c3e8535 1-41
+mdfn/docs/src/routes/docs/llms-full.txt/+server.ts
+  s_7d0a48f0aaecda::t_c56c94586b24a4 1-7
+mdfn/docs/src/routes/docs/llms.txt/+server.ts
+  s_7d0a48f0aaecda::t_042610e4545ee6 1-7
+mdfn/docs/src/routes/docs/search.json/+server.ts
+  s_7d0a48f0aaecda::t_6e8d68921a1670 1-8
+mdfn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_1a8a325cfbcc5b 1-837
+mdfn/docs/static/llms.txt
+  s_7d0a48f0aaecda::t_286c46d530645b 1-44
+mdfn/docs/svelte.config.js
+  s_7d0a48f0aaecda::t_3b8850f8751962 1-26
+mdfn/docs/tsconfig.json
+  s_7d0a48f0aaecda::t_6091c952d0ba20 1-59
+mdfn/docs/turbo.json
+  s_7d0a48f0aaecda::t_6e42539ede0add 1-20
+mdfn/docs/vite.config.ts
+  s_7d0a48f0aaecda::t_fafe14c2d802b9 1-12
+mdfn/render/README.md
+  s_7d0a48f0aaecda::t_921fce51e58a7a 3-7
+mdfn/server/README.md
+  s_7d0a48f0aaecda::t_c81721e62086c7 10-12
+package-lock.json
+  s_7d0a48f0aaecda::t_643841c082b33e 20625-21020,29469-29472
+scripts/cloudflare-docs/config.mjs
+  s_7d0a48f0aaecda::t_055a78657f2a73 24-33
+scripts/cloudflare-docs/select-products.mjs
+  s_7d0a48f0aaecda::t_9e115741c5a61e 60
+scripts/verify-mdfn-package-graph.mjs
+  s_7d0a48f0aaecda::t_fdfa4f167e8f0a 110-111,113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3e3eec18283da61eeced28dc65bbab0b858e4f70",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

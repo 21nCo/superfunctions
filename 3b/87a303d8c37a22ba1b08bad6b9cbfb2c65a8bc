@@ -1,0 +1,29 @@
+contentfn/.conduct/history-packed.mjs
+  s_e1c5fc1a65c0cf::t_94ceb785849996 1-30
+contentfn/.conduct/history-pagination-readiness.md
+  s_e1c5fc1a65c0cf::t_e523b0c2760203 1-40
+contentfn/.conduct/publish-idempotency-packed.py
+  s_e1c5fc1a65c0cf::t_ce769f4ce32821 2,15-16
+contentfn/server/README.md
+  s_e1c5fc1a65c0cf::t_1df1a37af5e319 57-77
+contentfn/server/src/__tests__/history-keyset.test.ts
+  s_e1c5fc1a65c0cf::t_da14b3416c37f7 1-91
+contentfn/server/src/storage/revisions.ts
+  s_e1c5fc1a65c0cf::t_632612d9d57dd6 12,61,82-85,87-93,95-119
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3b87a303d8c37a22ba1b08bad6b9cbfb2c65a8bc",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

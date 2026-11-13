@@ -1,0 +1,73 @@
+watchfn/.conduct/python-log-pattern-alerts.md
+  s_e1c5fc1a65c0cf::t_3526ca5de3f19d 1-9
+watchfn/.conduct/remaining-public-api-gaps.md
+  s_e1c5fc1a65c0cf::t_483042395096f5 1-35
+watchfn/.conduct/ts-log-pattern-alerts.md
+  s_e1c5fc1a65c0cf::t_c25e3e9bd8060a 1-52
+watchfn/python/README.md
+  s_e1c5fc1a65c0cf::t_65b42d957400d9 671-720
+watchfn/python/pyproject.toml
+  s_e1c5fc1a65c0cf::t_f5bd5195797fd7 11
+watchfn/python/tests/test_log_pattern_alerts.py
+  s_e1c5fc1a65c0cf::t_1000d734bc5f7a 1-178
+watchfn/python/tests/test_log_patterns.py
+  s_e1c5fc1a65c0cf::t_4671d996a71b3e 26
+watchfn/python/tests/test_memory_created_alerts.py
+  s_e1c5fc1a65c0cf::t_e10d711e8edf21 1-152
+watchfn/python/watchfn/alerts/durable.py
+  s_e1c5fc1a65c0cf::t_a0db440e288daf 260,282,372
+watchfn/python/watchfn/alerts/lifecycle.py
+  s_e1c5fc1a65c0cf::t_53d367cc9e93b2 45,50-52
+watchfn/python/watchfn/alerts/memory_durable.py
+  s_e1c5fc1a65c0cf::t_03712ade05c139 1-132
+watchfn/python/watchfn/alerts/observations.py
+  s_e1c5fc1a65c0cf::t_89fab3298181b6 33-41,101-109,147-150,154-170
+watchfn/python/watchfn/client.py
+  s_e1c5fc1a65c0cf::t_615bf9301708c3 10,12,72,82,103-104,122-125,136-137
+watchfn/python/watchfn/integrations/logfn.py
+  s_e1c5fc1a65c0cf::t_bcb7d91b09495f 170,173-175,216-221
+watchfn/python/watchfn/log_pattern_alerts.py
+  s_e1c5fc1a65c0cf::t_3d5cd38800aca2 1-140
+watchfn/python/watchfn/log_patterns.py
+  s_e1c5fc1a65c0cf::t_9a3994490afc26 46-62,75,77
+watchfn/python/watchfn/models.py
+  s_e1c5fc1a65c0cf::t_2a9eb137ee1f9c 27
+watchfn/scripts/packed-core-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_e9fc11b0aea416 23-24,53-58,81-84
+watchfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_6ec61309c72084 437-471
+watchfn/typescript/src/alerts/alert-manager.ts
+  s_e1c5fc1a65c0cf::t_106de5e9ab0c2a 5,26,192,196,203-207,213,217-218,233
+watchfn/typescript/src/alerts/conditions.ts
+  s_e1c5fc1a65c0cf::t_03f01cdcb227af 1,15-22,42-45,61,64,74-78
+watchfn/typescript/src/alerts/types.ts
+  s_e1c5fc1a65c0cf::t_311089b73c5f0f 35-36
+watchfn/typescript/src/core/watch-fn.ts
+  s_e1c5fc1a65c0cf::t_e193f760d615d9 1,344-350,380-383
+watchfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_fbca73a67f61c9 79,128-129
+watchfn/typescript/src/logs/patterns.ts
+  s_e1c5fc1a65c0cf::t_19d4ecade1f6d2 63,88-109
+watchfn/typescript/src/logs/regex.ts
+  s_e1c5fc1a65c0cf::t_d1c243036923ba 1-68
+watchfn/typescript/tests/alerts/public-manager.test.ts
+  s_e1c5fc1a65c0cf::t_75d70b4f69efed 396-411
+watchfn/typescript/tests/log-pattern-alerts.test.ts
+  s_e1c5fc1a65c0cf::t_07fe35f03d30a2 1-77
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9b740435f8352afef473eb8b4ac7179cf06721ce",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

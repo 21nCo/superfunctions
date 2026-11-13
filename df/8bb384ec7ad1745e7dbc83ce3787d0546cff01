@@ -1,0 +1,25 @@
+package-lock.json
+  s_e1c5fc1a65c0cf::t_2dc272bf2e707b 68105,68244-68246,68253
+userfn/.conduct/survey-sdk-readiness.md
+  s_e1c5fc1a65c0cf::t_a084a3477fab24 54-73
+userfn/typescript/package.json
+  s_e1c5fc1a65c0cf::t_611021d0b8a6d2 98
+userfn/typescript/src/__tests__/surveys-http.test.ts
+  s_e1c5fc1a65c0cf::t_cbe79347d456b6 6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "df8bb384ec7ad1745e7dbc83ce3787d0546cff01",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

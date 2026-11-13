@@ -1,0 +1,39 @@
+catchfn/.conduct/botfn-delivery-readiness.md
+  s_e1c5fc1a65c0cf::t_a1b3f90a6707a7 30
+catchfn/.conduct/issue-link-readiness.md
+  s_e1c5fc1a65c0cf::t_1fd9bc9bffa658 1-15
+catchfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_c345475feb7b7f 364,371-380
+catchfn/typescript/__tests__/issue-status.test.ts
+  s_e1c5fc1a65c0cf::t_a2722154544bb5 1-60
+catchfn/typescript/package.json
+  s_e1c5fc1a65c0cf::t_ae324a279c47ed 11-18,21-28
+catchfn/typescript/scripts/botfn-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_2ec8573d3e9f48 26,77-85,89,91,114,121-151,154,156-157
+catchfn/typescript/scripts/packed-status-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_293ac765599e42 1-46
+catchfn/typescript/src/core/catch-fn.ts
+  s_e1c5fc1a65c0cf::t_ef09626c175269 5,61,69-76,98,105,355-393,432
+catchfn/typescript/src/core/types.ts
+  s_e1c5fc1a65c0cf::t_5dd240747ba039 1,176-185,187,324,326-327
+catchfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_9d381121e46739 11-14
+catchfn/typescript/src/reporter/widget.ts
+  s_e1c5fc1a65c0cf::t_c7cd92b626fb4f 1,25,105-126,181
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "32324372022510879a0fa47d99e1a172c7e3ff49",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

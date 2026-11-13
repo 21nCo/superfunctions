@@ -1,0 +1,27 @@
+mailfn/OPERATIONS.md
+  s_7d0a48f0aaecda::t_cb11307ee18c84 5,13
+mailfn/consumers/README.md
+  s_7d0a48f0aaecda::t_653cf93d3e74d6 5
+mailfn/docs/content/docs/reference/sendfn.md
+  s_7d0a48f0aaecda::t_994f1594fb5efa 14
+mailfn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_52bc5e63c19f2d 464
+mailfn/sendfn/README.md
+  s_7d0a48f0aaecda::t_4b0e4f59652579 11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "74c51182482d669d858776fe784063a26f069879",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

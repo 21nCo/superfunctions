@@ -1,0 +1,51 @@
+.github/workflows/superfunctions-docs-cloudflare-deploy.yml
+  s_7d0a48f0aaecda::t_468c7ef0a2eeff 14,20,27,51
+.github/workflows/superfunctions-docs-cloudflare-routes.yml
+  s_7d0a48f0aaecda::t_54364e3e207786 18,75
+mcpfn/docs/package.json
+  s_7d0a48f0aaecda::t_8c2850e77b9061 10,21-22
+mcpfn/docs/scripts/generate-llms.mjs
+  s_7d0a48f0aaecda::t_3b616004448fb3 12,19-21
+mcpfn/docs/src/lib/server/docs-site-source.ts
+  s_7d0a48f0aaecda::t_f16550f8bfeb20 7
+mcpfn/docs/src/routes/+error.svelte
+  s_7d0a48f0aaecda::t_44623cc2497060 1-12
+mcpfn/docs/src/routes/docs/llms-full.txt/+server.ts
+  s_7d0a48f0aaecda::t_2b7b156e809cc9 3-4
+mcpfn/docs/src/routes/docs/llms.txt/+server.ts
+  s_7d0a48f0aaecda::t_962a81080dd78a 3-4
+mcpfn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_0fb6163310a85a 6
+mcpfn/docs/tsconfig.json
+  s_7d0a48f0aaecda::t_2f72b7215c384e 26-57
+mcpfn/docs/turbo.json
+  s_7d0a48f0aaecda::t_8cfeb84f57d52c 1-20
+mcpfn/docs/vite.config.ts
+  s_7d0a48f0aaecda::t_60f13db1e1bf31 9
+package-lock.json
+  s_7d0a48f0aaecda::t_817d9525e756f9 16568-16939,27477-27480
+scripts/cloudflare-docs/config.mjs
+  s_7d0a48f0aaecda::t_1224441ea9ba47 14-23
+scripts/cloudflare-docs/select-products.mjs
+  s_7d0a48f0aaecda::t_1c2af6c6806c9f 59
+scripts/docs-site/llms.mjs
+  s_7d0a48f0aaecda::t_954040b8e7d44d 3-4,84-112
+scripts/docs-site/llms.test.mjs
+  s_7d0a48f0aaecda::t_98da29edfd5725 5,8,37-64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "67a8066b670cb15c621846cb1902b3a1452887d0",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

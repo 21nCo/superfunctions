@@ -1,0 +1,31 @@
+cmsfn/.conduct/operational-logging-package.mjs
+  s_e1c5fc1a65c0cf::t_01749570a55328 1-28
+cmsfn/.conduct/operational-logging-readiness.md
+  s_e1c5fc1a65c0cf::t_abd3786f6a48c5 77-114
+cmsfn/.conduct/studio-packed-acceptance.py
+  s_e1c5fc1a65c0cf::t_57a33bf2f0d8ed 5,35-38
+cmsfn/server/README.md
+  s_e1c5fc1a65c0cf::t_4122fd8e5c63ec 222-226
+cmsfn/server/src/__tests__/operational-logging.test.ts
+  s_e1c5fc1a65c0cf::t_faa1f2149332fb 141-164
+cmsfn/server/src/index.ts
+  s_e1c5fc1a65c0cf::t_e5b27a452a1507 1,362-364
+cmsfn/server/src/logging/logger.ts
+  s_e1c5fc1a65c0cf::t_b69f791d0b6e77 70-87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a18e592073ca72d0c7b6cd2784905f6e90cef1ed",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

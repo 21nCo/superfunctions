@@ -1,0 +1,37 @@
+package-lock.json
+  s_e1c5fc1a65c0cf::t_f1a47986bcc25b 24149,68342
+watchfn/.conduct/scoped-http-auth-readiness.md
+  s_e1c5fc1a65c0cf::t_7629a20ad98cbe 1-34
+watchfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_beb5357667a6cd 136-166
+watchfn/typescript/package.json
+  s_e1c5fc1a65c0cf::t_e25cd357511920 79-80
+watchfn/typescript/scripts/verify-auth-package.mjs
+  s_e1c5fc1a65c0cf::t_1656bd23c5eb2e 1-37
+watchfn/typescript/src/core/types.ts
+  s_e1c5fc1a65c0cf::t_c5672f277bf255 1,66
+watchfn/typescript/src/core/watch-fn.ts
+  s_e1c5fc1a65c0cf::t_1a77f06210e4d4 1,89,93,174,181-193
+watchfn/typescript/src/http/handlers.ts
+  s_e1c5fc1a65c0cf::t_4503cb80f61ff1 25-26,62-63,92-93
+watchfn/typescript/tests/http/auth-provider.test.ts
+  s_e1c5fc1a65c0cf::t_955b29d6b9f857 1-46
+watchfn/typescript/tsup.config.ts
+  s_e1c5fc1a65c0cf::t_8952afb4daa7f7 14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ec2d58e7c8aacd302d6105791f9308b5dedb1bd1",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

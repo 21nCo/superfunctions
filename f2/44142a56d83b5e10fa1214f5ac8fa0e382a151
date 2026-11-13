@@ -1,0 +1,29 @@
+cifn/.conduct/durable-storage-readiness.md
+  s_e1c5fc1a65c0cf::t_b4d2b4cc066fa9 63-74
+cifn/typescript/control-plane/scripts/verify-module-consumers.mjs
+  s_e1c5fc1a65c0cf::t_b84d3956cc827e 1-19
+cifn/typescript/control-plane/src/pipeline/validator.ts
+  s_e1c5fc1a65c0cf::t_2a30481dd5afc6 1
+cifn/typescript/control-plane/src/store/database-store.test.ts
+  s_e1c5fc1a65c0cf::t_aa71dbc5983f7b 121-131
+cifn/typescript/control-plane/src/store/database-store.ts
+  s_e1c5fc1a65c0cf::t_eba153b9340dd8 144
+cifn/typescript/control-plane/tsup.config.ts
+  s_e1c5fc1a65c0cf::t_13006ad0753dd4 7-9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f244142a56d83b5e10fa1214f5ac8fa0e382a151",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
