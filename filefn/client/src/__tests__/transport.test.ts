@@ -76,8 +76,13 @@ interface PartUploadCase {
   toFileFn: boolean;
   /** Stubbed page location; when absent the test asserts there is none. */
   href?: string;
+  /** Stubbed document base URL (as set by `<base href>`); requires `href`. */
+  baseURI?: string;
   sessionToken?: string;
-  /** When set, the URL the injected fetch must receive. */
+  /**
+   * When set, the URL the injected fetch must receive, resolved against the
+   * page base (document base URL, else location) when there is one.
+   */
   expectedUrl?: string;
 }
 
@@ -87,9 +92,12 @@ interface PartUploadCase {
  * FileFn-bound parts get the auth header and 'include'; any other URL gets
  * only its signed headers and 'omit'.
  */
-async function expectPartUploadTransport({ baseUrl, url, toFileFn, href, sessionToken, expectedUrl }: PartUploadCase) {
+async function expectPartUploadTransport({ baseUrl, url, toFileFn, href, baseURI, sessionToken, expectedUrl }: PartUploadCase) {
   if (href) vi.stubGlobal('location', { href });
   else expect(globalThis.location).toBeUndefined();
+  if (baseURI) vi.stubGlobal('document', { baseURI });
+  else expect((globalThis as { document?: unknown }).document).toBeUndefined();
+  const pageBase = baseURI ?? href;
   const fetchImpl = vi.fn(
     async (_input: string, _init: RequestInit) => new Response(null, { status: 200, headers: { ETag: '"e"' } }),
   );
@@ -104,7 +112,9 @@ async function expectPartUploadTransport({ baseUrl, url, toFileFn, href, session
 
   expect(fetchImpl).toHaveBeenCalledTimes(1);
   const [dispatched, init] = fetchImpl.mock.calls[0];
-  if (expectedUrl !== undefined) expect(dispatched).toBe(expectedUrl);
+  if (expectedUrl !== undefined) {
+    expect(dispatched).toBe(pageBase ? new URL(expectedUrl, pageBase).href : expectedUrl);
+  }
   const headers = new Headers(init.headers);
   expect(headers.get('authorization')).toBe(toFileFn ? 'Bearer secret' : null);
   expect(headers.get('content-type')).toBe('text/plain');
@@ -332,6 +342,23 @@ describe('client transport options', () => {
     ['/api/files', 'https://app.example/dashboard', '/\\bucket.example/obj'],
   ])('sends a protocol-relative part URL to its own host under baseUrl %s (location %s, %s)', (baseUrl, href, url) =>
     expectPartUploadTransport({ baseUrl, url, toFileFn: false, href, expectedUrl: url }));
+
+  it.each([
+    ['/upload/sess_1/parts/1', true, 'https://api.example/api/files/upload/sess_1/parts/1'],
+    ['https://api.example/api/files/upload/sess_1/parts/1', true, 'https://api.example/api/files/upload/sess_1/parts/1'],
+    ['https://app.example/api/files/upload/sess_1/parts/1', false, 'https://app.example/api/files/upload/sess_1/parts/1'],
+    ['/../storage/part', false, 'https://api.example/api/storage/part'],
+    ['//bucket.example/obj', false, 'https://bucket.example/obj'],
+    [PRESIGNED, false, PRESIGNED],
+  ])('classifies and dispatches part URL %s against the document base URL, not the location (%s)', (url, toFileFn, expectedUrl) =>
+    expectPartUploadTransport({
+      baseUrl: '/api/files',
+      url,
+      toFileFn,
+      href: 'https://app.example/dashboard',
+      baseURI: 'https://api.example/elsewhere/',
+      expectedUrl,
+    }));
 
   it('defaults to the global fetch, resolved per request, and same-origin credentials', async () => {
     const client = createFileFnClient({ baseUrl: BASE });

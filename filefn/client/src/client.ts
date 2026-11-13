@@ -185,9 +185,10 @@ function mergeHeaders(
 }
 
 // Relative URLs are resolved against this origin when there is no page
-// location (Node, workers), so dot segments ("..", "%2e%2e") and
+// (Node, workers without a location), so dot segments ("..", "%2e%2e") and
 // protocol-relative hosts are normalized exactly as fetch would resolve them.
-// The reserved .invalid TLD never names a real FileFn deployment.
+// It is used only to classify a URL and is never dispatched. The reserved
+// .invalid TLD never names a real FileFn deployment.
 const NO_LOCATION_ORIGIN = "https://filefn-relative.invalid";
 
 /**
@@ -199,35 +200,55 @@ function isProtocolRelative(url: string): boolean {
   return /^[/\\]{2}/.test(url.replace(/[\t\n\r]/g, ""));
 }
 
-function resolveUrl(url: string): URL | undefined {
-  const pageUrl =
-    typeof globalThis.location?.href === "string" ? globalThis.location.href : NO_LOCATION_ORIGIN;
+/**
+ * The base a browser resolves a relative fetch URL against: the document base
+ * URL (which honors `<base href>`) in a window, else the location in a worker.
+ * Undefined when there is neither (Node).
+ */
+function pageBaseUrl(): string | undefined {
+  const baseURI = (globalThis as { document?: { baseURI?: unknown } }).document?.baseURI;
+  if (typeof baseURI === "string") return baseURI;
+  const href = globalThis.location?.href;
+  return typeof href === "string" ? href : undefined;
+}
+
+function resolveUrl(url: string, base: string): URL | undefined {
   try {
-    return new URL(url, pageUrl);
+    return new URL(url, base);
   } catch {
     return undefined;
   }
 }
 
 /**
- * Returns a predicate that tells whether a URL addresses the FileFn API under
- * `baseUrl` (same origin and path prefix). Only those requests carry the
- * configured auth headers and credentials mode. Both URLs are resolved and
- * normalized first, so a path that climbs out of baseUrl with dot segments
- * does not match. An empty `baseUrl` (a configured "" or "/") is the page
- * origin root, so every same-origin path matches it. A URL that cannot be
- * parsed never matches.
+ * Returns a function that resolves a part URL and tells whether it addresses
+ * the FileFn API under `baseUrl` (same origin and path prefix). Only those
+ * requests carry the configured auth headers and credentials mode.
+ *
+ * `baseUrl` and the part URL are resolved per call against one base, the one
+ * the browser uses for fetch (see pageBaseUrl), and the returned `url` is the
+ * resolved absolute URL, so the URL that is classified is exactly the URL
+ * that is dispatched. Resolving also normalizes dot segments, so a path that
+ * climbs out of baseUrl does not match. Without a page base, the URL is
+ * classified against a placeholder origin and dispatched unchanged. An empty
+ * `baseUrl` (a configured "" or "/") is the page origin root, so every
+ * same-origin path matches it. A URL that cannot be parsed never matches.
  */
-function createFileFnUrlMatcher(baseUrl: string): (url: string) => boolean {
-  const base = resolveUrl(baseUrl || "/");
-  const basePath = base?.pathname.replace(/\/$/, "") ?? "";
+function createPartUrlResolver(
+  baseUrl: string,
+): (url: string) => { url: string; toFileFn: boolean } {
   return (url) => {
-    const target = resolveUrl(url);
-    if (!base || !target) return false;
-    return (
-      target.origin === base.origin &&
-      (target.pathname === basePath || target.pathname.startsWith(`${basePath}/`))
-    );
+    const pageBase = pageBaseUrl();
+    const base = resolveUrl(baseUrl || "/", pageBase ?? NO_LOCATION_ORIGIN);
+    const target = resolveUrl(url, pageBase ?? NO_LOCATION_ORIGIN);
+    if (!base || !target) return { url, toFileFn: false };
+    const basePath = base.pathname.replace(/\/$/, "");
+    return {
+      url: pageBase ? target.href : url,
+      toFileFn:
+        target.origin === base.origin &&
+        (target.pathname === basePath || target.pathname.startsWith(`${basePath}/`)),
+    };
   };
 }
 
@@ -235,7 +256,7 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
   const retryOptions = resolveRetryOptions(config.retryOptions);
   const baseUrl = config.baseUrl.replace(/\/$/, "");
   const transport = resolveTransport(config);
-  const isFileFnUrl = createFileFnUrlMatcher(baseUrl);
+  const resolvePartUrl = createPartUrlResolver(baseUrl);
 
   async function readResponseBody(response: Response): Promise<{
     rawBody: string;
@@ -477,13 +498,14 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
       return withRetry(
         async () => {
           // A root-relative URL (proxy upload) is a path under baseUrl; a
-          // protocol-relative URL names its own host and is sent unchanged.
-          const finalUrl =
-            url.startsWith("/") && !isProtocolRelative(url) ? `${baseUrl}${url}` : url;
+          // protocol-relative URL names its own host and is never prefixed.
           // Proxy uploads under baseUrl go to FileFn and carry its auth
           // headers and credentials mode. Any other URL (a presigned storage
           // URL) gets only its signed headers and never ambient credentials.
-          const toFileFn = isFileFnUrl(finalUrl);
+          // The URL is classified and dispatched in the same resolved form.
+          const { url: finalUrl, toFileFn } = resolvePartUrl(
+            url.startsWith("/") && !isProtocolRelative(url) ? `${baseUrl}${url}` : url,
+          );
 
           const requestHeaders = mergeHeaders(
             toFileFn ? await readAuthHeaders() : undefined,
