@@ -116,8 +116,23 @@ function elapsedSeconds(value) {
 
 let clockTicks;
 function linuxClockTicks() {
-  clockTicks ??= Number(run("getconf", ["CLK_TCK"])?.stdout.trim()) || 100;
+  clockTicks ??= auxClockTicks() ?? (Number(run("getconf", ["CLK_TCK"])?.stdout.trim()) || 100);
   return clockTicks;
+}
+
+/**
+ * AT_CLKTCK (17) from the auxiliary vector the kernel gave this process, on a 64-bit system: the
+ * rate getconf CLK_TCK reports, read without starting a process, so that a passing run starts none
+ * of the guard's own to exit beside the tests it watches. Undefined when it cannot be read.
+ */
+function auxClockTicks() {
+  if (!process.arch.includes("64")) return undefined;
+  try {
+    const auxv = readFileSync("/proc/self/auxv");
+    const word = (at) => (os.endianness() === "LE" ? auxv.readBigUInt64LE(at) : auxv.readBigUInt64BE(at));
+    for (let at = 0; at + 16 <= auxv.length; at += 16) if (word(at) === 17n) return Number(word(at + 8)) || undefined;
+  } catch { /* read with getconf instead */ }
+  return undefined;
 }
 
 // The states proc(5) lists for a Linux process; a stat line showing any other is not well formed.
@@ -188,8 +203,10 @@ function listLinux() {
 const UTC_TOOL_ENV = () => ({ ...toolEnv(), TZ: "UTC0" });
 const LSTART = String.raw`(\S+\s+\S+\s+\d+\s+\d+:\d+:\d+\s+\d+)`;
 const darwinStart = (lstart) => `darwin-utc:${lstart.replaceAll(/\s+/g, " ")}`;
-// ps -o pid=,ppid=,pgid=,stat=,lstart= and, optionally, command=. stat starts with one of the states ps(1) lists.
-const PS_LINE = new RegExp(String.raw`^\s*(\d+)\s+(\d+)\s+(\d+)\s+([IRSTUZ]\S*)\s+${LSTART}(?:\s(.*))?$`);
+// ps -o pid=,ppid=,pgid=,stat=,lstart= and, optionally, command=. stat starts with one of the states ps(1) lists,
+// or "?" for a process ps catches as it starts or exits (its command then shows only "(name)"): a
+// process that may still run, not a zombie, and a line as well formed as any other.
+const PS_LINE = new RegExp(String.raw`^\s*(\d+)\s+(\d+)\s+(\d+)\s+([IRSTUZ?]\S*)\s+${LSTART}(?:\s(.*))?$`);
 
 /**
  * A line of that ps output read: as parseStat reads a Linux stat, or undefined when it is not
@@ -693,11 +710,13 @@ function groupMembers(pgid) {
  * The group of `entry`, a leader that has exited, read (groupMembers) and taken only when a read
  * of the leader right after it shows it still exited: otherwise its ID may have been reused
  * meanwhile, by a new leader of a new group with the same ID, so the read is not taken and counts
- * as incomplete, and `other` says when the ID names another process.
+ * as incomplete, and `other` says when the ID names another process. A read of the leader that
+ * fails is made again, up to IDENTITY_TRIES times in all, before the group read is given up.
  */
 function exitedGroup(entry) {
   const read = groupMembers(entry.pid);
-  const leader = identityOf(entry);
+  let leader = identityOf(entry);
+  for (let tries = 1; leader === undefined && tries < IDENTITY_TRIES; tries += 1) leader = identityOf(entry);
   return leader?.exited ? read : { members: [], complete: false, other: leader?.other === true };
 }
 

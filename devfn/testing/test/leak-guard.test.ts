@@ -17,18 +17,6 @@ import { attributeProcesses, listProcesses, ORIGINAL_TEMP_VARIABLE, ownedProcess
 import { temporaryDirectories } from "../../test-support/temp-directories.mjs";
 
 const tempDir = temporaryDirectories(afterEach);
-// Processes a fixture leaves on purpose where no guard finds them, read from the files that name
-// them and stopped after each test however it ends, a timeout included. Registered after
-// temporaryDirectories, so this runs first, while the files are still there.
-const fixtureFiles: string[] = [];
-afterEach(() => {
-  for (const file of fixtureFiles.splice(0)) {
-    let text = "";
-    try { text = readFileSync(file, "utf8"); } catch { continue; }
-    const pids = file.endsWith(".json") ? [JSON.parse(text).named] : [Number(text)];
-    for (const pid of pids) if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
-  }
-});
 const guard = fileURLToPath(new URL("../../test-support/leak-guard.mjs", import.meta.url));
 const locks = fileURLToPath(new URL("../../test-support/shared-locks.mjs", import.meta.url));
 const vitest = path.join(path.dirname(createRequire(import.meta.url).resolve("vitest/package.json")), "vitest.mjs");
@@ -36,7 +24,35 @@ const vitest = path.join(path.dirname(createRequire(import.meta.url).resolve("vi
 // Whether the process runs: an unreaped zombie, which a container's PID 1 may leave, does not.
 // The same check runs in every script this file generates, which require it from here.
 const liveness = fileURLToPath(new URL("./liveness.cjs", import.meta.url));
-const { live: alive } = createRequire(import.meta.url)(liveness) as { live: (pid: number) => boolean };
+type Fixture = { pid: number; started?: string };
+const { live: alive, started, stop } = createRequire(import.meta.url)(liveness) as { live: (pid: number) => boolean; started: (pid: number) => string | undefined; stop: (fixture: Fixture) => boolean };
+
+// The processes the fixtures start, each with the start it showed while it ran ({ pid, started }),
+// which a test tracks once it knows they run or which files the fixtures wrote name. After each
+// test however it ends, a timeout included, and in the finally of a test that leaves them, each is
+// sent SIGKILL only while its ID still shows that start (stop); never one whose start is unknown.
+// Registered after temporaryDirectories, so this runs first, while the files are still there.
+const fixtures: Fixture[] = [];
+const fixtureFiles: string[] = [];
+/** Tracks the process `pid` names now, which the caller knows to be the fixture it started, still running. */
+const track = (pid: number) => { fixtures.push({ pid, started: started(pid) }); return pid; };
+/** Every { pid, started } a fixture file's JSON holds, at any depth. */
+const namedIn = (value: unknown): Fixture[] => {
+  if (Array.isArray(value)) return value.flatMap(namedIn);
+  if (!value || typeof value !== "object") return [];
+  const { pid, started: start } = value as Fixture;
+  return [...(typeof pid === "number" && typeof start === "string" ? [{ pid, started: start }] : []), ...Object.values(value).flatMap(namedIn)];
+};
+function stopFixtures() {
+  for (const file of fixtureFiles.splice(0)) {
+    try { fixtures.push(...namedIn(JSON.parse(readFileSync(file, "utf8")))); } catch { /* not written, or not yet in full */ }
+  }
+  for (const fixture of fixtures.splice(0)) stop(fixture);
+}
+afterEach(stopFixtures);
+/** The process ID a fixture file names, once it is written. */
+const pidIn = (file: string) => { try { return JSON.parse(readFileSync(file, "utf8")).pid as number; } catch { return undefined; } };
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 // Whether the process has gone within a short while: a killed orphan is reaped by init.
 const gone = async (pid: number) => {
@@ -68,6 +84,7 @@ const orphanProcess = (cwd: string, ...named: string[]) => orphan(cwd, ['"-e"', 
 function project(body: string, { files = {}, options = "" }: { files?: Record<string, string>; options?: string } = {}): { dir: string; record: string } {
   const dir = tempDir("devfn-leak-guard-project-");
   const record = path.join(dir, "record.json");
+  fixtureFiles.push(record);
   writeFileSync(path.join(dir, "vitest.config.mjs"), `export default { test: { include: ["*.test.mjs"], globals: true, testTimeout: 1000, globalSetup: [${JSON.stringify(guard)}], setupFiles: ["./setup.mjs"]${options} } };\n`);
   writeFileSync(path.join(dir, "setup.mjs"), `import { guardTestFile } from ${JSON.stringify(guard)};\nguardTestFile({ beforeEach, afterEach, afterAll });\n`);
   for (const [name, content] of Object.entries({ "fixture.test.mjs": body, ...files })) {
@@ -76,8 +93,10 @@ const { existsSync, mkdirSync, mkdtempSync, readFileSync, rmdirSync, writeFileSy
 const { tmpdir } = require("node:os");
 const path = require("node:path");
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const { live } = require(${JSON.stringify(liveness)});
-const record = (value) => writeFileSync(${JSON.stringify(record)}, JSON.stringify({ root: process.env.SFN_TEST_LEAK_GUARD_ROOT, ...value }));
+const { live, started } = require(${JSON.stringify(liveness)});
+// Each process ID it records, with its start while it runs, so that the self-test signals only that process.
+const record = (value) => writeFileSync(${JSON.stringify(record)}, JSON.stringify({ root: process.env.SFN_TEST_LEAK_GUARD_ROOT, ...value,
+  fixtures: Object.values(value).flat().filter(Number.isInteger).map((pid) => ({ pid, started: started(pid) })) }));
 ${content}
 `);
   }
@@ -365,7 +384,7 @@ describe.skipIf(process.platform === "win32")("DevFn test leak guard", { timeout
       } else expect(result.code, result.output).toBe(0);
       expect(alive(recorded.pid!)).toBe(true);
     } finally {
-      if (recorded?.pid) try { process.kill(recorded.pid, "SIGKILL"); } catch { /* already gone */ }
+      stopFixtures();
     }
   });
 
@@ -414,7 +433,7 @@ describe.skipIf(process.platform === "win32")("DevFn test leak guard", { timeout
       if (recorded.pid) expect(listedOnly ? alive(recorded.pid) : await gone(recorded.pid)).toBe(true);
       expect(existsSync(recorded.root)).toBe(false);
     } finally {
-      if (recorded.pid) try { process.kill(recorded.pid, "SIGKILL"); } catch { /* already gone */ }
+      stopFixtures();
     }
   });
 
@@ -443,7 +462,7 @@ describe.skipIf(process.platform === "win32")("DevFn test leak guard", { timeout
     const stopped = path.join(dir, "stopped.json");
     // Not the scope's, until it starts a process that is, a second after the first stop round
     // has killed `ownGroup`, so that a second round stops it.
-    const later = `const { live } = require(${JSON.stringify(liveness)});
+    const later = `const { live, started } = require(${JSON.stringify(liveness)});
 const [, ownGroup, where, file] = process.argv;
 setTimeout(() => process.exit(1), 30_000);
 const wait = setInterval(() => {
@@ -451,18 +470,20 @@ const wait = setInterval(() => {
   clearInterval(wait);
   setTimeout(() => {
     const late = require("node:child_process").spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore", cwd: Buffer.from(where, "hex").toString(), env: { PATH: process.env.PATH } });
-    require("node:fs").writeFileSync(file, String(late.pid));
+    require("node:fs").writeFileSync(file, JSON.stringify({ pid: late.pid, started: started(late.pid) }));
     process.exit(0);
   }, 1_000);
 }, 50);`;
     writeFileSync(leader, `const { spawn } = require("node:child_process");
+const { started } = require(${JSON.stringify(liveness)});
 process.on("SIGTERM", () => {
   const keep = [process.execPath, ["-e", "setInterval(() => {}, 1000)"]];
   const env = { PATH: process.env.PATH };
   const sameGroup = spawn(...keep, { stdio: "ignore", cwd: "/", env });
   const ownGroup = spawn(...keep, { detached: true, stdio: "ignore", env });
   const watcher = spawn(process.execPath, ["-e", ${JSON.stringify(later)}, String(ownGroup.pid), Buffer.from(process.cwd()).toString("hex"), process.argv[2] + ".late"], { detached: true, stdio: "ignore", cwd: "/", env });
-  require("node:fs").writeFileSync(process.argv[2], JSON.stringify({ sameGroup: sameGroup.pid, ownGroup: ownGroup.pid, watcher: watcher.pid }));
+  const fixtures = [sameGroup, ownGroup, watcher].map(({ pid }) => ({ pid, started: started(pid) }));
+  require("node:fs").writeFileSync(process.argv[2], JSON.stringify({ sameGroup: sameGroup.pid, ownGroup: ownGroup.pid, watcher: watcher.pid, fixtures }));
   process.exit(0);
 });
 setInterval(() => {}, 1000);
@@ -476,13 +497,14 @@ test("leaves a process that starts more as it stops", async () => {
   record({ pid, named: ${orphanProcess('"/"', 'where + "/missing/../server.mjs"')} });
   // Long enough for the leader to install its SIGTERM handler.
   await sleep(500);
-});`);
+}, 10_000);`);
     // Whatever was started, read on its own: the run, or reading one of these, may fail.
     const read = (file: string) => { try { return JSON.parse(readFileSync(file, "utf8")); } catch { return undefined; } };
+    fixtureFiles.push(stopped, `${stopped}.late`);
     try {
       const { code, output, recorded } = await runProject(dir, record);
       const { sameGroup, ownGroup } = read(stopped);
-      const late = read(`${stopped}.late`);
+      const late = read(`${stopped}.late`)?.pid;
       expect(code).not.toBe(0);
       for (const pid of [recorded.pid, late, sameGroup]) expect(output, output).toContain(`process ${pid} `);
       for (const pid of [recorded.pid, ownGroup, late]) expect(await gone(pid)).toBe(true);
@@ -492,8 +514,7 @@ test("leaves a process that starts more as it stops", async () => {
       expect(alive(sameGroup)).toBe(true);
       expect(existsSync(recorded.root)).toBe(false);
     } finally {
-      const started = read(stopped) ?? {};
-      for (const pid of [read(record)?.pid, read(record)?.named, started.sameGroup, started.ownGroup, started.watcher, read(`${stopped}.late`)]) if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* stopped */ }
+      stopFixtures();
     }
   });
 
@@ -585,10 +606,11 @@ test("leaves a guarded directory", () => {
   // A leader that, on SIGTERM, starts a process in its group and exits. That process, which runs
   // from "/" and so is found only through the leader's group, interrupts the run 300 ms later.
   const interruptingLeader = `const [dir, main] = process.argv.slice(1);
+const { started } = require(${JSON.stringify(liveness)});
 process.on("SIGTERM", () => {
   const script = "setTimeout(() => process.kill(" + main + ", 'SIGTERM'), 300); setInterval(() => {}, 1000)";
   const member = require("node:child_process").spawn(process.execPath, ["-e", script], { stdio: "ignore", cwd: "/", env: { PATH: process.env.PATH } });
-  require("node:fs").writeFileSync(require("node:path").join(dir, "member.pid"), String(member.pid));
+  require("node:fs").writeFileSync(require("node:path").join(dir, "member.pid"), JSON.stringify({ pid: member.pid, started: started(member.pid) }));
   process.exit(0);
 });
 setInterval(() => {}, 1000);`;
@@ -596,17 +618,19 @@ setInterval(() => {}, 1000);`;
   // A leader whose group holds a process found only through it, which runs from "/" and outlives
   // SIGTERM. The leader exits on SIGTERM; 300 ms after SIGTERM, that process interrupts the run.
   const leaderOfInterrupter = `const [dir, main] = process.argv.slice(1);
+const { started } = require(${JSON.stringify(liveness)});
 const script = "process.on('SIGTERM', () => setTimeout(() => process.kill(" + main + ", 'SIGTERM'), 300)); setInterval(() => {}, 1000)";
 const member = require("node:child_process").spawn(process.execPath, ["-e", script], { stdio: "ignore", cwd: "/", env: { PATH: process.env.PATH } });
 process.on("SIGTERM", () => process.exit(0));
-setTimeout(() => require("node:fs").writeFileSync(require("node:path").join(dir, "member.pid"), String(member.pid)), 300);
+setTimeout(() => require("node:fs").writeFileSync(require("node:path").join(dir, "member.pid"), JSON.stringify({ pid: member.pid, started: started(member.pid) })), 300);
 setInterval(() => {}, 1000);`;
 
   it("stops, through its group, a process its stop saw in a leader's group when the run is interrupted after the leader exits", async () => {
     const { dir, record } = project(`test("leaves a leader whose group holds a process found only through it", async () => {
   const pid = ${orphan("process.env.SFN_TEST_LEAK_GUARD_ROOT", ['"-e"', JSON.stringify(leaderOfInterrupter), "process.cwd()", "process.env.SFN_TEST_LEAK_GUARD_MAIN_PID"])};
-  while (!existsSync("member.pid")) await sleep(20);
-  record({ pid, child: Number(readFileSync("member.pid", "utf8")) });
+  const member = () => { try { return JSON.parse(readFileSync("member.pid", "utf8")).pid; } catch { return undefined; } };
+  while (!member()) await sleep(20);
+  record({ pid, child: member() });
 }, 10_000);`);
     fixtureFiles.push(path.join(dir, "member.pid"));
     let member: number | undefined;
@@ -618,7 +642,7 @@ setInterval(() => {}, 1000);`;
       expect(await gone(member!)).toBe(true);
       expect(alive(recorded.pid!)).toBe(false);
     } finally {
-      if (member) try { process.kill(member, "SIGKILL"); } catch { /* already gone */ }
+      stopFixtures();
     }
   });
 
@@ -629,20 +653,17 @@ setInterval(() => {}, 1000);`;
   const pid = ${orphan("process.env.SFN_TEST_LEAK_GUARD_ROOT", ['"-e"', JSON.stringify(interruptingLeader), "process.cwd()", "process.env.SFN_TEST_LEAK_GUARD_MAIN_PID"])};
   record({ pid, named: ${orphanProcess('"/"', 'process.env.SFN_TEST_LEAK_GUARD_ROOT + "/missing/../server.mjs"')} });
 });`);
-    fixtureFiles.push(path.join(dir, "member.pid"), record);
-    let named: number | undefined;
-    let member: number | undefined;
+    fixtureFiles.push(path.join(dir, "member.pid"));
     try {
       const { code, output, recorded } = await runProject(dir, record);
-      named = recorded.named;
-      member = Number(readFileSync(path.join(dir, "member.pid"), "utf8"));
+      const member = pidIn(path.join(dir, "member.pid"));
       expect(code, output).not.toBe(0);
       expect(output).toContain("DevFn test leak guard: This interrupted test run left these behind.");
       expect(output).toContain(`process ${member} `);
       expect(output).toMatch(new RegExp(`Not stopped: (?:\\d+, )*${member}\\b`));
       expect(alive(recorded.pid!)).toBe(false);
     } finally {
-      for (const pid of [named, member]) if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+      stopFixtures();
     }
   });
 
@@ -914,7 +935,7 @@ test("names the locks", async () => {
       expect(alive(orphan!)).toBe(true);
       expect(existsSync(recorded.root)).toBe(false);
     } finally {
-      if (orphan) try { process.kill(orphan, "SIGKILL"); } catch { /* already gone */ }
+      stopFixtures();
     }
   });
 
@@ -938,7 +959,7 @@ test("names the locks", async () => {
       for (const pid of [recorded.pid, recorded.named]) expect(result.output).toContain(`process ${pid} `);
       for (const pid of [recorded.pid, recorded.named]) expect(alive(pid!)).toBe(true);
     } finally {
-      for (const pid of [recorded?.pid, recorded?.named]) if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+      stopFixtures();
     }
   });
 
@@ -958,7 +979,7 @@ test("names the locks", async () => {
       expect(output).toContain(`process ${named} `);
       expect(alive(named!)).toBe(true);
     } finally {
-      if (named) try { process.kill(named, "SIGKILL"); } catch { /* already gone */ }
+      stopFixtures();
     }
   });
 
@@ -970,15 +991,17 @@ test("names the locks", async () => {
 });`);
     // Hex-encoded, so the starter itself names neither the root nor a path of the late process.
     writeFileSync(path.join(dir, "late.cjs"), `const [named, pidFile] = process.argv.slice(2).map((value) => Buffer.from(value, "hex").toString());
+const { started } = require(${JSON.stringify(liveness)});
 setTimeout(() => {
   const child = require("node:child_process").spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", named], { detached: true, stdio: "ignore", cwd: "/", env: { PATH: process.env.PATH } });
   child.unref();
-  require("node:fs").writeFileSync(pidFile, String(child.pid));
+  require("node:fs").writeFileSync(pidFile, JSON.stringify({ pid: child.pid, started: started(child.pid) }));
 }, 2000);
 `);
     mkdirSync(path.join(dir, ".git"));
     mkdirSync(path.join(dir, "package"));
-    const latePid = () => existsSync(path.join(dir, "late.pid")) ? Number(readFileSync(path.join(dir, "late.pid"), "utf8")) : undefined;
+    const latePid = () => pidIn(path.join(dir, "late.pid"));
+    fixtureFiles.push(path.join(dir, "late.pid"));
     let orphaned: number | undefined;
     try {
       const { code, output, recorded } = await runProject(dir, record);
@@ -989,7 +1012,7 @@ setTimeout(() => {
       for (const pid of [orphaned, latePid()]) expect(alive(pid!)).toBe(true);
     } finally {
       await sleep(2_500);
-      for (const pid of [orphaned, latePid()]) if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+      stopFixtures();
     }
   });
 
@@ -1002,7 +1025,7 @@ setTimeout(() => {
   record({ pid, nested: ${orphan('"/"', ['path.join(process.cwd(), "starter.cjs")', "String(pid)", "hex(process.env.SFN_TEST_LEAK_GUARD_ROOT)", 'hex(path.join(process.cwd(), "child.pid"))'])} });
 });`);
     writeFileSync(path.join(dir, "starter.cjs"), `const [pid, root, pidFile] = [process.argv[2], ...process.argv.slice(3).map((value) => Buffer.from(value, "hex").toString())];
-const { live } = require(${JSON.stringify(liveness)});
+const { live, started } = require(${JSON.stringify(liveness)});
 // Once the guard has stopped that process, which may stay a zombie, and finished listing for what stopping it started.
 const wait = setInterval(() => {
   if (live(Number(pid))) return;
@@ -1010,13 +1033,14 @@ const wait = setInterval(() => {
   setTimeout(() => {
     const child = require("node:child_process").spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore", cwd: root, env: { PATH: process.env.PATH } });
     child.unref();
-    require("node:fs").writeFileSync(pidFile, String(child.pid));
+    require("node:fs").writeFileSync(pidFile, JSON.stringify({ pid: child.pid, started: started(child.pid) }));
   }, 1_000);
   setInterval(() => {}, 1000);
 }, 50);
 `);
     mkdirSync(path.join(dir, ".git"));
-    const childPid = () => existsSync(path.join(dir, "child.pid")) ? Number(readFileSync(path.join(dir, "child.pid"), "utf8")) : undefined;
+    const childPid = () => pidIn(path.join(dir, "child.pid"));
+    fixtureFiles.push(path.join(dir, "child.pid"));
     let starter: number | undefined;
     try {
       const { code, output, recorded } = await runProject(dir, record);
@@ -1027,7 +1051,7 @@ const wait = setInterval(() => {
       for (const pid of [recorded.pid, childPid()]) expect(await gone(pid!)).toBe(true);
       expect(alive(starter!)).toBe(true);
     } finally {
-      for (const pid of [starter, childPid()]) if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+      stopFixtures();
     }
   });
 
@@ -1105,7 +1129,7 @@ test("leaves processes, and then listing them fails", () => {
       expect(await gone(recorded.pid!)).toBe(true);
       expect(alive(named!)).toBe(true);
     } finally {
-      if (named) try { process.kill(named, "SIGKILL"); } catch { /* already gone */ }
+      stopFixtures();
     }
   });
 
@@ -1129,7 +1153,7 @@ test("leaves processes, and then listing them fails", () => {
       expect(alive(named!)).toBe(true);
       expect(existsSync(recorded.root)).toBe(false);
     } finally {
-      if (named) try { process.kill(named, "SIGKILL"); } catch { /* already gone */ }
+      stopFixtures();
     }
   });
 
@@ -1163,7 +1187,7 @@ test("cannot list processes", () => {
       // The process the ID now names is someone else's.
       expect(alive(pid!)).toBe(true);
     } finally {
-      if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+      stopFixtures();
     }
   });
 
@@ -1189,7 +1213,7 @@ test("cannot list processes", () => {
       // Signalled by neither the teardown's SIGTERM and SIGKILL nor the exit cleanup's SIGKILL.
       expect(alive(pid!)).toBe(true);
     } finally {
-      if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+      stopFixtures();
     }
   });
 
@@ -1222,7 +1246,7 @@ test("leaves a process, and then listing it fails", () => {
       expect(scoped).not.toContain("so it has not stopped them");
       expect(await gone(pid!)).toBe(true);
     } finally {
-      if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+      stopFixtures();
     }
   });
 
@@ -1239,7 +1263,7 @@ test("leaves a process, and then listing it fails", () => {
       expect(output).toContain(`process ${pid} `);
       expect(await gone(pid!)).toBe(true);
     } finally {
-      if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+      stopFixtures();
     }
   });
 
@@ -1276,7 +1300,7 @@ test("leaves a process, and then listing it fails", () => {
       for (const pid of [...recorded!.siblings!, recorded!.nested]) expect(result.output).not.toContain(`process ${pid} `);
       for (const pid of [recorded!.pid, recorded!.named, ...recorded!.siblings!, recorded!.nested]) expect(alive(pid!)).toBe(true);
     } finally {
-      for (const pid of [recorded?.pid, recorded?.named, ...(recorded?.siblings ?? []), recorded?.nested]) if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+      stopFixtures();
       for (const suffix of besides) rmSync(`${dir}${suffix}`, { recursive: true, force: true });
     }
   });
@@ -1316,12 +1340,10 @@ describe.skipIf(!["linux", "darwin"].includes(process.platform))("stopProcesses"
   const { syncBuiltinESMExports } = nodeRequire("node:module") as typeof import("node:module");
   // One second later (macOS ps -o lstart) or one clock tick later (Linux /proc/<pid>/stat field 22).
   const later = (text: string) => text.replace(/:(\d\d)(?!:)/, (_, s: string) => `:${String(s === "59" ? 58 : Number(s) + 1).padStart(2, "0")}`);
-  const pids: number[] = [];
   let restore: (() => void) | undefined;
   afterEach(() => {
     restore?.();
     restore = undefined;
-    for (const pid of pids.splice(0)) try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
   });
 
   /**
@@ -1361,7 +1383,8 @@ describe.skipIf(!["linux", "darwin"].includes(process.platform))("stopProcesses"
   /** Starts a detached Node process running `script`, and returns it once it has written its first line, with the output it writes. */
   async function start(script: string) {
     const child = spawn(process.execPath, ["-e", script], { detached: true, stdio: ["pipe", "pipe", "ignore"] });
-    pids.push(child.pid!);
+    // This process's own child, which it cannot have reaped yet: the ID still names it.
+    track(child.pid!);
     let output = "";
     child.stdout.on("data", (chunk) => { output += chunk; });
     while (!output.includes("\n")) await sleep(20);
@@ -1403,8 +1426,7 @@ const member = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { 
 process.stdout.write(member.pid + "\\n");
 process.stdin.on("end", () => process.exit(0));
 process.stdin.resume();`);
-    const member = Number(output().trim());
-    pids.push(member);
+    const member = track(Number(output().trim()));
     const entry = listed(leader);
     const exited = new Promise((resolve) => child.once("exit", resolve));
     child.stdin!.end();
@@ -1415,6 +1437,13 @@ process.stdin.resume();`);
     const entry = listProcesses(Date.now())?.find((candidate) => candidate.pid === pid);
     expect(entry?.started, `process ${pid} is listed with its start`).toBeDefined();
     return entry!;
+  };
+  /** The ID in a line "<pid> <start>" a leader wrote as it started that process in its SIGTERM handler, which is tracked with that start. */
+  const memberStarted = (line: string) => {
+    // The start itself may hold spaces (macOS: "ps:Fri Nov 13 06:42:52 2026").
+    const pid = Number(line.slice(0, line.indexOf(" ")));
+    fixtures.push({ pid, started: line.slice(line.indexOf(" ") + 1) });
+    return pid;
   };
   const ignoresSigterm = `process.on("SIGTERM", () => process.stdout.write("SIGTERM\\n")); process.stdout.write("ready\\n"); setInterval(() => {}, 1000);`;
 
@@ -1587,7 +1616,7 @@ process.stdin.resume();`);
     // The leader outlives SIGTERM, and starts a process in its group when it gets it.
     const { pid: leader, output } = await start(`process.on("SIGTERM", () => {
   const member = require("node:child_process").spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
-  require("node:fs").writeSync(1, member.pid + "\\n");
+  require("node:fs").writeSync(1, member.pid + " " + require(${JSON.stringify(liveness)}).started(member.pid) + "\\n");
 });
 process.stdout.write("ready\\n");
 setInterval(() => {}, 1000);`);
@@ -1616,8 +1645,7 @@ setInterval(() => {}, 1000);`);
       syncBuiltinESMExports();
     };
     expect(await stopProcesses([entry])).toEqual([]);
-    const member = Number(output().trim().split("\n")[1]);
-    pids.push(member);
+    const member = memberStarted(output().trim().split("\n")[1]);
     expect(await gone(member)).toBe(true);
   });
 
@@ -1629,8 +1657,7 @@ const members = [keep(), keep()];
 process.on("SIGTERM", () => process.exit(0));
 setTimeout(() => process.stdout.write(members.map((member) => member.pid).join(" ") + "\\n"), 500);
 setInterval(() => {}, 1000);`);
-    const members = output().trim().split(" ").map(Number);
-    pids.push(...members);
+    const members = output().trim().split(" ").map(Number).map(track);
     const entry = listed(leader);
     expect(entry.pgid).toBe(leader);
     // Only the leader is listed: the members are reached through its group, after it has exited.
@@ -1642,15 +1669,14 @@ setInterval(() => {}, 1000);`);
     const { pid: leader, output } = await start(`const { spawn } = require("node:child_process");
 process.on("SIGTERM", () => {
   const member = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
-  require("node:fs").writeSync(1, member.pid + "\\n");
+  require("node:fs").writeSync(1, member.pid + " " + require(${JSON.stringify(liveness)}).started(member.pid) + "\\n");
   process.exit(0);
 });
 process.stdout.write("ready\\n");
 setInterval(() => {}, 1000);`);
     const entry = listed(leader);
     const left = await stopProcesses([entry]);
-    const member = Number(output().trim().split("\n")[1]);
-    pids.push(member);
+    const member = memberStarted(output().trim().split("\n")[1]);
     expect(left.map((process) => process.pid)).toEqual([member]);
     expect(alive(member)).toBe(true);
   });
@@ -1663,8 +1689,7 @@ const members = [keep(), keep()];
 process.stdout.write(members.map((member) => member.pid).join(" ") + "\\n");
 process.stdin.on("end", () => process.exit(0));
 process.stdin.resume();`);
-    const members = output().trim().split(" ").map(Number);
-    pids.push(...members);
+    const members = output().trim().split(" ").map(Number).map(track);
     const entry = listed(leader);
     const exited = new Promise((resolve) => child.once("exit", resolve));
     child.stdin!.end();
@@ -1694,8 +1719,7 @@ setInterval(() => {}, 1000);`;
     ["with a listing that does not show it", () => []],
   ])("keeps returning a process it saw in a group it signalled once the leader has exited, while the process survives that signal, %s", async (_, find) => {
     const { pid: leader, output } = await start(leaderOfSurvivor);
-    const member = Number(output().trim());
-    pids.push(member);
+    const member = track(Number(output().trim()));
     const entry = listed(leader);
     refuseGroupSignals(leader, "SIGKILL");
     expect((await stopProcesses([entry], find)).map((left) => left.pid)).toEqual([member]);
@@ -1707,11 +1731,66 @@ setInterval(() => {}, 1000);`;
     ["with a listing that does not show them", () => []],
   ])("keeps returning a process it saw in the group of a leader still itself while both survive SIGKILL to that group, %s", async (_, find) => {
     const { pid: leader, output } = await start(leaderOfSurvivor);
-    const member = Number(output().trim());
-    pids.push(member);
+    const member = track(Number(output().trim()));
     const entry = listed(leader);
     refuseGroupSignals(leader);
     expect((await stopProcesses([entry], find)).map((left) => left.pid).sort()).toEqual([leader, member].sort());
+    expect(alive(member)).toBe(true);
+  });
+
+  /**
+   * Makes the reads of the exited leader `leader`'s own start that follow a read of its group
+   * (exitedGroup) fail or show another process's start, one per entry of `results`, in order;
+   * later ones are left alone.
+   */
+  function alterLeaderReadsAfterGroupRead(leader: number, results: ("unreadable" | "other")[]) {
+    let reads = 0;
+    const { spawnSync } = childProcess;
+    const { readFileSync } = fs;
+    const failure = () => Object.assign(new Error("reading failed (test)"), { code: "EIO" });
+    const next = () => {
+      const stack = new Error().stack ?? "";
+      return stack.includes("exitedGroup") && !stack.includes("groupMembers") ? results[reads++] : undefined;
+    };
+    (childProcess as { spawnSync: unknown }).spawnSync = (command: string, args: string[], ...rest: unknown[]) => {
+      const call = (list: string[]) => (spawnSync as (...all: unknown[]) => { stdout: string })(command, list, ...rest);
+      if (command !== "ps" || !args?.includes("-p") || !String(args.at(-1)).split(",").includes(String(leader))) return call(args);
+      const result = next();
+      if (result === "unreadable") return { error: failure() };
+      // This process's line, under the leader's ID: the ID names a process with another start.
+      if (result === "other") return { ...call(args), status: 0, stdout: call(args).stdout + call([...args.slice(0, -1), String(process.pid)]).stdout.replace(/^(\s*)\d+/, `$1${leader}`) };
+      return call(args);
+    };
+    (fs as { readFileSync: unknown }).readFileSync = (target: unknown, ...rest: unknown[]) => {
+      const read = (file: unknown) => (readFileSync as (...all: unknown[]) => string)(file, ...rest);
+      if (target !== `/proc/${leader}/stat`) return read(target);
+      const result = next();
+      if (result === "unreadable") throw failure();
+      return result === "other" ? read(`/proc/${process.pid}/stat`).replace(/^\d+/, String(leader)) : read(target);
+    };
+    syncBuiltinESMExports();
+    restore = () => {
+      Object.assign(childProcess, { spawnSync });
+      Object.assign(fs, { readFileSync });
+      syncBuiltinESMExports();
+    };
+  }
+
+  it("stops the group a leader that exits on SIGTERM left with a process the guard saw in it, though the first read of the leader after its group's read fails", async () => {
+    const { pid: leader, output } = await start(leaderOfSurvivor);
+    const member = track(Number(output().trim()));
+    const entry = listed(leader);
+    alterLeaderReadsAfterGroupRead(leader, ["unreadable"]);
+    expect(await stopProcesses([entry])).toEqual([]);
+    expect(await gone(member)).toBe(true);
+  });
+
+  it("never signals the group of an exited leader whose ID names another process once a read of it that failed is made again, and returns what it saw in it", async () => {
+    const { pid: leader, output } = await start(leaderOfSurvivor);
+    const member = track(Number(output().trim()));
+    const entry = listed(leader);
+    alterLeaderReadsAfterGroupRead(leader, ["unreadable", "other"]);
+    expect((await stopProcesses([entry])).map((left) => left.pid)).toEqual([member]);
     expect(alive(member)).toBe(true);
   });
 
@@ -1766,6 +1845,24 @@ setInterval(() => {}, 1000);`;
   it.each(malformed)("keeps returning a process held in an exited leader's group whose own read shows it %s, never taking it for another process", async (_, change) => {
     const { member, entry } = await exitedLeader();
     alterReads(member, "processStates", change);
+    expect((await stopProcesses([entry], () => [])).map((left) => left.pid)).toEqual([member]);
+    expect(alive(member)).toBe(true);
+  });
+
+  it.runIf(process.platform === "darwin")("takes a read of an exited leader's group as complete though it shows a process ps caught as it started or exited", async () => {
+    const { member, entry } = await exitedLeader();
+    const { spawnSync } = childProcess;
+    // ps shows "?" for the state of such a process, with only its name for its command.
+    const caught = "2147483646     1 2147483646 ?E   Fri Nov 13 01:20:47 2026     (node)\n";
+    (childProcess as { spawnSync: unknown }).spawnSync = (command: string, args: string[], ...rest: unknown[]) => {
+      const result = (spawnSync as (...all: unknown[]) => { stdout: string })(command, args, ...rest);
+      return command === "ps" && args?.includes("-A") && !args.includes("etime=") ? { ...result, stdout: result.stdout + caught } : result;
+    };
+    syncBuiltinESMExports();
+    restore = () => {
+      Object.assign(childProcess, { spawnSync });
+      syncBuiltinESMExports();
+    };
     expect((await stopProcesses([entry], () => [])).map((left) => left.pid)).toEqual([member]);
     expect(alive(member)).toBe(true);
   });
@@ -1917,5 +2014,60 @@ setInterval(() => {}, 1000);`;
     rereadAfterFailures(entry.pid, "unreadable");
     expect((await stopProcesses([entry], () => [])).map((left) => left.pid).sort()).toEqual([member, entry.pid].sort());
     expect(alive(member)).toBe(true);
+  });
+});
+
+// The self-test's own cleanup of what its fixtures start (stopFixtures) signals a process only
+// while its ID still shows the start the fixture recorded while it ran.
+describe.skipIf(process.platform === "win32")("the self-test's fixture cleanup", () => {
+  // Processes of this test's own, kept running, which stand in for ones that reused a fixture's ID,
+  // stopped after each test by their own starts, read as each was started.
+  const strangers: Fixture[] = [];
+  afterEach(() => { for (const fixture of strangers.splice(0)) stop(fixture); });
+  function stranger() {
+    const { pid } = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore" });
+    strangers.push({ pid: pid!, started: started(pid!) });
+    return pid!;
+  }
+
+  it("never signals a process a fixture file names under a start it did not have, as when its ID was reused", () => {
+    const pid = stranger();
+    const file = path.join(tempDir("devfn-leak-guard-cleanup-"), "record.json");
+    writeFileSync(file, JSON.stringify({ named: pid, fixtures: [{ pid, started: `${started(pid)} (earlier)` }] }));
+    fixtureFiles.push(file);
+    stopFixtures();
+    expect(alive(pid)).toBe(true);
+    expect(stop({ pid, started: "linux:1" })).toBe(false);
+    expect(alive(pid)).toBe(true);
+  });
+
+  it("never signals a fixture whose start could not be read while it ran", () => {
+    const pid = stranger();
+    fixtures.push({ pid, started: undefined });
+    const file = path.join(tempDir("devfn-leak-guard-cleanup-"), "member.pid");
+    writeFileSync(file, JSON.stringify({ pid, started: null }));
+    fixtureFiles.push(file);
+    stopFixtures();
+    expect(alive(pid)).toBe(true);
+  });
+
+  it("stops a fixture once, however often cleanup runs", async () => {
+    const pid = track(stranger());
+    const fixture = { pid, started: started(pid) };
+    stopFixtures();
+    expect(await gone(pid)).toBe(true);
+    stopFixtures();
+    expect(stop(fixture)).toBe(false);
+  });
+
+  let timedOut: number | undefined;
+  it.fails("tracks a fixture of a test that then times out (this test is meant to time out)", async () => {
+    timedOut = track(stranger());
+    await new Promise(() => {});
+  }, 500);
+
+  it("has stopped the fixture of the test that timed out before it", async () => {
+    expect(timedOut).toBeDefined();
+    expect(await gone(timedOut!)).toBe(true);
   });
 });

@@ -95,6 +95,8 @@ calls `guardTestFile` as a setup file.
   file or run. Before sending SIGTERM to a group, the guard records which processes are in
   it, and signals it only if its leader is still itself after that; SIGKILL goes to the group
   of a leader still itself at once, ending all of it together. Once the leader has exited,
+  a read of its group is taken only while a read of the leader right after it still shows
+  it exited (a read of the leader that fails is made again, up to three times in all), and
   its group is signalled only while it holds a process the guard recorded in it so, and a
   read of that process's own, just before the signal, shows it is still that process and
   still in the group. Nothing else, such as when a process started, links it to the leader:
@@ -102,7 +104,8 @@ calls `guardTestFile` as a setup file.
   handler starts, is listed and fails the file or run, but is never signalled. So are the
   other processes in the group, and whatever the stop after a failed test leaves running.
   A group that cannot be read in full (a process's `/proc` stat fails for any reason but
-  that it has exited, or a stat or `ps` line is not well formed) is not taken for all of it:
+  that it has exited, or a stat or `ps` line is not well formed; a `ps` state of `?`, for a
+  process caught as it starts or exits, is well formed) is not taken for all of it:
   its leader is read first, and while that leader has exited the group is read again before
   the guard gives up on it, and only a complete read that shows no process left in it clears
   it; once the leader's ID names another process, the group may be another one, so only what
