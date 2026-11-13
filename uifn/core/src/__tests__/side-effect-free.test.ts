@@ -6,8 +6,12 @@ import { describe, expect, it } from 'vitest';
 
 // package.json declares `"sideEffects": false`, which lets bundlers drop any @uifn/core module whose exports an
 // app does not use. That is only safe while importing a module does nothing but declare bindings, so this test
-// rejects module-level code that could run at import time, including inside initializers and class
-// definitions (extends clauses, computed member names, decorators and static initializers).
+// denies module-level code by default. Only imports with bindings, re-exports, declarations and default exports are
+// accepted, and each is walked in full (binding patterns, initializers, enum values, non-ambient namespace bodies and
+// class definitions), skipping only what JavaScript defers or erases: function, method and accessor bodies with
+// their parameters, instance field initializers, types and ambient declarations. Anything evaluated that can run
+// code is reported, except calls to the allow-listed freeze/contract builders and helpers that only forward to them.
+// Property reads, spreads and destructuring are accepted: they run user code only through getters or iterators.
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const sourceRoot = join(packageRoot, 'src');
@@ -51,11 +55,13 @@ const ASSIGNMENT_OPERATORS = new Set([
 ]);
 
 /**
- * Walks the expressions a module evaluates when it loads and records each one that runs code, at any depth: calls
- * other than the allow-listed pure builders (whose arguments are checked in turn), `new`, tagged templates, `await`,
- * assignments, `++`/`--` and `delete`. Classes are walked the way JavaScript defines them: the `extends` expression,
- * computed member names, decorators and static initializers all run at import. Function, method and accessor bodies,
- * parameter defaults and instance field initializers are skipped because declaring them runs nothing.
+ * Walks everything a module evaluates when it loads and records each piece that runs code, at any depth. It denies by
+ * default: every child node is walked except the positions JavaScript defers or erases, which are function, arrow,
+ * method, accessor and constructor bodies with their parameter lists, instance field initializers and type nodes.
+ * Within that, it records calls other than the allow-listed pure builders (whose arguments are walked in turn), `new`,
+ * tagged templates, `await`, assignments, `++`/`--` and `delete`. Classes are walked the way JavaScript defines them:
+ * the `extends` expression, computed member names, decorators and static initializers all run at import, and an
+ * unrecognised class member is reported.
  */
 function importTimeScanner(file: ts.SourceFile, at: (node: ts.Node) => string, pureCallees: ReadonlySet<string>) {
   const effects: string[] = [];
@@ -70,32 +76,45 @@ function importTimeScanner(file: ts.SourceFile, at: (node: ts.Node) => string, p
       if (ts.canHaveDecorators(member) && ts.getDecorators(member)?.length) {
         effects.push(`${at(member)} class member decorator runs at import`);
       }
-      if (ts.isFunctionLike(member)) {
+      if (member.name && ts.isComputedPropertyName(member.name)) visit(member.name.expression);
+      if (ts.isClassStaticBlockDeclaration(member)) {
+        effects.push(`${at(member)} static class initializer runs at import`);
+      } else if (ts.isPropertyDeclaration(member)) {
+        // Instance field initializers run per construction; static ones run when the class is defined.
+        if (member.initializer && member.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword)) {
+          effects.push(`${at(member)} static class initializer runs at import`);
+        }
+      } else if (
+        ts.isMethodDeclaration(member)
+        || ts.isConstructorDeclaration(member)
+        || ts.isGetAccessorDeclaration(member)
+        || ts.isSetAccessorDeclaration(member)
+      ) {
+        // Bodies and parameter defaults are deferred, but parameter decorators run when the class is defined.
         for (const parameter of member.parameters) {
           if (ts.getDecorators(parameter)?.length) effects.push(`${at(parameter)} parameter decorator runs at import`);
         }
+      } else if (!ts.isIndexSignatureDeclaration(member) && !ts.isSemicolonClassElement(member)) {
+        effects.push(`${at(member)} class member ${ts.SyntaxKind[member.kind]}`);
       }
-      if (member.name && ts.isComputedPropertyName(member.name)) visit(member.name.expression);
-      const isStatic = ts.isClassStaticBlockDeclaration(member)
-        || (ts.isPropertyDeclaration(member) && member.initializer && member.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword));
-      if (isStatic) effects.push(`${at(member)} static class initializer runs at import`);
     }
   };
 
   const visit = (node: ts.Node): void => {
+    if (ts.isExpressionWithTypeArguments(node)) {
+      // An instantiation expression (`make<T>`) still evaluates its expression; only the type arguments are erased.
+      visit(node.expression);
+      return;
+    }
+    if (ts.isTypeNode(node)) return;
     if (ts.isClassExpression(node)) {
       visitClass(node);
       return;
     }
-    if (
-      ts.isArrowFunction(node)
-      || ts.isFunctionExpression(node)
-      || ts.isMethodDeclaration(node)
-      || ts.isGetAccessorDeclaration(node)
-      || ts.isSetAccessorDeclaration(node)
-    ) {
-      // A computed method name still evaluates at import.
-      if (!ts.isArrowFunction(node) && !ts.isFunctionExpression(node) && ts.isComputedPropertyName(node.name)) visit(node.name);
+    if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) return;
+    if (ts.isMethodDeclaration(node) || ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)) {
+      // An object-literal method body is deferred, but a computed name still evaluates at import.
+      if (ts.isComputedPropertyName(node.name)) visit(node.name);
       return;
     }
     if (ts.isCallExpression(node)) {
@@ -155,36 +174,61 @@ function pureLocalHelpers(file: ts.SourceFile): Set<string> {
   return helpers;
 }
 
-/** Each top-level statement of `source` that could have an import-time side effect, described for the report. */
+function isAmbient(statement: ts.Statement): boolean {
+  return ts.canHaveModifiers(statement) && (ts.getModifiers(statement)?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword) ?? false);
+}
+
+/**
+ * Each module-level construct of `source` that could have an import-time side effect, described for the report.
+ * Statements are denied by default: only imports with bindings, re-exports, declarations and `export default`/
+ * `export =` are accepted, and each of those is walked in full. A non-ambient namespace body runs at import, so its
+ * statements are checked under the same rules; ambient (`declare`) statements and type-only declarations emit nothing.
+ */
 function importTimeEffects(fileName: string, source: string): string[] {
   const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true);
   const at = (node: ts.Node) => `${fileName}:${file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1}`;
   const pureCallees = new Set([...PURE_INITIALIZER_CALLEES, ...pureLocalHelpers(file)]);
   const { effects, visit, visitClass } = importTimeScanner(file, at, pureCallees);
-  for (const statement of file.statements) {
-    if (ts.isImportDeclaration(statement)) {
-      if (!statement.importClause) effects.push(`${at(statement)} side-effect import ${statement.moduleSpecifier.getText(file)}`);
-      continue;
-    }
-    if (
-      ts.isExportDeclaration(statement)
-      || ts.isFunctionDeclaration(statement)
-      || ts.isInterfaceDeclaration(statement)
-      || ts.isTypeAliasDeclaration(statement)
-      || ts.isModuleDeclaration(statement)
-    ) continue;
-    if (ts.isClassDeclaration(statement)) {
-      visitClass(statement);
-      continue;
-    }
-    if (ts.isVariableStatement(statement)) {
-      for (const declaration of statement.declarationList.declarations) {
-        if (declaration.initializer) visit(declaration.initializer);
+
+  const visitStatements = (statements: readonly ts.Statement[]): void => {
+    for (const statement of statements) {
+      if (ts.isImportDeclaration(statement)) {
+        if (!statement.importClause) effects.push(`${at(statement)} side-effect import ${statement.moduleSpecifier.getText(file)}`);
+        continue;
       }
-      continue;
+      if (
+        isAmbient(statement)
+        || ts.isFunctionDeclaration(statement)
+        || ts.isInterfaceDeclaration(statement)
+        || ts.isTypeAliasDeclaration(statement)
+        || ts.isEmptyStatement(statement)
+      ) continue;
+      if (ts.isModuleDeclaration(statement)) {
+        // `namespace A.B {}` nests the inner namespace as the body.
+        const body = statement.body;
+        if (body && ts.isModuleBlock(body)) visitStatements(body.statements);
+        else if (body && ts.isModuleDeclaration(body)) visitStatements([body]);
+        continue;
+      }
+      if (ts.isClassDeclaration(statement)) {
+        visitClass(statement);
+        continue;
+      }
+      if (
+        ts.isVariableStatement(statement)
+        || ts.isEnumDeclaration(statement)
+        || ts.isExportDeclaration(statement)
+        || ts.isExportAssignment(statement)
+      ) {
+        // Binding patterns (defaults, computed keys), initializers, enum member values and default exports all run.
+        ts.forEachChild(statement, visit);
+        continue;
+      }
+      effects.push(`${at(statement)} top-level ${ts.SyntaxKind[statement.kind]}`);
     }
-    effects.push(`${at(statement)} top-level ${ts.SyntaxKind[statement.kind]}`);
-  }
+  };
+
+  visitStatements(file.statements);
   return effects;
 }
 
@@ -238,6 +282,20 @@ describe('@uifn/core import-time side effects', () => {
       'function wrapPattern({ value }) { return Object.freeze(value); }',
       'export const viaPattern = wrapPattern({ value: 1 });',
       'export class Plain extends Base implements Shape { field = make(); method(value = register()) { return value; } }',
+      'export const { a = register() } = {};',
+      'export const [b = track()] = [];',
+      'export const { [k()]: renamed } = source;',
+      'export const { nested: { deep = make() } } = source;',
+      'namespace Setup { register(); }',
+      'export namespace Values { export const value = make(); }',
+      'namespace Outer.Inner { setup(); }',
+      'declare namespace Ambient { function f(): void; const v: number; }',
+      'namespace Types { export interface Shape { a: number } export type Id = string; }',
+      'declare const injected: number;',
+      'enum Level { Low = 1, High = compute() }',
+      'export default Object.freeze({ a: setup() });',
+      'if (flag) setup();',
+      'export const typed: Readonly<Record<string, number>> = Object.freeze({ a: 1 }) as Readonly<Record<string, number>>;',
     ].join('\n');
     expect(importTimeEffects('fixture.ts', source)).toEqual([
       "fixture.ts:1 side-effect import './register'",
@@ -266,6 +324,16 @@ describe('@uifn/core import-time side effects', () => {
       'fixture.ts:30 class member decorator runs at import',
       'fixture.ts:32 initializer calls wrapDefault',
       'fixture.ts:34 initializer calls wrapPattern',
+      'fixture.ts:36 initializer calls register',
+      'fixture.ts:37 initializer calls track',
+      'fixture.ts:38 initializer calls k',
+      'fixture.ts:39 initializer calls make',
+      'fixture.ts:40 top-level ExpressionStatement',
+      'fixture.ts:41 initializer calls make',
+      'fixture.ts:42 top-level ExpressionStatement',
+      'fixture.ts:46 initializer calls compute',
+      'fixture.ts:47 initializer calls setup',
+      'fixture.ts:48 top-level IfStatement',
     ]);
   });
 });
