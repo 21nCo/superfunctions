@@ -1,0 +1,41 @@
+scripts/check-searchfn-adapter-canonical.mjs
+  s_e1c5fc1a65c0cf::t_dc7207b9360dc9 69
+searchfn/.conduct/canonical-source-policy.md
+  s_e1c5fc1a65c0cf::t_4b7eba477ec3d8 31-34
+searchfn/adapter-contracts/__tests__/redaction.test.ts
+  s_e1c5fc1a65c0cf::t_95bc19d98e1d85 2,19-70
+searchfn/adapter-contracts/src/index.ts
+  s_e1c5fc1a65c0cf::t_386bff1c08fb28 107-108
+searchfn/adapter-contracts/src/redaction.ts
+  s_e1c5fc1a65c0cf::t_4aea8efec17fff 1-87
+searchfn/adapter-elasticsearch/__tests__/elasticsearch.test.ts
+  s_e1c5fc1a65c0cf::t_cbfc2a983e4d66 132,136-137,142-143
+searchfn/adapter-elasticsearch/src/internal/redaction.ts
+  s_e1c5fc1a65c0cf::t_15ec59a6ec557e 1
+searchfn/adapter-meilisearch/__tests__/meilisearch.test.ts
+  s_e1c5fc1a65c0cf::t_c34d7aeb2734be 129,133-134,139-140
+searchfn/adapter-meilisearch/src/internal/redaction.ts
+  s_e1c5fc1a65c0cf::t_a56baea2f148f5 1
+searchfn/adapter-postgres/__tests__/postgres.test.ts
+  s_e1c5fc1a65c0cf::t_713fd0af13ee86 375,379-380,385-386
+searchfn/adapter-postgres/src/internal/redaction.ts
+  s_e1c5fc1a65c0cf::t_092b9558728b68 1
+searchfn/adapters/src/internal/redaction.ts
+  s_e1c5fc1a65c0cf::t_6eea436904ff2f 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c0ce24b30ef7935e79a400ed27fcc8ffac1b5d42",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

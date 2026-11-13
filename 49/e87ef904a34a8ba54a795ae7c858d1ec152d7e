@@ -1,0 +1,33 @@
+cachefn/.conduct/offline-acceptance.md
+  s_e1c5fc1a65c0cf::t_8a9df24bb7d79b 1-48
+cachefn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_24911aac9ab89c 386-480
+cachefn/typescript/__tests__/offline-cache.test.ts
+  s_e1c5fc1a65c0cf::t_676e279c7a3626 1-117
+cachefn/typescript/scripts/browser-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_5c42f9f2af3053 6-7,15-17,41,43,147,172-196
+cachefn/typescript/src/core/cache.ts
+  s_e1c5fc1a65c0cf::t_58cac557b3c880 8-10,24,39-51,63-77,79-85,93-95,260-272,277-287,296-411
+cachefn/typescript/src/core/types.ts
+  s_e1c5fc1a65c0cf::t_6365b95d0fb46a 24-32,64-85,133-134,201,217-218
+cachefn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_a93bfa5f581fa1 12-15
+cachefn/typescript/type-tests/schema.ts
+  s_e1c5fc1a65c0cf::t_8cf4508697cc32 41-48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "49e87ef904a34a8ba54a795ae7c858d1ec152d7e",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

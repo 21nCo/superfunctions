@@ -1,0 +1,23 @@
+probefn/packages/browser-runner/src/browser-runner.ts
+  s_e1c5fc1a65c0cf::t_15b853e7d8f51d 52-63,68,78-85,90-91,103-104,136,145-146,148,155,162,172,184-185,193,195,211-240,242-243,245
+probefn/packages/browser-runner/src/event-capture.ts
+  s_e1c5fc1a65c0cf::t_00bba79defabe3 83-97,103,108,112,117,133-137
+probefn/packages/browser-runner/test/lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_d757323dfd22dc 1-149
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6d04003e1d4b757a42e176ae700e19091988e664",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

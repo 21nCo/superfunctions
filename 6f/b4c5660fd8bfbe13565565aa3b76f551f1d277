@@ -1,0 +1,33 @@
+contentfn/.conduct/history-index-readiness.md
+  s_e1c5fc1a65c0cf::t_1cbacacb6d2759 1-54
+contentfn/.conduct/history-packed.mjs
+  s_e1c5fc1a65c0cf::t_d1ef7959d5ffa4 3,27-34
+contentfn/server/README.md
+  s_e1c5fc1a65c0cf::t_51ca710ed39dc2 64-67,72-111
+contentfn/server/src/__tests__/history-index.test.ts
+  s_e1c5fc1a65c0cf::t_be4a556daeb08d 1-89
+contentfn/server/src/__tests__/history-keyset.test.ts
+  s_e1c5fc1a65c0cf::t_7fa250e7b8df0f 60,92-117
+contentfn/server/src/index.ts
+  s_e1c5fc1a65c0cf::t_7c5827400ce891 51-53
+contentfn/server/src/storage/migrate.ts
+  s_e1c5fc1a65c0cf::t_47d7c565fec583 6,35-61
+contentfn/server/src/storage/revisions.ts
+  s_e1c5fc1a65c0cf::t_064c3bda093f94 91-92,101-102,110-111,119
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6fb4c5660fd8bfbe13565565aa3b76f551f1d277",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

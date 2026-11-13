@@ -1,0 +1,25 @@
+probefn/.conduct/browser-engine-acceptance.md
+  s_e1c5fc1a65c0cf::t_e9406857ad1a26 1-9
+probefn/package.json
+  s_e1c5fc1a65c0cf::t_bcce9ef6d377df 12-13
+probefn/packages/browser-runner/test/browser-engine-matrix.acceptance.ts
+  s_e1c5fc1a65c0cf::t_cbe37041cd3586 1-65
+probefn/vitest.browsers.config.ts
+  s_e1c5fc1a65c0cf::t_0159cd1fccf3e4 1-4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2fc78b5a2633586a1e6ac77c56a78cf622057eb1",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

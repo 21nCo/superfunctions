@@ -1,0 +1,25 @@
+secfn/docs/content/docs/reference/server.md
+  s_7d0a48f0aaecda::t_cac286429951c2 53-55,57-59,71
+secfn/docs/content/docs/server.md
+  s_7d0a48f0aaecda::t_f88ba29f7a594f 35-37,39-41,53
+secfn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_6fdcecbb9750a5 270-272,274-276,288,470-472,474-476,488
+secfn/server/README.md
+  s_7d0a48f0aaecda::t_21d68e1c42226c 50-52,54-56,68
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cb0ba6eafaf5e3c9912d9fe7292a7720a4aeb380",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

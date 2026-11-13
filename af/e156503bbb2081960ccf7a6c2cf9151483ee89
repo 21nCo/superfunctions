@@ -1,0 +1,37 @@
+cmsfn/.conduct/array-editor-readiness.md
+  s_e1c5fc1a65c0cf::t_8f02877014cfba 1-56
+cmsfn/.conduct/studio-browser-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_d3197e1704ec87 18-19,399-403,440-475,478
+cmsfn/studio/README.md
+  s_e1c5fc1a65c0cf::t_40f269a48f2de0 98-99,116-131
+cmsfn/studio/src/__tests__/array-editor.test.tsx
+  s_e1c5fc1a65c0cf::t_08b43b96f64b14 1-85
+cmsfn/studio/src/__tests__/reference-boundaries.test.tsx
+  s_e1c5fc1a65c0cf::t_6e69780c9ced69 81-90
+cmsfn/studio/src/editor/renderField.tsx
+  s_e1c5fc1a65c0cf::t_0aa9b123d69b20 7,26,143,147-148,152-153,159,197
+cmsfn/studio/src/editor/widgets/ArrayField.tsx
+  s_e1c5fc1a65c0cf::t_c545c2f2d91e6a 1-91
+cmsfn/studio/src/editor/widgets/reference/ReferenceField.tsx
+  s_e1c5fc1a65c0cf::t_add43d9cc4a7df 47
+cmsfn/studio/src/editor/widgets/reference/ReferencePickerDialog.tsx
+  s_e1c5fc1a65c0cf::t_4ae11fd6a18f07 39-48
+cmsfn/studio/src/panes/editor/DocumentEditorPane.tsx
+  s_e1c5fc1a65c0cf::t_ca428837378f1b 331
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "afe156503bbb2081960ccf7a6c2cf9151483ee89",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

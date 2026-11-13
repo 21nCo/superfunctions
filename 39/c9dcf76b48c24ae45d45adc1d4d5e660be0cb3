@@ -1,0 +1,35 @@
+cmsfn/.conduct/role-validation-readiness.md
+  s_e1c5fc1a65c0cf::t_56acc353edc645 1-33
+cmsfn/core/src/index.ts
+  s_e1c5fc1a65c0cf::t_b1b0e318a76239 6
+cmsfn/core/src/roles/evaluate.ts
+  s_e1c5fc1a65c0cf::t_50d290ac40d367 7,32-34,36,53
+cmsfn/core/src/roles/validate.test.ts
+  s_e1c5fc1a65c0cf::t_fc62a25536a510 1-55
+cmsfn/core/src/roles/validate.ts
+  s_e1c5fc1a65c0cf::t_0f17462bf0a393 1-63
+cmsfn/server/src/__tests__/role-validation.test.ts
+  s_e1c5fc1a65c0cf::t_62caa7ca205156 1-25
+cmsfn/server/src/__tests__/roles.test.ts
+  s_e1c5fc1a65c0cf::t_833e87d81b5535 251-285
+cmsfn/server/src/storage/roles.ts
+  s_e1c5fc1a65c0cf::t_1e91da1103ec28 11,20,58
+cmsfn/server/tsconfig.storage.json
+  s_e1c5fc1a65c0cf::t_8244936f7975db 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "39c9dcf76b48c24ae45d45adc1d4d5e660be0cb3",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

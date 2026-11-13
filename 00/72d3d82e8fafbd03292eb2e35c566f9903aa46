@@ -1,0 +1,105 @@
+.github/workflows/superfunctions-docs-cloudflare-deploy.yml
+  s_7d0a48f0aaecda::t_adc62918543299 15,24,34,61
+.github/workflows/superfunctions-docs-cloudflare-routes.yml
+  s_7d0a48f0aaecda::t_70a784354d1bbb 19,79
+botfn/docs/.gitignore
+  s_7d0a48f0aaecda::t_fd8a1f8b2c43a3 1-10
+botfn/docs/README.md
+  s_7d0a48f0aaecda::t_d073e465750be0 1-24
+botfn/docs/content/docs/admin.md
+  s_7d0a48f0aaecda::t_c927801b94f2a8 1-12
+botfn/docs/content/docs/discord-bot.md
+  s_7d0a48f0aaecda::t_1d04ad6dafb787 1-18
+botfn/docs/content/docs/getting-started.md
+  s_7d0a48f0aaecda::t_0c76325c2ffa5d 1-26
+botfn/docs/content/docs/index.md
+  s_7d0a48f0aaecda::t_f4205e0dbc2fa0 1-10
+botfn/docs/content/docs/integrations.md
+  s_7d0a48f0aaecda::t_73c9421d35a35c 1-14
+botfn/docs/content/docs/meta.json
+  s_7d0a48f0aaecda::t_c8187ffbd5b6f5 1-14
+botfn/docs/content/docs/operations-and-limits.md
+  s_7d0a48f0aaecda::t_49d99e1406583d 1-12
+botfn/docs/content/docs/persistence.md
+  s_7d0a48f0aaecda::t_c7c3918841f9ef 1-29
+botfn/docs/content/docs/reference/commands-and-routes.md
+  s_7d0a48f0aaecda::t_8ee343599b05ad 1-21
+botfn/docs/content/docs/reference/configuration.md
+  s_7d0a48f0aaecda::t_2ee7e6520ed4ca 1-14
+botfn/docs/content/docs/reference/index.md
+  s_7d0a48f0aaecda::t_94bdef9fdcf523 1-10
+botfn/docs/content/docs/reference/meta.json
+  s_7d0a48f0aaecda::t_3f3dd65de62168 1-4
+botfn/docs/content/docs/reference/packages.md
+  s_7d0a48f0aaecda::t_27927cd26c358d 1-33
+botfn/docs/content/docs/slack-bot.md
+  s_7d0a48f0aaecda::t_dfe8e73f40050c 1-12
+botfn/docs/docsfn.config.ts
+  s_7d0a48f0aaecda::t_66e6264a0315fd 1-36
+botfn/docs/package.json
+  s_7d0a48f0aaecda::t_0bc87dbca0cb64 1-38
+botfn/docs/scripts/generate-llms.mjs
+  s_7d0a48f0aaecda::t_3fbb2579280c40 1-22
+botfn/docs/src/app.css
+  s_7d0a48f0aaecda::t_6a49fdf37d7dcc 1-81
+botfn/docs/src/app.html
+  s_7d0a48f0aaecda::t_a740341bc25f75 1-11
+botfn/docs/src/lib/components/DocsSiteSearch.svelte
+  s_7d0a48f0aaecda::t_924b6737826721 1-5
+botfn/docs/src/lib/server/docs-site-source.ts
+  s_7d0a48f0aaecda::t_79c103458da564 1-14
+botfn/docs/src/routes/+error.svelte
+  s_7d0a48f0aaecda::t_6b25d51049e084 1-12
+botfn/docs/src/routes/+layout.server.ts
+  s_7d0a48f0aaecda::t_8e2b0aa67b40e1 1-13
+botfn/docs/src/routes/+layout.svelte
+  s_7d0a48f0aaecda::t_96bb20389d1c37 1-86
+botfn/docs/src/routes/+page.svelte
+  s_7d0a48f0aaecda::t_49a2152461bcc2 1-28
+botfn/docs/src/routes/docs/[...slug]/+page.server.ts
+  s_7d0a48f0aaecda::t_d7250b15709dd7 1-25
+botfn/docs/src/routes/docs/[...slug]/+page.svelte
+  s_7d0a48f0aaecda::t_f8486c10e4e6de 1-41
+botfn/docs/src/routes/docs/llms-full.txt/+server.ts
+  s_7d0a48f0aaecda::t_9eb17b8c0de8cf 1-7
+botfn/docs/src/routes/docs/llms.txt/+server.ts
+  s_7d0a48f0aaecda::t_55fe7c855b4995 1-7
+botfn/docs/src/routes/docs/search.json/+server.ts
+  s_7d0a48f0aaecda::t_150f60e457f777 1-8
+botfn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_b19eebdbc6cf62 1-267
+botfn/docs/static/llms.txt
+  s_7d0a48f0aaecda::t_1c8b98f1df7618 1-18
+botfn/docs/svelte.config.js
+  s_7d0a48f0aaecda::t_9dc13319c12ff3 1-26
+botfn/docs/tsconfig.json
+  s_7d0a48f0aaecda::t_f53064b38a2584 1-59
+botfn/docs/turbo.json
+  s_7d0a48f0aaecda::t_858c4fb81e712e 1-20
+botfn/docs/vite.config.ts
+  s_7d0a48f0aaecda::t_7362b4397a6a03 1-12
+package-lock.json
+  s_7d0a48f0aaecda::t_6eeb6e222c5f4e 6914-7284,33053-33056
+scripts/cloudflare-docs/config.mjs
+  s_7d0a48f0aaecda::t_b80d912dbf0b60 24-33
+scripts/cloudflare-docs/select-products.mjs
+  s_7d0a48f0aaecda::t_eade9c3092392c 60
+scripts/docs-site/vitest.config.ts
+  s_7d0a48f0aaecda::t_1de933711b7507 18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0072d3d82e8fafbd03292eb2e35c566f9903aa46",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

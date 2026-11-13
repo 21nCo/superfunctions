@@ -1,0 +1,113 @@
+.github/workflows/superfunctions-docs-cloudflare-deploy.yml
+  s_ee2c11c27fc495::t_68c344ca198f2a 15,24,34,61
+.github/workflows/superfunctions-docs-cloudflare-routes.yml
+  s_ee2c11c27fc495::t_b4eb49ad633ce9 19,79
+botfn/docs/.gitignore
+  s_ee2c11c27fc495::t_26fc246b04a18d 1-10
+botfn/docs/README.md
+  s_ee2c11c27fc495::t_cbfc229f6a9c4e 1-24
+botfn/docs/content/docs/admin.md
+  s_ee2c11c27fc495::t_48f66ab22bd8b2 1-12
+botfn/docs/content/docs/discord-bot.md
+  s_ee2c11c27fc495::t_0a47883fb9e6b2 1-18
+botfn/docs/content/docs/getting-started.md
+  s_ee2c11c27fc495::t_44ef437b2aae89 1-26
+botfn/docs/content/docs/index.md
+  s_ee2c11c27fc495::t_7766d54c527aae 1-10
+botfn/docs/content/docs/integrations.md
+  s_ee2c11c27fc495::t_ff1b72da6a0837 1-14
+botfn/docs/content/docs/meta.json
+  s_664f1e7a19bfc5::t_42e1ac5761e8ac 1-14
+botfn/docs/content/docs/operations-and-limits.md
+  s_664f1e7a19bfc5::t_70ed3e707d934a 1-12
+botfn/docs/content/docs/persistence.md
+  s_664f1e7a19bfc5::t_df148212d1c4f5 1-29
+botfn/docs/content/docs/reference/commands-and-routes.md
+  s_664f1e7a19bfc5::t_6bd6642d27bff2 1-21
+botfn/docs/content/docs/reference/configuration.md
+  s_664f1e7a19bfc5::t_670db7be97517a 1-14
+botfn/docs/content/docs/reference/index.md
+  s_664f1e7a19bfc5::t_194fbe47577607 1-10
+botfn/docs/content/docs/reference/meta.json
+  s_664f1e7a19bfc5::t_6add5d9ebbc1d5 1-4
+botfn/docs/content/docs/reference/packages.md
+  s_664f1e7a19bfc5::t_a720826647ec92 1-33
+botfn/docs/content/docs/slack-bot.md
+  s_664f1e7a19bfc5::t_9438a0aeaadffb 1-12
+botfn/docs/docsfn.config.ts
+  s_664f1e7a19bfc5::t_dc8ceeb2cae6ba 1-36
+botfn/docs/package.json
+  s_664f1e7a19bfc5::t_e944c8b35f0789 1-38
+botfn/docs/scripts/generate-llms.mjs
+  s_ee2c11c27fc495::t_62361c433e8cbb 1-22
+botfn/docs/src/app.css
+  s_ee2c11c27fc495::t_b5f1427da25a5a 1-81
+botfn/docs/src/app.html
+  s_ee2c11c27fc495::t_57c06d6661e0a9 1-11
+botfn/docs/src/lib/components/DocsSiteSearch.svelte
+  s_ee2c11c27fc495::t_960ac9a139977a 1-5
+botfn/docs/src/lib/server/docs-site-source.ts
+  s_ee2c11c27fc495::t_04f004d4e87e59 1-14
+botfn/docs/src/routes/+error.svelte
+  s_ee2c11c27fc495::t_bee8da3d75ad5d 1-12
+botfn/docs/src/routes/+layout.server.ts
+  s_ee2c11c27fc495::t_97b71d46508104 1-13
+botfn/docs/src/routes/+layout.svelte
+  s_ee2c11c27fc495::t_e641131c5d877f 1-86
+botfn/docs/src/routes/+page.svelte
+  s_ee2c11c27fc495::t_e085f004bd8b43 1-28
+botfn/docs/src/routes/docs/[...slug]/+page.server.ts
+  s_ee2c11c27fc495::t_9a3340fa1324e2 1-25
+botfn/docs/src/routes/docs/[...slug]/+page.svelte
+  s_ee2c11c27fc495::t_f58b16ed1b0d45 1-41
+botfn/docs/src/routes/docs/llms-full.txt/+server.ts
+  s_ee2c11c27fc495::t_dd9962ab305645 1-7
+botfn/docs/src/routes/docs/llms.txt/+server.ts
+  s_ee2c11c27fc495::t_990f5f6d13d40a 1-7
+botfn/docs/src/routes/docs/search.json/+server.ts
+  s_ee2c11c27fc495::t_b7da1c7d6202ff 1-8
+botfn/docs/static/llms-full.txt
+  s_ee2c11c27fc495::t_611d8a9cc08e0e 1-267
+botfn/docs/static/llms.txt
+  s_ee2c11c27fc495::t_3a0a9dd501c43c 1-18
+botfn/docs/svelte.config.js
+  s_ee2c11c27fc495::t_fceb83890c06ed 1-26
+botfn/docs/tsconfig.json
+  s_ee2c11c27fc495::t_40fd6a0a6b6e9a 1-59
+botfn/docs/turbo.json
+  s_ee2c11c27fc495::t_848ac2ce7148d0 1-20
+botfn/docs/vite.config.ts
+  s_ee2c11c27fc495::t_ef33be870a4400 1-12
+scripts/cloudflare-docs/config.mjs
+  s_ee2c11c27fc495::t_738ef686772095 24-33
+scripts/cloudflare-docs/select-products.mjs
+  s_ee2c11c27fc495::t_fec73ae5bec621 60
+scripts/docs-site/vitest.config.ts
+  s_ee2c11c27fc495::t_ce44bd285045df 18
+package-lock.json
+  s_ee2c11c27fc495::t_512fd7ad0f9577 6914-7284,32682-32685
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4da9fedb69bd0967ef6e56edebafa2dc4445e76c",
+  "prompts": {},
+  "sessions": {
+    "s_664f1e7a19bfc5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0cf2229e-c8fe-4b04-a5e0-6383ee13ba71",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_ee2c11c27fc495": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d7bdcbec-53b0-4482-b897-9fa8ee677df4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

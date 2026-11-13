@@ -1,0 +1,37 @@
+devfn/cli/src/index.ts
+  s_7ea5f042448815::t_319e0b473855bf 17,259,261
+devfn/core/src/index.ts
+  s_7ea5f042448815::t_8ab2c9f049a92b 6
+devfn/core/src/tunnel.ts
+  s_7ea5f042448815::t_d1ce060187ab47 2,5,17-20,78
+devfn/core/test/tunnel-lifecycle.test.ts
+  s_7ea5f042448815::t_99cdb254e50d6a 111-124
+devfn/docs/configuration.md
+  s_7ea5f042448815::t_391e7b12c37d89 131
+devfn/ports/src/index.ts
+  s_7ea5f042448815::t_cf1dcb78188000 3
+devfn/ports/src/proxy-state.ts
+  s_7ea5f042448815::t_ad31b2103795eb 57
+devfn/proxy/src/tunnel/service.ts
+  s_7ea5f042448815::t_86c6e315ced10d 33-34,50,57,251,265-288,307-308,322,362-363,365,394-396,418-421,457,486,503-507,510-520
+devfn/proxy/src/tunnel/state.ts
+  s_7ea5f042448815::t_631c0c8c7f2385 5,264
+devfn/proxy/test/tunnel-service.test.ts
+  s_7ea5f042448815::t_a15b01d4607aaf 157-158,169-170,173-174,199-244,460-465
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ea3735ae6e5564d39baeb3043f19cbf008415f28",
+  "prompts": {},
+  "sessions": {
+    "s_7ea5f042448815": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_7ea5f042448815",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

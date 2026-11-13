@@ -1,0 +1,49 @@
+cmsfn/.conduct/studio-browser-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_f60a4e8c697469 14,33,57,216-236,239
+cmsfn/.conduct/studio-ops-readiness.md
+  s_e1c5fc1a65c0cf::t_c896fc2885d34f 1-32
+cmsfn/server/src/__tests__/ops-boundary.test.ts
+  s_e1c5fc1a65c0cf::t_07edb05f6d4c20 1-48
+cmsfn/server/src/__tests__/ops.test.ts
+  s_f3c85c4a41c7b4::t_c8854becba2e6d 119
+cmsfn/server/src/http/ops.ts
+  s_f3c85c4a41c7b4::t_2a34bb0e946127 1-8,13-14,16,18-25,27-32,34-40,42-45
+cmsfn/server/src/index.ts
+  s_f3c85c4a41c7b4::t_0b4b52f7229a02 55-58,188-189,202-203
+cmsfn/server/src/ops/export.ts
+  s_f3c85c4a41c7b4::t_0cbe8ed61d6fce 13-20,25,29
+cmsfn/server/src/ops/import.ts
+  s_f3c85c4a41c7b4::t_b0cec2e123dcc9 2,4
+cmsfn/studio/README.md
+  s_e1c5fc1a65c0cf::t_d6f8820c0df9d8 45-49
+cmsfn/studio/src/__tests__/opsShell.test.tsx
+  s_e1c5fc1a65c0cf::t_7afc36f8828111 1-32
+cmsfn/studio/src/app.tsx
+  s_f3c85c4a41c7b4::t_d126a4f5009630 14,37,108,113
+cmsfn/studio/src/panes/ops/OpsPane.tsx
+  s_e1c5fc1a65c0cf::t_e061ba86294fbf 1-19,21-29,31-45,47-66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a834bfa9fd0c25d658de0157d0d669c790dddf6b",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_f3c85c4a41c7b4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "576ab5f3-7d04-4063-8537-8fe2ce57d4fb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,39 @@
+cmsfn/.conduct/role-boundary-readiness.md
+  s_e1c5fc1a65c0cf::t_7f32dc7b3ff5dd 1-36
+cmsfn/core/tsup.config.ts
+  s_e1c5fc1a65c0cf::t_02d385a72da6b6 14-15
+cmsfn/server/package.json
+  s_e1c5fc1a65c0cf::t_1f2206cfaa11b1 47-48
+cmsfn/server/src/__tests__/roles-boundary.test.ts
+  s_e1c5fc1a65c0cf::t_cf0b43272f5c95 1-84
+cmsfn/server/src/__tests__/roles.test.ts
+  s_e1c5fc1a65c0cf::t_b4177119f18abd 37,220-250
+cmsfn/server/src/http/roles.ts
+  s_e1c5fc1a65c0cf::t_47900cc097cf8f 6-8,13,17-24,26-28,30-61,72-74,89-91,107-109
+cmsfn/server/src/index.ts
+  s_e1c5fc1a65c0cf::t_37c18a92c5fe86 43
+cmsfn/server/tsconfig.roles.json
+  s_e1c5fc1a65c0cf::t_c382d9a61db396 1-5
+cmsfn/server/tsup.config.ts
+  s_e1c5fc1a65c0cf::t_0505e11b22d5bd 14-15
+package-lock.json
+  s_e1c5fc1a65c0cf::t_985a6ef30ffc4e 68-70,6720-6790,19067-19070,31704-31707
+package.json
+  s_e1c5fc1a65c0cf::t_6222df4615ed03 63-65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b00b230047d7e2a6eab8cc52c3f4fc7306189643",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

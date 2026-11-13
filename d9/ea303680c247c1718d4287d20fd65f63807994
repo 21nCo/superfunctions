@@ -1,0 +1,39 @@
+cifn/.conduct/original-requirement-audit-20261025.md
+  s_e1c5fc1a65c0cf::t_203b8312c58b75 19
+cifn/.conduct/remote-hostfn-readiness.md
+  s_e1c5fc1a65c0cf::t_814956b6b28f14 1-25
+cifn/README.md
+  s_e1c5fc1a65c0cf::t_1e9439b7583792 487,500-513
+cifn/typescript/control-plane/scripts/verify-packed-logs.mjs
+  s_e1c5fc1a65c0cf::t_204c6f39b9496b 60,75,100
+cifn/typescript/runner/scripts/verify-remote-hostfn.mjs
+  s_e1c5fc1a65c0cf::t_93a83241b989db 1-308
+cifn/typescript/runner/src/index.ts
+  s_e1c5fc1a65c0cf::t_25924b4b4d26bf 25
+cifn/typescript/runner/src/remote-hostfn.test.ts
+  s_e1c5fc1a65c0cf::t_0f229fb21af54c 1-194
+cifn/typescript/runner/src/remote-runner.ts
+  s_e1c5fc1a65c0cf::t_fe25a5bb2d2690 1,13-19,23,25-27,37,58,166
+cifn/typescript/runner/src/runner.ts
+  s_e1c5fc1a65c0cf::t_39cb5050a38d87 50-51,88,120,550,552
+cifn/typescript/runner/src/server.ts
+  s_e1c5fc1a65c0cf::t_4dac42bef1d441 9-13
+cifn/typescript/runner/tsconfig.remote.json
+  s_e1c5fc1a65c0cf::t_1bc5690e056bbd 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d9ea303680c247c1718d4287d20fd65f63807994",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

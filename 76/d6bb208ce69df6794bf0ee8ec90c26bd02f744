@@ -1,0 +1,39 @@
+watchfn/.conduct/python-synthetic-lifecycle-reports.md
+  s_e1c5fc1a65c0cf::t_5c9152681b6ec5 1-34
+watchfn/python/README.md
+  s_e1c5fc1a65c0cf::t_aa1118cd2d5be3 721-757
+watchfn/python/pyproject.toml
+  s_e1c5fc1a65c0cf::t_ee81e1a962c72d 16
+watchfn/python/scripts/verify-http-wheel.py
+  s_e1c5fc1a65c0cf::t_685a0e8c67e238 23,27
+watchfn/python/tests/test_synthetics.py
+  s_e1c5fc1a65c0cf::t_230eea097726d0 1-151
+watchfn/python/watchfn/client.py
+  s_e1c5fc1a65c0cf::t_12f9611764996f 8,45,114,131,136-140,156-157
+watchfn/python/watchfn/synthetics/__init__.py
+  s_e1c5fc1a65c0cf::t_6b2aa838173e62 1-3
+watchfn/python/watchfn/synthetics/checks.py
+  s_e1c5fc1a65c0cf::t_0b2341a0899d97 1-81
+watchfn/python/watchfn/synthetics/reports.py
+  s_e1c5fc1a65c0cf::t_55e9d97beb46cd 1-74
+watchfn/python/watchfn/synthetics/scheduler.py
+  s_e1c5fc1a65c0cf::t_b97a7be3d48717 1-109
+watchfn/scripts/funnel-cross-language-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_45bf3370609e84 3,14,48-52,65-67,100,104
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "76d6bb208ce69df6794bf0ee8ec90c26bd02f744",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

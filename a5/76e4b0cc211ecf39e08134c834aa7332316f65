@@ -1,0 +1,25 @@
+probefn/.conduct/installed-browser-readiness.md
+  s_e1c5fc1a65c0cf::t_1366fc0d449781 1-45
+probefn/README.md
+  s_e1c5fc1a65c0cf::t_4d5577914c53b7 181-187
+probefn/scripts/installed-browser-consumer.mjs
+  s_e1c5fc1a65c0cf::t_9693837c3711b9 1-58
+probefn/scripts/verify-distribution.mjs
+  s_e1c5fc1a65c0cf::t_1f63971acf31b2 39,83-86
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a576e4b0cc211ecf39e08134c834aa7332316f65",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

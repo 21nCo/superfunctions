@@ -1,0 +1,257 @@
+filefn/docs/content/docs/quickstart/express.md
+  s_c1093e7194f7e3::t_228fa12056597f 14-69,78-79,82,97-98,103
+filefn/docs/content/docs/recipes/image-uploads.md
+  s_c1093e7194f7e3::t_228fa12056597f 13,48-52,59,66,105,109
+authfn/docs/content/docs/index.md
+  s_c1093e7194f7e3::t_228fa12056597f 40,72
+devfn/docs/content/docs/reference/configuration.md
+  s_c1093e7194f7e3::t_228fa12056597f 1-96
+devfn/docs/content/docs/reference/security.md
+  s_c1093e7194f7e3::t_228fa12056597f 1-25
+devfn/docs/scripts/generate-llms.mjs
+  s_c1093e7194f7e3::t_228fa12056597f 1-22
+filefn/docs/content/docs/adapters/db-memory.md
+  s_c1093e7194f7e3::t_228fa12056597f 2-3,6,9-10,13
+filefn/docs/content/docs/adapters/storage-gcs.md
+  s_c1093e7194f7e3::t_228fa12056597f 3,9,11,15-16,24-25
+filefn/docs/content/docs/adapters/storage-r2.md
+  s_c1093e7194f7e3::t_228fa12056597f 11,31
+filefn/docs/content/docs/recipes/document-uploads.md
+  s_c1093e7194f7e3::t_228fa12056597f 47-49
+filefn/docs/content/docs/adapters/storage.md
+  s_c1093e7194f7e3::t_228fa12056597f 41,43-45
+devfn/docs/content/docs/reference/testing.md
+  s_c1093e7194f7e3::t_228fa12056597f 1-6
+filefn/docs/content/docs/frameworks/hono.md
+  s_c1093e7194f7e3::t_228fa12056597f 15-18,22,33,73,91,114-115
+filefn/docs/content/docs/meta.json
+  s_c1093e7194f7e3::t_228fa12056597f 14
+authfn/docs/content/docs/ai-resources/llms-txt.md
+  s_c1093e7194f7e3::t_228fa12056597f 52
+filefn/docs/content/docs/adapters/storage-s3.md
+  s_c1093e7194f7e3::t_228fa12056597f 3,9,27,29,31
+devfn/docs/content/docs/ports-and-proxy.md
+  s_c1093e7194f7e3::t_228fa12056597f 1-12
+devfn/docs/src/app.css
+  s_c1093e7194f7e3::t_228fa12056597f 1-81
+devfn/docs/src/routes/+error.svelte
+  s_c1093e7194f7e3::t_228fa12056597f 1-12
+devfn/docs/README.md
+  s_c1093e7194f7e3::t_228fa12056597f 1-19
+devfn/docs/content/docs/configuration.md
+  s_c1093e7194f7e3::t_228fa12056597f 1-14
+devfn/docs/src/routes/+layout.svelte
+  s_c1093e7194f7e3::t_228fa12056597f 1-86
+filefn/docs/content/docs/frameworks/express.md
+  s_c1093e7194f7e3::t_228fa12056597f 3,8,12,14-15,17-20,22,26,28
+authfn/docs/content/docs/plugins/authoring.md
+  s_c1093e7194f7e3::t_228fa12056597f 323
+authfn/docs/content/docs/admin/index.md
+  s_c1093e7194f7e3::t_228fa12056597f 10-11,121,130
+devfn/docs/tsconfig.json
+  s_c1093e7194f7e3::t_228fa12056597f 1-59
+devfn/docs/src/routes/docs/llms-full.txt/+server.ts
+  s_c1093e7194f7e3::t_228fa12056597f 1-7
+authfn/docs/content/docs/ai-resources/claude.md
+  s_c1093e7194f7e3::t_228fa12056597f 3,8,10,12-13,15-16,18,22,30,33,38
+devfn/docs/content/docs/getting-started.md
+  s_c1093e7194f7e3::t_228fa12056597f 1-21
+devfn/docs/turbo.json
+  s_c1093e7194f7e3::t_228fa12056597f 1-20
+devfn/docs/content/docs/security.md
+  s_c1093e7194f7e3::t_228fa12056597f 1-10
+devfn/docs/content/docs/reference/config.md
+  s_c1093e7194f7e3::t_228fa12056597f 1-6
+devfn/docs/content/docs/reference/migration.md
+  s_c1093e7194f7e3::t_228fa12056597f 1-15
+filefn/docs/content/docs/quickstart/nextjs.md
+  s_c1093e7194f7e3::t_228fa12056597f 13,24
+devfn/docs/package.json
+  s_c1093e7194f7e3::t_228fa12056597f 1-31,33-35,37-38
+  s_c1093e7194f7e3::t_c0117333c2a485 32,36
+filefn/docs/content/docs/admin/meta.json
+  s_c1093e7194f7e3::t_228fa12056597f 1-4
+scripts/docs-site/llms.test.mjs
+  s_c1093e7194f7e3::t_228fa12056597f 7,36-50
+  s_c1093e7194f7e3::t_158cecb602bce6 51
+filefn/docs/content/docs/recipes/heic-conversion.md
+  s_c1093e7194f7e3::t_228fa12056597f 12,14,17-18,25-29,57,60-62,64-65,68-70,74
+scripts/cloudflare-docs/config.mjs
+  s_c1093e7194f7e3::t_228fa12056597f 14-23
+devfn/docs/static/llms.txt
+  s_c1093e7194f7e3::t_228fa12056597f 1-27
+devfn/docs/content/docs/index.md
+  s_c1093e7194f7e3::t_228fa12056597f 1-10
+devfn/docs/src/routes/docs/[...slug]/+page.svelte
+  s_c1093e7194f7e3::t_228fa12056597f 1-41
+filefn/docs/content/docs/adapters/storage-minio.md
+  s_c1093e7194f7e3::t_228fa12056597f 11
+authfn/docs/content/docs/frameworks/byo.md
+  s_c1093e7194f7e3::t_228fa12056597f 38,56,69,87,97
+devfn/docs/src/routes/docs/llms.txt/+server.ts
+  s_c1093e7194f7e3::t_228fa12056597f 1-7
+filefn/docs/content/docs/adapters/db-postgres.md
+  s_c1093e7194f7e3::t_228fa12056597f 2-3,6,8-9,13-16,18-19,22,24,26
+devfn/docs/vite.config.ts
+  s_c1093e7194f7e3::t_228fa12056597f 1-12
+filefn/docs/content/docs/getting-started.md
+  s_c1093e7194f7e3::t_228fa12056597f 13,34
+authfn/docs/content/docs/quickstart/bun.md
+  s_c1093e7194f7e3::t_228fa12056597f 8,67
+devfn/docs/content/docs/reference/index.md
+  s_c1093e7194f7e3::t_228fa12056597f 1-14
+devfn/docs/src/lib/server/docs-site-source.ts
+  s_c1093e7194f7e3::t_228fa12056597f 1-14
+devfn/docs/content/docs/reference/ports.md
+  s_c1093e7194f7e3::t_228fa12056597f 1-17
+authfn/docs/content/docs/ai-resources/codex.md
+  s_c1093e7194f7e3::t_228fa12056597f 31
+devfn/docs/content/docs/processes-and-compose.md
+  s_c1093e7194f7e3::t_228fa12056597f 1-10
+filefn/docs/content/docs/adapters/storage-azure.md
+  s_c1093e7194f7e3::t_228fa12056597f 3,9,11-12,14
+scripts/cloudflare-docs/select-products.mjs
+  s_c1093e7194f7e3::t_228fa12056597f 59
+authfn/docs/content/docs/quickstart/sveltekit.md
+  s_c1093e7194f7e3::t_228fa12056597f 68,70-73
+devfn/ports/test/registry.test.ts
+  s_c1093e7194f7e3::t_228fa12056597f 728-861
+filefn/docs/content/docs/adapters/db.md
+  s_c1093e7194f7e3::t_228fa12056597f 3,8,11-12,15,17,20-22,25-27,29,31
+filefn/docs/content/docs/quickstart/hono.md
+  s_c1093e7194f7e3::t_228fa12056597f 14,27
+.github/workflows/superfunctions-docs-cloudflare-routes.yml
+  s_c1093e7194f7e3::t_228fa12056597f 18,75
+devfn/docs/content/docs/packages.md
+  s_c1093e7194f7e3::t_228fa12056597f 1-17
+devfn/docs/content/docs/reference/processes.md
+  s_c1093e7194f7e3::t_228fa12056597f 1-29
+filefn/docs/content/docs/index.md
+  s_c1093e7194f7e3::t_228fa12056597f 77
+devfn/docs/src/routes/docs/search.json/+server.ts
+  s_c1093e7194f7e3::t_228fa12056597f 1-8
+devfn/docs/.gitignore
+  s_c1093e7194f7e3::t_228fa12056597f 1-10
+devfn/docs/content/docs/reference/proxy.md
+  s_c1093e7194f7e3::t_228fa12056597f 1-13
+devfn/docs/content/docs/meta.json
+  s_c1093e7194f7e3::t_228fa12056597f 1-4
+authfn/docs/content/docs/ai-resources/cursor.md
+  s_c1093e7194f7e3::t_228fa12056597f 3,8,10,18
+authfn/docs/content/docs/quickstart/nextjs.md
+  s_c1093e7194f7e3::t_228fa12056597f 67,69,93,111
+filefn/docs/content/docs/recipes/video-uploads.md
+  s_c1093e7194f7e3::t_228fa12056597f 3,12,44-46
+devfn/docs/src/routes/+layout.server.ts
+  s_c1093e7194f7e3::t_228fa12056597f 1-13
+filefn/docs/static/llms.txt
+  s_c1093e7194f7e3::t_228fa12056597f 9-14,16-17,21-22,68,85,93
+filefn/docs/content/docs/adapters/index.md
+  s_c1093e7194f7e3::t_228fa12056597f 30
+filefn/docs/content/docs/reference/schema.md
+  s_c1093e7194f7e3::t_228fa12056597f 138-142,145
+filefn/docs/content/docs/quickstart/sveltekit.md
+  s_c1093e7194f7e3::t_228fa12056597f 13,23
+authfn/docs/content/docs/frameworks/nextjs.md
+  s_c1093e7194f7e3::t_228fa12056597f 16,19,39,54,63-64
+authfn/docs/content/docs/ai-resources/meta.json
+  s_c1093e7194f7e3::t_228fa12056597f 3
+filefn/docs/content/docs/quickstart/bun.md
+  s_c1093e7194f7e3::t_228fa12056597f 13,21
+devfn/docs/src/routes/docs/[...slug]/+page.server.ts
+  s_c1093e7194f7e3::t_228fa12056597f 1-25
+devfn/ports/src/registry.ts
+  s_c1093e7194f7e3::t_228fa12056597f 8,285-322,372-375,379,795-830,833
+  s_c1093e7194f7e3::t_c82eebd424f31b 831-832,834
+filefn/docs/content/docs/recipes/cdn-integration.md
+  s_c1093e7194f7e3::t_228fa12056597f 3,8,10,12,15-23,28,30
+filefn/docs/static/llms-full.txt
+  s_c1093e7194f7e3::t_228fa12056597f 87,125,142,147,150-151,154,156,159-161,164,166-168,170,180,185-186,190-193,195-197,200,202,204,206,208,213,218,221,224-225,228,233,238,241,243-244,248-251,253-254,257,259,261,266,271,274,276-279,283-285,287,289,292,294,296,306,311,313,316,319,325-326,330,336,339,344,346-348,352,358-361,363-364,368,373,375-380,384,389,391-395,399,401,403,406-414,416,419,467,469-471,500,506,508-509,511,553,559,561,565-566,574-575,624,673,745,765,794,800,818,820,822,867-905,4582-4585,4591-4592,4595,4646-4649,4658,4663,4667,4669-4670,4672-4675,4677,4681,4683,4897-4900,4904,4915,4955,4973,4997-4998,5019-5020,5023-5024,5299,5320,5547,5555,5613-5668,5677-5678,5681,5696-5697,5702,5929,5942,6052,6063,6143,6153,6404,6409,6411,6413,6416-6418,6420-6424,6429,6431,6614-6616,6679,6681,6684-6685,6692-6696,6724,6727-6729,6731-6732,6735-6737,6741,6761,6796-6800,6807,6814,6853,6857,7115,7204,7213,7245-7247,8161-8165,8168
+filefn/docs/content/docs/admin/index.md
+  s_c1093e7194f7e3::t_228fa12056597f 1-32
+authfn/docs/content/docs/adapters/database/drizzle.md
+  s_c1093e7194f7e3::t_228fa12056597f 101
+filefn/docs/content/docs/adapters/storage-local.md
+  s_c1093e7194f7e3::t_228fa12056597f 9
+filefn/docs/content/docs/frameworks/nextjs.md
+  s_c1093e7194f7e3::t_228fa12056597f 15-16,19-20
+devfn/docs/src/routes/+page.svelte
+  s_c1093e7194f7e3::t_228fa12056597f 1-28
+authfn/docs/content/docs/admin/meta.json
+  s_c1093e7194f7e3::t_228fa12056597f 3
+authfn/docs/content/docs/frameworks/bun.md
+  s_c1093e7194f7e3::t_228fa12056597f 23
+devfn/docs/content/docs/migration.md
+  s_c1093e7194f7e3::t_228fa12056597f 1-10
+filefn/docs/content/docs/frameworks/bun.md
+  s_c1093e7194f7e3::t_228fa12056597f 12-15,21-22,25,75-78
+devfn/docs/content/docs/reference/compose.md
+  s_c1093e7194f7e3::t_228fa12056597f 1-8
+scripts/docs-site/llms.mjs
+  s_c1093e7194f7e3::t_228fa12056597f 91-107
+  s_c1093e7194f7e3::t_8c3af8908f8b51 90
+authfn/docs/static/llms-full.txt
+  s_c1093e7194f7e3::t_228fa12056597f 229,1024-1025,1135,1144,1174-1175,1177,1180,1182,1184,1186,1188-1193,1195,1197,1199,1201,1203,1205-1206,1208,1211,1213,1215,1223-1239,1243,1278,1285,1290,1292,1300,1330,1335,1341-1344,1346,1350,1356,1412,4257,4336,4354,4367,4385,4395,4699,4702,4722,4737,4746-4747,4817,4820-4823,4867,5076,5108,5635,7193,7252,7373,7375,7399,7417,7765,7767-7770
+devfn/docs/content/docs/reference/core.md
+  s_c1093e7194f7e3::t_228fa12056597f 1-28
+devfn/docs/svelte.config.js
+  s_c1093e7194f7e3::t_228fa12056597f 1-26
+devfn/docs/content/docs/lifecycle.md
+  s_c1093e7194f7e3::t_228fa12056597f 1-10
+.github/workflows/superfunctions-docs-cloudflare-deploy.yml
+  s_c1093e7194f7e3::t_228fa12056597f 14,20,27,51
+devfn/docs/content/docs/reference/cli.md
+  s_c1093e7194f7e3::t_228fa12056597f 1-30
+devfn/docs/content/docs/reference/meta.json
+  s_c1093e7194f7e3::t_228fa12056597f 1-4
+filefn/docs/content/docs/adapters/db-drizzle.md
+  s_c1093e7194f7e3::t_228fa12056597f 3,8-9,13-16,18-20,23,25,27,29,31
+filefn/docs/content/docs/recipes/tenant-isolation.md
+  s_c1093e7194f7e3::t_228fa12056597f 40
+devfn/docs/docsfn.config.ts
+  s_c1093e7194f7e3::t_228fa12056597f 1-41
+authfn/docs/content/docs/ai-resources/index.md
+  s_c1093e7194f7e3::t_228fa12056597f 3,8,14-17,19,23,29
+devfn/docs/src/lib/components/DocsSiteSearch.svelte
+  s_c1093e7194f7e3::t_228fa12056597f 1-5
+devfn/docs/src/app.html
+  s_c1093e7194f7e3::t_228fa12056597f 1-11
+authfn/docs/content/docs/frameworks/sveltekit.md
+  s_c1093e7194f7e3::t_228fa12056597f 16,19-22,66
+authfn/docs/static/llms.txt
+  s_c1093e7194f7e3::t_228fa12056597f 22-23,25-26
+authfn/docs/content/docs/admin/super-console.md
+  s_c1093e7194f7e3::t_228fa12056597f 1-27
+filefn/docs/content/docs/adapters/processors.md
+  s_c1093e7194f7e3::t_228fa12056597f 3,8,10,13,16,22-23,27,33,36,41,43-45,49,55-58,60-61,65,70,72-77,81,86,88-92,96,98,100,103-111,113,116
+devfn/docs/static/llms-full.txt
+  s_c1093e7194f7e3::t_228fa12056597f 1-493
+filefn/docs/content/docs/adapters/db-sqlite.md
+  s_c1093e7194f7e3::t_228fa12056597f 2-3,6,8-11,15-17,19,21,24,26,28
+package-lock.json
+  s_2ad05f9e34dee0::t_5ba9db410aa8f2 6411-6666,8290-8313,21667-21670
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "973178828e1d9c8566999c56c129f397aa182020",
+  "prompts": {},
+  "sessions": {
+    "s_2ad05f9e34dee0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ad1f412b-3c1b-4353-8d1b-d106410efcc7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_c1093e7194f7e3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "203316bd-9c88-41f4-b037-58d76f8b6cd9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

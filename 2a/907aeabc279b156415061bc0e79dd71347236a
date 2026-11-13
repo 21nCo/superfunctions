@@ -1,0 +1,35 @@
+README.md
+  s_e1c5fc1a65c0cf::t_5e49f0c5020a6d 21-24
+_conduct/verify-vitest-ui-shutdown.mjs
+  s_e1c5fc1a65c0cf::t_f2c41112c589aa 1-47
+_conduct/verify-vitest-ui.mjs
+  s_e1c5fc1a65c0cf::t_9e52879aace086 1,5,7-8,11-12,14,20,36-38,40,46-72,83,90-92
+_conduct/vitest4-default-docs-ui.md
+  s_e1c5fc1a65c0cf::t_65baadc617658d 1-155
+docsfn/examples/sveltekit-docs-site/package.json
+  s_e1c5fc1a65c0cf::t_c602e3175daa9a 13-16
+docsfn/examples/sveltekit-docs-site/proof-routes.test.ts
+  s_e1c5fc1a65c0cf::t_e7a2d2e51fe3ae 1-2,60-61
+package-lock.json
+  s_e1c5fc1a65c0cf::t_d58bc057d30492 27,31204-31661,59769-59772,62629
+package.json
+  s_e1c5fc1a65c0cf::t_5f4e4243e9294f 22,161
+scripts/run-vitest-ui.mjs
+  s_e1c5fc1a65c0cf::t_e69456cd49e8b4 1-88
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2a907aeabc279b156415061bc0e79dd71347236a",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

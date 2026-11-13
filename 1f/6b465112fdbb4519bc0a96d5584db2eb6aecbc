@@ -1,0 +1,31 @@
+cmsfn/.conduct/studio-browser-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_0531dbe9e0b82d 13-14,91-103,145,162-163,167-172,312-313
+cmsfn/.conduct/studio-history-readiness.md
+  s_e1c5fc1a65c0cf::t_18caea5563157c 1-55
+cmsfn/studio/README.md
+  s_e1c5fc1a65c0cf::t_efdb2730d41846 51-76
+cmsfn/studio/src/__tests__/history.test.tsx
+  s_e1c5fc1a65c0cf::t_f8978e46293301 1-76
+cmsfn/studio/src/app.tsx
+  s_e1c5fc1a65c0cf::t_e53b34a20664b7 1,119
+cmsfn/studio/src/index.ts
+  s_e1c5fc1a65c0cf::t_867347c6ff6774 16
+cmsfn/studio/src/panes/history/HistoryPane.tsx
+  s_e1c5fc1a65c0cf::t_b5a9c7cb066080 1-101
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1f6b465112fdbb4519bc0a96d5584db2eb6aecbc",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

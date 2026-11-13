@@ -1,0 +1,39 @@
+cifn/.conduct/owned-docker-checkpoint.md
+  s_e1c5fc1a65c0cf::t_dc27ea1755ed79 1-39
+cifn/README.md
+  s_e1c5fc1a65c0cf::t_0853b3bc262b19 104,408-430
+cifn/typescript/control-plane/scripts/verify-packed-logs.mjs
+  s_e1c5fc1a65c0cf::t_7598ed7eb826e0 29-30,33-52,64,89
+cifn/typescript/runner/scripts/verify-owned-docker.mjs
+  s_e1c5fc1a65c0cf::t_1cbbb97ace7076 1-25
+cifn/typescript/runner/src/index.ts
+  s_e1c5fc1a65c0cf::t_6db8272b5eeae2 26-28
+cifn/typescript/runner/src/owned-docker-executor.test.ts
+  s_e1c5fc1a65c0cf::t_636ebb0e6f8667 1-315
+cifn/typescript/runner/src/owned-docker-executor.ts
+  s_e1c5fc1a65c0cf::t_d4844a9f673514 1-394
+cifn/typescript/runner/src/remote-runner.ts
+  s_e1c5fc1a65c0cf::t_0da005160acbc1 1,12,16,18,28,156
+cifn/typescript/runner/src/runner.ts
+  s_e1c5fc1a65c0cf::t_e9b159b116281a 1,32-33,57-58,67,83-84,94,112-113,592,644,647-649
+cifn/typescript/runner/src/server.ts
+  s_e1c5fc1a65c0cf::t_018cd721645bb5 1-2,9
+cifn/typescript/runner/tsconfig.remote.json
+  s_e1c5fc1a65c0cf::t_184bbf2efa9b20 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fe1d858609913e6051044fe2ce5fb7a2330cba6e",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

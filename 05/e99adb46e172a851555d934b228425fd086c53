@@ -1,0 +1,25 @@
+flowfn/.conduct/memory-order-readiness.md
+  s_e1c5fc1a65c0cf::t_0f3518908c99e8 1-27
+flowfn/typescript/docs/queue-ownership.md
+  s_e1c5fc1a65c0cf::t_885668487f7e6d 132-139
+flowfn/typescript/src/adapters/memory-order.test.ts
+  s_e1c5fc1a65c0cf::t_118f3b3fdaa82a 1-45
+flowfn/typescript/src/adapters/memory.ts
+  s_e1c5fc1a65c0cf::t_56614f92be2d49 50-51,56-70
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "05e99adb46e172a851555d934b228425fd086c53",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

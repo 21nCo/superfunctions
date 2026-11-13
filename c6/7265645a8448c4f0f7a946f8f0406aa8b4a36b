@@ -1,0 +1,283 @@
+scripts/generate-uifn-phase-11.mjs
+  s_d4986a6f16d675::t_1b56966a68e334 66
+scripts/generate-uifn-phase-12.mjs
+  s_d4986a6f16d675::t_68e62e42065ef7 54
+scripts/generate-uifn-phase-13.mjs
+  s_d4986a6f16d675::t_cd264213c6a1d6 89
+scripts/uifn-adapter-dom-bindings.mjs
+  s_d4986a6f16d675::t_60ca5a7858f48b 2-45,48-53,55-73,75-80,83-87,89-90,93-112
+scripts/uifn-adapter-dom-bindings.test.mjs
+  s_d4986a6f16d675::t_7a5fffdc1e8498 5-10,62-66,68-97
+scripts/verify-uifn-bundle-size.mjs
+  s_d4986a6f16d675::t_1ef1bacb63ebd9 18,55-65,228-229,240-264,269-276,384-386,389
+scripts/verify-uifn-bundle-size.test.mjs
+  s_d4986a6f16d675::t_7ca0468c385b4e 104-110,113,115-116,118-120,202-233
+scripts/verify-uifn-phase-11-contract.mjs
+  s_d4986a6f16d675::t_0c148d4d11f43e 6,49,57-58,60-62
+scripts/verify-uifn-phase-12-contract.mjs
+  s_d4986a6f16d675::t_5045be939c5004 6,56,106-110
+scripts/verify-uifn-phase-13-contract.mjs
+  s_d4986a6f16d675::t_90567b8e1a9728 6,73,151-156
+uifn/dom/CHANGELOG.md
+  s_d4986a6f16d675::t_d81f7ab4f2698f 5-7
+uifn/dom/package.json
+  s_d4986a6f16d675::t_edeca0845b17b8 42
+uifn/dom/src/adapter-bindings.ts
+  s_d4986a6f16d675::t_89d023fce55b30 2,7-15,19-32,35-38,40,43-51,54,56-77,80-86,88,99,104,113-120,122-130,132-142,147-154,157,159-160,163-167,170-187,189-247
+uifn/dom/src/index.ts
+  s_d4986a6f16d675::t_4343d631b26379 1
+uifn/evidence/generated/phase-11/phase-11-react-compounds.json
+  s_d4986a6f16d675::t_d011eeff524936 7
+uifn/evidence/generated/phase-12/phase-12-svelte-compounds.json
+  s_d4986a6f16d675::t_6fb01b58208058 7
+uifn/evidence/generated/phase-13/phase-13-solid-compounds.json
+  s_d4986a6f16d675::t_6422765b0c2a29 7
+uifn/examples/size-fixtures/README.md
+  s_d4986a6f16d675::t_b10afa0b0451a8 21-25
+uifn/react/CHANGELOG.md
+  s_d4986a6f16d675::t_9dc0da77b2cca4 6-7
+uifn/react/src/generated/alert-dialog.tsx
+  s_d4986a6f16d675::t_cfa554b20cf19f 5,26
+uifn/react/src/generated/angle-slider.tsx
+  s_d4986a6f16d675::t_052f10ed54c556 5,26
+uifn/react/src/generated/autocomplete.tsx
+  s_d4986a6f16d675::t_7edeef615c3f47 5,26
+uifn/react/src/generated/carousel.tsx
+  s_d4986a6f16d675::t_646f123c11ab36 5,26
+uifn/react/src/generated/checkbox-group.tsx
+  s_d4986a6f16d675::t_110ea232db2d74 5,26
+uifn/react/src/generated/color-picker.tsx
+  s_d4986a6f16d675::t_5e153c916a9041 5,26
+uifn/react/src/generated/combobox.tsx
+  s_d4986a6f16d675::t_8e204c1a77df46 5,26
+uifn/react/src/generated/context-menu.tsx
+  s_d4986a6f16d675::t_ed39936590e976 5,26
+uifn/react/src/generated/date-picker.tsx
+  s_d4986a6f16d675::t_ec370db53cef6f 5,26
+uifn/react/src/generated/dialog.tsx
+  s_d4986a6f16d675::t_aebcc916fbcd9b 5,26
+uifn/react/src/generated/drawer.tsx
+  s_d4986a6f16d675::t_76ffae5257196f 5,26
+uifn/react/src/generated/editable.tsx
+  s_d4986a6f16d675::t_ea00b82f6fc6bb 5,26
+uifn/react/src/generated/floating-panel.tsx
+  s_d4986a6f16d675::t_8e6e269c759f4f 5,26
+uifn/react/src/generated/hover-card.tsx
+  s_d4986a6f16d675::t_319a88169bc025 5,26
+uifn/react/src/generated/image-cropper.tsx
+  s_d4986a6f16d675::t_8bd84aa9793211 5,26
+uifn/react/src/generated/listbox.tsx
+  s_d4986a6f16d675::t_b3ba19c0df5896 5,26
+uifn/react/src/generated/menu.tsx
+  s_d4986a6f16d675::t_8cd748edc55945 5,26
+uifn/react/src/generated/menubar.tsx
+  s_d4986a6f16d675::t_d0bebf772fc47c 5,26
+uifn/react/src/generated/navigation-menu.tsx
+  s_d4986a6f16d675::t_6384fc072d60e4 5,26
+uifn/react/src/generated/pagination.tsx
+  s_d4986a6f16d675::t_4996eaa6c2e5c8 5,26
+uifn/react/src/generated/pin-input.tsx
+  s_d4986a6f16d675::t_02172942893e8a 5,26
+uifn/react/src/generated/popover.tsx
+  s_d4986a6f16d675::t_a31948e9c35857 5,26
+uifn/react/src/generated/radio-group.tsx
+  s_d4986a6f16d675::t_5717ce5cc34266 5,26
+uifn/react/src/generated/scroll-area.tsx
+  s_d4986a6f16d675::t_6b2c1343a9e0b3 5,26
+uifn/react/src/generated/segment-group.tsx
+  s_d4986a6f16d675::t_ff7f5735583a13 5,26
+uifn/react/src/generated/select.tsx
+  s_d4986a6f16d675::t_d2e31142e30084 5,26
+uifn/react/src/generated/signature-pad.tsx
+  s_d4986a6f16d675::t_0c5220bf4595b5 5,26
+uifn/react/src/generated/slider.tsx
+  s_d4986a6f16d675::t_c1cd7266a436f0 5,26
+uifn/react/src/generated/splitter.tsx
+  s_d4986a6f16d675::t_9c91c45b4df8cf 5,26
+uifn/react/src/generated/tabs.tsx
+  s_d4986a6f16d675::t_4bc53e74ae0c50 5,26
+uifn/react/src/generated/toggle-group.tsx
+  s_d4986a6f16d675::t_b3d92a4d2fa5e1 5,26
+uifn/react/src/generated/toolbar.tsx
+  s_d4986a6f16d675::t_1023ade2b62d9e 5,26
+uifn/react/src/generated/tooltip.tsx
+  s_d4986a6f16d675::t_f896cf7037b22a 5,26
+uifn/react/src/generated/tour.tsx
+  s_d4986a6f16d675::t_814e7b5441187b 5,26
+uifn/react/src/generated/tree-view.tsx
+  s_d4986a6f16d675::t_dd64a25b4358d6 5,26
+uifn/react/src/internal/compound.tsx
+  s_d4986a6f16d675::t_21bdb4df1555c8 16-17,42,444,450,452
+uifn/solid/CHANGELOG.md
+  s_d4986a6f16d675::t_68238bf030b0f8 6-7
+uifn/solid/src/generated/alert-dialog.tsx
+  s_d4986a6f16d675::t_27e5b5d2af7604 3,23
+uifn/solid/src/generated/angle-slider.tsx
+  s_d4986a6f16d675::t_a4ff581fbef05d 3,23
+uifn/solid/src/generated/autocomplete.tsx
+  s_d4986a6f16d675::t_e41e0bfad87a2a 3,23
+uifn/solid/src/generated/carousel.tsx
+  s_d4986a6f16d675::t_2d302c58d56a9b 3,23
+uifn/solid/src/generated/checkbox-group.tsx
+  s_d4986a6f16d675::t_eaff7b4b541993 3,23
+uifn/solid/src/generated/color-picker.tsx
+  s_d4986a6f16d675::t_65635b747b2526 3,23
+uifn/solid/src/generated/combobox.tsx
+  s_d4986a6f16d675::t_5fb4cd9d2673e7 3,23
+uifn/solid/src/generated/context-menu.tsx
+  s_d4986a6f16d675::t_5cb7ae0c9af5c1 3,23
+uifn/solid/src/generated/date-picker.tsx
+  s_d4986a6f16d675::t_ce6720102560fd 3,23
+uifn/solid/src/generated/dialog.tsx
+  s_d4986a6f16d675::t_bae7408871f7c9 3,23
+uifn/solid/src/generated/drawer.tsx
+  s_d4986a6f16d675::t_a478b8be75b148 3,23
+uifn/solid/src/generated/editable.tsx
+  s_d4986a6f16d675::t_6a145fbc110dd9 3,23
+uifn/solid/src/generated/floating-panel.tsx
+  s_d4986a6f16d675::t_1d9920eb0ae72c 3,23
+uifn/solid/src/generated/hover-card.tsx
+  s_d4986a6f16d675::t_39bb2af37e2c7a 3,23
+uifn/solid/src/generated/image-cropper.tsx
+  s_d4986a6f16d675::t_67427e22ff355c 3,23
+uifn/solid/src/generated/listbox.tsx
+  s_d4986a6f16d675::t_4bb900ebb8b459 3,23
+uifn/solid/src/generated/menu.tsx
+  s_d4986a6f16d675::t_5fdf69b1c80b59 3,23
+uifn/solid/src/generated/menubar.tsx
+  s_d4986a6f16d675::t_e570227cd584e8 3,23
+uifn/solid/src/generated/navigation-menu.tsx
+  s_d4986a6f16d675::t_0d472808127a96 3,23
+uifn/solid/src/generated/pagination.tsx
+  s_d4986a6f16d675::t_390a5cfcd01abe 3,23
+uifn/solid/src/generated/pin-input.tsx
+  s_d4986a6f16d675::t_741a3bde432e07 3,23
+uifn/solid/src/generated/popover.tsx
+  s_d4986a6f16d675::t_78545ae19acc6e 3,23
+uifn/solid/src/generated/radio-group.tsx
+  s_d4986a6f16d675::t_5bbd72e2ac4630 3,23
+uifn/solid/src/generated/scroll-area.tsx
+  s_d4986a6f16d675::t_02c39d480bcff2 3,23
+uifn/solid/src/generated/segment-group.tsx
+  s_d4986a6f16d675::t_9e8f7ad4a8534a 3,23
+uifn/solid/src/generated/select.tsx
+  s_d4986a6f16d675::t_bfe130457472cc 3,23
+uifn/solid/src/generated/signature-pad.tsx
+  s_d4986a6f16d675::t_bc4818d866d598 3,23
+uifn/solid/src/generated/slider.tsx
+  s_d4986a6f16d675::t_d7a111c154cd9b 3,23
+uifn/solid/src/generated/splitter.tsx
+  s_d4986a6f16d675::t_1a704998dcf751 3,23
+uifn/solid/src/generated/tabs.tsx
+  s_d4986a6f16d675::t_0bd376be685fac 3,23
+uifn/solid/src/generated/toggle-group.tsx
+  s_d4986a6f16d675::t_cd5fc0daae332a 3,23
+uifn/solid/src/generated/toolbar.tsx
+  s_d4986a6f16d675::t_c1aa9fefdc31dc 3,23
+uifn/solid/src/generated/tooltip.tsx
+  s_d4986a6f16d675::t_005cf12ab90854 3,23
+uifn/solid/src/generated/tour.tsx
+  s_d4986a6f16d675::t_7cd4995ba091fa 3,23
+uifn/solid/src/generated/tree-view.tsx
+  s_d4986a6f16d675::t_6573dc535fe3fb 3,23
+uifn/solid/src/internal/compound.tsx
+  s_d4986a6f16d675::t_e11489b0466e25 30,72,476,478
+uifn/svelte/CHANGELOG.md
+  s_d4986a6f16d675::t_5677c4739c1976 6-8
+uifn/svelte/README.md
+  s_d4986a6f16d675::t_592f61640e4399 50
+uifn/svelte/lib/dom-bindings.ts
+  s_d4986a6f16d675::t_077907c39dce6f 2-16,18-22,30-76,82-83,86
+uifn/svelte/lib/generated/alert-dialog/definition.ts
+  s_d4986a6f16d675::t_064e739a35456c 3,13
+uifn/svelte/lib/generated/angle-slider/definition.ts
+  s_d4986a6f16d675::t_e265b34d82bd09 3,13
+uifn/svelte/lib/generated/autocomplete/definition.ts
+  s_d4986a6f16d675::t_5e9f18bae92859 3,13
+uifn/svelte/lib/generated/carousel/definition.ts
+  s_d4986a6f16d675::t_8823c24fc42858 3,13
+uifn/svelte/lib/generated/checkbox-group/definition.ts
+  s_d4986a6f16d675::t_f2b8b619c43599 3,13
+uifn/svelte/lib/generated/color-picker/definition.ts
+  s_d4986a6f16d675::t_535ed05e4f0335 3,13
+uifn/svelte/lib/generated/combobox/definition.ts
+  s_d4986a6f16d675::t_5eda3be1f417f8 3,13
+uifn/svelte/lib/generated/context-menu/definition.ts
+  s_d4986a6f16d675::t_8090c52f158976 3,13
+uifn/svelte/lib/generated/date-picker/definition.ts
+  s_d4986a6f16d675::t_515eb9ce7ca0c0 3,13
+uifn/svelte/lib/generated/dialog/definition.ts
+  s_d4986a6f16d675::t_fb03433cff928a 3,13
+uifn/svelte/lib/generated/drawer/definition.ts
+  s_d4986a6f16d675::t_b72f954c143db6 3,13
+uifn/svelte/lib/generated/editable/definition.ts
+  s_d4986a6f16d675::t_b5521534d69d90 3,13
+uifn/svelte/lib/generated/floating-panel/definition.ts
+  s_d4986a6f16d675::t_545ef4231bdd0e 3,13
+uifn/svelte/lib/generated/hover-card/definition.ts
+  s_d4986a6f16d675::t_5cfa6df07823e7 3,13
+uifn/svelte/lib/generated/image-cropper/definition.ts
+  s_d4986a6f16d675::t_93aba1556045cd 3,13
+uifn/svelte/lib/generated/listbox/definition.ts
+  s_d4986a6f16d675::t_029477fbb24aef 3,13
+uifn/svelte/lib/generated/menu/definition.ts
+  s_d4986a6f16d675::t_7c0a3dacd4b4ba 3,13
+uifn/svelte/lib/generated/menubar/definition.ts
+  s_d4986a6f16d675::t_17e859ec256066 3,13
+uifn/svelte/lib/generated/navigation-menu/definition.ts
+  s_d4986a6f16d675::t_07c4d6cb7e44c5 3,13
+uifn/svelte/lib/generated/pagination/definition.ts
+  s_d4986a6f16d675::t_e50edad2477576 3,13
+uifn/svelte/lib/generated/pin-input/definition.ts
+  s_d4986a6f16d675::t_6e79a3dea13a3c 3,13
+uifn/svelte/lib/generated/popover/definition.ts
+  s_d4986a6f16d675::t_4e65a902377dac 3,13
+uifn/svelte/lib/generated/radio-group/definition.ts
+  s_d4986a6f16d675::t_d9c88827906453 3,13
+uifn/svelte/lib/generated/scroll-area/definition.ts
+  s_d4986a6f16d675::t_e9b0155ff5e4f1 3,13
+uifn/svelte/lib/generated/segment-group/definition.ts
+  s_d4986a6f16d675::t_0822fcf5c110d4 3,13
+uifn/svelte/lib/generated/select/definition.ts
+  s_d4986a6f16d675::t_21cd4be8ecb4f2 3,13
+uifn/svelte/lib/generated/signature-pad/definition.ts
+  s_d4986a6f16d675::t_4bc8e7c8b21b57 3,13
+uifn/svelte/lib/generated/slider/definition.ts
+  s_d4986a6f16d675::t_4bfe2fa654bfd8 3,13
+uifn/svelte/lib/generated/splitter/definition.ts
+  s_d4986a6f16d675::t_8709910dba52ef 3,13
+uifn/svelte/lib/generated/tabs/definition.ts
+  s_d4986a6f16d675::t_e7038d75b73970 3,13
+uifn/svelte/lib/generated/toggle-group/definition.ts
+  s_d4986a6f16d675::t_eae73e4a20afce 3,13
+uifn/svelte/lib/generated/toolbar/definition.ts
+  s_d4986a6f16d675::t_b033f4db2de84d 3,13
+uifn/svelte/lib/generated/tooltip/definition.ts
+  s_d4986a6f16d675::t_8b0223ae9995ab 3,13
+uifn/svelte/lib/generated/tour/definition.ts
+  s_d4986a6f16d675::t_92adad8c074f66 3,13
+uifn/svelte/lib/generated/tree-view/definition.ts
+  s_d4986a6f16d675::t_25cc9ecd2e25a0 3,13
+uifn/svelte/lib/internal/compound.ts
+  s_d4986a6f16d675::t_8064916ac1a997 10-11,23-28,563,565-573
+uifn/svelte/lib/internal/dom-binding-plan.ts
+  s_d4986a6f16d675::t_bd7b19ac0954d3 1-76
+uifn/svelte/tests/dom-bindings-public.test.ts
+  s_d4986a6f16d675::t_bc80384e05bf61 4-5,88-94
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c67265645a8448c4f0f7a946f8f0406aa8b4a36b",
+  "prompts": {},
+  "sessions": {
+    "s_d4986a6f16d675": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4ae9acab-aca5-495d-891f-542066b6ebfa",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

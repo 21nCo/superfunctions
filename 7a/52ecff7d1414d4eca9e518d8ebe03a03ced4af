@@ -1,0 +1,25 @@
+billfn/core/src/__tests__/unlinked-webhooks.test.ts
+  s_f5db525fa70a5f::t_6765560216cec3 2449-2649
+billfn/core/src/service.ts
+  s_f5db525fa70a5f::t_fe8c7259e087c8 139-140,217-227,2313,2325,2327,2330-2336,3044-3056,3058,3060,3096-3101,3233-3234,3947-3949,3977-3982,3985,3988-3989
+billfn/core/src/types.ts
+  s_f5db525fa70a5f::t_31f7e95738c9d0 192,198-199
+billfn/docs/content/docs/server/reconciliation.mdx
+  s_f5db525fa70a5f::t_554e799186d840 31,38,46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7a52ecff7d1414d4eca9e518d8ebe03a03ced4af",
+  "prompts": {},
+  "sessions": {
+    "s_f5db525fa70a5f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_f5db525fa70a5f",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

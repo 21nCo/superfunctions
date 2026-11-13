@@ -1,0 +1,41 @@
+_conduct/shared-python-packaging-readiness.md
+  s_e1c5fc1a65c0cf::t_d2c45a59559e0f 1-9
+packages/python-core/superfunctions/db/__init__.py
+  s_e1c5fc1a65c0cf::t_ae9f4d2232f03f 16
+packages/python-core/superfunctions/db/namespace.py
+  s_e1c5fc1a65c0cf::t_efc6fceebf9ab1 58-60
+packages/python-core/superfunctions/db/types.py
+  s_e1c5fc1a65c0cf::t_89935ffa31674c 355-357
+packages/python-core/superfunctions/http/types.py
+  s_e1c5fc1a65c0cf::t_bea10b7952f6ca 77-79
+packages/python-core/superfunctions/oauth/core.py
+  s_e1c5fc1a65c0cf::t_7b1c2793c71880 9-14
+packages/python-core/superfunctions/oauth/flow.py
+  s_e1c5fc1a65c0cf::t_4041d5d3bcb342 18,26,404-406
+packages/python-core/superfunctions/oauth/http.py
+  s_e1c5fc1a65c0cf::t_7f82544a8b36b6 9,14
+packages/python-core/tests/test_auth_http_types.py
+  s_e1c5fc1a65c0cf::t_ac5f8ef9cbf0ff 66-70,74
+packages/python-core/tests/test_oauth_modules.py
+  s_e1c5fc1a65c0cf::t_27646fbaaac660 8,108
+packages/python-fastapi/pyproject.toml
+  s_e1c5fc1a65c0cf::t_68315414ff8b55 25
+packages/python-flask/pyproject.toml
+  s_e1c5fc1a65c0cf::t_2910f3c07e4981 25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0d69157ce17f351e75c44d3321b40a6f5935e729",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

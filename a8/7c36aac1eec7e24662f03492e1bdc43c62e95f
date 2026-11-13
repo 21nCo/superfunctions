@@ -1,0 +1,59 @@
+userfn/.conduct/flag-bootstrap-readiness.md
+  s_e1c5fc1a65c0cf::t_22f12ee3f7d20e 24-27
+userfn/.conduct/flag-config-sdk-readiness.md
+  s_e1c5fc1a65c0cf::t_a9171eef179908 1-66
+userfn/.conduct/flag-config-service-readiness.md
+  s_e1c5fc1a65c0cf::t_5f97661b29b624 101-104
+userfn/.conduct/flag-context-readiness.md
+  s_e1c5fc1a65c0cf::t_f6700853c7184a 148-151
+userfn/python/README.md
+  s_e1c5fc1a65c0cf::t_ed597fd4ba8494 191-192,231-276
+userfn/python/pyproject.toml
+  s_e1c5fc1a65c0cf::t_9ad5246d6a8cdd 12
+userfn/python/src/userfn/__init__.py
+  s_e1c5fc1a65c0cf::t_fcdc05b6f30040 1-2,8
+userfn/python/src/userfn/client.py
+  s_e1c5fc1a65c0cf::t_654c43cb5d3615 1,14-15,48-61,64-65,69-70
+userfn/python/src/userfn/core/config_http.py
+  s_e1c5fc1a65c0cf::t_e1e06dcfdbc295 1-229
+userfn/python/src/userfn/core/segments.py
+  s_e1c5fc1a65c0cf::t_195eeb0bea29fc 13
+userfn/python/src/userfn/types.py
+  s_e1c5fc1a65c0cf::t_db448e04c0a0fe 88-95,106
+userfn/python/tests/test_config_refresh.py
+  s_e1c5fc1a65c0cf::t_9797f8b65a07d8 1-142
+userfn/service/README.md
+  s_e1c5fc1a65c0cf::t_b42edfbac62701 139-142
+userfn/service/scripts/verify-config-package.mjs
+  s_e1c5fc1a65c0cf::t_96cd0e81cd1d34 34
+userfn/service/tests/flag-config-http.test.ts
+  s_e1c5fc1a65c0cf::t_c3a5b6a80519c4 1,4,24,35-36,46-47,54,115-116,126-178
+userfn/service/tests/python_config_wire_acceptance.py
+  s_e1c5fc1a65c0cf::t_6c191d8e8180c6 1-2,4,6-18
+userfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_b2a05865d105c2 176-177,210,212-254
+userfn/typescript/src/core/config-http.ts
+  s_e1c5fc1a65c0cf::t_965818e2736ce5 1-120
+userfn/typescript/src/core/segments.ts
+  s_e1c5fc1a65c0cf::t_4b6568834a9e85 11
+userfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_d564f94d44656b 1-2,22-23,27-28,115-127,130,135
+userfn/typescript/src/types.ts
+  s_e1c5fc1a65c0cf::t_f402122483977b 85-92,94
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a87c36aac1eec7e24662f03492e1bdc43c62e95f",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

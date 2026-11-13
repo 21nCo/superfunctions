@@ -1,0 +1,53 @@
+watchfn/.conduct/python-query-readiness.md
+  s_e1c5fc1a65c0cf::t_eca9a3cb7cc3ba 1-47
+watchfn/python/README.md
+  s_e1c5fc1a65c0cf::t_85359ae61f7622 53-104
+watchfn/python/scripts/verify-query-golden.mjs
+  s_b5e6f6158e6e62::t_e441c5f25ab32e 1-12
+watchfn/python/tests/fixtures/query-golden.json
+  s_e1c5fc1a65c0cf::t_f6a5b974504b65 1-675
+watchfn/python/tests/test_database.py
+  s_e1c5fc1a65c0cf::t_eab6855eb7fc59 239-265
+watchfn/python/tests/test_query.py
+  s_7ba056c7e072f1::t_e00bde61d02344 1-48
+watchfn/python/watchfn/__init__.py
+  s_e1c5fc1a65c0cf::t_3c7d7310a9d5c4 3,5
+watchfn/python/watchfn/client.py
+  s_e1c5fc1a65c0cf::t_5fbf1aa5d63205 2,6,91-101
+watchfn/python/watchfn/http/handlers.py
+  s_e1c5fc1a65c0cf::t_8e1b123ccc4324 10,117,125,129-130
+watchfn/python/watchfn/query.py
+  s_e1c5fc1a65c0cf::t_983793e0797ad0 1-286
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "21e50920c484b8e10e3e9f5d305197d95b12ddc4",
+  "prompts": {},
+  "sessions": {
+    "s_7ba056c7e072f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8d16bb29-946b-4259-b60d-7953e513216f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_b5e6f6158e6e62": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aea77509-1f09-4d19-8365-6202f2c0644c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
