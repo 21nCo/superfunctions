@@ -15,9 +15,10 @@ consoleCollector.start();
 network.start();
 breadcrumbs.addNavigation("/cart", "/checkout");
 
-// Later: the last 30 seconds of evidence, oldest first.
+// Later: the last 30 seconds of evidence, oldest first across collectors.
 const since = Date.now() - 30_000;
-const events = [...consoleCollector.collect({ since }), ...network.collect({ since }), ...breadcrumbs.collect({ since })];
+const events = [...consoleCollector.collect({ since }), ...network.collect({ since }), ...breadcrumbs.collect({ since })]
+  .sort((a, b) => a.timestamp - b.timestamp || a.seq - b.seq);
 
 consoleCollector.stop();
 network.stop();
@@ -30,7 +31,9 @@ Every event has `schemaVersion: 1`, a `kind` (`"console"`, `"network"` or
 milliseconds, plus the fields of its kind. The format is closed: extra fields
 are invalid. Check an event with `validateEvidenceEvent(event)` (returns a list
 of problems, empty when valid) or with any JSON Schema 2020-12 validator and
-the exported `evidenceEventSchema`.
+the exported `evidenceEventSchema`. Integer fields (`seq`, `timestamp`,
+`status`) are safe integers in both, and nested records (`data`, header
+records, objects in `args`) must be plain or null-prototype objects.
 
 | kind | fields |
 | --- | --- |
@@ -58,17 +61,21 @@ still installed: if another library wrapped them after `start()`, the catchfn
 wrapper stays in that chain, passes calls through and records nothing.
 
 The network collector never changes the application's request: the original
-arguments and receiver pass through untouched. `fetch` returns a promise
-chained from the page's that settles with the same response or rejection
-reason, so an unhandled rejection stays unhandled. Observation never runs the
-application's iterators, getters or conversions, and a stopped wrapper reads
-nothing at all:
+arguments pass through untouched (a `null` or `undefined` receiver of `fetch`
+becomes `globalThis`). The page's `fetch` and `XMLHttpRequest.prototype.open`
+run first, and observation reads their arguments only after they return: the
+platform has read the request by then, so no iterator, getter, conversion or
+Proxy trap that observation could trigger changes what is sent. `send` reads
+nothing from its arguments. `fetch` returns a promise chained from the page's
+that settles with the same response or rejection reason, so an unhandled
+rejection stays unhandled; a result that is not a thenable is returned as is.
+A stopped wrapper reads nothing at all. What observation then records:
 
 - Request headers are captured only from a platform `Headers` object (not a
   subclass), a plain array of `[name, value]` string pairs or a plain record of
   string data properties. Any other form (a generator, `Map.entries()`, an
-  accessor, a custom iterator, a non-string value) is passed on unread and the
-  request is recorded without `requestHeaders`.
+  accessor, a custom iterator, a non-string value, more than 200 pairs) is
+  not read and the request is recorded without `requestHeaders`.
 - `init.method` and `init.headers` are read only from own data properties.
 - The URL is read from a string, a platform `URL` or a platform `Request`;
   any other input is recorded as `"[UNREAD_URL]"` (`UNREAD_URL`), and a method
@@ -84,13 +91,17 @@ Captured values are snapshotted under a closed set of forms:
 - JSON primitives (strings, finite numbers, booleans, `null`) are kept;
 - `Error` becomes `{ name, message, stack, ...own properties }`;
 - plain objects and arrays are copied at most 5 container levels deep (deeper
-  containers become `"[Max Depth]"`) with at most 200 keys or items each;
+  containers become `"[Max Depth]"`) with at most 200 keys or items each,
+  a truncation marker included;
 - a container that refers back to one of its ancestors becomes `"[Circular]"`;
 - DOM nodes become `"<tag#id.class>"`;
-- everything else becomes `String(value)`.
+- everything else becomes `String(value)`, or `"[Unserializable]"` when that
+  conversion throws.
 
 One entry is at most 10 KB of UTF-8 JSON; strings are cut and containers stop
-early with a `"[Truncated]"` marker. A console event's argument list is one
+early with a `"[Truncated]"` marker (the last array item, or a record key
+whose value counts the omitted keys; `"[Truncated 2]"`, ... when the record
+already holds that key). A console event's argument list is one
 entry, and each argument counts its depth from 1. A breadcrumb's `data` and
 `message`, and a network event's `url` and each header record, are entries.
 
@@ -104,5 +115,5 @@ entry, and each argument counts its depth from 1. A breadcrumb's `data` and
 - `redactHeaders(headers)` redacts `authorization`, `cookie`, `set-cookie`,
   `x-api-key`, `x-auth-token` and `x-access-token`, case-insensitive.
 - `redactObject(value)` snapshots a value and redacts keys that name secrets,
-  plus URLs under `url`/`href` keys.
+  plus URLs under `url`/`href` keys; the redacted result keeps the 10 KB bound.
 - `redactString(text)` masks card numbers.

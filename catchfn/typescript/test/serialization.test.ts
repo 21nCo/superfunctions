@@ -48,17 +48,39 @@ describe("serialization closed set: one vector per form", () => {
     expect(serializeEntry([[[[[["six"]]]]]], 0)).toEqual([[[[[["six"]]]]]]);
   });
 
-  it(`keeps at most ${MAX_KEYS} keys or items per container`, () => {
-    const wide = Object.fromEntries(Array.from({ length: MAX_KEYS + 5 }, (_, index) => [`k${index}`, index]));
-    const value = serializeEntry(wide) as Record<string, unknown>;
-    expect(Object.keys(value)).toHaveLength(MAX_KEYS + 1);
-    expect(value.k199).toBe(199);
-    expect(value.k200).toBeUndefined();
-    expect(value[TRUNCATED]).toBe("5 more");
-    const list = serializeEntry(Array.from({ length: MAX_KEYS + 1 }, (_, index) => index)) as unknown[];
-    expect(list).toHaveLength(MAX_KEYS + 1);
-    expect(list.at(-2)).toBe(MAX_KEYS - 1);
-    expect(list.at(-1)).toBe(TRUNCATED);
+  it(`keeps at most ${MAX_KEYS} keys or items per container, the truncation marker included`, () => {
+    const record = (length: number) => Object.fromEntries(Array.from({ length }, (_, index) => [`k${index}`, index]));
+    const list = (length: number) => Array.from({ length }, (_, index) => index);
+    // Exactly at the cap: everything is kept, with no marker.
+    expect(serializeEntry(record(MAX_KEYS))).toEqual(record(MAX_KEYS));
+    expect(serializeEntry(list(MAX_KEYS))).toEqual(list(MAX_KEYS));
+    // One past it: MAX_KEYS - 1 entries plus the marker.
+    const value = serializeEntry(record(MAX_KEYS + 5)) as Record<string, unknown>;
+    expect(Object.keys(value)).toHaveLength(MAX_KEYS);
+    expect(value.k198).toBe(198);
+    expect(value.k199).toBeUndefined();
+    expect(value[TRUNCATED]).toBe("6 more");
+    const items = serializeEntry(list(MAX_KEYS + 1)) as unknown[];
+    expect(items).toHaveLength(MAX_KEYS);
+    expect(items.at(-2)).toBe(MAX_KEYS - 2);
+    expect(items.at(-1)).toBe(TRUNCATED);
+  });
+
+  it("never overwrites a captured key with the truncation marker", () => {
+    const input: Record<string, unknown> = { [TRUNCATED]: "keep", "[Truncated 2]": "keep too" };
+    for (let index = 0; index < MAX_KEYS + 3; index += 1) input[`k${index}`] = index;
+    const value = serializeEntry(input) as Record<string, unknown>;
+    expect(value[TRUNCATED]).toBe("keep");
+    expect(value["[Truncated 2]"]).toBe("keep too");
+    expect(value["[Truncated 3]"]).toBe("6 more");
+    expect(Object.keys(value)).toHaveLength(MAX_KEYS);
+    // Under byte pressure too: the marker stays in the budget.
+    const heavy: Record<string, unknown> = { [TRUNCATED]: "keep" };
+    for (let index = 0; index < 100; index += 1) heavy[`k${index}`] = "x".repeat(200);
+    const cut = serializeEntry(heavy) as Record<string, unknown>;
+    expect(cut[TRUNCATED]).toBe("keep");
+    expect(cut["[Truncated 2]"]).toMatch(/^\d+ more$/);
+    expect(bytes(cut)).toBeLessThanOrEqual(MAX_ENTRY_BYTES);
   });
 
   it(`never exceeds ${MAX_ENTRY_BYTES} bytes of UTF-8 JSON per entry`, () => {

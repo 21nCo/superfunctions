@@ -51,6 +51,48 @@ describe("evidence event v1 schema", () => {
     expect(isEvidenceEvent(event)).toBe(false);
   });
 
+  it("accepts only plain or null-prototype records in nested data and header records", () => {
+    class Box {
+      value = "x";
+    }
+    // A Date becomes a string in JSON, so the schema rejects what a consumer receives.
+    const changedByJson: Array<[string, unknown]> = [
+      ["a Date as breadcrumb data", { ...valid.breadcrumb, data: new Date(0) }],
+      ["a Date as request headers", { ...valid.network, requestHeaders: new Date(0) }],
+    ];
+    for (const [label, event] of changedByJson) {
+      expect(validateWithSchema(strip(event)), label).toBe(false);
+      expect(validateEvidenceEvent(event), label).not.toEqual([]);
+    }
+    // Other non-plain records are not JSON data either; the validator rejects them as is.
+    const nonPlain: Array<[string, unknown]> = [
+      ["a class instance as breadcrumb data", { ...valid.breadcrumb, data: new Box() }],
+      ["a Date nested in breadcrumb data", { ...valid.breadcrumb, data: { when: new Date(0) } }],
+      ["a Map nested in console args", { ...valid.console, args: [new Map([["a", 1]])] }],
+      ["a class instance as response headers", { ...valid.network, responseHeaders: new Box() }],
+    ];
+    for (const [label, event] of nonPlain) expect(validateEvidenceEvent(event), label).not.toEqual([]);
+    const bare = { ...valid.breadcrumb, data: Object.assign(Object.create(null), { nested: Object.assign(Object.create(null), { a: 1 }) }) };
+    expect(validateEvidenceEvent(bare)).toEqual([]);
+    expect(validateWithSchema(strip(bare))).toBe(true);
+  });
+
+  it("bounds every integer field at Number.MAX_SAFE_INTEGER in both validators", () => {
+    const cases: Array<[string, Record<string, unknown>]> = [
+      ["seq", valid.console],
+      ["timestamp", valid.console],
+      ["status", valid.network],
+    ];
+    for (const [field, event] of cases) {
+      const atBound = { ...event, [field]: Number.MAX_SAFE_INTEGER };
+      const pastBound = { ...event, [field]: Number.MAX_SAFE_INTEGER + 1 };
+      expect(validateWithSchema(atBound), field).toBe(true);
+      expect(validateEvidenceEvent(atBound), field).toEqual([]);
+      expect(validateWithSchema(pastBound), field).toBe(false);
+      expect(validateEvidenceEvent(pastBound), field).toEqual([`${field} is invalid`]);
+    }
+  });
+
   it("does not read inherited fields as the event's own", () => {
     // JSON has no inherited fields, so only the hand-written validator sees this case.
     const event = Object.create(valid.console);

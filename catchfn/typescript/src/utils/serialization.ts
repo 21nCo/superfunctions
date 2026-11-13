@@ -6,15 +6,18 @@
  * - `Error` becomes `{ name, message, stack, ...own properties }`;
  * - plain objects and arrays are copied, at most {@link MAX_DEPTH} container
  *   levels deep (deeper containers become `"[Max Depth]"`) and with at most
- *   {@link MAX_KEYS} keys or items each;
+ *   {@link MAX_KEYS} keys or items each, a truncation marker included;
  * - a container that refers back to one of its ancestors becomes `"[Circular]"`;
  * - DOM nodes become `"<tag#id.class>"`;
  * - everything else (undefined, NaN, bigint, symbol, functions, Date, Map,
- *   class instances, ...) becomes `String(value)`.
+ *   class instances, ...) becomes `String(value)`, or `"[Unserializable]"`
+ *   when that conversion throws.
  *
  * One entry never exceeds {@link MAX_ENTRY_BYTES} bytes of UTF-8 JSON: strings
  * are cut, and containers stop adding keys or items once the next one would
- * not fit and record the cut with a `"[Truncated]"` marker.
+ * not fit and record the cut with a `"[Truncated]"` marker: the last array
+ * item, or a record key `"[Truncated]"` (`"[Truncated 2]"`, ... when the
+ * record already has that key) whose value counts the omitted keys.
  */
 
 export type SerializedValue =
@@ -36,8 +39,8 @@ export const UNSERIALIZABLE = "[Unserializable]";
 
 // Room kept at each open container for its truncation marker, so a cut never
 // pushes the entry past the byte limit. The longest marker is the object form
-// `,"[Truncated]":"200 more"`, well under this.
-const MARKER_RESERVE = 32;
+// `,"[Truncated 200]":"<up to 16 digits> more"`, under this.
+const MARKER_RESERVE = 48;
 const STRING_SUFFIX = "…" + TRUNCATED;
 
 const encoder = new TextEncoder();
@@ -134,6 +137,13 @@ function defineEntry(target: Record<string, SerializedValue>, key: string, value
   Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true });
 }
 
+/** A marker key the record does not already hold, so captured data is never overwritten. */
+function truncationKey(record: Record<string, SerializedValue>): string {
+  let key = TRUNCATED;
+  for (let suffix = 2; Object.hasOwn(record, key); suffix += 1) key = `[Truncated ${suffix}]`;
+  return key;
+}
+
 function errorKeys(error: Error): string[] {
   const standard = ["name", "message", "stack"].filter((key) => key in error);
   return [...new Set([...standard, ...Object.getOwnPropertyNames(error)])];
@@ -214,7 +224,8 @@ export function serializeEntry(value: unknown, rootDepth = 1): SerializedValue {
     } catch {
       length = 0;
     }
-    const limit = Math.min(length, MAX_KEYS);
+    // The marker counts toward the cap: at most MAX_KEYS items in all.
+    const limit = length > MAX_KEYS ? MAX_KEYS - 1 : length;
     let truncated = length > limit;
     for (let index = 0; index < limit; index += 1) {
       const separator = index > 0 ? 1 : 0;
@@ -242,7 +253,8 @@ export function serializeEntry(value: unknown, rootDepth = 1): SerializedValue {
     } catch {
       keys = [];
     }
-    const limit = Math.min(keys.length, MAX_KEYS);
+    // The marker counts toward the cap: at most MAX_KEYS keys in all.
+    const limit = keys.length > MAX_KEYS ? MAX_KEYS - 1 : keys.length;
     let written = 0;
     for (let index = 0; index < limit; index += 1) {
       const key = keys[index] as string;
@@ -256,8 +268,9 @@ export function serializeEntry(value: unknown, rootDepth = 1): SerializedValue {
     const omitted = keys.length - written;
     if (omitted > 0) {
       const marker = `${omitted} more`;
-      bytes += (written > 0 ? 1 : 0) + jsonBytes(TRUNCATED) + 1 + jsonBytes(marker);
-      defineEntry(result, TRUNCATED, marker);
+      const markerKey = truncationKey(result);
+      bytes += (written > 0 ? 1 : 0) + jsonBytes(markerKey) + 1 + jsonBytes(marker);
+      defineEntry(result, markerKey, marker);
     }
     return { value: result, bytes };
   }

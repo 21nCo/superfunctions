@@ -68,10 +68,13 @@ export interface BreadcrumbEvidenceEvent extends EvidenceEventBase {
 
 export type EvidenceEvent = ConsoleEvidenceEvent | NetworkEvidenceEvent | BreadcrumbEvidenceEvent;
 
+// Integers are JavaScript safe integers, as `validateEvidenceEvent` checks.
+const safeInteger = { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER } as const;
+
 const base = {
   schemaVersion: { const: EVIDENCE_SCHEMA_VERSION },
-  seq: { type: "integer", minimum: 0 },
-  timestamp: { type: "integer", minimum: 0 },
+  seq: safeInteger,
+  timestamp: safeInteger,
 } as const;
 
 const stringRecord = { type: "object", additionalProperties: { type: "string" } } as const;
@@ -103,7 +106,7 @@ export const evidenceEventSchema = {
         transport: { enum: [...NETWORK_TRANSPORTS] },
         method: { type: "string" },
         url: { type: "string" },
-        status: { type: "integer", minimum: 0 },
+        status: safeInteger,
         statusText: { type: "string" },
         duration: { type: "number", minimum: 0 },
         requestHeaders: stringRecord,
@@ -131,16 +134,25 @@ type Check = (value: unknown) => boolean;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+/**
+ * A record that JSON keeps as is: a plain or null-prototype object (from any
+ * realm). A `Date`, a `Map` or a class instance is not one.
+ */
+const isPlainRecord = (value: unknown): value is Record<string, unknown> => {
+  if (!isRecord(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === null || Object.getPrototypeOf(prototype) === null;
+};
 const isString: Check = (value) => typeof value === "string";
 const isNonNegativeInteger: Check = (value) => Number.isSafeInteger(value) && (value as number) >= 0;
 const isNonNegativeNumber: Check = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0;
 const oneOf = (values: readonly string[]): Check => (value) => typeof value === "string" && values.includes(value);
-const isStringRecord: Check = (value) => isRecord(value) && Object.values(value).every(isString);
+const isStringRecord: Check = (value) => isPlainRecord(value) && Object.values(value).every(isString);
 const isJsonValue: Check = (value) => {
   if (value === null || typeof value === "string" || typeof value === "boolean") return true;
   if (typeof value === "number") return Number.isFinite(value);
   if (Array.isArray(value)) return value.every(isJsonValue);
-  return isRecord(value) && Object.values(value).every(isJsonValue);
+  return isPlainRecord(value) && Object.values(value).every(isJsonValue);
 };
 
 const common: Record<string, Check> = {
@@ -169,7 +181,7 @@ const shapes: Record<EvidenceKind, { required: Record<string, Check>; optional: 
     required: { ...common, type: oneOf(BREADCRUMB_TYPES) },
     optional: {
       message: isString,
-      data: (value) => isRecord(value) && isJsonValue(value),
+      data: (value) => isPlainRecord(value) && isJsonValue(value),
       category: isString,
       level: oneOf(BREADCRUMB_LEVELS),
     },

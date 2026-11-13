@@ -28,7 +28,9 @@ const CREDIT_CARD_PATTERN = /\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/g;
  * Redact sensitive values from an object. The input is first snapshotted
  * under the serialization closed set, so the result is bounded JSON data.
  * Keys matching a sensitive pattern become "[REDACTED]", and strings under a
- * key that names a URL or href are passed through {@link redactUrl}.
+ * key that names a URL or href are passed through {@link redactUrl}. The
+ * redacted result is bounded again, since a replacement can be longer than
+ * the value it replaces.
  */
 // The result mirrors the caller's shape, so it stays loosely typed.
 export function redactObject(obj: unknown, customPatterns: RegExp[] = []): any {
@@ -44,7 +46,7 @@ export function redactObject(obj: unknown, customPatterns: RegExp[] = []): any {
     }
     return result;
   }
-  return visit(serializeEntry(obj));
+  return serializeEntry(visit(serializeEntry(obj)));
 }
 
 /**

@@ -3,20 +3,22 @@
 // the repository, imports it from ESM and CommonJS in Node, type-checks a
 // typed consumer and bundles a browser consumer with esbuild
 // (platform=browser) to prove the package needs no Node built-ins.
-// Run after `npm run build`. `--keep` keeps the temp directory.
+// Builds the package first, so it never checks a missing or stale dist.
+// TypeScript and esbuild resolve from the package, as in an isolated
+// release install. `--keep` keeps the temp directory.
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
-import { builtinModules } from "node:module";
+import { builtinModules, createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const repoRoot = path.resolve(packageDir, "../..");
 const workdir = realpathSync(mkdtempSync(path.join(tmpdir(), "catchfn-packed-")));
 const keep = process.argv.includes("--keep");
-const require = createRequire(path.join(repoRoot, "package.json"));
+// Resolve the build tools the way the package's own scripts do: from the
+// package, falling back to a hoisted workspace install above it.
+const require = createRequire(path.join(packageDir, "package.json"));
 
 function run(command, args, cwd) {
   console.log(`$ ${command} ${args.join(" ")}  (cwd: ${cwd})`);
@@ -78,6 +80,7 @@ globalThis.__catchfn = { collectors, schema: evidenceEventSchema };
 `;
 
 try {
+  run("npm", ["run", "build"], packageDir);
   const packed = JSON.parse(run("npm", ["pack", "--json", "--pack-destination", workdir], packageDir));
   const tarball = path.join(workdir, packed[0].filename);
   const files = packed[0].files.map((file) => file.path).sort();
@@ -117,7 +120,7 @@ try {
       include: ["src"],
     })
   );
-  run(process.execPath, [path.join(repoRoot, "node_modules/typescript/bin/tsc"), "-p", "tsconfig.json"], consumer);
+  run(process.execPath, [require.resolve("typescript/bin/tsc"), "-p", "tsconfig.json"], consumer);
 
   // Browser bundle: any import of a Node built-in fails to resolve here.
   writeFileSync(path.join(consumer, "browser.mjs"), browserConsumer);

@@ -130,6 +130,22 @@ describe("NetworkCollector fetch capture", () => {
     }
   });
 
+  it("hands back a page result that is not a thenable, or whose then throws, as is", () => {
+    const plain = { not: "a promise" };
+    const throwing = Object.defineProperty({}, "then", {
+      get() {
+        throw new Error("then");
+      },
+    });
+    const refusing = { then: () => { throw new Error("call"); } };
+    pageFetch.mockReturnValueOnce(plain).mockReturnValueOnce(throwing).mockReturnValueOnce(refusing);
+    collector.start();
+    expect(fetch("/plain")).toBe(plain);
+    expect(fetch("/throwing")).toBe(throwing);
+    expect(fetch("/refusing")).toBe(refusing);
+    expect(collector.size()).toBe(0);
+  });
+
   it("redacts every listed sensitive request and response header", async () => {
     collector.start();
     const headers = Object.fromEntries(SENSITIVE_HEADERS.map((name) => [name, `${name}-secret`]));
@@ -269,7 +285,33 @@ interface Case {
   name: string;
   args: () => [unknown, unknown?];
   /** What the event records instead of the part it may not read. */
-  unread: "headers" | "url" | "method";
+  unread: "headers" | "url" | "method" | "none";
+}
+
+type Trap = "ownKeys" | "getOwnPropertyDescriptor" | "getPrototypeOf";
+/**
+ * A Proxy whose `trap` answers honestly for the first `honest` calls (as many
+ * as the platform's own Request construction makes) and alters the request
+ * through `alter` on every later one, so any read observation makes before
+ * the platform's changes what is sent.
+ */
+function stateful<T extends object>(target: T, trap: Trap, honest: number, alter: () => void): T {
+  let calls = 0;
+  return new Proxy(target, {
+    [trap]: (...args: unknown[]) => {
+      calls += 1;
+      if (calls > honest) alter();
+      return (Reflect[trap] as (...values: unknown[]) => unknown)(...args);
+    },
+  });
+}
+
+/** A headers record behind a stateful trap. */
+function trappedRecord(trap: Trap, honest: number, value: string): Case["args"] {
+  return () => {
+    const target = { authorization: value };
+    return ["https://example.com/p", { headers: stateful(target, trap, honest, () => (target.authorization = "Bearer altered")) }];
+  };
 }
 const CASES: Case[] = [
   {
@@ -334,6 +376,47 @@ const CASES: Case[] = [
   },
 ];
 
+// Proxy traps on the application's objects: the platform runs some of them
+// itself, observation must run none before the platform has read the request.
+CASES.push(
+  { name: "a headers Proxy with a stateful ownKeys trap", unread: "none", args: trappedRecord("ownKeys", 1, "Bearer G") },
+  { name: "a headers Proxy with a stateful getOwnPropertyDescriptor trap", unread: "none", args: trappedRecord("getOwnPropertyDescriptor", 1, "Bearer H") },
+  { name: "a headers Proxy with a stateful getPrototypeOf trap", unread: "none", args: trappedRecord("getPrototypeOf", 0, "Bearer I") },
+  {
+    name: "a Proxy array of header pairs with a stateful getPrototypeOf trap",
+    unread: "none",
+    args: () => {
+      const target = [["authorization", "Bearer J"]];
+      return ["https://example.com/j", { headers: stateful(target, "getPrototypeOf", 0, () => (target[0]![1] = "Bearer altered")) }];
+    },
+  },
+  {
+    name: "a Proxy header pair with a stateful getPrototypeOf trap",
+    unread: "none",
+    args: () => {
+      const pair = ["authorization", "Bearer K"];
+      return ["https://example.com/k", { headers: [stateful(pair, "getPrototypeOf", 0, () => (pair[1] = "Bearer altered"))] }];
+    },
+  },
+  {
+    name: "an init Proxy with a stateful getOwnPropertyDescriptor trap",
+    unread: "none",
+    args: () => {
+      const init: { headers: Record<string, string> } = { headers: { authorization: "Bearer L" } };
+      return ["https://example.com/l", stateful(init, "getOwnPropertyDescriptor", 0, () => (init.headers = { authorization: "Bearer altered" }))];
+    },
+  },
+  {
+    name: "an input Proxy with a stateful getPrototypeOf trap",
+    unread: "url",
+    args: () => {
+      let url = "https://example.com/n";
+      const input = stateful({ toString: () => url }, "getPrototypeOf", 1, () => (url = "https://other.example/n"));
+      return [input, { headers: { authorization: "Bearer N" } }];
+    },
+  }
+);
+
 describe("NetworkCollector at a native Request boundary", () => {
   // The page's fetch builds a platform Request, as a real fetch does, and
   // records what it would transmit.
@@ -356,7 +439,7 @@ describe("NetworkCollector at a native Request boundary", () => {
   async function baseline(test: Case) {
     expect(globalThis.fetch).toBe(pageFetch);
     const result = await transmit(test);
-    expect(result?.authorization).toMatch(/^Bearer [A-F]$/);
+    expect(result?.authorization).toMatch(/^Bearer [A-Z]$/);
     return result;
   }
 
@@ -399,6 +482,47 @@ describe("NetworkCollector at a native Request boundary", () => {
     expect(events.map((event) => event.url)).toEqual([UNREAD_URL, expect.stringContaining("ok=1"), "https://example.com/req"]);
     expect(events[1]!.url).not.toContain("secret");
     expect(events[2]).toMatchObject({ method: UNREAD_METHOD, requestHeaders: { "x-trace": "r" } });
+  });
+
+  it("runs no trap of the application's arguments before the page's fetch has run", async () => {
+    const trapped: string[] = [];
+    const traps = ["getPrototypeOf", "ownKeys", "getOwnPropertyDescriptor", "has", "get"] as const;
+    const watch = <T extends object>(label: string, target: T): T =>
+      new Proxy(
+        target,
+        Object.fromEntries(
+          traps.map((trap) => [
+            trap,
+            (...args: unknown[]) => {
+              trapped.push(`${label}.${trap}`);
+              return (Reflect[trap] as (...values: unknown[]) => unknown)(...args);
+            },
+          ])
+        )
+      );
+    let before: string[] | undefined;
+    pageFetch.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      before = [...trapped];
+      new Request(input, init);
+      return new Response("ok", { status: 200 });
+    });
+    const forms: Array<() => [unknown, unknown?]> = [
+      () => [watch("input", { toString: () => "https://example.com/i" })],
+      () => ["https://example.com/init", watch("init", { method: "POST", headers: { a: "1" } })],
+      () => ["https://example.com/record", { headers: watch("record", { authorization: "Bearer x" }) }],
+      () => ["https://example.com/pairs", { headers: watch("pairs", [["authorization", "Bearer x"]]) }],
+      () => ["https://example.com/pair", { headers: [watch("pair", ["authorization", "Bearer x"])] }],
+    ];
+    collector.start();
+    for (const form of forms) {
+      trapped.length = 0;
+      before = undefined;
+      const [input, init] = form();
+      await fetch(input as RequestInfo, init as RequestInit);
+      expect(before).toEqual([]);
+      expect(trapped.length).toBeGreaterThan(0); // The platform did read it.
+    }
+    expect(collector.size()).toBe(forms.length);
   });
 
   it("captures plain arrays, plain records and platform Headers, but not a Headers subclass", async () => {
@@ -446,6 +570,35 @@ describe("NetworkCollector XMLHttpRequest after stop()", () => {
     } finally {
       listen.mockRestore();
     }
+  });
+
+  it("runs no trap of open() or send() arguments before the page's open and send run", () => {
+    const trapped: string[] = [];
+    const watch = <T extends object>(label: string, target: T): T =>
+      new Proxy(target, {
+        getPrototypeOf: (value) => (trapped.push(`${label}.getPrototypeOf`), Reflect.getPrototypeOf(value)),
+        get: (value, key, receiver) => (trapped.push(`${label}.get`), Reflect.get(value, key, receiver)),
+        ownKeys: (value) => (trapped.push(`${label}.ownKeys`), Reflect.ownKeys(value)),
+      });
+    const order: string[] = [];
+    pageOpen.mockImplementationOnce(function (this: FakeXhr, ...args: unknown[]) {
+      order.push(`open after [${trapped.join(",")}]`);
+      this.opened = args;
+    });
+    pageSend.mockImplementationOnce(function (this: FakeXhr, body?: unknown) {
+      order.push(`send after [${trapped.join(",")}]`);
+      this.sent = body;
+    });
+    collector.start();
+    const xhr = new XMLHttpRequest() as unknown as FakeXhr;
+    const method = watch("method", { toString: () => "GET" });
+    const url = watch("url", { toString: () => "/x" });
+    (xhr as unknown as { open: (...args: unknown[]) => void }).open(method, url);
+    trapped.length = 0;
+    (xhr as unknown as { send: (...args: unknown[]) => void }).send(watch("body", { data: 1 }));
+    expect(order).toEqual(["open after []", "send after []"]);
+    xhr.respond(200, "OK");
+    expect(collector.collect()[0]).toMatchObject({ method: UNREAD_METHOD, url: UNREAD_URL, status: 200 });
   });
 
   it("records a placeholder for a non-string method or URL without converting it", () => {

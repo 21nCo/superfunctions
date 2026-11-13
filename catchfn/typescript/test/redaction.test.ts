@@ -1,17 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { redactHeaders, redactObject, redactString, redactUrl } from "../src/utils/redaction.js";
+import { MAX_ENTRY_BYTES, utf8Length } from "../src/utils/serialization.js";
 
 describe("redactObject", () => {
   it("redacts sensitive keys in nested objects and arrays", () => {
     const redacted = redactObject({
-      username: "john",
-      password: "secret123",
+      username: "example-user",
+      password: "not-a-real-password",
       user: { name: "John", apiKey: "key123" },
       items: [{ id: 1, secret: "value1" }],
       accessToken: "xyz789",
     });
     expect(redacted).toEqual({
-      username: "john",
+      username: "example-user",
       password: "[REDACTED]",
       user: { name: "John", apiKey: "[REDACTED]" },
       items: [{ id: 1, secret: "[REDACTED]" }],
@@ -23,9 +24,23 @@ describe("redactObject", () => {
     expect(redactObject({ publicData: "visible", customField: "hidden" }, [/customField/i])).toEqual({ publicData: "visible", customField: "[REDACTED]" });
   });
 
+  it(`stays within ${MAX_ENTRY_BYTES} bytes when redaction makes values longer`, () => {
+    const expanding = { password: 0, token: 0, secret: 0, auth: 0, text: "x".repeat(20000) };
+    const redacted = redactObject(expanding);
+    expect(utf8Length(JSON.stringify(redacted))).toBeLessThanOrEqual(MAX_ENTRY_BYTES);
+    expect(redacted).toMatchObject({ password: "[REDACTED]", token: "[REDACTED]", secret: "[REDACTED]", auth: "[REDACTED]" });
+    const many = Object.fromEntries(Array.from({ length: 150 }, (_, index) => [`token${index}`, index]));
+    const bounded = redactObject({ many, filler: "y".repeat(9000) });
+    expect(utf8Length(JSON.stringify(bounded))).toBeLessThanOrEqual(MAX_ENTRY_BYTES);
+    expect(JSON.stringify(bounded)).not.toMatch(/"token\d+":\d/);
+  });
+
   it("redacts an own __proto__ key's contents without touching prototypes", () => {
     const input = JSON.parse('{"__proto__":{"secret":"hidden"}}');
-    expect(redactObject(input).__proto__.secret).toBe("[REDACTED]");
+    const redacted = redactObject(input);
+    expect(Object.hasOwn(redacted, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(redacted)).toBe(Object.prototype);
+    expect(redacted.__proto__.secret).toBe("[REDACTED]");
   });
 });
 
