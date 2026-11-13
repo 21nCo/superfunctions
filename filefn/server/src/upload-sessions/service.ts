@@ -13,6 +13,7 @@ import type { DeduplicationService } from '../dedup/service.js';
 import type { ProcessingService } from '../processing/service.js';
 import * as errors from '../errors.js';
 import { createHash, randomBytes } from 'crypto';
+import { generateFileFnId } from '../ids.js';
 import {
   createUploadStartedEvent,
   createPartRecordedEvent,
@@ -87,7 +88,7 @@ export interface UploadSession {
 }
 
 function generateDefaultId(): string {
-  return `upl_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  return generateFileFnId('upl');
 }
 
 function hashPayload(input: CreateSessionInput, ctx: { principalId?: string; tenantId?: string }): string {
@@ -375,8 +376,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       const uploadSessionId = generateId();
       const now = new Date();
       const expiresAt = new Date(now.getTime() + uploadSessionTtlSeconds * 1000).toISOString();
-      const fileId = input.fileId || `file_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-      const versionId = `ver_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      const fileId = input.fileId || generateFileFnId('file');
+      const versionId = generateFileFnId('ver');
 
       const storageKey = computeStorageKey(policy, {
         fileName: input.fileName,
@@ -822,8 +823,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       }
 
       const now = new Date().toISOString();
-      const fileId = session.fileId || `file_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-      const versionId = `ver_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      const fileId = session.fileId || generateFileFnId('file');
+      const versionId = generateFileFnId('ver');
       const metadata = session.metadata ?? {};
 
       // Check for deduplication

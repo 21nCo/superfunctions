@@ -5,6 +5,8 @@ import type { FileFnEventEmitter } from '../events.js';
 import { resolveArtifactStorageTarget, resolveStorageTarget, type PolicyRegistry } from '../policies.js';
 import type { Logger } from '../observability/logger.js';
 import * as errors from '../errors.js';
+import { generateFileFnId } from '../ids.js';
+import { createBackgroundScheduler, type BackgroundScheduler } from '../runtime.js';
 
 export interface Processor {
   name: string;
@@ -60,6 +62,8 @@ export interface ProcessingServiceConfig {
   namespace?: string;
   enabled?: boolean;
   maxFileBytes?: number;
+  /** Runs queue-less processing after the response; defaults to a detached `setImmediate`. */
+  background?: BackgroundScheduler;
 }
 
 export interface FileArtifactRecord {
@@ -103,7 +107,7 @@ interface FileVersionRecord {
 }
 
 function generateId(): string {
-  return `art_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  return generateFileFnId('art');
 }
 
 function supportsProcessor(processor: Processor, mimeType: string): boolean {
@@ -142,6 +146,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     enabled = true,
     maxFileBytes = 50 * 1024 * 1024,
   } = config;
+  const background = config.background ?? createBackgroundScheduler(undefined, logger);
 
   const QUEUE_NAME = 'filefn.processing';
 
@@ -312,7 +317,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         }
       }
 
-      setImmediate(async () => {
+      background.schedule(async () => {
         try {
           await this.runProcessing(input, ctx);
         } catch (error) {

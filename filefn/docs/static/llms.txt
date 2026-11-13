@@ -83,6 +83,7 @@
 - [Swift Quickstart](https://filefn.com/docs/quickstart/swift): Use FileFnClient on iOS and macOS via Swift Package Manager — foreground and background uploads, HEIC preprocessing, and SwiftUI helpers.
 - [Recipes](https://filefn.com/docs/recipes): Production-tested filefn patterns — opinionated, end-to-end, copy-and-adjust.
 - [CDN integration](https://filefn.com/docs/recipes/cdn-integration): Separate storage authorization from public asset delivery.
+- [Cloudflare Workers](https://filefn.com/docs/recipes/cloudflare-workers): Mount filefn under a path prefix in a Worker, keep background processing alive with ctx.waitUntil, and clean up expired upload sessions from a cron trigger.
 - [Custom processor](https://filefn.com/docs/recipes/custom-processor): Author a processor end-to-end — image watermarking, sentiment scoring, transcoding to a custom format — and ship it as an artifact.
 - [Document uploads](https://filefn.com/docs/recipes/document-uploads): PDF / DOCX / plain text uploads with first-page previews, OCR text extraction, and download URLs.
 - [HEIC conversion](https://filefn.com/docs/recipes/heic-conversion): Handle iPhone HEIC photos correctly in browsers, native iOS, and on the server — without any of them seeing HEIC.

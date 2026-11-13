@@ -14,10 +14,48 @@ export interface FileFnRouterConfig {
   processingRoutes?: ProcessingRoutes;
   policyRoutes?: PolicyRoutes;
   quotaRoutes?: QuotaRoutes;
+  /** Path prefix every route is served under, e.g. `/files`. Omitted, `''` or `/` serves routes at the root. */
+  basePath?: string;
+}
+
+/**
+ * Normalizes a mount prefix to `''` (root) or `/segment[/segment...]` without a
+ * trailing slash. Throws FILEFN_BASE_PATH_INVALID unless the value is an
+ * absolute, already-encoded URL path: a leading `/`, no empty or dot segment,
+ * and no query, fragment, whitespace or other byte `URL` would percent-encode.
+ */
+export function normalizeBasePath(basePath: string | undefined): string {
+  if (basePath === undefined || basePath === '' || basePath === '/') {
+    return '';
+  }
+  const invalid = () =>
+    new Error(`FILEFN_BASE_PATH_INVALID: basePath must be an absolute path like "/files", got ${JSON.stringify(basePath)}`);
+  if (typeof basePath !== 'string' || !basePath.startsWith('/')) {
+    throw invalid();
+  }
+  const trimmed = basePath.endsWith('/') ? basePath.slice(0, -1) : basePath;
+  if (trimmed.slice(1).split('/').includes('')) {
+    throw invalid();
+  }
+  // Request paths are compared as URL#pathname reports them, so the prefix must
+  // already be in that form: no query, fragment, dot segment, or unencoded byte.
+  if (new URL(trimmed, 'http://filefn.invalid').pathname !== trimmed) {
+    throw invalid();
+  }
+  return trimmed;
+}
+
+/** Returns the route path under a normalized `basePath`, or null when the request path is outside it. */
+export function stripBasePath(path: string, basePath: string): string | null {
+  if (!basePath) return path;
+  if (path === basePath) return '/';
+  if (path.startsWith(`${basePath}/`)) return path.slice(basePath.length);
+  return null;
 }
 
 export function createRouter(config: FileFnRouterConfig) {
   const { uploadRoutes, fileRoutes, grantsRoutes, sharesRoutes, processingRoutes, policyRoutes, quotaRoutes } = config;
+  const basePath = normalizeBasePath(config.basePath);
   const reservedTopLevelPaths = new Set([
     'upload',
     'policies',
@@ -31,7 +69,10 @@ export function createRouter(config: FileFnRouterConfig) {
   return {
     async handle(request: Request): Promise<Response | null> {
       const url = new URL(request.url);
-      const path = url.pathname;
+      const path = stripBasePath(url.pathname, basePath);
+      if (path === null) {
+        return null; // Outside this router's basePath
+      }
       const method = request.method;
 
       // Upload session routes

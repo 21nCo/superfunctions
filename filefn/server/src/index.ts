@@ -24,7 +24,8 @@ import { createProcessingService, type Processor, type FlowFnProvider, type Proc
 import { createProcessingRoutes } from './processing/routes.js';
 import { createPolicyRoutes } from './policies.routes.js';
 import { createQuotaRoutes } from './quota.routes.js';
-import { createRouter, type FileFnRouter } from './router.js';
+import { createRouter, normalizeBasePath, stripBasePath, type FileFnRouter } from './router.js';
+import { createBackgroundScheduler, type FileFnRuntime } from './runtime.js';
 import type { AuthConfig } from './auth.js';
 import type { Logger } from './observability/logger.js';
 
@@ -62,6 +63,15 @@ export interface FileFnConfig {
   observability?: ObservabilityInput<FileFnObservationEvent>;
   authorizer?: Authorizer;
   namespace?: string;
+  /**
+   * Path prefix the router serves every route under, e.g. `/files` when the
+   * host mounts FileFn at `/files/*`. Omitted, `''` or `/` serves routes at the
+   * root. URLs FileFn returns (proxy upload and download paths) stay relative
+   * to this mount, so clients use `<origin><basePath>` as their base URL.
+   */
+  basePath?: string;
+  /** Host runtime hooks, e.g. `{ defer: (work) => ctx.waitUntil(work) }` on Workers. */
+  runtime?: FileFnRuntime;
   defaultChunkSizeBytes?: number;
   uploadSessionTtlSeconds?: number;
   signedUrlTtlSeconds?: number;
@@ -104,6 +114,12 @@ export interface FileFn extends FileProvider {
   readonly services: FileFnServices;
   definePolicy(name: string, policy: Omit<Policy, 'name'>): void;
   getSchema(): ReturnType<typeof getSchema>;
+  /**
+   * Deletes upload sessions that expired before completing, aborting their
+   * multipart uploads and proxy part objects. Call it from a scheduled job
+   * (for example a Workers cron trigger); FileFn does not run it on its own.
+   */
+  cleanupExpiredSessions(): ReturnType<UploadSessionService['cleanupExpiredSessions']>;
 }
 
 function hasConfiguredRouteRateLimits(limits?: FileFnRouteRateLimits): boolean {
@@ -131,6 +147,8 @@ export function createFileFn(config: FileFnConfig): FileFn {
     observability,
     authorizer,
     namespace = 'filefn',
+    basePath,
+    runtime,
     defaultChunkSizeBytes,
     uploadSessionTtlSeconds,
     signedUrlTtlSeconds,
@@ -154,7 +172,8 @@ export function createFileFn(config: FileFnConfig): FileFn {
   });
 
   const policyRegistry = createPolicyRegistry(initialPolicies);
-  const events = createEventEmitter(observabilityScope);
+  const background = createBackgroundScheduler(runtime, logger);
+  const events = createEventEmitter(observabilityScope, background);
   const deduplication = createDeduplicationService({
     db: observedDb,
     policies: policyRegistry,
@@ -217,6 +236,7 @@ export function createFileFn(config: FileFnConfig): FileFn {
     logger,
     namespace,
     enabled: processingConfig?.enabled ?? false,
+    background,
   });
 
   const uploadService = createUploadSessionService({
@@ -303,10 +323,23 @@ export function createFileFn(config: FileFnConfig): FileFn {
     auth,
   });
 
-  const baseRouter = createRouter({ uploadRoutes, fileRoutes, grantsRoutes, sharesRoutes, processingRoutes, policyRoutes, quotaRoutes });
+  const baseRouter = createRouter({
+    uploadRoutes,
+    fileRoutes,
+    grantsRoutes,
+    sharesRoutes,
+    processingRoutes,
+    policyRoutes,
+    quotaRoutes,
+    basePath,
+  });
+  const mountPath = normalizeBasePath(basePath);
   const router: FileFnRouter = observabilityScope
     ? {
         async handle(request) {
+          if (stripBasePath(new URL(request.url).pathname, mountPath) === null) {
+            return null; // Not FileFn's request: leave it unobserved for the host.
+          }
           const existing = observabilityScope.getCurrentRequest();
           if (existing) {
             return baseRouter.handle(request);
@@ -373,6 +406,10 @@ export function createFileFn(config: FileFnConfig): FileFn {
 
     getSchema() {
       return getSchema({ namespace });
+    },
+
+    cleanupExpiredSessions() {
+      return uploadService.cleanupExpiredSessions();
     },
 
     // FileProvider implementation
@@ -459,6 +496,7 @@ export { createFileService } from './files/service.js';
 export type { FileService, FileRecord, FileVersionRecord, Authorizer } from './files/service.js';
 export * from './errors.js';
 export type { FileFnRouter } from './router.js';
+export type { FileFnRuntime } from './runtime.js';
 
 // Authorization exports
 export { composeAuthorizers, createDefaultAuthorizer } from './authz/authorizer.js';
