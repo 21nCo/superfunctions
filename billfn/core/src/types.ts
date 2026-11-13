@@ -189,12 +189,14 @@ export interface BillFnWebhookReceipt {
  * - `billing_account_not_found`: the metadata names a billing account that does not exist.
  * - `price_not_found`: the event's product or price is not in the catalog.
  * - `billing_account_unavailable`: a subscription matches the reference but its billing account is gone.
+ * - `provider_reference_replaced`: the reference matched a subscription until a replayed event replaced it.
  */
 export type BillFnUnlinkedWebhookEventReason =
   | 'billing_account_metadata_missing'
   | 'billing_account_not_found'
   | 'price_not_found'
-  | 'billing_account_unavailable';
+  | 'billing_account_unavailable'
+  | 'provider_reference_replaced';
 
 /**
  * `unlinked` waits for its provider reference to be linked to a subscription;

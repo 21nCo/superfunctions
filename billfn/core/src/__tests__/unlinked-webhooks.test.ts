@@ -2446,3 +2446,204 @@ describe('committed mutation window and concurrent replay (PR #308 round 1 delta
     expect(await subscriptions()).toEqual([expect.objectContaining({ status: 'canceled', providerChargeId: 'pay_concur' })]);
   });
 });
+
+describe('mutation window reads, bootstrap lifecycle and replaced references (PR #308 round 1 delta review 2)', () => {
+  async function lifecycleEntries(db: Db, type: string) {
+    return db.findMany<{ id: string }>({ model: 'billingEvents', where: [{ field: 'type', operator: 'eq', value: type }], namespace: 'billfn' });
+  }
+
+  it.each([
+    ['throws', true],
+    ['returns nothing', false]
+  ] as const)(
+    'applies an event inside a committed mutation window when the provider read %s',
+    async (_label, throws) => {
+      const db = memoryAdapter({ debug: false });
+      const clock = { current: new Date('2026-11-01T00:00:01.000Z') };
+      const queue = new MemoryQueueAdapter<BillFnQueuedJob>({ now: () => clock.current.getTime() });
+      const reads: string[] = [];
+      const base = createProvider({});
+      const provider: BillFnProviderAdapter = {
+        ...base,
+        capabilities: { ...base.capabilities, resumeSubscription: true, syncSubscription: true },
+        async resumeSubscription() {
+          clock.current = new Date('2026-11-01T00:00:03.000Z');
+          return {
+            operationStatus: 'applied',
+            billingState: { subscriptionStatus: 'active', checkoutStatus: 'succeeded', providerSubscriptionId: 'sub_failread', autoRenew: true }
+          };
+        },
+        async fetchSubscription() {
+          reads.push('fetchSubscription');
+          if (throws) {
+            throw new Error('provider read unavailable');
+          }
+          return null;
+        }
+      };
+      const config = { db, catalog, queue, now: () => clock.current, providers: { dodo: provider } };
+      const billfn = createBillFn(config);
+      const worker = createBillFnReconciliationWorker(config);
+      await billfn.quotaProvider.recordUsage({ principalId: 'failread_user', bytes: 0 });
+      await deliver(billfn, [
+        subscriptionEvent({
+          eventId: 'evt_failread_bootstrap',
+          subscriptionId: 'sub_failread',
+          status: 'active',
+          occurredAt: '2026-10-30T00:00:00.000Z',
+          billingAccountId: 'ba_user_failread_user'
+        })
+      ]);
+      await worker.runNext();
+      await billfn.resumeSubscription({ subject: { principalId: 'failread_user' } });
+      clock.current = new Date('2026-11-01T00:00:04.000Z');
+
+      await deliver(billfn, [
+        subscriptionEvent({ eventId: 'evt_failread_inside', subscriptionId: 'sub_failread', status: 'canceled', occurredAt: '2026-11-01T00:00:02.000Z' })
+      ]);
+      expect(await worker.runNext()).toMatchObject({ status: 'succeeded' });
+
+      // The read runs inline in the webhook job, and its failure applies the event: the later write wins.
+      expect(reads).toEqual(['fetchSubscription']);
+      const [stored] = await db.findMany<BillFnSubscription>({ model: 'subscriptions', where: [], namespace: 'billfn' });
+      expect(stored).toMatchObject({ status: 'canceled' });
+      const entitlements = await billfn.getEntitlements({ principalId: 'failread_user' });
+      expect(entitlements.ok && entitlements.data.entitlements?.status).toBe('inactive');
+      expect(await worker.runNext()).toBeNull();
+    }
+  );
+
+  it('records a bootstrap event once when it is redelivered after its replay was held', async () => {
+    const { billfn, db, subscriptions, advance } = setup();
+    await billfn.quotaProvider.recordUsage({ principalId: 'boot_once_user', bytes: 0 });
+    await deliver(billfn, [
+      subscriptionEvent({ eventId: 'evt_boot_once_old', subscriptionId: 'sub_boot_once', status: 'past_due', occurredAt: '2026-10-29T00:00:00.000Z' })
+    ]);
+    await db.updateMany({
+      model: 'unlinkedWebhookEvents',
+      where: [{ field: 'providerEventId', operator: 'eq', value: 'evt_boot_once_old' }],
+      data: { status: 'replaying', replayClaimId: 'uwr_other', replayClaimedAt: '2026-11-01T00:00:00.000Z' },
+      namespace: 'billfn'
+    });
+    const bootstrap = subscriptionEvent({
+      eventId: 'evt_boot_once',
+      subscriptionId: 'sub_boot_once',
+      status: 'active',
+      occurredAt: '2026-10-30T00:00:00.000Z',
+      billingAccountId: 'ba_user_boot_once_user'
+    });
+    await expect(deliver(billfn, [bootstrap])).rejects.toMatchObject({ code: 'BILLFN_CONFLICT' });
+    advance(REPLAY_LEASE_MS);
+
+    const redelivered = await deliver(billfn, [bootstrap]);
+
+    expect(redelivered.ok).toBe(true);
+    expect(await subscriptions()).toEqual([expect.objectContaining({ status: 'active' })]);
+    expect(await lifecycleEntries(db, 'billfn.subscription.active')).toHaveLength(1);
+  });
+
+  it('retains an event with billing account metadata whose charge a replayed event replaced', async () => {
+    const { billfn, db, subscriptions, unlinked, advance } = setup();
+    await billfn.quotaProvider.recordUsage({ principalId: 'meta_stale_user', bytes: 0 });
+    await deliver(billfn, [
+      subscriptionEvent({ eventId: 'evt_meta_stale_renewal', subscriptionId: 'sub_meta_stale', chargeId: 'pay_meta_stale_2', status: 'active', occurredAt: '2026-10-30T00:00:00.000Z' })
+    ]);
+    await db.updateMany({
+      model: 'unlinkedWebhookEvents',
+      where: [{ field: 'providerEventId', operator: 'eq', value: 'evt_meta_stale_renewal' }],
+      data: { status: 'replaying', replayClaimId: 'uwr_other', replayClaimedAt: '2026-11-01T00:00:00.000Z' },
+      namespace: 'billfn'
+    });
+    await expect(
+      deliver(billfn, [
+        subscriptionEvent({
+          eventId: 'evt_meta_stale_bootstrap',
+          subscriptionId: 'sub_meta_stale',
+          chargeId: 'pay_meta_stale_1',
+          status: 'active',
+          occurredAt: '2026-10-29T00:00:00.000Z',
+          billingAccountId: 'ba_user_meta_stale_user'
+        })
+      ])
+    ).rejects.toMatchObject({ code: 'BILLFN_CONFLICT' });
+    advance(REPLAY_LEASE_MS);
+
+    await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_meta_stale_canceled',
+        chargeId: 'pay_meta_stale_1',
+        status: 'canceled',
+        occurredAt: '2026-10-31T00:00:00.000Z',
+        billingAccountId: 'ba_user_meta_stale_user'
+      })
+    ]);
+
+    expect(await subscriptions()).toEqual([
+      expect.objectContaining({ providerSubscriptionId: 'sub_meta_stale', providerChargeId: 'pay_meta_stale_2', status: 'active' })
+    ]);
+    const entitlements = await billfn.getEntitlements({ principalId: 'meta_stale_user' });
+    expect(entitlements.ok && entitlements.data.entitlements?.status).toBe('active');
+    expect(await unlinked()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ providerEventId: 'evt_meta_stale_canceled', status: 'unlinked', reason: 'provider_reference_replaced' })
+      ])
+    );
+  });
+
+  it('retains a delivered event whose charge another replay run replaced', async () => {
+    const armed = { value: false };
+    const inner = memoryAdapter({ debug: false });
+    const db = interceptDb(inner, {
+      updateMany: async (params, next) => {
+        const id = params.where.find((clause) => clause.field === 'id')?.value;
+        if (armed.value && params.model === 'unlinkedWebhookEvents' && (params.data as { status?: string }).status === 'replaying') {
+          // Another run applies the renewal, moving the subscription to the second charge, first.
+          armed.value = false;
+          const [subscription] = await inner.findMany<BillFnSubscription>({ model: 'subscriptions', where: [], namespace: 'billfn' });
+          await inner.updateMany({ model: 'subscriptions', where: [{ field: 'id', operator: 'eq', value: subscription.id }], data: { providerChargeId: 'pay_other_2' }, namespace: 'billfn' });
+          await inner.updateMany({ model: 'unlinkedWebhookEvents', where: [{ field: 'id', operator: 'eq', value: String(id) }], data: { status: 'replayed' }, namespace: 'billfn' });
+        }
+        return next();
+      }
+    });
+    const { billfn, subscriptions, unlinked, advance } = setup({ db });
+    await billfn.quotaProvider.recordUsage({ principalId: 'other_user', bytes: 0 });
+    await deliver(billfn, [
+      subscriptionEvent({ eventId: 'evt_other_renewal', subscriptionId: 'sub_other', chargeId: 'pay_other_2', status: 'active', occurredAt: '2026-10-30T00:00:00.000Z' })
+    ]);
+    await inner.updateMany({
+      model: 'unlinkedWebhookEvents',
+      where: [{ field: 'providerEventId', operator: 'eq', value: 'evt_other_renewal' }],
+      data: { status: 'replaying', replayClaimId: 'uwr_other', replayClaimedAt: '2026-11-01T00:00:00.000Z' },
+      namespace: 'billfn'
+    });
+    await expect(
+      deliver(billfn, [
+        subscriptionEvent({
+          eventId: 'evt_other_bootstrap',
+          subscriptionId: 'sub_other',
+          chargeId: 'pay_other_1',
+          status: 'active',
+          occurredAt: '2026-10-29T00:00:00.000Z',
+          billingAccountId: 'ba_user_other_user'
+        })
+      ])
+    ).rejects.toMatchObject({ code: 'BILLFN_CONFLICT' });
+    advance(REPLAY_LEASE_MS);
+    armed.value = true;
+
+    await deliver(billfn, [
+      subscriptionEvent({ eventId: 'evt_other_canceled', chargeId: 'pay_other_1', status: 'canceled', occurredAt: '2026-10-31T00:00:00.000Z' })
+    ]);
+
+    expect(armed.value).toBe(false);
+    expect(await subscriptions()).toEqual([
+      expect.objectContaining({ providerSubscriptionId: 'sub_other', providerChargeId: 'pay_other_2', status: 'active' })
+    ]);
+    expect(await unlinked()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ providerEventId: 'evt_other_canceled', status: 'unlinked', reason: 'provider_reference_replaced' })
+      ])
+    );
+  });
+});
