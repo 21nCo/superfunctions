@@ -7,7 +7,9 @@ on:
       - "packages/storage-r2/**"
       - "packages/storage/**"
       - "packages/observability/**"
+      - "package.json"
       - "package-lock.json"
+      - "scripts/ci-install-rollup-native.mjs"
       - ".github/workflows/storage-r2-minio.yml"
   pull_request:
     branches: [dev, next, main]
@@ -15,7 +17,9 @@ on:
       - "packages/storage-r2/**"
       - "packages/storage/**"
       - "packages/observability/**"
+      - "package.json"
       - "package-lock.json"
+      - "scripts/ci-install-rollup-native.mjs"
       - ".github/workflows/storage-r2-minio.yml"
 
 permissions:
@@ -30,8 +34,9 @@ jobs:
         # The upstream minio/minio image needs a `server` argument, which service containers cannot pass; this one starts the server itself.
         image: bitnamilegacy/minio:2025.7.23@sha256:8935e75fa5d11295c17171e4aa49efe390a1193cd7f12e4d21b92af9ffef09d7
         env:
-          MINIO_ROOT_USER: r2testaccess
-          MINIO_ROOT_PASSWORD: r2testsecretkey123
+          # Disposable per-run credentials for the throwaway service container; the job env below uses the same values.
+          MINIO_ROOT_USER: r2-ci-${{ github.run_id }}-${{ github.run_attempt }}
+          MINIO_ROOT_PASSWORD: r2-ci-key-${{ github.run_id }}-${{ github.run_attempt }}
           MINIO_DEFAULT_BUCKETS: filefn-r2-test
         ports:
           - 9000:9000
@@ -43,8 +48,8 @@ jobs:
     env:
       STORAGE_R2_S3_ENDPOINT: http://127.0.0.1:9000
       STORAGE_R2_S3_BUCKET: filefn-r2-test
-      STORAGE_R2_S3_ACCESS_KEY_ID: r2testaccess
-      STORAGE_R2_S3_SECRET_ACCESS_KEY: r2testsecretkey123
+      STORAGE_R2_S3_ACCESS_KEY_ID: r2-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      STORAGE_R2_S3_SECRET_ACCESS_KEY: r2-ci-key-${{ github.run_id }}-${{ github.run_attempt }}
       STORAGE_R2_S3_REQUIRED: "1"
     steps:
       - name: Checkout repository
@@ -77,14 +82,28 @@ jobs:
           npm run build --workspace @superfunctions/observability
           npm run build --workspace @superfunctions/storage
 
-      # The image creates the bucket after the server reports live; an anonymous request answers NoSuchBucket until then.
+      # The image creates the bucket after the server reports live. MinIO answers
+      # an anonymous request 403 AccessDenied whether or not the bucket exists, so
+      # readiness is a signed HeadBucket: 404 until the bucket exists, 200 after.
+      # Only 200 counts as ready. Connection failures, timeouts, 404 and 5xx are
+      # retried, and the step fails when the attempts run out.
       - name: Wait for the test bucket
         run: |
-          for _ in $(seq 1 30); do
-            if ! curl -s "$STORAGE_R2_S3_ENDPOINT/$STORAGE_R2_S3_BUCKET" | grep -q NoSuchBucket; then exit 0; fi
+          for attempt in $(seq 1 30); do
+            status="$(curl -sS -o /dev/null -w '%{http_code}' --head --connect-timeout 2 --max-time 5 \
+              -H "x-amz-content-sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" \
+              --aws-sigv4 "aws:amz:us-east-1:s3" \
+              --user "$STORAGE_R2_S3_ACCESS_KEY_ID:$STORAGE_R2_S3_SECRET_ACCESS_KEY" \
+              "$STORAGE_R2_S3_ENDPOINT/$STORAGE_R2_S3_BUCKET" || true)"
+            if [ "$status" = "200" ]; then
+              echo "bucket $STORAGE_R2_S3_BUCKET is ready (attempt $attempt)"
+              exit 0
+            fi
+            echo "attempt $attempt: HeadBucket returned HTTP ${status:-none}"
             sleep 2
           done
-          echo "::error::bucket $STORAGE_R2_S3_BUCKET was not created" && exit 1
+          echo "::error::bucket $STORAGE_R2_S3_BUCKET was not ready after 30 attempts (last HTTP ${status:-none})"
+          exit 1
 
       - name: Typecheck
         run: npm run typecheck --workspace @superfunctions/storage-r2

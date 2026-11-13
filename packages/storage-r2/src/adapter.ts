@@ -71,9 +71,9 @@ export class R2RequestError extends Error {
   readonly $metadata: { httpStatusCode: number; requestId?: string };
 
   constructor(operation: string, statusCode: number, s3Code?: string, s3Message?: string, requestId?: string) {
-    super(
-      `R2 ${operation} failed with HTTP ${statusCode}${s3Code ? ` ${s3Code}` : ''}${s3Message ? `: ${s3Message}` : ''}`
-    );
+    const code = s3Code ? ' ' + s3Code : '';
+    const detail = s3Message ? ': ' + s3Message : '';
+    super(`R2 ${operation} failed with HTTP ${statusCode}${code}${detail}`);
     this.name = s3Code ?? 'R2RequestError';
     this.statusCode = statusCode;
     this.$metadata = { httpStatusCode: statusCode, requestId };
@@ -92,8 +92,9 @@ const XML_ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot:
 
 function decodeXml(value: string): string {
   return value.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (match, entity: string) => {
-    if (entity[0] === '#') {
-      const codePoint = entity[1] === 'x' || entity[1] === 'X' ? parseInt(entity.slice(2), 16) : parseInt(entity.slice(1), 10);
+    if (entity.startsWith('#')) {
+      const hex = entity[1] === 'x' || entity[1] === 'X';
+      const codePoint = hex ? Number.parseInt(entity.slice(2), 16) : Number.parseInt(entity.slice(1), 10);
       return codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : match;
     }
     return XML_ENTITIES[entity.toLowerCase()] ?? match;
@@ -107,11 +108,11 @@ function escapeXml(value: string): string {
 }
 
 // An optional namespace prefix (`s3:`) before an element name.
-const XML_PREFIX = '(?:[A-Za-z_][\\w.-]*:)?';
+const XML_PREFIX = String.raw`(?:[A-Za-z_][\w.-]*:)?`;
 
 /** Text of the first `name` element, whatever its namespace prefix or attributes. */
 function xmlElement(xml: string, name: string): string | undefined {
-  const match = xml.match(new RegExp(`<${XML_PREFIX}${name}(?:\\s[^>]*)?>([\\s\\S]*?)</${XML_PREFIX}${name}\\s*>`));
+  const match = new RegExp(String.raw`<${XML_PREFIX}${name}(?:\s[^>]*)?>([\s\S]*?)</${XML_PREFIX}${name}\s*>`).exec(xml);
   return match ? decodeXml(match[1]) : undefined;
 }
 
@@ -120,7 +121,7 @@ function xmlRootName(xml: string): string | undefined {
   // Skip a BOM, the XML declaration, processing instructions, comments, a
   // doctype and whitespace (S3 pads slow completions with spaces).
   const body = xml.replace(/^\uFEFF?(?:\s|<\?[\s\S]*?\?>|<!--[\s\S]*?-->|<!DOCTYPE[^>]*>)*/i, '');
-  return body.match(/^<(?:[A-Za-z_][\w.-]*:)?([A-Za-z_][\w.-]*)[\s/>]/)?.[1];
+  return /^<(?:[A-Za-z_][\w.-]*:)?([A-Za-z_][\w.-]*)[\s/>]/.exec(body)?.[1];
 }
 
 // S3 error codes worth retrying whatever the HTTP status (the SDK's throttling
@@ -163,13 +164,19 @@ function isAbortError(error: unknown): boolean {
   return (error as { name?: unknown } | null)?.name === 'AbortError';
 }
 
+function trimTrailingSlashes(path: string): string {
+  let end = path.length;
+  while (end > 0 && path[end - 1] === '/') end--;
+  return path.slice(0, end);
+}
+
 function resolveEndpoint(config: R2StorageConfig): string {
   if (config.endpoint) {
     const url = new URL(config.endpoint);
     if (url.protocol !== 'https:' && url.protocol !== 'http:') {
       throw createStorageError('R2 endpoint must be an http(s) URL', 'STORAGE_CONFIG_INVALID');
     }
-    return `${url.origin}${url.pathname.replace(/\/+$/, '')}`;
+    return `${url.origin}${trimTrailingSlashes(url.pathname)}`;
   }
   if (!/^[A-Za-z0-9-]+$/.test(config.accountId ?? '')) {
     throw createStorageError('R2 accountId must be a non-empty account ID', 'STORAGE_CONFIG_INVALID');

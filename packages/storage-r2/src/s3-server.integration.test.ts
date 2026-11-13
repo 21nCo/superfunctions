@@ -28,6 +28,13 @@ const config = {
 const MIB = 1024 * 1024;
 const prefix = `r2-it-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
+/** Read a direct fetch's body so its connection is released; status and headers stay readable. */
+async function drained(response: Promise<Response>): Promise<Response> {
+  const settled = await response;
+  await settled.arrayBuffer();
+  return settled;
+}
+
 async function readAll(stream: ReadableStream): Promise<Uint8Array> {
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
@@ -62,7 +69,7 @@ describe.skipIf(!endpoint)('R2 adapter against an S3-compatible server', () => {
       constraints: { contentType: 'text/plain', contentLength: body.length },
     });
     expect(upload.headers).toEqual({ 'Content-Type': 'text/plain' });
-    const put = await fetch(upload.url, { method: 'PUT', headers: upload.headers, body });
+    const put = await drained(fetch(upload.url, { method: 'PUT', headers: upload.headers, body }));
     expect(put.status).toBe(200);
 
     const stat = await adapter.statObject({ key });
@@ -97,13 +104,13 @@ describe.skipIf(!endpoint)('R2 adapter against an S3-compatible server', () => {
     const stored = gzipSync(plain);
     const upload = await adapter.signUploadUrl!({ key, expiresInSeconds: 300 });
     // Content-Encoding is not a signed header, so any holder of the URL can set it.
-    const put = await fetch(upload.url, { method: 'PUT', headers: { 'Content-Encoding': 'gzip' }, body: stored });
+    const put = await drained(fetch(upload.url, { method: 'PUT', headers: { 'Content-Encoding': 'gzip' }, body: stored }));
     expect(put.status).toBe(200);
 
     const stat = await adapter.statObject({ key });
     expect(stat.size).toBe(stored.length);
     const full = await readAll(await adapter.openDownloadStream!({ key }));
-    expect(full.length).toBe(stat.size);
+    expect(full).toHaveLength(stat.size);
     expect(Buffer.from(full).equals(Buffer.from(stored))).toBe(true);
     const head = await readAll(await adapter.openDownloadStream!({ key, range: { start: 0, endInclusive: 9 } }));
     expect([...head]).toEqual([...stored.subarray(0, 10)]);
@@ -117,14 +124,14 @@ describe.skipIf(!endpoint)('R2 adapter against an S3-compatible server', () => {
       expiresInSeconds: 300,
       constraints: { contentType: 'text/plain', contentLength: 5 },
     });
-    const wrongType = await fetch(upload.url, { method: 'PUT', headers: { 'Content-Type': 'text/html' }, body: 'hello' });
+    const wrongType = await drained(fetch(upload.url, { method: 'PUT', headers: { 'Content-Type': 'text/html' }, body: 'hello' }));
     expect(wrongType.status).toBe(403);
-    const wrongLength = await fetch(upload.url, { method: 'PUT', headers: upload.headers, body: 'hello!' });
+    const wrongLength = await drained(fetch(upload.url, { method: 'PUT', headers: upload.headers, body: 'hello!' }));
     expect(wrongLength.status).toBe(403);
     const tampered = upload.url.replace(/X-Amz-Signature=([0-9a-f])/, (_m, c: string) =>
       `X-Amz-Signature=${c === '0' ? '1' : '0'}`
     );
-    const badSignature = await fetch(tampered, { method: 'PUT', headers: upload.headers, body: 'hello' });
+    const badSignature = await drained(fetch(tampered, { method: 'PUT', headers: upload.headers, body: 'hello' }));
     expect(badSignature.status).toBe(403);
     await expectNotFound(adapter.statObject({ key }));
   });
@@ -152,7 +159,7 @@ describe.skipIf(!endpoint)('R2 adapter against an S3-compatible server', () => {
         expiresInSeconds: 300,
         constraints: { contentLength: data.length },
       });
-      const response = await fetch(signed.url, { method: 'PUT', headers: signed.headers, body: data });
+      const response = await drained(fetch(signed.url, { method: 'PUT', headers: signed.headers, body: data }));
       expect(response.status).toBe(200);
       parts.push({ partNumber, etag: response.headers.get('etag')! });
     }

@@ -1,7 +1,7 @@
 {
   "name": "@superfunctions/storage-r2",
   "version": "0.3.0",
-  "description": "Cloudflare R2 storage adapter for @superfunctions/storage (Workers-native, no AWS SDK)",
+  "description": "Cloudflare R2 storage adapter for @superfunctions/storage (Workers-native; the adapter does not use or bundle the AWS SDK)",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { encodeS3Key, presignUrl, sha256Hex, signRequest, toAmzDate } from './sigv4.js';
+import { compareOrdinal, encodeS3Key, presignUrl, sha256Hex, signRequest, toAmzDate } from './sigv4.js';
 
 /**
  * Published AWS vectors:
@@ -128,5 +128,38 @@ describe('SigV4 helpers', () => {
     expect(url.searchParams.get('X-Amz-SignedHeaders')).toBe('content-type;host');
     expect(url.search).toContain('response-content-type=text%2Fplain%3B%20charset%3Dutf-8');
     expect(url.search).not.toContain('+');
+  });
+
+  it('orders canonical names by code unit, not by locale', async () => {
+    expect(['uploadId', 'X-Amz-Date', 'partNumber', 'X-Amz-Algorithm'].sort(compareOrdinal)).toEqual([
+      'X-Amz-Algorithm',
+      'X-Amz-Date',
+      'partNumber',
+      'uploadId',
+    ]);
+    // A presigned multipart part URL carries the query exactly as signed: the
+    // uppercase X-Amz-* parameters sort before partNumber and uploadId.
+    const url = await presignUrl(
+      S3_CREDENTIALS,
+      S3_SCOPE,
+      {
+        method: 'PUT',
+        url: 'https://examplebucket.s3.amazonaws.com/test.txt?uploadId=abc&partNumber=2',
+        headers: { 'X-Amz-Meta-Tag': 'a', 'Content-Length': '5' },
+        expiresInSeconds: 60,
+      },
+      S3_NOW
+    );
+    const names = [...new URL(url).searchParams.keys()];
+    expect(names.slice(0, -1)).toEqual([
+      'X-Amz-Algorithm',
+      'X-Amz-Credential',
+      'X-Amz-Date',
+      'X-Amz-Expires',
+      'X-Amz-SignedHeaders',
+      'partNumber',
+      'uploadId',
+    ]);
+    expect(new URL(url).searchParams.get('X-Amz-SignedHeaders')).toBe('content-length;host;x-amz-meta-tag');
   });
 });

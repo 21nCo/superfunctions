@@ -37,7 +37,7 @@ export interface SigV4Request {
 export function encodeRfc3986(value: string): string {
   return encodeURIComponent(value).replace(
     /[!'()*]/g,
-    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`
+    (char) => `%${(char.codePointAt(0) ?? 0).toString(16).toUpperCase()}`
   );
 }
 
@@ -67,12 +67,23 @@ async function hmac(key: Uint8Array | ArrayBuffer, data: string): Promise<ArrayB
   return crypto.subtle.sign('HMAC', cryptoKey, encoder.encode(data));
 }
 
+/**
+ * Ordinal (UTF-16 code unit) comparison. SigV4 sorts canonical header names and
+ * encoded query parameters by byte value; these strings are ASCII, so code-unit
+ * order is byte order. Locale-aware ordering (`localeCompare`) would break
+ * signatures, for example by sorting `partNumber` and `uploadId` before
+ * `X-Amz-Algorithm` in a presigned multipart part URL.
+ */
+export function compareOrdinal(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
 function canonicalQuery(params: URLSearchParams): string {
   return [...params]
     .map(([name, value]) => [encodeRfc3986(name), encodeRfc3986(value)] as const)
-    .sort(([aName, aValue], [bName, bValue]) =>
-      aName < bName ? -1 : aName > bName ? 1 : aValue < bValue ? -1 : aValue > bValue ? 1 : 0
-    )
+    .sort(([aName, aValue], [bName, bValue]) => compareOrdinal(aName, bName) || compareOrdinal(aValue, bValue))
     .map(([name, value]) => `${name}=${value}`)
     .join('&');
 }
@@ -86,7 +97,7 @@ function canonicalHeaders(url: URL, headers: Record<string, string>): {
     merged.set(name.toLowerCase(), value.trim().replace(/\s+/g, ' '));
   }
   merged.set('host', url.host);
-  const names = [...merged.keys()].sort();
+  const names = [...merged.keys()].sort(compareOrdinal);
   return {
     canonical: names.map((name) => `${name}:${merged.get(name)}\n`).join(''),
     signedHeaders: names.join(';'),
@@ -177,7 +188,7 @@ export async function presignUrl(
     headers[name.toLowerCase()] = value;
   }
   delete headers.host;
-  const signedHeaders = [...new Set(['host', ...Object.keys(headers)])].sort().join(';');
+  const signedHeaders = [...new Set(['host', ...Object.keys(headers)])].sort(compareOrdinal).join(';');
   const credentialScope = `${amzDate.slice(0, 8)}/${scope.region}/${scope.service}/aws4_request`;
 
   url.searchParams.set('X-Amz-Algorithm', ALGORITHM);
