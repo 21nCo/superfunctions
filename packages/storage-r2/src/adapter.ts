@@ -40,6 +40,24 @@ export interface R2StorageConfig {
   region?: string;
   /** Custom fetch implementation. Defaults to the global `fetch`, resolved per call. */
   fetch?: R2Fetch;
+  /** Retry policy for transient failures. Defaults to 3 attempts. */
+  retry?: R2RetryOptions;
+}
+
+/**
+ * Bounded retry for transient failures: network errors, HTTP 5xx and 429, S3
+ * throttling and timeout error codes, and a completion that reports such an
+ * error inside a 200 response. Each attempt is signed afresh. Delays use full
+ * jitter: a random wait up to `baseDelayMs * 2^(attempt - 1)` (five times the
+ * base for 429 and 503), capped at `maxDelayMs`.
+ */
+export interface R2RetryOptions {
+  /** Total attempts per request, including the first. Defaults to 3; 1 disables retries. */
+  maxAttempts?: number;
+  /** Defaults to 100 ms. */
+  baseDelayMs?: number;
+  /** Defaults to 20 000 ms. */
+  maxDelayMs?: number;
 }
 
 /**
@@ -87,9 +105,56 @@ function escapeXml(value: string): string {
   return value.replace(/[&<>"']/g, (char) => XML_ESCAPES[char]);
 }
 
+// An optional namespace prefix (`s3:`) before an element name.
+const XML_PREFIX = '(?:[A-Za-z_][\\w.-]*:)?';
+
+/** Text of the first `name` element, whatever its namespace prefix or attributes. */
 function xmlElement(xml: string, name: string): string | undefined {
-  const match = xml.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`));
+  const match = xml.match(new RegExp(`<${XML_PREFIX}${name}(?:\\s[^>]*)?>([\\s\\S]*?)</${XML_PREFIX}${name}\\s*>`));
   return match ? decodeXml(match[1]) : undefined;
+}
+
+/** Local name of the document's root element, without its namespace prefix. */
+function xmlRootName(xml: string): string | undefined {
+  // Skip a BOM, the XML declaration, processing instructions, comments, a
+  // doctype and whitespace (S3 pads slow completions with spaces).
+  const body = xml.replace(/^\uFEFF?(?:\s|<\?[\s\S]*?\?>|<!--[\s\S]*?-->|<!DOCTYPE[^>]*>)*/i, '');
+  return body.match(/^<(?:[A-Za-z_][\w.-]*:)?([A-Za-z_][\w.-]*)[\s/>]/)?.[1];
+}
+
+// S3 error codes worth retrying whatever the HTTP status (the SDK's throttling
+// and transient codes, plus the server-side codes S3 can embed in a 200).
+const RETRYABLE_CODES = new Set([
+  'InternalError',
+  'ServiceUnavailable',
+  'SlowDown',
+  'Throttling',
+  'ThrottlingException',
+  'ThrottledException',
+  'RequestThrottled',
+  'RequestThrottledException',
+  'RequestLimitExceeded',
+  'TooManyRequests',
+  'TooManyRequestsException',
+  'RequestTimeout',
+  'RequestTimeoutException',
+]);
+
+function resolveRetry(options: R2RetryOptions | undefined): Required<R2RetryOptions> {
+  const retry = { maxAttempts: 3, baseDelayMs: 100, maxDelayMs: 20_000, ...options };
+  if (!Number.isInteger(retry.maxAttempts) || retry.maxAttempts < 1) {
+    throw createStorageError('R2 retry.maxAttempts must be a positive integer', 'STORAGE_CONFIG_INVALID');
+  }
+  for (const field of ['baseDelayMs', 'maxDelayMs'] as const) {
+    if (!Number.isFinite(retry[field]) || retry[field] < 0) {
+      throw createStorageError(`R2 retry.${field} must be a non-negative number`, 'STORAGE_CONFIG_INVALID');
+    }
+  }
+  return retry;
+}
+
+function isAbortError(error: unknown): boolean {
+  return (error as { name?: unknown } | null)?.name === 'AbortError';
 }
 
 function resolveEndpoint(config: R2StorageConfig): string {
@@ -150,6 +215,7 @@ export function createR2StorageAdapter(config: R2StorageConfig): StorageAdapter 
   };
   const scope: SigV4Scope = { region: config.region ?? 'auto', service: 's3' };
   const doFetch: R2Fetch = config.fetch ?? ((input, init) => fetch(input, init));
+  const retry = resolveRetry(config.retry);
 
   function objectUrl(key: string, query: Array<[string, string]> = []): string {
     const path = `${baseUrl}/${assertValidKey(key)}`;
@@ -175,22 +241,59 @@ export function createR2StorageAdapter(config: R2StorageConfig): StorageAdapter 
     );
   }
 
-  async function send(
-    method: string,
-    url: string,
-    options: { headers?: Record<string, string>; body?: string } = {}
-  ): Promise<Response> {
-    const payloadHash = options.body === undefined ? undefined : await sha256Hex(options.body);
-    const headers = await signRequest(credentials, scope, { method, url, headers: options.headers, payloadHash });
-    return doFetch(url, { method, headers, body: options.body });
+  interface SendOptions {
+    headers?: Record<string, string>;
+    body?: string;
+    /** Also retry a 200 whose body is an S3 error document with a retryable code. */
+    inspectOkBody?: boolean;
   }
 
-  async function sendOk(
-    operation: string,
-    method: string,
-    url: string,
-    options?: { headers?: Record<string, string>; body?: string }
-  ): Promise<Response> {
+  async function isRetryable(response: Response, inspectOkBody: boolean): Promise<boolean> {
+    if (response.status >= 500 || response.status === 429) return true;
+    if (response.ok ? !inspectOkBody : response.status === 404) return false;
+    // Error bodies and completion results are small, so reading a copy is cheap
+    // and leaves the original body for the caller.
+    const text = await response
+      .clone()
+      .text()
+      .catch(() => '');
+    if (response.ok && xmlRootName(text) !== 'Error') return false;
+    return RETRYABLE_CODES.has(xmlElement(text, 'Code') ?? '');
+  }
+
+  function backoff(attempt: number, status?: number): Promise<void> {
+    const base = status === 429 || status === 503 ? retry.baseDelayMs * 5 : retry.baseDelayMs;
+    const delay = Math.random() * Math.min(retry.maxDelayMs, base * 2 ** (attempt - 1));
+    return new Promise((resolve) => setTimeout(resolve, delay));
+  }
+
+  /**
+   * Sign and send a request, retrying transient failures. Returns the first
+   * non-retryable response, or the last response once attempts run out.
+   */
+  async function send(method: string, url: string, options: SendOptions = {}): Promise<Response> {
+    const payloadHash = options.body === undefined ? undefined : await sha256Hex(options.body);
+    for (let attempt = 1; ; attempt += 1) {
+      const lastAttempt = attempt >= retry.maxAttempts;
+      // Sign each attempt so a retry after a long backoff carries a fresh date.
+      const headers = await signRequest(credentials, scope, { method, url, headers: options.headers, payloadHash });
+      let response: Response;
+      try {
+        response = await doFetch(url, { method, headers, body: options.body });
+      } catch (error) {
+        if (lastAttempt || isAbortError(error)) throw error;
+        await backoff(attempt);
+        continue;
+      }
+      if (lastAttempt || !(await isRetryable(response, options.inspectOkBody ?? false))) {
+        return response;
+      }
+      await response.body?.cancel().catch(() => undefined);
+      await backoff(attempt, response.status);
+    }
+  }
+
+  async function sendOk(operation: string, method: string, url: string, options?: SendOptions): Promise<Response> {
     const response = await send(method, url, options);
     if (!response.ok) {
       throw await toError(operation, response);
@@ -284,7 +387,17 @@ export function createR2StorageAdapter(config: R2StorageConfig): StorageAdapter 
       const response = await sendOk('CreateMultipartUpload', 'POST', objectUrl(input.key, [['uploads', '']]), {
         headers,
       });
-      const uploadId = xmlElement(await response.text(), 'UploadId');
+      const text = await response.text();
+      if (xmlRootName(text) === 'Error') {
+        throw new R2RequestError(
+          'CreateMultipartUpload',
+          response.status,
+          xmlElement(text, 'Code'),
+          xmlElement(text, 'Message'),
+          response.headers.get('x-amz-request-id') ?? xmlElement(text, 'RequestId')
+        );
+      }
+      const uploadId = xmlElement(text, 'UploadId');
       if (!uploadId) {
         throw new Error('Failed to create multipart upload: no UploadId returned');
       }
@@ -331,17 +444,19 @@ export function createR2StorageAdapter(config: R2StorageConfig): StorageAdapter 
         'CompleteMultipartUpload',
         'POST',
         objectUrl(input.key, [['uploadId', input.uploadId]]),
-        { headers: { 'content-type': 'application/xml' }, body }
+        { headers: { 'content-type': 'application/xml' }, body, inspectOkBody: true }
       );
-      // S3 can report a failed completion inside a 200 response.
+      // S3 can report a failed completion inside a 200 response, so only a
+      // CompleteMultipartUploadResult document counts as success.
       const text = await response.text();
-      if (/<Error>/.test(text)) {
+      if (xmlRootName(text) !== 'CompleteMultipartUploadResult') {
+        const code = xmlElement(text, 'Code');
         throw new R2RequestError(
           'CompleteMultipartUpload',
           response.status,
-          xmlElement(text, 'Code'),
-          xmlElement(text, 'Message'),
-          xmlElement(text, 'RequestId')
+          code,
+          xmlElement(text, 'Message') ?? (code ? undefined : 'response is not a CompleteMultipartUploadResult'),
+          response.headers.get('x-amz-request-id') ?? xmlElement(text, 'RequestId')
         );
       }
     },
@@ -361,7 +476,12 @@ export function createR2StorageAdapter(config: R2StorageConfig): StorageAdapter 
     }): Promise<ReadableStream> {
       const headers: Record<string, string> = {};
       if (input.range) headers.range = `bytes=${input.range.start}-${input.range.endInclusive}`;
-      const response = await send('GET', objectUrl(input.key), { headers });
+      // Ask for the stored bytes as-is. An object uploaded with a
+      // Content-Encoding (for example gzip) would otherwise be decoded by
+      // fetch, so the stream would not match the stored size or byte ranges.
+      const response = await send('GET', objectUrl(input.key, [['response-content-encoding', 'identity']]), {
+        headers,
+      });
       if (response.status === 404) {
         await response.body?.cancel();
         throw createNotFoundError();

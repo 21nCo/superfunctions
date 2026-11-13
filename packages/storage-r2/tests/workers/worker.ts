@@ -57,6 +57,23 @@ async function roundtrip(env: Env): Promise<Response> {
   const signedGet = await fetch((await adapter.signDownloadUrl!({ key, expiresInSeconds: 120 })).url);
   const signedGetBody = await signedGet.text();
 
+  // An object stored gzip-encoded must stream back as its stored bytes.
+  const encodedKey = `${key}.gz`;
+  const stored = new Uint8Array(
+    await new Response(
+      new Blob(['hello gzip '.repeat(1000)]).stream().pipeThrough(new CompressionStream('gzip'))
+    ).arrayBuffer()
+  );
+  const encodedUpload = await adapter.signUploadUrl!({ key: encodedKey, expiresInSeconds: 120 });
+  await (await fetch(encodedUpload.url, { method: 'PUT', headers: { 'Content-Encoding': 'gzip' }, body: stored })).arrayBuffer();
+  const encodedStat = await adapter.statObject({ key: encodedKey });
+  const encodedFull = new Uint8Array(await new Response(await adapter.openDownloadStream!({ key: encodedKey })).arrayBuffer());
+  const encodedHead = new Uint8Array(
+    await new Response(await adapter.openDownloadStream!({ key: encodedKey, range: { start: 0, endInclusive: 9 } })).arrayBuffer()
+  );
+  const sameBytes = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((value, i) => value === b[i]);
+  await adapter.deleteObject({ key: encodedKey });
+
   const multipartKey = `${key}.multipart`;
   const { uploadId } = await adapter.createMultipartUpload!({ key: multipartKey, contentType: 'text/plain' });
   const part = await adapter.signMultipartUploadPartUrl!({ key: multipartKey, uploadId, partNumber: 1, expiresInSeconds: 120 });
@@ -85,6 +102,11 @@ async function roundtrip(env: Env): Promise<Response> {
     signedGetStatus: signedGet.status,
     signedGetBody,
     multipartSize: multipartStat.size,
+    encoded: {
+      statMatchesStored: encodedStat.size === stored.length,
+      fullMatchesStored: sameBytes(encodedFull, stored),
+      rangeMatchesStored: sameBytes(encodedHead, stored.subarray(0, 10)),
+    },
     afterDelete,
   });
 }

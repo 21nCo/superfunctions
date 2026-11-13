@@ -105,6 +105,7 @@ describe('storage-r2 on workerd', () => {
       signedGetStatus: 200,
       signedGetBody: 'hello from workerd',
       multipartSize: 18,
+      encoded: { statMatchesStored: true, fullMatchesStored: true, rangeMatchesStored: true },
       afterDelete: 'STORAGE_NOT_FOUND',
     });
   });

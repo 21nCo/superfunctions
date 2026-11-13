@@ -6,6 +6,7 @@
  * of skipping, so CI cannot pass without exercising the server.
  */
 import { runConformanceTests, type StorageAdapter } from '@superfunctions/storage';
+import { gzipSync } from 'node:zlib';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createR2StorageAdapter, R2RequestError } from './index.js';
 
@@ -88,6 +89,25 @@ describe.skipIf(!endpoint)('R2 adapter against an S3-compatible server', () => {
     await expectNotFound(adapter.openDownloadStream!({ key }));
     // Deleting a missing object is idempotent, as on R2 and S3.
     await expect(adapter.deleteObject({ key })).resolves.toBeUndefined();
+  });
+
+  it('streams the stored bytes of an object uploaded with Content-Encoding: gzip', async () => {
+    const key = `${prefix}/encoded.json.gz`;
+    const plain = new TextEncoder().encode('{"value":"repeated"}'.repeat(10_000));
+    const stored = gzipSync(plain);
+    const upload = await adapter.signUploadUrl!({ key, expiresInSeconds: 300 });
+    // Content-Encoding is not a signed header, so any holder of the URL can set it.
+    const put = await fetch(upload.url, { method: 'PUT', headers: { 'Content-Encoding': 'gzip' }, body: stored });
+    expect(put.status).toBe(200);
+
+    const stat = await adapter.statObject({ key });
+    expect(stat.size).toBe(stored.length);
+    const full = await readAll(await adapter.openDownloadStream!({ key }));
+    expect(full.length).toBe(stat.size);
+    expect(Buffer.from(full).equals(Buffer.from(stored))).toBe(true);
+    const head = await readAll(await adapter.openDownloadStream!({ key, range: { start: 0, endInclusive: 9 } }));
+    expect([...head]).toEqual([...stored.subarray(0, 10)]);
+    await adapter.deleteObject({ key });
   });
 
   it('rejects uploads that break the signed constraints or signature', async () => {

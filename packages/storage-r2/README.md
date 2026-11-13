@@ -33,6 +33,18 @@ produce.
 - A missing object (`statObject`, `openDownloadStream`) throws
   `STORAGE_NOT_FOUND`; other API failures throw `R2RequestError`, whose `name`
   is the S3 error code and whose `statusCode` is the HTTP status.
+- Transient failures are retried up to 3 attempts in total, each signed
+  afresh, with jittered exponential backoff: network errors, HTTP 5xx and 429,
+  S3 throttling and timeout codes (`SlowDown`, `RequestTimeout`, ...), and a
+  multipart completion whose 200 response carries such an error. Other 4xx
+  responses are not retried.
+- A multipart completion succeeds only when the response is a
+  `CompleteMultipartUploadResult` document; an error document inside a 200
+  response (with or without an XML namespace) is a failure.
+- `openDownloadStream` returns the stored bytes. It requests
+  `response-content-encoding=identity`, so an object uploaded with a
+  `Content-Encoding` such as gzip is not decoded by `fetch`, and its length and
+  byte ranges match `statObject`.
 - Keys must be non-empty and must not contain `.` or `..` path segments
   (`STORAGE_KEY_INVALID`), because `fetch` would resolve them to another key.
 
@@ -43,6 +55,7 @@ produce.
 | `endpoint` | Override the API endpoint, e.g. a local S3-compatible server for tests. |
 | `region` | SigV4 region; defaults to `auto`. |
 | `fetch` | Custom `fetch` implementation. |
+| `retry` | `{ maxAttempts, baseDelayMs, maxDelayMs }`; defaults `3`, `100`, `20000`. `maxAttempts: 1` disables retries. |
 
 ## Tests
 
