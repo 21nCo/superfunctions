@@ -133,6 +133,17 @@ describe("changeDetail validation", () => {
     expect((await errors(narrowed, store)).join("\n")).toMatch(/path other\.ts is not a changed path[\s\S]*changed path missing\.ts is missing from the change hunks/);
   });
 
+  it("rejects correctly addressed full and delta artifacts that contain a zero-sized hunk", async () => {
+    const zero = (hunks: ChangeHunks): ChangeHunks => ({ ...hunks, files: hunks.files.map(file => file.path === "other.ts" ? { ...file, hunks: [...file.hunks, { oldStart: 2, oldLines: 0, newStart: 3, newLines: 0 }] } : file) });
+    expect(() => parseChangeHunks("diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -2,0 +3,0 @@\n", BASE, HEAD)).toThrow(/Malformed hunk header/);
+    for (const field of ["hunks", "deltaHunks"] as const) {
+      const { value, store } = await incremental();
+      const stored = await store.put("change-hunks", serializeChangeHunks(field === "hunks" ? zero(full) : zero(delta)));
+      value.changeDetail = { ...value.changeDetail!, [`${field}Artifact`]: stored.id, [`${field}Digest`]: stored.digest };
+      expect((await errors(value, store)).join("\n")).toMatch(new RegExp(`REVIEWFN_CHANGE_DETAIL_MISMATCH: ${field === "hunks" ? "change" : "delta"} hunks artifact \\S+ is malformed: Change hunks file other\\.ts has invalid hunks\\.`));
+    }
+  });
+
   it("cannot verify changeDetail without the artifact store", async () => {
     const { value } = await incremental();
     expect(await verifyChangeDetail(value)).toMatchObject({ errors: ["REVIEWFN_CHANGE_DETAIL_MISMATCH: changeDetail cannot be verified without the artifact store."] });

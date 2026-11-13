@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  DEFAULT_CONFIG, DEFAULT_POLICY, ReviewCoordinator, ReviewFnError, isolatedGitEnvironment, sha256, validateReport,
+  DEFAULT_CONFIG, DEFAULT_POLICY, ReviewCoordinator, ReviewFnError, changeHunksDiffArguments, isolatedGitEnvironment, sha256, validateReport,
   type ArtifactStore, type ContextAdapter, type Evidence, type ContextManifest, type ExecutionAdapter, type HarnessAdapter, type HarnessOutput, type ReviewReport,
 } from "@superfunctions/reviewfn-core";
 import { GitSourceControlAdapter } from "../src/index.js";
@@ -77,6 +77,69 @@ describe("GitSourceControlAdapter.changeHunks", { timeout: 30_000 }, () => {
     await write("large.txt", "line\n".repeat(10_000));
     const head = await commit("head");
     expect(await new GitSourceControlAdapter().changeHunks(root, base, head, 1024)).toEqual({ status: "too_large", limitBytes: 1024 });
+  });
+
+  it("keeps a leading U+FEFF in quoted rename and added paths", async () => {
+    const { root, git, write, commit } = await repository();
+    await write("\uFEFFfrom.txt", "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n");
+    await write("plain.txt", "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n");
+    const base = await commit("base");
+    await git("mv", "\uFEFFfrom.txt", "\uFEFFto.txt");
+    await write("\uFEFFto.txt", "1\n2\n3\n4\n5\n6\n7\n8\n9\n11\n");
+    await git("mv", "plain.txt", "\uFEFFnew.txt");
+    await write("\uFEFFadded.txt", "new\n");
+    const head = await commit("head");
+    const diff = await git("diff", ...changeHunksDiffArguments(base, head));
+    expect(diff).toContain('rename to "\\357\\273\\277to.txt"');
+    const captured = await new GitSourceControlAdapter().changeHunks(root, base, head, 1_000_000);
+    if (captured.status !== "parsed") throw new Error("expected parsed hunks");
+    expect(captured.hunks.files.map(file => [file.path, file.previousPath, file.status])).toEqual([
+      ["\uFEFFadded.txt", undefined, "added"],
+      ["\uFEFFnew.txt", "plain.txt", "renamed"],
+      ["\uFEFFto.txt", "\uFEFFfrom.txt", "renamed"],
+    ]);
+    expect([...captured.hunks.files[2].path].map(char => char.codePointAt(0))[0]).toBe(0xfeff);
+    expect([...captured.hunks.files[2].previousPath!].map(char => char.codePointAt(0))[0]).toBe(0xfeff);
+  });
+
+  it("does not parse output whose decoded UTF-8 outgrows the byte limit", async () => {
+    const { root, write, commit } = await repository();
+    const base = await commit("base");
+    await write("invalid.txt", Buffer.concat([Buffer.alloc(400, 0xff), Buffer.from("\n")]));
+    const head = await commit("head");
+    const raw = (await promisify(execFile)("git", ["diff", ...changeHunksDiffArguments(base, head)], { cwd: root, env: isolatedGitEnvironment(), encoding: "buffer" })).stdout.length;
+    const decoded = Buffer.byteLength((await promisify(execFile)("git", ["diff", ...changeHunksDiffArguments(base, head)], { cwd: root, env: isolatedGitEnvironment() })).stdout);
+    expect(decoded).toBeGreaterThan(raw + 700);
+    const adapter = new GitSourceControlAdapter();
+    expect(await adapter.changeHunks(root, base, head, raw)).toEqual({ status: "too_large", limitBytes: raw });
+    expect(await adapter.changeHunks(root, base, head, decoded)).toMatchObject({ status: "parsed" });
+  });
+
+  it("applies the same budget and cancellation contract to a configured runner", async () => {
+    const [from, to] = ["a".repeat(40), "b".repeat(40)];
+    const calls: string[][] = [];
+    const runnerWith = (output: string, onCall?: () => void) => new GitSourceControlAdapter({ runner: async args => { calls.push(args); onCall?.(); return output; } });
+    // Over the limit: not parsed, so unparseable output does not raise REVIEWFN_DIFF_UNSUPPORTED.
+    expect(await runnerWith("not a diff\n".repeat(20)).changeHunks(".", from, to, 100)).toEqual({ status: "too_large", limitBytes: 100 });
+    // Decoded replacement characters count at their UTF-8 length.
+    expect(await runnerWith("\uFFFD".repeat(40)).changeHunks(".", from, to, 100)).toEqual({ status: "too_large", limitBytes: 100 });
+    const aborted = new AbortController(); aborted.abort();
+    calls.length = 0;
+    await expect(runnerWith("").changeHunks(".", from, to, 100, aborted.signal)).rejects.toThrow("Change hunk capture canceled.");
+    expect(calls).toEqual([]);
+    const during = new AbortController();
+    await expect(runnerWith("", () => during.abort()).changeHunks(".", from, to, 100, during.signal)).rejects.toThrow("Change hunk capture canceled.");
+    expect(calls).toHaveLength(1);
+    expect(await runnerWith("").changeHunks(".", from, to, 100)).toEqual({ status: "parsed", hunks: { version: 1, baseCommit: from, headCommit: to, files: [] } });
+  });
+
+  it("rejects an already-aborted capture without running git", async () => {
+    const { root, write, commit } = await repository();
+    const base = await commit("base");
+    await write("file.txt", "x\n");
+    const head = await commit("head");
+    const controller = new AbortController(); controller.abort();
+    await expect(new GitSourceControlAdapter().changeHunks(root, base, head, 1_000_000, controller.signal)).rejects.toThrow("Change hunk capture canceled.");
   });
 
   it("checks ancestry and treats unknown objects as unrelated", async () => {

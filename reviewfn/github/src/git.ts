@@ -75,16 +75,21 @@ export class GitSourceControlAdapter implements SourceControlAdapter {
     catch (error) { if ([1, 128].includes((error as { code?: number }).code ?? 0)) return false; throw error; }
   }
 
-  /** Hunk-level model of `from..to` in the owned checkout; output over `maxBytes` is not parsed. */
+  /**
+   * Hunk-level model of `from..to` in the owned checkout. One capture contract for both the subprocess
+   * and a configured runner: cancellation is checked before and after the capture, and the diff is not
+   * parsed when its raw bytes (where observable) or its decoded UTF-8 length exceed `maxBytes`.
+   */
   public async changeHunks(root: string, from: string, to: string, maxBytes: number, signal?: AbortSignal): Promise<ChangeHunksCapture> {
     if (!isCommitId(from) || !isCommitId(to)) throw new Error("Change hunks require full commit IDs.");
     if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) throw new Error("Change hunks require a positive byte limit.");
-    let diff: string | undefined;
-    if (this.options.runner) {
-      const output = await this.runner(["diff", ...changeHunksDiffArguments(from, to)], root);
-      diff = Buffer.byteLength(output) > maxBytes ? undefined : output;
-    } else diff = await boundedDiff(root, changeHunksDiffArguments(from, to), maxBytes, signal);
-    return diff === undefined ? { status: "too_large", limitBytes: maxBytes } : { status: "parsed", hunks: parseChangeHunks(diff, from, to) };
+    if (signal?.aborted) throw new Error(CAPTURE_CANCELED);
+    const args = changeHunksDiffArguments(from, to);
+    const diff = this.options.runner ? await this.runner(["diff", ...args], root) : await boundedDiff(root, args, maxBytes, signal);
+    if (signal?.aborted) throw new Error(CAPTURE_CANCELED);
+    // Decoding invalid UTF-8 substitutes U+FFFD (3 bytes per invalid byte), so the decoded text can outgrow the raw budget.
+    if (diff === undefined || Buffer.byteLength(diff, "utf8") > maxBytes) return { status: "too_large", limitBytes: maxBytes };
+    return { status: "parsed", hunks: parseChangeHunks(diff, from, to) };
   }
 
   public async isAncestor(root: string, ancestor: string, descendant: string): Promise<boolean> {
@@ -154,10 +159,12 @@ async function streamDiffDigest(root: string, base: string, head: string): Promi
   });
 }
 
-/** Run `git diff` and return its output, or undefined once it exceeds `maxBytes` (the process is stopped). */
+const CAPTURE_CANCELED = "Change hunk capture canceled.";
+
+/** Run `git diff` and return its output, or undefined once its raw bytes exceed `maxBytes` (the process is stopped). */
 async function boundedDiff(root: string, args: string[], maxBytes: number, signal?: AbortSignal): Promise<string | undefined> {
   const executable = await resolveTrustedExecutable("git");
-  if (signal?.aborted) throw new Error("Change hunk capture canceled.");
+  if (signal?.aborted) throw new Error(CAPTURE_CANCELED);
   return new Promise((resolve, reject) => {
     const child = spawn(executable, ["diff", ...args], { cwd: root, env: isolatedGitEnvironment(), stdio: ["ignore", "pipe", "pipe"] });
     const chunks: Buffer[] = [];
@@ -180,7 +187,7 @@ async function boundedDiff(root: string, args: string[], maxBytes: number, signa
     child.once("close", code => {
       settle();
       if (stopped === "too_large") resolve(undefined);
-      else if (stopped) reject(new Error(stopped === "timeout" ? "Git diff for change hunks timed out." : "Change hunk capture canceled."));
+      else if (stopped) reject(new Error(stopped === "timeout" ? "Git diff for change hunks timed out." : CAPTURE_CANCELED));
       else if (code === 0) resolve(Buffer.concat(chunks).toString("utf8"));
       else reject(new Error(`Git diff for change hunks failed (${String(code)}): ${stderr.trim().slice(0, 500)}`));
     });

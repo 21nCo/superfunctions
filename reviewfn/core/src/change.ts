@@ -24,7 +24,8 @@ function unsupported(message: string, line?: number): never {
 }
 
 const ESCAPES: Record<string, number> = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, "\\": 92 };
-const utf8 = new TextDecoder("utf-8", { fatal: true });
+// ignoreBOM keeps a leading U+FEFF that is part of the path; the default decoder would strip it.
+const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 /** Decode one Git C-style quoted path starting at `start`; returns the value and the index after the closing quote. */
 function readQuoted(text: string, start: number, line: number): { value: string; end: number } {
@@ -204,6 +205,12 @@ export function serializeChangeHunks(hunks: ChangeHunks): string {
 
 const STATUSES = new Set<ChangeHunkFile["status"]>(["added", "modified", "deleted", "renamed", "binary"]);
 const count = (value: unknown): boolean => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+/** The parser's hunk invariant: non-negative safe-integer fields and at least one removed or added line. */
+const validHunk = (hunk: unknown): boolean => {
+  if (!hunk || typeof hunk !== "object") return false;
+  const { oldStart, oldLines, newStart, newLines } = hunk as Partial<ChangeHunk>;
+  return count(oldStart) && count(oldLines) && count(newStart) && count(newLines) && (oldLines as number) + (newLines as number) > 0;
+};
 
 /** Structural validation of an untrusted `ChangeHunks` value. */
 export function changeHunksErrors(value: unknown): string[] {
@@ -222,7 +229,7 @@ export function changeHunksErrors(value: unknown): string[] {
     if (!STATUSES.has(item.status as ChangeHunkFile["status"])) errors.push(`Change hunks file ${item.path} has an invalid status.`);
     if (item.previousPath !== undefined && (typeof item.previousPath !== "string" || !item.previousPath || !["renamed", "binary"].includes(item.status as string))) errors.push(`Change hunks file ${item.path} has an invalid previous path.`);
     if (item.status === "renamed" && item.previousPath === undefined) errors.push(`Renamed file ${item.path} requires its previous path.`);
-    if (!Array.isArray(item.hunks) || !item.hunks.every(hunk => hunk && typeof hunk === "object" && count(hunk.oldStart) && count(hunk.oldLines) && count(hunk.newStart) && count(hunk.newLines))) errors.push(`Change hunks file ${item.path} has invalid hunks.`);
+    if (!Array.isArray(item.hunks) || !item.hunks.every(validHunk)) errors.push(`Change hunks file ${item.path} has invalid hunks.`);
     else if (item.status === "binary" && item.hunks.length) errors.push(`Binary file ${item.path} cannot have line-level hunks.`);
   }
   return errors;
