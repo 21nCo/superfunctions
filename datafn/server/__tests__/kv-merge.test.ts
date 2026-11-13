@@ -112,6 +112,42 @@ async function expectLatestKvChangeCarries(
   }
 }
 
+/**
+ * The record is deleted as every pull kind and the writer's own pull apply it:
+ * the latest change is a delete, and nothing restores the record after it.
+ */
+async function expectKvRecordDeleted(call: (route: string, body: unknown) => Promise<Json>) {
+  for (const clientId of ["client:a", "client:fresh"]) {
+    const globalPull = await call("pull", { clientId, cursor: "0" });
+    const kvChanges = globalPull.result.changes.filter((change: Json) => change.id === "kv:prefs");
+    expect(kvChanges.at(-1)).toMatchObject({ op: "delete" });
+
+    const resourcePull = await call("pull", { clientId, cursors: { kv: "0" } });
+    expect(resourcePull.result.deleted?.kv).toContain("kv:prefs");
+    expect((resourcePull.result.records?.kv ?? []).map((record: Json) => record.id)).not.toContain("kv:prefs");
+  }
+}
+
+const noteInsert = (id: string) => ({
+  resource: "note",
+  version: 1,
+  operation: "insert",
+  id,
+  clientId: "client:a",
+  mutationId: `note-insert-${id}`,
+  record: { meta: {} },
+});
+
+let deleteSequence = 0;
+const kvDelete = () => ({
+  resource: "kv",
+  version: 1,
+  operation: "delete",
+  id: "kv:prefs",
+  clientId: "client:a",
+  mutationId: `kv-delete-${(deleteSequence += 1)}`,
+});
+
 describe("DATA-8: KV merge keeps every top-level key", () => {
   it("merges partial values sent to /mutation and pulls the full value", async () => {
     const { call, storedValue } = await serve();
@@ -266,5 +302,41 @@ describe("DATA-8: KV merge keeps every top-level key", () => {
     expect(await a.storedValue()).toEqual(full);
     await expectLatestKvChangeCarries(a.call, full);
     await expectLatestKvChangeCarries(b.call, full);
+  });
+
+  // One push reserves serverSeqs for the whole request at its first change.
+  // A KV change takes a fresh serverSeq after its write, so every later change
+  // of the same request must stay above it rather than take a reserved one.
+  it("records a push's changes to one KV record in write order after a set, merge, set", async () => {
+    const { call, storedValue } = await serve();
+    const pushed = await call("push", {
+      clientId: "client:a",
+      mutations: [
+        noteInsert("note:order"),
+        kvMutation({ seed: true }, { mutationIdPrefix: "kv-set-" }),
+        kvMutation({ fromMerge: true }),
+        kvMutation({ final: true }, { mutationIdPrefix: "kv-set-" }),
+        noteInsert("note:after"),
+      ],
+    });
+    expect(pushed.result.ok).toBe(true);
+    expect(await storedValue()).toEqual({ final: true });
+    await expectLatestKvChangeCarries(call, { final: true });
+    // The request's changes take increasing serverSeqs in write order.
+    const pulled = await call("pull", { clientId: "client:fresh", cursor: "0" });
+    expect(pulled.result.changes.map((change: Json) => change.id)).toEqual([
+      "note:order", "kv:prefs", "kv:prefs", "kv:prefs", "note:after",
+    ]);
+  });
+
+  it("keeps a KV record deleted when one push merges and then deletes it", async () => {
+    const { call, storedValue } = await serve();
+    const pushed = await call("push", {
+      clientId: "client:a",
+      mutations: [noteInsert("note:gone"), kvMutation({ seed: true }), kvDelete()],
+    });
+    expect(pushed.result.ok).toBe(true);
+    expect(await storedValue()).toBeUndefined();
+    await expectKvRecordDeleted(call);
   });
 });

@@ -403,8 +403,59 @@ export function describeDrizzleSqliteConformance(
         mutationId: `kv-merge-${(kvSequence += 1)}`,
         record: { value },
       });
+      const kvSet = (value: Json, clientId = "device-a") => ({
+        ...kvMerge(value, clientId),
+        mutationId: `kv-set-${(kvSequence += 1)}`,
+      });
+      const kvDelete = (clientId = "device-a") => ({
+        resource: "kv",
+        version: 1,
+        operation: "delete",
+        id: "kv:prefs",
+        clientId,
+        mutationId: `kv-delete-${(kvSequence += 1)}`,
+      });
       const storedKvValue = async () =>
         JSON.parse(String((await harness.all(`SELECT value FROM kv WHERE id = 'kv:prefs'`))[0]?.value));
+      const kvRowCount = async () =>
+        (await harness.all(`SELECT id FROM kv WHERE id = 'kv:prefs'`)).length;
+
+      /**
+       * Wraps a server's adapter so `hook` runs once, right after the first
+       * plain (not compare-and-swap) KV write of the given kind.
+       */
+      function afterPlainKvWrite(kind: "update" | "delete", hook: () => Promise<unknown>) {
+        const state = { ran: false };
+        const wrap = (adapter: Adapter) => new Proxy(adapter, {
+          get(target, property, receiver) {
+            const original = Reflect.get(target, property, receiver);
+            if (property !== kind) return original;
+            return async (params: { model: string; where?: Array<{ field: string }> }) => {
+              const result = await (original as (p: unknown) => Promise<unknown>).call(target, params);
+              const plain = params.model === "kv" && !params.where?.some((clause) => clause.field === "value");
+              if (plain && !state.ran) {
+                state.ran = true;
+                await hook();
+              }
+              return result;
+            };
+          },
+        });
+        return { state, wrap };
+      }
+
+      /** Every pull kind and device ends with the record deleted. */
+      async function expectKvDeleted(app: Started) {
+        for (const clientId of ["device-a", "device-fresh"]) {
+          const global = await app.call("POST", "/datafn/pull", { clientId, cursor: "0" });
+          const changes = global.body.result.changes.filter((change: Json) => change.id === "kv:prefs");
+          expect(changes.at(-1)).toMatchObject({ op: "delete" });
+
+          const perTable = await app.call("POST", "/datafn/pull", { clientId, cursors: { kv: "0" } });
+          expect(perTable.body.result.deleted?.kv).toContain("kv:prefs");
+          expect((perTable.body.result.records?.kv ?? []).map((record: Json) => record.id)).not.toContain("kv:prefs");
+        }
+      }
 
       type Hook = (() => Promise<unknown>) | undefined;
       /**
@@ -573,6 +624,89 @@ export function describeDrizzleSqliteConformance(
         expect(await storedKvValue()).toEqual({ seed: true, fromA: 1, fromB: 2 });
         await expectLatestKvChange(app, { seed: true, fromA: 1, fromB: 2 });
       });
+      // A push reserves serverSeqs at its first change. A KV change takes a
+      // fresh serverSeq after its write, so later changes of the same request
+      // must stay above it instead of taking the older reserved ones.
+      it("records a push's changes to one KV record in write order after a set, merge, set", async () => {
+        const app = await start();
+        const pushed = await app.call("POST", "/datafn/push", {
+          clientId: "device-a",
+          mutations: [
+            { ...insertTask("task:order", "Order", 1), clientId: "device-a" },
+            kvSet({ seed: true }),
+            kvMerge({ fromMerge: true }),
+            kvSet({ final: true }),
+            { ...insertTask("task:after", "After", 2), clientId: "device-a" },
+          ],
+        });
+        expect(pushed.body.result.ok).toBe(true);
+        expect(await storedKvValue()).toEqual({ final: true });
+        await expectLatestKvChange(app, { final: true });
+        // The request's changes take increasing serverSeqs in write order.
+        const pulled = await app.call("POST", "/datafn/pull", { clientId: "device-fresh", cursor: "0" });
+        expect(pulled.body.result.changes.map((change: Json) => change.id)).toEqual([
+          "task:order", "kv:prefs", "kv:prefs", "kv:prefs", "task:after",
+        ]);
+      });
+
+      it("keeps a KV record deleted when one push merges and then deletes it", async () => {
+        const app = await start();
+        const pushed = await app.call("POST", "/datafn/push", {
+          clientId: "device-a",
+          mutations: [{ ...insertTask("task:gone", "Gone", 1), clientId: "device-a" }, kvMerge({ seed: true }), kvDelete()],
+        });
+        expect(pushed.body.result.ok).toBe(true);
+        expect(await kvRowCount()).toBe(0);
+        await expectKvDeleted(app);
+      });
+
+      for (const route of ["/datafn/mutation", "/datafn/push"]) {
+        const send = (app: Started, mutation: Json) =>
+          app.call("POST", route, route === "/datafn/push" ? { clientId: "device-a", mutations: [mutation] } : mutation);
+
+        it(`records the merged value last when another server merges between a set's write and its change (${route})`, async () => {
+          const other = await start();
+          await other.call("POST", "/datafn/mutation", kvMerge({ seed: true }));
+          const after = afterPlainKvWrite("update", () =>
+            other.call("POST", "/datafn/mutation", kvMerge({ fromB: 2 }, "device-b")));
+          const app = await serve(after.wrap);
+
+          const set = await send(app, kvSet({ final: true }));
+          expect(set.body.result.ok).toBe(true);
+          expect(after.state.ran).toBe(true);
+          expect(await storedKvValue()).toEqual({ final: true, fromB: 2 });
+          await expectLatestKvChange(app, { final: true, fromB: 2 });
+        });
+
+        it(`keeps the record deleted when another server deletes it between a merge's write and its change (${route})`, async () => {
+          const other = await start();
+          await other.call("POST", "/datafn/mutation", kvMerge({ seed: true }));
+          const around = aroundKvWrites({
+            after: [() => other.call("POST", "/datafn/mutation", kvDelete("device-b"))],
+          });
+          const app = await serve(around.wrap);
+
+          const merged = await send(app, kvMerge({ fromA: 1 }));
+          expect(merged.body.result.ok).toBe(true);
+          expect(around.state.ran).toBe(1);
+          expect(await kvRowCount()).toBe(0);
+          await expectKvDeleted(app);
+        });
+
+        it(`keeps the record another server creates between a delete's write and its change (${route})`, async () => {
+          const other = await start();
+          await other.call("POST", "/datafn/mutation", kvMerge({ seed: true }));
+          const after = afterPlainKvWrite("delete", () =>
+            other.call("POST", "/datafn/mutation", kvMerge({ fromB: 2 }, "device-b")));
+          const app = await serve(after.wrap);
+
+          const deleted = await send(app, kvDelete());
+          expect(deleted.body.result.ok).toBe(true);
+          expect(after.state.ran).toBe(true);
+          expect(await storedKvValue()).toEqual({ fromB: 2 });
+          await expectLatestKvChange(app, { fromB: 2 });
+        });
+      }
     });
 
     describe("REST wrappers", () => {

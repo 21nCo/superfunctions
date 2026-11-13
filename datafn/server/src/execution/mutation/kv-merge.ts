@@ -10,6 +10,7 @@
 import { KV_RESOURCE_NAME } from "@datafn/core";
 import type { Adapter, WhereClause } from "@superfunctions/db";
 import { isNotFoundError } from "./merge-decision.js";
+import type { ChangeEntryInput } from "../sync/change-tracking.js";
 
 /**
  * `kv.set` is also sent as a `merge` operation with `record: { value }`
@@ -165,33 +166,47 @@ export async function updateKvRecordMerging(params: {
   );
 }
 
+/** True for a change on the built-in KV resource. */
+export function isKvResource(resource: unknown): boolean {
+  return resource === KV_RESOURCE_NAME;
+}
+
+type KvChangeOp = ChangeEntryInput["op"];
+
 /**
- * The change record for a KV value merge, carrying the value stored now.
+ * The op and record to store for a change on a KV record: the record's stored
+ * state when the change's serverSeq was allocated.
  *
  * Clients apply the change with the highest serverSeq for a record as its
- * whole value, but concurrent requests can allocate their sequence numbers in
- * a different order than they wrote the record. Call this only after the
- * change's serverSeq was allocated, and after this request's write: any merge
- * that wrote later allocates a higher serverSeq and reads again, so the
- * record's latest change always carries the complete stored value. Inside a
- * transaction the row lock is still held, so this reads this request's write.
- *
- * When the record is gone (deleted after this write), the record is returned
- * unchanged.
+ * whole value (a delete removes it), but writers can commit in a different
+ * order than they allocate serverSeqs: a write may commit, then a concurrent
+ * write commits and records, and only then does the first write allocate its
+ * serverSeq. So every KV change allocates its serverSeq after its own write
+ * (never from a pool reserved earlier) and only then reads the record. Any
+ * write that commits later allocates a higher serverSeq after it and reads
+ * again, so the record's latest change always carries the stored state:
+ * - row present: the change carries the stored value (a delete whose record
+ *   was created again after it becomes an upsert of the stored value);
+ * - row absent: the change becomes a delete, so a merge or set that a
+ *   concurrent delete overtook cannot resurrect the record.
+ * Inside a transaction the row stays locked by this request's write, so the
+ * read returns that write.
  */
-export async function readKvChangeRecord(params: {
+export async function snapshotKvChange(params: {
   db: Adapter;
-  resource: string;
   id: string;
   namespace?: string;
-  record: Record<string, unknown>;
-}): Promise<Record<string, unknown>> {
-  const { db, resource, id, namespace, record } = params;
+  op: KvChangeOp;
+  record: Record<string, unknown> | null;
+}): Promise<{ op: KvChangeOp; record: Record<string, unknown> | null }> {
+  const { db, id, namespace, op, record } = params;
   const row = await db.findOne<Record<string, unknown>>({
-    model: resource,
+    model: KV_RESOURCE_NAME,
     where: [{ field: "id", operator: "eq", value: id }],
     namespace,
   });
-  if (!row || !Object.prototype.hasOwnProperty.call(row, "value")) return record;
-  return { ...record, value: row.value };
+  if (!row) return { op: "delete", record: null };
+  const value = row.value ?? null;
+  if (op === "delete" || !record) return { op: "upsert", record: { id, value } };
+  return { op, record: { ...record, id, value } };
 }

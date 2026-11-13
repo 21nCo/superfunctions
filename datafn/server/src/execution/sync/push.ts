@@ -30,8 +30,9 @@ import {
 } from "../mutation/relations.js";
 import { executeSchemaAwareMerge } from "../mutation/merge-decision.js";
 import {
+  isKvResource,
   isKvValueMerge,
-  readKvChangeRecord,
+  snapshotKvChange,
   updateKvRecordMerging,
 } from "../mutation/kv-merge.js";
 import { stripReadonlyCapabilityFields } from "../mutation/execute.js";
@@ -368,32 +369,42 @@ export async function executePush(
   }
 
   /**
-   * The serverSeq and record to store for a pending change. A KV value merge
-   * change takes a fresh serverSeq after its write, then reads the stored
-   * value, so a concurrent merge that recorded in between can never be the
-   * record's latest change with fewer keys.
+   * The serverSeq, op and record to store for a pending change.
+   *
+   * Clients apply a record's highest-serverSeq change as its state, but seqs
+   * in the reserved pool were allocated before the writes that use them, so:
+   * - A change on a KV record takes a fresh serverSeq after its write and then
+   *   records the stored state (snapshotKvChange), so the record's latest
+   *   change reflects its stored state across concurrent requests too.
+   * - Taking a fresh serverSeq drops the rest of the reserved pool: no later
+   *   change in this request may take a reserved seq below it, so serverSeqs
+   *   stay increasing in write order within the request.
+   * Changes on other resources keep using the reserved pool, as before.
    */
   async function sequenceChange(
     change: PendingChange,
     allocation: SequenceAllocationState,
     targetDb: Adapter,
     targetChangeTracking = changeTracking,
-  ): Promise<{ seq: number; record: Record<string, unknown> | null }> {
-    if (!change.kvSnapshot || !change.record) {
+  ): Promise<{ seq: number; op: PendingChange["op"]; record: Record<string, unknown> | null }> {
+    if (!isKvResource(change.resource)) {
       return {
         seq: await takeNextServerSeq(allocation, targetChangeTracking),
+        op: change.op,
         record: change.record,
       };
     }
+    allocation.initialBatchAllocated = true;
+    allocation.pool = [];
     const seq = await targetChangeTracking.getNextServerSeq();
-    const record = await readKvChangeRecord({
+    const snapshot = await snapshotKvChange({
       db: targetDb,
-      resource: change.resource,
       id: change.id,
       namespace,
+      op: change.op,
       record: change.record,
     });
-    return { seq, record };
+    return { seq, ...snapshot };
   }
 
   // Pending change entries for a mutation that executed successfully
@@ -402,12 +413,6 @@ export async function executePush(
     id: string;
     op: "insert" | "merge" | "replace" | "upsert" | "delete";
     record: Record<string, unknown> | null;
-    /**
-     * DATA-8: the primary change of a KV value merge. It takes a serverSeq
-     * allocated after its write (never one reserved earlier in the request)
-     * and carries the value stored when that serverSeq was allocated.
-     */
-    kvSnapshot?: true;
   };
 
   type ExecuteMutationResult =
@@ -570,7 +575,6 @@ export async function executePush(
                 id: mut.id,
                 op: "merge",
                 record: { id: mut.id, ...changeRecordData },
-                ...(kvValueMerge ? { kvSnapshot: true as const } : {}),
               },
               ...propagationChanges,
             ],
@@ -1222,7 +1226,7 @@ export async function executePush(
           // transaction-bound service callback and publish only after commit.
           const txChangeTracking = changeTracking.withDb(txDb, false);
           for (const change of changes) {
-            const { seq, record } = await sequenceChange(
+            const { seq, op, record } = await sequenceChange(
               change,
               txSequenceAllocation,
               txDb,
@@ -1235,7 +1239,7 @@ export async function executePush(
             );
             // FIX-REL-002: retry within transaction
             await recordChangeWithRetry(txChangeTracking, {
-              serverSeq: seq, resource: change.resource, id: change.id, op: change.op, record,
+              serverSeq: seq, resource: change.resource, id: change.id, op, record,
             }, 2, logger);
             pendingChangeEvents.push(seq);
           }
@@ -1327,11 +1331,11 @@ export async function executePush(
         let changeTrackingFailed = false;
         try {
           for (const change of changes) {
-            const { seq, record } = await sequenceChange(change, sequenceAllocation, db);
+            const { seq, op, record } = await sequenceChange(change, sequenceAllocation, db);
             latestSeq = Math.max(latestSeq, seq);
             resourceSeqs[change.resource] = Math.max(resourceSeqs[change.resource] || 0, seq);
             await recordChangeWithRetry(changeTracking, {
-              serverSeq: seq, resource: change.resource, id: change.id, op: change.op, record,
+              serverSeq: seq, resource: change.resource, id: change.id, op, record,
             }, 2, logger);
           }
         } catch (error) {
