@@ -10,14 +10,18 @@ import {
   uifnPinInputRovingTarget,
   uifnPopupTriggerRovingTarget,
   uifnTourOverlayAdapterBinding,
-  type UIFnAdapterDomBinding,
+  type UIFnAdapterGestureParts,
+  type UIFnAdapterPopupParts,
+  type UIFnAdapterRovingParts,
+  type UIFnAdapterRovingTarget,
 } from '@uifn/dom';
 import type { SvelteDomBindingInstaller } from './internal/compound.js';
 import {
-  svelteDomBindingSpecFor,
+  POPUP,
+  RANGE_GESTURE,
+  ROVING_FOCUS,
   svelteDomBindingSpecs,
   type SvelteDomBindingKind,
-  type SvelteDomBindingSpec,
 } from './internal/dom-binding-plan.js';
 
 export type {
@@ -32,43 +36,42 @@ export interface SvelteDomBindingPlanTarget {
   readonly family: string;
 }
 
-const READY: Readonly<Record<string, UIFnAdapterDomBinding>> = {
-  uifnMenuAdapterBinding,
-  uifnNavigationMenuAdapterBinding,
-  uifnOverlayAdapterBinding,
-  uifnTourOverlayAdapterBinding,
-};
-const FACTORIES: Readonly<Record<string, (descriptor: never) => UIFnAdapterDomBinding>> = {
-  createUIFnPopupAdapterBinding,
-  createUIFnRangeGestureAdapterBinding,
-  createUIFnRovingFocusAdapterBinding,
-};
-const ROVING_TARGETS: Readonly<Record<string, unknown>> = {
+const ROVING_TARGETS: Readonly<Record<string, UIFnAdapterRovingTarget>> = {
   uifnEditableRovingTarget,
   uifnMenubarRovingTarget,
   uifnPinInputRovingTarget,
   uifnPopupTriggerRovingTarget,
 };
 
-function bindingFor(spec: SvelteDomBindingSpec): UIFnAdapterDomBinding {
-  if (spec.ready) return READY[spec.ready]!;
-  return FACTORIES[spec.factory!]!((spec.target ? ROVING_TARGETS[spec.target] : spec.descriptor) as never);
-}
+// Each installer reads only its own table, so importing one of them bundles only that kind of binding. Overlay,
+// menu and navigation-menu wiring works for any definition; the others use the parts of a catalog `name`.
 
-/** Installs one kind of binding for the mounted definition, with the parts its `name` uses in the catalog. */
-function installerOf(kind: SvelteDomBindingKind): SvelteDomBindingInstaller {
-  return (context) => {
-    const spec = svelteDomBindingSpecFor(kind, context.bridge.definition.name);
-    if (spec) bindingFor(spec)(context);
-  };
-}
+export const overlayDomBinding: SvelteDomBindingInstaller = (context) => (
+  context.bridge.definition.name === 'Tour' ? uifnTourOverlayAdapterBinding : uifnOverlayAdapterBinding
+)(context);
 
-export const overlayDomBinding: SvelteDomBindingInstaller = installerOf('overlayDomBinding');
-export const menuDomBinding: SvelteDomBindingInstaller = installerOf('menuDomBinding');
-export const popupDomBinding: SvelteDomBindingInstaller = installerOf('popupDomBinding');
-export const navigationMenuDomBinding: SvelteDomBindingInstaller = installerOf('navigationMenuDomBinding');
-export const rovingFocusDomBinding: SvelteDomBindingInstaller = installerOf('rovingFocusDomBinding');
-export const rangeGestureDomBinding: SvelteDomBindingInstaller = installerOf('rangeGestureDomBinding');
+export const menuDomBinding: SvelteDomBindingInstaller = uifnMenuAdapterBinding;
+
+export const navigationMenuDomBinding: SvelteDomBindingInstaller = uifnNavigationMenuAdapterBinding;
+
+/** A popup without catalog parts toggles and anchors to its `trigger` part. */
+export const popupDomBinding: SvelteDomBindingInstaller = (context) => {
+  const parts = POPUP[context.bridge.definition.name] ?? { trigger: 'trigger', reference: ['trigger'] };
+  createUIFnPopupAdapterBinding(parts as unknown as UIFnAdapterPopupParts)(context);
+};
+
+export const rovingFocusDomBinding: SvelteDomBindingInstaller = (context) => {
+  const target = ROVING_FOCUS[context.bridge.definition.name];
+  if (!target) return;
+  createUIFnRovingFocusAdapterBinding(
+    typeof target === 'string' ? ROVING_TARGETS[target]! : target as unknown as UIFnAdapterRovingParts,
+  )(context);
+};
+
+export const rangeGestureDomBinding: SvelteDomBindingInstaller = (context) => {
+  const surfaces = RANGE_GESTURE[context.bridge.definition.name];
+  if (surfaces) createUIFnRangeGestureAdapterBinding(surfaces as UIFnAdapterGestureParts)(context);
+};
 
 const INSTALLERS: Readonly<Record<SvelteDomBindingKind, SvelteDomBindingInstaller>> = {
   overlayDomBinding,

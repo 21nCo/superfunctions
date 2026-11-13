@@ -235,3 +235,14 @@ test("a Tabs fixture that bundles another primitive's descriptor fails the check
     { code: "UIFN_BUNDLE_UNRELATED_PRIMITIVE", fixture: "solid/menu", primitive: "tabs", markers: ['"Tabs"'] },
   ]);
 });
+
+test("one public @uifn/svelte/dom-bindings installer bundles only its own kind of binding", async (t) => {
+  requireBuiltAdapters();
+  const directory = tempDir(t, ".binding-marker-check-", path.join(FIXTURE_ROOT, "svelte"));
+  const entry = path.join(directory, "entry.ts");
+  writeFileSync(entry, "import { menuDomBinding } from '@uifn/svelte/dom-bindings';\nconsole.log(menuDomBinding);\n");
+  const { source } = await buildFixture({ id: "svelte/public-menu-installer", framework: "svelte", primitive: "menu", entry });
+  const hits = Object.fromEntries(findUnrelatedPrimitiveCode(source, "menu").map((hit) => [hit.primitive, hit.markers]));
+  assert.deepEqual(hits, {});
+  assert.ok(source.includes("create menu DOM binding"), "the menu installer itself is bundled");
+});

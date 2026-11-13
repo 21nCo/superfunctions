@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createTabsController, type TabsProps } from '@uifn/core/primitives/tabs';
 import catalog from '../../catalog/generated/catalog.json';
 import { adapterDomBindingSpecs, adapterDomBindings } from '../../../scripts/uifn-adapter-dom-bindings.mjs';
-import { svelteDomBindingSpecFor, svelteDomBindingSpecs } from '../lib/internal/dom-binding-plan.js';
+import { uifnMenuAdapterBinding, uifnNavigationMenuAdapterBinding } from '@uifn/dom';
+import { svelteDomBindingSpecs } from '../lib/internal/dom-binding-plan.js';
 import { SveltePrimitiveBridge, type SveltePrimitiveDefinition } from '../lib/index.js';
 import * as publicBindings from '../lib/dom-bindings.js';
 import packageJson from '../package.json';
@@ -87,19 +88,14 @@ describe('@uifn/svelte/dom-bindings public subpath', () => {
 
   it('looks up the same parts, state keys and @uifn/dom targets as the generated definitions', () => {
     for (const primitive of catalog.primitives) {
-      const planned = adapterDomBindingSpecs(primitive);
-      expect(svelteDomBindingSpecs({ name: primitive.name, family: primitive.behaviorFamily }), primitive.name).toEqual(planned);
-      for (const spec of planned) expect(svelteDomBindingSpecFor(spec.installer, primitive.name), primitive.name).toEqual(spec);
+      expect(svelteDomBindingSpecs({ name: primitive.name, family: primitive.behaviorFamily }), primitive.name)
+        .toEqual(adapterDomBindingSpecs(primitive));
     }
   });
 
-  it('wires overlay, menu, navigation-menu and popup installers for a definition with any name or family', () => {
-    expect(svelteDomBindingSpecFor('overlayDomBinding', 'ConsumerSheet')).toEqual({ installer: 'overlayDomBinding', ready: 'uifnOverlayAdapterBinding' });
-    expect(svelteDomBindingSpecFor('menuDomBinding', 'ActionMenu')).toEqual({ installer: 'menuDomBinding', ready: 'uifnMenuAdapterBinding' });
-    expect(svelteDomBindingSpecFor('navigationMenuDomBinding', 'SiteNav')?.ready).toBe('uifnNavigationMenuAdapterBinding');
-    expect(svelteDomBindingSpecFor('popupDomBinding', 'Picker')?.descriptor).toEqual({ trigger: 'trigger', reference: ['trigger'] });
-    expect(svelteDomBindingSpecFor('rovingFocusDomBinding', 'Picker')).toBeNull();
-    expect(svelteDomBindingSpecFor('rangeGestureDomBinding', 'Picker')).toBeNull();
+  it('exports the name-independent menu and navigation-menu installers themselves', () => {
+    expect(publicBindings.menuDomBinding).toBe(uifnMenuAdapterBinding);
+    expect(publicBindings.navigationMenuDomBinding).toBe(uifnNavigationMenuAdapterBinding);
   });
 
   it('moves roving focus in a hand-built definition that lists the exported installers', async () => {
