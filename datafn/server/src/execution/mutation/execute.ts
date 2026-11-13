@@ -19,7 +19,11 @@ import {
   extractRelationRecordDeltasFromDB,
 } from "./relations.js";
 import { executeSchemaAwareMerge } from "./merge-decision.js";
-import { isKvValueMerge, updateKvRecordMerging } from "./kv-merge.js";
+import {
+  isKvValueMerge,
+  readKvChangeRecord,
+  updateKvRecordMerging,
+} from "./kv-merge.js";
 import {
   executeShare,
   executeUnshare,
@@ -232,6 +236,9 @@ async function executeMutationCore(
   }> = [];
   // EXE-008: flag to skip change tracking when deleting a non-existent record
   let skipChangeTracking = false;
+  // DATA-8: the primary change of a KV value merge carries the value stored
+  // when its serverSeq is allocated, not the value this request wrote.
+  let kvSnapshotChange = false;
   let failedShareCompensation: FailedShareCompensation | null = null;
 
   if (
@@ -365,6 +372,7 @@ async function executeMutationCore(
           if (mergeResult.ok) {
             resolvedRecord =
               mergeResult.mode !== "create" && kvMergedData ? kvMergedData : mergeData;
+            kvSnapshotChange = kvValueMerge;
             additionalChanges.push(...await applyInactivePropagation(
               db,
               schema,
@@ -1024,8 +1032,21 @@ async function executeMutationCore(
           primaryChange,
           ...additionalChanges,
         ];
+        // Read the KV value only after its serverSeq is allocated, so the
+        // record's latest change carries every key stored by then.
+        const snapshotKvChange = async () => {
+          if (!kvSnapshotChange || !primaryChange.record) return;
+          primaryChange.record = await readKvChangeRecord({
+            db,
+            resource: primaryChange.resource,
+            id: primaryChange.id,
+            namespace,
+            record: primaryChange.record,
+          });
+        };
         if (allChanges.length > 1) {
           const seqs = await changeTracking.getNextServerSeqBatch(allChanges.length);
+          await snapshotKvChange();
           await recordChangesWithRetry(
             changeTracking,
             allChanges.map((change, i) => ({
@@ -1040,6 +1061,7 @@ async function executeMutationCore(
           );
         } else {
           const serverSeq = await changeTracking.getNextServerSeq();
+          await snapshotKvChange();
           // FIX-REL-002: Use shared retry helper for change-tracking parity with push path
           await recordChangeWithRetry(changeTracking, {
             serverSeq,

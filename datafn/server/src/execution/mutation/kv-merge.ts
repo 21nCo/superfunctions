@@ -77,8 +77,9 @@ export function mergeKvValue(stored: unknown, patch: unknown): unknown {
  * Atomicity per record:
  * - Inside a database transaction, a no-op update first takes the row lock, so
  *   the read and the write cannot interleave with another merge of the record.
- * - Without transactions (Drizzle on SQLite and D1), the write is conditional
- *   on the value that was read and retries after a concurrent change.
+ * - Without transactions (Drizzle on SQLite and D1), every write is
+ *   conditional on the value that was read and retries after a concurrent
+ *   change. It never falls back to an unconditional write.
  */
 export async function updateKvRecordMerging(params: {
   db: Adapter;
@@ -143,20 +144,17 @@ export async function updateKvRecordMerging(params: {
     return written;
   }
 
-  let previousFingerprint: string | undefined;
+  // Every attempt is a compare-and-swap on the value it read, so a write never
+  // lands on a value it did not merge from. A miss means another writer
+  // changed the record in between; read again and retry.
   for (let attempt = 0; attempt < KV_MERGE_MAX_ATTEMPTS; attempt += 1) {
     const stored = await readStored();
     const current = stored.value ?? null;
     const written = withMergedValue(stored);
-    const fingerprint = JSON.stringify(current);
-    // A conditional write that missed while the value stayed the same means
-    // the store cannot compare this stored representation (for example JSON
-    // written outside DataFn). Fall back to a plain write of the fresh merge.
-    const conditional = fingerprint !== previousFingerprint;
-    previousFingerprint = fingerprint;
-    const updateWhere: WhereClause[] = conditional
-      ? [...where, { field: "value", operator: "eq", value: current }]
-      : where;
+    const updateWhere: WhereClause[] = [
+      ...where,
+      { field: "value", operator: "eq", value: current },
+    ];
     if (await tryUpdate(updateWhere, written)) {
       return written;
     }
@@ -165,4 +163,35 @@ export async function updateKvRecordMerging(params: {
   throw new Error(
     `KV merge of ${id} did not settle after ${KV_MERGE_MAX_ATTEMPTS} concurrent attempts`,
   );
+}
+
+/**
+ * The change record for a KV value merge, carrying the value stored now.
+ *
+ * Clients apply the change with the highest serverSeq for a record as its
+ * whole value, but concurrent requests can allocate their sequence numbers in
+ * a different order than they wrote the record. Call this only after the
+ * change's serverSeq was allocated, and after this request's write: any merge
+ * that wrote later allocates a higher serverSeq and reads again, so the
+ * record's latest change always carries the complete stored value. Inside a
+ * transaction the row lock is still held, so this reads this request's write.
+ *
+ * When the record is gone (deleted after this write), the record is returned
+ * unchanged.
+ */
+export async function readKvChangeRecord(params: {
+  db: Adapter;
+  resource: string;
+  id: string;
+  namespace?: string;
+  record: Record<string, unknown>;
+}): Promise<Record<string, unknown>> {
+  const { db, resource, id, namespace, record } = params;
+  const row = await db.findOne<Record<string, unknown>>({
+    model: resource,
+    where: [{ field: "id", operator: "eq", value: id }],
+    namespace,
+  });
+  if (!row || !Object.prototype.hasOwnProperty.call(row, "value")) return record;
+  return { ...record, value: row.value };
 }

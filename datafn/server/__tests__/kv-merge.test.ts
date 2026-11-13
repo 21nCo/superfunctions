@@ -90,6 +90,28 @@ async function expectPullsCarryFullValue(call: (route: string, body: unknown) =>
   expect(cloned.result.data.kv).toEqual([{ id: "kv:prefs", value: mergedValue }]);
 }
 
+/**
+ * The latest change for the record, as each pull kind and the writer's own
+ * pull apply it, carries exactly the expected value.
+ */
+async function expectLatestKvChangeCarries(
+  call: (route: string, body: unknown) => Promise<Json>,
+  expected: Json,
+) {
+  for (const clientId of ["client:a", "client:fresh"]) {
+    const globalPull = await call("pull", { clientId, cursor: "0" });
+    const kvChanges = globalPull.result.changes.filter((change: Json) => change.id === "kv:prefs");
+    expect(kvChanges.at(-1).record.value).toEqual(expected);
+
+    const resourcePull = await call("pull", { clientId, cursors: { kv: "0" } });
+    const pulled = [
+      ...(resourcePull.result.records?.kv ?? []),
+      ...(resourcePull.result.merged?.kv ?? []),
+    ].filter((record: Json) => record.id === "kv:prefs");
+    expect(pulled.at(-1).value).toEqual(expected);
+  }
+}
+
 describe("DATA-8: KV merge keeps every top-level key", () => {
   it("merges partial values sent to /mutation and pulls the full value", async () => {
     const { call, storedValue } = await serve();
@@ -163,22 +185,12 @@ describe("DATA-8: KV merge keeps every top-level key", () => {
     expect(read.result.data).toEqual([{ id: "note:1", meta: { b: 2 } }]);
   });
 
-  it("keeps both keys when two merges into one record run concurrently", async () => {
-    const base = memoryAdapter();
-    // Delay every KV read so the two requests overlap between read and write.
-    const slowReads = new Proxy(base, {
-      get(target, property, receiver) {
-        if (property === "findOne") {
-          return async (params: Parameters<Adapter["findOne"]>[0]) => {
-            const row = await target.findOne(params);
-            if (params.model === "kv") await new Promise((resolve) => setTimeout(resolve, 5));
-            return row;
-          };
-        }
-        return Reflect.get(target, property, receiver);
-      },
-    }) as Adapter;
-    const { call, storedValue } = await serve(slowReads);
+  it("keeps every key when merges into one record arrive concurrently on both write paths", async () => {
+    // The memory adapter runs each transaction as one queued operation, so
+    // this checks the end-to-end outcome for concurrent requests on memory. It
+    // does not exercise the row-lock step, which only matters on a database
+    // that runs transactions concurrently (Postgres).
+    const { call, storedValue } = await serve();
     await call("mutation", kvMutation({ seed: true }));
 
     const results = await Promise.all([
@@ -187,6 +199,72 @@ describe("DATA-8: KV merge keeps every top-level key", () => {
       call("mutation", kvMutation({ fromC: 3 }, { clientId: "client:c" })),
     ]);
     expect(results.map((res) => res.result.ok)).toEqual([true, true, true]);
-    expect(await storedValue()).toEqual({ seed: true, fromA: 1, fromB: 2, fromC: 3 });
+    const full = { seed: true, fromA: 1, fromB: 2, fromC: 3 };
+    expect(await storedValue()).toEqual(full);
+    await expectLatestKvChangeCarries(call, full);
+  });
+
+  it("records the full value last when a concurrent push commits between a multi-mutation push's changes", async () => {
+    // Device A pushes [note insert, kv merge]. Its first change reserves
+    // serverSeqs for the whole request. Device B's push to another server
+    // commits a merge of the same KV record before A's merge runs, so B's
+    // change takes a serverSeq above the one A reserved earlier.
+    const base = memoryAdapter();
+    let afterNoteInsert: (() => Promise<unknown>) | undefined;
+    const deviceA = new Proxy(base, {
+      get(target, property, receiver) {
+        if (property !== "transaction") return Reflect.get(target, property, receiver);
+        return async (callback: (trx: Adapter) => Promise<unknown>) => {
+          let insertedNote = false;
+          const result = await target.transaction!(async (trx: Adapter) =>
+            callback(new Proxy(trx, {
+              get(trxTarget, trxProperty, trxReceiver) {
+                const value = Reflect.get(trxTarget, trxProperty, trxReceiver);
+                if (trxProperty !== "create") return value;
+                return async (params: Parameters<Adapter["create"]>[0]) => {
+                  const created = await (value as Adapter["create"]).call(trxTarget, params);
+                  if (params.model === "note") insertedNote = true;
+                  return created;
+                };
+              },
+            }) as Adapter),
+          );
+          const run = insertedNote ? afterNoteInsert : undefined;
+          if (run) {
+            afterNoteInsert = undefined;
+            await run();
+          }
+          return result;
+        };
+      },
+    }) as Adapter;
+    const a = await serve(deviceA);
+    const b = await serve(base);
+    await a.call("mutation", kvMutation({ seed: true }));
+
+    afterNoteInsert = () =>
+      b.call("push", { clientId: "client:b", mutations: [kvMutation({ fromB: 2 }, { clientId: "client:b" })] });
+    const pushed = await a.call("push", {
+      clientId: "client:a",
+      mutations: [
+        {
+          resource: "note",
+          version: 1,
+          operation: "insert",
+          id: "note:race",
+          clientId: "client:a",
+          mutationId: "note-race",
+          record: { meta: {} },
+        },
+        kvMutation({ fromA: 1 }),
+      ],
+    });
+    expect(pushed.result.ok).toBe(true);
+    expect(afterNoteInsert).toBeUndefined();
+
+    const full = { seed: true, fromA: 1, fromB: 2 };
+    expect(await a.storedValue()).toEqual(full);
+    await expectLatestKvChangeCarries(a.call, full);
+    await expectLatestKvChangeCarries(b.call, full);
   });
 });

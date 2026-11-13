@@ -4,6 +4,9 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+// @datafn/server already dev-depends on @datafn/client, so the client cannot
+// declare it back without a package cycle. It resolves from the workspace, and
+// datafn/client/turbo.json builds it before this package's tests run.
 import { createDatafnServer } from "@datafn/server";
 import { memoryAdapter } from "@superfunctions/db/adapters";
 import { createDatafnClient } from "../src/client.js";

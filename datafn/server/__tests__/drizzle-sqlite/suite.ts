@@ -406,6 +406,51 @@ export function describeDrizzleSqliteConformance(
       const storedKvValue = async () =>
         JSON.parse(String((await harness.all(`SELECT value FROM kv WHERE id = 'kv:prefs'`))[0]?.value));
 
+      type Hook = (() => Promise<unknown>) | undefined;
+      /**
+       * Wraps a server's adapter so other servers' requests run around its
+       * conditional KV value writes: `before[n]` and `after[n]` run around the
+       * n-th write attempt. `ran` counts the attempts.
+       */
+      function aroundKvWrites(hooks: { before?: Hook[]; after?: Hook[] }) {
+        const state = { ran: 0 };
+        const wrap = (adapter: Adapter) => new Proxy(adapter, {
+          get(target, property, receiver) {
+            if (property !== "update") return Reflect.get(target, property, receiver);
+            return async (params: Parameters<Adapter["update"]>[0]) => {
+              const conditional =
+                params.model === "kv" && params.where?.some((clause) => clause.field === "value");
+              if (!conditional) return target.update(params);
+              const n = state.ran;
+              state.ran += 1;
+              await hooks.before?.[n]?.();
+              try {
+                return await target.update(params);
+              } finally {
+                await hooks.after?.[n]?.();
+              }
+            };
+          },
+        });
+        return { state, wrap };
+      }
+
+      /** The record's latest change carries `expected` for every pull kind and device. */
+      async function expectLatestKvChange(app: Started, expected: Json) {
+        for (const clientId of ["device-a", "device-fresh"]) {
+          const global = await app.call("POST", "/datafn/pull", { clientId, cursor: "0" });
+          const changes = global.body.result.changes.filter((change: Json) => change.id === "kv:prefs");
+          expect(changes.at(-1).record.value).toEqual(expected);
+
+          const perTable = await app.call("POST", "/datafn/pull", { clientId, cursors: { kv: "0" } });
+          const pulled = [
+            ...(perTable.body.result.records?.kv ?? []),
+            ...(perTable.body.result.merged?.kv ?? []),
+          ].filter((record: Json) => record.id === "kv:prefs");
+          expect(pulled.at(-1).value).toEqual(expected);
+        }
+      }
+
       it("keeps every top-level key across partial merges and pulls the full value", async () => {
         const app = await start();
         const first = await app.call("POST", "/datafn/mutation", kvMerge({ name: "Ada", appearance: { theme: "dark" } }));
@@ -463,6 +508,70 @@ export function describeDrizzleSqliteConformance(
         ]);
         expect(concurrent.map((res) => res.body.result.ok)).toEqual([true, true]);
         expect(await storedKvValue()).toEqual({ seed: true, fromA: 1, fromB: 2, pushA: 1, pushB: 2 });
+      });
+
+      it("never writes over a value it did not merge from when the value changes and changes back between attempts", async () => {
+        const other = await start();
+        await other.call("POST", "/datafn/mutation", kvMerge({ k: 1 }));
+        const merge = (value: Json) => () => other.call("POST", "/datafn/mutation", kvMerge(value, "device-b"));
+        // Attempt 1 read { k: 1 }, then { k: 2 } lands, so its write misses.
+        // { k: 1 } lands again before attempt 2 reads the same value it saw
+        // before, then { d: 4 } lands before attempt 2 writes.
+        const around = aroundKvWrites({
+          before: [merge({ k: 2 }), merge({ d: 4 })],
+          after: [merge({ k: 1 })],
+        });
+        const app = await serve(around.wrap);
+
+        const merged = await app.call("POST", "/datafn/mutation", kvMerge({ a: 1 }));
+        expect(merged.body.result.ok).toBe(true);
+        expect(around.state.ran).toBe(3);
+        expect(await storedKvValue()).toEqual({ k: 1, d: 4, a: 1 });
+        await expectLatestKvChange(app, { k: 1, d: 4, a: 1 });
+      });
+
+      for (const route of ["/datafn/mutation", "/datafn/push"]) {
+        it(`records the full value last when another server merges between a merge's write and its change (${route})`, async () => {
+          const other = await start();
+          await other.call("POST", "/datafn/mutation", kvMerge({ seed: true }));
+          // The other server writes and records its change after this merge
+          // wrote, so its serverSeq is lower than the one this merge takes.
+          const around = aroundKvWrites({
+            after: [() => other.call("POST", "/datafn/mutation", kvMerge({ fromB: 2 }, "device-b"))],
+          });
+          const app = await serve(around.wrap);
+
+          const body = route === "/datafn/push"
+            ? { clientId: "device-a", mutations: [kvMerge({ fromA: 1 })] }
+            : kvMerge({ fromA: 1 });
+          const merged = await app.call("POST", route, body);
+          expect(merged.body.result.ok).toBe(true);
+          expect(around.state.ran).toBe(1);
+          expect(await storedKvValue()).toEqual({ seed: true, fromA: 1, fromB: 2 });
+          await expectLatestKvChange(app, { seed: true, fromA: 1, fromB: 2 });
+        });
+      }
+
+      it("records the full value last when a single push races a multi-mutation push", async () => {
+        const other = await start();
+        await other.call("POST", "/datafn/mutation", kvMerge({ seed: true }));
+        // The task change reserves serverSeqs for the whole request. The other
+        // server's push merges and records before this request's KV write.
+        const around = aroundKvWrites({
+          before: [
+            () => other.call("POST", "/datafn/push", { clientId: "device-b", mutations: [kvMerge({ fromB: 2 }, "device-b")] }),
+          ],
+        });
+        const app = await serve(around.wrap);
+
+        const pushed = await app.call("POST", "/datafn/push", {
+          clientId: "device-a",
+          mutations: [{ ...insertTask("task:race", "Race", 1), clientId: "device-a" }, kvMerge({ fromA: 1 })],
+        });
+        expect(pushed.body.result.ok).toBe(true);
+        expect(around.state.ran).toBe(2);
+        expect(await storedKvValue()).toEqual({ seed: true, fromA: 1, fromB: 2 });
+        await expectLatestKvChange(app, { seed: true, fromA: 1, fromB: 2 });
       });
     });
 
