@@ -1,6 +1,6 @@
 {
   "name": "@filefn/server",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "FileFn server SDK for file upload/download handling",
   "type": "module",
   "main": "./dist/index.js",
@@ -47,6 +47,7 @@
     "@superfunctions/observability": "0.0.3"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "4.20251120.0",
     "@filefn/processing": "0.1.2",
     "@superfunctions/storage-local": "0.2.1",
     "sharp": "^0.33.5",
