@@ -1,8 +1,8 @@
 // The @uifn/dom bindings each headless adapter primitive wires, shared by the React (phase 11), Svelte (phase 12)
 // and Solid (phase 13) generators. The installers live in @uifn/dom (src/adapter-bindings.ts) and never branch on
-// a primitive name: each generated definition passes its own parts and state keys, so an app that imports one
-// primitive bundles only that primitive's installers and descriptors (and floating-ui only when one of them
-// positions a popup). Installers run in the order listed here.
+// a primitive name: each generated definition passes its own parts, state keys and gesture driver, so an app that
+// imports one primitive bundles only that primitive's installers, descriptors and driver (and floating-ui only
+// when one of them positions a popup). Installers run in the order listed here.
 
 const ITEM_CONTROLS = Object.freeze({ stateKey: 'focusedItem', parts: ['itemControl', 'item'] });
 
@@ -55,7 +55,7 @@ const described = (installer, factory, descriptor) => (
 /**
  * The bindings a catalog primitive's generated definition lists, in installation order. `installer` names the
  * kind; the definition uses `ready` (a @uifn/dom installer) or calls `factory` with `descriptor` (inline data)
- * or `target` (a @uifn/dom roving target).
+ * or `target` (a @uifn/dom roving target), after the @uifn/dom gesture `driver` when there is one.
  */
 export function adapterDomBindingSpecs(primitive) {
   const specs = [];
@@ -66,7 +66,9 @@ export function adapterDomBindingSpecs(primitive) {
   if (POPUP[primitive.name]) specs.push(described('popupDomBinding', 'createUIFnPopupAdapterBinding', POPUP[primitive.name]));
   if (primitive.name === 'NavigationMenu') specs.push(binding('navigationMenuDomBinding', 'uifnNavigationMenuAdapterBinding'));
   if (ROVING_FOCUS[primitive.name]) specs.push(described('rovingFocusDomBinding', 'createUIFnRovingFocusAdapterBinding', ROVING_FOCUS[primitive.name]));
-  if (RANGE_GESTURE[primitive.name]) specs.push(described('rangeGestureDomBinding', 'createUIFnRangeGestureAdapterBinding', RANGE_GESTURE[primitive.name]));
+  if (RANGE_GESTURE[primitive.name]) {
+    specs.push({ ...described('rangeGestureDomBinding', 'createUIFnRangeGestureAdapterBinding', RANGE_GESTURE[primitive.name]), driver: `uifn${primitive.name}GestureDriver` });
+  }
   return specs;
 }
 
@@ -77,14 +79,16 @@ export function adapterDomBindings(primitive) {
 
 function expression(spec) {
   if (spec.ready) return spec.ready;
-  return `/* @__PURE__ */ ${spec.factory}(${spec.target ?? JSON.stringify(spec.descriptor)})`;
+  const driver = spec.driver ? `${spec.driver}, ` : '';
+  return `/* @__PURE__ */ ${spec.factory}(${driver}${spec.target ?? JSON.stringify(spec.descriptor)})`;
 }
 
 /** The @uifn/dom import and definition field a generated adapter module needs, or empty strings for none. */
 export function adapterDomBindingsSource(primitive) {
   const specs = adapterDomBindingSpecs(primitive);
   if (!specs.length) return { importLine: '', field: '' };
-  const imports = [...new Set(specs.flatMap((spec) => [spec.ready, spec.factory, spec.target].filter(Boolean)))].sort();
+  const imports = [...new Set(specs.flatMap((spec) => [spec.ready, spec.factory, spec.driver, spec.target].filter(Boolean)))]
+    .sort((left, right) => (left < right ? -1 : Number(left > right)));
   return {
     importLine: `import { ${imports.join(', ')} } from '@uifn/dom';\n`,
     field: `\n  domBindings: [${specs.map(expression).join(', ')}],`,

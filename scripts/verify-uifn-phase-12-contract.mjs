@@ -109,7 +109,7 @@ export function verifyPhase12Contract(options = {}) {
   const ownershipSource = `${bridgeSource}\n${installers}`;
   for (const problem of sharedAdapterInstallerIssues(installers, catalog.primitives)) add('UIFN_SVELTE_DOM_OWNERSHIP_MISSING', problem);
   if (!bridgeSource.includes('definition.domBindings')) add('UIFN_SVELTE_DOM_OWNERSHIP_MISSING', 'definition.domBindings');
-  for (const token of ['acquireUIFnDomPlatform', 'createUIFnOverlayDomBinding', 'createUIFnRangeGestureDomBinding', 'createUIFnNativeFormResetBinding', 'createUIFnPortal']) {
+  for (const token of ['acquireUIFnDomPlatform', 'createUIFnOverlayDomBinding', 'createUIFnRangeGestureDriverBinding', 'createUIFnNativeFormResetBinding', 'createUIFnPortal']) {
     if (!ownershipSource.includes(token)) add('UIFN_SVELTE_DOM_OWNERSHIP_MISSING', token);
   }
 

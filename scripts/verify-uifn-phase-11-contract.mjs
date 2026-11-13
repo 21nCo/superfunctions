@@ -61,7 +61,7 @@ export async function verifyPhase11Contract({ requireDist = false } = {}) {
   const substrate = `${compound}\n${installers}`;
   for (const problem of sharedAdapterInstallerIssues(installers, catalog.primitives)) issues.push(issue('UIFN_FRAMEWORK_BEHAVIOR_FORK', problem, 'uifn/dom/src/adapter-bindings.ts'));
   if (!compound.includes('definition.domBindings')) issues.push(issue('UIFN_FRAMEWORK_BEHAVIOR_FORK', 'React substrate never installs definition.domBindings.', 'uifn/react/src/internal/compound.tsx'));
-  for (const required of ['useSyncExternalStore', 'createUIFnOverlayDomBinding', 'createUIFnMenuDomBinding', 'createUIFnRangeGestureDomBinding', 'createUIFnNativeFormResetBinding', 'this.current?.update', '.destroy()']) {
+  for (const required of ['useSyncExternalStore', 'createUIFnOverlayDomBinding', 'createUIFnMenuDomBinding', 'createUIFnRangeGestureDriverBinding', 'createUIFnNativeFormResetBinding', 'this.current?.update', '.destroy()']) {
     if (!substrate.includes(required)) issues.push(issue('UIFN_FRAMEWORK_BEHAVIOR_FORK', `React substrate omits ${required}.`, 'uifn/react/src/internal/compound.tsx'));
   }
   for (const forbidden of ['useControllableState', 'useRovingFocus', 'useFocusTrap', 'useOutsideClick', 'usePosition', 'destroyTimerRef']) {

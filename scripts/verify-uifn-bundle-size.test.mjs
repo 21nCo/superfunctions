@@ -108,6 +108,8 @@ test("adapter sources may not import the @uifn/core root barrel, even for types"
   write("uifn/svelte/lib/internal/Part.svelte", "<div></div>\n<script lang=\"ts\">\n  import type { UIFnController } from\n    '@uifn/core';\n</script>\n");
   // Template expressions load modules too, and a `generics` attribute may contain `>`.
   write("uifn/svelte/lib/internal/Lazy.svelte", "<script lang=\"ts\" generics=\"T extends Map<string, number>\">\n  let { value }: { value: T } = $props();\n</script>\n<button onclick={async () => console.log(await import('@uifn/core'))}>Load</button>\n{#await import(\n  \"@uifn/core\"\n) then core}{core}{/await}\n");
+  // A backtick specifier, a comment before it and a module script are imports; comments, text and styles are not.
+  write("uifn/svelte/lib/internal/Markup.svelte", "<script module lang=\"ts\">\n  export type Core = typeof import('@uifn/core');\n</script>\n<!-- {import('@uifn/core')} -->\n<p>import('@uifn/core')</p>\n<button onclick={() => import(/* lazy */ `@uifn/core`)}>Load</button>\n<style>\n  p::after { content: \"import('@uifn/core')\"; }\n</style>\n");
   // Strings and comments that mention the root barrel load nothing, and subpaths are allowed.
   write("uifn/react/src/text.ts", "// import x from '@uifn/core';\nexport const note = \"from '@uifn/core'\";\nimport { a } from '@uifn/core/parts';\n");
   assert.deepEqual(findRootBarrelImports(root).sort(), [
@@ -117,6 +119,8 @@ test("adapter sources may not import the @uifn/core root barrel, even for types"
     "uifn/solid/src/split-dynamic.ts:2",
     "uifn/svelte/lib/internal/Lazy.svelte:4",
     "uifn/svelte/lib/internal/Lazy.svelte:6",
+    "uifn/svelte/lib/internal/Markup.svelte:2",
+    "uifn/svelte/lib/internal/Markup.svelte:6",
     "uifn/svelte/lib/internal/Part.svelte:4",
     "uifn/svelte/lib/internal/Root.svelte:2",
     "uifn/svelte/lib/split.ts:2",
@@ -224,6 +228,30 @@ test("the descriptor markers find other primitives' roving, gesture and popup wi
       assert.ok(hits[primitive]?.length >= 1, `${framework}: expected ${primitive} markers, found ${JSON.stringify(hits)}`);
     }
   }
+});
+
+test("a one-primitive gesture app bundles only that primitive's gesture driver", async (t) => {
+  requireBuiltAdapters();
+  // Pointer actions only another range-gesture primitive's driver calls (Splitter, Carousel, ScrollArea,
+  // ColorPicker, ImageCropper); a driver chosen by primitive name at runtime bundles all of them.
+  const foreign = ["resizeCancel", "dragCancel", "dragHorizontalThumb", "setChannel", "startResize"];
+  for (const framework of ["react", "svelte", "solid"]) {
+    const directory = tempDir(t, ".binding-marker-check-", path.join(FIXTURE_ROOT, framework));
+    const entry = path.join(directory, framework === "svelte" ? "entry.ts" : "entry.tsx");
+    writeFileSync(entry, `import { Slider } from '@uifn/${framework}/slider';\nconsole.log(Slider);\n`);
+    const { source } = await buildFixture({ id: `${framework}/slider-gesture-check`, framework, primitive: "tabs", entry });
+    assert.ok(source.includes("pointerCancel"), `${framework}: the Slider build lost its own gesture driver`);
+    assert.deepEqual(foreign.filter((marker) => source.includes(marker)), [], `${framework}: Slider bundles another driver`);
+  }
+});
+
+test("a Svelte Menubar build carries the Menubar marker that the Tabs and Menu fixtures must not", async (t) => {
+  requireBuiltAdapters();
+  const directory = tempDir(t, ".binding-marker-check-", path.join(FIXTURE_ROOT, "svelte"));
+  const entry = path.join(directory, "entry.ts");
+  writeFileSync(entry, "import { Menubar } from '@uifn/svelte/menubar';\nconsole.log(Menubar);\n");
+  const { source } = await buildFixture({ id: "svelte/menubar-marker-check", framework: "svelte", primitive: "tabs", entry });
+  assert.ok(findUnrelatedPrimitiveCode(source, "tabs").some((hit) => hit.primitive === "menubar"));
 });
 
 test("a Tabs fixture that bundles another primitive's descriptor fails the check", () => {

@@ -12,12 +12,12 @@
       "budgetGzipBytes": 58304
     },
     "svelte/tabs": {
-      "measuredGzipBytes": 39091,
-      "budgetGzipBytes": 43001
+      "measuredGzipBytes": 38754,
+      "budgetGzipBytes": 42630
     },
     "svelte/menu": {
-      "measuredGzipBytes": 54140,
-      "budgetGzipBytes": 59555
+      "measuredGzipBytes": 53807,
+      "budgetGzipBytes": 59188
     },
     "solid/tabs": {
       "measuredGzipBytes": 41133,

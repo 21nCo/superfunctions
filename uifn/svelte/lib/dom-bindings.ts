@@ -10,10 +10,19 @@ import {
   uifnPinInputRovingTarget,
   uifnPopupTriggerRovingTarget,
   uifnTourOverlayAdapterBinding,
+  uifnAngleSliderGestureDriver,
+  uifnCarouselGestureDriver,
+  uifnColorPickerGestureDriver,
+  uifnImageCropperGestureDriver,
+  uifnScrollAreaGestureDriver,
+  uifnSignaturePadGestureDriver,
+  uifnSliderGestureDriver,
+  uifnSplitterGestureDriver,
   type UIFnAdapterGestureParts,
   type UIFnAdapterPopupParts,
   type UIFnAdapterRovingParts,
   type UIFnAdapterRovingTarget,
+  type UIFnRangeGestureDriver,
 } from '@uifn/dom';
 import type { SvelteDomBindingInstaller } from './internal/compound.js';
 import {
@@ -24,7 +33,10 @@ import {
   type SvelteDomBindingKind,
 } from './internal/dom-binding-plan.js';
 
+export { svelteMenubarCommitFocus } from './internal/menubar-commit-focus.js';
 export type {
+  SvelteCommitFocus,
+  SvelteCommitFocusHandle,
   SvelteDomBindingContext,
   SvelteDomBindingHandle,
   SvelteDomBindingInstaller,
@@ -41,6 +53,17 @@ const ROVING_TARGETS: Readonly<Record<string, UIFnAdapterRovingTarget>> = {
   uifnMenubarRovingTarget,
   uifnPinInputRovingTarget,
   uifnPopupTriggerRovingTarget,
+};
+
+const GESTURE_DRIVERS: Readonly<Record<string, UIFnRangeGestureDriver>> = {
+  AngleSlider: uifnAngleSliderGestureDriver,
+  Carousel: uifnCarouselGestureDriver,
+  ColorPicker: uifnColorPickerGestureDriver,
+  ImageCropper: uifnImageCropperGestureDriver,
+  ScrollArea: uifnScrollAreaGestureDriver,
+  SignaturePad: uifnSignaturePadGestureDriver,
+  Slider: uifnSliderGestureDriver,
+  Splitter: uifnSplitterGestureDriver,
 };
 
 // Each installer reads only its own table, so importing one of them bundles only that kind of binding. Overlay,
@@ -69,8 +92,10 @@ export const rovingFocusDomBinding: SvelteDomBindingInstaller = (context) => {
 };
 
 export const rangeGestureDomBinding: SvelteDomBindingInstaller = (context) => {
-  const surfaces = RANGE_GESTURE[context.bridge.definition.name];
-  if (surfaces) createUIFnRangeGestureAdapterBinding(surfaces as UIFnAdapterGestureParts)(context);
+  const { name } = context.bridge.definition;
+  const surfaces = RANGE_GESTURE[name];
+  const driver = GESTURE_DRIVERS[name];
+  if (surfaces && driver) createUIFnRangeGestureAdapterBinding(driver, surfaces as UIFnAdapterGestureParts)(context);
 };
 
 const INSTALLERS: Readonly<Record<SvelteDomBindingKind, SvelteDomBindingInstaller>> = {

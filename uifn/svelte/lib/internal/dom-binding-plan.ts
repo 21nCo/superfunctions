@@ -18,6 +18,8 @@ export interface SvelteDomBindingSpec {
   readonly factory?: string;
   readonly descriptor?: Readonly<Record<string, unknown>>;
   readonly target?: string;
+  /** The @uifn/dom gesture driver passed to `factory` before `descriptor`. */
+  readonly driver?: string;
 }
 
 const ITEM_CONTROLS = { stateKey: 'focusedItem', parts: ['itemControl', 'item'] };
@@ -71,6 +73,8 @@ export function svelteDomBindingSpecs(target: { readonly name: string; readonly 
   if (POPUP[name]) specs.push(described('popupDomBinding', 'createUIFnPopupAdapterBinding', POPUP[name]));
   if (name === 'NavigationMenu') specs.push({ installer: 'navigationMenuDomBinding', ready: 'uifnNavigationMenuAdapterBinding' });
   if (ROVING_FOCUS[name]) specs.push(described('rovingFocusDomBinding', 'createUIFnRovingFocusAdapterBinding', ROVING_FOCUS[name]));
-  if (RANGE_GESTURE[name]) specs.push(described('rangeGestureDomBinding', 'createUIFnRangeGestureAdapterBinding', RANGE_GESTURE[name]));
+  if (RANGE_GESTURE[name]) {
+    specs.push({ ...described('rangeGestureDomBinding', 'createUIFnRangeGestureAdapterBinding', RANGE_GESTURE[name]), driver: `uifn${name}GestureDriver` });
+  }
   return specs;
 }

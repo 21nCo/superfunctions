@@ -1,6 +1,6 @@
 import { createScrollAreaController, type ScrollAreaProps } from '@uifn/core/primitives/scroll-area';
 import type { SveltePrimitiveDefinition } from '../../internal/compound.js';
-import { createUIFnRangeGestureAdapterBinding } from '@uifn/dom';
+import { createUIFnRangeGestureAdapterBinding, uifnScrollAreaGestureDriver } from '@uifn/dom';
 
 export const ScrollAreaDefinition: SveltePrimitiveDefinition<ScrollAreaProps> = {
   name: 'ScrollArea',
@@ -10,5 +10,5 @@ export const ScrollAreaDefinition: SveltePrimitiveDefinition<ScrollAreaProps> = 
   inputNames: ["type","scrollHideDelay","orientation","dir"],
   contextKey: Symbol('uifn.ScrollArea'),
   createController: createScrollAreaController as never,
-  domBindings: [/* @__PURE__ */ createUIFnRangeGestureAdapterBinding({"entries":["thumb"]})],
+  domBindings: [/* @__PURE__ */ createUIFnRangeGestureAdapterBinding(uifnScrollAreaGestureDriver, {"entries":["thumb"]})],
 };

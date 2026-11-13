@@ -1,6 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createImageCropperController, type ImageCropperProps, type ImageCropperController } from '@uifn/core/primitives/image-cropper';
-import { createUIFnRangeGestureAdapterBinding } from '@uifn/dom';
+import { createUIFnRangeGestureAdapterBinding, uifnImageCropperGestureDriver } from '@uifn/dom';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -20,7 +20,7 @@ export const ImageCropperDefinition: SolidPrimitiveDefinition<ImageCropperProps>
   inputNames: ["src","crop","defaultCrop","aspectRatio","minSize","maxSize","disabled"],
   context: ImageCropperContext,
   createController: createImageCropperController as never,
-  domBindings: [/* @__PURE__ */ createUIFnRangeGestureAdapterBinding({"parts":["cropArea"],"entries":["handle"]})],
+  domBindings: [/* @__PURE__ */ createUIFnRangeGestureAdapterBinding(uifnImageCropperGestureDriver, {"parts":["cropArea"],"entries":["handle"]})],
 };
 
 function ImageCropperRootElement(props: JSX.IntrinsicElements['div']): JSX.Element {

@@ -1,6 +1,6 @@
 import { createAngleSliderController, type AngleSliderProps } from '@uifn/core/primitives/angle-slider';
 import type { SveltePrimitiveDefinition } from '../../internal/compound.js';
-import { createUIFnRangeGestureAdapterBinding } from '@uifn/dom';
+import { createUIFnRangeGestureAdapterBinding, uifnAngleSliderGestureDriver } from '@uifn/dom';
 
 export const AngleSliderDefinition: SveltePrimitiveDefinition<AngleSliderProps> = {
   name: 'AngleSlider',
@@ -10,5 +10,5 @@ export const AngleSliderDefinition: SveltePrimitiveDefinition<AngleSliderProps> 
   inputNames: ["value","defaultValue","min","max","step","disabled","readOnly"],
   contextKey: Symbol('uifn.AngleSlider'),
   createController: createAngleSliderController as never,
-  domBindings: [/* @__PURE__ */ createUIFnRangeGestureAdapterBinding({"parts":["track"]})],
+  domBindings: [/* @__PURE__ */ createUIFnRangeGestureAdapterBinding(uifnAngleSliderGestureDriver, {"parts":["track"]})],
 };

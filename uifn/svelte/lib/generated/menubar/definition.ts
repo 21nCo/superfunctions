@@ -1,6 +1,7 @@
 import { createMenubarController, type MenubarProps } from '@uifn/core/primitives/menubar';
 import type { SveltePrimitiveDefinition } from '../../internal/compound.js';
 import { createUIFnRovingFocusAdapterBinding, uifnMenubarRovingTarget } from '@uifn/dom';
+import { svelteMenubarCommitFocus } from '../../internal/menubar-commit-focus.js';
 
 export const MenubarDefinition: SveltePrimitiveDefinition<MenubarProps> = {
   name: 'Menubar',
@@ -11,4 +12,5 @@ export const MenubarDefinition: SveltePrimitiveDefinition<MenubarProps> = {
   contextKey: Symbol('uifn.Menubar'),
   createController: createMenubarController as never,
   domBindings: [/* @__PURE__ */ createUIFnRovingFocusAdapterBinding(uifnMenubarRovingTarget)],
+  commitFocus: svelteMenubarCommitFocus,
 };

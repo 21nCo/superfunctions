@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { createAngleSliderController, type AngleSliderProps, type AngleSliderController } from '@uifn/core/primitives/angle-slider';
-import { createUIFnRangeGestureAdapterBinding } from '@uifn/dom';
+import { createUIFnRangeGestureAdapterBinding, uifnAngleSliderGestureDriver } from '@uifn/dom';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -23,7 +23,7 @@ const AngleSliderDefinition: ReactPrimitiveDefinition<AngleSliderProps> = {
   inputNames: ["value","defaultValue","min","max","step","disabled","readOnly"],
   context: AngleSliderContext,
   createController: createAngleSliderController as never,
-  domBindings: [/* @__PURE__ */ createUIFnRangeGestureAdapterBinding({"parts":["track"]})],
+  domBindings: [/* @__PURE__ */ createUIFnRangeGestureAdapterBinding(uifnAngleSliderGestureDriver, {"parts":["track"]})],
 };
 
 export type AngleSliderRootProps = ReactPrimitiveRootProps<AngleSliderProps, 'div'>;

@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { gzipSync } from "node:zlib";
+import { parse as parseSvelte } from "svelte/compiler";
 import ts from "typescript";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -45,8 +46,8 @@ export const UNRELATED_PRIMITIVE_MARKERS = Object.freeze({
     "Popup DOM binding requires content and floating elements.",
   ]),
   slider: Object.freeze([
-    "resizeCancel", // @uifn/dom range-gesture binding (Slider, Splitter, Carousel, AngleSlider, ...)
-    "dragCancel",
+    "create gesture binding", // @uifn/dom gesture binding every range-gesture driver uses (Slider, Splitter, ...)
+    "gesture-pointerdown",
   ]),
   menu: Object.freeze([
     "create menu DOM binding", // @uifn/dom menu binding (Menu, ContextMenu)
@@ -63,6 +64,8 @@ export const UNRELATED_PRIMITIVE_MARKERS = Object.freeze({
   "image-cropper": Object.freeze(['"ImageCropper"', '"cropArea"']),
   splitter: Object.freeze(['"Splitter"', '"resizeHandle"']),
   "date-picker": Object.freeze(['"DatePicker"']),
+  // An adapter substrate that special-cases Menubar by name ships that handling with every primitive.
+  menubar: Object.freeze(['"Menubar"']),
 });
 
 // Each adapter's fixtures build with the Vite and framework plugin its Workbench declares. The framework runtime
@@ -226,10 +229,6 @@ export async function buildFixture(fixture) {
 export const ADAPTER_SOURCE_ROOTS = Object.freeze(["uifn/react/src", "uifn/solid/src", "uifn/svelte/lib"]);
 const ADAPTER_SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".svelte"]);
 const ROOT_BARREL = "@uifn/core";
-// A Svelte <script> element; quoted attribute values (`generics="T extends A<B>"`) may contain `>`.
-const SVELTE_SCRIPT = /<script\b(?:[^>"']|"[^"]*"|'[^']*')*>([\s\S]*?)<\/script>/g;
-// Markup can load a module only through an `import(...)` expression; the specifier may follow on a later line.
-const MARKUP_ROOT_BARREL = /\bimport\s*\(\s*["']@uifn\/core["']/g;
 
 function adapterSources(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -264,22 +263,55 @@ function rootBarrelLines(code, fileName) {
   return lines;
 }
 
+function lineAt(text, offset) {
+  return text.slice(0, offset).split("\n").length;
+}
+
+/** The literal text of a markup specifier node: a string, or a template literal without substitutions. */
+function markupSpecifierText(node) {
+  if (node?.type === "Literal") return node.value;
+  if (node?.type === "TemplateLiteral" && node.expressions.length === 0) return node.quasis[0].value.cooked;
+  return undefined;
+}
+
+/** Every ESTree node under `node` (the Svelte AST links children only through plain properties). */
+function* svelteNodes(node, seen = new WeakSet()) {
+  if (!node || typeof node !== "object" || seen.has(node)) return;
+  seen.add(node);
+  if (typeof node.type === "string") yield node;
+  for (const [key, value] of Object.entries(node)) {
+    if (key === "parent" || key === "metadata") continue;
+    for (const child of Array.isArray(value) ? value : [value]) yield* svelteNodes(child, seen);
+  }
+}
+
+/**
+ * Root-barrel lines of a Svelte component, parsed with the Svelte compiler: its `<script>` blocks go through the
+ * TypeScript scan, and template expressions are checked for `import(...)`, so comments, text and styles that only
+ * mention the barrel are never reported.
+ */
+function svelteRootBarrelLines(text, fileName) {
+  const ast = parseSvelte(text, { modern: true, filename: fileName });
+  const lines = [];
+  for (const script of [ast.module, ast.instance].filter(Boolean)) {
+    const { start, end } = script.content;
+    const offsetLine = lineAt(text, start) - 1;
+    lines.push(...rootBarrelLines(text.slice(start, end), fileName).map((line) => line + offsetLine));
+  }
+  for (const node of svelteNodes(ast.fragment)) {
+    const specifier = node.type === "ImportExpression" ? node.source : node.type === "TSImportType" ? node.argument?.literal ?? node.argument : undefined;
+    if (markupSpecifierText(specifier) === ROOT_BARREL) lines.push(lineAt(text, specifier.start));
+  }
+  return lines;
+}
+
 /** `path:line` of every adapter import of the @uifn/core root barrel, however its statement is laid out. */
 export function findRootBarrelImports(root = repoRoot, sourceRoots = ADAPTER_SOURCE_ROOTS) {
   const hits = [];
   for (const sourceRoot of sourceRoots) {
     for (const file of adapterSources(path.join(root, sourceRoot))) {
       const text = readFileSync(file, "utf8");
-      const lineAt = (offset) => text.slice(0, offset).split("\n").length;
-      const scripts = file.endsWith(".svelte")
-        ? [...text.matchAll(SVELTE_SCRIPT)].map((match) => ({ code: match[1], offset: match.index + match[0].length - match[1].length - "</script>".length }))
-        : [{ code: text, offset: 0 }];
-      const lines = scripts.flatMap(({ code, offset }) => rootBarrelLines(code, file).map((line) => line + lineAt(offset) - 1));
-      if (file.endsWith(".svelte")) {
-        // Blank the script blocks (keeping offsets), then scan the template expressions that remain.
-        const markup = text.replace(SVELTE_SCRIPT, (block) => block.replace(/[^\n]/g, " "));
-        for (const match of markup.matchAll(MARKUP_ROOT_BARREL)) lines.push(lineAt(match.index + match[0].indexOf("@uifn/core")));
-      }
+      const lines = file.endsWith(".svelte") ? svelteRootBarrelLines(text, file) : rootBarrelLines(text, file);
       for (const line of lines.sort((left, right) => left - right)) hits.push(`${path.relative(root, file)}:${line}`);
     }
   }

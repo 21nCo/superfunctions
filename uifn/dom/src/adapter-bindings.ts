@@ -1,5 +1,5 @@
 import type { UIFnController } from '@uifn/core/controller';
-import { createUIFnRangeGestureDomBinding } from './gesture';
+import { createUIFnRangeGestureDriverBinding, type UIFnRangeGestureDriver } from './gesture';
 import {
   createUIFnMenuDomBinding,
   createUIFnNavigationMenuDomBinding,
@@ -12,8 +12,7 @@ import { createUIFnPopupDomBinding } from './popup';
 // The DOM wiring the headless adapters (@uifn/react, @uifn/svelte, @uifn/solid) install for a mounted primitive.
 // Each generated definition lists the installers its primitive needs, with that primitive's parts and state keys
 // as arguments, so an installer never branches on a primitive name and a one-primitive app bundles only the
-// installers and descriptors it uses. (createUIFnRangeGestureDomBinding, which the range-gesture installer calls,
-// still selects its pointer handling by `primitive`.)
+// installers, descriptors and gesture driver it uses.
 
 type AnyRecord = Record<string, unknown>;
 
@@ -224,7 +223,11 @@ export interface UIFnAdapterGestureParts {
   readonly numericEntryValues?: boolean;
 }
 
-export function createUIFnRangeGestureAdapterBinding(surfaces: UIFnAdapterGestureParts): UIFnAdapterDomBinding {
+/** Binds every gesture surface of a primitive to that primitive's `driver` (for example uifnSliderGestureDriver). */
+export function createUIFnRangeGestureAdapterBinding(
+  driver: UIFnRangeGestureDriver,
+  surfaces: UIFnAdapterGestureParts,
+): UIFnAdapterDomBinding {
   return ({ bridge, controller, platform, add }) => {
     if (!controller) return;
     const targets: Array<{ value?: unknown; element: HTMLElement }> = [];
@@ -238,9 +241,9 @@ export function createUIFnRangeGestureAdapterBinding(surfaces: UIFnAdapterGestur
       }
     }
     for (const target of targets) {
-      add(createUIFnRangeGestureDomBinding({
+      add(createUIFnRangeGestureDriverBinding({
         scope: platform.scope,
-        primitive: bridge.definition.name as never,
+        driver,
         element: target.element,
         value: target.value,
         controller: controller as never,

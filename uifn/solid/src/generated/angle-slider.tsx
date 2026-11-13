@@ -1,6 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createAngleSliderController, type AngleSliderProps, type AngleSliderController } from '@uifn/core/primitives/angle-slider';
-import { createUIFnRangeGestureAdapterBinding } from '@uifn/dom';
+import { createUIFnRangeGestureAdapterBinding, uifnAngleSliderGestureDriver } from '@uifn/dom';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -20,7 +20,7 @@ export const AngleSliderDefinition: SolidPrimitiveDefinition<AngleSliderProps> =
   inputNames: ["value","defaultValue","min","max","step","disabled","readOnly"],
   context: AngleSliderContext,
   createController: createAngleSliderController as never,
-  domBindings: [/* @__PURE__ */ createUIFnRangeGestureAdapterBinding({"parts":["track"]})],
+  domBindings: [/* @__PURE__ */ createUIFnRangeGestureAdapterBinding(uifnAngleSliderGestureDriver, {"parts":["track"]})],
 };
 
 function AngleSliderRootElement(props: JSX.IntrinsicElements['div']): JSX.Element {

@@ -6,7 +6,6 @@ import {
   acquireUIFnDomPlatform,
   createUIFnNativeFormResetBinding,
   createUIFnPortal,
-  focusUIFnElement,
   type UIFnAdapterDomBindingContext,
   type UIFnAdapterDomBindingHandle,
   type UIFnDomResourceSnapshot,
@@ -26,6 +25,18 @@ export type SvelteDomBindingHandle = UIFnAdapterDomBindingHandle;
 /** Wires one kind of @uifn/dom behavior for a mounted primitive; the @uifn/dom adapter installers fit here. */
 export type SvelteDomBindingInstaller = (context: SvelteDomBindingContext) => void;
 
+/** Focus work a primitive must run after Svelte commits controller-driven attributes to the DOM. */
+export interface SvelteCommitFocusHandle {
+  /** The live controller's state changed; Svelte has not yet committed the matching action parameters. */
+  changed(): void;
+  /** A DOM commit for the live controller has landed. */
+  committed(): void;
+  destroy(): void;
+}
+
+/** Created for each live controller of a definition that lists it. */
+export type SvelteCommitFocus = (bridge: SveltePrimitiveBridge<any>, controller: AnyController) => SvelteCommitFocusHandle;
+
 export interface SveltePrimitiveDefinition<TInputs extends object = AnyRecord> {
   readonly name: string;
   readonly family: string;
@@ -37,6 +48,8 @@ export interface SveltePrimitiveDefinition<TInputs extends object = AnyRecord> {
   readonly contract?: AnyStaticContract;
   /** The @uifn/dom behaviors this primitive wires, in installation order; none when absent. */
   readonly domBindings?: readonly SvelteDomBindingInstaller[];
+  /** Focus work that waits for Svelte's DOM commit; none when absent. */
+  readonly commitFocus?: SvelteCommitFocus;
 }
 
 export interface SveltePrimitiveRenderPayload {
@@ -226,8 +239,7 @@ export class SveltePrimitiveBridge<TInputs extends object = AnyRecord> {
   private domRefreshEpoch = 0;
   private domCommitQueued = false;
   private domBindings: readonly SvelteDomBinding[] = [];
-  private cancelDeferredRovingFocus: (() => void) | null = null;
-  private menubarWasOpen = false;
+  private commitFocus: SvelteCommitFocusHandle | null = null;
 
   constructor(
     readonly definition: SveltePrimitiveDefinition<TInputs>,
@@ -291,12 +303,13 @@ export class SveltePrimitiveBridge<TInputs extends object = AnyRecord> {
     this.releaseController = null;
     this.destroyCurrent();
     this.current = this.create(true);
+    this.releaseCommitFocus();
+    this.commitFocus = this.definition.commitFocus?.(this, this.current) ?? null;
     this.releaseController = this.current.subscribe(() => {
       this.emit();
-      this.scheduleDeferredRovingFocus();
+      this.commitFocus?.changed();
     }, { emitInitial: false });
     this.live = true;
-    this.menubarWasOpen = Boolean(this.current.getState().value);
     this.refreshDomOwnership();
   }
 
@@ -318,10 +331,14 @@ export class SveltePrimitiveBridge<TInputs extends object = AnyRecord> {
     this.releaseDom = null;
     this.releaseController?.();
     this.releaseController = null;
-    this.cancelDeferredRovingFocus?.();
-    this.cancelDeferredRovingFocus = null;
+    this.releaseCommitFocus();
     this.destroyCurrent();
     this.live = false;
+  }
+
+  private releaseCommitFocus(): void {
+    this.commitFocus?.destroy();
+    this.commitFocus = null;
   }
 
   readonly subscribe = (listener: () => void): (() => void) => {
@@ -345,56 +362,6 @@ export class SveltePrimitiveBridge<TInputs extends object = AnyRecord> {
 
   private emit(): void {
     this.listeners.forEach((listener) => listener());
-  }
-
-  /**
-   * Svelte commits action parameters after controller subscribers run. Defer
-   * Menubar's focus transfer until the next frame so the new active item and
-   * its roving tabindex have both reached the DOM.
-   */
-  private scheduleDeferredRovingFocus(): void {
-    if (this.definition.name !== 'Menubar' || this.destroyed) return;
-    const controller = this.current;
-    const root = this.getElement(this.definition.rootPart);
-    if (!controller || !root) return;
-    const state = controller.getState();
-    const open = Boolean(state.value);
-    const shouldRestore = this.menubarWasOpen && !open;
-    this.menubarWasOpen = open;
-    if (!open && !shouldRestore) return;
-
-    this.cancelDeferredRovingFocus?.();
-    const ownerWindow = root.ownerDocument.defaultView;
-    if (!ownerWindow) return;
-    const focusAfterCommit = () => {
-      this.cancelDeferredRovingFocus = null;
-      if (this.destroyed || this.current !== controller) return;
-      const current = controller.getState();
-      const currentOpen = Boolean(current.value);
-      const activeKey = String(
-        currentOpen
-          ? current.activeItem ?? ''
-          : current.focusReturn ?? current.focusedMenu ?? '',
-      );
-      if (!activeKey) return;
-      const parts = currentOpen ? ['item', 'submenuTrigger'] : ['trigger'];
-      const target = parts
-        .map((part) => this.getElement(part, activeKey))
-        .find((element): element is HTMLElement => Boolean(element))
-        ?? (currentOpen
-          ? this.getElementEntries('item').find(({ element }) => element.tabIndex === 0)?.element
-          : null);
-      if (target?.isConnected && root.ownerDocument.activeElement !== target) {
-        target.focus({ preventScroll: true });
-      }
-    };
-    if (typeof ownerWindow.requestAnimationFrame === 'function') {
-      const frame = ownerWindow.requestAnimationFrame(focusAfterCommit);
-      this.cancelDeferredRovingFocus = () => ownerWindow.cancelAnimationFrame(frame);
-    } else {
-      const timer = ownerWindow.setTimeout(focusAfterCommit, 0);
-      this.cancelDeferredRovingFocus = () => ownerWindow.clearTimeout(timer);
-    }
   }
 
   readonly getSnapshot = (): Readonly<UIFnSnapshot<AnyRecord>> => {
@@ -512,15 +479,7 @@ export class SveltePrimitiveBridge<TInputs extends object = AnyRecord> {
         // subscribed focus, overlay, and navigation bindings expose update().
         if (binding.update?.length === 0) binding.update();
       });
-      const controller = this.current;
-      if (this.definition.name === 'Menubar' && controller) {
-        const state = controller.getState();
-        const activeItem = state.value ? String(state.activeItem ?? '') : '';
-        const target = activeItem
-          ? this.getElement('item', activeItem) ?? this.getElement('submenuTrigger', activeItem)
-          : null;
-        if (target?.isConnected) focusUIFnElement(target);
-      }
+      this.commitFocus?.committed();
     });
   }
 
@@ -597,8 +556,7 @@ export class SveltePrimitiveBridge<TInputs extends object = AnyRecord> {
     this.domRefreshEpoch += 1;
     this.domRefreshQueued = false;
     this.domCommitQueued = false;
-    this.cancelDeferredRovingFocus?.();
-    this.cancelDeferredRovingFocus = null;
+    this.releaseCommitFocus();
     this.domBindings = [];
     this.releaseDom?.();
     this.releaseDom = null;
