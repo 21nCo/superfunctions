@@ -72,6 +72,20 @@ describe("evidence event v1 schema", () => {
       ["a class instance as response headers", { ...valid.network, responseHeaders: new Box() }],
     ];
     for (const [label, event] of nonPlain) expect(validateEvidenceEvent(event), label).not.toEqual([]);
+    // A toJSON hook, own or inherited, enumerable or not, changes the JSON form.
+    const hook = { value: () => "not a record" };
+    const withHook = (target: object) => Object.defineProperty(target, "toJSON", hook);
+    const hooked: Array<[string, unknown]> = [
+      ["breadcrumb data with a hidden toJSON", { ...valid.breadcrumb, data: withHook({ a: 1 }) }],
+      ["breadcrumb data inheriting toJSON", { ...valid.breadcrumb, data: Object.create(withHook(Object.create(null))) }],
+      ["request headers with a hidden toJSON", { ...valid.network, requestHeaders: withHook({ a: "b" }) }],
+      ["console args with a hidden toJSON", { ...valid.console, args: withHook(["x"]) }],
+      ["a nested array with a hidden toJSON", { ...valid.console, args: [withHook([1])] }],
+    ];
+    for (const [label, event] of hooked) {
+      expect(validateEvidenceEvent(event), label).not.toEqual([]);
+      expect(isEvidenceEvent(event), label).toBe(false);
+    }
     const bare = { ...valid.breadcrumb, data: Object.assign(Object.create(null), { nested: Object.assign(Object.create(null), { a: 1 }) }) };
     expect(validateEvidenceEvent(bare)).toEqual([]);
     expect(validateWithSchema(strip(bare))).toBe(true);

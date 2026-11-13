@@ -134,12 +134,14 @@ type Check = (value: unknown) => boolean;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+/** A `toJSON` hook, own or inherited, enumerable or not, replaces the value in JSON. */
+const hasToJson = (value: object): boolean => "toJSON" in value;
 /**
  * A record that JSON keeps as is: a plain or null-prototype object (from any
- * realm). A `Date`, a `Map` or a class instance is not one.
+ * realm) with no `toJSON` hook. A `Date`, a `Map` or a class instance is not one.
  */
 const isPlainRecord = (value: unknown): value is Record<string, unknown> => {
-  if (!isRecord(value)) return false;
+  if (!isRecord(value) || hasToJson(value)) return false;
   const prototype = Object.getPrototypeOf(value);
   return prototype === null || Object.getPrototypeOf(prototype) === null;
 };
@@ -151,7 +153,7 @@ const isStringRecord: Check = (value) => isPlainRecord(value) && Object.values(v
 const isJsonValue: Check = (value) => {
   if (value === null || typeof value === "string" || typeof value === "boolean") return true;
   if (typeof value === "number") return Number.isFinite(value);
-  if (Array.isArray(value)) return value.every(isJsonValue);
+  if (Array.isArray(value)) return !hasToJson(value) && value.every(isJsonValue);
   return isPlainRecord(value) && Object.values(value).every(isJsonValue);
 };
 
@@ -164,7 +166,7 @@ const common: Record<string, Check> = {
 
 const shapes: Record<EvidenceKind, { required: Record<string, Check>; optional: Record<string, Check> }> = {
   console: {
-    required: { ...common, level: oneOf(CONSOLE_LEVELS), args: (value) => Array.isArray(value) && value.every(isJsonValue) },
+    required: { ...common, level: oneOf(CONSOLE_LEVELS), args: (value) => Array.isArray(value) && isJsonValue(value) },
     optional: {},
   },
   network: {

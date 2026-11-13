@@ -484,6 +484,23 @@ describe("NetworkCollector at a native Request boundary", () => {
     expect(events[2]).toMatchObject({ method: UNREAD_METHOD, requestHeaders: { "x-trace": "r" } });
   });
 
+  it("sends the same request through a page fetch that defers the native call, for every non-Proxy form", async () => {
+    // A wrapper installed before start() that awaits before calling the
+    // native fetch: observation's reads come first, and must not matter.
+    pageFetch.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      await Promise.resolve();
+      const request = new Request(input, init);
+      sent.push({ url: request.url, method: request.method, authorization: request.headers.get("authorization") });
+      return new Response("ok", { status: 200 });
+    });
+    for (const test of CASES.filter((entry) => !entry.name.includes("Proxy"))) {
+      collector.stop();
+      const expected = await baseline(test);
+      collector.start();
+      expect(await transmit(test), test.name).toEqual(expected);
+    }
+  });
+
   it("runs no trap of the application's arguments before the page's fetch has run", async () => {
     const trapped: string[] = [];
     const traps = ["getPrototypeOf", "ownKeys", "getOwnPropertyDescriptor", "has", "get"] as const;
@@ -599,6 +616,56 @@ describe("NetworkCollector XMLHttpRequest after stop()", () => {
     expect(order).toEqual(["open after []", "send after []"]);
     xhr.respond(200, "OK");
     expect(collector.collect()[0]).toMatchObject({ method: UNREAD_METHOD, url: UNREAD_URL, status: 200 });
+  });
+
+  it("attributes a send() made from open()'s readystatechange to that open(), and lets a nested open() win", () => {
+    // Like the platform, the page's open() dispatches readystatechange before it returns.
+    const throwing = new SyntaxError("bad method");
+    pageOpen.mockImplementation(function (this: FakeXhr, ...args: unknown[]) {
+      if (args[0] === "BAD") throw throwing;
+      this.opened = args;
+      this.dispatchEvent(new Event("readystatechange"));
+    });
+    try {
+      collector.start();
+      const fake = new XMLHttpRequest() as unknown as FakeXhr;
+      const xhr = fake as unknown as XMLHttpRequest;
+      let onOpen: (() => void) | undefined;
+      fake.addEventListener("readystatechange", () => {
+        const handle = onOpen;
+        onOpen = undefined;
+        handle?.();
+      });
+      // A fresh request, then the same object reused after it completed.
+      onOpen = () => xhr.send();
+      xhr.open("GET", "/first");
+      fake.respond(200, "OK");
+      onOpen = () => xhr.send("body");
+      xhr.open("POST", "/second");
+      fake.respond(201, "Created");
+      // An open() nested in the outer open()'s dispatch is the one sent.
+      onOpen = () => {
+        onOpen = () => xhr.send();
+        xhr.open("PUT", "/inner");
+      };
+      xhr.open("DELETE", "/outer");
+      fake.respond(202, "Accepted");
+      // An open() the platform rejects leaves the earlier request's record.
+      xhr.open("PATCH", "/kept");
+      expect(() => xhr.open("BAD", "/rejected")).toThrow(throwing);
+      xhr.send();
+      fake.respond(204, "No Content");
+      expect(collector.collect().map(({ method, url, status }) => [method, url, status])).toEqual([
+        ["GET", "/first", 200],
+        ["POST", "/second", 201],
+        ["PUT", "/inner", 202],
+        ["PATCH", "/kept", 204],
+      ]);
+    } finally {
+      pageOpen.mockImplementation(function (this: FakeXhr, ...args: unknown[]) {
+        this.opened = args;
+      });
+    }
   });
 
   it("records a placeholder for a non-string method or URL without converting it", () => {

@@ -31,6 +31,12 @@ interface Observation {
 
 type Listener = (observation: Observation) => void;
 
+/** The method and URL of an XMLHttpRequest's current open(). */
+interface XhrRecord {
+  method: string;
+  url: string;
+}
+
 let listeners = new Set<Listener>();
 let restore: (() => void) | undefined;
 
@@ -199,9 +205,11 @@ function requestDefaults(input: unknown): { method: Field; headers: Field } {
 
 /**
  * What a `fetch(input, init)` call sent, read without running application
- * code. Called only after the page's fetch has returned: the platform reads
- * its arguments synchronously inside that call, so nothing read here can
- * change what it sends.
+ * getters, iterators or conversions. Called only after the page's fetch has
+ * returned: a native fetch, and a wrapper that calls one synchronously, has
+ * read its arguments by then. A Proxy's traps can still run here (no script
+ * can tell a Proxy apart), which a wrapper that defers the native call, or a
+ * later call that reuses a stateful Proxy, could observe.
  */
 function readFetchRequest(input: unknown, init: unknown): Pick<Observation, "method" | "url" | "requestHeaders"> {
   let { method, headers } = requestDefaults(input);
@@ -284,6 +292,7 @@ function subscribe(listener: Listener): () => void {
         const timestamp = Date.now();
         // The page's fetch runs first, with the application's own arguments
         // and receiver, before observation reads anything from them.
+        // See readFetchRequest for what that ordering does and does not cover.
         const pending = original.apply(this ?? globalThis, args);
         let observed: Observation;
         try {
@@ -320,7 +329,7 @@ function subscribe(listener: Listener): () => void {
       const prototype = XMLHttpRequest.prototype;
       const originalOpen = prototype.open as (...values: unknown[]) => unknown;
       const originalSend = prototype.send as (...values: unknown[]) => unknown;
-      const records = new WeakMap<object, { method: string; url: string }>();
+      const records = new WeakMap<object, XhrRecord>();
       const target = typeof EventTarget === "function" ? EventTarget.prototype : undefined;
       // A platform attribute is read through the platform getter; a stand-in
       // without one is read only from an own data property.
@@ -330,25 +339,44 @@ function subscribe(listener: Listener): () => void {
       };
       const open = function (this: XMLHttpRequest, ...args: unknown[]) {
         if (current.size === 0) return originalOpen.apply(this, args);
-        // The platform converts the method and URL inside open(); observation
-        // reads them only after it returns. An open() that throws leaves the
-        // earlier request, and its record, in place.
-        const result = originalOpen.apply(this, args);
+        const [method, url] = args;
+        // A string is read before the call, which runs no application code;
+        // an object URL only after the platform has converted it. The record
+        // is in place before the call, so a send() made from open()'s own
+        // readystatechange belongs to this request (or to a nested open()).
+        const record: XhrRecord = { method: typeof method === "string" ? text(method) : UNREAD_METHOD, url: typeof url === "string" ? captureUrl(url) : UNREAD_URL };
+        let previous: XhrRecord | undefined;
+        let tracked = false;
         try {
-          const [method, url] = args;
-          records.set(this, { method: typeof method === "string" ? text(method) : UNREAD_METHOD, url: captureUrl(inputUrl(url, false)) });
+          previous = records.get(this);
+          records.set(this, record);
+          tracked = true;
         } catch {
+          tracked = false; // Not an object: there is nothing to record.
+        }
+        let result: unknown;
+        try {
+          result = originalOpen.apply(this, args);
+        } catch (error) {
+          // A rejected open() leaves the earlier request, and its record, in place.
+          if (tracked && records.get(this) === record) {
+            if (previous) records.set(this, previous);
+            else records.delete(this);
+          }
+          throw error;
+        }
+        if (tracked && typeof url !== "string") {
           try {
-            records.delete(this);
+            record.url = captureUrl(inputUrl(url, false));
           } catch {
-            /* Not an object: there is no record to drop. */
+            /* Keep the placeholder. */
           }
         }
         return result;
       } as typeof prototype.open;
       const send = function (this: XMLHttpRequest, ...args: unknown[]) {
         if (current.size === 0) return originalSend.apply(this, args);
-        let record: { method: string; url: string } | undefined;
+        let record: XhrRecord | undefined;
         try {
           record = records.get(this);
         } catch {

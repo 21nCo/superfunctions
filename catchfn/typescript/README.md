@@ -62,11 +62,16 @@ wrapper stays in that chain, passes calls through and records nothing.
 
 The network collector never changes the application's request: the original
 arguments pass through untouched (a `null` or `undefined` receiver of `fetch`
-becomes `globalThis`). The page's `fetch` and `XMLHttpRequest.prototype.open`
-run first, and observation reads their arguments only after they return: the
-platform has read the request by then, so no iterator, getter, conversion or
-Proxy trap that observation could trigger changes what is sent. `send` reads
-nothing from its arguments. `fetch` returns a promise chained from the page's
+becomes `globalThis`), and observation never runs the application's
+iterators, getters or conversions. The page's `fetch` and
+`XMLHttpRequest.prototype.open` run first, and observation reads object
+arguments only after they return (strings are read before `open`, which runs
+no application code); `send` reads nothing from its arguments. A native
+`fetch`, or a wrapper that calls one synchronously, has read the request by
+then. No script can tell a Proxy apart, so a Proxy's traps still run when
+observation reads it: if the `fetch` that was installed before `start()`
+defers the native call, or the application reuses a stateful Proxy in a later
+request, those traps can observe the reads. `fetch` returns a promise chained from the page's
 that settles with the same response or rejection reason, so an unhandled
 rejection stays unhandled; a result that is not a thenable is returned as is.
 A stopped wrapper reads nothing at all. What observation then records:
