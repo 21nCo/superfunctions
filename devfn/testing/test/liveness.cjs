@@ -65,16 +65,17 @@ function fixture(pid) {
 
 /**
  * Sends `fixture` ({ pid, started }, its start read while it ran) SIGKILL only when a read just
- * before shows its ID still running with that start. Returns "stopped" once it has; "gone" when no
- * process runs as its ID or the ID names a process started at another time (never signalled);
- * "unknown" when it cannot tell (no start recorded, the read failed, or the signal did), and then
- * it signals nothing.
+ * before shows its ID still running with that start. It reads the ID first, whatever the fixture
+ * recorded. Returns "stopped" once it has signalled; "gone" when no process runs as the ID (a
+ * zombie included), or the ID names a process started at another time than the one recorded
+ * (never signalled); "unknown" when it cannot tell (the read failed, the signal did, or the ID
+ * runs but no start was recorded to tell it is the fixture), and then it signals nothing.
  */
 function stop(fixture) {
-  if (typeof fixture?.started !== "string") return "unknown";
-  const current = identity(fixture.pid);
-  if (current === undefined) return "unknown";
-  if (current.gone || current.started !== fixture.started) return "gone";
+  const current = identity(fixture?.pid);
+  if (current?.gone) return "gone";
+  if (current === undefined || typeof fixture.started !== "string") return "unknown";
+  if (current.started !== fixture.started) return "gone";
   try { process.kill(fixture.pid, "SIGKILL"); return "stopped"; } catch (error) { return error?.code === "ESRCH" ? "gone" : "unknown"; }
 }
 

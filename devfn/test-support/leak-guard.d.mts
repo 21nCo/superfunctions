@@ -9,7 +9,7 @@ export declare function guardTestFile(hooks: { beforeEach: Hook; afterEach: Hook
 export declare function guardDirectory(directory: string): void;
 export declare function pathAliases(directory: string): string[];
 export declare function removeTree(directory: string): boolean;
-export declare function tempLeftovers(directory: string): string[];
+export declare function tempLeftovers(directory: string): string[] | undefined;
 type Process = { pid: number; ppid: number; pgid: number; started?: number | string; command: string; environment: string; cwd?: string };
 export declare function listProcesses(sinceMs?: number): Process[] | undefined;
 export declare function stopProcesses<T extends Process>(processes: T[], find?: () => T[] | undefined, held?: Map<string, T>): Promise<T[]>;

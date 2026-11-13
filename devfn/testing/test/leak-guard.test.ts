@@ -13,7 +13,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { processBirthSignature } from "@devfn/config";
 import { withFileLock } from "@devfn/ports";
 
-import { attributeProcesses, listProcesses, ORIGINAL_TEMP_VARIABLE, ownedProcesses, pathAliases, pathsNamedUnder, stopProcesses } from "../../test-support/leak-guard.mjs";
+import { attributeProcesses, listProcesses, ORIGINAL_TEMP_VARIABLE, ownedProcesses, pathAliases, pathsNamedUnder, stopProcesses, tempLeftovers } from "../../test-support/leak-guard.mjs";
 import { temporaryDirectories } from "../../test-support/temp-directories.mjs";
 
 const tempDir = temporaryDirectories(afterEach);
@@ -411,6 +411,36 @@ describe.skipIf(process.platform === "win32")("DevFn test leak guard", { timeout
     expect(existsSync(recorded.dir!)).toBe(false);
   });
 
+  it("reads a temp folder that does not exist as empty, lists one left unreadable by restoring its owner's permissions, and never reads one it cannot list as empty", () => {
+    const parent = tempDir("devfn-leak-guard-listing-");
+    expect(tempLeftovers(path.join(parent, "missing"))).toEqual([]);
+    // A file where a folder is expected cannot be listed (ENOTDIR).
+    writeFileSync(path.join(parent, "file"), "");
+    expect(tempLeftovers(path.join(parent, "file"))).toBeUndefined();
+    // Permissions do not stop root from listing it.
+    if (process.getuid?.() === 0) return;
+    const locked = path.join(parent, "locked");
+    mkdirSync(locked);
+    writeFileSync(path.join(locked, "forgotten.txt"), "");
+    chmodSync(locked, 0);
+    expect(tempLeftovers(locked)).toEqual(["forgotten.txt"]);
+  });
+
+  // Permissions do not stop root from listing the folder.
+  it.skipIf(process.getuid?.() === 0)("fails a test file that leaves its temp folder unreadable, lists what it holds and removes it", async () => {
+    const { dir, record } = project(`test("locks its temp folder", () => {
+  writeFileSync(path.join(tmpdir(), "forgotten.txt"), "");
+  record({ dir: tmpdir() });
+  require("node:fs").chmodSync(tmpdir(), 0);
+});`);
+    const { code, output, recorded } = await runProject(dir, record);
+    expect(code, output).not.toBe(0);
+    expect(output).toContain(`DevFn test leak guard: ${path.join(dir, "fixture.test.mjs")} left these behind.`);
+    expect(output).toContain(`temp entry ${path.join(recorded.dir!, "forgotten.txt")}\n`);
+    expect(existsSync(recorded.dir!)).toBe(false);
+    expect(existsSync(recorded.root)).toBe(false);
+  });
+
   it("fails, but never signals, a process whose only link to the run is its root cut short at a separator", async () => {
     // The orphan names "<root> sibling/x", which need not exist, as one argument. Linux's /proc
     // shows that whole, so it is not the run's at all. macOS's ps cannot show where it ends, so
@@ -613,6 +643,21 @@ test("leaves a guarded directory", () => {
     // The test file's own folder, which the guard made, is listed by its contents.
     expect(output).toContain(`temp entry ${recorded.dir}\n`);
     expect(alive(recorded.pid!)).toBe(false);
+    expect(existsSync(recorded.root)).toBe(false);
+  });
+
+  // Permissions do not stop root from listing the folder.
+  it.skipIf(process.getuid?.() === 0)("lists what an interrupted run's test file folder holds though a test left it unreadable, and removes it", async () => {
+    const { dir, record } = project(`test("locks its temp folder and hangs", async () => {
+  writeFileSync(path.join(tmpdir(), "forgotten.txt"), "");
+  record({ dir: tmpdir() });
+  require("node:fs").chmodSync(tmpdir(), 0);
+  await new Promise(() => {});
+}, 60_000);`);
+    const { code, output, recorded } = await runProject(dir, record, "signal");
+    expect(code).not.toBe(0);
+    expect(output).toContain("DevFn test leak guard: This interrupted test run left these behind.");
+    expect(output).toContain(`temp entry ${path.join(recorded.dir!, "forgotten.txt")}\n`);
     expect(existsSync(recorded.root)).toBe(false);
   });
 
@@ -2096,6 +2141,40 @@ describe.skipIf(process.platform === "win32")("the self-test's fixture cleanup",
     expect(alive(pid)).toBe(true);
     // Listed by the cleanup after this test otherwise, which would fail it.
     fixtures.splice(0);
+  });
+
+  it("retires a fixture whose start could not be read once its process has exited, so the test passes", async () => {
+    const pid = stranger();
+    fixtures.push({ pid, started: undefined });
+    const file = path.join(tempDir("devfn-leak-guard-cleanup-"), "member.pid");
+    writeFileSync(file, JSON.stringify({ pid, started: null }));
+    fixtureFiles.push(file);
+    // Still running: kept, and never signalled.
+    expect((await stopFixtures(0)).map((left) => left.pid)).toEqual([pid, pid]);
+    expect(alive(pid)).toBe(true);
+    // It exits (here through the start this test read as it started it), which retires both.
+    expect(stop(strangers.at(-1)!)).toBe("stopped");
+    expect(await gone(pid)).toBe(true);
+    expect(stop({ pid })).toBe("gone");
+    expect(await finishFixtures(300)).toBeUndefined();
+  });
+
+  /** Whether `pid` is a zombie, read from /proc on Linux and from ps elsewhere, not through liveness. */
+  const zombie = (pid: number) => {
+    if (process.platform !== "linux") return spawnSync("/bin/ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).stdout.trim().startsWith("Z");
+    try { return /\) Z /.test(readFileSync(`/proc/${pid}/stat`, "utf8")); } catch { return false; }
+  };
+
+  it("retires a fixture whose start could not be read once its process is a zombie", async () => {
+    // sh starts a short-lived child, then becomes a sleep that never waits for it, so the child
+    // stays a zombie until that sleep ends, as under a container's PID 1 that does not reap.
+    const parent = spawn("/bin/sh", ["-c", "sleep 0.2 & echo $!; exec sleep 30"], { stdio: ["ignore", "pipe", "ignore"] });
+    strangers.push({ pid: parent.pid!, started: started(parent.pid!) });
+    const pid = Number(await new Promise<string>((resolve) => parent.stdout!.once("data", (chunk) => resolve(String(chunk)))));
+    fixtures.push({ pid, started: undefined });
+    for (const deadline = Date.now() + 5_000; !zombie(pid) && Date.now() < deadline;) await sleep(50);
+    expect(zombie(pid)).toBe(true);
+    expect(await finishFixtures(300)).toBeUndefined();
   });
 
   it("stops a fixture once, however often cleanup runs", async () => {

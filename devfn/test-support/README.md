@@ -26,6 +26,9 @@ calls `guardTestFile` as a setup file.
   test's own `finally` may still be waiting on the call that stalled.
 - After a test file's own hooks, the guard fails the file when one of its processes is
   still running or a temp entry remains, lists them, and then stops and removes them.
+  A temp folder a test left unreadable gets its owner's permissions back and is listed
+  again. One that still cannot be listed fails the file or run as a leftover; it never
+  reads as empty.
 - When the run ends it does the same for the whole run (and, with
   `DEVFN_REAL_COMPOSE=1`, for Compose containers whose project directory is in the run's
   temp root), and fails the run.

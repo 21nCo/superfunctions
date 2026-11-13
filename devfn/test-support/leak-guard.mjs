@@ -981,10 +981,22 @@ async function stopAndReport(classify, settled, held = new Map()) {
   return { owned: [...stopped.values()], unstopped, reported };
 }
 
-/** Entries left in a temp folder, ignoring tool caches and the guard's own records. */
+/**
+ * Entries left in a temp folder, ignoring tool caches and the guard's own records: none when the
+ * folder does not exist. A folder a test left unreadable gets its owner's permissions back and
+ * is listed again. Returns undefined when it still cannot be listed, which is never read as empty.
+ */
 export function tempLeftovers(directory) {
-  try { return readdirSync(directory).filter((name) => !isToolCache(name) && !isGuardRecord(name)).sort(); } catch { return []; }
+  for (let tries = 0; ; tries += 1) {
+    try { return readdirSync(directory).filter((name) => !isToolCache(name) && !isGuardRecord(name)).sort(); } catch (error) {
+      if (error?.code === "ENOENT") return [];
+      if (tries > 0 || !["EACCES", "EPERM"].includes(error?.code)) return undefined;
+      try { chmodSync(directory, (statSync(directory).mode & 0o7777) | 0o700); } catch { return undefined; }
+    }
+  }
 }
+/** How a report names a temp folder that could not be listed. */
+const unlisted = (directory) => `${directory}, which could not be listed, so what it holds is unknown`;
 
 /** Removes a directory tree, first making read-only folders in it writable again. */
 export function removeTree(directory) {
@@ -1246,12 +1258,17 @@ export async function setup(project) {
  * in the root, is listed by its contents; any other entry, whatever its name, is listed itself.
  */
 function runLeftovers(root) {
+  // Listed first, so a root a test left unreadable is readable again for its record.
+  const listed = tempLeftovers(root);
+  if (!listed) return [unlisted(root)];
   let folders;
   try { folders = new Set(readFileSync(path.join(root, FOLDER_RECORD), "utf8").split("\n")); } catch { folders = new Set(); }
   const isFileFolder = (entry) => { try { return folders.has(entry) && lstatSync(path.join(root, entry)).isDirectory(); } catch { return false; } };
-  return tempLeftovers(root).flatMap((entry) => {
-    const nested = isFileFolder(entry) ? tempLeftovers(path.join(root, entry)).map((inner) => `${entry}/${inner}`) : [entry];
-    return nested.map((relative) => path.join(root, relative));
+  return listed.flatMap((entry) => {
+    if (!isFileFolder(entry)) return [path.join(root, entry)];
+    const folder = path.join(root, entry);
+    const nested = tempLeftovers(folder);
+    return nested ? nested.map((inner) => path.join(folder, inner)) : [unlisted(folder)];
   });
 }
 
@@ -1612,9 +1629,15 @@ export function guardTestFile({ beforeEach, afterEach, afterAll }) {
   // The file's registry (resolveHeld): what a stop after a failed test left or held back, which the
   // file's check lists even when it no longer finds it as the file's, such as a process in an exited leader's group.
   const held = new Map();
+  // What a failed test's cleanup removed while it could not tell which entries the test made,
+  // because the folder could not be listed before it: the file's check lists them too.
+  const cleared = [];
   // Setup-file hooks are registered first: Vitest runs these before-hooks before the file's own,
   // and these after-hooks after the file's own.
-  beforeEach(() => { before = { at: Date.now(), pids: listPids(), entries: new Set(tempLeftovers(folder)) }; });
+  beforeEach(() => {
+    const listed = tempLeftovers(folder);
+    before = { at: Date.now(), pids: listPids(), entries: listed && new Set(listed) };
+  });
   afterEach(async (context) => {
     // Tests that run concurrently share the snapshot, so what each started cannot be told apart.
     if (context?.task?.result?.state !== "fail" || context.task.concurrent || !before?.pids) return;
@@ -1622,7 +1645,11 @@ export function guardTestFile({ beforeEach, afterEach, afterAll }) {
     const find = () => { const listed = listProcesses(at); return listed && ownedProcesses(listed, scope()).filter((entry) => !pids.has(entry.pid)); };
     const started = find() ?? [];
     if (started.length > 0) await stopProcesses(started, find, held);
-    for (const entry of tempLeftovers(folder)) if (!entries.has(entry)) removeTree(path.join(folder, entry));
+    for (const entry of tempLeftovers(folder) ?? []) {
+      if (entries?.has(entry)) continue;
+      removeTree(path.join(folder, entry));
+      if (!entries) cleared.push(path.join(folder, entry));
+    }
   }, 60_000);
   afterAll(async (suite) => {
     const classify = keepingLast(() => { const listing = listProcesses(startedAt); return listing && attributeProcesses(listing, scope()); });
@@ -1630,7 +1657,8 @@ export function guardTestFile({ beforeEach, afterEach, afterAll }) {
     const settled = await settle(classify, FILE_GRACE_MS) ?? { owned: [], ambiguous: [] };
     const { owned, unstopped, reported } = await stopAndReport(classify, settled, held);
     const ambiguous = reported?.ambiguous ?? [];
-    const entries = tempLeftovers(folder).map((entry) => path.join(folder, entry));
+    const listed = tempLeftovers(folder);
+    const entries = [...cleared.splice(0), ...(listed ? listed.map((entry) => path.join(folder, entry)) : [unlisted(folder)])];
     const removed = removeTree(folder);
     for (const directory of guardedDirectories()) {
       if (!existsSync(directory)) continue;
