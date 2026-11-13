@@ -138,6 +138,35 @@ export function getSchema(_options: BillFnSchemaOptions = {}): { version: number
     ]
   };
 
+  const unlinkedWebhookEvents: TableSchema = {
+    modelName: 'unlinkedWebhookEvents',
+    fields: {
+      id: { type: 'string', required: true, unique: true },
+      provider: { type: 'string', required: true },
+      providerEventId: { type: 'string', required: true },
+      providerReference: { type: 'string', required: true },
+      eventType: { type: 'string', required: true },
+      occurredAt: { type: 'string', required: false },
+      reason: { type: 'string', required: true },
+      metadataBillingAccountId: { type: 'string', required: false },
+      status: { type: 'string', required: true },
+      event: { type: 'json', required: true },
+      replayClaimId: { type: 'string', required: false },
+      replayClaimedAt: { type: 'string', required: false },
+      replayedAt: { type: 'string', required: false },
+      subscriptionId: { type: 'string', required: false },
+      error: { type: 'string', required: false },
+      expiresAt: { type: 'string', required: true },
+      createdAt: { type: 'string', required: true },
+      updatedAt: { type: 'string', required: true }
+    },
+    indexes: [
+      { name: 'unlinked_webhook_events_provider_event_idx', fields: ['provider', 'providerEventId'], unique: true },
+      { name: 'unlinked_webhook_events_provider_reference_idx', fields: ['provider', 'providerReference', 'status'] },
+      { name: 'unlinked_webhook_events_expires_idx', fields: ['expiresAt'] }
+    ]
+  };
+
   const billingEvents: TableSchema = {
     modelName: 'billingEvents',
     fields: {
@@ -250,11 +279,12 @@ export function getSchema(_options: BillFnSchemaOptions = {}): { version: number
     refunds,
     subscriptionChangeRequests,
     reconciliationJobs,
-    reconciliationCursors
+    reconciliationCursors,
+    unlinkedWebhookEvents
   ];
 
   return {
-    version: 3,
+    version: 4,
     schemas
   };
 }

@@ -4,7 +4,7 @@ from billfn import get_schema
 def test_schema_exposes_expected_version_and_tables() -> None:
     schema = get_schema()
 
-    assert schema["version"] == 3
+    assert schema["version"] == 4
     model_names = [table["modelName"] for table in schema["schemas"]]
     assert model_names == [
         "billingAccounts",
@@ -19,6 +19,7 @@ def test_schema_exposes_expected_version_and_tables() -> None:
         "subscriptionChangeRequests",
         "reconciliationJobs",
         "reconciliationCursors",
+        "unlinkedWebhookEvents",
     ]
 
 
@@ -43,6 +44,10 @@ def test_schema_includes_webhook_and_usage_uniqueness_indexes() -> None:
     assert any(
         index.get("unique") and index["fields"] == ["provider", "providerChargeId"]
         for index in subscription_indexes
+    )
+    assert any(
+        index.get("unique") and index["fields"] == ["provider", "providerEventId"]
+        for index in tables["unlinkedWebhookEvents"]["indexes"]
     )
 
 

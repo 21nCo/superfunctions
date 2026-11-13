@@ -204,7 +204,7 @@ function createMockProvider(provider: 'dodo' | 'apple'): BillFnProviderAdapter {
 describe('@billfn/core', () => {
   it('keeps schema model names logical for custom namespaces and enforces provider reference uniqueness', () => {
     const schema = getSchema({ namespace: 'custom_billfn' });
-    expect(schema.version).toBe(3);
+    expect(schema.version).toBe(4);
     expect(schema.schemas.map((table) => table.modelName)).toContain('subscriptions');
     expect(schema.schemas.some((table) => table.modelName.startsWith('custom_billfn_'))).toBe(false);
     const subscriptions = schema.schemas.find((table) => table.modelName === 'subscriptions');
@@ -216,6 +216,13 @@ describe('@billfn/core', () => {
     )?.unique).toBe(true);
     const receipts = schema.schemas.find((table) => table.modelName === 'webhookReceipts');
     expect(receipts?.fields.processingClaimedAt).toEqual({ type: 'string', required: false });
+    const unlinked = schema.schemas.find((table) => table.modelName === 'unlinkedWebhookEvents');
+    expect(unlinked?.indexes?.find(
+      (index) => index.fields.join(',') === 'provider,providerEventId'
+    )?.unique).toBe(true);
+    expect(unlinked?.indexes?.some(
+      (index) => index.fields.join(',') === 'provider,providerReference,status'
+    )).toBe(true);
   });
 
   it('creates, verifies, and reads entitlements for a Dodo checkout', async () => {
@@ -1314,7 +1321,18 @@ describe('@billfn/core', () => {
   });
 
   it('re-enqueues an unfinished webhook receipt after its prior job failed', async () => {
-    const db = memoryAdapter({ debug: false });
+    const memoryDb = memoryAdapter({ debug: false });
+    let failUnlinkedStore = true;
+    const db = {
+      ...memoryDb,
+      async create<T>(params: Parameters<typeof memoryDb.create>[0]): Promise<T> {
+        if (params.model === 'unlinkedWebhookEvents' && failUnlinkedStore) {
+          failUnlinkedStore = false;
+          throw new Error('injected unlinked store failure');
+        }
+        return memoryDb.create<T>(params);
+      }
+    };
     const queue = new MemoryQueueAdapter();
     const provider: BillFnProviderAdapter = {
       ...createMockProvider('dodo'),
@@ -1348,9 +1366,9 @@ describe('@billfn/core', () => {
       where: [{ field: 'providerEventId', operator: 'eq', value: 'evt_failed_redelivery' }],
       namespace: 'billfn'
     });
-    await expect(billfn.runReconciliationJob({ jobId: firstJob?.id ?? '' })).rejects.toMatchObject({
-      code: 'BILLFN_NOT_FOUND'
-    });
+    await expect(billfn.runReconciliationJob({ jobId: firstJob?.id ?? '' })).rejects.toThrow(
+      'injected unlinked store failure'
+    );
 
     const retried = await billfn.handleWebhook({ provider: 'dodo', rawBody: '{}', headers: new Headers() });
     const jobs = await db.findMany({

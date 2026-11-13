@@ -23,6 +23,17 @@ These routes require `operations.authorize(request)` to succeed.
 - `account-scan`
 - `notification-history-backfill`
 
+## Events for subscriptions BillFn has not seen
+
+A verified webhook whose subscription or payment reference matches no local subscription or checkout session is acknowledged with a 2xx response instead of failing with `BILLFN_NOT_FOUND`:
+
+- When the provider record carries `billfn_billing_account_id` metadata naming an existing billing account, and its product is in the catalog, BillFn creates the subscription from the provider record and applies the event. Two deliveries racing to create the same subscription end with one row: the loser of the unique `provider + providerSubscriptionId` insert applies its event as an ordered update.
+- Otherwise the event is stored in `unlinkedWebhookEvents` with status `unlinked`, keyed by provider and provider reference (the provider subscription id, or the charge id for a one-time payment), with a `reason`: `billing_account_metadata_missing`, `billing_account_not_found` (metadata names an account that does not exist; no account is created), `price_not_found`, or `billing_account_unavailable`.
+
+Unlinked events are kept for 90 days. Storing a new unlinked event deletes rows past their `expiresAt`, and an expired event is never replayed.
+
+When a reference is later linked, by checkout verification, a restored purchase, a metadata bootstrap, or the next event for that reference, BillFn replays its unexpired unlinked events in provider event-time order (events without a provider time go last). An event older than the subscription's current provider state is marked `skipped`; an applied event is marked `replayed`. A replay stops at an event it cannot apply and leaves it and the later events `unlinked`, with the error recorded, for the next link or event on that reference.
+
 ## Worker
 
 Use `createBillFnReconciliationWorker(config)` with the same BillFn config you mount in your server.

@@ -50,6 +50,8 @@ import type {
   BillFnSyncSubscriptionRequest,
   BillFnSyncSubscriptionResponse,
   BillFnSyncSubscriptionResponseData,
+  BillFnUnlinkedWebhookEvent,
+  BillFnUnlinkedWebhookEventReason,
   BillFnUsageLedgerEntry,
   BillFnUsageMeter,
   BillFnUsageResponse,
@@ -79,12 +81,18 @@ const TABLES = {
   refunds: 'refunds',
   subscriptionChangeRequests: 'subscriptionChangeRequests',
   reconciliationJobs: 'reconciliationJobs',
-  reconciliationCursors: 'reconciliationCursors'
+  reconciliationCursors: 'reconciliationCursors',
+  unlinkedWebhookEvents: 'unlinkedWebhookEvents'
 } as const;
 
 const PROVIDER_EVENT_OCCURRED_AT_METADATA_KEY = 'billfnProviderEventOccurredAt';
 const WEBHOOK_RECEIPT_CLAIM_LEASE_MS = 15 * 60 * 1000;
 const RECONCILIATION_JOB_CLAIM_LEASE_MS = 15 * 60 * 1000;
+/** Unlinked webhook events are kept this long for a later link to replay them. */
+const UNLINKED_WEBHOOK_EVENT_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+const UNLINKED_WEBHOOK_EVENT_REPLAY_LEASE_MS = 15 * 60 * 1000;
+/** Provider metadata key naming the billing account that owns a provider record. */
+const BILLING_ACCOUNT_METADATA_KEY = 'billfn_billing_account_id';
 /** Deliveries of one queue message refused by lease conflicts before it is dead-lettered. */
 const RECONCILIATION_QUEUE_MAX_LEASE_CONFLICT_ATTEMPTS = 5;
 
@@ -141,6 +149,20 @@ type ProjectionResult = {
   entitlements: BillFnEntitlementSnapshot;
 };
 type ReconciliationLeaseGuard = () => Promise<void>;
+type ParsedProviderEvent = {
+  providerEventId: string;
+  type: string;
+  signatureVerified: boolean;
+  occurredAt?: string;
+  planKey?: string;
+  priceId?: string;
+  providerSubscriptionId?: string;
+  providerChargeId?: string;
+  checkoutReferenceId?: string;
+  billingState?: VerifiedBillingState;
+  raw: Record<string, unknown>;
+};
+type ProviderProjectionContext = NonNullable<Awaited<ReturnType<typeof resolveProjectionContextForProviderState>>>;
 
 export function createBillFnService(config: BillFnConfig) {
   return createBillFnServiceWithInternals(config).service;
@@ -572,13 +594,16 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         payload: input.payload
       });
 
-      const result = await applyVerificationState(deps, {
-        billingAccount,
-        plan,
-        price,
-        checkoutSession,
-        state: verification
-      });
+      const result = await linkSubscriptionAndReplay(
+        deps,
+        await applyVerificationState(deps, {
+          billingAccount,
+          plan,
+          price,
+          checkoutSession,
+          state: verification
+        })
+      );
 
       if (!result.checkoutSession) {
         throw createBillFnError({
@@ -969,12 +994,15 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         });
 
         if (!projection) {
-          const applied = await applyVerificationState(deps, {
-            billingAccount,
-            plan,
-            price,
-            state
-          });
+          const applied = await linkSubscriptionAndReplay(
+            deps,
+            await applyVerificationState(deps, {
+              billingAccount,
+              plan,
+              price,
+              state
+            })
+          );
           const response: BillFnRestorePurchasesResponseData = {
             subscription: applied.subscription,
             entitlements: applied.entitlements
@@ -986,14 +1014,17 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
           continue;
         }
 
-        const applied = await applyVerificationState(deps, {
-          billingAccount: projection.billingAccount,
-          plan: projection.plan,
-          price: projection.price,
-          checkoutSession: projection.checkoutSession ?? undefined,
-          subscription: projection.subscription ?? undefined,
-          state
-        });
+        const applied = await linkSubscriptionAndReplay(
+          deps,
+          await applyVerificationState(deps, {
+            billingAccount: projection.billingAccount,
+            plan: projection.plan,
+            price: projection.price,
+            checkoutSession: projection.checkoutSession ?? undefined,
+            subscription: projection.subscription ?? undefined,
+            state
+          })
+        );
 
         const response: BillFnRestorePurchasesResponseData = {
           subscription: applied.subscription,
@@ -2679,34 +2710,41 @@ async function resolveProjectionContextForProviderState(
 async function processParsedWebhookEvent(
   deps: ServiceDeps,
   providerName: BillingProviderName,
-  event: {
-    providerEventId: string;
-    type: string;
-    signatureVerified: boolean;
-    occurredAt?: string;
-    planKey?: string;
-    priceId?: string;
-    providerSubscriptionId?: string;
-    providerChargeId?: string;
-    checkoutReferenceId?: string;
-    billingState?: NonNullable<Awaited<ReturnType<NonNullable<BillFnProviderAdapter['verifyCheckout']>>>>;
-    raw: Record<string, unknown>;
-  }
+  event: ParsedProviderEvent
 ) {
-  if (!event.billingState) {
+  const state = event.billingState;
+  if (!state) {
     return null;
   }
-  const projection = await resolveProjectionContextForProviderState(deps, {
+  let projection = await resolveProjectionContextForProviderState(deps, {
     provider: providerName,
-    state: event.billingState,
+    state,
     checkoutReferenceId: event.checkoutReferenceId
   });
   if (!projection) {
-    throw createBillFnError({
-      code: 'BILLFN_NOT_FOUND',
-      message: `Webhook event could not be linked to a billing account: ${event.providerEventId}`
-    });
+    return bootstrapOrStoreUnlinkedWebhookEvent(deps, providerName, event, state);
   }
+  if (projection.subscription) {
+    // Events stored before this reference was linked go first, so provider event-time order holds.
+    const replay = await replayUnlinkedWebhookEvents(deps, projection.subscription);
+    if (replay.applied > 0 || replay.skipped > 0) {
+      projection =
+        (await resolveProjectionContextForProviderState(deps, {
+          provider: providerName,
+          state,
+          checkoutReferenceId: event.checkoutReferenceId
+        })) ?? projection;
+    }
+  }
+  return applyParsedWebhookEvent(deps, providerName, { ...event, billingState: state }, projection);
+}
+
+async function applyParsedWebhookEvent(
+  deps: ServiceDeps,
+  providerName: BillingProviderName,
+  event: ParsedProviderEvent & { billingState: VerifiedBillingState },
+  projection: ProviderProjectionContext
+) {
   if (
     projection.subscription &&
     event.occurredAt &&
@@ -2737,6 +2775,393 @@ async function processParsedWebhookEvent(
     });
   }
   return applied;
+}
+
+/**
+ * Handles a verified event whose provider reference matches no local
+ * subscription or checkout. Provider metadata naming an existing billing
+ * account bootstraps the subscription from the provider record; any other
+ * event is stored as unlinked, so the webhook is acknowledged and the event is
+ * replayed once the reference is linked.
+ */
+async function bootstrapOrStoreUnlinkedWebhookEvent(
+  deps: ServiceDeps,
+  providerName: BillingProviderName,
+  event: ParsedProviderEvent,
+  state: VerifiedBillingState
+) {
+  const providerReference = state.providerSubscriptionId ?? state.providerChargeId;
+  if (!providerReference) {
+    deps.metrics.track('reconciliation.event.skipped', {
+      provider: providerName,
+      providerEventId: event.providerEventId,
+      reason: 'provider_reference_missing'
+    });
+    return null;
+  }
+  const metadataBillingAccountId = readBillingAccountMetadata(event, state);
+  // A subscription that matches the reference but whose billing account is gone must not be rebound.
+  const orphaned = await findSubscriptionByProviderRef(
+    deps,
+    providerName,
+    state.providerSubscriptionId,
+    state.providerChargeId
+  );
+  let reason: BillFnUnlinkedWebhookEventReason;
+  if (orphaned) {
+    reason = 'billing_account_unavailable';
+  } else if (!metadataBillingAccountId) {
+    reason = 'billing_account_metadata_missing';
+  } else {
+    const billingAccount = await getBillingAccountById(deps, metadataBillingAccountId);
+    const eventPrice = billingAccount
+      ? await resolveProviderEventPriceReference(deps, providerName, event, null)
+      : null;
+    if (billingAccount && eventPrice) {
+      return bootstrapSubscriptionFromWebhookEvent(deps, providerName, event, {
+        billingAccount,
+        plan: eventPrice.plan,
+        price: eventPrice.price,
+        state
+      });
+    }
+    reason = billingAccount ? 'price_not_found' : 'billing_account_not_found';
+  }
+
+  await storeUnlinkedWebhookEvent(deps, providerName, event, {
+    providerReference,
+    reason,
+    metadataBillingAccountId
+  });
+  if (orphaned) {
+    return null;
+  }
+  // A link that committed while this event was being stored would have missed it; replay it now.
+  const linked = await findSubscriptionByProviderRef(
+    deps,
+    providerName,
+    state.providerSubscriptionId,
+    state.providerChargeId
+  );
+  if (linked) {
+    await replayUnlinkedWebhookEvents(deps, linked);
+  }
+  return null;
+}
+
+async function bootstrapSubscriptionFromWebhookEvent(
+  deps: ServiceDeps,
+  providerName: BillingProviderName,
+  event: ParsedProviderEvent,
+  input: {
+    billingAccount: BillFnBillingAccount;
+    plan: ReturnType<typeof requirePlan>;
+    price: BillFnPriceDefinition;
+    state: VerifiedBillingState;
+  }
+) {
+  // A concurrent delivery that creates the same reference first makes this an ordered update.
+  const applied = await applyVerificationState(deps, {
+    billingAccount: input.billingAccount,
+    plan: input.plan,
+    price: input.price,
+    state: input.state,
+    occurredAt: event.occurredAt
+  });
+  deps.metrics.track('webhook.subscription.bootstrapped', {
+    provider: providerName,
+    applied: Boolean(applied)
+  });
+  if (!applied) {
+    deps.metrics.track('reconciliation.event.skipped', {
+      provider: providerName,
+      providerEventId: event.providerEventId,
+      reason: 'out_of_order'
+    });
+  }
+  const subscription =
+    applied?.subscription ??
+    (await findSubscriptionByProviderRef(
+      deps,
+      providerName,
+      input.state.providerSubscriptionId,
+      input.state.providerChargeId
+    ));
+  if (subscription) {
+    await replayUnlinkedWebhookEvents(deps, subscription);
+  }
+  return applied;
+}
+
+async function storeUnlinkedWebhookEvent(
+  deps: ServiceDeps,
+  providerName: BillingProviderName,
+  event: ParsedProviderEvent,
+  input: {
+    providerReference: string;
+    reason: BillFnUnlinkedWebhookEventReason;
+    metadataBillingAccountId: string | null;
+  }
+) {
+  const now = deps.now();
+  const timestamp = toIsoString(now);
+  const record: BillFnUnlinkedWebhookEvent = {
+    id: buildUnlinkedWebhookEventId(providerName, event.providerEventId),
+    provider: providerName,
+    providerEventId: event.providerEventId,
+    providerReference: input.providerReference,
+    eventType: event.type,
+    occurredAt: event.occurredAt ?? null,
+    reason: input.reason,
+    metadataBillingAccountId: input.metadataBillingAccountId,
+    status: 'unlinked',
+    event: serializeParsedWebhookEvent(event),
+    replayClaimId: null,
+    replayClaimedAt: null,
+    replayedAt: null,
+    subscriptionId: null,
+    error: null,
+    expiresAt: toIsoString(new Date(now.getTime() + UNLINKED_WEBHOOK_EVENT_RETENTION_MS)),
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
+  try {
+    await deps.db.create({
+      model: TABLES.unlinkedWebhookEvents,
+      data: record,
+      namespace: deps.namespace
+    });
+  } catch (error) {
+    // A redelivered or replayed event keeps the row it already has.
+    if (!isDuplicateRecordError(error)) {
+      throw error;
+    }
+    return;
+  }
+  deps.metrics.track('webhook.event.unlinked', {
+    provider: providerName,
+    reason: input.reason
+  });
+  await purgeExpiredUnlinkedWebhookEvents(deps, timestamp);
+}
+
+async function purgeExpiredUnlinkedWebhookEvents(deps: ServiceDeps, timestamp: string) {
+  try {
+    await deps.db.deleteMany({
+      model: TABLES.unlinkedWebhookEvents,
+      where: [{ field: 'expiresAt', operator: 'lt', value: timestamp }],
+      namespace: deps.namespace
+    });
+  } catch (error) {
+    // Retention cleanup must not make the provider redeliver an event that is already stored.
+    deps.metrics.track('webhook.unlinked.purge_failed', {
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
+type UnlinkedReplayResult = { applied: number; skipped: number; pending: number };
+
+/**
+ * Applies unexpired unlinked events for the subscription's provider references
+ * in provider event-time order. An event older than the subscription's current
+ * provider state is marked skipped. A replay stops at the first event another
+ * replay holds or that cannot be applied, leaving it and later events unlinked
+ * so the order is kept for the next link or event on that reference.
+ */
+async function replayUnlinkedWebhookEvents(
+  deps: ServiceDeps,
+  subscription: BillFnSubscription
+): Promise<UnlinkedReplayResult> {
+  const result: UnlinkedReplayResult = { applied: 0, skipped: 0, pending: 0 };
+  const references = [...new Set([subscription.providerSubscriptionId, subscription.providerChargeId])].filter(
+    (reference): reference is string => typeof reference === 'string' && reference.length > 0
+  );
+  if (references.length === 0) {
+    return result;
+  }
+  const timestamp = toIsoString(deps.now());
+  const candidates = (
+    await deps.db.findMany<BillFnUnlinkedWebhookEvent>({
+      model: TABLES.unlinkedWebhookEvents,
+      where: [
+        { field: 'provider', operator: 'eq', value: subscription.provider },
+        { field: 'providerReference', operator: 'in', value: references },
+        { field: 'status', operator: 'in', value: ['unlinked', 'replaying'] }
+      ],
+      namespace: deps.namespace
+    })
+  )
+    .filter((candidate) => candidate.expiresAt > timestamp)
+    .sort(compareUnlinkedWebhookEvents);
+
+  for (const [index, candidate] of candidates.entries()) {
+    const claimId = deps.generateId('uwr');
+    if (!(await claimUnlinkedWebhookEvent(deps, candidate, claimId))) {
+      result.pending = candidates.length - index;
+      break;
+    }
+    let outcome: { status: 'replayed' | 'skipped'; subscriptionId: string } | null = null;
+    let failure: string | null = null;
+    try {
+      outcome = await applyUnlinkedWebhookEvent(deps, candidate);
+    } catch (error) {
+      failure = error instanceof Error ? error.message : String(error);
+    }
+    const finishedAt = toIsoString(deps.now());
+    await deps.db.updateMany({
+      model: TABLES.unlinkedWebhookEvents,
+      where: [
+        { field: 'id', operator: 'eq', value: candidate.id },
+        { field: 'replayClaimId', operator: 'eq', value: claimId }
+      ],
+      data: outcome
+        ? {
+            status: outcome.status,
+            subscriptionId: outcome.subscriptionId,
+            replayedAt: finishedAt,
+            replayClaimId: null,
+            replayClaimedAt: null,
+            error: null,
+            updatedAt: finishedAt
+          }
+        : {
+            status: 'unlinked',
+            replayClaimId: null,
+            replayClaimedAt: null,
+            error: failure,
+            updatedAt: finishedAt
+          },
+      namespace: deps.namespace
+    });
+    if (!outcome) {
+      deps.metrics.track('webhook.unlinked.replay_stopped', {
+        provider: candidate.provider,
+        providerEventId: candidate.providerEventId,
+        reason: failure ? 'error' : 'not_linked'
+      });
+      result.pending = candidates.length - index;
+      break;
+    }
+    if (outcome.status === 'replayed') {
+      result.applied += 1;
+    } else {
+      result.skipped += 1;
+    }
+  }
+
+  if (result.applied > 0 || result.skipped > 0) {
+    deps.metrics.track('webhook.unlinked.replayed', {
+      provider: subscription.provider,
+      applied: result.applied,
+      skipped: result.skipped
+    });
+  }
+  return result;
+}
+
+async function applyUnlinkedWebhookEvent(deps: ServiceDeps, row: BillFnUnlinkedWebhookEvent) {
+  const event = deserializeParsedWebhookEvent(row.event);
+  const state = event?.billingState;
+  if (!event || !state) {
+    return null;
+  }
+  const projection = await resolveProjectionContextForProviderState(deps, {
+    provider: row.provider,
+    state,
+    checkoutReferenceId: event.checkoutReferenceId
+  });
+  if (!projection?.subscription) {
+    return null;
+  }
+  const applied = await applyParsedWebhookEvent(deps, row.provider, { ...event, billingState: state }, projection);
+  return {
+    status: applied ? ('replayed' as const) : ('skipped' as const),
+    subscriptionId: applied?.subscription.id ?? projection.subscription.id
+  };
+}
+
+async function claimUnlinkedWebhookEvent(deps: ServiceDeps, row: BillFnUnlinkedWebhookEvent, claimId: string) {
+  const claimTime = deps.now();
+  const where: WhereClause[] = [
+    { field: 'id', operator: 'eq', value: row.id },
+    { field: 'status', operator: 'eq', value: row.status }
+  ];
+  if (row.status === 'replaying') {
+    const previousClaimedAt = row.replayClaimedAt ? Date.parse(row.replayClaimedAt) : Number.NaN;
+    if (
+      Number.isFinite(previousClaimedAt) &&
+      claimTime.getTime() - previousClaimedAt < UNLINKED_WEBHOOK_EVENT_REPLAY_LEASE_MS
+    ) {
+      return false;
+    }
+    where.push({ field: 'replayClaimId', operator: 'eq', value: row.replayClaimId ?? null });
+  }
+  const claimed = await deps.db.updateMany({
+    model: TABLES.unlinkedWebhookEvents,
+    where,
+    data: {
+      status: 'replaying',
+      replayClaimId: claimId,
+      replayClaimedAt: toIsoString(claimTime),
+      updatedAt: toIsoString(claimTime)
+    },
+    namespace: deps.namespace
+  });
+  return claimed === 1;
+}
+
+function compareUnlinkedWebhookEvents(left: BillFnUnlinkedWebhookEvent, right: BillFnUnlinkedWebhookEvent) {
+  const leftTime = left.occurredAt ? parseProviderEventTime(left.occurredAt) : null;
+  const rightTime = right.occurredAt ? parseProviderEventTime(right.occurredAt) : null;
+  if (leftTime !== rightTime) {
+    // Events without a provider time cannot be ordered against timed ones and go last.
+    if (leftTime === null) {
+      return 1;
+    }
+    if (rightTime === null) {
+      return -1;
+    }
+    return leftTime - rightTime;
+  }
+  if (left.createdAt !== right.createdAt) {
+    return left.createdAt < right.createdAt ? -1 : 1;
+  }
+  return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
+}
+
+/** Re-reads the projection after replayed events changed the linked subscription. */
+async function linkSubscriptionAndReplay(deps: ServiceDeps, result: ProjectionResult): Promise<ProjectionResult> {
+  const replay = await replayUnlinkedWebhookEvents(deps, result.subscription);
+  if (replay.applied === 0) {
+    return result;
+  }
+  const subscription = (await getSubscriptionById(deps, result.subscription.id)) ?? result.subscription;
+  const entitlements = (await findEntitlementSnapshot(deps, subscription.billingAccountId)) ?? result.entitlements;
+  const checkoutSession = result.checkoutSession
+    ? ((await getCheckoutSession(deps, result.checkoutSession.checkoutSessionId)) ?? result.checkoutSession)
+    : undefined;
+  return { checkoutSession, subscription, entitlements };
+}
+
+function readBillingAccountMetadata(event: ParsedProviderEvent, state: VerifiedBillingState) {
+  const stateRaw = asRecord(state.raw);
+  const candidates = [
+    asRecord(stateRaw?.metadata),
+    asRecord(event.raw.metadata),
+    asRecord(asRecord(event.raw.data)?.metadata)
+  ];
+  for (const metadata of candidates) {
+    const value = metadata ? readString(metadata, BILLING_ACCOUNT_METADATA_KEY) : null;
+    if (value) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function buildUnlinkedWebhookEventId(provider: BillingProviderName, providerEventId: string) {
+  return `uwe_${provider}_${Buffer.from(providerEventId).toString('base64url')}`;
 }
 
 async function resolveProviderEventPriceReference(

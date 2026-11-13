@@ -183,6 +183,51 @@ export interface BillFnWebhookReceipt {
   processedAt?: string | null;
 }
 
+/**
+ * Why a verified webhook event could not be applied to a subscription:
+ * - `billing_account_metadata_missing`: the provider record carries no `billfn_billing_account_id` metadata.
+ * - `billing_account_not_found`: the metadata names a billing account that does not exist.
+ * - `price_not_found`: the event's product or price is not in the catalog.
+ * - `billing_account_unavailable`: a subscription matches the reference but its billing account is gone.
+ */
+export type BillFnUnlinkedWebhookEventReason =
+  | 'billing_account_metadata_missing'
+  | 'billing_account_not_found'
+  | 'price_not_found'
+  | 'billing_account_unavailable';
+
+/**
+ * `unlinked` waits for its provider reference to be linked to a subscription;
+ * `replaying` is claimed by a replay run; `replayed` was applied and `skipped`
+ * was older than the subscription's current provider state.
+ */
+export type BillFnUnlinkedWebhookEventStatus = 'unlinked' | 'replaying' | 'replayed' | 'skipped';
+
+/** A verified webhook event kept until its provider reference is linked to a subscription. */
+export interface BillFnUnlinkedWebhookEvent {
+  id: string;
+  provider: BillingProviderName;
+  providerEventId: string;
+  /** The provider subscription id, or the provider charge id for a one-time payment. */
+  providerReference: string;
+  eventType: string;
+  occurredAt?: string | null;
+  reason: BillFnUnlinkedWebhookEventReason;
+  /** The `billfn_billing_account_id` metadata value, when the provider record carried one. */
+  metadataBillingAccountId?: string | null;
+  status: BillFnUnlinkedWebhookEventStatus;
+  /** The parsed provider event, replayed once the reference is linked. */
+  event: Record<string, unknown>;
+  replayClaimId?: string | null;
+  replayClaimedAt?: string | null;
+  replayedAt?: string | null;
+  subscriptionId?: string | null;
+  error?: string | null;
+  expiresAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface BillFnBillingEvent {
   id: string;
   billingAccountId: string;
