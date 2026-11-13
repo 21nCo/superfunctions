@@ -239,10 +239,18 @@ export function findRootBarrelImports(root = repoRoot, sourceRoots = ADAPTER_SOU
 
 /** Measures every fixture and evaluates it against the budgets file. */
 export async function verifyBundleSizes({ budgetsPath = DEFAULT_BUDGETS_PATH, fixtureRoot = FIXTURE_ROOT, only, build = buildFixture } = {}) {
-  const fixtures = listFixtures(fixtureRoot).filter((fixture) => !only?.length || only.includes(fixture.id));
+  const known = listFixtures(fixtureRoot);
+  const knownIds = known.map((fixture) => fixture.id);
+  const fixtures = known.filter((fixture) => !only?.length || only.includes(fixture.id));
   const document = JSON.parse(readFileSync(budgetsPath, "utf8"));
-  const { budgets, errors } = parseBudgets(document, listFixtures(fixtureRoot).map((fixture) => fixture.id));
+  const { budgets, errors } = parseBudgets(document, knownIds);
   const failures = [
+    ...(only ?? []).filter((id) => !knownIds.includes(id)).map((id) => ({
+      code: "UIFN_BUNDLE_FIXTURE_UNKNOWN",
+      message: `--fixture ${id} names no fixture; expected one of ${knownIds.join(", ")}`,
+    })),
+    // A check that measured nothing proves nothing, so it never passes.
+    ...(fixtures.length === 0 ? [{ code: "UIFN_BUNDLE_NO_FIXTURES", message: "no fixture was selected for measurement" }] : []),
     ...errors.map((message) => ({ code: "UIFN_BUNDLE_BUDGETS_INVALID", message })),
     ...findRootBarrelImports().map((location) => ({ code: "UIFN_ADAPTER_ROOT_BARREL_IMPORT", location })),
   ];
@@ -287,14 +295,20 @@ function formatReport(report) {
   return lines.join("\n");
 }
 
-function parseArgs(argv) {
+function optionValue(argv, index, flag) {
+  const value = argv[index];
+  if (value === undefined || value === "" || value.startsWith("--")) throw new Error(`${flag} needs a value`);
+  return value;
+}
+
+export function parseArgs(argv) {
   const options = { budgetsPath: DEFAULT_BUDGETS_PATH, json: false, record: false, only: [] };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--json") options.json = true;
     else if (arg === "--record") options.record = true;
-    else if (arg === "--budgets") options.budgetsPath = path.resolve(argv[++index] ?? "");
-    else if (arg === "--fixture") options.only.push(argv[++index]);
+    else if (arg === "--budgets") options.budgetsPath = path.resolve(optionValue(argv, ++index, arg));
+    else if (arg === "--fixture") options.only.push(optionValue(argv, ++index, arg));
     else throw new Error(`unknown argument: ${arg}`);
   }
   return options;
@@ -304,6 +318,7 @@ async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.record) {
     const fixtures = listFixtures();
+    if (fixtures.length === 0) throw new Error("no fixture to record a budget for");
     const measurements = [];
     for (const fixture of fixtures) {
       const { source } = await buildFixture(fixture);

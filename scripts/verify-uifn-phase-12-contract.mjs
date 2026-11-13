@@ -101,8 +101,12 @@ export function verifyPhase12Contract(options = {}) {
   if (!updateBody.includes('this.current?.update(') || updateBody.includes('this.create(')) {
     add(PHASE_12_MUTATION_CODES.recreateControllerOnUpdate, 'bridge.update does not delegate directly to controller.update');
   }
+  // The bridge installs each definition's DOM bindings, which live in internal/dom-bindings so a one-primitive
+  // bundle carries only its own; DOM ownership spans both modules.
+  const ownershipSource = `${bridgeSource}\n${readFileSync(path.join(repoRoot, 'uifn/svelte/lib/internal/dom-bindings.ts'), 'utf8')}`;
+  if (!bridgeSource.includes('definition.domBindings')) add('UIFN_SVELTE_DOM_OWNERSHIP_MISSING', 'definition.domBindings');
   for (const token of ['acquireUIFnDomPlatform', 'createUIFnOverlayDomBinding', 'createUIFnRangeGestureDomBinding', 'createUIFnNativeFormResetBinding', 'createUIFnPortal']) {
-    if (!bridgeSource.includes(token)) add('UIFN_SVELTE_DOM_OWNERSHIP_MISSING', token);
+    if (!ownershipSource.includes(token)) add('UIFN_SVELTE_DOM_OWNERSHIP_MISSING', token);
   }
 
   if (options.requireDist) {

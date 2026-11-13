@@ -15,8 +15,10 @@ import {
   findRootBarrelImports,
   findUnrelatedPrimitiveCode,
   listFixtures,
+  parseArgs,
   parseBudgets,
   recordBudgets,
+  verifyBundleSizes,
 } from "./verify-uifn-bundle-size.mjs";
 
 const script = fileURLToPath(new URL("./verify-uifn-bundle-size.mjs", import.meta.url));
@@ -108,6 +110,29 @@ test("adapter sources may not import the @uifn/core root barrel, even for types"
 
 test("the current adapter sources import @uifn/core only through subpaths", () => {
   assert.deepEqual(findRootBarrelImports(), []);
+});
+
+test("an unknown or missing --fixture fails instead of passing with nothing measured", async () => {
+  let builds = 0;
+  const build = async () => { builds += 1; return { files: [], source: "export{}" }; };
+  const unknown = await verifyBundleSizes({ only: ["react/nope"], build });
+  assert.equal(unknown.ok, false);
+  assert.equal(builds, 0);
+  assert.deepEqual(unknown.measurements, []);
+  assert.deepEqual(unknown.failures.map((failure) => failure.code), ["UIFN_BUNDLE_FIXTURE_UNKNOWN", "UIFN_BUNDLE_NO_FIXTURES"]);
+
+  const mixed = await verifyBundleSizes({ only: ["react/tabs", "react/nope"], build });
+  assert.equal(mixed.ok, false);
+  assert.deepEqual(mixed.failures.map((failure) => failure.code), ["UIFN_BUNDLE_FIXTURE_UNKNOWN"]);
+
+  assert.throws(() => parseArgs(["--fixture"]), /--fixture needs a value/);
+  assert.throws(() => parseArgs(["--fixture", "--json"]), /--fixture needs a value/);
+  assert.throws(() => parseArgs(["--budgets"]), /--budgets needs a value/);
+  for (const args of [["--fixture", "react/nope"], ["--fixture"]]) {
+    const run = spawnSync(process.execPath, [script, ...args], { cwd: repoRoot, encoding: "utf8" });
+    assert.equal(run.status, 1, `${args.join(" ")}: ${run.stdout}`);
+    assert.doesNotMatch(run.stdout, /ok: every fixture/);
+  }
 });
 
 test("the markers find QR-code and color-picker code in a real minified Vite build", async (t) => {

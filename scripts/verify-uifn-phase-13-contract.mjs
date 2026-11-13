@@ -146,8 +146,13 @@ export function verifyPhase13Contract(options = {}) {
     || /(?:const|let)\s+\{[^}]+\}\s*=\s*(?:props|runtime\.props|source\(\))/.test(bridgeSource)) {
     add(PHASE_13_MUTATION_CODES.staleReactiveInput, 'root input projection destructures or does not read live accessors');
   }
+  // The bridge installs each definition's DOM bindings, which live in internal/dom-bindings so a one-primitive
+  // bundle carries only its own; DOM ownership spans both modules.
+  const bindingsPath = path.join(repoRoot, 'uifn/solid/src/internal/dom-bindings.ts');
+  const ownershipSource = `${bridgeSource}\n${existsSync(bindingsPath) ? readFileSync(bindingsPath, 'utf8') : ''}`;
+  if (!bridgeSource.includes('definition.domBindings')) add('UIFN_SOLID_LIFECYCLE_OR_DOM_OWNERSHIP_MISSING', 'definition.domBindings');
   for (const token of ['createEffect', 'onCleanup', 'createSolidPartPropsBinding', 'acquireUIFnDomPlatform', 'createUIFnOverlayDomBinding', 'createUIFnRangeGestureDomBinding', 'createUIFnNativeFormResetBinding', 'createUIFnPortal']) {
-    if (!bridgeSource.includes(token)) add('UIFN_SOLID_LIFECYCLE_OR_DOM_OWNERSHIP_MISSING', token);
+    if (!ownershipSource.includes(token)) add('UIFN_SOLID_LIFECYCLE_OR_DOM_OWNERSHIP_MISSING', token);
   }
 
   if (options.requireDist) {

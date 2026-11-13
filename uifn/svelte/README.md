@@ -47,6 +47,7 @@ Every catalog part is also a named export, such as `AccordionRoot` and `Accordio
 - A render snippet receives merged props, the Svelte action and its parameters, the current state/actions/status, and the bridge. Apply the supplied action when replacing the default element.
 - User event callbacks run before internal behavior. `event.preventDefault()` cancels cancelable internal behavior while protected accessibility invariants remain intact.
 - Components use `$props.id()` plus the injected environment to keep IDs stable across SSR and hydration.
+- A `SveltePrimitiveBridge` wires only the `@uifn/dom` bindings its definition lists in `domBindings`, so an app bundles only the bindings of the primitives it imports. A hand-built `SveltePrimitiveDefinition` must list them too: import the installers (`overlayDomBinding`, `rovingFocusDomBinding` and so on) from `@uifn/svelte/dom-bindings`, or call `svelteDomBindingsFor({ name, family })` there for the installers the generated definition of that catalog primitive uses.
 
 ## SSR and packaging
 

@@ -52,7 +52,11 @@ export async function verifyPhase11Contract({ requireDist = false } = {}) {
     if (/create(?:Primitive|Compound|Component)Factory/.test(source)) issues.push(issue('UIFN_FRAMEWORK_BEHAVIOR_FORK', `${primitive.name} uses a generic exported factory substitute.`, generated.source));
   }
 
-  const substrate = read('uifn/react/src/internal/compound.tsx');
+  // The compound owns the controller lifecycle and installs each definition's DOM bindings, which live in
+  // internal/dom-bindings so a one-primitive bundle carries only its own; the substrate is both modules.
+  const compound = read('uifn/react/src/internal/compound.tsx');
+  const substrate = `${compound}\n${read('uifn/react/src/internal/dom-bindings.ts')}`;
+  if (!compound.includes('definition.domBindings')) issues.push(issue('UIFN_FRAMEWORK_BEHAVIOR_FORK', 'React substrate never installs definition.domBindings.', 'uifn/react/src/internal/compound.tsx'));
   for (const required of ['useSyncExternalStore', 'createUIFnOverlayDomBinding', 'createUIFnMenuDomBinding', 'createUIFnRangeGestureDomBinding', 'createUIFnNativeFormResetBinding', 'this.current?.update', '.destroy()']) {
     if (!substrate.includes(required)) issues.push(issue('UIFN_FRAMEWORK_BEHAVIOR_FORK', `React substrate omits ${required}.`, 'uifn/react/src/internal/compound.tsx'));
   }

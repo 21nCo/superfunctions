@@ -26,6 +26,12 @@
       "import": "./dist/hooks/media-query.js",
       "default": "./dist/hooks/media-query.js"
     },
+    "./dom-bindings": {
+      "types": "./dist/dom-bindings.d.ts",
+      "svelte": "./dist/dom-bindings.js",
+      "import": "./dist/dom-bindings.js",
+      "default": "./dist/dom-bindings.js"
+    },
     "./*": {
       "types": "./dist/generated/*/index.d.ts",
       "svelte": "./dist/generated/*/index.js",

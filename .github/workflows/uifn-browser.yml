@@ -16,6 +16,9 @@ on:
       - "scripts/verify-uifn-bundle-size.test.mjs"
       - "scripts/uifn-adapter-dom-bindings.mjs"
       - "scripts/uifn-adapter-dom-bindings.test.mjs"
+      # A root dependency bump (floating-ui, Vite, framework plugins) changes bundle sizes without touching uifn/.
+      - "package.json"
+      - "package-lock.json"
   push:
     branches:
       - dev
