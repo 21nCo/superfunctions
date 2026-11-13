@@ -137,13 +137,11 @@ type ServiceDeps = {
   metrics: MetricsEmitter;
   queue?: BillFnQueueAdapter<BillFnQueuedJob>;
   /**
-   * Reads the subscription from the provider and applies it inline, with the
-   * catalog selection the live record names, else `selection`. Throws when the
-   * read or applying it fails.
+   * Reconciles an event inside a committed mutation's window with an inline
+   * provider read; throws only when applying a successful read fails.
    */
-  reconcileProviderState?: (subscription: BillFnSubscription, selection: CatalogSelection) => Promise<void>;
+  reconcileProviderState?: (subscription: BillFnSubscription, providerEventId: string | undefined) => Promise<void>;
 };
-type CatalogSelection = { plan: ReturnType<typeof requirePlan>; price: BillFnPriceDefinition };
 
 type VerifiedBillingState = NonNullable<Awaited<ReturnType<NonNullable<BillFnProviderAdapter['verifyCheckout']>>>>;
 type ApplyVerificationStateInput = {
@@ -172,6 +170,8 @@ type ApplyVerificationStateInput = {
   committedAt?: string;
   /** The applied provider event, which keys its lifecycle billing event so a redelivery or replay records it once. */
   providerEventId?: string;
+  /** Keeps an open mutation window; the caller closes it once this write's effects are recorded. */
+  keepMutationWindow?: boolean;
 };
 type ProjectionResult = {
   checkoutSession: BillFnCheckoutSession | undefined;
@@ -218,9 +218,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
     metrics,
     queue: config.queue
   };
-  deps.reconcileProviderState = async (subscription, selection) => {
-    await syncSubscriptionById(subscription.id, selection);
-  };
+  deps.reconcileProviderState = (subscription, providerEventId) => reconcileWindowEvent(subscription, providerEventId);
 
   const subscriptionProvider = {
     getActiveSubscription: async (subject: BillableSubject) => {
@@ -317,13 +315,8 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
     }
   };
 
-  /**
-   * Reads the subscription from the provider and applies it. A reconcile passes
-   * `selection` (an event's catalog selection): the provider is read for it, the
-   * live record's product, when it names a catalog price, replaces it, and the
-   * retained events are left to the caller's replay.
-   */
-  async function syncSubscriptionById(subscriptionId: string, selection?: CatalogSelection): Promise<ProjectionResult> {
+  /** Reads the subscription from the provider with its stored (committed) catalog selection. */
+  async function readProviderSubscription(subscriptionId: string) {
     const subscription = await getSubscriptionById(deps, subscriptionId);
     if (!subscription) {
       throw createBillFnError({
@@ -338,14 +331,14 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         message: 'Billing account not found'
       });
     }
-    const storedPlan = requirePlan(deps.catalog, subscription.planKey);
-    const requested = selection ?? { plan: storedPlan, price: requirePriceById(storedPlan, subscription.priceId) };
+    const plan = requirePlan(deps.catalog, subscription.planKey);
+    const price = requirePriceById(plan, subscription.priceId);
     const provider = requireProvider(deps, subscription.provider, 'fetchSubscription');
     const liveStateObservedAt = toIsoString(deps.now());
     const verification = await provider.fetchSubscription({
       subscription,
-      plan: requested.plan,
-      price: requested.price
+      plan,
+      price
     });
     if (!verification) {
       throw createBillFnError({
@@ -353,18 +346,51 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         message: 'Provider did not return subscription state'
       });
     }
-    const live = selection
-      ? await resolveProviderEventPriceReference(
-          deps,
-          subscription.provider,
-          { type: 'subscription.read', billingState: verification },
-          null
-        )
-      : null;
-    const { plan, price } = live ?? requested;
-    const input = { billingAccount, plan, price, subscription, state: verification, liveStateObservedAt };
-    // A reconcile runs inside the delivery or replay of an event, which replays the references the read links.
-    return selection ? applyVerificationState(deps, input) : applyLiveProviderState(deps, input);
+    return { billingAccount, plan, price, subscription, state: verification, liveStateObservedAt };
+  }
+
+  async function syncSubscriptionById(subscriptionId: string): Promise<ProjectionResult> {
+    return applyLiveProviderState(deps, await readProviderSubscription(subscriptionId));
+  }
+
+  /**
+   * Reconciles an event inside a committed mutation's window with a provider
+   * read. The read keeps the committed plan and price unless the live record
+   * names another catalog price. When the read fails or returns nothing, the
+   * committed state stands (the provider returned it after the event occurred)
+   * and a subscription-sync job is enqueued when a queue is configured. The
+   * window stays open until the read's entitlements and its lifecycle entry,
+   * keyed by the event, are written, so a retry after a failure there
+   * reconciles again and records the entry once.
+   */
+  async function reconcileWindowEvent(subscription: BillFnSubscription, providerEventId: string | undefined) {
+    let read: Awaited<ReturnType<typeof readProviderSubscription>>;
+    try {
+      read = await readProviderSubscription(subscription.id);
+    } catch (error) {
+      deps.metrics.track('subscription.mutation.window_event_unreconciled', {
+        provider: subscription.provider,
+        subscriptionId: subscription.id,
+        reason: 'read_failed',
+        error: error instanceof Error ? error.message : String(error)
+      });
+      await scheduleSubscriptionSync(subscription);
+      return;
+    }
+    const live = await resolveProviderEventPriceReference(
+      deps,
+      read.subscription.provider,
+      { type: 'subscription.read', billingState: read.state },
+      null
+    );
+    await applyVerificationState(deps, {
+      ...read,
+      plan: live?.plan ?? read.plan,
+      price: live?.price ?? read.price,
+      keepMutationWindow: true,
+      providerEventId: providerEventId ? `${providerEventId}#window-read` : undefined
+    });
+    await closeMutationWindow(deps, subscription.id);
   }
 
   /**
@@ -2385,7 +2411,8 @@ async function applyVerificationState(
       continue;
     }
     // A state write closes the window of an earlier committed mutation; a committed mutation opens its own.
-    const mergedMetadata = withoutMutationWindow(mergeJson(baseSubscription?.metadata, input.state.raw));
+    const merged = mergeJson(baseSubscription?.metadata, input.state.raw);
+    const mergedMetadata = input.keepMutationWindow ? merged : withoutMutationWindow(merged);
     const providerStateAt = providerStateTimeFor(input.occurredAt, supersededBefore, baseSubscription);
     const metadata = providerStateAt
       ? {
@@ -2606,7 +2633,7 @@ async function linkSkippedEventReferences(
       ...data,
       updatedAt: nextSubscriptionUpdatedAt(deps.now(), current.updatedAt)
     };
-    if (await writeOrderedReferenceLink(deps, current, linked)) {
+    if (await writeOrderedSubscription(deps, current, linked)) {
       deps.metrics.track('reconciliation.event.references_linked', {
         provider: current.provider,
         subscriptionId: current.id
@@ -2641,8 +2668,8 @@ async function linkableMissingReferences(
   return data;
 }
 
-/** Writes a reference link ordered against the row it was computed from; false when that row changed. */
-async function writeOrderedReferenceLink(deps: ServiceDeps, current: BillFnSubscription, linked: BillFnSubscription) {
+/** Writes a subscription row ordered against the row it was computed from; false when that row changed. */
+async function writeOrderedSubscription(deps: ServiceDeps, current: BillFnSubscription, next: BillFnSubscription) {
   try {
     const updated = await deps.db.updateMany({
       model: TABLES.subscriptions,
@@ -2650,7 +2677,7 @@ async function writeOrderedReferenceLink(deps: ServiceDeps, current: BillFnSubsc
         { field: 'id', operator: 'eq', value: current.id },
         { field: 'updatedAt', operator: 'eq', value: current.updatedAt }
       ],
-      data: linked,
+      data: next,
       namespace: deps.namespace
     });
     return updated === 1;
@@ -3318,9 +3345,18 @@ async function storeUnlinkedWebhookEvent(
       namespace: deps.namespace
     });
   } catch (error) {
-    // A redelivered or replayed event keeps the row it already has.
+    // A redelivered or replayed event keeps the row it already has, but a replaced reference is recorded
+    // on it, so the event never bootstraps a subscription later.
     if (!isDuplicateRecordError(error)) {
       throw error;
+    }
+    if (input.reason === 'provider_reference_replaced') {
+      await deps.db.updateMany({
+        model: TABLES.unlinkedWebhookEvents,
+        where: [{ field: 'id', operator: 'eq', value: record.id }],
+        data: { reason: input.reason, updatedAt: timestamp },
+        namespace: deps.namespace
+      });
     }
     return;
   }
@@ -4030,16 +4066,14 @@ function withoutMutationWindow(metadata: Record<string, unknown> | undefined) {
 
 /**
  * Handles an event inside a committed mutation's window: links its missing
- * references and reconciles the subscription with an inline provider read for
- * the event's catalog selection (the live record's product replaces it). When
- * the provider cannot be read, the committed mutation's state stands. A failed
- * read, or a failure applying it, is thrown, so the delivery or replay that
- * carried the event is retried; the event is never applied over the mutation.
+ * references and reconciles the subscription with an inline provider read
+ * (`reconcileProviderState`). When the provider cannot be read, the committed
+ * mutation's state stands. The event is never applied over the mutation.
  */
 async function reconcileMutationWindowEvent(
   deps: ServiceDeps,
   subscription: BillFnSubscription,
-  input: Pick<ApplyVerificationStateInput, 'state' | 'plan' | 'price'>
+  input: Pick<ApplyVerificationStateInput, 'state' | 'providerEventId'>
 ) {
   const linked = await linkSkippedEventReferences(deps, subscription, input.state);
   const readable = Boolean(deps.reconcileProviderState) && typeof deps.providers[linked.provider]?.fetchSubscription === 'function';
@@ -4048,8 +4082,31 @@ async function reconcileMutationWindowEvent(
     subscriptionId: linked.id
   });
   if (readable) {
-    await deps.reconcileProviderState?.(linked, { plan: input.plan, price: input.price });
+    await deps.reconcileProviderState?.(linked, input.providerEventId);
   }
+}
+
+/** Closes a committed mutation's window once a reconcile read's effects are recorded. */
+async function closeMutationWindow(deps: ServiceDeps, subscriptionId: string) {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const current = await getSubscriptionById(deps, subscriptionId);
+    const metadata = asRecord(current?.metadata);
+    if (!current || !metadata || !(PROVIDER_MUTATION_STARTED_AT_METADATA_KEY in metadata)) {
+      return;
+    }
+    const closed = {
+      ...current,
+      metadata: withoutMutationWindow(metadata),
+      updatedAt: nextSubscriptionUpdatedAt(deps.now(), current.updatedAt)
+    };
+    if (await writeOrderedSubscription(deps, current, closed)) {
+      return;
+    }
+  }
+  throw createBillFnError({
+    code: 'BILLFN_CONFLICT',
+    message: 'Unable to close the mutation window after multiple retries'
+  });
 }
 
 function nextSubscriptionUpdatedAt(now: Date, previous?: string) {
