@@ -1,0 +1,101 @@
+authfn/api-keys/package.json
+  s_2409648105d207::t_8bbc5b64e3fe57 3,29
+authfn/api-keys/src/index.ts
+  s_2409648105d207::t_c3d24c27dfc009 90,97-101,117
+authfn/core/package.json
+  s_2409648105d207::t_3996355808f39e 3
+authfn/core/src/__tests__/api-key-owner-actor.test.ts
+  s_5fa45231d3c0cd::t_99e3ac534829d7 23,100
+authfn/core/src/__tests__/placement-context.test.ts
+  s_5fa45231d3c0cd::t_164f4850c6bd46 517
+authfn/core/src/core/api-keys.ts
+  s_c719faa707762b::t_9dc034ebfbdce3 14,22-26,52,58-60,87,209-213,226,232-233
+authfn/core/src/core/errors.ts
+  s_bf4b492f77da1c::t_3be2461e76afa2 13,277-286
+authfn/core/src/core/sessions.ts
+  s_c719faa707762b::t_96542c77d4b05e 34,451-452
+authfn/core/src/index.ts
+  s_bf4b492f77da1c::t_6014bc3c4c3678 25,61,98-111,164-166
+authfn/core/src/types.ts
+  s_bf4b492f77da1c::t_e3a7c857563175 7,19,97-102,587-592
+authfn/password/package.json
+  s_2409648105d207::t_1d88eb27d17b9a 3,29
+package-lock.json
+  s_2409648105d207::t_a432acd2f0803e 1532,1535,1666,4505,4508
+authfn/core/src/__tests__/api-keys.test.ts
+  s_5fa45231d3c0cd::t_14bccb3fed659a 20,273,303,423,442,444
+authfn/core/src/__tests__/integration-browser.test.ts
+  s_5fa45231d3c0cd::t_4a42baaabcabdd 161,413,426
+authfn/core/src/__tests__/sqlite/suite.ts
+  s_5fa45231d3c0cd::t_01851fb924ed74 65-66,68
+authfn/core/README.md
+  s_bf4b492f77da1c::t_2c9bfc847f1fda 13-34,58
+authfn/core/src/__tests__/api-key-docs.test.ts
+  s_bf4b492f77da1c::t_9350dbf35beb78 8,10,18-29,44-46,48-50,54,59-61,71,86,93,95,108,118,124,144-145,150-152,155-164,170-171,176,187-188,191-192,195,197,212-213,215-230,232-233,242
+authfn/core/src/__tests__/scopes.test.ts
+  s_bf4b492f77da1c::t_f4b87b198f3081 1-263
+authfn/core/src/core/scopes.ts
+  s_bf4b492f77da1c::t_1886dbaec65baf 1-246
+authfn/docs/content/docs/core-concepts/envelopes.md
+  s_bf4b492f77da1c::t_95176f8e324153 72
+authfn/docs/content/docs/core-concepts/errors.md
+  s_bf4b492f77da1c::t_68372d3ef4dcec 40
+authfn/docs/content/docs/core-concepts/sessions.md
+  s_bf4b492f77da1c::t_e79ecba801aa3e 37,158
+authfn/docs/content/docs/plugins/api-keys.md
+  s_bf4b492f77da1c::t_fc8315abfd0bcb 12,21,33-34,39,58,64,66,71,79,81-89,92,94,96-111,117,119-121,129,138-139,143,156,184-185
+authfn/docs/content/docs/recipes/cli-auth.md
+  s_bf4b492f77da1c::t_4c3a2beadfa62c 14-21,26,47,50,56,58-59,64-65,70,74
+authfn/docs/content/docs/reference/configuration.md
+  s_bf4b492f77da1c::t_5772a196021292 21,83-93
+authfn/docs/content/docs/reference/errors.md
+  s_bf4b492f77da1c::t_1cd3e031a7ce0b 18
+authfn/docs/content/docs/sdk/core.md
+  s_bf4b492f77da1c::t_a63ad7c26f3ca2 100-101,151
+authfn/docs/static/llms-full.txt
+  s_bf4b492f77da1c::t_0101e8de24614b 2054,2146,3713,3834,5136,5145,5157-5158,5163,5182,5188,5190,5195,5203,5205-5213,5216,5218,5220-5235,5241,5243-5245,5253,5262-5263,5267,5280,5308-5309,8466-8473,8478,8499,8502,8508,8510-8511,8516-8517,8522,8526,9878,9940-9950,10158,11007-11008,11058
+authfn/examples/account-settings/client/src/App.svelte
+  s_bf4b492f77da1c::t_2b875d74d98c5c 181
+authfn/examples/account-settings/server/src/auth.ts
+  s_bf4b492f77da1c::t_816418abab90bf 18-20,23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c26b3fbd3ebed2e9910f44019529ed4b3f92b8d6",
+  "prompts": {},
+  "sessions": {
+    "s_2409648105d207": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d70d3597-81a1-4d05-8bd3-05ad69afb585",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_5fa45231d3c0cd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c62f25c6-2b0e-42cc-8428-c9343362c50d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_bf4b492f77da1c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b0dbb1d-2b65-4127-85d5-232755430943",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_c719faa707762b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0d229937-ba84-4ae8-ba85-eced28f5d576",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
