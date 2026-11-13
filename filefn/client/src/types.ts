@@ -56,13 +56,17 @@ export interface UploadInput {
    *
    * - Must match `file_[A-Za-z0-9_-]{8,64}`; the server rejects any other value
    *   on `upload/init` with 400 `FILEFN_INVALID_FILE_ID`.
-   * - A new ID creates the file owned by the caller when its upload completes.
-   *   If two callers race on the same new ID, the first completion to claim it
-   *   owns the file; the other's completion fails with 403 `FILEFN_FORBIDDEN`
-   *   and stores none of its bytes under the file.
+   * - A new ID creates the file, owned by the caller, when the upload
+   *   completes. The server completes uploads of one file one at a time, and
+   *   the first to complete creates it. A later completion under that ID by
+   *   another caller is treated like a replacement (below): it fails with 403
+   *   `FILEFN_FORBIDDEN` unless that caller may write the file, and in either
+   *   case stores none of its bytes over the file's.
    * - An existing ID replaces that file with a new version and needs write
    *   permission on it; otherwise `upload/init` (or, if the file appeared after
    *   init, the completion) fails with 403.
+   * - If another upload of the same file is still completing, the completion
+   *   fails with 409 `FILEFN_FILE_BUSY` (`details.retryable: true`); retry it.
    * - Retrying an upload under the same ID is safe: pass the same
    *   `idempotencyKey` to get the same upload session back. A retry without
    *   it, by the same caller, becomes a new version of the same file.
