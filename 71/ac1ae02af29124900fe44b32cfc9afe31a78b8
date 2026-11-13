@@ -1,0 +1,69 @@
+flowfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_8e402b679849f9 28,36,52-66
+flowfn/typescript/scripts/packed-consumer-acceptance.mjs
+  s_c1093e7194f7e3::t_76b5a88c5358e8 34,44
+flowfn/typescript/src/adapters/base.ts
+  s_e1c5fc1a65c0cf::t_aa6e3e92db1438 1,68
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_e1c5fc1a65c0cf::t_2cbaa2f259e88f 1,678-679,681
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_e1c5fc1a65c0cf::t_681cd0e9971ae6 1,22
+flowfn/typescript/src/adapters/redis.test.ts
+  s_e1c5fc1a65c0cf::t_e5e0ab20754a81 1,22
+flowfn/typescript/src/adapters/redis.ts
+  s_e1c5fc1a65c0cf::t_2540103cc51a57 1,650-651,653-662
+flowfn/typescript/src/core/durable-scheduler.ts
+  s_e1c5fc1a65c0cf::t_2ffb1229fe3485 1,20,111-112,114,167-169,172
+flowfn/typescript/src/core/flow-fn.ts
+  s_e1c5fc1a65c0cf::t_09fd6f55806541 1,67,76,369-371,373-389
+flowfn/typescript/src/core/scheduler.ts
+  s_e1c5fc1a65c0cf::t_166db4b7990fcf 1,28,179-181,183-185
+flowfn/typescript/src/core/shutdown.test.ts
+  s_c1093e7194f7e3::t_c15009d7b3951f 1-82
+flowfn/typescript/src/core/shutdown.ts
+  s_e1c5fc1a65c0cf::t_b54fea801330bf 1-25
+flowfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_53d7ab0de96518 60-61
+flowfn/typescript/src/queue/queue.ts
+  s_e1c5fc1a65c0cf::t_7ef58606ba60c6 1,25,566-568,572-573,575,577-582
+flowfn/typescript/src/queue/types.ts
+  s_e1c5fc1a65c0cf::t_c58b374ec8164a 1,47
+flowfn/typescript/src/queue/worker-pool.ts
+  s_e1c5fc1a65c0cf::t_ba1b302133ba92 1,29,61,93-94,97,100-101,103,107
+flowfn/typescript/src/queue/worker.ts
+  s_c1093e7194f7e3::t_f54bd27ccfab13 1,26,58,87-88,91,93-95,97,99,107
+flowfn/typescript/src/storage/shutdown-contract.ts
+  s_e1c5fc1a65c0cf::t_b1648860634cf3 1-30
+flowfn/typescript/src/stream/stream.ts
+  s_e1c5fc1a65c0cf::t_f931a3933c81ae 1,22,83,92,107,118-119,128,153-155,157,198-200,202-205
+flowfn/typescript/src/stream/types.ts
+  s_e1c5fc1a65c0cf::t_4ee91f1bde0634 1,37,78
+flowfn/typescript/src/workflow/types.ts
+  s_e1c5fc1a65c0cf::t_7f3a34115711f0 1,35
+flowfn/typescript/src/workflow/workflow.ts
+  s_e1c5fc1a65c0cf::t_56c3f3a343743d 1,266,349,424,426,506,965,1039-1041,1044-1055
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "71ac1ae02af29124900fe44b32cfc9afe31a78b8",
+  "prompts": {},
+  "sessions": {
+    "s_c1093e7194f7e3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "203316bd-9c88-41f4-b037-58d76f8b6cd9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

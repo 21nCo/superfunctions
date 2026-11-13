@@ -1,0 +1,23 @@
+devfn/docs/configuration.md
+  s_69d9915699d5c2::t_be5b20598361bc 137,140
+devfn/proxy/src/tunnel/service.ts
+  s_69d9915699d5c2::t_6673ae694c47f0 52-53,55-56,708-713
+devfn/proxy/test/tunnel-ngrok.test.ts
+  s_69d9915699d5c2::t_b266949cd56b4f 384-386,449,515-516
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fc901c84fdae8c0326e75fe042e2bc78c90c9eae",
+  "prompts": {},
+  "sessions": {
+    "s_69d9915699d5c2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_69d9915699d5c2",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

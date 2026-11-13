@@ -1,0 +1,87 @@
+chartfn/.conduct/pr-destination.md
+  s_e1c5fc1a65c0cf::t_a82e204db7fb04 1-5
+chartfn/LICENSE
+  s_e1c5fc1a65c0cf::t_2ecdcc9d07c9d3 1-21
+chartfn/README.md
+  s_e1c5fc1a65c0cf::t_180a8fa9f596db 3-76,82,89,104,111,127,132-146
+chartfn/__tests__/bounds-and-logging.test.ts
+  s_e1c5fc1a65c0cf::t_3193b485beac09 1-22
+chartfn/__tests__/carbon-adapter.test.tsx
+  s_e1c5fc1a65c0cf::t_9e3a1aa6c58caf 2-15,17-27,29-34,36-68,70-75
+chartfn/__tests__/chartjs-adapter.test.ts
+  s_e1c5fc1a65c0cf::t_f47ee78c67dd0e 11,38,42,93-111
+chartfn/__tests__/core-readiness.test.ts
+  s_e1c5fc1a65c0cf::t_e844d907569c56 1-30
+chartfn/__tests__/echarts-readiness.test.ts
+  s_e1c5fc1a65c0cf::t_01d3e6a83e5b7c 1-50
+chartfn/__tests__/handle-lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_c9dfc4482daff1 50
+chartfn/package.json
+  s_e1c5fc1a65c0cf::t_cddf1f638b9c28 11-18,28,31-32,59-60,68
+chartfn/react/LICENSE
+  s_e1c5fc1a65c0cf::t_d49d9ece09dd14 1-21
+chartfn/react/README.md
+  s_e1c5fc1a65c0cf::t_a42a0122048143 3,9,16,22,30,34,36
+chartfn/react/__tests__/chart-react.test.tsx
+  s_e1c5fc1a65c0cf::t_5ca84d296152c4 31-60
+chartfn/react/package.json
+  s_e1c5fc1a65c0cf::t_bb34e194943e61 10-17,24-25,45
+chartfn/react/src/Chart.tsx
+  s_e1c5fc1a65c0cf::t_ff2328193dc7b8 35-36
+chartfn/react/src/useChart.tsx
+  s_e1c5fc1a65c0cf::t_f2fa9bed2244df 3,37,40-43,45-55,59,66-70
+chartfn/scripts/browser-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_5f553004bc5fb6 1-97
+chartfn/scripts/framework-browser-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_85c5c609abf0a7 1-98
+chartfn/scripts/packed-consumer.mjs
+  s_e1c5fc1a65c0cf::t_97845cc69cdf21 1-47
+chartfn/src/adapters/carbon.ts
+  s_e1c5fc1a65c0cf::t_37f69bf9966513 2-20,23,25-36,38-41,43-47,49-54,56-61,63,66-105,111,113-125,127-132,135,137-144
+chartfn/src/adapters/chartjs.ts
+  s_e1c5fc1a65c0cf::t_2388060a5b8c03 17,20,38,90,93-95,121,123,145-149,151,155-162,170-174,182
+chartfn/src/adapters/echarts.ts
+  s_e1c5fc1a65c0cf::t_5ae6d34f285e3c 3,31,40-43,55,109,118,168-171,202-211,220-230,237,243-265
+chartfn/src/chart-fn.ts
+  s_e1c5fc1a65c0cf::t_0e09e2d2bf9551 76,95-110
+chartfn/src/logger.ts
+  s_e1c5fc1a65c0cf::t_c935de9e1f8a4f 23-24
+chartfn/src/resolve-container.ts
+  s_e1c5fc1a65c0cf::t_92b07be34b5f6f 8
+chartfn/src/types.ts
+  s_e1c5fc1a65c0cf::t_1fe82026348c65 12-13
+chartfn/src/validate.ts
+  s_e1c5fc1a65c0cf::t_5fa19c1c267594 37,83-91,93-99,129-134
+chartfn/svelte/LICENSE
+  s_e1c5fc1a65c0cf::t_06083d3b8b7911 1-21
+chartfn/svelte/README.md
+  s_e1c5fc1a65c0cf::t_61e98016189e2f 3,10,17,23
+chartfn/svelte/__tests__/chart-svelte.test.ts
+  s_e1c5fc1a65c0cf::t_34790cceac4db3 30-60
+chartfn/svelte/package.json
+  s_e1c5fc1a65c0cf::t_68a9fb725d69d2 5-6,8,12-16,20-24,30,36,39-41,64-68
+chartfn/svelte/scripts/fix-declarations.mjs
+  s_e1c5fc1a65c0cf::t_de66311189b16e 1-7
+chartfn/svelte/src/Chart.svelte
+  s_e1c5fc1a65c0cf::t_ce2c23afec1b74 3,14-16,19-23,25-28,31-32,35-36,38-39,41
+chartfn/svelte/vite.ssr.config.ts
+  s_e1c5fc1a65c0cf::t_274f5472612d48 1-2,4-11
+package.json
+  s_e1c5fc1a65c0cf::t_166d0ccf201c0f 63-66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "17baaf652d48ced1439cd9f9acabf1248283e36e",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

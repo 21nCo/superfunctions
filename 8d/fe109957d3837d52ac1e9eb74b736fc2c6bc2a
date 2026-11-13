@@ -1,0 +1,45 @@
+probefn/.conduct/event-journal-readiness.md
+  s_e1c5fc1a65c0cf::t_4070826f02784d 1-95
+probefn/docs/artifacts.md
+  s_e1c5fc1a65c0cf::t_5e25e5261290e4 160-213
+probefn/packages/browser-runner/test/lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_496774c9a13de4 95-97
+probefn/packages/core/src/session-manager.ts
+  s_e1c5fc1a65c0cf::t_7b112df0b161d6 257
+probefn/packages/dev-server/src/dev-server-manager.ts
+  s_e1c5fc1a65c0cf::t_a9875a8e20182f 207-208
+probefn/packages/mcp-server/src/server.ts
+  s_e1c5fc1a65c0cf::t_a4b4f239437ce0 320-321,1132-1135,1593-1594
+probefn/packages/mcp-server/test/event-integrity.test.ts
+  s_e1c5fc1a65c0cf::t_90a55151017023 1-41
+probefn/packages/storage/src/artifact-store.ts
+  s_e1c5fc1a65c0cf::t_5d66453c1ef6db 112,144,210,215-219,267,269,305,309
+probefn/packages/storage/src/event-journal.ts
+  s_e1c5fc1a65c0cf::t_1ca702b36cdafb 1-72
+probefn/packages/storage/src/run-quota.ts
+  s_e1c5fc1a65c0cf::t_1f33e9bb334039 4-6,27,54-55,66-72,97-104,163-198,227-228,235,238-253,256,258-263
+probefn/packages/storage/test/event-journal.test.ts
+  s_e1c5fc1a65c0cf::t_b00f68fe430243 1-144
+probefn/packages/storage/test/fixtures/event-crash-child.mjs
+  s_e1c5fc1a65c0cf::t_56f305427fb2c2 1-47
+probefn/scripts/installed-event-journal-consumer.mjs
+  s_e1c5fc1a65c0cf::t_d4b8bf3e030939 1-63
+probefn/scripts/verify-distribution.mjs
+  s_e1c5fc1a65c0cf::t_66f33390f8e318 83-84,89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8dfe109957d3837d52ac1e9eb74b736fc2c6bc2a",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

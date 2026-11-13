@@ -1,0 +1,35 @@
+watchfn/.conduct/python-http-auth-readiness.md
+  s_e1c5fc1a65c0cf::t_62b2b4f62587c7 1-47
+watchfn/python/README.md
+  s_e1c5fc1a65c0cf::t_9ea6557110be49 1-80
+watchfn/python/pyproject.toml
+  s_e1c5fc1a65c0cf::t_502c4764c15294 15
+watchfn/python/scripts/verify-http-wheel.py
+  s_e1c5fc1a65c0cf::t_ec0271a224f922 1-23
+watchfn/python/tests/test_http.py
+  s_e1c5fc1a65c0cf::t_493ff4b8708681 1-191
+watchfn/python/watchfn/adapters/flask.py
+  s_e1c5fc1a65c0cf::t_5618097e014d06 14
+watchfn/python/watchfn/http/handlers.py
+  s_e1c5fc1a65c0cf::t_69847d48bd2299 1-3,5-7,9-15,21-68,70,73-97,99-102,105-130
+watchfn/python/watchfn/models.py
+  s_e1c5fc1a65c0cf::t_05550ebe09e122 3-22,26
+watchfn/python/watchfn/storage/memory_storage.py
+  s_e1c5fc1a65c0cf::t_bdaf3067c456bf 1,5,8-9,12,15-19,22-25,27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "91cac95b84831d48954d820976160190bdc09038",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+clifn/docs/scripts/generate-llms.mjs
+  s_7d0a48f0aaecda::t_05098e7968a24c 12,20-21
+scripts/docs-site/llms.mjs
+  s_7d0a48f0aaecda::t_196eeb03bdf483 3-4,84-86,88-94,96,98-100,109
+scripts/docs-site/llms.test.mjs
+  s_7d0a48f0aaecda::t_3406824db540cb 5,43-44,46-58,62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5e4df49de74ca6de058751dc9f37bb75c206e52e",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,39 @@
+flowfn/.conduct/python-memory-partition-readiness.md
+  s_e1c5fc1a65c0cf::t_e427fc84df0ebe 1-35
+flowfn/.conduct/python-memory-partition-validation-20261025.json
+  s_e1c5fc1a65c0cf::t_68b5d1517c3302 1-40
+flowfn/.conduct/verify-python-memory-partitions.py
+  s_e1c5fc1a65c0cf::t_36ea625f779074 1-48
+flowfn/python/README.md
+  s_e1c5fc1a65c0cf::t_625bd985c5bfd6 121,123-144
+flowfn/python/flowfn/adapters/memory.py
+  s_e1c5fc1a65c0cf::t_75651a010b74f5 11,14,27-28,31,291-301,304-313,366,368-371,379,397,401-403,445-446
+flowfn/python/flowfn/adapters/memory_partitions.py
+  s_e1c5fc1a65c0cf::t_4d5ca6587d8427 1-190
+flowfn/python/flowfn/core/flow.py
+  s_e1c5fc1a65c0cf::t_127b5012110374 110-115
+flowfn/python/flowfn/stream/partition.py
+  s_e1c5fc1a65c0cf::t_278795e44fe1dc 1-31
+flowfn/python/flowfn/stream/stream.py
+  s_e1c5fc1a65c0cf::t_7065b3f9c99b43 14,40,57-59,143-149,151,163
+flowfn/python/flowfn/stream/types.py
+  s_e1c5fc1a65c0cf::t_5ef3b9eb47c8ce 10,12,22,67,75
+flowfn/python/tests/test_memory_stream_partitions.py
+  s_e1c5fc1a65c0cf::t_c16ab9f869b07d 1-328
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "50c2823c29597fea8daef277552f578baa21f21b",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

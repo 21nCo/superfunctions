@@ -1,0 +1,35 @@
+flowfn/python/README.md
+  s_e1c5fc1a65c0cf::t_1a10a698bac65c 134-149
+flowfn/python/flowfn/__init__.py
+  s_e1c5fc1a65c0cf::t_0ae9789797bd2c 7-12
+flowfn/python/flowfn/adapters/base.py
+  s_e1c5fc1a65c0cf::t_7e1123cbe91d7f 3,8-12,45,47,88,92
+flowfn/python/flowfn/core/flow.py
+  s_e1c5fc1a65c0cf::t_bf26fa4d4841df 4,6-17,38-45,71,89,103,109,113,119,124,134,140,156
+flowfn/python/flowfn/queue/dlq.py
+  s_e1c5fc1a65c0cf::t_45299aac0a40db 9,41,52
+flowfn/python/flowfn/queue/types.py
+  s_e1c5fc1a65c0cf::t_96efb724d9c7d8 3,44-45,53
+flowfn/python/flowfn/scheduler/__init__.py
+  s_e1c5fc1a65c0cf::t_f7b704d0ddffed 1-142
+flowfn/python/pyproject.toml
+  s_e1c5fc1a65c0cf::t_ff94603303d16a 31,49,59-61
+flowfn/python/tests/test_scheduler.py
+  s_e1c5fc1a65c0cf::t_c6cbab8fa34727 1-104
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b6445550bc9ab0bb335a579cdf5b4013c9140957",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,35 @@
+devfn/cli/SECURITY.md
+  s_1900bb15a7199a::t_318786b7e07a0b 22
+devfn/core/test/oauth-relay-owner.test.ts
+  s_1900bb15a7199a::t_646a809ec7e3a3 1-73
+devfn/docs/configuration.md
+  s_1900bb15a7199a::t_92bf1ed23c1910 105
+devfn/proxy/src/index.ts
+  s_1900bb15a7199a::t_bb7247975176cb 197-202,500,525-530,537-547,555-560,624
+devfn/proxy/src/oauth-relay/service.ts
+  s_1900bb15a7199a::t_9da8e0cf35cd75 12,258,293,335
+devfn/proxy/src/oauth-relay/state.ts
+  s_1900bb15a7199a::t_22a5675a651b22 18-24,327,380
+devfn/proxy/test/oauth-relay-service.test.ts
+  s_1900bb15a7199a::t_97e4fe32c4bd3c 296-315
+devfn/proxy/test/oauth-relay.test.ts
+  s_1900bb15a7199a::t_4f38bfda7727bf 1,12,220,290-318
+devfn/proxy/test/proxy.test.ts
+  s_1900bb15a7199a::t_cc62d6034739ae 235-271
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c95969c6874bfba8dffd86fb6c7679eff964ee06",
+  "prompts": {},
+  "sessions": {
+    "s_1900bb15a7199a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5e049926-ee38-44b5-a734-8c7117ee5ff7",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

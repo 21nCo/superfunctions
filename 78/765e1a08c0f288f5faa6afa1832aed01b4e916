@@ -1,0 +1,25 @@
+probefn/.conduct/turbo-dependency-readiness.md
+  s_e1c5fc1a65c0cf::t_8ab1257aeb982d 53-85
+probefn/packages/browser-runner/test/actions.test.ts
+  s_e1c5fc1a65c0cf::t_635287962ce6d1 84,86,224,252,280,305,307
+probefn/packages/browser-runner/test/browser-runner.test.ts
+  s_e1c5fc1a65c0cf::t_5e0ede5d1631bf 94,96
+probefn/packages/dev-server/test/dev-server-manager.test.ts
+  s_e1c5fc1a65c0cf::t_149207b20fca57 186-192,207,213,225
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "78765e1a08c0f288f5faa6afa1832aed01b4e916",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

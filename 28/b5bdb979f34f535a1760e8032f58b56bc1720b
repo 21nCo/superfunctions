@@ -1,0 +1,25 @@
+userfn/.conduct/dialog-keyboard-readiness.md
+  s_e1c5fc1a65c0cf::t_aa50bd3196c53a 1-26
+userfn/typescript/scripts/verify-survey-renderer.mjs
+  s_e1c5fc1a65c0cf::t_32b422a898c75d 38,70-84,127-146,162
+userfn/typescript/src/ui/renderer.ts
+  s_e1c5fc1a65c0cf::t_e4f4458f6c4e2f 8,21-23,29-59,278,283,352,392
+userfn/typescript/src/ui/styles.ts
+  s_e1c5fc1a65c0cf::t_aae1fb66559e81 41-43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "28b5bdb979f34f535a1760e8032f58b56bc1720b",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

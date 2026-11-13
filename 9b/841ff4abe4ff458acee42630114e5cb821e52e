@@ -1,0 +1,33 @@
+_conduct/shared-readiness-sf-next.md
+  s_e1c5fc1a65c0cf::t_0abeb92f18ed98 63-70
+package-lock.json
+  s_e1c5fc1a65c0cf::t_0fe0b88515871c 51421,51431,51448,51455,51498,51505,51549,51556
+packages/http-express/package.json
+  s_e1c5fc1a65c0cf::t_7e314240ada5d2 26,30
+packages/http-fastify/package.json
+  s_e1c5fc1a65c0cf::t_ba8f8dbd110a4f 26,30
+packages/http-next/package.json
+  s_e1c5fc1a65c0cf::t_598f6776425732 26,30
+packages/http-next/vitest.config.ts
+  s_e1c5fc1a65c0cf::t_6701364269e31e 1-8
+packages/http-sveltekit/package.json
+  s_e1c5fc1a65c0cf::t_edf79a60ef2161 26,30
+packages/http-sveltekit/vitest.config.ts
+  s_e1c5fc1a65c0cf::t_d908a2ff3bcbe9 1-8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9b841ff4abe4ff458acee42630114e5cb821e52e",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

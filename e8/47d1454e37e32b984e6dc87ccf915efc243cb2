@@ -1,0 +1,33 @@
+flowfn/.conduct/postgres-queue-order-readiness.md
+  s_e1c5fc1a65c0cf::t_a2d55c26a32bb1 1-62
+flowfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_e664e1b27be0b0 21-23
+flowfn/typescript/docs/API.md
+  s_e1c5fc1a65c0cf::t_f30f81aa1942d0 841-844
+flowfn/typescript/docs/queue-ownership.md
+  s_e1c5fc1a65c0cf::t_64d5266ba4bb8e 138-164
+flowfn/typescript/scripts/packed-consumer-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_3f031223db9716 44,50
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_e1c5fc1a65c0cf::t_65aa8521cb5315 60-61,64,73-95,107,126,236,253
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_e1c5fc1a65c0cf::t_0b1608b142273e 59-120
+flowfn/typescript/src/adapters/postgres/schema.ts
+  s_e1c5fc1a65c0cf::t_b310be9063c3ac 13,25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e847d1454e37e32b984e6dc87ccf915efc243cb2",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

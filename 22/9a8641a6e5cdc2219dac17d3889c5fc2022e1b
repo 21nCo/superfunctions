@@ -1,0 +1,14 @@
+packages/http/README.md
+  h_bdc5b81c173ee9 263,270-273
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "229a8641a6e5cdc2219dac17d3889c5fc2022e1b",
+  "prompts": {},
+  "humans": {
+    "h_bdc5b81c173ee9": {
+      "author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

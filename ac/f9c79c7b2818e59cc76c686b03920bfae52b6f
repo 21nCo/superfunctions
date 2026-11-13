@@ -1,0 +1,37 @@
+browsefn/.conduct/image-download-security.md
+  s_e1c5fc1a65c0cf::t_cea227649f8219 1-27
+browsefn/python/browsefn/core/types.py
+  s_e1c5fc1a65c0cf::t_192c9eae90d60a 339-341
+browsefn/python/browsefn/images/_download_utils.py
+  s_e1c5fc1a65c0cf::t_6df07ba034eff7 15-17,29-116
+browsefn/python/browsefn/images/browser.py
+  s_e1c5fc1a65c0cf::t_70182046d9157a 15,98-99
+browsefn/python/browsefn/images/providers/_shared.py
+  s_e1c5fc1a65c0cf::t_bebfa8c97df953 15,59-60,68-70
+browsefn/python/tests/test_image_security.py
+  s_e1c5fc1a65c0cf::t_4e611998a174cf 1-106
+browsefn/python/tests/test_images.py
+  s_e1c5fc1a65c0cf::t_b0d70d9d940064 4,74,124,146
+browsefn/typescript/src/images/browser.ts
+  s_e1c5fc1a65c0cf::t_d2357ec2135aaf 6-8,219-221,233
+browsefn/typescript/src/images/download.ts
+  s_e1c5fc1a65c0cf::t_6f7cf55cd8701d 1-113
+browsefn/typescript/tests/image-browser.test.ts
+  s_e1c5fc1a65c0cf::t_9633abdfe436f8 2,6-10,25-27,30-42,45-46,49-53,55-58,60,62-63,65,67-69,71-73,75-79,81-103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "acf9c79c7b2818e59cc76c686b03920bfae52b6f",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

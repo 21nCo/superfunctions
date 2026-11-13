@@ -1,0 +1,35 @@
+recfn/.conduct/consent-transport-readiness.md
+  s_e1c5fc1a65c0cf::t_887e94ca5e2890 1-56
+recfn/README.md
+  s_e1c5fc1a65c0cf::t_5f2551eacd6d82 248-257
+recfn/platforms/browser-core/src/chat.ts
+  s_e1c5fc1a65c0cf::t_26d7bb135ea2cd 46-47
+recfn/platforms/browser-core/src/session.ts
+  s_e1c5fc1a65c0cf::t_8a63743a0b7a23 295-296
+recfn/platforms/meet/__tests__/meet-adapter.test.ts
+  s_e1c5fc1a65c0cf::t_b004332d622ce9 1,198-201,237-252
+recfn/platforms/meet/src/chat.ts
+  s_e1c5fc1a65c0cf::t_5a6a891c8de0af 208-210
+recfn/platforms/teams/__tests__/teams-adapter.test.ts
+  s_e1c5fc1a65c0cf::t_fbc3f7e2b7d59a 1,188-191,227-242
+recfn/platforms/teams/src/chat.ts
+  s_e1c5fc1a65c0cf::t_7b3cea6d9fc413 41-43
+recfn/server/__tests__/consent.test.ts
+  s_e1c5fc1a65c0cf::t_1ec16af0f55b21 215
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3a5d8249e559ba4a7c75b5339db0b4f5e4cf0c95",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

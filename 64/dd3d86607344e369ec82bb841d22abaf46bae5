@@ -1,0 +1,37 @@
+_conduct/shared-python-readiness-sf-next.md
+  s_e1c5fc1a65c0cf::t_4dcee4bcc80048 1-20
+packages/python-core/README.md
+  s_e1c5fc1a65c0cf::t_3b1eda89f69643 1,6,9-10,14
+packages/python-core/pyproject.toml
+  s_e1c5fc1a65c0cf::t_96de983cd7e04b 6
+packages/python-core/superfunctions/db/types.py
+  s_e1c5fc1a65c0cf::t_0e979c082d4eee 60
+packages/python-core/tests/test_oauth.py
+  s_e1c5fc1a65c0cf::t_8c1c358b9ecc0a 132,167
+packages/python-sqlalchemy/README.md
+  s_e1c5fc1a65c0cf::t_898bd1f6c31303 9-10
+packages/python-sqlalchemy/pyproject.toml
+  s_e1c5fc1a65c0cf::t_79e38d94add142 7,26
+packages/python-sqlalchemy/superfunctions_sqlalchemy/__init__.py
+  s_e1c5fc1a65c0cf::t_cdf0f6c83f038a 18
+packages/python-sqlalchemy/superfunctions_sqlalchemy/adapter.py
+  s_e1c5fc1a65c0cf::t_10e8379713e39f 35,57,60,62-66,576,582
+packages/python-sqlalchemy/tests/test_adapter.py
+  s_e1c5fc1a65c0cf::t_8ec81d145aace0 7,17,194,196-197,270,288,380
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "64dd3d86607344e369ec82bb841d22abaf46bae5",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

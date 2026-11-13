@@ -1,0 +1,23 @@
+recfn/server/__tests__/storage-adapter.test.ts
+  s_e1c5fc1a65c0cf::t_4a8a71a2ebf57a 13-44
+recfn/server/src/integrations/storage.ts
+  s_e1c5fc1a65c0cf::t_4513a2e383166b 28-33
+recfn/.conduct/upload-stream-readiness.md
+  s_e1c5fc1a65c0cf::t_94f0cca6b6ea21 1-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8188541ada72c7b5927ff4ffad2235fa706b3352",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

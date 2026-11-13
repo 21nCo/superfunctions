@@ -1,0 +1,23 @@
+contentfn/.conduct/packed-acceptance.py
+  s_e1c5fc1a65c0cf::t_d42a01a6e15298 7
+contentfn/.conduct/packed-runtime.mjs
+  s_e1c5fc1a65c0cf::t_fbea996871e25d 28
+contentfn/.conduct/packed-schema4-readiness.md
+  s_e1c5fc1a65c0cf::t_c9ce59ef74834a 1-26
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3f5aa26fa07301371510d47b455d997608b32dc7",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

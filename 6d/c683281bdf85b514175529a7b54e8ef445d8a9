@@ -1,0 +1,41 @@
+cmsfn/.conduct/studio-browser-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_76b7dd9a7d4ae7 1-77
+cmsfn/.conduct/studio-packaging-readiness.md
+  s_e1c5fc1a65c0cf::t_9ab75e95d1c75b 1-38
+cmsfn/.conduct/studio-packed-acceptance.py
+  s_e1c5fc1a65c0cf::t_345d235c5c8cdc 1-49
+cmsfn/studio/README.md
+  s_e1c5fc1a65c0cf::t_92ed8856d4eb05 1-33
+cmsfn/studio/package.json
+  s_e1c5fc1a65c0cf::t_b0101733083ff8 4,11-18,51,62-68
+cmsfn/studio/src/__tests__/collab.test.tsx
+  s_e1c5fc1a65c0cf::t_b89e9d5e8eb735 53-62,64-69
+cmsfn/studio/src/__tests__/editor.test.tsx
+  s_e1c5fc1a65c0cf::t_daf8ceedd07ef5 46,172,183-184,203-204
+cmsfn/studio/src/panes/editor/DocumentEditorPane.tsx
+  s_e1c5fc1a65c0cf::t_3500889c667784 106,145
+cmsfn/studio/tsconfig.json
+  s_e1c5fc1a65c0cf::t_398800cad3b86e 4-8,24-31
+cmsfn/studio/vitest.config.ts
+  s_e1c5fc1a65c0cf::t_2d6304c399f107 4-6
+package-lock.json
+  s_e1c5fc1a65c0cf::t_eefe6bacea65a1 71-72,7311-7609,21074-21077
+package.json
+  s_e1c5fc1a65c0cf::t_3d0cd77bec0f53 66-67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6dc683281bdf85b514175529a7b54e8ef445d8a9",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

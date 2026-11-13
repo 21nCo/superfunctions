@@ -1,0 +1,111 @@
+.github/workflows/superfunctions-docs-cloudflare-routes.yml
+  s_4f080f4d5ff0de::t_70f1de53dda28c 19,79
+botfn/docs/.gitignore
+  s_7d0a48f0aaecda::t_da6239fca6fe15 1-10
+botfn/docs/README.md
+  s_7d0a48f0aaecda::t_299a26bdf7c570 1-24
+botfn/docs/content/docs/admin.md
+  s_7d0a48f0aaecda::t_7507bace990f92 1-12
+botfn/docs/content/docs/discord-bot.md
+  s_7d0a48f0aaecda::t_9ff7d9fec8bc74 1-18
+botfn/docs/content/docs/getting-started.md
+  s_7d0a48f0aaecda::t_187e2c175f50fc 1-26
+botfn/docs/content/docs/index.md
+  s_7d0a48f0aaecda::t_e0a55d77064d05 1-10
+botfn/docs/content/docs/integrations.md
+  s_7d0a48f0aaecda::t_556844cc9253b6 1-14
+botfn/docs/content/docs/meta.json
+  s_7d0a48f0aaecda::t_72e29a12ab76b2 1-14
+botfn/docs/content/docs/operations-and-limits.md
+  s_7d0a48f0aaecda::t_efc07d78ac30a9 1-12
+botfn/docs/content/docs/persistence.md
+  s_7d0a48f0aaecda::t_626beeda710b4b 1-29
+botfn/docs/content/docs/reference/commands-and-routes.md
+  s_7d0a48f0aaecda::t_aa676359ae18e4 1-21
+botfn/docs/content/docs/reference/configuration.md
+  s_7d0a48f0aaecda::t_9617c026a8f1a7 1-14
+botfn/docs/content/docs/reference/index.md
+  s_7d0a48f0aaecda::t_639f5f4fbe4b84 1-10
+botfn/docs/content/docs/reference/meta.json
+  s_7d0a48f0aaecda::t_459655570e1b8b 1-4
+botfn/docs/content/docs/reference/packages.md
+  s_7d0a48f0aaecda::t_d39ede58213ef2 1-33
+botfn/docs/content/docs/slack-bot.md
+  s_7d0a48f0aaecda::t_d77204c5e65c38 1-12
+botfn/docs/docsfn.config.ts
+  s_7d0a48f0aaecda::t_de4131118b7ad1 1-36
+botfn/docs/package.json
+  s_7d0a48f0aaecda::t_034b8b4d0fa9fc 1-38
+botfn/docs/scripts/generate-llms.mjs
+  s_7d0a48f0aaecda::t_9c484096403c5c 1-22
+botfn/docs/src/app.css
+  s_7d0a48f0aaecda::t_99aa06b0895099 1-81
+botfn/docs/src/app.html
+  s_7d0a48f0aaecda::t_5b61a8189de9c5 1-11
+botfn/docs/src/lib/components/DocsSiteSearch.svelte
+  s_7d0a48f0aaecda::t_f1a1b358c57a42 1-5
+botfn/docs/src/lib/server/docs-site-source.ts
+  s_7d0a48f0aaecda::t_0ac1add3c34a50 1-14
+botfn/docs/src/routes/+error.svelte
+  s_7d0a48f0aaecda::t_c69bde896e2679 1-12
+botfn/docs/src/routes/+layout.server.ts
+  s_7d0a48f0aaecda::t_f72533bb992f79 1-13
+botfn/docs/src/routes/+layout.svelte
+  s_7d0a48f0aaecda::t_42077aae35e659 1-86
+botfn/docs/src/routes/+page.svelte
+  s_7d0a48f0aaecda::t_fdc4d1e5b857f7 1-28
+botfn/docs/src/routes/docs/[...slug]/+page.server.ts
+  s_7d0a48f0aaecda::t_4859d6e0c09ebe 1-25
+botfn/docs/src/routes/docs/[...slug]/+page.svelte
+  s_7d0a48f0aaecda::t_565bf05cadff21 1-41
+botfn/docs/src/routes/docs/llms-full.txt/+server.ts
+  s_7d0a48f0aaecda::t_4c86b3f94ecec3 1-7
+botfn/docs/src/routes/docs/llms.txt/+server.ts
+  s_7d0a48f0aaecda::t_120d1373f3268e 1-7
+botfn/docs/src/routes/docs/search.json/+server.ts
+  s_7d0a48f0aaecda::t_f3a4dfe37234a9 1-8
+botfn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_90952322aea361 1-267
+botfn/docs/static/llms.txt
+  s_7d0a48f0aaecda::t_2edc9c0002bf41 1-18
+botfn/docs/svelte.config.js
+  s_7d0a48f0aaecda::t_9d1cc8288a807e 1-26
+botfn/docs/tsconfig.json
+  s_7d0a48f0aaecda::t_1765a96d60c2eb 1-59
+botfn/docs/turbo.json
+  s_7d0a48f0aaecda::t_5d5582e8ab3152 1-20
+botfn/docs/vite.config.ts
+  s_7d0a48f0aaecda::t_22030302dd71c2 1-12
+package-lock.json
+  s_4f080f4d5ff0de::t_b57ca3e09bd897 6914-7284,32682-32685
+scripts/cloudflare-docs/config.mjs
+  s_7d0a48f0aaecda::t_ca3aa1897db090 24-33
+scripts/cloudflare-docs/select-products.mjs
+  s_7d0a48f0aaecda::t_f2d49b76abfa09 60
+scripts/docs-site/vitest.config.ts
+  s_7d0a48f0aaecda::t_0a650f2998ec2e 18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4d5561efca7c1e249cf461e360d852609d62e839",
+  "prompts": {},
+  "sessions": {
+    "s_4f080f4d5ff0de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a159b584-eb17-4948-9eec-7dbe6f7888ea",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

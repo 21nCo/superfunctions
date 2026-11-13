@@ -1,0 +1,29 @@
+cachefn/.conduct/browser-matrix-20261023.md
+  s_e1c5fc1a65c0cf::t_82d1785aaa8f2e 1-78
+cachefn/.conduct/native-safari-availability.md
+  s_e1c5fc1a65c0cf::t_a63a8d9cfc8f09 27-33
+cachefn/typescript/scripts/browser-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_adece381f866a0 9,52
+cachefn/typescript/scripts/browser-storage-contract.mjs
+  s_e1c5fc1a65c0cf::t_0f1edff84aa84c 1-163
+cachefn/typescript/scripts/firefox-native-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_811f21ab30c5cb 1-55
+cachefn/typescript/scripts/safari-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_247e4fbfa23e53 1-59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "79374df040e15484786978469ef21d5f9e8ef9f8",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

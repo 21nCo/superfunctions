@@ -1,0 +1,151 @@
+datafn/docs/public/llms-full.txt
+  s_7d0a48f0aaecda::t_f2a0b02a491ac5 16,52,114,157,199,235,245,248,313,324,330,340,353,382,388,398,427,505,555,609,622,633,652-654,657,664,745,883,981,1167,1174,1215,1527,1629,1675,1724,1744,1779,2013,2161,2297,2386,2569,2704,2894,3023,3085,3293,3623,3894,4019,4148,4426,4537,5195,5382,5517,5815,6004,6116,6337,6511,6711,6854,7051,7225,7341,7501,7634,7761,7885,7963,8115,8273,8452,8634,8787,9014,9166,9369,9508,9711,9887,10151,10450,10601,10738,11024,11183,11330,11528,11690,11866,11922,12163,12318,12454,12591-12780,12784,12841,12851-12852,12942-12943,12967-12968,12989-13121,13125,13235-13236,13476,13595,13841,13999,14135,14146-14147,14159,14166-14167,14197,14286,14416,14533,14627,14635-14637,14713,14722,14867,14879,14883-14884,14899,14924,14927-14930,14933-14941,14943-14946,14950-14952,15021,15033,15039-15175,15179,15297-15329,15333,15553,15688,15857,15999,16479,16741,16890,17023,17197,17421,17572,17647,17769,17894,18033,18190,18276,18380,18500,18614,18758,18925,19067,19226,19370,19492,19753,19837,19942,20054,20151,20256,20372,20479,20585,20722,20883,20991,21132,21266,21413,21580,21735,21895,22038,22189,22340,22485,22618,22736,22841,22998,23169,23350,23508,23619,23629-23632,23706,24030,24130,24188,24242,24392,24520,24703,24800,24937,25030,25201,25279,25299,25309-25314,25329,25340-25344,25416,25523,25625,25685-25715,25719,25777-25839,25843,26011,26208,26354,26587,26695,26727,26729,26738,26760-26764,26822,26824-26825,26828,26830,26835-26845,26849,26851-26859,26861,26863,26865,26867,26869,26871,26874,26876-26884,26886,26888,26891-26893,26900,27129,27309,27427,27549-27626,27630,27699
+datafn/docs/public/llms.txt
+  s_7d0a48f0aaecda::t_14e5b7ce252fd3 9-14,18-28,32-40,44-58,62-145,149-151,155-163,167-182,186-219
+datafn/docs/scripts/generate-llms.mjs
+  s_7d0a48f0aaecda::t_0dbf8b5c99eda2 12
+datafn/python/pyproject.toml
+  s_7d0a48f0aaecda::t_bdb8d6c6039102 9
+devfn/SPEC.md
+  s_7d0a48f0aaecda::t_9012f6e799288b 15,23-24
+devfn/cli/README.md
+  s_7d0a48f0aaecda::t_cbc1e1776e8457 13-14,17-18,20-21
+devfn/cli/SECURITY.md
+  s_7d0a48f0aaecda::t_98d6a1eb3506ae 8-9,11-21
+devfn/cli/src/index.ts
+  s_7d0a48f0aaecda::t_5fe129d748c78f 16,32-34,51,53,65-67,73,99-101,153-159,181-199,201,207
+devfn/cli/test/cli.test.ts
+  s_7d0a48f0aaecda::t_59763b4b84859a 7-8,13,25-27,29-55,166-207,251,516-552
+devfn/compose/README.md
+  s_7d0a48f0aaecda::t_b153028284ff3b 3-5
+devfn/compose/package.json
+  s_7d0a48f0aaecda::t_3015e049b918e3 11-12
+devfn/compose/src/index.ts
+  s_7d0a48f0aaecda::t_1f4f3d254cabbb 2-4,8-11,15-29,63-69,73-85,92-111,116-117,120-1317,1333,1344-1346,1350-1392,1405-1410,1424,1451-1519,1531-1533,1535-1539,1547-1548,1624-1678
+devfn/compose/src/path-interpolation.ts
+  s_7d0a48f0aaecda::t_fec7ecd859dfaa 1-505
+devfn/compose/src/source-files.ts
+  s_7d0a48f0aaecda::t_1ed6ef89013c97 1-441
+devfn/compose/test/fingerprint-contract.test.ts
+  s_7d0a48f0aaecda::t_3ebb166b67c087 1-1071
+devfn/compose/test/override.test.ts
+  s_7d0a48f0aaecda::t_34f10e869b97f1 1-2,5-7,9-64,67-440,442-444,469-504,527,556,576,580-586,609-810,815,820-824,839,852,870,892,914-1145
+devfn/compose/test/path-contract.test.ts
+  s_7d0a48f0aaecda::t_14f300ac47a8bd 1-307
+devfn/compose/test/preview-budget.fixture.mts
+  s_7d0a48f0aaecda::t_0e3df0c30b7da6 1-38
+devfn/config/src/credentials.ts
+  s_7d0a48f0aaecda::t_11c87acd4434d1 1-69
+devfn/config/src/index.ts
+  s_7d0a48f0aaecda::t_80b780d0c9c7bc 2,6
+devfn/config/src/process-identity.ts
+  s_7d0a48f0aaecda::t_de934b99537115 2-3,8-26,30,34-35,39-40,46-56,58-210,213-215
+devfn/config/src/schema.ts
+  s_7d0a48f0aaecda::t_38c777298e1e2f 17,51,53-65,151-168,171-175,200,225,233,247-264,272-277,370-371,373-375,377,381-387,445-447
+devfn/config/src/trust.ts
+  s_7d0a48f0aaecda::t_71ad01eb5fc190 6,42-43
+devfn/config/src/types.ts
+  s_7d0a48f0aaecda::t_b927506fa7a574 64-69,72,74-84
+devfn/config/test/config.test.ts
+  s_7d0a48f0aaecda::t_8e6154ae75310f 1,5,8,11-155,194-200,216-245,424
+devfn/config/test/domain-routes.test.ts
+  s_7d0a48f0aaecda::t_76ec7a61209171 1-2,4-5,8-47
+devfn/config/test/process-identity.test.ts
+  s_7d0a48f0aaecda::t_2ea015d483bbc5 1-90
+devfn/core/README.md
+  s_7d0a48f0aaecda::t_d5178fd8a172de 3-25
+devfn/core/src/endpoints.ts
+  s_7d0a48f0aaecda::t_1d248d4895697d 1-1087
+devfn/core/src/identity.ts
+  s_7d0a48f0aaecda::t_e101fc44ec908b 7,15-27,29-51,58-59,64-74
+devfn/core/src/index.ts
+  s_7d0a48f0aaecda::t_b719591de05ecc 1-3,5
+devfn/core/src/orchestrator.ts
+  s_7d0a48f0aaecda::t_37ffd0949c160c 2,7-11,13-14,17,46-151,165,167,169-181,186-258,277,287-322,330,335,342,350-451,456-462,465-476,479-487,490,493-497,507-531,534-591,595-597,602,604-607,610-633,635-656,659-673,675-688,690-776,780,794,797,800-806,817-827,834-844,911,960-966
+devfn/core/src/runtime.ts
+  s_7d0a48f0aaecda::t_30004e12bf75cc 61-68
+devfn/core/src/types.ts
+  s_7d0a48f0aaecda::t_c1aee7b1516736 19-27,57-60,65
+devfn/core/test/domain-routing.test.ts
+  s_7d0a48f0aaecda::t_18b43477408dae 1-731
+devfn/core/test/endpoints.test.ts
+  s_7d0a48f0aaecda::t_39e1fa1b3eafb5 1-1754
+devfn/core/test/identity.test.ts
+  s_7d0a48f0aaecda::t_50f275c4117944 2-3,8,10,15-89
+devfn/core/test/orchestrator.test.ts
+  s_7d0a48f0aaecda::t_136544de4ba6b4 6,31-49
+devfn/core/test/proxy-readiness.test.ts
+  s_7d0a48f0aaecda::t_f874b607d27aa2 1-338
+devfn/core/test/registered-domain-startup.test.ts
+  s_7d0a48f0aaecda::t_3c03fb0f07ab95 1-257
+devfn/core/test/replacement-contract.test.ts
+  s_7d0a48f0aaecda::t_37e02ecb12838e 1-185
+devfn/core/test/startup-fixture.test.ts
+  s_7d0a48f0aaecda::t_b447d7eb8fae68 1-1098
+devfn/core/test/teardown-evidence.test.ts
+  s_7d0a48f0aaecda::t_22d840b596f11c 1-476
+devfn/core/vitest.config.ts
+  s_7d0a48f0aaecda::t_fcb24527815520 3-5
+devfn/docs/.gitignore
+  s_7d0a48f0aaecda::t_9fa1ac4244f791 1-10
+devfn/docs/README.md
+  s_7d0a48f0aaecda::t_88d243cf6d762e 1-19
+devfn/docs/configuration.md
+  s_7d0a48f0aaecda::t_c2870e47e34b81 42,46,59-76,81-89
+devfn/docs/content/docs/configuration.md
+  s_7d0a48f0aaecda::t_68f93ccd5a86f4 1-14
+devfn/docs/content/docs/getting-started.md
+  s_7d0a48f0aaecda::t_f405225fd5e4e6 1-21
+devfn/docs/content/docs/index.md
+  s_7d0a48f0aaecda::t_a007cb2be3e246 1-10
+devfn/docs/content/docs/lifecycle.md
+  s_7d0a48f0aaecda::t_3e94f4ffc43a0c 1-10
+devfn/docs/content/docs/meta.json
+  s_7d0a48f0aaecda::t_0b45c660ac7f77 1-4
+devfn/docs/content/docs/migration.md
+  s_7d0a48f0aaecda::t_f8dbe169561fb3 1-10
+devfn/docs/content/docs/packages.md
+  s_7d0a48f0aaecda::t_e923625a491100 1-17
+devfn/docs/content/docs/ports-and-proxy.md
+  s_7d0a48f0aaecda::t_5bf4386dff00af 1-12
+devfn/docs/content/docs/processes-and-compose.md
+  s_7d0a48f0aaecda::t_6787df2de9a3ec 1-10
+devfn/docs/content/docs/reference/cli.md
+  s_7d0a48f0aaecda::t_7172e6b16f077a 1-30
+devfn/docs/content/docs/reference/compose.md
+  s_7d0a48f0aaecda::t_d9b5c0bade9a02 1-8
+devfn/docs/content/docs/reference/config.md
+  s_7d0a48f0aaecda::t_df5399f001eb60 1-6
+devfn/docs/content/docs/reference/configuration.md
+  s_7d0a48f0aaecda::t_aebb937c5c6182 1-96
+devfn/docs/content/docs/reference/core.md
+  s_7d0a48f0aaecda::t_8bbc338e3b38b2 1-28
+devfn/docs/content/docs/reference/index.md
+  s_7d0a48f0aaecda::t_7b91c344a95421 1-14
+devfn/docs/content/docs/reference/meta.json
+  s_7d0a48f0aaecda::t_6a0249a251a60f 1-4
+devfn/docs/content/docs/reference/migration.md
+  s_7d0a48f0aaecda::t_e0b9cc141a3f08 1-15
+devfn/docs/content/docs/reference/ports.md
+  s_7d0a48f0aaecda::t_b71f2ede381be2 1-17
+devfn/docs/content/docs/reference/processes.md
+  s_7d0a48f0aaecda::t_517bce18221344 2-3,6,8,10-13,15,17-20,22,24-29
+devfn/docs/content/docs/reference/proxy.md
+  s_7d0a48f0aaecda::t_00950c807b5088 1-13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7d8c5ba3ed3ef8e154222658f3da350de01d7ce9",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

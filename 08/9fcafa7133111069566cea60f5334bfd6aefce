@@ -1,0 +1,35 @@
+watchfn/.conduct/public-api-gaps-20261025.md
+  s_e1c5fc1a65c0cf::t_bcf750515eb446 5,10
+watchfn/.conduct/python-lifecycle-callbacks.md
+  s_e1c5fc1a65c0cf::t_7531e938efc160 1-16
+watchfn/python/README.md
+  s_e1c5fc1a65c0cf::t_9ac51070dcee96 375-400
+watchfn/python/tests/test_alert_callbacks.py
+  s_e1c5fc1a65c0cf::t_7573b0676c3a88 1-231
+watchfn/python/tests/test_durable_alerts.py
+  s_e1c5fc1a65c0cf::t_aa7f3684232441 255-257,268,272-277
+watchfn/python/watchfn/alerts/alert_manager.py
+  s_e1c5fc1a65c0cf::t_a4edd2bd22770d 7-8,49,51-60,67,91,96,103-106,108,110-113,118-123,131,136,145,148,150-151,173,179-191
+watchfn/python/watchfn/alerts/durable.py
+  s_e1c5fc1a65c0cf::t_0ec66509f8dea3 16,41,45-59,235-237,277-285,325,333,341,343
+watchfn/python/watchfn/alerts/lifecycle.py
+  s_e1c5fc1a65c0cf::t_fe9757f918e62d 1-130
+watchfn/python/watchfn/client.py
+  s_e1c5fc1a65c0cf::t_131681e03aa976 46-47,70-71,79-80
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "089fcafa7133111069566cea60f5334bfd6aefce",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

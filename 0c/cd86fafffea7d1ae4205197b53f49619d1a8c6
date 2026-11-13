@@ -1,0 +1,29 @@
+flowfn/admin/src/capability.ts
+  s_e1c5fc1a65c0cf::t_e602f26a1d027b 92,122
+  s_e1c5fc1a65c0cf::t_bed7a7c60eb606 198,216,419,620,811
+flowfn/admin/src/domain-service.ts
+  s_e1c5fc1a65c0cf::t_2fbb85b8c49014 25-32,37-40,167,218,247,271,321-324
+  s_e1c5fc1a65c0cf::t_e602f26a1d027b 44-45,49,51
+flowfn/admin/src/types.ts
+  s_e1c5fc1a65c0cf::t_e602f26a1d027b 32
+  s_e1c5fc1a65c0cf::t_3d3c6cc1bfb0c2 58,67,76,92,99,111,119,139,165,171
+flowfn/admin/src/__tests__/admin.test.ts
+  s_e1c5fc1a65c0cf::t_1c77200cf8d7a5 85-99
+  s_e1c5fc1a65c0cf::t_e602f26a1d027b 100-118
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0ccd86fafffea7d1ae4205197b53f49619d1a8c6",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

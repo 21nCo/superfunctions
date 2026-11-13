@@ -1,0 +1,21 @@
+drawfn/.conduct/requirement-readiness.md
+  s_e1c5fc1a65c0cf::t_ae8c1fe912a545 21,35,53,73-82
+drawfn/scripts/performance-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_54a52ebdabacad 1-41
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1814db8182011398502ee7926481eb0c19cd7c5f",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

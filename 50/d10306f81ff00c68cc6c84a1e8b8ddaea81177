@@ -1,0 +1,29 @@
+chartfn/__tests__/chartjs-adapter.test.ts
+  s_e1c5fc1a65c0cf::t_678cdaa26522dc 96-100
+chartfn/src/adapters/chartjs.ts
+  s_e1c5fc1a65c0cf::t_4d2ffdbfd80d8a 85,91,122
+chartfn/.conduct/requirement-readiness.md
+  s_e1c5fc1a65c0cf::t_4aadb309a25a0c 71-84
+chartfn/__tests__/carbon-adapter.test.tsx
+  s_e1c5fc1a65c0cf::t_f4bbc4196276de 43-47
+chartfn/src/adapters/carbon.ts
+  s_e1c5fc1a65c0cf::t_f4bbc4196276de 23-24
+chartfn/scripts/browser-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_678cdaa26522dc 40-44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "50d10306f81ff00c68cc6c84a1e8b8ddaea81177",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

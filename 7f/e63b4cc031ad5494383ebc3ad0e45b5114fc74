@@ -1,0 +1,37 @@
+package-lock.json
+  s_e1c5fc1a65c0cf::t_80bbcfc8f6124c 68362,68377-68378,68410-68412
+watchfn/.conduct/ts-email-readiness.md
+  s_e1c5fc1a65c0cf::t_0beffffc5176b6 1-76
+watchfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_0056a3a16e29d3 320-365
+watchfn/typescript/package.json
+  s_e1c5fc1a65c0cf::t_ad9a348505435a 99-100,140-141,173-175
+watchfn/typescript/scripts/verify-alert-package.mjs
+  s_e1c5fc1a65c0cf::t_02e314eee2a05f 18,26-27,30,58-60,69,72-79
+watchfn/typescript/src/alerts/alert-manager.ts
+  s_e1c5fc1a65c0cf::t_f21a1a9cdf6331 1,43,87,98,367,416,419,427,432-436,469
+watchfn/typescript/src/alerts/channels/email-ses.ts
+  s_e1c5fc1a65c0cf::t_6d5f2668c4d69e 1-44
+watchfn/typescript/src/alerts/types.ts
+  s_e1c5fc1a65c0cf::t_0c38bee2b1e29a 20-27,33-35
+watchfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_3a24bb55fd381a 104
+watchfn/typescript/tests/alerts/email.test.ts
+  s_e1c5fc1a65c0cf::t_79efd6c8cf2288 1-98
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7fe63b4cc031ad5494383ebc3ad0e45b5114fc74",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

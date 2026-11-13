@@ -1,0 +1,25 @@
+devfn/cli/test/cli.test.ts
+  s_1900bb15a7199a::t_8987b28cd558e6 42-43
+devfn/docs/configuration.md
+  s_1900bb15a7199a::t_92471208a335b6 105
+devfn/proxy/src/oauth-relay/service.ts
+  s_1900bb15a7199a::t_a98f0b989e94bc 150-165,216,254,265,269-283,309
+devfn/proxy/test/oauth-relay-service.test.ts
+  s_1900bb15a7199a::t_fed94fd680e5d3 316-378
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f38f99a3a6f94075a176e132e4dab14eec2e6bdd",
+  "prompts": {},
+  "sessions": {
+    "s_1900bb15a7199a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5e049926-ee38-44b5-a734-8c7117ee5ff7",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

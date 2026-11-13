@@ -1,0 +1,29 @@
+logfn/.conduct/python-http-readiness.md
+  s_80963dfe0ed6a0::t_72d5c8e3b806e5 21-40
+logfn/scripts/python-http-acceptance.py
+  s_e1c5fc1a65c0cf::t_d4cdfadf7f2001 2,4,9-23,27,32-34,43-44,52-53,59-62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6e4f965f92a4b6403d85ca304b5fba905ea776f8",
+  "prompts": {},
+  "sessions": {
+    "s_80963dfe0ed6a0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1697b-ff95-7703-a372-b18be567f3ac",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,125 @@
+.github/workflows/superfunctions-docs-cloudflare-deploy.yml
+  s_7d0a48f0aaecda::t_dc431bd33abff7 15,25,36,64
+.github/workflows/superfunctions-docs-cloudflare-routes.yml
+  s_7d0a48f0aaecda::t_eef25947798428 19,80
+clifn/core/README.md
+  s_4f080f4d5ff0de::t_b28cc733063cba 51,121,131-132,147-148,161-165,183
+clifn/docs/.gitignore
+  s_4f080f4d5ff0de::t_41398969efc31c 1-13
+clifn/docs/README.md
+  s_4f080f4d5ff0de::t_29f7fada340862 1-21
+clifn/docs/content/docs/automation.md
+  s_4f080f4d5ff0de::t_eb8b4e94836e2c 1-32
+clifn/docs/content/docs/cli-builder.md
+  s_4f080f4d5ff0de::t_883d993ddc4428 1-36
+clifn/docs/content/docs/configuration.md
+  s_4f080f4d5ff0de::t_21c7626bcd0ea5 1-34
+clifn/docs/content/docs/credentials-and-client.md
+  s_4f080f4d5ff0de::t_079d74a81b5501 1-38
+clifn/docs/content/docs/getting-started.md
+  s_4f080f4d5ff0de::t_0b90efe3d54d1a 1-32
+clifn/docs/content/docs/index.md
+  s_4f080f4d5ff0de::t_eae00d9e32dfc8 1-20
+clifn/docs/content/docs/interaction-and-stdio.md
+  s_4f080f4d5ff0de::t_03fa0dc3b45f6b 1-25
+clifn/docs/content/docs/meta.json
+  s_4f080f4d5ff0de::t_d2640329c4361f 1-14
+clifn/docs/content/docs/output-and-diagnostics.md
+  s_4f080f4d5ff0de::t_eea4d4cf5c7885 1-37
+clifn/docs/content/docs/reference/admin.md
+  s_4f080f4d5ff0de::t_39dd731bcca52b 1-8
+clifn/docs/content/docs/reference/core-readme.md
+  s_4f080f4d5ff0de::t_2ec00dd5d36344 1-402
+clifn/docs/content/docs/reference/exports.md
+  s_4f080f4d5ff0de::t_f65a9fabfdcbc3 1-24
+clifn/docs/content/docs/reference/index.md
+  s_4f080f4d5ff0de::t_09fd10d76f151d 1-10
+clifn/docs/content/docs/reference/meta.json
+  s_4f080f4d5ff0de::t_a5253af41797f3 1-9
+clifn/docs/docsfn.config.ts
+  s_4f080f4d5ff0de::t_709a8b119fba88 1-36
+clifn/docs/package.json
+  s_4f080f4d5ff0de::t_b9fd39e783250e 1-38
+clifn/docs/scripts/generate-llms.mjs
+  s_4f080f4d5ff0de::t_ab09f650afc7ed 1-22
+clifn/docs/src/app.css
+  s_4f080f4d5ff0de::t_3998ba77d23bcf 1-82
+clifn/docs/src/app.html
+  s_4f080f4d5ff0de::t_790442b7915ba3 1-11
+clifn/docs/src/lib/components/DocsSiteSearch.svelte
+  s_4f080f4d5ff0de::t_c80ffc9e347785 1-5
+clifn/docs/src/lib/server/docs-site-source.ts
+  s_4f080f4d5ff0de::t_e5c87145c5bc2f 1-14
+clifn/docs/src/routes/+error.svelte
+  s_4f080f4d5ff0de::t_38ba14c321ca0a 1-12
+clifn/docs/src/routes/+layout.server.ts
+  s_4f080f4d5ff0de::t_f30e8598c43710 1-13
+clifn/docs/src/routes/+layout.svelte
+  s_4f080f4d5ff0de::t_6302f83de15b50 1-86
+clifn/docs/src/routes/+page.svelte
+  s_4f080f4d5ff0de::t_5bddef1e2c2a4c 1-29
+clifn/docs/src/routes/docs/[...slug]/+page.server.ts
+  s_4f080f4d5ff0de::t_7f23fd938baf33 1-25
+clifn/docs/src/routes/docs/[...slug]/+page.svelte
+  s_4f080f4d5ff0de::t_12d80be93533c4 1-41
+clifn/docs/src/routes/docs/llms-full.txt/+server.ts
+  s_4f080f4d5ff0de::t_f803732232aa07 1-7
+clifn/docs/src/routes/docs/llms.txt/+server.ts
+  s_4f080f4d5ff0de::t_c8cabcec795f7c 1-7
+clifn/docs/src/routes/docs/search.json/+server.ts
+  s_4f080f4d5ff0de::t_e5133e3b989c64 1-8
+clifn/docs/static/llms-full.txt
+  s_4f080f4d5ff0de::t_2a5d3c4c6d91c7 1-754
+clifn/docs/static/llms.txt
+  s_4f080f4d5ff0de::t_3b8d40e5b70e1a 1-18
+clifn/docs/svelte.config.js
+  s_4f080f4d5ff0de::t_b3c59d036f455b 1-26
+clifn/docs/tsconfig.json
+  s_4f080f4d5ff0de::t_efda6a60de4c65 1-59
+clifn/docs/turbo.json
+  s_4f080f4d5ff0de::t_5d3eefd42835d1 1-20
+clifn/docs/vite.config.ts
+  s_4f080f4d5ff0de::t_286fce77990ba7 1-12
+package-lock.json
+  s_7d0a48f0aaecda::t_4c4f58f4a55fa0 8129-8499,25261-25264
+scripts/cloudflare-docs/config.mjs
+  s_7d0a48f0aaecda::t_287da56ce43e58 24-33
+scripts/cloudflare-docs/select-products.mjs
+  s_7d0a48f0aaecda::t_7d2dfec7498be1 60
+scripts/docs-site/llms.mjs
+  s_4f080f4d5ff0de::t_2ed4c3ec8dea5d 84-90,102
+scripts/docs-site/llms.test.mjs
+  s_664f1e7a19bfc5::t_eaa505b86508ff 48-52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b605218ee78eef03bc3eb55519ebc0078f9225b9",
+  "prompts": {},
+  "sessions": {
+    "s_4f080f4d5ff0de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a159b584-eb17-4948-9eec-7dbe6f7888ea",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_664f1e7a19bfc5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0cf2229e-c8fe-4b04-a5e0-6383ee13ba71",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

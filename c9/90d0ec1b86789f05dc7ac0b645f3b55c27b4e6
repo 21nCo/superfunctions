@@ -1,0 +1,35 @@
+plugfn/docs/README.md
+  s_7d0a48f0aaecda::t_a9fd342b0244b0 23,25
+plugfn/docs/content/docs/connections-and-oauth.md
+  s_7d0a48f0aaecda::t_53eb8eaecf781f 56
+plugfn/docs/content/docs/getting-started.md
+  s_7d0a48f0aaecda::t_f3d2af4191b55f 53
+plugfn/docs/content/docs/provider-readiness.md
+  s_7d0a48f0aaecda::t_3cdf1439b8e811 6
+plugfn/docs/content/docs/reference/release-gates.md
+  s_7d0a48f0aaecda::t_623fb2cf915005 29-35,65,79,81,88,95
+plugfn/docs/operations/release-gates.md
+  s_7d0a48f0aaecda::t_c421af677eb4b6 24-30,60,74,76,83,90
+plugfn/docs/package.json
+  s_7d0a48f0aaecda::t_e532e4c4a3ab70 10
+plugfn/docs/scripts/generate-llms.mjs
+  s_7d0a48f0aaecda::t_a0f315e9a76476 19-22,25-29
+plugfn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_d711e08bd7ae1c 6,90,147,196,369-375,405,419,421,428,435
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c990d0ec1b86789f05dc7ac0b645f3b55c27b4e6",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

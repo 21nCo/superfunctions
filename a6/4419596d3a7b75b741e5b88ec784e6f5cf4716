@@ -1,0 +1,23 @@
+reviewfn/core/src/coordinator.ts
+  s_fc04a1ba4cb666::t_52a12fd3cb9c6f 231
+reviewfn/github/src/git.ts
+  s_fc04a1ba4cb666::t_2b4563ca2c5347 8-10,82-84,91,167-177
+reviewfn/github/test/change-hunks.test.ts
+  s_fc04a1ba4cb666::t_171aeca1962ca4 11,136-152
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a64419596d3a7b75b741e5b88ec784e6f5cf4716",
+  "prompts": {},
+  "sessions": {
+    "s_fc04a1ba4cb666": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_fc04a1ba4cb666",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
