@@ -1,0 +1,43 @@
+authfn/core/README.md
+  s_c7ddf6f1a8d232::t_092f1b0a14af57 34
+authfn/docs/content/docs/recipes/placement-bound-auth-context.md
+  s_c7ddf6f1a8d232::t_b5777e601935cc 88
+authfn/docs/static/llms-full.txt
+  s_c7ddf6f1a8d232::t_adfc4fd3f26aa7 9436
+authfn/email-otp/package.json
+  s_c7ddf6f1a8d232::t_0a885c110462b8 3,29
+authfn/email-otp/src/__tests__/core-dependency.test.ts
+  s_c7ddf6f1a8d232::t_80753c774cf8af 1-84
+authfn/email-otp/vitest.config.ts
+  s_c7ddf6f1a8d232::t_da9075f06fc9cc 1-7
+authfn/email-otp/vitest.global-setup.ts
+  s_c7ddf6f1a8d232::t_d2d936e93d0b38 1-21
+authfn/multi-region/package.json
+  s_c7ddf6f1a8d232::t_89d1c948caf96e 3,29
+authfn/multi-region/src/__tests__/core-dependency.test.ts
+  s_c7ddf6f1a8d232::t_ec94c6446c6786 1-27
+authfn/native-handoff/package.json
+  s_c7ddf6f1a8d232::t_42a16b5d488cd9 3,29
+authfn/social-oauth/package.json
+  s_c7ddf6f1a8d232::t_ca8bd9889f9314 3,33
+authfn/two-factor/package.json
+  s_c7ddf6f1a8d232::t_e77422f81163bd 3,29
+package-lock.json
+  s_c7ddf6f1a8d232::t_29074cd1540824 1394-1404,1603-1623,1634-1696,1706-1830,2484,2487,4558,4562,4619,4623,4787,4796,4910,4913
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f5efabaf88eac1f959bbfe24d3b442c7dec8ae63",
+  "prompts": {},
+  "sessions": {
+    "s_c7ddf6f1a8d232": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ab9bd76c-3eb5-4c4b-bcc5-df9f23a2cd23",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
