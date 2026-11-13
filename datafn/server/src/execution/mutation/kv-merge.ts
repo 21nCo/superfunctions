@@ -103,10 +103,16 @@ function isTransactionUnsupportedError(error: unknown): boolean {
  *   record. A caller outside a transaction gets its own transaction for this.
  *   Comparing the stored JSON is never needed there, so how a dialect compares
  *   a JSON column (MySQL never equals one to a string) does not matter.
- * - Only adapters without transactions (Drizzle on SQLite and D1) use a
+ * - Adapters without transactions that report missed updates
+ *   (strictUpdateNotFound, as Drizzle on SQLite and D1 does) use a
  *   compare-and-swap: every write is conditional on the value that was read
- *   and retries after a concurrent change. It never falls back to an
- *   unconditional write.
+ *   and retries after a concurrent change. The compare-and-swap never falls
+ *   back to an unconditional write.
+ * - An adapter with neither transactions nor strictUpdateNotFound cannot
+ *   detect a failed conditional write, so it gets a plain read-merge-write.
+ *   That keeps the other keys of a merge that runs alone, but it is not
+ *   atomic: a concurrent merge of the same record between the read and the
+ *   write can be lost. No adapter in this repository takes this path.
  *
  * Known limit: the locked read is an ordinary read. On a database whose
  * transactions read from a snapshot taken at their first read (MySQL InnoDB at
