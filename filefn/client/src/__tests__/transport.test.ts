@@ -69,6 +69,48 @@ function createFakeServer(partUrl: (partNumber: number) => string) {
 
 const tenBytes = () => new Blob(['0123456789'], { type: 'text/plain' });
 
+interface PartUploadCase {
+  baseUrl: string;
+  url: string;
+  /** Whether the part PUT must carry FileFn auth headers and credentials. */
+  toFileFn: boolean;
+  /** Stubbed page location; when absent the test asserts there is none. */
+  href?: string;
+  sessionToken?: string;
+  /** When set, the URL the injected fetch must receive. */
+  expectedUrl?: string;
+}
+
+/**
+ * Uploads one part through `uploadPartToSignedUrl` with credentials 'include'
+ * and a Bearer auth header, then checks what reached the injected fetch:
+ * FileFn-bound parts get the auth header and 'include'; any other URL gets
+ * only its signed headers and 'omit'.
+ */
+async function expectPartUploadTransport({ baseUrl, url, toFileFn, href, sessionToken, expectedUrl }: PartUploadCase) {
+  if (href) vi.stubGlobal('location', { href });
+  else expect(globalThis.location).toBeUndefined();
+  const fetchImpl = vi.fn(
+    async (_input: string, _init: RequestInit) => new Response(null, { status: 200, headers: { ETag: '"e"' } }),
+  );
+  const http = createHttpClient({
+    baseUrl,
+    fetch: fetchImpl as unknown as typeof fetch,
+    credentials: 'include',
+    getAuthHeaders: () => ({ Authorization: 'Bearer secret' }),
+  });
+
+  await http.uploadPartToSignedUrl(url, { 'content-type': 'text/plain' }, tenBytes(), sessionToken);
+
+  expect(fetchImpl).toHaveBeenCalledTimes(1);
+  const [dispatched, init] = fetchImpl.mock.calls[0];
+  if (expectedUrl !== undefined) expect(dispatched).toBe(expectedUrl);
+  const headers = new Headers(init.headers);
+  expect(headers.get('authorization')).toBe(toFileFn ? 'Bearer secret' : null);
+  expect(headers.get('content-type')).toBe('text/plain');
+  expect(init.credentials).toBe(toFileFn ? 'include' : 'omit');
+}
+
 describe('client transport options', () => {
   const globalFetch = vi.fn(async () => {
     throw new Error('global fetch must not be used when a fetch is injected');
@@ -173,22 +215,8 @@ describe('client transport options', () => {
     ['https://files.example.com/api/filesystem/upload', false],
     ['https://files.example.com.evil.test/api/files/upload', false],
     ['http://files.example.com/api/files/upload', false],
-  ])('only sends FileFn headers and credentials to signed URL %s when it is under baseUrl (%s)', async (url, toFileFn) => {
-    const server = createFakeServer(() => url);
-    const http = createHttpClient({
-      baseUrl: `${BASE}/`,
-      fetch: server.fetch,
-      credentials: 'include',
-      getAuthHeaders: () => ({ Authorization: 'Bearer secret' }),
-    });
-
-    await http.uploadPartToSignedUrl(url, { 'content-type': 'text/plain' }, tenBytes());
-
-    const [put] = server.calls;
-    expect(put.url).toBe(url);
-    expect(put.headers.get('authorization')).toBe(toFileFn ? 'Bearer secret' : null);
-    expect(put.credentials).toBe(toFileFn ? 'include' : 'omit');
-  });
+  ])('only sends FileFn headers and credentials to signed URL %s when it is under baseUrl (%s)', (url, toFileFn) =>
+    expectPartUploadTransport({ baseUrl: `${BASE}/`, url, toFileFn, expectedUrl: url }));
 
   it('lets request headers replace auth headers of any case on API requests', async () => {
     const server = createFakeServer((n) => `/upload/sess_1/parts/${n}`);
@@ -262,22 +290,8 @@ describe('client transport options', () => {
     ['/upload/sess_1/parts/1', true],
     ['/api/files/upload/sess_1/parts/1', true],
     [PRESIGNED, false],
-  ])('matches part URL %s against a relative baseUrl without a page location (%s)', async (url, toFileFn) => {
-    expect(globalThis.location).toBeUndefined();
-    const fetchImpl = vi.fn(async () => new Response(null, { status: 200, headers: { ETag: '"e"' } }));
-    const http = createHttpClient({
-      baseUrl: '/api/files',
-      fetch: fetchImpl as unknown as typeof fetch,
-      credentials: 'include',
-      getAuthHeaders: () => ({ Authorization: 'Bearer secret' }),
-    });
-
-    await http.uploadPartToSignedUrl(url, { 'content-type': 'text/plain' }, tenBytes());
-
-    const init = (fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1];
-    expect(new Headers(init.headers).get('authorization')).toBe(toFileFn ? 'Bearer secret' : null);
-    expect(init.credentials).toBe(toFileFn ? 'include' : 'omit');
-  });
+  ])('matches part URL %s against a relative baseUrl without a page location (%s)', (url, toFileFn) =>
+    expectPartUploadTransport({ baseUrl: '/api/files', url, toFileFn }));
 
   it.each([
     ['/', '/upload/sess_1/parts/1', true],
@@ -287,43 +301,15 @@ describe('client transport options', () => {
     ['', '//other.example/upload/sess_1/parts/1', false],
     ['', '/\\other.example/upload/sess_1/parts/1', false],
     ['/', 'https://other.example/upload/sess_1/parts/1', false],
-  ])('treats a root baseUrl %j as the page origin for part URL %s on a non-root page (%s)', async (baseUrl, url, toFileFn) => {
-    vi.stubGlobal('location', { href: 'https://app.example/dashboard' });
-    const fetchImpl = vi.fn(async () => new Response(null, { status: 200, headers: { ETag: '"e"' } }));
-    const http = createHttpClient({
-      baseUrl,
-      fetch: fetchImpl as unknown as typeof fetch,
-      credentials: 'include',
-      getAuthHeaders: () => ({ Authorization: 'Bearer secret' }),
-    });
-
-    await http.uploadPartToSignedUrl(url, { 'content-type': 'text/plain' }, tenBytes(), 'upls_1');
-
-    const init = (fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1];
-    expect(new Headers(init.headers).get('authorization')).toBe(toFileFn ? 'Bearer secret' : null);
-    expect(init.credentials).toBe(toFileFn ? 'include' : 'omit');
-  });
+  ])('treats a root baseUrl %j as the page origin for part URL %s on a non-root page (%s)', (baseUrl, url, toFileFn) =>
+    expectPartUploadTransport({ baseUrl, url, toFileFn, href: 'https://app.example/dashboard', sessionToken: 'upls_1' }));
 
   it.each([
     ['', '/upload/sess_1/parts/1', true],
     ['', '//other.example/upload/sess_1/parts/1', false],
     ['', '/\\other.example/upload/sess_1/parts/1', false],
-  ])('never treats a protocol-relative URL as FileFn without a page location (baseUrl %j, %s, %s)', async (baseUrl, url, toFileFn) => {
-    expect(globalThis.location).toBeUndefined();
-    const fetchImpl = vi.fn(async () => new Response(null, { status: 200, headers: { ETag: '"e"' } }));
-    const http = createHttpClient({
-      baseUrl,
-      fetch: fetchImpl as unknown as typeof fetch,
-      credentials: 'include',
-      getAuthHeaders: () => ({ Authorization: 'Bearer secret' }),
-    });
-
-    await http.uploadPartToSignedUrl(url, { 'content-type': 'text/plain' }, tenBytes());
-
-    const init = (fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1];
-    expect(new Headers(init.headers).get('authorization')).toBe(toFileFn ? 'Bearer secret' : null);
-    expect(init.credentials).toBe(toFileFn ? 'include' : 'omit');
-  });
+  ])('never treats a protocol-relative URL as FileFn without a page location (baseUrl %j, %s, %s)', (baseUrl, url, toFileFn) =>
+    expectPartUploadTransport({ baseUrl, url, toFileFn }));
 
   it.each([
     [undefined, '/../storage/part', false],
@@ -334,23 +320,8 @@ describe('client transport options', () => {
     ['https://app.example/dashboard', '/../storage/part', false],
     ['https://app.example/dashboard', '/%2e%2e/storage/part', false],
     ['https://app.example/dashboard', '/upload/sess_1/parts/1', true],
-  ])('normalizes dot segments before matching a part URL under baseUrl /api/files (location %s, %s, %s)', async (href, url, toFileFn) => {
-    if (href) vi.stubGlobal('location', { href });
-    else expect(globalThis.location).toBeUndefined();
-    const fetchImpl = vi.fn(async () => new Response(null, { status: 200, headers: { ETag: '"e"' } }));
-    const http = createHttpClient({
-      baseUrl: '/api/files',
-      fetch: fetchImpl as unknown as typeof fetch,
-      credentials: 'include',
-      getAuthHeaders: () => ({ Authorization: 'Bearer secret' }),
-    });
-
-    await http.uploadPartToSignedUrl(url, { 'content-type': 'text/plain' }, tenBytes());
-
-    const init = (fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1];
-    expect(new Headers(init.headers).get('authorization')).toBe(toFileFn ? 'Bearer secret' : null);
-    expect(init.credentials).toBe(toFileFn ? 'include' : 'omit');
-  });
+  ])('normalizes dot segments before matching a part URL under baseUrl /api/files (location %s, %s, %s)', (href, url, toFileFn) =>
+    expectPartUploadTransport({ baseUrl: '/api/files', url, toFileFn, href }));
 
   it.each([
     [BASE, undefined, '//bucket.example/obj'],
@@ -359,25 +330,8 @@ describe('client transport options', () => {
     ['/api/files', undefined, '//bucket.example/obj'],
     ['/api/files', 'https://app.example/dashboard', '//bucket.example/obj'],
     ['/api/files', 'https://app.example/dashboard', '/\\bucket.example/obj'],
-  ])('sends a protocol-relative part URL to its own host under baseUrl %s (location %s, %s)', async (baseUrl, href, url) => {
-    if (href) vi.stubGlobal('location', { href });
-    else expect(globalThis.location).toBeUndefined();
-    const fetchImpl = vi.fn(async () => new Response(null, { status: 200, headers: { ETag: '"e"' } }));
-    const http = createHttpClient({
-      baseUrl,
-      fetch: fetchImpl as unknown as typeof fetch,
-      credentials: 'include',
-      getAuthHeaders: () => ({ Authorization: 'Bearer secret' }),
-    });
-
-    await http.uploadPartToSignedUrl(url, { 'content-type': 'text/plain' }, tenBytes());
-
-    const [dispatched, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
-    expect(dispatched).toBe(url);
-    expect(new Headers(init.headers).get('authorization')).toBeNull();
-    expect(new Headers(init.headers).get('content-type')).toBe('text/plain');
-    expect(init.credentials).toBe('omit');
-  });
+  ])('sends a protocol-relative part URL to its own host under baseUrl %s (location %s, %s)', (baseUrl, href, url) =>
+    expectPartUploadTransport({ baseUrl, url, toFileFn: false, href, expectedUrl: url }));
 
   it('defaults to the global fetch, resolved per request, and same-origin credentials', async () => {
     const client = createFileFnClient({ baseUrl: BASE });
