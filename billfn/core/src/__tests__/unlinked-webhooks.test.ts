@@ -2532,7 +2532,17 @@ describe('mutation windows, replaced references and regained references (PR #308
    */
   async function committedMutation(
     name: string,
-    options: { operation?: Mutation; read?: Read; db?: Db; metrics?: Array<[string, unknown]>; chargeless?: boolean; queued?: boolean; targetPriceId?: string } = {}
+    options: {
+      operation?: Mutation;
+      read?: Read;
+      db?: Db;
+      metrics?: Array<[string, unknown]>;
+      chargeless?: boolean;
+      queued?: boolean;
+      targetPriceId?: string;
+      /** Runs before <name>_user's billing account exists. */
+      beforeAccount?: (billfn: ReturnType<typeof createBillFn>) => Promise<unknown>;
+    } = {}
   ) {
     const db = options.db ?? memoryAdapter({ debug: false });
     const clock = { current: new Date('2026-11-01T00:00:01.000Z') };
@@ -2560,6 +2570,7 @@ describe('mutation windows, replaced references and regained references (PR #308
     const config = { db, catalog, metrics, queue, now: () => clock.current, providers: { dodo: provider } };
     const billfn = createBillFn(config);
     const worker = queue ? createBillFnReconciliationWorker(config) : null;
+    await options.beforeAccount?.(billfn);
     await billfn.quotaProvider.recordUsage({ principalId: `${name}_user`, bytes: 0 });
     await deliver(billfn, [bootstrapEvent(name, { chargeId: options.chargeless ? undefined : `pay_${name}` })]);
     await worker?.runNext();
@@ -3187,18 +3198,31 @@ describe('mutation windows, replaced references and regained references (PR #308
     expect(await env.subscriptions()).toEqual([expect.objectContaining({ providerChargeId: 'pay_disp_1', status: 'canceled' })]);
   });
 
+  /** A cancellation inside the window naming only pay_<name>_1, whose metadata names <name>_other_user, or <name>_user. */
+  function chargeCancellation(name: string, sameAccount = false) {
+    const account = sameAccount ? `${name}_user` : `${name}_other_user`;
+    return subscriptionEvent({ eventId: `evt_${name}_inside`, chargeId: `pay_${name}_1`, status: 'canceled', occurredAt: '2026-11-01T00:00:02.000Z', billingAccountId: `ba_user_${account}` });
+  }
+
   /**
-   * Retains a cancellation inside the window naming only pay_<name>_1, whose metadata names <name>_other_user
-   * (no account yet), after `before`; then links pay_<name>_1 to the subscription without replaying.
+   * Retains `chargeCancellation` (no account yet) after `before`; then links pay_<name>_1 to the subscription
+   * without replaying. One naming <name>_user must be delivered before that account exists (`beforeAccount`).
    */
   type RetainEnv = Pick<Awaited<ReturnType<typeof committedMutation>>, 'billfn' | 'db'>;
-  async function retainUnreadChargeCancellation(env: RetainEnv, name: string, before?: (setReferences: (data: Partial<BillFnSubscription>) => Promise<unknown>) => Promise<void>) {
+  async function retainUnreadChargeCancellation(
+    env: RetainEnv,
+    name: string,
+    before?: (setReferences: (data: Partial<BillFnSubscription>) => Promise<unknown>) => Promise<void>,
+    options: { sameAccount?: boolean } = {}
+  ) {
     const [subscription] = await env.db.findMany<BillFnSubscription>({ model: 'subscriptions', where: [], namespace: 'billfn' });
     const setReferences = (data: Partial<BillFnSubscription>) =>
       env.db.updateMany({ model: 'subscriptions', where: [{ field: 'id', operator: 'eq', value: subscription.id }], data, namespace: 'billfn' });
     await before?.(setReferences);
-    const inside = subscriptionEvent({ eventId: `evt_${name}_inside`, chargeId: `pay_${name}_1`, status: 'canceled', occurredAt: '2026-11-01T00:00:02.000Z', billingAccountId: `ba_user_${name}_other_user` });
-    await deliver(env.billfn, [inside]);
+    const inside = chargeCancellation(name, options.sameAccount);
+    if (!options.sameAccount) {
+      await deliver(env.billfn, [inside]);
+    }
     await setReferences({ providerChargeId: `pay_${name}_1` });
     const row = async () => (await env.db.findMany<BillFnUnlinkedWebhookEvent>({ model: 'unlinkedWebhookEvents', where: [{ field: 'providerEventId', operator: 'eq', value: `evt_${name}_inside` }], namespace: 'billfn' }))[0];
     expect(await row()).toMatchObject({ status: 'unlinked', reason: 'billing_account_not_found' });
@@ -3247,12 +3271,16 @@ describe('mutation windows, replaced references and regained references (PR #308
   /** Redelivers and webhook-replays the retained event once its metadata account exists: no second subscription. */
   async function expectNeverBootstraps(env: RetainEnv, name: string, inside: BillFnParsedWebhookEvent) {
     await env.billfn.quotaProvider.recordUsage({ principalId: `${name}_other_user`, bytes: 0 });
+    const entitlement = await entitlementStatus(env.billfn, `${name}_user`);
     expect((await deliver(env.billfn, [inside])).ok).toBe(true);
     const replay = await env.billfn.enqueueReconciliationJob({ kind: 'webhook-replay', provider: 'dodo', providerEventId: inside.providerEventId });
     const run = replay.ok ? await env.billfn.runReconciliationJob({ jobId: replay.data.job.id }) : null;
     expect(run?.ok && run.data.job.status).toBe('succeeded');
     expect(await env.db.findMany({ model: 'subscriptions', where: [], namespace: 'billfn' })).toHaveLength(1);
+    expect(await entitlementStatus(env.billfn, `${name}_user`)).toBe(entitlement);
   }
+
+  const replacedReferences = (subscription: BillFnSubscription | undefined) => subscription?.metadata?.billfnReplacedProviderReferences;
 
   it('records a retained event on a charge a provider read replaces as replaced, so it never bootstraps', async () => {
     const live = { chargeId: 'pay_synced_1' };
@@ -3286,11 +3314,75 @@ describe('mutation windows, replaced references and regained references (PR #308
     fault.armed = true;
     const renewal = at('crash', 'renewal', 'active', '06.000', { chargeId: 'pay_crash_2' });
     await expect(deliver(env.billfn, [renewal])).rejects.toThrow('injected entitlement write failure');
+    // The write saved the charge it dropped; the redelivery's replay records the retained event.
     expect(await env.stored()).toMatchObject({ providerChargeId: 'pay_crash_2' });
-    expect(await row()).toMatchObject({ status: 'unlinked', reason: 'provider_reference_replaced' });
+    expect(replacedReferences(await env.stored())).toEqual(['pay_crash_1']);
 
     expect((await deliver(env.billfn, [renewal])).ok).toBe(true);
+    expect(await row()).toMatchObject({ status: 'unlinked', reason: 'provider_reference_replaced' });
     await expectNeverBootstraps(env, 'crash', inside);
+  });
+
+  it('never bootstraps a retained event naming the account whose delivered renewal replaced its charge, when the delivery stopped right after the subscription write', async () => {
+    const fault = { armed: false };
+    const db = interceptDb(memoryAdapter({ debug: false }), {
+      updateMany: async (params, next) => {
+        if (params.model === 'entitlementSnapshots' && fault.armed) {
+          fault.armed = false;
+          throw new Error('injected entitlement write failure');
+        }
+        return next();
+      }
+    });
+    const env = await committedMutation('stop', {
+      read: recoveringRead({ value: true }, 'throws', 'canceled'),
+      chargeless: true,
+      db,
+      beforeAccount: (billfn) => deliver(billfn, [chargeCancellation('stop', true)])
+    });
+    const { inside, row } = await retainUnreadChargeCancellation(env, 'stop', undefined, { sameAccount: true });
+
+    fault.armed = true;
+    const renewal = at('stop', 'renewal', 'active', '06.000', { chargeId: 'pay_stop_2' });
+    await expect(deliver(env.billfn, [renewal])).rejects.toThrow('injected entitlement write failure');
+    expect(await row()).toMatchObject({ reason: 'billing_account_not_found' });
+
+    // Nothing recorded the event yet: redelivering and webhook-replaying it are refused by the saved charge.
+    await expectNeverBootstraps(env, 'stop', inside);
+    expect(await row()).toMatchObject({ status: 'unlinked', reason: 'provider_reference_replaced' });
+    expect((await deliver(env.billfn, [renewal])).ok).toBe(true);
+    expect(await env.db.findMany({ model: 'subscriptions', where: [], namespace: 'billfn' })).toHaveLength(1);
+  });
+
+  it('keeps the retained events of a charge a write would drop when that write loses to a concurrent one that keeps it', async () => {
+    const lose = { armed: false };
+    const memory = memoryAdapter({ debug: false });
+    const db = interceptDb(memory, {
+      updateMany: async (params, next) => {
+        if (params.model === 'subscriptions' && lose.armed && params.where.some((clause) => clause.field === 'updatedAt')) {
+          lose.armed = false;
+          // A newer event keeping pay_race_1 commits first.
+          const [current] = await memory.findMany<BillFnSubscription>({ model: 'subscriptions', where: [], namespace: 'billfn' });
+          await memory.updateMany({
+            model: 'subscriptions',
+            where: [{ field: 'id', operator: 'eq', value: current.id }],
+            data: { updatedAt: '2026-11-01T00:00:09.000Z', metadata: { ...current.metadata, billfnProviderEventOccurredAt: '2026-11-01T00:00:07.000Z' } },
+            namespace: 'billfn'
+          });
+        }
+        return next();
+      }
+    });
+    const env = await committedMutation('race', { read: recoveringRead({ value: true }, 'throws', 'canceled'), chargeless: true, db });
+    const { row } = await retainUnreadChargeCancellation(env, 'race');
+
+    lose.armed = true;
+    // The renewal is then older than the state, and the window event on the kept charge is still unread.
+    await expect(deliver(env.billfn, [at('race', 'renewal', 'active', '06.000', { chargeId: 'pay_race_2' })])).rejects.toThrow('provider read unavailable');
+
+    expect(await env.stored()).toMatchObject({ providerChargeId: 'pay_race_1' });
+    expect(replacedReferences(await env.stored())).toBeUndefined();
+    expect(await row()).toMatchObject({ status: 'unlinked', reason: 'billing_account_not_found' });
   });
 
   it('records a retained event a replay run holds as replaced when a provider read replaces its charge, so it never bootstraps', async () => {
@@ -3308,35 +3400,81 @@ describe('mutation windows, replaced references and regained references (PR #308
     await expectNeverBootstraps(env, 'held', inside);
   });
 
-  it('keeps a committed cancellation that replaces the charge when recording the replaced events before its write fails, and records them after it', async () => {
-    const fault = { armed: false };
-    const db = interceptDb(memoryAdapter({ debug: false }), {
-      findMany: async (params, next) => {
-        if (params.model === 'unlinkedWebhookEvents' && fault.armed) {
-          fault.armed = false;
-          throw new Error('injected lookup failure');
+  it.each(['redelivered', 'synced first'] as const)(
+    'keeps a committed cancellation that replaces the charge when its replay cannot record the replaced events, and never bootstraps them (%s)',
+    async (recovery) => {
+      const fault = { armed: false };
+      const db = interceptDb(memoryAdapter({ debug: false }), {
+        findMany: async (params, next) => {
+          if (params.model === 'unlinkedWebhookEvents' && fault.armed) {
+            throw new Error('injected lookup failure');
+          }
+          return next();
         }
-        return next();
-      }
-    });
-    const base = createProvider({});
-    const provider: BillFnProviderAdapter = {
-      ...base,
-      capabilities: { ...base.capabilities, cancelSubscription: true },
-      async cancelSubscription() {
-        fault.armed = true;
-        return { operationStatus: 'applied', billingState: { subscriptionStatus: 'canceled', checkoutStatus: 'succeeded', providerSubscriptionId: 'sub_cmt', providerChargeId: 'pay_cmt_2', autoRenew: false } };
-      }
-    };
-    const billfn = createBillFn({ db, catalog, now: () => new Date('2026-11-01T00:00:01.000Z'), providers: { dodo: provider } });
-    await billfn.quotaProvider.recordUsage({ principalId: 'cmt_user', bytes: 0 });
-    await deliver(billfn, [bootstrapEvent('cmt')]);
-    const { inside, row } = await retainUnreadChargeCancellation({ billfn, db }, 'cmt');
+      });
+      const canceledState = { subscriptionStatus: 'canceled' as const, checkoutStatus: 'succeeded' as const, providerSubscriptionId: 'sub_cmt', providerChargeId: 'pay_cmt_2', autoRenew: false };
+      const calls = { cancel: 0 };
+      const base = createProvider({});
+      const provider: BillFnProviderAdapter = {
+        ...base,
+        capabilities: { ...base.capabilities, cancelSubscription: true, syncSubscription: true },
+        async cancelSubscription() {
+          calls.cancel += 1;
+          fault.armed = true;
+          return { operationStatus: 'applied', billingState: canceledState };
+        },
+        fetchSubscription: async () => canceledState
+      };
+      const config = { db, catalog, now: () => new Date('2026-11-01T00:00:01.000Z'), providers: { dodo: provider } };
+      const billfn = createBillFn(config);
+      // Retained before the account exists, so its metadata names the account the subscription belongs to.
+      const inside = subscriptionEvent({ eventId: 'evt_cmt_inside', chargeId: 'pay_cmt_1', status: 'active', occurredAt: '2026-11-01T00:00:02.000Z', billingAccountId: 'ba_user_cmt_user' });
+      await deliver(billfn, [inside]);
+      await billfn.quotaProvider.recordUsage({ principalId: 'cmt_user', bytes: 0 });
+      await deliver(billfn, [bootstrapEvent('cmt')]);
+      await db.updateMany({ model: 'subscriptions', where: [], data: { providerChargeId: 'pay_cmt_1' }, namespace: 'billfn' });
 
-    const canceled = await billfn.cancelSubscription({ subject: { principalId: 'cmt_user' } });
+      const canceled = await billfn.cancelSubscription({ subject: { principalId: 'cmt_user' } });
+      fault.armed = false;
 
-    expect(canceled.ok && canceled.data.subscription).toMatchObject({ status: 'canceled', providerChargeId: 'pay_cmt_2' });
-    expect(await row()).toMatchObject({ status: 'unlinked', reason: 'provider_reference_replaced' });
-    await expectNeverBootstraps({ billfn, db }, 'cmt', inside);
-  });
+      expect(canceled.ok && canceled.data.subscription).toMatchObject({ status: 'canceled', providerChargeId: 'pay_cmt_2' });
+      expect(calls.cancel).toBe(1);
+      const row = async () => (await db.findMany<BillFnUnlinkedWebhookEvent>({ model: 'unlinkedWebhookEvents', where: [], namespace: 'billfn' }))[0];
+      expect(await row()).toMatchObject({ status: 'unlinked', reason: 'billing_account_not_found' });
+      if (recovery === 'synced first') {
+        // Another process's sync finishes the bookkeeping from the saved charge alone.
+        const subscriptionId = canceled.ok ? canceled.data.subscription.id : undefined;
+        expect((await createBillFn(config).syncSubscription({ subject: { principalId: 'cmt_user' }, subscriptionId })).ok).toBe(true);
+        expect(await row()).toMatchObject({ status: 'unlinked', reason: 'provider_reference_replaced' });
+      }
+      await expectNeverBootstraps({ billfn, db }, 'cmt', inside);
+      expect(await entitlementStatus(billfn, 'cmt_user')).toBe('inactive');
+      expect(await row()).toMatchObject({ status: 'unlinked', reason: 'provider_reference_replaced' });
+      expect(calls.cancel).toBe(1);
+    }
+  );
+
+  it('reports a replay finished when the events left at its bound name only a reference it replaced', async () => {
+    const env = setup();
+    await env.billfn.quotaProvider.recordUsage({ principalId: 'cap_user', bytes: 0 });
+    await deliver(env.billfn, [bootstrapEvent('cap')]);
+    const setReferences = (data: Partial<BillFnSubscription>) => env.db.updateMany({ model: 'subscriptions', where: [], data, namespace: 'billfn' });
+    // 500 events for sub_cap, the first moving it to pay_cap_2, then three for pay_cap_1 after them, all retained.
+    await setReferences({ providerSubscriptionId: 'sub_cap_unlinked' });
+    const at = (index: number) => new Date(Date.parse('2026-11-01T00:00:10.000Z') + index * 1000).toISOString();
+    await deliver(env.billfn, [
+      ...Array.from({ length: 500 }, (_, index) =>
+        subscriptionEvent({ eventId: `evt_cap_${String(index).padStart(3, '0')}`, subscriptionId: 'sub_cap', chargeId: index === 0 ? 'pay_cap_2' : undefined, status: 'active', occurredAt: at(index) })
+      ),
+      ...[0, 1, 2].map((index) => subscriptionEvent({ eventId: `evt_cap_old_${index}`, chargeId: 'pay_cap_1', status: 'canceled', occurredAt: at(600 + index) }))
+    ]);
+    await setReferences({ providerSubscriptionId: 'sub_cap', providerChargeId: 'pay_cap_1' });
+
+    const older = subscriptionEvent({ eventId: 'evt_cap_older', subscriptionId: 'sub_cap', status: 'active', occurredAt: '2026-10-29T00:00:00.000Z' });
+    expect((await deliver(env.billfn, [older])).ok).toBe(true);
+
+    expect(await env.subscriptions()).toEqual([expect.objectContaining({ providerChargeId: 'pay_cap_2', status: 'active' })]);
+    const old = (await env.unlinked()).filter((row) => row.providerEventId.startsWith('evt_cap_old_'));
+    expect(old.map((row) => [row.status, row.reason])).toEqual(Array.from({ length: 3 }, () => ['unlinked', 'provider_reference_replaced']));
+  }, 60_000);
 });
