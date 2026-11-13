@@ -1,3 +1,5 @@
+import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { authFnApiKeyPlugin } from '@authfn/api-keys';
 import { memoryAdapter } from '../../../../packages/db/src/testing/index.js';
@@ -178,18 +180,45 @@ describe('scopes on every session', () => {
     expect(() => requireScopes(session, 'memotron:read')).toThrow(AuthFnInsufficientScopeError);
   });
 
-  it('exposes only the string entries of scopes stored before validation existed', async () => {
-    const config = createConfig();
-    const key = await createApiKey(config, { userId: null, name: 'legacy', scopes: ['memotron:read'] });
+  async function authenticateWithStoredScopes(config: AuthFnRuntimeConfig, stored: unknown[]) {
+    const key = await createApiKey(config, { userId: null, name: 'legacy' });
+    // Keys stored before 0.6.0 were never validated, so write the row directly.
     await config.database.update({
       model: 'api_keys',
       where: [{ field: 'id', operator: 'eq', value: key.keyId }],
-      data: { scopes: ['memotron:read', 42, null, 'read'] },
+      data: { scopes: stored },
       namespace: 'authfn'
     });
-    const session = await authenticateApiKey(config, key.secret);
-    expect(session?.scopes).toEqual(['memotron:read', 'read']);
-    expect(session?.metadata?.scopes).toEqual(['memotron:read', 'read']);
+    return authenticateApiKey(config, key.secret);
+  }
+
+  it('lets a legacy stored * grant every registered scope', async () => {
+    const session = await authenticateWithStoredScopes(createConfig(), ['*']);
+    expect(session?.scopes).toEqual(['*']);
+    expect(() => requireScopes(session, ['memotron:write', 'pointron:read', 'nucleum:write'], { registry: REGISTRY }))
+      .not.toThrow();
+  });
+
+  it('drops legacy stored scopes the registry cannot grant, including an unregistered owner wildcard', async () => {
+    const session = await authenticateWithStoredScopes(createConfig(), [
+      'legacy:*', 'memotron:*', 'billing:read', 'read', 'pointron:delete', 42, null, 'nucleum:read'
+    ]);
+    expect(session?.scopes).toEqual(['memotron:*', 'nucleum:read']);
+    expect(() => requireScopes(session, ['memotron:read', 'memotron:write', 'nucleum:read'])).not.toThrow();
+    for (const needed of ['legacy:read', 'billing:read', 'pointron:delete', 'pointron:read']) {
+      expect(() => requireScopes(session, needed)).toThrow(AuthFnInsufficientScopeError);
+    }
+    // The deprecated mirror still lists every stored string, but it is never a grant.
+    expect(session?.metadata?.scopes).toEqual(['legacy:*', 'memotron:*', 'billing:read', 'read', 'pointron:delete', 'nucleum:read']);
+  });
+
+  it('grants nothing from legacy owner scopes when the host declares no registry', async () => {
+    const config = { ...createConfig(), scopes: undefined };
+    const session = await authenticateWithStoredScopes(config, ['memotron:read', 'memotron:*', '*']);
+    expect(session?.scopes).toEqual(['*']);
+    const narrow = await authenticateWithStoredScopes(config, ['memotron:read', 'memotron:*']);
+    expect(narrow?.scopes).toEqual([]);
+    expect(() => requireScopes(narrow, 'memotron:read')).toThrow(AuthFnInsufficientScopeError);
   });
 });
 
@@ -259,5 +288,47 @@ describe('requireScopes', () => {
   it('rejects an unregistered needed scope when given the registry, even for the full wildcard', () => {
     expect(() => requireScopes(grants('*'), 'billing:read' as never, { registry: REGISTRY })).toThrow(TypeError);
     expect(() => requireScopes(grants('*'), 'billing:read')).not.toThrow();
+  });
+});
+
+describe('requireScopes typing', () => {
+  // A whole-program typecheck: loading the TypeScript libraries cold takes several seconds on CI.
+  it('type-checks needed scopes against a registry passed to either check', { timeout: 30_000 }, () => {
+    const fileName = fileURLToPath(new URL('../../__scopes_typing.ts', import.meta.url)).replaceAll('\\', '/');
+    const publicEntry = fileURLToPath(new URL('../index.ts', import.meta.url)).replaceAll('\\', '/');
+    const source = `
+      import { defineAuthFnScopes, hasScopes, requireScopes, type AuthFnSession } from 'authfn';
+      declare const session: AuthFnSession | null;
+      const registry = defineAuthFnScopes({ memotron: ['read', 'write'], pointron: ['read'] });
+      requireScopes(session, 'memotron:read', { registry });
+      requireScopes(session, ['memotron:write', 'pointron:read'], { registry });
+      hasScopes(session, 'pointron:read', { registry });
+      requireScopes(session, 'repo:delete');
+      hasScopes(session, ['repo:delete']);
+      // @ts-expect-error an unregistered owner is a compile error when the registry is passed
+      requireScopes(session, 'repo:delete', { registry });
+      // @ts-expect-error an unregistered action is a compile error when the registry is passed
+      requireScopes(session, ['memotron:read', 'pointron:write'], { registry });
+      // @ts-expect-error hasScopes checks the registry the same way
+      hasScopes(session, 'repo:delete', { registry });
+      const dynamic: string = 'memotron:read';
+      // @ts-expect-error an unchecked string cannot bypass a registry that is passed
+      requireScopes(session, dynamic, { registry });
+    `;
+    const options: ts.CompilerOptions = {
+      noEmit: true, strict: true, skipLibCheck: true, types: ['node'],
+      target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.NodeNext,
+      moduleResolution: ts.ModuleResolutionKind.NodeNext,
+      paths: { authfn: [publicEntry] }
+    };
+    const host = ts.createCompilerHost(options);
+    const getSourceFile = host.getSourceFile.bind(host);
+    host.getSourceFile = (name, ...args) => name === fileName
+      ? ts.createSourceFile(name, source, options.target!, true)
+      : getSourceFile(name, ...args);
+    const program = ts.createProgram([fileName], options, host);
+    const diagnostics = ts.getPreEmitDiagnostics(program);
+    expect(diagnostics.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'))).toEqual([]);
+    expect(program.getSourceFile(publicEntry)).toBeDefined();
   });
 });

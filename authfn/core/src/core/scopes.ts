@@ -35,6 +35,13 @@ export interface AuthFnRequireScopesOptions<TRegistry extends AuthFnScopeRegistr
   registry?: TRegistry;
 }
 
+/**
+ * Options for the untyped overloads. A call that passes a registry must use
+ * the typed overload, so its needed scopes are checked against that registry
+ * at compile time as well as at run time.
+ */
+type AuthFnUncheckedScopesOptions = { registry?: undefined };
+
 const SCOPE_SEGMENT = /^[a-z0-9][a-z0-9_.-]{0,63}$/;
 const OWNER_WILDCARD_ACTION = '*';
 
@@ -88,6 +95,26 @@ export function assertRegisteredScopes(
   return [...new Set(scopes as string[])];
 }
 
+/**
+ * Reads the scopes stored on an API key into the grant its session carries.
+ * Keys stored before 0.6.0 were never validated, so only string entries that
+ * the current registry could grant survive: a registered scope, `<owner>:*`
+ * for a registered owner, or `*`. Anything else grants nothing.
+ */
+export function readStoredScopeGrant(
+  registry: AuthFnScopeRegistry | undefined,
+  stored: unknown
+): string[] {
+  if (!Array.isArray(stored)) {
+    return [];
+  }
+
+  const owners = normalizeScopeRegistry(registry ?? {});
+  return [...new Set(stored.filter(
+    (scope): scope is string => typeof scope === 'string' && isGrantableScope(owners, scope)
+  ))];
+}
+
 /** True when the granted scopes cover every needed scope. See `requireScopes`. */
 export function hasScopes<const TRegistry extends AuthFnScopeRegistry>(
   session: Pick<AuthFnSession, 'scopes'> | null | undefined,
@@ -97,7 +124,7 @@ export function hasScopes<const TRegistry extends AuthFnScopeRegistry>(
 export function hasScopes(
   session: Pick<AuthFnSession, 'scopes'> | null | undefined,
   needed: string | readonly string[],
-  options?: AuthFnRequireScopesOptions
+  options?: AuthFnUncheckedScopesOptions
 ): boolean;
 export function hasScopes(
   session: Pick<AuthFnSession, 'scopes'> | null | undefined,
@@ -111,7 +138,8 @@ export function hasScopes(
  * The shared scope check hosts call before protected work. Every needed scope
  * must be a concrete `<owner>:<action>` and must be granted by the session:
  * exactly, by `<owner>:*` for the same owner, or by `*`. Cookie and bearer
- * user sessions carry `['*']`; API-key sessions carry the key's stored scopes.
+ * user sessions carry `['*']`; API-key sessions carry the key's
+ * stored scopes that the host registry can grant.
  *
  * Throws `AUTHFN_UNAUTHENTICATED` (401) without a session and
  * `AUTHFN_INSUFFICIENT_SCOPE` (403) when a needed scope is not granted.
@@ -127,7 +155,7 @@ export function requireScopes<
 export function requireScopes<TSession extends Pick<AuthFnSession, 'scopes'>>(
   session: TSession | null | undefined,
   needed: string | readonly string[],
-  options?: AuthFnRequireScopesOptions
+  options?: AuthFnUncheckedScopesOptions
 ): asserts session is TSession;
 export function requireScopes(
   session: Pick<AuthFnSession, 'scopes'> | null | undefined,

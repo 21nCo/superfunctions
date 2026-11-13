@@ -11,7 +11,7 @@ import {
   AUTHFN_LEGACY_USER_REFERENCE_MAX_LENGTH,
   assertAuthFnDatabaseKeyLength
 } from './limits.js';
-import { assertRegisteredScopes } from './scopes.js';
+import { assertRegisteredScopes, readStoredScopeGrant } from './scopes.js';
 import { hashSecret } from './sessions.js';
 import { findUserById } from './users.js';
 
@@ -161,7 +161,7 @@ export async function revokeApiKeyById(
 }
 
 export async function authenticateApiKey(
-  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
+  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace' | 'scopes'>,
   secret: string,
   options?: { now?: () => Date }
 ): Promise<AuthFnSession | null> {
@@ -206,9 +206,14 @@ export async function authenticateApiKey(
     namespace: namespace(config)
   });
 
-  // Keys stored before scopes were validated may hold any JSON; only string
-  // entries can grant, and `requireScopes` matches them exactly.
-  const grantedScopes = Array.isArray(updatedRecord.scopes)
+  // Keys stored before 0.6.0 may hold any JSON. The session grant keeps only
+  // entries the current registry could grant, and `requireScopes` expands
+  // them: a stored `*` covers every registered scope and `<owner>:*` every
+  // action of that registered owner. Unregistered entries grant nothing.
+  const grantedScopes = readStoredScopeGrant(config.scopes, updatedRecord.scopes);
+  // Deprecated `metadata.scopes` keeps every stored string for display; it is
+  // never a grant (`requireScopes` reads only `session.scopes`).
+  const storedScopes = Array.isArray(updatedRecord.scopes)
     ? updatedRecord.scopes.filter((scope): scope is string => typeof scope === 'string')
     : [];
   const actor = owner
@@ -230,7 +235,7 @@ export async function authenticateApiKey(
       // Deprecated: kept for one minor version; read `actorId` instead.
       ownerUserId: owner?.id,
       // Deprecated: read `session.scopes` (checked by `requireScopes`).
-      scopes: [...grantedScopes]
+      scopes: storedScopes
     }
   };
 }

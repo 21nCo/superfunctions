@@ -97,7 +97,7 @@ export interface AuthFnSession extends AuthSession {
   /**
    * Scopes this session grants, checked with `requireScopes`. Cookie and
    * bearer user sessions carry `['*']`; API-key sessions carry the key's
-   * stored scopes (`[]` when it has none).
+   * stored scopes that the host registry can grant (`[]` when none).
    */
   scopes: string[];
   primaryEmail?: string;
