@@ -94,7 +94,7 @@ export interface UploadSession {
   uploadSessionTokenHash?: string | null;
 }
 
-interface RacedFileRecord {
+interface FileOwnerRecord {
   fileId: string;
   ownerId: string;
   tenantId?: string | null;
@@ -247,8 +247,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     }
   }
 
-  async function findFileRecord(fileId: string): Promise<RacedFileRecord | null> {
-    return db.findOne<RacedFileRecord>({
+  async function findFileRecord(fileId: string): Promise<FileOwnerRecord | null> {
+    return db.findOne<FileOwnerRecord>({
       model: 'files',
       where: [{ field: 'fileId', operator: 'eq', value: fileId }],
       namespace,
@@ -264,22 +264,28 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     });
   }
 
-  async function deleteObjectBestEffort(key: string, target: string | undefined): Promise<void> {
-    if (!storage.deleteObject) return;
+  async function deleteFileClaim(fileId: string, versionId: string): Promise<void> {
     try {
-      await storage.deleteObject({ key, target });
+      await db.delete({
+        model: 'files',
+        where: [
+          { field: 'fileId', operator: 'eq', value: fileId },
+          { field: 'currentVersionId', operator: 'eq', value: versionId },
+        ],
+        namespace,
+      });
     } catch {
-      // Best-effort cleanup.
+      // Best-effort: a same-owner retry of this session re-authorizes and heals the row.
     }
   }
 
   /**
-   * Whether the caller may turn its session into a new version of a file that
-   * another session created after this one passed its write check. Without a
-   * configured checker only the same named owner in the same tenant may.
+   * Whether the caller may turn its session into a new version of an existing
+   * file. Uses the configured checker against the row as it is now; without
+   * one, only the same named owner in the same tenant may.
    */
-  async function canReplaceRacedFile(
-    file: RacedFileRecord,
+  async function canReplaceFile(
+    file: FileOwnerRecord,
     session: UploadSession,
     ctx: FileProviderContext
   ): Promise<boolean> {
@@ -291,6 +297,50 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       file.ownerId === session.ownerId &&
       (file.tenantId ?? null) === (session.tenantId ?? null)
     );
+  }
+
+  async function assertCanReplaceFile(
+    file: FileOwnerRecord,
+    session: UploadSession,
+    ctx: FileProviderContext
+  ): Promise<void> {
+    if (!(await canReplaceFile(file, session, ctx))) {
+      throw errors.forbidden({ fileId: file.fileId, operation: 'replace' });
+    }
+  }
+
+  /**
+   * Decides who owns `fileId` before a completion publishes any bytes, so a
+   * caller that may not write the file never reaches storage.
+   *
+   * An existing row is authorized as it is now. An absent one is claimed by
+   * inserting the file row; `files.fileId` is unique, so when sessions race to
+   * create the same new ID exactly one insert succeeds (first writer wins) and
+   * every other session is authorized against the winner's row: the same owner's
+   * retry becomes a new version, another principal gets 403.
+   *
+   * Returns true when this call inserted the row. The caller deletes that claim
+   * if it fails before the version row exists.
+   */
+  async function claimFileForCompletion(
+    fileRow: Record<string, unknown> & { fileId: string },
+    session: UploadSession,
+    ctx: FileProviderContext
+  ): Promise<boolean> {
+    const existing = await findFileRecord(fileRow.fileId);
+    if (existing) {
+      await assertCanReplaceFile(existing, session, ctx);
+      return false;
+    }
+    try {
+      await db.create({ model: 'files', data: fileRow, namespace });
+      return true;
+    } catch (createError) {
+      const winner = await findFileRecord(fileRow.fileId);
+      if (!winner) throw createError;
+      await assertCanReplaceFile(winner, session, ctx);
+      return false;
+    }
   }
 
   return {
@@ -804,186 +854,160 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         }
       }
 
-      if (session.fileId && fileWriteChecker) {
-        const canWrite = await fileWriteChecker.canWriteFile(session.fileId, ctx);
-        if (!canWrite) {
-          throw errors.forbidden({ fileId: session.fileId, operation: 'replace' });
-        }
-      }
       const policy = policies.get(session.policy);
       const policyStorageTarget = policy ? resolveStorageTarget(policy) : undefined;
-
-      // Complete multipart upload
-      if (
-        session.uploadMode === 'multipart-signed-url' &&
-        getStorageCapabilities(storage, policyStorageTarget).multipart &&
-        storage.completeMultipartUpload &&
-        session.storageUploadId
-      ) {
-        await storage.completeMultipartUpload({
-          key: session.storageKey,
-          target: policyStorageTarget,
-          uploadId: session.storageUploadId,
-          parts: parts.sort((a, b) => a.partNumber - b.partNumber).map(p => ({ partNumber: p.partNumber, etag: p.etag })),
-        });
-      } else if (session.uploadMode === 'proxy') {
-        // Stitch proxy parts
-        if (!storage.openUploadStream || !storage.openDownloadStream) {
-            throw new Error('Storage adapter does not support streaming required for proxy upload completion');
-        }
-
-        const sortedParts = parts.sort((a, b) => a.partNumber - b.partNumber);
-        const writeStream = await storage.openUploadStream({ 
-            key: session.storageKey,
-            target: policyStorageTarget,
-            contentType: session.mimeType
-        });
-
-        const writer = writeStream.getWriter();
-        try {
-            for (const part of sortedParts) {
-                const partKey = proxyPartKey(session.storageKey, part.partNumber);
-                const readStream = await storage.openDownloadStream({ key: partKey, target: policyStorageTarget });
-                const reader = readStream.getReader();
-
-                try {
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
-                        await writer.write(value);
-                    }
-                } finally {
-                    reader.releaseLock();
-                }
-            }
-        } finally {
-            await writer.close();
-        }
-
-        // Cleanup parts
-        for (const part of sortedParts) {
-             const partKey = proxyPartKey(session.storageKey, part.partNumber);
-             try {
-                 await storage.deleteObject({ key: partKey, target: policyStorageTarget });
-             } catch {
-                 // ignore
-             }
-        }
-      }
-
-      // Validate size if supported
-      if (storage.statObject) {
-        try {
-          const stat = await storage.statObject({ key: session.storageKey, target: policyStorageTarget });
-          if (stat.size !== session.size) {
-            throw errors.uploadSizeMismatch(session.size, stat.size);
-          }
-        } catch (err) {
-            if (err instanceof errors.FileFnError) throw err;
-            // Ignore stat errors if object doesn't exist (should exist though)
-        }
-      }
-
       const now = new Date().toISOString();
       const fileId = session.fileId || generateFileFnId('file');
       const versionId = generateFileFnId('ver');
       const metadata = session.metadata ?? {};
 
-      // Check for deduplication
+      // Settle ownership before publishing: a custom storagePath may give every
+      // session of this file the same key, so a caller that loses the file must
+      // not complete its object there.
+      const createdFile = await claimFileForCompletion({
+        fileId,
+        currentVersionId: versionId,
+        ownerId: session.ownerId,
+        tenantId: session.tenantId,
+        visibility: policy?.visibility || 'private',
+        policy: session.policy,
+        mimeType: session.mimeType,
+        size: session.size,
+        name: session.fileName,
+        metadata,
+        createdAt: now,
+        updatedAt: now,
+      }, session, ctx);
+
       let finalStorageKey = session.storageKey;
       let checksumSha256Base64: string | null = null;
-      let isDeduplicated = false;
-
-      if (dedup && dedup.isEnabled()) {
-        const dedupResult = await dedup.computeAndCheckDuplicate(
-          session.storageKey,
-          session.tenantId,
-          policyStorageTarget ?? null,
-          storage
-        );
-
-        checksumSha256Base64 = dedupResult.checksumSha256Base64;
-
-        if (dedupResult.isDuplicate && dedupResult.existingStorageKey) {
-          // Reuse existing storage key (reference to existing object)
-          finalStorageKey = dedupResult.existingStorageKey;
-          isDeduplicated = true;
-
-          // Delete the newly uploaded file since we're reusing an existing one
-          if (storage.deleteObject && finalStorageKey !== session.storageKey) {
-            try {
-              await storage.deleteObject({ key: session.storageKey, target: policyStorageTarget });
-            } catch {
-              // Ignore deletion errors - storage cleanup is non-critical
-            }
-          }
-        }
-      }
-
-      // Create or update file. files.fileId is unique, so when sessions race to
-      // create the same new ID exactly one insert succeeds: the first writer owns
-      // the file and the others become replacements that need write permission.
-      const fileUpdate = {
-        currentVersionId: versionId,
-        size: session.size,
-        mimeType: session.mimeType,
-        metadata,
-        updatedAt: now,
-      };
-      const existingFile = session.fileId ? await findFileRecord(session.fileId) : null;
-
-      if (existingFile) {
-        await updateFileRecord(fileId, fileUpdate);
-      } else {
-        try {
-          await db.create({
-            model: 'files',
-            data: {
-              fileId,
-              currentVersionId: versionId,
-              ownerId: session.ownerId,
-              tenantId: session.tenantId,
-              visibility: policy?.visibility || 'private',
-              policy: session.policy,
-              mimeType: session.mimeType,
-              size: session.size,
-              name: session.fileName,
-              metadata,
-              createdAt: now,
-              updatedAt: now,
-            },
-            namespace,
+      try {
+        // Complete multipart upload
+        if (
+          session.uploadMode === 'multipart-signed-url' &&
+          getStorageCapabilities(storage, policyStorageTarget).multipart &&
+          storage.completeMultipartUpload &&
+          session.storageUploadId
+        ) {
+          await storage.completeMultipartUpload({
+            key: session.storageKey,
+            target: policyStorageTarget,
+            uploadId: session.storageUploadId,
+            parts: parts.sort((a, b) => a.partNumber - b.partNumber).map(p => ({ partNumber: p.partNumber, etag: p.etag })),
           });
-        } catch (createError) {
-          const winner = session.fileId ? await findFileRecord(session.fileId) : null;
-          if (!winner) throw createError;
-          if (!(await canReplaceRacedFile(winner, session, ctx))) {
-            // The default key embeds this session's own version ID, so the object
-            // is ours alone; a custom storagePath may share the winner's key.
-            if (!isDeduplicated && !policy?.storagePath) {
-              await deleteObjectBestEffort(session.storageKey, policyStorageTarget);
-            }
-            throw errors.forbidden({ fileId, operation: 'replace' });
+        } else if (session.uploadMode === 'proxy') {
+          // Stitch proxy parts
+          if (!storage.openUploadStream || !storage.openDownloadStream) {
+              throw new Error('Storage adapter does not support streaming required for proxy upload completion');
           }
-          await updateFileRecord(fileId, fileUpdate);
-        }
-      }
 
-      // Create version
-      await db.create({
-        model: 'fileVersions',
-        data: {
-          versionId,
-          fileId,
-          storageKey: finalStorageKey,
-          mimeType: session.mimeType,
-          size: session.size,
-          checksumSha256Base64,
-          tenantId: session.tenantId,
-          createdAt: now,
-        },
-        namespace,
-      });
+          const sortedParts = parts.sort((a, b) => a.partNumber - b.partNumber);
+          const writeStream = await storage.openUploadStream({ 
+              key: session.storageKey,
+              target: policyStorageTarget,
+              contentType: session.mimeType
+          });
+
+          const writer = writeStream.getWriter();
+          try {
+              for (const part of sortedParts) {
+                  const partKey = proxyPartKey(session.storageKey, part.partNumber);
+                  const readStream = await storage.openDownloadStream({ key: partKey, target: policyStorageTarget });
+                  const reader = readStream.getReader();
+
+                  try {
+                      while (true) {
+                          const { done, value } = await reader.read();
+                          if (done) break;
+                          await writer.write(value);
+                      }
+                  } finally {
+                      reader.releaseLock();
+                  }
+              }
+          } finally {
+              await writer.close();
+          }
+
+          // Cleanup parts
+          for (const part of sortedParts) {
+               const partKey = proxyPartKey(session.storageKey, part.partNumber);
+               try {
+                   await storage.deleteObject({ key: partKey, target: policyStorageTarget });
+               } catch {
+                   // ignore
+               }
+          }
+        }
+
+        // Validate size if supported
+        if (storage.statObject) {
+          try {
+            const stat = await storage.statObject({ key: session.storageKey, target: policyStorageTarget });
+            if (stat.size !== session.size) {
+              throw errors.uploadSizeMismatch(session.size, stat.size);
+            }
+          } catch (err) {
+              if (err instanceof errors.FileFnError) throw err;
+              // Ignore stat errors if object doesn't exist (should exist though)
+          }
+        }
+
+        // Check for deduplication
+        if (dedup && dedup.isEnabled()) {
+          const dedupResult = await dedup.computeAndCheckDuplicate(
+            session.storageKey,
+            session.tenantId,
+            policyStorageTarget ?? null,
+            storage
+          );
+
+          checksumSha256Base64 = dedupResult.checksumSha256Base64;
+
+          if (dedupResult.isDuplicate && dedupResult.existingStorageKey) {
+            // Reuse existing storage key (reference to existing object)
+            finalStorageKey = dedupResult.existingStorageKey;
+
+            // Delete the newly uploaded file since we're reusing an existing one
+            if (storage.deleteObject && finalStorageKey !== session.storageKey) {
+              try {
+                await storage.deleteObject({ key: session.storageKey, target: policyStorageTarget });
+              } catch {
+                // Ignore deletion errors - storage cleanup is non-critical
+              }
+            }
+          }
+        }
+
+        if (!createdFile) {
+          await updateFileRecord(fileId, {
+            currentVersionId: versionId,
+            size: session.size,
+            mimeType: session.mimeType,
+            metadata,
+            updatedAt: now,
+          });
+        }
+
+        // Create version
+        await db.create({
+          model: 'fileVersions',
+          data: {
+            versionId,
+            fileId,
+            storageKey: finalStorageKey,
+            mimeType: session.mimeType,
+            size: session.size,
+            checksumSha256Base64,
+            tenantId: session.tenantId,
+            createdAt: now,
+          },
+          namespace,
+        });
+      } catch (completionError) {
+        if (createdFile) await deleteFileClaim(fileId, versionId);
+        throw completionError;
+      }
 
       // Update session
       await db.update({

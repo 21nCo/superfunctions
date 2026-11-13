@@ -24,6 +24,7 @@ type Row = Record<string, any>;
 function createDb() {
   const tables = new Map<string, Row[]>();
   let filesBarrier: { expected: number; arrived: Array<() => void> } | null = null;
+  let filesReadPause: { reached: () => void; release: Promise<void> } | null = null;
 
   function table(model: string): Row[] {
     if (!tables.has(model)) tables.set(model, []);
@@ -71,7 +72,14 @@ function createDb() {
       return record;
     },
     async findOne(params: any) {
-      return table(params.model).find((row) => match(row, params.where)) ?? null;
+      const found = table(params.model).find((row) => match(row, params.where)) ?? null;
+      const pause = params.model === 'files' ? filesReadPause : null;
+      if (pause) {
+        filesReadPause = null;
+        pause.reached();
+        await pause.release;
+      }
+      return found;
     },
     async findMany(params: any) {
       return table(params.model).filter((row) => match(row, params.where));
@@ -113,17 +121,32 @@ function createDb() {
     holdFilesInserts(expected: number) {
       filesBarrier = { expected, arrived: [] };
     },
+    /**
+     * Holds the next `files` read after it has seen the table, until `release`
+     * is called. `reached` resolves once that read is held.
+     */
+    pauseNextFilesRead() {
+      let release!: () => void;
+      let reached!: () => void;
+      const reachedPromise = new Promise<void>((resolve) => { reached = resolve; });
+      filesReadPause = { reached, release: new Promise<void>((resolve) => { release = resolve; }) };
+      return { reached: reachedPromise, release };
+    },
   };
 }
 
 describe('client-chosen file IDs on upload/init (FILE-5)', () => {
   let db: ReturnType<typeof createDb>;
-  let deletedKeys: string[];
+  /** Multipart upload IDs in the order they were completed, per storage key. */
+  let published: Map<string, string[]>;
+  let failNextPublish: boolean;
   let fileFn: FileFn;
 
   function build(storagePath?: (ctx: { fileId: string }) => string) {
     db = createDb();
-    deletedKeys = [];
+    published = new Map();
+    failNextPublish = false;
+    let uploads = 0;
     fileFn = createFileFn({
       database: db.adapter,
       storage: createFakeStorageAdapter({
@@ -134,11 +157,19 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
           proxyStreamingUpload: false,
           proxyStreamingDownload: false,
         },
+        async createMultipartUpload() {
+          uploads += 1;
+          return { uploadId: `mpu_${uploads}` };
+        },
+        async completeMultipartUpload(input) {
+          if (failNextPublish) {
+            failNextPublish = false;
+            throw new Error('storage unavailable');
+          }
+          published.set(input.key, [...(published.get(input.key) ?? []), input.uploadId]);
+        },
         async statObject(input) {
           return { key: input.key, size: 3 };
-        },
-        async deleteObject(input) {
-          deletedKeys.push(input.key);
         },
       }),
       policies: [{ name: 'capture', contentTypes: ['image/png'], maxSizeBytes: 1024, storagePath }],
@@ -194,8 +225,27 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
     return call('POST', `/upload/${uploadSessionId}/complete`, user);
   }
 
-  function storageKeyOf(uploadSessionId: string): string {
-    return db.rows('uploadSessions').find((row) => row.uploadSessionId === uploadSessionId)!.storageKey;
+  function sessionRow(uploadSessionId: string): Row {
+    return db.rows('uploadSessions').find((row) => row.uploadSessionId === uploadSessionId)!;
+  }
+
+  /** The upload whose bytes a storage key currently holds (the last one completed there). */
+  function contentAt(key: string): string | undefined {
+    return published.get(key)?.at(-1);
+  }
+
+  function publishedUploads(): string[] {
+    return [...published.values()].flat();
+  }
+
+  /** Asserts `fileId` has one row owned by the winner, one version, and the winner's bytes. */
+  function expectSingleOwner(fileId: string, winner: string, winnerSession: string, winnerVersionId: string) {
+    expect(db.rows('files').filter((row) => row.fileId === fileId)).toEqual([
+      expect.objectContaining({ ownerId: winner, currentVersionId: winnerVersionId }),
+    ]);
+    const versions = db.rows('fileVersions').filter((row) => row.fileId === fileId);
+    expect(versions).toEqual([expect.objectContaining({ versionId: winnerVersionId })]);
+    expect(contentAt(versions[0].storageKey)).toBe(sessionRow(winnerSession).storageUploadId);
   }
 
   describe('grammar file_[A-Za-z0-9_-]{8,64}', () => {
@@ -280,47 +330,89 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
     expect(file).toMatchObject({ ownerId: 'user_a', tenantId: 'org_1', currentVersionId: done.body.data.versionId });
   });
 
-  it('two principals racing on one new ID resolve to a single owner', async () => {
-    const fileId = 'file_raced_new_id_01';
-    // Neither file exists yet, so both inits are accepted.
-    const sessionA = await initAndUpload('user_a', fileId);
-    const sessionB = await initAndUpload('user_b', fileId);
+  describe('two principals racing on one new ID resolve to a single owner', () => {
+    const layouts = [
+      ['the default per-version key', undefined],
+      ['a custom storagePath shared by both sessions', (ctx: { fileId: string }) => `captures/${ctx.fileId}`],
+    ] as const;
 
-    // Both completions pass their pre-insert write check before either inserts.
-    db.holdFilesInserts(2);
-    const [doneA, doneB] = await Promise.all([complete('user_a', sessionA), complete('user_b', sessionB)]);
+    describe.each(layouts)('with %s', (_layout, storagePath) => {
+      beforeEach(() => build(storagePath));
 
-    expect(doneA.status).toBe(200);
-    expect(doneA.body.data.fileId).toBe(fileId);
-    expect(doneB.status).toBe(403);
-    expect(doneB.body.error.code).toBe('FILEFN_FORBIDDEN');
+      async function initBoth(fileId: string): Promise<[string, string]> {
+        // Neither file exists yet, so both inits are accepted.
+        const sessionA = await initAndUpload('user_a', fileId);
+        const sessionB = await initAndUpload('user_b', fileId);
+        if (storagePath) expect(sessionRow(sessionB).storageKey).toBe(sessionRow(sessionA).storageKey);
+        return [sessionA, sessionB];
+      }
 
-    expect(db.rows('files').filter((row) => row.fileId === fileId)).toEqual([
-      expect.objectContaining({ ownerId: 'user_a', currentVersionId: doneA.body.data.versionId }),
-    ]);
-    expect(db.rows('fileVersions').filter((row) => row.fileId === fileId)).toHaveLength(1);
-    // The loser's completed object is discarded; the winner's is kept.
-    expect(deletedKeys).toContain(storageKeyOf(sessionB));
-    expect(deletedKeys).not.toContain(storageKeyOf(sessionA));
+      it('when both completions find the ID free and insert at once', async () => {
+        const fileId = 'file_raced_insert_01';
+        const [sessionA, sessionB] = await initBoth(fileId);
 
-    // Retrying the losing completion stays forbidden and changes nothing.
-    const retryB = await complete('user_b', sessionB);
-    expect(retryB.status).toBe(403);
-    expect(db.rows('fileVersions').filter((row) => row.fileId === fileId)).toHaveLength(1);
+        db.holdFilesInserts(2);
+        const [doneA, doneB] = await Promise.all([complete('user_a', sessionA), complete('user_b', sessionB)]);
+
+        expect(doneA.status).toBe(200);
+        expect(doneA.body.data.fileId).toBe(fileId);
+        expect(doneB.status).toBe(403);
+        expect(doneB.body.error.code).toBe('FILEFN_FORBIDDEN');
+        expectSingleOwner(fileId, 'user_a', sessionA, doneA.body.data.versionId);
+        // The loser never publishes, so a shared key keeps the winner's bytes.
+        expect(publishedUploads()).not.toContain(sessionRow(sessionB).storageUploadId);
+
+        // Retrying the losing completion stays forbidden and changes nothing.
+        const retryB = await complete('user_b', sessionB);
+        expect(retryB.status).toBe(403);
+        expectSingleOwner(fileId, 'user_a', sessionA, doneA.body.data.versionId);
+      });
+
+      it('when the winner creates the file after the loser found the ID free', async () => {
+        const fileId = 'file_raced_lookup_01';
+        const [sessionA, sessionB] = await initBoth(fileId);
+
+        // user_b's completion sees no file, then waits while user_a completes.
+        const paused = db.pauseNextFilesRead();
+        const pendingB = complete('user_b', sessionB);
+        await paused.reached;
+        const doneA = await complete('user_a', sessionA);
+        expect(doneA.status).toBe(200);
+        paused.release();
+        const doneB = await pendingB;
+
+        expect(doneB.status).toBe(403);
+        expect(doneB.body.error.code).toBe('FILEFN_FORBIDDEN');
+        expectSingleOwner(fileId, 'user_a', sessionA, doneA.body.data.versionId);
+        expect(publishedUploads()).not.toContain(sessionRow(sessionB).storageUploadId);
+      });
+
+      it('when the loser completes after the winner', async () => {
+        const fileId = 'file_raced_after_01';
+        const [sessionA, sessionB] = await initBoth(fileId);
+
+        const doneA = await complete('user_a', sessionA);
+        const doneB = await complete('user_b', sessionB);
+        expect(doneA.status).toBe(200);
+        expect(doneB.status).toBe(403);
+        expectSingleOwner(fileId, 'user_a', sessionA, doneA.body.data.versionId);
+        expect(publishedUploads()).not.toContain(sessionRow(sessionB).storageUploadId);
+      });
+    });
   });
 
-  it('keeps the shared object when a custom storagePath gives both racers the same key', async () => {
-    build((ctx) => `captures/${ctx.fileId}`);
-    const fileId = 'file_raced_shared_key';
-    const sessionA = await initAndUpload('user_a', fileId);
-    const sessionB = await initAndUpload('user_b', fileId);
-    expect(storageKeyOf(sessionB)).toBe(storageKeyOf(sessionA));
+  it('releases a new ID when completion fails before the version exists', async () => {
+    const fileId = 'file_claim_released_01';
+    const uploadSessionId = await initAndUpload('user_a', fileId);
 
-    db.holdFilesInserts(2);
-    const [doneA, doneB] = await Promise.all([complete('user_a', sessionA), complete('user_b', sessionB)]);
-    expect(doneA.status).toBe(200);
-    expect(doneB.status).toBe(403);
-    expect(deletedKeys).toEqual([]);
+    failNextPublish = true;
+    await expect(complete('user_a', uploadSessionId)).rejects.toThrow('storage unavailable');
+    expect(db.rows('files').filter((row) => row.fileId === fileId)).toEqual([]);
+
+    // The ID is still free: the same session can complete, or another caller could claim it.
+    const done = await complete('user_a', uploadSessionId);
+    expect(done.status).toBe(200);
+    expectSingleOwner(fileId, 'user_a', uploadSessionId, done.body.data.versionId);
   });
 
   describe('a retried init after a lost response', () => {
@@ -353,8 +445,15 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
       expect(files).toHaveLength(1);
       expect(files[0].ownerId).toBe('user_a');
       expect(files[0].currentVersionId).toBe(doneRetry.body.data.versionId);
-      expect(db.rows('fileVersions').filter((row) => row.fileId === fileId)).toHaveLength(2);
-      expect(deletedKeys).toEqual([]);
+      const versions = db.rows('fileVersions').filter((row) => row.fileId === fileId);
+      expect(versions.map((row) => row.versionId).sort()).toEqual(
+        [doneOriginal.body.data.versionId, doneRetry.body.data.versionId].sort(),
+      );
+      // Both uploads were published under their own keys and kept.
+      for (const [session, done] of [[original, doneOriginal], [retry, doneRetry]] as const) {
+        const version = versions.find((row) => row.versionId === done.body.data.versionId)!;
+        expect(contentAt(version.storageKey)).toBe(sessionRow(session).storageUploadId);
+      }
     });
   });
 
