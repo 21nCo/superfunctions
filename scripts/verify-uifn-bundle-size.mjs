@@ -11,11 +11,11 @@
 // The adapters and their @uifn dependencies must be built first (their dist output is what an app consumes).
 
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { gzipSync } from "node:zlib";
-import { parse as parseSvelte } from "svelte/compiler";
 import ts from "typescript";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -291,7 +291,9 @@ function* svelteNodes(node, seen = new WeakSet()) {
  * mention the barrel are never reported.
  */
 function svelteRootBarrelLines(text, fileName) {
-  const ast = parseSvelte(text, { modern: true, filename: fileName });
+  // The Svelte 5 compiler @uifn/svelte builds with, not whichever copy the repository root happens to hoist.
+  const { parse } = createRequire(path.join(repoRoot, "uifn/svelte/package.json"))("svelte/compiler");
+  const ast = parse(text, { modern: true, filename: fileName });
   const lines = [];
   for (const script of [ast.module, ast.instance].filter(Boolean)) {
     const { start, end } = script.content;

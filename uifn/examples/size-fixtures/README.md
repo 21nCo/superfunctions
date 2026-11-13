@@ -20,9 +20,10 @@ Vite and framework plugin that adapter's Workbench declares), then:
   minification: the QR-code generator and QRCode contract, the color-picker controller, and the `@uifn/dom`
   bindings that Dialog (overlay), Select (popup), Slider (range gesture) and Menu wire, and the names and parts
   that other primitives pass to the roving-focus, gesture and popup installers (PinInput, Editable, Pagination,
-  TreeView, SegmentGroup, ImageCropper, Splitter, DatePicker, and Tabs for the Menu fixtures). Each generated
-  definition lists only the `@uifn/dom` installers and descriptors `scripts/uifn-adapter-dom-bindings.mjs`
-  assigns to it;
+  TreeView, SegmentGroup, ImageCropper, Splitter, DatePicker, and Tabs for the Menu fixtures), and the name
+  Menubar, which an adapter substrate that special-cases Menubar would ship with every primitive. Each generated
+  definition lists only the `@uifn/dom` installers, descriptors and gesture driver
+  `scripts/uifn-adapter-dom-bindings.mjs` assigns to it;
 - fails when an adapter source imports the `@uifn/core` root barrel instead of a subpath.
 
 Build the adapters first, then run the check from the repository root:
