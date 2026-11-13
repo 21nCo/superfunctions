@@ -61,6 +61,18 @@ describe("CodexHarnessAdapter outputSchema", () => {
     expect(output.error).toMatch(/severity/);
   });
 
+  it("keeps a null the custom schema requires while still omitting optional nulls", async () => {
+    const custom = { ...lensOutputSchema, required: [...lensOutputSchema.required, "notes"], properties: { ...lensOutputSchema.properties, notes: { anyOf: [{ type: "string" }, { type: "null" }] } } };
+    const { adapter, seen } = recordingAdapter({ ...lensPayload(), notes: null });
+    const output = await adapter.run({ ...input, outputSchema: custom });
+    expect(seen.schema).toEqual(strictProviderSchema(custom));
+    expect(output.error).toBeUndefined();
+    expect(output.terminal).toBe("completed");
+    const { anchor: _nullAnchor, ...finding } = lensFinding("high");
+    expect(output.findings).toEqual([finding]);
+    expect(output.evidence[0]).toEqual({ id: "E1", kind: "code", description: "loop bound", code: { commit: head, path: "src/index.ts", startLine: 3 } });
+  });
+
   it("rejects output that satisfies a custom schema but is not a harness payload", async () => {
     const custom = { type: "object", additionalProperties: false, required: ["summary"], properties: { summary: { type: "string" } } };
     const { adapter } = recordingAdapter({ summary: "fine" });

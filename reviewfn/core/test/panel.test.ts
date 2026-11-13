@@ -2,10 +2,10 @@ import { Ajv } from "ajv";
 import { describe, expect, it } from "vitest";
 
 import {
-  DEFAULT_POLICY, PANEL_PRIORITY_SEVERITY, PANEL_VALIDATION_CODES, credentialFingerprint, derivePanelVerdict, lensOutputSchema, panelFindingSchema,
+  DEFAULT_POLICY, PANEL_PRIORITY_SEVERITY, PANEL_VALIDATION_CODES, credentialFingerprint, derivePanelVerdict, lensOutputSchema, omitOptionalNullsFor, panelFindingSchema,
   panelPolicyDigest, panelPolicySchema, panelReportSchema, panelStructureIssues, serializeChangeHunks, sha256, slotIdentityKey, slotIdentitySchema, slotRunSchema,
   validatePanelFinding, validatePanelPolicy, validatePanelReport, validateReport, validateSlotIdentity, validateSlotRun,
-  type ArtifactStore, type ContextManifest, type PanelFinding, type PanelPolicy, type PanelReport, type PanelStructure, type ReviewReport, type SlotRun, type SourceControlAdapter,
+  type ArtifactStore, type ContextManifest, type LensOutput, type PanelFinding, type PanelPolicy, type PanelReport, type PanelStructure, type ReviewReport, type SlotRun, type SourceControlAdapter,
 } from "../src/index.js";
 
 const head = "b".repeat(40);
@@ -287,6 +287,31 @@ describe("slot run collapse and model mismatch", () => {
     expect(await slotIssues(spurious)).toEqual(["REVIEWFN_PANEL_SCHEMA /slotRuns/0/voidReasons"]);
   });
 
+  it("keeps the provenance of a collapsed lens: collapse affects quorum only", async () => {
+    const collapsedOnly = mutate(panelReport(), report => { report.findings[0].origins = [{ slotId: "lens-b", lens: "security" }]; });
+    expect(await slotIssues(collapsedOnly)).toEqual([]);
+    const shared = mutate(panelReport(), report => { report.findings[0].origins = [{ slotId: "lens-a", lens: "general" }, { slotId: "lens-b", lens: "security" }]; });
+    expect(await slotIssues(shared)).toEqual([]);
+    const wrongLens = mutate(panelReport(), report => { report.findings[0].origins = [{ slotId: "lens-b", lens: "general" }]; });
+    expect(await slotIssues(wrongLens)).toEqual(["REVIEWFN_PANEL_ORIGIN_UNKNOWN /findings/0/origins/0"]);
+    // The verifier must still be independent of a collapsed origin's identity.
+    const dependent = mutate(collapsedOnly, report => { report.slots[3].inference.model = "gpt-6.1-sol"; run(report, "verifier").identity.model = "gpt-6.1-sol"; });
+    // findings[1] keeps its lens-a origin, which has the same identity.
+    expect(await slotIssues(dependent)).toEqual(["REVIEWFN_PANEL_VERIFICATION_INVALID /findings/0/verification/slotId", "REVIEWFN_PANEL_VERIFICATION_INVALID /findings/1/verification/slotId"]);
+  });
+
+  it.each(["failed", "canceled", "quota_exhausted", "timed_out", "malformed", "void"] as const)("rejects an origin whose run ended %s", async terminal => {
+    const value = mutate(pair("completed", terminal), report => { report.findings[0].origins = [{ slotId: "lens-b", lens: "security" }]; });
+    expect(await slotIssues(value)).toEqual(["REVIEWFN_PANEL_ORIGIN_UNKNOWN /findings/0/origins/0"]);
+  });
+
+  it("requires a run's harness version to equal its slot's, so a version cannot escape collapse", async () => {
+    const direct = mutate(panelReport(), report => { run(report, "verifier").identity.harnessVersion = "0.155.0"; });
+    expect(await slotIssues(direct)).toEqual(["REVIEWFN_PANEL_SCHEMA /slotRuns/3/identity"]);
+    const bypass = mutate(panelReport(), report => { Object.assign(run(report, "lens-b"), { terminal: "completed", identity: { ...run(report, "lens-b").identity, harnessVersion: "9.9.9" } }); });
+    expect(await slotIssues(bypass)).toEqual(["REVIEWFN_PANEL_SCHEMA /slotRuns/1/identity"]);
+  });
+
   it("encodes two slots that resolve the same wrong model as two void runs", async () => {
     const value = mutate(panelReport(), report => {
       for (const slotId of ["lens-a", "lens-b"]) Object.assign(run(report, slotId), { identity: { ...run(report, slotId).identity, model: "gpt-6-mini" }, terminal: "void", voidReasons: ["model_mismatch"] });
@@ -391,6 +416,30 @@ describe("panel claims are verified like 0.1 claims", () => {
     expect(await anchorIssuePaths(incremental(anchoredAt(since, "src/value.ts")), { ...absent(["src/value.ts"]), artifacts: store })).toEqual(["/evidence/0/code", "/findings/0/anchor"]);
   });
 
+  it("returns issues for an empty root without calling source control", async () => {
+    const calls: string[] = [];
+    const recording = { ...sourceControl, pathExists: async (root: string) => { calls.push(`pathExists ${root}`); if (!root) throw new Error("empty root"); return false; }, verifyAnchor: async (root: string) => { calls.push(`verifyAnchor ${root}`); return true; } };
+    const deleted = mutate(panelReport(), report => { report.evidence[0].code = { commit: mergeBase, path: "src/value.ts", startLine: 1 }; report.findings[0].anchor = { commit: mergeBase, path: "src/value.ts", startLine: 1 }; });
+    const result = await validatePanelReport(deleted, policy, { ...options, sourceControl: recording, root: "" });
+    expect(calls).toEqual([]);
+    expect(result.issues.filter(issue => issue.code === "REVIEWFN_PANEL_FINDING_INVALID").map(issue => issue.path)).toEqual(["/evidence/0/code", "/evidence/1/code", "/evidence/2/code", "/findings/0/anchor", "/findings/1/anchor", "/findings/2/anchor"]);
+  });
+
+  it("rejects anchors that source control does not confirm", async () => {
+    const rejecting = { ...options, sourceControl: { ...sourceControl, verifyAnchor: async (_root: string, anchor: { startLine?: number }) => anchor.startLine !== 7 } };
+    const moved = mutate(panelReport(), report => { report.evidence[0].code!.startLine = 7; report.findings[1].anchor!.startLine = 7; });
+    expect((await validatePanelReport(moved, policy, rejecting)).issues.map(issue => `${issue.code} ${issue.path}`)).toEqual(["REVIEWFN_PANEL_FINDING_INVALID /evidence/0/code", "REVIEWFN_PANEL_FINDING_INVALID /findings/1/anchor"]);
+  });
+
+  it("bounds the panel findings, reported, dropped and suppressed alike, by maxFindings", async () => {
+    const limited = (maxFindings: number) => ({ ...policy, limits: { ...policy.limits, maxFindings } });
+    for (const value of [panelReport(), panelOnly()]) {
+      expect(value.findings).toHaveLength(3);
+      expect((await validatePanelReport(value, limited(3), options)).issues).toEqual([]);
+      expect((await validatePanelReport(value, limited(2), options)).issues).toEqual([expect.objectContaining({ code: "REVIEWFN_PANEL_FINDING_INVALID", path: "/findings" })]);
+    }
+  });
+
   it("allows merge-base anchors only for on-base verification evidence", async () => {
     const onBase = { id: "B1", kind: "code" as const, description: "the base has no such loop", code: { commit: mergeBase, path: "src/other.ts", startLine: 1 } };
     const cited = (change: (report: PanelReport) => void = () => {}) => mutate(panelReport(), report => { report.evidence.push(onBase); report.findings[0].verification!.evidenceIds.push("B1"); change(report); });
@@ -470,6 +519,27 @@ describe("panel policy and slot identity", () => {
     expect(slotIdentityKey(identity)).toBe(slotIdentityKey({ ...identity }));
     expect(slotIdentityKey(identity)).not.toBe(slotIdentityKey({ ...identity, credentialFingerprint: credentialFingerprint("account-2") }));
     expect(slotIdentityKey(identity)).not.toBe(slotIdentityKey({ ...identity, credentialFingerprint: undefined }));
+  });
+
+  it("omits only the nulls a schema leaves optional, following $ref, items and composite branches", () => {
+    const schema = {
+      type: "object", required: ["kept", "list"],
+      properties: { kept: { anyOf: [{ type: "string" }, { type: "null" }] }, dropped: { type: "string" }, list: { type: "array", items: { $ref: "#/$defs/item" } } },
+      $defs: { item: { allOf: [{ type: "object", required: ["id"], properties: { id: { anyOf: [{ type: "string" }, { type: "null" }] }, note: { type: "string" } } }] } },
+    };
+    const omit = omitOptionalNullsFor(schema);
+    expect(omit({ kept: null, dropped: null, list: [{ id: null, note: null }], untraced: null })).toEqual({ kept: null, list: [{ id: null }], untraced: null });
+    expect(omit({ kept: "x", list: [] })).toEqual({ kept: "x", list: [] });
+    expect(omit(null)).toBeNull();
+  });
+
+  it("types lens findings with the panel severities the lens schema accepts", () => {
+    const lensFinding: LensOutput["findings"][number] = { ...panelReport().findings[0], severity: "critical" };
+    // @ts-expect-error a lens never emits info
+    const info: LensOutput["findings"][number]["severity"] = "info";
+    const output = (severity: string) => ({ findings: [{ fingerprint: lensFinding.fingerprint, severity, category: lensFinding.category, title: lensFinding.title, trigger: lensFinding.trigger, impact: lensFinding.impact, direction: lensFinding.direction, evidenceIds: [], basis: "inferred", requirementIds: [], lifecycle: "new" }], evidence: [], inspectedPaths: [], uninspected: [] });
+    expect(panelStructureIssues("lensOutput", output(lensFinding.severity))).toEqual([]);
+    expect(codes(panelStructureIssues("lensOutput", output(info)))).toEqual(["REVIEWFN_PANEL_FINDING_INVALID"]);
   });
 
   it("maps priorities onto severities without info", () => {

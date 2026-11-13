@@ -6,7 +6,7 @@ import type { ArtifactStore, CodeAnchor, ContextManifest, Evidence, ReviewPolicy
 import { anchorCommitChecker, deriveVerdict, reproductionVerified, sinceAncestryError, sourceReferenceChecker, validateReport, verifiedDeltaOf, waiverReferenceValid } from "../validator.js";
 import { PANEL_CREDENTIAL_FINGERPRINT_PATTERN, PANEL_DIGEST_PATTERN, PANEL_NONBLANK_PATTERN, PANEL_SLOT_ID_PATTERN, PANEL_TIMESTAMP_PATTERN, panelSchemaDefs } from "./schema.js";
 import { PANEL_DEFAULT_MAX_CONCURRENT_SLOTS } from "./types.js";
-import type { PanelFinding, PanelPolicy, PanelReport, PanelReportIssueCode, PanelReportValidationResult, PanelSlot, PanelValidationCode, PanelValidationIssue, PanelValidationResult, SlotIdentity, SlotRun } from "./types.js";
+import type { PanelFinding, PanelFindingOrigin, PanelPolicy, PanelReport, PanelReportIssueCode, PanelReportValidationResult, PanelSlot, PanelValidationCode, PanelValidationIssue, PanelValidationResult, SlotIdentity, SlotRun } from "./types.js";
 
 /** The closed set of panel validation codes. */
 export const PANEL_VALIDATION_CODES: readonly PanelValidationCode[] = Object.freeze([
@@ -229,7 +229,10 @@ export function validatePanelPolicy(value: unknown): PanelValidationResult<Panel
 /** Digest of a valid panel policy with `maxConcurrentSlots` defaulted, recorded as `PanelReport.panelPolicyDigest`. */
 export function panelPolicyDigest(policy: PanelPolicy): string {
   const validation = validatePanelPolicy(policy);
-  if (!validation.valid) throw new ReviewFnError("REVIEWFN_CONFIG_INVALID", `Invalid panel policy: ${validation.issues.map(issue => `${issue.code} ${issue.path} ${issue.message}`).join("; ")}`);
+  if (!validation.valid) {
+    const details = validation.issues.map(issue => [issue.code, issue.path, issue.message].join(" ")).join("; ");
+    throw new ReviewFnError("REVIEWFN_CONFIG_INVALID", `Invalid panel policy: ${details}`);
+  }
   return digestJson({ ...policy, maxConcurrentSlots: policy.maxConcurrentSlots ?? PANEL_DEFAULT_MAX_CONCURRENT_SLOTS });
 }
 
@@ -315,7 +318,7 @@ function slotRunIssues(report: PanelReport, slots: Map<string, PanelSlot>, issue
     const slot = slots.get(run.slotId);
     if (!slot) return add(issues, "REVIEWFN_PANEL_SLOT_UNKNOWN", `${path}/slotId`, `Run references unknown slot ${run.slotId}.`);
     const { identity } = run;
-    if (identity.harnessAdapter !== slot.harness.adapter || identity.provider !== slot.inference.provider || identity.auth !== slot.inference.auth) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/identity`, `Run identity does not match slot ${slot.id}'s harness adapter, provider or auth mode.`);
+    if (identity.harnessAdapter !== slot.harness.adapter || identity.harnessVersion !== slot.harness.version || identity.provider !== slot.inference.provider || identity.auth !== slot.inference.auth) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/identity`, `Run identity does not match slot ${slot.id}'s harness adapter, harness version, provider or auth mode.`);
     // One precedence: an observed model mismatch voids the run whatever else happened.
     const mismatch = slot.inference.model !== "configured" && identity.model !== slot.inference.model;
     if (mismatch && run.terminal !== "void") add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/terminal`, `Resolved model ${identity.model} differs from configured model ${slot.inference.model}; the run must be void with model_mismatch.`);
@@ -365,10 +368,25 @@ async function evidenceIssues({ report, options, referenceValid, detail }: Evide
   return new Map(report.evidence.map(item => [item.id, item]));
 }
 
+/**
+ * Why `origin` cannot have reported a finding, if it cannot. Collapse affects quorum only: a collapsed run succeeded
+ * with its own lens, so it is an origin like a completed run. Every other terminal produced no findings.
+ */
+function originProblem(origin: PanelFindingOrigin, slot: PanelSlot | undefined, runs: Map<string, SlotRun>): string | undefined {
+  if (!slot) return "names no slot";
+  if (slot.stage === "verifier") return "names a verifier slot";
+  if (slot.lens !== origin.lens) return `has lens ${origin.lens}, but slot ${slot.id} uses lens ${slot.lens}`;
+  const terminal = runs.get(slot.id)?.terminal;
+  if (terminal !== "completed" && terminal !== "collapsed") return "names a slot without a completed or collapsed run";
+  return undefined;
+}
+
 async function findingIssues(context: EvidenceContext, policy: ReviewPolicy, slots: Map<string, PanelSlot>, evidence: Map<string, Evidence>, issues: Issues): Promise<void> {
   const { report, options, referenceValid } = context;
   const runs = new Map(report.slotRuns.map(run => [run.slotId, run]));
   const requirementIds = new Set(report.requirementsReport?.requirements.map(requirement => requirement.id) ?? []);
+  // The 0.1 bound applies to every recorded finding: dropped and suppressed findings stay in the report.
+  if (report.findings.length > policy.limits.maxFindings) add(issues, "REVIEWFN_PANEL_FINDING_INVALID", "/findings", `The report records ${report.findings.length} findings, more than maxFindings (${policy.limits.maxFindings}).`);
   for (const { index, key } of duplicates(report.findings, finding => finding.fingerprint)) add(issues, "REVIEWFN_PANEL_FINDING_INVALID", `/findings/${index}/fingerprint`, `Fingerprint ${key} is reported more than once; merge the origins into one finding.`);
   for (const [index, finding] of report.findings.entries()) {
     const path = `/findings/${index}`;
@@ -380,8 +398,7 @@ async function findingIssues(context: EvidenceContext, policy: ReviewPolicy, slo
     if (finding.basis === "reproduced" && !(await reproductionVerified(finding.evidenceIds, evidence, report.gateReceipts, report.change.headCommit, options.artifacts))) add(issues, "REVIEWFN_PANEL_FINDING_INVALID", `${path}/basis`, "A reproduced finding requires a completed gate receipt at the reviewed head with verified retained logs.");
     for (const id of finding.requirementIds) if (!requirementIds.has(id)) add(issues, "REVIEWFN_PANEL_FINDING_INVALID", `${path}/requirementIds`, `Finding references unknown requirement ${id}.`);
     finding.origins.forEach((origin, position) => {
-      const slot = slots.get(origin.slotId);
-      const reason = !slot ? "names no slot" : slot.stage === "verifier" ? "names a verifier slot" : slot.lens !== origin.lens ? `has lens ${origin.lens}, but slot ${slot.id} uses lens ${slot.lens}` : runs.get(slot.id)?.terminal !== "completed" ? "names a slot without a completed run" : undefined;
+      const reason = originProblem(origin, slots.get(origin.slotId), runs);
       if (reason) add(issues, "REVIEWFN_PANEL_ORIGIN_UNKNOWN", `${path}/origins/${position}`, `Origin ${origin.slotId} ${reason}.`);
     });
     const verification = finding.verification;

@@ -83,12 +83,13 @@ export function verifiedDeltaOf(report: Pick<ReviewReport, "change" | "changeDet
 /**
  * Which commit a code anchor may cite: the reviewed head; the merge base only for a changed path absent at head;
  * `since` only for a path the verified delta removed that is absent at head. Absence needs `sourceControl.pathExists`,
- * so without source control only head anchors pass. This checks the commit only; `verifyAnchor` checks the lines.
+ * so without source control and a nonempty root only head anchors pass, and source control is never called. This checks
+ * the commit only; `verifyAnchor` checks the lines.
  */
 export function anchorCommitChecker(report: Pick<ReviewReport, "change" | "changeDetail">, verifiedDelta: ChangeHunks | undefined, sourceControl?: SourceControlAdapter, root?: string): (anchor: CodeAnchor) => Promise<boolean> {
   const since = report.changeDetail?.since;
   const deltaRemoved = new Set(verifiedDelta?.files.filter(file => file.status === "deleted" || file.status === "binary").map(file => file.path) ?? []);
-  const absentAtHead = async (path: string): Promise<boolean> => !!sourceControl?.pathExists && root !== undefined && !(await sourceControl.pathExists(root, report.change.headCommit, path));
+  const absentAtHead = async (path: string): Promise<boolean> => !!sourceControl?.pathExists && !!root && !(await sourceControl.pathExists(root, report.change.headCommit, path));
   return async (anchor: CodeAnchor): Promise<boolean> => anchor.commit === report.change.headCommit
     || (anchor.commit === report.change.mergeBaseCommit && report.change.changedPaths.includes(anchor.path) && await absentAtHead(anchor.path))
     || (verifiedDelta !== undefined && anchor.commit === since && deltaRemoved.has(anchor.path) && await absentAtHead(anchor.path));

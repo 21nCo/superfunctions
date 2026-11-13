@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
-import { safeRead, strictProviderSchema, structuredOutputValidator, omitOptionalNulls, validateHarnessPayload, redactJson, redactText, type HarnessAdapter, type HarnessCapabilities, type HarnessInput, type HarnessOutput, type JsonValue, type NormalizedRunEvent, type PreflightResult, type ReviewFnConfig } from "@superfunctions/reviewfn-core";
+import { safeRead, strictProviderSchema, structuredOutputValidator, omitOptionalNulls, omitOptionalNullsFor, validateHarnessPayload, redactJson, redactText, type HarnessAdapter, type HarnessCapabilities, type HarnessInput, type HarnessOutput, type JsonValue, type NormalizedRunEvent, type PreflightResult, type ReviewFnConfig } from "@superfunctions/reviewfn-core";
 
 export interface CommandResult { code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string; timedOut: boolean; canceled: boolean }
 export type CommandRunner = (command: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number; maxOutputBytes: number; signal?: AbortSignal; stdin?: string }) => Promise<CommandResult>;
@@ -115,7 +115,10 @@ export class CodexHarnessAdapter implements HarnessAdapter {
     if (forbiddenInstructionChanges.length) return emptyFailure("failed", `Review target changes auto-loaded instruction/configuration paths: ${forbiddenInstructionChanges.join(", ")}. Trusted policy refuses inference.`);
     // A caller-supplied output schema (for example the panel lens schema) replaces the 0.1 harness schema; it must compile before inference.
     let validatePayload: (value: unknown) => string[] = validateHarnessPayload;
+    // Strict provider output carries null for each optional property; only those nulls are omitted before validation.
+    let omitNulls: (value: unknown) => unknown = omitOptionalNulls;
     if (input.outputSchema) {
+      omitNulls = omitOptionalNullsFor(input.outputSchema);
       try { validatePayload = structuredOutputValidator(input.outputSchema); }
       catch (error) { return emptyFailure("failed", `outputSchema is not a valid JSON Schema: ${error instanceof Error ? error.message : String(error)}`); }
     }
@@ -160,7 +163,7 @@ export class CodexHarnessAdapter implements HarnessAdapter {
       try { text = (await safeRead(outputPath, input.policy.limits.maxOutputBytes)).toString("utf8"); }
       catch { return { ...emptyFailure("malformed", "Structured output is missing, unsafe, or exceeds its byte budget."), events, transcript: `${stdout}\n${stderr}` }; }
       try {
-        const raw = omitOptionalNulls(redactJson(JSON.parse(text), secrets));
+        const raw = omitNulls(redactJson(JSON.parse(text), secrets));
         const errors = validatePayload(raw);
         if (errors.length) throw new Error(errors.join("; "));
         let parsed = raw as Omit<HarnessOutput, "terminal" | "events" | "transcript">;

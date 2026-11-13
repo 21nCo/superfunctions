@@ -197,6 +197,38 @@ export function structuredOutputValidator(schema: Readonly<Record<string, unknow
   return value => compiledValidator(value) ? [] : (compiledValidator.errors ?? []).map(error => `${error.instancePath || "/"}: ${error.message}`);
 }
 
+type SchemaNode = Readonly<Record<string, unknown>>;
+const isNode = (value: unknown): value is SchemaNode => typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * Undo `strictProviderSchema` for a caller schema: a null-valued property is omitted only where `schema` declares it
+ * and leaves it optional. A null the schema requires (a required nullable property) or does not describe is kept for
+ * validation to judge. Local `$ref`s, `items`, `additionalProperties` and `allOf`/`anyOf`/`oneOf` branches are followed;
+ * a property is optional when no branch declaring it requires it.
+ */
+export function omitOptionalNullsFor(schema: SchemaNode): (value: unknown) => unknown {
+  const lookup = (ref: string): unknown => ref.slice(2).split("/").reduce<unknown>((node, key) => isNode(node) ? node[key.replaceAll("~1", "/").replaceAll("~0", "~")] : undefined, schema);
+  const expand = (node: unknown, seen = new Set<unknown>()): SchemaNode[] => {
+    if (!isNode(node) || seen.has(node)) return [];
+    seen.add(node);
+    const branches = ["allOf", "anyOf", "oneOf"].flatMap(key => Array.isArray(node[key]) ? node[key] as unknown[] : []);
+    if (typeof node.$ref === "string" && node.$ref.startsWith("#/")) branches.push(lookup(node.$ref));
+    return [node, ...branches.flatMap(branch => expand(branch, seen))];
+  };
+  const walk = (value: unknown, nodes: SchemaNode[]): unknown => {
+    if (Array.isArray(value)) return value.map(item => walk(item, nodes.flatMap(node => expand(node.items))));
+    if (!isNode(value)) return value;
+    return Object.fromEntries(Object.entries(value).flatMap(([key, item]) => {
+      const declaring = nodes.filter(node => isNode(node.properties) && Object.hasOwn(node.properties, key));
+      const optional = declaring.length > 0 && !declaring.some(node => Array.isArray(node.required) && node.required.includes(key));
+      if (item === null && optional) return [];
+      const children = declaring.length ? declaring.map(node => (node.properties as SchemaNode)[key]) : nodes.map(node => node.additionalProperties);
+      return [[key, walk(item, children.flatMap(child => expand(child)))]];
+    }));
+  };
+  return value => walk(value, expand(schema));
+}
+
 export function validateStructuredOutput(schema: Readonly<Record<string, unknown>>, value: unknown): string[] {
   return structuredOutputValidator(schema)(value);
 }

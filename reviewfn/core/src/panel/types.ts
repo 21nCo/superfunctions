@@ -13,6 +13,7 @@ export interface PanelSlot {
   /** Matches `^[a-z0-9][a-z0-9-]{0,62}$` and is unique within the panel. */
   id: string;
   stage: PanelSlotStage;
+  /** `version` is the exact harness-reported version every run of this slot must report. */
   harness: { adapter: string; version: string };
   /** `model: "configured"` defers to the harness default, as in 0.1, and is never a model mismatch. */
   inference: { provider: string; model: string; auth: string; credentialEnv?: string };
@@ -38,11 +39,12 @@ export const PANEL_DEFAULT_MAX_CONCURRENT_SLOTS = 2;
 /**
  * Slot identity: (harness adapter, harness version, provider, resolved model, auth mode, credential fingerprint).
  * Within a stage, the first `completed` run of an identity in policy order counts toward quorum; a later run of the
- * same identity that would also count is `collapsed`. Runs that do not complete neither count nor collapse.
+ * same identity that would also count is `collapsed`. Runs that do not complete neither count nor collapse. Collapse
+ * affects quorum only: a collapsed run succeeded, and its findings keep it as their origin.
  */
 export interface SlotIdentity {
   harnessAdapter: string;
-  /** The harness-reported version. */
+  /** The harness-reported version; it must equal the slot's `harness.version`. */
   harnessVersion: string;
   provider: string;
   /** The model the harness resolved; the configured model when the harness reported none. */
@@ -52,6 +54,10 @@ export interface SlotIdentity {
   credentialFingerprint?: string;
 }
 
+/**
+ * `collapsed`: the run completed, but an earlier completed run in its stage has the same identity, so it does not count
+ * toward quorum. Its findings still name it as their origin.
+ */
 export type SlotRunTerminal = "completed" | "failed" | "canceled" | "quota_exhausted" | "timed_out" | "malformed" | "void" | "collapsed";
 /**
  * `model_mismatch`: the resolved model differs from a configured model other than `configured`; such a run is always
@@ -96,7 +102,7 @@ export type PanelFindingDisposition = "reported" | "dropped" | "suppressed";
 /** A 0.1 `Finding` with panel provenance. Dropped and suppressed findings stay in the report. */
 export interface PanelFinding extends Omit<Finding, "severity"> {
   severity: PanelFindingSeverity;
-  /** Every completed lens slot that reported this finding; at least one. */
+  /** Every lens slot that reported this finding, each with a `completed` or `collapsed` run; at least one. */
   origins: PanelFindingOrigin[];
   /** 0–1; informational only and never used for gating. */
   confidence: number;
@@ -144,9 +150,14 @@ export interface PanelReport {
   verdict?: Verdict;
 }
 
+/** A lens finding: a 0.1 `Finding` with a panel severity, as `lensOutputSchema` requires. */
+export interface LensFinding extends Omit<Finding, "severity"> {
+  severity: PanelFindingSeverity;
+}
+
 /** Lens slot output: the 0.1 harness output without requirements or assessments. */
 export interface LensOutput {
-  findings: Finding[];
+  findings: LensFinding[];
   evidence: Evidence[];
   inspectedPaths: string[];
   uninspected: Array<{ scope: string; reason: string }>;
