@@ -1,5 +1,6 @@
 export * from "./artifacts.js";
 export * from "./canonical.js";
+export * from "./change.js";
 export * from "./coordinator.js";
 export * from "./defaults.js";
 export * from "./errors.js";

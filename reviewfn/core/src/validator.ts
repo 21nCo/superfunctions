@@ -1,4 +1,5 @@
 import { sha256 } from "./canonical.js";
+import { sinceRangeError, verifyChangeDetail } from "./change.js";
 import type { CodeAnchor, ArtifactStore, ContextManifest, SourceReference, Assessment, Evidence, ReportPublisher, ReviewPolicy, ReviewReport, SourceControlAdapter, Verdict } from "./types.js";
 
 export interface ValidationResult {
@@ -45,6 +46,8 @@ export async function validateReport(report: ReviewReport, policy: ReviewPolicy,
     if (!report.requirements.length) errors.push("No requirements were extracted; extraction coverage is unverified.");
     if (!report.inspectedPaths.length) errors.push("No code paths were inspected.");
     for (const changed of report.change.changedPaths) if (!report.inspectedPaths.includes(changed) && !report.uninspected.some(item => item.scope === changed && item.reason.trim().length > 0)) errors.push(`Changed path ${changed} has no inspected or explicitly uninspected scope.`);
+    const deltaPaths = Array.isArray(report.changeDetail?.deltaPaths) ? report.changeDetail.deltaPaths : [];
+    for (const changed of deltaPaths) if (!report.inspectedPaths.includes(changed) && !report.uninspected.some(item => item.scope === changed && item.reason.trim().length > 0)) errors.push(`Delta path ${changed} has no inspected or explicitly uninspected scope.`);
     for (const category of new Set([...policy.requiredCategories, ...(report.configuration.reviewCategories ?? [])])) if (!report.requirements.some(requirement => requirement.category === category)) errors.push(`Extraction coverage for required category ${category} is unverified.`);
     for (const source of context?.sources ?? []) {
       if (source.status !== "available" || !policy.sourceAuthority.acceptedTypes.includes(source.type) || (source.type === "comment" && !policy.sourceAuthority.commentsMayClarify)) continue;
@@ -149,6 +152,13 @@ export async function validateReport(report: ReviewReport, policy: ReviewPolicy,
       if (finding.anchor && !(await allowedCommit(finding.anchor))) errors.push(`Finding ${finding.fingerprint} does not reference reviewed head.`);
       if (finding.anchor && !(await sourceControl.verifyAnchor(root, finding.anchor))) errors.push(`Finding ${finding.fingerprint} has an invalid code anchor.`);
     }
+  }
+
+  errors.push(...(await verifyChangeDetail(report, artifacts)).errors);
+  const since = report.changeDetail?.since;
+  if (since !== undefined && sourceControl?.isAncestor && root) {
+    const reason = await sinceRangeError(since, report.change.mergeBaseCommit, report.change.headCommit, (ancestor, descendant) => sourceControl.isAncestor!(root, ancestor, descendant));
+    if (reason) errors.push(`REVIEWFN_SINCE_NOT_ANCESTOR: ${reason}`);
   }
 
   if (report.execution !== "completed" && report.verdict !== undefined) errors.push("A non-completed run cannot have a verdict.");

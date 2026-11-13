@@ -2,7 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
 
-import { isolatedGitEnvironment, resolveTrustedExecutable, compareCodePoints, sha256, type ChangeSnapshot, type CodeAnchor, type SourceControlAdapter } from "@superfunctions/reviewfn-core";
+import { changeHunksDiffArguments, isolatedGitEnvironment, isCommitId, parseChangeHunks, resolveTrustedExecutable, compareCodePoints, sha256, type ChangeHunksCapture, type ChangeSnapshot, type CodeAnchor, type SourceControlAdapter } from "@superfunctions/reviewfn-core";
 
 const execFileAsync = promisify(execFile);
 export type GitRunner = (args: string[], cwd: string) => Promise<string>;
@@ -75,6 +75,28 @@ export class GitSourceControlAdapter implements SourceControlAdapter {
     catch (error) { if ([1, 128].includes((error as { code?: number }).code ?? 0)) return false; throw error; }
   }
 
+  /** Hunk-level model of `from..to` in the owned checkout; output over `maxBytes` is not parsed. */
+  public async changeHunks(root: string, from: string, to: string, maxBytes: number, signal?: AbortSignal): Promise<ChangeHunksCapture> {
+    if (!isCommitId(from) || !isCommitId(to)) throw new Error("Change hunks require full commit IDs.");
+    if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) throw new Error("Change hunks require a positive byte limit.");
+    let diff: string | undefined;
+    if (this.options.runner) {
+      const output = await this.runner(["diff", ...changeHunksDiffArguments(from, to)], root);
+      diff = Buffer.byteLength(output) > maxBytes ? undefined : output;
+    } else diff = await boundedDiff(root, changeHunksDiffArguments(from, to), maxBytes, signal);
+    return diff === undefined ? { status: "too_large", limitBytes: maxBytes } : { status: "parsed", hunks: parseChangeHunks(diff, from, to) };
+  }
+
+  public async isAncestor(root: string, ancestor: string, descendant: string): Promise<boolean> {
+    if (!isCommitId(ancestor) || !isCommitId(descendant)) return false;
+    for (const commit of [ancestor, descendant]) {
+      const type = await this.runner(["cat-file", "-t", commit], root).catch((error: { code?: number }) => { if (error?.code === 128) return ""; throw error; });
+      if (type.trim() !== "commit") return false;
+    }
+    try { await this.runner(["merge-base", "--is-ancestor", ancestor, descendant], root); return true; }
+    catch (error) { if ((error as { code?: number }).code === 1) return false; throw error; }
+  }
+
   public async verifyAnchor(root: string, anchor: CodeAnchor): Promise<boolean> {
     if (!/^[a-f0-9]{40,64}$/.test(anchor.commit)) return false;
     if (!anchor.startLine && !anchor.symbol) return false;
@@ -128,6 +150,39 @@ async function streamDiffDigest(root: string, base: string, head: string): Promi
       clearTimeout(timeout);
       if (code === 0 && !timedOut) resolve(hash.digest("hex"));
       else reject(new Error(timedOut ? "Git diff hashing timed out." : `Git diff hashing failed (${String(code)}).`));
+    });
+  });
+}
+
+/** Run `git diff` and return its output, or undefined once it exceeds `maxBytes` (the process is stopped). */
+async function boundedDiff(root: string, args: string[], maxBytes: number, signal?: AbortSignal): Promise<string | undefined> {
+  const executable = await resolveTrustedExecutable("git");
+  if (signal?.aborted) throw new Error("Change hunk capture canceled.");
+  return new Promise((resolve, reject) => {
+    const child = spawn(executable, ["diff", ...args], { cwd: root, env: isolatedGitEnvironment(), stdio: ["ignore", "pipe", "pipe"] });
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    let stopped: "too_large" | "timeout" | "canceled" | undefined;
+    let stderr = "";
+    const stop = (reason: NonNullable<typeof stopped>) => { stopped ??= reason; child.kill("SIGKILL"); };
+    const timeout = setTimeout(() => stop("timeout"), 120_000);
+    const abort = () => stop("canceled");
+    signal?.addEventListener("abort", abort, { once: true });
+    child.stdout.on("data", (chunk: Buffer) => {
+      if (stopped) return;
+      bytes += chunk.length;
+      if (bytes > maxBytes) { chunks.length = 0; stop("too_large"); return; }
+      chunks.push(chunk);
+    });
+    child.stderr.on("data", (chunk: Buffer) => { if (stderr.length < 4096) stderr += chunk.toString("utf8"); });
+    const settle = () => { clearTimeout(timeout); signal?.removeEventListener("abort", abort); };
+    child.once("error", error => { settle(); reject(error); });
+    child.once("close", code => {
+      settle();
+      if (stopped === "too_large") resolve(undefined);
+      else if (stopped) reject(new Error(stopped === "timeout" ? "Git diff for change hunks timed out." : "Change hunk capture canceled."));
+      else if (code === 0) resolve(Buffer.concat(chunks).toString("utf8"));
+      else reject(new Error(`Git diff for change hunks failed (${String(code)}): ${stderr.trim().slice(0, 500)}`));
     });
   });
 }
