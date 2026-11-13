@@ -1,0 +1,45 @@
+watchfn/.conduct/log-pattern-discovery-readiness.md
+  s_e1c5fc1a65c0cf::t_ca223a01a76207 1-13
+watchfn/python/README.md
+  s_e1c5fc1a65c0cf::t_83b5e6c6198361 657-672
+watchfn/python/tests/fixtures/log-pattern-golden.json
+  s_e1c5fc1a65c0cf::t_a690b16760d419 1-117
+watchfn/python/tests/test_log_patterns.py
+  s_e1c5fc1a65c0cf::t_f2563280ddd1f7 1-87
+watchfn/python/watchfn/integrations/logfn.py
+  s_e1c5fc1a65c0cf::t_c7c23dfe9b95f7 213-218
+watchfn/python/watchfn/log_patterns.py
+  s_e1c5fc1a65c0cf::t_714b73787153ea 1-99
+watchfn/scripts/packed-core-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_085edb012882bd 45-51,73
+watchfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_2d44d1c2758a7c 419-438
+watchfn/typescript/src/core/watch-fn.ts
+  s_e1c5fc1a65c0cf::t_7490e39dfe8567 1,343-347
+watchfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_256b3e118e10b3 125-126
+watchfn/typescript/src/logs/patterns.ts
+  s_e1c5fc1a65c0cf::t_03064fede1a734 1-104
+watchfn/typescript/src/storage/database.ts
+  s_e1c5fc1a65c0cf::t_adae599fc551af 192
+watchfn/typescript/tests/log-patterns.test.ts
+  s_e1c5fc1a65c0cf::t_f47061b4aeb0ca 1-59
+watchfn/typescript/tests/storage/log-index-sqlite.acceptance.ts
+  s_e1c5fc1a65c0cf::t_72bd38ca4b9e30 11,54-55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f391430ae6588e23869db59bf1cd9c61d1bcb3ec",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

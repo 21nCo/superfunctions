@@ -1,0 +1,65 @@
+cmsfn/.conduct/reference-readiness.md
+  s_e1c5fc1a65c0cf::t_04ae146bc619ff 1-77
+cmsfn/.conduct/studio-browser-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_26670ee8fa930c 15,17-18,79,389-433,436
+cmsfn/.conduct/studio-packed-acceptance.py
+  s_e1c5fc1a65c0cf::t_4b304bdf724067 35-39
+cmsfn/core/src/desk/types.ts
+  s_e1c5fc1a65c0cf::t_32405953dee33d 18-19
+cmsfn/core/src/index.ts
+  s_e1c5fc1a65c0cf::t_2ac2118548ed73 30-31
+cmsfn/core/src/references/types.ts
+  s_e1c5fc1a65c0cf::t_d1b4478af531d4 1-32
+cmsfn/core/src/server-api/types.ts
+  s_e1c5fc1a65c0cf::t_c736a259fbd15f 49
+cmsfn/server/README.md
+  s_e1c5fc1a65c0cf::t_96390c949f88fd 162-186
+cmsfn/server/src/__tests__/references.test.ts
+  s_e1c5fc1a65c0cf::t_8a6eb37cb2cda6 1-44
+cmsfn/server/src/auth/authorize.ts
+  s_e1c5fc1a65c0cf::t_12358683a0ca6d 13
+cmsfn/server/src/contentfn/response.ts
+  s_e1c5fc1a65c0cf::t_8c96b9547d11b6 26-27,30-31,37,48,71-74,76-77
+cmsfn/server/src/http/references.ts
+  s_e1c5fc1a65c0cf::t_c81fe975dbf977 1-38
+cmsfn/server/src/index.ts
+  s_e1c5fc1a65c0cf::t_4df83e9d1c9380 1,48-49,278-282
+cmsfn/studio/README.md
+  s_e1c5fc1a65c0cf::t_e88ca58b1dc30b 100-116
+cmsfn/studio/src/__tests__/reference-boundaries.test.tsx
+  s_e1c5fc1a65c0cf::t_7eaf99793f4e75 1-80
+cmsfn/studio/src/__tests__/referencePicker.test.tsx
+  s_e1c5fc1a65c0cf::t_56a68dfd086396 46,72
+cmsfn/studio/src/app.tsx
+  s_e1c5fc1a65c0cf::t_c8bb2c97d5408b 133
+cmsfn/studio/src/contentfn/boundedRequest.ts
+  s_e1c5fc1a65c0cf::t_a19e3a66653696 1,4-5,13,17,23,28-29
+cmsfn/studio/src/contentfn/client.ts
+  s_e1c5fc1a65c0cf::t_16c011c70d3692 15,130,141
+cmsfn/studio/src/editor/renderField.tsx
+  s_e1c5fc1a65c0cf::t_4d1a341a7210c8 31-33,150,212-214
+cmsfn/studio/src/editor/widgets/reference/ReferenceField.tsx
+  s_e1c5fc1a65c0cf::t_f4768b682572bb 5,15-17,39,45-49,55-56,58,64,67-68,73,75,77
+cmsfn/studio/src/editor/widgets/reference/ReferencePickerDialog.tsx
+  s_e1c5fc1a65c0cf::t_32ed5af61e7f41 1-5,7-9,11-51
+cmsfn/studio/src/panes/editor/DocumentEditorPane.tsx
+  s_e1c5fc1a65c0cf::t_e6cf33bcbe927e 40,47,332
+cmsfn/studio/src/references/queryCandidates.ts
+  s_e1c5fc1a65c0cf::t_2387d225a7352f 1-4,6-9,11-32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "00e3ab5acb6ba7a4e534e5bb7e084221c8943a96",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,39 @@
+flowfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_dc5216cf079350 79-84
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_e1c5fc1a65c0cf::t_298b753ac4a669 1,540-541,548-550,575,577-578,580-587,590-591,594,599,604,621-622,626,654-655
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_e1c5fc1a65c0cf::t_4e204956f224e8 1,23-25
+flowfn/typescript/src/adapters/redis.test.ts
+  s_e1c5fc1a65c0cf::t_73d1eacb34e436 1,23-25
+flowfn/typescript/src/adapters/redis.ts
+  s_e1c5fc1a65c0cf::t_d6d9076d2417cc 1,352-353,357,365,367,369-381,384-386,391,396,413-414,421,424,454,477-478
+flowfn/typescript/src/storage/stream-lease-contract.ts
+  s_e1c5fc1a65c0cf::t_8035a58b584650 1-73
+flowfn/typescript/src/stream/delivery-lease.test.ts
+  s_e1c5fc1a65c0cf::t_8149c3260d9640 1-44
+flowfn/typescript/src/stream/delivery-lease.ts
+  s_e1c5fc1a65c0cf::t_654cd36e2cca70 1-41
+flowfn/typescript/src/stream/lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_e09fb63a7a4588 187-219
+flowfn/typescript/src/stream/memory-groups.ts
+  s_e1c5fc1a65c0cf::t_27fcd1fb52fdd3 24,108,121-122,132,137,140,155-156,194,210,228
+flowfn/typescript/src/stream/types.ts
+  s_e1c5fc1a65c0cf::t_b3d37b48ecd356 41-42,72
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "59378a8b5fab72af061f40499fdc475d4aaed55a",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

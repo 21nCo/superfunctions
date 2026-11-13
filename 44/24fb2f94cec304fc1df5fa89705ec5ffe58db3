@@ -1,0 +1,31 @@
+watchfn/.conduct/storage-readiness.md
+  s_e1c5fc1a65c0cf::t_d260b77abf3ba2 1-19
+watchfn/typescript/src/core/types.ts
+  s_e1c5fc1a65c0cf::t_771100d269dfc1 1,17
+watchfn/typescript/src/storage/database.ts
+  s_e1c5fc1a65c0cf::t_d8520b120314e7 1-2,4-5,7,13-15,17-18,20-30,33-43,47,49-65
+watchfn/typescript/src/storage/schema.ts
+  s_e1c5fc1a65c0cf::t_974f1cbb419513 1-10
+watchfn/typescript/tests/storage/database.test.ts
+  s_e1c5fc1a65c0cf::t_62b32476d4a371 1-63
+watchfn/typescript/tests/storage/sqlite.acceptance.ts
+  s_e1c5fc1a65c0cf::t_bdd0ef65e73bf0 1-47
+watchfn/typescript/tests/storage/sqlite.config.ts
+  s_e1c5fc1a65c0cf::t_a59ab9537181bc 1-2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4424fb2f94cec304fc1df5fa89705ec5ffe58db3",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,29 @@
+watchfn/.conduct/python-stored-traces.md
+  s_e1c5fc1a65c0cf::t_9684c68396e61a 1-13
+watchfn/python/tests/test_traces.py
+  s_e1c5fc1a65c0cf::t_a4cfc24f975c5a 1-164
+watchfn/python/watchfn/client.py
+  s_e1c5fc1a65c0cf::t_d738cfe78e603a 2,8-9,24,42,47-58,89-90,99-100
+watchfn/python/watchfn/query.py
+  s_e1c5fc1a65c0cf::t_c629e4bdbe4ca9 184-185,194-195
+watchfn/python/watchfn/trace/queries.py
+  s_e1c5fc1a65c0cf::t_e844c895de6633 1-125
+watchfn/python/watchfn/trace/tracer.py
+  s_e1c5fc1a65c0cf::t_c69da114868b6c 4-8,26-29,31-38,64,67-68,73-76,86-88,95-96,105,107-111,113-120,122-123
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "804fda7c07af17f196df017b8aa11f642dcf9402",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

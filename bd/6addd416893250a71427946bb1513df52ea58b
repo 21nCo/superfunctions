@@ -1,0 +1,21 @@
+devfn/ports/src/registry.ts
+  s_7d0a48f0aaecda::t_786eb175bd5f99 294,303,365-368,372,800,803-807,810-811
+devfn/ports/test/registry.test.ts
+  s_7d0a48f0aaecda::t_48afe4571bf2c5 777-778,820-823
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bd6addd416893250a71427946bb1513df52ea58b",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,55 @@
+logfn/.conduct/python-typing-readiness.md
+  s_e1c5fc1a65c0cf::t_4df8c9a189168e 1-92
+logfn/python/README.md
+  s_e1c5fc1a65c0cf::t_ec77996a411c08 143-169
+logfn/python/pyproject.toml
+  s_e1c5fc1a65c0cf::t_4c0b14e7700e1e 53-55,72
+logfn/python/src/logfn/__init__.py
+  s_e1c5fc1a65c0cf::t_7c96b41d827334 1,4,6-15,35
+logfn/python/src/logfn/core.py
+  s_e1c5fc1a65c0cf::t_d373006b3db688 3,6,9,12,16,22,36,58-59,76,78,80-81,110-111,193,196,199,202,205,208,211,269,271-273
+logfn/python/src/logfn/default_redaction.py
+  s_e1c5fc1a65c0cf::t_dd3ddb631e988f 4
+logfn/python/src/logfn/pipeline.py
+  s_e1c5fc1a65c0cf::t_6584cd1bd354b0 4-5,8-9,12,14,52-53,69
+logfn/python/src/logfn/serialization.py
+  s_e1c5fc1a65c0cf::t_42b3941b3861ae 5,11
+logfn/python/src/logfn/sinks.py
+  s_e1c5fc1a65c0cf::t_6ad490bdf0cdf2 4-5,8-9,16,28,34-46,54,82-88,103,112,117,132-134,152,159-161,186-187,191
+logfn/python/src/logfn/types.py
+  s_e1c5fc1a65c0cf::t_9f0d82ba5b18bb 2,12,36-37,45,51-53,57,66-67,69-70,76-77
+logfn/python/tests/test_async_sinks.py
+  s_e1c5fc1a65c0cf::t_9bd1b7d87eca4b 2,4,6,9,11,13,17,30,33,35,38,40,53,55-56,73-74,77,79,82,84
+logfn/python/tests/test_core.py
+  s_e1c5fc1a65c0cf::t_70a553cd38b90a 3,6,8-9,11,15,26,40,56
+logfn/python/tests/test_correlation.py
+  s_e1c5fc1a65c0cf::t_1da657020f78ce 4,7-8,30-31,41-42
+logfn/python/tests/test_default_redaction.py
+  s_e1c5fc1a65c0cf::t_f9ef3c3671639f 3-6,9-10,12-13,15-16,29-31,33,35-37,49-50,59,61,64,71,76,78,88-90,92,104-105,110
+logfn/python/tests/test_error_reporting.py
+  s_e1c5fc1a65c0cf::t_7eae6532a6f06d 2,4,7,9-22,24-25,28,30-34,36-40,42,46,48-56,59,63-66,68-73,75-85,87
+logfn/python/tests/test_http_delivery.py
+  s_e1c5fc1a65c0cf::t_05b9fdf54069bf 3,6,8,11,15,17,33,35,47,50,64,67,86,88,98,100,114,116,131,133,144,146,157,160,162
+logfn/python/tests/test_pipeline.py
+  s_e1c5fc1a65c0cf::t_5094aa5c831af0 2-4,6,9,19,24,28,33,36
+logfn/python/tests/test_serialization.py
+  s_e1c5fc1a65c0cf::t_16a1ba47788461 7,10-13,21-22,25-26,32-34,45,48,51-53,57-59,65,69-70,80-81,86,88,95
+logfn/python/tests/typing_consumer.py
+  s_e1c5fc1a65c0cf::t_2f81fac4125a2b 1-44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1fd3f1c3bad750350867a39a8f509196b30682a7",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

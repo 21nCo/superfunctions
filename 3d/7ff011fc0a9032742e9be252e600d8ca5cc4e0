@@ -1,0 +1,65 @@
+_conduct/browsefn-readiness.md
+  s_e1c5fc1a65c0cf::t_4bf41a5e9bb786 34-52
+browsefn/.conduct/browser-geo-acceptance.md
+  s_e1c5fc1a65c0cf::t_c8cc40fe058d09 1-55
+browsefn/.conduct/cache-backends.md
+  s_e1c5fc1a65c0cf::t_e1f5c27963b841 1-42
+browsefn/python/browsefn/core/cache_manager.py
+  s_e1c5fc1a65c0cf::t_dd1e6a61049624 4-5,26,51-65,100-110,115-122,126,132-144,147-152,154-155,158-161,163,168-171,173-174,176-184
+browsefn/python/browsefn/core/cache_storage.py
+  s_e1c5fc1a65c0cf::t_1f3fe8435d589b 1-187
+browsefn/python/browsefn/core/types.py
+  s_e1c5fc1a65c0cf::t_73bc2fb321bb3c 53-57
+browsefn/python/browsefn/geo/providers/nominatim.py
+  s_e1c5fc1a65c0cf::t_670e623ec3664a 5,21-38,71,76,89,91-95,97-110,119,124,139-143,152,166-194
+browsefn/python/pyproject.toml
+  s_e1c5fc1a65c0cf::t_e33af3958c8820 10,41-42
+browsefn/python/tests/test_cache_manager.py
+  s_e1c5fc1a65c0cf::t_e68a78bbb05dad 80-81,108-217
+browsefn/python/tests/test_nominatim_bounds.py
+  s_e1c5fc1a65c0cf::t_a9949a5cdfa4bd 1-82
+browsefn/typescript/package.json
+  s_e1c5fc1a65c0cf::t_f3e74dbefef495 60-62,80-84
+browsefn/typescript/src/core/cache-manager.ts
+  s_e1c5fc1a65c0cf::t_876e3126a0dd31 6,38,42,48,62,69-70,132-135,137-140,142-152,156-164,175-176,185-186,190,194,196,199,201-205,207-209
+browsefn/typescript/src/core/cache-storage.ts
+  s_e1c5fc1a65c0cf::t_47ddf159170db0 1-149
+browsefn/typescript/src/core/types.ts
+  s_e1c5fc1a65c0cf::t_0ad5ec2ee50e60 38-42
+browsefn/typescript/src/geo/providers/nominatim.ts
+  s_e1c5fc1a65c0cf::t_fb5301372af41b 27-39,80-94,107-117,152-154,164-173
+browsefn/typescript/src/web/providers/browser-provider-utils.ts
+  s_e1c5fc1a65c0cf::t_718802ad2f6939 126-173
+browsefn/typescript/src/web/providers/playwright.ts
+  s_e1c5fc1a65c0cf::t_2ce5b890ca1192 11,13-14,20,45,50,61,67,77,80,83,112-113
+browsefn/typescript/src/web/providers/puppeteer.ts
+  s_e1c5fc1a65c0cf::t_b665e693018ce0 11,13-14,18,25,47,59,65,74,78,81,84-87,111-112
+browsefn/typescript/tests/browser-lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_6bb93d30c05c86 1-61
+browsefn/typescript/tests/cache-browser-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_5aa2d1e19b4618 1-44
+browsefn/typescript/tests/cache-persistence.test.ts
+  s_e1c5fc1a65c0cf::t_a089cd88fd265c 1-91
+browsefn/typescript/tests/nominatim-bounds.test.ts
+  s_e1c5fc1a65c0cf::t_64f424afae15e8 1-52
+browsefn/typescript/tests/web-providers.test.ts
+  s_e1c5fc1a65c0cf::t_9a48e51850f9bd 91,129
+package-lock.json
+  s_e1c5fc1a65c0cf::t_7464dbf79f2b1f 7452,7455,7459,7461-7463,7491-7500
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3d7ff011fc0a9032742e9be252e600d8ca5cc4e0",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

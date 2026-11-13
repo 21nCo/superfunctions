@@ -1,0 +1,33 @@
+clifn/docs/.gitignore
+  s_7d0a48f0aaecda::t_8af528369ec483 8-9,13
+clifn/docs/content/docs/automation.md
+  s_7d0a48f0aaecda::t_474292e627ace1 6,20,27,29,32
+clifn/docs/content/docs/cli-builder.md
+  s_7d0a48f0aaecda::t_503a77fe322126 32
+clifn/docs/content/docs/configuration.md
+  s_7d0a48f0aaecda::t_ce3ce69dea6834 30
+clifn/docs/content/docs/credentials-and-client.md
+  s_7d0a48f0aaecda::t_aa36c4324cc313 6,8,18-25,27,36
+clifn/docs/content/docs/interaction-and-stdio.md
+  s_7d0a48f0aaecda::t_24752560951659 6,12-17
+clifn/docs/content/docs/reference/index.md
+  s_7d0a48f0aaecda::t_468d21c3476201 10
+clifn/docs/src/app.css
+  s_7d0a48f0aaecda::t_5280abc4f1d570 79
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b67aad0af9882c3d47672207987316387effa5e6",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,27 @@
+devfn/docs/configuration.md
+  s_198acc2062151f::t_772dddd54fc3ce 137
+devfn/proxy/src/tunnel/service.ts
+  s_198acc2062151f::t_e3d9bc361770a8 282-283,285,312-315,322-339,371-372,510-512,520
+devfn/core/test/tunnel-ngrok-lifecycle.test.ts
+  s_198acc2062151f::t_ff2386a2562083 175-193
+devfn/proxy/src/tunnel/state.ts
+  s_198acc2062151f::t_ff6f721e3da3de 77-80,82,423
+devfn/proxy/test/tunnel-ngrok.test.ts
+  s_198acc2062151f::t_0e3b5c9c9d0913 515-567
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d23cf43cbbe87aa735e4d296328b7078dfd4a9a5",
+  "prompts": {},
+  "sessions": {
+    "s_198acc2062151f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9e89231a-3eb2-45ed-83af-be7f9e95ba7a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

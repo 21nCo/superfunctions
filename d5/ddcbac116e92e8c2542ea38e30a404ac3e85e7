@@ -1,0 +1,43 @@
+package-lock.json
+  s_e1c5fc1a65c0cf::t_025c36878347d7 129846,130231-130239
+watchfn/.conduct/zod4-readiness.md
+  s_e1c5fc1a65c0cf::t_5e6422642da926 1-11
+watchfn/scripts/packed-core-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_149e20df187d04 4,55-65,67-84,88-94
+watchfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_4a5db88c72942d 14-17
+watchfn/typescript/package.json
+  s_e1c5fc1a65c0cf::t_981dfeb2107822 11,16,23,28,35,40,47,52,59,64,71,76,91,189-203
+watchfn/typescript/scripts/bundle-declarations.mjs
+  s_e1c5fc1a65c0cf::t_234639587a57bc 13-16,18-41,43-44,62-74,76
+watchfn/typescript/src/core/bug-report.ts
+  s_e1c5fc1a65c0cf::t_7d8228fa33be8e 5-11,15,22-24
+watchfn/typescript/src/core/context-manager.ts
+  s_e1c5fc1a65c0cf::t_a3806b8632065d 14
+watchfn/typescript/src/core/metric-aggregator.ts
+  s_e1c5fc1a65c0cf::t_201dfa7b983e42 11,25
+watchfn/typescript/src/core/types.ts
+  s_e1c5fc1a65c0cf::t_27b522f89e7d26 61,71
+watchfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_fb8f220b294d1c 109-122
+watchfn/typescript/tests/http/bug-report.test.ts
+  s_e1c5fc1a65c0cf::t_60bd0da5baa00a 53-64
+watchfn/typescript/tests/schema-contract.test.ts
+  s_e1c5fc1a65c0cf::t_1a7d9dc09e0933 1-53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d5ddcbac116e92e8c2542ea38e30a404ac3e85e7",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

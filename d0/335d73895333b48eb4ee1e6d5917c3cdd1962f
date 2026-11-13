@@ -1,0 +1,29 @@
+flowfn/.conduct/python-redis-retention-readiness.md
+  s_e1c5fc1a65c0cf::t_5dd381e871693f 1-23
+flowfn/python/README.md
+  s_e1c5fc1a65c0cf::t_7c9e2a0b18015c 123,144,231
+flowfn/python/flowfn/adapters/redis.py
+  s_e1c5fc1a65c0cf::t_e9b956574a1053 178-179,182-183,185-189,352-354
+flowfn/python/tests/test_durable_adapters.py
+  s_e1c5fc1a65c0cf::t_5b22a42d9a02b7 102-105
+flowfn/python/tests/test_redis_partitions.py
+  s_e1c5fc1a65c0cf::t_ebe233148d35b8 13,466-528
+flowfn/python/tests/test_stream_retention.py
+  s_e1c5fc1a65c0cf::t_ff530c8fb3b522 112-114
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d0335d73895333b48eb4ee1e6d5917c3cdd1962f",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

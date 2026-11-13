@@ -1,0 +1,39 @@
+sendfn/python/README.md
+  s_e1c5fc1a65c0cf::t_da9938e19f1ce4 231-263
+sendfn/python/pyproject.toml
+  s_e1c5fc1a65c0cf::t_52f6b688d410bf 30-31
+sendfn/python/sendfn/email/aws_ses.py
+  s_e1c5fc1a65c0cf::t_70bf3634775525 5,10,13,18,31,33-37,57-90,93-94,97-98,103-108,111-139,149-150,169,215,221-242,253,255,258-259,274-277,279,299-300,302-305,310-311,336-339,341
+sendfn/python/sendfn/email/provider.py
+  s_e1c5fc1a65c0cf::t_910c4445ccdd62 3,7-18
+sendfn/python/sendfn/models.py
+  s_e1c5fc1a65c0cf::t_93353a77d66110 5,149-176
+sendfn/python/tests/test_aws_ses_lifecycle.py
+  s_e1c5fc1a65c0cf::t_e3d9f2b4e54e86 1-327
+watchfn/.conduct/sendfn-email-prerequisite.md
+  s_1900bb15a7199a::t_6c8009f86ae04e 1-16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c50c4351c3ec58faf49c10d7b81eb22bdb986cc1",
+  "prompts": {},
+  "sessions": {
+    "s_1900bb15a7199a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5e049926-ee38-44b5-a734-8c7117ee5ff7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

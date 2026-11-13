@@ -1,0 +1,107 @@
+.github/workflows/superfunctions-docs-cloudflare-deploy.yml
+  s_7d0a48f0aaecda::t_ac2b55ec570495 15,27,40,70
+.github/workflows/superfunctions-docs-cloudflare-routes.yml
+  s_7d0a48f0aaecda::t_6090f3459a088b 19,82
+memoryfn/docs/.gitignore
+  s_7d0a48f0aaecda::t_faa0480f9c8bd0 1-10
+memoryfn/docs/README.md
+  s_7d0a48f0aaecda::t_52c5d2ea581860 1-25
+memoryfn/docs/content/docs/embeddings-and-extraction.md
+  s_7d0a48f0aaecda::t_b66e64be977c21 1-24
+memoryfn/docs/content/docs/getting-started.md
+  s_7d0a48f0aaecda::t_613ae2bd0b3396 1-37
+memoryfn/docs/content/docs/http.md
+  s_7d0a48f0aaecda::t_dfb976ae46296a 1-24
+memoryfn/docs/content/docs/index.md
+  s_7d0a48f0aaecda::t_39365dff08543f 1-20
+memoryfn/docs/content/docs/mcp.md
+  s_7d0a48f0aaecda::t_8fba1012ad8b3c 1-47
+memoryfn/docs/content/docs/meta.json
+  s_7d0a48f0aaecda::t_c1d4aac47ff066 1-15
+memoryfn/docs/content/docs/operations-and-limits.md
+  s_7d0a48f0aaecda::t_5225fbbf1e6c71 1-21
+memoryfn/docs/content/docs/reference/api.md
+  s_7d0a48f0aaecda::t_911e116b841679 1-27
+memoryfn/docs/content/docs/reference/index.md
+  s_7d0a48f0aaecda::t_8dd8184a17a13b 1-10
+memoryfn/docs/content/docs/reference/meta.json
+  s_7d0a48f0aaecda::t_7a87b82aa9023e 1-9
+memoryfn/docs/content/docs/reference/package-overview.md
+  s_7d0a48f0aaecda::t_cd9bb712cbb3b6 1-20
+memoryfn/docs/content/docs/reference/storage-lifecycle.md
+  s_7d0a48f0aaecda::t_e7092400fb8d4b 1-64
+memoryfn/docs/content/docs/scope-and-lifecycle.md
+  s_7d0a48f0aaecda::t_1101842f67d4e5 1-26
+memoryfn/docs/content/docs/search.md
+  s_7d0a48f0aaecda::t_210d3aca463e9b 1-25
+memoryfn/docs/content/docs/storage.md
+  s_7d0a48f0aaecda::t_666afdcc1578f9 1-33
+memoryfn/docs/docsfn.config.ts
+  s_7d0a48f0aaecda::t_5a80fa74388406 1-36
+memoryfn/docs/package.json
+  s_7d0a48f0aaecda::t_343808dc5838e5 1-39
+memoryfn/docs/scripts/generate-llms.mjs
+  s_7d0a48f0aaecda::t_5066e6d89135e0 1-25
+memoryfn/docs/src/app.css
+  s_7d0a48f0aaecda::t_efcc25d5612166 1-82
+memoryfn/docs/src/app.html
+  s_7d0a48f0aaecda::t_8945b8882a6f1f 1-11
+memoryfn/docs/src/lib/components/DocsSiteSearch.svelte
+  s_7d0a48f0aaecda::t_cf2b3a8b7eb3c6 1-5
+memoryfn/docs/src/lib/server/docs-site-source.ts
+  s_7d0a48f0aaecda::t_1802761b0378d6 1-14
+memoryfn/docs/src/routes/+error.svelte
+  s_7d0a48f0aaecda::t_c98177c2650429 1-12
+memoryfn/docs/src/routes/+layout.server.ts
+  s_7d0a48f0aaecda::t_4ed3deb685cce4 1-13
+memoryfn/docs/src/routes/+layout.svelte
+  s_7d0a48f0aaecda::t_11794081bd1812 1-86
+memoryfn/docs/src/routes/+page.svelte
+  s_7d0a48f0aaecda::t_4698d40c15d2d2 1-28
+memoryfn/docs/src/routes/docs/[...slug]/+page.server.ts
+  s_7d0a48f0aaecda::t_27954f1a652f55 1-25
+memoryfn/docs/src/routes/docs/[...slug]/+page.svelte
+  s_7d0a48f0aaecda::t_059a866a4b9a01 1-41
+memoryfn/docs/src/routes/docs/llms-full.txt/+server.ts
+  s_7d0a48f0aaecda::t_cf2247543be8c5 1-7
+memoryfn/docs/src/routes/docs/llms.txt/+server.ts
+  s_7d0a48f0aaecda::t_9f8bcc10080b37 1-7
+memoryfn/docs/src/routes/docs/search.json/+server.ts
+  s_7d0a48f0aaecda::t_c15de616b3eab6 1-8
+memoryfn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_a8ad585662eec5 1-438
+memoryfn/docs/static/llms.txt
+  s_7d0a48f0aaecda::t_245a0be37593d3 1-19
+memoryfn/docs/svelte.config.js
+  s_7d0a48f0aaecda::t_5dadcacbc5d302 1-26
+memoryfn/docs/tsconfig.json
+  s_7d0a48f0aaecda::t_b1779d9827dfdd 1-59
+memoryfn/docs/turbo.json
+  s_7d0a48f0aaecda::t_d333a9f77f24f2 1-20
+memoryfn/docs/vite.config.ts
+  s_7d0a48f0aaecda::t_56a920fb8c10d1 1-12
+package-lock.json
+  s_7d0a48f0aaecda::t_065322e0ba4bfe 52,22803-23174,29567-29570
+package.json
+  s_7d0a48f0aaecda::t_9c38f79b1000ad 47
+scripts/cloudflare-docs/config.mjs
+  s_7d0a48f0aaecda::t_a6ce85e6d6ca30 24-33
+scripts/cloudflare-docs/select-products.mjs
+  s_7d0a48f0aaecda::t_14757048f3cfec 60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7d7c8a7e0c9ca4e99cffe6da9e0f6fb05078276b",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

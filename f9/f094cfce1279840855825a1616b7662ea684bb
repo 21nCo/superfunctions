@@ -1,0 +1,67 @@
+browsefn/.conduct/destination-policy-readiness.md
+  s_e1c5fc1a65c0cf::t_01e8b98c6dff16 1-80
+browsefn/README.md
+  s_e1c5fc1a65c0cf::t_301807fb3d1177 243-273
+browsefn/python/README.md
+  s_e1c5fc1a65c0cf::t_14f7ad50f9b58f 94-110
+browsefn/python/browsefn/core/provider_manager.py
+  s_e1c5fc1a65c0cf::t_b4b99df720fd4b 128,145-146,171-172
+browsefn/python/browsefn/core/types.py
+  s_e1c5fc1a65c0cf::t_22318d59749ff1 171-173,175,234
+browsefn/python/browsefn/http/router.py
+  s_e1c5fc1a65c0cf::t_f02c7e1faa1a13 90,111,148
+browsefn/python/browsefn/middleware/retry.py
+  s_1786e4c8d6d477::t_b37f0f93b7c422 53-54
+browsefn/python/browsefn/web/providers/bs4.py
+  s_e1c5fc1a65c0cf::t_40fbff32b03751 51-59
+browsefn/python/browsefn/web/public_page.py
+  s_e1c5fc1a65c0cf::t_ff3c91445731e6 1-65
+browsefn/python/browsefn/web/scraper.py
+  s_e1c5fc1a65c0cf::t_4c948bef950754 24,104-107,115,146
+browsefn/python/tests/test_destination_policy.py
+  s_e1c5fc1a65c0cf::t_4feb72982ed350 1-155
+browsefn/typescript/src/core/types.ts
+  s_1786e4c8d6d477::t_969b271c48d2d6 137-141,143,216,319
+browsefn/typescript/src/images/browser.ts
+  s_1786e4c8d6d477::t_4c1cf47968ff04 110-112
+browsefn/typescript/src/images/download.ts
+  s_e1c5fc1a65c0cf::t_54057f43da0adb 5-7
+browsefn/typescript/src/middleware/retry.ts
+  s_e1c5fc1a65c0cf::t_82a3db8f27ca9a 66
+browsefn/typescript/src/router/http-router.ts
+  s_1786e4c8d6d477::t_4eadde4569a7e1 185,208,246
+browsefn/typescript/src/utils/destination-policy.ts
+  s_e1c5fc1a65c0cf::t_3f4ba02ec02deb 1-24
+browsefn/typescript/src/utils/public-page.ts
+  s_e1c5fc1a65c0cf::t_5786ac8fcf81ae 1-71
+browsefn/typescript/src/web/providers/cheerio.ts
+  s_e1c5fc1a65c0cf::t_77bf4db569fe09 5,32-35,48-51
+browsefn/typescript/src/web/scraper.ts
+  s_e1c5fc1a65c0cf::t_0b486def5befe2 5-6,117,181-182,206,244-245,272
+browsefn/typescript/tests/destination-policy.test.ts
+  s_e1c5fc1a65c0cf::t_cb1335fc7895fe 1-99
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f9f094cfce1279840855825a1616b7662ea684bb",
+  "prompts": {},
+  "sessions": {
+    "s_1786e4c8d6d477": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d3878118-ae2f-4300-8b70-b21e7f41eeb0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

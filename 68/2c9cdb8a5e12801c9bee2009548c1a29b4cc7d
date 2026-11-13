@@ -1,0 +1,31 @@
+userfn/.conduct/survey-identity-readiness.md
+  s_e1c5fc1a65c0cf::t_ed175648345d6e 1-30
+userfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_1573f76bc0f8fd 478-492
+userfn/typescript/src/__tests__/consent.test.ts
+  s_e1c5fc1a65c0cf::t_97f3f11f28ed34 62-79
+userfn/typescript/src/__tests__/surveys.test.ts
+  s_e1c5fc1a65c0cf::t_826fdad3283f05 39,45-67
+userfn/typescript/src/core/surveys.ts
+  s_e1c5fc1a65c0cf::t_55acdafb59b5ea 6,49-52,60-63,65
+userfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_f13cbdc7b05091 138,142-144
+userfn/typescript/src/types.ts
+  s_e1c5fc1a65c0cf::t_aec38828951aaf 230
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "682c9cdb8a5e12801c9bee2009548c1a29b4cc7d",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

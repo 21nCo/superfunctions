@@ -1,0 +1,37 @@
+package-lock.json
+  s_e1c5fc1a65c0cf::t_88cc2e0ca33322 53777,53780,53782,53787,53793
+recfn/.conduct/persistence-readiness.md
+  s_e1c5fc1a65c0cf::t_727f80f6f3ac5e 1-30
+recfn/README.md
+  s_e1c5fc1a65c0cf::t_5745d5475c3da5 32-46
+recfn/server/__tests__/api-recordings.test.ts
+  s_e1c5fc1a65c0cf::t_6e47fea0c4ea0f 79-80
+recfn/server/__tests__/db-sqlite.test.ts
+  s_e1c5fc1a65c0cf::t_b27e79e001d2f5 1-99
+recfn/server/__tests__/db-store.test.ts
+  s_e1c5fc1a65c0cf::t_3cea225b118a37 59,61,66,71,73,81,83,89-102
+recfn/server/package.json
+  s_e1c5fc1a65c0cf::t_9767e0bb7d4b1b 4,45-47,52,71
+recfn/server/src/index.ts
+  s_e1c5fc1a65c0cf::t_256628be66b25e 218
+recfn/server/src/store/db.ts
+  s_e1c5fc1a65c0cf::t_3c3bcc14154322 1-2,22-25,115-121,126,376,509,650
+recfn/server/src/store/schema.ts
+  s_e1c5fc1a65c0cf::t_ca4b7672708bf4 32,100,160,163,168-172
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3043bfabc3ca7f247fe55fccdcebd04a43866f00",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

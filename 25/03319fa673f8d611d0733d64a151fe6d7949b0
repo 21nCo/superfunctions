@@ -1,0 +1,25 @@
+cifn/.conduct/startup-registration-readiness.md
+  s_e1c5fc1a65c0cf::t_e74adbc081454f 1-7
+cifn/typescript/control-plane/package.json
+  s_e1c5fc1a65c0cf::t_330bc599eef7df 13-14
+cifn/typescript/control-plane/scripts/verify-startup.mjs
+  s_e1c5fc1a65c0cf::t_dfb518e5125bcf 1-43
+cifn/typescript/control-plane/src/server.ts
+  s_e1c5fc1a65c0cf::t_b6196170468f7f 45,55-57
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2503319fa673f8d611d0733d64a151fe6d7949b0",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

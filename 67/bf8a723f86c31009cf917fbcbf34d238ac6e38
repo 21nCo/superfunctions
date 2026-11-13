@@ -1,0 +1,27 @@
+watchfn/.conduct/aggregation-readiness.md
+  s_e1c5fc1a65c0cf::t_8d3a924ade438a 1-50
+watchfn/typescript/src/core/watch-fn.ts
+  s_e1c5fc1a65c0cf::t_0f6163b7e3a0d1 11,147,150-152
+watchfn/typescript/src/query/query-engine.ts
+  s_e1c5fc1a65c0cf::t_b3171773534862 1,5-8,16-27,29-33,35-39,44-47,55-62,78,84-85,93,106-234
+watchfn/typescript/src/query/types.ts
+  s_e1c5fc1a65c0cf::t_6c41308b31c104 21-22,27,40-46
+watchfn/typescript/tests/query/aggregation.test.ts
+  s_e1c5fc1a65c0cf::t_9b6df297593d75 1-126
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "67bf8a723f86c31009cf917fbcbf34d238ac6e38",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

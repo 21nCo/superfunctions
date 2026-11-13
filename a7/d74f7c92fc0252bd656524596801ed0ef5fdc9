@@ -1,0 +1,37 @@
+watchfn/.conduct/python-durable-alert-readiness.md
+  s_e1c5fc1a65c0cf::t_413cf9f53dea6b 1-90
+watchfn/python/README.md
+  s_e1c5fc1a65c0cf::t_a50553c9b31bd7 232-329
+watchfn/python/tests/test_durable_alerts.py
+  s_e1c5fc1a65c0cf::t_38e5898a245799 1-244
+watchfn/python/tests/test_stored_alerts.py
+  s_e1c5fc1a65c0cf::t_e0d0df2904339b 10,93,104,135-137
+watchfn/python/watchfn/__init__.py
+  s_e1c5fc1a65c0cf::t_97342d37772a37 8-11
+watchfn/python/watchfn/alerts/alert_manager.py
+  s_e1c5fc1a65c0cf::t_2b43d48d658830 19,21
+watchfn/python/watchfn/alerts/durable.py
+  s_e1c5fc1a65c0cf::t_14afb289713612 1-311
+watchfn/python/watchfn/alerts/schema.py
+  s_e1c5fc1a65c0cf::t_3c103d98e766f5 1-19
+watchfn/python/watchfn/client.py
+  s_e1c5fc1a65c0cf::t_49dd6ef35f56e0 8,37,42-47
+watchfn/python/watchfn/storage/database.py
+  s_e1c5fc1a65c0cf::t_6dc87c4851e5bd 168-171
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a7d74f7c92fc0252bd656524596801ed0ef5fdc9",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

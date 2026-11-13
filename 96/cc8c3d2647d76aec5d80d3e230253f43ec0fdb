@@ -1,0 +1,39 @@
+logfn/typescript/src/sinks/http-delivery.test.ts
+  s_e1c5fc1a65c0cf::t_fa157d538f407d 8-26
+logfn/typescript/src/sinks/indexeddb-queue.test.ts
+  s_e1c5fc1a65c0cf::t_fa157d538f407d 62-75
+logfn/typescript/src/sinks/http.ts
+  s_e1c5fc1a65c0cf::t_fcfe6c3db6023d 53-54,85-88,166-168,227,231,245,255-256
+logfn/typescript/src/sinks/indexeddb-queue.ts
+  s_e1c5fc1a65c0cf::t_fcfe6c3db6023d 31,33-34,36,44-45
+logfn/python/src/logfn/sinks.py
+  s_e1c5fc1a65c0cf::t_fcfe6c3db6023d 111-116,123,198
+logfn/python/tests/test_http_delivery.py
+  s_e1c5fc1a65c0cf::t_fa157d538f407d 139,143-169
+logfn/scripts/browser-offline-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_b1cab215168ffa 64-82
+logfn/.conduct/overflow-metrics-readiness.md
+  s_e1c5fc1a65c0cf::t_b910cb0c3eaf20 1-46
+logfn/python/README.md
+  s_e1c5fc1a65c0cf::t_8e2d7a299eb97b 170-179
+logfn/scripts/packed-core-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_08aea778b2556d 20,29
+logfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_bba9335bb0cbee 583-603
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "96cc8c3d2647d76aec5d80d3e230253f43ec0fdb",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

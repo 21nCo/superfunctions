@@ -1,0 +1,203 @@
+logfn/.conduct/default-redaction-readiness.md
+  s_e1c5fc1a65c0cf::t_cc09b9fe4ae839 1-70
+logfn/.conduct/diagnostic-privacy-readiness.md
+  s_e1c5fc1a65c0cf::t_4d49df982b91b7 1-7
+logfn/.conduct/dynamic-sink-readiness.md
+  s_e1c5fc1a65c0cf::t_56919f388b4381 1-15
+logfn/.conduct/native-safari-offline-20261023.json
+  s_e1c5fc1a65c0cf::t_c61c8caeef6386 1-50
+logfn/.conduct/native-safari-offline-readiness.md
+  s_e1c5fc1a65c0cf::t_f70c48dab58b24 1-66
+logfn/.conduct/overflow-metrics-readiness.md
+  s_e1c5fc1a65c0cf::t_45f4ebb7258f6b 1-46
+logfn/.conduct/pipeline-throughput-readiness.md
+  s_e1c5fc1a65c0cf::t_2a61f1c7a2efdf 1-26
+logfn/.conduct/pipeline-throughput-receipt.json
+  s_e1c5fc1a65c0cf::t_8cd9451d2e4231 1-398
+logfn/.conduct/pipeline-throughput.mjs
+  s_e1c5fc1a65c0cf::t_826c7278902fae 1-98
+logfn/.conduct/python-close-ownership-readiness.md
+  s_e1c5fc1a65c0cf::t_22efd69af1b7af 1-9
+logfn/.conduct/python-http-readiness.md
+  s_e1c5fc1a65c0cf::t_ad6c1ef4b41e0a 1-40
+logfn/.conduct/python-interval-drain-readiness.md
+  s_e1c5fc1a65c0cf::t_1178ad84ce5092 1-9
+logfn/.conduct/python-typing-readiness.md
+  s_e1c5fc1a65c0cf::t_00d0088b0a5a5d 1-92
+logfn/.conduct/readiness.md
+  s_e1c5fc1a65c0cf::t_7ee81d4ea846c1 1-187
+logfn/.conduct/response-correlation-readiness.md
+  s_e1c5fc1a65c0cf::t_17a6cc5766765f 1-31
+logfn/admin/README.md
+  s_e1c5fc1a65c0cf::t_552966291e7248 1-12
+logfn/admin/package.json
+  s_e1c5fc1a65c0cf::t_5da7458b91807b 36,42-44
+logfn/admin/src/__tests__/dispatcher.test.ts
+  s_e1c5fc1a65c0cf::t_aecf6069b1cf5c 1-33
+logfn/python/README.md
+  s_e1c5fc1a65c0cf::t_51297b107be41c 47-270
+logfn/python/pyproject.toml
+  s_e1c5fc1a65c0cf::t_20e305e554dab9 35,37-40,58-60,77,82-86
+logfn/python/src/logfn/__init__.py
+  s_e1c5fc1a65c0cf::t_e6c4c47919ee62 1,4,6-15,35,46-48
+logfn/python/src/logfn/core.py
+  s_e1c5fc1a65c0cf::t_92fb71c047cf49 2,6-7,9-10,14-16,23,31-78,83,85,87-91,93-96,99,105,111-143,151-152,170-180,202,208-213,215-216,218,220-230,232-234,236,239,242,245,248,251,254,264,272-273,275-278,281-310,314,316-321,330-332
+logfn/python/src/logfn/default_redaction.py
+  s_e1c5fc1a65c0cf::t_b14dc9cd6b8bd3 1-47
+logfn/python/src/logfn/http.py
+  s_e1c5fc1a65c0cf::t_29cccd46702d24 1-147
+logfn/python/src/logfn/pipeline.py
+  s_e1c5fc1a65c0cf::t_4e8df43e66f086 4-8,12,14,28-46,52-53,69,102
+logfn/python/src/logfn/serialization.py
+  s_e1c5fc1a65c0cf::t_5e256623198a98 1-94
+logfn/python/src/logfn/sinks.py
+  s_e1c5fc1a65c0cf::t_46274178048b5e 4-5,8-9,16,28,34-46,54,62-67,73,75-94,98,100-105,107-112,114-117,119-125,128-165,169-206,209-231
+logfn/python/src/logfn/types.py
+  s_e1c5fc1a65c0cf::t_b3c130c94b70e6 2,12,23-30,36-37,45-46,51-53,56-59,61-63,66-67,69-70,73,76-77
+logfn/python/tests/test_async_sinks.py
+  s_e1c5fc1a65c0cf::t_1aa9168b1f676b 1-95
+logfn/python/tests/test_core.py
+  s_e1c5fc1a65c0cf::t_53e54035874b4c 3,6,8-9,11,15,26,38,40,56
+logfn/python/tests/test_correlation.py
+  s_e1c5fc1a65c0cf::t_1025e96bac2a1d 1-49
+logfn/python/tests/test_default_redaction.py
+  s_e1c5fc1a65c0cf::t_5f7db7e431185a 1-114
+logfn/python/tests/test_dynamic_sinks.py
+  s_e1c5fc1a65c0cf::t_33bb847fff3621 1-84
+logfn/python/tests/test_error_reporting.py
+  s_e1c5fc1a65c0cf::t_2fdf04ad05bda2 1-87
+logfn/python/tests/test_http.py
+  s_e1c5fc1a65c0cf::t_bdd466c79347aa 1-241
+logfn/python/tests/test_http_delivery.py
+  s_e1c5fc1a65c0cf::t_b00d2f198e409c 1-293
+logfn/python/tests/test_pipeline.py
+  s_e1c5fc1a65c0cf::t_a5b1c8c3f0b09b 2-4,6,9,19,24,28,33,36
+logfn/python/tests/test_serialization.py
+  s_e1c5fc1a65c0cf::t_08dd5fc44c4452 1-106
+logfn/python/tests/typing_consumer.py
+  s_e1c5fc1a65c0cf::t_9e4faf5efabd05 1-44
+logfn/scripts/browser-offline-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_2858291e86473a 1-86
+logfn/scripts/diagnostic-privacy-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_b7c62c1a811a70 1-54
+logfn/scripts/packed-admin-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_0f254e1b4ff2ca 1-49
+logfn/scripts/packed-core-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_03738f406fedd0 1-40
+logfn/scripts/packed-http-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_c22d63e21f2b51 1-36
+logfn/scripts/python-http-acceptance.py
+  s_e1c5fc1a65c0cf::t_fd7ed2d7f010ee 1-71
+logfn/scripts/safari-offline-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_700a4807b50734 1-120
+logfn/scripts/watchfn-integration-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_6ac77067f7afa7 1-121
+logfn/scripts/workerd-response-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_fb8b542f12b46b 1-58
+logfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_c3792ffa64a73c 74,240-243,250-258,352-363,403-631
+logfn/typescript/package.json
+  s_e1c5fc1a65c0cf::t_19cf398d02901c 28-31,41,72,92,94,96
+logfn/typescript/src/browser/error-capture.ts
+  s_e1c5fc1a65c0cf::t_451d84a3f97bd9 69-70,82,86
+logfn/typescript/src/browser/flush-privacy.test.ts
+  s_e1c5fc1a65c0cf::t_8970645d35f961 1-45
+logfn/typescript/src/core/async-delivery.test.ts
+  s_e1c5fc1a65c0cf::t_15ed4b1ef2476a 1-55
+logfn/typescript/src/core/default-redaction.test.ts
+  s_e1c5fc1a65c0cf::t_e435e2863ef745 1-87
+logfn/typescript/src/core/dynamic-sinks.test.ts
+  s_e1c5fc1a65c0cf::t_30e1f8d00cc346 1-63
+logfn/typescript/src/core/error-hook.test.ts
+  s_e1c5fc1a65c0cf::t_91c97b6fed9aab 1-37
+logfn/typescript/src/core/factory-http.test.ts
+  s_e1c5fc1a65c0cf::t_1cecad424a3d38 1-25
+logfn/typescript/src/core/factory.ts
+  s_e1c5fc1a65c0cf::t_6cd5372ec09025 8,38-40
+logfn/typescript/src/core/logger.test.ts
+  s_e1c5fc1a65c0cf::t_0910112a96df4b 155
+logfn/typescript/src/core/logger.ts
+  s_e1c5fc1a65c0cf::t_4f65170c4b56d9 11,14-15,22,26,28,30-56,59,62-63,71,75,77-86,129,162-170,178,180-190,193,246,249,253,261-264,271-273,275-285
+logfn/typescript/src/http/express.ts
+  s_e1c5fc1a65c0cf::t_a77ccc3c2e947f 8,10-11,23,27,31,35,38,40,58-65,67,80-91,95-96
+logfn/typescript/src/http/fastify.ts
+  s_e1c5fc1a65c0cf::t_80cb096690a19a 11-18,20,22-23,37,41,43-45,47,51,56,66,70,72-74,77-78,80-89,107,112,128-130
+logfn/typescript/src/http/framework-contracts.test.ts
+  s_e1c5fc1a65c0cf::t_6d458041b13d71 1-144
+logfn/typescript/src/http/hono.ts
+  s_e1c5fc1a65c0cf::t_9d1b2e6b739ebd 8,10-11,13,25,29-33,37,49,51,69-76,78,88,95,99
+logfn/typescript/src/http/middleware.test.ts
+  s_e1c5fc1a65c0cf::t_ea86e7f6e1508d 155,181-199
+logfn/typescript/src/http/middleware.ts
+  s_e1c5fc1a65c0cf::t_90b40e3a3bf5bb 5-7,29-31,70,95-113,167,189-197,199-210,212-216,218-220,222-266
+logfn/typescript/src/http/response-correlation.test.ts
+  s_e1c5fc1a65c0cf::t_20bc5e701f7f9a 1-88
+logfn/typescript/src/http/shared.test.ts
+  s_e1c5fc1a65c0cf::t_e95d5b8adf36b9 1-38
+logfn/typescript/src/http/shared.ts
+  s_e1c5fc1a65c0cf::t_0824922d0ea614 1-47
+logfn/typescript/src/http/watch-delivery.test.ts
+  s_e1c5fc1a65c0cf::t_9cb2347a48b751 1-76
+logfn/typescript/src/http/watch-http.test.ts
+  s_e1c5fc1a65c0cf::t_2a800d34b44ca5 1-56
+logfn/typescript/src/http/watch-router.test.ts
+  s_e1c5fc1a65c0cf::t_bbc020821f23c5 1-27
+logfn/typescript/src/http/watch.test.ts
+  s_e1c5fc1a65c0cf::t_b5b0041edf14ee 6-7,401-412
+logfn/typescript/src/http/watch.ts
+  s_e1c5fc1a65c0cf::t_cf1f8ea2747c73 5-8,10-14,22,35-41,44-48,54-58,75-95,140,147,156-159,162-168,170,176-192
+logfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_467ffdb81d87a8 13,15,58
+logfn/typescript/src/pipeline/default-redaction.ts
+  s_e1c5fc1a65c0cf::t_33d8255e917d19 1-45
+logfn/typescript/src/pipeline/redact-cycles.test.ts
+  s_e1c5fc1a65c0cf::t_0e6fc696d6de02 1-19
+logfn/typescript/src/pipeline/redact.ts
+  s_e1c5fc1a65c0cf::t_36d552205ccd1e 6,65-68,91
+logfn/typescript/src/pipeline/request-ids.ts
+  s_e1c5fc1a65c0cf::t_409f41c3eb5735 26-32,81,91-93
+logfn/typescript/src/pipeline/trace-context.test.ts
+  s_e1c5fc1a65c0cf::t_8d2f98d1856eac 1-20
+logfn/typescript/src/serialization-bounds.test.ts
+  s_e1c5fc1a65c0cf::t_48742cee9902bf 1-48
+logfn/typescript/src/server/process-handlers.test.ts
+  s_e1c5fc1a65c0cf::t_c5bd715ed68b8d 1-33
+logfn/typescript/src/server/process-handlers.ts
+  s_e1c5fc1a65c0cf::t_0df90caec3f5c3 25,27,29-31,33
+logfn/typescript/src/sinks/http-delivery.test.ts
+  s_e1c5fc1a65c0cf::t_155047ceb3e822 1-95
+logfn/typescript/src/sinks/http-lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_b6d69f4faf4704 1-70
+logfn/typescript/src/sinks/http.test.ts
+  s_e1c5fc1a65c0cf::t_c7cb30405f020c 360,378-379
+logfn/typescript/src/sinks/http.ts
+  s_e1c5fc1a65c0cf::t_6cda7cd5866138 6,42-44,52-59,73-83,85-88,90-94,99,112,114-116,119-121,124-125,127-129,131-132,135,137-138,141,144-178,180-184,191,197,201-218,220-239,247,252,256-258,268-281
+logfn/typescript/src/sinks/indexeddb-queue.test.ts
+  s_e1c5fc1a65c0cf::t_84e144df26cb79 1-75
+logfn/typescript/src/sinks/indexeddb-queue.ts
+  s_e1c5fc1a65c0cf::t_e9c1dcee7a06e7 1-77
+logfn/typescript/src/types.ts
+  s_e1c5fc1a65c0cf::t_807d28f4a720d3 99-105,107-113,140-141
+logfn/typescript/src/validation.ts
+  s_e1c5fc1a65c0cf::t_ebc4ea75a522fa 6,35-54,56-60,62-63,66-67,69-91,93,95-101,104,111,119-125
+package-lock.json
+  s_e1c5fc1a65c0cf::t_6d66fefbaaae59 40590,40920,40924,40931
+watchfn/.conduct/logfn-prerequisite-integration.md
+  s_e1c5fc1a65c0cf::t_fc51f4e152d7c5 1-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "45419cfc927541a6666554b5591d944dddb4462e",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

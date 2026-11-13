@@ -1,0 +1,47 @@
+devfn/SPEC.md
+  s_92427ff18a8304::t_76d2feba19eaf6 21
+devfn/cli/README.md
+  s_92427ff18a8304::t_c3ee5e466c7962 15-17,23
+devfn/cli/src/index.ts
+  s_92427ff18a8304::t_31c3999633c1c7 16,35,55,70,76,105,204-216,219
+devfn/cli/test/cli.test.ts
+  s_92427ff18a8304::t_c29cadd5b7499f 29-49
+devfn/core/src/index.ts
+  s_92427ff18a8304::t_5cc68786966460 3
+devfn/core/src/orchestrator.ts
+  s_92427ff18a8304::t_d8edcf8c97c9e0 3,12,47-53,338,375-388,786-787
+devfn/core/test/oauth-relay-lifecycle.test.ts
+  s_92427ff18a8304::t_13b452b09a9335 1-114
+devfn/core/test/oauth-relay-owner.test.ts
+  s_92427ff18a8304::t_e527d47b122fa4 1-73
+devfn/core/test/oauth-relay-recovery.test.ts
+  s_92427ff18a8304::t_812844d4f6146d 1-106
+devfn/processes/src/index.ts
+  s_92427ff18a8304::t_9aa7359da89688 3
+devfn/proxy/package.json
+  s_92427ff18a8304::t_f360e4f5c38368 8,12
+devfn/proxy/src/oauth-relay/index.ts
+  s_92427ff18a8304::t_1c0bd14ac96999 1-7
+devfn/proxy/src/oauth-relay/service.ts
+  s_92427ff18a8304::t_f414914bed5c6b 1-403
+devfn/proxy/test/oauth-relay-service.test.ts
+  s_92427ff18a8304::t_d78006cf826bba 1-658
+package-lock.json
+  s_92427ff18a8304::t_296eaae9322048 10954
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4ac88788fcd9c40f8fc94291914cc9074a70e397",
+  "prompts": {},
+  "sessions": {
+    "s_92427ff18a8304": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26336501-b0e6-4534-a7c2-345f5528a4ba",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

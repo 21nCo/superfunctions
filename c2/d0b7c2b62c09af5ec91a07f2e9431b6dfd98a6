@@ -1,0 +1,25 @@
+watchfn/.conduct/storage-lifecycle-readiness.md
+  s_e1c5fc1a65c0cf::t_3f2184477a01ac 1-41
+watchfn/typescript/src/core/types.ts
+  s_e1c5fc1a65c0cf::t_8e8de006670482 64-65
+watchfn/typescript/src/core/watch-fn.ts
+  s_e1c5fc1a65c0cf::t_6ca1fc15e1f0fb 18-23,38-75,109-116,128,134,138,153-154,156-172
+watchfn/typescript/tests/storage/lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_5a9d859439731a 1-144
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c2d0b7c2b62c09af5ec91a07f2e9431b6dfd98a6",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,35 @@
+cifn/.conduct/execution-adjudication-readiness.md
+  s_e1c5fc1a65c0cf::t_420093c9ce001e 1-21
+cifn/README.md
+  s_e1c5fc1a65c0cf::t_ed1cb94d5707f4 327-365
+cifn/typescript/control-plane/scripts/verify-packed-logs.mjs
+  s_e1c5fc1a65c0cf::t_613e3ed19a2eda 45,62-65
+cifn/typescript/control-plane/scripts/verify-remote-logs.mjs
+  s_e1c5fc1a65c0cf::t_791efc8d78851a 9-10,13-17,148,196-219,227
+cifn/typescript/control-plane/src/dispatch/adjudication.ts
+  s_e1c5fc1a65c0cf::t_f6fadd18f3f6e6 1-39
+cifn/typescript/control-plane/src/dispatch/types.ts
+  s_e1c5fc1a65c0cf::t_f0d3c6840175f9 12
+cifn/typescript/control-plane/src/index.ts
+  s_e1c5fc1a65c0cf::t_1020e343c600f1 91-92
+cifn/typescript/control-plane/src/store/database-store.test.ts
+  s_e1c5fc1a65c0cf::t_06cffed36e2771 976-1073
+cifn/typescript/control-plane/src/store/database-store.ts
+  s_e1c5fc1a65c0cf::t_0116e9215be420 1,605-684,697
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1ca7d6b08c16ba87e37a3399350435a4b8d8bc74",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

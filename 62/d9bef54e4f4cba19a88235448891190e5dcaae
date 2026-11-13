@@ -1,0 +1,63 @@
+contentfn/README.md
+  s_e1c5fc1a65c0cf::t_3e4b1cf9a52d77 34-43,116-124,160-168
+contentfn/client/src/index.ts
+  s_e1c5fc1a65c0cf::t_60dd99bb433e28 64
+contentfn/client/src/realtime-query.test.ts
+  s_e1c5fc1a65c0cf::t_b971b3ed76cbc1 1-59
+contentfn/client/src/realtime.ts
+  s_e1c5fc1a65c0cf::t_1fa3565d7f3f97 1-5,16-17,20-28,31-33,36-41,43-48,50-59,62-66,77-83,86-113,118-129
+contentfn/server/package.json
+  s_e1c5fc1a65c0cf::t_a5e789fe237ca8 35-36
+contentfn/server/src/__tests__/query-subscription-bounds.test.ts
+  s_e1c5fc1a65c0cf::t_4398b18132454c 1-81
+contentfn/server/src/__tests__/query-subscription.test.ts
+  s_e1c5fc1a65c0cf::t_ab91ec7807d2fa 1-194
+contentfn/server/src/__tests__/schema-concurrency.test.ts
+  s_e1c5fc1a65c0cf::t_36e1a83a701e8c 1-41
+contentfn/server/src/__tests__/schema-discovery.test.ts
+  s_e1c5fc1a65c0cf::t_7218c5066045bb 1-37
+contentfn/server/src/__tests__/sqlite-readiness.test.ts
+  s_e1c5fc1a65c0cf::t_6988971d0c041a 41-45
+contentfn/server/src/http/validateInput.ts
+  s_e1c5fc1a65c0cf::t_7bc3567d970d71 22
+contentfn/server/src/importExport/importDataset.ts
+  s_e1c5fc1a65c0cf::t_2027372e0ea8a9 11,170,191,199
+contentfn/server/src/index.ts
+  s_e1c5fc1a65c0cf::t_d2f21d73ba4d60 44
+contentfn/server/src/realtime/sse.ts
+  s_e1c5fc1a65c0cf::t_1408cacb5d9764 2,9-21,25-74,76-81,83-105,108-235,237-248,250-262,264-272
+contentfn/server/src/server.ts
+  s_e1c5fc1a65c0cf::t_cb42eaa6fcba61 1,37-38,148,192,222
+contentfn/server/src/storage/assets.ts
+  s_e1c5fc1a65c0cf::t_06eed23604ae8e 1,104
+contentfn/server/src/storage/documentIdentity.ts
+  s_e1c5fc1a65c0cf::t_9992404837fd3f 1-2,4-7
+contentfn/server/src/storage/events.ts
+  s_e1c5fc1a65c0cf::t_e6d23e103595aa 55
+contentfn/server/src/storage/revisions.ts
+  s_e1c5fc1a65c0cf::t_d3d82401d9aa2e 18,47
+contentfn/server/src/storage/schema.ts
+  s_e1c5fc1a65c0cf::t_5c45bcbc7025b4 89-93,102-104,118-119,131-133,144-145,159-160,195-196,208,219-233
+contentfn/server/src/storage/schemaStorage.ts
+  s_e1c5fc1a65c0cf::t_5dfcbf0048aeec 112,114,122
+contentfn/server/src/storage/webhookQueue.ts
+  s_e1c5fc1a65c0cf::t_2870411322e7b3 1,32
+contentfn/server/src/storage/webhooks.ts
+  s_e1c5fc1a65c0cf::t_855331d85cc1ed 53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "62d9bef54e4f4cba19a88235448891190e5dcaae",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

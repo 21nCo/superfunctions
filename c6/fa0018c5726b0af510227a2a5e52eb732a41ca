@@ -1,0 +1,43 @@
+package-lock.json
+  s_e1c5fc1a65c0cf::t_adc02332e2a96e 55393,55909-55917,55954,56013,56044
+probefn/.conduct/zod4-distribution-readiness.md
+  s_e1c5fc1a65c0cf::t_f14e4db429f5c7 1-21
+probefn/README.md
+  s_e1c5fc1a65c0cf::t_9df8f0a87b3952 13-21
+probefn/package.json
+  s_e1c5fc1a65c0cf::t_eaf8c250de6351 22
+probefn/packages/contracts/package.json
+  s_e1c5fc1a65c0cf::t_e867bfc79a0e18 30
+probefn/packages/contracts/src/config.ts
+  s_e1c5fc1a65c0cf::t_aa648ef6f78046 33,45,47-55,66-67,96,100-104,111
+probefn/packages/contracts/test/config.test.ts
+  s_e1c5fc1a65c0cf::t_a358ddc687b031 8,81-103
+probefn/packages/mcp-server/package.json
+  s_e1c5fc1a65c0cf::t_2874d23c4538f6 22
+probefn/packages/mcp-server/src/schema.ts
+  s_e1c5fc1a65c0cf::t_547de498e8aad4 5-6
+probefn/packages/mcp-server/src/server.ts
+  s_e1c5fc1a65c0cf::t_df7f4ed49f9ce0 933-934,941-942,955
+probefn/packages/mcp-server/test/schema-compatibility.test.ts
+  s_e1c5fc1a65c0cf::t_a8cce14eae7911 1-27
+probefn/packages/storage/package.json
+  s_e1c5fc1a65c0cf::t_9e6745bb69dee3 17
+probefn/scripts/verify-distribution.mjs
+  s_e1c5fc1a65c0cf::t_92a4279f91b1a4 48,54-60,79-87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c6fa0018c5726b0af510227a2a5e52eb732a41ca",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,37 @@
+contentfn/.conduct/sql-service-acceptance.md
+  s_e1c5fc1a65c0cf::t_79040ffc18f7b8 1-13
+contentfn/README.md
+  s_e1c5fc1a65c0cf::t_b69215fc27a655 37-39,44-45
+contentfn/server/src/__tests__/schema-discovery.test.ts
+  s_e1c5fc1a65c0cf::t_36c9a9d2d22189 1-3
+contentfn/server/src/__tests__/sql-services.integration.test.ts
+  s_e1c5fc1a65c0cf::t_52679d3d2cf150 1-80
+contentfn/server/src/importExport/importDataset.ts
+  s_e1c5fc1a65c0cf::t_3f55fdecf1a2f8 83,91,124,132
+contentfn/server/src/query/expand.ts
+  s_e1c5fc1a65c0cf::t_a8a40c011b8462 1,38
+contentfn/server/src/storage/docs.ts
+  s_e1c5fc1a65c0cf::t_8849bc928cb57d 96,183,225,236,245,254,304,356
+contentfn/server/src/storage/document-validation.ts
+  s_e1c5fc1a65c0cf::t_5326d89c20b968 1,244
+contentfn/server/src/storage/publish.ts
+  s_e1c5fc1a65c0cf::t_9ab80ff2bbbbf1 41,71,92,101,166,186
+contentfn/server/src/storage/revisions.ts
+  s_e1c5fc1a65c0cf::t_9e39fce726d4b8 200,209
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f287d3a59bd0b9a75a20354564d6bf8075c3a1c1",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

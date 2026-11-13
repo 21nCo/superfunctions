@@ -1,0 +1,55 @@
+recfn/.conduct/media-finalization-readiness.md
+  s_e1c5fc1a65c0cf::t_e5073ef44fe560 1-73
+recfn/README.md
+  s_e1c5fc1a65c0cf::t_58322c26c61292 122-163
+recfn/core/src/types.ts
+  s_e1c5fc1a65c0cf::t_1d8fed52cc49c2 162-163,171-173
+recfn/platforms/meet/src/audio-capture.ts
+  s_e1c5fc1a65c0cf::t_44b6a18c473655 19,28,125,217,223-224,232-235,251,319,345,348-350,378
+recfn/platforms/teams/src/audio-capture.ts
+  s_e1c5fc1a65c0cf::t_b538839ab8e89c 19,28,125,217,223-224,232-235,251,319,345,348-350,378
+recfn/platforms/zoom/src/audio-capture.ts
+  s_e1c5fc1a65c0cf::t_3424b97a5d45bc 12,22-23,39-43,48,57,68-69,89-93,97
+recfn/platforms/zoom/src/meeting-sdk.ts
+  s_e1c5fc1a65c0cf::t_70666813816b49 27-29,37-40
+recfn/platforms/zoom/src/video-capture.ts
+  s_e1c5fc1a65c0cf::t_c7c3f948992dfd 7,17-19,35-39,43
+recfn/server/__tests__/bot-lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_e4a4137b473efe 33-34,40-41,73-78
+recfn/server/__tests__/consent.test.ts
+  s_e1c5fc1a65c0cf::t_a4f4d6a48492f2 29-30
+recfn/server/__tests__/e2e.test.ts
+  s_e1c5fc1a65c0cf::t_d7a506b561f0d9 2-5,79,180-181,186-187,192-193,246-257
+recfn/server/__tests__/media-recorder-finalization.test.ts
+  s_92427ff18a8304::t_4b9d0ddf8a00e0 1-45
+recfn/server/__tests__/recording-capture.test.ts
+  s_e1c5fc1a65c0cf::t_da7634c1065f12 2-24,26-32,34-39,41-50,52-54,56-59,61-68,70-80
+recfn/server/src/recording/capture.ts
+  s_e1c5fc1a65c0cf::t_b97f5f53b841cf 1,3-6,11,17-25,27,29-46,48-57,59-62,64,66-69,71,73-91,93-184,187
+recfn/server/src/worker/bot-worker.ts
+  s_e1c5fc1a65c0cf::t_2fe432551a0042 22,35-36,140-144,156,158
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "051ca7599f6f154e6f2bd5a7fac8cebd3a1e92f3",
+  "prompts": {},
+  "sessions": {
+    "s_92427ff18a8304": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26336501-b0e6-4534-a7c2-345f5528a4ba",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

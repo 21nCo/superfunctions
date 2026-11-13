@@ -1,0 +1,45 @@
+flowfn/typescript/src/stream/lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_ba05adaf0c8884 17-22,25-27
+  s_e1c5fc1a65c0cf::t_38682b7d71f526 23-24
+flowfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_9d5020f33f9652 38,81-103
+  s_e1c5fc1a65c0cf::t_e9251b2f5dc74f 104
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_e1c5fc1a65c0cf::t_bc67934e9379b9 1,68-69,172-176,187,389-421,424-433,436-439,507-512,514,519,532-534,542,614,642-648,654-657,791
+flowfn/typescript/src/stream/partition.test.ts
+  s_e1c5fc1a65c0cf::t_7c85df9a259390 1-23
+flowfn/typescript/src/stream/partition.ts
+  s_e1c5fc1a65c0cf::t_7c85df9a259390 1-20
+flowfn/typescript/src/stream/stream.ts
+  s_e1c5fc1a65c0cf::t_ba05adaf0c8884 1,26,34,41-49,54-57,77,198
+flowfn/.conduct/postgres-stream-partitioning-readiness.md
+  s_e1c5fc1a65c0cf::t_baa4cc8981c4f5 1-23
+flowfn/.conduct/stream-partitioning-design.md
+  s_e1c5fc1a65c0cf::t_3bdd8f57a2cf11 1-25
+flowfn/typescript/scripts/partition-crash-worker.mjs
+  s_e1c5fc1a65c0cf::t_27aeb2eacd161c 1-12
+flowfn/typescript/src/adapters/base.ts
+  s_e1c5fc1a65c0cf::t_e2b3aa5bb1a4e6 30-31
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_e1c5fc1a65c0cf::t_035528eb0ac077 1-3,15,64-215,303-312,570,582-583
+flowfn/typescript/src/adapters/postgres/schema.ts
+  s_e1c5fc1a65c0cf::t_f2a8b9e6cd3100 13-14,49-59,106,114-115
+flowfn/typescript/src/stream/types.ts
+  s_e1c5fc1a65c0cf::t_991f01f8b6377e 98-99
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d7399131207b4ede89a885542389bf6d421c2ea0",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

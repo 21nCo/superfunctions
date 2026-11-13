@@ -1,0 +1,61 @@
+.github/workflows/superfunctions-docs-cloudflare-deploy.yml
+  s_7d0a48f0aaecda::t_615b57f73d4521 14,20,27,51
+.github/workflows/superfunctions-docs-cloudflare-routes.yml
+  s_7d0a48f0aaecda::t_fd8f6956cdab16 18,75
+clifn/docs/package.json
+  s_1900bb15a7199a::t_f5d940e03dcd8b 10
+clifn/docs/scripts/generate-llms.mjs
+  s_7d0a48f0aaecda::t_01d93beb6e20a7 10,20-21
+clifn/docs/src/routes/docs/llms-full.txt/+server.ts
+  s_1900bb15a7199a::t_79bf64bfea6c45 3-4
+clifn/docs/src/routes/docs/llms.txt/+server.ts
+  s_1900bb15a7199a::t_f89b1d0ab071f1 3-4
+clifn/docs/tsconfig.json
+  s_1900bb15a7199a::t_f093dc1b7d3c59 28-30
+clifn/docs/turbo.json
+  s_1900bb15a7199a::t_fa12966150856c 1-20
+clifn/docs/vite.config.ts
+  s_1900bb15a7199a::t_f256e6387783e3 9
+package-lock.json
+  s_c1093e7194f7e3::t_1467d90f10f626 7757-8127,10480-10503,11087-11110,24147-24150
+scripts/cloudflare-docs/config.mjs
+  s_7d0a48f0aaecda::t_9ae3c526f2f08b 14-23
+scripts/cloudflare-docs/select-products.mjs
+  s_7d0a48f0aaecda::t_0395e2d03db205 59
+scripts/docs-site/llms.mjs
+  s_7d0a48f0aaecda::t_ef1acd40c12cfd 90-107
+scripts/docs-site/llms.test.mjs
+  s_7d0a48f0aaecda::t_873e33804deeac 7,36-51
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a7e13fd346455f03e9419f1a7dd0b001d7207b56",
+  "prompts": {},
+  "sessions": {
+    "s_1900bb15a7199a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5e049926-ee38-44b5-a734-8c7117ee5ff7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_c1093e7194f7e3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "203316bd-9c88-41f4-b037-58d76f8b6cd9",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
