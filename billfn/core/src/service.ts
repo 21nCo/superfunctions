@@ -90,11 +90,11 @@ const PROVIDER_EVENT_OCCURRED_AT_METADATA_KEY = 'billfnProviderEventOccurredAt';
 /** When the committed provider mutation that set the provider-state time started; it opens that mutation's window. */
 const PROVIDER_MUTATION_STARTED_AT_METADATA_KEY = 'billfnProviderMutationStartedAt';
 /**
- * Provider references a subscription dropped, saved by the write that dropped them, so their
- * retained events are never bootstrapped and every later replay records them as replaced.
+ * Provider references a committed mutation's write dropped before their retained events could be
+ * recorded as replaced, saved by that write: they never bootstrap for the account, and every later
+ * replay records them. The next write that drops a reference records them first and clears them.
  */
 const REPLACED_PROVIDER_REFERENCES_METADATA_KEY = 'billfnReplacedProviderReferences';
-/** Bounds the dropped references a subscription keeps; older ones were recorded by the replays since. */
 const REPLACED_PROVIDER_REFERENCES_MAX = 32;
 const WEBHOOK_RECEIPT_CLAIM_LEASE_MS = 15 * 60 * 1000;
 const RECONCILIATION_JOB_CLAIM_LEASE_MS = 15 * 60 * 1000;
@@ -2482,9 +2482,10 @@ async function applyVerificationState(
     };
 
     if (baseSubscription) {
-      // A reference this write drops is saved with it, so no failure or interruption after the write
-      // leaves its retained events able to bootstrap; the replay after the write records them.
-      record.metadata = withReplacedReferences(record.metadata, baseSubscription, record);
+      // Events on a reference this write drops are recorded as replaced before it, so no failure or
+      // interruption after the write leaves them able to bootstrap another subscription.
+      const marked = await markReplacedReferenceEvents(deps, baseSubscription, record, Boolean(input.committedAt));
+      record.metadata = withReplacedReferences(record.metadata, baseSubscription, record, marked !== null);
       // A provider-state time is only written by an update ordered against the row it was computed from.
       if (providerStateAt) {
         const updated = await deps.db.updateMany({
@@ -2500,6 +2501,8 @@ async function applyVerificationState(
           subscription = record;
           break;
         }
+        // The write lost its race, and the row that won may keep the reference.
+        await restoreReplacedReferenceEvents(deps, marked);
         const current = await getSubscriptionById(deps, baseSubscription.id);
         if (!current) {
           throw createBillFnError({
@@ -3181,7 +3184,7 @@ async function applyEventToLinkedSubscription(
     applied?.subscription ?? (linkedBefore ? await getSubscriptionById(deps, linkedBefore.id) : null);
   const replayAgain = linkedAfter ?? linkedBefore;
   // A newer event closes the window, so the unread event is then skipped; one still unread fails this
-  // delivery. One on a reference this event replaced is recorded as replaced by this replay.
+  // delivery. One on a reference this event replaced was recorded as replaced by its write.
   if (replayAgain && (windowUnread || (linkedAfter && addsProviderReference(linkedBefore, linkedAfter)))) {
     await replayUnlinkedWebhookEventsOrThrow(deps, replayAgain);
   }
@@ -3319,7 +3322,7 @@ async function bootstrapFromMetadata(
   if (!billingAccount) {
     return 'billing_account_not_found';
   }
-  // A reference the account's subscription dropped never bootstraps, even before a replay recorded its events.
+  // A reference the account's subscription dropped never bootstraps, even before its events are recorded.
   if (await namesReplacedReference(deps, billingAccount.id, providerName, state)) {
     return 'provider_reference_replaced';
   }
@@ -3502,13 +3505,13 @@ type UnlinkedReplayOutcome =
  * event, or a live provider read) is marked skipped. An event that no longer
  * resolves to a subscription, because an earlier replayed event replaced its
  * reference, stays unlinked with reason `provider_reference_replaced` and the
- * replay continues past it. The end of every pass records the events still
- * unlinked on a reference the subscription's writes dropped (saved on the
- * subscription by the write itself) or held during the pass and lost since as
- * replaced the same way; they no longer count as left at the bound. An event
- * inside a committed mutation's window whose provider read fails (no queue)
- * stays unlinked with the error, the
- * replay continues, and the operation fails afterwards so it is retried. A
+ * replay continues past it. Every write that drops a reference, and the end
+ * of the pass for one held during it and lost since, or one a committed
+ * mutation's write saved, records the events still unlinked on it as replaced
+ * the same way; they no longer count as left at the bound. An event inside a
+ * committed mutation's window whose provider read fails (no queue) stays
+ * unlinked with the error, the replay continues, and the operation fails
+ * afterwards so it is retried. A
  * replay stops at the first event another replay holds or that fails to apply,
  * leaving it and later events for the next replay, so the order is kept.
  */
@@ -3611,14 +3614,19 @@ function createUnlinkedReplayQueue(deps: ServiceDeps, provider: BillingProviderN
  * replay run that may never release it), so it never bootstraps another
  * subscription. Only the reason (and an unclaimed event's last error) is
  * written, never on an event another run finished, so a run holding the event
- * keeps its claim. A regain still replays
- * it, since discovery ignores the reason.
+ * keeps its claim. A regain still replays it, since discovery ignores the
+ * reason. Returns the events it changed, as they were.
  */
-async function recordReplacedReferenceEvents(deps: ServiceDeps, provider: BillingProviderName, dropped: string[], kept: string[]) {
-  if (dropped.length === 0) {
-    return;
-  }
+async function recordReplacedReferenceEvents(
+  deps: ServiceDeps,
+  provider: BillingProviderName,
+  dropped: string[],
+  kept: string[]
+): Promise<MarkedReplacedEvents> {
   const timestamp = toIsoString(deps.now());
+  if (dropped.length === 0) {
+    return { rows: [], markedAt: timestamp };
+  }
   const rows = await findUnlinkedWebhookEventsForReferences(deps, provider, dropped, timestamp);
   const stale = rows.filter((row) => row.reason !== 'provider_reference_replaced' && !namesAnyReference(row, kept));
   const replaced = { reason: 'provider_reference_replaced', updatedAt: timestamp };
@@ -3633,16 +3641,77 @@ async function recordReplacedReferenceEvents(deps: ServiceDeps, provider: Billin
       namespace: deps.namespace
     });
   // An unclaimed event also drops its last replay error; a claimed one gets only the reason.
-  await Promise.all(
+  const changed = await Promise.all(
     stale.map(async (row) => {
-      if ((await record(row, ['unlinked'], { ...replaced, error: null })) === 0) {
-        await record(row, ['unlinked', 'replaying'], replaced);
+      if ((await record(row, ['unlinked'], { ...replaced, error: null })) === 1) {
+        return row;
       }
+      return (await record(row, ['unlinked', 'replaying'], replaced)) === 1 ? row : null;
     })
   );
+  return { rows: changed.filter((row): row is BillFnUnlinkedWebhookEvent => row !== null), markedAt: timestamp };
 }
 
-/** The references a subscription dropped and does not hold again, as saved by the writes that dropped them. */
+type MarkedReplacedEvents = { rows: BillFnUnlinkedWebhookEvent[]; markedAt: string };
+
+/**
+ * Before a write from `before` to `after` that drops a reference, records the
+ * retained events on it, and on the references earlier writes saved, as
+ * replaced. Returns the events marked for this write's dropped references,
+ * which a write that loses its race restores. A committed provider mutation
+ * is never failed by this: it returns null and its write saves the references.
+ */
+async function markReplacedReferenceEvents(
+  deps: ServiceDeps,
+  before: BillFnSubscription,
+  after: BillFnSubscription,
+  committed: boolean
+): Promise<MarkedReplacedEvents | null> {
+  const { kept, dropped, saved } = referenceChange(before, after);
+  try {
+    const references = dropped.length > 0 ? [...new Set([...dropped, ...saved])] : [];
+    const marked = await recordReplacedReferenceEvents(deps, before.provider, references, kept);
+    return { ...marked, rows: marked.rows.filter((row) => namesAnyReference(row, dropped)) };
+  } catch (error) {
+    if (!committed) {
+      throw error;
+    }
+    return null;
+  }
+}
+
+/** Puts back the reason and error of events a write that lost its race marked, unless they changed since. */
+async function restoreReplacedReferenceEvents(deps: ServiceDeps, marked: MarkedReplacedEvents | null) {
+  try {
+    await Promise.all(
+      (marked?.rows ?? []).map((row) =>
+        deps.db.updateMany({
+          model: TABLES.unlinkedWebhookEvents,
+          where: [
+            { field: 'id', operator: 'eq', value: row.id },
+            { field: 'reason', operator: 'eq', value: 'provider_reference_replaced' },
+            { field: 'updatedAt', operator: 'eq', value: marked?.markedAt }
+          ],
+          data: { reason: row.reason, error: row.error ?? null, updatedAt: toIsoString(deps.now()) },
+          namespace: deps.namespace
+        })
+      )
+    );
+  } catch (error) {
+    // Left marked, an event on a reference the subscription keeps still replays; it only cannot bootstrap.
+    deps.metrics.track('webhook.unlinked.replaced_restore_failed', { error: errorMessage(error) });
+  }
+}
+
+/** The references `after` keeps, the ones it drops from `before`, and the ones earlier writes saved. */
+function referenceChange(before: BillFnSubscription, after: BillFnSubscription) {
+  const kept = providerReferencesOf(after);
+  const dropped = providerReferencesOf(before).filter((reference) => !kept.includes(reference));
+  const saved = replacedReferencesOf(before).filter((reference) => !kept.includes(reference));
+  return { kept, dropped, saved };
+}
+
+/** The references a subscription dropped and does not hold again whose events a write could not record first. */
 function replacedReferencesOf(subscription: BillFnSubscription) {
   const saved = subscription.metadata?.[REPLACED_PROVIDER_REFERENCES_METADATA_KEY];
   const held = providerReferencesOf(subscription);
@@ -3651,13 +3720,21 @@ function replacedReferencesOf(subscription: BillFnSubscription) {
     : [];
 }
 
-/** The written metadata with the references `after` drops from `before` added, and those it holds again removed. */
-function withReplacedReferences(metadata: Record<string, unknown> | undefined, before: BillFnSubscription, after: BillFnSubscription) {
-  const kept = providerReferencesOf(after);
-  const dropped = providerReferencesOf(before).filter((reference) => !kept.includes(reference));
-  const replaced = [...new Set([...replacedReferencesOf(before), ...dropped])]
-    .filter((reference) => !kept.includes(reference))
-    .slice(-REPLACED_PROVIDER_REFERENCES_MAX);
+/**
+ * The written metadata's saved references: cleared once recorded before a write that drops one,
+ * joined by the dropped ones when `recorded` is false, and without those `after` holds again.
+ */
+function withReplacedReferences(
+  metadata: Record<string, unknown> | undefined,
+  before: BillFnSubscription,
+  after: BillFnSubscription,
+  recorded: boolean
+) {
+  const { dropped, saved } = referenceChange(before, after);
+  const replaced =
+    recorded && dropped.length > 0
+      ? []
+      : [...new Set([...saved, ...(recorded ? [] : dropped)])].slice(-REPLACED_PROVIDER_REFERENCES_MAX);
   const { [REPLACED_PROVIDER_REFERENCES_METADATA_KEY]: _previous, ...rest } = metadata ?? {};
   return replaced.length > 0 ? { ...rest, [REPLACED_PROVIDER_REFERENCES_METADATA_KEY]: replaced } : rest;
 }
