@@ -115,11 +115,10 @@ export class CodexHarnessAdapter implements HarnessAdapter {
     if (forbiddenInstructionChanges.length) return emptyFailure("failed", `Review target changes auto-loaded instruction/configuration paths: ${forbiddenInstructionChanges.join(", ")}. Trusted policy refuses inference.`);
     // A caller-supplied output schema (for example the panel lens schema) replaces the 0.1 harness schema; it must compile before inference.
     let validatePayload: (value: unknown) => string[] = validateHarnessPayload;
-    // Strict provider output carries null for each optional property; only those nulls are omitted before validation.
+    // Strict provider output carries null for each optional property; only nulls the schema rejects are omitted before validation.
     let omitNulls: (value: unknown) => unknown = omitOptionalNulls;
     if (input.outputSchema) {
-      omitNulls = omitOptionalNullsFor(input.outputSchema);
-      try { validatePayload = structuredOutputValidator(input.outputSchema); }
+      try { validatePayload = structuredOutputValidator(input.outputSchema); omitNulls = omitOptionalNullsFor(input.outputSchema); }
       catch (error) { return emptyFailure("failed", `outputSchema is not a valid JSON Schema: ${error instanceof Error ? error.message : String(error)}`); }
     }
     const directory = await mkdtemp(path.join(tmpdir(), "reviewfn-codex-"));
@@ -170,7 +169,8 @@ export class CodexHarnessAdapter implements HarnessAdapter {
         if (input.outputSchema) {
           // Lens output has no requirements or assessments; the normalized result must still be a 0.1 harness payload.
           const fields = raw as Partial<typeof parsed>;
-          parsed = { requirements: fields.requirements ?? [], assessments: fields.assessments ?? [], evidence: fields.evidence!, findings: fields.findings!, inspectedPaths: fields.inspectedPaths!, uninspected: fields.uninspected! };
+          // A null is an absent value in a 0.1 payload, whatever the caller schema allowed.
+          parsed = omitOptionalNulls({ requirements: fields.requirements ?? [], assessments: fields.assessments ?? [], evidence: fields.evidence, findings: fields.findings, inspectedPaths: fields.inspectedPaths, uninspected: fields.uninspected }) as typeof parsed;
           const normalizedErrors = validateHarnessPayload(parsed);
           if (normalizedErrors.length) throw new Error(normalizedErrors.join("; "));
         }

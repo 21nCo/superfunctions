@@ -13,7 +13,7 @@ export interface PanelSlot {
   /** Matches `^[a-z0-9][a-z0-9-]{0,62}$` and is unique within the panel. */
   id: string;
   stage: PanelSlotStage;
-  /** `version` is the exact harness-reported version every run of this slot must report. */
+  /** `version` is the exact harness-reported version a run must report to complete or collapse. */
   harness: { adapter: string; version: string };
   /** `model: "configured"` defers to the harness default, as in 0.1, and is never a model mismatch. */
   inference: { provider: string; model: string; auth: string; credentialEnv?: string };
@@ -44,7 +44,7 @@ export const PANEL_DEFAULT_MAX_CONCURRENT_SLOTS = 2;
  */
 export interface SlotIdentity {
   harnessAdapter: string;
-  /** The harness-reported version; it must equal the slot's `harness.version`. */
+  /** The harness-reported version. A run whose version differs from the slot's `harness.version` cannot be `completed` or `collapsed`. */
   harnessVersion: string;
   provider: string;
   /** The model the harness resolved; the configured model when the harness reported none. */
@@ -56,7 +56,7 @@ export interface SlotIdentity {
 
 /**
  * `collapsed`: the run completed, but an earlier completed run in its stage has the same identity, so it does not count
- * toward quorum. Its findings still name it as their origin.
+ * toward quorum. Its findings still name it as their origin, and a collapsed verifier's verifications stand.
  */
 export type SlotRunTerminal = "completed" | "failed" | "canceled" | "quota_exhausted" | "timed_out" | "malformed" | "void" | "collapsed";
 /**
@@ -89,7 +89,7 @@ export type VerificationVerdict = "confirmed" | "refuted" | "inconclusive";
 
 export interface PanelFindingVerification {
   verdict: VerificationVerdict;
-  /** A completed `verifier` slot whose identity differs from every origin slot's identity. */
+  /** A `verifier` slot with a completed or collapsed run, whose identity differs from every origin slot's identity. */
   slotId: string;
   evidenceIds: string[];
   /** Whether the defect is also present on the base revision. */

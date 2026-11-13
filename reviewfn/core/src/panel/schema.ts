@@ -182,51 +182,51 @@ export const lensOutputSchema = {
 
 const compiled = new WeakMap<object, ValidateFunction>();
 
-/**
- * Compile a structured-output JSON Schema such as `lensOutputSchema` into a validator returning error messages.
- * Throws when the schema cannot be compiled; compiled schemas are cached by object identity.
- */
-export function structuredOutputValidator(schema: Readonly<Record<string, unknown>>): (value: unknown) => string[] {
+/** Strict Ajv compilation, cached by schema object identity. */
+function compile(schema: Readonly<Record<string, unknown>>): ValidateFunction {
   let validate = compiled.get(schema);
   if (!validate) {
     // One Ajv instance per schema: Ajv retains every schema it compiles, and caller schemas may reuse an `$id`.
     validate = new Ajv({ allErrors: true, strict: true }).compile(schema);
     compiled.set(schema, validate);
   }
-  const compiledValidator = validate;
+  return validate;
+}
+
+/**
+ * Compile a structured-output JSON Schema such as `lensOutputSchema` into a validator returning error messages.
+ * Throws when the schema cannot be compiled; compiled schemas are cached by object identity.
+ */
+export function structuredOutputValidator(schema: Readonly<Record<string, unknown>>): (value: unknown) => string[] {
+  const compiledValidator = compile(schema);
   return value => compiledValidator(value) ? [] : (compiledValidator.errors ?? []).map(error => `${error.instancePath || "/"}: ${error.message}`);
 }
 
-type SchemaNode = Readonly<Record<string, unknown>>;
-const isNode = (value: unknown): value is SchemaNode => typeof value === "object" && value !== null && !Array.isArray(value);
-
 /**
- * Undo `strictProviderSchema` for a caller schema: a null-valued property is omitted only where `schema` declares it
- * and leaves it optional. A null the schema requires (a required nullable property) or does not describe is kept for
- * validation to judge. Local `$ref`s, `items`, `additionalProperties` and `allOf`/`anyOf`/`oneOf` branches are followed;
- * a property is optional when no branch declaring it requires it.
+ * Undo `strictProviderSchema` for a caller schema, judged by the caller schema itself: a null-valued object property is
+ * omitted only where the compiled schema rejects that null, and validation is repeated until the value is valid or no
+ * rejected null remains. A null the schema accepts, such as a required nullable property, is kept, however the schema
+ * composes `required`, `$ref` (including recursive `#`), `allOf`, `anyOf`, `oneOf` or conditionals. Array items are
+ * never removed. Throws when the schema cannot be compiled.
  */
-export function omitOptionalNullsFor(schema: SchemaNode): (value: unknown) => unknown {
-  const lookup = (ref: string): unknown => ref.slice(2).split("/").reduce<unknown>((node, key) => isNode(node) ? node[key.replaceAll("~1", "/").replaceAll("~0", "~")] : undefined, schema);
-  const expand = (node: unknown, seen = new Set<unknown>()): SchemaNode[] => {
-    if (!isNode(node) || seen.has(node)) return [];
-    seen.add(node);
-    const branches = ["allOf", "anyOf", "oneOf"].flatMap(key => Array.isArray(node[key]) ? node[key] as unknown[] : []);
-    if (typeof node.$ref === "string" && node.$ref.startsWith("#/")) branches.push(lookup(node.$ref));
-    return [node, ...branches.flatMap(branch => expand(branch, seen))];
+export function omitOptionalNullsFor(schema: Readonly<Record<string, unknown>>): (value: unknown) => unknown {
+  const validate = compile(schema);
+  return value => {
+    const result = structuredClone(value);
+    while (!validate(result)) {
+      let removed = false;
+      for (const error of validate.errors ?? []) {
+        const keys = error.instancePath.split("/").slice(1).map(key => key.replaceAll("~1", "/").replaceAll("~0", "~"));
+        const key = keys.pop();
+        const parent = keys.reduce<unknown>((node, step) => typeof node === "object" && node !== null ? (node as Record<string, unknown>)[step] : undefined, result);
+        if (key === undefined || typeof parent !== "object" || parent === null || Array.isArray(parent)) continue;
+        const record = parent as Record<string, unknown>;
+        if (Object.hasOwn(record, key) && record[key] === null) { delete record[key]; removed = true; }
+      }
+      if (!removed) break;
+    }
+    return result;
   };
-  const walk = (value: unknown, nodes: SchemaNode[]): unknown => {
-    if (Array.isArray(value)) return value.map(item => walk(item, nodes.flatMap(node => expand(node.items))));
-    if (!isNode(value)) return value;
-    return Object.fromEntries(Object.entries(value).flatMap(([key, item]) => {
-      const declaring = nodes.filter(node => isNode(node.properties) && Object.hasOwn(node.properties, key));
-      const optional = declaring.length > 0 && !declaring.some(node => Array.isArray(node.required) && node.required.includes(key));
-      if (item === null && optional) return [];
-      const children = declaring.length ? declaring.map(node => (node.properties as SchemaNode)[key]) : nodes.map(node => node.additionalProperties);
-      return [[key, walk(item, children.flatMap(child => expand(child)))]];
-    }));
-  };
-  return value => walk(value, expand(schema));
 }
 
 export function validateStructuredOutput(schema: Readonly<Record<string, unknown>>, value: unknown): string[] {

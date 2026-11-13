@@ -307,6 +307,9 @@ function timestampExists(value: string): boolean {
   return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
 }
 
+/** Terminals of runs that succeeded: `completed` counts toward quorum, and `collapsed` would have. */
+const COUNTING = new Set<SlotRun["terminal"]>(["completed", "collapsed"]);
+
 function slotRunIssues(report: PanelReport, slots: Map<string, PanelSlot>, issues: Issues): void {
   const order = new Map([...slots.keys()].map((id, index) => [id, index]));
   for (const { index, key } of duplicates(report.slotRuns, run => run.slotId)) add(issues, "REVIEWFN_PANEL_SLOT_DUPLICATE", `/slotRuns/${index}/slotId`, `Slot ${key} has more than one run.`);
@@ -318,7 +321,9 @@ function slotRunIssues(report: PanelReport, slots: Map<string, PanelSlot>, issue
     const slot = slots.get(run.slotId);
     if (!slot) return add(issues, "REVIEWFN_PANEL_SLOT_UNKNOWN", `${path}/slotId`, `Run references unknown slot ${run.slotId}.`);
     const { identity } = run;
-    if (identity.harnessAdapter !== slot.harness.adapter || identity.harnessVersion !== slot.harness.version || identity.provider !== slot.inference.provider || identity.auth !== slot.inference.auth) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/identity`, `Run identity does not match slot ${slot.id}'s harness adapter, harness version, provider or auth mode.`);
+    if (identity.harnessAdapter !== slot.harness.adapter || identity.provider !== slot.inference.provider || identity.auth !== slot.inference.auth) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/identity`, `Run identity does not match slot ${slot.id}'s harness adapter, provider or auth mode.`);
+    // A harness reporting another version than the slot pins is recorded truthfully, but its run never counts or collapses.
+    if (identity.harnessVersion !== slot.harness.version && COUNTING.has(run.terminal)) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/identity/harnessVersion`, `Harness version ${identity.harnessVersion} differs from slot ${slot.id}'s ${slot.harness.version}; such a run cannot be ${run.terminal}.`);
     // One precedence: an observed model mismatch voids the run whatever else happened.
     const mismatch = slot.inference.model !== "configured" && identity.model !== slot.inference.model;
     if (mismatch && run.terminal !== "void") add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/terminal`, `Resolved model ${identity.model} differs from configured model ${slot.inference.model}; the run must be void with model_mismatch.`);
@@ -376,8 +381,8 @@ function originProblem(origin: PanelFindingOrigin, slot: PanelSlot | undefined, 
   if (!slot) return "names no slot";
   if (slot.stage === "verifier") return "names a verifier slot";
   if (slot.lens !== origin.lens) return `has lens ${origin.lens}, but slot ${slot.id} uses lens ${slot.lens}`;
-  const terminal = runs.get(slot.id)?.terminal;
-  if (terminal !== "completed" && terminal !== "collapsed") return "names a slot without a completed or collapsed run";
+  const run = runs.get(slot.id);
+  if (!run || !COUNTING.has(run.terminal)) return "names a slot without a completed or collapsed run";
   return undefined;
 }
 
@@ -407,7 +412,8 @@ async function findingIssues(context: EvidenceContext, policy: ReviewPolicy, slo
     if (!verifier) { add(issues, "REVIEWFN_PANEL_SLOT_UNKNOWN", `${path}/verification/slotId`, `Verification references unknown slot ${verification.slotId}.`); continue; }
     const verifierRun = runs.get(verifier.id);
     if (verifier.stage !== "verifier") add(issues, "REVIEWFN_PANEL_VERIFICATION_INVALID", `${path}/verification/slotId`, `Slot ${verifier.id} is not a verifier slot.`);
-    if (verifierRun?.terminal !== "completed") add(issues, "REVIEWFN_PANEL_VERIFICATION_INVALID", `${path}/verification/slotId`, `Verifier slot ${verifier.id} has no completed run.`);
+    // As for origins, collapse affects quorum only: a collapsed verifier run succeeded and its verification stands.
+    if (!verifierRun || !COUNTING.has(verifierRun.terminal)) add(issues, "REVIEWFN_PANEL_VERIFICATION_INVALID", `${path}/verification/slotId`, `Verifier slot ${verifier.id} has no completed or collapsed run.`);
     else {
       const key = slotIdentityKey(verifierRun.identity);
       const shared = finding.origins.find(origin => { const run = runs.get(origin.slotId); return run !== undefined && slotIdentityKey(run.identity) === key; });

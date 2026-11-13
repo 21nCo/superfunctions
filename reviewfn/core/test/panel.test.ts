@@ -305,11 +305,31 @@ describe("slot run collapse and model mismatch", () => {
     expect(await slotIssues(value)).toEqual(["REVIEWFN_PANEL_ORIGIN_UNKNOWN /findings/0/origins/0"]);
   });
 
-  it("requires a run's harness version to equal its slot's, so a version cannot escape collapse", async () => {
+  it("records a harness version drift truthfully but never lets it count, so a version cannot escape collapse", async () => {
     const direct = mutate(panelReport(), report => { run(report, "verifier").identity.harnessVersion = "0.155.0"; });
-    expect(await slotIssues(direct)).toEqual(["REVIEWFN_PANEL_SCHEMA /slotRuns/3/identity"]);
-    const bypass = mutate(panelReport(), report => { Object.assign(run(report, "lens-b"), { terminal: "completed", identity: { ...run(report, "lens-b").identity, harnessVersion: "9.9.9" } }); });
-    expect(await slotIssues(bypass)).toEqual(["REVIEWFN_PANEL_SCHEMA /slotRuns/1/identity"]);
+    expect(await slotIssues(direct)).toEqual(["REVIEWFN_PANEL_SCHEMA /slotRuns/3/identity/harnessVersion"]);
+    const drifted = (terminal: SlotRun["terminal"]) => mutate(panelReport(), report => { Object.assign(run(report, "lens-b"), { terminal, voidReasons: terminal === "void" ? ["workspace_mutated"] : [], identity: { ...run(report, "lens-b").identity, harnessVersion: "9.9.9" } }); });
+    expect(await slotIssues(drifted("completed"))).toEqual(["REVIEWFN_PANEL_SCHEMA /slotRuns/1/identity/harnessVersion"]);
+    expect(await slotIssues(drifted("collapsed"))).toEqual(["REVIEWFN_PANEL_SCHEMA /slotRuns/1/identity/harnessVersion", "REVIEWFN_PANEL_SLOT_DUPLICATE /slotRuns/1/terminal"]);
+    for (const terminal of ["failed", "canceled", "quota_exhausted", "timed_out", "malformed", "void"] as const) expect(await slotIssues(drifted(terminal))).toEqual([]);
+  });
+
+  it("keeps the verifications of a collapsed verifier, which must still be independent", async () => {
+    const twoVerifiers = (change: (report: PanelReport) => void = () => {}) => mutate(panelReport(), report => {
+      report.slots.push({ ...structuredClone(report.slots[3]), id: "verifier-b" });
+      report.slotRuns.push({ ...structuredClone(run(report, "verifier")), slotId: "verifier-b", terminal: "collapsed" });
+      report.findings[0].verification!.slotId = "verifier-b";
+      change(report);
+    });
+    expect(await slotIssues(twoVerifiers())).toEqual([]);
+    expect(await slotIssues(twoVerifiers(report => { run(report, "verifier-b").terminal = "completed"; }))).toEqual(["REVIEWFN_PANEL_SLOT_DUPLICATE /slotRuns/4/terminal"]);
+    expect(await slotIssues(twoVerifiers(report => { Object.assign(run(report, "verifier-b"), { terminal: "failed" }); }))).toEqual(["REVIEWFN_PANEL_VERIFICATION_INVALID /findings/0/verification/slotId"]);
+    const dependent = twoVerifiers(report => {
+      for (const slot of report.slots.filter(item => item.stage === "verifier")) slot.inference.model = "gpt-6.1-sol";
+      for (const slotId of ["verifier", "verifier-b"]) run(report, slotId).identity.model = "gpt-6.1-sol";
+      report.findings[1].verification!.slotId = "verifier-b";
+    });
+    expect(await slotIssues(dependent)).toEqual(["REVIEWFN_PANEL_VERIFICATION_INVALID /findings/0/verification/slotId", "REVIEWFN_PANEL_VERIFICATION_INVALID /findings/1/verification/slotId"]);
   });
 
   it("encodes two slots that resolve the same wrong model as two void runs", async () => {
@@ -521,16 +541,27 @@ describe("panel policy and slot identity", () => {
     expect(slotIdentityKey(identity)).not.toBe(slotIdentityKey({ ...identity, credentialFingerprint: undefined }));
   });
 
-  it("omits only the nulls a schema leaves optional, following $ref, items and composite branches", () => {
-    const schema = {
-      type: "object", required: ["kept", "list"],
-      properties: { kept: { anyOf: [{ type: "string" }, { type: "null" }] }, dropped: { type: "string" }, list: { type: "array", items: { $ref: "#/$defs/item" } } },
-      $defs: { item: { allOf: [{ type: "object", required: ["id"], properties: { id: { anyOf: [{ type: "string" }, { type: "null" }] }, note: { type: "string" } } }] } },
-    };
-    const omit = omitOptionalNullsFor(schema);
-    expect(omit({ kept: null, dropped: null, list: [{ id: null, note: null }], untraced: null })).toEqual({ kept: null, list: [{ id: null }], untraced: null });
-    expect(omit({ kept: "x", list: [] })).toEqual({ kept: "x", list: [] });
-    expect(omit(null)).toBeNull();
+  it("omits only the nulls a schema rejects, however it composes required, $ref and branches", () => {
+    const nullable = { anyOf: [{ type: "string" }, { type: "null" }] };
+    const direct = omitOptionalNullsFor({ type: "object", required: ["kept"], properties: { kept: nullable, dropped: { type: "string" }, list: { type: "array", items: { $ref: "#/$defs/item" } } }, $defs: { item: { type: "object", required: ["id"], properties: { id: nullable, note: { type: "string" } } } } });
+    expect(direct({ kept: null, dropped: null, list: [{ id: null, note: null }, null], untraced: null })).toEqual({ kept: null, list: [{ id: null }, null], untraced: null });
+    expect(direct({ kept: "x", list: [] })).toEqual({ kept: "x", list: [] });
+    expect(direct(null)).toBeNull();
+    // required beside properties declared in an allOf branch or a $ref target
+    expect(omitOptionalNullsFor({ type: "object", required: ["a"], allOf: [{ type: "object", properties: { a: nullable } }] })({ a: null })).toEqual({ a: null });
+    expect(omitOptionalNullsFor({ type: "object", properties: { a: nullable }, allOf: [{ type: "object", properties: { a: nullable }, required: ["a"] }] })({ a: null })).toEqual({ a: null });
+    // Strict compilation, which the adapter also applies, rejects `required` without its property or type up front.
+    expect(() => omitOptionalNullsFor({ type: "object", properties: { a: nullable }, allOf: [{ required: ["a"] }] })).toThrow(/strict mode/);
+    expect(() => omitOptionalNullsFor({ $ref: "#/$defs/shape", required: ["a"], $defs: { shape: { type: "object", properties: { a: nullable } } } })).toThrow(/strict mode/);
+    // recursive root reference
+    expect(omitOptionalNullsFor({ type: "object", required: ["children"], properties: { children: { type: "array", items: { $ref: "#" } }, note: { type: "string" } } })({ children: [{ children: [], note: null }], note: null })).toEqual({ children: [{ children: [] }] });
+    // a discriminated union: another branch requiring the property does not keep an optional null
+    const union = omitOptionalNullsFor({ anyOf: [
+      { type: "object", additionalProperties: false, required: ["kind", "a"], properties: { kind: { const: "x" }, a: { type: "string" } } },
+      { type: "object", additionalProperties: false, required: ["kind"], properties: { kind: { const: "y" }, a: { type: "string" } } },
+    ] });
+    expect(union({ kind: "y", a: null })).toEqual({ kind: "y" });
+    expect(() => omitOptionalNullsFor({ type: "object", notAKeyword: true })).toThrow();
   });
 
   it("types lens findings with the panel severities the lens schema accepts", () => {
