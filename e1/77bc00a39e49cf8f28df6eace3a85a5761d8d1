@@ -1,0 +1,41 @@
+cmsfn/.conduct/media-readiness.md
+  s_e1c5fc1a65c0cf::t_9c4758afe40d6b 1-52
+cmsfn/.conduct/studio-browser-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_ab6a44a3c9b068 7,13,15,17-18,58,351-388,391
+cmsfn/studio/README.md
+  s_e1c5fc1a65c0cf::t_c7b715215105da 79-99
+cmsfn/studio/src/__tests__/media-boundaries.test.tsx
+  s_e1c5fc1a65c0cf::t_94808c19f6c764 1-88
+cmsfn/studio/src/contentfn/client.ts
+  s_e1c5fc1a65c0cf::t_4a1deb15581859 15-16,19,130,141
+cmsfn/studio/src/editor/renderField.tsx
+  s_e1c5fc1a65c0cf::t_38d4637c58f2d3 26-28,147,233
+cmsfn/studio/src/editor/widgets/AssetWidget.tsx
+  s_e1c5fc1a65c0cf::t_e07567e7a1f0c6 12-14,24,27
+cmsfn/studio/src/media/insertAssetAtPath.ts
+  s_e1c5fc1a65c0cf::t_5fb94dc9380598 1-13
+cmsfn/studio/src/media/transport.ts
+  s_e1c5fc1a65c0cf::t_a58e2cfab1444c 1-31
+cmsfn/studio/src/media/upload.ts
+  s_e1c5fc1a65c0cf::t_e1ddbe662c5b85 8-10,35-40
+cmsfn/studio/src/panes/editor/DocumentEditorPane.tsx
+  s_e1c5fc1a65c0cf::t_8beb3a438abc63 1,61-62,66,281,283,288-294,329
+cmsfn/studio/src/panes/media/MediaLibraryPane.tsx
+  s_e1c5fc1a65c0cf::t_23bdca67cae252 1-6,8,10,12-13,16-21,24-35,37-54,56-67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e177bc00a39e49cf8f28df6eace3a85a5761d8d1",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

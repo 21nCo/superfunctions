@@ -1,0 +1,39 @@
+flowfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_7433bba3dd2d1f 86-95
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_e1c5fc1a65c0cf::t_85167eafa0cfb6 1,24
+flowfn/typescript/src/adapters/redis.test.ts
+  s_e1c5fc1a65c0cf::t_9d51339987ed14 1,24
+flowfn/typescript/src/storage/stream-filter-contract.ts
+  s_e1c5fc1a65c0cf::t_67f56106c17c95 1-23
+flowfn/typescript/src/stream/lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_a787e4c68f8664 1,221-231
+flowfn/typescript/src/stream/stream.ts
+  s_fc1e5ad5b6d4c0::t_345ecfc2aa9c2d 10,72-82,85,88,95,109,111,134
+flowfn/typescript/src/stream/types.ts
+  s_fc1e5ad5b6d4c0::t_41d0fffd09deea 20,22,62-65,69-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1391d5efb7c1896aab9c6206f40d7184677acfb9",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_fc1e5ad5b6d4c0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35f3409b-369e-4783-b998-c6a953fd6b02",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

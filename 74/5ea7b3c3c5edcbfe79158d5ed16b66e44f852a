@@ -1,0 +1,41 @@
+_conduct/shared-readiness-sf-next.md
+  s_e1c5fc1a65c0cf::t_1c0b0bf9e5c51b 35-46
+mcpfn/core/src/client-profiles.ts
+  s_e1c5fc1a65c0cf::t_077ae138d403cf 9,204,249-250,278-279,281-282,333-334,362,412-429,436-447,449-450,565,631-634
+mcpfn/core/src/declaration.ts
+  s_e1c5fc1a65c0cf::t_49849ed917167d 57
+mcpfn/core/src/registry.ts
+  s_e1c5fc1a65c0cf::t_17da7d79a118d3 451-464,552-553,582,650,755-756
+mcpfn/core/src/server.ts
+  s_e1c5fc1a65c0cf::t_82b85f69b7c0ed 691
+mcpfn/core/tests/client-profiles.test.ts
+  s_e1c5fc1a65c0cf::t_37d5cb577a42f4 3,27-52,1144-1161
+mcpfn/core/tests/declaration.test.ts
+  s_e1c5fc1a65c0cf::t_1417e52ba1539b 7-16
+mdfn/core/src/anchors.ts
+  s_e1c5fc1a65c0cf::t_0819dabdab1320 37-39,45-55
+mdfn/core/src/core.test.ts
+  s_e1c5fc1a65c0cf::t_70369ef1dbedeb 39-65
+mdfn/core/src/immutable.ts
+  s_e1c5fc1a65c0cf::t_73c0a9c8f9d77d 3-5,8,16,23,25
+mdfn/extensions/src/extensions.test.ts
+  s_e1c5fc1a65c0cf::t_e0db727973bb41 9-19
+mdfn/extensions/src/index.ts
+  s_e1c5fc1a65c0cf::t_093e6adc7e0ace 76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "745ea7b3c3c5edcbfe79158d5ed16b66e44f852a",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

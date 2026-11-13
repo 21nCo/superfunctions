@@ -1,0 +1,29 @@
+flowfn/typescript/src/core/metrics.ts
+  s_e1c5fc1a65c0cf::t_3e029c3a3c28a1 61-63,111-114
+flowfn/typescript/src/core/metrics.test.ts
+  s_e1c5fc1a65c0cf::t_3e029c3a3c28a1 5-25
+flowfn/typescript/src/queue/leases.test.ts
+  s_e1c5fc1a65c0cf::t_de00e18b54397c 9-33
+flowfn/.conduct/memory-retention-measurements-20261023.json
+  s_e1c5fc1a65c0cf::t_385cbc6b382647 1-311
+flowfn/.conduct/memory-retention-readiness.md
+  s_e1c5fc1a65c0cf::t_1cb1556ddd84ee 1-81
+flowfn/typescript/src/adapters/memory.ts
+  s_e1c5fc1a65c0cf::t_4eadb44462d340 46-47,82,101,117,125
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c3a3e16203bd2c0489cc6656840aeb7ec48cd548",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

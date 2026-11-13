@@ -1,0 +1,43 @@
+contentfn/.conduct/richtext-limits-packed.mjs
+  s_e1c5fc1a65c0cf::t_3b4d7577ea2539 1-29
+contentfn/.conduct/richtext-limits-readiness.md
+  s_e1c5fc1a65c0cf::t_a30a5d47f338f4 1-42
+contentfn/server/README.md
+  s_e1c5fc1a65c0cf::t_bc118c1da901f2 112-127
+contentfn/server/src/__tests__/richtext-limits.test.ts
+  s_e1c5fc1a65c0cf::t_44414f1d424ab6 1-72
+contentfn/server/src/importExport/importDataset.ts
+  s_e1c5fc1a65c0cf::t_95af0c85bebe16 1,15,23,29-34
+contentfn/server/src/limits/limits.ts
+  s_e1c5fc1a65c0cf::t_f1ce6f4c25ed25 9-10,12,22
+contentfn/server/src/server.ts
+  s_e1c5fc1a65c0cf::t_7e736186b49b9a 240
+contentfn/server/src/storage/docs.ts
+  s_e1c5fc1a65c0cf::t_257f6bc9b2a69d 26,80,369
+contentfn/server/src/storage/document-validation.ts
+  s_e1c5fc1a65c0cf::t_e0fdf5e08c899d 1,62,70,90,101,106,120,162,166,282-306
+contentfn/server/src/storage/publish.ts
+  s_e1c5fc1a65c0cf::t_3c46e778c24b89 16,63
+contentfn/server/src/storage/revisions.ts
+  s_e1c5fc1a65c0cf::t_8bd154d023e822 22,168
+contentfn/server/src/storage/schedules.ts
+  s_e1c5fc1a65c0cf::t_4937f2c1c854ee 36,47
+contentfn/server/src/storage/schemaStorage.ts
+  s_e1c5fc1a65c0cf::t_2e620b4083bf0b 17,108
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c3ec880facb69bf8e4826398db18f96d6014722d",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

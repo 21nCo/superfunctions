@@ -1,0 +1,65 @@
+recfn/.conduct/media-finalization-readiness.md
+  s_e1c5fc1a65c0cf::t_cb57a18f98e17c 3-6
+recfn/.conduct/media-streaming-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_ee22e4623109e3 1-58
+recfn/.conduct/media-streaming-readiness.md
+  s_e1c5fc1a65c0cf::t_a9d28b9bc213d6 1-118
+recfn/.conduct/media-streaming-receipt-20261022.json
+  s_e1c5fc1a65c0cf::t_d77e9cf85f236a 1-44
+recfn/README.md
+  s_e1c5fc1a65c0cf::t_a73704bc4dd6f3 126-148
+recfn/platforms/meet/src/audio-capture.ts
+  s_e1c5fc1a65c0cf::t_e08a05d8c1cd1e 121,233-240,324,329,349,371,384-388,484
+recfn/platforms/teams/src/audio-capture.ts
+  s_e1c5fc1a65c0cf::t_f8ea2f4cc504cc 121,233-240,324,329,349,371,384-388,484
+recfn/platforms/zoom/__tests__/zoom-adapter.test.ts
+  s_e1c5fc1a65c0cf::t_f2f69e247b14af 2,450-469
+recfn/platforms/zoom/src/audio-capture.ts
+  s_e1c5fc1a65c0cf::t_735feb8b7334ab 1,28-33,56,74,79-84,109
+recfn/platforms/zoom/src/video-capture.ts
+  s_e1c5fc1a65c0cf::t_039a0b82a432d0 1,24-29,50
+recfn/server/__tests__/bot-lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_8f81a84180a78b 118-119,130,160,211,272,333,524,575,621,661,677
+recfn/server/__tests__/bounded-audio-split.test.ts
+  s_e1c5fc1a65c0cf::t_55b0b1486c3756 1-25
+recfn/server/__tests__/capture-artifact-storage.test.ts
+  s_e1c5fc1a65c0cf::t_a0d3650b00b7a9 1-37
+recfn/server/__tests__/consent.test.ts
+  s_e1c5fc1a65c0cf::t_01050820e60bcc 67-68,79,109,164,202
+recfn/server/__tests__/media-recorder-finalization.test.ts
+  s_e1c5fc1a65c0cf::t_e432a5b3e8c11f 6,28-37
+recfn/server/__tests__/realtime-transcription.test.ts
+  s_e1c5fc1a65c0cf::t_137bc43f4c4496 132-142
+recfn/server/__tests__/recording-capture.test.ts
+  s_e1c5fc1a65c0cf::t_5ef1989dce99d2 2,70-100
+recfn/server/src/index.ts
+  s_e1c5fc1a65c0cf::t_8a95c517f2167b 241-242
+recfn/server/src/integrations/storage.ts
+  s_e1c5fc1a65c0cf::t_86aa015d420bd0 5-9,45,54-55,66,75-77
+recfn/server/src/recording/bounded-audio-split.ts
+  s_e1c5fc1a65c0cf::t_1a4fb1adadd6dc 1-51
+recfn/server/src/recording/capture.ts
+  s_e1c5fc1a65c0cf::t_d97ba958ab1394 3,7-8,17-23,27,29,31-32,41,46-49,54,56,64,67-69,74-76,84-89,91,93,98-99,106-107,113-123,125-126,131,134,137-165,167-212,216,222-247,249,254,257-271
+recfn/server/src/recording/storage.ts
+  s_e1c5fc1a65c0cf::t_35ceade82c8673 5,50,58,91,161-166
+recfn/server/src/transcription/realtime.ts
+  s_e1c5fc1a65c0cf::t_fd558035fd2e10 63,65-74,76-87,89-94,129,161-164
+recfn/server/src/worker/bot-worker.ts
+  s_e1c5fc1a65c0cf::t_7190dd16ae15e5 20,22,25,46-47,55,57,145,151,160,162,238-239,310-311,412-413,431,490-499
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a21af2fa9a6393546230f3bef571b7137d34cc5b",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

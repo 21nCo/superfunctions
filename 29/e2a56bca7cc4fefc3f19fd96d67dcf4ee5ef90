@@ -1,0 +1,39 @@
+flowfn/.conduct/manual-stream-expiry-installed-20261025.jsonl
+  s_e1c5fc1a65c0cf::t_ecb0a7a34d25f3 1-7
+flowfn/.conduct/manual-stream-expiry-readiness.md
+  s_e1c5fc1a65c0cf::t_a7b86f98c3091a 1-9
+flowfn/.conduct/redis-stream-partition-readiness.md
+  s_e1c5fc1a65c0cf::t_c6c435603cd2ae 24-25
+flowfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_62c408cdc43bcd 152-153
+flowfn/typescript/scripts/packed-partition-consumer.mjs
+  s_e1c5fc1a65c0cf::t_05f8fa36399037 58-78
+flowfn/typescript/scripts/packed-redis-partition-consumer.mjs
+  s_e1c5fc1a65c0cf::t_786ac70f95ea3f 52-72
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_e1c5fc1a65c0cf::t_20093acce877da 738-742
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_e1c5fc1a65c0cf::t_3cb56cb3bb480e 8,35
+flowfn/typescript/src/adapters/redis.test.ts
+  s_e1c5fc1a65c0cf::t_e87667272651d5 8,201
+flowfn/typescript/src/adapters/redis.ts
+  s_e1c5fc1a65c0cf::t_c8ad32ed2312a7 534
+flowfn/typescript/src/storage/stream-lease-contract.ts
+  s_e1c5fc1a65c0cf::t_f5a6f4672c2f76 74-98
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "29e2a56bca7cc4fefc3f19fd96d67dcf4ee5ef90",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

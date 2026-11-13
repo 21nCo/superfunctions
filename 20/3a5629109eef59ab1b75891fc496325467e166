@@ -1,0 +1,89 @@
+browsefn/.conduct/configurable-limits-readiness.md
+  s_e1c5fc1a65c0cf::t_df0ed769c5da55 1-75
+browsefn/.conduct/hostname-policy-readiness.md
+  s_e1c5fc1a65c0cf::t_235cc4d8e5bdf5 107-112
+browsefn/README.md
+  s_e1c5fc1a65c0cf::t_a1a84e37544ac0 252,327-376
+browsefn/python/README.md
+  s_e1c5fc1a65c0cf::t_e3e5b183a55942 101,111-128
+browsefn/python/browsefn/core/browse_fn.py
+  s_e1c5fc1a65c0cf::t_fa45ae88050dbf 8,98,341,352-353,391-392,414-420
+browsefn/python/browsefn/core/types.py
+  s_e1c5fc1a65c0cf::t_11bc6e248183b7 172-174
+browsefn/python/browsefn/http/router.py
+  s_e1c5fc1a65c0cf::t_645b92d5d17df6 155-157
+browsefn/python/browsefn/images/_download_utils.py
+  s_e1c5fc1a65c0cf::t_56f27641070b07 2,48,50,66,77,81
+browsefn/python/browsefn/images/_transform.py
+  s_e1c5fc1a65c0cf::t_24e5c9c5636fa9 11,31
+browsefn/python/browsefn/images/browser.py
+  s_e1c5fc1a65c0cf::t_48aff4c88690ab 17,61,101
+browsefn/python/browsefn/images/providers/_shared.py
+  s_e1c5fc1a65c0cf::t_ef8b483cf48b8b 62-63
+browsefn/python/browsefn/utils/destination_policy.py
+  s_e1c5fc1a65c0cf::t_a2a82250b2c6c4 54-57,66-71,86
+browsefn/python/browsefn/utils/security_limits.py
+  s_e1c5fc1a65c0cf::t_ed7a810ba60925 1-35
+browsefn/python/browsefn/web/providers/bs4.py
+  s_e1c5fc1a65c0cf::t_aea3707c16aeaa 8,62,99
+browsefn/python/browsefn/web/public_page.py
+  s_e1c5fc1a65c0cf::t_8be47b9fd562f6 9,31,34,48
+browsefn/python/browsefn/web/scraper.py
+  s_e1c5fc1a65c0cf::t_d6ce023b4099a7 7,116
+browsefn/python/tests/test_security_limits.py
+  s_e1c5fc1a65c0cf::t_068414efd93f48 1-107
+browsefn/typescript/src/core/browse-fn.ts
+  s_e1c5fc1a65c0cf::t_ab951453441ab0 1-3,82,96,153,184,238-244
+browsefn/typescript/src/core/types.ts
+  s_e1c5fc1a65c0cf::t_776f81c3ba2929 138-143
+browsefn/typescript/src/images/browser.ts
+  s_e1c5fc1a65c0cf::t_fcff766db0dc33 1,106-107,118
+browsefn/typescript/src/images/download.ts
+  s_e1c5fc1a65c0cf::t_05d9a7a2d02457 1,18,49
+browsefn/typescript/src/images/transform.ts
+  s_e1c5fc1a65c0cf::t_0116fdc91e019a 1,22,31,82
+browsefn/typescript/src/router/http-router.ts
+  s_e1c5fc1a65c0cf::t_deb2d10063283d 250,253
+browsefn/typescript/src/utils/destination-policy.ts
+  s_e1c5fc1a65c0cf::t_0cd4205f8c7f61 52-57,62-65,78
+browsefn/typescript/src/utils/public-page.ts
+  s_e1c5fc1a65c0cf::t_96293722ea75fd 1,12,45
+browsefn/typescript/src/utils/security-limits.ts
+  s_e1c5fc1a65c0cf::t_14edf9fa0f2be5 1-28
+browsefn/typescript/src/web/providers/cheerio.ts
+  s_e1c5fc1a65c0cf::t_0616af27ee1cb6 1,53,81
+browsefn/typescript/src/web/providers/firecrawl.ts
+  s_e1c5fc1a65c0cf::t_0e6318bb1b5571 1,14,41
+browsefn/typescript/src/web/providers/jina.ts
+  s_e1c5fc1a65c0cf::t_d998565c2c8dcd 1,14,36
+browsefn/typescript/src/web/providers/playwright.ts
+  s_e1c5fc1a65c0cf::t_76ca1afb1d5d80 1,82
+browsefn/typescript/src/web/providers/puppeteer.ts
+  s_e1c5fc1a65c0cf::t_cf9d471439af73 1,80
+browsefn/typescript/src/web/providers/remote-utils.ts
+  s_e1c5fc1a65c0cf::t_ed6d9b2e64b14f 1,21,25-27
+browsefn/typescript/src/web/scraper.ts
+  s_e1c5fc1a65c0cf::t_c91c19dee908fc 1,71,86
+browsefn/typescript/tests/browser-isolation.acceptance.test.ts
+  s_e1c5fc1a65c0cf::t_6de57704563fe5 70-75
+browsefn/typescript/tests/remote-contracts.test.ts
+  s_e1c5fc1a65c0cf::t_76b8ea74078b5a 29,60-66
+browsefn/typescript/tests/security-limits.test.ts
+  s_e1c5fc1a65c0cf::t_1f15e4125fac64 1-84
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "203a5629109eef59ab1b75891fc496325467e166",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

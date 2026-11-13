@@ -1,0 +1,31 @@
+flowfn/.conduct/memory-stream-partition-readiness.md
+  s_e1c5fc1a65c0cf::t_28a79db2242c5c 1-13
+flowfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_4f66e28925baf4 38,109-121
+flowfn/typescript/scripts/packed-consumer-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_71b2ac9b1bc9f2 40-54
+flowfn/typescript/src/adapters/memory.ts
+  s_e1c5fc1a65c0cf::t_b561d155009e70 17,24,28,169-179,181-185,193,234,238,275,316,326
+flowfn/typescript/src/stream/lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_f02bdc5bb5db41 19-25
+flowfn/typescript/src/stream/memory-groups.ts
+  s_e1c5fc1a65c0cf::t_6f390e70c4b7c5 1,30,33-35,41,44,51,62,86,89,94-106,130-136,138-163,167,169-170,199,231-232,264-265,280
+flowfn/typescript/src/stream/memory-partitions.test.ts
+  s_e1c5fc1a65c0cf::t_c9c97321215961 1-140
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6648d03c460f22934afbb30af6b4b3966e6321ba",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

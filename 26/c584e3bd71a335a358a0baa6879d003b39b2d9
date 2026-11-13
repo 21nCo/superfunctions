@@ -1,0 +1,29 @@
+devfn/cli/SECURITY.md
+  s_1900bb15a7199a::t_5975b0fec85aa7 22
+devfn/core/test/oauth-relay-recovery.test.ts
+  s_1900bb15a7199a::t_cf43d3f6a0b43c 44-47,49,52,55-57
+devfn/docs/configuration.md
+  s_1900bb15a7199a::t_840faf678b14a3 105
+devfn/proxy/src/oauth-relay/service.ts
+  s_1900bb15a7199a::t_30c9196835a9da 150-156,162-163,166,168,173-193,259,275-277,279-281,283-285,289,300,305-311,314,369,377-379,387-390,396-397
+devfn/proxy/test/oauth-relay-service.test.ts
+  s_1900bb15a7199a::t_598f17bdfc5475 491-578
+devfn/proxy/test/oauth-relay.test.ts
+  s_1900bb15a7199a::t_3e3ee254df1f28 443
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "26c584e3bd71a335a358a0baa6879d003b39b2d9",
+  "prompts": {},
+  "sessions": {
+    "s_1900bb15a7199a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5e049926-ee38-44b5-a734-8c7117ee5ff7",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

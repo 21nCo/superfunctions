@@ -1,0 +1,25 @@
+watchfn/.conduct/readiness.md
+  s_e1c5fc1a65c0cf::t_2aa91673b492d4 29-35
+watchfn/typescript/src/adapters/express.ts
+  s_e1c5fc1a65c0cf::t_e1a81f88dab6c1 30-37,42,46,49-52
+watchfn/typescript/tests/adapters/express.test.ts
+  s_e1c5fc1a65c0cf::t_c47a2aedc70093 1-50
+watchfn/typescript/tests/core/metric-aggregator.test.ts
+  s_e1c5fc1a65c0cf::t_c32b6310905d8f 52,77-88,91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6213f4bd4f85a2aefcf5ac894d0cee427bc3976f",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,63 @@
+userfn/.conduct/feedback-board-readiness.md
+  s_e1c5fc1a65c0cf::t_3d6503177f2d7a 1-28
+userfn/.conduct/feedback-service-readiness.md
+  s_e1c5fc1a65c0cf::t_70d43daea53bd9 41-44
+userfn/python/README.md
+  s_e1c5fc1a65c0cf::t_bb14d7d1550084 137-150
+userfn/python/src/userfn/client.py
+  s_e1c5fc1a65c0cf::t_3d03b358a12ff0 55-68
+userfn/python/src/userfn/core/feedback.py
+  s_e1c5fc1a65c0cf::t_f9f6e11d7db513 30-47
+userfn/python/src/userfn/core/feedback_http.py
+  s_e1c5fc1a65c0cf::t_c37926c09ffa6e 4,9,52-75,79-80,83-85,91-104
+userfn/python/tests/test_feedback_http.py
+  s_e1c5fc1a65c0cf::t_bfd52668b1329d 16,27-28,92-120
+userfn/service/README.md
+  s_e1c5fc1a65c0cf::t_78863ca202dece 30,39-53
+userfn/service/package.json
+  s_e1c5fc1a65c0cf::t_e5b7d25503cea0 21
+userfn/service/src/index.ts
+  s_e1c5fc1a65c0cf::t_5bce6a0350ec6b 3,7,17-18,26-27,38-39,69-81,97,103-145,179
+userfn/service/src/schema.ts
+  s_e1c5fc1a65c0cf::t_793bef0d91d937 18-28
+userfn/service/tests/authfn-acceptance.test.ts
+  s_e1c5fc1a65c0cf::t_b45f1ae6b19e08 21,25-27,35
+userfn/service/tests/board-http.test.ts
+  s_e1c5fc1a65c0cf::t_890f36d95deb76 1-92
+userfn/service/tests/python_board_acceptance.py
+  s_e1c5fc1a65c0cf::t_256ae1d54d37d8 1-24
+userfn/service/tests/service.test.ts
+  s_e1c5fc1a65c0cf::t_79455d6a5870fe 141-173
+userfn/service/tests/sqlite-http.test.ts
+  s_e1c5fc1a65c0cf::t_1547a65e42cb7d 27,52-54,62
+userfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_fe95aeb851d702 123-136
+userfn/typescript/src/__tests__/feedback-http.test.ts
+  s_e1c5fc1a65c0cf::t_b215397cb3fc98 59-87
+userfn/typescript/src/__tests__/feedback.test.ts
+  s_e1c5fc1a65c0cf::t_b889cc4a47bb55 13
+userfn/typescript/src/core/feedback-http.ts
+  s_e1c5fc1a65c0cf::t_7e364d81ab15f8 2,27-50,55-56,63-64,77,87
+userfn/typescript/src/core/feedback.ts
+  s_e1c5fc1a65c0cf::t_06563e9a1a8d45 1,24-34
+userfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_5e9058ea5434ec 9,53-56
+userfn/typescript/src/types.ts
+  s_e1c5fc1a65c0cf::t_3ea5bc8ea3f791 98,105,182-184,187-191
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "87d67e9dd66e8559df20998ee8116d7b568d7155",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

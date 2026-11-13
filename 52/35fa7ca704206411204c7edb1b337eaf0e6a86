@@ -1,0 +1,23 @@
+probefn/.conduct/mcp-event-pagination-readiness.md
+  s_e1c5fc1a65c0cf::t_552aedbf4f1b21 45-50
+probefn/packages/storage/src/event-page.ts
+  s_e1c5fc1a65c0cf::t_a32e1f4f9f3a8e 12,14,16,19,30,35
+probefn/packages/storage/test/event-page.test.ts
+  s_e1c5fc1a65c0cf::t_2b0e42751ef99d 80-88
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5235fa7ca704206411204c7edb1b337eaf0e6a86",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

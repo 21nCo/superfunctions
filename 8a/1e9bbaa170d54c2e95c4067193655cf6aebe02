@@ -1,0 +1,23 @@
+authfn/docs/content/docs/admin/index.md
+  s_7d0a48f0aaecda::t_12f807d71a1a9d 121
+authfn/docs/content/docs/admin/super-console.md
+  s_7d0a48f0aaecda::t_3fb6d13676e3e9 21
+authfn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_280b3cdec7a3c2 1135,1195
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8a1e9bbaa170d54c2e95c4067193655cf6aebe02",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

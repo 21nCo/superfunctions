@@ -1,0 +1,33 @@
+flowfn/.conduct/queue-claim-measurements-20261020.json
+  s_e1c5fc1a65c0cf::t_4f3ebc26dfcecd 1-278
+flowfn/.conduct/queue-claim-performance-readiness.md
+  s_e1c5fc1a65c0cf::t_bced827bcd289c 1-70
+flowfn/typescript/docs/queue-ownership.md
+  s_e1c5fc1a65c0cf::t_5eb6049f7c82e4 70-74,96-112
+flowfn/typescript/scripts/queue-benchmark.mjs
+  s_e1c5fc1a65c0cf::t_579da3c2c4cb38 4-6,32-42,86-96
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_e1c5fc1a65c0cf::t_27440bf2f183c7 216-235
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_e1c5fc1a65c0cf::t_e07b9d7c3f1113 174-186
+flowfn/typescript/src/adapters/redis.test.ts
+  s_e1c5fc1a65c0cf::t_cab6a4acde6071 54,57-60,62-64,66-83,85,87-93
+flowfn/typescript/src/adapters/redis.ts
+  s_e1c5fc1a65c0cf::t_af5183ce4ba840 65,75-76,78-98
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ff19de2b66f3d31c7a30082a999b32a31fea52f1",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

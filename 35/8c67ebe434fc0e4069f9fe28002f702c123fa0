@@ -1,0 +1,29 @@
+watchfn/.conduct/alert-evaluation-readiness.md
+  s_e1c5fc1a65c0cf::t_e02afcc8edfa4b 1-47
+watchfn/typescript/src/alerts/conditions.ts
+  s_e1c5fc1a65c0cf::t_8ae8d1ce86b5c6 1-2,4-5,8-9,12,15-32,34-36,38-40,42-47,49-99
+watchfn/typescript/src/alerts/evaluator.ts
+  s_e1c5fc1a65c0cf::t_963e94ce3e0465 3,25-26,41,52,58,68-70,79,93-94
+watchfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_9d988de97a5cb8 72-74
+watchfn/typescript/tests/alerts/conditions.test.ts
+  s_e1c5fc1a65c0cf::t_da0b1e867fb5bf 20,36,61,76,79,110-111,114,143-144,147
+watchfn/typescript/tests/alerts/windowed-evaluation.test.ts
+  s_e1c5fc1a65c0cf::t_4a22fd3e0f7c93 1-68
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "358c67ebe434fc0e4069f9fe28002f702c123fa0",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

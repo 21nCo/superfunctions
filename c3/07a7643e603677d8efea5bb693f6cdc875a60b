@@ -1,0 +1,35 @@
+cifn/.conduct/live-log-readiness.md
+  s_e1c5fc1a65c0cf::t_6215fd090ae187 22
+cifn/.conduct/remote-log-delivery-readiness.md
+  s_e1c5fc1a65c0cf::t_b33abbe49bdb31 19
+cifn/.conduct/started-log-recovery-readiness.md
+  s_e1c5fc1a65c0cf::t_dd40f5bd3a2660 1-33
+cifn/typescript/control-plane/scripts/verify-packed-logs.mjs
+  s_e1c5fc1a65c0cf::t_6cc046f7dece6e 1-41
+cifn/typescript/control-plane/scripts/verify-remote-logs.mjs
+  s_e1c5fc1a65c0cf::t_7e968b50d4da3e 18-21,30-40,138-182,191,193-198
+cifn/typescript/runner/src/log-spool.test.ts
+  s_e1c5fc1a65c0cf::t_f7a0018d83561a 5,131-184
+cifn/typescript/runner/src/log-spool.ts
+  s_e1c5fc1a65c0cf::t_07b11483ad7f81 1,8-66,95
+cifn/typescript/runner/src/remote-runner.test.ts
+  s_e1c5fc1a65c0cf::t_41d8d19b2b32fe 1,260-288
+cifn/typescript/runner/src/remote-runner.ts
+  s_e1c5fc1a65c0cf::t_8faad4f40175c7 1,172-178
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c307a7643e603677d8efea5bb693f6cdc875a60b",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

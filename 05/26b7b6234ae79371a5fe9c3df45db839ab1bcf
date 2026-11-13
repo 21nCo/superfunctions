@@ -1,0 +1,23 @@
+watchfn/.conduct/browser-discard-readiness.md
+  s_e1c5fc1a65c0cf::t_10bae970328c20 11
+watchfn/agents/browser/src/index.ts
+  s_e1c5fc1a65c0cf::t_e886bfc0730bff 176,183-187
+watchfn/agents/browser/tests/discard.test.ts
+  s_e1c5fc1a65c0cf::t_af4a276222f668 81-108
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0526b7b6234ae79371a5fe9c3df45db839ab1bcf",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,27 @@
+clifn/docs/content/docs/credentials-and-client.md
+  s_7d0a48f0aaecda::t_de45c09155063a 8
+clifn/docs/content/docs/interaction-and-stdio.md
+  s_7d0a48f0aaecda::t_2927cd267fa74f 13,15-17
+clifn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_59964abe04fbba 16,30,37,39,42,78,116,130,132,142-149,151,160,232,238-244,752
+scripts/docs-site/llms.mjs
+  s_7d0a48f0aaecda::t_3ad478d570dd34 3,99-103
+scripts/docs-site/llms.test.mjs
+  s_7d0a48f0aaecda::t_df48ddc13aff72 56-60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "026ed14085222e9b35841bb0a9e22b8e02a7ee5f",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

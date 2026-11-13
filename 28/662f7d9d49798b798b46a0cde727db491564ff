@@ -1,0 +1,27 @@
+flowfn/.conduct/python-typing-readiness.md
+  s_e1c5fc1a65c0cf::t_84e869beee7d9e 1-40
+flowfn/python/pyproject.toml
+  s_e1c5fc1a65c0cf::t_e4b35d9e03d5d5 50-51
+flowfn/python/flowfn/adapters/redis.py
+  s_e1c5fc1a65c0cf::t_8a2a21297e9824 32-48,55,151,207,211,272-276,293,360
+  s_e1c5fc1a65c0cf::t_9463f1da24e6c3 12,25-31,206,292,358
+flowfn/python/README.md
+  s_e1c5fc1a65c0cf::t_cf2b920932492f 256,266-283
+  s_e1c5fc1a65c0cf::t_1ea21905bfff1a 284
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "28662f7d9d49798b798b46a0cde727db491564ff",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,33 @@
+flowfn/typescript/src/workflow/types.ts
+  s_e1c5fc1a65c0cf::t_9ca4cbbd67acd4 26-27
+flowfn/typescript/scripts/workflow-crash-worker.mjs
+  s_e1c5fc1a65c0cf::t_e6849cf1dc9849 14-16,22
+flowfn/typescript/src/storage/workflow-crash-contract.ts
+  s_e1c5fc1a65c0cf::t_e4affa5c39af99 40
+  s_e1c5fc1a65c0cf::t_e6849cf1dc9849 5-6,34-35,39,41-46,50
+flowfn/typescript/docs/workflow-ownership.md
+  s_e1c5fc1a65c0cf::t_2cb05b18d858e4 41-57
+flowfn/typescript/src/workflow/workflow.ts
+  s_e1c5fc1a65c0cf::t_9aeeac64c031a8 877,920
+  s_e1c5fc1a65c0cf::t_836c871b1c923e 202,383,843-847
+  s_e1c5fc1a65c0cf::t_d2058068522000 185,397,438,496,536,872,874,876,878,884,886,894,896,914,919,921
+  s_e1c5fc1a65c0cf::t_9ca4cbbd67acd4 217-219,264-265,353,962-990,1016-1017
+  s_e1c5fc1a65c0cf::t_b845b997f11448 828-842,848-865
+  s_e1c5fc1a65c0cf::t_d22f4e57b8b04d 940,942
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9faa93445dd71f23a5ed9163450bb1587cf88c5e",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,25 @@
+logfn/.conduct/python-interval-drain-readiness.md
+  s_e1c5fc1a65c0cf::t_916b9d8f9b0604 1-9
+logfn/python/README.md
+  s_e1c5fc1a65c0cf::t_3f18ccbb17d81e 55-56
+logfn/python/src/logfn/sinks.py
+  s_e1c5fc1a65c0cf::t_f5dd19e7791f2c 146-151
+logfn/python/tests/test_http_delivery.py
+  s_e1c5fc1a65c0cf::t_e380e61d765540 222-255
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "587c77cd8ac2fa27c122ae0360cf581b2b9e70a0",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

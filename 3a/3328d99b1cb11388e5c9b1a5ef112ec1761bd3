@@ -1,0 +1,25 @@
+flowfn/python/README.md
+  s_e1c5fc1a65c0cf::t_625b6dd27802ae 201-202
+flowfn/python/flowfn/adapters/postgres.py
+  s_e1c5fc1a65c0cf::t_2942d6bc0c9d30 208,213,224,229,232,234-242,249-256,263,265,270-275,277-282,285-286
+flowfn/python/flowfn/adapters/stream_lease.py
+  s_e1c5fc1a65c0cf::t_587a6d1746c32c 1-49
+flowfn/python/tests/test_postgres_stream_ownership.py
+  s_e1c5fc1a65c0cf::t_a41ab633844501 1-90
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3a3328d99b1cb11388e5c9b1a5ef112ec1761bd3",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

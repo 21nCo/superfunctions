@@ -1,0 +1,191 @@
+devfn/proxy/test/proxy.test.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 5,9-40,45-48,64-74,81-176,271-272,274-293
+devfn/processes/src/index.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 2-4
+devfn/cli/SECURITY.md
+  s_c1093e7194f7e3::t_7a2e233b1674b7 8-9,11-21
+devfn/ports/src/proxy-state.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-65
+devfn/processes/test/supervisor.test.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1,6,9,13-22,49-89
+  s_c1093e7194f7e3::t_47a30244456189 90
+devfn/core/src/runtime.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 61-68
+devfn/ports/src/types.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 8-12,21-27,53,57-79,105-107
+devfn/ports/test/lock.test.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-444
+devfn/processes/src/supervisor.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1,10-11,17-19,21-27,64,71-72,90,105-110,115,120-125,127,130,133-141
+devfn/core/test/replacement-contract.test.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-185
+devfn/proxy/README.md
+  s_c1093e7194f7e3::t_7a2e233b1674b7 3-10
+uifn/catalogs/wrangler.jsonc
+  s_c1093e7194f7e3::t_7a2e233b1674b7 20
+.github/workflows/superfunctions-docs-cloudflare-deploy.yml
+  s_c1093e7194f7e3::t_7a2e233b1674b7 110-132,136-137
+devfn/ports/src/registry.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 4,8,10-14,18-283,301-315,337,354,360,366-391,395-398,417-433,439,449,478,485,496,530-533,538-609,622-656,658,667-672,684,688-693,698,705-716,718-724,726-730,735-752,756-758,760,766-767,769-774,776-782
+devfn/processes/src/gated.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-148
+devfn/processes/src/adapters.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1,23-24
+devfn/compose/README.md
+  s_c1093e7194f7e3::t_7a2e233b1674b7 3-5
+devfn/core/src/endpoints.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-1087
+devfn/core/test/identity.test.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 2-3,8,10,15-89
+.github/workflows/uifn-catalogs-cloudflare-preview.yml
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-91
+devfn/processes/test/readiness.test.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 4,6,9-48
+devfn/processes/src/types.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 15-22,35
+devfn/proxy/src/domains.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-197
+scripts/deploy-uifn-catalogs.mjs
+  s_c1093e7194f7e3::t_7a2e233b1674b7 15-28,59
+devfn/core/test/domain-routing.test.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-731
+devfn/core/src/types.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 19-27,57-60,65
+devfn/core/test/proxy-readiness.test.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-338
+devfn/processes/test/adapters.test.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 16-23
+scripts/cloudflare-docs/config.mjs
+  s_c1093e7194f7e3::t_7a2e233b1674b7 7-12,20,33,43,56,111,117-118
+  s_c1093e7194f7e3::t_7c590c07bd28ed 119-120
+devfn/ports/test/registry.test.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-3,6-7,10,14-18,20-411,539-541,545-639,662-842
+  s_c1093e7194f7e3::t_180a7bf04796d9 843
+devfn/cli/src/index.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 16,32-34,51,53,65-67,73,99-101,153-159,181-199,201,207
+devfn/processes/src/identity.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1
+devfn/proxy/src/index.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 2-5,7-8,11-14,18,20-56,59-71,73,81-91,93-149,151,155-190,199,201-203,209-260,264,270,280-499,503-515,517-519,522-540,542-549,552-553,565-573,575,591,598-611,613-621,623-695,698-701,703-704,707-711,714-718,720,723-726,728-733,735,740,743-744,749
+devfn/proxy/test/domain-routing.test.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-362
+devfn/proxy/test/activation.test.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-255
+devfn/docs/configuration.md
+  s_c1093e7194f7e3::t_7a2e233b1674b7 42,46,59-76,81-89
+devfn/ports/src/index.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-4,6
+devfn/ports/test/lock-takeover.test.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-178
+scripts/cloudflare-docs/deploy.mjs
+  s_c1093e7194f7e3::t_7a2e233b1674b7 6,21-33,131
+devfn/core/test/orchestrator.test.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 6,31-49
+devfn/core/src/orchestrator.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 2,7-11,13-14,17,46-151,165,167,169-181,186-258,277,287-322,330,335,342,350-451,456-462,465-476,479-487,490,493-497,507-531,534-591,595-597,602,604-607,610-633,635-656,659-673,675-688,690-776,780,794,797,800-806,817-827,834-844,911,960-964,966
+  s_c1093e7194f7e3::t_5b82d950c004b5 965
+.github/workflows/superfunctions-docs-cloudflare-routes.yml
+  s_c1093e7194f7e3::t_7a2e233b1674b7 43-69,76-77
+devfn/compose/src/index.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 2-4,8-11,15-29,63-69,73-85,92-111,116-117,120-1317,1333,1344-1346,1350-1392,1405-1410,1424,1451-1519,1531-1533,1535-1539,1547-1548,1624-1677
+  s_c1093e7194f7e3::t_6c9a33b27284c2 1678
+devfn/core/test/endpoints.test.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-1754
+devfn/compose/package.json
+  s_c1093e7194f7e3::t_7a2e233b1674b7 11
+  s_c1093e7194f7e3::t_b1a1088a5dc958 12
+devfn/core/vitest.config.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 3-5
+devfn/compose/src/path-interpolation.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-505
+devfn/ports/README.md
+  s_c1093e7194f7e3::t_7a2e233b1674b7 4-14
+devfn/compose/test/preview-budget.fixture.mts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-38
+devfn/config/test/config.test.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1,5,8,11-155,194-200,216-245,424
+devfn/proxy/test/real-caddy.test.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-176
+devfn/core/src/identity.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 7,15-27,29-51,58-59,64-74
+devfn/core/test/startup-fixture.test.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-1094
+devfn/config/src/schema.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 17,51,53-65,151-168,171-175,200,225,233,247-264,272-277,370-371,373-375,377,381-387,445-447
+devfn/config/src/types.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 64-69,72,74-84
+devfn/cli/README.md
+  s_c1093e7194f7e3::t_7a2e233b1674b7 13-14,17-18,20-21
+devfn/config/src/trust.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 6,42-43
+devfn/config/test/domain-routes.test.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-47
+devfn/processes/src/wrapper.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 16-33,37,41-43,45-46,49-50,53-54,57-74
+devfn/core/src/index.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-3,5
+devfn/core/test/teardown-evidence.test.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-476
+devfn/ports/src/lock.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-4,6,11,13-59,64,66-73,76-91,94-211
+devfn/processes/README.md
+  s_c1093e7194f7e3::t_7a2e233b1674b7 4-26
+devfn/processes/src/readiness.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 63-95,102,164
+devfn/ports/src/listeners.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 9-20,23-26,29,32-54,128-141,144-147,149-159
+devfn/ports/test/claim-evidence.test.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-222
+devfn/SPEC.md
+  s_c1093e7194f7e3::t_7a2e233b1674b7 15,23
+  s_c1093e7194f7e3::t_ee5e804f57c124 24
+devfn/cli/test/cli.test.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 7-8,13,25-27,29-55,166-207,251,516-551
+  s_c1093e7194f7e3::t_5ac477128366b3 552
+scripts/cloudflare-docs/sync-routes.mjs
+  s_c1093e7194f7e3::t_7a2e233b1674b7 76-80
+devfn/processes/src/group.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-77
+devfn/compose/src/source-files.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-441
+devfn/config/test/process-identity.test.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-90
+devfn/compose/test/fingerprint-contract.test.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-1071
+devfn/config/src/credentials.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-69
+devfn/config/src/index.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 2,6
+devfn/compose/test/path-contract.test.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-307
+devfn/config/src/process-identity.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 2-3,8-26,30,34-35,39-40,46-56,58-210,213-215
+devfn/core/test/registered-domain-startup.test.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-257
+devfn/ports/src/proxy-owner.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-20
+devfn/ports/test/listeners.test.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-3,6,31-67
+devfn/core/README.md
+  s_c1093e7194f7e3::t_7a2e233b1674b7 3-25
+devfn/compose/test/override.test.ts
+  s_c1093e7194f7e3::t_7a2e233b1674b7 1-2,5-7,9-64,67-440,442-444,469-504,527,556,576,580-586,609-810,815,820-824,839,852,870,892,914-1145
+package-lock.json
+  s_c1093e7194f7e3::t_3035cc86234e71 6412-6413,6417,6435-6449
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ae741da6eab381562a69a4dbedfd6087553198a6",
+  "prompts": {},
+  "sessions": {
+    "s_c1093e7194f7e3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "203316bd-9c88-41f4-b037-58d76f8b6cd9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

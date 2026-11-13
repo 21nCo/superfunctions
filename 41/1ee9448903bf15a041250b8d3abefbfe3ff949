@@ -1,0 +1,59 @@
+drawfn/core/README.md
+  s_e1c5fc1a65c0cf::t_756c404dd8cd04 160-161
+drawfn/core/__tests__/camera-input.test.ts
+  s_e1c5fc1a65c0cf::t_90006493169420 5
+drawfn/core/__tests__/freedraw-normalization.test.ts
+  s_e1c5fc1a65c0cf::t_ffe0d4750b4697 5
+drawfn/core/__tests__/selection-events.test.ts
+  s_e1c5fc1a65c0cf::t_a724598f9af6b8 5
+drawfn/core/__tests__/setup.ts
+  s_e1c5fc1a65c0cf::t_73acde88695847 1,3,6
+drawfn/core/__tests__/shape-tools.test.ts
+  s_e1c5fc1a65c0cf::t_fa10012b4fbd3b 1-41
+drawfn/core/src/tools/ellipse-tool.ts
+  s_e1c5fc1a65c0cf::t_094083da1987bb 1,3-4
+drawfn/core/src/tools/rectangle-tool.ts
+  s_e1c5fc1a65c0cf::t_01a45f762f9a7c 1,3-4
+drawfn/core/src/tools/shape-tool.ts
+  s_e1c5fc1a65c0cf::t_b87cdb7da7207b 1-93
+drawfn/core/src/utils.ts
+  s_e1c5fc1a65c0cf::t_a9cfd910111adf 16-17
+drawfn/drawfn-react/src/__tests__/setup.ts
+  s_e1c5fc1a65c0cf::t_956ed977faf1a7 3,5-6
+drawfn/drawfn-react/src/__tests__/use-drawfn.test.tsx
+  s_e1c5fc1a65c0cf::t_5fd074e82ad096 7
+drawfn/drawfn-react/tsconfig.json
+  s_e1c5fc1a65c0cf::t_a7ebea18e5f6a0 4-7,22-29
+drawfn/drawfn-svelte/__tests__/drawfn-action.test.ts
+  s_e1c5fc1a65c0cf::t_d4dc822e16d0e7 7
+drawfn/drawfn-svelte/__tests__/setup.ts
+  s_e1c5fc1a65c0cf::t_c2dfbe92c23d2e 3,5-6
+drawfn/scripts/framework-browser-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_89a34af4b42003 2,15
+drawfn/scripts/npm-cli.mjs
+  s_e1c5fc1a65c0cf::t_708491cdd5d252 1-8
+drawfn/scripts/packed-consumer.mjs
+  s_e1c5fc1a65c0cf::t_eb3eaffd4ed8f8 2,12,15-16,35-36
+drawfn/testing/canvas.ts
+  s_e1c5fc1a65c0cf::t_83f3bef01202f6 1-58
+drawfn/testing/create-canvas.ts
+  s_e1c5fc1a65c0cf::t_afa5915ded563a 1-14
+drawfn/testing/scene.ts
+  s_e1c5fc1a65c0cf::t_809e26c31a64ef 1-27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "411ee9448903bf15a041250b8d3abefbfe3ff949",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

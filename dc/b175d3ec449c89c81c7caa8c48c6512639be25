@@ -1,0 +1,33 @@
+flowfn/python/README.md
+  s_e1c5fc1a65c0cf::t_fe44a47e8ec1d7 176-177
+flowfn/python/flowfn/adapters/base.py
+  s_e1c5fc1a65c0cf::t_92a54498c9fb04 96-99
+flowfn/python/flowfn/adapters/memory.py
+  s_e1c5fc1a65c0cf::t_3c20e4e7e5e434 363-365
+flowfn/python/flowfn/adapters/postgres.py
+  s_e1c5fc1a65c0cf::t_323ee42bfdcfe0 80-84
+flowfn/python/flowfn/adapters/redis.py
+  s_e1c5fc1a65c0cf::t_43911617e9515a 78-92
+flowfn/python/flowfn/workflow/workflow.py
+  s_e1c5fc1a65c0cf::t_4086aa28ac8dd3 245-248,252,261,316
+flowfn/python/tests/test_durable_adapters.py
+  s_e1c5fc1a65c0cf::t_913dc813c2e5a2 126-131
+flowfn/python/tests/test_workflow_discovery.py
+  s_e1c5fc1a65c0cf::t_553d1603bfa0ab 1-22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dcb175d3ec449c89c81c7caa8c48c6512639be25",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

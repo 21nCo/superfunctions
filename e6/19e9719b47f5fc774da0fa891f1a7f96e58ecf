@@ -1,0 +1,67 @@
+flowfn/typescript/src/workflow/workflow.ts
+  s_e1c5fc1a65c0cf::t_30a1d7705e8b52 54-59,175,334,339,350,355,359
+  s_e1c5fc1a65c0cf::t_dcec9a6f83b038 48-53,176,184,265,378
+  s_e1c5fc1a65c0cf::t_b5dc6307cf9a5a 203-206,288,317-333,335-338,340-349,351-354,356-358,360,368,409,612-614,622,741,763-764,781-783,786,794
+  s_e1c5fc1a65c0cf::t_b16e6d32332814 207,258,266,314,361-367,369,388,406,570,610-611,793,795,903,907-908
+flowfn/typescript/docs/workflow-ownership.md
+  s_e1c5fc1a65c0cf::t_8c3893fbd1e91a 1-44
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_e1c5fc1a65c0cf::t_fddf850062b5ea 12,18
+  s_e1c5fc1a65c0cf::t_fd3c210ef10cdd 11,19
+flowfn/typescript/src/workflow/types.ts
+  s_e1c5fc1a65c0cf::t_89891730312bb9 55-56
+  s_e1c5fc1a65c0cf::t_dcec9a6f83b038 139-140
+  s_e1c5fc1a65c0cf::t_30a1d7705e8b52 141
+flowfn/typescript/src/workflow/lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_bf98da189cb852 244-259
+  s_e1c5fc1a65c0cf::t_01cc027fe454bf 235-236,279,357,367-368,370
+  s_e1c5fc1a65c0cf::t_30a1d7705e8b52 223
+flowfn/typescript/src/adapters/base.ts
+  s_e1c5fc1a65c0cf::t_89891730312bb9 12,53
+flowfn/typescript/src/storage/workflow-crash-contract.ts
+  s_e1c5fc1a65c0cf::t_fddf850062b5ea 1,3-11,13-45
+  s_e1c5fc1a65c0cf::t_037d05d7158617 2,12
+flowfn/typescript/src/adapters/memory.ts
+  s_e1c5fc1a65c0cf::t_89891730312bb9 27
+  s_e1c5fc1a65c0cf::t_ed6346a53b78a6 262
+  s_e1c5fc1a65c0cf::t_3bdd6b8fb7958a 2,252-257
+flowfn/typescript/src/adapters/redis.ts
+  s_e1c5fc1a65c0cf::t_ed6346a53b78a6 569-570
+  s_e1c5fc1a65c0cf::t_2410eb973ac9d5 533-535,547,553-554,556-564,577
+  s_e1c5fc1a65c0cf::t_3bdd6b8fb7958a 2,530-532,536-546,548-552,555
+flowfn/typescript/src/storage/workflow-control.ts
+  s_e1c5fc1a65c0cf::t_7fb6240fbb3bd3 13-14
+  s_e1c5fc1a65c0cf::t_89891730312bb9 1-12,15-40
+flowfn/typescript/scripts/provider-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_fddf850062b5ea 61
+flowfn/typescript/src/storage/workflow-control-contract.ts
+  s_e1c5fc1a65c0cf::t_f185df90b94f76 1-35,52
+  s_e1c5fc1a65c0cf::t_33a705a89cc0ab 36-51
+flowfn/typescript/scripts/workflow-crash-worker.mjs
+  s_e1c5fc1a65c0cf::t_fddf850062b5ea 1-27
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_e1c5fc1a65c0cf::t_3bdd6b8fb7958a 2,651-660
+  s_e1c5fc1a65c0cf::t_ed6346a53b78a6 663-664,666
+  s_e1c5fc1a65c0cf::t_111cbe258e3530 661
+flowfn/typescript/src/storage/workflow-control.test.ts
+  s_e1c5fc1a65c0cf::t_f185df90b94f76 1-6
+flowfn/typescript/src/adapters/redis.test.ts
+  s_e1c5fc1a65c0cf::t_fddf850062b5ea 5,18
+  s_e1c5fc1a65c0cf::t_f185df90b94f76 4,19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e619e9719b47f5fc774da0fa891f1a7f96e58ecf",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

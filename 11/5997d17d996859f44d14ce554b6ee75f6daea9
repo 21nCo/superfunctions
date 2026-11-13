@@ -1,0 +1,39 @@
+.github/workflows/testfn-acceptance.yml
+  s_e1c5fc1a65c0cf::t_aca6d543f73e32 27-28
+package-lock.json
+  s_e1c5fc1a65c0cf::t_4883ccf6339afc 62255,62292-62302,62313-62343,62457-62468,62628-62634,62686-62697
+testfn/scripts/storage-performance-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_6cf0618a615120 1-90
+testfn/typescript/package.json
+  s_e1c5fc1a65c0cf::t_c2642a905d5032 46-47,78,80,89-91,111,115-117,119,121-122
+testfn/typescript/src/reporters/console-reporter.ts
+  s_e1c5fc1a65c0cf::t_3a0b81be37b789 14,38,50,52-55
+testfn/typescript/tests/analytics-history.test.ts
+  s_e1c5fc1a65c0cf::t_4d4905dfb2b0e6 1-145
+testfn/typescript/tests/artifact-failure-contract.test.ts
+  s_e1c5fc1a65c0cf::t_2fdb454f9be176 1-135
+testfn/typescript/tests/framework-failure-contract.test.ts
+  s_e1c5fc1a65c0cf::t_27497626cfb738 1-126
+testfn/typescript/tests/lifecycle-contract.test.ts
+  s_e1c5fc1a65c0cf::t_16c5d0fb5393af 1-181
+testfn/typescript/tests/network-contract.test.ts
+  s_e1c5fc1a65c0cf::t_c443ce90c1e316 1-74
+testfn/typescript/vitest.config.ts
+  s_e1c5fc1a65c0cf::t_0c8f32457dfc72 5-11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "115997d17d996859f44d14ce554b6ee75f6daea9",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,29 @@
+userfn/.conduct/survey-renderer-readiness.md
+  s_e1c5fc1a65c0cf::t_f9ba51cc903847 1-81
+userfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_09204b41b3d8a0 517-552
+userfn/typescript/scripts/verify-survey-renderer.mjs
+  s_e1c5fc1a65c0cf::t_587145ef9d3ce6 1-117
+userfn/typescript/src/__tests__/survey-renderer-delivery.test.ts
+  s_e1c5fc1a65c0cf::t_ab84718c5616cd 1-66
+userfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_6c10c070b01d2e 1,23,33-35,65-69,150-153,155,158-182,184-186,188-189,257-258,266-267
+userfn/typescript/src/ui/renderer.ts
+  s_e1c5fc1a65c0cf::t_0b68b9521d0a0d 2,5-6,8,17,20,35,38,132-137,145-146,149-151,155,157-174,176-185,187,190-199,201-225,227-240,242-243
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ac0da2e725117dd63f0af47062e128b7a3a7b7b1",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

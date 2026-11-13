@@ -1,0 +1,41 @@
+cifn/.conduct/request-boundary-readiness.md
+  s_e1c5fc1a65c0cf::t_9c48aad54bf242 1-36
+cifn/SPEC.md
+  s_e1c5fc1a65c0cf::t_ddb6794c1c35f0 269
+cifn/typescript/control-plane/package.json
+  s_e1c5fc1a65c0cf::t_71c81c786b4eb6 44-45
+cifn/typescript/control-plane/src/api/body.ts
+  s_e1c5fc1a65c0cf::t_a4a1570a7d0680 1-17
+cifn/typescript/control-plane/src/api/envelope.ts
+  s_e1c5fc1a65c0cf::t_748644989c8fd2 10,38
+cifn/typescript/control-plane/src/api/routes.ts
+  s_e1c5fc1a65c0cf::t_8b09901fc18f45 2,82-84,328-330,350-352,409-415
+cifn/typescript/control-plane/src/http-server.test.ts
+  s_e1c5fc1a65c0cf::t_24250ea308c226 1-104
+cifn/typescript/control-plane/src/http-server.ts
+  s_e1c5fc1a65c0cf::t_97886276d1827b 1-48
+cifn/typescript/control-plane/src/server.ts
+  s_e1c5fc1a65c0cf::t_3b786434dc1bc9 1,52
+cifn/typescript/control-plane/tsconfig.boundary.json
+  s_e1c5fc1a65c0cf::t_83407601c26415 1-12
+cifn/typescript/control-plane/tsup.config.ts
+  s_e1c5fc1a65c0cf::t_25c3f269c2da8b 7
+package-lock.json
+  s_e1c5fc1a65c0cf::t_7a049f18ca3186 6016
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "21540e2181964c435127c4f44b91ab0ce26ff060",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

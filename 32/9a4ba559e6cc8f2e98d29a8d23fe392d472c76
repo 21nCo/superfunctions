@@ -1,0 +1,51 @@
+watchfn/.conduct/receipt-retention-readiness.md
+  s_e1c5fc1a65c0cf::t_f7493ce1c10b7f 1-116
+watchfn/python/README.md
+  s_e1c5fc1a65c0cf::t_be51d17ed02a6d 289-290,318-320,357-359,366-367,469-471,474-475,480-513
+watchfn/python/tests/test_durable_alerts.py
+  s_e1c5fc1a65c0cf::t_233c6b307d639c 6,18-19
+watchfn/python/tests/test_pagerduty_dispatch.py
+  s_e1c5fc1a65c0cf::t_bc3b0d4cbf9144 138
+watchfn/python/tests/test_receipt_retention.py
+  s_e1c5fc1a65c0cf::t_42df173c87655d 1-219
+watchfn/python/watchfn/alerts/dispatch.py
+  s_e1c5fc1a65c0cf::t_7ee4257e5275e2 12,66,77-79,216
+watchfn/python/watchfn/alerts/durable.py
+  s_e1c5fc1a65c0cf::t_33fb6c75367a2f 249,352-363
+watchfn/python/watchfn/alerts/retention.py
+  s_e1c5fc1a65c0cf::t_f3ffe839211996 1-150
+watchfn/python/watchfn/alerts/schema.py
+  s_e1c5fc1a65c0cf::t_d0ff3d492d144f 2,18-20
+watchfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_32d07b232518bd 191,237-238,256-311
+watchfn/typescript/scripts/verify-alert-package.mjs
+  s_e1c5fc1a65c0cf::t_f8d6aff1ac2150 45-46,51-57,65-69
+watchfn/typescript/src/alerts/alert-manager.ts
+  s_e1c5fc1a65c0cf::t_8d91c7e4c6aa41 6,12,14,48,55-58,116,244,290,295,297-306,327-328,347
+watchfn/typescript/src/alerts/retention.ts
+  s_e1c5fc1a65c0cf::t_5bd89833e93f4f 1-126
+watchfn/typescript/src/alerts/schema.ts
+  s_e1c5fc1a65c0cf::t_0a8061c1bdec2a 9,18,20
+watchfn/typescript/tests/alerts/pagerduty.test.ts
+  s_e1c5fc1a65c0cf::t_5e4f018310fda9 32,35,125,239-404
+watchfn/typescript/tests/alerts/public-manager.test.ts
+  s_e1c5fc1a65c0cf::t_460914a508dfad 301
+watchfn/typescript/tests/storage/event-retention.test.ts
+  s_e1c5fc1a65c0cf::t_ae202807d3a61b 105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "329a4ba559e6cc8f2e98d29a8d23fe392d472c76",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

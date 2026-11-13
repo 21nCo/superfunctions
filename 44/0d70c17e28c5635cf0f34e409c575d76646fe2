@@ -1,0 +1,27 @@
+devfn/cli/SECURITY.md
+  s_1900bb15a7199a::t_cb19aec2284007 19
+devfn/ports/README.md
+  s_1900bb15a7199a::t_73409ccef5afd7 12,14
+devfn/ports/test/lock-takeover.test.ts
+  s_1900bb15a7199a::t_ff197aac610632 1-138
+devfn/ports/test/lock.test.ts
+  s_1900bb15a7199a::t_581f990d374689 374
+devfn/ports/src/lock.ts
+  s_1900bb15a7199a::t_b843fac177ec21 3,57,116-133,135,137,140-141,144-147,150,154-155,157,164-167,171-176,182-188
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "440d70c17e28c5635cf0f34e409c575d76646fe2",
+  "prompts": {},
+  "sessions": {
+    "s_1900bb15a7199a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5e049926-ee38-44b5-a734-8c7117ee5ff7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

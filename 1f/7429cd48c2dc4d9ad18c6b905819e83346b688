@@ -1,0 +1,23 @@
+devfn/cli/SECURITY.md
+  s_51725a7b06e016::t_e965b3cfaf4753 19
+devfn/proxy/src/index.ts
+  s_51725a7b06e016::t_9e85edc5b7c5b7 541
+devfn/proxy/test/proxy.test.ts
+  s_51725a7b06e016::t_89764e7d1f2918 2,457-460,464,466-468,471-472,474-475
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1f7429cd48c2dc4d9ad18c6b905819e83346b688",
+  "prompts": {},
+  "sessions": {
+    "s_51725a7b06e016": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_51725a7b06e016",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

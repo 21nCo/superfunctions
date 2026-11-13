@@ -1,0 +1,23 @@
+logfn/python/README.md
+  s_e1c5fc1a65c0cf::t_fb9070c1a7401a 104-108
+logfn/python/src/logfn/serialization.py
+  s_e1c5fc1a65c0cf::t_66ea2a5e661b2e 14-22
+logfn/python/tests/test_serialization.py
+  s_e1c5fc1a65c0cf::t_256efe7a5f43f9 79-100
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3c71d7a24f7032253a40ed9be1881a2790467c1a",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

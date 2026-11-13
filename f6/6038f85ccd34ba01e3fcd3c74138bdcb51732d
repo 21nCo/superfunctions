@@ -1,0 +1,35 @@
+cmsfn/.conduct/studio-browser-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_faa10e2cc96a3f 13-15,19,21,37-44,129-162,165-166
+cmsfn/.conduct/studio-lifecycle-readiness.md
+  s_e1c5fc1a65c0cf::t_36250c1bce9ea3 38-39
+cmsfn/.conduct/studio-singleton-readiness.md
+  s_e1c5fc1a65c0cf::t_7bc2cdce27e709 1-20
+cmsfn/studio/README.md
+  s_e1c5fc1a65c0cf::t_45ac74ca6cecd1 37-39
+cmsfn/studio/src/__tests__/singleton.test.tsx
+  s_e1c5fc1a65c0cf::t_10139a972c3697 1-66
+cmsfn/studio/src/app.tsx
+  s_e1c5fc1a65c0cf::t_279fa2b68dd0bd 35-36,76,81,90-99,103,107,112
+cmsfn/studio/src/desk/DeskTree.tsx
+  s_e1c5fc1a65c0cf::t_1940a46a07a464 11-12,16,19,31,50-52,62,72
+cmsfn/studio/src/index.ts
+  s_e1c5fc1a65c0cf::t_09a9f3b1f988dc 9
+cmsfn/studio/src/panes/editor/DocumentEditorPane.tsx
+  s_e1c5fc1a65c0cf::t_4fb777931587b5 25-26,45,47,89-92,103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f66038f85ccd34ba01e3fcd3c74138bdcb51732d",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

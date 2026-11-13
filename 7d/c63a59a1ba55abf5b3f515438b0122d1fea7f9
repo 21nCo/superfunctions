@@ -1,0 +1,1281 @@
+.github/workflows/ci.yml
+  s_7d0a48f0aaecda::t_57065c84e73c8a 26,47,65-67,81,84,123,125,160,163,193,200,227,230,273,276
+.github/workflows/mailfn-release.yml
+  s_7d0a48f0aaecda::t_e122fec20a6eeb 23,25
+.github/workflows/publish-python.yml
+  s_7d0a48f0aaecda::t_f654b8e431fd43 1-99
+.github/workflows/publish-tag.yml
+  s_7d0a48f0aaecda::t_42a5dc96c26419 7-8,15-19,25,30,33-34,38,41,49-51,56-61,63,67-70,72-73,76-77,80-82,85,89-155
+.github/workflows/pullfrog.yml
+  s_7d0a48f0aaecda::t_a674e9e94d562a 19,25
+.github/workflows/release-swift.yml
+  s_7d0a48f0aaecda::t_76906cefe619ae 1,5-19,22-26,30-32,34-56
+.github/workflows/reviewfn-release.yml
+  s_7d0a48f0aaecda::t_eed79b6dae8c70 32,34
+.github/workflows/searchfn-client-tests.yml
+  s_7d0a48f0aaecda::t_f604b930dbaab2 31,34
+.github/workflows/searchfn-client-tusk-vitest.yml
+  s_7d0a48f0aaecda::t_71869e4ee42026 23,29
+.github/workflows/superfunctions-docs-cloudflare-deploy.yml
+  s_7d0a48f0aaecda::t_c7bcde3d8e5297 13-15,20-22,28-30,34,38,53-55,70,75,99,111,124-146,150-151
+.github/workflows/superfunctions-docs-cloudflare-routes.yml
+  s_7d0a48f0aaecda::t_c897734bb31d31 17-19,34,40,46-72,75-77,82-83
+.github/workflows/uifn-catalogs-cloudflare-preview.yml
+  s_7d0a48f0aaecda::t_c8995383189a34 1-91
+.github/workflows/uifn-phase-14-compat.yml
+  s_7d0a48f0aaecda::t_14735641fee753 16,24,70,88,153,177
+.gitignore
+  s_7d0a48f0aaecda::t_fb3ce3ff0befd5 56-58
+Package.swift
+  s_7d0a48f0aaecda::t_783cfffb3ef09f 137,145,155,165,175
+README.md
+  s_7d0a48f0aaecda::t_b97d59552d942d 52-226
+apifn/README.md
+  s_7d0a48f0aaecda::t_6f05326382b67d 20-32
+apifn/admin/package.json
+  s_7d0a48f0aaecda::t_95e691fc4db8ab 36-39,43
+apifn/admin/src/__tests__/admin.test.ts
+  s_7d0a48f0aaecda::t_0b032835b48cf8 1,37
+apifn/cli/package.json
+  s_7d0a48f0aaecda::t_2623f59fc9dddd 27
+apifn/collections/package.json
+  s_7d0a48f0aaecda::t_96f2ec59e3aa12 23
+apifn/core/package.json
+  s_7d0a48f0aaecda::t_12a01583338d25 3
+apifn/docsfn/README.md
+  s_7d0a48f0aaecda::t_b9ba170838e6e7 12-15,65-67
+apifn/docsfn/__tests__/provider.test.ts
+  s_7d0a48f0aaecda::t_0a7d6db84da03a 6-7,240-264
+apifn/docsfn/package.json
+  s_7d0a48f0aaecda::t_80b8b06a7134af 3,32-34,58
+apifn/docsfn/src/react/ApifnApiReference.tsx
+  s_7d0a48f0aaecda::t_43d83e8fdd2472 62-63,110,114-115
+apifn/mock/package.json
+  s_7d0a48f0aaecda::t_c3f26635c7c055 23
+apifn/python/pyproject.toml
+  s_7d0a48f0aaecda::t_6b1e845b5be291 9
+apifn/react/README.md
+  s_7d0a48f0aaecda::t_c9594df75df335 128-147
+apifn/react/package.json
+  s_7d0a48f0aaecda::t_b0749efcf070d3 3,19,22,29-34
+apifn/react/tests/api-explorer.test.tsx
+  s_7d0a48f0aaecda::t_5a389165f36447 1-101
+apifn/react/tests/try-it.test.tsx
+  s_7d0a48f0aaecda::t_dcd3a9156abd30 1-82
+apifn/react/vitest.config.ts
+  s_7d0a48f0aaecda::t_2ad37c0f81564d 1-7,9-13,16-22
+apifn/snippets/package.json
+  s_7d0a48f0aaecda::t_61bc0719df1711 23
+apifn/svelte/README.md
+  s_7d0a48f0aaecda::t_992c61e0f83413 53-54,108-129
+apifn/svelte/package.json
+  s_7d0a48f0aaecda::t_b5961f47374707 3,47,50,56-60
+apifn/svelte/src/ApiExplorer.svelte
+  s_7d0a48f0aaecda::t_0776011d747f3e 60,220
+apifn/svelte/src/EndpointViewer.svelte
+  s_7d0a48f0aaecda::t_0366b31c4c983e 41-44,83
+apifn/svelte/src/SchemaViewer.svelte
+  s_7d0a48f0aaecda::t_933ec265b141f2 72,79
+apifn/svelte/src/TryIt.svelte
+  s_7d0a48f0aaecda::t_20608c6f137f0c 87,91,100,104,112,114,121,123,125-126,134-137
+apifn/svelte/tests/api-explorer.test.ts
+  s_7d0a48f0aaecda::t_b1d369282ec125 1-135
+apifn/svelte/tests/try-it.test.ts
+  s_7d0a48f0aaecda::t_6b66f407ad0760 1-93
+apifn/svelte/vitest.config.ts
+  s_7d0a48f0aaecda::t_e849bd4a48d87b 1-3,5-6,8-12
+authfn/core/README.md
+  s_7d0a48f0aaecda::t_f505fa2f80c14c 12-31
+authfn/core/package.json
+  s_7d0a48f0aaecda::t_cf9ed392570d46 3
+authfn/core/src/__tests__/api-key-docs.test.ts
+  s_7d0a48f0aaecda::t_a03e31e07493de 1-245
+authfn/core/src/__tests__/api-keys.test.ts
+  s_7d0a48f0aaecda::t_3a7cfef5c4257e 9-14,38-175
+authfn/core/src/__tests__/placement-context.test.ts
+  s_7d0a48f0aaecda::t_7d7ebc3743e005 19,499-503
+authfn/core/src/core/api-keys.ts
+  s_7d0a48f0aaecda::t_28c05781e2ce9d 13-14,47-65
+authfn/docs/content/docs/adapters/database/drizzle.md
+  s_7d0a48f0aaecda::t_8533fc99b7f583 101
+authfn/docs/content/docs/admin/index.md
+  s_7d0a48f0aaecda::t_a0908dc61c0fb0 10-11,121,130
+authfn/docs/content/docs/admin/meta.json
+  s_7d0a48f0aaecda::t_32af9d47ffbda4 3
+authfn/docs/content/docs/admin/super-console.md
+  s_7d0a48f0aaecda::t_1061c8c7a93fa8 1-27
+authfn/docs/content/docs/ai-resources/claude.md
+  s_7d0a48f0aaecda::t_3a00f5dfd91dc1 3,8,10,12-13,15-16,18,22,30,33,38
+authfn/docs/content/docs/ai-resources/codex.md
+  s_7d0a48f0aaecda::t_fe720aaf3bd56a 31
+authfn/docs/content/docs/ai-resources/cursor.md
+  s_7d0a48f0aaecda::t_ce73156583fb98 3,8,10,18
+authfn/docs/content/docs/ai-resources/index.md
+  s_7d0a48f0aaecda::t_71b4d4dc1ea500 3,8,14-17,19,23,29
+authfn/docs/content/docs/ai-resources/llms-txt.md
+  s_7d0a48f0aaecda::t_dbc9a1db9865d2 8,10-11,13,15,17,19-20,23,25-31,35,37,41,43,48,50,52
+authfn/docs/content/docs/ai-resources/meta.json
+  s_7d0a48f0aaecda::t_1ce7c94fe1c849 3
+authfn/docs/content/docs/frameworks/bun.md
+  s_7d0a48f0aaecda::t_6186466688ce9e 23
+authfn/docs/content/docs/frameworks/byo.md
+  s_7d0a48f0aaecda::t_9c3165cbd7dc9a 38,56,69,87,97
+authfn/docs/content/docs/frameworks/nextjs.md
+  s_7d0a48f0aaecda::t_617f18bd35427d 16,19,39,54,63-64
+authfn/docs/content/docs/frameworks/sveltekit.md
+  s_7d0a48f0aaecda::t_c25a557ac527dd 16,19-22,66
+authfn/docs/content/docs/index.md
+  s_7d0a48f0aaecda::t_16933c75ad5229 36,40,72
+authfn/docs/content/docs/plugins/api-keys.md
+  s_7d0a48f0aaecda::t_74fc7cc0a22c24 3,8,10,13-14,50-52,60-62,84,87-103,105-111,115-154,161,169,174-175,179-180
+authfn/docs/content/docs/plugins/authoring.md
+  s_7d0a48f0aaecda::t_b884d35b33b35c 323
+authfn/docs/content/docs/plugins/index.md
+  s_7d0a48f0aaecda::t_248db6b65f9a8e 15
+authfn/docs/content/docs/quickstart/bun.md
+  s_7d0a48f0aaecda::t_a5860a65a5f0dd 8,67
+authfn/docs/content/docs/quickstart/nextjs.md
+  s_7d0a48f0aaecda::t_3ea9e142663cce 67,69,93,111
+authfn/docs/content/docs/quickstart/sveltekit.md
+  s_7d0a48f0aaecda::t_45b96330855b28 68,70-73
+authfn/docs/content/docs/recipes/cli-auth.md
+  s_7d0a48f0aaecda::t_0b5fdecd1eda35 40,43-49,51-60,64-66,68-69,73,75,77
+authfn/docs/docsfn.config.ts
+  s_7d0a48f0aaecda::t_04109f901c1c63 3-6,13,33
+authfn/docs/package.json
+  s_7d0a48f0aaecda::t_14531ab3d6ba5b 10-11,22-23,35-36,40-41,48-49
+authfn/docs/scripts/generate-llms.mjs
+  s_7d0a48f0aaecda::t_65596c43362011 6,9,11
+authfn/docs/src/lib/components/DocsSiteSearch.svelte
+  s_7d0a48f0aaecda::t_cdf54ea753ea54 5
+authfn/docs/src/lib/server/docs-site-source.ts
+  s_7d0a48f0aaecda::t_0e82e14c29923c 7,22
+authfn/docs/src/routes/+error.svelte
+  s_7d0a48f0aaecda::t_437364894df5a6 1-12
+authfn/docs/src/routes/+layout.server.ts
+  s_7d0a48f0aaecda::t_63561bf8d96392 4-5,7,9
+authfn/docs/src/routes/+page.svelte
+  s_7d0a48f0aaecda::t_f4ac163e1c2e03 11-13,37,41-243
+authfn/docs/src/routes/blog/+page.server.ts
+  s_7d0a48f0aaecda::t_fce6ffe0a13e56 1-5
+authfn/docs/src/routes/blog/+page.svelte
+  s_7d0a48f0aaecda::t_43900078f3640f 27
+authfn/docs/src/routes/blog/[slug]/+page.server.ts
+  s_7d0a48f0aaecda::t_70113d8ecc2218 2-3,6-8
+authfn/docs/src/routes/blog/rss.xml/+server.ts
+  s_7d0a48f0aaecda::t_2419724bdc2eea 2,5
+authfn/docs/src/routes/docs/[...slug]/+page.server.ts
+  s_7d0a48f0aaecda::t_1cfdd6cab69bf6 2,6-8
+authfn/docs/src/routes/docs/blog/+page.server.ts
+  s_7d0a48f0aaecda::t_43c44b6d913e07 1-5
+authfn/docs/src/routes/docs/blog/+page.svelte
+  s_7d0a48f0aaecda::t_f6d6610309c371 1-7
+authfn/docs/src/routes/docs/blog/[...slug]/+page.server.ts
+  s_7d0a48f0aaecda::t_54acd8097c5bcc 1-8
+authfn/docs/src/routes/docs/blog/[...slug]/+page.svelte
+  s_7d0a48f0aaecda::t_944fd9683f29a3 1-7
+authfn/docs/src/routes/docs/blog/rss.xml/+server.ts
+  s_7d0a48f0aaecda::t_c72c4ab7fbb9e7 1-5
+authfn/docs/src/routes/docs/llms-full.txt/+server.ts
+  s_7d0a48f0aaecda::t_3ed0aae244832e 4
+authfn/docs/src/routes/docs/llms.txt/+server.ts
+  s_7d0a48f0aaecda::t_92cfaacc6d2a19 4
+authfn/docs/src/routes/docs/search.json/+server.ts
+  s_7d0a48f0aaecda::t_e9053a15b0d249 1-2
+authfn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_469639ed959862 229,1024-1025,1135,1144,1174-1175,1177,1180,1182,1184,1186,1188-1193,1195,1197,1199,1201,1203,1205-1206,1208,1211,1213,1215,1223-1239,1243,1278,1285,1290,1292,1300,1330,1335,1341-1344,1346,1350,1356,1368,1370-1371,1373,1375,1377,1379-1380,1383,1385-1388,1391,1393,1395,1398,1401,1404-1405,1408,1410,1412,4257,4336,4354,4367,4385,4395,4699,4702,4722,4737,4746-4747,4817,4820-4823,4867,5072,5076,5108,5115,5120,5122,5125-5126,5162-5164,5172-5174,5196,5199-5221,5223,5227-5266,5273,5281,5286-5287,5291-5292,5635,5875,6775,7193,7252,7373,7375,7399,7417,7765,7767-7770,8462,8465-8471,8473-8482,8486-8488,8490-8491,8495,8497,8499
+authfn/docs/static/llms.txt
+  s_7d0a48f0aaecda::t_9ff25628dd143d 22-23,25-26,63
+authfn/docs/tsconfig.json
+  s_7d0a48f0aaecda::t_1905261753681b 2,4-11,25-27
+authfn/docs/turbo.json
+  s_7d0a48f0aaecda::t_22852744a27925 1-31
+authfn/docs/vite.config.ts
+  s_7d0a48f0aaecda::t_8ec4a34ff06ef7 17
+authfn/python/pyproject.toml
+  s_7d0a48f0aaecda::t_a8a1f2a0244a10 30,43-44
+billfn/README.md
+  s_7d0a48f0aaecda::t_6ac7c6e8a880d6 11,26-32,45,54
+billfn/admin/package.json
+  s_7d0a48f0aaecda::t_cf8bada371caef 36-39,42-43
+billfn/client/package.json
+  s_7d0a48f0aaecda::t_4e3652505929cb 3
+billfn/client/src/__tests__/client.test.ts
+  s_7d0a48f0aaecda::t_ba3beb36a2b586 1-3,5,7-20,22-40,42,44-54,56,58-68
+billfn/client/src/http-client.ts
+  s_7d0a48f0aaecda::t_a9356680a270fc 25,37
+billfn/core/package.json
+  s_7d0a48f0aaecda::t_1b4fe08af152b5 30
+billfn/core/src/__tests__/billfn.test.ts
+  s_7d0a48f0aaecda::t_2c00c2c946e71c 3-4
+billfn/docs/content/docs/getting-started.mdx
+  s_7d0a48f0aaecda::t_af408afc54b370 24-31
+billfn/docs/content/docs/index.mdx
+  s_7d0a48f0aaecda::t_a182abd942e0b2 15,97
+billfn/docs/content/docs/server/administration.mdx
+  s_7d0a48f0aaecda::t_08aa230b4edda7 1-37
+billfn/docs/content/docs/server/meta.json
+  s_7d0a48f0aaecda::t_6dd121b6c154d5 3
+billfn/python/pyproject.toml
+  s_7d0a48f0aaecda::t_9a6b73d195b7c4 29
+billfn/svelte/package.json
+  s_7d0a48f0aaecda::t_590a4da472ad93 19,27,32
+billfn/svelte/src/__tests__/stores.test.ts
+  s_7d0a48f0aaecda::t_d6db3aec142b94 1-59
+billfn/swift-bridge/README.md
+  s_7d0a48f0aaecda::t_d59fa3765b53cb 11,14-17,19-22
+billfn/swift-bridge/package.json
+  s_7d0a48f0aaecda::t_adb569ae9f289a 6-7,10-11,14-15,17-20
+billfn/swift-bridge/tsconfig.json
+  s_7d0a48f0aaecda::t_d186c6094c5947 7-14,16-17
+botfn/.gitignore
+  s_7d0a48f0aaecda::t_50094299967075 43
+botfn/AGENTS.md
+  s_7d0a48f0aaecda::t_25e455e1be6a6e 1,3,5,7-10,12,15-24,27,29,31-36,38,40,42,44,46-49
+botfn/README.md
+  s_7d0a48f0aaecda::t_f761882d3cca7b 1,3,5,7,9-19,21,23,25,28-29,31-32,34-35,37-38,41,43,45-48,50,52-56,58-60,62-65,67-71,73-75
+botfn/admin/package.json
+  s_7d0a48f0aaecda::t_acb11576c5d772 2,35-36,39
+botfn/admin/src/__tests__/admin.test.ts
+  s_7d0a48f0aaecda::t_a6c77f27cfaaac 30
+botfn/bot-discord/README.md
+  s_7d0a48f0aaecda::t_e1f67f5be3be84 5-15
+botfn/bot-discord/package.json
+  s_7d0a48f0aaecda::t_7234655654758e 2,5-17,24,26,31-35,43
+botfn/bot-discord/src/core.ts
+  s_7d0a48f0aaecda::t_2c022b67622c14 8-9,17,26-27
+botfn/bot-discord/src/index.cloudflare.ts
+  s_7d0a48f0aaecda::t_74c5c8e192af81 1
+botfn/bot-discord/tests/interactions.test.ts
+  s_7d0a48f0aaecda::t_a9747760bd27b7 1-62
+botfn/bot-discord/tsconfig.json
+  s_7d0a48f0aaecda::t_4451b8a9324cf5 15-17
+botfn/bot-slack/package.json
+  s_7d0a48f0aaecda::t_23168abc29d289 2,15
+botfn/bot-slack/src/index.ts
+  s_7d0a48f0aaecda::t_5f6f958b868287 2
+botfn/discord-core/package.json
+  s_7d0a48f0aaecda::t_92da6dd9581844 2,5-7,9-12,26
+botfn/discord-core/src/index.ts
+  s_7d0a48f0aaecda::t_0d38223e111149 1-3
+botfn/discord-core/src/verify.ts
+  s_7d0a48f0aaecda::t_eaf5e65696bec1 102
+botfn/discord-core/tsconfig.json
+  s_7d0a48f0aaecda::t_1b972292ddabc6 5,13-14
+botfn/github-integration/package.json
+  s_7d0a48f0aaecda::t_f0636aeec0232f 2,5-7,9-12,23-24
+botfn/github-integration/src/api.ts
+  s_7d0a48f0aaecda::t_c4cf5466427b35 1
+botfn/github-integration/src/index.ts
+  s_7d0a48f0aaecda::t_1e33946d49ddd8 1-2
+botfn/github-integration/tsconfig.json
+  s_7d0a48f0aaecda::t_99d1a23e2e1588 5,13-14
+botfn/linear-integration/package.json
+  s_7d0a48f0aaecda::t_cf044bc4d0b752 2,5-7,9-12,23-24
+botfn/linear-integration/src/index.ts
+  s_7d0a48f0aaecda::t_629cba6f2d65e8 1
+botfn/linear-integration/tsconfig.json
+  s_7d0a48f0aaecda::t_b4c57c7d6f0047 3-12
+botfn/persistence/README.md
+  s_7d0a48f0aaecda::t_8c49fa2a93451f 41,46-72,76
+botfn/persistence/SETUP.md
+  s_7d0a48f0aaecda::t_1df836c3299d9b 95,157,176
+botfn/persistence/package.json
+  s_7d0a48f0aaecda::t_73ae87916df94f 2,5-21,27-28,41-42
+botfn/persistence/src/client.ts
+  s_7d0a48f0aaecda::t_f757c3dd45e119 1-2,14
+botfn/persistence/src/core.ts
+  s_7d0a48f0aaecda::t_f2b22173efe4bc 6-7,9-10,89-90,106-109,117-119,399,411
+botfn/persistence/src/index.cloudflare.ts
+  s_7d0a48f0aaecda::t_0fac873dcc5099 1
+botfn/persistence/tests/persistence.test.ts
+  s_7d0a48f0aaecda::t_9f68aa92d3848a 1-103
+botfn/persistence/tsconfig.json
+  s_7d0a48f0aaecda::t_4264bcdae07d34 14-16
+botfn/persistence/vitest.config.ts
+  s_7d0a48f0aaecda::t_d379327029170d 2,4-8
+botfn/persistence/wrangler.toml
+  s_7d0a48f0aaecda::t_74099e69594616 3-5
+botfn/shared-types/package.json
+  s_7d0a48f0aaecda::t_13aad0438658ee 2,5-7,9-12
+botfn/shared-types/src/index.ts
+  s_7d0a48f0aaecda::t_58b906a779475d 1-3
+botfn/shared-types/tsconfig.json
+  s_7d0a48f0aaecda::t_0ff04fb940287c 13-14
+botfn/slack-core/package.json
+  s_7d0a48f0aaecda::t_0e45647f54b9f2 2,9-16,19,24
+botfn/slack-core/src/verify.ts
+  s_7d0a48f0aaecda::t_7f8daf90bbc229 25,29-30,32
+botfn/slack-core/tests/verify.test.ts
+  s_7d0a48f0aaecda::t_3e1406c7034ba6 1-52
+botfn/slack-core/tsconfig.json
+  s_7d0a48f0aaecda::t_05139eca225d46 1-16
+botfn/slack-core/vitest.config.ts
+  s_7d0a48f0aaecda::t_7458050e572858 2,4-6
+datafn/docs/app/layout.tsx
+  s_7d0a48f0aaecda::t_d411ab124bed33 7-14
+datafn/docs/content/docs/ai-resources/claude.mdx
+  s_7d0a48f0aaecda::t_9cb73096de3fd8 40
+datafn/docs/content/docs/ai-resources/codex.mdx
+  s_7d0a48f0aaecda::t_e566f1a9e82299 47
+datafn/docs/content/docs/ai-resources/cursor.mdx
+  s_7d0a48f0aaecda::t_c84c20dde46496 40,50,53
+datafn/docs/content/docs/ai-resources/index.mdx
+  s_7d0a48f0aaecda::t_5cd65b0a9913e7 16,35-37,40
+datafn/docs/content/docs/ai-resources/llms-txt.mdx
+  s_7d0a48f0aaecda::t_f61ea1d35d6e38 15,21,31,44,73,79
+datafn/docs/content/docs/ai-resources/mcp.mdx
+  s_7d0a48f0aaecda::t_1f8c98774539b2 33
+datafn/docs/content/docs/ai-resources/skills.mdx
+  s_7d0a48f0aaecda::t_e536c65822d7b5 54,108
+datafn/docs/content/docs/documentation/index.mdx
+  s_7d0a48f0aaecda::t_16b1e0400e26af 190
+datafn/docs/content/docs/documentation/server/administration.mdx
+  s_7d0a48f0aaecda::t_fd46b3b0efc119 1-28
+datafn/docs/content/docs/documentation/server/meta.json
+  s_7d0a48f0aaecda::t_d982275b2c593b 3
+datafn/docs/content/docs/reference/changelog.mdx
+  s_7d0a48f0aaecda::t_d92081fb401f6b 16
+datafn/docs/content/docs/reference/events.mdx
+  s_7d0a48f0aaecda::t_03159363a5719a 2-3,8,10,15-25,29,31-39,41,43,45,47,49,51,54,56-64,66,68,71-73
+datafn/docs/public/llms-full.txt
+  s_7d0a48f0aaecda::t_1e6da6ed9bc970 16,52,114,157,199,235,245,248,313,324,330,340,353,382,388,398,427,505,555,609,622,633,652-654,657,664,745,883,981,1167,1174,1215,1527,1629,1675,1724,1744,1779,2013,2161,2297,2386,2569,2704,2894,3023,3085,3293,3623,3894,4019,4148,4426,4537,5195,5382,5517,5815,6004,6116,6337,6511,6711,6854,7051,7225,7341,7501,7634,7761,7885,7963,8115,8273,8452,8634,8787,9014,9166,9369,9508,9711,9887,10151,10450,10601,10738,11024,11183,11330,11528,11690,11866,11922,12163,12318,12454,12591-12780,12784,12841,12851-12852,12942-12943,12967-12968,12989-13121,13125,13235-13236,13476,13595,13841,13999,14135,14146-14147,14159,14166-14167,14197,14286,14416,14533,14627,14635-14637,14713,14722,14867,14879,14883-14884,14899,14924,14927-14930,14933-14941,14943-14946,14950-14952,15021,15033,15039-15175,15179,15297-15329,15333,15553,15688,15857,15999,16479,16741,16890,17023,17197,17421,17572,17647,17769,17894,18033,18190,18276,18380,18500,18614,18758,18925,19067,19226,19370,19492,19753,19837,19942,20054,20151,20256,20372,20479,20585,20722,20883,20991,21132,21266,21413,21580,21735,21895,22038,22189,22340,22485,22618,22736,22841,22998,23169,23350,23508,23619,23629-23632,23706,24030,24130,24188,24242,24392,24520,24703,24800,24937,25030,25201,25279,25299,25309-25314,25329,25340-25344,25416,25523,25625,25685-25715,25719,25777-25839,25843,26011,26208,26354,26587,26695,26727,26729,26738,26760-26764,26822,26824-26825,26828,26830,26835-26845,26849,26851-26859,26861,26863,26865,26867,26869,26871,26874,26876-26884,26886,26888,26891-26893,26900,27129,27309,27427,27549-27626,27630,27699
+datafn/docs/public/llms.txt
+  s_7d0a48f0aaecda::t_43fc549c39e048 9-14,18-28,32-40,44-58,62-145,149-151,155-163,167-182,186-219
+datafn/docs/scripts/generate-llms.mjs
+  s_7d0a48f0aaecda::t_5388a78b2c812f 12
+datafn/python/pyproject.toml
+  s_7d0a48f0aaecda::t_c7ea8dba5a809d 9
+devfn/SPEC.md
+  s_7d0a48f0aaecda::t_caa7f70091a549 15,23-24
+devfn/cli/README.md
+  s_7d0a48f0aaecda::t_41291f65492d6f 13-14,17-18,20-21
+devfn/cli/SECURITY.md
+  s_7d0a48f0aaecda::t_d62b932ed0dc95 8-9,11-21
+devfn/cli/src/index.ts
+  s_7d0a48f0aaecda::t_3e30c16e785f4a 16,32-34,51,53,65-67,73,99-101,153-159,181-199,201,207
+devfn/cli/test/cli.test.ts
+  s_7d0a48f0aaecda::t_cae7b1720291f8 7-8,13,25-27,29-55,166-207,251,516-552
+devfn/compose/README.md
+  s_7d0a48f0aaecda::t_8dda08c1440df3 3-5
+devfn/compose/package.json
+  s_7d0a48f0aaecda::t_e62cbf67ffe102 11-12
+devfn/compose/src/index.ts
+  s_7d0a48f0aaecda::t_525fdb135fd1da 2-4,8-11,15-29,63-69,73-85,92-111,116-117,120-1317,1333,1344-1346,1350-1392,1405-1410,1424,1451-1519,1531-1533,1535-1539,1547-1548,1624-1678
+devfn/compose/src/path-interpolation.ts
+  s_7d0a48f0aaecda::t_7154fe974304f6 1-505
+devfn/compose/src/source-files.ts
+  s_7d0a48f0aaecda::t_0e7ce53bf76bc1 1-441
+devfn/compose/test/fingerprint-contract.test.ts
+  s_7d0a48f0aaecda::t_243a79d8ee29e9 1-1071
+devfn/compose/test/override.test.ts
+  s_7d0a48f0aaecda::t_ae93143b202524 1-2,5-7,9-64,67-440,442-444,469-504,527,556,576,580-586,609-810,815,820-824,839,852,870,892,914-1145
+devfn/compose/test/path-contract.test.ts
+  s_7d0a48f0aaecda::t_b27ca141d95d54 1-307
+devfn/compose/test/preview-budget.fixture.mts
+  s_7d0a48f0aaecda::t_484ef886e9d4a8 1-38
+devfn/config/src/credentials.ts
+  s_7d0a48f0aaecda::t_5e123d3dfffe53 1-69
+devfn/config/src/index.ts
+  s_7d0a48f0aaecda::t_ed821a3ba02ef0 2,6
+devfn/config/src/process-identity.ts
+  s_7d0a48f0aaecda::t_cf79280462ac22 2-3,8-26,30,34-35,39-40,46-56,58-210,213-215
+devfn/config/src/schema.ts
+  s_7d0a48f0aaecda::t_17ff49087b4369 17,51,53-65,151-168,171-175,200,225,233,247-264,272-277,370-371,373-375,377,381-387,445-447
+devfn/config/src/trust.ts
+  s_7d0a48f0aaecda::t_9fb806409008c9 6,42-43
+devfn/config/src/types.ts
+  s_7d0a48f0aaecda::t_9af2a8bbda5302 64-69,72,74-84
+devfn/config/test/config.test.ts
+  s_7d0a48f0aaecda::t_f6ec8c00363d94 1,5,8,11-155,194-200,216-245,424
+devfn/config/test/domain-routes.test.ts
+  s_7d0a48f0aaecda::t_67555821baac85 1-2,4-5,8-47
+devfn/config/test/process-identity.test.ts
+  s_7d0a48f0aaecda::t_714cb5d5900a68 1-90
+devfn/core/README.md
+  s_7d0a48f0aaecda::t_eb60ca40fca37a 3-25
+devfn/core/src/endpoints.ts
+  s_7d0a48f0aaecda::t_3279ffdefd3f84 1-1087
+devfn/core/src/identity.ts
+  s_7d0a48f0aaecda::t_eaf3377997bd31 7,15-27,29-51,58-59,64-74
+devfn/core/src/index.ts
+  s_7d0a48f0aaecda::t_39a294051ece81 1-3,5
+devfn/core/src/orchestrator.ts
+  s_7d0a48f0aaecda::t_3fe9bd19fc00ef 2,7-11,13-14,17,46-151,165,167,169-181,186-258,277,287-322,330,335,342,350-451,456-462,465-476,479-487,490,493-497,507-531,534-591,595-597,602,604-607,610-633,635-656,659-673,675-688,690-776,780,794,797,800-806,817-827,834-844,911,960-966
+devfn/core/src/runtime.ts
+  s_7d0a48f0aaecda::t_226bc4305c9995 61-68
+devfn/core/src/types.ts
+  s_7d0a48f0aaecda::t_4b12852e289d98 19-27,57-60,65
+devfn/core/test/domain-routing.test.ts
+  s_7d0a48f0aaecda::t_019b33d4096cb2 1-731
+devfn/core/test/endpoints.test.ts
+  s_7d0a48f0aaecda::t_097edb95c83a6e 1-1754
+devfn/core/test/identity.test.ts
+  s_7d0a48f0aaecda::t_bda50501c20d1a 2-3,8,10,15-89
+devfn/core/test/orchestrator.test.ts
+  s_7d0a48f0aaecda::t_e73cba31db3fa5 6,31-49
+devfn/core/test/proxy-readiness.test.ts
+  s_7d0a48f0aaecda::t_5e7343116de776 1-338
+devfn/core/test/registered-domain-startup.test.ts
+  s_7d0a48f0aaecda::t_d07aa5f714032b 1-257
+devfn/core/test/replacement-contract.test.ts
+  s_7d0a48f0aaecda::t_90c66e172f1886 1-185
+devfn/core/test/startup-fixture.test.ts
+  s_7d0a48f0aaecda::t_c2cd8802419c87 1-1098
+devfn/core/test/teardown-evidence.test.ts
+  s_7d0a48f0aaecda::t_ad549ac8fc1ecc 1-476
+devfn/core/vitest.config.ts
+  s_7d0a48f0aaecda::t_5160256cf0818b 3-5
+devfn/docs/.gitignore
+  s_7d0a48f0aaecda::t_3e878691d1f69b 1-10
+devfn/docs/README.md
+  s_7d0a48f0aaecda::t_d9378d188fe785 1-19
+devfn/docs/configuration.md
+  s_7d0a48f0aaecda::t_4ea1e00cbc83ba 42,46,59-76,81-89
+devfn/docs/content/docs/configuration.md
+  s_7d0a48f0aaecda::t_6517ac9ab2731c 1-14
+devfn/docs/content/docs/getting-started.md
+  s_7d0a48f0aaecda::t_6d6126a2447475 1-21
+devfn/docs/content/docs/index.md
+  s_7d0a48f0aaecda::t_d1bcb92974627c 1-10
+devfn/docs/content/docs/lifecycle.md
+  s_7d0a48f0aaecda::t_8bee6247acefc2 1-10
+devfn/docs/content/docs/meta.json
+  s_7d0a48f0aaecda::t_ad8ae8bb837cd7 1-4
+devfn/docs/content/docs/migration.md
+  s_7d0a48f0aaecda::t_6f025368724219 1-10
+devfn/docs/content/docs/packages.md
+  s_7d0a48f0aaecda::t_0209b160891463 1-17
+devfn/docs/content/docs/ports-and-proxy.md
+  s_7d0a48f0aaecda::t_1add0c535d10d6 1-12
+devfn/docs/content/docs/processes-and-compose.md
+  s_7d0a48f0aaecda::t_05cd947892df77 1-10
+devfn/docs/content/docs/reference/cli.md
+  s_7d0a48f0aaecda::t_25305d81fa41ca 1-30
+devfn/docs/content/docs/reference/compose.md
+  s_7d0a48f0aaecda::t_cb9c4f476458bd 1-8
+devfn/docs/content/docs/reference/config.md
+  s_7d0a48f0aaecda::t_2f470b9d26e66b 1-6
+devfn/docs/content/docs/reference/configuration.md
+  s_7d0a48f0aaecda::t_930a8d35dae485 1-96
+devfn/docs/content/docs/reference/core.md
+  s_7d0a48f0aaecda::t_ad2e3fa1936c69 1-28
+devfn/docs/content/docs/reference/index.md
+  s_7d0a48f0aaecda::t_7cc60b96e9025b 1-14
+devfn/docs/content/docs/reference/meta.json
+  s_7d0a48f0aaecda::t_907f1ebbbe4f77 1-4
+devfn/docs/content/docs/reference/migration.md
+  s_7d0a48f0aaecda::t_2cbea540799e0d 1-15
+devfn/docs/content/docs/reference/ports.md
+  s_7d0a48f0aaecda::t_3c67b69f4ffd97 1-17
+devfn/docs/content/docs/reference/processes.md
+  s_7d0a48f0aaecda::t_b94c2fcdfa2b2d 2-3,6,8,10-13,15,17-20,22,24-29
+devfn/docs/content/docs/reference/proxy.md
+  s_7d0a48f0aaecda::t_293b145db33a02 1-13
+devfn/docs/content/docs/reference/security.md
+  s_7d0a48f0aaecda::t_b03f7754070372 1-25
+devfn/docs/content/docs/reference/testing.md
+  s_7d0a48f0aaecda::t_68937f98a8bf72 1-6
+devfn/docs/content/docs/security.md
+  s_7d0a48f0aaecda::t_dd891d60a461dc 1-10
+devfn/docs/docsfn.config.ts
+  s_7d0a48f0aaecda::t_2fa59d96e67441 1-41
+devfn/docs/package.json
+  s_7d0a48f0aaecda::t_6df44067c90874 1-38
+devfn/docs/scripts/generate-llms.mjs
+  s_7d0a48f0aaecda::t_4e060c2e639451 1-22
+devfn/docs/src/app.css
+  s_7d0a48f0aaecda::t_f70c4314d48522 1-81
+devfn/docs/src/app.html
+  s_7d0a48f0aaecda::t_2a07473342e995 1-11
+devfn/docs/src/lib/components/DocsSiteSearch.svelte
+  s_7d0a48f0aaecda::t_c336dd5e0d5d12 1-5
+devfn/docs/src/lib/server/docs-site-source.ts
+  s_7d0a48f0aaecda::t_60c8c49474fdee 1-14
+devfn/docs/src/routes/+error.svelte
+  s_7d0a48f0aaecda::t_d22756cd966304 1-12
+devfn/docs/src/routes/+layout.server.ts
+  s_7d0a48f0aaecda::t_56cf2c18e95bf8 1-13
+devfn/docs/src/routes/+layout.svelte
+  s_7d0a48f0aaecda::t_e6356bc6c43f02 1-86
+devfn/docs/src/routes/+page.svelte
+  s_7d0a48f0aaecda::t_a7e69a3a15f845 1-28
+devfn/docs/src/routes/docs/[...slug]/+page.server.ts
+  s_7d0a48f0aaecda::t_8b8f2719236fe7 1-25
+devfn/docs/src/routes/docs/[...slug]/+page.svelte
+  s_7d0a48f0aaecda::t_e63f9225d4071b 1-41
+devfn/docs/src/routes/docs/llms-full.txt/+server.ts
+  s_7d0a48f0aaecda::t_98d1daeb4cb993 1-7
+devfn/docs/src/routes/docs/llms.txt/+server.ts
+  s_7d0a48f0aaecda::t_36217d8c507823 1-7
+devfn/docs/src/routes/docs/search.json/+server.ts
+  s_7d0a48f0aaecda::t_22738e0e8d58a4 1-3,5-7
+devfn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_dad725b65e9b0a 1-493
+devfn/docs/static/llms.txt
+  s_7d0a48f0aaecda::t_fb40008c206d4b 1-27
+devfn/docs/svelte.config.js
+  s_7d0a48f0aaecda::t_b05dc7a623e6b6 1-3,6-26
+devfn/docs/tsconfig.json
+  s_7d0a48f0aaecda::t_bd703dec74101e 1-59
+devfn/docs/turbo.json
+  s_7d0a48f0aaecda::t_e4d316436dfa20 2-11,13-17,19
+devfn/docs/vite.config.ts
+  s_7d0a48f0aaecda::t_cc54af3058a55d 1-4,7-10
+devfn/ports/README.md
+  s_7d0a48f0aaecda::t_add504bd448f0e 4-14
+devfn/ports/src/index.ts
+  s_7d0a48f0aaecda::t_1bfa0f9f682063 1-4,6
+devfn/ports/src/listeners.ts
+  s_7d0a48f0aaecda::t_496ae11915454d 9-20,23-26,29,32-54,128-141,144-147,149-159
+devfn/ports/src/lock.ts
+  s_7d0a48f0aaecda::t_1fc9ab9435b55c 1-4,6,11,13-59,64,66-73,76-91,94-211
+devfn/ports/src/proxy-owner.ts
+  s_7d0a48f0aaecda::t_f775b006908871 1-20
+devfn/ports/src/proxy-state.ts
+  s_7d0a48f0aaecda::t_4a87fac37fe722 1-109
+devfn/ports/src/registry.ts
+  s_7d0a48f0aaecda::t_d7a7c9f5786128 4,8,10-14,18-321,339-353,372-375,379,396,402,408-433,437-440,459-475,481,491,520,527,538,572-575,580-651,664-698,700,709-714,726,730-735,740,747-758,760-766,768-772,777-834,838-840,842,848-849,851-856,858-864
+devfn/ports/src/types.ts
+  s_7d0a48f0aaecda::t_62cfff2b3929ff 8-12,21-27,53,57-79,105-107
+devfn/ports/test/claim-evidence.test.ts
+  s_7d0a48f0aaecda::t_556a32a0657b1a 1-222
+devfn/ports/test/listeners.test.ts
+  s_7d0a48f0aaecda::t_63838e4fd6d992 1-3,6,31-67
+devfn/ports/test/lock-takeover.test.ts
+  s_7d0a48f0aaecda::t_657978388c762d 1-178
+devfn/ports/test/lock.test.ts
+  s_7d0a48f0aaecda::t_84d380d2d27952 1-444
+devfn/ports/test/registry.test.ts
+  s_7d0a48f0aaecda::t_80a538d06740e1 1-3,6-7,10,14-18,20-411,539-541,545-639,662-977
+devfn/processes/README.md
+  s_7d0a48f0aaecda::t_cfc11b408c8c9a 4-26
+devfn/processes/src/adapters.ts
+  s_7d0a48f0aaecda::t_ab0840bc6043f0 1,23-24
+devfn/processes/src/gated.ts
+  s_7d0a48f0aaecda::t_f055c2c2949865 1-22,25-35,38-43,46-80,82-100,102-115,117-123,125-144,146-148
+devfn/processes/src/group.ts
+  s_7d0a48f0aaecda::t_01e647484d54e0 1-77
+devfn/processes/src/identity.ts
+  s_7d0a48f0aaecda::t_91b617ecee0ac2 1
+devfn/processes/src/index.ts
+  s_7d0a48f0aaecda::t_c09c4fa2680b03 2-4
+devfn/processes/src/readiness.ts
+  s_7d0a48f0aaecda::t_4487766bfe0da3 63-95,102,164
+devfn/processes/src/supervisor.ts
+  s_7d0a48f0aaecda::t_99d0ff2ae5c0d3 1,10-11,17-19,21-27,64,71-72,90,105-110,115,120-125,127,130,133-141
+devfn/processes/src/types.ts
+  s_7d0a48f0aaecda::t_a423abe4b6f142 15-22,35
+devfn/processes/src/wrapper.ts
+  s_7d0a48f0aaecda::t_216c12a043b0df 16-33,37,41-43,45-46,49-50,53-54,57-74
+devfn/processes/test/adapters.test.ts
+  s_7d0a48f0aaecda::t_200766c6dce717 16-23
+devfn/processes/test/readiness.test.ts
+  s_7d0a48f0aaecda::t_80c9271719ab4b 4,6,9-48
+devfn/processes/test/supervisor.test.ts
+  s_7d0a48f0aaecda::t_f97412506536e8 1,6,9,13-22,49-90
+devfn/proxy/README.md
+  s_7d0a48f0aaecda::t_14eea2f6f16fb0 3-10
+devfn/proxy/src/domains.ts
+  s_7d0a48f0aaecda::t_a7064260581a80 1-197
+devfn/proxy/src/index.ts
+  s_7d0a48f0aaecda::t_a2c6f43f698563 2-5,7-8,11-14,18,20-58,61-69,72-76,83-93,95-116,118-153,157-233,239,243,245-247,250,254-305,309-319,325,335-549,553-627,629,632-665,667-674,677-678,690-698,700,710-726,728-729,732,735-737,740-753,755-763,765-838,840-844,846-847,850-856,859-863,865-866,869-871,873-882,885-891,894-895,897-900,905
+devfn/proxy/test/activation.test.ts
+  s_7d0a48f0aaecda::t_73d8a58a273d33 1-255
+devfn/proxy/test/domain-routing.test.ts
+  s_7d0a48f0aaecda::t_ea6655f2c9eea7 1-362
+devfn/proxy/test/proxy.test.ts
+  s_7d0a48f0aaecda::t_20d7c5d7f8a4bb 1-2,6,10-43,48-51,67-77,84-516,576-793,829-830,832-879
+devfn/proxy/test/real-caddy.test.ts
+  s_7d0a48f0aaecda::t_c4f5965c270753 1-176
+extfn/docs/.gitignore
+  s_7d0a48f0aaecda::t_35b796bd144e00 1-10
+extfn/docs/README.md
+  s_7d0a48f0aaecda::t_fed3a7f4db8ea5 1-24
+extfn/docs/cli.md
+  s_7d0a48f0aaecda::t_b8b068cebcf630 117
+extfn/docs/consumer-host-abstraction.md
+  s_7d0a48f0aaecda::t_c515a519a24f33 76-84,89-93,96,107-108
+extfn/docs/content/docs/cli.md
+  s_7d0a48f0aaecda::t_6d1affb842fcb1 1-15
+extfn/docs/content/docs/configuration.md
+  s_7d0a48f0aaecda::t_81eceb8804e506 1-31
+extfn/docs/content/docs/content-and-background.md
+  s_7d0a48f0aaecda::t_f83a3b466d2ec7 1-10
+extfn/docs/content/docs/getting-started.md
+  s_7d0a48f0aaecda::t_9b357df57cf3cb 1-29
+extfn/docs/content/docs/index.md
+  s_7d0a48f0aaecda::t_b541b603cf9f23 1-10
+extfn/docs/content/docs/integrations.md
+  s_7d0a48f0aaecda::t_6b77c9604201c4 1-10
+extfn/docs/content/docs/meta.json
+  s_7d0a48f0aaecda::t_3985d7ba33508e 1-4
+extfn/docs/content/docs/operations-and-limits.md
+  s_7d0a48f0aaecda::t_0d79717036559d 1-10
+extfn/docs/content/docs/reference/cli.md
+  s_7d0a48f0aaecda::t_925eab67efd39c 1-147
+extfn/docs/content/docs/reference/consumer-host-abstraction.md
+  s_7d0a48f0aaecda::t_4d64115d988857 1-158
+extfn/docs/content/docs/reference/index.md
+  s_7d0a48f0aaecda::t_59464169a77722 1-13
+extfn/docs/content/docs/reference/meta.json
+  s_7d0a48f0aaecda::t_fa565517e3d887 1-4
+extfn/docs/content/docs/reference/multi-content-and-background-handlers.md
+  s_7d0a48f0aaecda::t_722eed86ef5125 1-151
+extfn/docs/content/docs/reference/scan.md
+  s_7d0a48f0aaecda::t_ad921b029664d3 2-3,6,8,10,12-14,16,19-20,23,25,27,29-36,38,40-46,48,50-52,54-65,67,69,71,73,75-77,80,83,85-87,89,91-101,103-114
+extfn/docs/content/docs/runtime.md
+  s_7d0a48f0aaecda::t_a38ce81817319b 1-18
+extfn/docs/content/docs/scan-and-package.md
+  s_7d0a48f0aaecda::t_33ef0ed223ac53 1-10
+extfn/docs/docsfn.config.ts
+  s_7d0a48f0aaecda::t_f7e47eb4b2e92d 1-40
+extfn/docs/package.json
+  s_7d0a48f0aaecda::t_5b6af5584c9515 1-38
+extfn/docs/scan.md
+  s_7d0a48f0aaecda::t_4ea8e2bd97c43f 86,89
+extfn/docs/scripts/generate-llms.mjs
+  s_7d0a48f0aaecda::t_fbdd6259c16a0e 1-20
+extfn/docs/src/app.css
+  s_7d0a48f0aaecda::t_ef111c8c706dd5 1-85
+extfn/docs/src/app.html
+  s_7d0a48f0aaecda::t_7a74ef21397414 1-11
+extfn/docs/src/lib/components/DocsSiteSearch.svelte
+  s_7d0a48f0aaecda::t_ed6b7fb7b74a23 1-5
+extfn/docs/src/lib/server/docs-site-source.ts
+  s_7d0a48f0aaecda::t_22e40f09de012f 1-14
+extfn/docs/src/routes/+error.svelte
+  s_7d0a48f0aaecda::t_0fb5930dc9f039 1-12
+extfn/docs/src/routes/+layout.server.ts
+  s_7d0a48f0aaecda::t_6d7c82027ed4c8 1-13
+extfn/docs/src/routes/+layout.svelte
+  s_7d0a48f0aaecda::t_f84b38ee534d53 1-86
+extfn/docs/src/routes/+page.svelte
+  s_7d0a48f0aaecda::t_afde0376b3bd5f 1-28
+extfn/docs/src/routes/docs/[...slug]/+page.server.ts
+  s_7d0a48f0aaecda::t_f54a1f5d42427b 1-25
+extfn/docs/src/routes/docs/[...slug]/+page.svelte
+  s_7d0a48f0aaecda::t_11b879bbe685c9 1-41
+extfn/docs/src/routes/docs/llms-full.txt/+server.ts
+  s_7d0a48f0aaecda::t_de37c8f49eb90e 1-7
+extfn/docs/src/routes/docs/llms.txt/+server.ts
+  s_7d0a48f0aaecda::t_6c83ac8e513a23 1-7
+extfn/docs/src/routes/docs/search.json/+server.ts
+  s_7d0a48f0aaecda::t_b7013ab4875288 1-8
+extfn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_78aa8285c74efe 1-790
+extfn/docs/static/llms.txt
+  s_7d0a48f0aaecda::t_3afe9bd0c52b5f 1-20
+extfn/docs/svelte.config.js
+  s_7d0a48f0aaecda::t_dd8a64c8078bb0 1-26
+extfn/docs/tsconfig.json
+  s_7d0a48f0aaecda::t_6f86b8e5f14bf6 1-59
+extfn/docs/turbo.json
+  s_7d0a48f0aaecda::t_2bfb878a59d2ab 1-20
+extfn/docs/vite.config.ts
+  s_7d0a48f0aaecda::t_eae24ad70a5b13 1-5,7-11
+filefn/admin/package.json
+  s_7d0a48f0aaecda::t_438f3005193006 36,40-42
+filefn/admin/src/__tests__/domain.integration.test.ts
+  s_7d0a48f0aaecda::t_ed73873b3f3a18 1-77
+filefn/docs/content/docs/adapters/db-drizzle.md
+  s_7d0a48f0aaecda::t_7731b6c7421526 3,8-9,13-16,18-20,23,25,27,29,31
+filefn/docs/content/docs/adapters/db-memory.md
+  s_7d0a48f0aaecda::t_289259fae82523 2-3,6,9-10,13
+filefn/docs/content/docs/adapters/db-postgres.md
+  s_7d0a48f0aaecda::t_a25fa776be65a1 2-3,6,8-9,13-16,18-19,22,24,26
+filefn/docs/content/docs/adapters/db-sqlite.md
+  s_7d0a48f0aaecda::t_f1280e9b351486 2-3,6,8-11,15-17,19,21,24,26,28
+filefn/docs/content/docs/adapters/db.md
+  s_7d0a48f0aaecda::t_d5d8ad18389a87 3,8,11-12,15,17,20-22,25-27,29,31
+filefn/docs/content/docs/adapters/index.md
+  s_7d0a48f0aaecda::t_2a3e62f190bbc8 30
+filefn/docs/content/docs/adapters/processors.md
+  s_7d0a48f0aaecda::t_45dc5e31ed84b3 3,8,10,13,16,22-23,27,33,36,41,43-45,49,55-58,60-61,65,70,72-77,81,86,88-92,96,98,100,103-111,113,116
+filefn/docs/content/docs/adapters/storage-azure.md
+  s_7d0a48f0aaecda::t_87bdf6b091ab10 3,9,11-12,14
+filefn/docs/content/docs/adapters/storage-gcs.md
+  s_7d0a48f0aaecda::t_f48d73cc5f4579 3,9,11,15-16,24-25
+filefn/docs/content/docs/adapters/storage-local.md
+  s_7d0a48f0aaecda::t_41cbf02bdffe2d 9
+filefn/docs/content/docs/adapters/storage-minio.md
+  s_7d0a48f0aaecda::t_690033cfab0edc 11
+filefn/docs/content/docs/adapters/storage-r2.md
+  s_7d0a48f0aaecda::t_42211203e3eca3 11,31
+filefn/docs/content/docs/adapters/storage-s3.md
+  s_7d0a48f0aaecda::t_37843db2dc4043 3,9,27,29,31
+filefn/docs/content/docs/adapters/storage.md
+  s_7d0a48f0aaecda::t_ca9f4492e2e44b 41,43-45
+filefn/docs/content/docs/admin/index.md
+  s_7d0a48f0aaecda::t_d79d92c3713516 1-32
+filefn/docs/content/docs/admin/meta.json
+  s_7d0a48f0aaecda::t_0353285fba52b5 1-4
+filefn/docs/content/docs/ai-resources/claude.md
+  s_7d0a48f0aaecda::t_ec927d2d1703ec 3,8,11,13-16,19
+filefn/docs/content/docs/ai-resources/codex.md
+  s_7d0a48f0aaecda::t_ead42a7ab6f047 3,8,10,12-16,19
+filefn/docs/content/docs/ai-resources/cursor.md
+  s_7d0a48f0aaecda::t_e09344a8744401 3,8,11,13,15-18,21
+filefn/docs/content/docs/ai-resources/index.md
+  s_7d0a48f0aaecda::t_48e7b5656e656d 3,8,10-11,13,15-21
+filefn/docs/content/docs/ai-resources/llms-txt.md
+  s_7d0a48f0aaecda::t_2244c735d2a866 3,8,10-13,15,17,19,21-22,25,27-30,33,35,37,39,41-43,46
+filefn/docs/content/docs/ai-resources/mcp.md
+  s_7d0a48f0aaecda::t_6e6071379b4701 2-3,6,8,10,12
+filefn/docs/content/docs/ai-resources/skills.md
+  s_7d0a48f0aaecda::t_b6d56d63e472fa 2-3,6,8,10,12-16,18
+filefn/docs/content/docs/api/index.md
+  s_7d0a48f0aaecda::t_0e524f5d87cdba 8
+filefn/docs/content/docs/core-concepts/rate-limiting.md
+  s_7d0a48f0aaecda::t_554123b63a8c03 14-15,17,65-67,69-73,75-77,79-80
+filefn/docs/content/docs/features/rate-limiting.md
+  s_7d0a48f0aaecda::t_eaa319cc8debde 16-17,19,37-41
+filefn/docs/content/docs/frameworks/bun.md
+  s_7d0a48f0aaecda::t_366e9a00fb9fd2 12-15,21-22,25,75-78
+filefn/docs/content/docs/frameworks/express.md
+  s_7d0a48f0aaecda::t_74943d1b2b0b87 3,8,12,14-15,17-20,22,26,28
+filefn/docs/content/docs/frameworks/hono.md
+  s_7d0a48f0aaecda::t_c9ba9949865158 15-18,22,33,73,91,114-115
+filefn/docs/content/docs/frameworks/nextjs.md
+  s_7d0a48f0aaecda::t_132f5e7e7bbb1c 15-16,19-20
+filefn/docs/content/docs/getting-started.md
+  s_7d0a48f0aaecda::t_afc823244dd919 13,34
+filefn/docs/content/docs/index.md
+  s_7d0a48f0aaecda::t_c52b15bbc11d77 77
+filefn/docs/content/docs/meta.json
+  s_7d0a48f0aaecda::t_7b83cbe7e6c0b1 14
+filefn/docs/content/docs/quickstart/bun.md
+  s_7d0a48f0aaecda::t_3447e3a66fcd63 13,21
+filefn/docs/content/docs/quickstart/express.md
+  s_7d0a48f0aaecda::t_9f87f74edba855 14-69,78-79,82,97-98,103
+filefn/docs/content/docs/quickstart/hono.md
+  s_7d0a48f0aaecda::t_1421e56b01cfde 14,27
+filefn/docs/content/docs/quickstart/nextjs.md
+  s_7d0a48f0aaecda::t_48dbfd8cf99b36 13,24
+filefn/docs/content/docs/quickstart/sveltekit.md
+  s_7d0a48f0aaecda::t_ecc86cb5396196 13,23
+filefn/docs/content/docs/recipes/cdn-integration.md
+  s_7d0a48f0aaecda::t_f43cddba2a2cdc 3,8,10,12,15-23,28,30
+filefn/docs/content/docs/recipes/document-uploads.md
+  s_7d0a48f0aaecda::t_9c61eac9ad85e5 47-49
+filefn/docs/content/docs/recipes/heic-conversion.md
+  s_7d0a48f0aaecda::t_94e0e039272189 12,14,17-18,25-29,57,60-62,64-65,68-70,74
+filefn/docs/content/docs/recipes/image-uploads.md
+  s_7d0a48f0aaecda::t_cabe1154dd1ad1 13,48-52,59,66,105,109
+filefn/docs/content/docs/recipes/tenant-isolation.md
+  s_7d0a48f0aaecda::t_9b06684b54b021 40
+filefn/docs/content/docs/recipes/video-uploads.md
+  s_7d0a48f0aaecda::t_68f89cd513d49b 3,12,44-46
+filefn/docs/content/docs/reference/configuration.md
+  s_7d0a48f0aaecda::t_a3abc0dcfea04d 14,51-52,83,89,103-104,107
+filefn/docs/content/docs/reference/schema.md
+  s_7d0a48f0aaecda::t_996d3c6fd967e2 138-142,145
+filefn/docs/content/docs/sdk/server.md
+  s_7d0a48f0aaecda::t_54ad684cd1dd15 26,36,38,43-44,53-70,89-114
+filefn/docs/docsfn.config.ts
+  s_7d0a48f0aaecda::t_6eec4ab54ec02c 3-6,13,33
+filefn/docs/package.json
+  s_7d0a48f0aaecda::t_1c97cae7873665 10-11,22-23,31-32,37-38
+filefn/docs/scripts/generate-llms.mjs
+  s_7d0a48f0aaecda::t_494a0865b9cb1a 6,61
+filefn/docs/src/lib/components/DocsSiteSearch.svelte
+  s_7d0a48f0aaecda::t_26f012a93869b3 5
+filefn/docs/src/lib/server/docs-site-source.ts
+  s_7d0a48f0aaecda::t_2a65516e912dd9 7,22
+filefn/docs/src/routes/+error.svelte
+  s_7d0a48f0aaecda::t_4fe7586e080e06 1-12
+filefn/docs/src/routes/+layout.server.ts
+  s_7d0a48f0aaecda::t_bdda7bb7eab874 4-5,7,9
+filefn/docs/src/routes/+page.svelte
+  s_7d0a48f0aaecda::t_9ee20f3d5533b1 11-13,41-243
+filefn/docs/src/routes/blog/+page.server.ts
+  s_7d0a48f0aaecda::t_105cabc40728a2 1-5
+filefn/docs/src/routes/blog/+page.svelte
+  s_7d0a48f0aaecda::t_b83b98b842ab3a 27
+filefn/docs/src/routes/blog/[slug]/+page.server.ts
+  s_7d0a48f0aaecda::t_da1990d0ba3260 2-3,6-8
+filefn/docs/src/routes/blog/rss.xml/+server.ts
+  s_7d0a48f0aaecda::t_6575cb31ccc40a 2,5
+filefn/docs/src/routes/docs/[...slug]/+page.server.ts
+  s_7d0a48f0aaecda::t_0fbb074ce043b3 3,6-8
+filefn/docs/src/routes/docs/blog/+page.server.ts
+  s_7d0a48f0aaecda::t_6959ab842ebe1d 1-5
+filefn/docs/src/routes/docs/blog/+page.svelte
+  s_7d0a48f0aaecda::t_5af812c8cb503b 1-7
+filefn/docs/src/routes/docs/blog/[...slug]/+page.server.ts
+  s_7d0a48f0aaecda::t_8a2fc4adb2abc5 1-8
+filefn/docs/src/routes/docs/blog/[...slug]/+page.svelte
+  s_7d0a48f0aaecda::t_d68ea5a3eda896 1-7
+filefn/docs/src/routes/docs/blog/rss.xml/+server.ts
+  s_7d0a48f0aaecda::t_63c9e8bc77f792 1-5
+filefn/docs/src/routes/docs/llms-full.txt/+server.ts
+  s_7d0a48f0aaecda::t_6eb6753610c738 4
+filefn/docs/src/routes/docs/llms.txt/+server.ts
+  s_7d0a48f0aaecda::t_6842f58222a938 4
+filefn/docs/src/routes/docs/search.json/+server.ts
+  s_7d0a48f0aaecda::t_e32af31cc1bd8e 1-2
+filefn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_75c9f4c96da12c 87,125,142,147,150-151,154,156,159-161,164,166,168-170,180,185-186,190-193,195-197,200,202,204,206,208,213,218,221,224-225,228,233,238,241,243-244,248-251,253-254,257,259,261,266,271,274,276-279,283-285,287,289,292,294,296,306,311,313,316,319,325-326,330,336,339,344,346-348,352,358-361,363-364,368,373,375-380,384,389,391-395,399,401,403,406-414,416,419,467,469-471,500,506,508-509,511,553,559,561,565-566,574-575,624,673,745,765,794,800,818,820,822,869,871,874,877,879,882,884-888,891,893,895,897,899,901,903,908,910,913,916,918,920-921,923,925-931,934,936,938,941,944,946,948-949,951-955,957,960,962,964,967,970,972,974,976-980,983,988,990,993,996,998,1000-1001,1003,1005-1008,1011,1014,1016,1018,1021,1024,1026,1028-1031,1033,1035,1037,1039-1040,1043,1045-1048,1051,1053,1055,1057,1059-1062,1064,1069,1071,1074,1077,1079,1081,1083,1086,1088,1090,1093,1096-1098,1100-1108,1123,2410-2411,2413,2461-2463,2465-2469,2471-2473,2475-2476,4218-4219,4221,4239-4243,4582-4585,4591-4592,4595,4646-4649,4658,4663,4667,4669-4670,4672-4675,4677,4681,4683,4897-4900,4904,4915,4955,4973,4997-4998,5019-5020,5023-5024,5299,5320,5547,5555,5613-5668,5677-5678,5681,5696-5697,5702,5929,5942,6052,6063,6143,6153,6404,6409,6411,6413,6416-6418,6420-6424,6429,6431,6614-6616,6679,6681,6684-6685,6692-6696,6724,6727-6729,6731-6732,6735-6737,6741,6761,6796-6800,6807,6814,6853,6857,7115,7204,7213,7245-7247,7498,7535-7536,7567,7573,7587-7588,7591,8161-8165,8168,8624,8634,8636,8641-8642,8651-8668,8687-8712
+filefn/docs/static/llms.txt
+  s_7d0a48f0aaecda::t_8044dd690b9287 9-14,16-17,21-29,68,85,93
+filefn/docs/tsconfig.json
+  s_7d0a48f0aaecda::t_37f954c044a56f 2,4-11,25-27
+filefn/docs/turbo.json
+  s_7d0a48f0aaecda::t_ace81140c757a6 1-22
+filefn/python/pyproject.toml
+  s_7d0a48f0aaecda::t_680965a43492ea 28
+filefn/server/package.json
+  s_7d0a48f0aaecda::t_ff5d2e32df6ea6 3,16-18,48-50
+filefn/server/tests/services.integration.test.ts
+  s_7d0a48f0aaecda::t_32d2be153e960d 1-94
+filefn/server/tsconfig.json
+  s_7d0a48f0aaecda::t_cd636778393474 17
+hostfn/admin/package.json
+  s_7d0a48f0aaecda::t_51a3df395b0596 37
+hostfn/admin/src/__tests__/admin.test.ts
+  s_7d0a48f0aaecda::t_ddb491ca4d02aa 122-185
+hostfn/cli/README.md
+  s_7d0a48f0aaecda::t_d80c3f6b57d4a6 58-62,75-99,1102-1105,1116-1117,1119,1126-1130
+hostfn/cli/package.json
+  s_7d0a48f0aaecda::t_599c830157c22e 3,16-18,21,24,26-27,38-39,49
+hostfn/cli/src/__tests__/operator.test.ts
+  s_7d0a48f0aaecda::t_4a5c19b846b8cb 19-52
+hostfn/cli/src/commands/server/setup.ts
+  s_7d0a48f0aaecda::t_f25dcd9e937b74 1,158
+hostfn/cli/src/operator.ts
+  s_7d0a48f0aaecda::t_87ac73ba384dcb 1-2,216,222,277
+hostfn/cli/tsconfig.json
+  s_7d0a48f0aaecda::t_5d73eb7796cf14 24
+hostfn/docs/app/layout.tsx
+  s_7d0a48f0aaecda::t_4141b395087e15 7-11,14-16
+hostfn/docs/content/docs/documentation/advanced/administration.mdx
+  s_7d0a48f0aaecda::t_a643baed502701 1-41
+hostfn/docs/content/docs/documentation/advanced/meta.json
+  s_7d0a48f0aaecda::t_e9ab446cdc474a 3
+hostfn/docs/content/docs/documentation/index.mdx
+  s_7d0a48f0aaecda::t_dc230f2bcf94d2 17
+hostfn/docs/content/docs/index.mdx
+  s_7d0a48f0aaecda::t_b4260e2d659392 8-9
+langfn/docs/.gitignore
+  s_7d0a48f0aaecda::t_6db3a5a9bd442b 1-10
+langfn/docs/README.md
+  s_7d0a48f0aaecda::t_2eb42f68f4b001 1-24
+langfn/docs/content/docs/getting-started.md
+  s_7d0a48f0aaecda::t_a92474852ce44b 1-22
+langfn/docs/content/docs/http.md
+  s_7d0a48f0aaecda::t_3d2b2837f8e381 1-121
+langfn/docs/content/docs/index.md
+  s_7d0a48f0aaecda::t_9a33bdd4ffcf37 1-8
+langfn/docs/content/docs/mcp.md
+  s_7d0a48f0aaecda::t_3c6c4c878692ef 1-8
+langfn/docs/content/docs/memory-and-rag.md
+  s_7d0a48f0aaecda::t_9a8bf86d37b50a 1-12
+langfn/docs/content/docs/meta.json
+  s_7d0a48f0aaecda::t_e4a7b37d5acebe 1-4
+langfn/docs/content/docs/models-and-providers.md
+  s_7d0a48f0aaecda::t_22a756ced718f5 1-65
+langfn/docs/content/docs/observability-and-evaluation.md
+  s_7d0a48f0aaecda::t_f8ea7ab91d95f5 1-10
+langfn/docs/content/docs/operations-and-limits.md
+  s_7d0a48f0aaecda::t_db816a3bbeaea0 1-10
+langfn/docs/content/docs/prompts-and-structured.md
+  s_7d0a48f0aaecda::t_ed84ae6ff86c82 1-10
+langfn/docs/content/docs/reference/compatibility.md
+  s_7d0a48f0aaecda::t_f3dc9ecbb78840 1-24
+langfn/docs/content/docs/reference/index.md
+  s_7d0a48f0aaecda::t_77af957f4c3c0c 1-11
+langfn/docs/content/docs/reference/meta.json
+  s_7d0a48f0aaecda::t_1bf7a815282159 1-4
+langfn/docs/content/docs/reference/package-exports.md
+  s_7d0a48f0aaecda::t_8198b59de0a327 1-26
+langfn/docs/content/docs/reference/release-gate.md
+  s_7d0a48f0aaecda::t_4a6772f17d746d 1-17
+langfn/docs/content/docs/reference/typescript.md
+  s_7d0a48f0aaecda::t_841e924824617c 1-65
+langfn/docs/content/docs/streaming-and-tools.md
+  s_7d0a48f0aaecda::t_81c21901bd227b 1-58
+langfn/docs/content/docs/workflows.md
+  s_7d0a48f0aaecda::t_390ef91f6db668 1-48
+langfn/docs/docsfn.config.ts
+  s_7d0a48f0aaecda::t_e46f457017f5f8 1-40
+langfn/docs/package.json
+  s_7d0a48f0aaecda::t_e5c3338a26a2e0 1-38
+langfn/docs/scripts/generate-llms.mjs
+  s_7d0a48f0aaecda::t_16347fcd6c582a 1-20
+langfn/docs/src/app.css
+  s_7d0a48f0aaecda::t_cf8c19abc332b9 1-85
+langfn/docs/src/app.html
+  s_7d0a48f0aaecda::t_a602dfbeb5bd33 1-11
+langfn/docs/src/lib/components/DocsSiteSearch.svelte
+  s_7d0a48f0aaecda::t_784da1c65f1f26 1-5
+langfn/docs/src/lib/server/docs-site-source.ts
+  s_7d0a48f0aaecda::t_f4b7e194b27eca 1-14
+langfn/docs/src/routes/+error.svelte
+  s_7d0a48f0aaecda::t_8ac676e1d85e00 1-12
+langfn/docs/src/routes/+layout.server.ts
+  s_7d0a48f0aaecda::t_a058feafba5791 1-13
+langfn/docs/src/routes/+layout.svelte
+  s_7d0a48f0aaecda::t_2025006bb58714 1-86
+langfn/docs/src/routes/+page.svelte
+  s_7d0a48f0aaecda::t_18871cd30319b3 1-28
+langfn/docs/src/routes/docs/[...slug]/+page.server.ts
+  s_7d0a48f0aaecda::t_2941b95bd4b020 1-25
+langfn/docs/src/routes/docs/[...slug]/+page.svelte
+  s_7d0a48f0aaecda::t_bfdc3dbb487f12 1-41
+langfn/docs/src/routes/docs/llms-full.txt/+server.ts
+  s_7d0a48f0aaecda::t_52598eda423d74 1-7
+langfn/docs/src/routes/docs/llms.txt/+server.ts
+  s_7d0a48f0aaecda::t_b2be7f316898fd 1-7
+langfn/docs/src/routes/docs/search.json/+server.ts
+  s_7d0a48f0aaecda::t_0f46ab9a4f00f7 1-8
+langfn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_acd26d8d8d1f07 1-587
+langfn/docs/static/llms.txt
+  s_7d0a48f0aaecda::t_9585667756dfd1 1-22
+langfn/docs/svelte.config.js
+  s_7d0a48f0aaecda::t_96c781d55a2f97 1-26
+langfn/docs/tsconfig.json
+  s_7d0a48f0aaecda::t_da6b65ed656e17 1-59
+langfn/docs/turbo.json
+  s_7d0a48f0aaecda::t_413d286eb5b65a 1-20
+langfn/docs/vite.config.ts
+  s_7d0a48f0aaecda::t_3f18e4f939b598 1-12
+langfn/typescript/src/orchestration/chain.ts
+  s_7d0a48f0aaecda::t_675a0fef25c585 58-59
+langfn/typescript/tests/chain-router.test.ts
+  s_7d0a48f0aaecda::t_947216b22275b3 1-22
+package-lock.json
+  s_7d0a48f0aaecda::t_ffa99a49d820ac 50,83,87,91-92,101,124,247,296,299-301,305,336,347,350,353-354,357-359,361-362,369-372,376-380,383-386,388-400,403-417,419-420,422-424,427-441,444-445,447-448,451-452,455-458,460-469,471-475,478-481,483-492,495,498-502,505-506,509-513,516-527,529-530,533-536,540-544,547-551,554,556-557,560-564,567-590,593,596,601-611,615-618,621-625,628,630-631,634-638,641-642,644-645,648-652,655-668,671,674-678,681,683-684,687-694,697-700,704-708,711-713,716,718-722,725-728,730,733-739,741-743,746-750,753-1438,1450-1492,1532-1574,1577,1636-1668,1688,1701-1702,1706,1708,1714-1715,1856-1872,1922-1971,2009-2068,2081-2168,2201-2243,4291-4333,4395-4409,4442-4484,4526-4534,4545-4559,4617-4646,4657-4671,4730-4733,4736,4738-4742,4745,4773-4775,4778,4780-4787,4792,4819,5847,5855,5879,5883,5887-5888,5892,5896-5900,5911,6395,6399,6902,6910-6911,6915,6920-6922,6926,6931-6933,6937,6950,6952,7436,7449,9349-9376,9684-9756,9767-10007,10010-10019,10022-10025,10027-10028,10031,10034-10038,10040-10044,10047-10050,10053-10067,10070,10073-10076,10080-10145,10378-10761,10866,10870-10872,10903-10941,10993,11001,11003,11008-11009,11071-11151,11173-11232,11245-11332,11640,11651-11652,11654,11696-11712,11758,12043,12050,13689-14059,15555-15566,16451-16462,17419-17430,17881-17892,25010-25013,25268-25274,26370-26373,27715-27718,32291-32326,33491-33518,47693-47705,47758-47764,52307-52320,52333-52388,52783-52792,53137-53147,55452,55552-55584,55648,55667-55668,55676-55678,55716-55717,55725-55761,56072,56078,56084,56104,56144-56173,56186,56189,56215,56221-56232,56342-56353,56613,56715,56724,56734,56736,56851-56867,57585,57591-57592,59981,59987,59998,60006,60030,60032,60035,60044,60543,60777-60832,64578,65338
+packages/README.md
+  s_7d0a48f0aaecda::t_882158e0c19ca9 21,44,58-63,66,70-75
+packages/admin/README.md
+  s_7d0a48f0aaecda::t_31837697ae5120 123-127,171
+packages/admin/package.json
+  s_7d0a48f0aaecda::t_c57b8718a2b463 3
+packages/admin/src/audit.test.ts
+  s_7d0a48f0aaecda::t_f7a3c190ca16c1 1-26
+packages/admin/src/audit.ts
+  s_7d0a48f0aaecda::t_314491d2d5e0a0 108,125,143-148
+packages/db/README.md
+  s_7d0a48f0aaecda::t_0c23a5f9617dbc 77,90-98
+packages/db/package.json
+  s_7d0a48f0aaecda::t_a08c0372c553e8 3,58,60,67-68,76-78
+packages/docs-theme/package.json
+  s_7d0a48f0aaecda::t_d00af829b25f07 20-22,38-39
+packages/docs-theme/src/config.ts
+  s_7d0a48f0aaecda::t_8d5d9f367c8829 15-18
+packages/docs-theme/src/index.ts
+  s_7d0a48f0aaecda::t_6b4f4a4ac3ce7a 1-4
+packages/docs-theme/src/layout.tsx
+  s_7d0a48f0aaecda::t_23606bbfd2ca88 14-17
+packages/docs-theme/tests/theme.test.mjs
+  s_7d0a48f0aaecda::t_40e2aa932f6a13 1-26
+packages/docs-theme/tsconfig.json
+  s_7d0a48f0aaecda::t_5afb5d7b45aafb 4-5
+packages/middleware/package.json
+  s_7d0a48f0aaecda::t_ca1736625e4807 3,21,37,46
+packages/oauth-core/README.md
+  s_7d0a48f0aaecda::t_7ca568767feb2d 59-71
+packages/oauth-core/package.json
+  s_7d0a48f0aaecda::t_2e643701b82509 3,28
+packages/oauth-core/vitest.config.ts
+  s_7d0a48f0aaecda::t_68a427eff394e7 1,3-9
+packages/oauth-flow/package.json
+  s_7d0a48f0aaecda::t_412b2aef3874f3 21
+packages/oauth-flow/vitest.config.ts
+  s_7d0a48f0aaecda::t_455a1618403b7d 1,3-9
+packages/oauth-http/README.md
+  s_7d0a48f0aaecda::t_6cd898b7a62eb4 51-59
+packages/oauth-http/package.json
+  s_7d0a48f0aaecda::t_d018276bf5ff13 3,21,41
+packages/oauth-http/tests/nested-user-token.test.ts
+  s_7d0a48f0aaecda::t_e490ee52e5b366 2,4
+packages/oauth-http/vitest.config.ts
+  s_7d0a48f0aaecda::t_9a985d8ae33b8f 1,3-9
+packages/oauth-providers/package.json
+  s_7d0a48f0aaecda::t_2a03fe55da976b 21,44
+packages/oauth-providers/vitest.config.ts
+  s_7d0a48f0aaecda::t_b32ae1fdd53646 1,3-9
+packages/oauth-testing/package.json
+  s_7d0a48f0aaecda::t_e3156674dc978e 21
+packages/oauth-testing/vitest.config.ts
+  s_7d0a48f0aaecda::t_dbe2a6d4792613 1,3-9
+packages/python-core/README.md
+  s_7d0a48f0aaecda::t_c142346ace5d3d 1,6,12,15-21
+packages/python-core/pyproject.toml
+  s_7d0a48f0aaecda::t_1c895db4a7c4c1 6
+packages/python-fastapi/pyproject.toml
+  s_7d0a48f0aaecda::t_e4c5bf586dfbe3 25
+packages/python-flask/pyproject.toml
+  s_7d0a48f0aaecda::t_87d958934e400a 25
+packages/python-sqlalchemy/README.md
+  s_7d0a48f0aaecda::t_c040c571ac4247 9-14
+packages/python-sqlalchemy/pyproject.toml
+  s_7d0a48f0aaecda::t_56966cea7d3f71 7,26
+packages/python-sqlalchemy/superfunctions_sqlalchemy/__init__.py
+  s_7d0a48f0aaecda::t_942045fc056936 18
+packages/python-sqlalchemy/superfunctions_sqlalchemy/adapter.py
+  s_7d0a48f0aaecda::t_755169759b83a8 57
+plugfn/CHANGELOG.md
+  s_7d0a48f0aaecda::t_bf05b736082107 7-12
+plugfn/admin/package.json
+  s_7d0a48f0aaecda::t_911cb5b599f3b5 38
+plugfn/cli/package.json
+  s_7d0a48f0aaecda::t_74ddf7b9b2a063 9-13
+plugfn/client/package.json
+  s_7d0a48f0aaecda::t_073d971bfee2a6 26
+plugfn/core/README.md
+  s_7d0a48f0aaecda::t_bd581621705360 112,114-118
+plugfn/core/package.json
+  s_7d0a48f0aaecda::t_619ffb627d3759 3,15,36,38
+plugfn/docs/migrations/oauth-shared-stack.md
+  s_7d0a48f0aaecda::t_194466176372ad 5-7,25,27-28,30-33
+plugfn/docs/operations/release-gates.md
+  s_7d0a48f0aaecda::t_58548ffe8f8c51 20,99-123
+plugfn/providers/package.json
+  s_7d0a48f0aaecda::t_b2ff1cb4f55e6e 62,64,76,82-83
+plugfn/providers/tests/e2e/oauth-callback.test.ts
+  s_7d0a48f0aaecda::t_f073152c835a8f 2-3
+plugfn/providers/tests/e2e/webhook-verification.test.ts
+  s_7d0a48f0aaecda::t_4fe04965ed8990 3-9
+plugfn/providers/tests/selected-lifecycle.test.ts
+  s_7d0a48f0aaecda::t_f1369eb4acde38 5
+plugfn/providers/tests/webhook-raw-body.test.ts
+  s_7d0a48f0aaecda::t_37adb6b1f7b346 3-7
+plugfn/providers/tsconfig.json
+  s_7d0a48f0aaecda::t_9ca25f3dbefd38 23
+plugfn/python/pyproject.toml
+  s_7d0a48f0aaecda::t_43b6471c22df90 31
+plugfn/scripts/gate-plugfn-release.mjs
+  s_7d0a48f0aaecda::t_ab31f6a7b59687 82-95
+release-packages.json
+  s_7d0a48f0aaecda::t_d742289f0cab91 164-195
+reviewfn/README.md
+  s_7d0a48f0aaecda::t_5976cf9bb25389 48-55
+scripts/assert-release-ref.mjs
+  s_7d0a48f0aaecda::t_96103f6c22710c 1-18
+scripts/assert-release-ref.test.mjs
+  s_7d0a48f0aaecda::t_165161869b1fb7 1-49
+scripts/ci-utils.mjs
+  s_7d0a48f0aaecda::t_25fc5c9b7516fe 94,131,148
+scripts/ci-utils.test.mjs
+  s_7d0a48f0aaecda::t_fcc5d5f720c8c8 1-37
+scripts/cloudflare-docs/config.mjs
+  s_7d0a48f0aaecda::t_08491c832893d3 7-12,14-16,18-42,50,63,73,86,141,147-150
+scripts/cloudflare-docs/deploy.mjs
+  s_7d0a48f0aaecda::t_68c022d93714d0 6,21-33,49-52,75,92-98,144
+scripts/cloudflare-docs/select-products.mjs
+  s_7d0a48f0aaecda::t_5ab5ac5e2aedbe 49,56,58-60
+scripts/cloudflare-docs/sync-routes.mjs
+  s_7d0a48f0aaecda::t_76a31f13a70f23 76-80
+scripts/deploy-uifn-catalogs.mjs
+  s_7d0a48f0aaecda::t_46738fc747d816 15-28,59
+scripts/docs-site/LandingPage.svelte
+  s_7d0a48f0aaecda::t_e88d0a382ea7f2 178-179,186-187,215-216,219-229
+scripts/docs-site/README.md
+  s_7d0a48f0aaecda::t_0d996cf9e65228 7,15-16
+scripts/docs-site/atomic-write.test.mjs
+  s_7d0a48f0aaecda::t_fa3bfe4a3c6329 1-7,9-23,25-37,39-48,50-59,61-62,64-73,75-82
+scripts/docs-site/blog.test.ts
+  s_7d0a48f0aaecda::t_1a8b2f9207ce0d 1-98
+scripts/docs-site/blog.ts
+  s_7d0a48f0aaecda::t_1f1251c09e36a7 1-8,10-11,13-29,33-69,71-87
+scripts/docs-site/check-built-site.mjs
+  s_7d0a48f0aaecda::t_cd52abff4a86d7 1-43
+scripts/docs-site/check-built-site.test.mjs
+  s_7d0a48f0aaecda::t_656e15193d5f0e 1-3,5,7-31
+scripts/docs-site/dependency-owner.test.ts
+  s_7d0a48f0aaecda::t_c474da819042b6 1-49
+scripts/docs-site/layout.ts
+  s_7d0a48f0aaecda::t_54c6045cefc10f 4-8
+scripts/docs-site/llms.mjs
+  s_7d0a48f0aaecda::t_b1bec25b1e4b31 1-2,12-18,20,52-62,64-95,98-99,104,123
+scripts/docs-site/llms.test.mjs
+  s_7d0a48f0aaecda::t_033cfc0fe7eb76 5,7,9-11,13-33,35-49
+scripts/docs-site/origin.test.mjs
+  s_7d0a48f0aaecda::t_12e01bca245e14 8-9,11-74
+scripts/docs-site/page.test.ts
+  s_7d0a48f0aaecda::t_07236204c005d6 2-3,5-93
+scripts/docs-site/page.ts
+  s_7d0a48f0aaecda::t_71cca4f8a0bb6f 25-26,108
+scripts/docs-site/runtime.test.ts
+  s_7d0a48f0aaecda::t_b5ef43ef911749 3,16,53-56,61-70,82-83,85,88-98
+scripts/docs-site/runtime.ts
+  s_7d0a48f0aaecda::t_8b289cc1b99d05 23,185,194,346-353,365-375,378,380,385,389-391,404-413
+scripts/docs-site/vite.test.mjs
+  s_7d0a48f0aaecda::t_ccb2fd4f6c5954 1-2,4,6,8-23,25-79,81-87
+scripts/docs-site/vite.ts
+  s_7d0a48f0aaecda::t_931364e514a404 1,5-32,34-38,42-54,56-60,63
+scripts/docs-site/vitest.config.ts
+  s_7d0a48f0aaecda::t_c6ffd9b5b035b4 1,3,7,12-16,21-23,25,27-30
+scripts/generate-uifn-phase-17.mjs
+  s_7d0a48f0aaecda::t_1b5f0bef46bb46 575,578-612
+scripts/pack-release-package.mjs
+  s_7d0a48f0aaecda::t_5bdce5e2f66d33 1-41
+scripts/python_release.py
+  s_7d0a48f0aaecda::t_d0cf440aba6fa4 1-173
+scripts/resolve-release-tag.mjs
+  s_7d0a48f0aaecda::t_f41fa36e3c19ee 6-20,22-28,30-33,35-42,44,47-58
+scripts/resolve-release-tag.test.mjs
+  s_7d0a48f0aaecda::t_cb97db5e8db9ff 1-35
+scripts/swift-release.mjs
+  s_7d0a48f0aaecda::t_4b10475bd4c672 1-52
+scripts/swift-release.test.mjs
+  s_7d0a48f0aaecda::t_f745c5ac915c28 1-27
+scripts/test_python_release.py
+  s_7d0a48f0aaecda::t_8d8b5fad968599 1-86
+scripts/uifn-docs-cli-resolution.test.mjs
+  s_7d0a48f0aaecda::t_cb9f23210b7028 1-61
+scripts/verify-uifn-phase-17.mjs
+  s_7d0a48f0aaecda::t_e8395ad24ab200 29
+searchfn/docs/app/layout.tsx
+  s_7d0a48f0aaecda::t_1164b047690110 9
+searchfn/docs/content/docs/documentation/administration.mdx
+  s_7d0a48f0aaecda::t_ee8651f811dbf2 1-20
+searchfn/docs/content/docs/documentation/advanced/adapter-migration.mdx
+  s_7d0a48f0aaecda::t_912e9b9e28ad46 50,52
+searchfn/docs/content/docs/documentation/deploy/cloudflare-workers.mdx
+  s_7d0a48f0aaecda::t_9add785c1b9534 35,38-40,43,52,87,91-93
+searchfn/docs/content/docs/documentation/deploy/fly.mdx
+  s_7d0a48f0aaecda::t_12521efa9f737c 19-27,79,83-85,92,94-96
+searchfn/docs/content/docs/documentation/deploy/railway.mdx
+  s_7d0a48f0aaecda::t_c99e4c86e02b7f 21,23-25,29,44,48,59,62-65
+searchfn/docs/content/docs/documentation/deploy/vercel.mdx
+  s_7d0a48f0aaecda::t_4e2d28da7fed62 27,29-31,34,45
+searchfn/docs/content/docs/documentation/meta.json
+  s_7d0a48f0aaecda::t_8afdaa45e4e7a4 11
+searchfn/docs/content/docs/documentation/python/http-mount.mdx
+  s_7d0a48f0aaecda::t_ead55faebaf9ec 2-3,6,10-12,15,17
+searchfn/docs/content/docs/documentation/python/index.mdx
+  s_7d0a48f0aaecda::t_3539b429207b37 4,7,9,11-13,15
+searchfn/docs/content/docs/documentation/python/indexing.mdx
+  s_7d0a48f0aaecda::t_25d989d391f142 3,6,9,11-12,15,17
+searchfn/docs/content/docs/documentation/python/meta.json
+  s_7d0a48f0aaecda::t_1d160bfe07501f 3
+searchfn/docs/content/docs/documentation/python/search.mdx
+  s_7d0a48f0aaecda::t_8abd8b822a9d9a 3,6,9,11-12,15,17
+searchfn/docs/content/docs/documentation/python/setup.mdx
+  s_7d0a48f0aaecda::t_6743e14e181ce3 3,8,12,15-16,18,20,24,27,29,31,33
+searchfn/docs/content/docs/documentation/security/request-authz.mdx
+  s_7d0a48f0aaecda::t_ab7ce1ced59614 121,123
+searchfn/docs/content/docs/getting-started.mdx
+  s_7d0a48f0aaecda::t_105f65345eb5fc 168
+searchfn/docs/content/docs/operations/setup.mdx
+  s_7d0a48f0aaecda::t_4f718da4d5e742 10-12,18-23,25
+searchfn/docs/content/docs/quickstart/bun.mdx
+  s_7d0a48f0aaecda::t_fd5ef497092e79 20,22,26,34,41
+searchfn/docs/content/docs/quickstart/express.mdx
+  s_7d0a48f0aaecda::t_ec517329698074 9,16,20,22,26,31-32,51
+searchfn/docs/content/docs/quickstart/fastapi.mdx
+  s_7d0a48f0aaecda::t_1a8fe17f84a577 3,6-7,10,14,16,19-38,41,43,45,47
+searchfn/docs/content/docs/quickstart/fastify.mdx
+  s_7d0a48f0aaecda::t_b146121af7ab35 9,16,20,22,26,32
+searchfn/docs/content/docs/quickstart/flask.mdx
+  s_7d0a48f0aaecda::t_06d2c2e2a7cd71 3,6-7,12-13,15,18-35,38,40,42,44
+searchfn/docs/content/docs/quickstart/hono.mdx
+  s_7d0a48f0aaecda::t_5258351429cd26 11,24,28,30,34,42-43,46,54,89-93,95,98
+searchfn/docs/content/docs/quickstart/nextjs.mdx
+  s_7d0a48f0aaecda::t_8583f0cb7d78f9 20,22,26,31,37
+searchfn/docs/content/docs/quickstart/starlette.mdx
+  s_7d0a48f0aaecda::t_5bff65ff2d8e08 3,6-7,14,16,18,22-30,33-36,41,43,45,47
+searchfn/docs/content/docs/quickstart/sveltekit.mdx
+  s_7d0a48f0aaecda::t_58800a1bd813da 16,19,24,26,30,34-35,37-38,41
+searchfn/docs/content/docs/reference/adapters/postgres.mdx
+  s_7d0a48f0aaecda::t_2d1c802e989f61 22
+searchfn/docs/content/docs/reference/changelog.mdx
+  s_7d0a48f0aaecda::t_b8161890e68568 41
+searchfn/docs/content/docs/reference/python.mdx
+  s_7d0a48f0aaecda::t_d3c4cf56fdc233 2-3,6,9,11-13,18,20,22
+searchfn/docs/public/llms-full.txt
+  s_7d0a48f0aaecda::t_eda95c524ce45f 1004,1219-1243,1295,1297,1599,1603,1605-1606,1611,3352,3355-3357,3360,3369,3404,3408-3410,3565-3573,3625,3629-3631,3638,3640-3642,3946,3948-3950,3954,3969,3973,3984,3987-3990,4152,4154-4156,4159,4170,4696,4699,4702,4706-4708,4711,4713,4721,4724,4726,4728-4730,4732,4740,4743,4746,4748-4749,4752,4754,4762,4765,4768,4770-4771,4774,4776,4784,4789,4793,4796-4797,4799,4801,4805,4808,4810,4812,4814,5368,5370,6095-6097,6103-6108,6110,6401,6403,6407,6415,6422,6460,6467,6471,6473,6477,6482-6483,6502,6516,6519-6520,6523,6527,6529,6532,6534-6544,6546,6549-6551,6554,6556,6558,6560,6574,6581,6585,6587,6591,6597,6627,6630-6631,6636-6637,6639,6642,6644-6655,6657-6659,6662,6664,6666,6668,6684,6697,6701,6703,6707,6715-6716,6719,6727,6762-6766,6768,6771,6802,6804,6808,6813,6819,6891,6894-6895,6902,6904,6906,6910-6918,6921-6924,6929,6931,6933,6935,6956,6959,6964,6966,6970,6974-6975,6977-6978,6981,9398,9573,10291,10294,10297,10300,10302-10304,10309,10311,10313
+searchfn/docs/public/llms.txt
+  s_7d0a48f0aaecda::t_45571ec9868d6b 30,60-64,92,94,97,133
+searchfn/swift/README.md
+  s_7d0a48f0aaecda::t_419f8b3dffa08d 115-124
+searchfn/swift/Sources/SearchFnCore/SearchFnResourceEngine.swift
+  s_7d0a48f0aaecda::t_46fe00db78ba6b 42,57-63,120,134,147,159-160,180-182,198,203,255,260,272
+searchfn/swift/Sources/SearchFnCore/SearchFnScoring.swift
+  s_7d0a48f0aaecda::t_06c3475b0074d9 63-82,87,89,104
+searchfn/swift/Sources/SearchFnMemoryAdapter/SearchFnMemoryAdapter.swift
+  s_7d0a48f0aaecda::t_0d29951635949f 124,128-132
+searchfn/swift/Sources/SearchFnSQLiteAdapter/SearchFnSQLiteAdapter.swift
+  s_7d0a48f0aaecda::t_1b3f05542c86de 172,176-180
+searchfn/swift/Tests/SearchFnConformanceTests/SearchFnConformanceTests.swift
+  s_7d0a48f0aaecda::t_ccee461d01e7e1 76,90-109
+searchfn/swift/Tests/SearchFnCoreTests/SearchFnCoreTests.swift
+  s_7d0a48f0aaecda::t_223cdd31ad90ce 81-121
+searchfn/swift/Tests/SearchFnMemoryAdapterTests/SearchFnMemoryAdapterTests.swift
+  s_7d0a48f0aaecda::t_1e7a7a304957e8 78-82
+searchfn/swift/Tests/SearchFnSQLiteAdapterTests/SearchFnSQLiteAdapterTests.swift
+  s_7d0a48f0aaecda::t_63a00c73914d59 114-118
+secfn/core/package.json
+  s_7d0a48f0aaecda::t_e4b8cd5a363e77 3,48,59
+secfn/runtime/README.md
+  s_7d0a48f0aaecda::t_97bd19ecf88768 24-27
+secfn/runtime/package.json
+  s_7d0a48f0aaecda::t_f256a6e2600551 33
+secfn/server/README.md
+  s_7d0a48f0aaecda::t_d220f5dba6e9bc 5-11,14-20
+secfn/server/package.json
+  s_7d0a48f0aaecda::t_3b820dd4af7c19 40,42,45,48
+secfn/server/src/__tests__/installed-package.ts
+  s_7d0a48f0aaecda::t_8e6b338654cd88 1,3-27
+secfn/server/src/__tests__/package-contracts.test.ts
+  s_7d0a48f0aaecda::t_22752a6f41dd73 1-60
+secfn/server/src/__tests__/postgres-contracts.test.ts
+  s_7d0a48f0aaecda::t_b26e529df00334 14-15
+sendfn/python/pyproject.toml
+  s_7d0a48f0aaecda::t_d4d94cb4b4c007 31,47,54,67,71
+superconsole/package.json
+  s_7d0a48f0aaecda::t_b48dba185e3497 28
+turbo.json
+  s_7d0a48f0aaecda::t_bdc52c4bbbda9f 45-46
+uifn/catalogs/wrangler.jsonc
+  s_7d0a48f0aaecda::t_9c6f9039e33e84 20
+uifn/docs/generated/delivery.md
+  s_7d0a48f0aaecda::t_0c21655790504b 3-24
+uifn/docs/generated/docs-coverage.json
+  s_7d0a48f0aaecda::t_884bd08d699984 11
+uifn/docs/generated/site/delivery.html
+  s_7d0a48f0aaecda::t_89015958286ee9 1-6
+uifn/docs/generated/site/index.html
+  s_7d0a48f0aaecda::t_3918b128b3f87b 1
+uifn/patterns/CHANGELOG.md
+  s_7d0a48f0aaecda::t_503802b62a1bbc 3-7
+uifn/patterns/README.md
+  s_7d0a48f0aaecda::t_642edd532cfa88 31-46
+uifn/patterns/package.json
+  s_7d0a48f0aaecda::t_e6d59b5304e996 21,27
+uifn/patterns/src/patterns-story-runner.test.ts
+  s_7d0a48f0aaecda::t_79e0ab01e85956 3,42-43,63,67
+uifn/registry/README.md
+  s_7d0a48f0aaecda::t_8ed60c098289b2 112-126
+uifn/sf/CHANGELOG.md
+  s_7d0a48f0aaecda::t_581473a43e9b54 3-8
+uifn/sf/README.md
+  s_7d0a48f0aaecda::t_903e7ca22b26a8 28-42
+uifn/sf/package.json
+  s_7d0a48f0aaecda::t_e682bdd1921b23 21,27
+uifn/sf/src/sf-story-runner.test.ts
+  s_7d0a48f0aaecda::t_a72b966bda3cc3 3,50-51,54,58
+uifn/sf/tsconfig.json
+  s_7d0a48f0aaecda::t_c1384a69510acd 9
+uifn/storybook/generated/story-inventory.json
+  s_7d0a48f0aaecda::t_8644c0866ab943 15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7dc63a59a1ba55abf5b3f515438b0122d1fea7f9",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

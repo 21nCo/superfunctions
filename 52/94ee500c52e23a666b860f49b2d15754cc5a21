@@ -1,0 +1,29 @@
+userfn/.conduct/campaign-cap-readiness.md
+  s_e1c5fc1a65c0cf::t_92d815a98c433c 1-21
+userfn/.conduct/original-requirements-status.md
+  s_e1c5fc1a65c0cf::t_96a40694e317ad 52
+userfn/python/tests/test_messaging.py
+  s_e1c5fc1a65c0cf::t_bf88b9af785f79 76-96
+userfn/typescript/src/__tests__/messaging.test.ts
+  s_e1c5fc1a65c0cf::t_f4214350211176 75-91
+userfn/typescript/src/core/messaging.ts
+  s_e1c5fc1a65c0cf::t_9af7504f175df8 57-58
+userfn/typescript/src/types.ts
+  s_e1c5fc1a65c0cf::t_dc6846795d8871 181
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5294ee500c52e23a666b860f49b2d15754cc5a21",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

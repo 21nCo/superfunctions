@@ -1,0 +1,359 @@
+flowfn/.conduct/sf-next-delivery-20261020.md
+  s_e1c5fc1a65c0cf::t_b35472db6b3400 1-48
+flowfn/.conduct/typescript-trace-propagation-20261020.md
+  s_e1c5fc1a65c0cf::t_1bded10bb19b32 1-36
+flowfn/admin/README.md
+  s_e1c5fc1a65c0cf::t_cd68e49f296306 1-38
+flowfn/admin/package.json
+  s_e1c5fc1a65c0cf::t_aa84f3bf76317b 37,41-44
+flowfn/admin/src/__tests__/admin.test.ts
+  s_e1c5fc1a65c0cf::t_4195e583b87d4c 1,28-30,61,69-72,85-140,143,156-186,188-197,202-206,220,232-238,257-260,262-264,266-274,278-288,296-299,301-319,328-336,338-341,346-350,354-358,361-370,378-381,386-389,393-401,404-510,528-531,546-549
+flowfn/admin/src/adapter.ts
+  s_e1c5fc1a65c0cf::t_0f48b57229d533 14-15,18-20,22-35
+flowfn/admin/src/capability.ts
+  s_e1c5fc1a65c0cf::t_e0ea182d56da9d 8,42-47,54-59,75-86,89-94,105-125,127-138,144-147,156-158,161-167,173-180,182-190,195-203,207-212,216-218,221-224,227-230,234-331,335-354,356-375,379-386,391-401,404-409,413-424,427-430,433-441,443-446,448-468,470-490,492-520,523-542,544-563,565-591,593-618,621-623,626-632,635-641,643-652,654-674,676-696,698-730,732-765,767-800,805-813,818-839,842-858,862-863,870-871,877-886,890-896
+flowfn/admin/src/client.ts
+  s_e1c5fc1a65c0cf::t_d4b547fdce89a4 1-5,23-25,27,30-33,35-56,58-71,74-81,84-97,100-119,122-125
+flowfn/admin/src/domain-service.ts
+  s_e1c5fc1a65c0cf::t_f6d36553e0f1b3 1,10-11,16-17,27-42,46-52,56-60,65-68,78-87,89-93,95-98,100-109,116-121,127-130,136-140,145-149,153-160,164-177,179-199,202-209,214-220,236-261,265-270,277-280,286-289,310-313,323-338,340-344,356-359,363-366
+flowfn/admin/src/index.ts
+  s_e1c5fc1a65c0cf::t_96ab00ec2fadb3 13-15
+flowfn/admin/src/runtime-capability.ts
+  s_e1c5fc1a65c0cf::t_e73f1ad81a6930 1-60
+flowfn/admin/src/types.ts
+  s_e1c5fc1a65c0cf::t_28d1792a3fcecb 11-13,17-27,35,60-74,79,83-86,93-99,101-118,122,126-158,168,172-175,177-182,185-266,269-275,295-296
+flowfn/python/README.md
+  s_e1c5fc1a65c0cf::t_f7c2f9b732ece5 116-264
+flowfn/python/benchmarks/native_queues.py
+  s_e1c5fc1a65c0cf::t_3b7f118f1721e2 1-94
+flowfn/python/flowfn/__init__.py
+  s_e1c5fc1a65c0cf::t_f85dd6c731b214 7-12
+flowfn/python/flowfn/adapters/base.py
+  s_e1c5fc1a65c0cf::t_27bec666b57615 3-4,6-11,16-20,22-35,37-41,45,49,53,57,61-71,76,80,86-87,91,95-103,105,108-109,112-120
+flowfn/python/flowfn/adapters/durable_queues.py
+  s_e1c5fc1a65c0cf::t_1c79025a9e2544 1-218
+flowfn/python/flowfn/adapters/memory.py
+  s_e1c5fc1a65c0cf::t_b0346a46e028d7 5-6,8-11,17,20-22,26-28,30-121,125-177,179-188,191,195,198-199,201,205,220,222,227,231,235,237,240,246,249,251-284,289,292-312,314,318,323,325,331-332,334-342,349-351,353-370,374-375,378-390,392-394,397-406
+flowfn/python/flowfn/adapters/memory_stream.py
+  s_e1c5fc1a65c0cf::t_e492b5f895de49 1-116
+flowfn/python/flowfn/adapters/native_queues.py
+  s_e1c5fc1a65c0cf::t_c7a5080e873e2c 1-101
+flowfn/python/flowfn/adapters/postgres.py
+  s_e1c5fc1a65c0cf::t_4217fa04bd925e 1-317
+flowfn/python/flowfn/adapters/postgres_queue_functions.py
+  s_e1c5fc1a65c0cf::t_266eb0797f617d 1-127
+flowfn/python/flowfn/adapters/postgres_queues.py
+  s_e1c5fc1a65c0cf::t_ffd2558748d1b5 1-240
+flowfn/python/flowfn/adapters/redis.py
+  s_e1c5fc1a65c0cf::t_bb19cf34666152 1-345
+flowfn/python/flowfn/adapters/redis_queue_scripts.py
+  s_e1c5fc1a65c0cf::t_5d10419d6f2f4e 1-170
+flowfn/python/flowfn/adapters/redis_queues.py
+  s_e1c5fc1a65c0cf::t_3bfc99fc7c034e 1-297
+flowfn/python/flowfn/adapters/stream_lease.py
+  s_e1c5fc1a65c0cf::t_2f7d6c482798b8 1-49
+flowfn/python/flowfn/adapters/workflow_state.py
+  s_e1c5fc1a65c0cf::t_647b06e5f17c54 1-67
+flowfn/python/flowfn/core/flow.py
+  s_e1c5fc1a65c0cf::t_34dac563f74e7f 3-5,7-19,24,36,40-50,52-54,56,60,62,68,73-77,79-81,83,86-93,95,99-100,102,105,107-108,110,114-115,117,119-122,124-133,135,137,139,142-156,159-193
+flowfn/python/flowfn/core/lifecycle.py
+  s_e1c5fc1a65c0cf::t_7bfc245d3d91e4 1-26
+flowfn/python/flowfn/core/metrics.py
+  s_e1c5fc1a65c0cf::t_1d6d705ea88b7b 3-7,13,22,36-37,39,42-43,45-46,48,51,53-56,59-60,66,71-72,74-79,82,84-85,90,92,100,102,105,107-108,110-111,115,117-129,132-135,137-140,142,145-148,150-153,155,157-160,162-168,170-179
+flowfn/python/flowfn/core/telemetry.py
+  s_e1c5fc1a65c0cf::t_f435496bec9ea9 1-129
+flowfn/python/flowfn/monitoring/health.py
+  s_e1c5fc1a65c0cf::t_f3aa5de110c7f3 7-8,13,22,33,45,50,53,59,61,63,68,71,79-80,83-84,86,90,94,99,106,109,111,113-115,123,131,141,153-156,159-194,198,201-204,206,208,210,213-215,217-218,221-239,241,248,252
+flowfn/python/flowfn/monitoring/runtime.py
+  s_e1c5fc1a65c0cf::t_30ffb05f958481 1-115
+flowfn/python/flowfn/patterns/batching.py
+  s_e1c5fc1a65c0cf::t_5569327c1ef6bd 8-9,14,16,24,29,33,37,43,48,53,57,59,68-69,74,79,82,87,91,100,104,109,113,117,120,124
+flowfn/python/flowfn/patterns/priority.py
+  s_e1c5fc1a65c0cf::t_c16d281cc075a4 1,4-6,8,10-16,20-22,24-25,27,29-39,41,43-44,46-47,50,52-53
+flowfn/python/flowfn/patterns/rate_limit.py
+  s_e1c5fc1a65c0cf::t_c7d2b26f0434a9 9,14-15,21,27,31,34-36,38,44,48,55,61,67,71,74,77,84-85,92,98,102,105,111,116
+flowfn/python/flowfn/queue/dlq.py
+  s_e1c5fc1a65c0cf::t_b50e46bfcc45d8 1,3,5,8-10,23,39-41,43-44,48-57,60-61,66-67,69-70,72-73,75-76,78-84,86,88-96,99-106,108-115,117-122
+flowfn/python/flowfn/queue/queue.py
+  s_e1c5fc1a65c0cf::t_fa64f49b25c706 6,12-13,17-20,23,28-29,31-33,37-39,41-42,44-80,84,87,89-90,92-93,96-97,100-101,103-104,106-109,112,114,118,121,123-125,127,131,133-135,139-157,160-164,166-168,171-175,180-190,195,198-228,232-249,257,261,265,269,272-273,276-279,284,287,290,292-293,297,301,303
+flowfn/python/flowfn/queue/types.py
+  s_e1c5fc1a65c0cf::t_d1ceff8391921e 3-4,8-11,14,25,33,35-37,42,44-45,47-49,55-61,65,70,74-75,77-82,85,88-89,94,101,112
+flowfn/python/flowfn/scheduler/__init__.py
+  s_e1c5fc1a65c0cf::t_c95835d8b7a83b 1-304
+flowfn/python/flowfn/storage/event_log.py
+  s_e1c5fc1a65c0cf::t_50f07810f11b31 11,19,27,40,44-45,48-49,52,60,65-66,70-71,75,79,82,87,89,91,94-95,98,100,104,108,112,114,116,118-124,126-128,131,133,136,140,142,148
+flowfn/python/flowfn/storage/job_storage.py
+  s_e1c5fc1a65c0cf::t_92e86b48c871e3 11,17,20,27,31,35,39,43,51,54,57-58,61-63,67-69,71,75,78,82-83,87,91,98,101,103
+flowfn/python/flowfn/storage/workflow_storage.py
+  s_e1c5fc1a65c0cf::t_b4c67eaa1d54c1 9,13,17,19,23-24,27,35,39,43,46,49,53,55,59,61-62,66,69,74-75,79,85,88,92
+flowfn/python/flowfn/stream/stream.py
+  s_e1c5fc1a65c0cf::t_94e79da4416972 3,11-12,15-19,26-27,29-31,34-38,40-46,48-72,76,79-86,88-106,108-120,122-131,134,137,140-141,143,146,148,150,153,157,159-160,162,164-169,171,173-174,176-177,179-180,182-192,194,202,209-211,218-219,222-224,227-233,235-237,241-243,246-247,249-251,254-255
+flowfn/python/flowfn/stream/types.py
+  s_e1c5fc1a65c0cf::t_5ac5092270441d 4-11,16,24,33,36-38,41-43,46-47,52,58-59,62-63,68,72-73,78-80
+flowfn/python/flowfn/utils/hashing.py
+  s_e1c5fc1a65c0cf::t_164554f778a46b 12,14
+flowfn/python/flowfn/utils/ids.py
+  s_e1c5fc1a65c0cf::t_a7744eaa076e87 8,11,13,15-16,18-19,23-27,29-30,32,35,42,47,52
+flowfn/python/flowfn/utils/time.py
+  s_e1c5fc1a65c0cf::t_618130670a63b4 12,33-34,36-37,39-40,43,60-61,67,69,71-76,87
+flowfn/python/flowfn/workflow/builder.py
+  s_e1c5fc1a65c0cf::t_0510f5e3efe41a 12-14,18-33,35,37-38,40,42,46-48,50-52,54-55,57-59,61-62,64,66-67,70-74
+flowfn/python/flowfn/workflow/types.py
+  s_e1c5fc1a65c0cf::t_f4cd1aa90dd4a1 10,19,23-27,37,44,54,67,71,75,79,83,87
+flowfn/python/flowfn/workflow/workflow.py
+  s_e1c5fc1a65c0cf::t_d8d6c3d4c05581 9,13-15,18-21,26-31,34-48,50-79,82-121,123-203,207,209-214,216,219-224,229-247,249-256,262-264,266-270,272,274-279,281-298,300,303-309,313-316,318,321-324,326-344,346,349-357,359-360,363-365,367,370-375,377-381,383-386,389,391-392,394-398,400-401,403-404,409-413,416,418,420-421,424-426,430,433,438,440-463,465-483,487,490,493-494,496-498,501-502,506,509,512,514-519,521,523,531,533-542
+flowfn/python/pyproject.toml
+  s_e1c5fc1a65c0cf::t_0a3bf8c2392de9 31,36-37,51-52,55,62-64
+flowfn/python/tests/test_basic.py
+  s_e1c5fc1a65c0cf::t_ca9c53120f971e 11-12,14-15,22-24,26-29,31,35,42-44,46,50-51,53-55,58,60,67-69,71,76,78-80,83,85,92-93,95-99,106-107,109-111,113-114,118,122-123
+flowfn/python/tests/test_consumer_groups.py
+  s_e1c5fc1a65c0cf::t_6cc1971ea58a82 1-148
+flowfn/python/tests/test_dlq_recovery.py
+  s_e1c5fc1a65c0cf::t_930b6ac3f0d211 1-78
+flowfn/python/tests/test_durable_adapters.py
+  s_e1c5fc1a65c0cf::t_fd1e4e7fd467e5 1-214
+flowfn/python/tests/test_durable_retention.py
+  s_e1c5fc1a65c0cf::t_ff9cebd5734f97 1-45
+flowfn/python/tests/test_durable_stream_ownership.py
+  s_e1c5fc1a65c0cf::t_df2a621bc204c6 1-154
+flowfn/python/tests/test_events.py
+  s_e1c5fc1a65c0cf::t_069e253fb69352 1-208
+flowfn/python/tests/test_flow_shutdown.py
+  s_e1c5fc1a65c0cf::t_440aacfd5a33c4 1-151
+flowfn/python/tests/test_health.py
+  s_e1c5fc1a65c0cf::t_55cebba9e30ef4 1-109
+flowfn/python/tests/test_integration.py
+  s_e1c5fc1a65c0cf::t_7b9ba1c52fe9b5 11-15,17,22,25-27,29-31,33,35,42-44,46,48-49,52,54,56,60-62,64,66,73-77,79,82,84,86-87,89-90,92-93,95-98,101,105-107,109-113,120-124,126,130,134,136-139,141,143,146,153-154,156-158,160,163,166-168,171-175,177,181-182
+flowfn/python/tests/test_metrics.py
+  s_e1c5fc1a65c0cf::t_b1e6fa74bb68f9 1-151
+flowfn/python/tests/test_native_queues.py
+  s_e1c5fc1a65c0cf::t_7766e4d83cb08e 1-189
+flowfn/python/tests/test_queue_contract.py
+  s_e1c5fc1a65c0cf::t_71a64c571975f5 1-122
+flowfn/python/tests/test_queue_lease_cancellation.py
+  s_e1c5fc1a65c0cf::t_b3faf9f1bb7bd5 1-115
+flowfn/python/tests/test_queue_lifecycle.py
+  s_e1c5fc1a65c0cf::t_3d2547090191d6 1-131
+flowfn/python/tests/test_scheduler.py
+  s_e1c5fc1a65c0cf::t_188070dfb16897 1-127
+flowfn/python/tests/test_scheduler_recovery.py
+  s_e1c5fc1a65c0cf::t_b8d061a20069db 1-106
+flowfn/python/tests/test_storage_contract.py
+  s_e1c5fc1a65c0cf::t_447f89ae02c565 1-75
+flowfn/python/tests/test_stream_lifecycle.py
+  s_e1c5fc1a65c0cf::t_964f34b5f3846d 1-37
+flowfn/python/tests/test_stream_retention.py
+  s_e1c5fc1a65c0cf::t_5699a50dbd052a 1-115
+flowfn/python/tests/test_telemetry.py
+  s_e1c5fc1a65c0cf::t_1218b57c922310 1-142
+flowfn/python/tests/test_trace_propagation.py
+  s_e1c5fc1a65c0cf::t_763cc7a07ac772 1-138
+flowfn/python/tests/test_workflow.py
+  s_e1c5fc1a65c0cf::t_c7af51dfd5189b 11-12,14,16-18,20-27,29-30,33,35,37,44-45,47,50,53,56-58,61,63,65,72-73,76-78,81,84,86-87,94-95,97,101-104,107,110-111,115,117,119,126-127,130-132,134-136,138,140-144,148-149
+flowfn/python/tests/test_workflow_close_ownership.py
+  s_e1c5fc1a65c0cf::t_1ac806d74889db 1-46
+flowfn/python/tests/test_workflow_discovery.py
+  s_e1c5fc1a65c0cf::t_a5f8097f003c3b 1-139
+flowfn/python/tests/test_workflow_lifecycle.py
+  s_e1c5fc1a65c0cf::t_37082a8e3f687d 1-117
+flowfn/python/tests/test_workflow_recovery.py
+  s_e1c5fc1a65c0cf::t_256acc7538072c 1-110
+flowfn/python/tests/test_workflow_renewal.py
+  s_e1c5fc1a65c0cf::t_a5b917a394f2cd 1-97
+flowfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_2611559d09f4df 1-135
+flowfn/typescript/docs/API.md
+  s_e1c5fc1a65c0cf::t_ef21fed95de39c 802-890
+flowfn/typescript/docs/durable-scheduling.md
+  s_e1c5fc1a65c0cf::t_bb0a49e037517d 1-46
+flowfn/typescript/docs/queue-ownership.md
+  s_e1c5fc1a65c0cf::t_7feee6040c5c9d 1-67
+flowfn/typescript/docs/retry-strategies.md
+  s_e1c5fc1a65c0cf::t_fad87a44512385 1-35
+flowfn/typescript/docs/workflow-ownership.md
+  s_e1c5fc1a65c0cf::t_5cb1f704e8cd60 1-57
+flowfn/typescript/package.json
+  s_e1c5fc1a65c0cf::t_90c4d0982cf276 12-13,39,44-46,48-51,55,57-58,61-64,67,69,81-141
+flowfn/typescript/scripts/packed-consumer-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_ef62be10aab2e4 1-50
+flowfn/typescript/scripts/provider-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_f0851740cdf6d9 1-101
+flowfn/typescript/scripts/queue-benchmark.mjs
+  s_e1c5fc1a65c0cf::t_72747547b1cce0 1-71
+flowfn/typescript/scripts/scheduler-crash-worker.mjs
+  s_e1c5fc1a65c0cf::t_f038e69305900a 1-20
+flowfn/typescript/scripts/workflow-cancel-worker.mjs
+  s_e1c5fc1a65c0cf::t_6696c3ae6f11c2 1-27
+flowfn/typescript/scripts/workflow-crash-worker.mjs
+  s_e1c5fc1a65c0cf::t_4b79ebbe1bce93 1-34
+flowfn/typescript/src/adapters/base.ts
+  s_e1c5fc1a65c0cf::t_35810faf3d9bf0 1,8-10,13,17-18,20-27,33-34,40-41,45-52,54,57,68
+flowfn/typescript/src/adapters/memory.ts
+  s_e1c5fc1a65c0cf::t_fbfc0b4e3d0d2a 1-2,10-12,15-16,20,23-105,107,109-110,112-115,117-118,121-127,130-132,135-137,140,145,147-157,159,162-174,177-179,181-190,192,194-195,198,207-208,210,213-249,252-257,260,262-263,267,269,272-274,276,281-282,290-291,296-297
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_e1c5fc1a65c0cf::t_21e491fc5ce98a 1-8,13-15,17,19,23,26-29,32-171,174-194,197-208,210-214,216-231,234-273,275-276,278-281,283-290,292-300,302-337,346-349,352-509,515-516,518-668,670-679,681-683,685,687-691,693-694,696-699
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_e1c5fc1a65c0cf::t_7942fb19f051c5 1-19,21-46,48-51,53-77,79-87,89-333,335-336
+flowfn/typescript/src/adapters/postgres/schema.ts
+  s_e1c5fc1a65c0cf::t_9105fe7ff9ce80 1-92
+flowfn/typescript/src/adapters/redis.test.ts
+  s_e1c5fc1a65c0cf::t_e978ecb71cd8e9 1-17,19-21,23-41,44-46,48-66,68-75,77-85,87-92,94-343
+flowfn/typescript/src/adapters/redis.ts
+  s_e1c5fc1a65c0cf::t_e798d39b20b547 1-4,12-14,17-42,52-53,68-98,101-148,150,152-177,179-229,233-236,241-263,266-268,270-276,279-281,283-284,286-290,292-295,298,301-302,305-307,310,313-314,316-336,338-346,348-415,417-418,420-451,453-455,459-463,466-472,475-481,484-486,490-541,543,546-580,583,585-586,590,593,596-598,601-606,611,613-616,618-623,627,630-631,634-662,665-676
+flowfn/typescript/src/core/durable-scheduler.ts
+  s_e1c5fc1a65c0cf::t_85786c710d5100 1-174
+flowfn/typescript/src/core/flow-fn.test.ts
+  s_e1c5fc1a65c0cf::t_4830ed1219c724 1-2,4-5,7-9,11-13,15-19,21-30,32-36,38-39,41-70
+flowfn/typescript/src/core/flow-fn.ts
+  s_e1c5fc1a65c0cf::t_32e5a260428cde 1-2,9-13,15,23,38-39,51-56,58,67,72-78,82,90-91,98,104-164,207,209-254,264,266-279,289-303,307-336,339,369-389
+flowfn/typescript/src/core/metrics.test.ts
+  s_e1c5fc1a65c0cf::t_0040a40d13d586 1-84
+flowfn/typescript/src/core/metrics.ts
+  s_e1c5fc1a65c0cf::t_accd7048a0418c 1,29-43,51,61,79,84,88-91,102,109,127-130,148,164-168,173-183,185-202,213-216,225-226,229
+flowfn/typescript/src/core/scheduler.test.ts
+  s_e1c5fc1a65c0cf::t_a05dde7274fa67 1-21,24-26,28-29,31-33,35-38,41-42,44-46,48-51,54-61,63-67,69-70,72-74,76-89,91-127
+flowfn/typescript/src/core/scheduler.ts
+  s_e1c5fc1a65c0cf::t_2ee565ebc137ae 1-2,4-22,25-103,105-106,108-114,116-126,128-168,170-176,178-187
+flowfn/typescript/src/core/shutdown.test.ts
+  s_e1c5fc1a65c0cf::t_cfcac8fef3df3b 1-85
+flowfn/typescript/src/core/shutdown.ts
+  s_e1c5fc1a65c0cf::t_5240f3a3ca95bc 1-25
+flowfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_8fe1fac861ffb1 3,8,60-61
+flowfn/typescript/src/instrumentation.test.ts
+  s_e1c5fc1a65c0cf::t_34ead4c54a6ecf 1-156
+flowfn/typescript/src/instrumentation.ts
+  s_e1c5fc1a65c0cf::t_08409ca5120bb6 1-86
+flowfn/typescript/src/monitoring/health.ts
+  s_e1c5fc1a65c0cf::t_bfbdd4c4beb891 1,194,213-214,227,234,248-250,253,257-258,261
+flowfn/typescript/src/patterns/backoff.test.ts
+  s_e1c5fc1a65c0cf::t_59d00376554aa4 1-51
+flowfn/typescript/src/patterns/backoff.ts
+  s_e1c5fc1a65c0cf::t_ab2fdec74c0041 1,3-12,14-29,31-32
+flowfn/typescript/src/patterns/batching.ts
+  s_e1c5fc1a65c0cf::t_d28026adc95611 135,158,213,235
+flowfn/typescript/src/patterns/circuit-breaker.test.ts
+  s_e1c5fc1a65c0cf::t_f487952e3c4d64 1-51
+flowfn/typescript/src/patterns/circuit-breaker.ts
+  s_e1c5fc1a65c0cf::t_5872e4ef68bd0f 1,9,13,15,23,25,27,33-35,38,45-46
+flowfn/typescript/src/patterns/priority.ts
+  s_e1c5fc1a65c0cf::t_da78c8250cbc0e 97,121,131
+flowfn/typescript/src/patterns/rate-limit.ts
+  s_e1c5fc1a65c0cf::t_218624bac36a16 87,92,204,208,264,282
+flowfn/typescript/src/patterns/retry.test.ts
+  s_e1c5fc1a65c0cf::t_248b3f0a383236 1-2,4-5,7-26,28-35,38-59,62-64,66-69
+flowfn/typescript/src/queue/batch.test.ts
+  s_e1c5fc1a65c0cf::t_c1bc6b794156a8 1-2,4-5,7-31,33-42,44-50,52-56,58-83,85-87
+flowfn/typescript/src/queue/dependencies.test.ts
+  s_e1c5fc1a65c0cf::t_42312a939a24b6 1-2,4-5,7-9,11-13,15-17,19-20,22-25,27-33
+flowfn/typescript/src/queue/dlq.ts
+  s_e1c5fc1a65c0cf::t_f816eb7d66778f 55-59,113-117,120,124,144,192-193,198
+flowfn/typescript/src/queue/job.ts
+  s_e1c5fc1a65c0cf::t_57f678c20e7b2a 1-11,13-16,21-22,27-28,31-52,54-57,60-62,65-66,68-69,71-73,75,78,81,84-97,100-101,104-111
+flowfn/typescript/src/queue/leases.test.ts
+  s_e1c5fc1a65c0cf::t_cd351701004e08 1-95
+flowfn/typescript/src/queue/lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_4a938ae3ae76e3 1-115
+flowfn/typescript/src/queue/queue.ts
+  s_e1c5fc1a65c0cf::t_73c408c6395151 1-3,13,15-21,23-42,44-63,65-116,119-120,122-212,214-280,283-288,290-299,301-345,347-360,362-376,378-383,385-393,396-420,423-428,430-434,436-450,452-469,471-489,491-522,525-526,528-531,533-536,538-547,549,552-554,557-559,564-583
+flowfn/typescript/src/queue/types.ts
+  s_e1c5fc1a65c0cf::t_5e90ae4106e0d8 1,8,11-12,14,25,44,47-52,64-70,91-92,95,133-134,137-138,140-144
+flowfn/typescript/src/queue/worker-pool.test.ts
+  s_e1c5fc1a65c0cf::t_ec0b8d632e678b 1-24
+flowfn/typescript/src/queue/worker-pool.ts
+  s_e1c5fc1a65c0cf::t_b3684866ba38de 1-110
+flowfn/typescript/src/queue/worker.test.ts
+  s_e1c5fc1a65c0cf::t_49945a0b83a6a2 1-66
+flowfn/typescript/src/queue/worker.ts
+  s_e1c5fc1a65c0cf::t_0c9534812bc979 1-4,10-12,15,17-28,30-52,55-70,72-73,75-84,86-108,112
+flowfn/typescript/src/storage/event-log.ts
+  s_e1c5fc1a65c0cf::t_5da51374d7ffa7 44,57,73,91,143,157
+flowfn/typescript/src/storage/job-storage.test.ts
+  s_e1c5fc1a65c0cf::t_dba34f6f3759a0 1-44
+flowfn/typescript/src/storage/job-storage.ts
+  s_e1c5fc1a65c0cf::t_975783bfd4503a 5,64,66-70,72,75-76,79,82,87,89,92,94,100,102-103,106,111,113-119,122-124,127-129
+flowfn/typescript/src/storage/scheduler-contract.ts
+  s_e1c5fc1a65c0cf::t_ef15976202ff77 1-38
+flowfn/typescript/src/storage/shutdown-contract.ts
+  s_e1c5fc1a65c0cf::t_d3addfd6b90f4f 1-30
+flowfn/typescript/src/storage/stream-filter-contract.ts
+  s_e1c5fc1a65c0cf::t_e4579bf0e4477f 1-23
+flowfn/typescript/src/storage/stream-lease-contract.ts
+  s_e1c5fc1a65c0cf::t_ff1b9636e495cc 1-73
+flowfn/typescript/src/storage/telemetry-contract.ts
+  s_e1c5fc1a65c0cf::t_c3e0d6e2518e5a 1-43
+flowfn/typescript/src/storage/worker-contract.ts
+  s_e1c5fc1a65c0cf::t_0c84755fd2a376 1-58
+flowfn/typescript/src/storage/workflow-cancel-contract.ts
+  s_e1c5fc1a65c0cf::t_0a81a5fb7d739c 1-51
+flowfn/typescript/src/storage/workflow-control-contract.ts
+  s_e1c5fc1a65c0cf::t_905fe26f640399 1-52
+flowfn/typescript/src/storage/workflow-control.test.ts
+  s_e1c5fc1a65c0cf::t_bb567f5e0e9e38 1-8
+flowfn/typescript/src/storage/workflow-control.ts
+  s_e1c5fc1a65c0cf::t_73f89de4e271ba 1-40
+flowfn/typescript/src/storage/workflow-crash-contract.ts
+  s_e1c5fc1a65c0cf::t_8f136b41b342a5 1-64
+flowfn/typescript/src/storage/workflow-storage.ts
+  s_e1c5fc1a65c0cf::t_38073a0ba2074f 75,109,128
+flowfn/typescript/src/stream/delivery-lease.test.ts
+  s_e1c5fc1a65c0cf::t_d41dc295aa4059 1-44
+flowfn/typescript/src/stream/delivery-lease.ts
+  s_e1c5fc1a65c0cf::t_18badafb332da6 1-41
+flowfn/typescript/src/stream/lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_ad32560776d9c7 1-231
+flowfn/typescript/src/stream/memory-groups.ts
+  s_e1c5fc1a65c0cf::t_2950b7cf955364 1-237
+flowfn/typescript/src/stream/stream.ts
+  s_e1c5fc1a65c0cf::t_7f304d5da1f617 1-4,10,18,20-36,38-42,44,46-47,49-50,54-62,65,67-81,85,87-107,109-126,130-136,138-144,147,149-153,156,158-162,164-168,171-172,175,177-178,181-185,190,192-196,199-205,208-209,211-218
+flowfn/typescript/src/stream/types.ts
+  s_e1c5fc1a65c0cf::t_ea1b5a4bac0870 1,3-5,10,13-16,18-23,26-28,30-35,37,41-42,51,62-66,69-71,77-78,85,91-93,97-101,105-106
+flowfn/typescript/src/utils/id-generator.ts
+  s_e1c5fc1a65c0cf::t_643aac317a8aa9 102
+flowfn/typescript/src/utils/serialization.ts
+  s_e1c5fc1a65c0cf::t_9abeed3904e2a3 16,68
+flowfn/typescript/src/utils/time.ts
+  s_e1c5fc1a65c0cf::t_e48fea9d1ffab5 91,98-99
+flowfn/typescript/src/workflow/advanced.test.ts
+  s_e1c5fc1a65c0cf::t_b56bfa983d1250 1-47
+flowfn/typescript/src/workflow/durable-wait.test.ts
+  s_e1c5fc1a65c0cf::t_f2c17aecc082ce 1-42
+flowfn/typescript/src/workflow/events.test.ts
+  s_e1c5fc1a65c0cf::t_3913ed136eb7a9 1-44
+flowfn/typescript/src/workflow/lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_81a4c0bf956d7a 1-397
+flowfn/typescript/src/workflow/types.ts
+  s_e1c5fc1a65c0cf::t_0baa2ec9851bee 1,3,26-35,41-56,58-59,65-67,108,142-144,155,160
+flowfn/typescript/src/workflow/workflow.test.ts
+  s_e1c5fc1a65c0cf::t_a880b2f32fb613 1-64
+flowfn/typescript/src/workflow/workflow.ts
+  s_e1c5fc1a65c0cf::t_b3088b2a946ab8 1-2,20,39,45,50-61,66-73,130,138,159-160,166-167,172-183,187-257,259-260,262-282,284-400,403-408,411,415-421,423-440,442-560,562,564-566,568-570,572-576,578-579,582-592,594-648,654-756,758-780,783,785,787,789-801,804-821,823-861,864-866,868-889,891-918,920-959,963-990,992-1003,1006-1034,1036,1039-1042,1044-1055,1058-1075
+flowfn/typescript/tests/dlq.test.ts
+  s_e1c5fc1a65c0cf::t_ebc835e427561b 5,202,206-220
+flowfn/typescript/tests/health.test.ts
+  s_e1c5fc1a65c0cf::t_c56a740236c9a8 5,229-257
+flowfn/typescript/tsconfig.tests.json
+  s_e1c5fc1a65c0cf::t_c7e44f9e00cd5e 1-19
+flowfn/typescript/tsup.config.ts
+  s_e1c5fc1a65c0cf::t_511816d090e494 4
+flowfn/typescript/vitest.config.ts
+  s_e1c5fc1a65c0cf::t_f27bb1228f4df5 7
+package-lock.json
+  s_e1c5fc1a65c0cf::t_229da0a0d541ea 10778,10782-10785,10788-10792,10795-10800,10802-10803,10806-10810,10813-10815,10817-10830,10833-10837,10840,10843,10846-10915,10918-11392,11398-11399,11401,11403-11404,11408-11410,11412,11415,11418-11421,11441-11443,11447-11452,11458-11461,11465-11479,11483-11495,11497-11520,11522-11675,11678-11684,11686-11695,11698-11699,11702-11708,11710-11719,11722-11723,11726-11732,11734-11743,11746-11747,11750-11756,11758-11767,11770-11771,11774-11780,11782-11788,11791-11792,11795-11801,11803-11807,11809-11813,11816-11833,11840-11843,11847,11850-11857,11859-11860,11863-11899,11901-11912,11915,11921,11924,11927,11930,11933,11936,11939,11942,11945,11948-11949,11953-11956,11960-11962,11966-11977,11980-11983,11987-11991,11994,11997,12000-12003,12006-12017,12020,12023,12026,12029,12032,12035-12053,23963-24055,24396-24398,24402,25998-26013,26015-26017,26031-26033,26047-26049,26063-26065,26079-26081,26095-26097,26101-26103,26114-26116,26120-26122,26133-26135,26139-26141,26152-26154,26158-26160,26171-26173,26177-26179,26190-26192,26196-26198,26209-26211,26225-26227,26241-26243,29380-29382,34177-34179,34188,34231-34233,41124-41126,43148-43150,43153-43155,43163,43175-43177,43182-43184,43195-43197,43204-43206,43235-43237,43398-43400,43417,43419,44935-44937,44941,44951-44965,46514-46516
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c22b544fa776d9914cacd625cd99dded3ddd1148",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

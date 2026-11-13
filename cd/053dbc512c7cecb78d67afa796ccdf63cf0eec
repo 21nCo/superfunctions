@@ -1,0 +1,55 @@
+package-lock.json
+  s_e1c5fc1a65c0cf::t_9d0e74524c1f02 64502
+userfn/.conduct/flag-bootstrap-readiness.md
+  s_e1c5fc1a65c0cf::t_3e378a2ea39f07 22-23
+userfn/.conduct/flag-context-readiness.md
+  s_e1c5fc1a65c0cf::t_25160d165ae4a3 1-143
+userfn/admin/package.json
+  s_e1c5fc1a65c0cf::t_c89036ac59aeea 36
+userfn/admin/src/__tests__/flag-config.test.ts
+  s_e1c5fc1a65c0cf::t_9c4b37c79f61e2 1-46
+userfn/admin/src/index.ts
+  s_e1c5fc1a65c0cf::t_c96fe99e069640 127,130-145
+userfn/python/README.md
+  s_e1c5fc1a65c0cf::t_00808bfbd32aaa 193-230
+userfn/python/src/userfn/client.py
+  s_e1c5fc1a65c0cf::t_7a3fe31bea226c 16
+userfn/python/src/userfn/core/flags.py
+  s_e1c5fc1a65c0cf::t_f4c3febb76764f 2-6,10-12,14-17,19-21,24-27,30-84,146-282
+userfn/python/src/userfn/types.py
+  s_e1c5fc1a65c0cf::t_a3a6abcca8fbe5 2,58-76,85-86,97
+userfn/python/tests/test_flag_context.py
+  s_e1c5fc1a65c0cf::t_4d7b4a16848142 1-111
+userfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_06074035a55632 178-211
+userfn/typescript/package.json
+  s_e1c5fc1a65c0cf::t_f8b72e86203d48 11-18,21-28
+userfn/typescript/scripts/verify-flag-context.mjs
+  s_e1c5fc1a65c0cf::t_c029aa218a2309 1-60
+userfn/typescript/src/__tests__/flag-context.test.ts
+  s_e1c5fc1a65c0cf::t_17f3de26eec9ae 1-130
+userfn/typescript/src/core/flags.ts
+  s_e1c5fc1a65c0cf::t_3eaa88d0ee701a 5-8,12-14,18-23,27-54,56-60,62,126-224
+userfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_d910a8744d3073 25
+userfn/typescript/src/operator.ts
+  s_e1c5fc1a65c0cf::t_b446f7af00ace0 1,168,182
+userfn/typescript/src/types.ts
+  s_e1c5fc1a65c0cf::t_27d47f452527a9 60-73,77,81-82,87-88
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cd053dbc512c7cecb78d67afa796ccdf63cf0eec",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

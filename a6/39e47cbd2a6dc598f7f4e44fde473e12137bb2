@@ -1,0 +1,25 @@
+flowfn/python/README.md
+  s_e1c5fc1a65c0cf::t_833f4c0ab2b312 178-179
+flowfn/python/flowfn/adapters/memory.py
+  s_e1c5fc1a65c0cf::t_6bbfe1302158d2 357,361
+flowfn/python/flowfn/workflow/workflow.py
+  s_e1c5fc1a65c0cf::t_df22ef40bf9c99 237,239,312-313,350-352
+flowfn/python/tests/test_workflow_discovery.py
+  s_e1c5fc1a65c0cf::t_fdefe9b7fc54b1 23-55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a639e47cbd2a6dc598f7f4e44fde473e12137bb2",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

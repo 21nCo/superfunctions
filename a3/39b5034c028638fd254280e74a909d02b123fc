@@ -1,0 +1,35 @@
+package-lock.json
+  s_7d0a48f0aaecda::t_7d4c71557e1d60 13279
+langfn/docs/docsfn.config.ts
+  s_cc141836298190::t_0369e4dff58625 9-12
+langfn/docs/package.json
+  s_cc141836298190::t_4ad4562c866958 21-22
+langfn/docs/src/app.css
+  s_cc141836298190::t_f389b8a89237a5 74-77,82
+langfn/docs/src/routes/docs/[...slug]/+page.server.ts
+  s_cc141836298190::t_2039be9b934846 13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a339b5034c028638fd254280e74a909d02b123fc",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_cc141836298190": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a73b512c325948d28",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,55 @@
+userfn/.conduct/campaign-timing-readiness.md
+  s_e1c5fc1a65c0cf::t_ac22f78ad95263 1-80
+userfn/.conduct/durable-campaign-caps-readiness.md
+  s_e1c5fc1a65c0cf::t_154472dbedf4e7 110-115
+userfn/python/README.md
+  s_e1c5fc1a65c0cf::t_6a3099fcfa07a2 398-409
+userfn/python/src/userfn/client.py
+  s_e1c5fc1a65c0cf::t_2fad5b4d5fc63e 88,98
+userfn/python/src/userfn/core/messaging.py
+  s_e1c5fc1a65c0cf::t_882eeadc98589d 21-26,43-45
+userfn/python/src/userfn/core/messaging_http.py
+  s_e1c5fc1a65c0cf::t_b0b497fbb5f2ee 2,82,85,102-104,107
+userfn/python/src/userfn/types.py
+  s_e1c5fc1a65c0cf::t_0258b961474b59 178-183,194-195
+userfn/python/tests/test_messaging_durable.py
+  s_e1c5fc1a65c0cf::t_d2e4620edebe37 45-82
+userfn/service/README.md
+  s_e1c5fc1a65c0cf::t_aca5c1928e3e4f 163-203
+userfn/service/scripts/verify-messaging-browser.mjs
+  s_e1c5fc1a65c0cf::t_932a2592e78519 26,30,53,56-57,66-70,73
+userfn/service/src/messaging.ts
+  s_e1c5fc1a65c0cf::t_76cc03fe7f9761 5,8,16-26,56,60-62,69-76,85-94,99-104,106
+userfn/service/src/schema.ts
+  s_e1c5fc1a65c0cf::t_42319120d853e5 19-29
+userfn/service/tests/messaging-http.test.ts
+  s_e1c5fc1a65c0cf::t_75e74f4d2d97e1 88-126
+userfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_1533545a84fb39 467-477
+userfn/typescript/src/__tests__/messaging-durable.test.ts
+  s_e1c5fc1a65c0cf::t_7333ea81e73a33 92-114
+userfn/typescript/src/core/messaging-http.ts
+  s_e1c5fc1a65c0cf::t_75f77821a47863 53-55,57,68-70,72
+userfn/typescript/src/core/messaging.ts
+  s_e1c5fc1a65c0cf::t_c321e54b005d4f 14-19,37
+userfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_0901f2224f42be 108,126
+userfn/typescript/src/types.ts
+  s_e1c5fc1a65c0cf::t_b7013c8c08f3cc 183-184,192-194
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3e4703166d45722240820e252136511af69c111e",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

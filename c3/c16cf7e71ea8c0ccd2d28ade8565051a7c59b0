@@ -1,0 +1,121 @@
+drawfn/.conduct/pr-destination.md
+  s_e1c5fc1a65c0cf::t_390d82d903eba0 1-5
+drawfn/core/LICENSE
+  s_e1c5fc1a65c0cf::t_169515a07c607d 1-21
+drawfn/core/README.md
+  s_e1c5fc1a65c0cf::t_cc498956488ab6 98,119,140-161
+drawfn/core/__tests__/camera-input.test.ts
+  s_e1c5fc1a65c0cf::t_ee37f638060fa6 5
+drawfn/core/__tests__/drawfn.test.ts
+  s_e1c5fc1a65c0cf::t_850c03dbf7fd80 84,93
+drawfn/core/__tests__/freedraw-normalization.test.ts
+  s_e1c5fc1a65c0cf::t_aa72ecc346fee6 5
+drawfn/core/__tests__/readiness.test.ts
+  s_e1c5fc1a65c0cf::t_add8a0090666c0 1-141
+drawfn/core/__tests__/selection-events.test.ts
+  s_e1c5fc1a65c0cf::t_bc17590c447260 5
+drawfn/core/__tests__/setup.ts
+  s_e1c5fc1a65c0cf::t_74f7464bf8da06 1,3,6
+drawfn/core/__tests__/shape-tools.test.ts
+  s_e1c5fc1a65c0cf::t_f30636107adfc7 1-41
+drawfn/core/example.html
+  s_e1c5fc1a65c0cf::t_7f25eae2f1f165 125,131-133,156,159
+drawfn/core/package.json
+  s_e1c5fc1a65c0cf::t_67ca99d0e99a68 12-19,31-32,70
+drawfn/core/src/drawfn.ts
+  s_e1c5fc1a65c0cf::t_c7b0cdc40382b3 10,35,157-161,838-840,845-847,862-863,889-891,916,1016,1030-1044,1163-1168,1185,1197,1276-1278,1289-1290,1303-1304,1319-1321,1327,1343-1344,1403-1405,1423,1425,1430,1443,1456,1472-1474,1483,1495,1513,1528,1568-1569,1573-1577,1617,1624,1626-1628,1644,1656-1657,1663-1689,1737-1738,1753-1754,1770-1772,1808,1813,1829-1833,1843
+drawfn/core/src/renderer.ts
+  s_e1c5fc1a65c0cf::t_291365e3b1966c 34,64,184-186,283,429-440,471,494-497,503
+drawfn/core/src/tools/ellipse-tool.ts
+  s_e1c5fc1a65c0cf::t_cea10257359c39 1,3-4
+drawfn/core/src/tools/pan-tool.ts
+  s_e1c5fc1a65c0cf::t_58b1e7a499a8a7 20-23
+drawfn/core/src/tools/pen-tool.ts
+  s_e1c5fc1a65c0cf::t_759b0f4deb4e4e 22,36
+drawfn/core/src/tools/rectangle-tool.ts
+  s_e1c5fc1a65c0cf::t_ea5afdcea73bc2 1,3-4
+drawfn/core/src/tools/select-tool.ts
+  s_e1c5fc1a65c0cf::t_ea1e0220833f6a 184-193
+drawfn/core/src/tools/shape-tool.ts
+  s_e1c5fc1a65c0cf::t_cfa86534e424b1 1-93
+drawfn/core/src/tools/text-tool.ts
+  s_e1c5fc1a65c0cf::t_107a39ce3f4a95 26,81-82,87-91,125,128,144
+drawfn/core/src/types.ts
+  s_e1c5fc1a65c0cf::t_a5ca9e393c50b6 120-121
+drawfn/core/src/utils.ts
+  s_e1c5fc1a65c0cf::t_eb2016c865ddc7 16-17,51-54
+drawfn/drawfn-react/LICENSE
+  s_e1c5fc1a65c0cf::t_03f29b4be09cd5 1-21
+drawfn/drawfn-react/README.md
+  s_e1c5fc1a65c0cf::t_4bb5989dce7db6 28,57
+drawfn/drawfn-react/package.json
+  s_e1c5fc1a65c0cf::t_90717881dc36e0 12-19,30-31,63,71
+drawfn/drawfn-react/src/DrawfnCanvas.tsx
+  s_e1c5fc1a65c0cf::t_cab4baf58324aa 18-19,28-29
+drawfn/drawfn-react/src/__tests__/setup.ts
+  s_e1c5fc1a65c0cf::t_63612fe6e1cfc3 3,5-6
+drawfn/drawfn-react/src/__tests__/use-drawfn.test.tsx
+  s_e1c5fc1a65c0cf::t_af52e3e3b14aa4 5,7,9,14,96-122
+drawfn/drawfn-react/src/use-drawfn.ts
+  s_e1c5fc1a65c0cf::t_04c4673b5d869a 50-53,67-68,76-78,80,83,87,91,93,150-151
+drawfn/drawfn-react/tsconfig.json
+  s_e1c5fc1a65c0cf::t_deed82b1d03ea7 4-7,22-29
+drawfn/drawfn-svelte/LICENSE
+  s_e1c5fc1a65c0cf::t_0ef4dc8579029f 1-21
+drawfn/drawfn-svelte/README.md
+  s_e1c5fc1a65c0cf::t_fb764bc2ff701a 3-7,12,22,47,74,113,135,141,153,175,204,206,347,352,356,381
+drawfn/drawfn-svelte/__tests__/drawfn-action.test.ts
+  s_e1c5fc1a65c0cf::t_f57e70b79a6cf6 4-7,70-98
+drawfn/drawfn-svelte/__tests__/drawfn-canvas.test.ts
+  s_e1c5fc1a65c0cf::t_c868388d3a612b 4-5
+drawfn/drawfn-svelte/__tests__/setup.ts
+  s_e1c5fc1a65c0cf::t_03e1e5f5aa97e2 3,5-6
+drawfn/drawfn-svelte/package.json
+  s_e1c5fc1a65c0cf::t_c9d55f0cdb0484 7,14,17-19,22-24,28,31,34-36,60-62,67,70-71,76-77,81
+drawfn/drawfn-svelte/src/Canvas.svelte
+  s_e1c5fc1a65c0cf::t_f257a8397746db 15
+drawfn/drawfn-svelte/src/DrawfnCanvas.svelte
+  s_e1c5fc1a65c0cf::t_fabcb0c6eaeeba 2-3,17-18,28,31-34,68,74
+drawfn/drawfn-svelte/src/drawfn-action.ts
+  s_e1c5fc1a65c0cf::t_82d1bf67210e71 24-27,29-42,44,47-51,53-61,65-66
+drawfn/drawfn-svelte/src/stores.ts
+  s_e1c5fc1a65c0cf::t_632d6a243a15e5 1,15,45-46,90-96
+drawfn/drawfn-svelte/svelte.config.js
+  s_e1c5fc1a65c0cf::t_8e5abdd25d2a2e 1-2
+drawfn/drawfn-svelte/tsup.config.ts
+  s_e1c5fc1a65c0cf::t_9268df09826f58 5
+drawfn/drawfn-svelte/vitest.config.ts
+  s_e1c5fc1a65c0cf::t_0f2c401734f8bf 8,14,16
+drawfn/scripts/browser-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_bfe46b343c8f15 1-80
+drawfn/scripts/framework-browser-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_6abff86f3bce30 1-60
+drawfn/scripts/npm-cli.mjs
+  s_e1c5fc1a65c0cf::t_d6018c0b3065a0 1-8
+drawfn/scripts/packed-consumer.mjs
+  s_e1c5fc1a65c0cf::t_36b039c11e88de 1-38
+drawfn/testing/canvas.ts
+  s_e1c5fc1a65c0cf::t_1c4cb13b868425 1-58
+drawfn/testing/create-canvas.ts
+  s_e1c5fc1a65c0cf::t_7db5813337e0d1 1-14
+drawfn/testing/scene.ts
+  s_e1c5fc1a65c0cf::t_4e87bbb43c91eb 1-27
+package.json
+  s_e1c5fc1a65c0cf::t_45d53f55f42865 63-66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c3c16cf7e71ea8c0ccd2d28ade8565051a7c59b0",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,167 @@
+flowfn/admin/README.md
+  s_e1c5fc1a65c0cf::t_47566da4681997 1-31
+flowfn/admin/package.json
+  s_e1c5fc1a65c0cf::t_08ad69bcea0b92 1-46
+flowfn/admin/src/__tests__/admin.test.ts
+  s_e1c5fc1a65c0cf::t_66674d3a8e3148 1-495
+flowfn/admin/src/adapter.ts
+  s_e1c5fc1a65c0cf::t_1fe9cce2fae5f3 1-42
+flowfn/admin/src/capability.ts
+  s_e1c5fc1a65c0cf::t_940a896acbd754 1-891
+flowfn/admin/src/client.ts
+  s_e1c5fc1a65c0cf::t_96159eb1839f8f 1-102
+flowfn/admin/src/domain-service.ts
+  s_e1c5fc1a65c0cf::t_b5c5b83499ecf0 1-312
+flowfn/admin/src/index.ts
+  s_e1c5fc1a65c0cf::t_6387a19dc81fbb 1-19
+flowfn/admin/src/types.ts
+  s_e1c5fc1a65c0cf::t_f94624d8ec9de5 1-272
+flowfn/admin/tsconfig.json
+  s_e1c5fc1a65c0cf::t_d0ed17e66c3250 1-33
+flowfn/admin/vitest.config.ts
+  s_e1c5fc1a65c0cf::t_a230cd38cb76f6 1-8
+flowfn/typescript/docs/API.md
+  s_e1c5fc1a65c0cf::t_481a5a09653670 1-890
+flowfn/typescript/docs/USAGE.md
+  s_e1c5fc1a65c0cf::t_38ce675e6161d5 1-619
+flowfn/typescript/docs/retry-strategies.md
+  s_e1c5fc1a65c0cf::t_850e1b54f34c2a 1-33
+flowfn/typescript/package.json
+  s_e1c5fc1a65c0cf::t_8d3bd1ac573e4c 1-81
+flowfn/typescript/scripts/provider-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_79a749f4475c29 1-95
+flowfn/typescript/src/adapters/base.ts
+  s_e1c5fc1a65c0cf::t_fa890e308cb5de 1-62
+flowfn/typescript/src/adapters/memory.ts
+  s_e1c5fc1a65c0cf::t_28c4b6fdee7e6f 1-249
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_e1c5fc1a65c0cf::t_edba341550b3a5 1-589
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_e1c5fc1a65c0cf::t_173c6b0e62a562 1-219
+flowfn/typescript/src/adapters/postgres/schema.ts
+  s_e1c5fc1a65c0cf::t_d1204f8d44e370 1-91
+flowfn/typescript/src/adapters/redis.test.ts
+  s_e1c5fc1a65c0cf::t_eb9746d67f5be5 1-169
+flowfn/typescript/src/adapters/redis.ts
+  s_e1c5fc1a65c0cf::t_c7d151e4fcfb07 1-507
+flowfn/typescript/src/core/flow-fn.test.ts
+  s_e1c5fc1a65c0cf::t_b75bc171ff85f2 1-71
+flowfn/typescript/src/core/flow-fn.ts
+  s_e1c5fc1a65c0cf::t_d0d4184be0ba22 1-369
+flowfn/typescript/src/core/metrics.test.ts
+  s_e1c5fc1a65c0cf::t_d386082ea23ae6 1-84
+flowfn/typescript/src/core/metrics.ts
+  s_e1c5fc1a65c0cf::t_767f073f69488f 1-237
+flowfn/typescript/src/core/scheduler.test.ts
+  s_e1c5fc1a65c0cf::t_9fe67f568a73e0 1-128
+flowfn/typescript/src/core/scheduler.ts
+  s_e1c5fc1a65c0cf::t_e2c4c6a4b873c0 1-180
+flowfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_95af5389b965fe 1-57
+flowfn/typescript/src/monitoring/health.ts
+  s_e1c5fc1a65c0cf::t_b28e738774bc70 1-268
+flowfn/typescript/src/patterns/backoff.test.ts
+  s_e1c5fc1a65c0cf::t_9c61722ec86dd3 1-51
+flowfn/typescript/src/patterns/backoff.ts
+  s_e1c5fc1a65c0cf::t_5b1eea4642da3c 1-33
+flowfn/typescript/src/patterns/batching.ts
+  s_e1c5fc1a65c0cf::t_12f69bf60803b5 1-248
+flowfn/typescript/src/patterns/circuit-breaker.test.ts
+  s_e1c5fc1a65c0cf::t_ad43e10de062cb 1-52
+flowfn/typescript/src/patterns/circuit-breaker.ts
+  s_e1c5fc1a65c0cf::t_b6f43b49fe919a 1-52
+flowfn/typescript/src/patterns/priority.ts
+  s_e1c5fc1a65c0cf::t_dcbee13b465a14 1-146
+flowfn/typescript/src/patterns/rate-limit.ts
+  s_e1c5fc1a65c0cf::t_477b8d8d6053cd 1-290
+flowfn/typescript/src/patterns/retry.test.ts
+  s_e1c5fc1a65c0cf::t_c5fd719ad4a2a9 1-70
+flowfn/typescript/src/queue/batch.test.ts
+  s_e1c5fc1a65c0cf::t_624453263e8f26 1-46
+flowfn/typescript/src/queue/dependencies.test.ts
+  s_e1c5fc1a65c0cf::t_5c80c84f05d2c4 1-33
+flowfn/typescript/src/queue/dlq.ts
+  s_e1c5fc1a65c0cf::t_0a4429fc9ab319 1-232
+flowfn/typescript/src/queue/job.ts
+  s_e1c5fc1a65c0cf::t_96412500b8aa97 1-106
+flowfn/typescript/src/queue/lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_2c6ec4d556c206 1-115
+flowfn/typescript/src/queue/queue.ts
+  s_e1c5fc1a65c0cf::t_cc1a093ca4bc69 1-447
+flowfn/typescript/src/queue/types.ts
+  s_e1c5fc1a65c0cf::t_ddfa8d2cc17980 1-162
+flowfn/typescript/src/queue/worker.test.ts
+  s_e1c5fc1a65c0cf::t_56fa13a1e234df 1-54
+flowfn/typescript/src/queue/worker.ts
+  s_e1c5fc1a65c0cf::t_247456449065db 1-91
+flowfn/typescript/src/storage/event-log.ts
+  s_e1c5fc1a65c0cf::t_d4561c0a5728fc 1-205
+flowfn/typescript/src/storage/job-storage.test.ts
+  s_e1c5fc1a65c0cf::t_7e439ddf9650bb 1-44
+flowfn/typescript/src/storage/job-storage.ts
+  s_e1c5fc1a65c0cf::t_0b61b6516725ce 1-134
+flowfn/typescript/src/storage/workflow-storage.ts
+  s_e1c5fc1a65c0cf::t_869dd20036f2e1 1-182
+flowfn/typescript/src/stream/lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_90ef76cd1d65c9 1-157
+flowfn/typescript/src/stream/memory-groups.ts
+  s_e1c5fc1a65c0cf::t_70ef3c4f764fcd 1-236
+flowfn/typescript/src/stream/stream.ts
+  s_e1c5fc1a65c0cf::t_55472876cb26d1 1-194
+flowfn/typescript/src/stream/types.ts
+  s_e1c5fc1a65c0cf::t_a489345cfe8eb3 1-99
+flowfn/typescript/src/utils/hashing.ts
+  s_e1c5fc1a65c0cf::t_5b93e96b126223 1-29
+flowfn/typescript/src/utils/id-generator.ts
+  s_e1c5fc1a65c0cf::t_171544553f4f0b 1-109
+flowfn/typescript/src/utils/serialization.ts
+  s_e1c5fc1a65c0cf::t_c8f5c883bbf60a 1-142
+flowfn/typescript/src/utils/time.ts
+  s_e1c5fc1a65c0cf::t_369c2d8b5dfb10 1-167
+flowfn/typescript/src/workflow/advanced.test.ts
+  s_e1c5fc1a65c0cf::t_7f78309b9ac880 1-48
+flowfn/typescript/src/workflow/events.test.ts
+  s_e1c5fc1a65c0cf::t_81c2d49197b788 1-45
+flowfn/typescript/src/workflow/lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_d1269cc155dece 1-360
+flowfn/typescript/src/workflow/types.ts
+  s_e1c5fc1a65c0cf::t_a4ef7a923dc177 1-160
+flowfn/typescript/src/workflow/workflow.test.ts
+  s_e1c5fc1a65c0cf::t_0e2c92d5f2fdf5 1-65
+flowfn/typescript/src/workflow/workflow.ts
+  s_e1c5fc1a65c0cf::t_64f5163751aded 1-858
+flowfn/typescript/tests/dlq.test.ts
+  s_e1c5fc1a65c0cf::t_4b96418836772b 1-220
+flowfn/typescript/tests/health.test.ts
+  s_e1c5fc1a65c0cf::t_4628d40c187c3a 1-257
+flowfn/typescript/tests/integration.test.ts
+  s_e1c5fc1a65c0cf::t_fa986b7c55d788 1-253
+flowfn/typescript/tests/stream.test.ts
+  s_e1c5fc1a65c0cf::t_90014e75102cf2 1-233
+flowfn/typescript/tests/workflow.test.ts
+  s_e1c5fc1a65c0cf::t_726e950b3bb0be 1-286
+flowfn/typescript/tsconfig.json
+  s_e1c5fc1a65c0cf::t_6e7bd93fd3b7e5 1-17
+flowfn/typescript/tsconfig.tests.json
+  s_e1c5fc1a65c0cf::t_b1a6ae4ced61c0 1-19
+flowfn/typescript/tsup.config.ts
+  s_e1c5fc1a65c0cf::t_98fe5d3f23babc 1-10
+flowfn/typescript/vitest.config.ts
+  s_e1c5fc1a65c0cf::t_04fb380968d61a 1-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cd0d2a2b0ee40540d48ed0feee993a5bda473181",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

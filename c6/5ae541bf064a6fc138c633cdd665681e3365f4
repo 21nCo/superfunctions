@@ -1,0 +1,37 @@
+_conduct/cachefn-contract-audit.md
+  s_e1c5fc1a65c0cf::t_6ad2da516ee96d 1-111
+cachefn/admin/README.md
+  s_e1c5fc1a65c0cf::t_3884d7531c6027 1-67
+cachefn/admin/src/__tests__/dispatcher.test.ts
+  s_e1c5fc1a65c0cf::t_36aff8049d1bd1 1-60
+cachefn/python/README.md
+  s_e1c5fc1a65c0cf::t_d04bb1a50cdd1b 5,9-11,15,135
+cachefn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_21b7bf80051cdb 290,292-294,297-320
+cachefn/typescript/examples/browser-app.html
+  s_e1c5fc1a65c0cf::t_85801d164a4da0 86
+cachefn/typescript/examples/express-api.ts
+  s_e1c5fc1a65c0cf::t_41a51378ed8a4d 10-12,156
+cachefn/typescript/src/core/types.ts
+  s_e1c5fc1a65c0cf::t_d7e750f5950c0b 131-164
+cachefn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_4368817f2e9679 20-21,64,71-72
+cachefn/typescript/type-tests/schema.ts
+  s_e1c5fc1a65c0cf::t_65248751f2dd34 1-40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c65ae541bf064a6fc138c633cdd665681e3365f4",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

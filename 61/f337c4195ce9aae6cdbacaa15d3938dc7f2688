@@ -1,0 +1,21 @@
+catchfn/.conduct/browser-delivery-readiness.md
+  s_e1c5fc1a65c0cf::t_d5272d2b50f936 3,11
+catchfn/typescript/scripts/browser-delivery-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_49032de8907681 39,65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "61f337c4195ce9aae6cdbacaa15d3938dc7f2688",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

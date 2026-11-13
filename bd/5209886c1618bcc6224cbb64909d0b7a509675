@@ -1,0 +1,31 @@
+probefn/.conduct/physical-scratch-next-steps.md
+  s_e1c5fc1a65c0cf::t_31ece5763667e6 1-123
+probefn/.conduct/trace-cleanup-readiness.md
+  s_e1c5fc1a65c0cf::t_6d56c9b4ff8af0 1-95
+probefn/docs/artifacts.md
+  s_e1c5fc1a65c0cf::t_da674d9c66c22f 214-229
+probefn/packages/analyzers/test/design.test.ts
+  s_e1c5fc1a65c0cf::t_1d1e9c27f91544 2-3,8,11,27-31,76-78,132-139,280,304,409-417
+probefn/packages/browser-runner/src/browser-runner.ts
+  s_e1c5fc1a65c0cf::t_0d9c7d2bfbd586 13,60-61,203,210,220-231,233-253,274,282,295,299,305,307
+probefn/packages/browser-runner/src/trace.ts
+  s_e1c5fc1a65c0cf::t_10b507b59e5820 7,10-21,61-63,68,70-82
+probefn/packages/browser-runner/test/scratch-cleanup.test.ts
+  s_e1c5fc1a65c0cf::t_b27bcbdb11f98a 2,9,11,15,21,106-213
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bd5209886c1618bcc6224cbb64909d0b7a509675",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

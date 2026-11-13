@@ -1,0 +1,309 @@
+package-lock.json
+  s_e1c5fc1a65c0cf::t_5c15c1914a3f43 53-54,7434-7438,7440-8012,9735-9743,24187-24190,26696-26740,27094-27138,27873-27878,34054-34060,35993-35998,36147-36150,36558-36620,37206-37221,37234-37245,38619-38643,46245-46256,46744-46792,52380-52392,55825
+package.json
+  s_e1c5fc1a65c0cf::t_ca4831c4bf732c 48-49
+packages/http/package.json
+  s_e1c5fc1a65c0cf::t_95431660eef80f 3,19-22
+browsefn/README.md
+  s_b04c7346571e9a::t_ec582272f258f6 1-135,137-242,244-326
+browsefn/SPEC.md
+  s_b04c7346571e9a::t_71449cb51dae2e 1-1032
+browsefn/admin/package.json
+  s_b04c7346571e9a::t_645e738f883817 1-35,37-43
+browsefn/admin/src/__tests__/admin.test.ts
+  s_b04c7346571e9a::t_96b31f746a0998 1-180
+browsefn/admin/src/adapter.ts
+  s_b04c7346571e9a::t_f9ea4d674b1a2d 1-33
+browsefn/admin/src/capability.ts
+  s_b04c7346571e9a::t_e3bc29e13d1a47 1-331
+browsefn/admin/src/client.ts
+  s_b04c7346571e9a::t_49cf4671b8395f 1-39
+browsefn/admin/src/domain-service.ts
+  s_b04c7346571e9a::t_db74439e4ff81a 1-191
+browsefn/admin/src/index.ts
+  s_b04c7346571e9a::t_3ec1f419cb082e 1-8
+browsefn/admin/src/types.ts
+  s_b04c7346571e9a::t_6bd1b81aef4d70 1-123
+browsefn/admin/tsconfig.json
+  s_b04c7346571e9a::t_328d8a98b059ec 1-33
+browsefn/admin/vitest.config.ts
+  s_b04c7346571e9a::t_6bc8cc1254cd1e 1-8
+browsefn/python/.gitignore
+  s_b04c7346571e9a::t_c88c03dbefeb27 1-8
+browsefn/python/README.md
+  s_b04c7346571e9a::t_7e16ba131565a9 1-93
+browsefn/python/TESTING.md
+  s_b04c7346571e9a::t_0fa15804558d5c 1-46
+browsefn/python/browsefn/__init__.py
+  s_b04c7346571e9a::t_34ae151cdbf918 1-66
+browsefn/python/browsefn/adapters/fastapi.py
+  s_b04c7346571e9a::t_b085af54506871 1-41
+browsefn/python/browsefn/core/browse_fn.py
+  s_b04c7346571e9a::t_4c26215d74ab74 1-447
+browsefn/python/browsefn/core/cache_manager.py
+  s_b04c7346571e9a::t_8b71496f3083d4 1-187
+browsefn/python/browsefn/core/cache_storage.py
+  s_b04c7346571e9a::t_3d4b9e86eaac98 1-187
+browsefn/python/browsefn/core/errors.py
+  s_b04c7346571e9a::t_1769f89c91b5bc 1-90
+browsefn/python/browsefn/core/provider_manager.py
+  s_b04c7346571e9a::t_1568c1ce02d7c0 1-203
+browsefn/python/browsefn/core/provider_registry.py
+  s_b04c7346571e9a::t_c28fa79d280b60 1-65
+browsefn/python/browsefn/core/rate_limiter.py
+  s_b04c7346571e9a::t_a568f953771fb9 1-138
+browsefn/python/browsefn/core/types.py
+  s_b04c7346571e9a::t_2b9aa337f3b298 1-505
+browsefn/python/browsefn/geo/geocoder.py
+  s_b04c7346571e9a::t_7107ec2c88d355 1-91
+browsefn/python/browsefn/geo/providers/__init__.py
+  s_b04c7346571e9a::t_ceebef0712ef0f 1-7
+browsefn/python/browsefn/geo/providers/google_maps.py
+  s_b04c7346571e9a::t_4fbd2d0aeead57 1-266
+browsefn/python/browsefn/geo/providers/mapbox.py
+  s_b04c7346571e9a::t_28097c0bde4664 1-252
+browsefn/python/browsefn/geo/providers/nominatim.py
+  s_b04c7346571e9a::t_2dd9c383db92c4 1-214
+browsefn/python/browsefn/http/router.py
+  s_b04c7346571e9a::t_0a3a80ea3a7690 1-250
+browsefn/python/browsefn/images/_download_utils.py
+  s_b04c7346571e9a::t_700d376b8a5099 1-118
+browsefn/python/browsefn/images/_selection.py
+  s_b04c7346571e9a::t_4e5257b32a93b8 1-31
+browsefn/python/browsefn/images/_transform.py
+  s_b04c7346571e9a::t_fae209a4a1250c 1-107
+browsefn/python/browsefn/images/browser.py
+  s_b04c7346571e9a::t_006e2cde6593aa 1-117
+browsefn/python/browsefn/images/providers/__init__.py
+  s_b04c7346571e9a::t_b628e64a204ac4 1-11
+browsefn/python/browsefn/images/providers/_shared.py
+  s_b04c7346571e9a::t_2b47ecfa4bb3d8 1-76
+browsefn/python/browsefn/images/providers/pexels.py
+  s_b04c7346571e9a::t_a60e7ff0d90f21 1-111
+browsefn/python/browsefn/images/providers/pixabay.py
+  s_b04c7346571e9a::t_77af5357e6eb49 1-111
+browsefn/python/browsefn/images/providers/unsplash.py
+  s_b04c7346571e9a::t_34674f35d78a2e 1-115
+browsefn/python/browsefn/middleware/__init__.py
+  s_b04c7346571e9a::t_b7a9ff0fb09aa8 1-13
+browsefn/python/browsefn/middleware/logging.py
+  s_b04c7346571e9a::t_fb2e6ad18f2a51 1-169
+browsefn/python/browsefn/middleware/metrics.py
+  s_b04c7346571e9a::t_203a8a9491f5a6 1-138
+browsefn/python/browsefn/middleware/retry.py
+  s_b04c7346571e9a::t_a3d9216b94a00a 1-94
+browsefn/python/browsefn/utils/__init__.py
+  s_b04c7346571e9a::t_36b4ed47a60ddd 1-21
+browsefn/python/browsefn/utils/html_utils.py
+  s_b04c7346571e9a::t_9be6a20fed1d76 1-135
+browsefn/python/browsefn/utils/url_utils.py
+  s_b04c7346571e9a::t_7be1faaa10c832 1-74
+browsefn/python/browsefn/utils/validation.py
+  s_b04c7346571e9a::t_d498674da5aa36 1-99
+browsefn/python/browsefn/web/providers/bs4.py
+  s_b04c7346571e9a::t_7b86957c7f8c28 1-104
+browsefn/python/browsefn/web/scraper.py
+  s_b04c7346571e9a::t_6b1230d15521cc 1-172
+browsefn/python/pyproject.toml
+  s_b04c7346571e9a::t_11460acc31e143 1-52
+browsefn/python/tests/conftest.py
+  s_b04c7346571e9a::t_a203286ef4c35b 1-21
+browsefn/python/tests/test_cache_manager.py
+  s_b04c7346571e9a::t_93f20f754ddf77 1-217
+browsefn/python/tests/test_cache_request_identity.py
+  s_b04c7346571e9a::t_46ca3e50e511b8 1-43
+browsefn/python/tests/test_contract_parity.py
+  s_b04c7346571e9a::t_d42d7b1f5a4d94 1-26
+browsefn/python/tests/test_credentials_useragent.py
+  s_b04c7346571e9a::t_ddd5ca677dbb44 1-43
+browsefn/python/tests/test_geo.py
+  s_b04c7346571e9a::t_23186e7f34fa03 1-120
+browsefn/python/tests/test_html_markdown.py
+  s_b04c7346571e9a::t_23c946e21fcec7 1-9
+browsefn/python/tests/test_image_security.py
+  s_b04c7346571e9a::t_4b3393c9f289d2 1-123
+browsefn/python/tests/test_image_transform.py
+  s_b04c7346571e9a::t_197e483a9376ac 1-108
+browsefn/python/tests/test_images.py
+  s_b04c7346571e9a::t_14d5ca88d6b9d5 1-156
+browsefn/python/tests/test_middleware.py
+  s_b04c7346571e9a::t_f4d497b7f3dc80 1-184
+browsefn/python/tests/test_nominatim_bounds.py
+  s_b04c7346571e9a::t_f2b170e4d1ae60 1-82
+browsefn/python/tests/test_provider_manager.py
+  s_b04c7346571e9a::t_6744555fffde7e 1-110
+browsefn/python/tests/test_rate_limiter.py
+  s_b04c7346571e9a::t_a57b43f3a42b5f 1-78
+browsefn/python/tests/test_redirect_resolution.py
+  s_b04c7346571e9a::t_a5eba23e7d230b 1-41
+browsefn/python/tests/test_release_gate.py
+  s_b04c7346571e9a::t_85ebe8f6dcc392 1-44
+browsefn/python/tests/test_retry_http.py
+  s_b04c7346571e9a::t_08e4e4d36688a1 1-45
+browsefn/python/tests/test_router.py
+  s_b04c7346571e9a::t_49e022de008ed9 1-134
+browsefn/python/tests/test_types.py
+  s_b04c7346571e9a::t_568413f8d811a0 1-9
+browsefn/python/tests/test_web.py
+  s_b04c7346571e9a::t_96df27efd454c8 1-105
+browsefn/scripts/check-duplication.mjs
+  s_b04c7346571e9a::t_3e69802c0daeb1 1-61
+browsefn/scripts/verify-release.mjs
+  s_b04c7346571e9a::t_a958977d0f8c8e 1-85
+browsefn/typescript/README.md
+  s_b04c7346571e9a::t_3dba347bd8ed78 1-89
+browsefn/typescript/examples/basic-web-scraping.ts
+  s_b04c7346571e9a::t_617616e1f5460b 1-45
+browsefn/typescript/examples/geocoding.ts
+  s_b04c7346571e9a::t_cec213da01feb5 1-41
+browsefn/typescript/examples/image-search.ts
+  s_b04c7346571e9a::t_6831e67539eeb9 1-43
+browsefn/typescript/examples/with-puppeteer.ts
+  s_b04c7346571e9a::t_a7a86a1ccaff12 1-34
+browsefn/typescript/package.json
+  s_b04c7346571e9a::t_28572386323ff7 1-94
+browsefn/typescript/src/core/browse-fn.ts
+  s_b04c7346571e9a::t_8baf7f5b6f16df 1-731
+browsefn/typescript/src/core/cache-manager.ts
+  s_b04c7346571e9a::t_3923529c8f9391 1-214
+browsefn/typescript/src/core/cache-storage.ts
+  s_b04c7346571e9a::t_2230057f42d413 1-149
+browsefn/typescript/src/core/errors.ts
+  s_b04c7346571e9a::t_785b8ccbc7e8b0 1-109
+browsefn/typescript/src/core/provider-manager.ts
+  s_b04c7346571e9a::t_0d7a298970fe07 1-174
+browsefn/typescript/src/core/provider-registry.ts
+  s_b04c7346571e9a::t_4b9357bde98dfe 1-80
+browsefn/typescript/src/core/rate-limiter.ts
+  s_b04c7346571e9a::t_a205c1793ff1ad 1-88
+browsefn/typescript/src/core/types.ts
+  s_b04c7346571e9a::t_6303f6c24c666c 1-482
+browsefn/typescript/src/geo/geocoder.ts
+  s_b04c7346571e9a::t_772ab299f518eb 1-347
+browsefn/typescript/src/geo/providers/google-maps.ts
+  s_b04c7346571e9a::t_04320b48e03c2f 1-304
+browsefn/typescript/src/geo/providers/mapbox.ts
+  s_b04c7346571e9a::t_5df89bc1439aed 1-269
+browsefn/typescript/src/geo/providers/nominatim.ts
+  s_b04c7346571e9a::t_d0542488152b7c 1-202
+browsefn/typescript/src/images/browser.ts
+  s_b04c7346571e9a::t_1e21c2a6821cf7 1-279
+browsefn/typescript/src/images/download.ts
+  s_b04c7346571e9a::t_663f57caac97d9 1-113
+browsefn/typescript/src/images/providers/pexels.ts
+  s_b04c7346571e9a::t_01dc6ffaefc8a2 1-88
+browsefn/typescript/src/images/providers/pixabay.ts
+  s_b04c7346571e9a::t_f613a7f006c54c 1-88
+browsefn/typescript/src/images/providers/unsplash.ts
+  s_b04c7346571e9a::t_489326e94239a0 1-91
+browsefn/typescript/src/images/selection.ts
+  s_b04c7346571e9a::t_6a521e6386a10a 1-21
+browsefn/typescript/src/images/transform.ts
+  s_b04c7346571e9a::t_1add954a21325c 1-86
+browsefn/typescript/src/index.ts
+  s_b04c7346571e9a::t_d64c447e4690a5 1-111
+browsefn/typescript/src/middleware/logging.ts
+  s_b04c7346571e9a::t_60e517ef092671 1-152
+browsefn/typescript/src/middleware/metrics.ts
+  s_b04c7346571e9a::t_3b9bc1c0c83199 1-110
+browsefn/typescript/src/middleware/retry.ts
+  s_b04c7346571e9a::t_3b0b0c9b1bb715 1-106
+browsefn/typescript/src/router/http-router.ts
+  s_b04c7346571e9a::t_5451bcebd4a35b 1-358
+browsefn/typescript/src/utils/html-utils.ts
+  s_b04c7346571e9a::t_e6f4c9a2903c4a 1-180
+browsefn/typescript/src/utils/url-utils.ts
+  s_b04c7346571e9a::t_4f2dca416dee56 1-77
+browsefn/typescript/src/utils/validation.ts
+  s_b04c7346571e9a::t_1501c28cdeea92 1-217
+browsefn/typescript/src/web/providers/browser-provider-utils.ts
+  s_b04c7346571e9a::t_a12661492cf20e 1-173
+browsefn/typescript/src/web/providers/cheerio.ts
+  s_b04c7346571e9a::t_8f6c01008bb22d 1-88
+browsefn/typescript/src/web/providers/firecrawl.ts
+  s_b04c7346571e9a::t_d98f51dabf96a1 1-44
+browsefn/typescript/src/web/providers/jina.ts
+  s_b04c7346571e9a::t_a26b21173ae7a1 1-40
+browsefn/typescript/src/web/providers/playwright.ts
+  s_b04c7346571e9a::t_1b6804490874de 1-127
+browsefn/typescript/src/web/providers/puppeteer.ts
+  s_b04c7346571e9a::t_8173aac4a3f69c 1-126
+browsefn/typescript/src/web/providers/remote-utils.ts
+  s_b04c7346571e9a::t_5a8ee4cfed91f8 1-34
+browsefn/typescript/src/web/scraper.ts
+  s_b04c7346571e9a::t_f4f119f0cb48b5 1-469
+browsefn/typescript/tests/browser-lifecycle.test.ts
+  s_b04c7346571e9a::t_2a94405edad34d 1-61
+browsefn/typescript/tests/cache-browser-acceptance.mjs
+  s_b04c7346571e9a::t_e4060b213c68c3 1-44
+browsefn/typescript/tests/cache-manager.test.ts
+  s_b04c7346571e9a::t_cd68cd3020ac9d 1-130
+browsefn/typescript/tests/cache-persistence.test.ts
+  s_b04c7346571e9a::t_c2abba397ba243 1-91
+browsefn/typescript/tests/cheerio-proxy.test.ts
+  s_b04c7346571e9a::t_44f594090661e0 1-27
+browsefn/typescript/tests/credentials-useragent.test.ts
+  s_b04c7346571e9a::t_07fcd91ccf062b 1-35
+browsefn/typescript/tests/geo-providers.test.ts
+  s_b04c7346571e9a::t_547b8559871d48 1-159
+browsefn/typescript/tests/geocoder.test.ts
+  s_b04c7346571e9a::t_bd552fc4f95398 1-182
+browsefn/typescript/tests/image-browser.test.ts
+  s_b04c7346571e9a::t_095b8d21b89a5f 1-110
+browsefn/typescript/tests/image-providers.test.ts
+  s_b04c7346571e9a::t_6e3e3524d216ad 1-154
+browsefn/typescript/tests/image-transform.test.ts
+  s_b04c7346571e9a::t_1497edea284fc4 1-85
+browsefn/typescript/tests/nominatim-bounds.test.ts
+  s_b04c7346571e9a::t_f251c82887bba7 1-52
+browsefn/typescript/tests/provider-manager.test.ts
+  s_b04c7346571e9a::t_b95b197701d540 1-78
+browsefn/typescript/tests/rate-limiter.test.ts
+  s_b04c7346571e9a::t_025f1f31f27a94 1-136
+browsefn/typescript/tests/redirect-resolution.test.ts
+  s_b04c7346571e9a::t_b39d008c1e24b8 1-18
+browsefn/typescript/tests/remote-contracts.test.ts
+  s_b04c7346571e9a::t_4acd8974baa9b5 1-59
+browsefn/typescript/tests/remote-timeout.test.ts
+  s_b04c7346571e9a::t_cca81fb0ac67e7 1-16
+browsefn/typescript/tests/retry-http.test.ts
+  s_b04c7346571e9a::t_6b271b53c5136e 1-43
+browsefn/typescript/tests/router-smoke.test.ts
+  s_b04c7346571e9a::t_31a3c4e013c65e 1-103
+browsefn/typescript/tests/web-providers.test.ts
+  s_b04c7346571e9a::t_1f91a986235096 1-162
+browsefn/typescript/tests/web-scraper.test.ts
+  s_b04c7346571e9a::t_3421540b9abc5e 1-336
+browsefn/typescript/tsconfig.json
+  s_b04c7346571e9a::t_7258ea24f57e55 1-20
+browsefn/typescript/tsup.config.ts
+  s_b04c7346571e9a::t_3e6a8e4ada4f3b 1-10
+browsefn/typescript/vitest.config.ts
+  s_b04c7346571e9a::t_85241dc47336b1 1-13
+browsefn/v0.intent.md
+  s_b04c7346571e9a::t_c2ba719d90199a 1-9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2f2d183a1bc6fde1d163df31bde38b4e917ff006",
+  "prompts": {},
+  "sessions": {
+    "s_b04c7346571e9a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e1d-47e3-7ca3-83df-a3ff8eb4f048",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

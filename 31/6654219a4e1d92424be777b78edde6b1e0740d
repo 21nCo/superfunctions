@@ -1,0 +1,23 @@
+_conduct/shared-ci-docs-readiness.md
+  s_e1c5fc1a65c0cf::t_1f472b4d4c4cd6 27-32
+cifn/typescript/dashboard/tsconfig.json
+  s_e1c5fc1a65c0cf::t_aa25b117b4b188 5-9,21-24,26-31
+docs/package.json
+  s_e1c5fc1a65c0cf::t_e2812822fcbd80 8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "316654219a4e1d92424be777b78edde6b1e0740d",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

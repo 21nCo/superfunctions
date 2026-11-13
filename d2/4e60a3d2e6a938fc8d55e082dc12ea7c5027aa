@@ -1,0 +1,65 @@
+package-lock.json
+  s_e1c5fc1a65c0cf::t_8ea9782a118696 52976,53093-53095,53107
+probefn/.conduct/durable-quota-readiness.md
+  s_e1c5fc1a65c0cf::t_2eef342779c1d8 1-77
+probefn/README.md
+  s_e1c5fc1a65c0cf::t_98374e20bf612f 133-135,140-147
+probefn/docs/artifacts.md
+  s_e1c5fc1a65c0cf::t_98edb724694a9a 77-131
+probefn/package.json
+  s_e1c5fc1a65c0cf::t_04fd2c5dd33168 5
+probefn/packages/browser-runner/src/trace.ts
+  s_e1c5fc1a65c0cf::t_4f686e8ece9ce5 2-3,41-47
+probefn/packages/browser-runner/test/artifact-quota.test.ts
+  s_e1c5fc1a65c0cf::t_79e9506d1b2ce0 1-46
+probefn/packages/browser-runner/test/semantic-find.test.ts
+  s_e1c5fc1a65c0cf::t_23f5aa09675850 60,63-64
+probefn/packages/core/src/checkpoints.ts
+  s_e1c5fc1a65c0cf::t_c6f317cbe210cf 2,155,190-191
+probefn/packages/core/src/session-manager.ts
+  s_e1c5fc1a65c0cf::t_d9237d42035944 255
+probefn/packages/dev-server/src/dev-server-manager.ts
+  s_e1c5fc1a65c0cf::t_42a8c780d610e9 364,366-368
+probefn/packages/mcp-server/test/mcp-server.test.ts
+  s_e1c5fc1a65c0cf::t_79657c561689f3 318
+probefn/packages/storage/package.json
+  s_e1c5fc1a65c0cf::t_f055177a7a39ad 6
+probefn/packages/storage/src/artifact-store.ts
+  s_e1c5fc1a65c0cf::t_926180b15f4654 2-3,47-48,54-56,134-135,142-143,145-147,155,192,198-200,204-277,283-284,286-287
+probefn/packages/storage/src/event-sink.ts
+  s_e1c5fc1a65c0cf::t_5d191e29e0a8d9 23,37,45,65-69
+probefn/packages/storage/src/run-quota.ts
+  s_e1c5fc1a65c0cf::t_87cc96f3b02384 1-176
+probefn/packages/storage/test/concurrent-caps.test.ts
+  s_e1c5fc1a65c0cf::t_6d2f87159879cc 91,94
+probefn/packages/storage/test/durable-quota.test.ts
+  s_e1c5fc1a65c0cf::t_ad16d47255c015 1-145
+probefn/packages/storage/test/fixtures/quota-child.ts
+  s_e1c5fc1a65c0cf::t_4c2369bdd037e4 1-16
+probefn/packages/visual-baselines/package.json
+  s_e1c5fc1a65c0cf::t_8a3a978be73b83 12
+probefn/packages/visual-baselines/src/index.ts
+  s_e1c5fc1a65c0cf::t_1fc4f650c75d88 1,3,180,189-199
+probefn/packages/visual-baselines/test/compare.test.ts
+  s_e1c5fc1a65c0cf::t_7d0f7f01bd424c 1,3,40,46,48-49,57-58,77-78,91,152-170
+probefn/test/fixtures/vite-healthy/server.mjs
+  s_e1c5fc1a65c0cf::t_d9a4437281679e 126
+probefn/test/fixtures/vite-regression/server.mjs
+  s_e1c5fc1a65c0cf::t_e45b0ffee9e78c 144
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d24e60a3d2e6a938fc8d55e082dc12ea7c5027aa",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

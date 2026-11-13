@@ -1,0 +1,55 @@
+flowfn/python/README.md
+  s_e1c5fc1a65c0cf::t_6b0db99f0ef364 238-246
+flowfn/python/flowfn/adapters/base.py
+  s_e1c5fc1a65c0cf::t_c989145c52c499 31-35
+flowfn/python/flowfn/adapters/durable_queues.py
+  s_e1c5fc1a65c0cf::t_a1d271c62709bc 92-93,111
+flowfn/python/flowfn/adapters/memory.py
+  s_e1c5fc1a65c0cf::t_f928a07d378adc 46,53,71
+flowfn/python/flowfn/adapters/postgres_queue_functions.py
+  s_e1c5fc1a65c0cf::t_577ae46eb342a4 120-127
+flowfn/python/flowfn/adapters/postgres_queues.py
+  s_e1c5fc1a65c0cf::t_df052db0864126 104,145-148
+flowfn/python/flowfn/adapters/redis_queue_scripts.py
+  s_e1c5fc1a65c0cf::t_0c29ef1e0bc65b 53,62,87
+flowfn/python/flowfn/adapters/redis_queues.py
+  s_e1c5fc1a65c0cf::t_6fdfd91c34c728 195-196
+flowfn/python/flowfn/core/flow.py
+  s_e1c5fc1a65c0cf::t_d6e3fcefe9f059 5,79,92,107,149-155,167
+flowfn/python/flowfn/monitoring/health.py
+  s_e1c5fc1a65c0cf::t_1f4a8c910a3844 7-8,154-156,160-194,206,217,235-238
+flowfn/python/flowfn/queue/queue.py
+  s_e1c5fc1a65c0cf::t_f62d7b0daa45d0 20,29,31,70-77,161,182,234-240
+flowfn/python/flowfn/queue/types.py
+  s_e1c5fc1a65c0cf::t_d6f0677a88f1e6 4,78-80
+flowfn/python/flowfn/stream/stream.py
+  s_e1c5fc1a65c0cf::t_7efe223a481693 19,27,29,67-68
+flowfn/python/flowfn/workflow/workflow.py
+  s_e1c5fc1a65c0cf::t_096610b4f6ec41 15,31,536-540
+flowfn/python/tests/test_events.py
+  s_c1093e7194f7e3::t_7be8838b5ba088 1-208
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0da6e94a430ba7b5ff5d4a355fba075591611b83",
+  "prompts": {},
+  "sessions": {
+    "s_c1093e7194f7e3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "203316bd-9c88-41f4-b037-58d76f8b6cd9",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
