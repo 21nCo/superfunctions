@@ -668,6 +668,34 @@ describe("NetworkCollector XMLHttpRequest after stop()", () => {
     }
   });
 
+  it("records a URL object's address for a request that completes during open()'s readystatechange", () => {
+    pageOpen.mockImplementation(function (this: FakeXhr, ...args: unknown[]) {
+      this.opened = args;
+      this.dispatchEvent(new Event("readystatechange"));
+    });
+    try {
+      const filtered = new NetworkCollector(5, { allowUrls: ["/api/"] });
+      filtered.start();
+      const fake = new XMLHttpRequest() as unknown as FakeXhr;
+      const xhr = fake as unknown as XMLHttpRequest;
+      // A synchronous request: send() completes inside the readystatechange of open().
+      fake.addEventListener("readystatechange", () => {
+        xhr.send();
+        fake.respond(200, "OK");
+      }, { once: true });
+      xhr.open("GET", new URL("https://example.com/api/obj?token=t-secret") as unknown as string, false);
+      const events = filtered.collect();
+      filtered.stop();
+      expectValidEvents(events);
+      expect(events.map((event) => event.url)).toEqual([expect.stringContaining("https://example.com/api/obj")]);
+      expect(events[0]!.url).not.toContain("t-secret");
+    } finally {
+      pageOpen.mockImplementation(function (this: FakeXhr, ...args: unknown[]) {
+        this.opened = args;
+      });
+    }
+  });
+
   it("records a placeholder for a non-string method or URL without converting it", () => {
     collector.start();
     let reads = 0;

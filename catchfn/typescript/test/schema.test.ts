@@ -86,6 +86,11 @@ describe("evidence event v1 schema", () => {
       expect(validateEvidenceEvent(event), label).not.toEqual([]);
       expect(isEvidenceEvent(event), label).toBe(false);
     }
+    // A toJSON key holding data is kept by JSON.stringify, and both validators accept it.
+    const dataKey = { ...valid.breadcrumb, data: { toJSON: "keep", nested: [{ toJSON: null }] } };
+    expect(validateEvidenceEvent(dataKey)).toEqual([]);
+    expect(validateWithSchema(strip(dataKey))).toBe(true);
+    expect(strip(dataKey)).toEqual(dataKey);
     const bare = { ...valid.breadcrumb, data: Object.assign(Object.create(null), { nested: Object.assign(Object.create(null), { a: 1 }) }) };
     expect(validateEvidenceEvent(bare)).toEqual([]);
     expect(validateWithSchema(strip(bare))).toBe(true);

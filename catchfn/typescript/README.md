@@ -33,7 +33,8 @@ are invalid. Check an event with `validateEvidenceEvent(event)` (returns a list
 of problems, empty when valid) or with any JSON Schema 2020-12 validator and
 the exported `evidenceEventSchema`. Integer fields (`seq`, `timestamp`,
 `status`) are safe integers in both, and nested records (`data`, header
-records, objects in `args`) must be plain or null-prototype objects.
+records, objects in `args`) must be plain or null-prototype objects without a
+callable `toJSON`.
 
 | kind | fields |
 | --- | --- |
@@ -65,8 +66,9 @@ arguments pass through untouched (a `null` or `undefined` receiver of `fetch`
 becomes `globalThis`), and observation never runs the application's
 iterators, getters or conversions. The page's `fetch` and
 `XMLHttpRequest.prototype.open` run first, and observation reads object
-arguments only after they return (strings are read before `open`, which runs
-no application code); `send` reads nothing from its arguments. A native
+arguments only after they return (a string or platform `URL` passed to `open`
+is read before it, which runs no application code); `send` reads nothing from
+its arguments. A native
 `fetch`, or a wrapper that calls one synchronously, has read the request by
 then. No script can tell a Proxy apart, so a Proxy's traps still run when
 observation reads it: if the `fetch` that was installed before `start()`

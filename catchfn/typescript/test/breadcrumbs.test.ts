@@ -21,6 +21,13 @@ describe("BreadcrumbCollector", () => {
     expect(event).not.toHaveProperty("data");
   });
 
+  it("emits a valid event for data that carries a toJSON key", () => {
+    collector.addUser("click", "save", { toJSON: "x" });
+    collector.add({ type: "custom", data: { toJSON: () => 1, a: 1 } });
+    expect(collector.collect().map((event) => event.data)).toMatchObject([{ toJSON: "x" }, { toJSON: expect.any(String), a: 1 }]);
+    // afterEach validates both in both validators, before and after JSON.
+  });
+
   it("keeps the newest maxSize breadcrumbs", () => {
     for (let index = 0; index < 15; index += 1) collector.add({ type: "custom", message: `Breadcrumb ${index}` });
     const events = collector.collect();

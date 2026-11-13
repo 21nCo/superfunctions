@@ -134,11 +134,14 @@ type Check = (value: unknown) => boolean;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
-/** A `toJSON` hook, own or inherited, enumerable or not, replaces the value in JSON. */
-const hasToJson = (value: object): boolean => "toJSON" in value;
+/**
+ * A callable `toJSON`, own or inherited, enumerable or not, replaces the value
+ * in JSON. A `toJSON` key holding data is ordinary data, as in JSON.stringify.
+ */
+const hasToJson = (value: object): boolean => typeof (value as { toJSON?: unknown }).toJSON === "function";
 /**
  * A record that JSON keeps as is: a plain or null-prototype object (from any
- * realm) with no `toJSON` hook. A `Date`, a `Map` or a class instance is not one.
+ * realm) with no callable `toJSON`. A `Date`, a `Map` or a class instance is not one.
  */
 const isPlainRecord = (value: unknown): value is Record<string, unknown> => {
   if (!isRecord(value) || hasToJson(value)) return false;

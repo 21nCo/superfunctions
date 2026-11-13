@@ -178,15 +178,31 @@ function captureHeaders(value: Field): Record<string, string> | undefined {
 }
 
 /**
+ * The address of a platform `URL`, through the platform's `href` getter. Its
+ * brand check runs no application code, not even a Proxy trap; anything that
+ * is not a platform `URL` is unread.
+ */
+function platformHref(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null || typeof URL !== "function") return undefined;
+  try {
+    const href = Object.getOwnPropertyDescriptor(URL.prototype, "href")?.get?.call(value);
+    return typeof href === "string" ? href : undefined;
+  } catch {
+    return undefined; // Not a platform URL.
+  }
+}
+
+/**
  * A URL string, a platform `URL` or, for fetch, a platform `Request`;
  * anything else is recorded as {@link UNREAD_URL}.
  */
 function inputUrl(input: unknown, allowRequest = true): string {
   if (typeof input === "string") return input;
+  const href = platformHref(input);
+  if (href !== undefined) return href;
+  if (!allowRequest) return UNREAD_URL;
   try {
-    let url: Field = UNREADABLE;
-    if (typeof URL === "function" && isInstance(input, URL)) url = platformRead(URL, "href", input);
-    else if (allowRequest && typeof Request === "function" && isInstance(input, Request)) url = platformRead(Request, "url", input);
+    const url = typeof Request === "function" && isInstance(input, Request) ? platformRead(Request, "url", input) : UNREADABLE;
     return typeof url === "string" ? url : UNREAD_URL;
   } catch {
     return UNREAD_URL;
@@ -340,11 +356,11 @@ function subscribe(listener: Listener): () => void {
       const open = function (this: XMLHttpRequest, ...args: unknown[]) {
         if (current.size === 0) return originalOpen.apply(this, args);
         const [method, url] = args;
-        // A string is read before the call, which runs no application code;
-        // an object URL only after the platform has converted it. The record
-        // is in place before the call, so a send() made from open()'s own
+        // Read before the call, which runs no application code: a string, or
+        // a platform URL through its brand-checked getter. The record is in
+        // place before the call, so a send() made from open()'s own
         // readystatechange belongs to this request (or to a nested open()).
-        const record: XhrRecord = { method: typeof method === "string" ? text(method) : UNREAD_METHOD, url: typeof url === "string" ? captureUrl(url) : UNREAD_URL };
+        const record: XhrRecord = { method: typeof method === "string" ? text(method) : UNREAD_METHOD, url: captureUrl(inputUrl(url, false)) };
         let previous: XhrRecord | undefined;
         let tracked = false;
         try {
@@ -364,13 +380,6 @@ function subscribe(listener: Listener): () => void {
             else records.delete(this);
           }
           throw error;
-        }
-        if (tracked && typeof url !== "string") {
-          try {
-            record.url = captureUrl(inputUrl(url, false));
-          } catch {
-            /* Keep the placeholder. */
-          }
         }
         return result;
       } as typeof prototype.open;

@@ -16,9 +16,11 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  expectValidEvents(collector.collect());
+  // Restore the globals first, so a failed check cannot leak into later tests.
+  const events = collector.collect();
   collector.stop();
   for (const level of CONSOLE_LEVELS) console[level] = saved[level] as ConsoleFunction;
+  expectValidEvents(events);
 });
 
 describe("ConsoleCollector capture", () => {
@@ -31,6 +33,14 @@ describe("ConsoleCollector capture", () => {
     for (const level of CONSOLE_LEVELS) expect(page[level]).toHaveBeenCalledWith(`via ${level}`, 1);
     const seqs = events.map((event) => event.seq);
     expect([...seqs].sort((a, b) => a - b)).toEqual(seqs);
+  });
+
+  it("emits valid events for captured values that carry a toJSON key", () => {
+    collector.start();
+    console.log({ toJSON: "data", a: 1 }, { toJSON: () => 1 }, Object.assign(new Error("hooked"), { toJSON: "x" }));
+    const [event] = collector.collect();
+    expect(event!.args).toMatchObject([{ toJSON: "data", a: 1 }, { toJSON: expect.any(String) }, { message: "hooked", toJSON: "x" }]);
+    // afterEach validates it in both validators, before and after JSON.
   });
 
   it("serializes arguments under the closed set", () => {
