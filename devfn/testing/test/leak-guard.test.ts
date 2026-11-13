@@ -411,14 +411,17 @@ describe.skipIf(process.platform === "win32")("DevFn test leak guard", { timeout
     expect(existsSync(recorded.dir!)).toBe(false);
   });
 
-  it("reads a temp folder that does not exist as empty, lists one left unreadable by restoring its owner's permissions, and never reads one it cannot list as empty", () => {
+  it("reads a temp folder that does not exist as empty and never reads one it cannot list as empty", () => {
     const parent = tempDir("devfn-leak-guard-listing-");
     expect(tempLeftovers(path.join(parent, "missing"))).toEqual([]);
     // A file where a folder is expected cannot be listed (ENOTDIR).
     writeFileSync(path.join(parent, "file"), "");
     expect(tempLeftovers(path.join(parent, "file"))).toBeUndefined();
-    // Permissions do not stop root from listing it.
-    if (process.getuid?.() === 0) return;
+  });
+
+  // Permissions do not stop root from listing the folder, so root reports this test skipped.
+  it.skipIf(process.getuid?.() === 0)("lists a temp folder left unreadable by restoring its owner's permissions", () => {
+    const parent = tempDir("devfn-leak-guard-listing-");
     const locked = path.join(parent, "locked");
     mkdirSync(locked);
     writeFileSync(path.join(locked, "forgotten.txt"), "");
