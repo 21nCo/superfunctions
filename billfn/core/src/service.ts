@@ -145,8 +145,9 @@ type ApplyVerificationStateInput = {
   state: VerifiedBillingState;
   occurredAt?: string;
   /**
-   * When `state` comes from a live provider read (checkout verification or
-   * restore), the time that read started. It is saved as the subscription's
+   * When `state` comes from a live provider read or a provider mutation
+   * response (verification, restore, sync, cancel, change, resume, refund),
+   * the time that provider call started. It is saved as the subscription's
    * provider-state time, never moving it backwards, so a later replay or
    * delivery of an event that occurred before the read is skipped.
    */
@@ -309,6 +310,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
     const plan = requirePlan(deps.catalog, subscription.planKey);
     const price = requirePriceById(plan, subscription.priceId);
     const provider = requireProvider(deps, subscription.provider, 'fetchSubscription');
+    const liveStateObservedAt = toIsoString(deps.now());
     const verification = await provider.fetchSubscription({
       subscription,
       plan,
@@ -320,12 +322,13 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         message: 'Provider did not return subscription state'
       });
     }
-    return applyVerificationState(deps, {
+    return applyLiveProviderState(deps, {
       billingAccount,
       plan,
       price,
       subscription,
-      state: verification
+      state: verification,
+      liveStateObservedAt
     });
   }
 
@@ -605,17 +608,14 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         payload: input.payload
       });
 
-      const result = await linkSubscriptionAndReplay(
-        deps,
-        await applyVerificationState(deps, {
-          billingAccount,
-          plan,
-          price,
-          checkoutSession,
-          state: verification,
-          liveStateObservedAt: verificationObservedAt
-        })
-      );
+      const result = await applyLiveProviderState(deps, {
+        billingAccount,
+        plan,
+        price,
+        checkoutSession,
+        state: verification,
+        liveStateObservedAt: verificationObservedAt
+      });
 
       if (!result.checkoutSession) {
         throw createBillFnError({
@@ -643,6 +643,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
       const plan = requirePlan(deps.catalog, subscription.planKey);
       const price = requirePriceById(plan, subscription.priceId);
       const provider = requireProvider(deps, subscription.provider, 'cancelSubscription');
+      const liveStateObservedAt = toIsoString(deps.now());
       const operation = (await provider.cancelSubscription({
         subscription,
         reason: input.reason
@@ -660,12 +661,13 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
       };
 
       const projection = operation.billingState
-        ? await applyVerificationState(deps, {
+        ? await applyLiveProviderState(deps, {
             billingAccount,
             plan,
             price,
             subscription,
-            state: operation.billingState
+            state: operation.billingState,
+            liveStateObservedAt
           })
         : {
             subscription,
@@ -724,6 +726,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
       const provider = requireProvider(deps, subscription.provider, 'changeSubscription');
       const effectiveAt = input.effectiveAt ?? 'immediate';
       const prorationBehavior = input.prorationBehavior ?? 'provider_default';
+      const liveStateObservedAt = toIsoString(deps.now());
       const operation = await provider.changeSubscription({
         subscription,
         currentPlan,
@@ -754,12 +757,13 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
 
       const appliesTargetImmediately = operation.operationStatus === 'applied' && effectiveAt === 'immediate';
       const projection = operation.billingState
-        ? await applyVerificationState(deps, {
+        ? await applyLiveProviderState(deps, {
             billingAccount,
             plan: appliesTargetImmediately ? target.plan : currentPlan,
             price: appliesTargetImmediately ? target.price : currentPrice,
             subscription,
-            state: operation.billingState
+            state: operation.billingState,
+            liveStateObservedAt
           })
         : {
             subscription,
@@ -806,17 +810,19 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
       const plan = requirePlan(deps.catalog, subscription.planKey);
       const price = requirePriceById(plan, subscription.priceId);
       const provider = requireProvider(deps, subscription.provider, 'resumeSubscription');
+      const liveStateObservedAt = toIsoString(deps.now());
       const operation = await provider.resumeSubscription({
         subscription
       });
 
       const projection = operation.billingState
-        ? await applyVerificationState(deps, {
+        ? await applyLiveProviderState(deps, {
             billingAccount,
             plan,
             price,
             subscription,
-            state: operation.billingState
+            state: operation.billingState,
+            liveStateObservedAt
           })
         : {
             subscription,
@@ -869,6 +875,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
       const provider = requireProvider(deps, providerName, 'refundCharge');
       const mode = input.mode ?? 'full';
       const providerChargeId = input.providerChargeId ?? subscription.providerChargeId;
+      const liveStateObservedAt = toIsoString(deps.now());
       const operation = await provider.refundCharge({
         subscription,
         billingAccount,
@@ -901,12 +908,13 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
       if (subscription && operation.billingState) {
         const plan = requirePlan(deps.catalog, subscription.planKey);
         const price = requirePriceById(plan, subscription.priceId);
-        const projection = await applyVerificationState(deps, {
+        const projection = await applyLiveProviderState(deps, {
           billingAccount,
           plan,
           price,
           subscription,
-          state: operation.billingState
+          state: operation.billingState,
+          liveStateObservedAt
         });
         projectedSubscription = projection.subscription;
         projectedEntitlements = projection.entitlements;
@@ -1008,16 +1016,13 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         });
 
         if (!projection) {
-          const applied = await linkSubscriptionAndReplay(
-            deps,
-            await applyVerificationState(deps, {
-              billingAccount,
-              plan,
-              price,
-              state,
-              liveStateObservedAt: restoreObservedAt
-            })
-          );
+          const applied = await applyLiveProviderState(deps, {
+            billingAccount,
+            plan,
+            price,
+            state,
+            liveStateObservedAt: restoreObservedAt
+          });
           const response: BillFnRestorePurchasesResponseData = {
             subscription: applied.subscription,
             entitlements: applied.entitlements
@@ -1029,18 +1034,15 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
           continue;
         }
 
-        const applied = await linkSubscriptionAndReplay(
-          deps,
-          await applyVerificationState(deps, {
-            billingAccount: projection.billingAccount,
-            plan: projection.plan,
-            price: projection.price,
-            checkoutSession: projection.checkoutSession ?? undefined,
-            subscription: projection.subscription ?? undefined,
-            state,
-            liveStateObservedAt: restoreObservedAt
-          })
-        );
+        const applied = await applyLiveProviderState(deps, {
+          billingAccount: projection.billingAccount,
+          plan: projection.plan,
+          price: projection.price,
+          checkoutSession: projection.checkoutSession ?? undefined,
+          subscription: projection.subscription ?? undefined,
+          state,
+          liveStateObservedAt: restoreObservedAt
+        });
 
         const response: BillFnRestorePurchasesResponseData = {
           subscription: applied.subscription,
@@ -1610,6 +1612,7 @@ async function syncSubscriptionByIdForJob(
   const plan = requirePlan(deps.catalog, subscription.planKey);
   const price = requirePriceById(plan, subscription.priceId);
   const provider = requireProvider(deps, subscription.provider, 'fetchSubscription');
+  const liveStateObservedAt = toIsoString(deps.now());
   const verification = await provider.fetchSubscription({
     subscription,
     plan,
@@ -1619,16 +1622,14 @@ async function syncSubscriptionByIdForJob(
     return;
   }
   await assertLease();
-  const applied = await applyVerificationState(deps, {
+  await applyLiveProviderState(deps, {
     billingAccount,
     plan,
     price,
     subscription,
-    state: verification
+    state: verification,
+    liveStateObservedAt
   });
-  if (addsProviderReference(subscription, applied.subscription)) {
-    await replayUnlinkedWebhookEventsOrThrow(deps, applied.subscription);
-  }
 }
 
 async function getOrCreateBillingAccount(
@@ -3370,12 +3371,20 @@ async function replayUnlinkedWebhookEventsOrThrow(deps: ServiceDeps, subscriptio
 }
 
 /**
- * Replays unlinked events after a live provider read (checkout verification or
- * restore) linked the subscription and saved the read's start as its
- * provider-state time, then re-reads the projection when replayed events
- * changed it.
+ * Applies state from a live provider read or a provider mutation response
+ * (checkout verification, restore, sync, cancel, change, resume, refund).
+ * `liveStateObservedAt` is when the provider call started: it is saved as the
+ * subscription's provider-state time, and a state an event newer than it has
+ * superseded only links its references. The retained unlinked events for the
+ * resulting reference set are then replayed every time, not only when this
+ * call added a reference, so a retry after an interrupted replay applies them;
+ * events older than the read are skipped. Returns the projection after replay.
  */
-async function linkSubscriptionAndReplay(deps: ServiceDeps, result: ProjectionResult): Promise<ProjectionResult> {
+async function applyLiveProviderState(
+  deps: ServiceDeps,
+  input: ApplyVerificationStateInput & { occurredAt?: undefined; liveStateObservedAt: string }
+): Promise<ProjectionResult> {
+  const result = await applyVerificationState(deps, input);
   const replay = await replayUnlinkedWebhookEventsOrThrow(deps, result.subscription);
   if (replay.applied === 0) {
     return result;

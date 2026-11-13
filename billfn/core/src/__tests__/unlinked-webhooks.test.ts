@@ -40,8 +40,10 @@ const DAY = 24 * 60 * 60 * 1000;
 
 type ProviderOptions = {
   verifiedSubscriptionId?: string;
-  /** Runs while the provider is read live, before verification or restore returns. */
+  /** Runs while the provider is read live, before verification, restore or sync returns. */
   duringLiveRead?: () => Promise<void>;
+  /** The charge a subscription sync reads from the provider; the provider supports sync when set. */
+  syncedChargeId?: string;
 };
 
 /**
@@ -91,7 +93,22 @@ function createProvider(options: ProviderOptions): BillFnProviderAdapter {
     },
     async parseWebhook(input) {
       return JSON.parse(input.rawBody) as BillFnParsedWebhookEvent[];
-    }
+    },
+    ...(options.syncedChargeId
+      ? {
+          async fetchSubscription(input: { subscription: BillFnSubscription }) {
+            await options.duringLiveRead?.();
+            return {
+              subscriptionStatus: 'active' as const,
+              checkoutStatus: 'succeeded' as const,
+              providerSubscriptionId: input.subscription.providerSubscriptionId,
+              providerChargeId: options.syncedChargeId,
+              autoRenew: true,
+              raw: { synced: true }
+            };
+          }
+        }
+      : {})
   };
 }
 
@@ -1185,5 +1202,165 @@ describe('webhook events for subscriptions BillFn has not seen', () => {
     expect(await subscriptions()).toEqual([expect.objectContaining({ status: 'canceled' })]);
     const entitlements = await billfn.getEntitlements({ principalId: 'restore_bootstrap_user' });
     expect(entitlements.ok && entitlements.data.entitlements?.status).toBe('inactive');
+  });
+
+  it('replays retained events for the charge a subscription sync adds, skipping ones older than the read', async () => {
+    let during: () => Promise<void> = async () => undefined;
+    const { billfn, subscriptions, unlinked, advance } = setup({
+      syncedChargeId: 'pay_sync',
+      duringLiveRead: () => during()
+    });
+    await billfn.quotaProvider.recordUsage({ principalId: 'sync_user', bytes: 0 });
+    // A cancellation that names only the charge is retained before the subscription exists.
+    await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_sync_a_cancel',
+        chargeId: 'pay_sync',
+        status: 'canceled',
+        occurredAt: '2026-10-31T00:00:00.000Z'
+      })
+    ]);
+    advance(1000);
+    await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_sync_bootstrap',
+        subscriptionId: 'sub_sync',
+        status: 'active',
+        occurredAt: '2026-10-30T00:00:00.000Z',
+        billingAccountId: 'ba_user_sync_user'
+      })
+    ]);
+    const [bootstrapped] = await subscriptions();
+    advance(1000);
+    // A payment failure for the charge arrives while the sync reads the provider, so it is newer than the read.
+    during = async () => {
+      advance(1000);
+      await deliver(billfn, [
+        subscriptionEvent({
+          eventId: 'evt_sync_b_failed',
+          chargeId: 'pay_sync',
+          status: 'past_due',
+          occurredAt: '2026-11-01T00:00:03.000Z'
+        })
+      ]);
+    };
+
+    const synced = await billfn.syncSubscription({
+      subject: { principalId: 'sync_user' },
+      subscriptionId: bootstrapped?.id ?? ''
+    });
+
+    if (!synced.ok) {
+      throw new Error('expected sync');
+    }
+    // The read's active state supersedes the older cancellation; the newer payment failure is applied after it.
+    expect(synced.data.subscription).toMatchObject({ providerChargeId: 'pay_sync', status: 'past_due' });
+    expect(synced.data.entitlements.status).toBe('grace');
+    expect(await subscriptions()).toEqual([expect.objectContaining({ status: 'past_due' })]);
+    expect(await unlinked()).toEqual([
+      expect.objectContaining({ providerEventId: 'evt_sync_a_cancel', status: 'skipped' }),
+      expect.objectContaining({ providerEventId: 'evt_sync_b_failed', status: 'replayed' })
+    ]);
+  });
+
+  it('keeps the live state a subscription sync job reads over an older retained event for the charge it adds', async () => {
+    const { billfn, subscriptions, unlinked, advance } = setup({ syncedChargeId: 'pay_job_sync' });
+    await billfn.quotaProvider.recordUsage({ principalId: 'job_sync_user', bytes: 0 });
+    await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_job_sync_cancel',
+        chargeId: 'pay_job_sync',
+        status: 'canceled',
+        occurredAt: '2026-10-31T00:00:00.000Z'
+      })
+    ]);
+    advance(1000);
+    await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_job_sync_bootstrap',
+        subscriptionId: 'sub_job_sync',
+        status: 'active',
+        occurredAt: '2026-10-30T00:00:00.000Z',
+        billingAccountId: 'ba_user_job_sync_user'
+      })
+    ]);
+    const [bootstrapped] = await subscriptions();
+    advance(1000);
+
+    const enqueued = await billfn.enqueueReconciliationJob({ kind: 'subscription-sync', subscriptionId: bootstrapped?.id });
+    if (!enqueued.ok) {
+      throw new Error('expected job');
+    }
+    const run = await billfn.runReconciliationJob({ jobId: enqueued.data.job.id });
+
+    expect(run.ok && run.data.job.status).toBe('succeeded');
+    expect(await subscriptions()).toEqual([
+      expect.objectContaining({ providerChargeId: 'pay_job_sync', status: 'active' })
+    ]);
+    const entitlements = await billfn.getEntitlements({ principalId: 'job_sync_user' });
+    expect(entitlements.ok && entitlements.data.entitlements?.status).toBe('active');
+    expect(await unlinked()).toEqual([expect.objectContaining({ providerEventId: 'evt_job_sync_cancel', status: 'skipped' })]);
+  });
+
+  it('replays on a sync job retry the retained event an interrupted replay held on the first attempt', async () => {
+    const db = memoryAdapter({ debug: false });
+    const clock = { current: new Date('2026-11-01T00:00:00.000Z') };
+    const queue = new MemoryQueueAdapter<BillFnQueuedJob>({ now: () => clock.current.getTime() });
+    const config = {
+      db,
+      catalog,
+      queue,
+      now: () => clock.current,
+      providers: { dodo: createProvider({ syncedChargeId: 'pay_sync_retry' }) }
+    };
+    const billfn = createBillFn(config);
+    const worker = createBillFnReconciliationWorker(config);
+    await billfn.quotaProvider.recordUsage({ principalId: 'sync_retry_user', bytes: 0 });
+    await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_sync_retry_bootstrap',
+        subscriptionId: 'sub_sync_retry',
+        status: 'active',
+        occurredAt: '2026-10-30T00:00:00.000Z',
+        billingAccountId: 'ba_user_sync_retry_user'
+      })
+    ]);
+    await worker.runNext();
+    // A payment failure for a charge no subscription carries yet, dated after both sync reads below.
+    await deliver(billfn, [
+      subscriptionEvent({
+        eventId: 'evt_sync_retry_failed',
+        chargeId: 'pay_sync_retry',
+        status: 'past_due',
+        occurredAt: '2026-11-01T06:00:00.000Z'
+      })
+    ]);
+    await worker.runNext();
+    // A replay run claimed it and stopped before releasing it.
+    await db.updateMany({
+      model: 'unlinkedWebhookEvents',
+      where: [{ field: 'providerEventId', operator: 'eq', value: 'evt_sync_retry_failed' }],
+      data: { status: 'replaying', replayClaimId: 'uwr_interrupted', replayClaimedAt: clock.current.toISOString() },
+      namespace: 'billfn'
+    });
+    const [bootstrapped] = await db.findMany<BillFnSubscription>({ model: 'subscriptions', where: [], namespace: 'billfn' });
+    await billfn.enqueueReconciliationJob({ kind: 'subscription-sync', subscriptionId: bootstrapped?.id });
+
+    // The first attempt saves the synced charge, then finds the retained event held and is retried.
+    await expect(worker.runNext()).rejects.toMatchObject({ code: 'BILLFN_CONFLICT' });
+    const afterFirst = await db.findMany<BillFnSubscription>({ model: 'subscriptions', where: [], namespace: 'billfn' });
+    expect(afterFirst).toEqual([expect.objectContaining({ providerChargeId: 'pay_sync_retry', status: 'active' })]);
+
+    // The retry adds no reference, but still replays the event once the interrupted claim's lease expires.
+    clock.current = new Date(clock.current.getTime() + REPLAY_LEASE_MS);
+    expect(await worker.runNext()).toMatchObject({ status: 'succeeded' });
+
+    expect(await db.findMany<BillFnSubscription>({ model: 'subscriptions', where: [], namespace: 'billfn' })).toEqual([
+      expect.objectContaining({ providerChargeId: 'pay_sync_retry', status: 'past_due' })
+    ]);
+    const entitlements = await billfn.getEntitlements({ principalId: 'sync_retry_user' });
+    expect(entitlements.ok && entitlements.data.entitlements?.status).toBe('grace');
+    const [row] = await db.findMany<BillFnUnlinkedWebhookEvent>({ model: 'unlinkedWebhookEvents', where: [], namespace: 'billfn' });
+    expect(row).toMatchObject({ providerEventId: 'evt_sync_retry_failed', status: 'replayed', subscriptionId: bootstrapped?.id });
   });
 });
