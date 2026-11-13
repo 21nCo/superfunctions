@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { memoryAdapter } from '@superfunctions/db/testing';
 import { MemoryQueueAdapter } from '@superfunctions/queue';
-import { createBillFn, createBillFnReconciliationWorker } from '../index.js';
+import { createBillFn, createBillFnError, createBillFnReconciliationWorker } from '../index.js';
 import type {
   BillFnCatalog,
   BillFnParsedWebhookEvent,
@@ -2700,12 +2700,49 @@ describe('mutation windows, replaced references and regained references (PR #308
     expect(await lifecycle()).toHaveLength(1);
   });
 
-  /** A read that, like Apple's, only accepts the price the subscription committed; `raw` is the live record. */
+  it('applies a newer delivered event while a retained window event still cannot be read, then skips the retained one', async () => {
+    const env = await committedMutation('replay_newer', { read: recoveringRead({ value: true }, 'throws', 'canceled'), chargeless: true });
+    await expect(retainWindowCancellationThenLink(env, 'replay_newer')).rejects.toMatchObject({ code: 'BILLFN_PROVIDER_ERROR' });
+
+    expect((await deliver(env.billfn, [at('replay_newer', 'after', 'past_due', '06.000')])).ok).toBe(true);
+
+    expect(await env.processed('evt_replay_newer_after')).toBe(true);
+    expect(await env.stored()).toMatchObject({ status: 'past_due' });
+    expect(await entitlementStatus(env.billfn, 'replay_newer_user')).toBe('grace');
+    const [retained] = await env.db.findMany<BillFnUnlinkedWebhookEvent>({ model: 'unlinkedWebhookEvents', where: [], namespace: 'billfn' });
+    expect(retained).toMatchObject({ providerEventId: 'evt_replay_newer_inside', status: 'skipped' });
+  });
+
+  it('bootstraps from metadata when the event names a product several prices of one plan share', async () => {
+    const pro = catalog.plans[0];
+    const shared = (priceId: string, currency: string) => ({ ...pro.prices[0], priceId, providerProductId: 'pdt_pro_shared', currency });
+    const db = memoryAdapter({ debug: false });
+    const billfn = createBillFn({
+      db,
+      catalog: { plans: [{ ...pro, prices: [shared('price_pro_usd', 'USD'), shared('price_pro_inr', 'INR')] }] },
+      now: () => new Date('2026-11-01T00:00:00.000Z'),
+      providers: { dodo: createProvider({}) }
+    });
+    await billfn.quotaProvider.recordUsage({ principalId: 'oneplan_user', bytes: 0 });
+
+    await deliver(billfn, [subscriptionEvent({ eventId: 'evt_oneplan', subscriptionId: 'sub_oneplan', status: 'active', occurredAt: '2026-10-30T00:00:00.000Z', billingAccountId: 'ba_user_oneplan_user', productId: 'pdt_pro_shared' })]);
+
+    expect(await billfn.subscriptionProvider.getActiveSubscription({ principalId: 'oneplan_user' })).toMatchObject({ planKey: 'pro', providerSubscriptionId: 'sub_oneplan' });
+    expect(await db.findMany({ model: 'unlinkedWebhookEvents', where: [], namespace: 'billfn' })).toHaveLength(0);
+  });
+
+  /** The StoreKit subscription payload Apple's read returns as `raw`: the product is only inside the signed transaction. */
+  const APPLE_SUBSCRIPTION_PAYLOAD = { data: [{ lastTransactions: [{ status: 1, signedTransactionInfo: 'header.payload.signature' }] }] };
+
+  /**
+   * A read that, like Apple's, only accepts the price of the live product (`committedPriceId`) and rejects any
+   * other with BILLFN_CONFLICT; `raw` is the live record.
+   */
   function committedPriceRead(reads: string[], committedPriceId: string, raw: Record<string, unknown>): Read {
     return async (input) => {
       reads.push(input.price.priceId);
       if (input.price.priceId !== committedPriceId) {
-        throw new Error('live transaction does not match the requested product');
+        throw createBillFnError({ code: 'BILLFN_CONFLICT', message: 'Apple transaction does not match the checkout product' });
       }
       return { subscriptionStatus: 'active', checkoutStatus: 'succeeded', providerSubscriptionId: input.subscription.providerSubscriptionId, autoRenew: true, raw };
     };
@@ -2742,7 +2779,7 @@ describe('mutation windows, replaced references and regained references (PR #308
 
   it('reconciles an in-window renewal into another product when the provider only reads the live product', async () => {
     const reads: string[] = [];
-    const env = await committedMutation('apple_like', { read: committedPriceRead(reads, 'price_team_dodo_month', { transaction: { productId: 'pdt_team_month' } }) });
+    const env = await committedMutation('apple_like', { read: committedPriceRead(reads, 'price_team_dodo_month', APPLE_SUBSCRIPTION_PAYLOAD) });
 
     expect((await deliver(env.billfn, [at('apple_like', 'renewed', 'active', '02.000', { productId: 'pdt_team_month' })])).ok).toBe(true);
 
@@ -2969,11 +3006,15 @@ describe('mutation windows, replaced references and regained references (PR #308
 
   it("keeps a committed change when only a read for the event's price succeeds and the live record names no product", async () => {
     const reads: string[] = [];
-    const env = await committedMutation('unconfirmed', {
-      operation: 'changeSubscription',
-      targetPriceId: 'price_team_dodo_month',
-      read: committedPriceRead(reads, 'price_pro_dodo_month', {})
-    });
+    // The read for the committed price fails transiently; one for the event's price returns a record naming no product.
+    const read: Read = async (input) => {
+      reads.push(input.price.priceId);
+      if (input.price.priceId === 'price_team_dodo_month') {
+        throw new Error('provider read unavailable');
+      }
+      return { subscriptionStatus: 'active', checkoutStatus: 'succeeded', providerSubscriptionId: input.subscription.providerSubscriptionId, autoRenew: true, raw: {} };
+    };
+    const env = await committedMutation('unconfirmed', { operation: 'changeSubscription', targetPriceId: 'price_team_dodo_month', read });
 
     await expect(deliver(env.billfn, [at('unconfirmed', 'old_product', 'active', '02.000', { productId: 'pdt_pro_month' })])).rejects.toMatchObject({ code: 'BILLFN_PROVIDER_ERROR' });
 
@@ -2990,9 +3031,9 @@ describe('mutation windows, replaced references and regained references (PR #308
         throw new Error('StoreKit unavailable');
       }
       if (input.price.priceId !== 'price_team_dodo_month') {
-        throw new Error('live transaction does not match the requested product');
+        throw createBillFnError({ code: 'BILLFN_CONFLICT', message: 'Apple transaction does not match the checkout product' });
       }
-      return { subscriptionStatus: 'active', checkoutStatus: 'succeeded', providerSubscriptionId: input.subscription.providerSubscriptionId, autoRenew: true, raw: { transaction: { productId: 'pdt_team_month' } } };
+      return { subscriptionStatus: 'active', checkoutStatus: 'succeeded', providerSubscriptionId: input.subscription.providerSubscriptionId, autoRenew: true, raw: APPLE_SUBSCRIPTION_PAYLOAD };
     };
     const env = await committedMutation('apple_queue', { operation: 'cancelSubscription', read, queued: true });
 

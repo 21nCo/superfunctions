@@ -1710,7 +1710,8 @@ async function syncSubscriptionByIdForJob(
  * Reads the subscription from the provider for its stored plan and price. If
  * that read fails and `candidate` names another catalog price, it reads for
  * that price (a provider such as Apple reads only the live product); such a
- * read counts only when the live record names a catalog price, else it fails.
+ * read counts only when the live record names a catalog price or the provider
+ * rejected the stored price with `BILLFN_CONFLICT`, else it fails.
  * The catalog price the live record names is the selection applied. Returns
  * null when the provider returned no state, and throws the first failure.
  */
@@ -1725,9 +1726,10 @@ async function fetchLiveSubscription(deps: ServiceDeps, subscription: BillFnSubs
     try {
       const state = await provider.fetchSubscription({ subscription, plan: selection.plan, price: selection.price });
       const live = state
-        ? await resolveProviderEventPriceReference(deps, subscription.provider, { type: 'subscription.read', billingState: state }, null)
+        ? await resolveProviderEventPriceReference(deps, subscription.provider, { type: 'subscription.read', billingState: state }, subscription)
         : null;
-      if (state && (live || selection === stored)) {
+      // A provider that rejected the stored price as a mismatch (Apple) confirms the price it accepts.
+      if (state && (live || selection === stored || isBillFnConflictError(failures[0]))) {
         return { ...(live ?? selection), state, liveStateObservedAt };
       }
       if (state) {
@@ -3104,8 +3106,9 @@ async function processParsedWebhookEvent(
     projection = outcome.linked;
   }
   if (projection.subscription) {
-    // Events stored before this reference was linked go first, so provider event-time order holds.
-    await replayUnlinkedWebhookEventsOrThrow(deps, projection.subscription);
+    // Events stored before this reference was linked go first, so provider event-time order holds. An
+    // unread window event does not hold this event back: it is retried after this event is applied.
+    const { windowUnread } = await replayUnlinkedWebhookEventsOrThrow(deps, projection.subscription, { deferWindowUnread: true });
     // This run's replay, or one another run finished, may have replaced the reference this event matched.
     const refreshed = await resolveProjectionContextForProviderState(deps, {
       provider: providerName,
@@ -3119,6 +3122,9 @@ async function processParsedWebhookEvent(
         reason: 'provider_reference_replaced',
         metadataBillingAccountId: readBillingAccountMetadata(event, state)
       });
+      if (windowUnread) {
+        throw windowUnread.error;
+      }
       return null;
     }
     projection = refreshed;
@@ -3128,8 +3134,10 @@ async function processParsedWebhookEvent(
     // skipped as older than the subscription's state, which still links its missing references.
     const linkedAfter =
       applied?.subscription ?? (linkedBefore ? await getSubscriptionById(deps, linkedBefore.id) : null);
-    if (linkedAfter && addsProviderReference(linkedBefore, linkedAfter)) {
-      await replayUnlinkedWebhookEventsOrThrow(deps, linkedAfter);
+    const replayAgain = linkedAfter ?? linkedBefore;
+    // A newer event closes the window, so the unread event is then skipped; one still unread fails this delivery.
+    if (replayAgain && (windowUnread || (linkedAfter && addsProviderReference(linkedBefore, linkedAfter)))) {
+      await replayUnlinkedWebhookEventsOrThrow(deps, replayAgain);
     }
     return applied;
   }
@@ -3756,9 +3764,14 @@ function compareUnlinkedWebhookEvents(left: BillFnUnlinkedWebhookEvent, right: B
  * released first and its error rethrown; an event another replay run still
  * holds, including a run interrupted before it released the event, raises a
  * lease conflict. An event inside a mutation window whose read failed raises
- * that window-read error once the rest of the replay is done.
+ * that window-read error once the rest of the replay is done, unless
+ * `deferWindowUnread` returns it for the caller to raise later.
  */
-async function replayUnlinkedWebhookEventsOrThrow(deps: ServiceDeps, subscription: BillFnSubscription) {
+async function replayUnlinkedWebhookEventsOrThrow(
+  deps: ServiceDeps,
+  subscription: BillFnSubscription,
+  options: { deferWindowUnread?: boolean } = {}
+) {
   const result = await replayUnlinkedWebhookEvents(deps, subscription);
   if (result.failure) {
     throw result.failure.error;
@@ -3769,7 +3782,7 @@ async function replayUnlinkedWebhookEventsOrThrow(deps: ServiceDeps, subscriptio
   if (result.bounded) {
     throw unlinkedReplayBounded();
   }
-  if (result.windowUnread) {
+  if (result.windowUnread && !options.deferWindowUnread) {
     throw result.windowUnread.error;
   }
   return result;
@@ -3922,7 +3935,7 @@ async function resolveProviderEventPriceReference(
         record ? ['product_id', 'productId', 'price_id', 'priceId'].map((key) => readString(record, key)) : []
       )
     ];
-    const resolved = findCatalogPriceReference(deps.catalog, provider, references);
+    const resolved = findCatalogPriceReference(deps.catalog, provider, references, subscription?.priceId);
     if (resolved) {
       return resolved;
     }
@@ -3947,13 +3960,15 @@ async function resolveProviderEventPriceReference(
 
 /**
  * The catalog price the references name: an exact catalog price id first, then
- * a provider product id that exactly one catalog price has. A product several
- * prices share names none of them, so the caller keeps its confirmed selection.
+ * a provider product id. A product several prices share names the current
+ * price if it is one of them, else the first of them when they are all in one
+ * plan; across plans it names none, so the caller keeps its stored selection.
  */
 function findCatalogPriceReference(
   catalog: BillFnCatalog,
   provider: BillingProviderName,
-  references: Array<string | null | undefined>
+  references: Array<string | null | undefined>,
+  currentPriceId?: string
 ): CatalogSelection | null {
   const prices = catalog.plans.flatMap((plan) =>
     plan.prices.filter((price) => price.provider === provider).map((price) => ({ plan, price }))
@@ -3967,8 +3982,9 @@ function findCatalogPriceReference(
   }
   for (const reference of named) {
     const products = prices.filter((candidate) => candidate.price.providerProductId === reference);
-    if (products.length === 1) {
-      return products[0];
+    const current = products.find((candidate) => candidate.price.priceId === currentPriceId);
+    if (current || new Set(products.map((candidate) => candidate.plan.planKey)).size === 1) {
+      return current ?? products[0];
     }
   }
   return null;
@@ -4285,6 +4301,10 @@ function isDuplicateRecordError(error: unknown) {
     current = record.cause;
   }
   return false;
+}
+
+function isBillFnConflictError(error: unknown) {
+  return error instanceof Error && (error as { code?: string }).code === 'BILLFN_CONFLICT';
 }
 
 function isBillFnNotFoundError(error: unknown) {
