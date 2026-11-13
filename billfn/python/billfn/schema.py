@@ -276,6 +276,7 @@ def get_schema() -> Dict[str, Any]:
             "provider": {"type": "string", "required": True},
             "providerEventId": {"type": "string", "required": True},
             "providerReference": {"type": "string", "required": True},
+            "providerSecondaryReference": {"type": "string", "required": False},
             "eventType": {"type": "string", "required": True},
             "occurredAt": {"type": "string", "required": False},
             "reason": {"type": "string", "required": True},
@@ -300,6 +301,10 @@ def get_schema() -> Dict[str, Any]:
             {
                 "name": "unlinked_webhook_events_provider_reference_idx",
                 "fields": ["provider", "providerReference", "status"],
+            },
+            {
+                "name": "unlinked_webhook_events_provider_secondary_reference_idx",
+                "fields": ["provider", "providerSecondaryReference", "status"],
             },
             {
                 "name": "unlinked_webhook_events_expires_idx",

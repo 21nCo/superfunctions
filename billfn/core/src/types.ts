@@ -210,6 +210,8 @@ export interface BillFnUnlinkedWebhookEvent {
   providerEventId: string;
   /** The provider subscription id, or the provider charge id for a one-time payment. */
   providerReference: string;
+  /** The charge of an event that also names its subscription, so linking either reference replays it. */
+  providerSecondaryReference?: string | null;
   eventType: string;
   occurredAt?: string | null;
   reason: BillFnUnlinkedWebhookEventReason;

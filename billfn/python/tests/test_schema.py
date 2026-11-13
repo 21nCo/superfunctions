@@ -49,6 +49,9 @@ def test_schema_includes_webhook_and_usage_uniqueness_indexes() -> None:
         index.get("unique") and index["fields"] == ["provider", "providerEventId"]
         for index in tables["unlinkedWebhookEvents"]["indexes"]
     )
+    unlinked_index_fields = [index["fields"] for index in tables["unlinkedWebhookEvents"]["indexes"]]
+    assert ["provider", "providerReference", "status"] in unlinked_index_fields
+    assert ["provider", "providerSecondaryReference", "status"] in unlinked_index_fields
 
 
 def test_schema_includes_lifecycle_and_reconciliation_indexes() -> None:

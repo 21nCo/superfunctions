@@ -145,6 +145,7 @@ export function getSchema(_options: BillFnSchemaOptions = {}): { version: number
       provider: { type: 'string', required: true },
       providerEventId: { type: 'string', required: true },
       providerReference: { type: 'string', required: true },
+      providerSecondaryReference: { type: 'string', required: false },
       eventType: { type: 'string', required: true },
       occurredAt: { type: 'string', required: false },
       reason: { type: 'string', required: true },
@@ -163,6 +164,10 @@ export function getSchema(_options: BillFnSchemaOptions = {}): { version: number
     indexes: [
       { name: 'unlinked_webhook_events_provider_event_idx', fields: ['provider', 'providerEventId'], unique: true },
       { name: 'unlinked_webhook_events_provider_reference_idx', fields: ['provider', 'providerReference', 'status'] },
+      {
+        name: 'unlinked_webhook_events_provider_secondary_reference_idx',
+        fields: ['provider', 'providerSecondaryReference', 'status']
+      },
       { name: 'unlinked_webhook_events_expires_idx', fields: ['expiresAt'] }
     ]
   };
