@@ -20,6 +20,14 @@ import {
 } from "./relations.js";
 import { executeSchemaAwareMerge } from "./merge-decision.js";
 import {
+  isKvMergeContentionError,
+  isKvMergeUnsupportedError,
+  isKvResource,
+  isKvValueMerge,
+  snapshotKvChange,
+  updateKvRecordMerging,
+} from "./kv-merge.js";
+import {
   executeShare,
   executeUnshare,
   getFailedShareCompensation,
@@ -208,11 +216,12 @@ async function executeMutationCore(
   actorId?: string,
   logger?: DatafnLogger,
   multiRegionRuntime?: DatafnMultiRegionRuntimeConfig | null,
+  inTransaction = false,
 ): Promise<MutationResult> {
   const resolvedCapabilities = resolveCapabilitiesForResource(schema, mutation.resource);
   let opResult:
     | { ok: true }
-    | { ok: false; code: string; message: string; path: string };
+    | { ok: false; code: string; message: string; path: string; retryable?: boolean };
   let resolvedRecord: Record<string, unknown> | undefined;
   let changeOverride:
     | {
@@ -310,12 +319,27 @@ async function executeMutationCore(
           );
           const strictUpdateNotFound =
             db.capabilities?.operations?.strictUpdateNotFound === true;
+          const kvValueMerge = isKvValueMerge(mutation);
+          // The complete stored KV record written by a KV value merge, which
+          // the change record must carry so a pull never applies a bare patch.
+          let kvMergedData: Record<string, unknown> | undefined;
           const mergeResult = await executeSchemaAwareMerge({
             schema,
             resource: mutation.resource,
             id: mutation.id,
             delta: mergeData,
             update: async () => {
+              if (kvValueMerge) {
+                kvMergedData = await updateKvRecordMerging({
+                  db,
+                  resource: mutation.resource,
+                  id: mutation.id,
+                  namespace,
+                  data: mergeData,
+                  inTransaction,
+                });
+                return;
+              }
               const updated = await db.update({
                 model: mutation.resource,
                 where: [{ field: "id", operator: "eq", value: mutation.id }],
@@ -346,7 +370,8 @@ async function executeMutationCore(
           });
 
           if (mergeResult.ok) {
-            resolvedRecord = mergeData;
+            resolvedRecord =
+              mergeResult.mode !== "create" && kvMergedData ? kvMergedData : mergeData;
             additionalChanges.push(...await applyInactivePropagation(
               db,
               schema,
@@ -362,12 +387,22 @@ async function executeMutationCore(
                 resource: mutation.resource,
               });
             }
-            opResult = {
-              ok: false,
-              code: mergeResult.code,
-              message: mergeResult.message,
-              path: mergeResult.path,
-            };
+            opResult = isKvMergeUnsupportedError(mergeResult.error)
+              ? {
+                  ok: false,
+                  code: "DFQL_UNSUPPORTED",
+                  message: (mergeResult.error as Error).message,
+                  path: "record.value",
+                }
+              : {
+                  ok: false,
+                  code: mergeResult.code,
+                  message: mergeResult.message,
+                  path: mergeResult.path,
+                  // A KV merge that gave up under contention wrote nothing;
+                  // the same mutation can succeed when retried.
+                  retryable: isKvMergeContentionError(mergeResult.error),
+                };
           }
         }
         break;
@@ -941,7 +976,12 @@ async function executeMutationCore(
         ok: false,
         mutationId: effectiveMutationId,
         affectedIds: [],
-        errors: [{ code: opResult.code, message: opResult.message, path: opResult.path, retryable: false }],
+        errors: [{
+          code: opResult.code,
+          message: opResult.message,
+          path: opResult.path,
+          retryable: opResult.retryable === true,
+        }],
         deduped: false,
       };
   if (failedShareCompensation) {
@@ -1006,8 +1046,24 @@ async function executeMutationCore(
           primaryChange,
           ...additionalChanges,
         ];
+        // DATA-8: a change on a KV record records the record's stored state,
+        // read only after its serverSeq is allocated (after this request's
+        // write), so the record's latest change reflects its stored state.
+        const snapshotPrimaryKvChange = async () => {
+          if (!isKvResource(primaryChange.resource)) return;
+          const snapshot = await snapshotKvChange({
+            db,
+            id: primaryChange.id,
+            namespace,
+            op: primaryChange.op,
+            record: primaryChange.record,
+          });
+          primaryChange.op = snapshot.op;
+          primaryChange.record = snapshot.record;
+        };
         if (allChanges.length > 1) {
           const seqs = await changeTracking.getNextServerSeqBatch(allChanges.length);
+          await snapshotPrimaryKvChange();
           await recordChangesWithRetry(
             changeTracking,
             allChanges.map((change, i) => ({
@@ -1022,6 +1078,7 @@ async function executeMutationCore(
           );
         } else {
           const serverSeq = await changeTracking.getNextServerSeq();
+          await snapshotPrimaryKvChange();
           // FIX-REL-002: Use shared retry helper for change-tracking parity with push path
           await recordChangeWithRetry(changeTracking, {
             serverSeq,
@@ -1340,6 +1397,7 @@ export async function executeMutation(
           actorId,
           logger,
           multiRegionRuntime,
+          true,
         );
         if (txMutationResult.ok && shouldQueuePermissionDirectorySync) {
           await queuePermissionDirectorySync(txDb);
@@ -1461,6 +1519,7 @@ export async function executeMutation(
           actorId,
           logger,
           multiRegionRuntime,
+          true,
         );
         if (txMutationResult.ok && shouldQueuePermissionDirectorySync) {
           await queuePermissionDirectorySync(txDb);
@@ -1520,6 +1579,7 @@ export async function executeMutation(
       actorId,
       logger,
       multiRegionRuntime,
+      insideTransaction,
     );
   } catch (error) {
     await releasePermissionDirectoryTask();
