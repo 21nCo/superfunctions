@@ -336,6 +336,12 @@ export interface BillFnVerifiedBillingState {
   checkoutStatus: CheckoutSessionStatus;
   providerSubscriptionId?: string;
   providerChargeId?: string;
+  /**
+   * The catalog price or provider product id the provider record names, set
+   * by an adapter whose record carries it in a form BillFn cannot read from
+   * `raw` (Apple's signed transaction). BillFn reads it before `raw`.
+   */
+  providerProductId?: string;
   currentPeriodStart?: string;
   currentPeriodEnd?: string;
   autoRenew?: boolean;

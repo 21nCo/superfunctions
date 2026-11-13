@@ -110,6 +110,8 @@ describe('@billfn/provider-apple', () => {
 
     expect(verified?.subscriptionStatus).toBe('expired');
     expect(verified?.providerChargeId).toBe('txn_123');
+    // The product is only inside the signed transaction, so the state names it for BillFn core.
+    expect(verified?.providerProductId).toBe('apple.pro.month');
     expect(verified?.currentPeriodStart).toBe('2026-04-20T00:00:00.000Z');
     expect(verified?.currentPeriodEnd).toBe('2026-05-20T00:00:00.000Z');
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain('https://api.storekit.itunes.apple.com/inApps/v1/subscriptions/txn_123');
@@ -371,6 +373,7 @@ describe('@billfn/provider-apple', () => {
 
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/inApps/v1/subscriptions/orig_restore');
     expect(restored?.[0]?.subscriptionStatus).toBe('active');
+    expect(restored?.[0]?.providerProductId).toBe('apple.pro.month');
   });
 
   it('uses the v2 history endpoint for non-subscription purchase restoration', async () => {
@@ -401,7 +404,7 @@ describe('@billfn/provider-apple', () => {
       tokenProvider: async () => 'token'
     });
 
-    await provider.restorePurchases?.({
+    const restored = await provider.restorePurchases?.({
       billingAccount: {
         id: 'ba_user_123',
         ownerType: 'user',
@@ -430,6 +433,7 @@ describe('@billfn/provider-apple', () => {
     });
 
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/inApps/v2/history/txn_lifetime');
+    expect(restored?.[0]?.providerProductId).toBe('apple.lifetime');
   });
 
   it('parses App Store Server Notifications v2 payloads using the configured verifier', async () => {
@@ -466,6 +470,7 @@ describe('@billfn/provider-apple', () => {
     expect(events).toHaveLength(1);
     expect(events?.[0]?.signatureVerified).toBe(true);
     expect(events?.[0]?.billingState?.subscriptionStatus).toBe('active');
+    expect(events?.[0]?.billingState?.providerProductId).toBe('apple.pro.month');
     expect(events?.[0]?.occurredAt).toBe('2026-04-21T00:00:00.000Z');
   });
 

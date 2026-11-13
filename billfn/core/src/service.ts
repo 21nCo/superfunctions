@@ -362,15 +362,15 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
     let read: Awaited<ReturnType<typeof readProviderSubscription>>;
     try {
       read = await readProviderSubscription(subscription.id, event.selection);
-    } catch (failure) {
+    } catch (error_) {
       deps.metrics.track('subscription.mutation.window_event_unreconciled', {
         provider: subscription.provider,
         subscriptionId: subscription.id,
         reason: 'read_failed',
-        error: failure instanceof Error ? failure.message : String(failure)
+        error: error_ instanceof Error ? error_.message : String(error_)
       });
       if (!deps.queue) {
-        throw windowReadFailed(failure);
+        throw windowReadFailed(error_);
       }
       await scheduleSubscriptionSync(subscription, event.selection);
       return;
@@ -1710,12 +1710,13 @@ async function syncSubscriptionByIdForJob(
 
 /**
  * Reads the subscription from the provider for its stored plan and price. If
- * that read fails and `candidate` names another catalog price, it reads for
- * that price (a provider such as Apple reads only the live product); such a
- * read counts only when the live record names a catalog price or the provider
- * rejected the stored price with `BILLFN_CONFLICT`, else it fails.
- * The catalog price the live record names is the selection applied. Returns
- * null when the provider returned no state, and throws the first failure.
+ * that read fails or returns no state and `candidate` names another catalog
+ * price, it reads for that price (a provider such as Apple reads only the live
+ * product); such a read counts only when the state it returns names a catalog
+ * price (`providerProductId` or the raw record), whatever the stored read's
+ * failure was, else it counts as failed. The catalog price the live record
+ * names is the selection applied. Returns null when every read returned no
+ * state, and otherwise throws the first failure.
  */
 async function fetchLiveSubscription(deps: ServiceDeps, subscription: BillFnSubscription, candidate?: CatalogSelection) {
   const plan = requirePlan(deps.catalog, subscription.planKey);
@@ -1730,8 +1731,8 @@ async function fetchLiveSubscription(deps: ServiceDeps, subscription: BillFnSubs
       const live = state
         ? await resolveProviderEventPriceReference(deps, subscription.provider, { type: 'subscription.read', billingState: state }, subscription)
         : null;
-      // A provider that rejected the stored price as a mismatch (Apple) confirms the price it accepts.
-      if (state && (live || selection === stored || isBillFnConflictError(failures[0]))) {
+      // A read for another price counts only when the provider confirms that price.
+      if (state && (live || selection === stored)) {
         return { ...(live ?? selection), state, liveStateObservedAt };
       }
       if (state) {
@@ -3109,42 +3110,7 @@ async function processParsedWebhookEvent(
     projection = outcome.linked;
   }
   if (projection.subscription) {
-    // Events stored before this reference was linked go first, so provider event-time order holds. An
-    // unread window event does not hold this event back: it is retried after this event is applied.
-    const { windowUnread } = await replayUnlinkedWebhookEventsOrThrow(deps, projection.subscription, { deferWindowUnread: true });
-    // This run's replay, or one another run finished, may have replaced the reference this event matched.
-    const refreshed = await resolveProjectionContextForProviderState(deps, {
-      provider: providerName,
-      state,
-      checkoutReferenceId: event.checkoutReferenceId
-    });
-    if (!refreshed) {
-      // The event is retained, never applied to the subscription it matched nor used to bootstrap another.
-      await storeUnlinkedWebhookEvent(deps, providerName, event, {
-        providerReference: (state.providerSubscriptionId ?? state.providerChargeId) as string,
-        reason: 'provider_reference_replaced',
-        metadataBillingAccountId: readBillingAccountMetadata(event, state)
-      });
-      if (windowUnread) {
-        // The replay that replaced the reference closed the window, so the unread event is now skipped;
-        // this delivery's redelivery would no longer reach the subscription, so it is replayed here.
-        await replayUnlinkedWebhookEventsOrThrow(deps, projection.subscription);
-      }
-      return null;
-    }
-    projection = refreshed;
-    const linkedBefore = projection.subscription;
-    const applied = await applyParsedWebhookEvent(deps, providerName, { ...event, billingState: state }, projection);
-    // An event that adds a provider reference links the events stored for it, including an event
-    // skipped as older than the subscription's state, which still links its missing references.
-    const linkedAfter =
-      applied?.subscription ?? (linkedBefore ? await getSubscriptionById(deps, linkedBefore.id) : null);
-    const replayAgain = linkedAfter ?? linkedBefore;
-    // A newer event closes the window, so the unread event is then skipped; one still unread fails this delivery.
-    if (replayAgain && (windowUnread || (linkedAfter && addsProviderReference(linkedBefore, linkedAfter)))) {
-      await replayUnlinkedWebhookEventsOrThrow(deps, replayAgain);
-    }
-    return applied;
+    return applyEventToLinkedSubscription(deps, providerName, { ...event, billingState: state }, projection.subscription);
   }
   // The event resolved only through a checkout session, so applying it links the reference:
   // events stored for it before now are replayed after it, newer ones applied and older ones skipped.
@@ -3160,6 +3126,58 @@ async function processParsedWebhookEvent(
     ));
   if (linked) {
     await replayUnlinkedWebhookEventsOrThrow(deps, linked);
+  }
+  return applied;
+}
+
+/**
+ * Applies an event that resolved to a subscription. Events stored before its
+ * reference was linked go first, so provider event-time order holds; an unread
+ * window event does not hold this event back and is retried after it. Events
+ * on a reference this event replaced are then recorded as replaced.
+ */
+async function applyEventToLinkedSubscription(
+  deps: ServiceDeps,
+  providerName: BillingProviderName,
+  event: ParsedProviderEvent & { billingState: VerifiedBillingState },
+  subscription: BillFnSubscription
+) {
+  const state = event.billingState;
+  const { windowUnread } = await replayUnlinkedWebhookEventsOrThrow(deps, subscription, { deferWindowUnread: true });
+  // This run's replay, or one another run finished, may have replaced the reference this event matched.
+  const refreshed = await resolveProjectionContextForProviderState(deps, {
+    provider: providerName,
+    state,
+    checkoutReferenceId: event.checkoutReferenceId
+  });
+  if (!refreshed) {
+    // The event is retained, never applied to the subscription it matched nor used to bootstrap another.
+    await storeUnlinkedWebhookEvent(deps, providerName, event, {
+      providerReference: (state.providerSubscriptionId ?? state.providerChargeId) as string,
+      reason: 'provider_reference_replaced',
+      metadataBillingAccountId: readBillingAccountMetadata(event, state)
+    });
+    if (windowUnread) {
+      // The replay that replaced the reference closed the window, so the unread event is now skipped;
+      // this delivery's redelivery would no longer reach the subscription, so it is replayed here.
+      await replayUnlinkedWebhookEventsOrThrow(deps, subscription);
+    }
+    return null;
+  }
+  const linkedBefore = refreshed.subscription;
+  const applied = await applyParsedWebhookEvent(deps, providerName, event, refreshed);
+  // An event that adds a provider reference links the events stored for it, including an event
+  // skipped as older than the subscription's state, which still links its missing references.
+  const linkedAfter =
+    applied?.subscription ?? (linkedBefore ? await getSubscriptionById(deps, linkedBefore.id) : null);
+  const replayAgain = linkedAfter ?? linkedBefore;
+  // A newer event closes the window, so the unread event is then skipped; one still unread fails this
+  // delivery. Events on a reference this event replaced, including one the replay above left unread,
+  // are recorded as replaced.
+  if (replayAgain && (windowUnread || (linkedAfter && addsProviderReference(linkedBefore, linkedAfter)))) {
+    await replayUnlinkedWebhookEventsOrThrow(deps, replayAgain, {
+      formerReferences: linkedBefore ? providerReferencesOf(linkedBefore) : []
+    });
   }
   return applied;
 }
@@ -3251,24 +3269,14 @@ async function bootstrapOrStoreUnlinkedWebhookEvent(
   } else if (await isRetainedAsReplaced(deps, providerName, event.providerEventId)) {
     // A replay replaced the reference this event matched: it never bootstraps another subscription.
     reason = 'provider_reference_replaced';
-  } else if (!metadataBillingAccountId) {
-    reason = 'billing_account_metadata_missing';
-  } else {
-    const billingAccount = await getBillingAccountById(deps, metadataBillingAccountId);
-    const eventPrice = billingAccount
-      ? await resolveProviderEventPriceReference(deps, providerName, event, null)
-      : null;
-    if (billingAccount && eventPrice) {
-      return {
-        handled: await bootstrapSubscriptionFromWebhookEvent(deps, providerName, event, {
-          billingAccount,
-          plan: eventPrice.plan,
-          price: eventPrice.price,
-          state
-        })
-      };
+  } else if (metadataBillingAccountId) {
+    const bootstrap = await bootstrapFromMetadata(deps, providerName, event, state, metadataBillingAccountId);
+    if (typeof bootstrap !== 'string') {
+      return bootstrap;
     }
-    reason = billingAccount ? 'price_not_found' : 'billing_account_not_found';
+    reason = bootstrap;
+  } else {
+    reason = 'billing_account_metadata_missing';
   }
 
   await storeUnlinkedWebhookEvent(deps, providerName, event, {
@@ -3291,6 +3299,32 @@ async function bootstrapOrStoreUnlinkedWebhookEvent(
     await replayUnlinkedWebhookEventsOrThrow(deps, linked);
   }
   return { handled: null };
+}
+
+/** Bootstraps the subscription for the account the metadata names, or returns why the event is stored unlinked. */
+async function bootstrapFromMetadata(
+  deps: ServiceDeps,
+  providerName: BillingProviderName,
+  event: ParsedProviderEvent,
+  state: VerifiedBillingState,
+  billingAccountId: string
+): Promise<{ handled: ProjectionResult | null } | BillFnUnlinkedWebhookEventReason> {
+  const billingAccount = await getBillingAccountById(deps, billingAccountId);
+  if (!billingAccount) {
+    return 'billing_account_not_found';
+  }
+  const eventPrice = await resolveProviderEventPriceReference(deps, providerName, event, null);
+  if (!eventPrice) {
+    return 'price_not_found';
+  }
+  return {
+    handled: await bootstrapSubscriptionFromWebhookEvent(deps, providerName, event, {
+      billingAccount,
+      plan: eventPrice.plan,
+      price: eventPrice.price,
+      state
+    })
+  };
 }
 
 async function bootstrapSubscriptionFromWebhookEvent(
@@ -3432,6 +3466,8 @@ type UnlinkedReplayResult = {
   failure?: { error: unknown };
   /** The first window-read failure of an event left retained so the operation is retried. */
   windowUnread?: { error: unknown };
+  /** Every event this pass left window-unread; one whose reference was then lost no longer counts. */
+  unreadRows?: Array<{ rowId: string; error: unknown }>;
 };
 
 /**
@@ -3456,7 +3492,9 @@ type UnlinkedReplayOutcome =
  * event, or a live provider read) is marked skipped. An event that no longer
  * resolves to a subscription, because an earlier replayed event replaced its
  * reference, stays unlinked with reason `provider_reference_replaced` and the
- * replay continues past it. An event inside a committed mutation's window
+ * replay continues past it. After the pass, every event still unlinked on a
+ * reference the subscription held (or held before, `formerReferences`) but no
+ * longer holds is recorded as replaced the same way. An event inside a committed mutation's window
  * whose provider read fails (no queue) stays unlinked with the error, the
  * replay continues, and the operation fails afterwards so it is retried. A
  * replay stops at the first event another replay holds or that fails to apply,
@@ -3464,10 +3502,12 @@ type UnlinkedReplayOutcome =
  */
 async function replayUnlinkedWebhookEvents(
   deps: ServiceDeps,
-  subscription: BillFnSubscription
+  subscription: BillFnSubscription,
+  formerReferences: string[] = []
 ): Promise<UnlinkedReplayResult> {
   const result: UnlinkedReplayResult = { applied: 0, skipped: 0, pending: 0 };
-  const queue = createUnlinkedReplayQueue(deps, subscription.provider);
+  const queue = createUnlinkedReplayQueue(deps, subscription.provider, formerReferences);
+  let latest = subscription;
   await queue.discover(subscription);
   for (let processed = 0; processed < UNLINKED_WEBHOOK_EVENT_REPLAY_MAX_EVENTS; processed += 1) {
     const candidate = queue.next();
@@ -3487,9 +3527,12 @@ async function replayUnlinkedWebhookEvents(
     // (which may have stopped before replaying what they linked) can add a reference.
     const current = await getSubscriptionById(deps, subscription.id);
     if (current) {
+      latest = current;
       await queue.discover(current);
     }
   }
+  const replaced = await markReplacedUnlinkedWebhookEvents(deps, latest, queue.heldReferences());
+  result.windowUnread = result.unreadRows?.find((row) => !replaced.has(row.rowId));
   if (!result.held && !result.failure && queue.remaining() > 0) {
     // The bound was reached with events left: the replay is unfinished, so the operation is retried.
     result.pending = queue.remaining();
@@ -3510,11 +3553,12 @@ async function replayUnlinkedWebhookEvents(
  * The ordered replay queue. `discover` merges the unexpired events stored for
  * every reference the subscription gained since the previous discovery (a
  * first gain or a regain); `release` lets a visited event that stayed unlinked
- * be queued again.
+ * be queued again. `formerReferences` are ones it held before the pass.
  */
-function createUnlinkedReplayQueue(deps: ServiceDeps, provider: BillingProviderName) {
+function createUnlinkedReplayQueue(deps: ServiceDeps, provider: BillingProviderName, formerReferences: string[]) {
   const timestamp = toIsoString(deps.now());
   let observed = new Set<string>();
+  const held = new Set(formerReferences);
   const queued = new Set<string>();
   let pending: BillFnUnlinkedWebhookEvent[] = [];
   return {
@@ -3522,6 +3566,7 @@ function createUnlinkedReplayQueue(deps: ServiceDeps, provider: BillingProviderN
       const current = providerReferencesOf(subscription);
       const gained = current.filter((reference) => !observed.has(reference));
       observed = new Set(current);
+      current.forEach((reference) => held.add(reference));
       if (gained.length === 0) {
         return;
       }
@@ -3531,9 +3576,63 @@ function createUnlinkedReplayQueue(deps: ServiceDeps, provider: BillingProviderN
       pending = [...pending, ...added].sort(compareUnlinkedWebhookEvents);
     },
     release: (row: BillFnUnlinkedWebhookEvent) => queued.delete(row.id),
+    /** Every reference the subscription held before or during the pass. */
+    heldReferences: () => [...held],
     next: () => pending.shift(),
     remaining: () => pending.length
   };
+}
+
+/**
+ * Records every still-unlinked event on a reference the subscription held
+ * (before or during a replay pass) but no longer holds, and that now resolves
+ * to no subscription, as `provider_reference_replaced`, whatever it was left
+ * as (window-unread, unresolved or not visited), so it never bootstraps
+ * another subscription. A regain still replays it, since discovery ignores the
+ * reason. The write is fenced on the row's state, so a row another run claimed
+ * or finished since it was read is left alone. Returns the rows recorded.
+ */
+async function markReplacedUnlinkedWebhookEvents(deps: ServiceDeps, subscription: BillFnSubscription, held: string[]) {
+  const replaced = new Set<string>();
+  const current = providerReferencesOf(subscription);
+  const lost = held.filter((reference) => !current.includes(reference));
+  if (lost.length === 0) {
+    return replaced;
+  }
+  const timestamp = toIsoString(deps.now());
+  const rows = await findUnlinkedWebhookEventsForReferences(deps, subscription.provider, lost, timestamp);
+  for (const row of rows.filter((candidate) => candidate.status === 'unlinked')) {
+    if (await resolvesToSubscription(deps, row)) {
+      continue;
+    }
+    const recorded = await deps.db.updateMany({
+      model: TABLES.unlinkedWebhookEvents,
+      where: [
+        { field: 'id', operator: 'eq', value: row.id },
+        { field: 'status', operator: 'eq', value: 'unlinked' },
+        { field: 'updatedAt', operator: 'eq', value: row.updatedAt }
+      ],
+      data: { reason: 'provider_reference_replaced', error: null, updatedAt: timestamp },
+      namespace: deps.namespace
+    });
+    if (recorded > 0) {
+      replaced.add(row.id);
+    }
+  }
+  return replaced;
+}
+
+async function resolvesToSubscription(deps: ServiceDeps, row: BillFnUnlinkedWebhookEvent) {
+  const event = deserializeParsedWebhookEvent(row.event);
+  if (!event?.billingState) {
+    return false;
+  }
+  const projection = await resolveProjectionContextForProviderState(deps, {
+    provider: row.provider,
+    state: event.billingState,
+    checkoutReferenceId: event.checkoutReferenceId
+  });
+  return Boolean(projection?.subscription);
 }
 
 async function findUnlinkedWebhookEventsForReferences(
@@ -3613,7 +3712,7 @@ async function replayUnlinkedWebhookEvent(
   }
   if (outcome.kind === 'window_unread') {
     // Retained with its error; the operation fails after the pass, so its retry reads the provider again.
-    result.windowUnread ??= { error: outcome.error };
+    (result.unreadRows ??= []).push({ rowId: candidate.id, error: outcome.error });
   }
   // A displaced event, delivered in order, would have been stored unlinked as well, so it stays
   // unlinked (and replays if its reference is linked again) and does not hold back later events.
@@ -3769,15 +3868,17 @@ function compareUnlinkedWebhookEvents(left: BillFnUnlinkedWebhookEvent, right: B
  * released first and its error rethrown; an event another replay run still
  * holds, including a run interrupted before it released the event, raises a
  * lease conflict. An event inside a mutation window whose read failed raises
- * that window-read error once the rest of the replay is done, unless
- * `deferWindowUnread` returns it for the caller to raise later.
+ * that window-read error once the rest of the replay is done, unless its
+ * reference was replaced meanwhile or `deferWindowUnread` returns it for the
+ * caller to raise later. `formerReferences` are references the subscription
+ * held before the write that triggered the replay.
  */
 async function replayUnlinkedWebhookEventsOrThrow(
   deps: ServiceDeps,
   subscription: BillFnSubscription,
-  options: { deferWindowUnread?: boolean } = {}
+  options: { deferWindowUnread?: boolean; formerReferences?: string[] } = {}
 ) {
-  const result = await replayUnlinkedWebhookEvents(deps, subscription);
+  const result = await replayUnlinkedWebhookEvents(deps, subscription, options.formerReferences);
   if (result.failure) {
     throw result.failure.error;
   }
@@ -3833,11 +3934,12 @@ async function applyLiveProviderState(
   options: { onReplayDeferred?: (subscription: BillFnSubscription) => Promise<void> } = {}
 ): Promise<ProjectionResult> {
   const result = await applyVerificationState(deps, input);
+  const formerReferences = input.subscription ? providerReferencesOf(input.subscription) : [];
   if (!options.onReplayDeferred) {
-    await replayUnlinkedWebhookEventsOrThrow(deps, result.subscription);
+    await replayUnlinkedWebhookEventsOrThrow(deps, result.subscription, { formerReferences });
     return refreshProjectionAfterReplay(deps, result);
   }
-  await replayAfterCommittedMutation(deps, result.subscription, options.onReplayDeferred);
+  await replayAfterCommittedMutation(deps, result.subscription, options.onReplayDeferred, formerReferences);
   try {
     return { ...(await refreshProjectionAfterReplay(deps, result)), providerStateRaced: result.providerStateRaced };
   } catch (error) {
@@ -3855,10 +3957,11 @@ async function applyLiveProviderState(
 async function replayAfterCommittedMutation(
   deps: ServiceDeps,
   subscription: BillFnSubscription,
-  onReplayDeferred: (subscription: BillFnSubscription) => Promise<void>
+  onReplayDeferred: (subscription: BillFnSubscription) => Promise<void>,
+  formerReferences: string[]
 ) {
   try {
-    await replayUnlinkedWebhookEventsOrThrow(deps, subscription);
+    await replayUnlinkedWebhookEventsOrThrow(deps, subscription, { formerReferences });
   } catch (error) {
     deps.metrics.track('webhook.unlinked.replay_deferred', {
       provider: subscription.provider,
@@ -3935,6 +4038,7 @@ async function resolveProviderEventPriceReference(
     // A provider record may carry its product on the transaction it describes (Apple).
     const records = [raw, asRecord(raw?.transaction)];
     const references = [
+      event.billingState?.providerProductId,
       event.priceId,
       ...records.flatMap((record) =>
         record ? ['product_id', 'productId', 'price_id', 'priceId'].map((key) => readString(record, key)) : []
@@ -4306,10 +4410,6 @@ function isDuplicateRecordError(error: unknown) {
     current = record.cause;
   }
   return false;
-}
-
-function isBillFnConflictError(error: unknown) {
-  return error instanceof Error && (error as { code?: string }).code === 'BILLFN_CONFLICT';
 }
 
 function isBillFnNotFoundError(error: unknown) {

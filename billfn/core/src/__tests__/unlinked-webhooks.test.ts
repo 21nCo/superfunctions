@@ -2523,7 +2523,7 @@ describe('mutation window reads, bootstrap lifecycle and replaced references (PR
 
 describe('mutation windows, replaced references and regained references (PR #308 round 2)', () => {
   const COMMITTED_AT = '2026-11-01T00:00:03.000Z';
-  type Read = (input: { subscription: BillFnSubscription; price: { priceId: string } }) => Promise<BillFnVerifiedBillingState | null>;
+  type Read = (input: { subscription: BillFnSubscription; price: { priceId: string; providerProductId?: string } }) => Promise<BillFnVerifiedBillingState | null>;
 
   /**
    * Bootstraps sub_<name> (with charge pay_<name> unless `chargeless`) and commits `operation` with a
@@ -2773,6 +2773,22 @@ describe('mutation windows, replaced references and regained references (PR #308
     };
   }
 
+  /**
+   * The shipped Apple adapter's read: one for another price than the live product's (`livePriceId`) fails
+   * with BILLFN_CONFLICT, a matching one returns the StoreKit payload and names the product in
+   * `providerProductId`. While `outage.value` is set, a read for `outage.priceId` (any read if unset) fails.
+   */
+  function storeKitRead(reads: string[], livePriceId: string, outage: { value: boolean; priceId?: string } = { value: false }): Read {
+    return async (input) => {
+      reads.push(input.price.priceId);
+      if (outage.value && (!outage.priceId || outage.priceId === input.price.priceId)) {
+        throw createBillFnError({ code: 'BILLFN_PROVIDER_ERROR', message: 'StoreKit returned 503' });
+      }
+      const read = committedPriceRead([], livePriceId, APPLE_SUBSCRIPTION_PAYLOAD);
+      return { ...(await read(input))!, providerProductId: input.price.providerProductId };
+    };
+  }
+
   it('reconciles an in-window renewal to the product the live record names', async () => {
     const reads: string[] = [];
     const env = await committedMutation('catalog', { read: committedPriceRead(reads, 'price_pro_dodo_month', { product_id: 'pdt_team_month' }) });
@@ -2802,17 +2818,22 @@ describe('mutation windows, replaced references and regained references (PR #308
     expect(entitlements.ok && entitlements.data.entitlements?.limits).toMatchObject({ storage: 5000 });
   });
 
-  it('reconciles an in-window renewal into another product when the provider only reads the live product', async () => {
-    const reads: string[] = [];
-    const env = await committedMutation('apple_like', { read: committedPriceRead(reads, 'price_team_dodo_month', APPLE_SUBSCRIPTION_PAYLOAD) });
+  it.each(['rejected as another product', 'unavailable'] as const)(
+    'reconciles an in-window renewal into another product when the provider only reads the live product and the stored-price read is %s',
+    async (storedRead) => {
+      const reads: string[] = [];
+      const name = storedRead === 'unavailable' ? 'apple_503' : 'apple_like';
+      const outage = { value: storedRead === 'unavailable', priceId: 'price_pro_dodo_month' };
+      const env = await committedMutation(name, { operation: 'cancelSubscription', read: storeKitRead(reads, 'price_team_dodo_month', outage) });
 
-    expect((await deliver(env.billfn, [at('apple_like', 'renewed', 'active', '02.000', { productId: 'pdt_team_month' })])).ok).toBe(true);
+      expect((await deliver(env.billfn, [at(name, 'renewed', 'active', '02.000', { productId: 'pdt_team_month' })])).ok).toBe(true);
 
-    expect(reads).toEqual(['price_pro_dodo_month', 'price_team_dodo_month']);
-    expect(await env.stored()).toMatchObject({ planKey: 'team', priceId: 'price_team_dodo_month' });
-    const entitlements = await env.billfn.getEntitlements({ principalId: 'apple_like_user' });
-    expect(entitlements.ok && entitlements.data.entitlements?.limits).toMatchObject({ storage: 5000 });
-  });
+      expect(reads).toEqual(['price_pro_dodo_month', 'price_team_dodo_month']);
+      expect(await env.stored()).toMatchObject({ planKey: 'team', priceId: 'price_team_dodo_month', status: 'active' });
+      const entitlements = await env.billfn.getEntitlements({ principalId: `${name}_user` });
+      expect(entitlements.ok && entitlements.data.entitlements?.limits).toMatchObject({ storage: 5000 });
+    }
+  );
 
   it('leaves open the window of a mutation that commits while an earlier window event is reconciled', async () => {
     let reads = 0;
@@ -3029,49 +3050,49 @@ describe('mutation windows, replaced references and regained references (PR #308
     expect(await env.stored()).toMatchObject({ status: 'canceled' });
   });
 
-  it("keeps a committed change when only a read for the event's price succeeds and the live record names no product", async () => {
-    const reads: string[] = [];
-    // The read for the committed price fails transiently; one for the event's price returns a record naming no product.
-    const read: Read = async (input) => {
-      reads.push(input.price.priceId);
-      if (input.price.priceId === 'price_team_dodo_month') {
-        throw new Error('provider read unavailable');
-      }
-      return { subscriptionStatus: 'active', checkoutStatus: 'succeeded', providerSubscriptionId: input.subscription.providerSubscriptionId, autoRenew: true, raw: {} };
-    };
-    const env = await committedMutation('unconfirmed', { operation: 'changeSubscription', targetPriceId: 'price_team_dodo_month', read });
+  it.each(['BILLFN_PROVIDER_ERROR', 'BILLFN_CONFLICT'] as const)(
+    "keeps a committed change when the committed-price read fails with %s and a read for the event's price names no product",
+    async (code) => {
+      const reads: string[] = [];
+      const name = code === 'BILLFN_CONFLICT' ? 'unconfirmed_conflict' : 'unconfirmed';
+      // A generic provider: the read for the committed price fails; one for the event's price returns a record naming no product.
+      const read: Read = async (input) => {
+        reads.push(input.price.priceId);
+        if (input.price.priceId === 'price_team_dodo_month') {
+          throw createBillFnError({ code, message: 'provider read failed' });
+        }
+        return { subscriptionStatus: 'active', checkoutStatus: 'succeeded', providerSubscriptionId: input.subscription.providerSubscriptionId, autoRenew: true, raw: {} };
+      };
+      const env = await committedMutation(name, { operation: 'changeSubscription', targetPriceId: 'price_team_dodo_month', read });
 
-    await expect(deliver(env.billfn, [at('unconfirmed', 'old_product', 'active', '02.000', { productId: 'pdt_pro_month' })])).rejects.toMatchObject({ code: 'BILLFN_PROVIDER_ERROR' });
+      await expect(deliver(env.billfn, [at(name, 'old_product', 'active', '02.000', { productId: 'pdt_pro_month' })])).rejects.toMatchObject({ code: 'BILLFN_PROVIDER_ERROR' });
 
-    expect(reads).toEqual(['price_team_dodo_month', 'price_pro_dodo_month']);
-    expect(await env.stored()).toMatchObject({ planKey: 'team', priceId: 'price_team_dodo_month' });
-    const entitlements = await env.billfn.getEntitlements({ principalId: 'unconfirmed_user' });
-    expect(entitlements.ok && entitlements.data.entitlements?.limits).toMatchObject({ storage: 5000 });
-  });
+      expect(reads).toEqual(['price_team_dodo_month', 'price_pro_dodo_month']);
+      expect(await env.stored()).toMatchObject({ planKey: 'team', priceId: 'price_team_dodo_month' });
+      const entitlements = await env.billfn.getEntitlements({ principalId: `${name}_user` });
+      expect(entitlements.ok && entitlements.data.entitlements?.limits).toMatchObject({ storage: 5000 });
+    }
+  );
 
-  it('recovers an in-window renewal into another product through the queued sync when the provider reads only the live product', async () => {
-    const failing = { value: true };
-    const read: Read = async (input) => {
-      if (failing.value) {
-        throw new Error('StoreKit unavailable');
-      }
-      if (input.price.priceId !== 'price_team_dodo_month') {
-        throw createBillFnError({ code: 'BILLFN_CONFLICT', message: 'Apple transaction does not match the checkout product' });
-      }
-      return { subscriptionStatus: 'active', checkoutStatus: 'succeeded', providerSubscriptionId: input.subscription.providerSubscriptionId, autoRenew: true, raw: APPLE_SUBSCRIPTION_PAYLOAD };
-    };
-    const env = await committedMutation('apple_queue', { operation: 'cancelSubscription', read, queued: true });
+  it.each(['rejected as another product', 'unavailable'] as const)(
+    'recovers an in-window renewal into another product through the queued sync when the provider reads only the live product and its stored-price read is %s',
+    async (storedRead) => {
+      const name = storedRead === 'unavailable' ? 'apple_queue_503' : 'apple_queue';
+      // Every read fails while the delivery runs; during the sync job only the stored-price read may still fail.
+      const outage: { value: boolean; priceId?: string } = { value: true };
+      const env = await committedMutation(name, { operation: 'cancelSubscription', read: storeKitRead([], 'price_team_dodo_month', outage), queued: true });
 
-    await deliver(env.billfn, [at('apple_queue', 'renewed', 'active', '02.000', { productId: 'pdt_team_month' })]);
-    expect(await env.worker?.runNext()).toMatchObject({ kind: 'webhook-event', status: 'succeeded' });
-    expect(await env.stored()).toMatchObject({ planKey: 'pro' });
+      await deliver(env.billfn, [at(name, 'renewed', 'active', '02.000', { productId: 'pdt_team_month' })]);
+      expect(await env.worker?.runNext()).toMatchObject({ kind: 'webhook-event', status: 'succeeded' });
+      expect(await env.stored()).toMatchObject({ planKey: 'pro' });
 
-    failing.value = false;
-    expect(await env.worker?.runNext()).toMatchObject({ kind: 'subscription-sync', status: 'succeeded' });
-    expect(await env.stored()).toMatchObject({ planKey: 'team', priceId: 'price_team_dodo_month', status: 'active' });
-    const entitlements = await env.billfn.getEntitlements({ principalId: 'apple_queue_user' });
-    expect(entitlements.ok && entitlements.data.entitlements?.limits).toMatchObject({ storage: 5000 });
-  });
+      Object.assign(outage, storedRead === 'unavailable' ? { priceId: 'price_pro_dodo_month' } : { value: false });
+      expect(await env.worker?.runNext()).toMatchObject({ kind: 'subscription-sync', status: 'succeeded' });
+      expect(await env.stored()).toMatchObject({ planKey: 'team', priceId: 'price_team_dodo_month', status: 'active' });
+      const entitlements = await env.billfn.getEntitlements({ principalId: `${name}_user` });
+      expect(entitlements.ok && entitlements.data.entitlements?.limits).toMatchObject({ storage: 5000 });
+    }
+  );
 
   it('reconciles a renewal into another product that raced a committed cancellation when the provider reads only the live product', async () => {
     let billfn!: ReturnType<typeof createBillFn>;
@@ -3087,7 +3108,7 @@ describe('mutation windows, replaced references and regained references (PR #308
         current = new Date('2026-11-01T00:00:03.000Z');
         return { operationStatus: 'applied', billingState: { subscriptionStatus: 'canceled', checkoutStatus: 'succeeded', providerSubscriptionId: 'sub_raced_apple', autoRenew: false } };
       },
-      fetchSubscription: committedPriceRead(reads, 'price_team_dodo_month', APPLE_SUBSCRIPTION_PAYLOAD)
+      fetchSubscription: storeKitRead(reads, 'price_team_dodo_month')
     };
     billfn = createBillFn({ db: memoryAdapter({ debug: false }), catalog, now: () => current, providers: { dodo: provider } });
     await billfn.quotaProvider.recordUsage({ principalId: 'raced_apple_user', bytes: 0 });
@@ -3164,5 +3185,61 @@ describe('mutation windows, replaced references and regained references (PR #308
     await deliver(env.billfn, [subscriptionEvent({ eventId: 'evt_disp_back', subscriptionId: 'sub_disp', chargeId: 'pay_disp_1', status: 'active', occurredAt: '2026-10-31T09:00:00.000Z' })]);
     expect((await env.unlinked()).find((row) => row.providerEventId === 'evt_disp_canceled')).toMatchObject({ status: 'replayed' });
     expect(await env.subscriptions()).toEqual([expect.objectContaining({ providerChargeId: 'pay_disp_1', status: 'canceled' })]);
+  });
+
+  /**
+   * Retains a cancellation inside the window naming only pay_<name>_1, whose metadata names <name>_other_user
+   * (no account yet), after `before`; then links pay_<name>_1 to the subscription without replaying.
+   */
+  async function retainUnreadChargeCancellation(env: Awaited<ReturnType<typeof committedMutation>>, name: string, before?: (setReferences: (data: Partial<BillFnSubscription>) => Promise<unknown>) => Promise<void>) {
+    const [subscription] = await env.db.findMany<BillFnSubscription>({ model: 'subscriptions', where: [], namespace: 'billfn' });
+    const setReferences = (data: Partial<BillFnSubscription>) =>
+      env.db.updateMany({ model: 'subscriptions', where: [{ field: 'id', operator: 'eq', value: subscription.id }], data, namespace: 'billfn' });
+    await before?.(setReferences);
+    const inside = subscriptionEvent({ eventId: `evt_${name}_inside`, chargeId: `pay_${name}_1`, status: 'canceled', occurredAt: '2026-11-01T00:00:02.000Z', billingAccountId: `ba_user_${name}_other_user` });
+    await deliver(env.billfn, [inside]);
+    await setReferences({ providerChargeId: `pay_${name}_1` });
+    const row = async () => (await env.db.findMany<BillFnUnlinkedWebhookEvent>({ model: 'unlinkedWebhookEvents', where: [{ field: 'providerEventId', operator: 'eq', value: `evt_${name}_inside` }], namespace: 'billfn' }))[0];
+    expect(await row()).toMatchObject({ status: 'unlinked', reason: 'billing_account_not_found' });
+    return { inside, row };
+  }
+
+  it('records a window event left unread on a charge the delivered event replaces as replaced, so it never bootstraps, and replays it once the charge is regained', async () => {
+    const env = await committedMutation('lost', { read: recoveringRead({ value: true }, 'throws', 'canceled'), chargeless: true });
+    const { inside, row } = await retainUnreadChargeCancellation(env, 'lost');
+
+    // The replay before the renewal cannot read the window event; the renewal then replaces pay_lost_1 with pay_lost_2.
+    expect((await deliver(env.billfn, [at('lost', 'renewal', 'active', '06.000', { chargeId: 'pay_lost_2' })])).ok).toBe(true);
+
+    expect(await env.stored()).toMatchObject({ status: 'active', providerChargeId: 'pay_lost_2' });
+    expect(await row()).toMatchObject({ status: 'unlinked', reason: 'provider_reference_replaced', error: null });
+    await env.billfn.quotaProvider.recordUsage({ principalId: 'lost_other_user', bytes: 0 });
+    expect((await deliver(env.billfn, [inside])).ok).toBe(true);
+    const replay = await env.billfn.enqueueReconciliationJob({ kind: 'webhook-replay', provider: 'dodo', providerEventId: 'evt_lost_inside' });
+    const run = replay.ok ? await env.billfn.runReconciliationJob({ jobId: replay.data.job.id }) : null;
+    expect(run?.ok && run.data.job.status).toBe('succeeded');
+    expect(await env.db.findMany({ model: 'subscriptions', where: [], namespace: 'billfn' })).toHaveLength(1);
+    expect(await entitlementStatus(env.billfn, 'lost_user')).toBe('active');
+
+    // Regaining pay_lost_1 finishes the retained event (older than the state, so skipped).
+    expect((await deliver(env.billfn, [at('lost', 'back', 'active', '07.000', { chargeId: 'pay_lost_1' })])).ok).toBe(true);
+    expect(await row()).toMatchObject({ status: 'skipped' });
+    expect(await env.stored()).toMatchObject({ status: 'active', providerChargeId: 'pay_lost_1' });
+  });
+
+  it('records a window event left unread as replaced when a later event in the same replay replaces its charge', async () => {
+    const env = await committedMutation('inpass', { read: recoveringRead({ value: true }, 'throws', 'canceled'), chargeless: true });
+    // A renewal moving the subscription to pay_inpass_2 is retained while its id is unlinked.
+    const { row } = await retainUnreadChargeCancellation(env, 'inpass', async (setReferences) => {
+      await setReferences({ providerSubscriptionId: 'sub_inpass_unlinked' });
+      await deliver(env.billfn, [at('inpass', 'renewal', 'active', '06.000', { chargeId: 'pay_inpass_2' })]);
+      await setReferences({ providerSubscriptionId: 'sub_inpass' });
+    });
+
+    // An older event for the subscription replays both: the window event is unread, then the renewal replaces its charge.
+    expect((await deliver(env.billfn, [at('inpass', 'older', 'active', '00.500')])).ok).toBe(true);
+
+    expect(await env.stored()).toMatchObject({ status: 'active', providerChargeId: 'pay_inpass_2' });
+    expect(await row()).toMatchObject({ status: 'unlinked', reason: 'provider_reference_replaced', error: null });
   });
 });
