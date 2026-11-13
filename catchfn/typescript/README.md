@@ -1,0 +1,92 @@
+# catchfn
+
+Console, network and breadcrumb collectors that record what happened in a
+browser or Node process as versioned **evidence events**. The collectors run on
+their own: no reporter client, widget or server is needed.
+
+```ts
+import { BreadcrumbCollector, ConsoleCollector, NetworkCollector, validateEvidenceEvent } from "catchfn";
+
+const consoleCollector = new ConsoleCollector(100); // keeps the newest 100 events
+const network = new NetworkCollector(20, { blockUrls: ["/health"] });
+const breadcrumbs = new BreadcrumbCollector(50);
+
+consoleCollector.start();
+network.start();
+breadcrumbs.addNavigation("/cart", "/checkout");
+
+// Later: the last 30 seconds of evidence, oldest first.
+const since = Date.now() - 30_000;
+const events = [...consoleCollector.collect({ since }), ...network.collect({ since }), ...breadcrumbs.collect({ since })];
+
+consoleCollector.stop();
+network.stop();
+```
+
+## Evidence events v1
+
+Every event has `schemaVersion: 1`, a `kind` (`"console"`, `"network"` or
+`"breadcrumb"`), a `seq` capture-order number and a `timestamp` in epoch
+milliseconds, plus the fields of its kind. The format is closed: extra fields
+are invalid. Check an event with `validateEvidenceEvent(event)` (returns a list
+of problems, empty when valid) or with any JSON Schema 2020-12 validator and
+the exported `evidenceEventSchema`.
+
+| kind | fields |
+| --- | --- |
+| `console` | `level` (`log`, `info`, `warn`, `error`, `debug`), `args` |
+| `network` | `transport` (`fetch`, `xhr`), `method`, `url`, optional `status`, `statusText`, `duration`, `requestHeaders`, `responseHeaders` |
+| `breadcrumb` | `type` (`navigation`, `console`, `network`, `user`, `custom`), optional `message`, `data`, `category`, `level` (`debug`, `info`, `warning`, `error`) |
+
+Captured events are frozen.
+
+## Time-window queries
+
+Each collector keeps its events in a fixed-size ring buffer (the constructor's
+`maxSize`; `0` keeps nothing) and `collect({ since, until })` returns the
+buffered events whose `timestamp` lies in the **inclusive** window, oldest
+first. Either bound may be omitted, `since > until` matches nothing, and a
+`NaN` or non-number bound throws a `RangeError`.
+
+## Patching and `stop()`
+
+`ConsoleCollector` wraps `console.log/info/warn/error/debug`; `NetworkCollector`
+wraps `fetch` and `XMLHttpRequest.prototype.open/send`. Overlapping collectors
+share one set of wrappers. `stop()` on the last running collector restores
+exactly the functions that were replaced, but only where its own wrapper is
+still installed: if another library wrapped them after `start()`, the catchfn
+wrapper stays in that chain, passes calls through and records nothing.
+
+The network collector never changes the application's request: the original
+arguments, receiver and returned promise pass through untouched. The captured
+URL goes through `redactUrl` and the captured headers through `redactHeaders`.
+
+## Serialization
+
+Captured values are snapshotted under a closed set of forms:
+
+- JSON primitives (strings, finite numbers, booleans, `null`) are kept;
+- `Error` becomes `{ name, message, stack, ...own properties }`;
+- plain objects and arrays are copied at most 5 container levels deep (deeper
+  containers become `"[Max Depth]"`) with at most 200 keys or items each;
+- a container that refers back to one of its ancestors becomes `"[Circular]"`;
+- DOM nodes become `"<tag#id.class>"`;
+- everything else becomes `String(value)`.
+
+One entry is at most 10 KB of UTF-8 JSON; strings are cut and containers stop
+early with a `"[Truncated]"` marker. A console event's argument list is one
+entry, and each argument counts its depth from 1. A breadcrumb's `data` and
+`message`, and a network event's `url` and each header record, are entries.
+
+## Redaction
+
+- `redactUrl(url)` removes authority credentials, replaces sensitive query
+  values (`token`, `key`, `secret`, `password`, `api_key`, `access_token`,
+  `auth`, case-insensitive) with `[REDACTED]`, redacts a fragment that names a
+  token, secret, password or API key, keeps relative URLs relative and returns
+  `[REDACTED_URL]` for a URL it cannot parse.
+- `redactHeaders(headers)` redacts `authorization`, `cookie`, `set-cookie`,
+  `x-api-key`, `x-auth-token` and `x-access-token`, case-insensitive.
+- `redactObject(value)` snapshots a value and redacts keys that name secrets,
+  plus URLs under `url`/`href` keys.
+- `redactString(text)` masks card numbers.
