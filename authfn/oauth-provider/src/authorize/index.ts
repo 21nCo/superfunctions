@@ -11,7 +11,7 @@ import {
   resolveRequestedScopes,
   type OAuthProviderRuntime
 } from '../runtime.js';
-import { createGrantWithCode, findConsent, recordConsent } from '../store.js';
+import { createGrantWithCode, findConsent, recordConsent, revokeGrant } from '../store.js';
 import type { OAuthAuthorizationRequestParams, OAuthProviderClient, OAuthProviderUser } from '../types.js';
 
 export const OAUTH_AUTHORIZE_PATH = '/oauth/authorize';
@@ -119,20 +119,35 @@ function redirect(location: string): Response {
   return new Response(null, { status: 302, headers: { location, 'cache-control': 'no-store' } });
 }
 
+function consentCovers(consent: { scopes: string[] } | null, scopes: string[]): boolean {
+  return consent !== null && scopes.every((scope) => consent.scopes.includes(scope));
+}
+
+/**
+ * Creates the grant and its code, or returns `null` when the user's consent
+ * was withdrawn meanwhile. A disconnect deletes the consent and then revokes
+ * the grants it finds: a grant inserted before that lookup is revoked by the
+ * disconnect, and one inserted after it fails the consent check below and is
+ * revoked here, so no code outlives a completed disconnect.
+ */
 async function issueCode(
   runtime: OAuthProviderRuntime,
   user: OAuthProviderUser,
   request: AuthorizationRequest & { ok: true }
-): Promise<Record<string, string | undefined>> {
-  const code = await createGrantWithCode(runtime.store, {
-    clientId: request.client.clientId,
-    userId: user.id,
-    resource: request.params.resource,
+): Promise<Record<string, string | undefined> | null> {
+  const triple = { clientId: request.client.clientId, userId: user.id, resource: request.params.resource };
+  const { grantId, code } = await createGrantWithCode(runtime.store, {
+    ...triple,
     scopes: request.scopes,
     redirectUri: request.params.redirect_uri,
     codeChallenge: request.params.code_challenge,
     now: runtime.now()
   });
+  const consent = await findConsent(runtime.store, triple.userId, triple.clientId, triple.resource);
+  if (!consentCovers(consent, request.scopes)) {
+    await revokeGrant(runtime.store, grantId, 'consent_withdrawn', runtime.now());
+    return null;
+  }
   return { code, state: request.params.state };
 }
 
@@ -164,13 +179,10 @@ export function createAuthorizeRoutes(runtime: OAuthProviderRuntime): Route[] {
 
         if (validated.client.trusted) {
           const consent = await findConsent(runtime.store, user.id, validated.client.clientId, validated.params.resource);
-          if (consent && validated.scopes.every((scope) => consent.scopes.includes(scope))) {
-            return redirect(await clientRedirectUrl(
-              runtime,
-              request,
-              validated.params.redirect_uri,
-              await issueCode(runtime, user, validated)
-            ));
+          // Without a code, consent was withdrawn meanwhile: ask again.
+          const values = consentCovers(consent, validated.scopes) ? await issueCode(runtime, user, validated) : null;
+          if (values) {
+            return redirect(await clientRedirectUrl(runtime, request, validated.params.redirect_uri, values));
           }
         }
 
@@ -230,7 +242,10 @@ export function createAuthorizeRoutes(runtime: OAuthProviderRuntime): Route[] {
             scopes: validated.scopes,
             now: runtime.now()
           });
-          values = await issueCode(runtime, user, validated);
+          values = await issueCode(runtime, user, validated) ?? errorRedirectValues(
+            new OAuthError('access_denied', 'The authorization was withdrawn while it was being approved'),
+            validated.params.state
+          );
         } else if (decision === 'deny') {
           values = errorRedirectValues(
             new OAuthError('access_denied', 'The user denied the authorization request'),

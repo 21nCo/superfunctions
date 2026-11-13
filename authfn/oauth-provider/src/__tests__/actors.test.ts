@@ -270,6 +270,95 @@ describe('in-scope actors', () => {
     expect(await verify(pointron.access_token, POINTRON)).toBeNull();
     expect((await provider.getAuthorize(provider.authorizeQuery(rhombus(POINTRON), RHOMBUS))).status).toBe(200);
   });
+
+  /** A provider whose next grant insert can be held while the user disconnects Rhombus. */
+  async function setupDisconnectRace() {
+    const provider = await setupProvider({ pauseInsertsInto: 'oauth_provider_grants' });
+    const triple = { userId: provider.user.id, clientId: RHOMBUS.clientId, resource: MEMOTRON };
+    const query = provider.authorizeQuery({
+      client_id: RHOMBUS.clientId,
+      redirect_uri: RHOMBUS.redirectUris[0],
+      resource: MEMOTRON
+    }, RHOMBUS);
+    return {
+      provider,
+      query,
+      /** Runs `request` with its grant insert held until the disconnect has returned. */
+      raceDisconnect: async (request: () => Promise<Response>) => {
+        const reached = provider.pause.arm();
+        const pending = request();
+        await reached;
+        await disconnectOAuthClient({ database: provider.database }, triple);
+        provider.pause.release();
+        return pending;
+      },
+      /** Every grant of the triple is revoked and the next authorization asks for consent. */
+      expectDisconnected: async () => {
+        const grants = await provider.database.findMany<{ resource: string; revokedAt: Date | null }>({
+          model: 'oauth_provider_grants',
+          where: [
+            { field: 'userId', operator: 'eq', value: triple.userId },
+            { field: 'clientId', operator: 'eq', value: triple.clientId }
+          ],
+          namespace: 'authfn'
+        });
+        expect(grants.length).toBeGreaterThan(0);
+        expect(grants.filter((grant) => grant.revokedAt === null)).toEqual([]);
+        const consentsBefore = provider.consents.length;
+        const next = await provider.getAuthorize(query);
+        expect(next.status).toBe(200);
+        expect(provider.consents).toHaveLength(consentsBefore + 1);
+      },
+      exchange: (code: string) => provider.token({
+        grant_type: 'authorization_code',
+        client_id: RHOMBUS.clientId,
+        code,
+        redirect_uri: RHOMBUS.redirectUris[0],
+        code_verifier: RFC7636_VERIFIER
+      })
+    };
+  }
+
+  it('revoked grant: a trusted silent authorization racing a disconnect issues no code', async () => {
+    const race = await setupDisconnectRace();
+    const { provider, query } = race;
+    const first = await provider.authorize(Object.fromEntries(query), RHOMBUS);
+    expect((await race.exchange(first.searchParams.get('code')!)).status).toBe(200);
+
+    // Without a race the silent path issues a working code.
+    const sequential = await provider.getAuthorize(query);
+    expect(sequential.status).toBe(302);
+    expect((await race.exchange(new URL(sequential.headers.get('location')!).searchParams.get('code')!)).status).toBe(200);
+
+    // The silent path read the consent just before the disconnect, so its
+    // grant insert lands after it: it asks for consent instead of a code.
+    const consentsBefore = provider.consents.length;
+    const silent = await race.raceDisconnect(() => provider.getAuthorize(query));
+    expect(silent.status).toBe(200);
+    expect(silent.headers.get('location')).toBeNull();
+    expect(provider.consents).toHaveLength(consentsBefore + 1);
+    await race.expectDisconnected();
+  });
+
+  it('revoked grant: an approval racing a disconnect redirects with access_denied and no code', async () => {
+    const race = await setupDisconnectRace();
+    const { provider, query } = race;
+    expect((await provider.getAuthorize(query)).status).toBe(200);
+    const params = { ...provider.consents[0].params };
+
+    // The approval recorded its consent just before the disconnect.
+    const approved = await race.raceDisconnect(() => provider.decide(params, 'approve'));
+    expect(approved.status).toBe(200);
+    const callback = new URL((await approved.json() as { data: { redirectTo: string } }).data.redirectTo);
+    expect(callback.searchParams.get('code')).toBeNull();
+    expect(callback.searchParams.get('error')).toBe('access_denied');
+    expect(callback.searchParams.get('state')).toBe('xyz');
+    await race.expectDisconnected();
+
+    // Approving again without a race works.
+    const fresh = await provider.authorize(Object.fromEntries(query), RHOMBUS);
+    expect((await race.exchange(fresh.searchParams.get('code')!)).status).toBe(200);
+  });
 });
 
 describe('token lifetimes', () => {

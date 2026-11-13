@@ -171,7 +171,7 @@ export async function createGrantWithCode(
     codeChallenge: string;
     now: Date;
   }
-): Promise<string> {
+): Promise<{ grantId: string; code: string }> {
   const { redirectUri, codeChallenge, now, ...shared } = input;
   const grant: OAuthGrantRecord = {
     ...shared,
@@ -196,7 +196,7 @@ export async function createGrantWithCode(
     createdAt: now
   };
   await insert(store, MODELS.codes, record);
-  return code;
+  return { grantId: grant.id, code };
 }
 
 export function findCode(store: OAuthStore, code: string): Promise<OAuthAuthorizationCodeRecord | null> {

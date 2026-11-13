@@ -61,13 +61,43 @@ export function createProviderApp() {
   return authfn({ scopes: REGISTRY, plugins: [authFnOAuthProviderPlugin()] });
 }
 
-export async function setupProvider() {
+/**
+ * Pauses the next insert into `model` after `arm()` until `release()`, to
+ * force an interleaving with another operation; `arm()` resolves once the
+ * insert is paused.
+ */
+export function createInsertPause(database: AuthFnRuntimeConfig['database'], model: string) {
+  let paused: { reached: () => void; released: Promise<void> } | undefined;
+  let release: () => void = () => {};
+  const wrapped: AuthFnRuntimeConfig['database'] = {
+    ...database,
+    create: async (params) => {
+      const pause = params.model === model ? paused : undefined;
+      if (pause) {
+        paused = undefined;
+        pause.reached();
+        await pause.released;
+      }
+      return database.create(params);
+    }
+  };
+  return {
+    database: wrapped,
+    arm: () => new Promise<void>((reached) => {
+      paused = { reached, released: new Promise<void>((resolve) => { release = resolve; }) };
+    }),
+    release: () => release()
+  };
+}
+
+export async function setupProvider(options: { pauseInsertsInto?: string } = {}) {
   const database = memoryAdapter({ debug: false });
+  const pause = createInsertPause(database, options.pauseInsertsInto ?? '');
   let now = new Date('2026-11-14T00:00:00.000Z');
   const consents: OAuthConsentInput[] = [];
   const logins: OAuthLoginRequiredInput[] = [];
   const server = createProviderApp().createServer({
-    database,
+    database: pause.database,
     pluginRuntime: {
       oauthProvider: {
         clients: [RFC6749_CLIENT, MCP_HOST, RHOMBUS],
@@ -190,6 +220,7 @@ export async function setupProvider() {
   return {
     server,
     database,
+    pause,
     coreConfig,
     user,
     session,
