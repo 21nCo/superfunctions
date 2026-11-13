@@ -59,9 +59,13 @@ const track = (pid: number) => { fixtures.push(...namedIn(livenessModule.fixture
 async function stopFixtures(graceMs = 2_000): Promise<Fixture[]> {
   for (const deadline = Date.now() + graceMs; ;) {
     for (const file of fixtureFiles.splice(0)) {
+      // A file not written names nothing. One that cannot be read, or not yet in full, is read
+      // again, and listed by finishFixtures if it never is.
       let text: string;
-      try { text = readFileSync(file, "utf8"); } catch { continue; }
-      // A file not yet written in full is read again, and listed by finishFixtures if it never is.
+      try { text = readFileSync(file, "utf8"); } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") fixtureFiles.push(file);
+        continue;
+      }
       try { fixtures.push(...namedIn(JSON.parse(text))); } catch { fixtureFiles.push(file); }
     }
     const left = fixtures.splice(0).filter((fixture) => stop(fixture) !== "gone");
@@ -170,7 +174,10 @@ async function runProject(dir: string, record: string, interrupt?: "signal" | "c
     }
   }
   const code = await exited;
-  return { code, output, recorded: JSON.parse(readFileSync(record, "utf8")) };
+  const recorded = JSON.parse(readFileSync(record, "utf8"));
+  // What it names is stopped after the test however its record reads then.
+  fixtures.push(...namedIn(recorded));
+  return { code, output, recorded };
 }
 
 describe("pathsNamedUnder", () => {
@@ -2165,6 +2172,14 @@ describe.skipIf(process.platform === "win32")("the self-test's fixture cleanup",
   it("lists, at the cleanup after a test, a fixture file it could not read in full", async () => {
     const file = path.join(tempDir("devfn-leak-guard-cleanup-"), "member.pid");
     writeFileSync(file, '{"pid": 1');
+    fixtureFiles.push(file);
+    expect(await finishFixtures(300)).toBe(`The self-test could not tell these fixtures were gone, so it did not signal them: the processes ${file} names, which could not be read in full`);
+  });
+
+  it("reads again, and lists if it never can, a fixture file whose read fails", async () => {
+    const file = path.join(tempDir("devfn-leak-guard-cleanup-"), "record");
+    // A directory where a file is expected: reading it fails with EISDIR, not ENOENT.
+    mkdirSync(file);
     fixtureFiles.push(file);
     expect(await finishFixtures(300)).toBe(`The self-test could not tell these fixtures were gone, so it did not signal them: the processes ${file} names, which could not be read in full`);
   });
