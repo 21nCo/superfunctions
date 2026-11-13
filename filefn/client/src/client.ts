@@ -138,9 +138,125 @@ export interface HttpClient {
   ): Promise<{ etag: string; recorded?: boolean }>;
 }
 
+const CREDENTIALS_MODES: readonly RequestCredentials[] = ["omit", "same-origin", "include"];
+
+function resolveTransport(config: FileFnClientConfig): {
+  send: (url: string, init: RequestInit) => Promise<Response>;
+  credentials: RequestCredentials;
+} {
+  const customFetch = config.fetch;
+  if (customFetch !== undefined && typeof customFetch !== "function") {
+    throw new TypeError("FileFnClientConfig.fetch must be a function");
+  }
+  const credentials = config.credentials ?? "same-origin";
+  if (!CREDENTIALS_MODES.includes(credentials)) {
+    throw new TypeError(
+      `FileFnClientConfig.credentials must be one of ${CREDENTIALS_MODES.join(", ")}`,
+    );
+  }
+
+  return {
+    // Call the injected fetch detached from `config` so browser fetch does not
+    // throw "Illegal invocation"; resolve the global per call so it can be
+    // replaced (polyfilled or stubbed) after the client is created.
+    send: (url, init) => (customFetch ? customFetch(url, init) : globalThis.fetch(url, init)),
+    credentials,
+  };
+}
+
+/**
+ * Merges header records from left to right. Header names are
+ * case-insensitive, so a later source replaces an earlier header whatever its
+ * casing, and the later source's spelling of the name is kept. Callers pass
+ * the auth headers first so request-specific headers (JSON Content-Type,
+ * signed part headers, x-upload-session-token) always win.
+ */
+function mergeHeaders(
+  ...sources: Array<Record<string, string> | undefined>
+): Record<string, string> {
+  const merged = new Map<string, [name: string, value: string]>();
+  for (const source of sources) {
+    if (!source) continue;
+    for (const [name, value] of Object.entries(source)) {
+      merged.set(name.toLowerCase(), [name, value]);
+    }
+  }
+  return Object.fromEntries(merged.values());
+}
+
+// Relative URLs are resolved against this origin when there is no page
+// (Node, workers without a location), so dot segments ("..", "%2e%2e") and
+// protocol-relative hosts are normalized exactly as fetch would resolve them.
+// It is used only to classify a URL and is never dispatched. The reserved
+// .invalid TLD never names a real FileFn deployment.
+const NO_LOCATION_ORIGIN = "https://filefn-relative.invalid";
+
+/**
+ * A URL whose first two characters (ignoring the tab and newline characters
+ * URL parsers strip) are slashes or backslashes names another host
+ * ("//host/..." or "/\\host/..."), so it is never a path under baseUrl.
+ */
+function isProtocolRelative(url: string): boolean {
+  return /^[/\\]{2}/.test(url.replace(/[\t\n\r]/g, ""));
+}
+
+/**
+ * The base a browser resolves a relative fetch URL against: the document base
+ * URL (which honors `<base href>`) in a window, else the location in a worker.
+ * Undefined when there is neither (Node).
+ */
+function pageBaseUrl(): string | undefined {
+  const baseURI = (globalThis as { document?: { baseURI?: unknown } }).document?.baseURI;
+  if (typeof baseURI === "string") return baseURI;
+  const href = globalThis.location?.href;
+  return typeof href === "string" ? href : undefined;
+}
+
+function resolveUrl(url: string, base: string): URL | undefined {
+  try {
+    return new URL(url, base);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Returns a function that resolves a part URL and tells whether it addresses
+ * the FileFn API under `baseUrl` (same origin and path prefix). Only those
+ * requests carry the configured auth headers and credentials mode.
+ *
+ * `baseUrl` and the part URL are resolved per call against one base, the one
+ * the browser uses for fetch (see pageBaseUrl), and the returned `url` is the
+ * resolved absolute URL, so the URL that is classified is exactly the URL
+ * that is dispatched. Resolving also normalizes dot segments, so a path that
+ * climbs out of baseUrl does not match. Without a page base, the URL is
+ * classified against a placeholder origin and dispatched unchanged. An empty
+ * `baseUrl` (a configured "" or "/") is the page origin root, so every
+ * same-origin path matches it. A URL that cannot be parsed never matches.
+ */
+function createPartUrlResolver(
+  baseUrl: string,
+): (url: string) => { url: string; toFileFn: boolean } {
+  return (url) => {
+    const pageBase = pageBaseUrl();
+    const base = resolveUrl(baseUrl || "/", pageBase ?? NO_LOCATION_ORIGIN);
+    const target = resolveUrl(url, pageBase ?? NO_LOCATION_ORIGIN);
+    if (!base || !target) return { url, toFileFn: false };
+    const basePath = base.pathname.replace(/\/$/, "");
+    return {
+      url: pageBase ? target.href : url,
+      toFileFn:
+        target.origin === base.origin &&
+        (target.pathname === basePath || target.pathname.startsWith(`${basePath}/`)),
+    };
+  };
+}
+
 export function createHttpClient(config: FileFnClientConfig): HttpClient {
   const retryOptions = resolveRetryOptions(config.retryOptions);
   const baseUrl = config.baseUrl.replace(/\/$/, "");
+  const transport = resolveTransport(config);
+  const resolvePartUrl = createPartUrlResolver(baseUrl);
 
   async function readResponseBody(response: Response): Promise<{
     rawBody: string;
@@ -180,19 +296,8 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
     return { rawBody: "", parsedBody: undefined, isJson: false };
   }
 
-  async function getHeaders(includeJsonContentType = false): Promise<Record<string, string>> {
-    const headers: Record<string, string> = {};
-
-    if (includeJsonContentType) {
-      headers["Content-Type"] = "application/json";
-    }
-
-    if (config.getAuthHeaders) {
-      const authHeaders = await config.getAuthHeaders();
-      Object.assign(headers, authHeaders);
-    }
-
-    return headers;
+  async function readAuthHeaders(): Promise<Record<string, string> | undefined> {
+    return config.getAuthHeaders ? await config.getAuthHeaders() : undefined;
   }
 
   async function request<T>(
@@ -206,14 +311,16 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
     return withRetry(
       async () => {
         const hasJsonBody = body !== undefined;
-        const headers = await getHeaders(hasJsonBody);
-        if (extraHeaders) {
-          Object.assign(headers, extraHeaders);
-        }
-        const response = await fetch(`${baseUrl}${path}`, {
+        const headers = mergeHeaders(
+          await readAuthHeaders(),
+          hasJsonBody ? { "Content-Type": "application/json" } : undefined,
+          extraHeaders,
+        );
+        const response = await transport.send(`${baseUrl}${path}`, {
           method,
           headers,
           body: body ? JSON.stringify(body) : undefined,
+          credentials: transport.credentials,
           signal,
         });
 
@@ -390,17 +497,26 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
     async uploadPartToSignedUrl(url, headers, body, uploadSessionToken, signal) {
       return withRetry(
         async () => {
-          // If URL is relative (proxy upload), prepend baseUrl
-          const finalUrl = url.startsWith("/") ? `${baseUrl}${url}` : url;
+          // A root-relative URL (proxy upload) is a path under baseUrl; a
+          // protocol-relative URL names its own host and is never prefixed.
+          // Proxy uploads under baseUrl go to FileFn and carry its auth
+          // headers and credentials mode. Any other URL (a presigned storage
+          // URL) gets only its signed headers and never ambient credentials.
+          // The URL is classified and dispatched in the same resolved form.
+          const { url: finalUrl, toFileFn } = resolvePartUrl(
+            url.startsWith("/") && !isProtocolRelative(url) ? `${baseUrl}${url}` : url,
+          );
 
-          const requestHeaders = {
-            ...headers,
-            ...(uploadSessionToken ? { "x-upload-session-token": uploadSessionToken } : {}),
-          };
-          const response = await fetch(finalUrl, {
+          const requestHeaders = mergeHeaders(
+            toFileFn ? await readAuthHeaders() : undefined,
+            headers,
+            uploadSessionToken ? { "x-upload-session-token": uploadSessionToken } : undefined,
+          );
+          const response = await transport.send(finalUrl, {
             method: "PUT",
             headers: requestHeaders,
             body,
+            credentials: toFileFn ? transport.credentials : "omit",
             signal,
           });
 
