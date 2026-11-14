@@ -1,0 +1,37 @@
+authfn/oauth-provider/README.md
+  s_5e058b19c8dc51::t_551b9d66229bb5 52,72
+authfn/oauth-provider/src/__tests__/actors.test.ts
+  s_5e058b19c8dc51::t_311c0637c86942 378-408
+authfn/oauth-provider/src/__tests__/endpoints.test.ts
+  s_5e058b19c8dc51::t_5f5b79ea4d8cd7 260-267,269
+authfn/oauth-provider/src/__tests__/harness.ts
+  s_5e058b19c8dc51::t_fecab858bd23e7 70-71,73-76,80,82-87,90-93,95,111-112
+authfn/oauth-provider/src/__tests__/storage.test.ts
+  s_5e058b19c8dc51::t_602292f2b16c65 49,60-75,79
+authfn/oauth-provider/src/authorize/index.ts
+  s_5e058b19c8dc51::t_8cc4d1377cf58a 143-147,157,159,161,171-172
+authfn/oauth-provider/src/http.ts
+  s_5e058b19c8dc51::t_dd34f7cdcc7597 187,189-191
+authfn/oauth-provider/src/store.ts
+  s_5e058b19c8dc51::t_20a35d3dbf9805 111-112,180,190-206,318-326,328,496-500,502,505,511-515
+authfn/oauth-provider/src/token/code.ts
+  s_5e058b19c8dc51::t_8e87eda6e40121 4-13,71-76
+authfn/oauth-provider/src/types.ts
+  s_5e058b19c8dc51::t_7b838c9a7563e3 163-164
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0ddc45778bc1b23ca0b8947c2a95c5b5cbc744db",
+  "prompts": {},
+  "sessions": {
+    "s_5e058b19c8dc51": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_5e058b19c8dc51",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
