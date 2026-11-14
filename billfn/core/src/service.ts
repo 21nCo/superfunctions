@@ -1225,7 +1225,8 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
       const selection = requireImportPrice(plan, providerName, state);
       // One audit event per import run and state it records, never changed once written. The run is the operator's
       // request (a rerun of it that records a state it already recorded adds none, even after another state) or,
-      // without a requestId, this call. The state is every field the event shows and the import marker.
+      // without a requestId, this call. The state is every field the event shows and whether the row carries the
+      // import marker (not its value, which a rerun that adds it sets to its own read time).
       const run = operator.requestId ? ['request', operator.requestId] : ['call', deps.generateId('run')];
       const importAudit = (subscription: BillFnSubscription): BillFnBillingEvent => ({
         id: `evt_import_${createHash('sha256')
@@ -1246,7 +1247,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
               subscription.currentPeriodStart ?? null,
               subscription.currentPeriodEnd ?? null,
               subscription.autoRenew,
-              subscription.metadata?.[BILLFN_IMPORTED_AT_METADATA_KEY] ?? null
+              subscription.metadata?.[BILLFN_IMPORTED_AT_METADATA_KEY] !== undefined
             ])
           )
           .digest('base64url')}`,

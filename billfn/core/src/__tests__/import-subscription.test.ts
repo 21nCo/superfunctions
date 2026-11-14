@@ -1309,9 +1309,10 @@ describe('billfn.services.subscriptions.import', () => {
   });
 
   it.each([
-    ['its import audit write fails', (model: string, type?: string) => model === 'billingEvents' && type === 'billfn.subscription.imported', false],
-    ['its entitlement write fails', (model: string) => model === 'entitlementSnapshots', true]
-  ])('never marks an accepted row imported without its operator audit when a newer event supersedes the read and %s', async (_name, fails, markedAfter) => {
+    ['its import audit write fails', (model: string, type?: string) => model === 'billingEvents' && type === 'billfn.subscription.imported', false, false],
+    ['its entitlement write fails', (model: string) => model === 'entitlementSnapshots', true, true],
+    ['its row write fails after its audit', (model: string) => model === 'subscriptions', false, true]
+  ])('never marks an accepted row imported without its operator audit when a newer event supersedes the read and %s', async (_name, fails, markedAfter, auditAfter) => {
     let armed = false;
     let delivered = false;
     const fail = (model: string, data: unknown) => {
@@ -1367,8 +1368,10 @@ describe('billfn.services.subscriptions.import', () => {
     const marked = async () => (await env.subscriptions())[0]?.metadata?.[BILLFN_IMPORTED_AT_METADATA_KEY] !== undefined;
     const audit = expect.objectContaining({ payload: expect.objectContaining({ subscriptionId: 'sub_checkout', operator: OPERATOR, reason: 'cutover' }) });
     expect(await marked()).toBe(markedAfter);
-    expect(await env.importEvents()).toEqual(markedAfter ? [audit] : []);
+    expect(await env.importEvents()).toEqual(auditAfter ? [audit] : []);
 
+    // Still superseded, but a later read: a marker it adds carries this call's time, which is not in the event id.
+    env.clock.current = new Date('2026-11-10T00:00:01.000Z');
     const rerun = unwrap(await env.import({ billingAccountId, reason: 'cutover' }));
     expect(rerun.subscription).toMatchObject({ id: 'sub_checkout', status: 'active' });
     expect(await marked()).toBe(true);
