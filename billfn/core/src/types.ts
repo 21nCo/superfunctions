@@ -664,7 +664,8 @@ export interface BillFnImportOperator {
  * the original transaction id (both may be given when they are equal).
  */
 export type BillFnImportSubscriptionReference =
-  | { providerSubscriptionId: string; originalTransactionId?: string }
+  | { provider: 'apple'; providerSubscriptionId: string; originalTransactionId?: string }
+  | { provider: Exclude<BillingProviderName, 'apple'>; providerSubscriptionId: string; originalTransactionId?: never }
   | {
       provider: 'apple';
       providerSubscriptionId?: string;

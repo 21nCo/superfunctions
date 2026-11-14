@@ -262,17 +262,18 @@ export function createBillFnDomainAdminService(
       const provider = billingProvider(string(input.payload.provider, "payload.provider")) as BillingProviderName;
       const providerSubscriptionId = optionalString(input.payload.providerSubscriptionId, "payload.providerSubscriptionId");
       const originalTransactionId = optionalString(input.payload.originalTransactionId, "payload.originalTransactionId");
-      const reference = providerSubscriptionId !== undefined
-        ? { providerSubscriptionId, originalTransactionId }
-        : originalTransactionId !== undefined && provider === "apple"
-          ? { provider, originalTransactionId }
+      const reference = provider === "apple"
+        ? providerSubscriptionId !== undefined
+          ? { provider, providerSubscriptionId, originalTransactionId }
+          : originalTransactionId !== undefined ? { provider, originalTransactionId } : undefined
+        : providerSubscriptionId !== undefined && originalTransactionId === undefined
+          ? { provider, providerSubscriptionId }
           : undefined;
       if (!reference) {
         throw new AdminError("invalid_argument", "payload.providerSubscriptionId is required (payload.originalTransactionId names Apple subscriptions only).");
       }
       try {
         const data = unwrap(await options.billfn.services.subscriptions.import({
-          provider,
           ...reference,
           billingAccountId: scoped.billingAccount.id,
           // The subject's billing account is created when this is its first billing record.

@@ -267,6 +267,7 @@ describe("@billfn/admin", () => {
       for (const payload of [
         { provider: "dodo", planKey: "nucleus" },
         { provider: "dodo", originalTransactionId: "2000000123", planKey: "nucleus" },
+        { provider: "dodo", providerSubscriptionId: "sub_legacy", originalTransactionId: "2000000123", planKey: "nucleus" },
       ]) {
         const result = await dispatcher.dispatch({
           operationId: "billfn.subscriptions.import-subscription",
@@ -288,6 +289,7 @@ describe("@billfn/admin", () => {
       ]) {
         expect(validateAdminValue(inputSchema, { payload: { provider: "apple", planKey: "nucleus", ...reference } })).toEqual([]);
       }
+      expect(validateAdminValue(inputSchema, { payload: { provider: "dodo", planKey: "nucleus", providerSubscriptionId: "sub_legacy" } })).toEqual([]);
     });
 
     it("binds the provider subscription to the subject's billing account and records the operator", async () => {

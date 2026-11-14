@@ -498,8 +498,12 @@ const domainActionInputSchemas: Record<string, AdminObjectSchema> = {
           planKey: { type: "string", minLength: 1 },
         },
         ["provider", "planKey"],
-        // The subscription to import: its provider subscription id or, for Apple only, its original transaction id.
-        [{ required: ["providerSubscriptionId"] }, { properties: { provider: { const: "apple" } }, required: ["originalTransactionId"] }],
+        // The subscription to import: its provider subscription id or, for Apple only, its original transaction id
+        // (another provider's payload may not carry one: no string is both non-empty and empty).
+        [
+          { properties: { provider: { const: "apple" } }, anyOf: [{ required: ["providerSubscriptionId"] }, { required: ["originalTransactionId"] }] },
+          { properties: { provider: { enum: ["dodo", "stripe", "polar", "google-play", "microsoft-store"] }, originalTransactionId: { maxLength: 0 } }, required: ["providerSubscriptionId"] },
+        ],
       ),
       reason: { type: "string", minLength: 1, maxLength: 2000 },
     },
@@ -737,8 +741,9 @@ export interface BillFnImportSubscriptionInput {
     planKey: string;
   } & (
     /** The provider subscription id; for Apple, the original transaction id may be given instead (or as well, when equal). */
-    | { providerSubscriptionId: string; originalTransactionId?: string }
+    | { provider: "apple"; providerSubscriptionId: string; originalTransactionId?: string }
     | { provider: "apple"; providerSubscriptionId?: string; originalTransactionId: string }
+    | { provider: "dodo" | "stripe" | "polar" | "google-play" | "microsoft-store"; providerSubscriptionId: string; originalTransactionId?: never }
   );
   reason?: string;
 }
