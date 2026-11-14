@@ -207,6 +207,13 @@ describe("GitHubAdvisoryPublisher with panel reports", () => {
     expect(writes).toEqual([]);
   });
 
+  it("refuses a 0.1 report under the reserved panel profile before any comment or check write", async () => {
+    const { writes, publisher } = github();
+    const result = await publisher.publish({ report: report(), rendered: "0.1", expectedHead: "b".repeat(40), profile: "panel" });
+    expect(result).toEqual({ status: "failed", error: expect.stringMatching(/reserved for panel reports/) });
+    expect(writes).toEqual([]);
+  });
+
   it("refuses a panel report under another profile before any comment or check write", async () => {
     const { writes, publisher } = github();
     const result = await publisher.publish({ report: panelReport(), rendered: "panel", expectedHead: "b".repeat(40), profile: "requirements" });

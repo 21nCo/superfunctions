@@ -138,7 +138,7 @@ export class FileArtifactStore implements ArtifactStore {
       if (!references.has(next.digest) || Date.parse(references.get(next.digest)!.expiresAt) < Date.parse(next.expiresAt)) references.set(next.digest, next);
       metadata[name] = [...references.values()];
     }
-    await safeWrite(marker, JSON.stringify(markerName.directory === undefined ? metadata : { ...metadata, directory: markerName.directory }));
+    await safeWrite(marker, JSON.stringify(markerName.directory === undefined ? metadata : { ...metadata, directory: markerName.directory, host: hostname() }));
     if (!this.copiesPaired) {
       await safeWrite(path.join(this.reportCopiesDirectory, jsonName), json);
       await safeWrite(path.join(this.reportCopiesDirectory, markdownName), markdown);
@@ -167,6 +167,7 @@ export class FileArtifactStore implements ArtifactStore {
       try { await rename(stagedJson, jsonFile); }
       catch (error) {
         await (previousMarkdown === undefined ? rm(markdownFile, { force: true }) : safeWrite(markdownFile, previousMarkdown)).catch(() => { markdownLeftover = true; });
+        if (markdownLeftover) throw new Error(`${error instanceof Error ? error.message : String(error)}; restoring the previous ${markdownFile} also failed, so it holds this write's Markdown copy`, { cause: error });
         throw error;
       }
     } catch (error) {
@@ -248,22 +249,43 @@ export class FileArtifactStore implements ArtifactStore {
         }
       } catch (error) { errors.push(`Report copies: ${error instanceof Error ? error.message : String(error)}`); }
     }
-    if (this.copiesMarkerKeyed) await this.deleteOrphanedMarkers(errors);
+    if (this.copiesMarkerKeyed) await this.deleteOrphanedMarkers(now, errors);
+    if (this.copiesPaired && this.reportCopiesDirectory) await this.deleteStagedCopies(errors);
     return { deleted, errors };
   }
 
   /**
-   * Drop the keyed markers whose recorded output directory no longer exists: no copies are left to expire there. Only
-   * the marker inside the store is removed, and only when its name matches the digest of the directory it records. A
-   * marker that cannot be read, or whose directory cannot be checked, is left for that directory's own cleanup.
+   * Drop a keyed marker whose output directory is missing on the host that wrote it, once every copy it records has
+   * expired: nothing it covers is still within retention. A marker written on another host (such as a container),
+   * one still covering an unexpired copy (the directory may only be unmounted), or one that cannot be read or whose name
+   * does not match the directory it records is kept for that directory's own cleanup.
    */
-  private async deleteOrphanedMarkers(errors: string[]): Promise<void> {
+  private async deleteOrphanedMarkers(now: Date, errors: string[]): Promise<void> {
     for (const entry of await readdir(this.root)) {
       if (!entry.startsWith(`${this.copiesStem}-`) || !/-[a-f0-9]{16}$/.test(entry)) continue;
-      const directory = await safeRead(path.join(this.root, entry)).then(raw => (JSON.parse(raw.toString("utf8")) as { directory?: unknown } | null)?.directory).catch(() => undefined);
-      if (typeof directory !== "string" || !path.isAbsolute(directory) || this.keyedMarker(directory) !== entry) continue;
+      const marker = await safeRead(path.join(this.root, entry)).then(raw => ({ raw, value: JSON.parse(raw.toString("utf8")) as { directory?: unknown; host?: unknown } | null })).catch(() => undefined);
+      const directory = marker?.value?.directory;
+      if (typeof directory !== "string" || !path.isAbsolute(directory) || this.keyedMarker(directory) !== entry || marker!.value!.host !== hostname()) continue;
+      const references = (() => { try { return Object.values(parseReportCopies(marker!.raw, this.copyNames)).flat(); } catch { return undefined; } })();
+      if (!references || references.some(reference => Date.parse(reference.expiresAt) > now.getTime())) continue;
       if (!await realpath(directory).then(() => false, (error: NodeJS.ErrnoException) => missing(error))) continue;
       await rm(path.join(this.root, entry)).catch((error: unknown) => { errors.push(`${entry}: ${error instanceof Error ? error.message : String(error)}`); });
+    }
+  }
+
+  /**
+   * Remove staged copies (`.reviewfn-copy-<uuid>.json|md`) that an interrupted write left in the copies directory. Copy
+   * writes hold the store lease, so under the lease no staged file belongs to a write in progress.
+   */
+  private async deleteStagedCopies(errors: string[]): Promise<void> {
+    const entries = await readdir(this.reportCopiesDirectory!).catch((error: NodeJS.ErrnoException) => missing(error) ? [] : Promise.reject(error)).catch((error: unknown) => { errors.push(`Staged copies: ${error instanceof Error ? error.message : String(error)}`); return []; });
+    for (const entry of entries) {
+      if (!/^\.reviewfn-copy-[0-9a-f-]{36}\.(json|md)$/.test(entry)) continue;
+      const file = path.join(this.reportCopiesDirectory!, entry);
+      try {
+        if (!(await lstat(file)).isFile()) throw new Error("refusing non-regular staged copy");
+        await rm(file);
+      } catch (error) { errors.push(`${entry}: ${error instanceof Error ? error.message : String(error)}`); }
     }
   }
 

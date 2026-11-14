@@ -150,23 +150,39 @@ it("skips panel report-copy expiry for an output directory that does not exist",
   expect(await store.deleteExpired(new Date(Date.now() + 2 * 86_400_000))).toEqual({ deleted: [], errors: [] });
 });
 
-it("expires the keyed marker of a panel output directory that was deleted", async () => {
+it("expires the keyed marker of a deleted panel output directory once its copies' retention has ended", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-orphan-"));
   const artifacts = path.join(root, "artifacts");
-  await new FileArtifactStore(artifacts, path.join(root, "gone"), PANEL_REPORT_COPY_NAMES).writeReportCopies("gone-json", "gone-md", 30);
-  await new FileArtifactStore(artifacts, path.join(root, "kept"), PANEL_REPORT_COPY_NAMES).writeReportCopies("kept-json", "kept-md", 30);
+  const kept = () => new FileArtifactStore(artifacts, path.join(root, "kept"), PANEL_REPORT_COPY_NAMES);
+  for (const name of ["gone", "elsewhere"]) await new FileArtifactStore(artifacts, path.join(root, name), PANEL_REPORT_COPY_NAMES).writeReportCopies(`${name}-json`, `${name}-md`, 30);
+  await kept().writeReportCopies("kept-json", "kept-md", 30);
   const markers = async () => (await fileSystem.readdir(artifacts)).filter(entry => entry.startsWith(".panel-report-copies-"));
-  expect(await markers()).toHaveLength(2);
-  await fileSystem.rm(path.join(root, "gone"), { recursive: true });
-  // Cleanup through either output directory drops only the marker whose directory no longer exists.
-  expect(await new FileArtifactStore(artifacts, path.join(root, "kept"), PANEL_REPORT_COPY_NAMES).deleteExpired()).toEqual({ deleted: [], errors: [] });
-  expect(await markers()).toHaveLength(1);
-  expect(await readFile(path.join(root, "kept", "panel-report.json"), "utf8")).toBe("kept-json");
+  // A marker written on another host (such as a container) is never treated as orphaned here.
+  for (const entry of await markers()) {
+    const value = JSON.parse(await readFile(path.join(artifacts, entry), "utf8"));
+    if (value.directory.endsWith("elsewhere")) await writeFile(path.join(artifacts, entry), JSON.stringify({ ...value, host: "another-host" }));
+  }
+  for (const name of ["gone", "elsewhere"]) await fileSystem.rm(path.join(root, name), { recursive: true });
+  // Within retention the markers stay: a missing directory may only be unmounted.
+  expect(await kept().deleteExpired()).toEqual({ deleted: [], errors: [] });
+  expect(await markers()).toHaveLength(3);
   // Another directory's unreadable marker is skipped, never failing cleanup.
   for (const [entry, content] of [[".panel-report-copies-0000000000000000", "not json"], [".panel-report-copies-1111111111111111", "null"]]) await writeFile(path.join(artifacts, entry), content);
-  expect((await new FileArtifactStore(artifacts, path.join(root, "kept"), PANEL_REPORT_COPY_NAMES).deleteExpired(new Date(Date.now() + 31 * 86_400_000))).errors).toEqual([]);
-  expect(await markers()).toHaveLength(2);
+  expect((await kept().deleteExpired(new Date(Date.now() + 31 * 86_400_000))).errors).toEqual([]);
+  const remaining = await markers();
+  expect(remaining.sort()).toEqual([".panel-report-copies-0000000000000000", ".panel-report-copies-1111111111111111", expect.any(String)].sort());
+  expect(JSON.parse(await readFile(path.join(artifacts, remaining.find(entry => !/-(0|1)+$/.test(entry))!), "utf8")).host).toBe("another-host");
   await expect(readFile(path.join(root, "kept", "panel-report.json"))).rejects.toThrow();
+});
+
+it("removes staged panel copies that an interrupted write left behind", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-staged-"));
+  const store = new FileArtifactStore(path.join(root, "artifacts"), root, PANEL_REPORT_COPY_NAMES);
+  await store.writeReportCopies("json", "md", 30);
+  const staged = [".reviewfn-copy-01234567-89ab-cdef-0123-456789abcdef.json", ".reviewfn-copy-01234567-89ab-cdef-0123-456789abcdef.md"];
+  for (const entry of staged) await writeFile(path.join(root, entry), "interrupted report");
+  expect(await store.deleteExpired()).toEqual({ deleted: [], errors: [] });
+  expect((await fileSystem.readdir(root)).sort()).toEqual(["artifacts", "panel-report.json", "panel-report.md"]);
 });
 
 it.each([".json", ".md"])("replaces the panel copies as a pair, keeping the previous pair when writing the %s copy fails", async failing => {

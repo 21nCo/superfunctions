@@ -294,7 +294,7 @@ export async function savePanelRun(report: PanelReport, quorumMet: boolean, loca
   } catch (error) {
     // A failure before the copies are saved exits 4 for a canceled run; after it, only a report that records the
     // cancellation does.
-    if (recordsCancellation || (!saved && signal?.aborted)) return { exitCode: PANEL_EXIT_CODES.canceled, error: new ReviewFnError("REVIEWFN_CANCELED", saved ? "The panel run was canceled; its report records the cancellation, but importing its evidence failed." : "The panel run was canceled, and saving its report failed; nothing of the run was saved.", { runId: report.runId, cause: errorPayload(error) }) };
+    if (recordsCancellation || (!saved && signal?.aborted)) return { exitCode: PANEL_EXIT_CODES.canceled, error: new ReviewFnError("REVIEWFN_CANCELED", saved ? "The panel run was canceled; its report records the cancellation, but importing its evidence failed." : "The panel run was canceled, and saving its report failed before its copies were saved; nothing of the run was saved unless the cause says otherwise.", { runId: report.runId, cause: errorPayload(error) }) };
     return { exitCode: PANEL_EXIT_CODES.error, error };
   }
 }
@@ -419,6 +419,7 @@ export function publication(value: unknown, flags: Flags): { report: ReviewRepor
   }
   const report = value as ReviewReport;
   if (report.execution !== "completed" || report.configuration.profile !== required(flags, "profile")) throw new Error("Artifact does not match trusted publication identity or is not completed.");
+  if (report.configuration.profile === "panel") throw new Error("The panel profile is reserved for panel reports.");
   return { report, rendered: renderMarkdownReport(report), profile: report.configuration.profile };
 }
 

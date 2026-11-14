@@ -56,7 +56,8 @@ export class GitHubAdvisoryPublisher implements ReportPublisher {
     if (isPanelReport(request.report)) {
       if (request.profile !== "panel") return { status: "failed", error: `A panel report publishes only under the panel profile, not ${JSON.stringify(request.profile)}.` };
       if (panelReportCanceled(request.report)) return { status: "failed", error: "The panel run was canceled; a canceled panel report is never published." };
-    } else if (request.report.execution !== "completed") return { status: "failed", error: "Only completed assessments may be published." };
+    } else if (request.profile === "panel") return { status: "failed", error: "The panel profile is reserved for panel reports." };
+    else if (request.report.execution !== "completed") return { status: "failed", error: "Only completed assessments may be published." };
     if (!/^[a-zA-Z0-9_-]{1,80}$/.test(request.profile)) throw new Error("Unsafe profile.");
     const current = await this.currentHead();
     if (current !== request.expectedHead) return { status: "stale", error: `PR head is ${current}, not reviewed head ${request.expectedHead}.` };
