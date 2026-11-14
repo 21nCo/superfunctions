@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -324,6 +324,45 @@ describe("slot workspaces for other repository shapes", () => {
     await writeFile(path.join(replaced.path, "vendor", "lib"), "not a submodule\n");
     await expect(replaced.verify()).resolves.toMatchObject({ unchanged: false, reason: expect.stringMatching(/differs from head .*vendor\/lib/) });
     await replaced.remove();
+  });
+
+  it("gives each checkout its own objects for head and the reference commits, with no path outside it", async () => {
+    const repo = await repository();
+    const mergeBase = await commitAll(repo, "merge base");
+    await writeFile(path.join(repo, "src", "value.ts"), "export const value = 2;\n");
+    const since = await commitAll(repo, "since");
+    await writeFile(path.join(repo, "src", "value.ts"), "export const value = 3;\n");
+    const head = await commitAll(repo, "head");
+    // A base commit no ref reaches, as for a pull request whose base branch moved.
+    git(repo, "checkout", "--quiet", "--detach", mergeBase);
+    await writeFile(path.join(repo, "src", "base.ts"), "export {};\n");
+    const base = await commitAll(repo, "unreachable base");
+    git(repo, "checkout", "--quiet", "-");
+    git(repo, "reset", "--quiet", "--hard", head);
+    const provider = new GitSlotWorkspaceProvider({ objectStore: repo, headCommit: head, referenceCommits: [mergeBase, base, since], parent });
+    const workspace = await provider.create("contained");
+    const gitDir = path.join(workspace.path, ".git");
+    await expect(lstat(path.join(gitDir, "objects", "info", "alternates"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(lstat(path.join(gitDir, "FETCH_HEAD"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(git(workspace.path, "remote")).toBe("");
+    // With the run's object store gone, the checkout alone still reads head, the merge base, base, since and the diffs.
+    const moved = `${repo}-moved`;
+    await rename(repo, moved);
+    try {
+      expect(git(workspace.path, "rev-parse", "HEAD^{tree}")).toBe(git(moved, "rev-parse", `${head}^{tree}`));
+      expect(git(workspace.path, "diff", "--name-only", `${mergeBase}..HEAD`)).toBe("src/value.ts");
+      expect(git(workspace.path, "diff", "--name-only", `${since}..HEAD`)).toBe("src/value.ts");
+      expect(git(workspace.path, "diff", "--name-only", `${base}..HEAD`)).toBe("src/base.ts\nsrc/value.ts");
+      // No text file in the checkout's Git directory names the store's path.
+      let naming = "";
+      try { naming = execFileSync("grep", ["-rIl", "--fixed-strings", "--", repo, gitDir], { encoding: "utf8" }); }
+      catch (error) { if ((error as { status?: number }).status !== 1) throw error; }
+      expect(naming).toBe("");
+    } finally {
+      await rename(moved, repo);
+    }
+    await expect(workspace.verify()).resolves.toEqual({ unchanged: true });
+    await workspace.remove();
   });
 
   it("checks out and verifies a SHA-256 repository", async () => {

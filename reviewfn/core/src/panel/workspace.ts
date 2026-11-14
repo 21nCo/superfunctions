@@ -46,6 +46,11 @@ export interface GitSlotWorkspaceOptions {
   /** The run's repository, whose object store holds the head commit. It is read, never written. */
   objectStore: string;
   headCommit: string;
+  /**
+   * Other commits a slot reads, such as the merge base, the base and the delta's `since`. Each checkout holds these and
+   * the head commit, with their trees, in its own object store.
+   */
+  referenceCommits?: string[];
   /** A run-owned directory to create checkouts in. */
   parent: string;
 }
@@ -170,8 +175,11 @@ class GitSlotWorkspace implements SlotWorkspace {
 }
 
 /**
- * Owned checkouts created from the run's object store at the head commit. Each checkout is a `--shared` clone with no
- * remote, hooks or line-ending conversion, so its files are the head blobs byte for byte.
+ * Owned checkouts created from the run's object store at the head commit. Each checkout is self-contained: its own
+ * object store holds the head and reference commits with their trees (a depth-1 fetch by object ID), with no
+ * alternates, remote or other path outside it, so a harness that sees only the checkout (for example, in a container)
+ * can still read head, the merge base and the diff. It has no hooks or line-ending conversion, so its files are the
+ * head blobs byte for byte.
  */
 export class GitSlotWorkspaceProvider implements SlotWorkspaceProvider {
   public constructor(private readonly options: GitSlotWorkspaceOptions) {}
@@ -184,12 +192,15 @@ export class GitSlotWorkspaceProvider implements SlotWorkspaceProvider {
       const store = path.resolve(this.options.objectStore);
       const objects = (await git(["rev-parse", "--path-format=absolute", "--git-path", "objects"], { cwd: store, signal })).trim();
       const objectFormat = (await git(["rev-parse", "--show-object-format"], { cwd: store, signal })).trim();
-      await git(["clone", "--quiet", "--template=", "--shared", "--no-checkout", "--", store, checkout], { cwd: directory, signal });
+      const commits = [...new Set([this.options.headCommit, ...(this.options.referenceCommits ?? [])].filter(commit => /\S/.test(commit)))];
+      await git(["init", "--quiet", "--template=", `--object-format=${objectFormat}`, checkout], { cwd: directory, signal });
+      // Protocol v2 serves any object by ID, so commits that no ref reaches are fetched too; nothing is written to the store.
+      await git(["-c", "protocol.version=2", "fetch", "--quiet", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--depth=1", "--", store, ...commits], { cwd: checkout, signal });
       // info/attributes outranks every committed .gitattributes, so checkout writes the head blobs unchanged.
       await mkdir(path.join(checkout, ".git", "info"), { recursive: true, mode: 0o700 });
       await writeFile(path.join(checkout, ".git", "info", "attributes"), LITERAL_ATTRIBUTES, { mode: 0o600 });
       await git(["checkout", "--quiet", "--detach", this.options.headCommit], { cwd: checkout, signal });
-      await git(["remote", "remove", "origin"], { cwd: checkout, signal });
+      // The run-owned comparison directory reads the store through alternates; the slot never sees it.
       await git(["init", "--quiet", "--bare", "--template=", `--object-format=${objectFormat}`, verifyGitDir], { cwd: directory, signal });
       await mkdir(path.join(verifyGitDir, "objects", "info"), { recursive: true, mode: 0o700 });
       await mkdir(path.join(verifyGitDir, "info"), { recursive: true, mode: 0o700 });

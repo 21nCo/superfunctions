@@ -6,8 +6,8 @@ import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
-  DEFAULT_CONFIG, DEFAULT_POLICY, GitSlotWorkspaceProvider, PANEL_QUORUM_UNMET, PanelCoordinator, validatePanelReport,
-  type ChangeHunks, type Evidence, type Finding, type HarnessOutput, type PanelCoordinatorDependencies, type PanelPolicy, type PanelRunRequest, type PanelSlot, type SlotHarnessOutput, type WorkspaceCheck,
+  DEFAULT_CONFIG, DEFAULT_POLICY, GENERAL_LENS, GitSlotWorkspaceProvider, LensRegistry, PANEL_QUORUM_UNMET, PanelCoordinator, validatePanelReport,
+  type ChangeHunks, type Evidence, type Finding, type HarnessOutput, type PanelCoordinatorDependencies, type PanelHarnessAdapter, type PanelPolicy, type PanelRunRequest, type PanelSlot, type SlotHarnessOutput, type WorkspaceCheck,
 } from "@superfunctions/reviewfn-core";
 import { FakeContextAdapter, FakeExecutionAdapter, FakePanelHarness, FakeSourceControlAdapter, MemoryArtifactStore, abortableDelay, slotOutput } from "../src/index.js";
 
@@ -415,12 +415,58 @@ describe("PanelCoordinator harness versions", () => {
     await expectValid(result, setup, panelPolicy);
   });
 
+  it("never records the slot's pin as the harness version when no version was observed", async () => {
+    const inner = new FakePanelHarness();
+    // Neither preflight nor the adapter reports a version.
+    const silent: PanelHarnessAdapter = {
+      capabilities: { ...inner.capabilities, version: "" },
+      preflight: async (configuration, signal) => { const result = await inner.preflight(configuration, signal); return { ...result, resolved: { ...result.resolved!, harnessVersion: "" } }; },
+      run: input => inner.run(input),
+    };
+    const panelPolicy = panel([slot("silent", 1)], { quorum: { stage1: 0, stage2: 0 } });
+    const setup = coordinator(inner, { harnesses: [silent] });
+    const result = await setup.coordinator.run(request(panelPolicy));
+    expect(result.report.slotRuns.map(run => [run.terminal, run.identity.harnessVersion])).toEqual([["failed", "unobserved"]]);
+    expect(result.slots[0].reasons.join()).toMatch(/No harness version was observed, so the pinned 1 was not confirmed/);
+    await expectValid(result, setup, panelPolicy);
+  });
+
+  it("binds each slot's lens and adapter contract version into the run identity", async () => {
+    const lens = (version: string, instructions: string) => new LensRegistry([{ ...GENERAL_LENS, version, instructions }]);
+    const panelPolicy = panel([slot("req", 1), slot("foreign", 1, undefined, { harness: { adapter: "other", version: "other-cli 3" } })], { requirementsSlot: "req", quorum: { stage1: 0, stage2: 0 } });
+    const run = async (lenses: LensRegistry, contract: string) => {
+      const harness = new FakePanelHarness({ behaviors: { req: () => requirementsHarnessOutput() } });
+      const other = new FakePanelHarness({ id: "other", version: contract, reportedVersion: "other-cli 3" });
+      // The identity does not depend on the checkouts, so plain directories stand in for them.
+      const workspaces = () => ({ create: async (slotId: string) => { const directory = await mkdtemp(path.join(workspaceRoot, `${slotId}-`)); return { path: directory, verify: async () => ({ unchanged: true }), remove: () => rm(directory, { recursive: true, force: true }) }; } });
+      const result = await coordinator(harness, { harnesses: [harness, other], harnessContractVersions: { other: contract }, lenses, workspaces }).coordinator.run(request(panelPolicy));
+      return { panel: result.report.runId, requirements: result.report.requirementsReport!.runId };
+    };
+    const original = await run(lens("1", GENERAL_LENS.instructions), "7");
+    const variants = [await run(lens("2", GENERAL_LENS.instructions), "7"), await run(lens("1", `${GENERAL_LENS.instructions} Also check naming.`), "7"), await run(lens("1", GENERAL_LENS.instructions), "8")];
+    expect(await run(lens("1", GENERAL_LENS.instructions), "7")).toEqual(original);
+    expect(new Set([original, ...variants].map(ids => ids.panel)).size).toBe(4);
+    // The embedded requirements report's run identity follows the panel's, so a different lens prompt changes it too.
+    expect(new Set([original, ...variants].map(ids => ids.requirements)).size).toBe(4);
+  }, 20_000);
+
   it("refuses a foreign adapter without an explicit contract version, even when capabilities.version is untouched", async () => {
     const harness = new FakePanelHarness();
     const other = new FakePanelHarness({ id: "other", version: "7" });
     const panelPolicy = panel([slot("foreign", 1, undefined, { harness: { adapter: "other", version: "7" } })]);
     await expect(coordinator(harness, { harnesses: [harness, other] }).coordinator.run(request(panelPolicy))).rejects.toMatchObject({ code: "REVIEWFN_PREFLIGHT_FAILED" });
     expect(other.preflights).toEqual([]);
+  });
+});
+
+describe("PanelCoordinator failure accounting", () => {
+  it("gives every run that does not count a reason, even when the harness stated none", async () => {
+    const harness = new FakePanelHarness({ behaviors: { quota: () => slotOutput({ terminal: "quota_exhausted", inspectedPaths: [] }), ok: clean } });
+    const panelPolicy = panel([slot("quota", 1), slot("ok", 1)]);
+    const setup = coordinator(harness);
+    const result = await setup.coordinator.run(request(panelPolicy));
+    expect(result.slots.map(outcome => [outcome.terminal, outcome.reasons])).toEqual([["quota_exhausted", ["The harness reported quota_exhausted without a reason."]], ["completed", []]]);
+    await expectValid(result, setup, panelPolicy);
   });
 });
 
@@ -449,7 +495,8 @@ describe("PanelCoordinator coverage", () => {
   });
 });
 
-describe("PanelCoordinator budget bounds", () => {
+// Real Git checkouts plus deliberate waits: allow for a loaded host. The bounds asserted are the coordinator's, not this timeout.
+describe("PanelCoordinator budget bounds", { timeout: 20_000 }, () => {
   /** Wrap each real checkout's comparison for the named slots. */
   function wrapVerify(wrapped: Record<string, (real: (signal?: AbortSignal) => Promise<WorkspaceCheck>, signal?: AbortSignal) => Promise<WorkspaceCheck>>) {
     return (options: ConstructorParameters<typeof GitSlotWorkspaceProvider>[0]) => {
@@ -486,16 +533,41 @@ describe("PanelCoordinator budget bounds", () => {
     await expectValid(result, setup, panelPolicy);
   });
 
-  it("gives a slot that finished just before the stage deadline its full comparison bound", async () => {
-    // The harness returns with about 150 ms of the stage left; the comparison then takes 500 ms, past the deadline.
+  it("gives a slot that finished just before its harness timeout its full comparison bound", async () => {
+    // The harness returns about 150 ms before its timeout; the comparison then takes 400 ms plus the real comparison of
+    // its 1,000 ms bound (a quarter of the 4,000 ms stage), which the harness timeout left before the stage deadline.
     const harness = new FakePanelHarness({ behaviors: { late: async input => { await abortableDelay(Math.max(0, input.policy.limits.harnessTimeoutMs - 150), input.signal); return clean(); } } });
     const panelPolicy = panel([slot("late", 1)]);
-    const workspaces = wrapVerify({ late: async (real, signal) => { await abortableDelay(500, signal); return real(signal); } });
+    const workspaces = wrapVerify({ late: async (real, signal) => { await abortableDelay(400, signal); return real(signal); } });
     const setup = coordinator(harness, { workspaces, abortGraceMs: 1 });
-    const result = await setup.coordinator.run(request(panelPolicy, { policy: { ...policy, limits: { ...policy.limits, harnessTimeoutMs: 2_000 } } }));
+    const result = await setup.coordinator.run(request(panelPolicy, { policy: { ...policy, limits: { ...policy.limits, harnessTimeoutMs: 4_000 } } }));
+    expect(harness.input("late").policy.limits.harnessTimeoutMs).toBeLessThanOrEqual(4_000 - 1_000 - 2);
     expect(result.report.slotRuns.map(run => [run.terminal, run.voidReasons])).toEqual([["completed", []]]);
     expect(result.report.coverage).toBe("complete");
     await expectValid(result, setup, panelPolicy);
+  });
+
+  it("ends a stage by its deadline even when a harness ignores abort and a comparison ignores its bound", async () => {
+    // harnessTimeoutMs 2,000, abort grace 100 and comparison bound 300 ms: each harness gets at most 1,500 ms, so its
+    // grace, the comparison and the comparison's grace all fit before the deadline.
+    const createdAt = new Map<string, number>();
+    const harness = new FakePanelHarness({ behaviors: { deaf: () => new Promise<SlotHarnessOutput>(() => undefined), slow: clean, probe: clean } });
+    const panelPolicy = panel([slot("deaf", 1), slot("slow", 1), slot("probe", 2)], { maxConcurrentSlots: 2 });
+    const wrapped = wrapVerify({ deaf: () => new Promise<WorkspaceCheck>(() => undefined), slow: () => new Promise<WorkspaceCheck>(() => undefined) });
+    const workspaces = (options: ConstructorParameters<typeof GitSlotWorkspaceProvider>[0]) => {
+      const provider = wrapped(options);
+      return { create: (slotId: string, signal?: AbortSignal) => { createdAt.set(slotId, Date.now()); return provider.create(slotId, signal); } };
+    };
+    const setup = coordinator(harness, { workspaces, abortGraceMs: 100, comparisonTimeoutMs: 300 });
+    const result = await setup.coordinator.run(request(panelPolicy, { policy: { ...policy, limits: { ...policy.limits, harnessTimeoutMs: 2_000 } } }));
+    const stageOne = Math.min(createdAt.get("deaf")!, createdAt.get("slow")!);
+    // Stage 2 starts once every stage-1 slot ended and its checkout was removed; only removal is outside the deadline.
+    expect(createdAt.get("probe")! - stageOne).toBeLessThan(2_000 + 250);
+    expect(harness.input("deaf").policy.limits.harnessTimeoutMs).toBeLessThanOrEqual(1_500);
+    expect(result.report.slotRuns.map(run => [run.slotId, run.terminal, run.voidReasons])).toEqual([["deaf", "timed_out", []], ["slow", "timed_out", []], ["probe", "completed", []]]);
+    expect(result.slots[0].reasons.join()).toMatch(/did not stop/);
+    expect(result.slots[1].reasons.join()).toMatch(/comparison did not finish within its 300 ms bound/);
+    await expectNoCheckouts(harness);
   });
 
   it("applies the output limit per channel, as the harness enforces it, and bounds the stored telemetry", async () => {
@@ -504,27 +576,31 @@ describe("PanelCoordinator budget bounds", () => {
     const harness = new FakePanelHarness({ behaviors: {
       // Payload, transcript and events each within 2,000 bytes; together well over it.
       within: () => ({ ...sized(), transcript: "y".repeat(1_900), events: events(20) }),
-      // Transcript and events over the limit: kept completed, stored bounded with reasons.
-      verbose: () => ({ ...clean(), transcript: "z".repeat(5_000), events: events(60) }),
+      // The transcript alone over the limit, as a harness's output stream over its cap.
+      verbose: () => ({ ...clean(), transcript: "z".repeat(5_000), events: events(1) }),
+      // The events alone over the limit.
+      chatty: () => ({ ...clean(), events: events(60) }),
       // The structured payload alone is over the limit.
       oversized: () => slotOutput({ inspectedPaths: ["src/value.ts", "src/other.ts", ...Array.from({ length: 200 }, (_, index) => `src/generated/${index}.ts`)] }),
     } });
     const budget = { timeoutMs: 60_000, maxOutputBytes: 2_000 };
-    const panelPolicy = panel([slot("within", 1, undefined, { budget }), slot("verbose", 1, undefined, { budget }), slot("oversized", 1, undefined, { budget })]);
+    const panelPolicy = panel([slot("within", 1, undefined, { budget }), slot("verbose", 1, undefined, { budget }), slot("chatty", 1, undefined, { budget }), slot("oversized", 1, undefined, { budget })]);
     const setup = coordinator(harness);
     const result = await setup.coordinator.run(request(panelPolicy, { config: { ...config, retainTranscript: true } }));
-    expect(result.report.slotRuns.map(run => run.terminal)).toEqual(["completed", "completed", "timed_out"]);
+    expect(result.report.slotRuns.map(run => run.terminal)).toEqual(["completed", "timed_out", "timed_out", "timed_out"]);
     expect(result.slots[0].reasons).toEqual([]);
     expect(result.report.findings.map(item => item.origins[0].slotId)).toEqual(["within"]);
     expect(result.slots[1].reasons.join("\n")).toMatch(/transcript \(5000 bytes\) exceeded its 2000-byte limit/);
-    expect(result.slots[1].reasons.join("\n")).toMatch(/60 events, more than its 2000-byte limit holds/);
-    expect(result.slots[2].reasons.join()).toMatch(/structured output \(\d+ bytes\) exceeded its 2000-byte limit/);
+    expect(result.slots[2].reasons.join("\n")).toMatch(/60 events exceeded its 2000-byte limit/);
+    expect(result.slots[3].reasons.join()).toMatch(/structured output \(\d+ bytes\) exceeded its 2000-byte limit/);
+    // What is stored stays within the limit, channel by channel.
     const verbose = await slotDocument(setup, result.report.slotRuns[1].outputArtifact);
-    const kept = (verbose.output as { events: unknown[] }).events;
-    expect(kept.length).toBeGreaterThan(0);
-    expect(Buffer.byteLength(JSON.stringify(kept))).toBeLessThanOrEqual(2_000);
     const transcript = Buffer.from((await setup.artifacts.get(verbose.redactedTranscriptArtifact as string))!).toString("utf8");
     expect(transcript).toBe("z".repeat(2_000));
+    const chatty = await slotDocument(setup, result.report.slotRuns[2].outputArtifact);
+    const kept = (chatty.output as { events: unknown[] }).events;
+    expect(kept.length).toBeGreaterThan(0);
+    expect(Buffer.byteLength(JSON.stringify(kept))).toBeLessThanOrEqual(2_000);
     await expectValid(result, setup, panelPolicy);
   });
 });

@@ -5,7 +5,7 @@ import path from "node:path";
 import { createAttemptId, digestJson, stableStringify } from "../canonical.js";
 import {
   assembleReviewReport, componentDiagnostics, fallbackDiagnostics, harnessAuthDiagnostics, harnessSecrets, normalizeHarnessOutput,
-  preflightContexts, preflightExecution, preflightSince, prepareReview, reviewRunId, type PreparedReview, type SharedRunDependencies,
+  preflightContexts, preflightExecution, preflightSince, prepareReview, type PreparedReview, type SharedRunDependencies,
 } from "../coordinator.js";
 import { ReviewFnError } from "../errors.js";
 import { redactJson, redactText } from "../redaction.js";
@@ -28,6 +28,8 @@ const CANCELED_REASON = "The panel run was canceled.";
 /** The terminal outcomes a harness may report; `void` and `collapsed` are decided by the panel, never by a harness. */
 const HARNESS_TERMINALS: ReadonlySet<string> = new Set<HarnessOutput["terminal"]>(["completed", "failed", "canceled", "quota_exhausted", "timed_out", "malformed"]);
 const MAX_LISTED_PATHS = 20;
+/** The harness version recorded when neither preflight nor the adapter reported one; it never matches a pin. */
+const UNOBSERVED_VERSION = "unobserved";
 
 /** A harness run for one panel slot: the 0.1 input plus the slot it serves. */
 export interface SlotHarnessInput extends HarnessInput {
@@ -65,11 +67,16 @@ export interface PanelCoordinatorDependencies extends SharedRunDependencies {
   workspaces?: (options: GitSlotWorkspaceOptions) => SlotWorkspaceProvider;
   /** Directory the run creates its checkout directory in; the system temporary directory by default. */
   workspaceRoot?: string;
-  /** How long an aborted harness may take to stop before its slot is abandoned and its checkout removed. */
+  /**
+   * How long an aborted harness or comparison may take to stop before it is abandoned; 10 seconds by default, capped at a
+   * tenth of the stage budget.
+   */
   abortGraceMs?: number;
   /**
-   * How long comparing a slot's checkout with head may take once the slot has finished, independent of the stage time
-   * left; 60 seconds by default. A comparison that does not finish in time makes the slot `timed_out`.
+   * How long comparing a slot's checkout with head may take once the slot has finished; 60 seconds by default, capped
+   * at a quarter of the stage budget. Each slot's harness timeout leaves this bound and two abort graces before the
+   * stage deadline, so a slot that finishes in time always gets the whole bound and the stage still ends by its
+   * deadline. A comparison that does not finish in time makes the slot `timed_out`.
    */
   comparisonTimeoutMs?: number;
   /** Source of credential values for fingerprints and redaction; `process.env` by default. */
@@ -127,6 +134,13 @@ interface SlotRecord {
   /** Empty when the slot ended before its prompt was built. */
   promptDigest: string;
   transcriptArtifact?: string;
+}
+
+/** A stage's time bounds: the abort grace, the comparison bound, and the time reserved for both before the deadline. */
+interface StageTimings {
+  graceMs: number;
+  comparisonMs: number;
+  reserveMs: number;
 }
 
 interface RunContext {
@@ -200,14 +214,15 @@ function truncateUtf8(text: string, maxBytes: number): string {
 }
 
 /**
- * Keep at most `maxBytes` of the transcript and of the serialized events (whole events, in order), and say what was not
- * kept. The terminal is unchanged: the panel neither consumes nor validates this telemetry.
+ * Enforce the output limit on the transcript and on the serialized events, each on its own, as a harness enforces it
+ * on its output streams. A channel over the limit is reported (the caller makes the run `timed_out`), and only its first
+ * `maxBytes` (whole events, in order) are kept, so what is stored stays bounded.
  */
 function boundTelemetry(output: SlotHarnessOutput, maxBytes: number): string[] {
-  const reasons: string[] = [];
+  const overruns: string[] = [];
   if (typeof output.transcript === "string") {
     const bytes = Buffer.byteLength(output.transcript);
-    if (bytes > maxBytes) { output.transcript = truncateUtf8(output.transcript, maxBytes); reasons.push(`The slot transcript (${bytes} bytes) exceeded its ${maxBytes}-byte limit; only its first ${maxBytes} bytes were kept.`); }
+    if (bytes > maxBytes) { output.transcript = truncateUtf8(output.transcript, maxBytes); overruns.push(`The slot transcript (${bytes} bytes) exceeded its ${maxBytes}-byte limit; only its first ${maxBytes} bytes were kept.`); }
   }
   if (Array.isArray(output.events)) {
     let used = 2;
@@ -219,9 +234,9 @@ function boundTelemetry(output: SlotHarnessOutput, maxBytes: number): string[] {
       used += size;
       kept += 1;
     }
-    if (kept < output.events.length) { reasons.push(`The slot reported ${output.events.length} events, more than its ${maxBytes}-byte limit holds; only the first ${kept} were kept.`); output.events = output.events.slice(0, kept); }
+    if (kept < output.events.length) { overruns.push(`The slot's ${output.events.length} events exceeded its ${maxBytes}-byte limit; only the first ${kept} were kept.`); output.events = output.events.slice(0, kept); }
   } else output.events = [];
-  return reasons;
+  return overruns;
 }
 
 function observedUsage(usage: SlotObservation["usage"]): SlotRun["usage"] | undefined {
@@ -267,7 +282,13 @@ export class PanelCoordinator {
     const prepared = await prepareReview(this.dependencies, request);
     const policyDigest = panelPolicyDigest(policy);
     const { capturedAt: _capturedAt, ...identityChange } = prepared.change;
-    const runId = digestJson({ kind: "reviewfn-panel", change: identityChange, contextDigest: prepared.context.digest, policy: request.policy, config: request.config, panelPolicyDigest: policyDigest, tests: prepared.tests.map(({ startedAt, finishedAt, runtimeMs, ...receipt }) => receipt), promptVersion: PANEL_PROMPT_VERSION, ...(request.since === undefined ? {} : { since: request.since }) });
+    // The run identity binds everything that shapes a slot's prompt and harness configuration, including each slot's
+    // lens (ID, version and instructions) and the adapter contract version it is configured with.
+    const slotInputs = policy.slots.filter(slot => slot.stage !== "verifier").map(slot => {
+      const lens = this.lenses.get(slot.lens)!;
+      return { slotId: slot.id, lens: { id: lens.id, version: lens.version, instructionsDigest: digestJson(lens.instructions) }, harnessContractVersion: this.slotConfig(request.config, slot).harness.version };
+    });
+    const runId = digestJson({ kind: "reviewfn-panel", change: identityChange, contextDigest: prepared.context.digest, policy: request.policy, config: request.config, panelPolicyDigest: policyDigest, slots: slotInputs, tests: prepared.tests.map(({ startedAt, finishedAt, runtimeMs, ...receipt }) => receipt), promptVersion: PANEL_PROMPT_VERSION, ...(request.since === undefined ? {} : { since: request.since }) });
     const environment = this.dependencies.environment ?? process.env;
     const secrets = harnessSecrets([request.config.inference.credentialEnv, ...policy.slots.map(slot => slot.inference.credentialEnv)], environment);
     const runController = new AbortController();
@@ -281,7 +302,7 @@ export class PanelCoordinator {
       let context: RunContext;
       const parent = await mkdtemp(path.join(this.dependencies.workspaceRoot ?? tmpdir(), "reviewfn-panel-"));
       try {
-        const provider = (this.dependencies.workspaces ?? (options => new GitSlotWorkspaceProvider(options)))({ objectStore: request.root, headCommit: prepared.change.headCommit, parent });
+        const provider = (this.dependencies.workspaces ?? (options => new GitSlotWorkspaceProvider(options)))({ objectStore: request.root, headCommit: prepared.change.headCommit, referenceCommits: [prepared.change.mergeBaseCommit, prepared.change.baseCommit, ...(request.since === undefined ? [] : [request.since])], parent });
         context = { request, prepared, runId, secrets, resolved, provider, runSignal: runController.signal, cleanupErrors };
         const stageOne = await this.runStage(1, context, undefined);
         // Stage 2 always runs, whatever stage 1 found, and is told what stage 1 reported.
@@ -345,14 +366,28 @@ export class PanelCoordinator {
     return { diagnostics, resolved };
   }
 
-  /** Run one stage's slots in policy order, at most `maxConcurrentSlots` at once, within the stage's wall-time budget. */
+  /**
+   * The abort grace and comparison bound for a stage of `budgetMs`, each capped at a share of the budget so the reserve
+   * never takes the whole stage, and the reserve each slot's harness timeout leaves before the stage deadline.
+   */
+  private stageTimings(budgetMs: number): StageTimings {
+    const graceMs = Math.max(0, Math.min(this.dependencies.abortGraceMs ?? DEFAULT_ABORT_GRACE_MS, Math.floor(budgetMs / 10)));
+    const comparisonMs = Math.max(1, Math.min(this.dependencies.comparisonTimeoutMs ?? DEFAULT_COMPARISON_TIMEOUT_MS, Math.floor(budgetMs / 4)));
+    return { graceMs, comparisonMs, reserveMs: comparisonMs + 2 * graceMs };
+  }
+
+  /**
+   * Run one stage's slots in policy order, at most `maxConcurrentSlots` at once, within the stage's wall-time budget: a
+   * slot's harness, abort grace and checkout comparison all end by the stage deadline.
+   */
   private async runStage(stage: 1 | 2, context: RunContext, prior: PriorStageFinding[] | undefined): Promise<SlotRecord[]> {
     const slots = context.request.panelPolicy.slots.filter((slot): slot is PanelSlot & { stage: 1 | 2 } => slot.stage === stage);
     const deadline = Date.now() + context.request.policy.limits.harnessTimeoutMs;
+    const timings = this.stageTimings(context.request.policy.limits.harnessTimeoutMs);
     const queue = [...slots];
     const records = new Map<string, SlotRecord>();
     const worker = async () => {
-      for (let slot = queue.shift(); slot; slot = queue.shift()) records.set(slot.id, await this.runSlot(slot, context, deadline, prior));
+      for (let slot = queue.shift(); slot; slot = queue.shift()) records.set(slot.id, await this.runSlot(slot, context, deadline, timings, prior));
     };
     await Promise.all(Array.from({ length: Math.min(effectiveMaxConcurrentSlots(context.request.panelPolicy), slots.length) }, worker));
     return slots.map(slot => records.get(slot.id)!);
@@ -364,7 +399,8 @@ export class PanelCoordinator {
     const credential = slot.inference.credentialEnv ? (this.dependencies.environment ?? process.env)[slot.inference.credentialEnv] : undefined;
     return {
       harnessAdapter: slot.harness.adapter,
-      harnessVersion: nonblank(resolved?.harnessVersion) ? resolved.harnessVersion : harness?.capabilities.version || slot.harness.version,
+      // The slot's pin is never recorded as a version: it is what the reported version is checked against.
+      harnessVersion: nonblank(resolved?.harnessVersion) ? resolved.harnessVersion : nonblank(harness?.capabilities.version) ? harness.capabilities.version : UNOBSERVED_VERSION,
       provider: slot.inference.provider,
       model: nonblank(resolved?.model) ? resolved.model : slot.inference.model,
       auth: slot.inference.auth,
@@ -373,7 +409,7 @@ export class PanelCoordinator {
   }
 
   /** Run one slot to a terminal outcome. Never throws; its checkout is removed whatever happened. */
-  private async runSlot(slot: PanelSlot & { stage: 1 | 2 }, context: RunContext, deadline: number, prior: PriorStageFinding[] | undefined): Promise<SlotRecord> {
+  private async runSlot(slot: PanelSlot & { stage: 1 | 2 }, context: RunContext, deadline: number, timings: StageTimings, prior: PriorStageFinding[] | undefined): Promise<SlotRecord> {
     const now = this.dependencies.now ?? (() => new Date());
     const { request, prepared } = context;
     const startedAt = now().toISOString();
@@ -389,6 +425,8 @@ export class PanelCoordinator {
         voidReasons.unshift("model_mismatch");
         allReasons.push(`Preflight resolved model ${identity.model}, not the configured ${slot.inference.model}.`);
       }
+      // Every run that does not count says why.
+      if (!voidReasons.length && !COUNTING.has(terminal) && !allReasons.length) allReasons.push(`The harness reported ${terminal} without a reason.`);
       // A clock that steps back never records a run finishing before it started.
       const finished = now().toISOString();
       const finishedAt = Date.parse(finished) < Date.parse(startedAt) ? startedAt : finished;
@@ -399,14 +437,16 @@ export class PanelCoordinator {
     };
     if (context.runSignal.aborted) return finish("canceled", ["The panel run was canceled before the slot started."], emptyOutput("canceled", "The panel run was canceled before the slot started."));
     const stageBudget = `Stage ${slot.stage} exhausted its ${request.policy.limits.harnessTimeoutMs} ms budget`;
-    if (deadline - Date.now() <= 0) return finish("timed_out", [`${stageBudget} before the slot started.`], emptyOutput("timed_out", "Stage budget exhausted."));
+    // The harness must stop early enough to leave the abort grace, the comparison and its grace before the deadline.
+    const harnessDeadline = deadline - timings.reserveMs;
+    if (harnessDeadline - Date.now() <= 0) return finish("timed_out", [`${stageBudget} before the slot started.`], emptyOutput("timed_out", "Stage budget exhausted."));
     const maxOutputBytes = Math.min(slot.budget.maxOutputBytes, request.policy.limits.maxOutputBytes);
     let workspace: SlotWorkspace | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       // Creating the checkout is bounded by the stage deadline; the slot's own timeout starts once its checkout exists.
       const creation = new AbortController();
-      const creationTimer = setTimeout(() => creation.abort(), Math.max(1, deadline - Date.now()));
+      const creationTimer = setTimeout(() => creation.abort(), Math.max(1, harnessDeadline - Date.now()));
       try { workspace = await context.provider.create(slot.id, AbortSignal.any([context.runSignal, creation.signal])); }
       catch (error) {
         const terminal = context.runSignal.aborted ? "canceled" : creation.signal.aborted ? "timed_out" : "failed";
@@ -414,7 +454,11 @@ export class PanelCoordinator {
         return finish(terminal, [reason], emptyOutput(terminal, reason));
       } finally { clearTimeout(creationTimer); }
       const slotLimit = Math.min(slot.budget.timeoutMs, request.policy.limits.harnessTimeoutMs);
-      const timeoutMs = Math.max(1, Math.min(slotLimit, deadline - Date.now()));
+      if (harnessDeadline - Date.now() <= 0) {
+        const reason = `${stageBudget} before the slot's harness could start.`;
+        return finish("timed_out", [reason], emptyOutput("timed_out", reason));
+      }
+      const timeoutMs = Math.max(1, Math.min(slotLimit, harnessDeadline - Date.now()));
       const slotController = new AbortController();
       let timedOut = false;
       timer = setTimeout(() => { timedOut = true; slotController.abort(); }, timeoutMs);
@@ -428,7 +472,7 @@ export class PanelCoordinator {
       const slotPolicy = { ...request.policy, limits: { ...request.policy.limits, harnessTimeoutMs: timeoutMs, maxOutputBytes } };
       const harness = this.dependencies.harnesses.find(item => item.capabilities.id === slot.harness.adapter)!;
       const input: SlotHarnessInput = { runId: context.runId, workspace: workspace.path, change: prepared.change, context: prepared.context, policy: slotPolicy, configuration: config, testReceipts: prepared.tests, prompt: prompt.prompt, ...(requirements ? {} : { outputSchema: lensOutputSchema }), signal, slot };
-      const settled = await settle(Promise.resolve().then(() => harness.run(input)), signal, this.dependencies.abortGraceMs ?? DEFAULT_ABORT_GRACE_MS);
+      const settled = await settle(Promise.resolve().then(() => harness.run(input)), signal, timings.graceMs);
       clearTimeout(timer);
       const reasons: string[] = [];
       let raw: SlotHarnessOutput;
@@ -436,7 +480,6 @@ export class PanelCoordinator {
       else if (settled.error !== undefined) raw = emptyOutput(timedOut ? "timed_out" : context.runSignal.aborted ? "canceled" : "failed", message(settled.error));
       else raw = settled.value as SlotHarnessOutput;
       const observed: SlotObservation = raw && typeof raw === "object" && raw.observed && typeof raw.observed === "object" ? raw.observed : {};
-      // The output limit applies per channel, as the harness enforces it: the structured payload must fit within it.
       const payloadBytes = structuredPayloadBytes(raw);
       let output: SlotHarnessOutput = normalizeHarnessOutput(raw, { secrets: context.secrets, aborted: context.runSignal.aborted, payloadErrors: requirements ? undefined : payload => validateLensPayload({ findings: payload.findings, evidence: payload.evidence, inspectedPaths: payload.inspectedPaths, uninspected: payload.uninspected }) });
       // Only a harness terminal is taken from the harness; anything else (missing, unknown, or the panel's own `void` and
@@ -447,17 +490,22 @@ export class PanelCoordinator {
         output = { terminal: "malformed", requirements: [], assessments: [], evidence: [], findings: [], inspectedPaths: [], uninspected: [{ scope: "terminal outcome", reason: `The harness reported terminal ${shown}, which is not a harness terminal outcome.` }], events: Array.isArray(output.events) ? output.events : [] };
       }
       if (!requirements) output = { ...output, requirements: [], assessments: [] };
+      // The output limit applies to each channel on its own (structured payload, transcript, events), as a harness
+      // enforces it on its streams: any channel over it exceeds the slot budget. What is stored stays within the limit.
+      const overruns = [
+        ...(payloadBytes > maxOutputBytes ? [`The slot's structured output (${payloadBytes} bytes) exceeded its ${maxOutputBytes}-byte limit.`] : []),
+        ...boundTelemetry(output, maxOutputBytes),
+      ];
       if (timedOut && !context.runSignal.aborted) { output.terminal = "timed_out"; reasons.push(timeoutMs < slotLimit ? `${stageBudget} while the slot ran.` : `The slot exceeded its ${timeoutMs} ms timeout.`); }
-      else if (payloadBytes > maxOutputBytes && output.terminal !== "canceled") { output.terminal = "timed_out"; reasons.push(`The slot's structured output (${payloadBytes} bytes) exceeded its ${maxOutputBytes}-byte limit.`); }
-      // The transcript and events are telemetry the harness bounds itself; the panel keeps at most the limit of each.
-      reasons.push(...boundTelemetry(output, maxOutputBytes));
+      else if (overruns.length && output.terminal !== "canceled") output.terminal = "timed_out";
+      reasons.push(...overruns);
       if (output.terminal !== "completed" && output.error) reasons.push(redactText(output.error, context.secrets));
       if (output.terminal === "malformed") reasons.push(...output.uninspected.map(item => `${item.scope}: ${item.reason}`));
-      // The comparison has its own bound, whatever stage time is left, and stops on run cancellation. Only an observed
-      // difference voids the slot; a comparison that did not finish leaves it timed out (or canceled), never counted.
-      const comparisonMs = this.dependencies.comparisonTimeoutMs ?? DEFAULT_COMPARISON_TIMEOUT_MS;
+      // The comparison has its whole bound, reserved before the stage deadline, and stops on run cancellation. Only an
+      // observed difference voids the slot; a comparison that did not finish leaves it timed out (or canceled), never counted.
+      const comparisonMs = timings.comparisonMs;
       const comparisonSignal = AbortSignal.any([context.runSignal, AbortSignal.timeout(comparisonMs)]);
-      const check = await this.compare(workspace, comparisonSignal);
+      const check = await this.compare(workspace, comparisonSignal, timings.graceMs);
       let uncompared: { terminal: "canceled" | "timed_out"; reason: string } | undefined;
       if (check.incomplete) {
         uncompared = context.runSignal.aborted
@@ -478,7 +526,10 @@ export class PanelCoordinator {
       let terminal: SlotRunTerminal = output.terminal;
       if (voidReasons.length) terminal = "void";
       else if (uncompared) { terminal = uncompared.terminal; reasons.push(uncompared.reason); }
-      else if (terminal === "completed" && identity.harnessVersion !== slot.harness.version) { terminal = "failed"; reasons.push(`The harness reported version ${identity.harnessVersion}, not the pinned ${slot.harness.version}.`); }
+      else if (terminal === "completed" && identity.harnessVersion !== slot.harness.version) {
+        terminal = "failed";
+        reasons.push(identity.harnessVersion === UNOBSERVED_VERSION ? `No harness version was observed, so the pinned ${slot.harness.version} was not confirmed.` : `The harness reported version ${identity.harnessVersion}, not the pinned ${slot.harness.version}.`);
+      }
       const usage = observedUsage(observed.usage);
       let transcript: string | undefined;
       if (request.config.retainTranscript && output.transcript) {
@@ -500,8 +551,8 @@ export class PanelCoordinator {
    * Compare a finished slot's checkout with head within `signal`. A comparison that stops on the signal, or does not stop
    * within the abort grace after it, is incomplete; only a completed comparison can report a difference.
    */
-  private async compare(workspace: SlotWorkspace, signal: AbortSignal): Promise<WorkspaceCheck> {
-    const settled = await settle(Promise.resolve().then(() => workspace.verify(signal)), signal, this.dependencies.abortGraceMs ?? DEFAULT_ABORT_GRACE_MS);
+  private async compare(workspace: SlotWorkspace, signal: AbortSignal, graceMs: number): Promise<WorkspaceCheck> {
+    const settled = await settle(Promise.resolve().then(() => workspace.verify(signal)), signal, graceMs);
     const stopped: WorkspaceCheck = { unchanged: false, incomplete: true, reason: "The comparison was stopped before it finished." };
     if (settled.abandoned) return stopped;
     if (settled.error !== undefined) return signal.aborted ? stopped : { unchanged: false, reason: `The checkout could not be compared with head: ${message(settled.error)}` };
@@ -594,7 +645,9 @@ export class PanelCoordinator {
       const { report, reportArtifact } = await assembleReviewReport(this.dependencies, {
         request, prepared: context.prepared, output, secrets: context.secrets, diagnostics, ...(signal ? { signal } : {}),
         harness: { id: record.slot.harness.adapter, version: record.run.identity.harnessVersion },
-        promptDigest: record.promptDigest, runId: reviewRunId(context.prepared, request, record.run.identity.harnessVersion), attemptId: context.request.attemptId ?? createAttemptId(),
+        // Its run identity is the panel run's (which binds the slot's lens and contract version) plus the slot, the
+        // version it ran under and the panel prompt it was actually given, not the 0.1 prompt.
+        promptDigest: record.promptDigest, runId: digestJson({ kind: "reviewfn-panel-requirements", panelRunId: context.runId, slotId: record.slot.id, harnessVersion: record.run.identity.harnessVersion, promptDigest: record.promptDigest }), attemptId: context.request.attemptId ?? createAttemptId(),
       });
       return { report, reasons: [], stored: [report.normalizedEventArtifact, report.redactedTranscriptArtifact, reportArtifact].filter((id): id is string => typeof id === "string") };
     } catch (error) {
