@@ -116,7 +116,9 @@ export function createOAuthProviderSchema(): AuthFnSchemaDefinition['schemas'] {
         generation: { type: 'string', required: true, fieldName: 'generation', maxLength: 64 },
         createdAt: date('created_at')
       },
-      indexes: [{ name: 'idx_authfn_oauth_provider_consents_triple', fields: ['userId', 'clientId', 'resource'] }]
+      // A user's rows for one client and resource are few (see recordConsent);
+      // `resource` is unbounded text, so it cannot be part of a MySQL key.
+      indexes: [{ name: 'idx_authfn_oauth_provider_consents_user_id', fields: ['userId'] }]
     },
     {
       modelName: MODELS.disconnects,

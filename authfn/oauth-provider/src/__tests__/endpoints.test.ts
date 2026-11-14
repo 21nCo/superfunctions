@@ -5,6 +5,10 @@ import { secretsEqual } from '../http.js';
 import { authFnOAuthProviderPlugin } from '../index.js';
 import { trimTrailingSlashes } from '../runtime.js';
 import {
+  generateDrizzleSchemaFile,
+  generateLibraryAbstractSchema
+} from '../../../../packages/cli/src/utils/schema-generators.js';
+import {
   MCP_HOST,
   MEMOTRON,
   MEMOTRON_SECRET,
@@ -157,6 +161,13 @@ describe('authorization endpoint', () => {
     expect(nextLocation.startsWith('https://tenant.example.com/next?to=?&error=invalid_scope&')).toBe(true);
     expect(new URL(nextLocation).searchParams.get('error')).toBe('invalid_scope');
 
+    // A loopback request matches on any port, but only as written: a form
+    // the URL parser repairs would resolve elsewhere in the browser.
+    for (const redirectUri of ['http:127.0.0.1/callback', 'http:/127.0.0.1:8080/callback']) {
+      const repaired = await provider.getAuthorize(provider.authorizeQuery({ redirect_uri: redirectUri }, MCP_HOST));
+      expect(repaired.status).toBe(400);
+      expect(repaired.headers.get('location')).toBeNull();
+    }
     // The URL parser drops a tab, so a loopback URI with one would match on
     // any port; the raw value must still be header-safe.
     const tabbed = await provider.getAuthorize(provider.authorizeQuery({ redirect_uri: 'http://127.0.0.1:8080/call\tback' }, MCP_HOST));
@@ -424,6 +435,11 @@ describe('configuration', () => {
       'https://client.example.com/cb?tenant=日本語',
       'https://client.example.com/c b',
       'https://client.example.com/cb?x=1\n',
+      'https:client.example.com/cb',
+      'https:/client.example.com/cb',
+      'https:\\\\client.example.com\\cb',
+      'https://user@client.example.com/cb',
+      'http:127.0.0.1/callback',
       'https://client.example.com/cb?state=fixed',
       'https://client.example.com/cb?code=1',
       'https://client.example.com/cb?iss=x',
@@ -438,6 +454,7 @@ describe('configuration', () => {
       'http://[::1]/callback',
       'http://127.0.0.1:8080/cb',
       'https://xn--r8jz45g.example/cb?tenant=%E6%97%A5',
+      'HTTPS://Client.Example.com:443/cb',
       'com.example.app:/oauth/callback'
     ])).not.toThrow();
   });
@@ -451,6 +468,12 @@ describe('configuration', () => {
       expect(() => create(secret)).toThrow(expect.objectContaining({ code: 'AUTHFN_CONFIG_INVALID' }));
     }
     expect(() => create('abc-._~+/XYZ019==')).not.toThrow();
+  });
+
+  it.each(['mysql', 'postgres', 'sqlite'] as const)('generates a %s schema within the key limits', async (dialect) => {
+    const schema = await generateLibraryAbstractSchema(createProviderApp(), {});
+    const generated = generateDrizzleSchemaFile(schema, 'authfn', 'authfn', dialect);
+    expect(generated).toContain('idx_authfn_oauth_provider_consents_user_id');
   });
 
   it('declares its tables in the AuthFn schema', () => {

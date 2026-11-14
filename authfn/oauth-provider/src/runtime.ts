@@ -148,9 +148,20 @@ export function isAllowedRedirectUri(value: unknown): value is string {
     return false;
   }
   const url = new URL(value);
-  const allowedScheme = url.protocol === 'https:' ||
-    (url.protocol === 'http:' ? LOOPBACK_HOSTS.has(url.hostname) : PRIVATE_USE_SCHEME.test(url.protocol));
+  const allowedScheme = url.protocol === 'https:' ? startsWithOrigin(value, url)
+    : url.protocol === 'http:' ? LOOPBACK_HOSTS.has(url.hostname) && startsWithOrigin(value, url)
+      : PRIVATE_USE_SCHEME.test(url.protocol);
   return allowedScheme && RESPONSE_PARAMETERS.every((name) => !url.searchParams.has(name));
+}
+
+/**
+ * The raw value begins with its own origin, `scheme://host[:port]`. The
+ * redirect is sent as written, and a browser resolves forms the URL parser
+ * repairs (`https:host/cb`, `https:/host/cb`, backslashes, userinfo)
+ * differently or relative to the authorization page.
+ */
+function startsWithOrigin(value: string, url: URL): boolean {
+  return value.slice(0, url.origin.length).toLowerCase() === url.origin.toLowerCase();
 }
 
 function configError(message: string): AuthFnConfigError {
@@ -194,7 +205,8 @@ export function matchesRedirectUri(client: OAuthProviderClient, redirectUri: str
 function parseLoopback(value: string): URL | null {
   try {
     const url = new URL(value);
-    return url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname) && !value.includes('#') ? url : null;
+    return url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname) && !value.includes('#') &&
+      startsWithOrigin(value, url) ? url : null;
   } catch {
     return null;
   }
