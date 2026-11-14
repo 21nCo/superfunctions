@@ -108,6 +108,8 @@ export function createOAuthProviderSchema(): AuthFnSchemaDefinition['schemas'] {
         clientId: ref('client_id'),
         resource: text('resource'),
         scopes,
+        // The number of disconnects of the triple when the user approved.
+        generation: { type: 'number', required: true, fieldName: 'generation' },
         createdAt: date('created_at')
       },
       indexes: [{ name: 'idx_authfn_oauth_provider_consents_user_id', fields: ['userId'] }]
@@ -174,13 +176,8 @@ async function claimIfUnset(
   data: Record<string, unknown>
 ): Promise<OAuthClaim | null> {
   const claimId = createIdentifier('ocl');
-  await store.database.updateMany({ model, where: whereId(id, unset), data: { ...data, claimId }, namespace: namespace(store) });
-  const row = await findBy<{ claimId?: string | null }>(store, model, 'id', id);
-  if (row?.claimId !== claimId) {
-    return null;
-  }
   const reset = Object.fromEntries([...Object.keys(data), 'claimId'].map((field) => [field, null]));
-  return {
+  const claim: OAuthClaim = {
     release: async () => {
       await store.database.updateMany({
         model,
@@ -190,6 +187,23 @@ async function claimIfUnset(
       });
     }
   };
+  await store.database.updateMany({ model, where: whereId(id, unset), data: { ...data, claimId }, namespace: namespace(store) });
+  const row = await releaseOnFailure(claim, () => findBy<{ claimId?: string | null }>(store, model, 'id', id));
+  return row?.claimId === claimId ? claim : null;
+}
+
+/**
+ * Runs `step` for a won claim. If it throws, the claim is released (only
+ * while it is still this caller's), so a client retrying after a failure that
+ * issued nothing is not treated as replaying its code or refresh token.
+ */
+export async function releaseOnFailure<T>(claim: OAuthClaim, step: () => Promise<T>): Promise<T> {
+  try {
+    return await step();
+  } catch (error) {
+    await claim.release().catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function createGrantWithCode(
@@ -301,16 +315,17 @@ export async function issueTokens(
     scopes: grant.scopes,
     expiresAt: addSeconds(now, OAUTH_REFRESH_TOKEN_TTL_SECONDS)
   };
-  try {
-    await insert(store, MODELS.tokens, access);
-    await insert(store, MODELS.tokens, refresh);
-  } catch (error) {
-    for (const id of [access.id, refresh.id]) {
-      await store.database.deleteMany({ model: MODELS.tokens, where: whereId(id), namespace: namespace(store) }).catch(() => 0);
+  await releaseOnFailure(claim, async () => {
+    try {
+      await insert(store, MODELS.tokens, access);
+      await insert(store, MODELS.tokens, refresh);
+    } catch (error) {
+      for (const id of [access.id, refresh.id]) {
+        await store.database.deleteMany({ model: MODELS.tokens, where: whereId(id), namespace: namespace(store) }).catch(() => 0);
+      }
+      throw error;
     }
-    await claim.release().catch(() => undefined);
-    throw error;
-  }
+  });
   return { accessToken, refreshToken, accessTokenExpiresIn: OAUTH_ACCESS_TOKEN_TTL_SECONDS, scopes };
 }
 
@@ -478,21 +493,26 @@ export async function countDisconnects(store: OAuthStore, triple: OAuthTriple): 
 }
 
 /**
- * The scopes the user has approved for the triple: the union of every
- * approval, or null when there is none. Each approval is its own row, so
- * concurrent approvals never overwrite each other.
+ * The scopes the user has approved for the triple since its latest disconnect
+ * (`generation`, from `countDisconnects`): the union of those approvals, or
+ * null when there is none. Each approval is its own row, so concurrent
+ * approvals never overwrite each other, and an approval made before a
+ * disconnect never counts after it, even if it was written late.
  */
-export async function findConsentScopes(store: OAuthStore, triple: OAuthTriple): Promise<string[] | null> {
+export async function findConsentScopes(store: OAuthStore, triple: OAuthTriple, generation: number): Promise<string[] | null> {
   const records = await store.database.findMany<OAuthConsentRecord>({
     model: MODELS.consents,
-    where: whereTriple(triple),
+    where: [...whereTriple(triple), { field: 'generation', operator: 'eq', value: generation }],
     namespace: namespace(store)
   });
   return records.length === 0 ? null : [...new Set(records.flatMap((record) => record.scopes))];
 }
 
-/** Records that the user approved `scopes` for the triple; returns the approval's ID. */
-export async function recordConsent(store: OAuthStore, input: OAuthTriple & { scopes: string[]; now: Date }): Promise<string> {
+/** Records that the user approved `scopes` for the triple in `generation`; returns the approval's ID. */
+export async function recordConsent(
+  store: OAuthStore,
+  input: OAuthTriple & { scopes: string[]; generation: number; now: Date }
+): Promise<string> {
   const { now, ...consent } = input;
   const id = createIdentifier('ocs');
   await insert(store, MODELS.consents, { ...consent, id, createdAt: now });

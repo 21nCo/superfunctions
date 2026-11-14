@@ -140,10 +140,11 @@ function consentCovers(consented: string[] | null, scopes: string[]): boolean {
  * Creates the grant and its code: for an approval (`approved`), after
  * recording the consent; otherwise only when remembered consent covers the
  * scopes. Returns `null` when there is no such consent or the app was
- * disconnected meanwhile. The disconnect markers are read before consent and
- * again after the grant exists (see `disconnectOAuthClient`); on a new marker
- * this authorization revokes its grant and removes the consent it recorded,
- * so nothing it started outlives a completed disconnect.
+ * disconnected meanwhile. The disconnect markers are counted before consent
+ * and again after the grant exists (see `disconnectOAuthClient`); consent is
+ * recorded and read for that count only, so an approval begun before a
+ * disconnect never authorizes anything after it. On a new marker this
+ * authorization revokes its grant and removes the consent it recorded.
  */
 async function issueCode(
   runtime: OAuthProviderRuntime,
@@ -153,11 +154,11 @@ async function issueCode(
 ): Promise<Record<string, string | undefined> | null> {
   const { store } = runtime;
   const triple = { clientId: request.client.clientId, userId: user.id, resource: request.params.resource };
-  const disconnects = await countDisconnects(store, triple);
+  const generation = await countDisconnects(store, triple);
   const consentId = approved
-    ? await recordConsent(store, { ...triple, scopes: request.scopes, now: runtime.now() })
+    ? await recordConsent(store, { ...triple, scopes: request.scopes, generation, now: runtime.now() })
     : undefined;
-  if (!consentCovers(await findConsentScopes(store, triple), request.scopes)) {
+  if (!consentCovers(await findConsentScopes(store, triple, generation), request.scopes)) {
     return null;
   }
   const { grantId, code } = await createGrantWithCode(store, {
@@ -167,8 +168,8 @@ async function issueCode(
     codeChallenge: request.params.code_challenge,
     now: runtime.now()
   });
-  if (await countDisconnects(store, triple) === disconnects &&
-    consentCovers(await findConsentScopes(store, triple), request.scopes)) {
+  if (await countDisconnects(store, triple) === generation &&
+    consentCovers(await findConsentScopes(store, triple, generation), request.scopes)) {
     return { code, state: request.params.state };
   }
   await revokeGrant(store, grantId, 'consent_withdrawn', runtime.now());

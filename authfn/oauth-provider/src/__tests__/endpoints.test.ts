@@ -257,15 +257,16 @@ describe('introspection (RFC 7662)', () => {
     expect(unauthenticated.body).toMatchObject({ error: 'invalid_token' });
     expect((await provider.introspect(issued.refresh_token)).body).toEqual({ active: false });
 
-    // RFC 6750 2.1: the credential is one b64token; anything else is refused.
-    for (const header of [`Bearer ${MEMOTRON_SECRET} extra`, `Bearer  ${MEMOTRON_SECRET}`, `Bearer ${MEMOTRON_SECRET},x`]) {
-      const response = await provider.handle('/auth/oauth/introspect', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', authorization: header },
-        body: new URLSearchParams({ token: issued.access_token })
-      });
-      expect(response.status).toBe(401);
+    // RFC 6750 2.1: "Bearer", one or more spaces, then one b64token.
+    const introspectWith = (authorization: string) => provider.handle('/auth/oauth/introspect', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', authorization },
+      body: new URLSearchParams({ token: issued.access_token })
+    });
+    for (const header of [`Bearer ${MEMOTRON_SECRET} extra`, `Bearer ${MEMOTRON_SECRET},x`, `Bearer\t${MEMOTRON_SECRET}`]) {
+      expect((await introspectWith(header)).status).toBe(401);
     }
+    expect(await (await introspectWith(`bearer   ${MEMOTRON_SECRET}`)).json()).toMatchObject({ active: true });
   });
 });
 

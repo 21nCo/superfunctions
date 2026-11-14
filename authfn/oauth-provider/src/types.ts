@@ -160,6 +160,8 @@ export interface OAuthConsentRecord {
   clientId: string;
   resource: string;
   scopes: string[];
+  /** Disconnects of the user, client and resource before this approval. */
+  generation: number;
   createdAt: Date;
 }
 

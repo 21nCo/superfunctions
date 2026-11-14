@@ -67,22 +67,32 @@ export function createProviderApp() {
 
 type Adapter = AuthFnRuntimeConfig['database'];
 
+type Operation = 'create' | 'findOne';
+
 /**
- * Controls inserts: `arm(model)` pauses the next insert into `model` until
- * `release()` and resolves once it is paused, to force an interleaving;
- * `failNext(model, match)` makes the next matching insert throw.
+ * Controls storage calls: `arm(model)` pauses the next insert into `model`
+ * until `release()` and resolves once it is paused, to force an interleaving;
+ * `failNext(model, match, operation)` makes the next matching insert (or
+ * `findOne`) throw.
  */
 export function createInsertControl(database: Adapter) {
   let paused: { model: string; reached: () => void; released: Promise<void> } | undefined;
-  let failure: { model: string; match: (data: Record<string, unknown>) => boolean } | undefined;
+  let failure: { model: string; operation: Operation; match: (params: { data?: Record<string, unknown> }) => boolean } | undefined;
   let release: () => void = () => {};
+  const injectFailure = (operation: Operation, params: { model: string; data?: Record<string, unknown> }) => {
+    if (failure?.operation === operation && failure.model === params.model && failure.match(params)) {
+      failure = undefined;
+      throw new Error(`injected ${operation} failure`);
+    }
+  };
   const wrapped: Adapter = {
     ...database,
+    findOne: async (params) => {
+      injectFailure('findOne', params);
+      return database.findOne(params);
+    },
     create: async (params) => {
-      if (failure?.model === params.model && failure.match(params.data)) {
-        failure = undefined;
-        throw new Error('injected insert failure');
-      }
+      injectFailure('create', params);
       const pause = paused?.model === params.model ? paused : undefined;
       if (pause) {
         paused = undefined;
@@ -98,8 +108,8 @@ export function createInsertControl(database: Adapter) {
       paused = { model, reached, released: new Promise<void>((resolve) => { release = resolve; }) };
     }),
     release: () => release(),
-    failNext: (model: string, match: (data: Record<string, unknown>) => boolean = () => true) => {
-      failure = { model, match };
+    failNext: (model: string, match: (params: { data?: Record<string, unknown> }) => boolean, operation: Operation = 'create') => {
+      failure = { model, operation, match };
     }
   };
 }

@@ -375,6 +375,37 @@ describe('in-scope actors', () => {
     expect(callback.searchParams.get('error')).toBe('access_denied');
     await race.expectDisconnected();
   });
+
+  it('revoked grant: consent an approval writes after a disconnect never authorizes a silent request', async () => {
+    const race = await setupDisconnectRace();
+    const { provider, query } = race;
+    expect((await provider.getAuthorize(query)).status).toBe(200);
+    const params = { ...provider.consents[0].params };
+
+    // The approval began before the disconnect; its consent row lands after
+    // it, and the approval is then held before creating its grant.
+    const consentHeld = provider.control.arm('oauth_provider_consents');
+    const approval = provider.decide(params, 'approve');
+    await consentHeld;
+    await disconnectOAuthClient({ database: provider.database }, {
+      userId: provider.user.id,
+      clientId: RHOMBUS.clientId,
+      resource: MEMOTRON
+    });
+    provider.control.release();
+    await provider.control.arm('oauth_provider_grants');
+
+    const consentsBefore = provider.consents.length;
+    const silent = await provider.getAuthorize(query);
+    expect(silent.status).toBe(200);
+    expect(silent.headers.get('location')).toBeNull();
+    expect(provider.consents).toHaveLength(consentsBefore + 1);
+
+    provider.control.release();
+    const callback = new URL((await (await approval).json() as { data: { redirectTo: string } }).data.redirectTo);
+    expect(callback.searchParams.get('error')).toBe('access_denied');
+    await race.expectDisconnected();
+  });
 });
 
 describe('concurrent approvals', () => {

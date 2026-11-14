@@ -46,7 +46,7 @@ describe.each([['memory', false], ['SQL', true]])('token issuance failure (%s)',
   it.each(['access', 'refresh'])('a failed %s token write leaves the code redeemable once', async (kind) => {
     const provider = await setupProvider({ sql });
     const code = (await provider.authorize()).searchParams.get('code')!;
-    provider.control.failNext('oauth_provider_tokens', (data) => data.kind === kind);
+    provider.control.failNext('oauth_provider_tokens', ({ data }) => data?.kind === kind);
     expect((await provider.exchange(code)).status).toBe(500);
     expect(await tokenRows(provider)).toBe(0);
 
@@ -57,10 +57,26 @@ describe.each([['memory', false], ['SQL', true]])('token issuance failure (%s)',
     expect((await provider.introspect(issued.access_token)).body).toEqual({ active: false });
   });
 
+  // An exchange reads the code, reads it back after claiming it, then reads the grant.
+  it.each([['claim read-back', 'oauth_provider_codes', 2], ['grant lookup', 'oauth_provider_grants', 1]] as const)(
+    'a failed %s after the claim leaves the code redeemable once',
+    async (_step, model, nth) => {
+      const provider = await setupProvider({ sql });
+      const code = (await provider.authorize()).searchParams.get('code')!;
+      let reads = 0;
+      provider.control.failNext(model, () => ++reads === nth, 'findOne');
+      expect((await provider.exchange(code)).status).toBe(500);
+      const retried = await provider.exchange(code);
+      expect(retried.status).toBe(200);
+      const issued = await retried.json() as Tokens;
+      expect((await provider.introspect(issued.access_token)).body.active).toBe(true);
+    }
+  );
+
   it.each(['access', 'refresh'])('a failed %s token write leaves the refresh token redeemable once', async (kind) => {
     const provider = await setupProvider({ sql });
     const issued = await provider.obtainTokens();
-    provider.control.failNext('oauth_provider_tokens', (data) => data.kind === kind);
+    provider.control.failNext('oauth_provider_tokens', ({ data }) => data?.kind === kind);
     expect((await provider.refresh(issued.refresh_token)).status).toBe(500);
     expect(await tokenRows(provider)).toBe(2);
     expect((await provider.introspect(issued.access_token)).body.active).toBe(true);

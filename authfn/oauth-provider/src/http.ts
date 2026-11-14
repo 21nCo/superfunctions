@@ -184,12 +184,10 @@ export function isBearerCredential(value: string): boolean {
   return BEARER_CREDENTIAL.test(value);
 }
 
-/** The credential of an `Authorization: Bearer <b64token>` header, or null. */
+/** The credential of an `Authorization: Bearer 1*SP <b64token>` header (RFC 6750 2.1), or null. */
 export function readBearerToken(request: Request): string | null {
-  const header = request.headers.get('authorization')?.trim();
-  if (!header || !/^bearer /i.test(header)) {
-    return null;
-  }
-  const token = header.slice(7);
+  const header = request.headers.get('authorization')?.trim() ?? '';
+  const scheme = /^bearer +/i.exec(header);
+  const token = scheme ? header.slice(scheme[0].length) : '';
   return isBearerCredential(token) ? token : null;
 }

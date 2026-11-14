@@ -1,7 +1,16 @@
 import { OAuthError, requireParam } from '../http.js';
 import { verifyS256 } from '../pkce.js';
 import type { OAuthProviderRuntime } from '../runtime.js';
-import { claimCode, findCode, findGrant, isActiveUser, issueTokens, revokeGrant, type IssuedTokens } from '../store.js';
+import {
+  claimCode,
+  findCode,
+  findGrant,
+  isActiveUser,
+  issueTokens,
+  releaseOnFailure,
+  revokeGrant,
+  type IssuedTokens
+} from '../store.js';
 import type { OAuthProviderClient } from '../types.js';
 
 function invalidGrant(description: string): OAuthError {
@@ -59,8 +68,12 @@ export async function exchangeAuthorizationCode(
     throw invalidGrant('Authorization code has already been used');
   }
 
-  const grant = await findGrant(runtime.store, record.grantId);
-  if (!grant || grant.revokedAt || !(await isActiveUser(runtime.store, grant.userId))) {
+  // A failed lookup releases the claim; a revoked grant or inactive user does not.
+  const grant = await releaseOnFailure(claim, async () => {
+    const found = await findGrant(runtime.store, record.grantId);
+    return found && !found.revokedAt && (await isActiveUser(runtime.store, found.userId)) ? found : null;
+  });
+  if (!grant) {
     throw invalidGrant('Authorization grant is no longer valid');
   }
   return issueTokens(runtime.store, grant, grant.scopes, now, claim);
