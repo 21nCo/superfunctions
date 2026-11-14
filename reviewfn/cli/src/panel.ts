@@ -322,7 +322,8 @@ export async function runPanelCommand(flags: Flags, dependencies: PanelCommandDe
     let request: Parameters<PanelCoordinator["run"]>[0];
     let reportDays: number;
     let setup: { config: ReviewFnConfig; policy: ReviewPolicy; panelPolicy: PanelPolicy; harnesses: PanelHarnessAdapter[]; contractVersions: Record<string, string>; since?: string };
-    // Preflight (exit 3): configuration, panel policy, harness resolution and refs that must name commits.
+    // Preflight (exit 3): configuration, panel policy, harness resolution, refs that must name commits, and an output
+    // directory that another artifact store owns.
     try {
       if (environment.GITHUB_TOKEN) throw new ReviewFnError("REVIEWFN_PREFLIGHT_FAILED", "Review execution must not receive GITHUB_TOKEN; use the separate publish command in a credentialed job.");
       const { root } = invocation;
@@ -332,6 +333,8 @@ export async function runPanelCommand(flags: Flags, dependencies: PanelCommandDe
       const { harnesses, contractVersions } = await resolvePanelHarnesses(panelPolicy, config, dependencies.importHarnessModule, environment);
       for (const ref of [invocation.base, invocation.head]) await resolveCommit(root, ref);
       const since = invocation.since === undefined ? undefined : await resolveCommit(root, invocation.since);
+      // One artifact store owns a panel output directory: refuse another's before any harness runs (saving re-checks).
+      await new FileArtifactStore(invocation.artifactsDirectory, invocation.outputDirectory, PANEL_REPORT_COPY_NAMES).checkReportCopiesOwner();
       setup = { config, policy, panelPolicy, harnesses, contractVersions, since };
     } catch (error) {
       if (signal?.aborted) return canceled(error, "during preflight");

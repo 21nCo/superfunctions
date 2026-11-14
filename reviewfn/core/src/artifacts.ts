@@ -1,6 +1,6 @@
 import { hostname } from "node:os";
 import { constants } from "node:fs";
-import { lstat, open, readdir, realpath, rename, rm } from "node:fs/promises";
+import { link, lstat, open, readdir, realpath, rename, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 
@@ -20,7 +20,10 @@ export interface ReportCopyNames { json: string; markdown: string }
 
 /** The 0.1 review report copies (`report.json`, `report.md`); retention metadata in `<artifacts>/.report-copies`. */
 export const REVIEW_REPORT_COPY_NAMES: ReportCopyNames = Object.freeze({ json: "report.json", markdown: "report.md" });
-/** The panel report copies (`panel-report.json`, `panel-report.md`); retention metadata in `<artifacts>/.panel-report-copies-<directory digest>`. */
+/**
+ * The panel report copies (`panel-report.json`, `panel-report.md`); retention metadata in
+ * `<artifacts>/.panel-report-copies-<directory digest>`, and the directory's owning store in `<output>/.panel-report-owner`.
+ */
 export const PANEL_REPORT_COPY_NAMES: ReportCopyNames = Object.freeze({ json: "panel-report.json", markdown: "panel-report.md" });
 
 export class FileArtifactStore implements ArtifactStore {
@@ -29,10 +32,18 @@ export class FileArtifactStore implements ArtifactStore {
   private readonly copiesMarkerKeyed: boolean;
   /**
    * Panel copies are staged and replaced as a pair, and a failed write restores the previous pair; only a crash, or a
-   * failed restore, between the two renames can leave a mixed pair, which retention still expires. The 0.1 copies keep
-   * their copy-by-copy writes.
+   * failed restore, between the two renames can leave a mixed pair of one store's writes, which its retention still
+   * expires. A panel copies directory is owned by one artifact store (see `ownerName`), so another store's write never
+   * lands between them. The 0.1 copies keep their copy-by-copy writes.
    */
   private readonly copiesPaired: boolean;
+  /**
+   * The owner record in a panel copies directory: the one artifact store (a digest of its root's realpath, with that
+   * realpath and the host) whose writes and cleanup may touch the directory's copies and staged files. It is claimed
+   * atomically by the first write under that store's lease and released by its cleanup once the store has no copy,
+   * retention metadata or staged copy there; any other store is refused with REVIEWFN_OUTPUT_DIRECTORY_IN_USE.
+   */
+  private readonly ownerName: string;
 
   /**
    * `reportCopiesDirectory` holds the report copies this store writes and expires; `copyNames` selects which set
@@ -47,6 +58,7 @@ export class FileArtifactStore implements ArtifactStore {
     if (!copyNames.json.endsWith(".json") || !copyNames.markdown.endsWith(".md")) throw new ReviewFnError("REVIEWFN_ARTIFACT_UNSAFE", "Report copy names must be a .json file and a .md file.");
     this.copyNames = [copyNames.json, copyNames.markdown];
     this.copiesStem = `.${copyNames.json.slice(0, -".json".length)}-copies`;
+    this.ownerName = `.${copyNames.json.slice(0, -".json".length)}-owner`;
     const review = copyNames.json === REVIEW_REPORT_COPY_NAMES.json && copyNames.markdown === REVIEW_REPORT_COPY_NAMES.markdown;
     this.copiesMarkerKeyed = !review && Boolean(reportCopiesDirectory);
     this.copiesPaired = !review;
@@ -71,7 +83,60 @@ export class FileArtifactStore implements ArtifactStore {
    * Stores that share an output directory but not an artifact root hold different leases, so each sweeps only the
    * staged files under its own key; stores reaching one root through different spellings share both key and lease.
    */
-  private async stagedPrefix(): Promise<string> { return `.reviewfn-copy-${sha256(await realpath(this.root)).slice(0, 16)}-`; }
+  private async stagedPrefix(): Promise<string> { return `.reviewfn-copy-${(await this.storeIdentity()).store}-`; }
+
+  /** This store's key: a digest of its root's physical path, which every spelling of the root shares. */
+  private async storeIdentity(): Promise<{ store: string; root: string }> {
+    const root = await physicalPath(this.root);
+    return { store: sha256(root).slice(0, 16), root };
+  }
+
+  /**
+   * Refuse, with REVIEWFN_OUTPUT_DIRECTORY_IN_USE, a panel copies directory that another artifact store owns. It writes
+   * nothing and takes no lease, so a command can check before it runs; writes and cleanup check again under the lease.
+   * Any other failure to read the directory is left to the write that follows.
+   */
+  public async checkReportCopiesOwner(): Promise<void> {
+    if (!this.copiesPaired || !this.reportCopiesDirectory) return;
+    await this.verifyOwner().catch((error: unknown) => error instanceof ReviewFnError && error.code === "REVIEWFN_OUTPUT_DIRECTORY_IN_USE" ? Promise.reject(error) : undefined);
+  }
+
+  /** Whether this store owns the copies directory (or no store does); throws REVIEWFN_OUTPUT_DIRECTORY_IN_USE otherwise. */
+  private async verifyOwner(): Promise<{ owned: boolean; identity: { store: string; root: string } }> {
+    const directory = this.reportCopiesDirectory!;
+    const identity = await this.storeIdentity();
+    const stat = await lstat(directory).catch((error: NodeJS.ErrnoException) => missing(error) ? undefined : Promise.reject(error));
+    if (!stat?.isDirectory()) return { owned: false, identity };
+    const file = path.join(directory, this.ownerName);
+    const raw = await safeRead(file, 4096).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? undefined : Promise.reject(error));
+    if (raw === undefined) return { owned: false, identity };
+    const owner = (() => { try { return JSON.parse(raw.toString("utf8")) as { store?: unknown; root?: unknown; host?: unknown } | null; } catch { return undefined; } })();
+    if (owner?.store === identity.store) return { owned: true, identity };
+    const describe = typeof owner?.store === "string" ? `the artifact store ${String(owner.root)} on ${String(owner.host)}` : "an unreadable owner record";
+    throw new ReviewFnError("REVIEWFN_OUTPUT_DIRECTORY_IN_USE", `${directory} holds the panel report copies of ${describe}, not of ${identity.root}; use another output directory, or delete ${file} once no run of its owner writes there and its copies are no longer needed.`, { directory, owner: file, ...(typeof owner?.store === "string" ? { store: owner.store, root: owner.root, host: owner.host } : {}) });
+  }
+
+  /**
+   * Claim the copies directory for this store, under its lease, unless it already owns it; returns whether this call
+   * claimed it. The record is written to a staged file of this store and linked into place, so it is never partial and
+   * exactly one of two stores claiming at once succeeds; the other is refused.
+   */
+  private async claimCopiesDirectory(): Promise<boolean> {
+    const { owned, identity } = await this.verifyOwner();
+    if (owned) return false;
+    const directory = this.reportCopiesDirectory!;
+    const staged = path.join(directory, `${await this.stagedPrefix()}${randomUUID()}.json`);
+    try {
+      const handle = await open(staged, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
+      try { await handle.writeFile(JSON.stringify({ ...identity, host: hostname() })); } finally { await handle.close(); }
+      await link(staged, path.join(directory, this.ownerName));
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      await this.verifyOwner();
+      return false;
+    } finally { await rm(staged, { force: true }); }
+  }
 
   /** Report-copy writes; tests override this to inject a failure between the two copies. */
   protected async writeCopyFile(file: string, content: string): Promise<void> { await safeWrite(file, content); }
@@ -131,6 +196,7 @@ export class FileArtifactStore implements ArtifactStore {
     if (!this.reportCopiesDirectory || !Number.isInteger(retentionDays) || retentionDays <= 0) throw new Error("Report-copy directory and positive retention are required.");
     await this.ensureSafeRoot();
     await safeDirectory(this.reportCopiesDirectory);
+    const claimed = this.copiesPaired && await this.claimCopiesDirectory();
     const markerName = await this.copiesMarker();
     if (!markerName) throw new Error("Report-copy directory disappeared before the copies were written.");
     const marker = path.join(this.root, markerName.name);
@@ -155,7 +221,10 @@ export class FileArtifactStore implements ArtifactStore {
       await safeWrite(path.join(this.reportCopiesDirectory, markdownName), markdown);
       return;
     }
-    await this.replaceCopyPair(json, markdown, currentCopies.get(markdownName), async () => { if (previousRaw) await safeWrite(marker, previousRaw); else await rm(marker, { force: true }); });
+    await this.replaceCopyPair(json, markdown, currentCopies.get(markdownName), async () => {
+      if (previousRaw) await safeWrite(marker, previousRaw); else await rm(marker, { force: true });
+      if (claimed) await rm(path.join(this.reportCopiesDirectory!, this.ownerName), { force: true });
+    });
   }
 
   /**
@@ -238,7 +307,9 @@ export class FileArtifactStore implements ArtifactStore {
         deleted.push(id);
       } catch (error) { errors.push(`${entry}: ${error instanceof Error ? error.message : String(error)}`); }
     }
-    if (this.reportCopiesDirectory) {
+    // Another store's panel copies directory is reported and left untouched: no copy, marker or staged file there is ours.
+    const foreign = this.copiesPaired && this.reportCopiesDirectory ? await this.verifyOwner().then(() => false, (error: unknown) => { errors.push(`Report copies: ${errorText(error)}`); return true; }) : false;
+    if (this.reportCopiesDirectory && !foreign) {
       try {
         const markerName = (await this.copiesMarker())?.name;
         const raw = markerName === undefined ? undefined : await safeRead(path.join(this.root, markerName)).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? undefined : Promise.reject(error));
@@ -262,8 +333,24 @@ export class FileArtifactStore implements ArtifactStore {
       } catch (error) { errors.push(`Report copies: ${error instanceof Error ? error.message : String(error)}`); }
     }
     if (this.copiesMarkerKeyed) await this.deleteOrphanedMarkers(now, errors);
-    if (this.copiesPaired && this.reportCopiesDirectory) await this.deleteStagedCopies(errors);
+    if (this.copiesPaired && this.reportCopiesDirectory && !foreign) {
+      await this.deleteStagedCopies(errors);
+      await this.releaseCopiesDirectory().catch((error: unknown) => { errors.push(`Output directory owner: ${errorText(error)}`); });
+    }
     return { deleted, errors };
+  }
+
+  /** Drop this store's claim on the copies directory once it holds none of its copies, retention metadata or staged copies. */
+  private async releaseCopiesDirectory(): Promise<void> {
+    const directory = this.reportCopiesDirectory!;
+    if (!(await this.verifyOwner()).owned) return;
+    const exists = (file: string) => lstat(file).then(() => true, (error: NodeJS.ErrnoException) => missing(error) ? false : Promise.reject(error));
+    for (const name of this.copyNames) if (await exists(path.join(directory, name))) return;
+    const marker = await this.copiesMarker();
+    if (marker && await exists(path.join(this.root, marker.name))) return;
+    const prefix = await this.stagedPrefix();
+    if ((await readdir(directory)).some(entry => entry.startsWith(prefix))) return;
+    await rm(path.join(directory, this.ownerName));
   }
 
   /**
@@ -289,7 +376,7 @@ export class FileArtifactStore implements ArtifactStore {
    * Remove staged copies (`.reviewfn-copy-<store key>-<uuid>.json|md`) that an interrupted write of this store left in
    * the copies directory. Only names carrying this store's key are touched: this store's copy writes hold its lease, so
    * under the lease none of them belongs to a write in progress. A staged file of a store with another artifact root
-   * may belong to that store's write in progress, under its own lease, and is left for that store's cleanup.
+   * (the owner record it stages while racing to claim an unowned directory) is left for that store.
    */
   private async deleteStagedCopies(errors: string[]): Promise<void> {
     const prefix = await this.stagedPrefix();
@@ -328,6 +415,19 @@ function validateMetadata(metadata: ArtifactMetadata, entry: string): void {
 }
 
 function missing(error: NodeJS.ErrnoException): boolean { return error.code === "ENOENT" || error.code === "ENOTDIR"; }
+
+function errorText(error: unknown): string { return error instanceof ReviewFnError ? `${error.code}: ${error.message}` : error instanceof Error ? error.message : String(error); }
+
+/** The physical path of `file`: its realpath, or for a path that does not exist yet, its nearest existing ancestor's. */
+async function physicalPath(file: string): Promise<string> {
+  const absolute = path.resolve(file);
+  try { return await realpath(absolute); }
+  catch (error) {
+    const parent = path.dirname(absolute);
+    if (!missing(error as NodeJS.ErrnoException) || parent === absolute) throw error;
+    return path.join(await physicalPath(parent), path.basename(absolute));
+  }
+}
 
 type ReportCopies = Record<string, { digest: string; expiresAt: string }[]>;
 function parseReportCopies(raw: Buffer, names: readonly string[]): ReportCopies {

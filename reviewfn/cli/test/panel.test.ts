@@ -175,7 +175,7 @@ describe("reviewfn panel exit codes", () => {
     const store = new FileArtifactStore(path.join(root, ".reviewfn", "artifacts"), output, PANEL_REPORT_COPY_NAMES);
     const reportDays = Math.min(config.retention.reportDays, DEFAULT_POLICY.retention.reportDays);
     expect((await store.deleteExpired(new Date(Date.now() + (reportDays - 1) * 86_400_000))).errors).toEqual([]);
-    expect((await readdir(output)).sort()).toEqual(["panel-report.json", "panel-report.md"]);
+    expect((await readdir(output)).sort()).toEqual([".panel-report-owner", "panel-report.json", "panel-report.md"]);
     expect((await store.deleteExpired(new Date(Date.now() + (reportDays + 1) * 86_400_000))).errors).toEqual([]);
     expect(await readdir(output)).toEqual([]);
   });
@@ -188,6 +188,31 @@ describe("reviewfn panel exit codes", () => {
     expect(JSON.parse(result.stderr)).toMatchObject({ error: "REVIEWFN_HARNESS_NOT_INSTALLED", details: { adapter: "claude-code", packageName: "@superfunctions/reviewfn-harness-claude-code", slots: ["claude"] } });
     expect(harness.calls).toHaveLength(0);
     await expect(readFile(path.join(root, ".reviewfn", "output", "panel-report.json"))).rejects.toThrow();
+  });
+
+  it("exits 3 before any harness runs, writing nothing, when another repository's artifact store owns the output directory", async () => {
+    await repository(panel([slot("one", 1)]));
+    const output = await mkdtemp(path.join(tmpdir(), "reviewfn-cli-panel-shared-")); owned.push(output);
+    const other = await mkdtemp(path.join(tmpdir(), "reviewfn-cli-panel-other-")); owned.push(other);
+    await new FileArtifactStore(other, output, PANEL_REPORT_COPY_NAMES).writeReportCopies("other-json", "other-md", 30);
+    const before = (await readdir(output)).sort();
+    const harness = codex();
+    const result = await invoke(["--base", base, "--head", head, "--output", output], harness);
+    expect(result.code).toBe(PANEL_EXIT_CODES.preflight);
+    expect(JSON.parse(result.stderr)).toMatchObject({ error: "REVIEWFN_OUTPUT_DIRECTORY_IN_USE", details: { directory: output, owner: path.join(output, ".panel-report-owner") } });
+    expect(harness.calls).toHaveLength(0);
+    expect(result.stdout).toBe("");
+    expect((await readdir(output)).sort()).toEqual(before);
+    expect(await readFile(path.join(output, "panel-report.json"), "utf8")).toBe("other-json");
+    expect((await readdir(path.join(root, ".reviewfn"))).sort()).toEqual(["config.json", "panel.json", "policy.json"]);
+    // Saving checks again under the store's lease: a directory claimed after preflight exits 1 and is left as it was.
+    expect((await invoke(["--base", base, "--head", head], codex())).code).toBe(PANEL_EXIT_CODES.complete);
+    const { report } = await stored();
+    const ownedArtifacts = await mkdtemp(path.join(tmpdir(), "reviewfn-cli-owned-")); owned.push(ownedArtifacts);
+    const saved = await savePanelRun(report, true, { ownedArtifacts, artifactsDirectory: path.join(root, ".reviewfn", "artifacts"), outputDirectory: output, reportDays: 30 });
+    expect(saved).toMatchObject({ exitCode: PANEL_EXIT_CODES.error, error: expect.objectContaining({ code: "REVIEWFN_OUTPUT_DIRECTORY_IN_USE" }) });
+    expect(saved.reportPath).toBeUndefined();
+    expect((await readdir(output)).sort()).toEqual(before);
   });
 
   it("exits 3 for an adapter outside the fixed table without loading any module for it", async () => {
@@ -333,7 +358,7 @@ describe("reviewfn panel exit codes", () => {
       const controller = new AbortController();
       const result = await savePanelRun(report, true, locations, controller.signal, new ScriptedStore(locations, hooks(controller)));
       expect([name, result.exitCode]).toEqual([name, exitCode]);
-      expect([name, (await readdir(locations.outputDirectory).catch(() => [])).sort()]).toEqual([name, saved ? ["panel-report.json", "panel-report.md"] : []]);
+      expect([name, (await readdir(locations.outputDirectory).catch(() => [])).sort()]).toEqual([name, saved ? [".panel-report-owner", "panel-report.json", "panel-report.md"] : []]);
       expect([name, (await readdir(locations.artifactsDirectory)).includes(`${id}.artifact`)]).toEqual([name, imported]);
     }
   });
