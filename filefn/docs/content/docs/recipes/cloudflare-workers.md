@@ -20,7 +20,12 @@ filefn's server imports Node built-ins (`crypto`, `events`, `Buffer`), so enable
   "main": "src/worker.ts",
   "compatibility_date": "2025-11-13",
   "compatibility_flags": ["nodejs_compat"],
-  "triggers": { "crons": ["*/15 * * * *"] }
+  "triggers": { "crons": ["*/15 * * * *"] },
+  // Only for queued processing (see below). Keep max_retries equal to the handler's maxRetries.
+  "queues": {
+    "producers": [{ "binding": "FILEFN_PROCESSING_QUEUE", "queue": "filefn-processing" }],
+    "consumers": [{ "queue": "filefn-processing", "max_retries": 3 }]
+  }
 }
 ```
 
@@ -37,6 +42,8 @@ interface Env {
   R2_BUCKET: string;
   R2_ACCESS_KEY_ID: string;
   R2_SECRET_ACCESS_KEY: string;
+  // Only for queued processing (see below).
+  FILEFN_PROCESSING_QUEUE: Queue;
 }
 
 function fileFnFor(env: Env, ctx: ExecutionContext) {
@@ -93,7 +100,7 @@ Without `runtime`, filefn behaves as on Node: processing starts on a `setImmedia
 
 ## Queued processing
 
-To run processing outside the request, bind a Cloudflare Queue and pass a producer as `processing.flowFn`. FileFn then enqueues a `filefn.processing` job when an upload completes. Import the producer from `@filefn/processing/queues/cloudflare`; that entry point has no dependencies, so the Worker does not bundle the image and OCR processors.
+To run processing outside the request, bind a Cloudflare Queue as a producer and a consumer (the `queues` entry in `wrangler.jsonc` above) and pass a producer as `processing.flowFn`. FileFn then enqueues a `filefn.processing` job when an upload completes. Import the producer from `@filefn/processing/queues/cloudflare`; that entry point has no dependencies, so the Worker does not bundle the image and OCR processors.
 
 ```ts
 import { createCloudflareFlowFnProvider } from "@filefn/processing/queues/cloudflare";
@@ -112,13 +119,13 @@ async queue(batch: MessageBatch, env: Env, ctx: ExecutionContext) {
 },
 ```
 
-`createProcessingJobHandler(fileFn)` runs the configured processors for each message and records artifacts through that FileFn instance. Artifacts and run rows are written once per job idempotency key; `processing.completed` is at least once, so overlapping deliveries of one job can each emit it, and a delivery that finds every processor already finished emits nothing. Each processor that finishes writes a run row (kind `filefn.processing-run`) after its artifacts, and a redelivered job skips processors that have one. Processors that share a name are told apart by their position among the processors with that name. Run rows have no stored object, and the artifact list, lookup and download operations never return them.
+`createProcessingJobHandler(fileFn)` runs the configured processors for each message and records artifacts through that FileFn instance. Artifacts and run rows are written once per job idempotency key. Each processor that finishes writes a run row (kind `filefn.processing-run`) after its artifacts, and a redelivered job skips processors that have one. `processing.completed` is at least once: once every processor has a run row, the job emits it and then records that it did in another run row. A delivery that fails or is evicted before that record emits it again on the next delivery, with `artifactsCreated` counting the job's artifacts across its deliveries. Overlapping deliveries of one job can each emit it, and a delivery that finds the completion recorded emits nothing. Processors that share a name are told apart by their position among the processors with that name. Run rows have no stored object, and the artifact list, lookup and download operations never return them.
 
-- A job whose file was deleted before the run is acknowledged and dropped. If the delete lands during the run, the job checks the version again after its writes: when the version is gone, it removes the rows it wrote for that version and their objects, and is dropped without `processing.completed`. A delete removes the file's version objects and releases their quota before it lists the file's artifacts, so a delete that fails later can be retried, and artifacts a job finished writing earlier are removed by the delete, even if the job already reported `processing.completed`. Neither removes an object that another file's version or artifact references with the same key in the same storage target.
+- A job whose file version is gone, before or after its writes, is acknowledged and dropped without `processing.completed`, once it has removed the rows left for that version and the objects they name. The rows are removed last, so a cleanup that fails (a reference scan or object delete error) keeps them and is retried, and the next delivery resumes it. An object this delivery uploaded before it wrote the object's row is removed best effort. A delete removes the file's version objects and releases their quota before it lists the file's artifacts, so a delete that fails later can be retried, and artifacts a job finished writing earlier are removed by the delete, even if the job already reported `processing.completed`. Neither removes an object that another file's version or artifact references with the same key in the same storage target.
 - A processor failure calls `message.retry()`. Set `maxRetries` to the consumer's `max_retries` (Cloudflare's default is 3): on the delivery whose `attempts` exceeds it, the handler emits `processing.failed` and acknowledges the message.
 - `retryDelaySeconds` (handler) and `delaySeconds` (producer) accept at most 43200, the 12-hour limit Cloudflare Queues sets on message delays; a larger value throws when the handler or producer is created.
 - A message body that is not a processing job is acknowledged and dropped. Optional fields over 512 characters (`requestId`, `jobId`, `idempotencyKey`) are ignored rather than rejected.
-- Each artifact's `metadata.processing` holds `{ processor, durationMs, idempotencyKey }`. FileFn reserves that key and overwrites a processor's own `processing` metadata.
+- Each artifact's `metadata.processing` holds `{ processor, durationMs, idempotencyKey, storageTarget }`. FileFn reserves that key and overwrites a processor's own `processing` metadata.
 
 ## Expired upload sessions
 

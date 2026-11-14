@@ -66,9 +66,13 @@ export interface ProcessingJob {
 
 /** Result of running one queued processing job. */
 export type ProcessingJobOutcome =
-  /** Every applicable processor succeeded; processors with a run recorded for this key were skipped. */
+  /**
+   * Every applicable processor succeeded and `processing.completed` was
+   * emitted; processors with a run recorded for this key were skipped.
+   * `artifactsCreated` counts the job's artifacts across its deliveries.
+   */
   | { status: 'completed'; artifactsCreated: number; skippedProcessors: ProcessorInstance[] }
-  /** Every applicable processor already has a run recorded for this idempotency key. */
+  /** Every applicable processor has a run recorded for this key and the job's completion was recorded. */
   | { status: 'duplicate' }
   /** Nothing to process: the body is not a job, or the file version no longer exists. */
   | { status: 'dropped'; reason: 'invalid-job' | 'version-deleted' }
@@ -100,13 +104,19 @@ export interface ArtifactProcessingMetadata {
   /** Wall-clock time the processor's `process` call took, in milliseconds. */
   durationMs: number;
   idempotencyKey: string;
+  /**
+   * Storage target the artifact object was written to. Cleanup of a deleted
+   * version uses it once the file row, and so its policy, is gone.
+   */
+  storageTarget: string;
 }
 
 /**
  * Kind of the `fileArtifacts` rows a processing job writes to record that one
  * processor finished for one idempotency key, including a run that produced
- * no artifacts. They have no stored object, and the artifact list, lookup and
- * download operations never return them.
+ * no artifacts, and that the job's `processing.completed` was emitted. They
+ * have no stored object, and the artifact list, lookup and download
+ * operations never return them.
  */
 export const PROCESSING_RUN_KIND = 'filefn.processing-run';
 
@@ -204,6 +214,27 @@ function processingRunIdFor(
   instance: ProcessorInstance,
 ): string {
   return derivedId('run', [PROCESSING_RUN_KIND, fileId, versionId, idempotencyKey, instance.processor, instance.instance]);
+}
+
+/**
+ * Derives the ID of the row that records that a job's `processing.completed`
+ * was emitted. Its parts have a different length from a processor run's, so
+ * no processor instance can derive it.
+ */
+function processingCompletionIdFor(fileId: string, versionId: string, idempotencyKey: string): string {
+  return derivedId('run', [PROCESSING_RUN_KIND, fileId, versionId, idempotencyKey]);
+}
+
+/** Artifacts a run row says its processor recorded. */
+function recordedArtifactCount(run: FileArtifactRecord | undefined): number {
+  const count = (run?.metadata?.processingRun as { artifactCount?: unknown } | undefined)?.artifactCount;
+  return typeof count === 'number' && Number.isFinite(count) ? count : 0;
+}
+
+/** Storage target a processing-written artifact row recorded for its object. */
+function recordedStorageTarget(row: FileArtifactRecord): string | undefined {
+  const target = (row.metadata?.processing as { storageTarget?: unknown } | undefined)?.storageTarget;
+  return typeof target === 'string' && target.length > 0 ? target : undefined;
 }
 
 function errorMessage(error: unknown): string {
@@ -601,14 +632,15 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       processor: processor.name,
       durationMs: run.durationMs,
       idempotencyKey,
+      storageTarget: target,
     };
     for (const artifact of run.result?.artifacts ?? []) {
       await recordArtifact(input, artifact, target, processing, writes);
     }
   }
 
-  /** IDs of the run rows recorded for one file version. */
-  async function findProcessingRuns(fileId: string, versionId: string): Promise<Set<string>> {
+  /** The run rows recorded for one file version, by ID. */
+  async function findProcessingRuns(fileId: string, versionId: string): Promise<Map<string, FileArtifactRecord>> {
     const runs = await db.findMany<FileArtifactRecord>({
       model: 'fileArtifacts',
       where: [
@@ -618,21 +650,18 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       ],
       namespace,
     });
-    return new Set(runs.map((run) => run.artifactId));
+    return new Map(runs.map((run) => [run.artifactId, run]));
   }
 
   /**
-   * Records that a processor finished for an idempotency key. It is written
-   * after the processor's artifacts, so a redelivery skips the processor only
-   * once its whole output is recorded.
+   * Creates one run-kind row. A concurrent delivery may have created the same
+   * row first, which counts as recorded.
    */
-  async function recordProcessingRun(
+  async function recordRunRow(
     input: Pick<ProcessorInput, 'fileId' | 'versionId'>,
-    idempotencyKey: string,
-    instance: ProcessorInstance,
-    details: { durationMs: number; artifactCount: number },
+    artifactId: string,
+    metadata: Record<string, unknown>,
   ): Promise<void> {
-    const artifactId = processingRunIdFor(input.fileId, input.versionId, idempotencyKey, instance);
     try {
       await db.create({
         model: 'fileArtifacts',
@@ -645,13 +674,12 @@ export function createProcessingService(config: ProcessingServiceConfig) {
           storageKey: `filefn/processing-runs/${artifactId}`,
           mimeType: 'application/json',
           size: 0,
-          metadata: { processingRun: { ...instance, idempotencyKey, ...details } },
+          metadata,
           createdAt: new Date().toISOString(),
         },
         namespace,
       });
     } catch (error) {
-      // A concurrent delivery recorded the same run first.
       const existing = await db.findOne<FileArtifactRecord>({
         model: 'fileArtifacts',
         where: [{ field: 'artifactId', operator: 'eq', value: artifactId }],
@@ -664,39 +692,75 @@ export function createProcessingService(config: ProcessingServiceConfig) {
   }
 
   /**
-   * Removes what processing left for a deleted version: its rows, and the
-   * objects this run uploaded or the rows named, unless another row still
-   * references the same object (deduplicated files can share storage keys).
-   * The rows go first, so of two cleanups racing over one object the later
-   * one sees no reference and deletes it.
+   * Removes what processing left for a deleted version. Its `fileArtifacts`
+   * rows are the cleanup journal: the objects they name go first, unless
+   * another row still references the same object (deduplicated files can share
+   * storage keys), and the rows go last. A failed reference scan or object
+   * delete throws with the rows kept, so the job is retried and its next
+   * delivery, which finds the version gone, resumes the cleanup. Objects this
+   * delivery uploaded without a row yet are removed best effort.
    */
   async function discardDeletedVersionOutput(
     input: Pick<ProcessorInput, 'fileId' | 'versionId'>,
-    target: string,
     writes: ProcessingWrites,
+    runTarget?: string,
   ): Promise<void> {
-    const where = [
-      { field: 'fileId', operator: 'eq' as const, value: input.fileId },
-      { field: 'versionId', operator: 'eq' as const, value: input.versionId },
-    ];
-    const rows = await db.findMany<FileArtifactRecord>({ model: 'fileArtifacts', where, namespace });
-    const refs = new Set([...writes.uploadedKeys].map((key) => storageRef(target, key)));
+    const rows = await db.findMany<FileArtifactRecord>({
+      model: 'fileArtifacts',
+      where: [
+        { field: 'fileId', operator: 'eq', value: input.fileId },
+        { field: 'versionId', operator: 'eq', value: input.versionId },
+      ],
+      namespace,
+    });
+    if (rows.length === 0 && writes.uploadedKeys.size === 0) {
+      return;
+    }
+    const file = runTarget === undefined
+      ? await db.findOne<FileRecord>({
+        model: 'files',
+        where: [{ field: 'fileId', operator: 'eq', value: input.fileId }],
+        namespace,
+      })
+      : null;
+    const fallbackTarget = runTarget ?? getArtifactStorageTarget(file ?? { policy: '' });
+    const journaled = new Set<string>();
     for (const row of rows) {
       if (row.kind !== PROCESSING_RUN_KIND) {
-        refs.add(storageRef(target, row.storageKey));
+        journaled.add(storageRef(recordedStorageTarget(row) ?? fallbackTarget, row.storageKey));
       }
     }
-    await db.deleteMany({ model: 'fileArtifacts', where, namespace });
-    const referenced = await findReferencedStorageRefs({ db, namespace, policies }, refs);
-    for (const ref of refs) {
-      if (referenced.has(ref)) {
-        continue;
-      }
-      try {
+    const unjournaled = new Set(
+      [...writes.uploadedKeys].map((key) => storageRef(fallbackTarget, key)).filter((ref) => !journaled.has(ref)),
+    );
+    // Only this version's rows are excluded: another version may share a key.
+    const referenced = await findReferencedStorageRefs(
+      { db, namespace, policies },
+      new Set([...journaled, ...unjournaled]),
+      input,
+    );
+    for (const ref of journaled) {
+      if (!referenced.has(ref)) {
         await storage.deleteObject(parseStorageRef(ref));
-      } catch {
-        // Best effort, as in deleteFile: the object may never have been written.
       }
+    }
+    for (const ref of unjournaled) {
+      if (!referenced.has(ref)) {
+        try {
+          await storage.deleteObject(parseStorageRef(ref));
+        } catch {
+          // Best effort: the upload may never have completed.
+        }
+      }
+    }
+    // Only the rows listed above: a row written since then names an object
+    // this cleanup has not considered, so it stays for the next cleanup.
+    for (const row of rows) {
+      await db.delete({
+        model: 'fileArtifacts',
+        where: [{ field: 'artifactId', operator: 'eq', value: row.artifactId }],
+        namespace,
+      });
     }
   }
 
@@ -722,6 +786,8 @@ export function createProcessingService(config: ProcessingServiceConfig) {
   ): Promise<ProcessingJobOutcome> {
     const found = await findVersion(job.fileId, job.versionId);
     if (!found) {
+      // An earlier delivery may have written rows before it saw the delete.
+      await discardDeletedVersionOutput(job, emptyWrites());
       return { status: 'dropped', reason: 'version-deleted' };
     }
     const { file, version } = found;
@@ -743,11 +809,12 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     }
 
     const recordedRuns = await findProcessingRuns(input.fileId, input.versionId);
-    const isRecorded = (entry: ProcessorEntry) =>
-      recordedRuns.has(processingRunIdFor(input.fileId, input.versionId, idempotencyKey, entry.instance));
-    const pending = applicable.filter((entry) => !isRecorded(entry));
-    const skippedProcessors = applicable.filter(isRecorded).map((entry) => entry.instance);
-    if (pending.length === 0) {
+    const runIdFor = (entry: ProcessorEntry) =>
+      processingRunIdFor(input.fileId, input.versionId, idempotencyKey, entry.instance);
+    const completionId = processingCompletionIdFor(input.fileId, input.versionId, idempotencyKey);
+    const pending = applicable.filter((entry) => !recordedRuns.has(runIdFor(entry)));
+    const skipped = applicable.filter((entry) => recordedRuns.has(runIdFor(entry)));
+    if (pending.length === 0 && recordedRuns.has(completionId)) {
       return { status: 'duplicate' };
     }
 
@@ -756,7 +823,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     const processingErrors: string[] = [];
     const writes = emptyWrites();
     const dropDeletedVersion = async (): Promise<ProcessingJobOutcome> => {
-      await discardDeletedVersionOutput(input, artifactStorageTarget, writes);
+      await discardDeletedVersionOutput(input, writes, artifactStorageTarget);
       return { status: 'dropped', reason: 'version-deleted' };
     };
 
@@ -774,9 +841,13 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       const recordedBefore = writes.artifactsRecorded;
       try {
         await recordArtifacts(input, entry.processor, run, artifactStorageTarget, idempotencyKey, writes);
-        await recordProcessingRun(input, idempotencyKey, entry.instance, {
-          durationMs: run.durationMs,
-          artifactCount: writes.artifactsRecorded - recordedBefore,
+        await recordRunRow(input, runIdFor(entry), {
+          processingRun: {
+            ...entry.instance,
+            idempotencyKey,
+            durationMs: run.durationMs,
+            artifactCount: writes.artifactsRecorded - recordedBefore,
+          },
         });
       } catch (error) {
         processingErrors.push(`${entry.label}: ${errorMessage(error)}`);
@@ -793,15 +864,34 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       return { status: 'retry', errors: processingErrors };
     }
 
+    // Every processor has its run recorded; report the job's whole output,
+    // including the processors earlier deliveries ran.
+    const artifactsCreated = skipped.reduce(
+      (total, entry) => total + recordedArtifactCount(recordedRuns.get(runIdFor(entry))),
+      writes.artifactsRecorded,
+    );
     events.emit('processing.completed' as any, {
       type: 'processing.completed',
       timestamp: new Date().toISOString(),
       requestId: job.requestId,
       fileId: input.fileId,
       versionId: input.versionId,
-      artifactsCreated: writes.artifactsRecorded,
+      artifactsCreated,
     });
-    return { status: 'completed', artifactsCreated: writes.artifactsRecorded, skippedProcessors };
+    // Recorded only after the event, so a delivery that fails before this
+    // point leaves the job to notify on its next delivery.
+    try {
+      await recordRunRow(input, completionId, { processingCompleted: { idempotencyKey, artifactsCreated } });
+    } catch (error) {
+      // The event went out; a later delivery of this job may emit it again.
+      logger?.warn('processing job completion not recorded', {
+        requestId: job.requestId,
+        fileId: input.fileId,
+        versionId: input.versionId,
+        error: errorMessage(error),
+      });
+    }
+    return { status: 'completed', artifactsCreated, skippedProcessors: skipped.map((entry) => entry.instance) };
   }
 
   return {

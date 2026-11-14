@@ -741,7 +741,7 @@ export function createFileService(config: FileServiceConfig) {
       const versionRefsReferencedElsewhere = await findReferencedStorageRefs(
         { db, namespace, policies },
         new Set(versionBytesByStorageRef.keys()),
-        fileId,
+        { fileId },
       );
 
       await db.deleteMany({
@@ -784,7 +784,7 @@ export function createFileService(config: FileServiceConfig) {
       const artifactRefsReferencedElsewhere = await findReferencedStorageRefs(
         { db, namespace, policies },
         artifactStorageRefs,
-        fileId,
+        { fileId },
       );
 
       await db.deleteMany({

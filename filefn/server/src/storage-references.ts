@@ -24,12 +24,13 @@ export interface StorageReferenceLookup {
  * Returns the refs among `candidates` that a `fileVersions` or `fileArtifacts`
  * row still references. Each row's target comes from its file's policy: the
  * storage target for a version, the artifact storage target for an artifact.
- * Rows of `excludeFileId` are ignored.
+ * Rows of the `exclude` file are ignored; with a `versionId`, only that
+ * version's rows are.
  */
 export async function findReferencedStorageRefs(
   lookup: StorageReferenceLookup,
   candidates: ReadonlySet<string>,
-  excludeFileId?: string,
+  exclude?: { fileId: string; versionId?: string },
 ): Promise<Set<string>> {
   const { db, namespace, policies } = lookup;
   const referenced = new Set<string>();
@@ -37,10 +38,15 @@ export async function findReferencedStorageRefs(
     return referenced;
   }
 
-  const allVersions = await db.findMany<{ fileId: string; storageKey: string }>({
+  const isExcluded = (row: { fileId: string; versionId: string }) =>
+    exclude !== undefined &&
+    row.fileId === exclude.fileId &&
+    (exclude.versionId === undefined || row.versionId === exclude.versionId);
+
+  const allVersions = await db.findMany<{ fileId: string; versionId: string; storageKey: string }>({
     model: 'fileVersions',
     where: [],
-    select: ['fileId', 'storageKey'],
+    select: ['fileId', 'versionId', 'storageKey'],
     namespace,
   });
   const allFiles = await db.findMany<{ fileId: string; policy: string }>({
@@ -54,20 +60,20 @@ export async function findReferencedStorageRefs(
 
   for (const version of allVersions) {
     const ref = storageRef(resolveStorageTarget(policyFor(version.fileId)), version.storageKey);
-    if (version.fileId !== excludeFileId && candidates.has(ref)) {
+    if (!isExcluded(version) && candidates.has(ref)) {
       referenced.add(ref);
     }
   }
 
-  const allArtifacts = await db.findMany<{ fileId: string; storageKey: string }>({
+  const allArtifacts = await db.findMany<{ fileId: string; versionId: string; storageKey: string }>({
     model: 'fileArtifacts',
     where: [],
-    select: ['fileId', 'storageKey'],
+    select: ['fileId', 'versionId', 'storageKey'],
     namespace,
   });
   for (const artifact of allArtifacts) {
     const ref = storageRef(resolveArtifactStorageTarget(policyFor(artifact.fileId)), artifact.storageKey);
-    if (artifact.fileId !== excludeFileId && candidates.has(ref)) {
+    if (!isExcluded(artifact) && candidates.has(ref)) {
       referenced.add(ref);
     }
   }

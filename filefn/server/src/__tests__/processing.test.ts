@@ -368,6 +368,7 @@ describe('ProcessingService', () => {
         processor: 'thumbnail',
         durationMs: expect.any(Number),
         idempotencyKey: `processing:${uploadResult.fileId}:${uploadResult.versionId}:thumbnail`,
+        storageTarget: 'durable',
       },
     });
     expect(processingCompleted).toHaveBeenCalledWith(expect.objectContaining({
