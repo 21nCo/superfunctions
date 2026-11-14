@@ -520,7 +520,7 @@ export { createLogger, redactSecrets } from './observability/logger.js';
 export type { Logger, LogContext, LoggerOptions } from './observability/logger.js';
 
 // Processing exports
-export { createProcessingService, PROCESSING_QUEUE_NAME } from './processing/service.js';
+export { createProcessingService, PROCESSING_QUEUE_NAME, PROCESSING_RUN_KIND } from './processing/service.js';
 export type {
   ArtifactProcessingMetadata,
   ProcessingJob,

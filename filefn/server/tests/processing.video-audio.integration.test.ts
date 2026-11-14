@@ -28,7 +28,7 @@ function createMockDb(): Adapter {
       const records = storage.get(key);
       if (!records) return null;
       for (const record of records.values()) {
-        const match = where.every((w: any) => (record as any)[w.field] === w.value);
+        const match = where.every((w: any) => (w.operator === 'ne' ? (record as any)[w.field] !== w.value : (record as any)[w.field] === w.value));
         if (match) return record as any;
       }
       return null;
@@ -43,7 +43,7 @@ function createMockDb(): Adapter {
       }
       const filtered = [];
       for (const record of records.values()) {
-        const match = where.every((w: any) => (record as any)[w.field] === w.value);
+        const match = where.every((w: any) => (w.operator === 'ne' ? (record as any)[w.field] !== w.value : (record as any)[w.field] === w.value));
         if (match) filtered.push(record);
       }
       return filtered as any[];

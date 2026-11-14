@@ -65,9 +65,9 @@ export interface ProcessingJob {
 
 /** Result of running one queued processing job. */
 export type ProcessingJobOutcome =
-  /** Every applicable processor succeeded; processors already recorded for this key were skipped. */
+  /** Every applicable processor succeeded; processors with a run recorded for this key were skipped. */
   | { status: 'completed'; artifactsCreated: number; skippedProcessors: string[] }
-  /** Every applicable processor was already recorded for this idempotency key. */
+  /** Every applicable processor already has a run recorded for this idempotency key. */
   | { status: 'duplicate' }
   /** Nothing to process: the body is not a job, or the file version no longer exists. */
   | { status: 'dropped'; reason: 'invalid-job' | 'version-deleted' }
@@ -89,9 +89,15 @@ export interface ArtifactProcessingMetadata {
   /** Wall-clock time the processor's `process` call took, in milliseconds. */
   durationMs: number;
   idempotencyKey: string;
-  /** Number of artifacts the processor produced in the same run. */
-  artifactCount: number;
 }
+
+/**
+ * Kind of the `fileArtifacts` rows a processing job writes to record that one
+ * processor finished for one idempotency key, including a run that produced
+ * no artifacts. They have no stored object, and the artifact list, lookup and
+ * download operations never return them.
+ */
+export const PROCESSING_RUN_KIND = 'filefn.processing-run';
 
 export interface FlowFnQueue {
   name: string;
@@ -160,18 +166,27 @@ interface FileVersionRecord {
 /** Crockford base32, lowercase, matching the alphabet of generated FileFn IDs. */
 const ID_ALPHABET = '0123456789abcdefghjkmnpqrstvwxyz';
 
+function derivedId(prefix: string, parts: string[]): string {
+  const digest = createHash('sha256').update(parts.join('\u0000')).digest();
+  let suffix = '';
+  for (let index = 0; index < 20; index += 1) {
+    suffix += ID_ALPHABET[digest[index] & 31];
+  }
+  return `${prefix}_${suffix}`;
+}
+
 /**
  * Derives the artifact ID for one (file, version, kind). Concurrent deliveries
  * of the same job then create the same row, so the unique `artifactId` makes
  * the second insert fail instead of adding a duplicate artifact.
  */
 function artifactIdFor(fileId: string, versionId: string, kind: string): string {
-  const digest = createHash('sha256').update(`${fileId}\u0000${versionId}\u0000${kind}`).digest();
-  let suffix = '';
-  for (let index = 0; index < 20; index += 1) {
-    suffix += ID_ALPHABET[digest[index] & 31];
-  }
-  return `art_${suffix}`;
+  return derivedId('art', [fileId, versionId, kind]);
+}
+
+/** Derives the ID of the run row for one processor and idempotency key. */
+function processingRunIdFor(fileId: string, versionId: string, idempotencyKey: string, processorKey: string): string {
+  return derivedId('run', [PROCESSING_RUN_KIND, fileId, versionId, idempotencyKey, processorKey]);
 }
 
 function errorMessage(error: unknown): string {
@@ -184,8 +199,9 @@ function isJobField(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= MAX_JOB_FIELD_LENGTH;
 }
 
-function isOptionalJobField(value: unknown): value is string | undefined {
-  return value === undefined || isJobField(value);
+/** An optional job field that fails the bound is left out instead of invalidating the job. */
+function optionalJobField(value: unknown): string | undefined {
+  return isJobField(value) ? value : undefined;
 }
 
 function parseProcessingJob(body: unknown): Omit<ProcessingJob, 'idempotencyKey'> & { idempotencyKey?: string } | null {
@@ -196,49 +212,43 @@ function parseProcessingJob(body: unknown): Omit<ProcessingJob, 'idempotencyKey'
   if (!isJobField(job.fileId) || !isJobField(job.versionId)) {
     return null;
   }
-  if (!isOptionalJobField(job.idempotencyKey) || !isOptionalJobField(job.jobId) || !isOptionalJobField(job.requestId)) {
-    return null;
-  }
   return {
     fileId: job.fileId,
     versionId: job.versionId,
-    idempotencyKey: job.idempotencyKey,
-    jobId: job.jobId,
-    requestId: job.requestId,
+    idempotencyKey: optionalJobField(job.idempotencyKey),
+    jobId: optionalJobField(job.jobId),
+    requestId: optionalJobField(job.requestId),
   };
 }
 
-function readProcessingMetadata(artifact: FileArtifactRecord): Partial<ArtifactProcessingMetadata> | undefined {
-  const value = artifact.metadata?.processing;
-  return typeof value === 'object' && value !== null ? value as Partial<ArtifactProcessingMetadata> : undefined;
+/** A configured processor and the key that identifies it in run records. */
+interface ProcessorEntry {
+  processor: Processor;
+  key: string;
 }
 
 /**
- * Names of processors whose complete artifact set is already recorded for
- * `idempotencyKey`. A processor with fewer recorded artifacts than it
- * produced (an interrupted earlier delivery) is not complete.
+ * Keys each configured processor by its name. Processors that share a name
+ * (gzip and deflate compression are both `compression`) are told apart by
+ * their order: `compression`, `compression#2`.
  */
-function completedProcessors(artifacts: FileArtifactRecord[], idempotencyKey: string): Set<string> {
-  const recorded = new Map<string, { count: number; expected: number }>();
-  for (const artifact of artifacts) {
-    const processing = readProcessingMetadata(artifact);
-    if (!processing || processing.idempotencyKey !== idempotencyKey || typeof processing.processor !== 'string') {
-      continue;
-    }
-    const entry = recorded.get(processing.processor) ?? { count: 0, expected: Number.POSITIVE_INFINITY };
-    entry.count += 1;
-    if (typeof processing.artifactCount === 'number') {
-      entry.expected = Math.min(entry.expected, processing.artifactCount);
-    }
-    recorded.set(processing.processor, entry);
-  }
-  const complete = new Set<string>();
-  for (const [processor, entry] of recorded) {
-    if (entry.count >= entry.expected) {
-      complete.add(processor);
-    }
-  }
-  return complete;
+function processorEntriesFor(processors: Processor[]): ProcessorEntry[] {
+  const seen = new Map<string, number>();
+  return processors.map((processor) => {
+    const occurrence = (seen.get(processor.name) ?? 0) + 1;
+    seen.set(processor.name, occurrence);
+    return { processor, key: occurrence === 1 ? processor.name : `${processor.name}#${occurrence}` };
+  });
+}
+
+/** What one processing run wrote, kept even when a later write fails. */
+interface ProcessingWrites {
+  artifactsRecorded: number;
+  uploadedKeys: Set<string>;
+}
+
+function emptyWrites(): ProcessingWrites {
+  return { artifactsRecorded: 0, uploadedKeys: new Set<string>() };
 }
 
 function supportsProcessor(processor: Processor, mimeType: string): boolean {
@@ -248,9 +258,19 @@ function supportsProcessor(processor: Processor, mimeType: string): boolean {
   return processor.supportedMimeTypes.includes(mimeType);
 }
 
+/**
+ * The job's idempotency key: the file version and its sorted processor names.
+ * A processor list too long for the job field bound is replaced by its hash,
+ * so the consumer never rejects a key FileFn enqueued.
+ */
 function buildProcessingIdempotencyKey(fileId: string, versionId: string, processors: Processor[]): string {
   const processorKey = processors.map((processor) => processor.name).sort().join(',');
-  return `processing:${fileId}:${versionId}:${processorKey}`;
+  const key = `processing:${fileId}:${versionId}:${processorKey}`;
+  if (key.length <= MAX_JOB_FIELD_LENGTH) {
+    return key;
+  }
+  const digest = createHash('sha256').update(processorKey).digest('hex');
+  return `processing:${fileId}:${versionId}:sha256:${digest}`;
 }
 
 function isGrantExpired(expiresAt: string | null | undefined): boolean {
@@ -278,6 +298,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     maxFileBytes = 50 * 1024 * 1024,
   } = config;
   const background = config.background ?? createBackgroundScheduler(undefined, logger);
+  const processorEntries = processorEntriesFor(processors);
 
   const QUEUE_NAME = PROCESSING_QUEUE_NAME;
 
@@ -387,7 +408,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       namespace,
     });
 
-    if (!artifact) {
+    if (!artifact || artifact.kind === PROCESSING_RUN_KIND) {
       throw errors.notFound('Artifact');
     }
 
@@ -457,16 +478,21 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     }
   }
 
-  /** Uploads one artifact and creates or updates its row for (file, version, kind). */
+  /**
+   * Uploads one artifact and creates or updates its row for (file, version,
+   * kind), noting each write in `writes` as it lands.
+   */
   async function recordArtifact(
     input: Pick<ProcessorInput, 'fileId' | 'versionId'>,
     artifact: ProcessorOutputArtifact,
     target: string,
     processing: ArtifactProcessingMetadata,
+    writes: ProcessingWrites,
   ): Promise<void> {
     if (!storage.openUploadStream) {
       throw new Error('Storage adapter does not support streaming uploads');
     }
+    writes.uploadedKeys.add(artifact.storageKey);
     const stream = await storage.openUploadStream({
       key: artifact.storageKey,
       target,
@@ -498,6 +524,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         data: fields,
         namespace,
       });
+      writes.artifactsRecorded += 1;
       return;
     }
 
@@ -532,27 +559,129 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         namespace,
       });
     }
+    writes.artifactsRecorded += 1;
   }
 
-  /** Records every artifact of one successful processor run; returns how many. */
+  /**
+   * Records every artifact of one successful processor run. A failed write
+   * throws; `writes` still counts the artifacts recorded before it.
+   */
   async function recordArtifacts(
     input: Pick<ProcessorInput, 'fileId' | 'versionId'>,
     processor: Processor,
     run: { result?: ProcessorResult; durationMs: number },
     target: string,
     idempotencyKey: string,
-  ): Promise<number> {
-    const artifacts = run.result?.artifacts ?? [];
+    writes: ProcessingWrites,
+  ): Promise<void> {
     const processing: ArtifactProcessingMetadata = {
       processor: processor.name,
       durationMs: run.durationMs,
       idempotencyKey,
-      artifactCount: artifacts.length,
     };
-    for (const artifact of artifacts) {
-      await recordArtifact(input, artifact, target, processing);
+    for (const artifact of run.result?.artifacts ?? []) {
+      await recordArtifact(input, artifact, target, processing, writes);
     }
-    return artifacts.length;
+  }
+
+  /** IDs of the run rows recorded for one file version. */
+  async function findProcessingRuns(fileId: string, versionId: string): Promise<Set<string>> {
+    const runs = await db.findMany<FileArtifactRecord>({
+      model: 'fileArtifacts',
+      where: [
+        { field: 'fileId', operator: 'eq', value: fileId },
+        { field: 'versionId', operator: 'eq', value: versionId },
+        { field: 'kind', operator: 'eq', value: PROCESSING_RUN_KIND },
+      ],
+      namespace,
+    });
+    return new Set(runs.map((run) => run.artifactId));
+  }
+
+  /**
+   * Records that a processor finished for an idempotency key. It is written
+   * after the processor's artifacts, so a redelivery skips the processor only
+   * once its whole output is recorded.
+   */
+  async function recordProcessingRun(
+    input: Pick<ProcessorInput, 'fileId' | 'versionId'>,
+    idempotencyKey: string,
+    processorKey: string,
+    details: { durationMs: number; artifactCount: number },
+  ): Promise<void> {
+    const artifactId = processingRunIdFor(input.fileId, input.versionId, idempotencyKey, processorKey);
+    try {
+      await db.create({
+        model: 'fileArtifacts',
+        data: {
+          artifactId,
+          fileId: input.fileId,
+          versionId: input.versionId,
+          kind: PROCESSING_RUN_KIND,
+          // No object is stored under this key.
+          storageKey: `filefn/processing-runs/${artifactId}`,
+          mimeType: 'application/json',
+          size: 0,
+          metadata: { processingRun: { processor: processorKey, idempotencyKey, ...details } },
+          createdAt: new Date().toISOString(),
+        },
+        namespace,
+      });
+    } catch (error) {
+      // A concurrent delivery recorded the same run first.
+      const existing = await db.findOne<FileArtifactRecord>({
+        model: 'fileArtifacts',
+        where: [{ field: 'artifactId', operator: 'eq', value: artifactId }],
+        namespace,
+      });
+      if (!existing) {
+        throw error;
+      }
+    }
+  }
+
+  async function isStorageKeyReferenced(storageKey: string): Promise<boolean> {
+    const where = [{ field: 'storageKey', operator: 'eq' as const, value: storageKey }];
+    const artifacts = await db.findMany<FileArtifactRecord>({ model: 'fileArtifacts', where, limit: 1, namespace });
+    if (artifacts.length > 0) {
+      return true;
+    }
+    const versions = await db.findMany<FileVersionRecord>({ model: 'fileVersions', where, limit: 1, namespace });
+    return versions.length > 0;
+  }
+
+  /**
+   * Removes what processing left for a deleted version: its rows, and the
+   * objects this run uploaded or the rows named, unless another row still
+   * references them (deduplicated files can share storage keys).
+   */
+  async function discardDeletedVersionOutput(
+    input: Pick<ProcessorInput, 'fileId' | 'versionId'>,
+    target: string,
+    writes: ProcessingWrites,
+  ): Promise<void> {
+    const where = [
+      { field: 'fileId', operator: 'eq' as const, value: input.fileId },
+      { field: 'versionId', operator: 'eq' as const, value: input.versionId },
+    ];
+    const rows = await db.findMany<FileArtifactRecord>({ model: 'fileArtifacts', where, namespace });
+    const storageKeys = new Set(writes.uploadedKeys);
+    for (const row of rows) {
+      if (row.kind !== PROCESSING_RUN_KIND) {
+        storageKeys.add(row.storageKey);
+      }
+    }
+    await db.deleteMany({ model: 'fileArtifacts', where, namespace });
+    for (const storageKey of storageKeys) {
+      if (await isStorageKeyReferenced(storageKey)) {
+        continue;
+      }
+      try {
+        await storage.deleteObject({ key: storageKey, target });
+      } catch {
+        // Best effort, as in deleteFile: the object may never have been written.
+      }
+    }
   }
 
   async function findVersion(fileId: string, versionId: string): Promise<{ file: FileRecord; version: FileVersionRecord } | null> {
@@ -591,46 +720,57 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       tenantId: file.tenantId ?? undefined,
     };
     const idempotencyKey = job.idempotencyKey ?? buildProcessingIdempotencyKey(input.fileId, input.versionId, processors);
-    const applicableProcessors = processors.filter((processor) => supportsProcessor(processor, input.mimeType));
+    const applicable = processorEntries.filter((entry) => supportsProcessor(entry.processor, input.mimeType));
+    if (applicable.length === 0) {
+      // As runProcessing does, a version no processor applies to completes without an event.
+      return { status: 'completed', artifactsCreated: 0, skippedProcessors: [] };
+    }
 
-    const recorded = await db.findMany<FileArtifactRecord>({
-      model: 'fileArtifacts',
-      where: [
-        { field: 'fileId', operator: 'eq', value: input.fileId },
-        { field: 'versionId', operator: 'eq', value: input.versionId },
-      ],
-      namespace,
-    });
-    const complete = completedProcessors(recorded, idempotencyKey);
-    const pending = applicableProcessors.filter((processor) => !complete.has(processor.name));
-    const skippedProcessors = applicableProcessors
-      .filter((processor) => complete.has(processor.name))
-      .map((processor) => processor.name);
-    if (applicableProcessors.length > 0 && pending.length === 0) {
+    const recordedRuns = await findProcessingRuns(input.fileId, input.versionId);
+    const isRecorded = (entry: ProcessorEntry) =>
+      recordedRuns.has(processingRunIdFor(input.fileId, input.versionId, idempotencyKey, entry.key));
+    const pending = applicable.filter((entry) => !isRecorded(entry));
+    const skippedProcessors = applicable.filter(isRecorded).map((entry) => entry.key);
+    if (pending.length === 0) {
       return { status: 'duplicate' };
     }
 
     const getData = createSourceReader(input.storageKey, getFileStorageTarget(file));
     const artifactStorageTarget = getArtifactStorageTarget(file);
     const processingErrors: string[] = [];
-    let artifactsCreated = 0;
+    const writes = emptyWrites();
+    const dropDeletedVersion = async (): Promise<ProcessingJobOutcome> => {
+      await discardDeletedVersionOutput(input, artifactStorageTarget, writes);
+      return { status: 'dropped', reason: 'version-deleted' };
+    };
 
-    for (const processor of pending) {
-      const run = await executeProcessor(processor, input, getData);
+    for (const entry of pending) {
+      const run = await executeProcessor(entry.processor, input, getData);
       // The version may have been deleted while the processor ran; its source
       // read then fails too, which is not a failure worth retrying.
       if (!(await findVersion(input.fileId, input.versionId))) {
-        return { status: 'dropped', reason: 'version-deleted' };
+        return dropDeletedVersion();
       }
       if (!run.result) {
-        processingErrors.push(`${processor.name}: ${run.error ?? 'processor reported failure'}`);
+        processingErrors.push(`${entry.key}: ${run.error ?? 'processor reported failure'}`);
         continue;
       }
+      const recordedBefore = writes.artifactsRecorded;
       try {
-        artifactsCreated += await recordArtifacts(input, processor, run, artifactStorageTarget, idempotencyKey);
+        await recordArtifacts(input, entry.processor, run, artifactStorageTarget, idempotencyKey, writes);
+        await recordProcessingRun(input, idempotencyKey, entry.key, {
+          durationMs: run.durationMs,
+          artifactCount: writes.artifactsRecorded - recordedBefore,
+        });
       } catch (error) {
-        processingErrors.push(`${processor.name}: ${errorMessage(error)}`);
+        processingErrors.push(`${entry.key}: ${errorMessage(error)}`);
       }
+    }
+
+    // A delete that ran during an upload or row write would leave this run's
+    // rows and objects behind for a version that no longer exists.
+    if (!(await findVersion(input.fileId, input.versionId))) {
+      return dropDeletedVersion();
     }
 
     if (processingErrors.length > 0) {
@@ -643,9 +783,9 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       requestId: job.requestId,
       fileId: input.fileId,
       versionId: input.versionId,
-      artifactsCreated,
+      artifactsCreated: writes.artifactsRecorded,
     });
-    return { status: 'completed', artifactsCreated, skippedProcessors };
+    return { status: 'completed', artifactsCreated: writes.artifactsRecorded, skippedProcessors };
   }
 
   return {
@@ -690,7 +830,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
               fileName: input.fileName,
               tenantId: input.tenantId,
               idempotencyKey: buildProcessingIdempotencyKey(input.fileId, input.versionId, processors),
-              requestId: ctx.requestId,
+              requestId: optionalJobField(ctx.requestId),
             } satisfies ProcessingJob);
             return { enqueued: true, jobId: result.jobId };
           } catch {
@@ -756,11 +896,14 @@ export function createProcessingService(config: ProcessingServiceConfig) {
           }
           continue;
         }
+        const writes = emptyWrites();
         try {
-          artifactsCreated += await recordArtifacts(input, processor, run, artifactStorageTarget, idempotencyKey);
+          await recordArtifacts(input, processor, run, artifactStorageTarget, idempotencyKey, writes);
         } catch (error) {
           processingErrors.push(`${processor.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
+        // Artifacts written before a failed write still count, as they did before.
+        artifactsCreated += writes.artifactsRecorded;
       }
 
       events.emit('processing.completed' as any, {
@@ -777,8 +920,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
 
     /**
      * Runs one queued processing job: the processors that apply to the job's
-     * file version and have no complete artifact set recorded for the job's
-     * idempotency key. Never throws; the outcome tells the queue consumer
+     * file version and have no run recorded for the job's idempotency key. Never throws; the outcome tells the queue consumer
      * whether to acknowledge or redeliver the message.
      */
     async processJob(body: unknown, delivery: ProcessingJobDelivery): Promise<ProcessingJobOutcome> {
@@ -835,7 +977,10 @@ export function createProcessingService(config: ProcessingServiceConfig) {
 
       const artifacts = await db.findMany<FileArtifactRecord>({
         model: 'fileArtifacts',
-        where: [{ field: 'fileId', operator: 'eq', value: fileId }],
+        where: [
+          { field: 'fileId', operator: 'eq', value: fileId },
+          { field: 'kind', operator: 'ne', value: PROCESSING_RUN_KIND },
+        ],
         orderBy: [
           { field: 'createdAt', direction: 'desc' },
           { field: 'artifactId', direction: 'asc' },
@@ -867,7 +1012,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         namespace,
       });
 
-      if (!artifact) {
+      if (!artifact || artifact.kind === PROCESSING_RUN_KIND) {
         throw errors.notFound('Artifact');
       }
 

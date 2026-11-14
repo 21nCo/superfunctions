@@ -69,10 +69,12 @@ function normalizeAttempts(attempts: number | undefined): number {
 /**
  * Creates the consumer for FileFn's `filefn.processing` queue. It runs the
  * FileFn instance's configured processors for one job and records artifacts
- * through that instance's services, once per job idempotency key: a
- * redelivered job skips processors whose artifacts are already recorded.
+ * through that instance's services, once per job idempotency key: each
+ * processor that finishes records a run (kind `filefn.processing-run`) after
+ * its artifacts, and a redelivered job skips processors with a recorded run.
  *
- * A job whose file version was deleted is dropped. A processor failure asks
+ * A job whose file version was deleted, before or during the run, is dropped
+ * and leaves no artifacts for that version. A processor failure asks
  * the queue to retry until the last delivery (see `maxRetries`), which records
  * `processing.failed`.
  */

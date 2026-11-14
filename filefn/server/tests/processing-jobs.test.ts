@@ -10,6 +10,7 @@ import {
   type Processor,
   type ProcessorInput,
   type ProcessingQueueMessage,
+  PROCESSING_RUN_KIND,
 } from '../src/index.js';
 import { createMemoryStorage } from './workers/memory-storage.js';
 
@@ -40,7 +41,13 @@ interface ProcessorSpy extends Processor {
 
 function textProcessor(
   name: string,
-  options: { kinds?: string[]; fail?: (call: number) => Error | string | null; delayMs?: number; gate?: Promise<void> } = {},
+  options: {
+    kinds?: string[];
+    fail?: (call: number) => Error | string | null;
+    delayMs?: number;
+    gate?: Promise<void>;
+    storageKeyFor?: (input: ProcessorInput, kind: string) => string;
+  } = {},
 ): ProcessorSpy {
   const inputs: ProcessorInput[] = [];
   const kinds = options.kinds ?? [name];
@@ -62,7 +69,7 @@ function textProcessor(
           kind,
           data: new TextEncoder().encode(`${kind}:${source.toUpperCase()}`),
           mimeType: 'text/plain',
-          storageKey: `${input.storageKey}.${kind}`,
+          storageKey: options.storageKeyFor?.(input, kind) ?? `${input.storageKey}.${kind}`,
           metadata: { source: name },
         })),
       };
@@ -187,8 +194,7 @@ describe('processing jobs', () => {
       processing: {
         processor: 'uppercase',
         durationMs: expect.any(Number),
-        idempotencyKey: `processing:${fileId}:${versionId}:uppercase`,
-        artifactCount: 1,
+        idempotencyKey: queue.jobs[0].idempotencyKey,
       },
     });
     expect((artifacts[0].metadata as any).processing.durationMs).toBeGreaterThanOrEqual(25);
@@ -381,6 +387,210 @@ describe('processing jobs', () => {
     }
     expect(await handler.handle({ versionId: 'ver_1' })).toEqual({ status: 'dropped', reason: 'invalid-job' });
     expect(processor.inputs).toHaveLength(0);
+  });
+
+  it('runs each of two processors that share a name until both have recorded their output', async () => {
+    // The bundled gzip and deflate compression processors are both named `compression`.
+    const gzip = textProcessor('compression', { kinds: ['compressed-gzip'] });
+    const deflate = textProcessor('compression', {
+      kinds: ['compressed-deflate'],
+      fail: (call) => (call === 1 ? new Error('deflate stream error') : null),
+    });
+    const { fileFn, queue } = setup([gzip, deflate]);
+    const { fileId } = await uploadNote(fileFn);
+    const handler = createProcessingJobHandler(fileFn);
+
+    expect(await handler.handle(queue.jobs[0], { attempts: 1 })).toEqual({
+      status: 'retry', errors: ['compression#2: deflate stream error'],
+    });
+    expect(await handler.handle(queue.jobs[0], { attempts: 2 })).toEqual({
+      status: 'completed', artifactsCreated: 1, skippedProcessors: ['compression'],
+    });
+    expect(await handler.handle(queue.jobs[0], { attempts: 1 })).toEqual({ status: 'duplicate' });
+
+    expect(gzip.inputs).toHaveLength(1);
+    expect(deflate.inputs).toHaveLength(2);
+    expect((await listArtifacts(fileFn, fileId)).map((artifact) => artifact.kind).sort())
+      .toEqual(['compressed-deflate', 'compressed-gzip']);
+  });
+
+  it('does not rerun a processor that produced no artifacts when its job is delivered again', async () => {
+    const empty = textProcessor('incompressible', { kinds: [] });
+    const { fileFn, queue, database } = setup([empty]);
+    const completed = vi.fn();
+    fileFn.events.on('processing.completed', completed);
+    const { fileId } = await uploadNote(fileFn);
+    const handler = createProcessingJobHandler(fileFn);
+
+    expect(await handler.handle(queue.jobs[0])).toEqual({ status: 'completed', artifactsCreated: 0, skippedProcessors: [] });
+    expect(await handler.handle(queue.jobs[0])).toEqual({ status: 'duplicate' });
+
+    expect(empty.inputs).toHaveLength(1);
+    expect(completed).toHaveBeenCalledTimes(1);
+    // The run record is not an artifact: the list, lookup and download operations hide it.
+    expect(await listArtifacts(fileFn, fileId)).toEqual([]);
+    const [run] = await database.findMany<{ artifactId: string; kind: string }>({
+      model: 'fileArtifacts', where: [], namespace: 'jobs_test',
+    });
+    expect(run.kind).toBe(PROCESSING_RUN_KIND);
+    await expect(readArtifact(fileFn, fileId, run.artifactId)).rejects.toMatchObject({ code: 'FILEFN_NOT_FOUND' });
+    await expect(fileFn.services.processing.getArtifactDownloadUrlForFile(fileId, run.artifactId, owner))
+      .rejects.toMatchObject({ code: 'FILEFN_NOT_FOUND' });
+  });
+
+  describe('when the version is deleted while its artifacts are written', () => {
+    async function expectNothingLeft(
+      database: Adapter,
+      storage: StorageAdapter,
+      uploads: { key: string; target?: string }[],
+    ) {
+      expect(await database.findMany({ model: 'fileArtifacts', where: [], namespace: 'jobs_test' })).toEqual([]);
+      expect(uploads.length).toBeGreaterThan(0);
+      for (const upload of uploads) {
+        await expect(storage.statObject(upload)).rejects.toThrow('object not found');
+      }
+    }
+
+    it('drops the job and removes the uploaded object and row when the delete lands during the upload', async () => {
+      const storage = createMemoryStorage();
+      const uploads: { key: string; target?: string }[] = [];
+      let deleteDuringUpload: (() => Promise<void>) | undefined;
+      const deletingStorage: StorageAdapter = {
+        ...storage,
+        async openUploadStream(input) {
+          if (input.key.endsWith('.uppercase')) {
+            uploads.push({ key: input.key, target: input.target });
+            const pending = deleteDuringUpload;
+            deleteDuringUpload = undefined;
+            await pending?.();
+          }
+          return storage.openUploadStream!(input);
+        },
+      };
+      const completed = vi.fn();
+      const { fileFn, queue, database } = setup([textProcessor('uppercase')], { storage: deletingStorage });
+      fileFn.events.on('processing.completed', completed);
+      const { fileId } = await uploadNote(fileFn);
+      deleteDuringUpload = () => fileFn.deleteFile({ fileId }, owner);
+
+      expect(await createProcessingJobHandler(fileFn).handle(queue.jobs[0])).toEqual({
+        status: 'dropped', reason: 'version-deleted',
+      });
+      expect(completed).not.toHaveBeenCalled();
+      await expectNothingLeft(database, storage, uploads);
+    });
+
+    it('drops the job and removes the object and row when the delete lands during the row write', async () => {
+      const storage = createMemoryStorage();
+      const uploads: { key: string; target?: string }[] = [];
+      const recordingStorage: StorageAdapter = {
+        ...storage,
+        async openUploadStream(input) {
+          if (input.key.endsWith('.uppercase')) uploads.push({ key: input.key, target: input.target });
+          return storage.openUploadStream!(input);
+        },
+      };
+      let deleteDuringRowWrite: (() => Promise<void>) | undefined;
+      const base = withUniqueArtifactIds(memoryAdapter());
+      const database = new Proxy(base, {
+        get(target, property, receiver) {
+          if (property !== 'create') return Reflect.get(target, property, receiver);
+          return async (params: Parameters<Adapter['create']>[0]) => {
+            const created = await target.create(params);
+            if (params.model === 'fileArtifacts' && (params.data as { kind?: string }).kind === 'uppercase') {
+              const pending = deleteDuringRowWrite;
+              deleteDuringRowWrite = undefined;
+              await pending?.();
+            }
+            return created;
+          };
+        },
+      });
+      const { fileFn, queue } = setup([textProcessor('uppercase')], { storage: recordingStorage, database });
+      const { fileId } = await uploadNote(fileFn);
+      deleteDuringRowWrite = () => fileFn.deleteFile({ fileId }, owner);
+
+      expect(await createProcessingJobHandler(fileFn).handle(queue.jobs[0])).toEqual({
+        status: 'dropped', reason: 'version-deleted',
+      });
+      await expectNothingLeft(database, storage, uploads);
+    });
+
+    it('keeps an object another file still references', async () => {
+      const storage = createMemoryStorage();
+      let deleteDuringUpload: (() => Promise<void>) | undefined;
+      const deletingStorage: StorageAdapter = {
+        ...storage,
+        async openUploadStream(input) {
+          const pending = deleteDuringUpload;
+          deleteDuringUpload = undefined;
+          await pending?.();
+          return storage.openUploadStream!(input);
+        },
+      };
+      const shared = textProcessor('stamp', { storageKeyFor: () => 'artifacts/shared-stamp' });
+      const { fileFn, queue } = setup([shared], { storage: deletingStorage });
+      const kept = await uploadNote(fileFn, 'kept');
+      const removed = await uploadNote(fileFn, 'removed');
+      const handler = createProcessingJobHandler(fileFn);
+      expect(await handler.handle(queue.jobs[0])).toMatchObject({ status: 'completed' });
+      deleteDuringUpload = () => fileFn.deleteFile({ fileId: removed.fileId }, owner);
+
+      expect(await handler.handle(queue.jobs[1])).toEqual({ status: 'dropped', reason: 'version-deleted' });
+
+      const [artifact] = await listArtifacts(fileFn, kept.fileId);
+      expect(artifact.storageKey).toBe('artifacts/shared-stamp');
+      await expect(readArtifact(fileFn, kept.fileId, artifact.artifactId)).resolves.toBeTypeOf('string');
+    });
+  });
+
+  it('enqueues and runs a job whose request ID or processor list is longer than a job field allows', async () => {
+    const longName = `uppercase-${'x'.repeat(600)}`;
+    const processor = textProcessor(longName, { kinds: ['uppercase'] });
+    const { fileFn, queue } = setup([processor]);
+    const body = Buffer.from('long ids');
+    const longRequest = { ...owner, requestId: `req_${'r'.repeat(509)}` };
+    expect(longRequest.requestId).toHaveLength(513);
+    const session = await fileFn.createUploadSession({
+      policy: 'note', fileName: 'note.txt', size: body.length, mimeType: 'text/plain',
+    }, longRequest);
+    const part = await fileFn.services.uploads.uploadPartBytes(session.uploadSessionId, 1, body, body.length, longRequest);
+    await fileFn.completeUploadPart({
+      uploadSessionId: session.uploadSessionId, partNumber: 1, etag: part.etag, size: part.size,
+    }, longRequest);
+    const { fileId, versionId } = await fileFn.completeUploadSession({ uploadSessionId: session.uploadSessionId }, longRequest);
+
+    const [job] = queue.jobs;
+    expect(job.requestId).toBeUndefined();
+    expect(job.idempotencyKey).toMatch(new RegExp(`^processing:${fileId}:${versionId}:sha256:[0-9a-f]{64}$`));
+    expect((job.idempotencyKey as string).length).toBeLessThanOrEqual(512);
+
+    const handler = createProcessingJobHandler(fileFn);
+    expect(await handler.handle(job)).toEqual({ status: 'completed', artifactsCreated: 1, skippedProcessors: [] });
+    // A body another producer wrote with over-long optional fields still runs; they are ignored.
+    expect(await handler.handle({ ...job, requestId: 'r'.repeat(513), jobId: 'j'.repeat(513) })).toEqual({ status: 'duplicate' });
+    expect(processor.inputs).toHaveLength(1);
+  });
+
+  it('counts the artifacts recorded before a later artifact write fails', async () => {
+    const processor = textProcessor('pair', { kinds: ['first', 'second'] });
+    const storage = createMemoryStorage();
+    const flakyStorage: StorageAdapter = {
+      ...storage,
+      async openUploadStream(input) {
+        if (input.key.endsWith('.second')) throw new Error('storage write interrupted');
+        return storage.openUploadStream!(input);
+      },
+    };
+    // Without a queue, FileFn runs the processors after the response and reports the count.
+    const { fileFn } = setup([processor], { storage: flakyStorage, processing: { enabled: true, processors: [processor] } });
+    const completed = vi.fn();
+    fileFn.events.on('processing.completed', completed);
+    const { fileId, versionId } = await uploadNote(fileFn);
+
+    await vi.waitFor(() => expect(completed).toHaveBeenCalledTimes(1));
+    expect(completed).toHaveBeenCalledWith(expect.objectContaining({ fileId, versionId, artifactsCreated: 1 }));
+    expect((await listArtifacts(fileFn, fileId)).map((artifact) => artifact.kind)).toEqual(['first']);
   });
 
   it('refuses a FileFn it cannot run jobs for', () => {

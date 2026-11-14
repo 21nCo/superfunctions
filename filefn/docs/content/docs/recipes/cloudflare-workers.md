@@ -91,13 +91,41 @@ The Worker creates filefn per request so that `runtime.defer` uses that request'
 
 Without `runtime`, filefn behaves as on Node: processing starts on a `setImmediate` turn after the request and runs detached. On Workers, configure the hook, or configure a processing queue through `processing.flowFn` so processing does not run in the request at all.
 
+## Queued processing
+
+To run processing outside the request, bind a Cloudflare Queue and pass a producer as `processing.flowFn`. FileFn then enqueues a `filefn.processing` job when an upload completes. Import the producer from `@filefn/processing/queues/cloudflare`; that entry point has no dependencies, so the Worker does not bundle the image and OCR processors.
+
+```ts
+import { createCloudflareFlowFnProvider } from "@filefn/processing/queues/cloudflare";
+import { createProcessingJobHandler } from "@filefn/server";
+
+// In fileFnFor's config:
+processing: {
+  enabled: true,
+  processors,
+  flowFn: createCloudflareFlowFnProvider({ "filefn.processing": env.FILEFN_PROCESSING_QUEUE }),
+},
+
+// In the Worker's default export, next to fetch and scheduled:
+async queue(batch: MessageBatch, env: Env, ctx: ExecutionContext) {
+  await createProcessingJobHandler(fileFnFor(env, ctx), { maxRetries: 3 }).queue(batch);
+},
+```
+
+`createProcessingJobHandler(fileFn)` runs the configured processors for each message and records artifacts through that FileFn instance, once per job idempotency key. Each processor that finishes writes a run row (kind `filefn.processing-run`) after its artifacts, and a redelivered job skips processors that have one. Processors that share a name are told apart by their order in `processors`. Run rows have no stored object, and the artifact list, lookup and download operations never return them.
+
+- A job whose file version was deleted, before or during the run, is acknowledged and dropped, and the run removes the rows and objects it wrote for that version.
+- A processor failure calls `message.retry()`. Set `maxRetries` to the consumer's `max_retries` (Cloudflare's default is 3): on the delivery whose `attempts` exceeds it, the handler emits `processing.failed` and acknowledges the message.
+- A message body that is not a processing job is acknowledged and dropped. Optional fields over 512 characters (`requestId`, `jobId`, `idempotencyKey`) are ignored rather than rejected.
+- Each artifact's `metadata.processing` holds `{ processor, durationMs, idempotencyKey }`. FileFn reserves that key and overwrites a processor's own `processing` metadata.
+
 ## Expired upload sessions
 
 `fileFn.cleanupExpiredSessions()` deletes upload sessions that expired before completing. It also aborts their multipart uploads and removes proxy part objects. It returns `{ deletedSessions, abortedMultipart }`. Completed sessions are kept.
 
 ## IDs
 
-filefn generates upload, file, version and artifact IDs as `<prefix>_<random>`. The random part is 20 base32 characters (100 bits) from the `node:crypto` CSPRNG (`randomFillSync`), which does not need a global Web Crypto object, for example `file_8h3k2m9q4x7c1v5t0bnr`. IDs are opaque. IDs from earlier versions (`file_<time>_<random>`) remain valid.
+filefn generates upload, file and version IDs as `<prefix>_<random>`. The random part is 20 base32 characters (100 bits) from the `node:crypto` CSPRNG (`randomFillSync`), which does not need a global Web Crypto object, for example `file_8h3k2m9q4x7c1v5t0bnr`. Processing derives each artifact ID from the file, version and artifact kind instead (`art_` and 20 base32 characters of a SHA-256 digest), so a redelivered job writes the same row. IDs are opaque. IDs from earlier versions (`file_<time>_<random>`) remain valid.
 
 ## What is verified
 
