@@ -1,6 +1,6 @@
 {
   "name": "@filefn/processing",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "FileFn file processing pipelines",
   "type": "module",
   "main": "./dist/index.js",
@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./queues/cloudflare": {
+      "types": "./dist/queues/cloudflare.d.ts",
+      "default": "./dist/queues/cloudflare.js"
     }
   },
   "files": [

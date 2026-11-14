@@ -75,6 +75,23 @@ export {
 } from './processors/audio.js';
 export { createCommandAudioProvider } from './providers/audio-command.js';
 
+// Also importable from `@filefn/processing/queues/cloudflare`, which a Worker
+// can bundle without the sharp and tesseract.js processors above.
+export {
+  createCloudflareFlowFnProvider,
+  createCloudflareQueueProducer,
+  PROCESSING_QUEUE_NAME,
+} from './queues/cloudflare.js';
+export type {
+  CloudflareFlowFnProvider,
+  CloudflareFlowFnQueue,
+  CloudflareQueueBinding,
+  CloudflareQueueContentType,
+  CloudflareQueueProducerOptions,
+  CloudflareQueueProducerSettings,
+  CloudflareQueueSendOptions,
+} from './queues/cloudflare.js';
+
 export interface ProcessingPipeline {
   name: string;
   process(data: Uint8Array): Promise<Uint8Array>;
