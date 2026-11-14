@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { DuplicateKeyError, type Adapter, type WhereClause } from '@superfunctions/db';
 import { ok } from '@superfunctions/envelope';
 import { createNamespacedEmitter, createMetricsEmitter, type MetricsEmitter } from '@superfunctions/metrics';
@@ -1219,14 +1220,30 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         });
       }
       const selection = requireImportPrice(plan, providerName, state);
-      // One audit event per import run: a rerun of the operator's request (same requestId) rewrites it, never adds one.
-      const auditId = operator.requestId
-        ? `evt_import_${Buffer.from(
-            JSON.stringify([providerName, reference, billingAccount.id, operator.id, operator.requestId, plan.planKey, input.reason ?? null])
-          ).toString('base64url')}`
-        : deps.generateId('evt');
+      // One audit event per import run and state it records: a rerun of the operator's request (same requestId)
+      // that records the same state adds none, and an event once written is never changed.
+      const runId = operator.requestId ? null : deps.generateId('evt');
       const importAudit = (subscription: BillFnSubscription): BillFnBillingEvent => ({
-        id: auditId,
+        id:
+          runId ??
+          `evt_import_${createHash('sha256')
+            .update(
+              JSON.stringify([
+                providerName,
+                reference,
+                billingAccount.id,
+                operator.id,
+                operator.type ?? null,
+                operator.requestId,
+                plan.planKey,
+                input.reason ?? null,
+                subscription.id,
+                subscription.planKey,
+                subscription.priceId,
+                subscription.status
+              ])
+            )
+            .digest('base64url')}`,
         billingAccountId: billingAccount.id,
         type: 'billfn.subscription.imported',
         payload: {
@@ -1264,10 +1281,17 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         throw error;
       }
 
-      // A binding this run accepted already has it (written before acceptance); recorded again from the row the run
-      // returns (a re-import, or another run's accepted row), before the replay, so a retried replay is still recorded.
-      const billingEvent = importAudit(applied.subscription);
-      await recordImportAudit(deps, billingEvent);
+      // A binding this run accepted already has it (written before acceptance); a re-import, or a run that returns
+      // another run's accepted row, records it here, before the replay, so a retried replay is still recorded.
+      const recorded = importAudit(applied.subscription);
+      await recordBillingEvent(deps, recorded);
+      // The first write of an event wins, so a rerun returns the event as recorded.
+      const billingEvent =
+        (await deps.db.findOne<BillFnBillingEvent>({
+          model: TABLES.billingEvents,
+          where: [{ field: 'id', operator: 'eq', value: recorded.id }],
+          namespace: deps.namespace
+        })) ?? recorded;
       deps.metrics.track('subscription.imported', { provider: providerName });
 
       // A replay that does not finish fails the import; calling it again finishes the replay.
@@ -2242,9 +2266,10 @@ async function refuseRetiredImportReference(
  * holds the reference, belongs to `billingAccountId` (another account's row
  * fails as bound elsewhere, untouched) and its reference is not retired.
  * Nothing uses a pending row, so no entitlement or lifecycle event exists for
- * it until this accepts it. The import's audit event (`audit`) is recorded
- * just before each acceptance write, so an accepted binding always has it; a
- * refusal deletes the row, and an interrupted run leaves it pending for the
+ * it until this accepts it. The import's audit event (`audit`) for the row it
+ * accepts is recorded just before each acceptance write, so an accepted
+ * binding always has it (an event for a write that then does not land stays);
+ * a refusal deletes the row, and an interrupted run leaves it pending for the
  * rerun to settle.
  *
  * Why the check after the write is enough: a reference is held by at most one
@@ -2284,7 +2309,7 @@ async function settleImportBinding(
       updatedAt: nextSubscriptionUpdatedAt(deps.now(), current.updatedAt)
     };
     if (audit) {
-      await recordImportAudit(deps, audit(accepted));
+      await recordBillingEvent(deps, audit(accepted));
     }
     if (await writeOrderedSubscription(deps, current, accepted)) {
       return { subscription: accepted, ownState, acceptedHere: true };
@@ -3316,23 +3341,6 @@ async function recordBillingEvent(deps: ServiceDeps, event: BillFnBillingEvent) 
     if (!isDuplicateRecordError(error)) {
       throw error;
     }
-  }
-}
-
-/** Records an import run's audit event; the run's earlier record (same id) is rewritten to the row it now names. */
-async function recordImportAudit(deps: ServiceDeps, event: BillFnBillingEvent) {
-  try {
-    await deps.db.create({ model: TABLES.billingEvents, data: event, namespace: deps.namespace });
-  } catch (error) {
-    if (!isDuplicateRecordError(error)) {
-      throw error;
-    }
-    await deps.db.updateMany({
-      model: TABLES.billingEvents,
-      where: [{ field: 'id', operator: 'eq', value: event.id }],
-      data: { payload: event.payload, createdAt: event.createdAt },
-      namespace: deps.namespace
-    });
   }
 }
 

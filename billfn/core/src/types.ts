@@ -657,8 +657,8 @@ export interface BillFnImportOperator {
   type?: string;
   /**
    * The operator request that ran the import, for audit correlation. It also
-   * identifies the run: calling import again with the same request keeps one
-   * `billfn.subscription.imported` event (rewritten to the state it returns).
+   * identifies the run: calling import again with the same request records no
+   * new `billfn.subscription.imported` event for a state it already recorded.
    */
   requestId?: string;
 }

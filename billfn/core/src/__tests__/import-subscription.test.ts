@@ -461,6 +461,28 @@ describe('billfn.services.subscriptions.import', () => {
     ]);
   });
 
+  it('keeps every recorded audit: a rerun records a changed state separately, and typed operators and long reasons stay distinct', async () => {
+    let status = 'active';
+    const env = setup({ record: (reference) => legacyRecord(reference, { status }) });
+    const billingAccountId = await env.account('alice');
+    const reason = 'r'.repeat(2000);
+    const first = unwrap(await env.import({ billingAccountId, reason }));
+    env.clock.current = new Date('2026-11-12T00:00:00.000Z');
+    status = 'paused';
+
+    const rerun = unwrap(await env.import({ billingAccountId, reason }));
+    await env.import({ billingAccountId, reason, operator: { ...OPERATOR, type: 'service' } });
+
+    // The id is a fixed-length digest; the first import's event keeps its state and time.
+    expect(first.billingEvent.id.length).toBeLessThan(64);
+    expect(rerun.billingEvent.id).not.toBe(first.billingEvent.id);
+    const events = await env.importEvents();
+    expect(events).toHaveLength(3);
+    expect(events.find((event) => event.id === first.billingEvent.id)).toEqual(first.billingEvent);
+    expect(first.billingEvent).toMatchObject({ createdAt: '2026-11-10T00:00:00.000Z', payload: { status: 'active', reason } });
+    expect(events.map((event) => (event.payload.operator as { type: string }).type).sort()).toEqual(['service', 'user', 'user']);
+  });
+
   it('completes on a rerun after an import interrupted before its replay finished', async () => {
     const env = setup();
     const billingAccountId = await env.account('alice');
@@ -555,7 +577,8 @@ describe('billfn.services.subscriptions.import', () => {
     expect(await lifecycleEventsOf(env.db, billingAccountId)).toEqual([
       expect.objectContaining({ type: 'billfn.subscription.active', payload: expect.objectContaining({ priceId: 'price_team_dodo_month' }) })
     ]);
-    expect(await env.importEvents()).toHaveLength(2);
+    // A's event for the state it was about to accept stays; each import also records the state it returned.
+    expect((await env.importEvents()).map((event) => event.payload.planKey).sort()).toEqual(['nucleus', 'team', 'team']);
   });
 
   it('publishes the plan of the state that wins when it accepts another import\'s state written before its acceptance', async () => {
