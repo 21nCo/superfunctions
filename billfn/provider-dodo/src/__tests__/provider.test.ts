@@ -717,7 +717,13 @@ describe('@billfn/provider-dodo', () => {
     const responses: Response[] = [
       // Dodo's answer to GET /subscriptions/:id for an unknown id.
       new Response(JSON.stringify({ code: 'NOT_FOUND', message: 'Subscription not found' }), { status: 404 }),
-      new Response('upstream unavailable', { status: 503 })
+      new Response('upstream unavailable', { status: 503 }),
+      // A success without the subscription's id, or one that is not JSON, is not Dodo's not-found answer.
+      new Response(JSON.stringify({ status: 'active' }), { status: 200 }),
+      new Response('<html>maintenance</html>', { status: 200 }),
+      // Dodo's rejections of a malformed id.
+      new Response(JSON.stringify({ code: 'INVALID_REQUEST', message: 'Invalid subscription id' }), { status: 400 }),
+      new Response(JSON.stringify({ code: 'UNPROCESSABLE_ENTITY', message: 'Invalid subscription id' }), { status: 422 })
     ];
     const fetchMock = vi.fn(async () => responses.shift() as Response) as typeof fetch;
     const provider = createDodoProvider({ apiKey: 'test', baseUrl: 'https://dodo.test', fetch: fetchMock });
@@ -733,5 +739,14 @@ describe('@billfn/provider-dodo', () => {
       retryable: true,
       details: { status: 503 }
     });
+    await expect(provider.importSubscription?.(input)).rejects.toMatchObject({ code: 'BILLFN_PROVIDER_ERROR', retryable: true });
+    await expect(provider.importSubscription?.(input)).rejects.toMatchObject({ code: 'BILLFN_PROVIDER_ERROR', retryable: true });
+    for (const status of [400, 422]) {
+      await expect(provider.importSubscription?.(input)).rejects.toMatchObject({
+        code: 'BILLFN_VALIDATION_ERROR',
+        retryable: false,
+        details: { status }
+      });
+    }
   });
 });

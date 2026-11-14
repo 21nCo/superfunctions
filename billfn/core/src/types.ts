@@ -660,14 +660,22 @@ export interface BillFnImportOperator {
 }
 
 /**
- * Binds an existing provider subscription to a billing account. Give the
- * provider subscription id, or for Apple the original transaction id.
+ * The subscription an import binds: the provider subscription id, or for Apple
+ * the original transaction id (both may be given when they are equal).
  */
-export interface BillFnImportSubscriptionRequest {
+export type BillFnImportSubscriptionReference =
+  | { providerSubscriptionId: string; originalTransactionId?: string }
+  | {
+      providerSubscriptionId?: string;
+      /** Apple only: the subscription's original transaction id. */
+      originalTransactionId: string;
+    };
+
+/** Binds an existing provider subscription to a billing account. */
+export type BillFnImportSubscriptionRequest = BillFnImportSubscriptionRequestFields & BillFnImportSubscriptionReference;
+
+export interface BillFnImportSubscriptionRequestFields {
   provider: BillingProviderName;
-  providerSubscriptionId?: string;
-  /** Apple only: the subscription's original transaction id. */
-  originalTransactionId?: string;
   billingAccountId: string;
   /**
    * When set, the billing account is created for this subject if it does not

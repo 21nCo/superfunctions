@@ -712,27 +712,51 @@ describe('@billfn/provider-apple', () => {
         'https://api.storekit-sandbox.itunes.apple.com/inApps/v1/subscriptions/orig_missing'
       ]);
 
-      // Any other production 404 is missing at once: only a transaction production does not know is read from the sandbox.
-      const otherNotFound = JSON.stringify({ errorCode: 4040002, errorMessage: 'Account not found. Please try again.' });
-      const productionOnly = vi.fn(async () => new Response(otherNotFound, { status: 404 })) as typeof fetch;
+      // OriginalTransactionIdNotFoundError is definitive at once: only 4040010 is read from the sandbox too.
+      const originalNotFound = JSON.stringify({ errorCode: 4040005, errorMessage: 'Original transaction id not found.' });
+      const productionOnly = vi.fn(async () => new Response(originalNotFound, { status: 404 })) as typeof fetch;
       const appleProduction = createAppleProvider({ fetch: productionOnly, tokenProvider: async () => 'token' });
       await expect(appleProduction.importSubscription?.({ providerReference: 'orig_missing', billingAccount, plan })).resolves.toBeNull();
       expect(vi.mocked(productionOnly)).toHaveBeenCalledTimes(1);
+    });
 
-      // A response without transactions is missing too; a StoreKit outage stays a retryable provider error.
-      const empty = createAppleProvider({
-        fetch: vi.fn(async () => new Response(JSON.stringify({ environment: 'Production', data: [] }), { status: 200 })) as typeof fetch,
-        tokenProvider: async () => 'token'
-      });
-      await expect(empty.importSubscription?.({ providerReference: 'orig_legacy', billingAccount, plan })).resolves.toBeNull();
-      const down = createAppleProvider({
-        fetch: vi.fn(async () => new Response('', { status: 500 })) as typeof fetch,
-        tokenProvider: async () => 'token'
-      });
-      await expect(down.importSubscription?.({ providerReference: 'orig_legacy', billingAccount, plan })).rejects.toMatchObject({
-        code: 'BILLFN_PROVIDER_ERROR',
-        retryable: true
-      });
+    it('keeps StoreKit retryable answers, outages and unreadable successes retryable', async () => {
+      // Recorded StoreKit retryable errors share HTTP 404 with the not-found answers; their errorCode tells them apart.
+      const retryable = [
+        { status: 404, body: JSON.stringify({ errorCode: 4040002, errorMessage: 'Account not found. Please try again.' }) },
+        { status: 404, body: JSON.stringify({ errorCode: 4040004, errorMessage: 'App not found. Please try again.' }) },
+        { status: 404, body: JSON.stringify({ errorCode: 4040006, errorMessage: 'Server error. Please try again.' }) },
+        { status: 404, body: '' },
+        { status: 500, body: '' },
+        // A success StoreKit's JSON parser rejects, or one without a readable transaction.
+        { status: 200, body: '<html>maintenance</html>' },
+        { status: 200, body: JSON.stringify({ environment: 'Production', data: [] }) }
+      ];
+      for (const recordedResponse of retryable) {
+        const fetchMock = vi.fn(async () => new Response(recordedResponse.body, { status: recordedResponse.status })) as typeof fetch;
+        const apple = createAppleProvider({ fetch: fetchMock, tokenProvider: async () => 'token' });
+        await expect(apple.importSubscription?.({ providerReference: 'orig_legacy', billingAccount, plan })).rejects.toMatchObject({
+          code: 'BILLFN_PROVIDER_ERROR',
+          retryable: true
+        });
+        // None of these is the production not-found answer that is read from the sandbox.
+        expect(vi.mocked(fetchMock)).toHaveBeenCalledTimes(1);
+      }
+    });
+
+    it('rejects a reference StoreKit calls malformed as invalid input', async () => {
+      for (const errorCode of [4000006, 4000008]) {
+        const fetchMock = vi.fn(async () => new Response(
+          JSON.stringify({ errorCode, errorMessage: 'Invalid transaction id.' }),
+          { status: 400 }
+        )) as typeof fetch;
+        const apple = createAppleProvider({ fetch: fetchMock, tokenProvider: async () => 'token' });
+        await expect(apple.importSubscription?.({ providerReference: 'not-a-transaction', billingAccount, plan })).rejects.toMatchObject({
+          code: 'BILLFN_VALIDATION_ERROR',
+          retryable: false,
+          details: { status: 400, errorCode }
+        });
+      }
     });
 
     it('syncs an imported subscription without the token check it keeps for BillFn purchases', async () => {

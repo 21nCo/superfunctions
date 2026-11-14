@@ -463,10 +463,12 @@ const actionOutputSchema: AdminObjectSchema = {
 const payloadSchema = (
   properties: NonNullable<AdminObjectSchema["properties"]>,
   required: string[] = [],
+  anyOf: AdminJsonSchema[] = [],
 ): AdminObjectSchema => ({
   type: "object",
   properties,
   ...(required.length ? { required } : {}),
+  ...(anyOf.length ? { anyOf } : {}),
   additionalProperties: false,
 });
 const domainActionInputSchemas: Record<string, AdminObjectSchema> = {
@@ -496,6 +498,8 @@ const domainActionInputSchemas: Record<string, AdminObjectSchema> = {
           planKey: { type: "string", minLength: 1 },
         },
         ["provider", "planKey"],
+        // The subscription to import: its provider subscription id or, for Apple, its original transaction id.
+        [{ required: ["providerSubscriptionId"] }, { required: ["originalTransactionId"] }],
       ),
       reason: { type: "string", minLength: 1, maxLength: 2000 },
     },
@@ -728,13 +732,14 @@ export interface BillFnChangeSubscriptionInput {
 export interface BillFnImportSubscriptionInput {
   payload: {
     provider: "dodo" | "apple" | "stripe" | "polar" | "google-play" | "microsoft-store";
-    /** The provider subscription id; for Apple, the original transaction id may be given instead. */
-    providerSubscriptionId?: string;
-    originalTransactionId?: string;
     /** Must be the active subject's billing account when given. */
     billingAccountId?: string;
     planKey: string;
-  };
+  } & (
+    /** The provider subscription id; for Apple, the original transaction id may be given instead (or as well, when equal). */
+    | { providerSubscriptionId: string; originalTransactionId?: string }
+    | { providerSubscriptionId?: string; originalTransactionId: string }
+  );
   reason?: string;
 }
 export interface BillFnCancelSubscriptionInput { id: string; reason?: string }

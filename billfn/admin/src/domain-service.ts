@@ -64,12 +64,29 @@ function adminErrorFromBillFn(error: unknown): unknown {
   if (error instanceof AdminError || typeof error !== "object" || error === null) return error;
   const { code, status, message, retryable, details } = error as { code?: unknown; status?: unknown; message?: unknown; retryable?: unknown; details?: unknown };
   if (typeof code !== "string" || !code.startsWith("BILLFN_") || typeof status !== "number") return error;
-  // Only the reason is passed on: it separates conflicts (an unfinished import replay from a reference bound elsewhere).
-  const reason = typeof details === "object" && details !== null ? (details as { reason?: unknown }).reason : undefined;
   return new AdminError(adminCodeForStatus(status), typeof message === "string" ? message : code, {
-    details: typeof reason === "string" ? { code, reason } : { code },
+    details: { code, ...importErrorDetails(details) },
     retryable: retryable === true,
   });
+}
+
+/**
+ * The BillFn error details an operator needs to recover, passed on by allow-list: `reason` separates conflicts
+ * (an unfinished import replay from a reference bound elsewhere), `originalTransactionIds` names the Apple
+ * reference to import instead of a renewal transaction, and `planKey`/`providerProductIds` explain a product mismatch.
+ */
+const IMPORT_ERROR_DETAIL_KEYS = ["reason", "planKey", "providerProductIds", "originalTransactionIds"] as const;
+
+function importErrorDetails(details: unknown): Record<string, string | string[]> {
+  if (typeof details !== "object" || details === null) return {};
+  const passed: Record<string, string | string[]> = {};
+  for (const key of IMPORT_ERROR_DETAIL_KEYS) {
+    const value = (details as Record<string, unknown>)[key];
+    if (typeof value === "string" || (Array.isArray(value) && value.every((item) => typeof item === "string"))) {
+      passed[key] = value;
+    }
+  }
+  return passed;
 }
 
 function asJson(value: object): JsonRecord {
@@ -243,11 +260,20 @@ export function createBillFnDomainAdminService(
         throw new AdminError("forbidden", "The import billing account is outside the active BillFn subject.");
       }
       const provider = billingProvider(string(input.payload.provider, "payload.provider")) as BillingProviderName;
+      const providerSubscriptionId = optionalString(input.payload.providerSubscriptionId, "payload.providerSubscriptionId");
+      const originalTransactionId = optionalString(input.payload.originalTransactionId, "payload.originalTransactionId");
+      const reference = providerSubscriptionId !== undefined
+        ? { providerSubscriptionId, originalTransactionId }
+        : originalTransactionId !== undefined
+          ? { originalTransactionId }
+          : undefined;
+      if (!reference) {
+        throw new AdminError("invalid_argument", "payload.providerSubscriptionId or payload.originalTransactionId is required.");
+      }
       try {
         const data = unwrap(await options.billfn.services.subscriptions.import({
           provider,
-          providerSubscriptionId: optionalString(input.payload.providerSubscriptionId, "payload.providerSubscriptionId"),
-          originalTransactionId: optionalString(input.payload.originalTransactionId, "payload.originalTransactionId"),
+          ...reference,
           billingAccountId: scoped.billingAccount.id,
           // The subject's billing account is created when this is its first billing record.
           subject,

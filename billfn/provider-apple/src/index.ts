@@ -130,18 +130,18 @@ export function createAppleProvider(config: AppleProviderConfig): BillFnProvider
           `/inApps/v1/subscriptions/${encodeURIComponent(input.providerReference)}`
         );
       } catch (error) {
-        // StoreKit answered 404 (a transaction production does not know is read from the sandbox first): not found.
-        if (providerErrorStatus(error) === 404) {
-          return null;
-        }
-        throw error;
+        return classifyStoreKitImportError(error);
       }
       const transactions = extractLastTransactionRecords(response.payload)
         .map((record) => decodeSignedPayload(record, 'signedTransactionInfo'))
         .filter((transaction): transaction is Record<string, unknown> => transaction !== null);
       if (!transactions.some((transaction) => readString(transaction, ['originalTransactionId']) === input.providerReference)) {
         if (transactions.length === 0) {
-          return null;
+          // A success without a readable transaction is not StoreKit's not-found answer: a retry may read it.
+          throw createBillFnError({
+            code: 'BILLFN_PROVIDER_ERROR',
+            message: 'Apple returned no readable transaction for the imported reference'
+          });
         }
         // StoreKit found the subscription by another of its transactions; the import binds its original transaction id.
         throw createBillFnError({
@@ -422,11 +422,48 @@ function buildStoreKitBaseUrl(environment: 'production' | 'sandbox') {
     : 'https://api.storekit-sandbox.itunes.apple.com';
 }
 
-function providerErrorStatus(error: unknown) {
-  if (!error || typeof error !== 'object' || !('details' in error)) {
+/** StoreKit's definitive answers that a transaction does not exist (TransactionIdNotFound, OriginalTransactionIdNotFound). */
+const STOREKIT_NOT_FOUND_ERROR_CODES = new Set([4040010, 4040005]);
+/** StoreKit's rejections of a malformed reference (InvalidTransactionId, InvalidOriginalTransactionId). */
+const STOREKIT_INVALID_REFERENCE_ERROR_CODES = new Set([4000006, 4000008]);
+
+/**
+ * Classifies a failed import read by StoreKit's errorCode, not its HTTP status: only a definitive not-found answer
+ * (after the sandbox fallback for 4040010) is missing, a malformed reference is invalid input, and anything else,
+ * including StoreKit's retryable 404s (4040002, 4040004, 4040006) and an unparsable body, stays a retryable provider error.
+ */
+function classifyStoreKitImportError(error: unknown): null {
+  if (error instanceof SyntaxError) {
+    throw createBillFnError({
+      code: 'BILLFN_PROVIDER_ERROR',
+      message: 'Apple returned an unreadable response for the imported reference'
+    });
+  }
+  const details = (error as { details?: { status?: unknown; body?: unknown } } | null)?.details;
+  const errorCode = readStoreKitErrorCode(details?.body);
+  if (details?.status === 404 && errorCode !== undefined && STOREKIT_NOT_FOUND_ERROR_CODES.has(errorCode)) {
+    return null;
+  }
+  if (details?.status === 400 && errorCode !== undefined && STOREKIT_INVALID_REFERENCE_ERROR_CODES.has(errorCode)) {
+    throw createBillFnError({
+      code: 'BILLFN_VALIDATION_ERROR',
+      message: 'Apple rejected the imported reference as malformed',
+      details: { status: details.status, errorCode }
+    });
+  }
+  throw error;
+}
+
+function readStoreKitErrorCode(body: unknown): number | undefined {
+  if (typeof body !== 'string') {
     return undefined;
   }
-  return (error as { details?: { status?: unknown } }).details?.status;
+  try {
+    const errorCode = (JSON.parse(body) as { errorCode?: unknown } | null)?.errorCode;
+    return typeof errorCode === 'number' ? errorCode : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function shouldFallbackToSandbox(error: unknown, environment: 'production' | 'sandbox') {

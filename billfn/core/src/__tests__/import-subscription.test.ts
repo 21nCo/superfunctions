@@ -4,7 +4,8 @@ import {
   BILLFN_IMPORTED_AT_METADATA_KEY,
   BILLFN_IMPORT_PENDING_METADATA_KEY,
   BILLFN_IMPORT_REPLAY_UNFINISHED_REASON,
-  createBillFn
+  createBillFn,
+  createBillFnError
 } from '../index.js';
 import type {
   BillFnBillingEvent,
@@ -1066,6 +1067,29 @@ describe('billfn.services.subscriptions.import', () => {
       code: 'BILLFN_NOT_FOUND'
     });
     expect(await env.subscriptions()).toEqual([]);
+  });
+
+  it('surfaces a retryable provider read failure as retryable without writing, and a retry imports', async () => {
+    // What an adapter reports for StoreKit's AccountNotFoundRetryableError (404, errorCode 4040002) or a Dodo outage.
+    let available = false;
+    const env = setup({
+      record: (reference) => {
+        if (!available) {
+          throw createBillFnError({ code: 'BILLFN_PROVIDER_ERROR', message: 'Apple request failed with status 404' });
+        }
+        return legacyRecord(reference);
+      }
+    });
+    const billingAccountId = await env.account('alice');
+
+    await expect(env.import({ billingAccountId })).rejects.toMatchObject({ code: 'BILLFN_PROVIDER_ERROR', retryable: true });
+    expect(await env.subscriptions()).toEqual([]);
+    expect(await billingEventsOf(env.db, billingAccountId)).toEqual([]);
+    expect(await entitlementsOf(env.db, billingAccountId)).toEqual([]);
+
+    available = true;
+    expect(unwrap(await env.import({ billingAccountId })).subscription.providerSubscriptionId).toBe('sub_legacy');
+    expect(await env.importEvents()).toHaveLength(1);
   });
 
   it('validates the request before reading the provider', async () => {

@@ -4,8 +4,8 @@ import {
   createBillFnAdminAdapter,
   createBillFnDomainAdminService,
 } from "../index.js";
-import { createBillFn, type BillFnInstance } from "@billfn/core";
-import { encodeAdminCursor } from "@superfunctions/admin";
+import { createBillFn, createBillFnError, type BillFnInstance } from "@billfn/core";
+import { createAdminDispatcher, createAdminRegistry, encodeAdminCursor, validateAdminValue } from "@superfunctions/admin";
 import { memoryAdapter } from "@superfunctions/db/adapters";
 
 const context = {
@@ -252,6 +252,39 @@ describe("@billfn/admin", () => {
       });
     });
 
+    it("rejects a request naming no subscription at input validation, before confirmation or the domain", async () => {
+      const { billfn, importSubscription } = importingBillFn();
+      const confirmation = { verify: vi.fn(async () => true) };
+      const dispatcher = createAdminDispatcher({
+        registry: createAdminRegistry({
+          adapters: [createBillFnAdminAdapter(createBillFnDomainAdminService({ billfn, subject: () => ({ tenantId: "workspace_1" }) }))],
+          enabledModules: ["billfn"],
+        }),
+        confirmation,
+      });
+
+      const result = await dispatcher.dispatch({
+        operationId: "billfn.subscriptions.import-subscription",
+        input: { payload: { provider: "dodo", planKey: "nucleus" } },
+        context: { ...context, confirmationToken: "token_1" },
+      });
+
+      expect(result).toMatchObject({ ok: false, error: { code: "invalid_argument" } });
+      expect(confirmation.verify).not.toHaveBeenCalled();
+      expect(importSubscription).not.toHaveBeenCalled();
+      // Either reference, or both when they are equal, satisfies the schema.
+      const inputSchema = billFnAdminCapability.operations.find(
+        (candidate) => candidate.id === "billfn.subscriptions.import-subscription",
+      )!.inputSchema!;
+      for (const reference of [
+        { providerSubscriptionId: "sub_legacy" },
+        { originalTransactionId: "2000000123" },
+        { providerSubscriptionId: "2000000123", originalTransactionId: "2000000123" },
+      ]) {
+        expect(validateAdminValue(inputSchema, { payload: { provider: "apple", planKey: "nucleus", ...reference } })).toEqual([]);
+      }
+    });
+
     it("binds the provider subscription to the subject's billing account and records the operator", async () => {
       const { billfn, db } = importingBillFn();
       const adapter = createBillFnAdminAdapter(
@@ -300,6 +333,39 @@ describe("@billfn/admin", () => {
       await expect(service("workspace_2").importSubscription({
         payload: { provider: "dodo", providerSubscriptionId: "sub_legacy", planKey: "nucleus" },
       }, context)).rejects.toMatchObject({ code: "conflict", retryable: false, message: expect.stringContaining("different billing account") });
+    });
+
+    it("passes on the details an operator needs to correct a refused import", async () => {
+      const { billfn, importSubscription } = importingBillFn();
+      const service = createBillFnDomainAdminService({ billfn, subject: () => ({ tenantId: "workspace_1" }) });
+      const payload = { provider: "dodo", providerSubscriptionId: "sub_legacy", planKey: "nucleus" } as const;
+
+      // What the Apple adapter reports for a renewal transaction id: the original transaction id to import instead.
+      importSubscription.mockRejectedValueOnce(createBillFnError({
+        code: "BILLFN_VALIDATION_ERROR",
+        message: "The Apple reference is not an original transaction id; import the subscription by its originalTransactionId",
+        details: { originalTransactionIds: ["2000000123"], internal: { token: "not passed on" } },
+      }));
+      const renewal = await service.importSubscription({ payload }, context).catch((error: unknown) => error);
+      expect(renewal).toMatchObject({
+        code: "invalid_argument",
+        retryable: false,
+        details: { code: "BILLFN_VALIDATION_ERROR", originalTransactionIds: ["2000000123"] },
+      });
+      expect((renewal as { details: Record<string, unknown> }).details).not.toHaveProperty("internal");
+
+      // A provider subscription whose product is not a price of the plan names both.
+      importSubscription.mockResolvedValueOnce({
+        subscriptionStatus: "active",
+        checkoutStatus: "succeeded",
+        providerSubscriptionId: "sub_legacy",
+        autoRenew: true,
+        raw: { subscription_id: "sub_legacy", product_id: "pdt_team_month", status: "active" },
+      });
+      await expect(service.importSubscription({ payload }, context)).rejects.toMatchObject({
+        code: "invalid_argument",
+        details: { code: "BILLFN_VALIDATION_ERROR", planKey: "nucleus", providerProductIds: ["pdt_team_month"] },
+      });
     });
 
     it("reports a reference the provider does not have as not found and an unfinished replay as a retryable conflict", async () => {

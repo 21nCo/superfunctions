@@ -298,18 +298,30 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
     },
     async importSubscription(input: BillFnImportSubscriptionInput) {
       // A subscription created outside BillFn carries no billfn_* metadata, so only its identity is checked.
-      const result = await tryRequestJson(
-        fetchImpl,
-        `${baseUrl}/subscriptions/${encodeURIComponent(input.providerReference)}`,
-        {
+      let result: Awaited<ReturnType<typeof tryRequestJson>>;
+      try {
+        result = await tryRequestJson(fetchImpl, `${baseUrl}/subscriptions/${encodeURIComponent(input.providerReference)}`, {
           method: 'GET',
           headers: createHeaders(config.apiKey)
+        });
+      } catch (error) {
+        if (error instanceof SyntaxError) {
+          throw createBillFnError({ code: 'BILLFN_PROVIDER_ERROR', message: 'Dodo returned an unreadable subscription response' });
         }
-      );
+        throw error;
+      }
       if (!result.ok) {
         // Dodo has no such subscription: BillFn reports it as not found, which a retry does not change.
         if (result.error.status === 404) {
           return null;
+        }
+        // Dodo rejects the id itself (the only input of this read): invalid input, which a retry does not change.
+        if (result.error.status === 400 || result.error.status === 422) {
+          throw createBillFnError({
+            code: 'BILLFN_VALIDATION_ERROR',
+            message: `Dodo rejected the imported subscription id with status ${result.error.status}`,
+            details: result.error
+          });
         }
         throw createBillFnError({
           code: 'BILLFN_PROVIDER_ERROR',
@@ -319,7 +331,8 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
       }
       const responseId = readString(result.data, ['subscription_id', 'id']);
       if (!responseId) {
-        return null;
+        // A success without the subscription's id is not Dodo's not-found answer: a retry may read it.
+        throw createBillFnError({ code: 'BILLFN_PROVIDER_ERROR', message: 'Dodo returned a subscription without its id' });
       }
       if (responseId !== input.providerReference) {
         throw createBillFnError({
