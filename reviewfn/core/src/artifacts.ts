@@ -1,6 +1,6 @@
 import { hostname } from "node:os";
 import { constants } from "node:fs";
-import { lstat, open, readdir, rm } from "node:fs/promises";
+import { lstat, open, readdir, realpath, rm } from "node:fs/promises";
 import path from "node:path";
 
 import { safeDirectory, safeRead, safeWrite } from "./safe-files.js";
@@ -24,22 +24,35 @@ export const PANEL_REPORT_COPY_NAMES: ReportCopyNames = Object.freeze({ json: "p
 
 export class FileArtifactStore implements ArtifactStore {
   private readonly copyNames: readonly [string, string];
-  private readonly copiesMarker: string;
+  private readonly copiesStem: string;
+  private readonly copiesMarkerKeyed: boolean;
 
   /**
    * `reportCopiesDirectory` holds the report copies this store writes and expires; `copyNames` selects which set
    * (0.1 review copies by default). Each set keeps its own retention metadata in the store, named after its JSON copy:
    * `.report-copies` for the 0.1 copies, whose store lives inside their output directory. Any other set's store can be
-   * shared by several output directories, so its metadata name also carries a digest of the copies directory, and
-   * cleanup for one output directory never drops the retention of another's copies.
+   * shared by several output directories, so its metadata name also carries a digest of the copies directory's
+   * physical path (its realpath, so `/tmp/out` and `/private/tmp/out` on macOS name the same marker), and cleanup for
+   * one output directory never drops the retention of another's copies.
    */
   public constructor(private readonly root: string, private readonly reportCopiesDirectory?: string, copyNames: ReportCopyNames = REVIEW_REPORT_COPY_NAMES) {
     for (const name of [copyNames.json, copyNames.markdown]) if (!/^[a-z][a-z0-9-]*\.(json|md)$/.test(name)) throw new ReviewFnError("REVIEWFN_ARTIFACT_UNSAFE", `Unsafe report copy name ${name}.`);
     if (!copyNames.json.endsWith(".json") || !copyNames.markdown.endsWith(".md")) throw new ReviewFnError("REVIEWFN_ARTIFACT_UNSAFE", "Report copy names must be a .json file and a .md file.");
     this.copyNames = [copyNames.json, copyNames.markdown];
-    const stem = `.${copyNames.json.slice(0, -".json".length)}-copies`;
+    this.copiesStem = `.${copyNames.json.slice(0, -".json".length)}-copies`;
     const review = copyNames.json === REVIEW_REPORT_COPY_NAMES.json && copyNames.markdown === REVIEW_REPORT_COPY_NAMES.markdown;
-    this.copiesMarker = review || !reportCopiesDirectory ? stem : `${stem}-${sha256(path.resolve(reportCopiesDirectory)).slice(0, 16)}`;
+    this.copiesMarkerKeyed = !review && Boolean(reportCopiesDirectory);
+  }
+
+  /**
+   * The retention metadata name of this store's report copies, or undefined when the copies directory does not exist
+   * (cleanup then has no copies to expire). A keyed name hashes the directory's realpath, after `safeDirectory` has
+   * refused symlinked components other than the root-owned macOS aliases, so every spelling of one directory agrees.
+   */
+  private async copiesMarker(): Promise<string | undefined> {
+    if (!this.copiesMarkerKeyed) return this.copiesStem;
+    const physical = await realpath(this.reportCopiesDirectory!).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? undefined : Promise.reject(error));
+    return physical === undefined ? undefined : `${this.copiesStem}-${sha256(physical).slice(0, 16)}`;
   }
 
   public put(kind: string, content: string | Uint8Array, retentionDays: number) { return this.withLease(() => this.putUnlocked(kind, content, retentionDays)); }
@@ -96,7 +109,10 @@ export class FileArtifactStore implements ArtifactStore {
   private async writeCopiesUnlocked(json: string, markdown: string, retentionDays: number): Promise<void> {
     if (!this.reportCopiesDirectory || !Number.isInteger(retentionDays) || retentionDays <= 0) throw new Error("Report-copy directory and positive retention are required.");
     await this.ensureSafeRoot();
-    const marker = path.join(this.root, this.copiesMarker);
+    await safeDirectory(this.reportCopiesDirectory);
+    const markerName = await this.copiesMarker();
+    if (!markerName) throw new Error("Report-copy directory disappeared before the copies were written.");
+    const marker = path.join(this.root, markerName);
     const previousRaw = await safeRead(marker).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? undefined : Promise.reject(error));
     const previous = previousRaw ? parseReportCopies(previousRaw, this.copyNames) : {};
     const metadata: ReportCopies = {};
@@ -165,7 +181,8 @@ export class FileArtifactStore implements ArtifactStore {
     }
     if (this.reportCopiesDirectory) {
       try {
-        const raw = await safeRead(path.join(this.root, this.copiesMarker)).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? undefined : Promise.reject(error));
+        const markerName = await this.copiesMarker();
+        const raw = markerName === undefined ? undefined : await safeRead(path.join(this.root, markerName)).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? undefined : Promise.reject(error));
         if (raw) {
           const metadata = parseReportCopies(raw, this.copyNames);
           let remaining = false;
@@ -181,7 +198,7 @@ export class FileArtifactStore implements ArtifactStore {
           }
           // Validate both copies before deleting either when an export changed.
           for (const file of expiredCopies) await rm(file, { force: true });
-          if (!remaining) await rm(path.join(this.root, this.copiesMarker));
+          if (!remaining) await rm(path.join(this.root, markerName!));
         }
       } catch (error) { errors.push(`Report copies: ${error instanceof Error ? error.message : String(error)}`); }
     }

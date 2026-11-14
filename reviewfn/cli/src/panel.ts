@@ -360,7 +360,8 @@ export async function runPanelCommand(flags: Flags, dependencies: PanelCommandDe
       else return fail(PANEL_EXIT_CODES.error, error);
     }
     const saved = await savePanelRun(report, quorumMet, { ownedArtifacts, artifactsDirectory: invocation.artifactsDirectory, outputDirectory: invocation.outputDirectory, reportDays }, signal);
-    if (saved.reportPath !== undefined) output = invocation.json ? `${JSON.stringify({ report: saved.reportPath, runId: report.runId })}\n` : `${saved.rendered}\n`;
+    // Exit 1 prints nothing on stdout, even when the report was saved (a retention cleanup failure).
+    if (saved.reportPath !== undefined && saved.exitCode !== PANEL_EXIT_CODES.error) output = invocation.json ? `${JSON.stringify({ report: saved.reportPath, runId: report.runId })}\n` : `${saved.rendered}\n`;
     return saved.error === undefined ? saved.exitCode : fail(saved.exitCode, saved.error);
   } catch (error) {
     // Only reading a stored canceled report reaches here; nothing was written to the output directory.
@@ -368,7 +369,8 @@ export async function runPanelCommand(flags: Flags, dependencies: PanelCommandDe
     return fail(PANEL_EXIT_CODES.error, error);
   } })();
   // The private snapshot holds a copy of the repository: a run that cannot remove it does not exit 0 or 2.
-  // A run that exits 1 for that reason prints nothing on stdout, so `--json` never pairs a report line with a failure.
+  // stdout carries the report (Markdown or the `--json` line) only for exit 0, 2, or 4 with a saved report that records
+  // the cancellation; no exit 1, including this one, prints a report line.
   try { await (dependencies.removeSnapshot ?? removeSnapshot)(owned); }
   catch (error) {
     if (code === PANEL_EXIT_CODES.complete || code === PANEL_EXIT_CODES.incomplete) return fail(PANEL_EXIT_CODES.error, new Error(`The panel run's private snapshot ${owned} was not removed: ${error instanceof Error ? error.message : String(error)}`));
@@ -400,6 +402,9 @@ export function publication(value: unknown, flags: Flags): { report: ReviewRepor
  * (`.reviewfn/output/panel-report.json` by default) must be a structurally valid panel report.
  */
 export async function renderStoredReport(flags: Flags, root: string): Promise<string> {
+  if (flags.get("input") === true) throw new Error("--input requires a value.");
+  const panelValue = flags.get("panel");
+  if (typeof panelValue === "string") throw new Error(`--panel takes no value; use --input ${panelValue} to choose the report.`);
   const panel = flags.has("panel");
   const input = path.resolve(root, optional(flags, "input") ?? (panel ? ".reviewfn/output/panel-report.json" : ".reviewfn/output/report.json"));
   const value: unknown = JSON.parse((await safeRead(input)).toString("utf8"));

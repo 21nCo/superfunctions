@@ -133,6 +133,18 @@ describe("reviewfn panel exit codes", () => {
     expect((await stored()).report.coverage).toBe("complete");
   });
 
+  it("exits 1 and prints no report line when retention cleanup fails, while the report is saved", async () => {
+    await repository(panel([slot("one", 1)]));
+    // Metadata that cleanup cannot parse makes deleteExpired report an error without stopping the save.
+    await mkdir(path.join(root, ".reviewfn", "artifacts"), { recursive: true, mode: 0o700 });
+    await writeFile(path.join(root, ".reviewfn", "artifacts", "broken.json"), "not json");
+    const result = await invoke(["--base", base, "--head", head, "--json"], codex());
+    expect(result.code).toBe(PANEL_EXIT_CODES.error);
+    expect(JSON.parse(result.stderr).error).toBe("REVIEWFN_RETENTION_CLEANUP_FAILED");
+    expect(result.stdout).toBe("");
+    expect((await stored()).report.coverage).toBe("complete");
+  });
+
   it("exits 2 for incomplete coverage even when quorum is met", async () => {
     await repository(panel([slot("one", 1)]));
     const result = await invoke(["--base", base, "--head", head], codex({ one: () => slotOutput({ inspectedPaths: [], uninspected: [{ scope: "src/value.ts", reason: "fixture skipped it" }] }) }));
@@ -342,5 +354,14 @@ describe("reviewfn init --panel and report --panel", () => {
     await writeFile(path.join(root, "bad.json"), JSON.stringify({ kind: "reviewfn-panel", schemaVersion: 1 }));
     await expect(renderStoredReport(parseArguments(["report", "--panel", "--input", "bad.json"]).flags, root)).rejects.toMatchObject({ code: "REVIEWFN_REPORT_INVALID" });
     await expect(renderStoredReport(parseArguments(["report", "--input", "bad.json"]).flags, root)).rejects.toThrow(/use reviewfn report --panel/);
+  });
+
+  it("refuses a bare --input and a value given to --panel instead of rendering the default report", async () => {
+    root = await mkdtemp(path.join(tmpdir(), "reviewfn-cli-report-flags-")); owned.push(root);
+    await mkdir(path.join(root, ".reviewfn", "output"), { recursive: true });
+    await writeFile(path.join(root, ".reviewfn", "output", "report.json"), "{}");
+    await writeFile(path.join(root, "other.json"), "{}");
+    for (const argv of [["report", "--input"], ["report", "--panel", "--input"]]) await expect(renderStoredReport(parseArguments(argv).flags, root)).rejects.toThrow("--input requires a value.");
+    await expect(renderStoredReport(parseArguments(["report", "--panel", "other.json"]).flags, root)).rejects.toThrow("--panel takes no value; use --input other.json to choose the report.");
   });
 });

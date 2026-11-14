@@ -6,6 +6,7 @@ import * as safeFiles from "../src/safe-files.js";
 import { DEFAULT_CONFIG, DEFAULT_POLICY, FileArtifactStore, PANEL_REPORT_COPY_NAMES, RepositoryMarkdownContextAdapter, applyRepositoryPolicy, buildReviewPrompt, deriveVerdict, digestJson, findingFingerprint, validateConfig, validateReport, type ReviewReport } from "../src/index.js";
 import { readFile, mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { realpathSync } from "node:fs";
 import path from "node:path";
 
 function report(): ReviewReport {
@@ -124,6 +125,29 @@ it("expires panel report copies separately from the 0.1 report copies in the sam
   await expect(readFile(path.join(root, "panel-report.md"))).rejects.toThrow();
   expect(await readFile(path.join(root, "report.json"), "utf8")).toBe("review-json");
   expect(() => new FileArtifactStore(root, root, { json: "../report.json", markdown: "report.md" })).toThrow(/Unsafe report copy name/);
+});
+
+// macOS tmpdir() is /var/folders/..., an alias of /private/var/folders/... that safeDirectory permits.
+const temporaryAlias = realpathSync(tmpdir()) !== path.resolve(tmpdir());
+it.skipIf(!temporaryAlias)("expires panel report copies written through one spelling of the output directory and cleaned through another", async () => {
+  const lexical = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-alias-"));
+  const physical = realpathSync(lexical);
+  expect(physical).not.toBe(lexical);
+  const artifacts = path.join(physical, "artifacts");
+  await new FileArtifactStore(artifacts, path.join(lexical, "out"), PANEL_REPORT_COPY_NAMES).writeReportCopies("panel-json", "panel-md", 1);
+  const cleanup = new FileArtifactStore(artifacts, path.join(physical, "out"), PANEL_REPORT_COPY_NAMES);
+  expect((await cleanup.deleteExpired()).errors).toEqual([]);
+  expect(await readFile(path.join(physical, "out", "panel-report.md"), "utf8")).toBe("panel-md");
+  expect((await cleanup.deleteExpired(new Date(Date.now() + 2 * 86_400_000))).errors).toEqual([]);
+  await expect(readFile(path.join(physical, "out", "panel-report.json"))).rejects.toThrow();
+  await expect(readFile(path.join(physical, "out", "panel-report.md"))).rejects.toThrow();
+  expect((await fileSystem.readdir(artifacts)).filter(entry => entry.startsWith(".panel-report-copies"))).toEqual([]);
+});
+
+it("skips panel report-copy expiry for an output directory that does not exist", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-missing-"));
+  const store = new FileArtifactStore(path.join(root, "artifacts"), path.join(root, "missing"), PANEL_REPORT_COPY_NAMES);
+  expect(await store.deleteExpired(new Date(Date.now() + 2 * 86_400_000))).toEqual({ deleted: [], errors: [] });
 });
 
 it.each(["report.json", "report.md"])("keeps report copies expirable after failing to save %s", async failure => {

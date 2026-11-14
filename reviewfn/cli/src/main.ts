@@ -31,6 +31,7 @@ async function run(): Promise<number> {
   const root = path.resolve(optional(args.flags, "root") ?? process.cwd());
   if (!args.command || args.command === "help" || args.flags.has("help")) { process.stdout.write(help()); return 0; }
   if (args.command === "init") {
+    if (typeof args.flags.get("panel") === "string") throw new Error("--panel takes no value.");
     const files = args.flags.has("panel") ? [await initializePanelPolicy(root)] : await initializeConfiguration(root);
     process.stdout.write(`${files.map((file) => path.relative(root, file)).join("\n")}\n`);
     return 0;
