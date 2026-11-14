@@ -1,5 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createHoverCardController, type CreateHoverCardProps, type HoverCardController } from '@uifn/core/primitives/hover-card';
+import { uifnOverlayAdapterBinding } from '@uifn/dom';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -19,6 +20,7 @@ export const HoverCardDefinition: SolidPrimitiveDefinition<CreateHoverCardProps>
   inputNames: ["open","defaultOpen","openDelay","closeDelay","placement"],
   context: HoverCardContext,
   createController: createHoverCardController as never,
+  domBindings: [uifnOverlayAdapterBinding],
 };
 
 function HoverCardRootElement(props: JSX.IntrinsicElements['div']): JSX.Element {

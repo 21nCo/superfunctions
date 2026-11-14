@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { createToolbarController, type ToolbarProps, type ToolbarController } from '@uifn/core/primitives/toolbar';
+import { createUIFnRovingFocusAdapterBinding } from '@uifn/dom';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -22,6 +23,7 @@ const ToolbarDefinition: ReactPrimitiveDefinition<ToolbarProps> = {
   inputNames: ["orientation","loop","dir","disabled"],
   context: ToolbarContext,
   createController: createToolbarController as never,
+  domBindings: [/* @__PURE__ */ createUIFnRovingFocusAdapterBinding({"stateKey":"focusedItem","parts":["button","link"]})],
 };
 
 export type ToolbarRootProps = ReactPrimitiveRootProps<ToolbarProps, 'div'>;

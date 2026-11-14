@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { createAlertDialogController, type AlertDialogProps, type AlertDialogController } from '@uifn/core/primitives/alert-dialog';
+import { uifnOverlayAdapterBinding } from '@uifn/dom';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -22,6 +23,7 @@ const AlertDialogDefinition: ReactPrimitiveDefinition<AlertDialogProps> = {
   inputNames: ["open","defaultOpen","initialFocus","restoreFocus"],
   context: AlertDialogContext,
   createController: createAlertDialogController as never,
+  domBindings: [uifnOverlayAdapterBinding],
 };
 
 export type AlertDialogRootProps = ReactPrimitiveRootProps<AlertDialogProps, 'div'>;

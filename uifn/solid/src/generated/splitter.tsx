@@ -1,5 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createSplitterController, type SplitterProps, type SplitterController } from '@uifn/core/primitives/splitter';
+import { createUIFnRangeGestureAdapterBinding, uifnSplitterGestureDriver } from '@uifn/dom';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -19,6 +20,7 @@ export const SplitterDefinition: SolidPrimitiveDefinition<SplitterProps> = {
   inputNames: ["sizes","defaultSizes","minSizes","maxSizes","orientation","dir","disabled"],
   context: SplitterContext,
   createController: createSplitterController as never,
+  domBindings: [/* @__PURE__ */ createUIFnRangeGestureAdapterBinding(uifnSplitterGestureDriver, {"entries":["resizeHandle"],"numericEntryValues":true})],
 };
 
 function SplitterRootElement(props: JSX.IntrinsicElements['div']): JSX.Element {

@@ -1,5 +1,6 @@
 import { createPopoverController, type PopoverProps } from '@uifn/core/primitives/popover';
 import type { SveltePrimitiveDefinition } from '../../internal/compound.js';
+import { uifnOverlayAdapterBinding } from '@uifn/dom';
 
 export const PopoverDefinition: SveltePrimitiveDefinition<PopoverProps> = {
   name: 'Popover',
@@ -9,4 +10,5 @@ export const PopoverDefinition: SveltePrimitiveDefinition<PopoverProps> = {
   inputNames: ["open","defaultOpen","modal","placement","closeOnEscape","closeOnInteractOutside"],
   contextKey: Symbol('uifn.Popover'),
   createController: createPopoverController as never,
+  domBindings: [uifnOverlayAdapterBinding],
 };

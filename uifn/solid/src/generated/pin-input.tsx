@@ -1,5 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createPinInputController, type PinInputProps, type PinInputController } from '@uifn/core/primitives/pin-input';
+import { createUIFnRovingFocusAdapterBinding, uifnPinInputRovingTarget } from '@uifn/dom';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -19,6 +20,7 @@ export const PinInputDefinition: SolidPrimitiveDefinition<PinInputProps> = {
   inputNames: ["value","defaultValue","length","mask","otp","name","disabled","readOnly","required"],
   context: PinInputContext,
   createController: createPinInputController as never,
+  domBindings: [/* @__PURE__ */ createUIFnRovingFocusAdapterBinding(uifnPinInputRovingTarget)],
 };
 
 function PinInputRootElement(props: JSX.IntrinsicElements['div']): JSX.Element {

@@ -1,6 +1,6 @@
 {
   "name": "@uifn/dom",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Owned DOM platform boundary for uifn",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -25,7 +25,7 @@
   },
   "dependencies": {
     "@floating-ui/dom": "^1.8.0",
-    "@uifn/core": "0.0.2",
+    "@uifn/core": "0.0.3",
     "tabbable": "^6.5.0"
   },
   "devDependencies": {
@@ -39,7 +39,7 @@
     "vite-plugin-solid": "2.11.12",
     "vitest": "^3.2.4"
   },
-  "files": ["dist", "README.md", "DEPENDENCIES.md"],
+  "files": ["dist", "README.md", "DEPENDENCIES.md", "CHANGELOG.md"],
   "author": "21n",
   "license": "MIT",
   "engines": { "node": ">=20 <25" },

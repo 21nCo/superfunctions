@@ -13,29 +13,21 @@ import {
   type JSX,
 } from 'solid-js';
 import { Dynamic } from 'solid-js/web';
-import {
-  type UIFnController,
-  type UIFnEnvironment,
-  type UIFnPartProps,
-  type UIFnPartRef,
-  type UIFnSnapshot,
-  type UIFnStaticPrimitiveContract,
-} from '@uifn/core';
+import type { UIFnController, UIFnSnapshot } from '@uifn/core/controller';
+import type { UIFnEnvironment } from '@uifn/core/environment';
 import {
   mergePartProps,
   resolveUIFnDefaultPartContent,
   type UIFnDefaultPartContent,
+  type UIFnPartProps,
+  type UIFnPartRef,
 } from '@uifn/core/parts';
+import type { UIFnStaticPrimitiveContract } from '@uifn/core/primitives';
 import {
   acquireUIFnDomPlatform,
-  createUIFnMenuDomBinding,
   createUIFnNativeFormResetBinding,
-  createUIFnNavigationMenuDomBinding,
-  createUIFnOverlayDomBinding,
-  createUIFnPopupDomBinding,
   createUIFnPortal,
-  createUIFnRangeGestureDomBinding,
-  createUIFnRovingFocusDomBinding,
+  type UIFnAdapterDomBinding,
   type UIFnDomResourceSnapshot,
   type UIFnPortalTarget,
 } from '@uifn/dom';
@@ -76,6 +68,8 @@ export interface SolidPrimitiveDefinition<TInputs extends object = AnyRecord> {
   readonly context: Context<SolidPrimitiveContextValue<TInputs> | undefined>;
   readonly createController?: (inputs: TInputs, environment: UIFnEnvironment) => AnyController;
   readonly contract?: AnyStaticContract;
+  /** The @uifn/dom behaviors this primitive wires, in installation order; none when absent. */
+  readonly domBindings?: readonly UIFnAdapterDomBinding[];
 }
 
 export interface SolidPrimitiveRenderPayload {
@@ -479,115 +473,9 @@ export class SolidPrimitiveBridge<TInputs extends object = AnyRecord> {
           restoreOnDestroy: true,
         }));
       }
-      if (this.definition.family === 'modal-overlay') {
-        const content = this.getElement('content');
-        if (content && controller) {
-          bindings.push(createUIFnOverlayDomBinding({
-            platform: lease.platform,
-            controller: controller as never,
-            content,
-            trigger: () => {
-              if (this.definition.name !== 'Tour') return this.getElement('trigger');
-              const target = (controller.getState().currentStep as { target?: unknown } | undefined)?.target;
-              return typeof target === 'string'
-                ? content.ownerDocument.querySelector<HTMLElement>(target)
-                : null;
-            },
-            positioner: () => this.getElement('positioner'),
-            arrow: () => this.getElement('arrow'),
-            portalNode: this.getElement('portal') ?? this.getElement('positioner') ?? content,
-            portalManagedExternally: this.getElement('portal') !== null,
-            validateAccessibleName: true,
-          }));
-        }
-      }
-      if ((this.definition.name === 'Menu' || this.definition.name === 'ContextMenu') && controller) {
-        const trigger = this.getElement('trigger');
-        const content = this.getElement('content');
-        if (trigger && content) {
-          bindings.push(createUIFnMenuDomBinding({
-            platform: lease.platform,
-            controller: controller as never,
-            id: content.id,
-            trigger,
-            content,
-            positioner: () => this.getElement('positioner'),
-            portalManagedExternally: this.getElement('portal') !== null,
-            getItemElement: (id) => this.getElement('item', id),
-          }));
-        }
-      }
-      if (
-        controller
-        && ['Autocomplete', 'Combobox', 'Select', 'ColorPicker', 'DatePicker'].includes(this.definition.name)
-      ) {
-        const content = this.getElement('content');
-        const trigger = this.definition.name === 'Autocomplete'
-          ? this.getElement('input')
-          : this.getElement('trigger');
-        const reference = ['Autocomplete', 'Combobox', 'Select', 'ColorPicker'].includes(this.definition.name)
-          ? this.getElement('control') ?? this.getElement('input') ?? trigger
-          : this.definition.name === 'DatePicker'
-            ? this.getElement('input') ?? trigger
-            : trigger;
-        const setOpen = controller.actions.setOpen;
-        if (content && trigger && reference && typeof setOpen === 'function') {
-          bindings.push(createUIFnPopupDomBinding({
-            platform: lease.platform,
-            controller: controller as never,
-            id: root.id || `${this.definition.name.toLowerCase()}-popup`,
-            trigger: () => (
-              this.definition.name === 'Autocomplete'
-                ? this.getElement('input')
-                : this.getElement('trigger')
-            ),
-            reference: () => (
-              ['Autocomplete', 'Combobox', 'Select', 'ColorPicker'].includes(this.definition.name)
-                ? this.getElement('control') ?? this.getElement('input') ?? this.getElement('trigger')
-                : this.definition.name === 'DatePicker'
-                  ? this.getElement('input') ?? this.getElement('trigger')
-                  : this.getElement('trigger')
-            ),
-            content: () => this.getElement('content'),
-            positioner: () => this.getElement('positioner'),
-            portalNode: this.getElement('portal') ?? this.getElement('positioner'),
-            portalManagedExternally: this.getElement('portal') !== null,
-            placement: 'bottom-start',
-            matchReferenceWidth: ['Autocomplete', 'Combobox', 'Select'].includes(this.definition.name),
-            getOpen: (state: Record<string, unknown>) => state.open === true,
-            setOpen: (next: boolean) => (setOpen as (value: boolean) => void)(next),
-          }));
-        }
-      }
-      if (this.definition.name === 'NavigationMenu' && controller) {
-        bindings.push(createUIFnNavigationMenuDomBinding({
-          platform: lease.platform,
-          controller: controller as never,
-          getTriggerElement: (id) => this.getElement('trigger', id),
-        }));
-      }
-      const roving = rovingTarget(this.definition.name, controller?.getState() ?? null);
-      if (controller && roving) {
-        bindings.push(createUIFnRovingFocusDomBinding({
-          platform: lease.platform,
-          controller,
-          getActiveKey: (state) => roving.getActiveKey(state as AnyRecord),
-          getElement: (key) => roving.getParts(controller.getState())
-            .map((part) => roving.valueScoped ? this.getElement(part, key) : this.getElement(part))
-            .find(Boolean) ?? null,
-          focusInitial: false,
-        }));
-      }
-      if (controller) {
-        for (const target of gestureTargets(this)) {
-          bindings.push(createUIFnRangeGestureDomBinding({
-            scope: lease.platform.scope,
-            primitive: this.definition.name as never,
-            element: target.element,
-            value: target.value,
-            controller: controller as never,
-          }));
-        }
+      const portalManagedExternally = this.getElement('portal') !== null;
+      for (const install of this.definition.domBindings ?? []) {
+        install({ bridge: this, controller, platform: lease.platform, root, portalManagedExternally, add: (binding) => bindings.push(binding) });
       }
     } catch (error) {
       bindings.reverse().forEach((binding) => binding.destroy());
@@ -620,66 +508,6 @@ export class SolidPrimitiveBridge<TInputs extends object = AnyRecord> {
     this.elements.clear();
     this.live = false;
   }
-}
-
-function gestureTargets(bridge: SolidPrimitiveBridge<any>): ReadonlyArray<{ value?: unknown; element: HTMLElement }> {
-  const single = (part: string) => {
-    const element = bridge.getElement(part);
-    return element ? [{ element }] : [];
-  };
-  if (bridge.definition.name === 'Slider') return single('control');
-  if (bridge.definition.name === 'AngleSlider') return single('track');
-  if (bridge.definition.name === 'Carousel') return single('viewport');
-  if (bridge.definition.name === 'SignaturePad') return single('canvas');
-  if (bridge.definition.name === 'ImageCropper') return [...single('cropArea'), ...bridge.getElementEntries('handle')];
-  if (bridge.definition.name === 'ColorPicker') return [...single('area'), ...bridge.getElementEntries('channelSlider')];
-  if (bridge.definition.name === 'Splitter') return bridge.getElementEntries('resizeHandle').map(({ value, element }) => ({ value: Number(value), element }));
-  if (bridge.definition.name === 'ScrollArea') return bridge.getElementEntries('thumb');
-  return [];
-}
-
-interface RovingTarget {
-  getActiveKey(state: AnyRecord): string | null;
-  getParts(state: AnyRecord): readonly string[];
-  readonly valueScoped: boolean;
-}
-
-function rovingTarget(name: string, state: AnyRecord | null): RovingTarget | null {
-  if (!state) return null;
-  if (name === 'Menubar') return {
-    getActiveKey: (current) => String(current.value ? current.activeItem ?? '' : current.focusedMenu ?? '') || null,
-    getParts: (current) => current.value ? ['item', 'submenuTrigger'] : ['trigger'],
-    valueScoped: true,
-  };
-  const fixed = (stateKey: string, parts: readonly string[]): RovingTarget => ({
-    getActiveKey: (current) => String(current[stateKey] ?? '') || null,
-    getParts: () => parts,
-    valueScoped: true,
-  });
-  if (name === 'ColorPicker') return {
-    getActiveKey: (current) => current.open ? null : 'trigger',
-    getParts: () => ['trigger'],
-    valueScoped: false,
-  };
-  if (name === 'Editable') return {
-    getActiveKey: (current) => current.editing ? 'input' : 'preview',
-    getParts: (current) => current.editing ? ['input'] : ['preview'],
-    valueScoped: false,
-  };
-  if (name === 'PinInput') return {
-    getActiveKey: (current) => String(Math.max(0, Number(current.valueLength ?? 0) - (current.completed ? 1 : 0))),
-    getParts: () => ['input'],
-    valueScoped: true,
-  };
-  if (name === 'NavigationMenu') return fixed('focusedItem', ['trigger']);
-  if (name === 'Tabs') return fixed('focusedItem', ['trigger']);
-  if (name === 'Toolbar') return fixed('focusedItem', ['button', 'link']);
-  if (name === 'Pagination') return fixed('focusedPage', ['pageTrigger']);
-  if (name === 'TreeView') return fixed('focusedItem', ['item']);
-  if (['CheckboxGroup', 'Listbox', 'RadioGroup', 'SegmentGroup', 'ToggleGroup'].includes(name)) {
-    return fixed('focusedItem', ['itemControl', 'item']);
-  }
-  return null;
 }
 
 function assignRef<TElement>(ref: UIFnPartRef<TElement>, value: TElement | null): void {
@@ -834,9 +662,7 @@ export interface SolidPrimitiveRootRuntimeProps<TInputs extends object> {
 export function SolidPrimitiveRoot<TInputs extends object>(runtime: SolidPrimitiveRootRuntimeProps<TInputs>): JSX.Element {
   const uniqueId = runtime.hydrationId;
   const source = () => runtime.props as AnyRecord;
-  const inputNames = runtime.definition.name === 'AngleSlider'
-    ? [...runtime.definition.inputNames, 'name']
-    : runtime.definition.inputNames;
+  const inputNames = runtime.definition.inputNames;
   const initial = splitSolidRootProps(untrack(source), inputNames);
   const environment: UIFnEnvironment = {
     ...initial.environment,

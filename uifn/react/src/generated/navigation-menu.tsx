@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { createNavigationMenuController, type NavigationMenuProps, type NavigationMenuController } from '@uifn/core/primitives/navigation-menu';
+import { createUIFnRovingFocusAdapterBinding, uifnNavigationMenuAdapterBinding } from '@uifn/dom';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -22,6 +23,7 @@ const NavigationMenuDefinition: ReactPrimitiveDefinition<NavigationMenuProps> = 
   inputNames: ["value","defaultValue","orientation","delayDuration","skipDelayDuration","dir"],
   context: NavigationMenuContext,
   createController: createNavigationMenuController as never,
+  domBindings: [uifnNavigationMenuAdapterBinding, /* @__PURE__ */ createUIFnRovingFocusAdapterBinding({"stateKey":"focusedItem","parts":["trigger"]})],
 };
 
 export type NavigationMenuRootProps = ReactPrimitiveRootProps<NavigationMenuProps, 'nav'>;

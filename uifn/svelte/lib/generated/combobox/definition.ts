@@ -1,5 +1,6 @@
 import { createComboboxController, type ComboboxProps } from '@uifn/core/primitives/combobox';
 import type { SveltePrimitiveDefinition } from '../../internal/compound.js';
+import { createUIFnPopupAdapterBinding } from '@uifn/dom';
 
 export const ComboboxDefinition: SveltePrimitiveDefinition<ComboboxProps> = {
   name: 'Combobox',
@@ -9,4 +10,5 @@ export const ComboboxDefinition: SveltePrimitiveDefinition<ComboboxProps> = {
   inputNames: ["value","defaultValue","inputValue","items","multiple","name","disabled","readOnly","required"],
   contextKey: Symbol('uifn.Combobox'),
   createController: createComboboxController as never,
+  domBindings: [/* @__PURE__ */ createUIFnPopupAdapterBinding({"trigger":"trigger","reference":["control","input","trigger"],"matchReferenceWidth":true})],
 };

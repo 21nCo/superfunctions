@@ -1,0 +1,8 @@
+# Local run evidence (Playwright traces, screenshots, generator scratch output).
+# Generated on every run; never committed.
+.conduct/
+
+# Scratch entry directories the bundle-size checker tests create next to the size fixtures (so the fixture's
+# node_modules resolution applies). The tests remove them; an interrupted run can leave them behind.
+examples/size-fixtures/*/.marker-check-*/
+examples/size-fixtures/*/.binding-marker-check-*/

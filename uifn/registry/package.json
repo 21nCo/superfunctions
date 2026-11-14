@@ -1,6 +1,6 @@
 {
   "name": "@uifn/registry",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Registry manifests, compiler, and CLI for uifn source installation",
   "main": "dist/index.js",
   "module": "dist/index.mjs",

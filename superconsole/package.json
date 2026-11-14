@@ -28,7 +28,7 @@
     "@superfunctions/admin": "0.1.5",
     "@sveltejs/kit": "2.69.3",
     "@uifn/components": "0.0.1",
-    "@uifn/components-svelte": "0.0.1",
+    "@uifn/components-svelte": "0.0.2",
     "@uifn/theme": "0.0.1",
     "@uifn/theme-tailwind": "0.0.1",
     "svelte": "5.46.4"

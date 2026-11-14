@@ -3,6 +3,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { adapterDomBindingWiringIssues, sharedAdapterInstallerIssues } from './uifn-adapter-dom-bindings.mjs';
 
 const root = process.cwd();
 const read = (file) => readFileSync(path.join(root, file), 'utf8');
@@ -45,6 +46,7 @@ export async function verifyPhase11Contract({ requireDist = false } = {}) {
       issues.push(issue('UIFN_ADAPTER_COVERAGE_MISSING', `${primitive.name} anatomy components differ from the catalog.`, generated.source));
     }
     const source = read(`uifn/react/${generated.source}`);
+    for (const problem of adapterDomBindingWiringIssues(primitive, source)) issues.push(issue('UIFN_FRAMEWORK_BEHAVIOR_FORK', problem, generated.source));
     for (const symbol of [...expected, primitive.name, `${primitive.name}Provider`, `use${primitive.name}`]) {
       if (!source.includes(` ${symbol}`)) issues.push(issue('UIFN_ADAPTER_COVERAGE_MISSING', `${generated.source} omits ${symbol}.`, generated.source));
     }
@@ -52,8 +54,14 @@ export async function verifyPhase11Contract({ requireDist = false } = {}) {
     if (/create(?:Primitive|Compound|Component)Factory/.test(source)) issues.push(issue('UIFN_FRAMEWORK_BEHAVIOR_FORK', `${primitive.name} uses a generic exported factory substitute.`, generated.source));
   }
 
-  const substrate = read('uifn/react/src/internal/compound.tsx');
-  for (const required of ['useSyncExternalStore', 'createUIFnOverlayDomBinding', 'createUIFnMenuDomBinding', 'createUIFnRangeGestureDomBinding', 'createUIFnNativeFormResetBinding', 'this.current?.update', '.destroy()']) {
+  // The compound owns the controller lifecycle and installs each definition's DOM bindings: the @uifn/dom adapter
+  // installers each generated definition lists (checked above), so the substrate is the compound plus those.
+  const compound = read('uifn/react/src/internal/compound.tsx');
+  const installers = read('uifn/dom/src/adapter-bindings.ts');
+  const substrate = `${compound}\n${installers}`;
+  for (const problem of sharedAdapterInstallerIssues(installers, catalog.primitives)) issues.push(issue('UIFN_FRAMEWORK_BEHAVIOR_FORK', problem, 'uifn/dom/src/adapter-bindings.ts'));
+  if (!compound.includes('definition.domBindings')) issues.push(issue('UIFN_FRAMEWORK_BEHAVIOR_FORK', 'React substrate never installs definition.domBindings.', 'uifn/react/src/internal/compound.tsx'));
+  for (const required of ['useSyncExternalStore', 'createUIFnOverlayDomBinding', 'createUIFnMenuDomBinding', 'createUIFnRangeGestureDriverBinding', 'createUIFnNativeFormResetBinding', 'this.current?.update', '.destroy()']) {
     if (!substrate.includes(required)) issues.push(issue('UIFN_FRAMEWORK_BEHAVIOR_FORK', `React substrate omits ${required}.`, 'uifn/react/src/internal/compound.tsx'));
   }
   for (const forbidden of ['useControllableState', 'useRovingFocus', 'useFocusTrap', 'useOutsideClick', 'usePosition', 'destroyTimerRef']) {

@@ -1,10 +1,11 @@
 {
   "name": "@uifn/core",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Permanently unstyled, framework-agnostic UI primitive semantics for uifn",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
+  "sideEffects": false,
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

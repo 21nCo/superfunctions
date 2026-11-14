@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { createPaginationController, type PaginationProps, type PaginationController } from '@uifn/core/primitives/pagination';
+import { createUIFnRovingFocusAdapterBinding } from '@uifn/dom';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -22,6 +23,7 @@ const PaginationDefinition: ReactPrimitiveDefinition<PaginationProps> = {
   inputNames: ["page","defaultPage","count","pageSize","siblingCount","disabled"],
   context: PaginationContext,
   createController: createPaginationController as never,
+  domBindings: [/* @__PURE__ */ createUIFnRovingFocusAdapterBinding({"stateKey":"focusedPage","parts":["pageTrigger"]})],
 };
 
 export type PaginationRootProps = ReactPrimitiveRootProps<PaginationProps, 'nav'>;

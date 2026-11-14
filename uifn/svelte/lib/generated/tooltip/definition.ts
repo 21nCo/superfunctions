@@ -1,5 +1,6 @@
 import { createTooltipController, type TooltipProps } from '@uifn/core/primitives/tooltip';
 import type { SveltePrimitiveDefinition } from '../../internal/compound.js';
+import { uifnOverlayAdapterBinding } from '@uifn/dom';
 
 export const TooltipDefinition: SveltePrimitiveDefinition<TooltipProps> = {
   name: 'Tooltip',
@@ -9,4 +10,5 @@ export const TooltipDefinition: SveltePrimitiveDefinition<TooltipProps> = {
   inputNames: ["open","defaultOpen","openDelay","closeDelay","placement","disabled"],
   contextKey: Symbol('uifn.Tooltip'),
   createController: createTooltipController as never,
+  domBindings: [uifnOverlayAdapterBinding],
 };

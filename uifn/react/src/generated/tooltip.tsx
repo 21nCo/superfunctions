@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { createTooltipController, type TooltipProps, type TooltipController } from '@uifn/core/primitives/tooltip';
+import { uifnOverlayAdapterBinding } from '@uifn/dom';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -22,6 +23,7 @@ const TooltipDefinition: ReactPrimitiveDefinition<TooltipProps> = {
   inputNames: ["open","defaultOpen","openDelay","closeDelay","placement","disabled"],
   context: TooltipContext,
   createController: createTooltipController as never,
+  domBindings: [uifnOverlayAdapterBinding],
 };
 
 export type TooltipRootProps = ReactPrimitiveRootProps<TooltipProps, 'span'>;

@@ -3,6 +3,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { adapterDomBindingsSource } from './uifn-adapter-dom-bindings.mjs';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -42,6 +43,10 @@ function callbackBindings(primitive) {
   });
 }
 
+const SVELTE_COMMIT_FOCUS = Object.freeze({
+  Menubar: { name: 'svelteMenubarCommitFocus', module: 'menubar-commit-focus.js' },
+});
+
 function definitionModule(primitive) {
   const name = primitive.name;
   const input = propsType(primitive);
@@ -50,9 +55,14 @@ function definitionModule(primitive) {
   const runtimeField = interactive
     ? `createController: create${name}Controller as never,`
     : `contract: ${name}Contract as never,`;
+  const domBindings = adapterDomBindingsSource(primitive);
+  // Svelte-only focus work that must wait for the DOM commit, imported only by the primitive that needs it.
+  const commitFocus = SVELTE_COMMIT_FOCUS[name];
+  const commitFocusImport = commitFocus ? `import { ${commitFocus.name} } from '../../internal/${commitFocus.module}';\n` : '';
+  const commitFocusField = commitFocus ? `\n  commitFocus: ${commitFocus.name},` : '';
   return `import { ${runtimeImport}, type ${input} } from '@uifn/core/primitives/${primitive.id}';
 import type { SveltePrimitiveDefinition } from '../../internal/compound.js';
-
+${domBindings.importLine}${commitFocusImport}
 export const ${name}Definition: SveltePrimitiveDefinition<${input}> = {
   name: '${name}',
   family: '${primitive.behaviorFamily}',
@@ -62,9 +72,11 @@ export const ${name}Definition: SveltePrimitiveDefinition<${input}> = {
     ...primitive.inputs.map((entry) => entry.name),
     ...(primitive.name === 'Accordion' ? ['type'] : []),
     ...(primitive.name === 'Carousel' ? ['dir'] : []),
+    // AngleSlider's root also takes the native form field name its hidden input submits.
+    ...(primitive.name === 'AngleSlider' ? ['name'] : []),
   ])},
   contextKey: Symbol('uifn.${name}'),
-  ${runtimeField}
+  ${runtimeField}${domBindings.field}${commitFocusField}
 };
 `;
 }
