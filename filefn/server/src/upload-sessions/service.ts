@@ -61,9 +61,11 @@ export interface CreateSessionInput {
   mimeType: string;
   /**
    * Client-chosen file ID (`file_[A-Za-z0-9_-]{8,64}`); omit or pass null to
-   * let the server generate one. An ID with no file is reserved for the
+   * let the server generate one. An ID with no file is reserved for a named
    * caller on init (first caller wins; another principal gets 403, the same
-   * one may init again). An ID with a file replaces it with a new version:
+   * one may init again). An anonymous caller does not reserve; it gets 403
+   * only if a named principal reserved the ID, at init or at completion.
+   * An ID with a file replaces it with a new version:
    * init checks write permission with the configured `fileWriteChecker`, and
    * completion checks it again.
    */
@@ -276,9 +278,9 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
   /**
    * Checks a file row that appeared after `assertMayCompleteInto` found none
    * (another completion created it): the session may only add a version to it
-   * with write permission, or, without a checker, as its named owner. Only the
-   * ID's reservation owner can have created it, so in practice this admits the
-   * same caller's other session and refuses anyone else.
+   * with write permission, or, without a checker, as its named owner. For a
+   * reserved ID only its owner can have created it, so this admits the same
+   * caller's other session and refuses anyone else.
    */
   async function assertMayWriteAppearedFile(
     file: FileOwnerRecord,
@@ -429,9 +431,12 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       }
 
       // A client-chosen ID that names a file replaces it, which needs write
-      // permission. One with no file is reserved for the caller: the first
+      // permission. One with no file is reserved for a named caller: the first
       // caller wins, so another principal gets 403 here and never uploads
-      // under it, while the same caller may init again (a retry).
+      // under it, while the same caller may init again (a retry). An
+      // anonymous caller cannot be told apart from another one, so it does
+      // not reserve: its ID stays unowned until the upload completes, and it
+      // may not use an ID a named principal reserved.
       if (clientFileId) {
         if (await findFile(clientFileId)) {
           if (fileWriteChecker && !(await fileWriteChecker.canWriteFile(clientFileId, ctx))) {
@@ -439,7 +444,10 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           }
         } else {
           const owner = { ownerId: ctx.principalId || 'anonymous', tenantId: ctx.tenantId || null };
-          if (!(await reservations.reserve(clientFileId, owner, input.policy))) {
+          const allowed = owner.ownerId === 'anonymous'
+            ? !(await reservations.find(clientFileId))
+            : await reservations.reserve(clientFileId, owner, input.policy);
+          if (!allowed) {
             throw errors.forbidden({ fileId: clientFileId, operation: 'create' });
           }
         }

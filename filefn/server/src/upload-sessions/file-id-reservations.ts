@@ -59,7 +59,7 @@ export function createFileIdReservations(config: { db: Adapter; namespace: strin
      * whether `owner` holds the reservation afterwards. Two callers racing on
      * one ID both try to insert it; the unique key lets exactly one in, and
      * the other reads the winner. A repeated call by the owner (a retried
-     * init) holds it already.
+     * init) holds it already. An anonymous owner never reserves.
      */
     async reserve(fileId: string, owner: FileIdOwner, policy: string): Promise<boolean> {
       if (owner.ownerId === 'anonymous') return false;
@@ -94,12 +94,16 @@ export function createFileIdReservations(config: { db: Adapter; namespace: strin
           },
           namespace,
         });
-        return true;
       } catch (error) {
         const winner = await find(fileId);
         if (!winner) throw error;
         return ownsReservation(winner, owner);
       }
+      // Read the reservation back rather than trusting the insert, so an
+      // adapter that does not enforce the unique key still settles one owner:
+      // every racer reads the same, first, row.
+      const held = await find(fileId);
+      return held !== null && ownsReservation(held, owner);
     },
   };
 }

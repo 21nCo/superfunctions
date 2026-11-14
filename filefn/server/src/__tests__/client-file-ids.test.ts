@@ -38,7 +38,8 @@ function hold(): Hold & { wait: Promise<void>; arrive: () => void } {
  * `uploadSessions.uploadSessionId` the way Postgres does. `holdNext` parks the
  * next matching operation before it runs.
  */
-function createDb() {
+function createDb(options: { enforceUnique?: boolean } = {}) {
+  const { enforceUnique = true } = options;
   const tables = new Map<string, Row[]>();
   const holds: Array<{ op: Op; model: string; when: (params: any) => boolean; h: ReturnType<typeof hold> }> = [];
 
@@ -75,7 +76,7 @@ function createDb() {
     async create(params: any) {
       await gate('create', params);
       const key = unique[params.model];
-      if (key && table(params.model).some((row) => row[key] === params.data[key])) {
+      if (enforceUnique && key && table(params.model).some((row) => row[key] === params.data[key])) {
         throw new Error(`duplicate key value violates unique constraint "${params.model}_${key}_key"`);
       }
       const record = { ...params.data };
@@ -153,8 +154,8 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
     return { reached: h.reached, release: h.release };
   }
 
-  function build(options: { layout?: Layout; mode?: 'multipart' | 'proxy' } = {}) {
-    const { layout = 'default', mode = 'multipart' } = options;
+  function build(options: { layout?: Layout; mode?: 'multipart' | 'proxy'; anonymous?: boolean } = {}) {
+    const { layout = 'default', mode = 'multipart', anonymous = false } = options;
     db = createDb();
     objects = new Map();
     publishedUploads = [];
@@ -219,7 +220,8 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
         storagePath: layout === 'shared' ? SHARED_PATH : undefined,
       }],
       auth: {
-        required: true,
+        // With `anonymous`, a request without x-user-id is an anonymous caller.
+        required: !anonymous,
         resolveSession: async (request) => {
           const principalId = request.headers.get('x-user-id');
           return principalId ? { principalId, tenantId: 'org_1' } : null;
@@ -245,7 +247,7 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
         method,
         headers: {
           'content-type': isBytes ? 'image/png' : 'application/json',
-          'x-user-id': user,
+          ...(user ? { 'x-user-id': user } : {}),
           ...extraHeaders,
         },
         body: body === undefined ? undefined : isBytes ? body : JSON.stringify(body),
@@ -650,5 +652,68 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
       expect(await reservations.reserve('file_anonymous_0001', { ownerId: 'anonymous', tenantId: null }, 'capture')).toBe(false);
       expect(reservationRow('file_anonymous_0001')).toBeUndefined();
     });
+  });
+
+  describe('an anonymous caller (no principal)', () => {
+    beforeEach(() => build({ anonymous: true }));
+
+    /** An anonymous init, part and completion, authorized by the session token. */
+    async function anonymousUpload(fileId: string): Promise<{ status: number; body: any }> {
+      const res = await init('', { fileId });
+      if (res.status !== 200) return res;
+      const { uploadSessionId, uploadSessionToken } = res.body.data;
+      const token = { 'x-upload-session-token': uploadSessionToken };
+      const part = await call('POST', `/upload/${uploadSessionId}/parts/1/complete`, '', { etag: 'etag-anon', size: 3 }, token);
+      expect(part.status).toBe(200);
+      return call('POST', `/upload/${uploadSessionId}/complete`, '', undefined, token);
+    }
+
+    it('uploads under an SDK-generated ID and creates the file under it', async () => {
+      // @filefn/client always sends a generated `file_<32 hex>` ID.
+      const fileId = `file_${'0123456789abcdef'.repeat(2)}`;
+      const done = await anonymousUpload(fileId);
+
+      expect(done.status).toBe(200);
+      expect(done.body.data.fileId).toBe(fileId);
+      expect(fileRows(fileId)).toEqual([expect.objectContaining({ ownerId: 'anonymous', currentVersionId: done.body.data.versionId })]);
+      // It reserves nothing: the ID is unowned until the file exists.
+      expect(reservationRow(fileId)).toBeUndefined();
+    });
+
+    it('gets 403 at init under an ID a named principal reserved', async () => {
+      const fileId = 'file_named_first_01';
+      expect((await init('user_a', { fileId })).status).toBe(200);
+
+      const res = await init('', { fileId });
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe('FILEFN_FORBIDDEN');
+    });
+
+    it('gets 403 at completion once a named principal reserved the ID after its init', async () => {
+      const fileId = 'file_named_later_01';
+      const res = await init('', { fileId });
+      expect(res.status).toBe(200);
+      const { uploadSessionId, uploadSessionToken } = res.body.data;
+      const token = { 'x-upload-session-token': uploadSessionToken };
+      await call('POST', `/upload/${uploadSessionId}/parts/1/complete`, '', { etag: 'etag-anon', size: 3 }, token);
+
+      expect((await init('user_a', { fileId })).status).toBe(200);
+      const done = await call('POST', `/upload/${uploadSessionId}/complete`, '', undefined, token);
+
+      expect(done.status).toBe(403);
+      expect(fileRows(fileId)).toEqual([]);
+      expect(publishedUploads).toEqual([]);
+    });
+  });
+
+  it('settles one reservation owner even on an adapter that does not enforce the unique key', async () => {
+    const lax = createDb({ enforceUnique: false });
+    const reservations = createFileIdReservations({ db: lax.adapter, namespace: 'filefn' });
+    const fileId = 'file_lax_adapter_01';
+    const results = await Promise.all([
+      reservations.reserve(fileId, { ownerId: 'user_a', tenantId: 'org_1' }, 'capture'),
+      reservations.reserve(fileId, { ownerId: 'user_b', tenantId: 'org_1' }, 'capture'),
+    ]);
+    expect(results.filter(Boolean)).toHaveLength(1);
   });
 });
