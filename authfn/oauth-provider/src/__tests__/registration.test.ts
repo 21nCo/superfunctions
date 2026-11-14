@@ -231,13 +231,22 @@ describe('client ID metadata documents', () => {
     }
     expect(documents.calls).toHaveLength(4);
 
-    // A definitive answer that is not a document ends the client, also for later outages.
-    serve = () => new Response('not found', { status: 404 });
-    provider.advance(5 * 60 + 1);
-    expect((await provider.getAuthorize(query)).status).toBe(400);
-    serve = () => new Response('down', { status: 503 });
-    expect((await provider.getAuthorize(query)).status).toBe(400);
-    expect(documents.calls).toHaveLength(6);
+    // A definitive answer that is not a document (here not found, or a body
+    // that is not UTF-8) ends the client, also for later outages, until it
+    // serves a document again.
+    for (const definitive of [
+      () => new Response('not found', { status: 404 }),
+      () => new Response(new Uint8Array([0x7b, 0xff, 0x7d]), { headers: { 'content-type': 'application/json' } })
+    ]) {
+      serve = definitive;
+      provider.advance(5 * 60 + 1);
+      expect((await provider.getAuthorize(query)).status).toBe(400);
+      serve = () => new Response('down', { status: 503 });
+      expect((await provider.getAuthorize(query)).status).toBe(400);
+      serve = () => Response.json(documentFor());
+      expect((await provider.getAuthorize(query)).status).toBe(200);
+    }
+    expect(documents.calls).toHaveLength(10);
   });
 
   it('refuses a document that names another client, carries a secret, redirects or is not a JSON 200', async () => {
@@ -415,32 +424,39 @@ describe('in-scope actors (AUTH-8)', () => {
     }
   });
 
-  it('registration flooding: a full document window refuses new clients but never locks out a known one', async () => {
-    const others = [1, 2, 3].map((index) => `https://mcp${index}.example.com/client.json`);
-    const documents = documentFetch(Object.fromEntries([
-      [DOCUMENT_URL, documentFor()],
-      ...others.map((url) => [url, documentFor({ client_id: url })])
-    ]));
-    const provider = await setupProvider({ registration: { metadataDocuments: true, fetch: documents.impl, rateLimit: { global: 3 } } });
+  it.each([false, true])('registration flooding: the document window limits only new clients; known ones are refetched outside it (sql: %s)', async (sql) => {
+    const others = [1, 2].map((index) => `https://mcp${index}.example.com/client.json`);
+    let current = documentFor();
+    const documents = documentFetch({
+      [DOCUMENT_URL]: () => Response.json(current),
+      ...Object.fromEntries(others.map((url) => [url, documentFor({ client_id: url })]))
+    });
+    const provider = await setupProvider({ sql, registration: { metadataDocuments: true, fetch: documents.impl, rateLimit: { global: 2 } } });
     const callback = await provider.authorize({}, DOCUMENT_CLIENT);
     const exchanged = await publicExchange(provider, DOCUMENT_CLIENT, callback.searchParams.get('code')!);
-    expect(exchanged.status).toBe(200);
     const { refresh_token: refreshToken } = await exchanged.json() as { refresh_token: string };
+    const authorizeNew = async (clientId: string) => (await provider.getAuthorize(
+      provider.authorizeQuery({ redirect_uri: 'https://mcp.example.com/cb' }, { ...DOCUMENT_CLIENT, clientId }), false)).status;
 
-    // Unauthenticated authorization requests for other client_ids fill the window.
-    const statuses: number[] = [];
-    for (const clientId of others) {
-      const query = provider.authorizeQuery({ redirect_uri: 'https://mcp.example.com/cb' }, { ...DOCUMENT_CLIENT, clientId });
-      statuses.push((await provider.getAuthorize(query, false)).status);
+    // A known client refetched every 5 minutes does not use up the window...
+    for (let round = 0; round < 4; round += 1) {
+      provider.advance(5 * 60 + 1);
+      expect((await provider.getAuthorize(provider.authorizeQuery({}, DOCUMENT_CLIENT))).status).toBe(200);
     }
-    expect(statuses).toEqual([401, 401, 429]);
+    expect(documents.calls).toEqual(Array(5).fill(DOCUMENT_URL));
+    // ...so a new client is still admitted, and the next one fills it.
+    expect([await authorizeNew(others[0]), await authorizeNew(others[1])]).toEqual([401, 429]);
 
-    // Past the 5-minute reuse, in the same full window, the known client still
-    // refreshes, authorizes and revokes from its stored document, without a fetch.
+    // In the full window, the known client picks up its changed document and
+    // still refreshes, authorizes and revokes, with one fetch for all three.
+    current = documentFor({ redirect_uris: ['https://mcp.example.com/moved'] });
     provider.advance(5 * 60 + 1);
     const refreshed = await provider.token({ grant_type: 'refresh_token', refresh_token: refreshToken, client_id: DOCUMENT_URL });
     expect(refreshed.status).toBe(200);
-    expect((await provider.getAuthorize(provider.authorizeQuery({}, DOCUMENT_CLIENT))).status).toBe(200);
+    const moved = { ...DOCUMENT_CLIENT, redirectUris: ['https://mcp.example.com/moved'] };
+    expect((await provider.getAuthorize(provider.authorizeQuery({}, moved))).status).toBe(200);
+    const removed = await provider.getAuthorize(provider.authorizeQuery({}, DOCUMENT_CLIENT));
+    expect([removed.status, removed.headers.get('location')]).toEqual([400, null]);
     const { refresh_token: rotated } = await refreshed.json() as { refresh_token: string };
     const revoked = await provider.handle('/auth/oauth/revoke', {
       method: 'POST',
@@ -448,7 +464,28 @@ describe('in-scope actors (AUTH-8)', () => {
       body: new URLSearchParams({ token: rotated, client_id: DOCUMENT_URL })
     });
     expect(revoked.status).toBe(200);
-    expect(documents.calls).toEqual([DOCUMENT_URL, ...others.slice(0, 2)]);
+    expect(await authorizeNew(others[1])).toBe(429);
+    expect(documents.calls).toEqual([...Array(5).fill(DOCUMENT_URL), others[0], DOCUMENT_URL]);
+  });
+
+  it.each([false, true])('registration flooding: a known client is refetched at most once per 5 minutes across instances (sql: %s)', async (sql) => {
+    const documents = documentFetch({ [DOCUMENT_URL]: documentFor() });
+    const provider = await setupProvider({ sql, registration: { metadataDocuments: true, fetch: documents.impl } });
+    const instances = [provider.handle, provider.instance(), provider.instance()];
+    const query = provider.authorizeQuery({}, DOCUMENT_CLIENT);
+    const authorizeEverywhere = async () => (await Promise.all(instances.map((handle) =>
+      handle(`/auth/oauth/authorize?${query}`, { headers: { cookie: provider.cookie } })))).map((response) => response.status);
+
+    expect((await provider.getAuthorize(query)).status).toBe(200);
+    for (let round = 1; round <= 3; round += 1) {
+      // Within 5 minutes of the last fetch, no instance refetches; after, exactly one does.
+      provider.advance(4 * 60);
+      expect(await authorizeEverywhere()).toEqual([200, 200, 200]);
+      expect(documents.calls).toHaveLength(round);
+      provider.advance(60 + 1);
+      expect(await authorizeEverywhere()).toEqual([200, 200, 200]);
+      expect(documents.calls).toHaveLength(round + 1);
+    }
   });
 
   it('registration flooding: metadata document fetches count toward the limit', async () => {

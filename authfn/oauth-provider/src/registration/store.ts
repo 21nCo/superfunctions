@@ -37,12 +37,15 @@ export function createRegistrationSchema(): AuthFnSchemaDefinition['schemas'] {
         id,
         name: { type: 'string', required: false, fieldName: 'name', maxLength: 255 },
         redirectUris: { type: 'json', required: true, fieldName: 'redirect_uris' },
-        fetchedAt: { type: 'date', required: true, fieldName: 'fetched_at' }
+        fetchedAt: { type: 'date', required: true, fieldName: 'fetched_at' },
+        // `<claim time, 16-digit ms>:<random>` of the request allowed to refetch it.
+        claimId: { type: 'string', required: true, fieldName: 'claim_id', maxLength: 64 }
       }
     },
     {
-      // One row per admitted registration or metadata document fetch; rows
-      // older than the previous window are pruned as new ones arrive.
+      // One row per admitted registration or first fetch of an unknown
+      // metadata document client; rows older than the previous window are
+      // pruned as new ones arrive.
       modelName: MODELS.events,
       fields: {
         id,
@@ -101,6 +104,7 @@ export interface DocumentClientRecord {
   name?: string | null;
   redirectUris: string[];
   fetchedAt: Date;
+  claimId: string;
 }
 
 export function findDocumentClient(store: RegistrationStore, clientId: string): Promise<DocumentClientRecord | null> {
@@ -111,22 +115,66 @@ export function findDocumentClient(store: RegistrationStore, clientId: string): 
   });
 }
 
-/** Stores `record` as the client's last usable document, replacing any earlier one. */
-export async function saveDocumentClient(store: RegistrationStore, record: DocumentClientRecord): Promise<void> {
-  const scope = { model: MODELS.documents, namespace: namespace(store) };
-  const { id, ...data } = record;
-  const update = () => store.database.updateMany({ ...scope, where: [eq('id', id)], data });
-  if (await update() > 0) {
-    return;
-  }
+/** Zero-padded so that string order is time order in every adapter. */
+function timeKey(ms: number): string {
+  return String(Math.max(0, ms)).padStart(16, '0');
+}
+
+/** A refetch claim made at `now`, which sorts after every earlier claim. */
+export function documentClaimId(now: Date): string {
+  return `${timeKey(now.getTime())}:${randomBytes(9).toString('hex')}`;
+}
+
+/** The time a refetch claim was made, in milliseconds. */
+export function documentClaimTime(claimId: string): number {
+  return Number(claimId.slice(0, 16));
+}
+
+/**
+ * Stores a newly fetched document. When another request stored the client
+ * first, from its own fetch, that row is kept. Row counts are never trusted:
+ * not every adapter reports them.
+ */
+export async function createDocumentClient(store: RegistrationStore, record: DocumentClientRecord): Promise<void> {
   try {
-    await store.database.create({ ...scope, data: { ...record } });
+    await store.database.create({ model: MODELS.documents, data: { ...record }, namespace: namespace(store) });
   } catch (error) {
-    // Another request stored it first: overwrite with this fetch.
-    if (await update() === 0) {
+    if (!await findDocumentClient(store, record.id)) {
       throw error;
     }
   }
+}
+
+/** Replaces a known client's document with the one its claimed refetch returned. */
+export async function updateDocumentClient(
+  store: RegistrationStore,
+  record: Omit<DocumentClientRecord, 'claimId'>
+): Promise<void> {
+  const { id, ...data } = record;
+  await store.database.updateMany({ model: MODELS.documents, where: [eq('id', id)], data, namespace: namespace(store) });
+}
+
+/**
+ * Claims the refetch of a known client's document when no claim was made in
+ * the `intervalMs` before `now`, so that across every instance the document
+ * is refetched at most once per interval. The claim is a conditional update
+ * read back: the caller whose claim ID is stored won.
+ */
+export async function claimDocumentRefetch(
+  store: RegistrationStore,
+  clientId: string,
+  now: Date,
+  intervalMs: number
+): Promise<boolean> {
+  const claimId = documentClaimId(now);
+  await store.database.updateMany({
+    model: MODELS.documents,
+    // Claim times up to now - interval sort before this bound; later ones after it.
+    where: [eq('id', clientId), { field: 'claimId', operator: 'lt', value: timeKey(now.getTime() - intervalMs + 1) }],
+    data: { claimId },
+    namespace: namespace(store)
+  });
+  return (await findDocumentClient(store, clientId))?.claimId === claimId;
 }
 
 export async function deleteDocumentClient(store: RegistrationStore, clientId: string): Promise<void> {

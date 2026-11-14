@@ -8,17 +8,22 @@ import {
   declaresMoreThan,
   fetchMetadataDocument,
   isMetadataDocumentClientId,
-  readCappedText
+  readCappedJson
 } from './document.js';
 import { isPlainObject, readPublicClientMetadata, SUPPORTED_GRANT_TYPES } from './metadata.js';
 import {
   admitRegistrationEvent,
+  claimDocumentRefetch,
+  createDocumentClient,
   deleteDocumentClient,
+  documentClaimId,
+  documentClaimTime,
   findDocumentClient,
   findRegisteredClient,
   insertRegisteredClient,
   REGISTERED_CLIENT_ID_PREFIX,
-  saveDocumentClient,
+  updateDocumentClient,
+  type DocumentClientRecord,
   type RegistrationEventKind,
   type RegistrationLimits
 } from './store.js';
@@ -29,7 +34,10 @@ export const OAUTH_REGISTRATION_PATH = '/oauth/register';
 
 const MAX_REGISTRATION_BODY_BYTES = 64 * 1024;
 const DEFAULT_LIMITS: RegistrationLimits = { perIp: 20, global: 200, windowSeconds: 3600 };
-/** A fetched metadata document is reused for 5 minutes, by up to 1000 clients per process. */
+/**
+ * A metadata document is refetched at most once per 5 minutes across all
+ * instances, and kept in memory for up to 1000 clients per process.
+ */
 const DOCUMENT_CACHE_MS = 5 * 60 * 1000;
 const DOCUMENT_CACHE_ENTRIES = 1000;
 
@@ -107,23 +115,27 @@ function publicClient(clientId: string, name: string | null | undefined, redirec
  * registrations). With `metadataDocuments`, an `https` URL `client_id` is
  * resolved from the document it serves: the document must name that exact
  * URL as its `client_id` and pass the same public client rules as a
- * registration. A usable document is stored and reused for 5 minutes by
- * every instance; each fetch counts toward the registration rate limit. When
- * a refetch is refused by that limit or the host gives no usable answer, a
- * known client keeps its last usable document, so flooding only refuses new
- * clients. A host that answers with something other than a usable document
- * makes the client unknown and its stored document is dropped.
+ * registration.
+ *
+ * The first fetch of an unknown `client_id` counts toward the registration
+ * rate limit, and its usable document is stored. A known client is refetched
+ * at most once per 5 minutes across all instances, outside that limit, so
+ * flooding refuses only new clients and known clients still pick up changed
+ * documents. When its host gives no usable answer (network error, timeout,
+ * 5xx, 408 or 429), a known client keeps its stored document; any other
+ * answer that is not a usable document makes it unknown and drops the row.
  */
 export function withClientRegistration(runtime: OAuthProviderRuntime): OAuthProviderRuntime {
   const documents = new Map<string, { client: OAuthProviderClient; expiresAt: number }>();
   const pending = new Map<string, Promise<OAuthProviderClient | undefined>>();
+  const fetchDocument = (clientId: string) => fetchMetadataDocument(runtime.config.registration?.fetch ?? fetch, clientId);
 
   const resolveDocumentClient = (clientId: string, request: Request) => {
     const cached = documents.get(clientId);
     if (cached && cached.expiresAt > runtime.now().getTime()) {
       return Promise.resolve(cached.client);
     }
-    // Concurrent requests for one document share a single fetch.
+    // Concurrent requests for one document share a single load.
     let loading = pending.get(clientId);
     if (!loading) {
       loading = loadDocumentClient(clientId, request).finally(() => pending.delete(clientId));
@@ -132,48 +144,61 @@ export function withClientRegistration(runtime: OAuthProviderRuntime): OAuthProv
     return loading;
   };
 
-  const remember = (clientId: string, client: OAuthProviderClient) => {
+  const remember = (clientId: string, client: OAuthProviderClient, expiresAt: number) => {
     if (documents.size >= DOCUMENT_CACHE_ENTRIES) {
       documents.delete(documents.keys().next().value!);
     }
-    documents.set(clientId, { client, expiresAt: runtime.now().getTime() + DOCUMENT_CACHE_MS });
+    documents.set(clientId, { client, expiresAt });
     return client;
   };
 
   const loadDocumentClient = async (clientId: string, request: Request) => {
     documents.delete(clientId);
     const stored = await findDocumentClient(runtime.store, clientId);
-    const known = stored ? publicClient(clientId, stored.name, stored.redirectUris) : undefined;
-    if (known && runtime.now().getTime() - new Date(stored!.fetchedAt).getTime() < DOCUMENT_CACHE_MS) {
-      return remember(clientId, known);
+    return stored ? loadKnownClient(stored) : loadNewClient(clientId, request);
+  };
+
+  const loadKnownClient = async (stored: DocumentClientRecord) => {
+    const clientId = stored.id;
+    const known = publicClient(clientId, stored.name, stored.redirectUris);
+    const now = runtime.now();
+    // Another request claimed the refetch within 5 minutes: use the stored
+    // document until that claim runs out.
+    const claimedUntil = documentClaimTime(stored.claimId) + DOCUMENT_CACHE_MS;
+    if (claimedUntil > now.getTime() || !await claimDocumentRefetch(runtime.store, clientId, now, DOCUMENT_CACHE_MS)) {
+      return remember(clientId, known, Math.max(claimedUntil, now.getTime() + 1000));
     }
-    try {
-      await admit(runtime, request, 'document');
-    } catch (error) {
-      // Flooding refuses new clients, never ones already known.
-      if (known) {
-        return remember(clientId, known);
-      }
-      throw error;
-    }
-    const fetched = await fetchMetadataDocument(runtime.config.registration?.fetch ?? fetch, clientId);
+    const expiresAt = now.getTime() + DOCUMENT_CACHE_MS;
+    const fetched = await fetchDocument(clientId);
     if (fetched.status === 'unavailable') {
-      return known && remember(clientId, known);
+      return remember(clientId, known, expiresAt);
     }
     const metadata = fetched.status === 'ok' ? readDocumentMetadata(clientId, fetched.document) : undefined;
     if (!metadata) {
-      if (stored) {
-        await deleteDocumentClient(runtime.store, clientId);
-      }
+      await deleteDocumentClient(runtime.store, clientId);
       return undefined;
     }
-    await saveDocumentClient(runtime.store, {
+    await updateDocumentClient(runtime.store, { id: clientId, name: metadata.name ?? null, redirectUris: metadata.redirectUris, fetchedAt: now });
+    return remember(clientId, publicClient(clientId, metadata.name, metadata.redirectUris), expiresAt);
+  };
+
+  const loadNewClient = async (clientId: string, request: Request) => {
+    await admit(runtime, request, 'document');
+    const now = runtime.now();
+    const fetched = await fetchDocument(clientId);
+    const metadata = fetched.status === 'ok' ? readDocumentMetadata(clientId, fetched.document) : undefined;
+    if (!metadata) {
+      return undefined;
+    }
+    await createDocumentClient(runtime.store, {
       id: clientId,
       name: metadata.name ?? null,
       redirectUris: metadata.redirectUris,
-      fetchedAt: runtime.now()
+      fetchedAt: now,
+      // This fetch is the client's refetch for the next 5 minutes.
+      claimId: documentClaimId(now)
     });
-    return remember(clientId, publicClient(clientId, metadata.name, metadata.redirectUris));
+    return remember(clientId, publicClient(clientId, metadata.name, metadata.redirectUris), now.getTime() + DOCUMENT_CACHE_MS);
   };
 
   return {
@@ -208,9 +233,9 @@ async function readRegistrationRequest(request: Request): Promise<unknown> {
     throw invalidBody('Request body must be a JSON object of at most 64 KB');
   }
   try {
-    const text = await readCappedText(request.body.getReader(), MAX_REGISTRATION_BODY_BYTES);
-    if (text !== null) {
-      return JSON.parse(text) as unknown;
+    const parsed = await readCappedJson(request.body.getReader(), MAX_REGISTRATION_BODY_BYTES);
+    if (parsed) {
+      return parsed.value;
     }
   } catch {
     // Invalid UTF-8 or JSON.

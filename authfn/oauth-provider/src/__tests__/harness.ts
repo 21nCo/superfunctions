@@ -126,7 +126,7 @@ export function createInsertControl(database: Adapter) {
 /**
  * The shipped Kysely adapter on an in-memory SQLite database, with one column
  * per schema field. SQLite has no JSON type, so JSON fields are stored as
- * text. The adapter's `create` and `update` fail on SQLite (`selectAll` on an
+ * text, and `id` is the primary key. The adapter's `create` and `update` fail on SQLite (`selectAll` on an
  * insert, `RETURNING "*"`), a packages/db defect outside this package
  * (AUTH-13), so inserts go through Kysely and `update` (used by AuthFn core
  * sessions) runs as `updateMany` and `findOne`. The OAuth store's claims,
@@ -135,7 +135,9 @@ export function createInsertControl(database: Adapter) {
 function sqliteAdapter(): Adapter {
   const sqlite = new Database(':memory:');
   for (const table of createProviderApp().getSchema().schemas) {
-    sqlite.exec(`CREATE TABLE "${table.modelName}" (${Object.keys(table.fields).map((field) => `"${field}"`).join(', ')})`);
+    // `id` is an enforced primary key, as in a migrated database.
+    const columns = Object.keys(table.fields).map((field) => `"${field}"${field === 'id' ? ' PRIMARY KEY' : ''}`);
+    sqlite.exec(`CREATE TABLE "${table.modelName}" (${columns.join(', ')})`);
   }
   const db = new Kysely<Record<string, Record<string, unknown>>>({ dialect: new SqliteDialect({ database: sqlite }) });
   const kysely = kyselyAdapter({
@@ -177,7 +179,7 @@ export async function setupProvider(
   let now = new Date('2026-11-14T00:00:00.000Z');
   const consents: OAuthConsentInput[] = [];
   const logins: OAuthLoginRequiredInput[] = [];
-  const server = createProviderApp().createServer({
+  const createInstance = () => createProviderApp().createServer({
     database: control.database,
     pluginRuntime: {
       oauthProvider: {
@@ -196,6 +198,7 @@ export async function setupProvider(
       }
     }
   });
+  const server = createInstance();
 
   const coreConfig: AuthFnRuntimeConfig = { database, namespace: 'authfn', plugins: [], scopes: REGISTRY };
   const user = await createUser(coreConfig, { primaryEmail: 'user@example.com' });
@@ -329,6 +332,11 @@ export async function setupProvider(
     revoke,
     register,
     obtainTokens,
+    /** Another server instance on the same storage and clock, with its own in-memory state. */
+    instance: () => {
+      const other = createInstance();
+      return (path: string, init?: RequestInit) => other.router.handle(new Request(`${ORIGIN}${path}`, init));
+    },
     advance: (seconds: number) => {
       now = new Date(now.getTime() + seconds * 1000);
     },

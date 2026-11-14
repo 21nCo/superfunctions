@@ -34,13 +34,13 @@ export function isMetadataDocumentClientId(value: string): boolean {
 }
 
 /**
- * Reads at most `maxBytes` from `reader` as UTF-8; null when the stream is
- * longer, after cancelling it. Invalid UTF-8 throws.
+ * Reads at most `maxBytes` from `reader`; null when the stream is longer,
+ * after cancelling it.
  */
-export async function readCappedText(
+async function readCappedBytes(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   maxBytes: number
-): Promise<string | null> {
+): Promise<Uint8Array | null> {
   const chunks: Uint8Array[] = [];
   let size = 0;
   for (;;) {
@@ -61,7 +61,24 @@ export async function readCappedText(
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  return bytes;
+}
+
+/** Parses UTF-8 JSON; invalid UTF-8 or JSON throws. */
+function parseJson(bytes: Uint8Array): unknown {
+  return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown;
+}
+
+/**
+ * Reads at most `maxBytes` of JSON from `reader`; null when the stream is
+ * longer, after cancelling it. Invalid UTF-8 or JSON throws.
+ */
+export async function readCappedJson(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  maxBytes: number
+): Promise<{ value: unknown } | null> {
+  const bytes = await readCappedBytes(reader, maxBytes);
+  return bytes && { value: parseJson(bytes) };
 }
 
 /** A declared `content-length` over `maxBytes`. */
@@ -74,7 +91,7 @@ export function declaresMoreThan(headers: Headers, maxBytes: number): boolean {
  * The outcome of a metadata document fetch: the parsed document; `invalid`
  * when the host answered with something that is not a document (a redirect,
  * a status other than 200, more than 64 KB, declared or streamed, or not
- * JSON); or `unavailable` when it gave no usable answer (a network error, no
+ * UTF-8 JSON); or `unavailable` when it gave no usable answer (a network error, no
  * complete answer within 5 seconds, a 5xx, 408 or 429).
  */
 export type MetadataDocumentFetch = { status: 'ok'; document: unknown } | { status: 'invalid' | 'unavailable' };
@@ -98,7 +115,7 @@ export async function fetchMetadataDocument(fetchImpl: typeof fetch, url: string
       reject(new Error('Client metadata document timed out'));
     }, METADATA_DOCUMENT_TIMEOUT_MS);
   });
-  const work = (async (): Promise<MetadataDocumentFetch | string> => {
+  const work = (async (): Promise<MetadataDocumentFetch | Uint8Array> => {
     const response = await fetchImpl(url, {
       method: 'GET',
       headers: { accept: 'application/json' },
@@ -113,10 +130,10 @@ export async function fetchMetadataDocument(fetchImpl: typeof fetch, url: string
       return { status: transient ? 'unavailable' : 'invalid' };
     }
     reader = response.body.getReader();
-    const text = await readCappedText(reader, METADATA_DOCUMENT_MAX_BYTES);
-    return text === null ? { status: 'invalid' } : text;
+    const bytes = await readCappedBytes(reader, METADATA_DOCUMENT_MAX_BYTES);
+    return bytes ?? { status: 'invalid' };
   })();
-  let outcome: MetadataDocumentFetch | string;
+  let outcome: MetadataDocumentFetch | Uint8Array;
   try {
     outcome = await Promise.race([work, deadline]);
   } catch {
@@ -127,11 +144,13 @@ export async function fetchMetadataDocument(fetchImpl: typeof fetch, url: string
     work.catch(() => undefined);
     controller.abort();
   }
-  if (typeof outcome !== 'string') {
+  if (!(outcome instanceof Uint8Array)) {
     return outcome;
   }
+  // Decoded here, not in the race: a complete body that is not UTF-8 JSON is
+  // the host's answer, while a failure reading it leaves the host unavailable.
   try {
-    return { status: 'ok', document: JSON.parse(outcome) as unknown };
+    return { status: 'ok', document: parseJson(outcome) };
   } catch {
     return { status: 'invalid' };
   }
