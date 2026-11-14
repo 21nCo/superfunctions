@@ -35,7 +35,8 @@ export function strictProviderSchema(schema: unknown = harnessOutputSchema): unk
   const output = Object.fromEntries(Object.entries(input).map(([key, value]) => [key, strictProviderSchema(value)]));
   if (input.type === "object" && input.properties) {
     const required = new Set(input.required as string[] ?? []);
-    output.properties = Object.fromEntries(Object.entries(input.properties as Record<string, unknown>).map(([key, value]) => [key, required.has(key) ? strictProviderSchema(value) : { anyOf: [strictProviderSchema(value), { type: "null" }] }]));
+    // Reuse the subtrees transformed above: transforming them again here doubled the work at every nesting level.
+    output.properties = Object.fromEntries(Object.entries(output.properties as Record<string, unknown>).map(([key, value]) => [key, required.has(key) ? value : { anyOf: [value, { type: "null" }] }]));
     output.required = Object.keys(input.properties as object);
   }
   return output;

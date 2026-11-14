@@ -76,7 +76,8 @@ describe("CodexHarnessAdapter outputSchema", () => {
   it.each([
     ["required only through an allOf branch", { notes: null }, true],
     ["a discriminated union whose other branch requires the property", { notes: { kind: "y", a: null } }, false],
-    ["a recursive reference", { notes: { children: [{ children: [], a: null }] } }, false],
+    // Provider-strict output carries every property, with null for an optional one, at every level.
+    ["a recursive reference", { notes: { children: [{ children: [], a: null }], a: null } }, false],
   ] as const)("normalizes provider nulls for %s through the adapter", async (_name, fields, requiredOnly) => {
     const notes = { anyOf: [
       { type: "null" },
@@ -93,8 +94,36 @@ describe("CodexHarnessAdapter outputSchema", () => {
     expect(output.error).toBeUndefined();
     expect(output.terminal).toBe("completed");
     expect(output.findings[0]).not.toHaveProperty("anchor");
-    // The provider payload is validated as normalized; the normalized 0.1 result carries no notes.
+    // The raw provider payload is validated against the provider-strict schema; the normalized 0.1 result carries no notes.
     expect(output).not.toHaveProperty("notes");
+  });
+
+  it.each([
+    ["anyOf", (x: object, y: object) => ({ anyOf: [x, y] })],
+    ["oneOf", (x: object, y: object) => ({ oneOf: [x, y] })],
+    ["if/then/else", () => ({ type: "object", additionalProperties: false, required: ["kind", "a"], properties: { kind: { enum: ["x", "y"] }, a: { anyOf: [{ type: "string" }, { type: "null" }] }, note: { type: "string" } }, if: { properties: { kind: { const: "x" } } }, then: true, else: { properties: { a: { type: "string" } } } })],
+  ] as const)("keeps a null only the applicable %s branch requires", async (_name, compose) => {
+    // Branch x requires a nullable a; branch y requires a string a. Both have an optional note.
+    const typed = (kind: string, a: object) => ({ type: "object", additionalProperties: false, required: ["kind", "a"], properties: { kind: { const: kind }, a, note: { type: "string" } } });
+    const notes = compose(typed("x", { anyOf: [{ type: "string" }, { type: "null" }] }), typed("y", { type: "string" }));
+    const custom = { ...lensOutputSchema, required: [...lensOutputSchema.required, "notes"], properties: { ...lensOutputSchema.properties, notes } };
+    const run = async (kind: string) => (await recordingAdapter({ ...lensPayload(), notes: { kind, a: null, note: null } }).adapter.run({ ...input, outputSchema: custom }));
+    const applicable = await run("x");
+    expect(applicable.error).toBeUndefined();
+    expect(applicable.terminal).toBe("completed");
+    expect(applicable.findings[0]).not.toHaveProperty("anchor");
+    expect((await run("y")).terminal).toBe("malformed");
+  });
+
+  it("rejects large invalid lens output promptly", async () => {
+    const payload = lensPayload();
+    payload.findings = Array.from({ length: 3000 }, (_, index) => ({ ...lensFinding(index ? "high" : "info"), fingerprint: `f${index}` }));
+    const { adapter } = recordingAdapter(payload);
+    const started = performance.now();
+    const output = await adapter.run({ ...input, outputSchema: lensOutputSchema, policy: { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, maxOutputBytes: 10_000_000 } } });
+    expect(performance.now() - started).toBeLessThan(1_000);
+    expect(output.terminal).toBe("malformed");
+    expect(output.error).toMatch(/severity/);
   });
 
   it("omits 0.1 nulls from the harness payload even where the custom schema requires them", async () => {

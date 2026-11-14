@@ -288,6 +288,11 @@ export interface PanelReportValidationOptions {
   context?: ContextManifest;
   /** Retained artifacts: change detail, reproduction logs and slot outputs fail closed without it. */
   artifacts?: ArtifactStore;
+  /**
+   * The panel policy the run used. It must have the report's `panelPolicyDigest` and slots. It binds the requirements
+   * report to `requirementsSlot`: without it an embedded requirements report fails closed.
+   */
+  panelPolicy?: PanelPolicy;
 }
 
 const REPORT_CODES = new Set<PanelReportIssueCode>(["REVIEWFN_CHANGE_DETAIL_MISMATCH", "REVIEWFN_SINCE_NOT_ANCESTOR"]);
@@ -309,6 +314,32 @@ function timestampExists(value: string): boolean {
 
 /** Terminals of runs that succeeded: `completed` counts toward quorum, and `collapsed` would have. */
 const COUNTING = new Set<SlotRun["terminal"]>(["completed", "collapsed"]);
+
+/** The supplied panel policy when it is the one the report records; otherwise an issue, and no policy. */
+function boundPanelPolicy(report: PanelReport, policy: PanelPolicy | undefined, issues: Issues): PanelPolicy | undefined {
+  if (!policy) return undefined;
+  let digest: string | undefined;
+  try { digest = panelPolicyDigest(policy); } catch { /* An invalid policy cannot be the one the report records. */ }
+  if (digest !== report.panelPolicyDigest) add(issues, "REVIEWFN_PANEL_SCHEMA", "/panelPolicyDigest", "The supplied panel policy is invalid or does not have the report's digest.");
+  else if (stableStringify(policy.slots) !== stableStringify(report.slots)) add(issues, "REVIEWFN_PANEL_SCHEMA", "/slots", "The report's slots differ from the panel policy's.");
+  else return policy;
+  return undefined;
+}
+
+/**
+ * Like a finding's origin, the requirements report must come from a run that succeeded: it is present exactly when the
+ * panel policy's `requirementsSlot` has a `completed` or `collapsed` run.
+ */
+function requirementsProvenanceIssues(report: PanelReport, policy: PanelPolicy | undefined, issues: Issues): void {
+  const slotId = policy?.requirementsSlot ?? null;
+  const run = slotId === null ? undefined : report.slotRuns.find(item => item.slotId === slotId);
+  const produced = run !== undefined && COUNTING.has(run.terminal);
+  if (report.requirementsReport && !produced) {
+    const reason = !policy ? "cannot be attributed without the panel policy the report records" : slotId === null ? "has no requirementsSlot in the panel policy" : `needs a completed or collapsed run of requirements slot ${slotId}`;
+    add(issues, "REVIEWFN_PANEL_ORIGIN_UNKNOWN", "/requirementsReport", `The requirements report ${reason}.`);
+  }
+  if (!report.requirementsReport && produced) add(issues, "REVIEWFN_PANEL_ORIGIN_UNKNOWN", "/requirementsReport", `Requirements slot ${String(slotId)} is ${run.terminal} but the report has no requirements report.`);
+}
 
 function slotRunIssues(report: PanelReport, slots: Map<string, PanelSlot>, issues: Issues): void {
   const order = new Map([...slots.keys()].map((id, index) => [id, index]));
@@ -488,6 +519,7 @@ export async function validatePanelReport(value: unknown, policy: ReviewPolicy, 
   const evidenceContext: EvidenceContext = { report, options, referenceValid: sourceReferenceChecker(context, policy), detail: await verifyChangeDetail(report as unknown as ReviewReport, options.artifacts) };
 
   slotRunIssues(report, slots, issues);
+  requirementsProvenanceIssues(report, boundPanelPolicy(report, options.panelPolicy, issues), issues);
   const evidence = await evidenceIssues(evidenceContext, issues);
   await findingIssues(evidenceContext, policy, slots, evidence, issues);
   await anchorIssues(evidenceContext, issues);

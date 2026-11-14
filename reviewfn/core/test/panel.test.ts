@@ -2,10 +2,10 @@ import { Ajv } from "ajv";
 import { describe, expect, it } from "vitest";
 
 import {
-  DEFAULT_POLICY, PANEL_PRIORITY_SEVERITY, PANEL_VALIDATION_CODES, credentialFingerprint, derivePanelVerdict, lensOutputSchema, omitOptionalNullsFor, panelFindingSchema, validateStructuredOutput,
+  DEFAULT_POLICY, PANEL_PRIORITY_SEVERITY, PANEL_VALIDATION_CODES, credentialFingerprint, derivePanelVerdict, harnessOutputSchema, lensOutputSchema, panelFindingSchema, stableStringify, strictProviderSchema, validateStructuredOutput,
   panelPolicyDigest, panelPolicySchema, panelReportSchema, panelStructureIssues, serializeChangeHunks, sha256, slotIdentityKey, slotIdentitySchema, slotRunSchema,
-  validatePanelFinding, validatePanelPolicy, validatePanelReport, validateReport, validateSlotIdentity, validateSlotRun,
-  type ArtifactStore, type ContextManifest, type LensOutput, type PanelFinding, type PanelPolicy, type PanelReport, type PanelStructure, type ReviewReport, type SlotRun, type SourceControlAdapter,
+  validatePanelFinding, validatePanelPolicy, validatePanelReport as validateWithOptions, validateReport, validateSlotIdentity, validateSlotRun,
+  type ArtifactStore, type ContextManifest, type LensOutput, type PanelFinding, type PanelPolicy, type PanelReport, type PanelReportValidationOptions, type PanelStructure, type ReviewPolicy, type ReviewReport, type SlotRun, type SourceControlAdapter,
 } from "../src/index.js";
 
 const head = "b".repeat(40);
@@ -52,6 +52,18 @@ const panelPolicy: PanelPolicy = {
   incremental: "full",
 };
 
+/** Panel policies by digest. A caller validates a report against the panel policy whose digest the report records. */
+const policies = new Map<string, PanelPolicy>();
+function sign(report: PanelReport, signed: PanelPolicy): void {
+  report.panelPolicyDigest = panelPolicyDigest(signed);
+  policies.set(report.panelPolicyDigest, signed);
+}
+/** `validatePanelReport` with the panel policy the report records, unless the options name another one (or none). */
+const validatePanelReport = (value: unknown, reviewPolicy: ReviewPolicy, extra: PanelReportValidationOptions = {}) => {
+  const digest = value && typeof value === "object" ? (value as { panelPolicyDigest?: unknown }).panelPolicyDigest : undefined;
+  return validateWithOptions(value, reviewPolicy, { panelPolicy: typeof digest === "string" ? policies.get(digest) : undefined, ...extra });
+};
+
 function finding(fingerprint: string, overrides: Partial<PanelFinding>): PanelFinding {
   return {
     fingerprint, severity: "high", category: "correctness", title: `Defect ${fingerprint}`, trigger: "An empty input", impact: "The call throws", direction: "Guard the empty case",
@@ -63,9 +75,9 @@ function finding(fingerprint: string, overrides: Partial<PanelFinding>): PanelFi
 /** Three review slots (lens-b collapsed into lens-a, lens-c void for a model mismatch) plus the verifier, two clusters, and confirmed, dropped and suppressed findings. */
 function panelReport(): PanelReport {
   const identity = { harnessAdapter: "codex", harnessVersion: "0.154.0", provider: "openai", model: "gpt-6.1-sol", auth: "chatgpt", credentialFingerprint: account };
-  return {
+  const report: PanelReport = {
     schemaVersion: 1, kind: "reviewfn-panel", runId: "panel-run", createdAt: "2026-01-01T00:10:00.000Z", change: structuredClone(change),
-    panelPolicyDigest: panelPolicyDigest(panelPolicy), slots: structuredClone(panelPolicy.slots),
+    panelPolicyDigest: "", slots: structuredClone(panelPolicy.slots),
     slotRuns: [
       { slotId: "lens-a", identity: { ...identity }, terminal: "completed", voidReasons: [], startedAt: "2026-01-01T00:01:00.000Z", finishedAt: "2026-01-01T00:04:00.000Z", outputArtifact: `slot-output-${"e".repeat(64)}`, outputDigest: "e".repeat(64), usage: { inputTokens: 1200, outputTokens: 300 } },
       { slotId: "lens-b", identity: { ...identity }, terminal: "collapsed", voidReasons: [], startedAt: "2026-01-01T00:01:00.000Z", finishedAt: "2026-01-01T00:01:00.000Z" },
@@ -88,6 +100,8 @@ function panelReport(): PanelReport {
     coverage: "complete", coverageReasons: [],
     verdict: "changes_requested",
   };
+  sign(report, panelPolicy);
+  return report;
 }
 
 const schemas: Record<PanelStructure, object> = { panelPolicy: panelPolicySchema, slotIdentity: slotIdentitySchema, slotRun: slotRunSchema, panelFinding: panelFindingSchema, panelReport: panelReportSchema, lensOutput: lensOutputSchema };
@@ -95,10 +109,21 @@ const ajv = Object.fromEntries(Object.entries(schemas).map(([kind, schema]) => [
 const ajvValid = (kind: PanelStructure, value: unknown) => ajv[kind](value) as boolean;
 const codes = (issues: Array<{ code: string }>) => [...new Set(issues.map(issue => issue.code))].sort();
 
+/** A changed copy; a copy whose slots changed is signed with the panel policy that declares those slots. */
 function mutate(report: PanelReport, change: (value: PanelReport) => void): PanelReport {
   const value = structuredClone(report);
   change(value);
+  const signed = policies.get(value.panelPolicyDigest);
+  if (signed && Array.isArray(value.slots) && stableStringify(signed.slots) !== stableStringify(value.slots) && validatePanelPolicy({ ...signed, slots: value.slots }).valid) sign(value, { ...signed, slots: value.slots });
   return value;
+}
+
+/** A panel whose policy skips requirement extraction: no requirements report, so findings cite no requirement. */
+function withoutRequirements(report: PanelReport, requirementsSlot: string | null = null): void {
+  delete report.requirementsReport;
+  report.contextManifestDigest = context.digest;
+  for (const item of report.findings) item.requirementIds = [];
+  sign(report, { ...policies.get(report.panelPolicyDigest)!, requirementsSlot });
 }
 
 /** One negative fixture per validation code; each must produce exactly that code. */
@@ -178,9 +203,7 @@ describe("panel report v1", () => {
 
   it("caps a panel without a requirements report at needs_verification", async () => {
     const value = mutate(panelReport(), report => {
-      delete report.requirementsReport;
-      report.contextManifestDigest = context.digest;
-      for (const item of report.findings) item.requirementIds = [];
+      withoutRequirements(report);
       report.findings[0].severity = "low";
       report.verdict = "needs_verification";
     });
@@ -233,9 +256,7 @@ describe("panel report v1", () => {
 /** The fixture without a requirements report; it records the frozen context digest itself. */
 function panelOnly(change: (report: PanelReport) => void = () => {}): PanelReport {
   return mutate(panelReport(), report => {
-    delete report.requirementsReport;
-    report.contextManifestDigest = context.digest;
-    for (const item of report.findings) item.requirementIds = [];
+    withoutRequirements(report);
     report.findings[0].severity = "low";
     report.verdict = "needs_verification";
     change(report);
@@ -252,7 +273,10 @@ describe("slot run collapse and model mismatch", () => {
     // Findings name the counted slot as their origin; without one, no lens reported anything.
     const origin = first === "completed" ? { slotId: "lens-a", lens: "general" } : { slotId: "lens-b", lens: "security" };
     for (const item of report.findings) item.origins = [origin];
-    if (first !== "completed" && second !== "completed") Object.assign(report, { findings: [], clusters: [], verdict: "ready" });
+    if (first !== "completed" && second !== "completed") Object.assign(report, { findings: [], clusters: [] });
+    // lens-a is the requirements slot: a run of it that did not succeed produced no requirements report.
+    if (first !== "completed" && first !== "collapsed") withoutRequirements(report, "lens-a");
+    report.verdict = derivePanelVerdict(report, policy);
   });
   const slotIssues = async (report: PanelReport) => (await validatePanelReport(report, policy, options)).issues.map(issue => `${issue.code} ${issue.path}`);
 
@@ -283,7 +307,7 @@ describe("slot run collapse and model mismatch", () => {
     expect(await slotIssues(without)).toEqual(["REVIEWFN_PANEL_SCHEMA /slotRuns/2/voidReasons"]);
     const both = mutate(panelReport(), report => { run(report, "lens-c").voidReasons = ["model_mismatch", "workspace_mutated"]; });
     expect(await slotIssues(both)).toEqual([]);
-    const spurious = mutate(panelReport(), report => { Object.assign(run(report, "lens-a"), { terminal: "void", voidReasons: ["model_mismatch"] }); run(report, "lens-b").terminal = "completed"; for (const item of report.findings) item.origins = [{ slotId: "lens-b", lens: "security" }]; });
+    const spurious = mutate(panelReport(), report => { Object.assign(run(report, "lens-a"), { terminal: "void", voidReasons: ["model_mismatch"] }); run(report, "lens-b").terminal = "completed"; for (const item of report.findings) item.origins = [{ slotId: "lens-b", lens: "security" }]; withoutRequirements(report, "lens-a"); report.verdict = derivePanelVerdict(report, policy); });
     expect(await slotIssues(spurious)).toEqual(["REVIEWFN_PANEL_SCHEMA /slotRuns/0/voidReasons"]);
   });
 
@@ -332,12 +356,50 @@ describe("slot run collapse and model mismatch", () => {
     expect(await slotIssues(dependent)).toEqual(["REVIEWFN_PANEL_VERIFICATION_INVALID /findings/0/verification/slotId", "REVIEWFN_PANEL_VERIFICATION_INVALID /findings/1/verification/slotId"]);
   });
 
-  it("encodes two slots that resolve the same wrong model as two void runs", async () => {
+  it("encodes two slots that resolve the same wrong model as two void runs, with no requirements report", async () => {
     const value = mutate(panelReport(), report => {
       for (const slotId of ["lens-a", "lens-b"]) Object.assign(run(report, slotId), { identity: { ...run(report, slotId).identity, model: "gpt-6-mini" }, terminal: "void", voidReasons: ["model_mismatch"] });
-      report.findings = []; report.clusters = []; report.verdict = "ready";
+      report.findings = []; report.clusters = [];
+      withoutRequirements(report, "lens-a");
+      report.verdict = "needs_verification";
     });
     expect(await slotIssues(value)).toEqual([]);
+    // A void requirements slot cannot supply the requirements report that would make the panel ready.
+    const voidProducer = mutate(value, report => { report.requirementsReport = requirementsReport(); delete report.contextManifestDigest; report.verdict = "ready"; });
+    expect(await slotIssues(voidProducer)).toEqual(["REVIEWFN_PANEL_ORIGIN_UNKNOWN /requirementsReport"]);
+  });
+
+  it("accepts a requirements report only from a requirements slot whose run succeeded", async () => {
+    const producedBy = (terminal: SlotRun["terminal"] | "missing", requirementsSlot: string | null = "lens-a") => mutate(panelReport(), report => {
+      // lens-b runs first in this variant, so lens-a may be completed, collapsed or end any other way.
+      for (const item of report.findings) item.origins = [{ slotId: "lens-b", lens: "security" }];
+      run(report, "lens-b").terminal = "completed";
+      if (terminal === "missing") report.slotRuns = report.slotRuns.filter(item => item.slotId !== "lens-a");
+      else Object.assign(run(report, "lens-a"), { terminal, voidReasons: terminal === "void" ? ["workspace_mutated"] : [] });
+      [report.slots[0], report.slots[1]] = [report.slots[1], report.slots[0]];
+      sign(report, { ...panelPolicy, slots: report.slots, requirementsSlot });
+    });
+    expect(await slotIssues(producedBy("collapsed"))).toEqual([]);
+    for (const terminal of ["failed", "canceled", "quota_exhausted", "timed_out", "malformed", "void", "missing"] as const) expect(await slotIssues(producedBy(terminal))).toEqual(["REVIEWFN_PANEL_ORIGIN_UNKNOWN /requirementsReport"]);
+    expect(await slotIssues(producedBy("collapsed", null))).toEqual(["REVIEWFN_PANEL_ORIGIN_UNKNOWN /requirementsReport"]);
+    // A succeeded requirements slot whose report is missing is reported too, so nothing disappears silently.
+    const lost = mutate(panelReport(), report => { delete report.requirementsReport; report.contextManifestDigest = context.digest; for (const item of report.findings) item.requirementIds = []; report.verdict = derivePanelVerdict(report, policy); });
+    expect(await slotIssues(lost)).toEqual(["REVIEWFN_PANEL_ORIGIN_UNKNOWN /requirementsReport"]);
+  });
+
+  it("binds the requirements report through the panel policy the report records, and fails closed without it", async () => {
+    const issuesWith = async (value: PanelReport, panelPolicyOption: PanelPolicy | undefined) => (await validateWithOptions(value, policy, { ...options, panelPolicy: panelPolicyOption })).issues.map(issue => `${issue.code} ${issue.path}`);
+    expect(await issuesWith(panelReport(), panelPolicy)).toEqual([]);
+    expect(await issuesWith(panelReport(), undefined)).toEqual(["REVIEWFN_PANEL_ORIGIN_UNKNOWN /requirementsReport"]);
+    // A panel without a requirements report needs no panel policy.
+    expect(await issuesWith(panelOnly(), undefined)).toEqual([]);
+    expect(await issuesWith(panelReport(), { ...panelPolicy, maxConcurrentSlots: 3 })).toEqual(["REVIEWFN_PANEL_SCHEMA /panelPolicyDigest", "REVIEWFN_PANEL_ORIGIN_UNKNOWN /requirementsReport"]);
+    expect(await issuesWith(panelReport(), { ...panelPolicy, maxConcurrentSlots: 9 })).toEqual(["REVIEWFN_PANEL_SCHEMA /panelPolicyDigest", "REVIEWFN_PANEL_ORIGIN_UNKNOWN /requirementsReport"]);
+    // The slots differ from the policy's while the digest is still the policy's (mutate would re-sign the copy).
+    const reslotted = panelReport();
+    reslotted.slots[0].lens = "correctness";
+    for (const item of reslotted.findings) item.origins = [{ slotId: "lens-a", lens: "correctness" }];
+    expect(await issuesWith(reslotted, panelPolicy)).toEqual(["REVIEWFN_PANEL_SCHEMA /slots", "REVIEWFN_PANEL_ORIGIN_UNKNOWN /requirementsReport"]);
   });
 
   it("rejects timestamps that are not real UTC times, which Ajv's pattern also rejects when out of range", async () => {
@@ -541,45 +603,42 @@ describe("panel policy and slot identity", () => {
     expect(slotIdentityKey(identity)).not.toBe(slotIdentityKey({ ...identity, credentialFingerprint: undefined }));
   });
 
-  it("omits only the nulls a schema rejects, however it composes required, $ref and branches", () => {
-    const nullable = { anyOf: [{ type: "string" }, { type: "null" }] };
-    const direct = omitOptionalNullsFor({ type: "object", required: ["kept"], properties: { kept: nullable, dropped: { type: "string" }, list: { type: "array", items: { $ref: "#/$defs/item" } } }, $defs: { item: { type: "object", required: ["id"], properties: { id: nullable, note: { type: "string" } } } } });
-    expect(direct({ kept: null, dropped: null, list: [{ id: null, note: null }, null], untraced: null })).toEqual({ kept: null, list: [{ id: null }, null], untraced: null });
-    expect(direct({ kept: "x", list: [] })).toEqual({ kept: "x", list: [] });
-    expect(direct(null)).toBeNull();
-    // required beside properties declared in an allOf branch or a $ref target
-    expect(omitOptionalNullsFor({ type: "object", required: ["a"], allOf: [{ type: "object", properties: { a: nullable } }] })({ a: null })).toEqual({ a: null });
-    expect(omitOptionalNullsFor({ type: "object", properties: { a: nullable }, allOf: [{ type: "object", properties: { a: nullable }, required: ["a"] }] })({ a: null })).toEqual({ a: null });
-    // Strict compilation, which the adapter also applies, rejects `required` without its property or type up front.
-    expect(() => omitOptionalNullsFor({ type: "object", properties: { a: nullable }, allOf: [{ required: ["a"] }] })).toThrow(/strict mode/);
-    expect(() => omitOptionalNullsFor({ $ref: "#/$defs/shape", required: ["a"], $defs: { shape: { type: "object", properties: { a: nullable } } } })).toThrow(/strict mode/);
-    // recursive root reference
-    expect(omitOptionalNullsFor({ type: "object", required: ["children"], properties: { children: { type: "array", items: { $ref: "#" } }, note: { type: "string" } } })({ children: [{ children: [], note: null }], note: null })).toEqual({ children: [{ children: [] }] });
-    // a discriminated union: another branch requiring the property does not keep an optional null
-    const union = omitOptionalNullsFor({ anyOf: [
-      { type: "object", additionalProperties: false, required: ["kind", "a"], properties: { kind: { const: "x" }, a: { type: "string" } } },
-      { type: "object", additionalProperties: false, required: ["kind"], properties: { kind: { const: "y" }, a: { type: "string" } } },
-    ] });
-    expect(union({ kind: "y", a: null })).toEqual({ kind: "y" });
-    // The documented limit: an inapplicable union branch that also rejects a required null gets it omitted, so the
-    // output fails validation and the adapter reports it malformed.
-    const typed = (kind: string, required: string[], properties: Record<string, unknown>) => ({ type: "object", additionalProperties: false, required: ["kind", ...required], properties: { kind: { const: kind }, ...properties } });
-    const mixedSchema = { anyOf: [typed("x", ["a"], { a: nullable, note: { type: "string" } }), typed("y", ["a"], { a: { type: "string" }, note: { type: "string" } })] };
-    const mixed = omitOptionalNullsFor(mixedSchema)({ kind: "x", a: null, note: null });
-    expect(mixed).toEqual({ kind: "x" });
-    expect(validateStructuredOutput(mixedSchema, mixed)).not.toEqual([]);
+  it("transforms each schema subtree once into the provider-strict form", () => {
+    // The previous implementation, which transformed every properties subtree twice per object level.
+    const doubled = (schema: unknown): unknown => {
+      if (Array.isArray(schema)) return schema.map(doubled);
+      if (!schema || typeof schema !== "object") return schema;
+      const input = schema as Record<string, unknown>;
+      const output = Object.fromEntries(Object.entries(input).map(([key, value]) => [key, doubled(value)]));
+      if (input.type === "object" && input.properties) {
+        const required = new Set(input.required as string[] ?? []);
+        output.properties = Object.fromEntries(Object.entries(input.properties as Record<string, unknown>).map(([key, value]) => [key, required.has(key) ? doubled(value) : { anyOf: [doubled(value), { type: "null" }] }]));
+        output.required = Object.keys(input.properties as object);
+      }
+      return output;
+    };
+    for (const schema of [harnessOutputSchema, lensOutputSchema, panelReportSchema]) expect(strictProviderSchema(schema)).toEqual(doubled(schema));
+    expect(strictProviderSchema()).toEqual(doubled(harnessOutputSchema));
+    let nested: Record<string, unknown> = { type: "string" };
+    for (let depth = 0; depth < 30; depth += 1) nested = { type: "object", additionalProperties: false, required: depth % 2 ? ["child"] : [], properties: { child: nested, note: { type: "string" } } };
+    const started = performance.now();
+    const strict = strictProviderSchema(nested);
+    expect(performance.now() - started).toBeLessThan(1_000);
+    expect(validateStructuredOutput(strict as Record<string, unknown>, null)).not.toEqual([]);
   });
 
-  it("omits nulls in linear rounds, so large invalid output fails promptly", () => {
-    const item = { fingerprint: "f", severity: "high", category: "c", title: "t", trigger: "t", impact: "i", direction: "d", anchor: null, evidenceIds: [], basis: "inferred", requirementIds: [], lifecycle: "new" };
-    const findings = Array.from({ length: 3000 }, (_, index) => ({ ...item, fingerprint: `f${index}` }));
-    findings[0] = { ...findings[0], severity: "info" };
-    const started = performance.now();
-    const result = omitOptionalNullsFor(lensOutputSchema)({ findings, evidence: [], inspectedPaths: [], uninspected: [] }) as { findings: Array<Record<string, unknown>> };
-    expect(performance.now() - started).toBeLessThan(5_000);
-    expect(result.findings.every(finding => !("anchor" in finding))).toBe(true);
-    expect(validateStructuredOutput(lensOutputSchema, result)).not.toEqual([]);
-    expect(() => omitOptionalNullsFor({ type: "object", notAKeyword: true })).toThrow();
+  it("lets the provider-strict schema decide which nulls the applicable branch allows", () => {
+    const nullable = { anyOf: [{ type: "string" }, { type: "null" }] };
+    const typed = (kind: string, properties: Record<string, unknown>) => ({ type: "object", additionalProperties: false, required: ["kind", "a"], properties: { kind: { const: kind }, ...properties } });
+    const x = typed("x", { a: nullable, note: { type: "string" } });
+    const y = typed("y", { a: { type: "string" }, note: { type: "string" } });
+    const conditional = { type: "object", additionalProperties: false, required: ["kind", "a"], properties: { kind: { enum: ["x", "y"] }, a: nullable, note: { type: "string" } }, if: { properties: { kind: { const: "x" } } }, then: true, else: { properties: { a: { type: "string" } } } };
+    for (const schema of [{ anyOf: [x, y] }, { oneOf: [x, y] }, conditional]) {
+      const strict = strictProviderSchema(schema) as Record<string, unknown>;
+      expect(validateStructuredOutput(strict, { kind: "x", a: null, note: null })).toEqual([]);
+      expect(validateStructuredOutput(strict, { kind: "y", a: null, note: null })).not.toEqual([]);
+      expect(validateStructuredOutput(strict, { kind: "y", a: "set", note: null })).toEqual([]);
+    }
   });
 
   it("types lens findings with the panel severities the lens schema accepts", () => {

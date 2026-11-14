@@ -202,38 +202,6 @@ export function structuredOutputValidator(schema: Readonly<Record<string, unknow
   return value => compiledValidator(value) ? [] : (compiledValidator.errors ?? []).map(error => `${error.instancePath || "/"}: ${error.message}`);
 }
 
-/** Object properties holding null that the schema rejects; empty when the value is valid. */
-function rejectedNulls(validate: ValidateFunction, value: unknown): Array<{ parent: Record<string, unknown>; key: string }> {
-  if (validate(value)) return [];
-  return (validate.errors ?? []).flatMap(error => {
-    const keys = error.instancePath.split("/").slice(1).map(key => key.replaceAll("~1", "/").replaceAll("~0", "~"));
-    const key = keys.pop();
-    const parent = keys.reduce<unknown>((node, step) => typeof node === "object" && node !== null ? (node as Record<string, unknown>)[step] : undefined, value);
-    if (key === undefined || typeof parent !== "object" || parent === null || Array.isArray(parent)) return [];
-    return Object.hasOwn(parent, key) && (parent as Record<string, unknown>)[key] === null ? [{ parent: parent as Record<string, unknown>, key }] : [];
-  });
-}
-
-/**
- * Undo `strictProviderSchema` for a caller schema, judged by the caller schema itself: every object property holding a
- * null that the compiled schema rejects is omitted, and this repeats until the value validates or no rejected null
- * remains. Each round costs one validation, and the value is cloned once. A null the schema accepts in place is kept,
- * so a required nullable property survives however `required`, `$ref` and `allOf` are composed. One case is not
- * recovered: when an `anyOf`/`oneOf` branch or a conditional that does not apply also rejects a null the applicable
- * branch requires, that null is omitted as well, and the output then fails validation (or validates without it). Array
- * items are never removed. Throws when the schema cannot be compiled.
- */
-export function omitOptionalNullsFor(schema: Readonly<Record<string, unknown>>): (value: unknown) => unknown {
-  const validate = compile(schema);
-  return value => {
-    const result = structuredClone(value);
-    for (let rejected = rejectedNulls(validate, result); rejected.length; rejected = rejectedNulls(validate, result)) {
-      for (const { parent, key } of rejected) delete parent[key];
-    }
-    return result;
-  };
-}
-
 export function validateStructuredOutput(schema: Readonly<Record<string, unknown>>, value: unknown): string[] {
   return structuredOutputValidator(schema)(value);
 }
