@@ -540,11 +540,19 @@ describe('device grant storage and request bounds', () => {
     expect(await interval()).toBe(before + 5 * slowed);
   });
 
-  it.each([['lost', 'updateMany'], ['committed', 'updateManyApplied']] as const)(
-    'a poll that cannot tell whether its %s write was stored, after 16 others were, is neither admitted nor slowed',
-    async (_write, operation) => {
+  it.each([
+    ['lost', 'updateMany', 'admitted'],
+    ['committed', 'updateManyApplied', 'admitted'],
+    ['lost', 'updateMany', 'slowed'],
+    ['committed', 'updateManyApplied', 'slowed']
+  ] as const)(
+    'a poll that cannot tell whether its %s write (%s) was stored, after 16 others were, is neither admitted nor slowed and is told when to retry (own poll %s)',
+    async (_write, operation, own) => {
       const provider = await setupDevice();
       const device = await provider.start();
+      if (own === 'slowed') {
+        expect(await provider.pollError(device.device_code)).toBe('authorization_pending');
+      }
       const paused = provider.control.arm(DEVICE_CODES, operation, ({ data }) => data?.pollClaim !== undefined);
       const a = provider.poll(device.device_code);
       await paused;
@@ -556,13 +564,49 @@ describe('device grant storage and request bounds', () => {
       const response = await a;
       expect(response.status).toBe(429);
       expect(await response.json()).toMatchObject({ error: 'temporarily_unavailable' });
-      // A lost write leaves the first other poll admitted; a committed one admitted A.
-      // Either way every slow_down answered is exactly one stored increment.
+      // Every slow_down answered is exactly one stored increment, and A's own
+      // increment is stored when its slow_down committed.
       const slowed = others.filter((answer) => answer === 'slow_down').length;
-      expect(slowed).toBe(operation === 'updateMany' ? 15 : 16);
-      expect((await provider.row(device.device_code))?.interval).toBe(5 + 5 * slowed);
+      const ownStored = own === 'slowed' && operation === 'updateManyApplied';
+      expect(slowed).toBe(own === 'admitted' && operation === 'updateMany' ? 15 : 16);
+      const interval = (await provider.row(device.device_code))?.interval as number;
+      expect(interval).toBe(5 + 5 * slowed + (ownStored ? 5 : 0));
+      // Retry-After is the stored interval, plus 5 when A's own slow_down may count;
+      // a poll that waits that long is not too fast.
+      const retryAfter = Number(response.headers.get('retry-after'));
+      expect(retryAfter).toBe(interval + (own === 'slowed' ? 5 : 0));
+      provider.advance(retryAfter);
+      expect(await provider.pollError(device.device_code)).toBe('authorization_pending');
     }
   );
+
+  it('a poll that loses every round to concurrent polls is told to retry once it would no longer be too fast', async () => {
+    const provider = await setupDevice();
+    const device = await provider.start();
+    const pollWrite = ({ data }: { data?: Record<string, unknown> }) => data?.pollClaim !== undefined;
+    let paused = provider.control.arm(DEVICE_CODES, 'updateMany', pollWrite);
+    const busy = provider.poll(device.device_code);
+    await paused;
+    // In each of its 16 rounds another poll commits between its read and its conditional write.
+    for (let round = 1; round <= 16; round += 1) {
+      await provider.poll(device.device_code);
+      if (round < 16) {
+        paused = provider.control.arm(DEVICE_CODES, 'updateMany', pollWrite);
+      }
+      provider.control.release();
+      if (round < 16) {
+        await paused;
+      }
+    }
+    const response = await busy;
+    expect(response.status).toBe(429);
+    expect(await response.json()).toMatchObject({ error: 'temporarily_unavailable' });
+    const interval = (await provider.row(device.device_code))?.interval;
+    expect(interval).toBe(5 + 5 * 15);
+    expect(Number(response.headers.get('retry-after'))).toBe(interval);
+    provider.advance(interval as number);
+    expect(await provider.pollError(device.device_code)).toBe('authorization_pending');
+  });
 
   it.each(['before its grant is created', 'before its decision is recorded', 'while its decision is written'] as const)(
     'an approval that crosses the code\'s expiry %s is refused and leaves no live grant',
@@ -594,6 +638,51 @@ describe('device grant storage and request bounds', () => {
       expect(grants[0].revokedAt).toBeTruthy();
       expect(await provider.pollError(device.device_code)).toBe('expired_token');
       expect(await provider.cliTokens()).toHaveLength(0);
+    }
+  );
+
+  it.each([false, true])(
+    'a poll that read its clock before an approval was published at expiry gets expired_token, and the approval is closed (sql: %s)',
+    async (sql) => {
+      const provider = await setupDevice({ sql });
+      const device = await provider.start();
+      provider.advance(599);
+      // The approval passes its expiry check at 599s and pauses before its decision applies.
+      const beforeDecision = provider.control.arm(DEVICE_CODES, 'updateMany', ({ data }) => data?.decision === 'approved');
+      const decision = provider.decide(device.user_code, 'approve');
+      await beforeDecision;
+      // A poll reads the clock at 599s and pauses before it reads the row.
+      const beforeRead = provider.control.arm(DEVICE_CODES, 'findOne', ({ where }) =>
+        where?.some(({ field }) => field === 'deviceCodeHash') === true);
+      const polled = provider.poll(device.device_code);
+      await beforeRead;
+      const afterDecision = provider.control.arm(DEVICE_CODES, 'updateManyApplied', ({ data }) => data?.decision === 'approved');
+      provider.advance(1);
+      provider.control.release(); // the decision is published at 600s
+      await afterDecision;
+      provider.control.release(); // the poll reads the approved row
+      const response = await polled;
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: 'expired_token' });
+      provider.control.release(); // the approval checks expiry after its write
+      const decided = await decision;
+      expect(decided.status).toBe(400);
+      expect(await decided.json()).toMatchObject({ error: 'invalid_grant' });
+      const stored = await provider.database.findOne<{ claimId?: string | null }>({
+        model: DEVICE_CODES,
+        where: [{ field: 'deviceCodeHash', operator: 'eq', value: hashSecret(device.device_code) }],
+        namespace: 'authfn'
+      });
+      expect(stored?.claimId).toMatch(/^odx_/);
+      const grants = await provider.database.findMany<{ revokedAt?: Date | null }>({
+        model: 'oauth_provider_grants',
+        where: [{ field: 'clientId', operator: 'eq', value: CLI.clientId }],
+        namespace: 'authfn'
+      });
+      expect(grants).toHaveLength(1);
+      expect(grants[0].revokedAt).toBeTruthy();
+      expect(await provider.cliTokens()).toHaveLength(0);
+      expect(await provider.pollError(device.device_code)).toBe('expired_token');
     }
   );
 

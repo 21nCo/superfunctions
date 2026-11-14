@@ -210,10 +210,13 @@ async function lookUpUserCode(
  * after the second read finds the grant, which already exists, and revokes
  * it; the device then also gets `access_denied` (see `exchangeDeviceCode`).
  * Expiry is checked before the decision is recorded and again after: an
- * approval that crosses it revokes its grant and throws `invalid_grant`
- * (recording nothing when it crossed before the write, and spending the code
- * when after, unless the device already exchanged it in time). An approval
- * interrupted anywhere before the decision leaves the request pending.
+ * approval that crosses it revokes its grant and throws `invalid_grant`. One
+ * that crossed before the write records nothing. One that crossed after it
+ * spends the code with an expiry claim, unless an exchange claimed it first:
+ * an exchange judges expiry with a clock read after it read the approval, so
+ * its winning claim proves the approval was published before expiry, and the
+ * approval stands. An approval interrupted anywhere before the decision
+ * leaves the request pending.
  * Returns whether the device will receive tokens.
  */
 async function approve(
@@ -401,8 +404,13 @@ function deviceError(error: 'authorization_pending' | 'slow_down' | 'access_deni
  * `expired_token` after 10 minutes. A `resource` other than the requested
  * one is `invalid_target` and leaves the code as it was. A poll that loses to
  * 16 concurrent polls, or cannot tell whether it was stored, is a 429
- * `temporarily_unavailable` with `Retry-After`. An approval yields the same tokens as an authorization code: an
+ * `temporarily_unavailable` whose `Retry-After` is the stored interval from
+ * the stored last poll time, plus 5 seconds when its own `slow_down` may count.
+ * An approval yields the same tokens as an authorization code: an
  * access token for the approved scopes and a refresh token under the grant.
+ * The exchange is judged unexpired with a clock read after the row read that
+ * showed the approval, and its tokens are issued at that time; tokens whose
+ * exchange was judged in time stay valid even when the claim commits later.
  * The device code works once; when its client presents it again after the
  * exchange, the grant is revoked, as for a replayed authorization code.
  */
@@ -434,12 +442,12 @@ export async function exchangeDeviceCode(
     throw new OAuthError('invalid_target', 'resource does not match the device authorization request');
   }
   const poll = await admitPoll(runtime.store, record, now);
-  if (poll === 'busy' || poll === 'unknown') {
+  if (poll.outcome === 'busy' || poll.outcome === 'unknown') {
     throw new OAuthError('temporarily_unavailable', 'Too many concurrent polls of this device code; try again later', 429, {
-      'retry-after': String(record.interval)
+      'retry-after': String(poll.retryAfterSeconds)
     });
   }
-  if (poll === 'slow_down') {
+  if (poll.outcome === 'slow_down') {
     throw deviceError('slow_down', 'Polling too fast; wait longer between requests');
   }
   if (!record.decidedAt) {
@@ -453,11 +461,19 @@ export async function exchangeDeviceCode(
   if (!grant) {
     throw deviceError('access_denied', 'The authorization was withdrawn');
   }
+  // `now` was read before the row, so the approval may have been published
+  // after it. Expiry is judged again with a clock read after the row showed
+  // the approval: only then does a committed exchange prove the approval was
+  // published in time, which `approve` relies on when its close loses.
+  const issuedAt = runtime.now();
+  if (record.expiresAt.getTime() <= issuedAt.getTime()) {
+    throw deviceError('expired_token', 'Device code has expired');
+  }
   // As for a code: the staged tokens become valid only when the claim on the
   // device code commits, and a concurrent exchange that loses is a replay.
-  const { tokens, claimId } = await stageTokens(runtime.store, grant, grant.scopes, now, record.id);
-  if (!(await claimDeviceCode(runtime.store, record.id, now, claimId))) {
-    await revokeGrant(runtime.store, record.grantId, 'code_replay', now);
+  const { tokens, claimId } = await stageTokens(runtime.store, grant, grant.scopes, issuedAt, record.id);
+  if (!(await claimDeviceCode(runtime.store, record.id, issuedAt, claimId))) {
+    await revokeGrant(runtime.store, record.grantId, 'code_replay', issuedAt);
     throw deviceError('invalid_grant', 'Device code has already been used');
   }
   if (!(await findLiveGrant(runtime.store, record.grantId))) {

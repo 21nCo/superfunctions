@@ -280,8 +280,22 @@ const POLL_ATTEMPTS = POLL_HISTORY;
 /**
  * `busy`: the poll lost every round to concurrent polls of the code and
  * changed nothing. `unknown`: it cannot tell whether its write committed.
+ * Both carry the seconds the client should wait, from the latest stored poll
+ * state (see `retryAfter`).
  */
-export type PollOutcome = 'admitted' | 'slow_down' | 'busy' | 'unknown';
+export type PollOutcome =
+  | { outcome: 'admitted' | 'slow_down' }
+  | { outcome: 'busy' | 'unknown'; retryAfterSeconds: number };
+
+/**
+ * Seconds after `now` until a poll is no longer too fast for the stored
+ * `state`: its interval from its last poll time. When the poll's own
+ * `slow_down` may have been stored (`unknown`), 5 more for it.
+ */
+function retryAfter(state: DeviceCodeRecord, now: Date, ownMayCount: boolean): number {
+  const wait = Math.max(0, readPollClaim(state.pollClaim).at - now.getTime()) + state.interval * 1000;
+  return Math.ceil(wait / 1000) + (ownMayCount ? OAUTH_DEVICE_POLL_INTERVAL_SECONDS : 0);
+}
 
 /**
  * Judges one poll of `record` against the last poll (RFC 8628 3.5). A poll
@@ -327,18 +341,18 @@ export async function admitPoll(store: DeviceStore, record: DeviceCodeRecord, no
     });
     const committed = stored ? readPollClaim(stored.pollClaim).ids : [];
     if (committed.includes(id)) {
-      return outcome;
+      return { outcome };
     }
     if (stored && !committed.includes(last.ids[last.ids.length - 1])) {
       // So many polls committed since that neither its ID nor the state it read is left.
-      return 'unknown';
+      return { outcome: 'unknown', retryAfterSeconds: retryAfter(stored, now, tooFast) };
     }
     if (writeError) {
       throw writeError.error;
     }
     current = stored;
   }
-  return 'busy';
+  return { outcome: 'busy', retryAfterSeconds: retryAfter(current ?? record, now, false) };
 }
 
 /**

@@ -72,29 +72,35 @@ type Adapter = AuthFnRuntimeConfig['database'];
 
 type Operation = 'create' | 'createCommitted' | 'findOne' | 'updateMany' | 'updateManyRejected';
 
-type PausedOperation = 'create' | 'findMany' | 'updateMany' | 'updateManyApplied';
+type PausedOperation = 'create' | 'findOne' | 'findMany' | 'updateMany' | 'updateManyApplied';
+
+interface StorageParams { data?: Record<string, unknown>; where?: { field: string }[] }
 
 /**
  * Controls storage calls: `arm(model)` pauses the next insert into `model`
- * (or, with `operation`, the next `findMany` or `updateMany` on it whose
- * params `match`, or with `updateManyApplied` the next such `updateMany`
+ * (or, with `operation`, the next `findOne`, `findMany` or `updateMany` on it
+ * whose params `match`, or with `updateManyApplied` the next such `updateMany`
  * after it applied) until `release()` and resolves once it is paused, to force
- * an interleaving;
+ * an interleaving. Several pauses can be armed at once; each `release()`
+ * releases the earliest armed one not yet released;
  * `failNext(model, match, operation)` makes the next matching insert or
  * `findOne` throw, the next insert (`createCommitted`) or `updateMany` commit
  * and then throw, as when its acknowledgement is lost, or
  * (`updateManyRejected`) throw without applying.
  */
 export function createInsertControl(database: Adapter) {
-  let paused: {
+  interface Pause {
     model: string;
     operation: PausedOperation;
-    match: (params: { data?: Record<string, unknown> }) => boolean;
+    match: (params: StorageParams) => boolean;
     reached: () => void;
+    release: () => void;
     released: Promise<void>;
-  } | undefined;
+  }
+  // Armed pauses not yet reached, and armed pauses not yet released, both in arm order.
+  let armed: Pause[] = [];
+  const unreleased: Pause[] = [];
   const failures: { model: string; operation: Operation; match: (params: { data?: Record<string, unknown> }) => boolean }[] = [];
-  let release: () => void = () => {};
   const injectFailure = (operation: Operation, params: { model: string; data?: Record<string, unknown> }) => {
     const index = failures.findIndex((failure) =>
       failure.operation === operation && failure.model === params.model && failure.match(params));
@@ -103,10 +109,10 @@ export function createInsertControl(database: Adapter) {
       throw new Error(`injected ${operation} failure`);
     }
   };
-  const pauseIfArmed = async (operation: PausedOperation, params: { model: string; data?: Record<string, unknown> }) => {
-    const pause = paused?.model === params.model && paused.operation === operation && paused.match(params) ? paused : undefined;
+  const pauseIfArmed = async (operation: PausedOperation, params: StorageParams & { model: string }) => {
+    const pause = armed.find((candidate) => candidate.model === params.model && candidate.operation === operation && candidate.match(params));
     if (pause) {
-      paused = undefined;
+      armed = armed.filter((candidate) => candidate !== pause);
       pause.reached();
       await pause.released;
     }
@@ -114,6 +120,7 @@ export function createInsertControl(database: Adapter) {
   const wrapped: Adapter = {
     ...database,
     findOne: async (params) => {
+      await pauseIfArmed('findOne', params);
       injectFailure('findOne', params);
       return database.findOne(params);
     },
@@ -142,11 +149,15 @@ export function createInsertControl(database: Adapter) {
     arm: (
       model: string,
       operation: PausedOperation = 'create',
-      match: (params: { data?: Record<string, unknown> }) => boolean = () => true
+      match: (params: StorageParams) => boolean = () => true
     ) => new Promise<void>((reached) => {
-      paused = { model, operation, match, reached, released: new Promise<void>((resolve) => { release = resolve; }) };
+      let release: () => void = () => {};
+      const released = new Promise<void>((resolve) => { release = resolve; });
+      const pause = { model, operation, match, reached, release, released };
+      armed.push(pause);
+      unreleased.push(pause);
     }),
-    release: () => release(),
+    release: () => unreleased.shift()?.release(),
     failNext: (model: string, match: (params: { data?: Record<string, unknown> }) => boolean, operation: Operation = 'create') => {
       failures.push({ model, operation, match });
     }
