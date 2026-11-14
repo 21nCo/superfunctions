@@ -8,6 +8,7 @@ export { getSchema, getSchemaMap } from './schema.js';
 export { createBillFnError, billFnErrorRegistry } from './errors.js';
 export {
   BILLFN_IMPORTED_AT_METADATA_KEY,
+  BILLFN_IMPORT_PENDING_METADATA_KEY,
   BILLFN_IMPORT_REPLAY_UNFINISHED_REASON,
   createBillFnReconciliationWorker
 } from './service.js';

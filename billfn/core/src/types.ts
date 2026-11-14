@@ -195,13 +195,15 @@ export interface BillFnWebhookReceipt {
  * - `price_not_found`: the event's product or price is not in the catalog.
  * - `billing_account_unavailable`: a subscription matches the reference but its billing account is gone.
  * - `provider_reference_replaced`: a subscription write (an event, a replay, a provider read or a mutation) dropped the reference, possibly before this event was first delivered, and no subscription holds it.
+ * - `subscription_import_pending`: an operator import holds the reference on a subscription it has not accepted yet; the import replays the event once it accepts it, and a refused import leaves it unlinked.
  */
 export type BillFnUnlinkedWebhookEventReason =
   | 'billing_account_metadata_missing'
   | 'billing_account_not_found'
   | 'price_not_found'
   | 'billing_account_unavailable'
-  | 'provider_reference_replaced';
+  | 'provider_reference_replaced'
+  | 'subscription_import_pending';
 
 /**
  * `unlinked` waits for its provider reference to be linked to a subscription;
