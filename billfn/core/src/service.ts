@@ -2490,40 +2490,32 @@ async function applyVerificationState(
       // clears it, the order `namesReplacedReference` reads against.
       const pending = await recordDroppedReferences(deps, baseSubscription, record, Boolean(input.committedAt));
       Object.assign(record, withPendingReplacements(record.metadata, pending));
-      // A provider-state time is only written by an update ordered against the row it was computed from.
-      if (providerStateAt) {
-        const updated = await deps.db.updateMany({
-          model: TABLES.subscriptions,
-          where: [
-            { field: 'id', operator: 'eq', value: baseSubscription.id },
-            { field: 'updatedAt', operator: 'eq', value: baseSubscription.updatedAt }
-          ],
-          data: record,
-          namespace: deps.namespace
-        });
-        if (updated === 1) {
-          subscription = record;
-          break;
-        }
-        // A lost race leaves its records: a reference the winner keeps is held, so its events still link to it.
-        const current = await getSubscriptionById(deps, baseSubscription.id);
-        if (!current) {
-          throw createBillFnError({
-            code: 'BILLFN_CONFLICT',
-            message: 'Subscription changed while applying provider event state'
-          });
-        }
-        baseSubscription = current;
-        await Promise.resolve();
-        continue;
-      }
-      subscription = await deps.db.update<BillFnSubscription>({
+      // Every update is ordered against the row it was computed from, so a provider-state time and the
+      // pending references it clears always come from the row it replaces.
+      const updated = await deps.db.updateMany({
         model: TABLES.subscriptions,
-        where: [{ field: 'id', operator: 'eq', value: baseSubscription.id }],
+        where: [
+          { field: 'id', operator: 'eq', value: baseSubscription.id },
+          { field: 'updatedAt', operator: 'eq', value: baseSubscription.updatedAt }
+        ],
         data: record,
         namespace: deps.namespace
       });
-      break;
+      if (updated === 1) {
+        subscription = record;
+        break;
+      }
+      // A lost race leaves its records: a reference the winner keeps is held, so its events still link to it.
+      const current = await getSubscriptionById(deps, baseSubscription.id);
+      if (!current) {
+        throw createBillFnError({
+          code: 'BILLFN_CONFLICT',
+          message: 'Subscription changed while applying provider event state'
+        });
+      }
+      baseSubscription = current;
+      await Promise.resolve();
+      continue;
     }
 
     try {

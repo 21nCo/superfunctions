@@ -3755,4 +3755,75 @@ describe('replaced-reference guard reads ordered against the writes that record 
       expect(calls.cancel).toBe(1);
     }
   );
+
+  it('records a pending charge a committed mutation saved while an event without a provider time was computed from the older row', async () => {
+    const fault = { armed: false };
+    const pause = { armed: false, ran: false, during: async () => {} };
+    const db = interceptDb(memoryAdapter({ debug: false }), {
+      create: async (params, next) => {
+        if (params.model === 'replacedProviderReferences' && fault.armed) {
+          throw new Error('injected record failure');
+        }
+        return next();
+      },
+      updateMany: async (params, next) => {
+        if (params.model === 'replacedProviderReferences' && fault.armed) {
+          throw new Error('injected record failure');
+        }
+        // The undated event recorded the charge its row held; it writes once the other writes ran.
+        if (params.model === 'replacedProviderReferences' && pause.armed && !pause.ran) {
+          pause.ran = true;
+          await pause.during();
+        }
+        return next();
+      }
+    });
+    const canceledState = { subscriptionStatus: 'canceled' as const, checkoutStatus: 'succeeded' as const, providerSubscriptionId: 'sub_und', providerChargeId: 'pay_und_2', autoRenew: false };
+    const calls = { cancel: 0 };
+    const base = createProvider({});
+    const provider: BillFnProviderAdapter = {
+      ...base,
+      capabilities: { ...base.capabilities, cancelSubscription: true },
+      async cancelSubscription() {
+        calls.cancel += 1;
+        fault.armed = true;
+        return { operationStatus: 'applied', billingState: canceledState };
+      }
+    };
+    const config = { db, catalog, now: () => new Date('2026-11-01T00:00:01.000Z'), providers: { dodo: provider } };
+    const billfn = createBillFn(config);
+    const other = createBillFn(config);
+    await billfn.quotaProvider.recordUsage({ principalId: 'und_user', bytes: 0 });
+    await billfn.quotaProvider.recordUsage({ principalId: 'und_other_user', bytes: 0 });
+    await deliver(billfn, [bootstrapEvent('und', { chargeId: 'pay_und_1' })]);
+
+    // While an event with no provider time (naming pay_und_3) is applied from the row holding pay_und_1,
+    // a dated event moves the subscription to pay_und_mid, then a committed cancellation drops
+    // pay_und_mid to pay_und_2 and, its record failing, saves pay_und_mid pending.
+    pause.during = async () => {
+      await deliver(other, [subscriptionEvent({ eventId: 'evt_und_mid', subscriptionId: 'sub_und', chargeId: 'pay_und_mid', status: 'active', occurredAt: '2026-10-31T00:00:00.000Z' })]);
+      const canceled = await other.cancelSubscription({ subject: { principalId: 'und_user' } });
+      fault.armed = false;
+      expect(canceled.ok && canceled.data.subscription).toMatchObject({ status: 'canceled', providerChargeId: 'pay_und_2' });
+    };
+    pause.armed = true;
+    const { occurredAt: _undated, ...undated } = subscriptionEvent({ eventId: 'evt_und_undated', subscriptionId: 'sub_und', chargeId: 'pay_und_3', status: 'active', occurredAt: '' });
+    expect((await deliver(billfn, [undated as BillFnParsedWebhookEvent])).ok).toBe(true);
+    expect(pause.ran).toBe(true);
+
+    // A first-time event for pay_und_mid naming the other account never bootstraps.
+    await deliver(createBillFn(config), [
+      subscriptionEvent({ eventId: 'evt_und_late', chargeId: 'pay_und_mid', status: 'active', occurredAt: '2026-11-01T00:00:00.500Z', billingAccountId: 'ba_user_und_other_user' })
+    ]);
+    expect(await db.findMany({ model: 'subscriptions', where: [], namespace: 'billfn' })).toEqual([
+      expect.objectContaining({ billingAccountId: 'ba_user_und_user', providerChargeId: 'pay_und_3', replacedReferencesPending: null })
+    ]);
+    expect(await db.findMany({ model: 'unlinkedWebhookEvents', where: [], namespace: 'billfn' })).toEqual([
+      expect.objectContaining({ providerEventId: 'evt_und_late', status: 'unlinked', reason: 'provider_reference_replaced' })
+    ]);
+    const recorded = await db.findMany<{ providerReference: string }>({ model: 'replacedProviderReferences', where: [], namespace: 'billfn' });
+    expect(recorded.map((row) => row.providerReference)).toContain('pay_und_mid');
+    expect(await entitlementStatus(billfn, 'und_other_user')).not.toBe('active');
+    expect(calls.cancel).toBe(1);
+  });
 });
