@@ -76,7 +76,7 @@ await billfn.services.subscriptions.import({
 ```
 
 - The billing account must exist, unless `subject` is given: then the account is created for it and must be `billingAccountId`.
-- The provider adapter's `importSubscription` reads the subscription by its reference and checks only that the record is that subscription (Dodo `GET /subscriptions/:id`; Apple `GET /inApps/v1/subscriptions/:originalTransactionId`). The product on the record must be a subscription price of `planKey`, which selects the price. A failed read is classified by what the provider said, and only a definitive answer fails for good:
+- The provider adapter's `importSubscription` reads the subscription by its reference and checks only that the record is that subscription (Dodo `GET /subscriptions/:id`; Apple `GET /inApps/v1/subscriptions/:originalTransactionId`). The product on the record (the adapter's `providerProductId`, else the record's `product_id`/`productId`) must be the `providerProductId` of a subscription price of `planKey`, which selects the price; it is never matched against a catalog `priceId`, so a product that only equals a catalog price id is refused with `BILLFN_VALIDATION_ERROR` before any subscription, entitlement or billing event is written. A failed read is classified by what the provider said, and only a definitive answer fails for good:
 
   | Provider answer | Import result |
   | --- | --- |

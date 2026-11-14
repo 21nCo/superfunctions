@@ -2167,7 +2167,11 @@ async function resolveImportBillingAccount(deps: ServiceDeps, input: BillFnImpor
   return billingAccount;
 }
 
-/** The plan's subscription price the provider record's product names. */
+/**
+ * The plan's subscription price the provider record's product names. Every reference (the adapter's
+ * `providerProductId`, then the record's `product_id`/`productId`) is a provider product id here, so it is matched
+ * only against `providerProductId`, never against a catalog `priceId` another plan's product could equal.
+ */
 function requireImportPrice(
   plan: ReturnType<typeof requirePlan>,
   provider: BillingProviderName,
@@ -2178,19 +2182,19 @@ function requireImportPrice(
   const references = [
     state.providerProductId,
     ...records.flatMap((record) => (record ? ['product_id', 'productId'].map((key) => readString(record, key)) : []))
-  ];
-  const selection = findCatalogPriceReference({ plans: [plan] }, provider, references);
-  if (!selection || selection.price.kind !== 'subscription') {
-    throw createBillFnError({
-      code: 'BILLFN_VALIDATION_ERROR',
-      message: `The provider subscription's product is not a ${provider} subscription price of plan ${plan.planKey}`,
-      details: {
-        planKey: plan.planKey,
-        providerProductIds: references.filter((reference): reference is string => Boolean(reference))
-      }
-    });
+  ].filter((reference): reference is string => Boolean(reference));
+  const prices = plan.prices.filter((price) => price.provider === provider && price.kind === 'subscription');
+  for (const reference of references) {
+    const price = prices.find((candidate) => candidate.providerProductId === reference);
+    if (price) {
+      return { plan, price };
+    }
   }
-  return selection;
+  throw createBillFnError({
+    code: 'BILLFN_VALIDATION_ERROR',
+    message: `The provider subscription's product is not a ${provider} subscription price of plan ${plan.planKey}`,
+    details: { planKey: plan.planKey, providerProductIds: references }
+  });
 }
 
 function importBoundElsewhere(provider: BillingProviderName) {

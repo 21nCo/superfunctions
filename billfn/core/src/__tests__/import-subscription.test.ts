@@ -88,6 +88,8 @@ function legacyRecord(subscriptionId: string, overrides: Partial<{ productId: st
 }
 
 type ProviderOptions = {
+  provider?: 'dodo' | 'apple';
+  /** A record's `providerProductId` is returned as the adapter's hint, as the Apple adapter sets it. */
   record?: (reference: string) => Record<string, unknown> | null;
   /** Runs inside the provider read, before it returns. */
   duringRead?: (input: BillFnImportSubscriptionInput) => Promise<void>;
@@ -105,13 +107,14 @@ function createProvider(options: ProviderOptions = {}) {
       subscriptionStatus: status,
       checkoutStatus: 'succeeded',
       providerSubscriptionId: record.subscription_id as string,
+      providerProductId: record.providerProductId as string | undefined,
       currentPeriodEnd: record.next_billing_date as string,
       autoRenew: (record.auto_renew as boolean | undefined) ?? status === 'active',
       raw: record
     };
   });
   const adapter: BillFnProviderAdapter = {
-    provider: 'dodo',
+    provider: options.provider ?? 'dodo',
     capabilities: {
       createCheckout: false,
       verifyCheckout: false,
@@ -182,7 +185,7 @@ function withSubscriptionReferenceUniqueness(db: Db): Db {
   } as Db;
 }
 
-function setup(options: ProviderOptions & { wrapDb?: (db: Db) => Db } = {}) {
+function setup(options: ProviderOptions & { wrapDb?: (db: Db) => Db; catalog?: BillFnCatalog } = {}) {
   const base = memoryAdapter({ debug: false });
   const unique = withSubscriptionReferenceUniqueness(base);
   const db = options.wrapDb ? options.wrapDb(unique) : unique;
@@ -190,8 +193,8 @@ function setup(options: ProviderOptions & { wrapDb?: (db: Db) => Db } = {}) {
   const provider = createProvider(options);
   const billfn = createBillFn({
     db,
-    catalog,
-    providers: { dodo: provider.adapter },
+    catalog: options.catalog ?? catalog,
+    providers: { [options.provider ?? 'dodo']: provider.adapter },
     now: () => clock.current
   });
   return {
@@ -206,7 +209,7 @@ function setup(options: ProviderOptions & { wrapDb?: (db: Db) => Db } = {}) {
     },
     import(input: Partial<BillFnImportSubscriptionRequest> & { billingAccountId: string }) {
       return billfn.services.subscriptions.import({
-        provider: 'dodo',
+        provider: options.provider ?? 'dodo',
         providerSubscriptionId: 'sub_legacy',
         planKey: 'nucleus',
         operator: OPERATOR,
@@ -1452,6 +1455,53 @@ describe('billfn.services.subscriptions.import', () => {
     await expect(env.import({ billingAccountId })).rejects.toMatchObject({ code: 'BILLFN_VALIDATION_ERROR' });
     expect(await env.subscriptions()).toEqual([]);
     expect(await env.importEvents()).toEqual([]);
+  });
+
+  it.each([
+    // Dodo: the record's product_id.
+    { provider: 'dodo' as const, nucleus: 'pdt_nucleus_month', team: 'pdt_team_month', product: (id: string) => ({ product_id: id }) },
+    // Apple: the adapter's providerProductId hint from the signed transaction; the raw payload carries no product.
+    { provider: 'apple' as const, nucleus: 'com.app.nucleus.monthly', team: 'com.app.team.monthly', product: (id: string) => ({ providerProductId: id }) }
+  ])('matches the $provider product only against providerProductId, never a catalog priceId another plan\'s product equals', async ({ provider, nucleus, team, product }) => {
+    // Nucleus's price id equals Team's provider product; the record's product names Team.
+    const colliding: BillFnCatalog = {
+      plans: [
+        { ...catalog.plans[0]!, prices: [{ ...catalog.plans[0]!.prices[0]!, provider, priceId: team, providerProductId: nucleus }] },
+        { ...catalog.plans[1]!, prices: [{ ...catalog.plans[1]!.prices[0]!, provider, providerProductId: team }] }
+      ]
+    };
+    const recordFor = (id: string) => (reference: string) => {
+      const { product_id: _ignored, ...legacy } = legacyRecord(reference);
+      return { ...legacy, ...product(id) };
+    };
+    const refused = setup({ provider, catalog: colliding, record: recordFor(team) });
+    const aliceAccount = await refused.account('alice');
+    await expect(refused.import({ billingAccountId: aliceAccount })).rejects.toMatchObject({
+      code: 'BILLFN_VALIDATION_ERROR',
+      details: { planKey: 'nucleus', providerProductIds: [team] }
+    });
+    expect(await refused.subscriptions()).toEqual([]);
+    expect(await entitlementsOf(refused.db, aliceAccount)).toEqual([]);
+    expect(await billingEventsOf(refused.db, aliceAccount)).toEqual([]);
+
+    // The plan's own product imports, selecting the price whose providerProductId it is.
+    const accepted = setup({ provider, catalog: colliding, record: recordFor(nucleus) });
+    const bobAccount = await accepted.account('bob');
+    const data = unwrap(await accepted.import({ billingAccountId: bobAccount }));
+    expect(data.subscription).toMatchObject({ provider, planKey: 'nucleus', priceId: team });
+    expect(data.entitlements).toMatchObject({ planKey: 'nucleus', status: 'active' });
+  });
+
+  it('reads the adapter\'s product hint before the raw record, and never as a catalog price id', async () => {
+    const hinted = (hint: string) => (reference: string) => ({ ...legacyRecord(reference, { productId: 'pdt_nucleus_year' }), providerProductId: hint });
+    const accepted = setup({ record: hinted('pdt_nucleus_month') });
+    const data = unwrap(await accepted.import({ billingAccountId: await accepted.account('alice') }));
+    expect(data.subscription).toMatchObject({ planKey: 'nucleus', priceId: 'price_nucleus_dodo_month' });
+
+    // A hint that is only a catalog price id names no provider product, so the raw product still selects the price.
+    const priceIdHint = setup({ record: hinted('price_team_dodo_month') });
+    const viaRaw = unwrap(await priceIdHint.import({ billingAccountId: await priceIdHint.account('alice') }));
+    expect(viaRaw.subscription).toMatchObject({ planKey: 'nucleus', priceId: 'price_nucleus_dodo_year' });
   });
 
   it('refuses a provider record for another reference and a missing record', async () => {

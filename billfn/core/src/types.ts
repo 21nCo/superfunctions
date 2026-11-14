@@ -364,7 +364,9 @@ export interface BillFnVerifiedBillingState {
   /**
    * The catalog price or provider product id the provider record names, set
    * by an adapter whose record carries it in a form BillFn cannot read from
-   * `raw` (Apple's signed transaction). BillFn reads it before `raw`.
+   * `raw` (Apple's signed transaction). BillFn reads it before `raw`. A
+   * subscription import reads it, like the record's product, as a provider
+   * product id only.
    */
   providerProductId?: string;
   currentPeriodStart?: string;
