@@ -52,6 +52,15 @@ function deriveFallbackLocalSource(upload: Pick<PendingUpload, 'fileName' | 'mim
   };
 }
 
+/**
+ * File ID of a pending upload staged without one. It is derived from the
+ * upload session ID, so every read of the same upload gives the same ID, and
+ * it matches the grammar `upload/init` accepts, `file_[A-Za-z0-9_-]{8,64}`.
+ */
+export function fallbackFileId(uploadSessionId: string): string {
+  return `file_${uploadSessionId.replace(/[^A-Za-z0-9_-]/g, '_').padEnd(8, '_').slice(0, 64)}`;
+}
+
 export interface OPFSStoreConfig {
   rootDir?: string;
 }
@@ -118,7 +127,7 @@ export class OPFSStore {
 
       const metadata = {
         uploadSessionId: upload.uploadSessionId,
-        fileId: upload.fileId || upload.uploadSessionId,
+        fileId: upload.fileId || fallbackFileId(upload.uploadSessionId),
         policy: upload.policy,
         idempotencyKey: upload.idempotencyKey,
         fileName: upload.fileName,
@@ -160,7 +169,7 @@ export class OPFSStore {
 
       return {
         ...metadata,
-        fileId: metadata.fileId || uploadSessionId,
+        fileId: metadata.fileId || fallbackFileId(uploadSessionId),
         localSource: metadata.localSource || deriveFallbackLocalSource(metadata),
         fileData,
       };
@@ -224,7 +233,7 @@ export class OPFSStore {
       url = URL.createObjectURL(blob);
       this.localObjectUrls.set(upload.uploadSessionId, url);
     }
-    const resolvedFileId = upload.fileId ?? upload.uploadSessionId;
+    const resolvedFileId = upload.fileId ?? fallbackFileId(upload.uploadSessionId);
     const resolvedLocalSource = upload.localSource ?? deriveFallbackLocalSource(upload);
 
     return {
@@ -314,7 +323,7 @@ export class OPFSStore {
       const metadata = JSON.parse(metaText);
       return {
         ...metadata,
-        fileId: metadata.fileId || uploadSessionId,
+        fileId: metadata.fileId || fallbackFileId(uploadSessionId),
         localSource: metadata.localSource || deriveFallbackLocalSource(metadata),
       };
     } catch {

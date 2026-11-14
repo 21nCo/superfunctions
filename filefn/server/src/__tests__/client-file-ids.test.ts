@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createFakeStorageAdapter } from '@superfunctions/storage';
 import type { Adapter, AdapterCapabilities } from '@superfunctions/db';
+import { memoryAdapter } from '@superfunctions/db/adapters/memory';
 import { createFileFn, type FileFn } from '../index.js';
 import { generateFileFnId } from '../ids.js';
 import { createDefaultAuthorizer } from '../authz/authorizer.js';
@@ -144,6 +145,7 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
   let objects: Map<string, string>;
   let publishedUploads: string[];
   let multipartUploadsStarted: number;
+  let abortedUploads: string[];
   let publishGate: ReturnType<typeof hold> | null;
   let fileFn: FileFn;
 
@@ -154,18 +156,34 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
     return { reached: h.reached, release: h.release };
   }
 
-  function build(options: { layout?: Layout; mode?: 'multipart' | 'proxy'; anonymous?: boolean } = {}) {
+  let database: Adapter;
+
+  function build(options: {
+    layout?: Layout;
+    mode?: 'multipart' | 'proxy';
+    anonymous?: boolean;
+    /** Runs on the shipped memory adapter, which enforces no unique keys. */
+    shippedMemory?: boolean;
+    quotaAllowed?: boolean;
+    failMultipartInit?: boolean;
+  } = {}) {
     const { layout = 'default', mode = 'multipart', anonymous = false } = options;
     db = createDb();
+    database = options.shippedMemory ? memoryAdapter() : db.adapter;
     objects = new Map();
     publishedUploads = [];
     multipartUploadsStarted = 0;
+    abortedUploads = [];
     publishGate = null;
     const proxy = mode === 'proxy';
     fileFn = createFileFn({
-      database: db.adapter,
+      database,
       // Honors write grants in filePermissions.
-      authorizer: createDefaultAuthorizer({ db: db.adapter }),
+      authorizer: createDefaultAuthorizer({ db: database }),
+      quota: options.quotaAllowed === undefined ? undefined : {
+        checkQuota: async () => ({ allowed: options.quotaAllowed!, current: 0, limit: 1 }),
+        recordUsage: async () => undefined,
+      },
       storage: createFakeStorageAdapter({
         capabilities: {
           signedUploadUrls: !proxy,
@@ -175,6 +193,7 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
           proxyStreamingDownload: proxy,
         },
         async createMultipartUpload() {
+          if (options.failMultipartInit) throw new Error('storage unavailable');
           multipartUploadsStarted += 1;
           return { uploadId: `mpu_${multipartUploadsStarted}` };
         },
@@ -208,6 +227,9 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
         },
         async deleteObject(input) {
           objects.delete(input.key);
+        },
+        async abortMultipartUpload(input) {
+          abortedUploads.push(input.uploadId);
         },
         async statObject(input) {
           return { key: input.key, size: proxy ? (objects.get(input.key)?.length ?? 0) : 3 };
@@ -620,6 +642,82 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
     expect(fileRows(fileId)).toEqual([
       expect.objectContaining({ ownerId: 'user_a', currentVersionId: doneA.body.data.versionId }),
     ]);
+    // The refused session is ended and the object only it published is gone; the winner's stays.
+    expect(sessionRow(sessionB).status).toBe('aborted');
+    expect(objects.has(sessionRow(sessionB).storageKey)).toBe(false);
+    expect(objects.get(versionRows(fileId)[0].storageKey)).toBe(sessionRow(sessionA).storageUploadId);
+  });
+
+  it('ends a completion refused before publishing: aborts its upload and deletes its parts', async () => {
+    const fileId = 'file_refused_prepub01';
+    const created = await initAndUpload('user_a', fileId);
+    expect((await complete('user_a', created)).status).toBe(200);
+    grantWrite(fileId, 'user_b');
+    const sessionB = await initAndUpload('user_b', fileId);
+    db.rows('filePermissions').length = 0;
+
+    expect((await complete('user_b', sessionB)).status).toBe(403);
+    expect(sessionRow(sessionB).status).toBe('aborted');
+    expect(abortedUploads).toEqual([sessionRow(sessionB).storageUploadId]);
+    expect(db.rows('uploadParts').filter((row) => row.uploadSessionId === sessionB)).toEqual([]);
+  });
+
+  describe('proxy parts of sessions sharing a storage path', () => {
+    beforeEach(() => build({ layout: 'shared', mode: 'proxy' }));
+
+    it("survive another session's abort, expiry and completion", async () => {
+      const fileId = 'file_shared_parts_01';
+      const [aborted, expired, first, last] = [
+        await initAndUpload('user_a', fileId, 'AAA'),
+        await initAndUpload('user_a', fileId, 'BBB'),
+        await initAndUpload('user_a', fileId, 'CCC'),
+        await initAndUpload('user_a', fileId, 'DDD'),
+      ];
+      expect((await call('POST', `/upload/${aborted}/abort`, 'user_a')).status).toBe(200);
+      sessionRow(expired).expiresAt = new Date(Date.now() - 1000).toISOString();
+      expect((await fileFn.cleanupExpiredSessions()).deletedSessions).toBe(1);
+
+      expect((await complete('user_a', first)).status).toBe(200);
+      expect(objects.get(SHARED_PATH({ fileId }))).toBe('CCC');
+      expect((await complete('user_a', last)).status).toBe(200);
+      expect(objects.get(SHARED_PATH({ fileId }))).toBe('DDD');
+    });
+
+    it('still completes a part recorded before parts were scoped to their session', async () => {
+      const fileId = 'file_legacy_part_001';
+      const session = await initAndUpload('user_a', fileId, 'OLD');
+      const part = db.rows('uploadParts').find((row) => row.uploadSessionId === session)!;
+      objects.set(`${SHARED_PATH({ fileId })}.part1`, objects.get(`${SHARED_PATH({ fileId })}.${session}.part1`)!);
+      objects.delete(`${SHARED_PATH({ fileId })}.${session}.part1`);
+      part.checksumSha256Base64 = null;
+
+      expect((await complete('user_a', session)).status).toBe(200);
+      expect(objects.get(SHARED_PATH({ fileId }))).toBe('OLD');
+    });
+  });
+
+  describe('on the shipped memory adapter, which enforces no unique keys', () => {
+    beforeEach(() => build({ shippedMemory: true }));
+
+    it('settles one reservation owner and one file row', async () => {
+      const fileId = 'file_shipped_memory1';
+      const statuses = (await Promise.all([init('user_a', { fileId }), init('user_b', { fileId })])).map((res) => res.status);
+      expect(statuses.sort()).toEqual([200, 403]);
+      const owner = statuses[0] === 200 ? 'user_a' : 'user_b';
+      const reservations = await database.findMany({
+        model: 'uploadSessions',
+        where: [{ field: 'uploadSessionId', operator: 'eq', value: fileIdReservationId(fileId) }],
+        namespace: 'filefn',
+      });
+      expect(reservations).toHaveLength(1);
+
+      const [one, two] = [await initAndUpload(owner, fileId), await initAndUpload(owner, fileId)];
+      const done = await Promise.all([complete(owner, one), complete(owner, two)]);
+      expect(done.map((res) => res.status)).toEqual([200, 200]);
+      const files = await database.findMany<Row>({ model: 'files', where: [{ field: 'fileId', operator: 'eq', value: fileId }], namespace: 'filefn' });
+      expect(files).toHaveLength(1);
+      expect(done.map((res) => res.body.data.versionId)).toContain(files[0].currentVersionId);
+    });
   });
 
   describe('a reservation', () => {
@@ -647,10 +745,18 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
       expect((await init('user_b', { fileId })).status).toBe(403);
     });
 
-    it('cannot be held by an anonymous caller', async () => {
-      const reservations = createFileIdReservations({ db: db.adapter, namespace: 'filefn' });
-      expect(await reservations.reserve('file_anonymous_0001', { ownerId: 'anonymous', tenantId: null }, 'capture')).toBe(false);
-      expect(reservationRow('file_anonymous_0001')).toBeUndefined();
+    it('is made only once the upload is admitted', async () => {
+      build({ quotaAllowed: false });
+      expect((await init('user_a', { fileId: 'file_over_quota_01' })).status).toBe(402);
+      expect((await init('user_a', { fileId: 'file_over_quota_01' })).status).toBe(402);
+      expect(reservationRow('file_over_quota_01')).toBeUndefined();
+
+      build({ failMultipartInit: true });
+      expect((await init('user_a', { fileId: 'file_setup_fails_01' })).status).toBe(500);
+      expect(reservationRow('file_setup_fails_01')).toBeUndefined();
+      // The ID is still free.
+      build();
+      expect((await init('user_b', { fileId: 'file_setup_fails_01' })).status).toBe(200);
     });
   });
 
@@ -676,8 +782,8 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
       expect(done.status).toBe(200);
       expect(done.body.data.fileId).toBe(fileId);
       expect(fileRows(fileId)).toEqual([expect.objectContaining({ ownerId: 'anonymous', currentVersionId: done.body.data.versionId })]);
-      // It reserves nothing: the ID is unowned until the file exists.
-      expect(reservationRow(fileId)).toBeUndefined();
+      // The ID was reserved for the anonymous session that created the file.
+      expect(reservationRow(fileId)).toMatchObject({ ownerId: 'anonymous', storageUploadId: sessionsOf('anonymous')[0].uploadSessionId });
     });
 
     it('gets 403 at init under an ID a named principal reserved', async () => {
@@ -689,20 +795,67 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
       expect(res.body.error.code).toBe('FILEFN_FORBIDDEN');
     });
 
-    it('gets 403 at completion once a named principal reserved the ID after its init', async () => {
-      const fileId = 'file_named_later_01';
-      const res = await init('', { fileId });
+    /** An anonymous init and part; `bytes` go through the proxy in proxy mode. */
+    async function anonymousInitAndUpload(fileId: string, bytes = 'abc', headers: Record<string, string> = {}) {
+      const res = await init('', { fileId }, headers);
       expect(res.status).toBe(200);
-      const { uploadSessionId, uploadSessionToken } = res.body.data;
+      const { uploadSessionId, uploadSessionToken, uploadMode } = res.body.data;
       const token = { 'x-upload-session-token': uploadSessionToken };
-      await call('POST', `/upload/${uploadSessionId}/parts/1/complete`, '', { etag: 'etag-anon', size: 3 }, token);
+      const part = uploadMode === 'proxy'
+        ? await call('PUT', `/upload/${uploadSessionId}/parts/1`, '', bytes, token)
+        : await call('POST', `/upload/${uploadSessionId}/parts/1/complete`, '', { etag: 'etag-anon', size: 3 }, token);
+      expect(part.status).toBe(200);
+      return { uploadSessionId: uploadSessionId as string, token };
+    }
 
+    describe.each(['multipart', 'proxy'] as const)('holds the ID from init, with a storage path shared by the ID, in %s mode', (mode) => {
+      beforeEach(() => build({ anonymous: true, layout: 'shared', mode }));
+
+      it('so a named init while its completion publishes gets 403, and one owner keeps its bytes', async () => {
+        const fileId = 'file_anon_publishing1';
+        const anon = await anonymousInitAndUpload(fileId, 'AAA');
+        const publishing = holdNextPublish();
+        const pending = call('POST', `/upload/${anon.uploadSessionId}/complete`, '', undefined, anon.token);
+        if (mode === 'multipart') await publishing.reached;
+
+        const named = await init('user_a', { fileId });
+        expect(named.status).toBe(403);
+        expect(sessionsOf('user_a')).toHaveLength(0);
+        publishing.release();
+        const done = await pending;
+
+        expect(done.status).toBe(200);
+        expect(fileRows(fileId)).toEqual([expect.objectContaining({ ownerId: 'anonymous' })]);
+        expect(reservationRow(fileId)).toMatchObject({ ownerId: 'anonymous', storageUploadId: anon.uploadSessionId });
+        // The download path serves the anonymous upload's bytes; user_a stored none.
+        expect(multipartUploadsStarted).toBe(mode === 'multipart' ? 1 : 0);
+        const expected = mode === 'proxy' ? 'AAA' : sessionRow(anon.uploadSessionId).storageUploadId;
+        expect(objects.get(versionRows(fileId)[0].storageKey)).toBe(expected);
+      });
+    });
+
+    it('refuses another anonymous session until the holder is aborted, and replays an idempotent retry', async () => {
+      const fileId = 'file_anon_vs_anon_01';
+      const first = await anonymousInitAndUpload(fileId, 'abc', { 'x-idempotency-key': 'idem_anon_1' });
+      const replay = await init('', { fileId }, { 'x-idempotency-key': 'idem_anon_1' });
+      expect(replay.body.data.uploadSessionId).toBe(first.uploadSessionId);
+      expect((await init('', { fileId })).status).toBe(403);
+      expect((await init('user_a', { fileId })).status).toBe(403);
+
+      expect((await call('POST', `/upload/${first.uploadSessionId}/abort`, '', undefined, first.token)).status).toBe(200);
+      expect(reservationRow(fileId)).toBeUndefined();
       expect((await init('user_a', { fileId })).status).toBe(200);
-      const done = await call('POST', `/upload/${uploadSessionId}/complete`, '', undefined, token);
+    });
 
-      expect(done.status).toBe(403);
-      expect(fileRows(fileId)).toEqual([]);
-      expect(publishedUploads).toEqual([]);
+    it('lets the ID go once the holding session expires', async () => {
+      const fileId = 'file_anon_expired_01';
+      const first = await anonymousInitAndUpload(fileId);
+      sessionRow(first.uploadSessionId).expiresAt = new Date(Date.now() - 1000).toISOString();
+      const second = await init('', { fileId });
+      expect(second.status).toBe(200);
+      expect(reservationRow(fileId)).toMatchObject({ storageUploadId: second.body.data.uploadSessionId });
+      // The expired session can no longer complete.
+      expect((await call('POST', `/upload/${first.uploadSessionId}/complete`, '', undefined, first.token)).status).toBe(410);
     });
   });
 
@@ -714,6 +867,7 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
       reservations.reserve(fileId, { ownerId: 'user_a', tenantId: 'org_1' }, 'capture'),
       reservations.reserve(fileId, { ownerId: 'user_b', tenantId: 'org_1' }, 'capture'),
     ]);
-    expect(results.filter(Boolean)).toHaveLength(1);
+    expect(results.filter((result) => result.held)).toHaveLength(1);
+    expect(lax.rows('uploadSessions')).toHaveLength(1);
   });
 });

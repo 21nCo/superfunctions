@@ -60,6 +60,7 @@ Wire-format envelope:
 | --- | --- | --- | --- |
 | `FILEFN_INVALID_PART_NUMBER` | 400 | `partNumber < 1` or `> totalParts`. | Use the part numbers returned by init. |
 | `FILEFN_INVALID_ETAG` | 400 | etag empty or malformed. | Read `ETag` from the storage PUT response and pass it through. |
+| `FILEFN_INVALID_FILE_ID` | 400 | `upload/init` `fileId` outside `file_[A-Za-z0-9_-]{8,64}`. | Send an ID from `generateFileId()`, or omit `fileId`. |
 | `FILEFN_UPLOAD_INCOMPLETE` | 409 | `complete` called before all parts recorded. | Record every part before `complete`. |
 | `FILEFN_UPLOAD_EXPIRED` | 410 | Session past TTL. | Call `init` again with a new idempotency key. |
 | `FILEFN_UPLOAD_ABORTED` | 410 | Session was aborted. | Same — start a new session. |

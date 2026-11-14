@@ -7,6 +7,7 @@ import type { QuotaProvider } from '../upload-sessions/service.js';
 import { resolveArtifactStorageTarget, resolveStorageTarget, type PolicyRegistry } from '../policies.js';
 import * as errors from '../errors.js';
 import { createFileDeletedEvent } from '../events.js';
+import { proxyPartKey, type ProxyPartRecord } from '../upload-sessions/part-keys.js';
 
 export interface FileRecord {
   fileId: string;
@@ -51,10 +52,6 @@ interface UploadSessionRecord {
   uploadMode: string;
   storageKey: string;
   storageUploadId: string | null;
-}
-
-interface UploadPartRecord {
-  partNumber: number;
 }
 
 interface FilePermissionGrantRecord {
@@ -189,10 +186,6 @@ function tryParseCursor(cursor: string): CursorTuple | null {
     // Fall through for legacy/plain cursor support.
   }
   return null;
-}
-
-function proxyPartKey(storageKey: string, partNumber: number): string {
-  return `${storageKey}.part${partNumber}`;
 }
 
 function isImageMimeType(mimeType: string): boolean {
@@ -678,17 +671,17 @@ export function createFileService(config: FileServiceConfig) {
           }
         }
 
-        const parts = await db.findMany<UploadPartRecord>({
+        const parts = await db.findMany<ProxyPartRecord>({
           model: 'uploadParts',
           where: [{ field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId }],
-          select: ['partNumber'],
+          select: ['partNumber', 'checksumSha256Base64'],
           namespace,
         });
 
         if (session.uploadMode === 'proxy') {
           for (const part of parts) {
             try {
-              await storage.deleteObject({ key: proxyPartKey(session.storageKey, part.partNumber), target: sessionStorageTarget });
+              await storage.deleteObject({ key: proxyPartKey(session.storageKey, session.uploadSessionId, part), target: sessionStorageTarget });
             } catch {
               // Best-effort cleanup for proxy temp parts.
             }

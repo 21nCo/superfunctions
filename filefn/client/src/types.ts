@@ -56,27 +56,28 @@ export interface UploadInput {
    *
    * - Must match `file_[A-Za-z0-9_-]{8,64}`; the server rejects any other value
    *   on `upload/init` with 400 `FILEFN_INVALID_FILE_ID`.
-   * - A new ID (no file yet) is reserved for the signed-in caller on
-   *   `upload/init`, and the file is created owned by that caller when the
-   *   upload completes. The first caller to init an ID keeps it: another
-   *   principal's `upload/init` (or completion) under it fails with 403
-   *   `FILEFN_FORBIDDEN`, before it uploads anything. The ID stays reserved
-   *   to its owner even if the file is later deleted.
-   * - An anonymous caller does not reserve the ID: it is unowned until the
-   *   upload completes and creates the file. The upload fails with 403 if a
-   *   signed-in caller reserved the ID first, at `upload/init` or at
-   *   completion.
+   * - A new ID (no file yet) is reserved on `upload/init`, and the file is
+   *   created under it when the upload completes. The first caller to init an
+   *   ID keeps it: anyone else's `upload/init` under it fails with 403
+   *   `FILEFN_FORBIDDEN`, so it never uploads. A signed-in caller's ID stays
+   *   reserved to it even if the file is later deleted.
+   * - An anonymous caller's reservation belongs to its upload session: another
+   *   anonymous `upload/init` under the ID fails with 403 until that session
+   *   completes, and the ID is free again once the session is aborted or
+   *   expires. Retry an anonymous `upload/init` with the same
+   *   `idempotencyKey`.
+   * - A completion can still fail with 403 after its parts were uploaded:
+   *   when write permission on an existing file was lost after init, or when
+   *   its reservation was lost (an anonymous session that expired, say). The
+   *   session is then aborted.
    * - An existing ID replaces that file with a new version and needs write
-   *   permission on it; otherwise `upload/init` fails with 403, and a
-   *   completion fails with 403 if the permission was lost after init.
+   *   permission on it; otherwise `upload/init` fails with 403.
    * - Retrying `upload/init` under the same ID is safe. With the same
    *   `idempotencyKey` it returns the same upload session. Without one, the
    *   same signed-in caller gets a new session for the same ID, and each
    *   session that completes adds a version of the one file; this keeps each
    *   version's bytes only when the policy's `storagePath` differs per
-   *   upload (the default does). An anonymous retry without a key gets a new
-   *   session too, but adding a version to a file it already created needs
-   *   write permission on that file.
+   *   upload (the default does).
    */
   fileId?: string;
   idempotencyKey?: string;
