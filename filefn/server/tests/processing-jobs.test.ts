@@ -699,6 +699,75 @@ describe('processing jobs', () => {
     });
   });
 
+  describe('when a file delete fails after its versions are removed', () => {
+    /** Throws once from the first `findMany` that `matches` after the delete removed the versions. */
+    function failOnceAfterVersionDelete(
+      database: Adapter,
+      matches: (params: Parameters<Adapter['findMany']>[0]) => boolean,
+    ) {
+      let versionsDeleted = false;
+      let failed = false;
+      return new Proxy(database, {
+        get(target, property, receiver) {
+          if (property === 'deleteMany') {
+            return async (params: Parameters<Adapter['deleteMany']>[0]) => {
+              const result = await target.deleteMany(params);
+              if (params.model === 'fileVersions') versionsDeleted = true;
+              return result;
+            };
+          }
+          if (property === 'findMany') {
+            return async (params: Parameters<Adapter['findMany']>[0]) => {
+              if (versionsDeleted && !failed && matches(params)) {
+                failed = true;
+                throw new Error('database connection lost');
+              }
+              return target.findMany(params);
+            };
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      });
+    }
+
+    async function expectRetryRemovesEverything(matches: (params: Parameters<Adapter['findMany']>[0]) => boolean) {
+      const storage = createMemoryStorage();
+      let usedBytes = 0;
+      const recordUsage = vi.fn(async ({ bytes }: { bytes: number }) => {
+        usedBytes += bytes;
+      });
+      const database = failOnceAfterVersionDelete(withUniqueArtifactIds(memoryAdapter()), matches);
+      const { fileFn, queue } = setup([textProcessor('uppercase')], {
+        storage,
+        database,
+        quota: { checkQuota: async () => ({ allowed: true, current: usedBytes, limit: 1_000_000 }), recordUsage },
+      });
+      const { fileId, versionId } = await uploadNote(fileFn, 'source bytes');
+      expect(await createProcessingJobHandler(fileFn).handle(queue.jobs[0])).toMatchObject({ status: 'completed' });
+      const version = await fileFn.services.files.getVersion(fileId, versionId, owner);
+      const [artifact] = await listArtifacts(fileFn, fileId);
+      expect(usedBytes).toBe(version.size);
+
+      await expect(fileFn.deleteFile({ fileId }, owner)).rejects.toThrow('database connection lost');
+      await fileFn.deleteFile({ fileId }, owner);
+
+      await expect(storage.statObject({ key: version.storageKey, target: 'durable' })).rejects.toThrow('object not found');
+      await expect(storage.statObject({ key: artifact.storageKey, target: 'durable' })).rejects.toThrow('object not found');
+      expect(usedBytes).toBe(0);
+      expect(recordUsage).toHaveBeenLastCalledWith(expect.objectContaining({ bytes: -version.size }));
+      expect(await database.findMany({ model: 'fileArtifacts', where: [], namespace: 'jobs_test' })).toEqual([]);
+      expect(await database.findMany({ model: 'files', where: [], namespace: 'jobs_test' })).toEqual([]);
+    }
+
+    it('removes the source object and releases its quota on retry after the artifact listing fails', async () => {
+      await expectRetryRemovesEverything((params) => params.model === 'fileArtifacts' && params.where.length > 0);
+    });
+
+    it('removes the source object and releases its quota on retry after the reference scan fails', async () => {
+      await expectRetryRemovesEverything((params) => params.model === 'fileVersions' && params.where.length === 0);
+    });
+  });
+
   it('enqueues and runs a job whose request ID or processor list is longer than a job field allows', async () => {
     const longName = `uppercase-${'x'.repeat(600)}`;
     const processor = textProcessor(longName, { kinds: ['uppercase'] });

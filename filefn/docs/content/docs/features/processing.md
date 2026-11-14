@@ -134,7 +134,7 @@ interface FlowFnQueue {
 | `GET /proxy/files/:fileId/artifacts/:artifactId/download` | Proxy-mode download. |
 | `POST /:fileId/process` | Manually trigger processors (re-process / lazy mode). |
 
-With a queue configured, `POST /:fileId/process` enqueues a job with the same idempotency key as the upload's job: the file version and its processor names. If every processor already finished for that key, the consumer acknowledges the job as a duplicate and emits no `processing.completed` or `processing.failed` after its `processing.started`. Re-running processors for a version that was already processed needs a different processor list. For the Cloudflare Queues consumer, see [Cloudflare Workers › Queued processing](../recipes/cloudflare-workers#queued-processing).
+With a queue configured, `POST /:fileId/process` enqueues a job with the same idempotency key as the upload's job: the file version and its processor names. If every processor already finished for that key, the consumer acknowledges the job as a duplicate and emits no `processing.completed` or `processing.failed` after its `processing.started`. FileFn has no per-request option to re-run processors that already finished for a version. For the Cloudflare Queues consumer, see [Cloudflare Workers › Queued processing](../recipes/cloudflare-workers#queued-processing).
 
 ## Events
 
