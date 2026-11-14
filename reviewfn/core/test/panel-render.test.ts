@@ -83,6 +83,9 @@ describe("renderPanelMarkdownReport", () => {
     expect(reported).toContain(`  - Verification: confirmed by checker: also on base; evidence B1\n${line}`);
     const setAside = markdown.slice(markdown.indexOf("- **Refuted race**"), markdown.indexOf("- **Waived"));
     expect(setAside).toContain(`  - Verification: refuted by checker: lock held; evidence B1\n${line}`);
+    // Evidence cited by both the finding and its verification is expanded once.
+    const shared = markdown.slice(markdown.indexOf("- **Critical in b**"), markdown.indexOf("#### Not anchored"));
+    expect(shared.split("    - E1 (code)")).toHaveLength(2);
   });
 
   it("keeps dropped and suppressed findings out of the reported sections, inside one collapsed section with reasons", () => {

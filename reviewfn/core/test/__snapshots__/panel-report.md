@@ -43,7 +43,6 @@
 - **Critical in b** (correctness; new in this change)
   - Origins: alpha (general lens)
   - Verification: confirmed by checker: reproduced at head; evidence E1
-    - E1 (code): value; `src/b.ts:3` at `bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`
   - Trigger: when Critical in b
   - Impact: wrong value
   - Fix: return the right value

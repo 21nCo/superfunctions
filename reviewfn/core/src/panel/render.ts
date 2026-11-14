@@ -85,7 +85,8 @@ function findingLines(finding: PanelFinding, evidence: Map<string, Evidence>): s
     `- **${escape(finding.title)}** (${escape(finding.category)}; ${onBase})`,
     `  - Origins: ${originsText(finding)}`,
     `  - Verification: ${verificationText(finding)}`,
-    ...evidenceLines(finding.verification?.evidenceIds ?? [], evidence),
+    // Evidence the finding cites itself is expanded once, under its Evidence line.
+    ...evidenceLines((finding.verification?.evidenceIds ?? []).filter(id => !finding.evidenceIds.includes(id)), evidence),
     `  - Trigger: ${escape(finding.trigger)}`,
     `  - Impact: ${escape(finding.impact)}`,
     `  - Fix: ${escape(finding.direction)}`,
