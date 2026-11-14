@@ -561,6 +561,21 @@ describe("panel policy and slot identity", () => {
       { type: "object", additionalProperties: false, required: ["kind"], properties: { kind: { const: "y" }, a: { type: "string" } } },
     ] });
     expect(union({ kind: "y", a: null })).toEqual({ kind: "y" });
+    // a required nullable property in the applicable branch, with optional nulls an inapplicable branch also rejects
+    const typed = (kind: string, required: string[], properties: Record<string, unknown>) => ({ type: "object", additionalProperties: false, required: ["kind", ...required], properties: { kind: { const: kind }, ...properties } });
+    for (const keyword of ["anyOf", "oneOf"]) {
+      const mixed = omitOptionalNullsFor({ [keyword]: [typed("x", ["a"], { a: nullable, note: { type: "string" } }), typed("y", ["a"], { a: { type: "string" }, note: { type: "string" } })] });
+      expect(mixed({ kind: "x", a: null, note: null })).toEqual({ kind: "x", a: null });
+    }
+    const second = omitOptionalNullsFor({ anyOf: [typed("x", ["a"], { a: { type: "string" } }), typed("y", ["a"], { a: nullable, b: { type: "string" } })] });
+    expect(second({ kind: "y", a: null, b: null })).toEqual({ kind: "y", a: null });
+    const untyped = omitOptionalNullsFor({ anyOf: [
+      { type: "object", additionalProperties: false, required: ["p"], properties: { p: nullable, q: { type: "string" } } },
+      { type: "object", additionalProperties: false, required: ["kind"], properties: { kind: { const: "b" }, p: { type: "string" } } },
+    ] });
+    expect(untyped({ p: null, q: null })).toEqual({ p: null });
+    const conditional = omitOptionalNullsFor({ type: "object", required: ["a"], properties: { flag: { type: "string" }, a: nullable }, if: { type: "object", required: ["flag"], properties: { flag: { type: "string" } } }, then: { type: "object", properties: { a: { type: "string" } } } });
+    expect(conditional({ flag: null, a: null })).toEqual({ a: null });
     expect(() => omitOptionalNullsFor({ type: "object", notAKeyword: true })).toThrow();
   });
 

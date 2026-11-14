@@ -202,30 +202,49 @@ export function structuredOutputValidator(schema: Readonly<Record<string, unknow
   return value => compiledValidator(value) ? [] : (compiledValidator.errors ?? []).map(error => `${error.instancePath || "/"}: ${error.message}`);
 }
 
+type Path = string[];
+
+/** Object properties holding null that a failed validation rejected. */
+function rejectedNulls(validate: ValidateFunction, value: unknown): Path[] {
+  if (validate(value)) return [];
+  const seen = new Set<string>();
+  return (validate.errors ?? []).flatMap(error => {
+    const keys = error.instancePath.split("/").slice(1).map(key => key.replaceAll("~1", "/").replaceAll("~0", "~"));
+    const parent = keys.slice(0, -1).reduce<unknown>((node, step) => typeof node === "object" && node !== null ? (node as Record<string, unknown>)[step] : undefined, value);
+    const key = keys.at(-1);
+    if (key === undefined || seen.has(error.instancePath) || typeof parent !== "object" || parent === null || Array.isArray(parent) || (parent as Record<string, unknown>)[key] !== null) return [];
+    seen.add(error.instancePath);
+    return [keys];
+  });
+}
+
+function without(value: unknown, paths: Path[]): unknown {
+  const result = structuredClone(value);
+  for (const keys of paths) delete (keys.slice(0, -1).reduce<unknown>((node, step) => (node as Record<string, unknown>)[step], result) as Record<string, unknown>)[keys.at(-1)!];
+  return result;
+}
+
 /**
- * Undo `strictProviderSchema` for a caller schema, judged by the caller schema itself: a null-valued object property is
- * omitted only where the compiled schema rejects that null, and validation is repeated until the value is valid or no
- * rejected null remains. A null the schema accepts, such as a required nullable property, is kept, however the schema
- * composes `required`, `$ref` (including recursive `#`), `allOf`, `anyOf`, `oneOf` or conditionals. Array items are
- * never removed. Throws when the schema cannot be compiled.
+ * Undo `strictProviderSchema` for a caller schema, judged by the caller schema itself: only object properties holding a
+ * null that the compiled schema rejects are omitted, and the result is returned once it validates. Every rejected null
+ * is omitted first, repeatedly. If that does not validate, as when an inapplicable `anyOf`/`oneOf` branch or a
+ * conditional rejects a null the applicable branch requires, nulls are instead omitted one at a time from the original
+ * output, each time the one whose omission leaves the fewest errors. So a required nullable property is kept wherever
+ * some omission of rejected nulls validates. Array items are never removed. Throws when the schema cannot be compiled.
  */
 export function omitOptionalNullsFor(schema: Readonly<Record<string, unknown>>): (value: unknown) => unknown {
   const validate = compile(schema);
+  const errorCount = (value: unknown) => validate(value) ? 0 : (validate.errors ?? []).length;
   return value => {
-    const result = structuredClone(value);
-    while (!validate(result)) {
-      let removed = false;
-      for (const error of validate.errors ?? []) {
-        const keys = error.instancePath.split("/").slice(1).map(key => key.replaceAll("~1", "/").replaceAll("~0", "~"));
-        const key = keys.pop();
-        const parent = keys.reduce<unknown>((node, step) => typeof node === "object" && node !== null ? (node as Record<string, unknown>)[step] : undefined, result);
-        if (key === undefined || typeof parent !== "object" || parent === null || Array.isArray(parent)) continue;
-        const record = parent as Record<string, unknown>;
-        if (Object.hasOwn(record, key) && record[key] === null) { delete record[key]; removed = true; }
-      }
-      if (!removed) break;
+    let batch = value;
+    for (let rejected = rejectedNulls(validate, batch); rejected.length; rejected = rejectedNulls(validate, batch)) batch = without(batch, rejected);
+    if (validate(batch)) return batch;
+    let current = value;
+    for (let rejected = rejectedNulls(validate, current); rejected.length; rejected = rejectedNulls(validate, current)) {
+      const scored = rejected.map(path => { const next = without(current, [path]); return { next, errors: errorCount(next) }; });
+      current = scored.reduce((best, item) => item.errors < best.errors ? item : best).next;
     }
-    return result;
+    return validate(current) ? current : batch;
   };
 }
 

@@ -77,11 +77,13 @@ describe("CodexHarnessAdapter outputSchema", () => {
     ["required only through an allOf branch", { notes: null }, true],
     ["a discriminated union whose other branch requires the property", { notes: { kind: "y", a: null } }, false],
     ["a recursive reference", { notes: { children: [{ children: [], a: null }] } }, false],
+    ["a union branch requiring a nullable property beside an optional null", { notes: { kind: "z", a: null, b: null } }, false],
   ] as const)("normalizes provider nulls for %s through the adapter", async (_name, fields, requiredOnly) => {
     const notes = { anyOf: [
       { type: "null" },
       { type: "object", additionalProperties: false, required: ["kind", "a"], properties: { kind: { const: "x" }, a: { type: "string" } } },
       { type: "object", additionalProperties: false, required: ["kind"], properties: { kind: { const: "y" }, a: { type: "string" } } },
+      { type: "object", additionalProperties: false, required: ["kind", "a"], properties: { kind: { const: "z" }, a: { anyOf: [{ type: "string" }, { type: "null" }] }, b: { type: "string" } } },
       { $ref: "#/$defs/tree" },
     ] };
     const tree = { type: "object", additionalProperties: false, required: ["children"], properties: { children: { type: "array", items: { $ref: "#/$defs/tree" } }, a: { type: "string" } } };
@@ -93,6 +95,8 @@ describe("CodexHarnessAdapter outputSchema", () => {
     expect(output.error).toBeUndefined();
     expect(output.terminal).toBe("completed");
     expect(output.findings[0]).not.toHaveProperty("anchor");
+    // The provider payload is validated as normalized; the normalized 0.1 result carries no notes.
+    expect(output).not.toHaveProperty("notes");
   });
 
   it("omits 0.1 nulls from the harness payload even where the custom schema requires them", async () => {
