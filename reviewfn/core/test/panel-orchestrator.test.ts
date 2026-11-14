@@ -251,12 +251,25 @@ describe("slot workspaces", () => {
     await expect(lstat(path.dirname(first.path))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("reports a comparison that is aborted as mutated", async () => {
+  it("reports a comparison stopped by its signal as incomplete, not as an observed change", async () => {
     const workspace = await provider().create("zeta");
     const check = await workspace.verify(AbortSignal.abort());
-    expect(check.unchanged).toBe(false);
-    expect(check.reason).toMatch(/could not be compared/);
+    expect(check).toMatchObject({ unchanged: false, incomplete: true, reason: expect.stringMatching(/stopped before it finished/) });
+    await expect(workspace.verify()).resolves.toEqual({ unchanged: true });
     await workspace.remove();
+  });
+
+  it("reports a top-level .git case variant on a case-sensitive filesystem as mutated", async context => {
+    const workspace = await provider().create("eta");
+    try {
+      // On a case-insensitive filesystem .GIT is the checkout's own .git, so the variant cannot exist.
+      const created = await mkdir(path.join(workspace.path, ".GIT")).then(() => true, () => false);
+      if (!created) return context.skip();
+      await writeFile(path.join(workspace.path, ".GIT", "payload"), "hidden\n");
+      const check = await workspace.verify();
+      expect(check.unchanged).toBe(false);
+      expect(check.reason).toMatch(/\.GIT/);
+    } finally { await workspace.remove(); }
   });
 
   it("fails creation for a commit the object store does not have and leaves nothing behind", async () => {

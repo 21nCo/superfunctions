@@ -17,14 +17,22 @@ const MAX_REPORTED_PATHS = 10;
 export interface WorkspaceCheck {
   /** True only when the checkout's tree is exactly the head tree, with no extra directories. */
   unchanged: boolean;
-  /** Why the checkout is considered mutated, including a check that could not complete. */
+  /**
+   * True when the comparison was stopped by its signal before it finished, so no difference was observed and the
+   * checkout was not shown to be unchanged either.
+   */
+  incomplete?: boolean;
+  /** Why the checkout is not shown to be unchanged: the observed difference, or why the comparison did not complete. */
   reason?: string;
 }
 
 /** One slot's owned checkout of the head commit. */
 export interface SlotWorkspace {
   readonly path: string;
-  /** Compare the checkout with the head tree. A check that cannot complete reports the checkout as mutated. */
+  /**
+   * Compare the checkout with the head tree. A comparison stopped by `signal` reports `incomplete`; one that fails for
+   * any other reason reports the checkout as changed, because the slot left it in a state that cannot be compared.
+   */
   verify(signal?: AbortSignal): Promise<WorkspaceCheck>;
   /** Remove the checkout and everything the slot wrote into it. Safe to call more than once. */
   remove(): Promise<void>;
@@ -70,7 +78,7 @@ export async function removeTree(directory: string): Promise<void> {
 interface WalkResult {
   /** Directories under the checkout other than the top-level `.git`, as `/`-separated relative paths. */
   directories: string[];
-  /** Entries named `.git` below the top level, which Git never hashes, so a slot could hide content in them. */
+  /** Entries named `.git` in any letter case, other than the checkout's own top-level `.git`, which Git never hashes. */
   nestedGitEntries: string[];
   /** Submodule (gitlink) paths with any content: Git does not look inside them, so they must stay as checked out, empty. */
   nonEmptyGitlinks: string[];
@@ -88,8 +96,10 @@ async function walk(root: string, gitlinks: Set<string>, signal?: AbortSignal): 
     }
     for (const entry of entries) {
       const child = relative ? `${relative}/${entry.name}` : entry.name;
+      // Only the checkout's own `.git` is skipped. Any other case variant, even at the top level of a case-sensitive
+      // filesystem, is something the slot wrote and Git may not compare.
       if (entry.name.toLowerCase() === ".git") {
-        if (relative) result.nestedGitEntries.push(child);
+        if (relative || entry.name !== ".git") result.nestedGitEntries.push(child);
         continue;
       }
       if (!entry.isDirectory()) continue;
@@ -141,12 +151,13 @@ class GitSlotWorkspace implements SlotWorkspace {
         else if (entry.startsWith("160000 ")) { expected.add(name); gitlinks.add(name); }
       }
       const found = await walk(this.path, gitlinks, signal);
-      if (found.nestedGitEntries.length) return { unchanged: false, reason: `The checkout has .git entries that Git does not compare: ${listed(found.nestedGitEntries)}.` };
+      if (found.nestedGitEntries.length) return { unchanged: false, reason: `The checkout has .git entries other than its own that Git does not compare: ${listed(found.nestedGitEntries)}.` };
       if (found.nonEmptyGitlinks.length) return { unchanged: false, reason: `The checkout has content in submodule paths: ${listed(found.nonEmptyGitlinks)}.` };
       const extra = found.directories.filter(directory => !expected.has(directory));
       if (extra.length) return { unchanged: false, reason: `The checkout has directories that head ${this.headCommit} does not: ${listed(extra)}.` };
       return { unchanged: true };
     } catch (error) {
+      if (signal?.aborted) return { unchanged: false, incomplete: true, reason: `The comparison with head ${this.headCommit} was stopped before it finished.` };
       return { unchanged: false, reason: `The checkout could not be compared with head ${this.headCommit}: ${error instanceof Error ? error.message : String(error)}` };
     }
   }
