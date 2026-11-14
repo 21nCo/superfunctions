@@ -1,0 +1,51 @@
+userfn/.conduct/flag-config-scheduling-readiness.md
+  s_e1c5fc1a65c0cf::t_1ba0a6891f9a6e 1-56
+userfn/.conduct/flag-config-sdk-readiness.md
+  s_e1c5fc1a65c0cf::t_3bfe6bd7599321 92-95
+userfn/python/README.md
+  s_e1c5fc1a65c0cf::t_e881acdf11dd84 192,274,277-295
+userfn/python/src/userfn/client.py
+  s_e1c5fc1a65c0cf::t_844dc9dfa224ea 1,16,61-65,69-87
+userfn/python/src/userfn/core/config_http.py
+  s_e1c5fc1a65c0cf::t_867e059d087acd 14-15,137-149,166-172,181,189-190,210
+userfn/python/src/userfn/core/config_refresh.py
+  s_e1c5fc1a65c0cf::t_bb46238f6ad3de 1-74
+userfn/python/tests/test_config_refresh.py
+  s_e1c5fc1a65c0cf::t_0f035691c481eb 131-141,154-198
+userfn/service/README.md
+  s_e1c5fc1a65c0cf::t_f28e5f86dadb78 139,141
+userfn/service/scripts/verify-config-browser.mjs
+  s_e1c5fc1a65c0cf::t_c558e3a6d8e288 44,59-61,64
+userfn/service/scripts/verify-config-package.mjs
+  s_e1c5fc1a65c0cf::t_63d4b06bc94b50 34
+userfn/service/tests/flag-config-http.test.ts
+  s_e1c5fc1a65c0cf::t_8b3a5a01acb148 24-25,37,46,177-180,196-211
+userfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_707eecaf4dc803 123,177,232,252,254-272
+userfn/typescript/src/__tests__/config-refresh.test.ts
+  s_e1c5fc1a65c0cf::t_32499204206dc8 1-43
+userfn/typescript/src/core/config-http.ts
+  s_e1c5fc1a65c0cf::t_e8d8a66fcd0ded 57-61,74,83
+userfn/typescript/src/core/config-refresh.ts
+  s_e1c5fc1a65c0cf::t_c914af431948f1 1-52
+userfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_9b6327da2df398 1-2,24,128-145
+userfn/typescript/src/types.ts
+  s_e1c5fc1a65c0cf::t_1fe7a2bcb4d4a2 85-91,112
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "44679d1df58d7e5d1ce1f7ab61cdb157e1b6122c",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

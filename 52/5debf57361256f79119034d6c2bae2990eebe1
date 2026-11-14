@@ -1,0 +1,39 @@
+flowfn/python/README.md
+  s_e1c5fc1a65c0cf::t_df06ab6f29f830 213-221
+flowfn/python/flowfn/adapters/memory.py
+  s_e1c5fc1a65c0cf::t_88572710876fd1 347-348
+flowfn/python/flowfn/adapters/postgres.py
+  s_e1c5fc1a65c0cf::t_ae604f11ff6aba 139-145,269-270,274-275
+flowfn/python/flowfn/adapters/redis.py
+  s_e1c5fc1a65c0cf::t_4188226d999455 133-135,139,281-282,286-287
+flowfn/python/flowfn/core/flow.py
+  s_e1c5fc1a65c0cf::t_af341c481da2a3 71-74,89,104
+flowfn/python/flowfn/core/metrics.py
+  s_e1c5fc1a65c0cf::t_d03c964935c83f 3-7,37,39,45-46,53-55,72,75-78,92,105,110,118-129,132-141,145-154,157-160,162-168,170-179
+flowfn/python/flowfn/queue/queue.py
+  s_e1c5fc1a65c0cf::t_b155d85a8eeeb1 18,27,29,218-222
+flowfn/python/flowfn/stream/stream.py
+  s_e1c5fc1a65c0cf::t_7450e58ccf3013 17,25,27,58,60-62
+flowfn/python/flowfn/stream/types.py
+  s_e1c5fc1a65c0cf::t_7f739ba961a483 72-73
+flowfn/python/tests/test_durable_stream_ownership.py
+  s_e1c5fc1a65c0cf::t_a2bd559baa2f2f 117-154
+flowfn/python/tests/test_metrics.py
+  s_e1c5fc1a65c0cf::t_868f523fdaa6bf 1-151
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "525debf57361256f79119034d6c2bae2990eebe1",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

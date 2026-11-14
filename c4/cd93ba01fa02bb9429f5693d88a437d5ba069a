@@ -1,0 +1,41 @@
+.github/workflows/apifn-api-check.yml
+  s_7d0a48f0aaecda::t_ac837938516388 108,119
+.github/workflows/ci.yml
+  s_7d0a48f0aaecda::t_bed653c28fd963 47,84,163,200,230,276
+.github/workflows/mailfn-release.yml
+  s_7d0a48f0aaecda::t_f04c590877225e 25
+.github/workflows/publish-python.yml
+  s_7d0a48f0aaecda::t_c358ec7d1ecc12 34,74
+.github/workflows/publish-tag.yml
+  s_7d0a48f0aaecda::t_fb38f225de5235 38,102
+.github/workflows/pullfrog.yml
+  s_7d0a48f0aaecda::t_2d22fc5d717527 25
+.github/workflows/release-swift.yml
+  s_7d0a48f0aaecda::t_fb04b8535edfec 28
+.github/workflows/reviewfn-release.yml
+  s_7d0a48f0aaecda::t_f0510c601024f7 34
+.github/workflows/searchfn-client-tests.yml
+  s_7d0a48f0aaecda::t_aed3edada445df 34
+.github/workflows/searchfn-client-tusk-vitest.yml
+  s_7d0a48f0aaecda::t_2bd9a5bb27f6cc 29
+.github/workflows/superfunctions-docs-cloudflare-deploy.yml
+  s_7d0a48f0aaecda::t_4f807362642a4e 83,119
+.github/workflows/superfunctions-docs-cloudflare-routes.yml
+  s_7d0a48f0aaecda::t_59327f6cc436ec 42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c4cd93ba01fa02bb9429f5693d88a437d5ba069a",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

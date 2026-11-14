@@ -1,0 +1,59 @@
+flowfn/typescript/src/storage/worker-contract.ts
+  s_e1c5fc1a65c0cf::t_b5b6296d51ea76 1-58
+flowfn/typescript/src/queue/worker-pool.test.ts
+  s_e1c5fc1a65c0cf::t_b5b6296d51ea76 1-5
+  s_e1c5fc1a65c0cf::t_f02d7bb40579f9 6-24
+flowfn/typescript/src/adapters/redis.test.ts
+  s_e1c5fc1a65c0cf::t_b5b6296d51ea76 7,20-21
+  s_e1c5fc1a65c0cf::t_4eeb44fc92abbe 23,25,106,109
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_e1c5fc1a65c0cf::t_b5b6296d51ea76 14,20-21
+  s_e1c5fc1a65c0cf::t_ae8d9d7adc4749 23,25,108,111
+flowfn/typescript/src/queue/queue.ts
+  s_e1c5fc1a65c0cf::t_2d415233748844 11,19,32,61-63,65-66,68-71,75,82,96-98,227-262,299,301,311-316,321
+flowfn/typescript/src/queue/worker-pool.ts
+  s_e1c5fc1a65c0cf::t_294b472c48fe69 1-104
+flowfn/typescript/src/queue/types.ts
+  s_e1c5fc1a65c0cf::t_2d415233748844 13,48-51
+  s_e1c5fc1a65c0cf::t_6fce83e6f15814 10,52,140
+flowfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_294b472c48fe69 8
+flowfn/typescript/src/queue/worker.ts
+  s_e1c5fc1a65c0cf::t_e2899ceec28f56 2,9-11,23-25,28-29,48-50,56,58,63,70,81,83-85,87,89-91,93-95
+flowfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_1f75f4284b0a9b 27-54
+flowfn/typescript/scripts/provider-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_97464725452c7b 78
+flowfn/typescript/scripts/scheduler-crash-worker.mjs
+  s_e1c5fc1a65c0cf::t_9fec84d0f31930 11
+flowfn/typescript/scripts/workflow-crash-worker.mjs
+  s_e1c5fc1a65c0cf::t_ff2c6cded4e0ca 11,19-25
+flowfn/typescript/src/queue/worker.test.ts
+  s_e1c5fc1a65c0cf::t_55da3172f7ee35 55-66
+flowfn/typescript/src/storage/scheduler-contract.ts
+  s_e1c5fc1a65c0cf::t_edcb4da9ed27df 6,8-9,15,21,25
+flowfn/typescript/src/storage/workflow-control-contract.ts
+  s_e1c5fc1a65c0cf::t_8c0ac9ac749cc8 6,38
+flowfn/typescript/src/storage/workflow-crash-contract.ts
+  s_e1c5fc1a65c0cf::t_a4b7b3f2d47091 42
+flowfn/typescript/src/workflow/durable-wait.test.ts
+  s_e1c5fc1a65c0cf::t_6f65986b6a7fce 1-42
+flowfn/typescript/src/workflow/workflow.ts
+  s_e1c5fc1a65c0cf::t_d14f36ae195726 949-959,966-972
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a8e54ddd154bde80f78b5ceb603ec0a53e04b6d9",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,25 @@
+probefn/.conduct/process-group-probe-native-20261020.json
+  s_e1c5fc1a65c0cf::t_7663d888053af8 1-666
+probefn/.conduct/process-group-probe-readiness.md
+  s_e1c5fc1a65c0cf::t_8a6c69c03b5ea6 1-14
+probefn/packages/dev-server/src/dev-server-manager.ts
+  s_e1c5fc1a65c0cf::t_c307bce88de8fe 463,466,468-474,489
+probefn/packages/dev-server/test/process-lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_198e71bed973bb 53,71-107
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fe43f655c90e90922e3bb0e21afc8200f0758e3a",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

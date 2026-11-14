@@ -1,0 +1,39 @@
+watchfn/.conduct/python-stored-alert-readiness.md
+  s_e1c5fc1a65c0cf::t_40242ce60c73c3 1-57
+watchfn/python/README.md
+  s_e1c5fc1a65c0cf::t_127636a25d00f9 191-241
+watchfn/python/scripts/verify-alert-golden.mjs
+  s_e1c5fc1a65c0cf::t_16cc9df0c05183 1-9
+watchfn/python/tests/fixtures/alert-golden.json
+  s_e1c5fc1a65c0cf::t_29970c723a55de 1-10
+watchfn/python/tests/test_stored_alerts.py
+  s_e1c5fc1a65c0cf::t_7bac7d6b0400ec 1-127
+watchfn/python/watchfn/alerts/alert_manager.py
+  s_e1c5fc1a65c0cf::t_50a5038e992d35 6-8,25,35-36,42,45-46,48-93
+watchfn/python/watchfn/alerts/observations.py
+  s_e1c5fc1a65c0cf::t_fc9d3f9b24c87d 1-121
+watchfn/python/watchfn/client.py
+  s_e1c5fc1a65c0cf::t_7573707b257184 7-8,36-37,41-48
+watchfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_4e2a1aaa806179 177-183
+watchfn/typescript/src/query/query-engine.ts
+  s_e1c5fc1a65c0cf::t_1a38820db6f4f7 26-29
+watchfn/typescript/tests/storage/query-streaming-sqlite.acceptance.ts
+  s_e1c5fc1a65c0cf::t_94af46638da65a 105-128
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cda434a1fa27eaa3054e65458204aca407be49b1",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+devfn/proxy/test/fixtures/oauth.ts
+  s_e1c5fc1a65c0cf::t_0f425f84e44870 165-166,173-179,197-198,200-203,205
+devfn/proxy/test/oauth-relay.test.ts
+  s_e1c5fc1a65c0cf::t_2b95cfe6e50096 172-191
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "192eefb6c35aafb030e3337c8fcd65ad428230f3",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

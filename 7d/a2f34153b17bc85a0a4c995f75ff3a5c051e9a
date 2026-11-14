@@ -1,0 +1,33 @@
+devfn/cli/SECURITY.md
+  s_1900bb15a7199a::t_06d221ba9c1406 8-9,19
+devfn/config/src/process-identity.ts
+  s_1900bb15a7199a::t_ec3074bd650fc4 66-71,81-95,99,103-111,117-119
+devfn/config/test/process-identity.test.ts
+  s_1900bb15a7199a::t_210de0c5658ec8 3,5-18,22-43,46-51,53-54,57-89
+devfn/core/README.md
+  s_1900bb15a7199a::t_c9bca5a764d629 7
+devfn/ports/README.md
+  s_1900bb15a7199a::t_966d1e55457907 7
+devfn/ports/src/lock.ts
+  s_1900bb15a7199a::t_f3ac427d6d879d 31,33-35,44-45,54-59,64,74-84,91,112-132,135-163
+devfn/ports/test/lock.test.ts
+  s_1900bb15a7199a::t_69f3a45e352c09 1,7-10,16,18-19,23-26,39-40,45-55,62,152,210-330
+devfn/ports/test/registry.test.ts
+  s_1900bb15a7199a::t_0f463494824652 545-569
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7da2f34153b17bc85a0a4c995f75ff3a5c051e9a",
+  "prompts": {},
+  "sessions": {
+    "s_1900bb15a7199a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5e049926-ee38-44b5-a734-8c7117ee5ff7",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

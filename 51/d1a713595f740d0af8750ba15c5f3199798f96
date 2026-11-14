@@ -1,0 +1,31 @@
+userfn/.conduct/survey-service-readiness.md
+  s_e1c5fc1a65c0cf::t_4416d2a6ea07e7 1-47
+userfn/service/README.md
+  s_e1c5fc1a65c0cf::t_2359971ef91f33 204-236
+userfn/service/package.json
+  s_e1c5fc1a65c0cf::t_21b83c31408b05 21
+userfn/service/src/index.ts
+  s_e1c5fc1a65c0cf::t_26a0af17051b9d 1-2,21,119
+userfn/service/src/schema.ts
+  s_e1c5fc1a65c0cf::t_e7356b1f626f27 5-22
+userfn/service/src/surveys.ts
+  s_e1c5fc1a65c0cf::t_9a77443aac859f 1-111
+userfn/service/tests/surveys-http.test.ts
+  s_e1c5fc1a65c0cf::t_ecb3106212f26b 1-96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "51d1a713595f740d0af8750ba15c5f3199798f96",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

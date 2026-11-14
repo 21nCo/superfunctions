@@ -1,0 +1,25 @@
+flowfn/.conduct/drain-history-measurements-20261023.json
+  s_e1c5fc1a65c0cf::t_34252a87aec545 1-629
+flowfn/.conduct/drain-history-readiness.md
+  s_e1c5fc1a65c0cf::t_b49117f972942d 1-85
+flowfn/typescript/src/queue/lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_869127d0475640 145-146,152,167-193
+flowfn/typescript/src/queue/queue.ts
+  s_e1c5fc1a65c0cf::t_d67861c44fe829 581-589
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7827a94295a1f668d314f6261b06e4df3e2e6b28",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+catchfn/.conduct/python-ci-readiness-20261023.md
+  s_e1c5fc1a65c0cf::t_db3568de9fa518 1-5
+catchfn/server/python/pyproject.toml
+  s_e1c5fc1a65c0cf::t_e43e775806ae79 17
+catchfn/server/python/tests/test_validation.py
+  s_e1c5fc1a65c0cf::t_1c423f76228264 4-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1052e42c541f03dae07bce3f15f1bfeac202cdaa",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

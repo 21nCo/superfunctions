@@ -1,0 +1,27 @@
+contentfn/server/src/webhooks/deliver.ts
+  s_e1c5fc1a65c0cf::t_1f211760fbe8a8 7,86-90
+contentfn/server/README.md
+  s_e1c5fc1a65c0cf::t_ff0690d4997a5c 20-21
+contentfn/.conduct/webhook-durability-readiness.md
+  s_e1c5fc1a65c0cf::t_ff0690d4997a5c 1-29
+contentfn/server/src/storage/webhookQueue.ts
+  s_e1c5fc1a65c0cf::t_1f211760fbe8a8 75-87
+contentfn/server/src/__tests__/webhooks.sqlite.test.ts
+  s_e1c5fc1a65c0cf::t_36da9cc89d19b4 1-86
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6babb7767d2c83ae55845b44453659dfdfd1ebe4",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

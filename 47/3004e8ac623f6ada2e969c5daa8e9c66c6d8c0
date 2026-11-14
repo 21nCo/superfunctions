@@ -1,0 +1,47 @@
+probefn/.conduct/accounting-database-budget.md
+  s_e1c5fc1a65c0cf::t_7a9e63e0689534 7-9,12
+probefn/README.md
+  s_e1c5fc1a65c0cf::t_8fda9d2b2aac05 189-190,195-207
+probefn/apps/cli/src/commands/checkpoint.ts
+  s_e1c5fc1a65c0cf::t_ff7ed5e24ff32a 24-28,33
+probefn/packages/contracts/src/config.ts
+  s_e1c5fc1a65c0cf::t_41270c4d9c65fb 105-109
+probefn/packages/contracts/test/config.test.ts
+  s_e1c5fc1a65c0cf::t_eac939e58c27c3 1-2,31-42
+probefn/packages/core/src/checkpoints.ts
+  s_e1c5fc1a65c0cf::t_c1c4f74bdc2cfa 5,8,37-38,64-72,86,88,93,98,105,116,150,168
+probefn/packages/core/test/checkpoints.test.ts
+  s_e1c5fc1a65c0cf::t_1776349c535139 93-106
+probefn/packages/dev-server/src/dev-server-manager.ts
+  s_e1c5fc1a65c0cf::t_3dc184ce616c1f 12,14,31,137,166-172
+probefn/packages/dev-server/test/process-lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_9ed035ebff44ec 78-85,228
+probefn/packages/mcp-server/src/server.ts
+  s_e1c5fc1a65c0cf::t_26115e7ce4dd8d 58,214,219,230,606-611,655,845,861
+probefn/packages/mcp-server/src/tools/checkpoint.ts
+  s_e1c5fc1a65c0cf::t_3f04f7af4093ae 16,32,43
+probefn/packages/storage/src/artifact-store.ts
+  s_e1c5fc1a65c0cf::t_1a67c2ba04f1d0 56,62-71,209
+probefn/packages/storage/src/run-quota.ts
+  s_e1c5fc1a65c0cf::t_b24be36af1aa52 8,16-19,30,41,43-45,65-66,87-88,125,137,152
+probefn/packages/storage/test/run-policy.test.ts
+  s_e1c5fc1a65c0cf::t_3cb1f08f4c5094 1-24
+probefn/scripts/installed-browser-consumer.mjs
+  s_e1c5fc1a65c0cf::t_9464535bba30c5 10-11,22,39-66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "473004e8ac623f6ada2e969c5daa8e9c66c6d8c0",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

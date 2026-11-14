@@ -1,0 +1,23 @@
+packages/db/README.md
+  s_e1c5fc1a65c0cf::t_6f13b41fa7b9a7 341-342
+packages/db/package.json
+  s_e1c5fc1a65c0cf::t_2255ba55b774b9 51-54,66-67
+packages/db/scripts/verify-schema-entry.cjs
+  s_e1c5fc1a65c0cf::t_41aba29a66b5a8 1-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3bf4a93b896dfd1263390a1daae8416330c3de92",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

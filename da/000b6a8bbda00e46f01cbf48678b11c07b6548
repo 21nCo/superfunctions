@@ -1,0 +1,19 @@
+watchfn/agents/browser/src/index.ts
+  s_e1c5fc1a65c0cf::t_8457ae3f7e99c9 55,78,90
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "da000b6a8bbda00e46f01cbf48678b11c07b6548",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

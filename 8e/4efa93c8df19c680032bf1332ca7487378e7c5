@@ -1,0 +1,35 @@
+testfn/.conduct/python-ci-typing-readiness.md
+  s_e1c5fc1a65c0cf::t_af11f5266f81e3 1-49
+testfn/python/scripts/packed_consumer.py
+  s_e1c5fc1a65c0cf::t_93167f604b9018 2,7,13-16,18,21,26-35,37-40,42-46,50
+testfn/python/tests/fixtures/dummy.py
+  s_e1c5fc1a65c0cf::t_60d9d39371e852 1,5,9
+testfn/python/tests/test_analytics_contract.py
+  s_e1c5fc1a65c0cf::t_89ee8648352561 2-3,5,9-12,16-22,28,37-42
+testfn/python/tests/test_execution_contract.py
+  s_e1c5fc1a65c0cf::t_88cc5e49bd6a2f 3,6,10,14-16,35,45-47,85-87,101,103,108-109,122-124,145-147,159,161,173-175,180-182,188
+testfn/python/tests/test_runner.py
+  s_e1c5fc1a65c0cf::t_1417321517c298 1,3,5-6,9,13,62,74-75
+testfn/python/tests/test_runner_reporting.py
+  s_e1c5fc1a65c0cf::t_c74be643eaef36 1-2,4-6,9-10,17,20,23-30,36-37,39,44,52-54
+testfn/python/tests/test_storage_isolation.py
+  s_e1c5fc1a65c0cf::t_22b947782c3d77 1-2,5-9,11-15,20,33,42-45
+testfn/python/tests/test_visual.py
+  s_e1c5fc1a65c0cf::t_fb3d5bde31cd03 2-3,6,10,46,48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8e4efa93c8df19c680032bf1332ca7487378e7c5",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

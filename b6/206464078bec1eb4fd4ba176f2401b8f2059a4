@@ -1,0 +1,21 @@
+logfn/.conduct/readiness.md
+  s_e1c5fc1a65c0cf::t_0ea18bb40d2f2f 155-166
+logfn/scripts/watchfn-integration-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_9ba6aefa2f211c 1-121
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b6206464078bec1eb4fd4ba176f2401b8f2059a4",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

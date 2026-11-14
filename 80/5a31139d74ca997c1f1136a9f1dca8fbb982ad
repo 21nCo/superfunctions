@@ -1,0 +1,193 @@
+contentfn/.conduct/browser-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_3a16d994c17269 1-52
+contentfn/.conduct/packed-acceptance.py
+  s_e1c5fc1a65c0cf::t_92f9a2c7ef9de5 1-33
+contentfn/.conduct/packed-runtime.mjs
+  s_e1c5fc1a65c0cf::t_d5b3856a0866a0 1-34
+contentfn/.conduct/sql-service-acceptance.md
+  s_e1c5fc1a65c0cf::t_75668e8757c812 1-15
+contentfn/.conduct/target-readiness.md
+  s_e1c5fc1a65c0cf::t_698aed35686db6 1-24
+contentfn/README.md
+  s_e1c5fc1a65c0cf::t_6a7dd48f9180f7 1-178
+contentfn/SPEC.md
+  s_e1c5fc1a65c0cf::t_62d2c569e03508 1-542
+contentfn/admin/README.md
+  s_e1c5fc1a65c0cf::t_df91be45f7c8a8 1-5
+contentfn/admin/package.json
+  s_e1c5fc1a65c0cf::t_9303723701f71a 3,36
+contentfn/cli/README.md
+  s_e1c5fc1a65c0cf::t_0fe2461f8724e4 1-5
+contentfn/cli/package.json
+  s_e1c5fc1a65c0cf::t_b5a5154a1763d1 3,28,41-42
+contentfn/cli/src/__tests__/cli.test.ts
+  s_e1c5fc1a65c0cf::t_a73475ff3f2641 9,41
+contentfn/cli/src/index.ts
+  s_e1c5fc1a65c0cf::t_5c5a6270accf78 13
+contentfn/client/README.md
+  s_e1c5fc1a65c0cf::t_1a26144d61c693 1-14
+contentfn/client/package.json
+  s_e1c5fc1a65c0cf::t_34f28c7a661e63 3-4,11-18,38,49,54-55
+contentfn/client/src/client.test.ts
+  s_e1c5fc1a65c0cf::t_23c5d5c974c568 1-21
+contentfn/client/src/index.ts
+  s_e1c5fc1a65c0cf::t_9bc6b3669adebb 1-2,27-102
+contentfn/client/src/realtime-query.test.ts
+  s_e1c5fc1a65c0cf::t_d146c5e653be37 1-59
+contentfn/client/src/realtime.ts
+  s_e1c5fc1a65c0cf::t_b85578e25d70be 1-130
+contentfn/client/tsconfig.json
+  s_e1c5fc1a65c0cf::t_398889e1b6b8a6 4-8,22-28
+contentfn/client/vitest.config.ts
+  s_e1c5fc1a65c0cf::t_84a2c51355fe88 1-5
+contentfn/core/README.md
+  s_e1c5fc1a65c0cf::t_98cabfb22dc490 1-10
+contentfn/core/package.json
+  s_e1c5fc1a65c0cf::t_808727fc29f8bc 3,11-18,38
+contentfn/core/src/patch/validatePatch.ts
+  s_e1c5fc1a65c0cf::t_5ed32712c41fd4 31,60,96,101
+contentfn/core/src/query/validateCfql.ts
+  s_e1c5fc1a65c0cf::t_38765e6862b54f 14,88-89,127,171,174
+contentfn/core/src/schema/validateSchema.ts
+  s_e1c5fc1a65c0cf::t_074f828b7083e4 28,40,68,98-100,125,136-145,185-186,188-189,195,211-215
+contentfn/core/src/schema/validation-contract.test.ts
+  s_e1c5fc1a65c0cf::t_8a701bb1ff71a5 1-27
+contentfn/server/README.md
+  s_e1c5fc1a65c0cf::t_c558b2c2e85ad1 1-20
+contentfn/server/package.json
+  s_e1c5fc1a65c0cf::t_978219a6ca1218 3,11-18,35-36,48,57,61-63,69-73
+contentfn/server/src/__tests__/artifact-validation.test.ts
+  s_e1c5fc1a65c0cf::t_abc6c3dc1be898 1-61
+contentfn/server/src/__tests__/assets.integration.test.ts
+  s_e1c5fc1a65c0cf::t_d0bc28b93cf3ed 178-196
+contentfn/server/src/__tests__/datasets-schema.integration.test.ts
+  s_e1c5fc1a65c0cf::t_834d67e24e5327 181-194
+contentfn/server/src/__tests__/history.integration.test.ts
+  s_e1c5fc1a65c0cf::t_a1a65c789342f1 69,229-246
+contentfn/server/src/__tests__/http-readiness.test.ts
+  s_e1c5fc1a65c0cf::t_5049e919ca665f 1-75
+contentfn/server/src/__tests__/importExport.integration.test.ts
+  s_e1c5fc1a65c0cf::t_060937d331ea48 379-395
+contentfn/server/src/__tests__/mutation-readiness.test.ts
+  s_e1c5fc1a65c0cf::t_2ae314aafd1824 1-61
+contentfn/server/src/__tests__/patch.integration.test.ts
+  s_e1c5fc1a65c0cf::t_3233375711107e 455-456
+contentfn/server/src/__tests__/query-subscription-bounds.test.ts
+  s_e1c5fc1a65c0cf::t_9baecbefa3a7f0 1-81
+contentfn/server/src/__tests__/query-subscription.test.ts
+  s_e1c5fc1a65c0cf::t_ef020b35184d15 1-194
+contentfn/server/src/__tests__/realtime.integration.test.ts
+  s_e1c5fc1a65c0cf::t_0629f489678f80 108-109,290-291
+contentfn/server/src/__tests__/references.integration.test.ts
+  s_e1c5fc1a65c0cf::t_b4f686ae4773f7 78,119,135-136
+contentfn/server/src/__tests__/schedules-readiness.test.ts
+  s_e1c5fc1a65c0cf::t_221dfd19850484 1-27
+contentfn/server/src/__tests__/schema-concurrency.test.ts
+  s_e1c5fc1a65c0cf::t_51bc1443bee850 1-41
+contentfn/server/src/__tests__/schema-discovery.test.ts
+  s_e1c5fc1a65c0cf::t_92a6e9806259f5 1-37
+contentfn/server/src/__tests__/schema-validation.test.ts
+  s_e1c5fc1a65c0cf::t_3e0fefb48f4312 1-133
+contentfn/server/src/__tests__/search-readiness.test.ts
+  s_e1c5fc1a65c0cf::t_ed85d5c31e1b81 1-43
+contentfn/server/src/__tests__/shared-storage.test.ts
+  s_e1c5fc1a65c0cf::t_9d3a12bc2e45a9 1-22
+contentfn/server/src/__tests__/sql-services.integration.test.ts
+  s_e1c5fc1a65c0cf::t_02293d3ad011bb 1-80
+contentfn/server/src/__tests__/sqlite-readiness.test.ts
+  s_e1c5fc1a65c0cf::t_324ee886e9e6a4 1-48
+contentfn/server/src/__tests__/webhooks.integration.test.ts
+  s_e1c5fc1a65c0cf::t_ecfd8de3c7b4ac 175,287,298-300,302-343
+contentfn/server/src/auth/authorize.ts
+  s_e1c5fc1a65c0cf::t_318d05e59f7cf8 14-15
+contentfn/server/src/http/endpoints/query.ts
+  s_e1c5fc1a65c0cf::t_d93a7d4bc27849 1,8-10
+contentfn/server/src/http/endpoints/schema.ts
+  s_e1c5fc1a65c0cf::t_4e1f7af731cd8d 25,49
+contentfn/server/src/http/node-handler.ts
+  s_e1c5fc1a65c0cf::t_e84f2ee6600411 1-42
+contentfn/server/src/http/router.ts
+  s_e1c5fc1a65c0cf::t_e04528a12ad968 1-6,36-63,65-84,88
+contentfn/server/src/http/validateInput.ts
+  s_e1c5fc1a65c0cf::t_03ed09ba7ec305 1-27
+contentfn/server/src/importExport/exportDataset.ts
+  s_e1c5fc1a65c0cf::t_062a5afb0a5632 1,15-16,24,51,59,85,106,108,122
+contentfn/server/src/importExport/format.ts
+  s_e1c5fc1a65c0cf::t_517d8be4c02c04 2-4,42-96,99-102
+contentfn/server/src/importExport/importDataset.ts
+  s_e1c5fc1a65c0cf::t_86d8a5cb79faf2 1-2,11,21,46-47,83,91,124,132,170,191,199
+contentfn/server/src/index.ts
+  s_e1c5fc1a65c0cf::t_cd9a5901ea0201 41-44
+contentfn/server/src/limits/limits.ts
+  s_e1c5fc1a65c0cf::t_4c87c26c70ad98 18,25-28
+contentfn/server/src/logging/logger.ts
+  s_e1c5fc1a65c0cf::t_25279521948082 72
+contentfn/server/src/patch/applyPatch.ts
+  s_e1c5fc1a65c0cf::t_d6eb5dd4d6ca22 106
+contentfn/server/src/query/cursor.ts
+  s_e1c5fc1a65c0cf::t_9bdd8f00fbfdc0 12
+contentfn/server/src/query/executeCfql.ts
+  s_e1c5fc1a65c0cf::t_3d69c38f5ee5f4 1,23-24,68-71,91,95,97,105,108,133,140,147,152-166,193,204,214,218
+contentfn/server/src/query/expand.ts
+  s_e1c5fc1a65c0cf::t_47c0a51df27178 1-2,38,54,131,140,166,169-170,173,183,187
+contentfn/server/src/realtime/protocol.ts
+  s_e1c5fc1a65c0cf::t_18cbbd2829f10f 35
+contentfn/server/src/realtime/sse.ts
+  s_e1c5fc1a65c0cf::t_2d31ea03b6cde6 1-273
+contentfn/server/src/realtime/subscribe.ts
+  s_e1c5fc1a65c0cf::t_9587ede8a3212a 58,76
+contentfn/server/src/server.ts
+  s_e1c5fc1a65c0cf::t_eaade2d5420ed6 1-6,11-13,25-28,37-38,42,45-46,60,64-65,67,122,136-138,148,152,161-163,166-167,170-206,208-210,213-217,219-220,222,224-234,236
+contentfn/server/src/storage/assets.ts
+  s_e1c5fc1a65c0cf::t_cbd3670032f8fa 1,7,15-16,23,44,54,82-83,104,117
+contentfn/server/src/storage/database.ts
+  s_e1c5fc1a65c0cf::t_19d8edf93b8934 1-31
+contentfn/server/src/storage/datasets.ts
+  s_e1c5fc1a65c0cf::t_a8719397f90ca5 1,7,40,91,98-103
+contentfn/server/src/storage/docs.ts
+  s_e1c5fc1a65c0cf::t_5c4f67cdbad263 1,7,13,20-21,23,27,64,88-90,96,108,116,148,183,211,218-227,236,245,254,259,281,287-293,304,347-348,351-352,355-357,359,361,375
+contentfn/server/src/storage/document-validation.ts
+  s_e1c5fc1a65c0cf::t_dff2021bb74f37 1-279
+contentfn/server/src/storage/documentIdentity.ts
+  s_e1c5fc1a65c0cf::t_ff874137152c8f 1-2,4-7
+contentfn/server/src/storage/events.ts
+  s_e1c5fc1a65c0cf::t_680c16ffa0fcb7 1-2,8,37,46,55,60,67-72
+contentfn/server/src/storage/idempotency.ts
+  s_e1c5fc1a65c0cf::t_65ce2bc6ad95af 1-38
+contentfn/server/src/storage/publish.ts
+  s_e1c5fc1a65c0cf::t_85ee4ba092b541 1-4,12,17,28,41,58-75,81,92,101,133,154,166,180-181,186,191,195
+contentfn/server/src/storage/revisions.ts
+  s_e1c5fc1a65c0cf::t_e20853bd719c23 1-5,12,18,22,28,47,62,79,81,100,107,114,140,151,176-183,190,200,209,241,244-251
+contentfn/server/src/storage/schedules.ts
+  s_e1c5fc1a65c0cf::t_9a3d03d46ff388 1-58
+contentfn/server/src/storage/schema.ts
+  s_e1c5fc1a65c0cf::t_d0bdea6a416778 38,48,89-93,102-104,118-119,131-133,144-145,159-160,166-178,180-181,195-196,208,219-233
+contentfn/server/src/storage/schemaStorage.ts
+  s_e1c5fc1a65c0cf::t_888c40a33f0927 1-2,8,50,52,101-112,114,122
+contentfn/server/src/storage/storageBackend.ts
+  s_e1c5fc1a65c0cf::t_55713738094a0c 34-59
+contentfn/server/src/storage/webhookQueue.ts
+  s_e1c5fc1a65c0cf::t_82f1600be403f0 1-2,8-9,17,32,50,54,62,65-67,69,87,91,94-96,98,100-111
+contentfn/server/src/storage/webhooks.ts
+  s_e1c5fc1a65c0cf::t_d8942ecfbe21ff 1,15,43,53,120-133
+contentfn/server/src/webhooks/deliver.ts
+  s_e1c5fc1a65c0cf::t_bfc3da96ebdca5 1,6,15-17,85-86,93,105,111-118,128,134-135,138,140,144,146,155-156,158
+package-lock.json
+  s_e1c5fc1a65c0cf::t_a4a76172a3026f 6670-6696,6723-6751,6857,6860,6869,6872-6873,6918,6921,6926-6927,6952,6983,6986,6990-6992,6995-6996,6998-6999,7005
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "805a31139d74ca997c1f1136a9f1dca8fbb982ad",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

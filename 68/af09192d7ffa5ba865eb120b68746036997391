@@ -1,0 +1,39 @@
+flowfn/.conduct/redis-partition-installed-20261025.jsonl
+  s_e1c5fc1a65c0cf::t_2dbd0869448fe3 1-7
+flowfn/.conduct/redis-stream-partition-readiness.md
+  s_e1c5fc1a65c0cf::t_e35d236dc59470 1-23
+flowfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_e75c32b1f9fe20 38,121-137
+flowfn/typescript/scripts/packed-consumer-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_35b848ec1b1651 26,101-106
+flowfn/typescript/scripts/packed-redis-partition-consumer.mjs
+  s_e1c5fc1a65c0cf::t_8b11fc937f5dc5 1-63
+flowfn/typescript/scripts/partition-crash-worker.mjs
+  s_e1c5fc1a65c0cf::t_c99df044a02126 1-11
+flowfn/typescript/src/adapters/redis.test.ts
+  s_e1c5fc1a65c0cf::t_9d003d965a9e2e 1-3,31-197
+flowfn/typescript/src/adapters/redis.ts
+  s_e1c5fc1a65c0cf::t_d67f5756b2f7cf 1,178,190,366-369,372,461-462,471-472,483-484,487,497,501-502,506,533-537,548,575-580,604,606,615-616,643-644,754-755
+flowfn/typescript/src/stream/delivery-lease.test.ts
+  s_e1c5fc1a65c0cf::t_40dbc934e60d9b 45-69
+flowfn/typescript/src/stream/delivery-lease.ts
+  s_e1c5fc1a65c0cf::t_cb89cf9146bdb1 5,9,18,37-41
+flowfn/typescript/src/stream/redis-partitions.ts
+  s_e1c5fc1a65c0cf::t_9a296f329f717a 1-194
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "68af09192d7ffa5ba865eb120b68746036997391",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

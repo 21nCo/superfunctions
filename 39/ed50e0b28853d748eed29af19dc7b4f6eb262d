@@ -1,0 +1,45 @@
+cachefn/.conduct/benchmark-before.json
+  s_e1c5fc1a65c0cf::t_717ffceb76dc95 1-104
+cachefn/.conduct/benchmark-chromium.json
+  s_e1c5fc1a65c0cf::t_5bc125a545931d 1-123
+cachefn/.conduct/benchmark-webkit.json
+  s_e1c5fc1a65c0cf::t_7a8990b937b822 1-117
+cachefn/.conduct/convenience-performance-acceptance.md
+  s_e1c5fc1a65c0cf::t_99298989d1f182 1-69
+cachefn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_7a74961ae73d85 307-338
+cachefn/typescript/__tests__/factory-convenience.test.ts
+  s_e1c5fc1a65c0cf::t_b2e1675345bc2e 1-60
+cachefn/typescript/__tests__/memory-storage-consistency.test.ts
+  s_e1c5fc1a65c0cf::t_7eed93a9eeb439 1,62-83
+cachefn/typescript/scripts/benchmark.mjs
+  s_e1c5fc1a65c0cf::t_3fe8c43cdeaa69 1-78
+cachefn/typescript/src/core/cache.ts
+  s_e1c5fc1a65c0cf::t_d7ac483c80af7a 31-33,540
+cachefn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_1a2c336041dda3 88-103
+cachefn/typescript/src/memoization/compatible.ts
+  s_e1c5fc1a65c0cf::t_a7b1e5dd98a176 1-68
+cachefn/typescript/src/memoization/memoize.ts
+  s_e1c5fc1a65c0cf::t_5037dc605c0797 9,26,38-45,54,58,72
+cachefn/typescript/src/storage/memory-storage.ts
+  s_e1c5fc1a65c0cf::t_9dafcdfc944710 26,37-39,48,60-62,65-66,69,93,106-108,115,137
+cachefn/typescript/type-tests/memoize.ts
+  s_e1c5fc1a65c0cf::t_e1c37908362aac 12-22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "39ed50e0b28853d748eed29af19dc7b4f6eb262d",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

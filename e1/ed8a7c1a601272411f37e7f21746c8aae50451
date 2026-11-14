@@ -1,0 +1,39 @@
+chartfn/README.md
+  s_e1c5fc1a65c0cf::t_3e88ad6d1f231c 127
+chartfn/__tests__/bounds-and-logging.test.ts
+  s_e1c5fc1a65c0cf::t_2b38dfe2bcb492 1-22
+chartfn/__tests__/echarts-readiness.test.ts
+  s_e1c5fc1a65c0cf::t_30a86e68b9c991 32-50
+chartfn/src/adapters/echarts.ts
+  s_e1c5fc1a65c0cf::t_58604720c57551 109,211,221-224,237,243
+chartfn/src/logger.ts
+  s_e1c5fc1a65c0cf::t_dd5e845942c0dd 23-24
+chartfn/src/validate.ts
+  s_e1c5fc1a65c0cf::t_08eb6a8918bb12 96-99
+chartfn/svelte/README.md
+  s_e1c5fc1a65c0cf::t_1dd2d99b551704 3
+chartfn/svelte/__tests__/chart-svelte.test.ts
+  s_e1c5fc1a65c0cf::t_e79f5eaa6d2fcb 51-60
+chartfn/svelte/package.json
+  s_e1c5fc1a65c0cf::t_efad4e738e0425 30,36
+chartfn/svelte/src/Chart.svelte
+  s_e1c5fc1a65c0cf::t_6b510061f49ba4 27-28
+package-lock.json
+  s_e1c5fc1a65c0cf::t_d829e5f0d2b9c5 7473-7479,7730-7739,7764-7770,7935-7961,8251,8258
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e1ed8a7c1a601272411f37e7f21746c8aae50451",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

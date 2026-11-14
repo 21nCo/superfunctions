@@ -1,0 +1,45 @@
+package-lock.json
+  s_e1c5fc1a65c0cf::t_13d91dcf73d638 64658,64664-64671
+userfn/.conduct/framework-flags-readiness.md
+  s_e1c5fc1a65c0cf::t_583d966c975ba1 1-88
+userfn/.conduct/original-requirements-status.md
+  s_e1c5fc1a65c0cf::t_d64cb97b8ac1d9 22-25,55
+userfn/service/scripts/verify-frameworks.mjs
+  s_e1c5fc1a65c0cf::t_7afffb0f6f74e6 1-98
+userfn/service/tests/flag-config-http.test.ts
+  s_e1c5fc1a65c0cf::t_1921af9e1f1c2d 235-247
+userfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_065f6f5aee26cf 342-399
+userfn/typescript/package.json
+  s_e1c5fc1a65c0cf::t_4722bbeba916b3 29-48,94-95,100-107
+userfn/typescript/src/__tests__/flag-observation.test.ts
+  s_e1c5fc1a65c0cf::t_922a238626437a 1-61
+userfn/typescript/src/core/config-http.ts
+  s_e1c5fc1a65c0cf::t_dde0c4d66a51ae 87-88
+userfn/typescript/src/core/flag-observation.ts
+  s_e1c5fc1a65c0cf::t_07abab042425b1 1-51
+userfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_be88038bcbe34f 8,31-32,133,161,167,173,179,190-218,240-241
+userfn/typescript/src/react.ts
+  s_e1c5fc1a65c0cf::t_f5de9fd37b8cce 1-24
+userfn/typescript/src/svelte.ts
+  s_e1c5fc1a65c0cf::t_e04542dbb95aaa 1-22
+userfn/typescript/tsup.config.ts
+  s_e1c5fc1a65c0cf::t_95f08506b83312 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "724ba5708dd489b3359ed0ec13d1377c12f96655",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

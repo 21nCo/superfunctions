@@ -1,0 +1,23 @@
+logfn/.conduct/pipeline-throughput.mjs
+  s_e1c5fc1a65c0cf::t_5e89b988d15d88 1-98
+logfn/.conduct/pipeline-throughput-readiness.md
+  s_e1c5fc1a65c0cf::t_0658d719a3efb3 1-26
+logfn/.conduct/pipeline-throughput-receipt.json
+  s_e1c5fc1a65c0cf::t_43de224da5f65c 1-398
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ee9fd2512714161434be886026c8a796c581f6bb",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

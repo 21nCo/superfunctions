@@ -1,0 +1,59 @@
+cifn/.conduct/durable-storage-readiness.md
+  s_e1c5fc1a65c0cf::t_1a693d1f9fd839 1-62
+cifn/README.md
+  s_e1c5fc1a65c0cf::t_2abaaa87d1ce8e 83-99
+cifn/typescript/control-plane/package.json
+  s_e1c5fc1a65c0cf::t_8c244449b5e27e 14-15,47-48,56-61
+cifn/typescript/control-plane/scripts/verify-durable-startup.mjs
+  s_e1c5fc1a65c0cf::t_ef8fb7fe5fdf5c 1-86
+cifn/typescript/control-plane/src/api/routes.ts
+  s_e1c5fc1a65c0cf::t_7f992df32f2c5d 3,25-26,42,44,164,199,221,241,251,267,283,287,304,306,313,315,372,381,388
+cifn/typescript/control-plane/src/index.ts
+  s_e1c5fc1a65c0cf::t_c3c9c67d4bb07f 63-67
+cifn/typescript/control-plane/src/integrations/filefn.ts
+  s_e1c5fc1a65c0cf::t_fce30efabc61af 67
+cifn/typescript/control-plane/src/runners/register.ts
+  s_e1c5fc1a65c0cf::t_cfdfdbf4de5f03 1,6,23
+cifn/typescript/control-plane/src/server.ts
+  s_e1c5fc1a65c0cf::t_1966f0d353bf77 8,39-43,45-48,50,52-53,55-70,72-82
+cifn/typescript/control-plane/src/store/database-schema.ts
+  s_e1c5fc1a65c0cf::t_bee14f3ebfbebe 1-29
+cifn/typescript/control-plane/src/store/database-store.test.ts
+  s_e1c5fc1a65c0cf::t_c60fe16d2d1f45 1-206
+cifn/typescript/control-plane/src/store/database-store.ts
+  s_e1c5fc1a65c0cf::t_09187f37b4bc08 1-233
+cifn/typescript/control-plane/src/store/memory-store.ts
+  s_e1c5fc1a65c0cf::t_ad4effc8871937 1-2,38,46-47
+cifn/typescript/control-plane/src/store/records.ts
+  s_e1c5fc1a65c0cf::t_a77b3d61a33db9 1-37
+cifn/typescript/control-plane/src/store/runtime-store.ts
+  s_e1c5fc1a65c0cf::t_62359928ea9bc8 1-46
+cifn/typescript/control-plane/src/store/store.ts
+  s_e1c5fc1a65c0cf::t_05ce7ebcb4d7ec 1-22
+cifn/typescript/control-plane/src/triggers/cron.ts
+  s_e1c5fc1a65c0cf::t_bdf426ff7c87ce 1,3,16,21,42
+cifn/typescript/control-plane/src/triggers/webhook.ts
+  s_e1c5fc1a65c0cf::t_689387f1b79608 1,4,18,135,160
+cifn/typescript/control-plane/tsconfig.durable.json
+  s_e1c5fc1a65c0cf::t_07fab890c5264d 1-5
+cifn/typescript/control-plane/tsup.config.ts
+  s_e1c5fc1a65c0cf::t_5316a911e612d6 7-8
+package-lock.json
+  s_e1c5fc1a65c0cf::t_8512cbb70923b7 6014,6026,6033-6036
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "49a14e09a0719fae4a2c9a234182022096a65d1d",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,44 @@
+scripts/ci-run-python-package.mjs
+  s_e1c5fc1a65c0cf::t_e8eb8ab88be3ed 33-39
+.gitignore
+  s_e1c5fc1a65c0cf::t_31833b6cc06376 84
+scripts/ci-python-dependencies.test.mjs
+  s_e1c5fc1a65c0cf::t_fbae46899a7634 31-52
+  s_e1c5fc1a65c0cf::t_e8eb8ab88be3ed 1-30,53
+scripts/ci-plan.mjs
+  s_e1c5fc1a65c0cf::t_fbae46899a7634 205
+scripts/ci-utils.mjs
+  s_e1c5fc1a65c0cf::t_e8eb8ab88be3ed 94,131,149
+_conduct/shared-ci-dependency-readiness-20261023.md
+  s_e1c5fc1a65c0cf::t_be176e2987578e 1-9
+cifn/typescript/dashboard/package.json
+  s_e1c5fc1a65c0cf::t_62d3b877228641 15-16,20-21
+datafn/server/package.json
+  s_e1c5fc1a65c0cf::t_dda669702fa7f7 51-52
+package-lock.json
+  s_e1c5fc1a65c0cf::t_29cf6a56c6338a 6493-6494,6498-6499,8964-8965,63160-63166,63312,63315,63347,63351,63871,63875
+uifn/examples/package.json
+  s_e1c5fc1a65c0cf::t_ba8989eb9446c0 12-17
+uifn/examples/react-workbench/package.json
+  s_e1c5fc1a65c0cf::t_fca55521d3f6b1 19-21
+uifn/examples/solid-workbench/package.json
+  s_e1c5fc1a65c0cf::t_906439019a39a3 18-20
+uifn/examples/svelte-workbench/package.json
+  s_e1c5fc1a65c0cf::t_6c572946bc87e6 18-20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c5e51a67fc4d79c6dd01d9d9c87a176d3a3dac92",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

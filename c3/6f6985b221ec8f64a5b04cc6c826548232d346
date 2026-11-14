@@ -1,0 +1,27 @@
+logfn/.conduct/readiness.md
+  s_e1c5fc1a65c0cf::t_2696473507ed00 64-69
+logfn/scripts/packed-core-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_a0090883660d81 1-37
+logfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_136a4fc88c284f 471-476
+logfn/typescript/src/pipeline/request-ids.ts
+  s_e1c5fc1a65c0cf::t_2562c0065db87a 26-32,81,91-93
+logfn/typescript/src/pipeline/trace-context.test.ts
+  s_e1c5fc1a65c0cf::t_0f36df1e26d545 1-20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c36f6985b221ec8f64a5b04cc6c826548232d346",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

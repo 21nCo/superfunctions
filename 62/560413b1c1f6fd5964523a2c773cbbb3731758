@@ -1,0 +1,93 @@
+logfn/python/src/logfn/__init__.py
+  s_e1c5fc1a65c0cf::t_4be6c37bc59e7f 3,47
+logfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_a7e7b0c985f332 39
+package-lock.json
+  s_e1c5fc1a65c0cf::t_c43dbe96fcec0e 129792
+watchfn/.conduct/logfn-integration-readiness.md
+  s_e1c5fc1a65c0cf::t_8799e6fb3bab11 1-19
+watchfn/.conduct/python-logfn-integration-readiness.md
+  s_e1c5fc1a65c0cf::t_dfbcb303bb7a04 1-55
+watchfn/python/README.md
+  s_e1c5fc1a65c0cf::t_4dea4068079457 568-656
+watchfn/python/pyproject.toml
+  s_e1c5fc1a65c0cf::t_fc7cef1d0e21ce 15,18
+watchfn/python/scripts/verify-http-wheel.py
+  s_e1c5fc1a65c0cf::t_a21c4a66fd63a6 1,13,16,18,22
+watchfn/python/tests/fixtures/log-index-golden.json
+  s_e1c5fc1a65c0cf::t_b9d45f58a29521 1-50
+watchfn/python/tests/test_log_integration.py
+  s_e1c5fc1a65c0cf::t_eb9227eb381cb0 1-411
+watchfn/python/watchfn/__init__.py
+  s_e1c5fc1a65c0cf::t_9a9a1e4be8b264 12-14
+watchfn/python/watchfn/client.py
+  s_e1c5fc1a65c0cf::t_246aa729ee2553 19,24-26,40-41,86-95,107,112-119,121
+watchfn/python/watchfn/integrations/logfn.py
+  s_e1c5fc1a65c0cf::t_2a5f013780bd98 1-221
+watchfn/python/watchfn/models.py
+  s_e1c5fc1a65c0cf::t_e6145ea5c077bb 66,77-78
+watchfn/python/watchfn/storage/database.py
+  s_e1c5fc1a65c0cf::t_43cb609ce3d153 5,8,11-20,31,105,107,109-110,117,121-124,162,164-165,182-285
+watchfn/python/watchfn/storage/events.py
+  s_e1c5fc1a65c0cf::t_2e506161da39f7 1-53
+watchfn/python/watchfn/storage/log_index.py
+  s_e1c5fc1a65c0cf::t_193e19a54b5200 1-96
+watchfn/python/watchfn/storage/memory_storage.py
+  s_e1c5fc1a65c0cf::t_01a1f03570a1f5 4,14,21-28,37-47
+watchfn/python/watchfn/storage/schema.py
+  s_e1c5fc1a65c0cf::t_27c17ec4ac6e9b 10-11
+watchfn/scripts/packed-core-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_41cf70355209ca 12,24-26,39-44
+watchfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_9ec54ee1da9748 391-418
+watchfn/typescript/package.json
+  s_e1c5fc1a65c0cf::t_f41ca5d7965bb9 86-87,93-94
+watchfn/typescript/scripts/bundle-declarations.mjs
+  s_e1c5fc1a65c0cf::t_68b398feee3b05 22
+watchfn/typescript/src/core/watch-fn.ts
+  s_e1c5fc1a65c0cf::t_b6a1daab20478d 1-2,51-57,128,132,139,214-219,245-248,424-445
+watchfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_9b1b69f22e9c6a 123-124
+watchfn/typescript/src/integrations/logfn/index.ts
+  s_e1c5fc1a65c0cf::t_0642584944803e 1-70
+watchfn/typescript/src/storage/database.ts
+  s_e1c5fc1a65c0cf::t_dac81be18042b5 1-2,48,51,58-70,131-188,196-197
+watchfn/typescript/src/storage/event-retention.ts
+  s_e1c5fc1a65c0cf::t_e6f4ec0b51d69a 1,67
+watchfn/typescript/src/storage/log-index/schema.ts
+  s_e1c5fc1a65c0cf::t_d4b219ff463bc0 1-19
+watchfn/typescript/src/storage/log-index/values.ts
+  s_e1c5fc1a65c0cf::t_9f256835232c7b 1-49
+watchfn/typescript/src/storage/memory-storage.ts
+  s_e1c5fc1a65c0cf::t_06dcf0635fa1b7 2,6-8,10-23,25-26,29-35,37-38
+watchfn/typescript/src/storage/schema.ts
+  s_e1c5fc1a65c0cf::t_93a46e8e7c00b8 1,9,15
+watchfn/typescript/src/storage/types.ts
+  s_e1c5fc1a65c0cf::t_5a88b8cb678d26 2
+watchfn/typescript/tests/logfn-integration.test.ts
+  s_e1c5fc1a65c0cf::t_e06b9aebbd735d 1-167
+watchfn/typescript/tests/storage/event-retention.test.ts
+  s_e1c5fc1a65c0cf::t_6ce97e6601fef4 82
+watchfn/typescript/tests/storage/log-index-sqlite.acceptance.ts
+  s_e1c5fc1a65c0cf::t_be6a637992c47c 1-54
+watchfn/typescript/tsup.config.ts
+  s_e1c5fc1a65c0cf::t_b92f6781a231b3 14
+watchfn/typescript/vitest.log-index.config.ts
+  s_e1c5fc1a65c0cf::t_fbf726e5b57027 1-3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "62560413b1c1f6fd5964523a2c773cbbb3731758",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

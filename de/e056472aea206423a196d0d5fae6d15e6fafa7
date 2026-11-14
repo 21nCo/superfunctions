@@ -1,0 +1,23 @@
+watchfn/.conduct/query-correctness-20261020.md
+  s_e1c5fc1a65c0cf::t_fe00cb54018e78 28-29
+watchfn/typescript/src/query/query-engine.ts
+  s_e1c5fc1a65c0cf::t_f1260545834488 38
+watchfn/typescript/tests/query/query-engine.test.ts
+  s_e1c5fc1a65c0cf::t_10e08a2a8fb1ac 32-37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dee056472aea206423a196d0d5fae6d15e6fafa7",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

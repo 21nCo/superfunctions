@@ -1,0 +1,21 @@
+devfn/cli/src/index.ts
+  s_05d306dad5c1fd::t_7b329a3c0907f9 313-315,317-322,324-325,328,330-332,336
+devfn/cli/test/cli.test.ts
+  s_05d306dad5c1fd::t_99f73422a34512 5,8,397-430
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6bd40848edfc5b0dfea5256fed8d516e92cee342",
+  "prompts": {},
+  "sessions": {
+    "s_05d306dad5c1fd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_05d306dad5c1fd",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

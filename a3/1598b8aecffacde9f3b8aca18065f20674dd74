@@ -1,0 +1,59 @@
+devfn/SPEC.md
+  s_1900bb15a7199a::t_4decaa5a822b5f 21
+devfn/cli/README.md
+  s_1900bb15a7199a::t_e9753de38b01e8 15-17,23
+devfn/cli/SECURITY.md
+  s_1900bb15a7199a::t_2f93cb111098cb 22
+devfn/cli/src/index.ts
+  s_1900bb15a7199a::t_aedac3be0db604 16,35,55,70,76,105,204-216,219
+devfn/cli/test/cli.test.ts
+  s_1900bb15a7199a::t_bf31271de29f3a 29-47
+devfn/core/src/index.ts
+  s_1900bb15a7199a::t_94a2b8294d8c8a 3
+devfn/core/src/orchestrator.ts
+  s_1900bb15a7199a::t_996490ec724222 12,369-374
+devfn/core/test/oauth-relay-recovery.test.ts
+  s_1900bb15a7199a::t_6e94c2e9f3b6e2 1-59
+devfn/docs/configuration.md
+  s_1900bb15a7199a::t_13f6dbf8da6ee4 91-108
+devfn/proxy/README.md
+  s_1900bb15a7199a::t_6857427bf72250 11
+devfn/proxy/package.json
+  s_1900bb15a7199a::t_23ba0bf6f38d3f 8,12
+devfn/proxy/src/oauth-relay/client.ts
+  s_1900bb15a7199a::t_0a4b2ab90d0688 1-67
+devfn/proxy/src/oauth-relay/index.ts
+  s_1900bb15a7199a::t_210de0c84dcba4 1-7
+devfn/proxy/src/oauth-relay/serve.ts
+  s_1900bb15a7199a::t_0f8bab54fd378a 1-27
+devfn/proxy/src/oauth-relay/server.ts
+  s_1900bb15a7199a::t_b49cd51b03008b 1-47
+devfn/proxy/src/oauth-relay/service.ts
+  s_1900bb15a7199a::t_c47a6e22789c83 1-204
+devfn/proxy/src/oauth-relay/state.ts
+  s_1900bb15a7199a::t_b1c6f788505105 1-347
+devfn/proxy/test/fixtures/oauth.ts
+  s_1900bb15a7199a::t_e8a795623d41e6 1-206
+devfn/proxy/test/oauth-relay-service.test.ts
+  s_1900bb15a7199a::t_4fb26d6de54a80 1-189
+devfn/proxy/test/oauth-relay.test.ts
+  s_1900bb15a7199a::t_d3cbbf0b368221 1-291
+package-lock.json
+  s_1900bb15a7199a::t_e5108513f01eb4 9618
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a31598b8aecffacde9f3b8aca18065f20674dd74",
+  "prompts": {},
+  "sessions": {
+    "s_1900bb15a7199a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5e049926-ee38-44b5-a734-8c7117ee5ff7",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

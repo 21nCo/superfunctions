@@ -1,0 +1,57 @@
+userfn/.conduct/feedback-board-readiness.md
+  s_e1c5fc1a65c0cf::t_b8f0d8b07f5acf 29-32
+userfn/.conduct/feedback-filter-readiness.md
+  s_e1c5fc1a65c0cf::t_dd1df84e6fca1e 1-26
+userfn/python/README.md
+  s_e1c5fc1a65c0cf::t_9d372cb2b91f90 151-162
+userfn/python/src/userfn/client.py
+  s_e1c5fc1a65c0cf::t_e7d77272486577 56,62-65
+userfn/python/src/userfn/core/feedback_http.py
+  s_e1c5fc1a65c0cf::t_88a90e5a485eea 45-46
+userfn/python/src/userfn/types.py
+  s_e1c5fc1a65c0cf::t_ee4f0f715cdc72 90
+userfn/service/README.md
+  s_e1c5fc1a65c0cf::t_c93fb0ebb08ea5 43,54-77
+userfn/service/package.json
+  s_e1c5fc1a65c0cf::t_cacc27e154cd72 21
+userfn/service/src/feedback-filters.ts
+  s_e1c5fc1a65c0cf::t_a8753fa1bb0105 1-48
+userfn/service/src/index.ts
+  s_e1c5fc1a65c0cf::t_87f9d3d2704274 8-9,21-22,42-43,85,115,123-142,188-195
+userfn/service/src/schema.ts
+  s_e1c5fc1a65c0cf::t_3d44b0908dfcf4 29-47
+userfn/service/src/validation.ts
+  s_e1c5fc1a65c0cf::t_8cfc2f5f190d7a 27,31
+userfn/service/tests/authfn-acceptance.test.ts
+  s_e1c5fc1a65c0cf::t_ade65e5bb94da3 21
+userfn/service/tests/board-http.test.ts
+  s_e1c5fc1a65c0cf::t_266ae4c9f8dc18 12,45,51-55
+userfn/service/tests/filter-migration.test.ts
+  s_e1c5fc1a65c0cf::t_3f64e922d04c0f 1-78
+userfn/service/tests/python_board_acceptance.py
+  s_e1c5fc1a65c0cf::t_43f61282b01bcf 3,8-10
+userfn/service/tests/service.test.ts
+  s_e1c5fc1a65c0cf::t_707312f47ef1d6 27,72,82
+userfn/service/tests/sqlite-http.test.ts
+  s_e1c5fc1a65c0cf::t_93315875084b87 27
+userfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_215d99b8019916 137-147
+userfn/typescript/src/types.ts
+  s_e1c5fc1a65c0cf::t_36852f53085705 93,99,190
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "287e2ca51a5b45a6fcf06db1d45893fb70de4e66",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

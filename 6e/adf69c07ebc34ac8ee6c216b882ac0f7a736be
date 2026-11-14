@@ -1,0 +1,25 @@
+cachefn/python/tests/test_readiness.py
+  s_85eda979cfadcc::t_7003ce650baba8 166-196
+cachefn/typescript/README.md
+  s_85eda979cfadcc::t_6c953b60a8367e 561-564
+cachefn/typescript/__tests__/offline-cache.test.ts
+  s_85eda979cfadcc::t_a14a00ee46a287 64-121
+cachefn/typescript/src/core/cache.ts
+  s_85eda979cfadcc::t_918f16f8950fba 43-45,407-415,429-431
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6eadf69c07ebc34ac8ee6c216b882ac0f7a736be",
+  "prompts": {},
+  "sessions": {
+    "s_85eda979cfadcc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_85eda979cfadcc",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

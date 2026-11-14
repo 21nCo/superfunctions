@@ -1,0 +1,31 @@
+devfn/docs/configuration.md
+  s_e1c5fc1a65c0cf::t_2c87da9a81883d 91-110
+devfn/proxy/src/oauth-relay/client.ts
+  s_e1c5fc1a65c0cf::t_33b63a3e5358be 1-77
+devfn/proxy/src/oauth-relay/serve.ts
+  s_e1c5fc1a65c0cf::t_acb98c08e2d050 1-38
+devfn/proxy/src/oauth-relay/server.ts
+  s_e1c5fc1a65c0cf::t_526f99b9ddad03 1-50
+devfn/proxy/src/oauth-relay/state.ts
+  s_e1c5fc1a65c0cf::t_14ff271442a419 1-395
+devfn/proxy/test/fixtures/oauth.ts
+  s_e1c5fc1a65c0cf::t_f0828aa810de83 1-206
+devfn/proxy/test/oauth-relay.test.ts
+  s_e1c5fc1a65c0cf::t_1d88c796cfd2f7 1-496
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6e955e642f02923803e69bc976a60a75d44e1ed2",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

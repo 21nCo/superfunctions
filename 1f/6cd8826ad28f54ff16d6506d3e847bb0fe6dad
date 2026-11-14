@@ -1,0 +1,25 @@
+extfn/docs/scripts/generate-llms.mjs
+  s_7d0a48f0aaecda::t_27cd60b58f62cd 6,12
+scripts/cloudflare-docs/config.mjs
+  s_7d0a48f0aaecda::t_f05fcb85c92fa1 20
+scripts/docs-site/origin.test.mjs
+  s_7d0a48f0aaecda::t_cbddfa41ce86dc 8,69
+scripts/docs-site/runtime.ts
+  s_7d0a48f0aaecda::t_c0f759b6645d9e 365-375
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1f6cd8826ad28f54ff16d6506d3e847bb0fe6dad",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

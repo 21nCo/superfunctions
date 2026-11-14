@@ -1,0 +1,21 @@
+sendfn/docs/content/docs/persistence-and-events.md
+  s_7d0a48f0aaecda::t_6a59ceeba84eaf 8
+sendfn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_15121ce6945f75 116
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "635c0ffc5be593b637670920c9d1693564f4b03d",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

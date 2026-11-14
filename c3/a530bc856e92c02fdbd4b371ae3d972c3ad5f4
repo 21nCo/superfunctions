@@ -1,0 +1,31 @@
+contentfn/SPEC.md
+  s_0d85e5b70dc887::t_78c86147f026b0 492
+contentfn/server/src/__tests__/review-regressions.test.ts
+  s_0d85e5b70dc887::t_a5cdcea2beff4e 151-196,267-298,696-706
+contentfn/server/src/realtime/server.ts
+  s_0d85e5b70dc887::t_bf442f530f54c3 105
+contentfn/server/src/realtime/sse.ts
+  s_0d85e5b70dc887::t_f878c162db4bc8 222
+contentfn/server/src/realtime/subscribe.ts
+  s_0d85e5b70dc887::t_b760e50b1a9f06 44-48,50-52,62-63
+contentfn/server/src/storage/schedules.ts
+  s_0d85e5b70dc887::t_45a7e1ae1356a3 11,25-29,52
+contentfn/server/src/storage/webhooks.ts
+  s_0d85e5b70dc887::t_399ebaac5d905f 32-33,52,55-58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c3a530bc856e92c02fdbd4b371ae3d972c3ad5f4",
+  "prompts": {},
+  "sessions": {
+    "s_0d85e5b70dc887": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "37e3656b-fb3d-4769-b9a9-5d99c965fb6b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

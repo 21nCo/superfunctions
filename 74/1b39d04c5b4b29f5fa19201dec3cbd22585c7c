@@ -1,0 +1,67 @@
+cifn/.conduct/remote-log-delivery-readiness.md
+  s_e1c5fc1a65c0cf::t_5ee2132935e543 1-31
+cifn/typescript/control-plane/package.json
+  s_e1c5fc1a65c0cf::t_1fcb7a74221106 64-68
+cifn/typescript/control-plane/scripts/verify-remote-logs.mjs
+  s_e1c5fc1a65c0cf::t_b5196390afb7dc 1-108
+cifn/typescript/control-plane/src/api/claims.ts
+  s_e1c5fc1a65c0cf::t_e6a9e1b12093e7 1,11,31-34
+cifn/typescript/control-plane/src/api/routes.ts
+  s_e1c5fc1a65c0cf::t_ae245e94390313 1,228-232
+cifn/typescript/control-plane/src/index.ts
+  s_e1c5fc1a65c0cf::t_d54b80fea0ffed 79-80
+cifn/typescript/control-plane/src/integrations/config.ts
+  s_e1c5fc1a65c0cf::t_a8334ffe629bad 85
+cifn/typescript/control-plane/src/integrations/logfn.test.ts
+  s_e1c5fc1a65c0cf::t_38964b3db099c0 1-10
+cifn/typescript/control-plane/src/integrations/logfn.ts
+  s_e1c5fc1a65c0cf::t_53244daacac81b 36,38-39,41-44
+cifn/typescript/control-plane/src/log-delivery/protocol.ts
+  s_e1c5fc1a65c0cf::t_0a0220a9152275 1-29
+cifn/typescript/control-plane/src/server.ts
+  s_e1c5fc1a65c0cf::t_72037967235398 1,58-67,70,76,84-85
+cifn/typescript/control-plane/src/store/database-store.ts
+  s_e1c5fc1a65c0cf::t_d4f3d93d7d1b60 1-2,23,30,44,55-56,310-378
+cifn/typescript/control-plane/src/store/log-delivery.test.ts
+  s_e1c5fc1a65c0cf::t_be4512f746649e 1-80
+cifn/typescript/control-plane/src/store/runtime-store.ts
+  s_e1c5fc1a65c0cf::t_b11785e876101f 40
+cifn/typescript/runner/package.json
+  s_e1c5fc1a65c0cf::t_53439dcaecd03a 34-35,43-47
+cifn/typescript/runner/src/claim-journal.ts
+  s_e1c5fc1a65c0cf::t_4893d98c21766b 10
+cifn/typescript/runner/src/executor/owned-shell.ts
+  s_e1c5fc1a65c0cf::t_290419dc44d2c7 78-80
+cifn/typescript/runner/src/executor/run-step.ts
+  s_e1c5fc1a65c0cf::t_4bd2018d0ad055 8
+cifn/typescript/runner/src/log-spool.test.ts
+  s_e1c5fc1a65c0cf::t_d0e60afc050097 1-77
+cifn/typescript/runner/src/log-spool.ts
+  s_e1c5fc1a65c0cf::t_4db855e2ed740a 1-107
+cifn/typescript/runner/src/remote-runner.test.ts
+  s_e1c5fc1a65c0cf::t_628157eb2d275d 205,214
+cifn/typescript/runner/src/remote-runner.ts
+  s_e1c5fc1a65c0cf::t_f389c9c0f2c201 1-2,10,14,26,46-49,57-68,130-134,136,139,151
+cifn/typescript/runner/src/server.ts
+  s_e1c5fc1a65c0cf::t_52bcb5b8b581c2 7
+cifn/typescript/runner/tsup.config.ts
+  s_e1c5fc1a65c0cf::t_57e78c2e645344 7-8
+package-lock.json
+  s_e1c5fc1a65c0cf::t_3c11cc6d50f535 6548-6549
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "741b39d04c5b4b29f5fa19201dec3cbd22585c7c",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+cifn/.conduct/step-status-next-slice.md
+  s_e1c5fc1a65c0cf::t_f93c9ea9af15db 1-36
+cifn/.conduct/scripts/reproduce-step-status-gap.mjs
+  s_e1c5fc1a65c0cf::t_3dcb3f5990eceb 1-61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "24a1f1918db4324eb5331164520ab478ae9c6af3",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

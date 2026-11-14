@@ -1,0 +1,37 @@
+watchfn/.conduct/python-pagerduty-readiness.md
+  s_e1c5fc1a65c0cf::t_9d6222b7893fca 1-98
+watchfn/python/README.md
+  s_e1c5fc1a65c0cf::t_793217b89a4986 344-346,365,370-413
+watchfn/python/tests/test_alert_dispatch.py
+  s_e1c5fc1a65c0cf::t_295714542976b9 20-21,28-29
+watchfn/python/tests/test_durable_alerts.py
+  s_e1c5fc1a65c0cf::t_eb8c4b8cb69c3b 26,29
+watchfn/python/tests/test_pagerduty_dispatch.py
+  s_e1c5fc1a65c0cf::t_247307f66f1a07 1-150
+watchfn/python/watchfn/alerts/dispatch.py
+  s_e1c5fc1a65c0cf::t_bd62afc8f617fd 10,61,65-68,75,77,82-89,113,116-137,146,174-176,184,206
+watchfn/python/watchfn/alerts/durable.py
+  s_e1c5fc1a65c0cf::t_c0ee00d9dc15c7 15,34,40-41,81,92-97,123-130,144-145,226,228-231,236-250,257-262,342-346
+watchfn/python/watchfn/alerts/pagerduty.py
+  s_e1c5fc1a65c0cf::t_d74b903eddeb00 1-24
+watchfn/python/watchfn/client.py
+  s_e1c5fc1a65c0cf::t_7be23137115653 45
+watchfn/python/watchfn/models.py
+  s_e1c5fc1a65c0cf::t_217ae39b34b90a 25-42,46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "91275f2add7a320146c5f3b1f2df6e11e5fd6d71",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,41 @@
+probefn/.conduct/live-flow-trace-readiness.md
+  s_e1c5fc1a65c0cf::t_cb79b4e37fc52c 1-31
+probefn/README.md
+  s_e1c5fc1a65c0cf::t_54eb34d9d1ba2b 208-218
+probefn/packages/browser-runner/src/browser-runner.ts
+  s_e1c5fc1a65c0cf::t_33c4aedba0678a 9,25,57,90,228-231,253
+probefn/packages/browser-runner/src/trace.ts
+  s_e1c5fc1a65c0cf::t_56013add11b41e 7,15,42-46
+probefn/packages/core/src/checkpoints.ts
+  s_ccfde97a4605b0::t_1b0772f90944a5 60-62
+probefn/packages/mcp-server/src/server.ts
+  s_e1c5fc1a65c0cf::t_1f85940798ba87 7-8,10,42,156-160,162-204,227-228,379-397,419-429,435-437,446-447,451-455,458-460,465-467,480-484,486-487,490,564-565,805,964,1285-1299,1301-1320,1322-1334,1336-1341,1343-1348,1351,1357-1379
+probefn/packages/mcp-server/test/flow-continuity.test.ts
+  s_e1c5fc1a65c0cf::t_7ac0ddb00a199b 1-131
+probefn/scripts/installed-browser-consumer.mjs
+  s_e1c5fc1a65c0cf::t_ef805937398f30 3,21,40-67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a2c6ff9e3a6d4ef7eb7888b6eed85ba5ba33b84a",
+  "prompts": {},
+  "sessions": {
+    "s_ccfde97a4605b0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a16871-f289-7982-89d7-7951935598f6",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

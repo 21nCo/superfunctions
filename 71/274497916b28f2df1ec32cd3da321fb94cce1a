@@ -1,0 +1,85 @@
+flowfn/.conduct/python-strict-ci-readiness-20261023.md
+  s_e1c5fc1a65c0cf::t_94700ebd6a831c 1-89
+flowfn/python/benchmarks/native_queues.py
+  s_e1c5fc1a65c0cf::t_54879baad0106b 16-17,21,26,31,33-34,39,58,65,80,92
+flowfn/python/flowfn/stream/stream.py
+  s_e1c5fc1a65c0cf::t_e71ab75b840c38 7,25-26,89-94
+flowfn/python/tests/assertions.py
+  s_e1c5fc1a65c0cf::t_1091ad4a3b1826 1-10
+flowfn/python/tests/native_support.py
+  s_e1c5fc1a65c0cf::t_430b17d7416b05 1-18
+flowfn/python/tests/test_basic.py
+  s_e1c5fc1a65c0cf::t_628ccb8618389f 3-4,10-11,15,26,46,54,71,79,96,110
+flowfn/python/tests/test_consumer_groups.py
+  s_e1c5fc1a65c0cf::t_cd77550748f888 1-2,4,9-11,14-15,23,28,32,47,49,55,60,72,85,91,111,116,136,145,148
+flowfn/python/tests/test_dlq_recovery.py
+  s_e1c5fc1a65c0cf::t_7c702e8112daab 1-2,4,9-10,14,19,45,48,60,66,71,77
+flowfn/python/tests/test_durable_adapters.py
+  s_e1c5fc1a65c0cf::t_760b29dd65f8d9 2-4,8-9,16-17,21,28,31,33-34,41-42,56,74,77,82,94,111,121,126,134,148,152,158,165,168,171,179,182-183,186,191,205,210,218,221
+flowfn/python/tests/test_durable_retention.py
+  s_e1c5fc1a65c0cf::t_9978ad51d51319 2-4,7,10,16,22,30,37,44
+flowfn/python/tests/test_durable_stream_ownership.py
+  s_e1c5fc1a65c0cf::t_c0acf1a7b4f3d7 2-4,6,10-11,13,16,18,37,39,44,54,67,69-70,72-75,77-81,85,87,99,108,110,130,133-134,136-138,141-147,152,155
+flowfn/python/tests/test_events.py
+  s_e1c5fc1a65c0cf::t_ed75d3deee849e 3-4,6,11,13-17,20,25,30,44,48,51,56,62,78-79,85,89,93,95,121,125,128,131,141,147,152,159,161,166,179,185,202,208,210,213,216
+flowfn/python/tests/test_flow_shutdown.py
+  s_e1c5fc1a65c0cf::t_adb988d630439c 2-4,6,12-15,19,22,27,35,44-45,59,67,73,90,95,104,111,116,120,141,146,151-155
+flowfn/python/tests/test_health.py
+  s_e1c5fc1a65c0cf::t_5453f6e8d83566 3-4,7-8,10,13,16,51,55,59,63,74,79,93,100
+flowfn/python/tests/test_integration.py
+  s_e1c5fc1a65c0cf::t_909925c2303903 3-4,10-12,16,26,31,47,54,57,65,78,88,92,95,98,110,125,135,139,158
+flowfn/python/tests/test_metrics.py
+  s_e1c5fc1a65c0cf::t_ee2c4dbab17b06 3-4,6,11,14-15,17-18,21,29,31,44,55,58,65,91,97,101,110,131,135,139,144,146,151
+flowfn/python/tests/test_native_queues.py
+  s_e1c5fc1a65c0cf::t_633aef2256269b 2-4,8,13-14,16-17,20,35,53,62,66,70,77,87,101,107,109,121,128,133,139,146,152-153,155-156,164,171-173,175,182,184,189
+flowfn/python/tests/test_queue_clocks.py
+  s_e1c5fc1a65c0cf::t_276dd5dd9d8a52 2-4,12,17,21,23,27,30,33,37,42,44,47-48,51,53,56-58,62-66,68,70-71,77,81,85-90,92,94-95,100,107,111-112
+flowfn/python/tests/test_queue_contract.py
+  s_e1c5fc1a65c0cf::t_460a6916bbed2d 1-2,8-9,13,29,37,52,61,70,82,88,97,103,107,119
+flowfn/python/tests/test_queue_lease_cancellation.py
+  s_e1c5fc1a65c0cf::t_80eeade8897849 2-4,7,11,13-15,19,27,32,34,46,53-55,57-58,99,107,112,114-115,117,123
+flowfn/python/tests/test_queue_lifecycle.py
+  s_e1c5fc1a65c0cf::t_b1c08c6103ed79 1-2,4,9-11,15,29,47,53,58,76,82,91,96,101,124,132,137
+flowfn/python/tests/test_scheduler.py
+  s_e1c5fc1a65c0cf::t_abe4376bc3c712 1-2,5,13,18,35,41,61,64,68,85,92,111,117
+flowfn/python/tests/test_scheduler_recovery.py
+  s_e1c5fc1a65c0cf::t_f056baad98eba5 1-2,6,10,12-13,39,41,45,47-48,56,86,90
+flowfn/python/tests/test_storage_contract.py
+  s_e1c5fc1a65c0cf::t_11213cf1f61e30 1-4,11-16,19-21,25-26,28-29,39,51,77,83
+flowfn/python/tests/test_stream_lifecycle.py
+  s_e1c5fc1a65c0cf::t_46c187f1543fab 1-2,8-9,13,19,26,34,38,43
+flowfn/python/tests/test_stream_retention.py
+  s_e1c5fc1a65c0cf::t_c4cc288e11ea73 2-4,8,12,14-15,18-19,22,24,28,33,36,47,58,60,67,75,79,87,96,99,108,112,116,125
+flowfn/python/tests/test_telemetry.py
+  s_e1c5fc1a65c0cf::t_f2ed00393ac69d 3-4,6,11,14-17,20,41,53,56,66,90,96,100,105,107,110,114,120,125,136,142
+flowfn/python/tests/test_trace_propagation.py
+  s_e1c5fc1a65c0cf::t_1362fb2ba9dde5 3-4,6,9-10,13,15-16,18-22,25,38,43-44,48,59-60,65,67,69,74,94,101,106,122,126,138
+flowfn/python/tests/test_workflow.py
+  s_e1c5fc1a65c0cf::t_3c4157dd739827 3-4,10,14,20,24,47,53,56,59,75,79,97,103,129,133
+flowfn/python/tests/test_workflow_close_ownership.py
+  s_e1c5fc1a65c0cf::t_d963f83511de60 2-4,9-11,13-15,18,21,24,29,34,36-38,49,56
+flowfn/python/tests/test_workflow_discovery.py
+  s_e1c5fc1a65c0cf::t_64621940558319 1-2,7-8,11,24,28,33,36,39,55,57,62,69,72,75,89,92,107,114,116,119,131,133
+flowfn/python/tests/test_workflow_lifecycle.py
+  s_e1c5fc1a65c0cf::t_6aefb7283b524e 1-2,8-11,14-16,23,28,35,52,57,62,65,82,86,93,106,110,123
+flowfn/python/tests/test_workflow_recovery.py
+  s_e1c5fc1a65c0cf::t_3fae17dd982ff1 2-4,12,14-18,41,43,46,50,53,57,64,67,71,78-79,82,86,99,104,120
+flowfn/python/tests/test_workflow_renewal.py
+  s_e1c5fc1a65c0cf::t_d1c5e52b2b131a 2-4,6,12-14,18,21,29,42,47,52,63,76,83,86,93
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "71274497916b28f2df1ec32cd3da321fb94cce1a",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,29 @@
+.github/workflows/ci.yml
+  s_e1c5fc1a65c0cf::t_9359397d20b255 9,60-62
+_conduct/stacked-ci-shared-usage-readiness.md
+  s_e1c5fc1a65c0cf::t_85f0e6e071c1cb 1-14
+scripts/check-duplication.mjs
+  s_e1c5fc1a65c0cf::t_fdd266875d0642 6,38,40-41
+scripts/check-shared-usage.mjs
+  s_e1c5fc1a65c0cf::t_f3dce4bc905e67 1-42
+scripts/check-shared-usage.test.mjs
+  s_e1c5fc1a65c0cf::t_e2723ea3e9d668 1-54
+scripts/ci-stacked-pr.test.mjs
+  s_e1c5fc1a65c0cf::t_89718f0be42d30 1-46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f01e9517a57a1b2f838a12f7091dfde34cde1e04",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

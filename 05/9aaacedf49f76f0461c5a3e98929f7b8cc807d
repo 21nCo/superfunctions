@@ -1,0 +1,29 @@
+_conduct/python-transaction-cas-readiness.md
+  s_e1c5fc1a65c0cf::t_97fe85a0d93112 1-31
+packages/python-core/superfunctions/db/__init__.py
+  s_e1c5fc1a65c0cf::t_df91c3093dae40 33,66
+packages/python-core/superfunctions/db/types.py
+  s_e1c5fc1a65c0cf::t_1739e3ced03911 416-427
+packages/python-sqlalchemy/README.md
+  s_e1c5fc1a65c0cf::t_e687d081eb5365 100-116
+packages/python-sqlalchemy/superfunctions_sqlalchemy/adapter.py
+  s_e1c5fc1a65c0cf::t_b93a07bec8d3a4 8,443,451-452,454-455,457,466-469,639-642
+packages/python-sqlalchemy/tests/test_adapter.py
+  s_e1c5fc1a65c0cf::t_964a3cb494156d 415-474
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "059aaacedf49f76f0461c5a3e98929f7b8cc807d",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

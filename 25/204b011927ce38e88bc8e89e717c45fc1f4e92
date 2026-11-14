@@ -1,0 +1,23 @@
+userfn/.conduct/durable-campaign-caps-readiness.md
+  s_e1c5fc1a65c0cf::t_06d6b798fd4eb8 83-92
+userfn/python/pyproject.toml
+  s_e1c5fc1a65c0cf::t_2eab61d9df0468 17-18
+userfn/python/src/userfn/client.py
+  s_e1c5fc1a65c0cf::t_cfa392da0693f8 91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "25204b011927ce38e88bc8e89e717c45fc1f4e92",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

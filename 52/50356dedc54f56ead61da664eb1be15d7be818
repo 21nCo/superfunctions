@@ -1,0 +1,41 @@
+cifn/.conduct/github-trigger-readiness.md
+  s_e1c5fc1a65c0cf::t_3d5715ffdf4902 1-29
+cifn/README.md
+  s_e1c5fc1a65c0cf::t_f31c6caca4f4b0 386-393
+cifn/typescript/control-plane/scripts/verify-remote-logs.mjs
+  s_e1c5fc1a65c0cf::t_b11a851980d5c9 9,50,69-70,72,75-99,260
+cifn/typescript/control-plane/src/pipeline/types.ts
+  s_e1c5fc1a65c0cf::t_397081fd42bcdc 4,8
+cifn/typescript/control-plane/src/server.ts
+  s_e1c5fc1a65c0cf::t_fd1589badb06df 1,55-56,59-68,95,112,132
+cifn/typescript/control-plane/src/store/database-store.test.ts
+  s_e1c5fc1a65c0cf::t_8badfba30b7ebf 315,318,339,342
+cifn/typescript/control-plane/src/triggers/github-event.test.ts
+  s_e1c5fc1a65c0cf::t_b53045fe1b4f39 1-19
+cifn/typescript/control-plane/src/triggers/github-event.ts
+  s_e1c5fc1a65c0cf::t_db94c673ace9f9 1-44
+cifn/typescript/control-plane/src/triggers/triggers.test.ts
+  s_e1c5fc1a65c0cf::t_35a534d84c02e0 1,16,42,46-52,133,150,329,351-403
+cifn/typescript/control-plane/src/triggers/webhook.ts
+  s_e1c5fc1a65c0cf::t_f8f4abcb80f0ae 1,73-76,78-82,98,123-127,130-131,134
+cifn/typescript/control-plane/tsconfig.durable.json
+  s_e1c5fc1a65c0cf::t_f2a9838f3e2c52 3
+cifn/typescript/runner/src/runner.ts
+  s_e1c5fc1a65c0cf::t_e1a9cc1819ab34 274
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5250356dedc54f56ead61da664eb1be15d7be818",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+logfn/.conduct/readiness.md
+  s_e1c5fc1a65c0cf::t_c96a458a4b3d35 81-85
+logfn/typescript/src/http/middleware.test.ts
+  s_e1c5fc1a65c0cf::t_a4ccc5c64f88b3 155,181-199
+logfn/typescript/src/http/middleware.ts
+  s_e1c5fc1a65c0cf::t_5d381cd45b3359 5,166-168,170-186
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7f14777f20d8d443ece76c8c9c3a3ccccfabf024",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

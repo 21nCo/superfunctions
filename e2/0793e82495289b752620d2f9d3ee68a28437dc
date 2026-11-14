@@ -1,0 +1,53 @@
+mcpfn/docs/README.md
+  s_7d0a48f0aaecda::t_e24d8c373328f9 23
+mcpfn/docs/content/docs/authorization.md
+  s_7d0a48f0aaecda::t_977372b34c39b9 33
+mcpfn/docs/content/docs/client.md
+  s_7d0a48f0aaecda::t_4031c1d2324516 25,35
+mcpfn/docs/content/docs/getting-started.md
+  s_7d0a48f0aaecda::t_d9e43814b0482c 61,65
+mcpfn/docs/content/docs/reference/architecture.md
+  s_7d0a48f0aaecda::t_8dfc062aa16dd1 108-109
+mcpfn/docs/content/docs/reference/auth.md
+  s_7d0a48f0aaecda::t_1ba84723f01e88 57-59
+mcpfn/docs/content/docs/reference/cli.md
+  s_7d0a48f0aaecda::t_3d9d165f13ee2d 64
+mcpfn/docs/content/docs/reference/client.md
+  s_7d0a48f0aaecda::t_313a4a40d3edc5 42-46
+mcpfn/docs/content/docs/reference/core.md
+  s_7d0a48f0aaecda::t_9ef556c56a9aa9 160-162
+mcpfn/docs/content/docs/reference/datafn.md
+  s_7d0a48f0aaecda::t_b41e78254895f1 11,45-46,49-50,57,61
+mcpfn/docs/content/docs/reference/inspector.md
+  s_7d0a48f0aaecda::t_849586a9d2760e 37-38
+mcpfn/docs/content/docs/reference/testing-and-ci.md
+  s_7d0a48f0aaecda::t_123b1d5c53d399 54,109-111
+mcpfn/docs/content/docs/reference/testing.md
+  s_7d0a48f0aaecda::t_91a61eb8ebc353 236-237
+mcpfn/docs/content/docs/server.md
+  s_7d0a48f0aaecda::t_dce7bb59b6169e 17-18
+mcpfn/docs/content/docs/testing.md
+  s_7d0a48f0aaecda::t_372bcc16a33722 10
+mcpfn/docs/docsfn.config.ts
+  s_7d0a48f0aaecda::t_51deeb621eaf66 3-6,13
+mcpfn/docs/src/app.css
+  s_7d0a48f0aaecda::t_408055d9ba756c 74-77,82
+mcpfn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_46a28d555b8323 43,74,84,171,175,346-347,477-479,584,633-637,804-806,886,920-921,924-925,932,936,998-999,1065,1120-1122,1449-1450,1535-1536,1568
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e20793e82495289b752620d2f9d3ee68a28437dc",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

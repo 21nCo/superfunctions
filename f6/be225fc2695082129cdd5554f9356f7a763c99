@@ -1,0 +1,25 @@
+mcpfn/core/package.json
+  s_e1c5fc1a65c0cf::t_031591fbefd803 17,35
+mcpfn/core/scripts/verify-bundled-zod.mjs
+  s_e1c5fc1a65c0cf::t_d753ed9f9dcee5 1-28
+mcpfn/core/tsup.config.ts
+  s_e1c5fc1a65c0cf::t_299e15ca470bc3 1-2,5-7,21-25
+package-lock.json
+  s_e1c5fc1a65c0cf::t_6da6481eb62408 16302,16767-16775
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f6be225fc2695082129cdd5554f9356f7a763c99",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

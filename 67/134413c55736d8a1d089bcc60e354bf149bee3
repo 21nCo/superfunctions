@@ -1,0 +1,33 @@
+flowfn/.conduct/manual-stream-expiry-readiness.md
+  s_e1c5fc1a65c0cf::t_378ae5d783bdf8 10-11
+flowfn/.conduct/memory-stream-partition-readiness.md
+  s_e1c5fc1a65c0cf::t_e3e6ac43e6151a 14-15
+flowfn/.conduct/memory-stream-receipt-installed-20261025.jsonl
+  s_e1c5fc1a65c0cf::t_70dd478b2ec4de 1-4
+flowfn/.conduct/memory-stream-receipt-readiness.md
+  s_e1c5fc1a65c0cf::t_ec7937e10da50d 1-9
+flowfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_01bb8a2c30bb03 112,118-120
+flowfn/typescript/scripts/packed-consumer-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_00b3d1560472ea 55-68
+flowfn/typescript/src/stream/memory-groups.ts
+  s_e1c5fc1a65c0cf::t_2a2a9b6126bd5a 143-160,261,278
+flowfn/typescript/src/stream/memory-receipts.test.ts
+  s_e1c5fc1a65c0cf::t_06a1f4ec37a329 1-98
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "67134413c55736d8a1d089bcc60e354bf149bee3",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,27 @@
+sendfn/python/README.md
+  s_e1c5fc1a65c0cf::t_b8f1f714d57277 273-305
+sendfn/python/scripts/verify-ses-wheel.py
+  s_e1c5fc1a65c0cf::t_a111c2d2ba1b41 1-50
+sendfn/python/sendfn/email/aws_ses.py
+  s_e1c5fc1a65c0cf::t_0b182eede43cbc 5,10,31,33-37,57-90,93,98,103-108,111-139,149-150,215,221-242,279,341
+sendfn/python/sendfn/models.py
+  s_e1c5fc1a65c0cf::t_2120e518f8a581 5,148-175
+sendfn/python/tests/test_aws_ses_lifecycle.py
+  s_e1c5fc1a65c0cf::t_d4d2abaa95052f 1-327
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "15a181c787d4506115a40d87b12d2d3f2563b627",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,41 @@
+flowfn/typescript/src/core/flow-fn.test.ts
+  s_e1c5fc1a65c0cf::t_2ffd7ca0ca8e75 51-59
+flowfn/typescript/src/core/flow-fn.ts
+  s_e1c5fc1a65c0cf::t_be7cee416b4cfd 80,265
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_e1c5fc1a65c0cf::t_5203d17e991e4e 70,625,647-648,668-670,674-697,701,708,746,773
+flowfn/typescript/src/stream/stream.ts
+  s_e1c5fc1a65c0cf::t_be7cee416b4cfd 53-57
+flowfn/.conduct/packed-partition-audit-20261025.json
+  s_e1c5fc1a65c0cf::t_7d27872ce380dc 1-199
+flowfn/.conduct/postgres-stream-partitioning-readiness.md
+  s_e1c5fc1a65c0cf::t_1fd938bb6eafbc 9,21,24-49
+flowfn/.conduct/stream-partitioning-design.md
+  s_e1c5fc1a65c0cf::t_9d2530070e2cb5 17
+flowfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_c1b93077674a00 84-87,89-92,100-104
+flowfn/typescript/scripts/packed-consumer-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_e8379dfb1a9873 26,80-85
+flowfn/typescript/scripts/packed-partition-consumer.mjs
+  s_e1c5fc1a65c0cf::t_a7d199357133d3 1-66
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_e1c5fc1a65c0cf::t_17851be60bbf7b 179-229
+flowfn/typescript/src/adapters/postgres/schema.ts
+  s_e1c5fc1a65c0cf::t_e03b91fb50a8fa 60-67,114,124
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b8b87aca25ae555bc435b74bd61152a6ca424e7b",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

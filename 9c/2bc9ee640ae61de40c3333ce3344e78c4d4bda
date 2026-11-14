@@ -1,0 +1,31 @@
+probefn/.conduct/process-lifecycle-readiness.md
+  s_e1c5fc1a65c0cf::t_decbaee80f52cf 1-13
+probefn/packages/contracts/src/errors.ts
+  s_e1c5fc1a65c0cf::t_dd626af84586e0 6
+probefn/packages/dev-server/src/dev-server-manager.ts
+  s_e1c5fc1a65c0cf::t_04977e38b459ec 49-53,66-67,74,78-79,87,119-120,122-123,134-135,141,143-144,157-162,164-165,182-191,193-195,200-201,214,217-226,245-246,272-274,289,303-309,343-344,356,359,362-365,385,387,393-394,401,406-408,412-416,418-426,450-480
+probefn/packages/dev-server/src/process-events.ts
+  s_e1c5fc1a65c0cf::t_f15c202db6fa51 1-2,34-45,47-51
+probefn/packages/dev-server/test/dev-server-manager.test.ts
+  s_e1c5fc1a65c0cf::t_818aa68adbb367 47-48,51-53
+probefn/packages/dev-server/test/process-events.test.ts
+  s_e1c5fc1a65c0cf::t_4d1c58789b28d2 1-29
+probefn/packages/dev-server/test/process-lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_03db752f550d59 1-192
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9c2bc9ee640ae61de40c3333ce3344e78c4d4bda",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
