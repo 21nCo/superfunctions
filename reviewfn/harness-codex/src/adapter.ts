@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
-import { safeRead, strictProviderSchema, structuredOutputValidator, omitOptionalNulls, validateHarnessPayload, redactJson, redactText, type HarnessAdapter, type HarnessCapabilities, type HarnessInput, type HarnessOutput, type JsonValue, type NormalizedRunEvent, type PreflightResult, type ReviewFnConfig } from "@superfunctions/reviewfn-core";
+import { safeRead, strictProviderSchema, structuredOutputValidator, unsupportedOutputSchema, omitOptionalNulls, validateHarnessPayload, redactJson, redactText, type HarnessAdapter, type HarnessCapabilities, type HarnessInput, type HarnessOutput, type JsonValue, type NormalizedRunEvent, type PreflightResult, type ReviewFnConfig } from "@superfunctions/reviewfn-core";
 
 export interface CommandResult { code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string; timedOut: boolean; canceled: boolean }
 export type CommandRunner = (command: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number; maxOutputBytes: number; signal?: AbortSignal; stdin?: string }) => Promise<CommandResult>;
@@ -114,19 +114,23 @@ export class CodexHarnessAdapter implements HarnessAdapter {
     const forbiddenInstructionChanges = input.change.changedPaths.filter((changed) => /(^|\/)(AGENTS(?:\.override)?\.md|\.codex\/|\.agents\/|\.claude\/)/i.test(changed));
     if (forbiddenInstructionChanges.length) return emptyFailure("failed", `Review target changes auto-loaded instruction/configuration paths: ${forbiddenInstructionChanges.join(", ")}. Trusted policy refuses inference.`);
     // A caller-supplied output schema (for example the panel lens schema) replaces the 0.1 harness schema. It must compile as
-    // given before inference. Codex receives its provider-strict form, where each optional property is required and nullable,
-    // and the raw output is validated against exactly that schema, so Ajv decides which nulls a union branch or conditional allows.
+    // given and lie inside the provider strict subset before inference. Codex receives its provider-strict form, where each
+    // property its own object schema does not require is required and nullable, and the raw output is validated against
+    // exactly that schema.
     let providerSchema: unknown;
     let validateProviderOutput: ((value: unknown) => string[]) | undefined;
     let validateCallerOutput: ((value: unknown) => string[]) | undefined;
     if (input.outputSchema) {
+      let unsupported: string | undefined;
       try {
         validateCallerOutput = structuredOutputValidator(input.outputSchema);
-        const unsupported = presenceTest(input.outputSchema);
-        if (unsupported) throw new Error(`${unsupported}, which the provider-strict form cannot preserve: it sends every declared property, with null for an optional one.`);
-        providerSchema = providerSchemaFor(input.outputSchema);
-        validateProviderOutput = structuredOutputValidator(providerSchema as Record<string, unknown>);
+        unsupported = unsupportedOutputSchema(input.outputSchema);
+        if (!unsupported) {
+          providerSchema = providerSchemaFor(input.outputSchema);
+          validateProviderOutput = structuredOutputValidator(providerSchema as Record<string, unknown>);
+        }
       } catch (error) { return emptyFailure("failed", `outputSchema is not a valid JSON Schema: ${error instanceof Error ? error.message : String(error)}`); }
+      if (unsupported) return emptyFailure("failed", `outputSchema uses ${unsupported}, which the provider strict subset does not support.`);
     } else providerSchema = strictProviderSchema();
     const directory = await mkdtemp(path.join(tmpdir(), "reviewfn-codex-"));
     const schemaPath = path.join(directory, "schema.json");
@@ -201,39 +205,6 @@ const providerSchemas = new WeakMap<object, unknown>();
 function providerSchemaFor(schema: Readonly<Record<string, unknown>>): unknown {
   if (!providerSchemas.has(schema)) providerSchemas.set(schema, strictProviderSchema(schema));
   return providerSchemas.get(schema);
-}
-
-/** Keywords whose meaning depends on which properties are present; the provider-strict form encodes absence as null. */
-const PRESENCE_KEYWORDS = new Set(["minProperties", "maxProperties", "dependentRequired", "dependentSchemas", "dependencies", "patternProperties", "propertyNames", "unevaluatedProperties"]);
-const NEGATED_OR_CONDITIONAL = new Set(["not", "if", "contains"]);
-const SAME_VALUE = new Set(["allOf", "anyOf", "oneOf", "if", "then", "else", "not"]);
-/**
- * A part of a caller schema that tests whether a property is present, which the provider-strict form cannot preserve.
- * Supported: `required` that lists only properties of the same `type: "object"` schema, outside `not`, `if` and
- * `contains`; and `$ref` only where no enclosing schema applying to the same value declares properties or required,
- * because the conversion decides which properties may be null without following references.
- */
-function presenceTest(schema: unknown, conditional = false, scoped = false): string | undefined {
-  if (Array.isArray(schema)) {
-    for (const item of schema) { const found = presenceTest(item, conditional, scoped); if (found) return found; }
-    return undefined;
-  }
-  if (!schema || typeof schema !== "object") return undefined;
-  const node = schema as Record<string, unknown>;
-  if (conditional && (node.$ref !== undefined || (Array.isArray(node.required) && node.required.length))) return "required or $ref inside not, if or contains";
-  if (scoped && node.$ref !== undefined) return "$ref combined with a schema that declares properties or required for the same value";
-  const scopes = scoped || node.properties !== undefined || (Array.isArray(node.required) && node.required.length > 0);
-  const declared = node.type === "object" && node.properties && typeof node.properties === "object" ? node.properties : {};
-  const undeclared = Array.isArray(node.required) ? node.required.find(name => !Object.hasOwn(declared, String(name))) : undefined;
-  if (undeclared !== undefined) return `required ${String(undeclared)} is not a property of the same object schema`;
-  for (const [key, value] of Object.entries(node)) {
-    if (PRESENCE_KEYWORDS.has(key)) return key;
-    if (["const", "enum", "default", "examples", "required"].includes(key)) continue;
-    // Property and definition maps are keyed by names, not keywords.
-    const found = ["properties", "$defs", "definitions"].includes(key) && value && typeof value === "object" ? presenceTest(Object.values(value), conditional) : presenceTest(value, conditional || NEGATED_OR_CONDITIONAL.has(key), SAME_VALUE.has(key) && scopes);
-    if (found) return found;
-  }
-  return undefined;
 }
 
 function minimalEnvironment(source: NodeJS.ProcessEnv, config: ReviewFnConfig): NodeJS.ProcessEnv {

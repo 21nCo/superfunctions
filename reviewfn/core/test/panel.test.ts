@@ -2,7 +2,7 @@ import { Ajv } from "ajv";
 import { describe, expect, it } from "vitest";
 
 import {
-  DEFAULT_POLICY, PANEL_PRIORITY_SEVERITY, PANEL_VALIDATION_CODES, credentialFingerprint, derivePanelVerdict, harnessOutputSchema, lensOutputSchema, panelFindingSchema, stableStringify, strictProviderSchema, validateStructuredOutput,
+  DEFAULT_POLICY, PANEL_PRIORITY_SEVERITY, PANEL_VALIDATION_CODES, credentialFingerprint, derivePanelVerdict, harnessOutputSchema, lensOutputSchema, panelFindingSchema, stableStringify, strictProviderSchema, unsupportedOutputSchema, validateStructuredOutput,
   panelPolicyDigest, panelPolicySchema, panelReportSchema, panelStructureIssues, serializeChangeHunks, sha256, slotIdentityKey, slotIdentitySchema, slotRunSchema,
   validatePanelFinding, validatePanelPolicy, validatePanelReport as validateWithOptions, validateReport, validateSlotIdentity, validateSlotRun,
   type ArtifactStore, type ContextManifest, type LensOutput, type PanelFinding, type PanelPolicy, type PanelReport, type PanelReportValidationOptions, type PanelStructure, type ReviewPolicy, type ReviewReport, type SlotRun, type SourceControlAdapter,
@@ -649,8 +649,12 @@ describe("panel policy and slot identity", () => {
       }
       return output;
     };
-    for (const schema of [harnessOutputSchema, lensOutputSchema, panelReportSchema]) expect(strictProviderSchema(schema)).toEqual(doubled(schema));
+    for (const schema of [harnessOutputSchema, lensOutputSchema]) expect(strictProviderSchema(schema)).toEqual(doubled(schema));
     expect(strictProviderSchema()).toEqual(doubled(harnessOutputSchema));
+    // Byte-identical to origin/dev for the 0.1 schema, and to the previous PR head for the lens schema.
+    const digest = (value: unknown) => sha256(JSON.stringify(value));
+    expect(digest(strictProviderSchema(harnessOutputSchema))).toBe("b9e9d0ad783840373df05b2d9e351f491a0575b8f3df8dc7b0eefd4e81a607be");
+    expect(digest(strictProviderSchema(lensOutputSchema))).toBe("32c252e0ec722af15aa4200a5aea5f340ce4aa96df2a0492761b05479e70b512");
     let nested: Record<string, unknown> = { type: "string" };
     for (let depth = 0; depth < 30; depth += 1) nested = { type: "object", additionalProperties: false, required: depth % 2 ? ["child"] : [], properties: { child: nested, note: { type: "string" } } };
     const started = performance.now();
@@ -659,31 +663,74 @@ describe("panel policy and slot identity", () => {
     expect(validateStructuredOutput(strict as Record<string, unknown>, null)).not.toEqual([]);
   });
 
-  it("lets the provider-strict schema decide which nulls the applicable branch allows", () => {
-    const nullable = { anyOf: [{ type: "string" }, { type: "null" }] };
-    const typed = (kind: string, properties: Record<string, unknown>) => ({ type: "object", additionalProperties: false, required: ["kind", "a"], properties: { kind: { const: kind }, ...properties } });
-    const x = typed("x", { a: nullable, note: { type: "string" } });
-    const y = typed("y", { a: { type: "string" }, note: { type: "string" } });
-    const conditional = { type: "object", additionalProperties: false, required: ["kind", "a"], properties: { kind: { enum: ["x", "y"] }, a: nullable, note: { type: "string" } }, if: { properties: { kind: { const: "x" } } }, then: true, else: { properties: { a: { type: "string" } } } };
-    for (const schema of [{ anyOf: [x, y] }, { oneOf: [x, y] }, conditional]) {
+  it("admits only the provider strict subset, which the lens and 0.1 harness schemas use", () => {
+    expect(unsupportedOutputSchema(harnessOutputSchema)).toBeUndefined();
+    expect(unsupportedOutputSchema(lensOutputSchema)).toBeUndefined();
+    const object = (properties: Record<string, unknown>, extra = {}) => ({ type: "object", additionalProperties: false, properties, ...extra });
+    expect(unsupportedOutputSchema(object({ a: { anyOf: [{ $ref: "#/$defs/x", description: "x" }, { type: ["string", "null"], maxLength: 3 }] } }, { $defs: { x: object({}) } }))).toBeUndefined();
+    expect(unsupportedOutputSchema(object({ a: { $ref: "#/$defs/x", required: [] } }, { $defs: { x: object({}) } }))).toBe("$ref beside required at /properties/a");
+    expect(unsupportedOutputSchema(object({ a: { anyOf: [{ type: "string" }], type: "string" } }))).toBe("anyOf beside type at /properties/a");
+    expect(unsupportedOutputSchema(object({ a: { $ref: "https://example.test/x" } }))).toBe("$ref outside #/$defs or #/definitions at /properties/a");
+    expect(unsupportedOutputSchema(object({ "a/b": { type: "string", oneOf: [] } }))).toBe("oneOf at /properties/a~1b");
+    expect(unsupportedOutputSchema(object({}, { $defs: { x: { type: ["object", "null"] } } }))).toBe("type at /$defs/x");
+    expect(unsupportedOutputSchema(object({ a: {} }))).toBe("a schema without type, enum or const at /properties/a");
+    expect(unsupportedOutputSchema(object({ a: true }))).toBe("a schema that is not an object at /properties/a");
+    expect(unsupportedOutputSchema({ anyOf: [object({})] })).toMatch(/^anyOf at the root/);
+  });
+
+  it("converts node-locally and copies literal data verbatim", () => {
+    const literal = { type: "object", properties: { p: { type: "string" } }, required: [] };
+    const schema = { type: "object", additionalProperties: false, required: ["shape"], properties: { shape: { const: literal }, choice: { enum: [literal] }, note: { type: "string", description: "plain" } } };
+    const strict = strictProviderSchema(schema) as { properties: Record<string, unknown>; required: string[] };
+    expect(JSON.stringify(strict.properties.shape)).toBe(JSON.stringify({ const: literal }));
+    expect(JSON.stringify(strict.properties.choice)).toBe(JSON.stringify({ anyOf: [{ enum: [literal] }, { type: "null" }] }));
+    expect(strict.required).toEqual(["shape", "choice", "note"]);
+    // A property its own object requires is never made nullable, whatever other nodes require.
+    const branch = (kind: string, required: string[]) => ({ type: "object", additionalProperties: false, required, properties: { kind: { const: kind }, p: { type: "string" } } });
+    const union = strictProviderSchema({ anyOf: [branch("x", ["kind", "p"]), branch("y", ["kind"])] }) as Record<string, unknown>;
+    expect(validateStructuredOutput(union, { kind: "x", p: null })).not.toEqual([]);
+    expect(validateStructuredOutput(union, { kind: "y", p: null })).toEqual([]);
+  });
+
+  it("accepts provider output only where removing the provider-added nulls satisfies the caller schema", () => {
+    const nullable = { type: ["string", "null"] };
+    const branch = (kind: string, a: object, required: string[]) => ({ type: "object", additionalProperties: false, required, properties: { kind: { const: kind }, a, note: { type: "string" } } });
+    const tree = { type: "object", additionalProperties: false, required: ["children"], properties: { children: { type: "array", items: { $ref: "#/$defs/tree" } }, a: { type: "string" } } };
+    const root = (notes: object) => ({ type: "object", additionalProperties: false, required: ["notes"], properties: { notes }, $defs: { tree } });
+    const schemas = [
+      root(nullable),
+      root({ type: "string" }),
+      root({ anyOf: [branch("x", nullable, ["kind", "a"]), branch("y", { type: "string" }, ["kind"])] }),
+      root({ anyOf: [{ $ref: "#/$defs/tree" }, { type: "null" }] }),
+    ];
+    const values = [null, "s", { kind: "x", a: null, note: null }, { kind: "x", a: "s", note: "n" }, { kind: "y", a: null, note: null }, { kind: "y", a: "s", note: null }, { kind: "z", a: null, note: null },
+      { children: [{ children: [], a: null }], a: null }, { children: [{ children: null, a: null }], a: "s" }];
+    // Independent oracle: follow the caller schema, pick the branch whose provider form accepts the value, and remove the
+    // nulls the provider form added there (properties their own object does not require).
+    const resolve = (schema: Record<string, unknown>, node: Record<string, unknown>): Record<string, unknown> => typeof node.$ref === "string" ? resolve(schema, (schema.$defs as Record<string, Record<string, unknown>>)[node.$ref.split("/").pop()!]) : node;
+    const strip = (schema: Record<string, unknown>, node: Record<string, unknown>, value: unknown): unknown => {
+      node = resolve(schema, node);
+      if (Array.isArray(node.anyOf)) {
+        const match = (node.anyOf as Record<string, unknown>[]).find(item => validateStructuredOutput({ ...(strictProviderSchema(resolve(schema, item)) as object), $defs: (strictProviderSchema(schema) as Record<string, unknown>).$defs } as Record<string, unknown>, value).length === 0);
+        return match ? strip(schema, match, value) : value;
+      }
+      if (node.type === "array" && Array.isArray(value)) return value.map(item => strip(schema, node.items as Record<string, unknown>, item));
+      if (node.type !== "object" || !value || typeof value !== "object" || Array.isArray(value)) return value;
+      const required = new Set(node.required as string[] ?? []);
+      const properties = node.properties as Record<string, Record<string, unknown>>;
+      return Object.fromEntries(Object.entries(value).filter(([key, item]) => item !== null || required.has(key)).map(([key, item]) => [key, properties[key] ? strip(schema, properties[key], item) : item]));
+    };
+    let accepted = 0;
+    for (const schema of schemas) {
+      expect(unsupportedOutputSchema(schema)).toBeUndefined();
       const strict = strictProviderSchema(schema) as Record<string, unknown>;
-      expect(validateStructuredOutput(strict, { kind: "x", a: null, note: null })).toEqual([]);
-      expect(validateStructuredOutput(strict, { kind: "y", a: null, note: null })).not.toEqual([]);
-      expect(validateStructuredOutput(strict, { kind: "y", a: "set", note: null })).toEqual([]);
+      for (const notes of values) {
+        if (validateStructuredOutput(strict, { notes }).length) continue;
+        accepted += 1;
+        expect(validateStructuredOutput(schema, strip(schema, schema, { notes }))).toEqual([]);
+      }
     }
-    // A null never stands in for a property that something applying to the same value requires.
-    const object = (properties: Record<string, unknown>, required: string[] = [], extra = {}) => ({ type: "object", properties, required, ...extra });
-    const accepts = (schema: Record<string, unknown>, value: unknown) => validateStructuredOutput(strictProviderSchema(schema) as Record<string, unknown>, value).length === 0;
-    // required at the root as a nullable value, refined to a string by a typed else: a null is a value there.
-    const refined = object({ kind: { enum: ["x", "y"] }, a: nullable }, ["kind", "a"], { if: object({ kind: { const: "x" } }), else: object({ a: { type: "string" } }) });
-    expect(accepts(refined, { kind: "x", a: null })).toBe(true);
-    expect(accepts(refined, { kind: "y", a: null })).toBe(false);
-    // optional everywhere, constrained by an untyped then: a null is an absent property.
-    expect(accepts(object({ kind: { const: "y" }, a: { type: "string" } }, ["kind"], { if: { properties: { kind: { const: "y" } } }, then: { properties: { a: { type: "string" } } } }), { kind: "y", a: null })).toBe(true);
-    // optional at the root but required by an allOf member, non-nullable or nullable there.
-    expect(accepts(object({ p: { type: "string" } }, [], { allOf: [object({ p: { type: "string" } }, ["p"])] }), { p: null })).toBe(false);
-    expect(accepts(object({ p: { type: "string" } }, [], { allOf: [object({ p: nullable }, ["p"])] }), { p: null })).toBe(false);
-    expect(accepts(object({ p: { type: "string" } }, [], { allOf: [object({ p: nullable }, ["p"])] }), { p: "set" })).toBe(true);
+    expect(accepted).toBeGreaterThan(5);
   });
 
   it("types lens findings with the panel severities the lens schema accepts", () => {

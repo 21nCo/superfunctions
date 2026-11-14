@@ -79,24 +79,23 @@ describe("CodexHarnessAdapter outputSchema", () => {
     expect(output.evidence[0]).toEqual({ id: "E1", kind: "code", description: "loop bound", code: { commit: head, path: "src/index.ts", startLine: 3 } });
   });
 
+  // A pure anyOf union of a null, two object branches and a recursive reference: every value has one object node per branch.
+  const unionNotes = { anyOf: [
+    { type: "null" },
+    { type: "object", additionalProperties: false, required: ["kind", "a"], properties: { kind: { const: "x" }, a: { type: "string" } } },
+    { type: "object", additionalProperties: false, required: ["kind"], properties: { kind: { const: "y" }, a: { type: "string" } } },
+    { $ref: "#/$defs/tree" },
+  ] };
+  const tree = { type: "object", additionalProperties: false, required: ["children"], properties: { children: { type: "array", items: { $ref: "#/$defs/tree" } }, a: { type: "string" } } };
+  const unionSchema = { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, notes: unionNotes }, $defs: { ...lensOutputSchema.$defs, tree } };
+
   it.each([
-    ["required only through an allOf branch", { notes: null }, true],
-    ["a discriminated union whose other branch requires the property", { notes: { kind: "y", a: null } }, false],
+    ["the branch that leaves a optional", { notes: { kind: "y", a: null } }],
     // Provider-strict output carries every property, with null for an optional one, at every level.
-    ["a recursive reference", { notes: { children: [{ children: [], a: null }], a: null } }, false],
-  ] as const)("normalizes provider nulls for %s through the adapter", async (_name, fields, requiredOnly) => {
-    const notes = { anyOf: [
-      { type: "null" },
-      { type: "object", additionalProperties: false, required: ["kind", "a"], properties: { kind: { const: "x" }, a: { type: "string" } } },
-      { type: "object", additionalProperties: false, required: ["kind"], properties: { kind: { const: "y" }, a: { type: "string" } } },
-      { $ref: "#/$defs/tree" },
-    ] };
-    const tree = { type: "object", additionalProperties: false, required: ["children"], properties: { children: { type: "array", items: { $ref: "#/$defs/tree" } }, a: { type: "string" } } };
-    // notes is optional at the root; the first case requires it only through an allOf branch, where a null must be kept.
-    const allOf = requiredOnly ? { allOf: [{ type: "object", properties: { notes }, required: ["notes"] }] } : {};
-    const custom = { ...lensOutputSchema, ...allOf, properties: { ...lensOutputSchema.properties, notes }, $defs: { ...lensOutputSchema.$defs, tree } };
+    ["a recursive reference", { notes: { children: [{ children: [], a: null }], a: null } }],
+  ] as const)("normalizes provider nulls of a pure anyOf union through %s", async (_name, fields) => {
     const { adapter } = recordingAdapter({ ...lensPayload(), ...fields });
-    const output = await adapter.run({ ...input, outputSchema: custom });
+    const output = await adapter.run({ ...input, outputSchema: unionSchema });
     expect(output.error).toBeUndefined();
     expect(output.terminal).toBe("completed");
     expect(output.findings[0]).not.toHaveProperty("anchor");
@@ -105,13 +104,17 @@ describe("CodexHarnessAdapter outputSchema", () => {
   });
 
   it.each([
-    ["anyOf", (x: object, y: object) => ({ anyOf: [x, y] })],
-    ["oneOf", (x: object, y: object) => ({ oneOf: [x, y] })],
-    ["if/then/else", () => ({ type: "object", additionalProperties: false, required: ["kind", "a"], properties: { kind: { enum: ["x", "y"] }, a: { anyOf: [{ type: "string" }, { type: "null" }] }, note: { type: "string" } }, if: { properties: { kind: { const: "x" } } }, then: true, else: { properties: { a: { type: "string" } } } })],
-  ] as const)("keeps a null only the applicable %s branch requires", async (_name, compose) => {
+    ["a null where the branch requires a string", { kind: "x", a: null }],
+    ["a value matching no branch", { kind: "z", a: "set" }],
+  ] as const)("marks output with %s malformed", async (_name, notes) => {
+    const output = await recordingAdapter({ ...lensPayload(), notes }).adapter.run({ ...input, outputSchema: unionSchema });
+    expect(output.terminal).toBe("malformed");
+  });
+
+  it("keeps a null only the applicable anyOf branch allows", async () => {
     // Branch x requires a nullable a; branch y requires a string a. Both have an optional note.
     const typed = (kind: string, a: object) => ({ type: "object", additionalProperties: false, required: ["kind", "a"], properties: { kind: { const: kind }, a, note: { type: "string" } } });
-    const notes = compose(typed("x", { anyOf: [{ type: "string" }, { type: "null" }] }), typed("y", { type: "string" }));
+    const notes = { anyOf: [typed("x", { type: ["string", "null"] }), typed("y", { type: "string" })] };
     const custom = { ...lensOutputSchema, required: [...lensOutputSchema.required, "notes"], properties: { ...lensOutputSchema.properties, notes } };
     const run = async (kind: string) => (await recordingAdapter({ ...lensPayload(), notes: { kind, a: null, note: null } }).adapter.run({ ...input, outputSchema: custom }));
     const applicable = await run("x");
@@ -161,33 +164,55 @@ describe("CodexHarnessAdapter outputSchema", () => {
     ["an unknown keyword", { type: "object", notAKeyword: true }],
     ["a non-iterable required", { type: "object", properties: { a: { type: "string" } }, required: 5 }],
     ["a string required", { type: "object", properties: { a: { type: "string" } }, required: "ab" }],
-    ["a required property that is not declared", { type: "object", properties: { a: { type: "string" } }, required: ["a", "b"] }],
     ["a nested non-iterable required", { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, notes: { type: "object", properties: { a: { type: "string" } }, required: true } } }],
-    ["minProperties, which the provider-strict form cannot preserve", { ...lensOutputSchema, minProperties: 5, properties: { ...lensOutputSchema.properties, notes: { type: "string" } } }],
-    ["a nested dependentRequired", { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, notes: { type: "object", properties: { a: { type: "string" }, b: { type: "string" } }, dependentRequired: { a: ["b"] } } } }],
-    // Presence tests through required: each would read a provider null as a present property.
-    ["a required property that only an allOf branch declares", { ...open(), required: [...lensOutputSchema.required, "notes"], allOf: [{ type: "object", properties: { notes: { type: "string" } } }] }],
-    ["an anyOf of required-only branches", { ...open(), properties: { ...lensOutputSchema.properties, a: { type: "string" }, b: { type: "string" } }, anyOf: [{ required: ["a"] }, { required: ["b"] }] }],
-    ["required inside not", { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, notes: { type: "object", properties: { a: { type: "string" } }, not: { type: "object", properties: { a: true }, required: ["a"] } } } }],
-    ["required inside if", { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, notes: { type: "object", properties: { a: { type: "string" }, b: { type: "string" } }, if: { type: "object", properties: { a: true }, required: ["a"] }, then: { type: "object", properties: { b: { type: "string" } }, required: ["b"] } } } }],
-    ["a $ref inside not", { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, notes: { not: { $ref: "#/$defs/codeAnchor" } } } }],
-    // The conversion does not follow references, so a referenced schema cannot share a value with declared properties.
-    ["a $ref in allOf beside a required property", { ...open(), properties: { ...lensOutputSchema.properties, a: { anyOf: [{ type: "string" }, { type: "null" }] } }, required: [...lensOutputSchema.required, "a"], allOf: [{ $ref: "#/$defs/t" }], $defs: { ...lensOutputSchema.$defs, t: { type: "object", properties: { a: { type: "string" } } } } }],
-    ["a $ref in a finding's allOf that requires its anchor", { ...lensOutputSchema, $defs: { ...lensOutputSchema.$defs, finding: { ...lensOutputSchema.$defs.finding, allOf: [{ $ref: "#/$defs/mustAnchor" }] }, mustAnchor: { type: "object", properties: { anchor: { anyOf: [{ $ref: "#/$defs/codeAnchor" }, { type: "null" }] } }, required: ["anchor"] } } }],
-  ])("fails before inference when outputSchema has %s", async (_name, outputSchema) => {
+  ])("fails before inference when outputSchema is not a valid JSON Schema: %s", async (_name, outputSchema) => {
     const { adapter, seen } = recordingAdapter(lensPayload());
     const output = await adapter.run({ ...input, outputSchema });
     expect(output.terminal).toBe("failed");
-    expect(output.error).toMatch(/outputSchema/);
+    expect(output.error).toMatch(/^outputSchema is not a valid JSON Schema/);
     expect(seen.invoked).toBe(false);
   });
 
-  it("still accepts a required property that its own object schema declares under a property test", async () => {
-    // A conditional on a property's value, not its presence, is preserved: kind is required where it is declared.
-    const notes = { type: "object", additionalProperties: false, required: ["kind"], properties: { kind: { enum: ["x", "y"] }, a: { type: "string" } }, if: { properties: { kind: { const: "y" } } }, then: { properties: { a: { type: "string" } } } };
-    const custom = { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, notes } };
-    const output = await recordingAdapter({ ...lensPayload(), notes: { kind: "y", a: null } }).adapter.run({ ...input, outputSchema: custom });
+  const notesSchema = (notes: object) => ({ ...lensOutputSchema, properties: { ...lensOutputSchema.properties, notes } });
+  const object = (properties: object, extra: object = {}) => ({ type: "object", additionalProperties: false, properties, ...extra });
+  // "uses": well-formed but outside the provider strict subset; "invalid": already rejected by the strict Ajv compile.
+  it.each([
+    // The pullfrog reproduction: a same-node $ref whose target requires a non-null anchor beside a finding's properties.
+    ["$ref", "uses", "a $ref beside properties", { ...lensOutputSchema, $defs: { ...lensOutputSchema.$defs, finding: { ...lensOutputSchema.$defs.finding, $ref: "#/$defs/mustAnchor" }, mustAnchor: object({ anchor: { $ref: "#/$defs/codeAnchor" } }, { required: ["anchor"] }) } }],
+    ["required", "invalid", "a $ref beside required", notesSchema({ $ref: "#/$defs/codeAnchor", required: ["path"] })],
+    ["allOf", "uses", "allOf", { ...lensOutputSchema, allOf: [object({ findings: { type: "array" } })] }],
+    ["oneOf", "uses", "oneOf", notesSchema({ oneOf: [{ type: "string" }, { type: "integer" }] })],
+    ["not", "uses", "not", notesSchema({ type: "string", not: { const: "x" } })],
+    ["if", "uses", "if/then/else", notesSchema(object({ kind: { enum: ["x", "y"] }, a: { type: "string" } }, { if: { properties: { kind: { const: "x" } } }, then: object({ a: { type: "string" } }, { required: ["a"] }), else: {} }))],
+    ["contains", "uses", "contains", notesSchema({ type: "array", items: { type: "string" }, contains: { const: "x" } })],
+    ["minProperties", "uses", "minProperties", { ...lensOutputSchema, minProperties: 5 }],
+    ["dependentRequired", "invalid", "a nested dependentRequired", notesSchema(object({ a: { type: "string" }, b: { type: "string" } }, { dependentRequired: { a: ["b"] } }))],
+    ["anyOf", "uses", "a root anyOf", { anyOf: [lensOutputSchema], $defs: lensOutputSchema.$defs }],
+    // The coderabbit shape: a property required only inside one anyOf branch beside the root properties.
+    ["anyOf", "uses", "anyOf beside properties and required", { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, kind: { enum: ["x", "y"] }, p: { type: "string" } }, anyOf: [object({ kind: { const: "x" }, p: { type: "string" } }, { required: ["p"] }), object({ kind: { const: "y" } })] }],
+    ["additionalProperties", "uses", "an object without additionalProperties false", notesSchema({ type: "object", properties: { a: { type: "string" } } })],
+    ["additionalProperties", "invalid", "properties without type object", notesSchema({ properties: { a: { type: "string" } }, additionalProperties: false })],
+    ["required", "invalid", "a required property that is not declared", { ...lensOutputSchema, required: [...lensOutputSchema.required, "notes"] }],
+    ["$async", "uses", "$async", { ...lensOutputSchema, $async: true }],
+    ["$defs", "uses", "nested $defs", notesSchema(object({ a: { $ref: "#/$defs/codeAnchor" } }, { $defs: { x: { type: "string" } } }))],
+    ["default", "uses", "a default", notesSchema({ type: "string", default: "x" })],
+  ])("fails before inference when outputSchema has %s (%s: %s)", async (keyword, kind, _name, outputSchema) => {
+    const { adapter, seen } = recordingAdapter(lensPayload());
+    const output = await adapter.run({ ...input, outputSchema });
+    expect(output.terminal).toBe("failed");
+    expect(output.error).toMatch(kind === "uses" ? /^outputSchema uses .*, which the provider strict subset does not support\.$/ : /^outputSchema is not a valid JSON Schema: /);
+    expect(output.error).toContain(keyword);
+    expect(seen.invoked).toBe(false);
+  });
+
+  it("copies const and enum literals verbatim, even when they look like schemas", async () => {
+    const literal = { type: "object", properties: { p: { type: "string" } } };
+    const custom = notesSchema(object({ shape: { const: literal }, choice: { enum: [literal, "plain"] } }, { required: ["shape", "choice"] }));
+    const { adapter, seen } = recordingAdapter({ ...lensPayload(), notes: { shape: literal, choice: literal } });
+    const output = await adapter.run({ ...input, outputSchema: custom });
     expect(output.error).toBeUndefined();
     expect(output.terminal).toBe("completed");
+    const sent = (seen.schema as { properties: { notes: { anyOf: [{ properties: Record<string, unknown> }] } } }).properties.notes.anyOf[0].properties;
+    expect(sent).toEqual({ shape: { const: literal }, choice: { enum: [literal, "plain"] } });
   });
 });
