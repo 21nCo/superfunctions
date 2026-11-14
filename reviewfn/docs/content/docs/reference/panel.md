@@ -23,7 +23,7 @@ reviewfn publish --input .reviewfn/output/panel-report.json --repository OWNER/R
 
 The run writes `panel-report.json` and `panel-report.md` to the output directory (`.reviewfn/output` by default). Its evidence, including each slot's redacted output, the context manifest and the stored panel report, is kept in the content-addressed store under `.reviewfn/artifacts`, with the retention the policy sets. The two report copies have the same report retention (the smaller of the config and policy `reportDays`): each run expires old artifacts and copies, and idle stores need the scheduled cleanup described in [security](security.md). Add both directories to the repository's ignore rules.
 
-Without `--json`, the rendered Markdown is printed on stdout. With `--json`, stdout carries exactly one JSON line, `{"report":"<absolute path of panel-report.json>","runId":"<run ID>"}`, for scripting. Errors are one JSON object on stderr, `{ "error": "<code>", "message": "…", "details": … }`.
+Without `--json`, the rendered Markdown is printed on stdout. With `--json`, stdout carries exactly one JSON line, printed only after the run's private snapshot is removed, `{"report":"<absolute path of panel-report.json>","runId":"<run ID>"}`, for scripting. Errors are one JSON object on stderr, `{ "error": "<code>", "message": "…", "details": … }`.
 
 ## Exit codes
 
@@ -34,8 +34,8 @@ The exit codes form a closed set. The verdict never changes the exit code, becau
 | 0 | The run completed and its coverage is complete. |
 | 2 | The run completed with incomplete coverage, or a stage's quorum was not met. The report is written. |
 | 3 | Preflight failed: invalid configuration or panel policy, a panel policy the head weakens, an unsupported or missing harness adapter, a `--base`, `--head` or `--since` ref that does not name a commit, a private repository snapshot that cannot be made, or a component's preflight refused the run. No report is written. |
-| 4 | The run was canceled (SIGINT or SIGTERM). Any failure while canceled, including a preflight that the cancellation interrupted or a report copy that could not be written, exits 4. A report is written only when it records the cancellation; such a report is never published. A cancellation after the run's report was assembled but before it was saved writes no report. |
-| 1 | Any other error, such as an invalid argument (including a value flag given without a value) or an output directory that cannot be written. |
+| 4 | The run was canceled (SIGINT or SIGTERM). Any failure while canceled, including a preflight that the cancellation interrupted or a report copy that could not be written, exits 4. A report is saved complete only when it records the cancellation; such a report is never published. A cancellation after the run's report was assembled but before it was saved writes no report. When saving fails while canceled, the output directory may hold an incomplete or stale `panel-report.json` or `panel-report.md`; do not use the output of a run that exits 4 unless the report records the cancellation. |
+| 1 | Any other error, such as an invalid argument (including a value flag given without a value), an output directory that cannot be written, or a completed run whose private repository snapshot could not be removed. In that last case the report is saved, but stdout stays empty. |
 
 ## Harness adapters
 

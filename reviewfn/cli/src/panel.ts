@@ -197,6 +197,8 @@ export interface PanelCommandDependencies {
   environment?: NodeJS.ProcessEnv;
   stdout?: (text: string) => void;
   stderr?: (text: string) => void;
+  /** Removes the run's private snapshot directory; a retried recursive `rm` by default. */
+  removeSnapshot?: (directory: string) => Promise<void>;
 }
 
 /** The single JSON error line every command writes to stderr. */
@@ -291,6 +293,8 @@ export async function savePanelRun(report: PanelReport, quorumMet: boolean, loca
   }
 }
 
+function removeSnapshot(directory: string): Promise<void> { return rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
+
 /**
  * `reviewfn panel`: run the panel over base..head and write `panel-report.json` and `panel-report.md` to the output
  * directory, with the run's evidence under `.reviewfn/artifacts`. Returns an exit code from `PANEL_EXIT_CODES`. Any
@@ -307,6 +311,8 @@ export async function runPanelCommand(flags: Flags, dependencies: PanelCommandDe
   try { invocation = panelInvocation(flags, environment); }
   catch (error) { return fail(PANEL_EXIT_CODES.error, error); }
   const owned = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-cli-"));
+  // The saved report's stdout line, printed only after the private snapshot is removed and the exit code is final.
+  let output: string | undefined;
   const code = await (async (): Promise<number> => { try {
     const ownedArtifacts = path.join(owned, "artifacts");
     let coordinator: PanelCoordinator;
@@ -354,7 +360,7 @@ export async function runPanelCommand(flags: Flags, dependencies: PanelCommandDe
       else return fail(PANEL_EXIT_CODES.error, error);
     }
     const saved = await savePanelRun(report, quorumMet, { ownedArtifacts, artifactsDirectory: invocation.artifactsDirectory, outputDirectory: invocation.outputDirectory, reportDays }, signal);
-    if (saved.reportPath !== undefined) stdout(invocation.json ? `${JSON.stringify({ report: saved.reportPath, runId: report.runId })}\n` : `${saved.rendered}\n`);
+    if (saved.reportPath !== undefined) output = invocation.json ? `${JSON.stringify({ report: saved.reportPath, runId: report.runId })}\n` : `${saved.rendered}\n`;
     return saved.error === undefined ? saved.exitCode : fail(saved.exitCode, saved.error);
   } catch (error) {
     // Only reading a stored canceled report reaches here; nothing was written to the output directory.
@@ -362,11 +368,12 @@ export async function runPanelCommand(flags: Flags, dependencies: PanelCommandDe
     return fail(PANEL_EXIT_CODES.error, error);
   } })();
   // The private snapshot holds a copy of the repository: a run that cannot remove it does not exit 0 or 2.
-  try { await rm(owned, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
+  // A run that exits 1 for that reason prints nothing on stdout, so `--json` never pairs a report line with a failure.
+  try { await (dependencies.removeSnapshot ?? removeSnapshot)(owned); }
   catch (error) {
-    if (code !== PANEL_EXIT_CODES.complete && code !== PANEL_EXIT_CODES.incomplete) return code;
-    return fail(PANEL_EXIT_CODES.error, new Error(`The panel run's private snapshot ${owned} was not removed: ${error instanceof Error ? error.message : String(error)}`));
+    if (code === PANEL_EXIT_CODES.complete || code === PANEL_EXIT_CODES.incomplete) return fail(PANEL_EXIT_CODES.error, new Error(`The panel run's private snapshot ${owned} was not removed: ${error instanceof Error ? error.message : String(error)}`));
   }
+  if (output !== undefined) stdout(output);
   return code;
 }
 

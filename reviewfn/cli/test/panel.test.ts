@@ -120,6 +120,19 @@ describe("reviewfn panel exit codes", () => {
     expect(result.stdout).toBe(`${markdown}\n`);
   });
 
+  it("exits 1 and prints no report line when the private snapshot cannot be removed after a complete run", async () => {
+    await repository(panel([slot("one", 1)]));
+    const removed: string[] = [];
+    const removeSnapshot = async (directory: string) => { removed.push(directory); await rm(directory, { recursive: true, force: true }); throw new Error("ENOTEMPTY: fixture"); };
+    const result = await invoke(["--base", base, "--head", head, "--json"], codex(), { removeSnapshot });
+    expect(result.code).toBe(PANEL_EXIT_CODES.error);
+    expect(result.stdout).toBe("");
+    expect(JSON.parse(result.stderr).message).toContain("private snapshot");
+    expect(removed).toHaveLength(1);
+    // The report itself was saved; only the exit code and stdout reflect the cleanup failure.
+    expect((await stored()).report.coverage).toBe("complete");
+  });
+
   it("exits 2 for incomplete coverage even when quorum is met", async () => {
     await repository(panel([slot("one", 1)]));
     const result = await invoke(["--base", base, "--head", head], codex({ one: () => slotOutput({ inspectedPaths: [], uninspected: [{ scope: "src/value.ts", reason: "fixture skipped it" }] }) }));
