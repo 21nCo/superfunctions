@@ -112,6 +112,11 @@ export interface PanelRunResult {
   slots: SlotOutcome[];
   quorum: PanelQuorumStatus[];
   validation: PanelReportValidationResult;
+  /**
+   * Artifacts stored by a conclusion that a cancellation interrupted, which this report supersedes. Present only on a
+   * canceled run's result.
+   */
+  supersededArtifacts?: string[];
 }
 
 interface SlotRecord {
@@ -286,15 +291,15 @@ export class PanelCoordinator {
         // Every slot removed its own checkout; this also removes anything an abandoned harness left, before the report is built.
         await removeTree(parent).catch(error => { cleanupErrors.push(`The run's checkout directory was not removed: ${message(error)}`); });
       }
-      const conclude = (canceled: boolean, supersedes?: string) => this.conclude({ context, stageRecords: records, diagnostics, policyDigest, canceled, supersedes });
+      const conclude = (canceled: boolean, supersedes: string[]) => this.conclude({ context, stageRecords: records, diagnostics, policyDigest, canceled, supersedes });
       // A cancellation observed before the report is stored restarts the conclusion in canceled mode, so nothing built
-      // after it records a completed result.
-      const first = context.runSignal.aborted ? undefined : await conclude(false);
-      if (!first) return (await conclude(true))!;
-      if (!context.runSignal.aborted) return first;
+      // after it records a completed result, and the canceled-mode report names every artifact the first pass stored.
+      const first = context.runSignal.aborted ? undefined : await conclude(false, []);
+      if (first?.result && !context.runSignal.aborted) return first.result;
+      const superseding = (await conclude(true, first?.stored ?? [])).result!;
+      if (!first?.result) return superseding;
       // Canceled while the report was stored: a superseding report records the cancellation, and the run rejects.
-      const superseding = (await conclude(true, first.reportArtifact))!;
-      throw new ReviewFnError("REVIEWFN_CANCELED", "The panel run was canceled while its report was stored; a superseding report records the cancellation.", { reportArtifact: superseding.reportArtifact, supersededReportArtifact: first.reportArtifact });
+      throw new ReviewFnError("REVIEWFN_CANCELED", "The panel run was canceled while its report was stored; a superseding report records the cancellation.", { reportArtifact: superseding.reportArtifact, supersededReportArtifact: first.result.reportArtifact, supersededArtifacts: superseding.supersededArtifacts ?? [] });
     } finally {
       request.signal?.removeEventListener("abort", forwardAbort);
     }
@@ -508,15 +513,17 @@ export class PanelCoordinator {
   }
 
   /**
-   * Turn the stage results into one stored panel report. Works on copies of `stageRecords`, so it can run again. Not in
-   * canceled mode, it returns undefined, storing no report, once it observes a cancellation. In canceled mode the report
-   * records the cancellation, and a completed requirements slot is canceled: its requirements report would otherwise
-   * record a completed execution after the run was canceled.
+   * Turn the stage results into one stored panel report. Works on copies of `stageRecords`, so it can run again, and
+   * returns every artifact it stored. Not in canceled mode, it stops without a result, storing nothing further, once it
+   * observes a cancellation. In canceled mode the report records the cancellation and names the artifacts it supersedes
+   * (`supersedes`), and a completed requirements slot is canceled: its requirements report would otherwise record a
+   * completed execution after the run was canceled.
    */
-  private async conclude(input: { context: RunContext; stageRecords: SlotRecord[]; diagnostics: PreflightDiagnostic[]; policyDigest: string; canceled: boolean; supersedes?: string }): Promise<PanelRunResult | undefined> {
+  private async conclude(input: { context: RunContext; stageRecords: SlotRecord[]; diagnostics: PreflightDiagnostic[]; policyDigest: string; canceled: boolean; supersedes: string[] }): Promise<{ result?: PanelRunResult; stored: string[] }> {
     const { context, canceled } = input;
     const records = input.stageRecords.map(record => ({ ...record, run: structuredClone(record.run), reasons: [...record.reasons] }));
     const cleanupErrors = [...context.cleanupErrors];
+    const stored: string[] = [];
     const interrupted = () => !canceled && context.runSignal.aborted;
     if (canceled) {
       const requirements = records.find(record => record.slot.id === context.request.panelPolicy.requirementsSlot);
@@ -527,16 +534,27 @@ export class PanelCoordinator {
     }
     const quorum = collapseAndCount(records, context.request.panelPolicy);
     // Every slot's outcome is stored once its final terminal (after collapse) is known, whatever ended it.
-    await this.storeSlotOutputs(records, context, cleanupErrors);
-    if (interrupted()) return undefined;
-    const requirementsReport = await this.requirementsReport(records, context, input.diagnostics);
-    if (interrupted()) return undefined;
-    return this.assemble({ context, records, quorum, requirementsReport, policyDigest: input.policyDigest, cleanupErrors, canceled, supersedes: input.supersedes });
+    await this.storeSlotOutputs(records, context, cleanupErrors, stored, canceled);
+    if (interrupted()) return { stored };
+    // Outside canceled mode the requirements report stores nothing once the run is canceled.
+    const requirementsReport = await this.requirementsReport(records, context, input.diagnostics, canceled ? undefined : context.runSignal);
+    stored.push(...requirementsReport.stored);
+    if (interrupted()) return { stored };
+    // Artifacts are content-addressed: one this pass stored again is current, not superseded.
+    const supersedes = input.supersedes.filter(id => !stored.includes(id));
+    const result = await this.assemble({ context, records, quorum, requirementsReport, policyDigest: input.policyDigest, cleanupErrors, canceled, supersedes });
+    if (result) {
+      stored.push(result.reportArtifact);
+      if (supersedes.length) result.supersededArtifacts = supersedes;
+    }
+    return { ...(result ? { result } : {}), stored };
   }
 
   /** Store each slot's outcome (terminal, reasons, identity and output) and bind it to its run by digest. */
-  private async storeSlotOutputs(records: SlotRecord[], context: RunContext, cleanupErrors: string[]): Promise<void> {
+  private async storeSlotOutputs(records: SlotRecord[], context: RunContext, cleanupErrors: string[], stored: string[], canceled: boolean): Promise<void> {
     for (const record of records) {
+      // Outside canceled mode nothing more is stored once the run is canceled; the canceled-mode pass stores them all.
+      if (!canceled && context.runSignal.aborted) return;
       const lens = this.lenses.get(record.slot.lens);
       const { output, run } = record;
       const document = {
@@ -547,9 +565,10 @@ export class PanelCoordinator {
         output: { findings: output.findings, evidence: output.evidence, inspectedPaths: output.inspectedPaths, uninspected: output.uninspected, requirements: output.requirements, assessments: output.assessments, events: output.events },
       };
       try {
-        const stored = await this.dependencies.artifacts.put(PANEL_SLOT_OUTPUT_ARTIFACT_KIND, JSON.stringify(redactJson(document, context.secrets), null, 2), context.prepared.retention.reportDays);
-        run.outputArtifact = stored.id;
-        run.outputDigest = stored.digest;
+        const artifact = await this.dependencies.artifacts.put(PANEL_SLOT_OUTPUT_ARTIFACT_KIND, JSON.stringify(redactJson(document, context.secrets), null, 2), context.prepared.retention.reportDays);
+        stored.push(artifact.id);
+        run.outputArtifact = artifact.id;
+        run.outputDigest = artifact.digest;
       } catch (error) {
         const reason = `The output of slot ${record.slot.id} could not be stored: ${redactText(message(error), context.secrets)}`;
         record.reasons.push(reason);
@@ -559,10 +578,10 @@ export class PanelCoordinator {
   }
 
   /** The requirements slot's 0.1 report, built through the shared 0.1 report path from the slot's final outcome. */
-  private async requirementsReport(records: SlotRecord[], context: RunContext, diagnostics: PreflightDiagnostic[]): Promise<{ report?: ReviewReport; reasons: string[] }> {
+  private async requirementsReport(records: SlotRecord[], context: RunContext, diagnostics: PreflightDiagnostic[], signal: AbortSignal | undefined): Promise<{ report?: ReviewReport; reasons: string[]; stored: string[] }> {
     const slotId = context.request.panelPolicy.requirementsSlot;
     const record = records.find(item => item.slot.id === slotId);
-    if (!record) return { reasons: [] };
+    if (!record) return { reasons: [], stored: [] };
     const output = structuredClone(record.output) as HarnessOutput;
     // A run that does not count (void, canceled, or a harness version other than the pinned one) never yields a completed report.
     if (!COUNTING.has(record.run.terminal)) {
@@ -572,14 +591,15 @@ export class PanelCoordinator {
     const config = this.slotConfig(context.request.config, record.slot);
     const request = { ...context.request, config };
     try {
-      const { report } = await assembleReviewReport(this.dependencies, {
-        request, prepared: context.prepared, output, secrets: context.secrets, diagnostics,
+      const { report, reportArtifact } = await assembleReviewReport(this.dependencies, {
+        request, prepared: context.prepared, output, secrets: context.secrets, diagnostics, ...(signal ? { signal } : {}),
         harness: { id: record.slot.harness.adapter, version: record.run.identity.harnessVersion },
         promptDigest: record.promptDigest, runId: reviewRunId(context.prepared, request, record.run.identity.harnessVersion), attemptId: context.request.attemptId ?? createAttemptId(),
       });
-      return { report, reasons: [] };
+      return { report, reasons: [], stored: [report.normalizedEventArtifact, report.redactedTranscriptArtifact, reportArtifact].filter((id): id is string => typeof id === "string") };
     } catch (error) {
-      return { reasons: [`The requirements report could not be built: ${message(error)}`] };
+      const partial = error instanceof ReviewFnError && Array.isArray(error.details?.storedArtifacts) ? error.details.storedArtifacts.filter((id): id is string => typeof id === "string") : [];
+      return { reasons: [`The requirements report could not be built: ${message(error)}`], stored: partial };
     }
   }
 
@@ -601,14 +621,17 @@ export class PanelCoordinator {
   }
 
   /**
-   * Stage-1 findings for stage 2: the findings of completed stage-1 slots that the panel report would admit, merged by
-   * fingerprint. Requirement links are not passed on, so they are not checked here.
+   * Stage-1 findings for stage 2: the findings of completed and collapsed stage-1 slots that the panel report would
+   * admit, merged by fingerprint. The runs are collapsed as for the report, on copies. Requirement links are not passed
+   * on, so they are not checked here.
    */
-  private async priorFindings(records: SlotRecord[], context: RunContext, policyDigest: string): Promise<PriorStageFinding[]> {
+  private async priorFindings(stageRecords: SlotRecord[], context: RunContext, policyDigest: string): Promise<PriorStageFinding[]> {
+    const records = stageRecords.map(record => ({ ...record, run: structuredClone(record.run) }));
+    collapseAndCount(records, context.request.panelPolicy);
     const base = this.baseReport(context, records, policyDigest);
     const merged = new Map<string, PriorStageFinding>();
     for (const record of records) {
-      if (record.run.terminal !== "completed") continue;
+      if (!COUNTING.has(record.run.terminal)) continue;
       const candidates = slotCandidates(record);
       candidates.findings = candidates.findings.map(finding => ({ ...finding, requirementIds: [] }));
       const excluded = await invalidCandidates(base, records.indexOf(record), candidates, context.request, this.validationOptions(context));
@@ -622,7 +645,7 @@ export class PanelCoordinator {
     return [...merged.values()];
   }
 
-  private async assemble(input: { context: RunContext; records: SlotRecord[]; quorum: PanelQuorumStatus[]; requirementsReport: { report?: ReviewReport; reasons: string[] }; policyDigest: string; cleanupErrors: string[]; canceled: boolean; supersedes?: string }): Promise<PanelRunResult | undefined> {
+  private async assemble(input: { context: RunContext; records: SlotRecord[]; quorum: PanelQuorumStatus[]; requirementsReport: { report?: ReviewReport; reasons: string[] }; policyDigest: string; cleanupErrors: string[]; canceled: boolean; supersedes: string[] }): Promise<PanelRunResult | undefined> {
     const { context, records, quorum } = input;
     const { request, prepared } = context;
     const now = this.dependencies.now ?? (() => new Date());
@@ -632,7 +655,7 @@ export class PanelCoordinator {
       ...prepared.executionErrors,
       ...prepared.tests.filter(receipt => receipt.exitCode !== 0 || receipt.timedOut || receipt.canceled).map(receipt => `Test ${receipt.id} did not pass (exit ${String(receipt.exitCode)}).`),
       ...(input.canceled || context.runSignal.aborted ? [CANCELED_REASON] : []),
-      ...(input.supersedes ? [`This report supersedes report ${input.supersedes}, which was stored before the cancellation was observed.`] : []),
+      ...(input.supersedes.length ? [`This report supersedes artifact(s) ${input.supersedes.join(", ")}, stored before the cancellation was observed.`] : []),
       ...quorum.filter(item => !item.met).map(item => `${PANEL_QUORUM_UNMET}: stage ${item.stage} has ${item.completed} completed slot run(s) with distinct identities; its quorum is ${item.required}.`),
       ...input.requirementsReport.reasons,
     ];

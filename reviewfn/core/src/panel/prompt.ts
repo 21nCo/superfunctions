@@ -41,8 +41,8 @@ export interface SlotPromptInput {
   tests: TestReceipt[];
   scope: SlotScope;
   /**
-   * Present for stage-2 slots, possibly empty: findings of completed stage-1 slots that pass the per-slot panel finding
-   * checks, merged by fingerprint, without requirement links and before the report's maxFindings bound.
+   * Present for stage-2 slots, possibly empty: findings of completed and collapsed stage-1 slots that pass the per-slot
+   * panel finding checks, merged by fingerprint, without requirement links and before the report's maxFindings bound.
    */
   priorFindings?: PriorStageFinding[];
   /** The requirements slot extracts and assesses requirements with the 0.1 prompt and schema. */

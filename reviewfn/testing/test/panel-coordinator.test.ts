@@ -107,6 +107,17 @@ describe("PanelCoordinator quorum", () => {
     await expectValid(result, setup, policy2);
   });
 
+  it("gives stage 2 every stage-1 finding the report admits, including one only a collapsed run reported", async () => {
+    const harness = new FakePanelHarness({ behaviors: { a: clean, b: reporting("Lonely defect"), s: clean } });
+    const panelPolicy = panel([slot("a", 1, "shared"), slot("b", 1, "shared"), slot("s", 2)]);
+    const setup = coordinator(harness);
+    const result = await setup.coordinator.run(request(panelPolicy));
+    expect(result.report.slotRuns.map(run => run.terminal)).toEqual(["completed", "collapsed", "completed"]);
+    expect(result.report.findings.map(item => [item.title, item.origins.map(origin => origin.slotId)])).toEqual([["Lonely defect", ["b"]]]);
+    expect(harness.input("s").prompt).toContain("Lonely defect");
+    await expectValid(result, setup, panelPolicy);
+  });
+
   it("never reaches ready without quorum, even when every requirement is implemented", async () => {
     const requirementsOutput = requirementsHarnessOutput();
     const harness = new FakePanelHarness({ behaviors: { r: () => requirementsOutput, s: failing() } });
@@ -218,8 +229,14 @@ describe("PanelCoordinator isolation and voiding", () => {
 
 describe("PanelCoordinator budgets, concurrency and cleanup", () => {
   it("runs at most maxConcurrentSlots slots at once and removes every checkout", async () => {
-    const slow = async (input: { signal?: AbortSignal }) => { await abortableDelay(40, input.signal); return clean(); };
-    const harness = new FakePanelHarness({ behaviors: Object.fromEntries(["s1", "s2", "s3", "s4", "s5"].map(id => [id, slow])) });
+    // Each run holds until a second run is active (or the last slot started), so the cap is reached whatever the host's
+    // speed, and a missing cap shows as more than two at once.
+    const slow = async (input: { signal?: AbortSignal }) => {
+      for (let waited = 0; harness.active < 2 && harness.calls.length < 5 && waited < 10_000; waited += 5) await abortableDelay(5, input.signal);
+      await abortableDelay(20, input.signal);
+      return clean();
+    };
+    const harness: FakePanelHarness = new FakePanelHarness({ behaviors: Object.fromEntries(["s1", "s2", "s3", "s4", "s5"].map(id => [id, slow])) });
     const panelPolicy = panel(["s1", "s2", "s3", "s4", "s5"].map(id => slot(id, 1)), { maxConcurrentSlots: 2, quorum: { stage1: 5, stage2: 0 } });
     const result = await coordinator(harness).coordinator.run(request(panelPolicy));
     expect(harness.calls).toHaveLength(5);
@@ -457,13 +474,14 @@ describe("PanelCoordinator budget bounds", () => {
       // Ignores its signal entirely.
       deaf: () => new Promise<WorkspaceCheck>(() => undefined),
     });
-    const setup = coordinator(harness, { workspaces, comparisonTimeoutMs: 200 });
+    // The bound leaves the real comparison of fast ample time on a loaded host.
+    const setup = coordinator(harness, { workspaces, comparisonTimeoutMs: 1_500 });
     const started = Date.now();
     const result = await setup.coordinator.run(request(panelPolicy));
     expect(Date.now() - started).toBeLessThan(10_000);
     expect(sawSignal).toBe(true);
     expect(result.report.slotRuns.map(run => [run.slotId, run.terminal, run.voidReasons])).toEqual([["slow", "timed_out", []], ["deaf", "timed_out", []], ["fast", "completed", []]]);
-    for (const outcome of result.slots.slice(0, 2)) expect(outcome.reasons.join()).toMatch(/comparison did not finish within its 200 ms bound/);
+    for (const outcome of result.slots.slice(0, 2)) expect(outcome.reasons.join()).toMatch(/comparison did not finish within its 1500 ms bound/);
     await expectNoCheckouts(harness);
     await expectValid(result, setup, panelPolicy);
   });
@@ -696,7 +714,7 @@ describe("PanelCoordinator cancellation and the requirements report", () => {
     const put = setup.artifacts.put.bind(setup.artifacts);
     let reports = 0;
     setup.artifacts.put = async (kind, content) => { const stored = await put(kind, content); if (kind === "panel-report" && ++reports === 1) controller.abort(); return stored; };
-    const error = await setup.coordinator.run(request(panelPolicy, { signal: controller.signal })).catch((caught: unknown) => caught) as { code: string; details: { reportArtifact: string; supersededReportArtifact: string } };
+    const error = await setup.coordinator.run(request(panelPolicy, { signal: controller.signal })).catch((caught: unknown) => caught) as { code: string; details: { reportArtifact: string; supersededReportArtifact: string; supersededArtifacts: string[] } };
     expect(error.code).toBe("REVIEWFN_CANCELED");
     const read = async (id: string) => JSON.parse(Buffer.from((await setup.artifacts.get(id))!).toString("utf8"));
     // The first report would have been ready; the one the error names records the cancellation instead.
@@ -705,7 +723,15 @@ describe("PanelCoordinator cancellation and the requirements report", () => {
     const report = await read(error.details.reportArtifact);
     expect(error.details.reportArtifact).not.toBe(error.details.supersededReportArtifact);
     expect(report.coverage).toBe("incomplete");
-    expect(report.coverageReasons).toEqual(expect.arrayContaining(["The panel run was canceled.", `This report supersedes report ${error.details.supersededReportArtifact}, which was stored before the cancellation was observed.`]));
+    expect(report.coverageReasons).toContain("The panel run was canceled.");
+    // Every artifact the first conclusion stored and the superseding one did not store again is named, including the
+    // ready panel report and its completed requirements report.
+    const reviewReports = [...setup.artifacts.values.keys()].filter(key => key.startsWith("review-report-"));
+    const completedReviewReport = (await Promise.all(reviewReports.map(async key => [key, (await read(key)).execution] as const))).filter(([, execution]) => execution === "completed").map(([key]) => key);
+    expect(completedReviewReport).toHaveLength(1);
+    expect(error.details.supersededArtifacts).toEqual(expect.arrayContaining([error.details.supersededReportArtifact, ...completedReviewReport]));
+    expect(error.details.supersededArtifacts).not.toContain(error.details.reportArtifact);
+    expect(report.coverageReasons).toContain(`This report supersedes artifact(s) ${error.details.supersededArtifacts.join(", ")}, stored before the cancellation was observed.`);
     expect(report.verdict).not.toBe("ready");
     expect(report.slotRuns[0].terminal).toBe("canceled");
     expect(report.requirementsReport.execution).toBe("canceled");
@@ -727,6 +753,29 @@ describe("PanelCoordinator cancellation and the requirements report", () => {
     expect(result.report.requirementsReport?.execution).toBe("canceled");
     expect(result.slots[0].reasons.join()).toMatch(/canceled before the requirements report was recorded/);
     expect([...setup.artifacts.values.keys()].filter(key => key.startsWith("panel-report-"))).toEqual([result.reportArtifact]);
+    await expectValid(result, setup, panelPolicy);
+  });
+
+  it("stores no completed requirements report once a cancellation arrives while the requirements report is assembled", async () => {
+    const controller = new AbortController();
+    const harness = new FakePanelHarness({ behaviors: { r: () => requirementsHarnessOutput() } });
+    const setup = coordinator(harness);
+    const put = setup.artifacts.put.bind(setup.artifacts);
+    let events = 0;
+    setup.artifacts.put = async (kind, content) => { const stored = await put(kind, content); if (kind === "normalized-events" && ++events === 1) controller.abort(); return stored; };
+    const result = await setup.coordinator.run(request(panelPolicy, { signal: controller.signal }));
+    expect(result.report.coverageReasons).toContain("The panel run was canceled.");
+    expect(result.report.verdict).not.toBe("ready");
+    expect(result.report.requirementsReport?.execution).toBe("canceled");
+    const read = async (id: string) => JSON.parse(Buffer.from((await setup.artifacts.get(id))!).toString("utf8"));
+    const reviewReports = [...setup.artifacts.values.keys()].filter(key => key.startsWith("review-report-"));
+    expect(reviewReports).toHaveLength(1);
+    expect((await read(reviewReports[0])).execution).toBe("canceled");
+    // Each artifact the interrupted conclusion stored is either part of this report or named as superseded.
+    // The one (canceled) review report is the canceled conclusion's own.
+    const current = new Set([result.reportArtifact, ...reviewReports, ...result.report.slotRuns.map(run => run.outputArtifact), result.report.requirementsReport?.normalizedEventArtifact]);
+    const stale = [...setup.artifacts.values.keys()].filter(key => /^(panel-slot-output|normalized-events|review-report|panel-report)-/.test(key) && !current.has(key));
+    expect(result.supersededArtifacts ?? []).toEqual(expect.arrayContaining(stale));
     await expectValid(result, setup, panelPolicy);
   });
 });

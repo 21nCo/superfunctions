@@ -210,14 +210,27 @@ export interface ReviewReportInput {
   attemptId: string;
   secrets: readonly string[];
   diagnostics: PreflightDiagnostic[];
+  /**
+   * Cancellation of the run the report belongs to. Once it is aborted no further artifact is stored: the call rejects
+   * with `REVIEWFN_CANCELED`, whose `details.storedArtifacts` lists what it already stored. A report stored before the
+   * abort was observed is returned as usual.
+   */
+  signal?: AbortSignal;
 }
 
 /**
  * Build, validate and store a 0.1 review report from normalized harness output. A report that fails validation is
  * stored with incomplete coverage and its verdict re-derived, never discarded.
  */
-export async function assembleReviewReport(dependencies: SharedRunDependencies, input: ReviewReportInput): Promise<{ report: ReviewReport; validation: { warnings: string[] } }> {
+export async function assembleReviewReport(dependencies: SharedRunDependencies, input: ReviewReportInput): Promise<{ report: ReviewReport; reportArtifact: string; validation: { warnings: string[] } }> {
   const { request, prepared, output, secrets } = input;
+  const stored: string[] = [];
+  const store = async (kind: string, content: string, days: number) => {
+    if (input.signal?.aborted) throw new ReviewFnError("REVIEWFN_CANCELED", "The review was canceled before its report was stored.", { storedArtifacts: [...stored] });
+    const artifact = await dependencies.artifacts.put(kind, content, days);
+    stored.push(artifact.id);
+    return artifact;
+  };
   const { change, changeDetail, context, retention, tests, executionErrors, executionPolicy } = prepared;
   const now = dependencies.now ?? (() => new Date());
   output.requirements = output.requirements.map(requirement => ({ ...requirement, extraction: { harness: input.harness.id, promptDigest: input.promptDigest } }));
@@ -228,8 +241,8 @@ export async function assembleReviewReport(dependencies: SharedRunDependencies, 
   ].filter((sourceId) => !sourceIds.has(sourceId));
   if (unknownSources.length) output.uninspected.push({ scope: "context references", reason: `Unknown sources: ${[...new Set(unknownSources)].join(", ")}` });
 
-  const eventArtifact = await dependencies.artifacts.put("normalized-events", JSON.stringify(redactJson(output.events, secrets), null, 2), retention.reportDays);
-  const transcriptArtifact = request.config.retainTranscript && output.transcript ? await dependencies.artifacts.put("redacted-transcript", redactText(output.transcript, secrets), retention.transcriptDays) : undefined;
+  const eventArtifact = await store("normalized-events", JSON.stringify(redactJson(output.events, secrets), null, 2), retention.reportDays);
+  const transcriptArtifact = request.config.retainTranscript && output.transcript ? await store("redacted-transcript", redactText(output.transcript, secrets), retention.transcriptDays) : undefined;
   const coverageReasons = [
     ...changeDetail.coverageReasons,
     ...context.incompleteReasons,
@@ -279,8 +292,8 @@ export async function assembleReviewReport(dependencies: SharedRunDependencies, 
     report.coverageReasons.push(...validation.errors);
     report.verdict = deriveVerdict(report, request.policy);
   }
-  await dependencies.artifacts.put("review-report", JSON.stringify(report, null, 2), retention.reportDays);
-  return { report, validation: { warnings: validation.warnings } };
+  const reportArtifact = await store("review-report", JSON.stringify(report, null, 2), retention.reportDays);
+  return { report, reportArtifact: reportArtifact.id, validation: { warnings: validation.warnings } };
 }
 
 export class ReviewCoordinator {
