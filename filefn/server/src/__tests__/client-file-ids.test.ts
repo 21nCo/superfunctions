@@ -6,7 +6,7 @@ import { createFileFn, type FileFn } from '../index.js';
 import { generateFileFnId } from '../ids.js';
 import { createDefaultAuthorizer } from '../authz/authorizer.js';
 import { CLIENT_FILE_ID_PATTERN, isValidClientFileId } from '../upload-sessions/file-id.js';
-import { COMPLETION_GRACE_MS, createFileIdReservations, fileIdReservationId } from '../upload-sessions/file-id-reservations.js';
+import { CLAIM_LEASE_MS, createFileIdReservations, fileIdReservationId } from '../upload-sessions/file-id-reservations.js';
 
 const CAPS: AdapterCapabilities = {
   types: { json: true, dates: true, booleans: true, bigint: false, uuid: false, enum: false },
@@ -18,7 +18,7 @@ const CAPS: AdapterCapabilities = {
 };
 
 type Row = Record<string, any>;
-type Op = 'create' | 'findOne';
+type Op = 'create' | 'findOne' | 'updateMany' | 'deleteMany';
 
 /** A held operation: `reached` resolves once it is held; `release` lets it run. */
 interface Hold {
@@ -95,7 +95,8 @@ function createDb(options: { enforceUnique?: boolean } = {}) {
     async update(params: any) {
       const rows = table(params.model);
       const index = rows.findIndex((row) => match(row, params.where));
-      if (index === -1) return null;
+      // Like the shipped adapters, an update that matches nothing throws.
+      if (index === -1) throw new Error(`No ${params.model} row matches the update`);
       rows[index] = { ...rows[index], ...params.data };
       return { ...rows[index] };
     },
@@ -105,13 +106,19 @@ function createDb(options: { enforceUnique?: boolean } = {}) {
       if (index !== -1) rows.splice(index, 1);
     },
     async deleteMany(params: any) {
+      await gate('deleteMany', params);
       const rows = table(params.model);
       const kept = rows.filter((row) => !match(row, params.where));
       tables.set(params.model, kept);
       return rows.length - kept.length;
     },
     async createMany() { return []; },
-    async updateMany() { return 0; },
+    async updateMany(params: any) {
+      await gate('updateMany', params);
+      const rows = table(params.model).filter((row) => match(row, params.where));
+      for (const row of rows) Object.assign(row, params.data);
+      return rows.length;
+    },
     async upsert() { throw new Error('not used'); },
     async count() { return 0; },
     async transaction(cb: any) { return cb(adapter); },
@@ -769,37 +776,54 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
       expect((await init('user_b', { fileId })).status).toBe(403);
     });
 
-    it('is reserved again by a retry still starting when the init that made it fails', async () => {
-      for (const intruder of [false, true]) {
-        build();
-        const fileId = intruder ? 'file_rollback_taken01' : 'file_rollback_inflight';
-        const [setupA, setupB] = [hold(), hold()];
-        beforeMultipartInit = async () => {
-          setupA.arrive();
-          await setupA.wait;
-          throw new Error('storage unavailable');
-        };
-        const failing = init('user_a', { fileId });
-        await setupA.reached;
-        beforeMultipartInit = async () => {
-          setupB.arrive();
-          await setupB.wait;
-        };
-        const retry = init('user_a', { fileId });
-        await setupB.reached;
-        setupA.release();
-        expect((await failing).status).toBe(500);
+    it('is kept for a retry still starting when the init that made it fails', async () => {
+      const fileId = 'file_rollback_inflight';
+      const [setupA, setupB] = [hold(), hold()];
+      beforeMultipartInit = async () => {
+        setupA.arrive();
+        await setupA.wait;
+        throw new Error('storage unavailable');
+      };
+      const failing = init('user_a', { fileId });
+      await setupA.reached;
+      beforeMultipartInit = async () => {
+        setupB.arrive();
+        await setupB.wait;
+      };
+      const retry = init('user_a', { fileId });
+      await setupB.reached;
+      setupA.release();
+      expect((await failing).status).toBe(500);
 
-        // No session relied on the reservation yet, so another principal may
-        // take the ID now; the retry then never starts. Either way one owner.
-        if (intruder) expect((await init('user_b', { fileId })).status).toBe(200);
-        setupB.release();
-        expect((await retry).status).toBe(intruder ? 403 : 200);
-        const owner = intruder ? 'user_b' : 'user_a';
-        expect(reservationRow(fileId)).toMatchObject({ ownerId: owner });
-        expect((await init(intruder ? 'user_a' : 'user_b', { fileId })).status).toBe(403);
-        if (intruder) expect(sessionsOf('user_a').map((row) => row.status)).toEqual(['aborted']);
-      }
+      expect((await init('user_b', { fileId })).status).toBe(403);
+      setupB.release();
+      expect((await retry).status).toBe(200);
+      expect(reservationRow(fileId)).toMatchObject({ ownerId: 'user_a' });
+    });
+
+    it.each([false, true])('is kept when the failed init drops it while a retry relies on it (retry completed first: %s)', async (completedFirst) => {
+      const fileId = completedFirst ? 'file_rollback_done_01' : 'file_rollback_cas_001';
+      const setup = hold();
+      beforeMultipartInit = async () => {
+        setup.arrive();
+        await setup.wait;
+        throw new Error('storage unavailable');
+      };
+      const failing = init('user_a', { fileId });
+      await setup.reached;
+      // The failing init's rollback has read the reservation and is held
+      // before it deletes; meanwhile a retry relies on it and returns.
+      const deleting = db.holdNext('deleteMany', 'uploadSessions', (params) => params.where?.[0]?.value === fileIdReservationId(fileId));
+      setup.release();
+      await deleting.reached;
+      const retry = await initAndUpload('user_a', fileId);
+      if (completedFirst) expect((await complete('user_a', retry)).status).toBe(200);
+      deleting.release();
+      expect((await failing).status).toBe(500);
+
+      expect(reservationRow(fileId)).toMatchObject({ ownerId: 'user_a' });
+      expect((await init('user_b', { fileId })).status).toBe(403);
+      if (!completedFirst) expect((await complete('user_a', retry)).status).toBe(200);
     });
 
     it('is kept for a same-owner init that lost the insert race when the init that made it fails', async () => {
@@ -1036,24 +1060,17 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
       expect(objects.get(SHARED_PATH({ fileId }))).toBe(sessionRow(winner.uploadSessionId).storageUploadId);
     });
 
-    it('keeps the claim for its session when a completion fails: the session may retry, and an abort frees the ID', async () => {
+    it('gives up the claim when the only completion of its session fails, so a new session under the ID succeeds', async () => {
       const fileId = 'file_anon_failed_pub1';
       const first = await anonymousInitAndUpload(fileId);
       failNextPublish = true;
       expect((await call('POST', `/upload/${first.uploadSessionId}/complete`, '', undefined, first.token)).status).toBe(500);
-      expect(reservationRow(fileId)).toMatchObject({ storageUploadId: first.uploadSessionId });
-      expect((await init('', { fileId })).status).toBe(403);
-      expect((await init('user_a', { fileId })).status).toBe(403);
-      expect((await call('POST', `/upload/${first.uploadSessionId}/complete`, '', undefined, first.token)).status).toBe(200);
+      expect(reservationRow(fileId)).toBeUndefined();
 
-      const other = 'file_anon_aborted_01';
-      const aborted = await anonymousInitAndUpload(other);
-      failNextPublish = true;
-      expect((await call('POST', `/upload/${aborted.uploadSessionId}/complete`, '', undefined, aborted.token)).status).toBe(500);
-      expect((await call('POST', `/upload/${aborted.uploadSessionId}/abort`, '', undefined, aborted.token)).status).toBe(200);
-      expect(reservationRow(other)).toBeUndefined();
-      const retry = await anonymousInitAndUpload(other);
+      // The offline client retries with a new session and no idempotency key.
+      const retry = await anonymousInitAndUpload(fileId);
       expect((await call('POST', `/upload/${retry.uploadSessionId}/complete`, '', undefined, retry.token)).status).toBe(200);
+      expect(fileRows(fileId)).toEqual([expect.objectContaining({ ownerId: 'anonymous' })]);
     });
 
     describe.each(['multipart', 'proxy'] as const)('keeps the claim while any call completing its session publishes, in %s mode', (mode) => {
@@ -1083,24 +1100,58 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
       });
     });
 
-    it('lets a claim lapse once its session expired and the completion grace passed', async () => {
+    it('lets the claim of a completion that never returned lapse after its lease', async () => {
       const fileId = 'file_anon_stuck_claim';
       const stale = await anonymousInitAndUpload(fileId);
-      // Its completion claimed the ID, then died before ending the session.
+      // Its completion claimed the ID, then died before dropping the claim.
       const store = createFileIdReservations({ db: db.adapter, namespace: 'filefn' });
-      expect((await store.reserve(fileId, sessionRow(stale.uploadSessionId) as any, 'capture')).held).toBe(true);
-
-      sessionRow(stale.uploadSessionId).expiresAt = new Date(Date.now() - 60_000).toISOString();
+      expect((await store.acquire(fileId, sessionRow(stale.uploadSessionId) as any, 'capture')).held).toBe(true);
       expect((await init('', { fileId })).status).toBe(403);
-      // Cleanup leaves a session whose claim is within the grace to a later run.
-      expect((await fileFn.cleanupExpiredSessions()).deletedSessions).toBe(0);
-      expect(reservationRow(fileId)).toMatchObject({ storageUploadId: stale.uploadSessionId });
-      sessionRow(stale.uploadSessionId).expiresAt = new Date(Date.now() - COMPLETION_GRACE_MS - 1000).toISOString();
+      expect((await init('user_a', { fileId })).status).toBe(403);
+
+      reservationRow(fileId)!.expiresAt = new Date(Date.now() - 1000).toISOString();
       const fresh = await anonymousInitAndUpload(fileId);
       expect((await call('POST', `/upload/${fresh.uploadSessionId}/complete`, '', undefined, fresh.token)).status).toBe(200);
-
-      expect((await call('POST', `/upload/${stale.uploadSessionId}/complete`, '', undefined, stale.token)).status).toBe(410);
       expect(publishedUploads).toEqual([sessionRow(fresh.uploadSessionId).storageUploadId]);
+    });
+
+    describe('in proxy mode with a shared storage path', () => {
+      beforeEach(() => build({ anonymous: true, layout: 'shared', mode: 'proxy' }));
+
+      it('keeps the claim while a completion stitches after the session is aborted, and commits nothing', async () => {
+        const fileId = 'file_anon_abort_stitch';
+        const anon = await anonymousInitAndUpload(fileId, 'AAA');
+        const publishing = holdNextPublish();
+        const pending = call('POST', `/upload/${anon.uploadSessionId}/complete`, '', undefined, anon.token);
+        await publishing.reached;
+        expect((await call('POST', `/upload/${anon.uploadSessionId}/abort`, '', undefined, anon.token)).status).toBe(200);
+        // The abort deleted the parts, but the stitch still relies on the claim.
+        expect((await init('user_a', { fileId })).status).toBe(403);
+        publishing.release();
+        expect((await pending).status).toBeGreaterThanOrEqual(400);
+        expect(objects.has(SHARED_PATH({ fileId }))).toBe(false);
+
+        const winner = await initAndUpload('user_a', fileId, 'BBB');
+        const done = await complete('user_a', winner);
+        expect(done.status).toBe(200);
+        expectFile(fileId, 'user_a', done.body.data.versionId, 'BBB');
+      });
+
+      it('commits nothing from a stitch whose claim lapsed and was taken meanwhile', async () => {
+        const fileId = 'file_anon_lease_lost';
+        const anon = await anonymousInitAndUpload(fileId, 'AAA');
+        const publishing = holdNextPublish();
+        const pending = call('POST', `/upload/${anon.uploadSessionId}/complete`, '', undefined, anon.token);
+        await publishing.reached;
+        reservationRow(fileId)!.expiresAt = new Date(Date.now() - CLAIM_LEASE_MS).toISOString();
+        const winner = await initAndUpload('user_a', fileId, 'BBB');
+        const done = await complete('user_a', winner);
+        expect(done.status).toBe(200);
+
+        publishing.release();
+        expect((await pending).status).toBe(403);
+        expectFile(fileId, 'user_a', done.body.data.versionId, 'BBB');
+      });
     });
 
     it('settles an overlapping completion of a session another call completed on the shipped memory adapter', async () => {
@@ -1160,8 +1211,8 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
     const reservations = createFileIdReservations({ db: lax.adapter, namespace: 'filefn' });
     const fileId = 'file_lax_adapter_01';
     const results = await Promise.all([
-      reservations.reserve(fileId, { ownerId: 'user_a', tenantId: 'org_1' }, 'capture'),
-      reservations.reserve(fileId, { ownerId: 'user_b', tenantId: 'org_1' }, 'capture'),
+      reservations.acquire(fileId, { ownerId: 'user_a', tenantId: 'org_1' }, 'capture'),
+      reservations.acquire(fileId, { ownerId: 'user_b', tenantId: 'org_1' }, 'capture'),
     ]);
     expect(results.filter((result) => result.held)).toHaveLength(1);
     expect(lax.rows('uploadSessions')).toHaveLength(1);

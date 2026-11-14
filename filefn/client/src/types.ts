@@ -63,11 +63,11 @@ export interface UploadInput {
    *   it never uploads. The ID stays reserved to its owner even if the file is
    *   later deleted.
    * - An anonymous caller claims the ID for its upload session only when the
-   *   upload completes, just before the bytes are stored. The session keeps
-   *   the claim, so a failed completion may be retried, until the file
-   *   exists, the session is aborted, or the session expired more than 15
-   *   minutes ago. Its `upload/init` fails with 403 if someone else holds the
-   *   ID; it may init again without a key.
+   *   upload completes, just before the bytes are stored, and holds it while
+   *   that completion runs (at most 15 minutes per call). A failed completion
+   *   frees the ID, so a retry, with this session or a new one, may complete.
+   *   Its `upload/init` fails with 403 while someone else holds the ID; it may
+   *   init again without a key.
    * - Only a completion can fail with 403 after the parts were uploaded: an
    *   anonymous one whose ID someone else reserved or claimed first, or one
    *   that lost write permission on an existing file after init. The session

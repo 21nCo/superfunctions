@@ -6,28 +6,27 @@ import { randomBytes } from 'node:crypto';
  * principal owns a client-chosen file ID that has no file yet. It is stored in
  * `uploadSessions` because that table's `uploadSessionId` is unique, which is
  * what makes the first reservation of an ID win; it is not an upload session:
- * session lookups skip it, its `status` is `completed` and it never expires,
- * so expired-session cleanup keeps it, and its `fileId` is null, so deleting
- * the file keeps it too. The ID stays with its first owner. An anonymous
- * caller claims an ID for one upload session when that session completes;
- * the claim belongs to the session, not to one request, and is released once
- * the file exists, when the session is aborted, or when it lapses (see
- * `isLapsed`).
+ * session lookups skip it, its `status` is `completed`, so expired-session
+ * cleanup keeps it, and its `fileId` is null, so deleting the file keeps it
+ * too. Its `size` counts who relies on it, changed only by compare-and-set,
+ * and it is deleted only when that count is 0. A named owner's inits rely on
+ * it; one that fails stops relying, so a reservation every init of which
+ * failed is removed, and one that any init started under is kept: the ID
+ * stays with its first owner. An anonymous session's completion calls rely on
+ * its claim while they run, so a failed completion leaves the ID free for a
+ * retry while a sibling call still publishing keeps it. A call that never
+ * finishes stops counting after `CLAIM_LEASE_MS` (the claim's `expiresAt`).
  */
 export const FILE_ID_RESERVATION_MODE = 'file-id-reservation';
 
 const RESERVATION_ID_PREFIX = 'fileid:';
 const NEVER_EXPIRES = '9999-12-31T23:59:59.999Z';
 
-/**
- * How long after its session expires an anonymous claim still holds. A
- * completion starts publishing only before its session expires, so this is the
- * time it has to finish publishing and create the file.
- */
-export const COMPLETION_GRACE_MS = 15 * 60 * 1000;
+/** How long an anonymous claim holds after a completion call last took it. */
+export const CLAIM_LEASE_MS = 15 * 60 * 1000;
 
-/** Statuses of an upload session that may still complete. */
-const LIVE_STATUSES = new Set(['pending', 'in_progress']);
+/** Attempts at settling a reservation before a contended one gives up. */
+const MAX_ATTEMPTS = 8;
 
 export function fileIdReservationId(fileId: string): string {
   return `${RESERVATION_ID_PREFIX}${fileId}`;
@@ -52,6 +51,9 @@ interface ReservationRecord extends FileIdOwner {
   storageKey: string;
   /** The upload session holding an anonymous claim. */
   storageUploadId: string | null;
+  /** How many inits, or running completion calls, rely on it. */
+  size: number;
+  expiresAt: string;
 }
 
 /** Whether `owner` is the named principal (in the same tenant) that `record` names. */
@@ -97,115 +99,116 @@ export function createFileIdReservations(config: { db: Adapter; namespace: strin
     });
   }
 
-  /**
-   * An anonymous claim lapses once its session is gone, has ended, or expired
-   * more than `COMPLETION_GRACE_MS` ago, so a completion that died after
-   * claiming does not keep the ID. Its session exists before it claims, since
-   * it claims only on completion.
-   */
-  async function isLapsed(reservation: ReservationRecord): Promise<boolean> {
-    if (reservation.ownerId !== 'anonymous' || !reservation.storageUploadId) return false;
-    const session = await db.findOne<{ status: string; expiresAt: string }>({
+  /** An anonymous claim lapses once no completion call relies on it, or its lease ran out. A named reservation never lapses. */
+  function isLapsed(reservation: ReservationRecord): boolean {
+    if (reservation.ownerId !== 'anonymous') return false;
+    return !(reservation.size > 0) || !(Date.parse(reservation.expiresAt) > Date.now());
+  }
+
+  /** Whether `claimant` holds `reservation` and it has not lapsed. */
+  function holds(reservation: ReservationRecord | null, claimant: FileIdClaimant): boolean {
+    return !!reservation && holdsReservation(reservation, claimant) && !isLapsed(reservation);
+  }
+
+  function where(fileId: string, reservation: ReservationRecord) {
+    return [
+      { field: 'uploadSessionId', operator: 'eq' as const, value: fileIdReservationId(fileId) },
+      { field: 'storageKey', operator: 'eq' as const, value: reservation.storageKey },
+      { field: 'size', operator: 'eq' as const, value: reservation.size },
+    ];
+  }
+
+  function insert(fileId: string, claimant: FileIdClaimant, policy: string, token: string, expiresAt: string) {
+    return db.create({
       model: 'uploadSessions',
-      where: [{ field: 'uploadSessionId', operator: 'eq', value: reservation.storageUploadId }],
+      data: {
+        uploadSessionId: fileIdReservationId(fileId),
+        status: 'completed',
+        policy,
+        fileId: null,
+        fileName: fileId,
+        mimeType: 'application/octet-stream',
+        size: 1,
+        uploadMode: FILE_ID_RESERVATION_MODE,
+        chunkSizeBytes: 0,
+        totalParts: 0,
+        storageKey: token,
+        storageUploadId: claimant.ownerId === 'anonymous' ? claimant.uploadSessionId ?? null : null,
+        ownerId: claimant.ownerId,
+        tenantId: claimant.tenantId,
+        metadata: null,
+        idempotencyKey: null,
+        idempotencyPayloadHash: null,
+        completionVersionId: null,
+        uploadSessionToken: null,
+        uploadSessionTokenHash: null,
+        expiresAt,
+        createdAt: new Date().toISOString(),
+      },
       namespace,
     });
-    if (!session || !LIVE_STATUSES.has(session.status)) return true;
-    const expiresAt = Date.parse(session.expiresAt);
-    return Number.isNaN(expiresAt) || expiresAt + COMPLETION_GRACE_MS <= Date.now();
   }
 
   return {
     find,
-    release,
-
-    /**
-     * Releases the reservation `token` made, for an init whose upload never
-     * started, unless a live session of the same owner relies on it. An init
-     * still starting checks its reservation again once its session exists.
-     */
-    async releaseUnlessRelied(fileId: string, token: string, owner: FileIdOwner): Promise<void> {
-      const sessions = await db.findMany<FileIdOwner & { uploadSessionId: string; status: string; expiresAt: string }>({
-        model: 'uploadSessions',
-        where: [
-          { field: 'fileId', operator: 'eq', value: fileId },
-          { field: 'ownerId', operator: 'eq', value: owner.ownerId },
-        ],
-        namespace,
-      });
-      const relied = sessions.some((session) =>
-        isNamedOwner(session, owner) && LIVE_STATUSES.has(session.status) && Date.parse(session.expiresAt) > Date.now()
-      );
-      if (!relied) await release(fileId, token);
-    },
+    holds,
 
     /** Whether someone other than `claimant` holds a live reservation of `fileId`. */
     async heldByOther(fileId: string, claimant: FileIdClaimant): Promise<boolean> {
       const reservation = await find(fileId);
-      return !!reservation && !holdsReservation(reservation, claimant) && !(await isLapsed(reservation));
+      return !!reservation && !holdsReservation(reservation, claimant) && !isLapsed(reservation);
     },
 
     /**
-     * Reserves `fileId` for `claimant` unless someone else holds it, and
-     * reports whether `claimant` holds it afterwards. Two callers racing on one
-     * ID both insert; the unique key lets exactly one in, and the other reads
-     * the winner. A named owner calling again (a retried init) holds it
-     * already, whichever way it got it. `token` is set only when this call
-     * inserted the reservation, so the caller can release it if its upload
-     * never starts.
+     * Makes `claimant` rely on the reservation of `fileId`, inserting it if
+     * nobody holds it, and reports whether `claimant` holds it. Two callers
+     * racing on one ID both insert; the unique key lets exactly one in, and
+     * the other relies on the winner's row. A lapsed claim is replaced.
+     * `token` names the row relied on, for `drop`.
      */
-    async reserve(fileId: string, claimant: FileIdClaimant, policy: string): Promise<{ held: boolean; token: string | null }> {
-      let existing = await find(fileId);
-      if (existing && !holdsReservation(existing, claimant) && (await isLapsed(existing))) {
-        await release(fileId, existing.storageKey);
-        existing = await find(fileId);
+    async acquire(fileId: string, claimant: FileIdClaimant, policy: string): Promise<{ held: boolean; token: string | null }> {
+      const expiresAt = claimant.ownerId === 'anonymous' ? new Date(Date.now() + CLAIM_LEASE_MS).toISOString() : NEVER_EXPIRES;
+      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+        const existing = await find(fileId);
+        if (existing && isLapsed(existing)) {
+          await db.deleteMany({ model: 'uploadSessions', where: where(fileId, existing), namespace });
+        } else if (existing) {
+          if (!holdsReservation(existing, claimant)) return { held: false, token: null };
+          const data = { size: existing.size + 1, expiresAt };
+          if ((await db.updateMany({ model: 'uploadSessions', where: where(fileId, existing), data, namespace })) > 0) {
+            return { held: true, token: existing.storageKey };
+          }
+        } else {
+          const token = `${fileIdReservationId(fileId)}/${randomBytes(12).toString('hex')}`;
+          try {
+            await insert(fileId, claimant, policy, token, expiresAt);
+          } catch (error) {
+            if (!(await find(fileId))) throw error;
+            continue;
+          }
+          // Read the reservation back rather than trusting the insert: on an
+          // adapter that does not enforce the unique key, every racer reads
+          // the same first row, and a later row is removed.
+          if ((await find(fileId))?.storageKey === token) return { held: true, token };
+          await release(fileId, token);
+        }
       }
-      if (existing) return { held: holdsReservation(existing, claimant), token: null };
-      const token = `${fileIdReservationId(fileId)}/${randomBytes(12).toString('hex')}`;
-      try {
-        await db.create({
-          model: 'uploadSessions',
-          data: {
-            uploadSessionId: fileIdReservationId(fileId),
-            status: 'completed',
-            policy,
-            fileId: null,
-            fileName: fileId,
-            mimeType: 'application/octet-stream',
-            size: 0,
-            uploadMode: FILE_ID_RESERVATION_MODE,
-            chunkSizeBytes: 0,
-            totalParts: 0,
-            storageKey: token,
-            storageUploadId: claimant.ownerId === 'anonymous' ? claimant.uploadSessionId ?? null : null,
-            ownerId: claimant.ownerId,
-            tenantId: claimant.tenantId,
-            metadata: null,
-            idempotencyKey: null,
-            idempotencyPayloadHash: null,
-            completionVersionId: null,
-            uploadSessionToken: null,
-            uploadSessionTokenHash: null,
-            expiresAt: NEVER_EXPIRES,
-            createdAt: new Date().toISOString(),
-          },
-          namespace,
-        });
-      } catch (error) {
-        const winner = await find(fileId);
-        if (!winner) throw error;
-        return { held: holdsReservation(winner, claimant), token: null };
-      }
-      // Read the reservation back rather than trusting the insert: on an
-      // adapter that does not enforce the unique key, every racer reads the
-      // same first row, and a later row is removed.
-      const winner = await find(fileId);
-      if (winner?.storageKey === token) return { held: true, token };
-      await release(fileId, token);
-      return { held: winner !== null && holdsReservation(winner, claimant), token: null };
+      throw new Error(`Could not settle the reservation of ${fileId}`);
     },
 
-    /** Releases the claim an anonymous session holds on its file ID, if any, once the session no longer needs it. */
+    /** Stops relying on the reservation `token` names, and removes it once nobody does. */
+    async drop(fileId: string, token: string): Promise<void> {
+      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+        const reservation = await find(fileId);
+        if (reservation?.storageKey !== token) return;
+        const changed = reservation.size > 1
+          ? await db.updateMany({ model: 'uploadSessions', where: where(fileId, reservation), data: { size: reservation.size - 1 }, namespace })
+          : await db.deleteMany({ model: 'uploadSessions', where: where(fileId, reservation), namespace });
+        if (changed > 0) return;
+      }
+    },
+
+    /** Removes the claim an anonymous session holds on its file ID, once the file exists. */
     async releaseClaimOf(session: FileIdClaimant & { fileId?: string | null }): Promise<void> {
       if (session.ownerId !== 'anonymous' || !session.fileId) return;
       const reservation = await find(session.fileId);
