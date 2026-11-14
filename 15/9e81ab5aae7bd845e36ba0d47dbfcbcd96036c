@@ -1,0 +1,33 @@
+sendfn/.conduct/ses-operation-drain.md
+  s_e1c5fc1a65c0cf::t_eb5dd940867648 17-20,46-50,53
+sendfn/python/README.md
+  s_e1c5fc1a65c0cf::t_5cfe70531b8bd5 284-287,296-297
+sendfn/python/sendfn/email/aws_ses.py
+  s_1900bb15a7199a::t_8c0e156951d9bf 71-75,85,118-126,231
+sendfn/python/tests/test_aws_ses_lifecycle.py
+  s_1900bb15a7199a::t_36440db4f1f561 218-327
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "159e81ab5aae7bd845e36ba0d47dbfcbcd96036c",
+  "prompts": {},
+  "sessions": {
+    "s_1900bb15a7199a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5e049926-ee38-44b5-a734-8c7117ee5ff7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

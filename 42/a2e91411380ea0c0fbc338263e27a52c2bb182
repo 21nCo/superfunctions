@@ -1,0 +1,29 @@
+contentfn/.conduct/history-packed.mjs
+  s_2409648105d207::t_edbdc89db9a4e8 33
+contentfn/server/src/limits/limits.ts
+  s_2409648105d207::t_2af0cd4fcb0649 30
+contentfn/server/src/server.ts
+  s_2409648105d207::t_34816718bc37fe 181-187,227-229,231,234-235,237,262-263
+contentfn/SPEC.md
+  s_2409648105d207::t_ad8902adce02b7 136,231-232,560-563
+contentfn/server/README.md
+  s_2409648105d207::t_efcc046befc42b 14
+contentfn/server/src/__tests__/review-regressions.test.ts
+  s_2409648105d207::t_77a895e063c6e5 582-617
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "42a2e91411380ea0c0fbc338263e27a52c2bb182",
+  "prompts": {},
+  "sessions": {
+    "s_2409648105d207": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d70d3597-81a1-4d05-8bd3-05ad69afb585",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,41 @@
+userfn/.conduct/feedback-readiness.md
+  s_e1c5fc1a65c0cf::t_5364976f921a72 1-31
+userfn/python/README.md
+  s_e1c5fc1a65c0cf::t_613007e522742f 117-124
+userfn/python/src/userfn/__init__.py
+  s_e1c5fc1a65c0cf::t_27b39cbc65491b 1-6
+userfn/python/src/userfn/client.py
+  s_e1c5fc1a65c0cf::t_e7a5ec3871c8aa 2,4,13,51-53
+userfn/python/src/userfn/core/feedback.py
+  s_e1c5fc1a65c0cf::t_6afee7b28729da 1-26
+userfn/python/src/userfn/types.py
+  s_e1c5fc1a65c0cf::t_5613e0616c0b77 2,72,173-188
+userfn/python/tests/test_feedback.py
+  s_e1c5fc1a65c0cf::t_8592f7481d6225 1-68
+userfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_e20d8d624940f7 101-108
+userfn/typescript/src/__tests__/feedback.test.ts
+  s_e1c5fc1a65c0cf::t_bee373ea42b8e9 3-4,6-48
+userfn/typescript/src/core/feedback.ts
+  s_e1c5fc1a65c0cf::t_e6e9447f801a42 1-5,8,11-20,24
+userfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_9ffdfab77e4a7c 27,131-132
+userfn/typescript/src/types.ts
+  s_e1c5fc1a65c0cf::t_ed1345787a70a1 72-73,171-178
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3a2b63446d88b60e1c7729ad20a4bc109c721755",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,47 @@
+devfn/core/src/orchestrator.ts
+  s_1786e4c8d6d477::t_b5881f169ebede 18,70-77,86,90-105,120-121,354-358
+devfn/core/src/tunnel.ts
+  s_1786e4c8d6d477::t_bc6318d72b4af6 127-130,133,139-143
+devfn/core/test/tunnel-lifecycle.test.ts
+  s_1786e4c8d6d477::t_19c9259cb94b48 255,260
+devfn/proxy/src/tunnel/ngrok-bridge.ts
+  s_1786e4c8d6d477::t_eca136e0037088 42-46,55-57,62,67,75,85-86,102,107
+devfn/proxy/src/tunnel/ngrok-connector.ts
+  s_1786e4c8d6d477::t_b2931dbafb6263 1,19-22,24-33,41,56,58,62-63,68,70-72,75
+devfn/proxy/src/tunnel/ngrok.ts
+  s_1786e4c8d6d477::t_a009f36787a880 21-27,179-184
+devfn/proxy/src/tunnel/service.ts
+  s_1786e4c8d6d477::t_4c6d77f533d704 231-234
+devfn/cli/src/index.ts
+  s_1786e4c8d6d477::t_61c7d8d85ffe87 18,248
+devfn/core/src/index.ts
+  s_1786e4c8d6d477::t_39ffa34300d910 7
+devfn/core/test/tunnel-ngrok-lifecycle.test.ts
+  s_1786e4c8d6d477::t_967ea6c0d9b23c 10-11,14,24,46,49,146-182,234-253
+devfn/docs/configuration.md
+  s_1786e4c8d6d477::t_f447b8265599fb 137-138,140
+devfn/proxy/src/tunnel/index.ts
+  s_1786e4c8d6d477::t_27f8d8aad1e388 7
+devfn/proxy/src/tunnel/state.ts
+  s_1786e4c8d6d477::t_881d6b20615078 1,46-49,53,59-61,172-174,181,239-240,242-244
+devfn/proxy/test/fixtures/tunnel.ts
+  s_1786e4c8d6d477::t_213f14cc6935ba 104-105,107
+devfn/proxy/test/tunnel-ngrok.test.ts
+  s_1786e4c8d6d477::t_3ef54a8468ec91 1,9,101,110,112-117,125,129,170,173-175,349-352,427-492
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7af4db9bfb996c1dba08d4c0f379a7a2f3455a38",
+  "prompts": {},
+  "sessions": {
+    "s_1786e4c8d6d477": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d3878118-ae2f-4300-8b70-b21e7f41eeb0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,41 @@
+logfn/python/README.md
+  s_df37aebcbdee79::t_ccc56d1e72e0b5 135-138
+logfn/python/src/logfn/core.py
+  s_df37aebcbdee79::t_8772af369231f5 122-124,375-388
+logfn/python/src/logfn/default_redaction.py
+  s_df37aebcbdee79::t_579305e20c018f 58-89,94
+logfn/python/tests/test_async_sinks.py
+  s_df37aebcbdee79::t_e75990c6dc1374 169-182
+logfn/python/tests/test_default_redaction.py
+  s_df37aebcbdee79::t_1431c1c82d7fbc 159-173
+logfn/typescript/README.md
+  s_df37aebcbdee79::t_81c8c3bfa41587 451-455,569-573
+logfn/typescript/src/core/default-redaction.test.ts
+  s_df37aebcbdee79::t_0ee8b48d73d53f 84-99
+logfn/typescript/src/core/error-hook.test.ts
+  s_df37aebcbdee79::t_863fb673dc1df3 67-104
+logfn/typescript/src/core/logger.ts
+  s_df37aebcbdee79::t_f3bfad222f9231 111-112,117,119-122,126-130
+logfn/typescript/src/pipeline/default-redaction.ts
+  s_df37aebcbdee79::t_dfc34dcbf29e23 32-59,65
+logfn/typescript/src/sinks/http-delivery.test.ts
+  s_df37aebcbdee79::t_7d5818da2537a4 45-57
+logfn/typescript/src/sinks/http.ts
+  s_df37aebcbdee79::t_80b04b31c526c0 74-85,166,173
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "49cc21d2a794aab331c19da592d4475dfc8abf54",
+  "prompts": {},
+  "sessions": {
+    "s_df37aebcbdee79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_df37aebcbdee79",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

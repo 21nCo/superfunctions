@@ -1,0 +1,51 @@
+watchfn/.conduct/ts-pagerduty-readiness.md
+  s_e1c5fc1a65c0cf::t_f260dbf087a673 1-93
+watchfn/python/README.md
+  s_e1c5fc1a65c0cf::t_4f2ae87912e32b 472-479
+watchfn/python/pyproject.toml
+  s_e1c5fc1a65c0cf::t_28cd2e4eaade08 15
+watchfn/python/tests/fixtures/pagerduty-golden.json
+  s_e1c5fc1a65c0cf::t_2eb2173733702d 1-104
+watchfn/python/tests/test_alert_dispatch.py
+  s_e1c5fc1a65c0cf::t_c520fed61b8401 216,256-268
+watchfn/python/tests/test_email_dispatch.py
+  s_e1c5fc1a65c0cf::t_00d3c268520023 246,248,270-306
+watchfn/python/tests/test_pagerduty_dispatch.py
+  s_e1c5fc1a65c0cf::t_defd953ab2fb1b 151-157
+watchfn/python/watchfn/alerts/dispatch.py
+  s_e1c5fc1a65c0cf::t_0781d4f82b9260 39-41,136-138
+watchfn/python/watchfn/alerts/durable.py
+  s_e1c5fc1a65c0cf::t_e7a7dcc8bdbc41 46,52-54,147,172,255
+watchfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_8e0d7ee2a50e14 122-124,136-137,189-255
+watchfn/typescript/scripts/verify-alert-package.mjs
+  s_e1c5fc1a65c0cf::t_6428c1ca88a60d 1-57
+watchfn/typescript/src/alerts/alert-manager.ts
+  s_e1c5fc1a65c0cf::t_f6dbc83b994a8a 6,10-14,20,40-43,47-74,81,93,99-100,109,128-129,213-214,219-242,245,258,261-294,298,300-344,346-376,379-395,398,401,403-406,408,411-412,414,416,418-420,422,424-449
+watchfn/typescript/src/alerts/channels/pagerduty.ts
+  s_e1c5fc1a65c0cf::t_5331e4a690be73 1-16
+watchfn/typescript/src/alerts/types.ts
+  s_e1c5fc1a65c0cf::t_4f8fab7fa5ddde 5,23-27,30,35,38
+watchfn/typescript/tests/alerts/pagerduty.test.ts
+  s_e1c5fc1a65c0cf::t_e590b58a2c28a2 1-237
+watchfn/typescript/tests/alerts/public-manager.test.ts
+  s_e1c5fc1a65c0cf::t_8f155c5b957f7b 81,84,91,177,185,189-190,192-195,197,200,214,255,261,267-268,288,301
+watchfn/typescript/tests/core/context-manager.test.ts
+  s_e1c5fc1a65c0cf::t_94c147f55deacb 1,81-92
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c147bc30c15821fb5ba2c4aa5ea0ffd24bf72ad6",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+_conduct/shared-ci-dependency-readiness-20261023.md
+  s_e1c5fc1a65c0cf::t_d147a973676ca6 10-11
+datafn/client/package.json
+  s_e1c5fc1a65c0cf::t_2fcd5663623f9b 24
+package-lock.json
+  s_e1c5fc1a65c0cf::t_b746ef6ecbee73 7794
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6e09f7d1954503c4832f9c407a206aa7fa55a632",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

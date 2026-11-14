@@ -1,0 +1,31 @@
+flowfn/python/README.md
+  s_e1c5fc1a65c0cf::t_16812c289c5ec1 165
+flowfn/python/flowfn/adapters/base.py
+  s_e1c5fc1a65c0cf::t_c03faa16b7d842 3,18-25
+flowfn/python/flowfn/adapters/durable_queues.py
+  s_e1c5fc1a65c0cf::t_5f72a1ed1cb12e 11,19-20,30-31,36,107-117,119-133,136,139-150,153-154,156-158,160-182
+flowfn/python/flowfn/adapters/memory.py
+  s_e1c5fc1a65c0cf::t_d23996698d4663 30-35
+flowfn/python/flowfn/queue/queue.py
+  s_e1c5fc1a65c0cf::t_5189107be82ca8 6,117-118,123-140,144-145,150,152,159-162,210-217
+flowfn/python/flowfn/queue/types.py
+  s_e1c5fc1a65c0cf::t_9a3031336fb810 8-11
+flowfn/python/tests/test_queue_lease_cancellation.py
+  s_e1c5fc1a65c0cf::t_95b785c5c8b9cc 1-84
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "48bedc4f45038623fd43c0bf8678e0014191090c",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

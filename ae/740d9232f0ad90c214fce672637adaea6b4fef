@@ -1,0 +1,45 @@
+cmsfn/.conduct/studio-browser-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_18b2717e051628 8,12,27,30,34,44-46,56-58,72,74-106,108-113,115-116,121-122,124
+cmsfn/.conduct/studio-lifecycle-readiness.md
+  s_e1c5fc1a65c0cf::t_071574d3478197 1-37
+cmsfn/.conduct/studio-packaging-readiness.md
+  s_e1c5fc1a65c0cf::t_7ebcfb4a3471ea 39-40
+cmsfn/.conduct/studio-packed-acceptance.py
+  s_e1c5fc1a65c0cf::t_b0f09a6c763c95 21
+cmsfn/studio/README.md
+  s_e1c5fc1a65c0cf::t_1c294282d6e871 33-37
+cmsfn/studio/src/__tests__/authoring-lifecycle.test.tsx
+  s_e1c5fc1a65c0cf::t_46765a8a12dd3f 1-81
+cmsfn/studio/src/app.tsx
+  s_e1c5fc1a65c0cf::t_5610ce6cd00401 34,74,76-83,88,98-101,115-116
+cmsfn/studio/src/contentfn/client.ts
+  s_e1c5fc1a65c0cf::t_0e1e1a3a9a9d3b 38-48,100-104
+cmsfn/studio/src/index.ts
+  s_e1c5fc1a65c0cf::t_251be96f5f3944 15
+cmsfn/studio/src/panes/editor/DocumentEditorPane.tsx
+  s_e1c5fc1a65c0cf::t_845e8d30380641 6,8,24-26,29,43-48,62,64-68,72,74-75,77,87-90,93,97,100-101,108-109,131,148,156-157,159,173,187-201,203,220-231,238-239,254,260-261,265-266
+cmsfn/studio/src/panes/list/DocumentListPane.tsx
+  s_e1c5fc1a65c0cf::t_6d901ef2d775ac 13,22,26
+cmsfn/studio/src/panes/list/useCfqlQuery.ts
+  s_e1c5fc1a65c0cf::t_9fbe57a3bf96d8 6,15,32,38-43,46,51,57,67,72,77,84,93
+cmsfn/studio/src/publish/PublishButton.tsx
+  s_e1c5fc1a65c0cf::t_796e49f8d6446c 5,13-14,25,30,33,35-47,54,59,61,63-64,69
+cmsfn/studio/src/workflow/WorkflowControls.tsx
+  s_e1c5fc1a65c0cf::t_9f2e6bcfba2414 1,32-35,39-41,52-53,56,61,69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ae740d9232f0ad90c214fce672637adaea6b4fef",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

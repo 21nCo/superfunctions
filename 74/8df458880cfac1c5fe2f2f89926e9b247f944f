@@ -1,0 +1,23 @@
+flowfn/.conduct/native-queue-baseline-20261025.json
+  s_e1c5fc1a65c0cf::t_e80d9691c05006 1-440
+flowfn/.conduct/native-queue-profiling-20261025.md
+  s_e1c5fc1a65c0cf::t_0e2ce7636f1b15 1-37
+flowfn/.conduct/postgres-create-batch-rejected-20261025.json
+  s_e1c5fc1a65c0cf::t_f44c089f4f1222 1-878
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "748df458880cfac1c5fe2f2f89926e9b247f944f",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

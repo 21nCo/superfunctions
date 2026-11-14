@@ -1,0 +1,39 @@
+sendfn/typescript/README.md
+  s_7ba056c7e072f1::t_80046d2e4c2b8e 247-284
+sendfn/typescript/package.json
+  s_e1c5fc1a65c0cf::t_d21cf2e03a3759 48-52,60-61
+sendfn/typescript/scripts/verify-ses-package.mjs
+  s_e1c5fc1a65c0cf::t_5ae5895f62fab0 1-47
+sendfn/typescript/src/email/aws-ses-adapter.ts
+  s_7ba056c7e072f1::t_3f473c5fea84f3 16-20,72-76,79-87,89-90,97-126,133-150,152-155,158,178,180,189,259,261,290-300,303-304,313,323
+sendfn/typescript/src/types.ts
+  s_e1c5fc1a65c0cf::t_d51914081e5242 43-48
+sendfn/typescript/tests/aws-ses-lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_4b4fdb164bb45e 1-96
+sendfn/typescript/tsup.config.ts
+  s_e1c5fc1a65c0cf::t_8f5772ee48f542 7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "89cae9df462f2f7b03115d400b878223d68c3092",
+  "prompts": {},
+  "sessions": {
+    "s_7ba056c7e072f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8d16bb29-946b-4259-b60d-7953e513216f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

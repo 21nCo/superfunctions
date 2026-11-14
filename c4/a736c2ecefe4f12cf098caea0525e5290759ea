@@ -1,0 +1,37 @@
+watchfn/.conduct/python-stored-alert-readiness.md
+  s_e1c5fc1a65c0cf::t_65632c863db817 10,58-75
+watchfn/python/README.md
+  s_e1c5fc1a65c0cf::t_4e6ea883096da7 218
+watchfn/python/tests/fixtures/alert-window-golden.json
+  s_e1c5fc1a65c0cf::t_556ef24d698370 1-14
+watchfn/python/tests/test_stored_alerts.py
+  s_e1c5fc1a65c0cf::t_f76838bd22b95e 128-149
+watchfn/python/watchfn/alerts/observations.py
+  s_e1c5fc1a65c0cf::t_cd3acbeb4e64b5 84,119
+watchfn/python/watchfn/client.py
+  s_e1c5fc1a65c0cf::t_07f63531f24a71 46-47
+watchfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_2b875ff5c7a465 178
+watchfn/typescript/src/alerts/alert-manager.ts
+  s_e1c5fc1a65c0cf::t_b1c1a094d64668 143,147,151,157,161
+watchfn/typescript/src/alerts/conditions.ts
+  s_e1c5fc1a65c0cf::t_caec75de7d4779 49,63-65
+watchfn/typescript/tests/alerts/public-manager.test.ts
+  s_e1c5fc1a65c0cf::t_dcee65af29e730 4,274-286
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c4a736c2ecefe4f12cf098caea0525e5290759ea",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

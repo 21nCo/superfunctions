@@ -1,0 +1,19 @@
+browsefn/admin/src/__tests__/dispatcher.test.ts
+  s_e1c5fc1a65c0cf::t_7b245d12951de8 1-132
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "aec2c50a887532ed1d612320d8648f86cfe5df1c",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

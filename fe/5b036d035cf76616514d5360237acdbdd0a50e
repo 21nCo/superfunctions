@@ -1,0 +1,25 @@
+cachefn/.conduct/priority-clear-readiness.md
+  s_e1c5fc1a65c0cf::t_fad07247031e20 1-11
+cachefn/.conduct/testfn-fixture-readiness.md
+  s_e1c5fc1a65c0cf::t_57d3e2b024efdb 30,38
+cachefn/typescript/__tests__/cache-fetch.test.ts
+  s_e1c5fc1a65c0cf::t_c77aec9e185fdb 41-94
+cachefn/typescript/src/core/cache.ts
+  s_e1c5fc1a65c0cf::t_a923a249b91f0c 53,199-202,296
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fe5b036d035cf76616514d5360237acdbdd0a50e",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

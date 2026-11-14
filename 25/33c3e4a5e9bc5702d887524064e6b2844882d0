@@ -1,0 +1,41 @@
+cmsfn/.conduct/studio-browser-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_cee5b5f0a0b0d7 33,57,197-215,218-219
+cmsfn/.conduct/studio-release-shell-readiness.md
+  s_e1c5fc1a65c0cf::t_a605e752b2c823 1-30
+cmsfn/server/src/__tests__/release-concurrency.test.ts
+  s_e1c5fc1a65c0cf::t_00e6789e6f36b3 1-78
+cmsfn/server/src/storage/releases.ts
+  s_e1c5fc1a65c0cf::t_d727fc6b8b671a 145-167,169-170,172
+cmsfn/studio/README.md
+  s_e1c5fc1a65c0cf::t_4e047a8cad6cff 43-45
+cmsfn/studio/src/__tests__/releaseShell.test.tsx
+  s_e1c5fc1a65c0cf::t_8215e12f2e3484 1-48
+cmsfn/studio/src/app.tsx
+  s_7ba056c7e072f1::t_ee007448faa04d 14,36,106-107,112
+cmsfn/studio/src/panes/releases/ReleasesPane.tsx
+  s_7ba056c7e072f1::t_255d2402e08199 1-2,4-9,11-18,20-23,25-35,37-38,40-69,71-93
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2533c3e4a5e9bc5702d887524064e6b2844882d0",
+  "prompts": {},
+  "sessions": {
+    "s_7ba056c7e072f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8d16bb29-946b-4259-b60d-7953e513216f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

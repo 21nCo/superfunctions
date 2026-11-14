@@ -1,0 +1,45 @@
+flowfn/.conduct/typescript-trace-propagation-20261020.md
+  s_e1c5fc1a65c0cf::t_044cd1fa5e5289 1-36
+flowfn/typescript/package.json
+  s_fc1e5ad5b6d4c0::t_25674f25998e42 63-64
+flowfn/typescript/src/core/durable-scheduler.ts
+  s_e1c5fc1a65c0cf::t_32cafdec2ee26d 11,66,131
+flowfn/typescript/src/instrumentation.test.ts
+  s_e1c5fc1a65c0cf::t_0c572d344c1d25 2-3,11,16,89-156
+flowfn/typescript/src/instrumentation.ts
+  s_e1c5fc1a65c0cf::t_06b1c75c54e6f4 1-11,41-50,65-71,80
+flowfn/typescript/src/queue/job.ts
+  s_e1c5fc1a65c0cf::t_590d15a3a78454 13
+flowfn/typescript/src/queue/queue.ts
+  s_e1c5fc1a65c0cf::t_7299c156c9ed69 181,360
+flowfn/typescript/src/queue/types.ts
+  s_e1c5fc1a65c0cf::t_9d99d0c2ddcbd8 65-66
+flowfn/typescript/src/stream/stream.ts
+  s_e1c5fc1a65c0cf::t_463c01019844ed 47,81
+flowfn/typescript/src/workflow/workflow.ts
+  s_e1c5fc1a65c0cf::t_b04b5ce0a56f3a 188,406,444,620,766
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "688dbd7f4d783cd300eff9986690e2c91a88828f",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_fc1e5ad5b6d4c0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35f3409b-369e-4783-b998-c6a953fd6b02",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

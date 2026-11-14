@@ -1,0 +1,31 @@
+cmsfn/.conduct/workflow-revision-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_632b0ef1f797f8 1-69
+cmsfn/.conduct/workflow-revision-readiness.md
+  s_e1c5fc1a65c0cf::t_ba584747d90a61 1-68
+cmsfn/server/src/__tests__/releases-boundary.test.ts
+  s_e1c5fc1a65c0cf::t_12db4e1f214d6c 43
+cmsfn/server/src/__tests__/workflow-revision.test.ts
+  s_e1c5fc1a65c0cf::t_b31d7d9fdf5a84 1-91
+cmsfn/server/src/http/publish.ts
+  s_e1c5fc1a65c0cf::t_8d3d2320732a94 80
+cmsfn/server/src/publish/contentfnClient.ts
+  s_e1c5fc1a65c0cf::t_a45f81f97c6773 18-23
+cmsfn/server/src/releases/publishRelease.ts
+  s_e1c5fc1a65c0cf::t_4a8c3efafc8c60 83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1f74d102478766c08ea9bc233eba96957bab22dc",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

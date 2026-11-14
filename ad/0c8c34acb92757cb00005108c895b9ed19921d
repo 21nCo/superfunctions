@@ -1,0 +1,25 @@
+logfn/.conduct/python-close-ownership-readiness.md
+  s_e1c5fc1a65c0cf::t_f272b2b089faed 1-9
+logfn/python/README.md
+  s_e1c5fc1a65c0cf::t_227b18ef1eae88 62-65
+logfn/python/src/logfn/sinks.py
+  s_e1c5fc1a65c0cf::t_b1b0ce011e5021 111,211-223
+logfn/python/tests/test_http_delivery.py
+  s_e1c5fc1a65c0cf::t_81142a594156d6 256-293
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ad0c8c34acb92757cb00005108c895b9ed19921d",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

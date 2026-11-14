@@ -1,0 +1,29 @@
+cifn/.conduct/log-confidentiality-readiness.md
+  s_e1c5fc1a65c0cf::t_ab480ff6769e81 30-39
+cifn/typescript/control-plane/src/api/api.test.ts
+  s_e1c5fc1a65c0cf::t_0f74d896e281ae 713-728
+cifn/typescript/control-plane/src/api/routes.ts
+  s_e1c5fc1a65c0cf::t_f7b5aa02ef7064 1,236-237
+cifn/typescript/control-plane/src/index.ts
+  s_e1c5fc1a65c0cf::t_d949e28d46165d 77-78
+cifn/typescript/control-plane/src/secrets/redact.ts
+  s_e1c5fc1a65c0cf::t_cc9dee92ffb5c9 1-11
+cifn/typescript/runner/src/reporting/redact.ts
+  s_e1c5fc1a65c0cf::t_710a1b2444bc39 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "31ae21f39eb98c794b57d0e45860555c2ec4d405",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,31 @@
+cifn/.conduct/python-typing-readiness.md
+  s_e1c5fc1a65c0cf::t_103c22283a6821 1-71
+cifn/python/README.md
+  s_e1c5fc1a65c0cf::t_5dc2460338c8a3 138-156
+cifn/python/cifn/types.py
+  s_e1c5fc1a65c0cf::t_971e615c78ca58 6,74,115,122-123,133,136,157-158,160-161,168-169,172-173,180,183-184,194,196,203,209,217,232,244-245
+cifn/python/tests/test_client.py
+  s_e1c5fc1a65c0cf::t_4b729b30470e0e 75,193
+cifn/python/tests/test_errors.py
+  s_e1c5fc1a65c0cf::t_a14c21e56d965e 77
+cifn/python/tests/test_types.py
+  s_e1c5fc1a65c0cf::t_c1279e8561e873 227-228,338
+cifn/python/tests/typing_consumer.py
+  s_e1c5fc1a65c0cf::t_7ee39fd76ad8c5 1-41
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dbb5c42a658bd3034a1eb72991096c31a240c887",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

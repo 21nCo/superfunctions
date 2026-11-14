@@ -1,0 +1,33 @@
+flowfn/.conduct/queue-batch-measurements-20261023.json
+  s_e1c5fc1a65c0cf::t_7031324f45d423 1-316
+flowfn/.conduct/queue-claim-performance-readiness.md
+  s_e1c5fc1a65c0cf::t_733c08539aeccf 11,71-161
+flowfn/typescript/docs/queue-ownership.md
+  s_e1c5fc1a65c0cf::t_95e1c68304acfd 113-131
+flowfn/typescript/scripts/provider-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_e55101fbd9b86f 4,18,86,100-101,106,108
+flowfn/typescript/src/adapters/redis.test.ts
+  s_e1c5fc1a65c0cf::t_f88aebedbc2989 19,92,96-249
+flowfn/typescript/src/adapters/redis.ts
+  s_e1c5fc1a65c0cf::t_1a4d408ea5d1ab 44-169,237,249-250,252,255-303,305
+flowfn/typescript/src/queue/lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_fcc26f61bea73d 2,117-165
+flowfn/typescript/src/queue/queue.ts
+  s_e1c5fc1a65c0cf::t_65a52efae11dd2 30-31,88,110,114,118,121-124,127,292-297,553,559-561
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "856d7878e2e979f00394df5e36ff0818c588ea6f",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

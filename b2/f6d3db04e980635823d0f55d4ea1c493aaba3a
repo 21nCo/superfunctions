@@ -1,0 +1,21 @@
+flowfn/python/flowfn/scheduler/__init__.py
+  s_e1c5fc1a65c0cf::t_276e4949e74d4b 95-99,219,248
+flowfn/python/tests/test_scheduler.py
+  s_e1c5fc1a65c0cf::t_c4d617f7ca64b9 105-127
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b2f6d3db04e980635823d0f55d4ea1c493aaba3a",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

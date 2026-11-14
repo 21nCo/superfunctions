@@ -1,0 +1,63 @@
+cifn/.conduct/durable-dispatch-readiness.md
+  s_e1c5fc1a65c0cf::t_22fc50e111cff9 3-5
+cifn/.conduct/remote-execution-readiness.md
+  s_e1c5fc1a65c0cf::t_e6379cd24f0a97 1-146
+cifn/README.md
+  s_e1c5fc1a65c0cf::t_a6a1a0d7af4a08 95,97-109
+cifn/typescript/control-plane/package.json
+  s_e1c5fc1a65c0cf::t_591e7d0110b022 15-16
+cifn/typescript/control-plane/scripts/verify-remote-execution.mjs
+  s_e1c5fc1a65c0cf::t_a22a84dbb14a81 1-122
+cifn/typescript/control-plane/src/api/claims.ts
+  s_e1c5fc1a65c0cf::t_f4c4a7ef7c65d5 1-39
+cifn/typescript/control-plane/src/api/envelope.ts
+  s_e1c5fc1a65c0cf::t_ccd46a6ac5ecc4 10-11,40-41
+cifn/typescript/control-plane/src/api/routes.ts
+  s_e1c5fc1a65c0cf::t_c259592e218c25 1,79,358
+cifn/typescript/control-plane/src/dispatch/prepare.ts
+  s_e1c5fc1a65c0cf::t_0679bdaf56901c 16,27,41,44
+cifn/typescript/control-plane/src/dispatch/types.ts
+  s_e1c5fc1a65c0cf::t_93ec2adca42fbf 14,17-19,34-48
+cifn/typescript/control-plane/src/index.ts
+  s_e1c5fc1a65c0cf::t_789fbf4bbfe9f9 72
+cifn/typescript/control-plane/src/queue/flowfn-client.ts
+  s_e1c5fc1a65c0cf::t_d1bb2d0ed377ee 5
+cifn/typescript/control-plane/src/store/database-store.test.ts
+  s_e1c5fc1a65c0cf::t_b75d1ef0094099 213,250,255,272,296-381
+cifn/typescript/control-plane/src/store/database-store.ts
+  s_e1c5fc1a65c0cf::t_aae284afb2b2b2 1,8-9,18,143,145,150,160,183,188,193-270
+cifn/typescript/runner/package.json
+  s_e1c5fc1a65c0cf::t_1e6ec8a7e65a4b 13-14
+cifn/typescript/runner/src/claim-journal.ts
+  s_e1c5fc1a65c0cf::t_128f2580e5e763 1-51
+cifn/typescript/runner/src/executor/run-step.ts
+  s_e1c5fc1a65c0cf::t_f9ed9d32d18edc 10-11
+cifn/typescript/runner/src/index.ts
+  s_e1c5fc1a65c0cf::t_221b128569bfab 24-25
+cifn/typescript/runner/src/remote-runner.test.ts
+  s_e1c5fc1a65c0cf::t_eca4f6dd477006 1-62
+cifn/typescript/runner/src/remote-runner.ts
+  s_e1c5fc1a65c0cf::t_f16d3cc8a80cee 1-95
+cifn/typescript/runner/src/runner.ts
+  s_e1c5fc1a65c0cf::t_e374198b97b396 26,52,71,578
+cifn/typescript/runner/src/server.ts
+  s_e1c5fc1a65c0cf::t_f92f395c9fc1c6 1,3-5,7-12,14-17,20
+cifn/typescript/runner/tsconfig.remote.json
+  s_e1c5fc1a65c0cf::t_6a233f10063935 1-6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8a13600f9e2b066d8af50fad227a1a39e1638947",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

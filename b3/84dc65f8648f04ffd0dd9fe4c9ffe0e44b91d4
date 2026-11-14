@@ -1,0 +1,25 @@
+probefn/.conduct/video-stream-cleanup-readiness.md
+  s_e1c5fc1a65c0cf::t_1d148b9cfd8b29 69-93
+probefn/docs/artifacts.md
+  s_e1c5fc1a65c0cf::t_ca0e59f2315a27 157-163
+probefn/packages/browser-runner/src/browser-runner.ts
+  s_e1c5fc1a65c0cf::t_29bfbbbbbe2dd9 59,84,201,208-209,242,250,264-265
+probefn/packages/browser-runner/test/scratch-cleanup.test.ts
+  s_e1c5fc1a65c0cf::t_efac6b133a383e 86-104
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b384dc65f8648f04ffd0dd9fe4c9ffe0e44b91d4",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

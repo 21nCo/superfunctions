@@ -1,0 +1,23 @@
+compfn/.conduct/configured-producer-acceptance.mts
+  s_e1c5fc1a65c0cf::t_c5913f62972af5 1-127
+compfn/.conduct/configured-producer-readiness.md
+  s_e1c5fc1a65c0cf::t_4abda157685932 1-93
+compfn/.conduct/configured-producer-tsconfig.json
+  s_e1c5fc1a65c0cf::t_a9c348c12db4eb 1-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c4591b3335192e3301fb6bce3cefe9d98e1f6696",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+flowfn/python/README.md
+  s_e1c5fc1a65c0cf::t_76986cecd80363 211-212
+flowfn/python/flowfn/workflow/workflow.py
+  s_e1c5fc1a65c0cf::t_b8d1ea508d2a08 53,113,120-123,131-132,144-145,155-159,166-168,170-177,179-180,182-189
+flowfn/python/tests/test_workflow_renewal.py
+  s_e1c5fc1a65c0cf::t_662f91dac29f1c 1-97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9e4c7991b64d6e683bcd9e19739dd918fcd1a64c",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

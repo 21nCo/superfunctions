@@ -1,0 +1,53 @@
+watchfn/.conduct/remaining-public-api-gaps.md
+  s_e1c5fc1a65c0cf::t_8bd3be7651d8b7 3
+watchfn/.conduct/stored-funnels-readiness.md
+  s_e1c5fc1a65c0cf::t_ec4e27d5cb4541 1-15
+watchfn/.conduct/typescript-synthetic-lifecycle-reports.md
+  s_e1c5fc1a65c0cf::t_99f76758388d8b 1-47
+watchfn/scripts/packed-core-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_6f6ac9142f1928 24,50-56,67-77,84,88,90,98-110
+watchfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_1e59897256f128 472-494
+watchfn/typescript/src/business/schema.ts
+  s_e1c5fc1a65c0cf::t_fb80891fe4051c 1-10
+watchfn/typescript/src/business/stored-funnels.ts
+  s_e1c5fc1a65c0cf::t_66b3b33cfab8bb 1-136
+watchfn/typescript/src/core/watch-fn.ts
+  s_e1c5fc1a65c0cf::t_2d74e229a33902 1,26-27,48,105-107,121,265,365-377,380-383,386-388,426-431,433-437
+watchfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_a863450980a72c 130-134
+watchfn/typescript/src/synthetics/http-check.ts
+  s_e1c5fc1a65c0cf::t_ecbd52e199eb56 1-2,4-5,7-15,17-23,25-37,40-43
+watchfn/typescript/src/synthetics/reports.ts
+  s_e1c5fc1a65c0cf::t_fe8e738e3f8704 1-79
+watchfn/typescript/src/synthetics/scheduler.ts
+  s_e1c5fc1a65c0cf::t_2f07f36bf1f6c7 1-5,7-13,15-22,24-28,30-37,41-51
+watchfn/typescript/src/synthetics/types.ts
+  s_e1c5fc1a65c0cf::t_0630292129e4dc 1,3-6,12,14-15,17-18,20-21,25-27,31-32,34-62
+watchfn/typescript/tests/basic.test.ts
+  s_e1c5fc1a65c0cf::t_0432d91d0e950e 192,197,217
+watchfn/typescript/tests/stored-funnels-sqlite.test.ts
+  s_e1c5fc1a65c0cf::t_5382e288787ae1 1-25
+watchfn/typescript/tests/stored-funnels.test.ts
+  s_e1c5fc1a65c0cf::t_6fddbaeb4c4de0 1-96
+watchfn/typescript/tests/synthetics-lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_c88b8c4256b748 1-72
+watchfn/typescript/tests/synthetics-native.test.ts
+  s_e1c5fc1a65c0cf::t_93819d8883c416 1-78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4a9e21b1394f8a4b791a195ad86b42afd18b7fa2",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,39 @@
+docsfn/cli/src/migrate-docusaurus.ts
+  s_c1093e7194f7e3::t_98624a0f21269e 1124-1125,1127-1129,1131,1133-1139,1143-1157,1161,1163,1170-1211,1216
+docsfn/cli/tests/migration-route-safety.test.mjs
+  s_c1093e7194f7e3::t_6406eda1c885aa 261-293
+docsfn/core/src/markdown.test.ts
+  s_c1093e7194f7e3::t_be3dd0adeb5dc3 614-652
+docsfn/core/src/markdown.ts
+  s_c1093e7194f7e3::t_9f0b028d3f9b12 11,113,814-823,826-828
+docsfn/core/src/sanitize.ts
+  s_c1093e7194f7e3::t_1c6018e747b609 4,116
+docsfn/core/src/security.test.ts
+  s_c1093e7194f7e3::t_353e89dce26c74 329-337
+docsfn/core/src/url-safety.ts
+  s_c1093e7194f7e3::t_1dd3e43307560f 1-11
+docsfn/react/src/VersionSwitcher.test.tsx
+  s_c1093e7194f7e3::t_5962841520e652 14-32
+docsfn/react/src/VersionSwitcher.tsx
+  s_c1093e7194f7e3::t_dd9aaa95902e53 73-82,102
+docsfn/svelte/src/VersionSwitcher.svelte
+  s_c1093e7194f7e3::t_d9355b47cd3d68 67-76,100
+docsfn/svelte/src/VersionSwitcher.test.ts
+  s_c1093e7194f7e3::t_e912a7c0b9ba21 13-22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d86315421f5d5096b94abd754889dd084f191658",
+  "prompts": {},
+  "sessions": {
+    "s_c1093e7194f7e3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "203316bd-9c88-41f4-b037-58d76f8b6cd9",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

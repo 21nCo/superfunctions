@@ -1,0 +1,25 @@
+flowfn/.conduct/memory-retention-readiness.md
+  s_e1c5fc1a65c0cf::t_67fc2035db6b67 82-85
+flowfn/.conduct/stored-id-reuse-measurements-20261023.json
+  s_e1c5fc1a65c0cf::t_c2a76a3409962c 1-281
+flowfn/.conduct/stored-id-reuse-readiness.md
+  s_e1c5fc1a65c0cf::t_55e2186ba036b0 1-64
+flowfn/typescript/src/adapters/memory.ts
+  s_e1c5fc1a65c0cf::t_05f80d97681f27 79-82,84-85,87-88
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d2e42101f64aa199c9d9960f7b004938fefdd9b5",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

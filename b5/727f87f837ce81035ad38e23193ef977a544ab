@@ -1,0 +1,29 @@
+recfn/.conduct/producer-recovery-readiness.md
+  s_e1c5fc1a65c0cf::t_c7437aad3ce741 1-70
+recfn/README.md
+  s_e1c5fc1a65c0cf::t_4819527f404afd 143-152
+recfn/server/__tests__/deletion-sqlite.test.ts
+  s_e1c5fc1a65c0cf::t_f320bf025c1a6b 216-247
+recfn/server/__tests__/recording-storage.test.ts
+  s_e1c5fc1a65c0cf::t_1bc92f4c17aecc 283-317
+recfn/server/src/recording/storage.ts
+  s_e1c5fc1a65c0cf::t_fbc1a0dfdf0416 162-173
+recfn/server/src/store/deletion.ts
+  s_e1c5fc1a65c0cf::t_b04f7d684bcfe4 100-107
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b5727f87f837ce81035ad38e23193ef977a544ab",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

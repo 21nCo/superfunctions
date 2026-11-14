@@ -1,0 +1,37 @@
+probefn/.conduct/event-streaming-readiness.md
+  s_e1c5fc1a65c0cf::t_64054e0a72ce19 11
+probefn/.conduct/mcp-event-pagination-readiness.md
+  s_e1c5fc1a65c0cf::t_d19408d0f54f36 1-44
+probefn/README.md
+  s_e1c5fc1a65c0cf::t_c81709f5e903f7 77-106
+probefn/packages/mcp-server/src/server.ts
+  s_e1c5fc1a65c0cf::t_881372209d1989 2,278-289,889,891,894,896,899,901
+probefn/packages/mcp-server/src/tools/page.ts
+  s_e1c5fc1a65c0cf::t_9e8920fd4578de 41-42,120,125-126,131,136,141-142,147,152,157-158,163
+probefn/packages/mcp-server/test/mcp-server.test.ts
+  s_e1c5fc1a65c0cf::t_cc49464cede8dd 76-94,119-120,138-139
+probefn/packages/storage/src/event-page.ts
+  s_e1c5fc1a65c0cf::t_3f9a071552cbb7 1-47
+probefn/packages/storage/src/event-reader.ts
+  s_e1c5fc1a65c0cf::t_1decde4fc39025 3,11,14,16,57-58,64,67-68,71,91,93-111,113-114,126-131,140,154,162
+probefn/packages/storage/src/index.ts
+  s_e1c5fc1a65c0cf::t_f7aeaf4b112a66 8-9
+probefn/packages/storage/test/event-page.test.ts
+  s_e1c5fc1a65c0cf::t_ee729b1b76d308 1-79
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7c9d251edeff29118915509482d6b049f2714a7b",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,45 @@
+drawfn/.conduct/requirement-readiness.md
+  s_e1c5fc1a65c0cf::t_49dbba41bc902c 16-17,20,38,67-72
+drawfn/core/README.md
+  s_e1c5fc1a65c0cf::t_8db689c51d152c 73-74,171-176
+drawfn/core/__tests__/clear-history.test.ts
+  s_e1c5fc1a65c0cf::t_0d725b45a0bc9b 1-36
+drawfn/core/__tests__/text-editing.test.ts
+  s_e1c5fc1a65c0cf::t_5633b6d2800817 61,74,129-138
+drawfn/core/src/drawfn.ts
+  s_e1c5fc1a65c0cf::t_fd1f52c062cdb7 14,946,999-1001,1003-1006,1008-1009,1012,1016-1028
+drawfn/core/src/tools/text-tool.ts
+  s_e1c5fc1a65c0cf::t_a7457b24f4424a 169,176
+drawfn/drawfn-react/README.md
+  s_e1c5fc1a65c0cf::t_111d11b5ab9607 158-161
+drawfn/drawfn-react/src/__tests__/use-drawfn.test.tsx
+  s_e1c5fc1a65c0cf::t_88d3e0b2a1e6c0 123-133
+drawfn/drawfn-react/src/use-drawfn.ts
+  s_e1c5fc1a65c0cf::t_cdba8656098cb4 26,134-135,160
+drawfn/drawfn-svelte/README.md
+  s_e1c5fc1a65c0cf::t_d72f6f90bf48bc 390-393
+drawfn/drawfn-svelte/__tests__/drawfn-action.test.ts
+  s_e1c5fc1a65c0cf::t_091acaafb1657b 99-107
+drawfn/drawfn-svelte/src/DrawfnCanvas.svelte
+  s_e1c5fc1a65c0cf::t_5477fc70cadb3a 53-56
+drawfn/drawfn-svelte/src/stores.ts
+  s_e1c5fc1a65c0cf::t_e0ba1740eecb82 1,75-78,95
+drawfn/scripts/browser-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_1b4900b7babcbc 31,44,46-48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8c72dbdb82484e70e32cca82709366b1ad9ee074",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

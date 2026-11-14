@@ -1,0 +1,171 @@
+authfn/docs/content/docs/ai-resources/llms-txt.md
+  s_7d0a48f0aaecda::t_7da16b0f865e30 8,10-11,13,15,17,19-20,23,25-31,35,37,41,43,48,50,52
+authfn/docs/docsfn.config.ts
+  s_7d0a48f0aaecda::t_e30541923bdcc5 3-6,13,33
+authfn/docs/package.json
+  s_7d0a48f0aaecda::t_16219fff312dda 10-11,22-23,35-36,40-41,48-49
+authfn/docs/scripts/generate-llms.mjs
+  s_7d0a48f0aaecda::t_e3625c91287f19 11
+authfn/docs/src/lib/server/docs-site-source.ts
+  s_7d0a48f0aaecda::t_c432e6202c4559 4,7,22
+authfn/docs/src/routes/docs/[...slug]/+page.server.ts
+  s_7d0a48f0aaecda::t_43746b841fa4d9 2,6-8
+authfn/docs/src/routes/docs/llms-full.txt/+server.ts
+  s_7d0a48f0aaecda::t_d6eb5df6ee6b25 2,4
+authfn/docs/src/routes/docs/llms.txt/+server.ts
+  s_7d0a48f0aaecda::t_de8204c48febab 2,4
+authfn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_00e461695c4dcf 1463,1465-1466,1468,1470,1472,1474-1475,1478-1484,1486,1490,1492,1496,1498,1503,1505,1507,5391,5434,5439,5441,5444-5445,5481-5483,5491-5493,5515,5518-5534,5536-5542,5546-5585,5592,5600,5605-5606,5610-5611,6194,8786,8789-8795,8797-8806,8810-8812,8814-8815,8819,8821,8823
+authfn/docs/static/llms.txt
+  s_7d0a48f0aaecda::t_1b6ed7775ac65e 64
+filefn/docs/docsfn.config.ts
+  s_7d0a48f0aaecda::t_46ab483c9d6af0 3-6,13,33
+filefn/docs/package.json
+  s_7d0a48f0aaecda::t_224ed63e13a852 10-11,22-23,31-32,37-38
+filefn/docs/src/lib/server/docs-site-source.ts
+  s_7d0a48f0aaecda::t_d6e5fd3c3f3df6 4,7,22
+filefn/docs/src/routes/docs/[...slug]/+page.server.ts
+  s_7d0a48f0aaecda::t_00f18f91cc85b5 3,6-8
+filefn/docs/src/routes/docs/llms-full.txt/+server.ts
+  s_7d0a48f0aaecda::t_c2b177ad794b7c 2,4
+filefn/docs/src/routes/docs/llms.txt/+server.ts
+  s_7d0a48f0aaecda::t_4fd18f7fc564f1 2,4
+filefn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_0bd41f849092d3 87,125,142,147,150-151,154,156,159-161,164,166,168-170,180,185-186,190-193,195-197,200,202,204,206,208,213,218,221,224-225,228,233,238,241,243-244,248-251,253-254,257,259,261,266,271,274,276-279,283-285,287,289,292,294,296,306,311,313,316,319,325-326,330,336,339,344,346-348,352,358-361,363-364,368,373,375-380,384,389,391-395,399,401,403,406-414,416,419,467,469-471,500,506,508-509,511,553,559,561,565-566,574-575,624,673,745,765,794,800,818,820,822,869,871,874,877,879,882,884-888,891,893,895,897,899,901,903,908,910,913,916,918,920-921,923,925-931,934,936,938,941,944,946,948-949,951-955,957,960,962,964,967,970,972,974,976-980,983,988,990,993,996,998,1000-1001,1003,1005-1008,1011,1014,1016,1018,1021,1024,1026,1028-1031,1033,1035,1037,1039-1040,1043,1045-1048,1051,1053,1055,1057,1059-1062,1064,1069,1071,1074,1077,1079,1081,1083,1086,1088,1090,1093,1096-1098,1100-1108,1123,2410-2411,2413,2461-2463,2465-2469,2471-2473,2475-2476,4218-4219,4221,4239-4243,4582-4585,4591-4592,4595,4646-4649,4658,4663,4667,4669-4670,4672-4675,4677,4681,4683,4897-4900,4904,4915,4955,4973,4997-4998,5019-5020,5023-5024,5299,5320,5547,5555,5613-5668,5677-5678,5681,5696-5697,5702,5929,5942,6052,6063,6143,6153,6404,6409,6411,6413,6416-6418,6420-6424,6429,6431,6614-6616,6679,6681,6684-6685,6692-6696,6724,6727-6729,6731-6732,6735-6737,6741,6761,6796-6800,6807,6814,6853,6857,7115,7204,7213,7245-7247,7498,7535-7536,7567,7573,7587-7588,7591,8161-8165,8168,8624,8634,8636,8641-8642,8651-8668,8687-8712
+filefn/docs/static/llms.txt
+  s_7d0a48f0aaecda::t_968e55f3003e3a 9-14,16-17,21-29,68,85,93
+package-lock.json
+  s_7d0a48f0aaecda::t_7f93e062df3fc4 82,86,90-91,100,123,246,295,298-300,304,335,346,349,352-353,356-358,360-361,368-496,518-709,715,726,729,732-734,737-739,745-873,885-1027,1051-1132,1177-1185,1196-1210,1255-1263,1274-1288,1396-1410,1449-1491,1531-1573,1576,1635-1667,1687,1700-1701,1705,1707,1713-1714,1855-1871,1901-2242,4290-4332,4375-4525,4534,4544-4547,4550,4552-4555,4616-4645,4656-4670,4729-4732,4735,4737-4741,4744,4772-4774,4777,4779-4786,4791,4818,5846,5854,5878,5882,5886-5887,5891,5895-5899,5910,6394,6398,6901,6909-6910,6914,6919-6921,6925,6930-6932,6936,6949,6951,7435,7448,9348-9375,9683-9684,9688,9706-9720,10006-10365,10470,10474-10476,10507-10545,10597,10605,10607,10612-10613,10675-10731,10753-10812,10825-10912,11220,11231-11232,11234,11276-11292,11338,11623,11630,14366-14370,14372-14375,14378-14379,14382,14385-14389,14392,14395-14398,14409-14433,14436-14439,14442-14454,14457,14460,14463-14473,14477,14480-14484,14487-14498,14501-14508,14511-14514,14516,14518-14525,14528-14529,14532,14535,14538,14541,14546-14582,14764-14775,15660-15671,16628-16639,17090-17101,24473-24479,25575-25578,31492-31527,32692-32719,46894-46906,46959-46965,51508-51521,51534-51589,51984-51993,52338-52348,54653,54753-54785,54849,54868-54869,54877-54879,54917-54918,54926-54962,55273,55279,55285,55305,55345-55374,55387,55390,55416,55422-55433,55543-55554,55814,55916,55925,55935,55937,56052-56068,56786,56792-56793,59182,59188,59199,59207,59231,59233,59236,59245,59744,59978-60033,63779,64539
+scripts/docs-site/LandingPage.svelte
+  s_7d0a48f0aaecda::t_073a6b5a47d783 181,188,219-229
+scripts/docs-site/README.md
+  s_7d0a48f0aaecda::t_d86730fb9ad0a6 7,13,15,17
+scripts/docs-site/Search.svelte
+  s_7d0a48f0aaecda::t_0c96522203a19f 15
+scripts/docs-site/layout.ts
+  s_7d0a48f0aaecda::t_d218ff9a34a5f4 4-8
+scripts/docs-site/llms.mjs
+  s_7d0a48f0aaecda::t_429390c3a22113 1-2,12-18,20,52-87,105
+scripts/docs-site/llms.test.mjs
+  s_7d0a48f0aaecda::t_f5d69ea30d09c3 5,7,9-11,13-33
+scripts/docs-site/origin.test.mjs
+  s_7d0a48f0aaecda::t_8af04f702b7d92 8-9,11-53,55-74
+scripts/docs-site/page.test.ts
+  s_7d0a48f0aaecda::t_7bcfa5ca9830dd 2-3,5-93
+scripts/docs-site/page.ts
+  s_7d0a48f0aaecda::t_0451beb612dad2 25-26
+scripts/docs-site/runtime.test.ts
+  s_7d0a48f0aaecda::t_689e3bd5958d89 16,53-56,61-70,82-83,85,88-98
+scripts/docs-site/runtime.ts
+  s_7d0a48f0aaecda::t_af8c947370b2fc 23,185,194,365-375,404-413
+scripts/docs-site/vite.ts
+  s_7d0a48f0aaecda::t_1018e07d66fcd4 1,5-31,34-38,42-60
+scripts/docs-site/vitest.config.ts
+  s_7d0a48f0aaecda::t_b2ab5e377fbe0a 1,3,7,12-16,21-23,25,27-30
+searchfn/docs/content/docs/quickstart/hono.mdx
+  s_7d0a48f0aaecda::t_998d70dcbc4d6d 11,24,28,30,34,42-43,46,54,89-93,95,98
+searchfn/docs/content/docs/quickstart/nextjs.mdx
+  s_7d0a48f0aaecda::t_b7a6ed3d155d4f 20,22,26,31,37
+searchfn/docs/content/docs/quickstart/starlette.mdx
+  s_7d0a48f0aaecda::t_367e693c3da778 3,6-7,14,16,18,22-30,33-36,41,43,45,47
+searchfn/docs/content/docs/quickstart/sveltekit.mdx
+  s_7d0a48f0aaecda::t_604b8383768b97 16,19,24,26,30,34-35,37-38,41
+searchfn/docs/content/docs/reference/adapters/postgres.mdx
+  s_7d0a48f0aaecda::t_686cf8896bbd15 22
+searchfn/docs/content/docs/reference/changelog.mdx
+  s_7d0a48f0aaecda::t_3d24a6db6f71d5 41
+searchfn/docs/content/docs/reference/python.mdx
+  s_7d0a48f0aaecda::t_af09d3987d154d 2-3,6,9,11-13,18,20,22
+searchfn/docs/public/llms-full.txt
+  s_7d0a48f0aaecda::t_17a266c2db1401 1004,1219-1243,1295,1297,1599,1603,1605-1606,1611,3352,3355-3357,3360,3369,3404,3408-3410,3565-3573,3625,3629-3631,3638,3640-3642,3946,3948-3950,3954,3969,3973,3984,3987-3990,4152,4154-4156,4159,4170,4696,4699,4702,4706-4708,4711,4713,4721,4724,4726,4728-4730,4732,4740,4743,4746,4748-4749,4752,4754,4762,4765,4768,4770-4771,4774,4776,4784,4789,4793,4796-4797,4799,4801,4805,4808,4810,4812,4814,5368,5370,6095-6097,6103-6108,6110,6401,6403,6407,6415,6422,6460,6467,6471,6473,6477,6482-6483,6502,6516,6519-6520,6523,6527,6529,6532,6534-6544,6546,6549-6551,6554,6556,6558,6560,6574,6581,6585,6587,6591,6597,6627,6630-6631,6636-6637,6639,6642,6644-6655,6657-6659,6662,6664,6666,6668,6684,6697,6701,6703,6707,6715-6716,6719,6727,6762-6766,6768,6771,6802,6804,6808,6813,6819,6891,6894-6895,6902,6904,6906,6910-6918,6921-6924,6929,6931,6933,6935,6956,6959,6964,6966,6970,6974-6975,6977-6978,6981,9398,9573,10291,10294,10297,10300,10302-10304,10309,10311,10313
+searchfn/docs/public/llms.txt
+  s_7d0a48f0aaecda::t_afe38f06a2e662 30,60-64,92,94,97,133
+searchfn/swift/README.md
+  s_7d0a48f0aaecda::t_06f1b4b06d5ebc 115-124
+searchfn/swift/Sources/SearchFnCore/SearchFnResourceEngine.swift
+  s_7d0a48f0aaecda::t_a41f2e8b7fd95b 42,57-63,120,134,147,159-160,180-182,198,203,255,260,272
+searchfn/swift/Sources/SearchFnCore/SearchFnScoring.swift
+  s_7d0a48f0aaecda::t_61b665cdf174db 63-82,87,89,104
+searchfn/swift/Sources/SearchFnMemoryAdapter/SearchFnMemoryAdapter.swift
+  s_7d0a48f0aaecda::t_1bd1bb1a7d7353 124,128-132
+searchfn/swift/Sources/SearchFnSQLiteAdapter/SearchFnSQLiteAdapter.swift
+  s_7d0a48f0aaecda::t_97865e24d8c966 172,176-180
+searchfn/swift/Tests/SearchFnConformanceTests/SearchFnConformanceTests.swift
+  s_7d0a48f0aaecda::t_91ccd5791ad8cd 76,90-109
+searchfn/swift/Tests/SearchFnCoreTests/SearchFnCoreTests.swift
+  s_7d0a48f0aaecda::t_04239720462ad6 81-121
+searchfn/swift/Tests/SearchFnMemoryAdapterTests/SearchFnMemoryAdapterTests.swift
+  s_7d0a48f0aaecda::t_5d8599e0b840b8 78-82
+searchfn/swift/Tests/SearchFnSQLiteAdapterTests/SearchFnSQLiteAdapterTests.swift
+  s_7d0a48f0aaecda::t_3e7787bee8cafa 114-118
+secfn/core/package.json
+  s_7d0a48f0aaecda::t_21ffd9030a55e2 3,48,59
+secfn/runtime/README.md
+  s_7d0a48f0aaecda::t_d4070290238199 24-27
+secfn/runtime/package.json
+  s_7d0a48f0aaecda::t_3f22cbe0396670 33
+secfn/server/README.md
+  s_7d0a48f0aaecda::t_0ce2a260f8c499 5-11,14-20
+secfn/server/package.json
+  s_7d0a48f0aaecda::t_1f8ec2afa95ea4 40,42,45,48
+secfn/server/src/__tests__/installed-package.ts
+  s_7d0a48f0aaecda::t_c4439c1ac3b1e2 1-27
+secfn/server/src/__tests__/package-contracts.test.ts
+  s_7d0a48f0aaecda::t_82a44045dd709f 1-60
+secfn/server/src/__tests__/postgres-contracts.test.ts
+  s_7d0a48f0aaecda::t_2df5efaed7cad5 14-15
+sendfn/python/pyproject.toml
+  s_7d0a48f0aaecda::t_b5fcd70c9c04ec 31,47,54,67,71
+superconsole/package.json
+  s_7d0a48f0aaecda::t_8d6c64528621d4 28
+turbo.json
+  s_7d0a48f0aaecda::t_b1402adc2eb1ce 45-46
+uifn/catalogs/wrangler.jsonc
+  s_7d0a48f0aaecda::t_ab5958e1e803fd 20
+uifn/docs/generated/delivery.md
+  s_7d0a48f0aaecda::t_09fa462059024e 3-24
+uifn/docs/generated/docs-coverage.json
+  s_7d0a48f0aaecda::t_3d1383ec1cca99 11
+uifn/docs/generated/site/delivery.html
+  s_7d0a48f0aaecda::t_0002523503e618 1-6
+uifn/docs/generated/site/index.html
+  s_7d0a48f0aaecda::t_1a45413eda5bf4 1
+uifn/patterns/CHANGELOG.md
+  s_7d0a48f0aaecda::t_df0b4aaa467ab0 3-7
+uifn/patterns/README.md
+  s_7d0a48f0aaecda::t_b5bc0708e723e0 31-46
+uifn/patterns/package.json
+  s_7d0a48f0aaecda::t_7ec54c02cc365d 21,27
+uifn/patterns/src/patterns-story-runner.test.ts
+  s_7d0a48f0aaecda::t_2caa390246141c 3,42-43,63,67
+uifn/registry/README.md
+  s_7d0a48f0aaecda::t_52c34ac2da41fa 112-126
+uifn/sf/CHANGELOG.md
+  s_7d0a48f0aaecda::t_3493370d89bb4a 3-8
+uifn/sf/README.md
+  s_7d0a48f0aaecda::t_6ce0acc7ae47fe 28-42
+uifn/sf/package.json
+  s_7d0a48f0aaecda::t_cf96791249c6b7 21,27
+uifn/sf/src/sf-story-runner.test.ts
+  s_7d0a48f0aaecda::t_cc634fe9333059 3,50-51,54,58
+uifn/sf/tsconfig.json
+  s_7d0a48f0aaecda::t_09f5e5153495cb 9
+uifn/storybook/generated/story-inventory.json
+  s_7d0a48f0aaecda::t_db5b8b938aa160 15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "95c0d662ce9d0cbf11e5009647abf4ae03ea7aae",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,43 @@
+cachefn/typescript/scripts/browser-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_ad0c19d0ef08b1 110-135
+cachefn/typescript/__tests__/indexeddb-pattern-delete.test.ts
+  s_e1c5fc1a65c0cf::t_625e226182cfb9 12-56
+  s_e1c5fc1a65c0cf::t_0959e374491657 1-11,57-174,191-250
+  s_e1c5fc1a65c0cf::t_29858179b10a7c 175-190
+cachefn/typescript/src/storage/storage-interface.ts
+  s_e1c5fc1a65c0cf::t_b19d1de97f3c5d 43-45
+cachefn/typescript/src/storage/indexeddb-storage.ts
+  s_e1c5fc1a65c0cf::t_7bb214e709b98d 124-125,127-151,153-159,161
+  s_e1c5fc1a65c0cf::t_b19d1de97f3c5d 126,152,160,162-166
+cachefn/typescript/scripts/benchmark.mjs
+  s_e1c5fc1a65c0cf::t_fff9a775b2f54d 4-5,8,15-24,147,151
+  s_e1c5fc1a65c0cf::t_160ef5d5c65cb3 3,31,35-37,44,50,57-62,64,66-75,93,112-116,120,122,125,128-129,139-143,149-150,152,154
+  s_e1c5fc1a65c0cf::t_56b7a4fc7ebaa4 76-92
+  s_e1c5fc1a65c0cf::t_7434362d8a61f2 94-107
+cachefn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_33be1ce5647c28 616-620,624
+  s_e1c5fc1a65c0cf::t_9915c3378aee7e 613-615,621-623
+  s_e1c5fc1a65c0cf::t_f86b1619006c3e 558-578
+cachefn/.conduct/indexeddb-pattern-performance-20261023.json
+  s_e1c5fc1a65c0cf::t_21b7861fdc7898 1-3591
+cachefn/.conduct/indexeddb-pattern-performance-readiness.md
+  s_e1c5fc1a65c0cf::t_5d41fd6907a70b 1-143
+cachefn/typescript/src/core/cache.ts
+  s_e1c5fc1a65c0cf::t_369c6d37e1429d 475-489
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8f0635ff65ed47546923c2b95971ee822762d533",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

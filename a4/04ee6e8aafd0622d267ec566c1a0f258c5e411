@@ -1,0 +1,25 @@
+recfn/.conduct/aggregate-deletion-readiness.md
+  s_e1c5fc1a65c0cf::t_468b04500f473e 1-25
+recfn/README.md
+  s_e1c5fc1a65c0cf::t_468b04500f473e 76-88
+recfn/server/__tests__/db-sqlite.test.ts
+  s_e1c5fc1a65c0cf::t_770b985e7b5ef9 6,85-100
+recfn/server/src/store/db.ts
+  s_e1c5fc1a65c0cf::t_9d6f8efb489dd2 212-213,215-222,224-225,227,231-276
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a404ee6e8aafd0622d267ec566c1a0f258c5e411",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

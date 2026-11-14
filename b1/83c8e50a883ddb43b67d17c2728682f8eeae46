@@ -1,0 +1,23 @@
+memoryfn/docs/README.md
+  s_7d0a48f0aaecda::t_cd7a17221a37b1 25
+memoryfn/docs/scripts/generate-llms.mjs
+  s_7d0a48f0aaecda::t_f85b2df9a6c9a9 19-22
+memoryfn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_160a3dbacd8a6a 6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b183c8e50a883ddb43b67d17c2728682f8eeae46",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

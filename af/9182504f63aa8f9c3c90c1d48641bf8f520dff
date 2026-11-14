@@ -1,0 +1,29 @@
+cachefn/.conduct/memoize-sync-after.json
+  s_e1c5fc1a65c0cf::t_7f995d0d993078 1-335
+cachefn/.conduct/memoize-sync-before.json
+  s_e1c5fc1a65c0cf::t_8ee86de443e494 1-335
+cachefn/.conduct/memoize-sync-readiness.md
+  s_e1c5fc1a65c0cf::t_de3d8d006df286 1-97
+cachefn/typescript/__tests__/memoize-sync-expiry.test.ts
+  s_e1c5fc1a65c0cf::t_f7504ef20373a8 1-73
+cachefn/typescript/scripts/memoize-sync-benchmark.mjs
+  s_e1c5fc1a65c0cf::t_8dad20e428b598 1-65
+cachefn/typescript/src/memoization/memoize.ts
+  s_e1c5fc1a65c0cf::t_d88de6eb3153b0 110-111,117-119,125-127
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "af9182504f63aa8f9c3c90c1d48641bf8f520dff",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

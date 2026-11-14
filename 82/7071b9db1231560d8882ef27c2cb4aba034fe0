@@ -1,0 +1,51 @@
+recfn/.conduct/python-typing-readiness.md
+  s_e1c5fc1a65c0cf::t_2fc484f4a6ea93 1-97
+recfn/python/README.md
+  s_e1c5fc1a65c0cf::t_5484dbb3f9c25b 65-84
+recfn/python/recfn/resources/analytics.py
+  s_e1c5fc1a65c0cf::t_a24544b00c90c4 8-16,19-21
+recfn/python/recfn/resources/bots.py
+  s_e1c5fc1a65c0cf::t_dccdcb843f4ab0 8,11-33,35-39,41-68,70-71,73-74,77-79
+recfn/python/recfn/resources/calendars.py
+  s_e1c5fc1a65c0cf::t_9569ecdf0aed29 10-58,60
+recfn/python/recfn/resources/chat.py
+  s_e1c5fc1a65c0cf::t_18fc4bd143f420 8-27,30-32
+recfn/python/recfn/resources/metadata.py
+  s_e1c5fc1a65c0cf::t_8c2b516df48898 8-13,16-18
+recfn/python/recfn/resources/participants.py
+  s_e1c5fc1a65c0cf::t_f837e77ea2ca11 9-20,23-25
+recfn/python/recfn/resources/recordings.py
+  s_e1c5fc1a65c0cf::t_2ef73cf5fd29a9 11-13,15-22,24-28,30-45,47-102,106-108,111,115-116,121-133,136-138
+recfn/python/recfn/resources/transcripts.py
+  s_e1c5fc1a65c0cf::t_2017e8f474b54a 5,8,11-13,15-31,33-57,59-75,77-109,111-114,116-119
+recfn/python/recfn/resources/webhooks.py
+  s_e1c5fc1a65c0cf::t_47de12db79e0f7 10-36,38
+recfn/python/recfn/types.py
+  s_e1c5fc1a65c0cf::t_d7074199004a2c 5,55-56,58,139,208
+recfn/python/recfn/ws.py
+  s_e1c5fc1a65c0cf::t_ba3cb4623b2e50 7,9-10,13-37,42,45,99
+recfn/python/tests/test_client.py
+  s_e1c5fc1a65c0cf::t_0dedc8472bd8cf 5-6,8
+recfn/python/tests/test_typed_resources.py
+  s_e1c5fc1a65c0cf::t_d1a6622400c2da 1-55
+recfn/python/tests/test_ws.py
+  s_e1c5fc1a65c0cf::t_3026636e7bfa7d 4,7,121,143-164
+recfn/python/tests/typing_consumer.py
+  s_e1c5fc1a65c0cf::t_ec4189e4b4e4a2 1-42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "827071b9db1231560d8882ef27c2cb4aba034fe0",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

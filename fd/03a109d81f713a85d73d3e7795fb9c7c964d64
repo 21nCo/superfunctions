@@ -1,0 +1,23 @@
+_conduct/shared-sqlalchemy-reflection.md
+  s_e1c5fc1a65c0cf::t_2373952ccf1af2 1-14
+packages/python-sqlalchemy/superfunctions_sqlalchemy/adapter.py
+  s_e1c5fc1a65c0cf::t_2fe4066335d2c3 123,130-132,244,289,313,348,384,447,536-537,539,546-547,558-560,651-653
+packages/python-sqlalchemy/tests/test_adapter.py
+  s_e1c5fc1a65c0cf::t_cf6a9286ef60c9 261-262,373-374,396-397,481-533
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fd03a109d81f713a85d73d3e7795fb9c7c964d64",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

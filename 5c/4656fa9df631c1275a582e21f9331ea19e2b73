@@ -1,0 +1,27 @@
+devfn/docs/configuration.md
+  s_45f331433aaa7c::t_3e0515885eb16f 127
+devfn/proxy/src/tunnel/service.ts
+  s_45f331433aaa7c::t_f311625873df84 14,220-223,226,572
+devfn/proxy/src/tunnel/state.ts
+  s_45f331433aaa7c::t_8436e256fdf7d5 258-269,275-276,285-288,290-294
+devfn/proxy/test/tunnel-service.test.ts
+  s_45f331433aaa7c::t_fbceff389e0ca5 12-14,18,23-39,79-80,289-324,382-396
+devfn/proxy/test/tunnel-state.test.ts
+  s_45f331433aaa7c::t_4f59a1cde0b657 6,8-9,12-15,18-22,42-43,61-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5c4656fa9df631c1275a582e21f9331ea19e2b73",
+  "prompts": {},
+  "sessions": {
+    "s_45f331433aaa7c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_45f331433aaa7c",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

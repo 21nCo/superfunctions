@@ -1,0 +1,33 @@
+logfn/python/src/logfn/serialization.py
+  s_d4e016594d2e1d::t_8ffe0e556eb11b 18-22,56,59,61-63
+logfn/typescript/src/validation.ts
+  s_d4e016594d2e1d::t_f37be36025f690 32-34,47-68
+logfn/python/README.md
+  s_d4e016594d2e1d::t_fb78c3cdde74da 106,153-154,159-163
+logfn/python/src/logfn/default_redaction.py
+  s_d4e016594d2e1d::t_f2d93e773d2af8 4,28-42,44-104,183-198,210,217-218,252-253,266,272,274,283-286,293,297
+logfn/python/tests/test_default_redaction.py
+  s_d4e016594d2e1d::t_0c1beba55f958e 2,6-7,12-19,316-319,325-424
+logfn/typescript/README.md
+  s_d4e016594d2e1d::t_b0c345f4e4cbd7 447-449,609-610,615-620
+logfn/typescript/src/core/default-redaction.test.ts
+  s_d4e016594d2e1d::t_8650aa7963ac5d 2,10-12,182-233,240-243,345-369
+logfn/typescript/src/pipeline/default-redaction.ts
+  s_d4e016594d2e1d::t_298e86620aa809 21-91,145-154,157-160,172,177-178,209-210,213,217,219,223-227,234,237,266-271
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4e716531c9636eb4fdd28d2553d4227a8c34ba1c",
+  "prompts": {},
+  "sessions": {
+    "s_d4e016594d2e1d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "53e3db07-f213-4871-bb85-d8d4c7c513ce",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

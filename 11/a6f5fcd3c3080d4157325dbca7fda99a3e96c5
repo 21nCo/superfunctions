@@ -1,0 +1,113 @@
+catchfn/.conduct/readiness.md
+  s_e1c5fc1a65c0cf::t_d06208a070d622 1-38
+catchfn/admin/package.json
+  s_e1c5fc1a65c0cf::t_0acf1cf6e60b87 36
+catchfn/admin/src/index.ts
+  s_e1c5fc1a65c0cf::t_88f38eb6262757 113-114,117
+catchfn/server/python/.gitignore
+  s_e1c5fc1a65c0cf::t_e1ee467cecc50c 1-6
+catchfn/server/python/README.md
+  s_e1c5fc1a65c0cf::t_24616332f85853 17,19,22,36-41
+catchfn/server/python/pyproject.toml
+  s_e1c5fc1a65c0cf::t_6d4eb8185d6530 2,8,10-17
+catchfn/server/python/src/catchfn/__init__.py
+  s_e1c5fc1a65c0cf::t_8f4ae83fee49ab 2-3,6-14
+catchfn/server/python/src/catchfn/router.py
+  s_e1c5fc1a65c0cf::t_e503c8b8d4f71f 1-20,23-60,62-67,70-75,78-97,99-100,102-105
+catchfn/server/python/src/catchfn/schema.py
+  s_e1c5fc1a65c0cf::t_e0a3d006945356 1-37
+catchfn/server/python/src/catchfn/service.py
+  s_e1c5fc1a65c0cf::t_7e5b4410817828 1-26,29-93,95-104,106-123,126-178,180,183-187,190-220,223,226-256
+catchfn/server/python/src/catchfn/types.py
+  s_e1c5fc1a65c0cf::t_7baccb7a33bc48 2-5,13,21,25-29,33,36,40-42,44-46,49-57,63-69,72-82,85-102,104,107-110,113,116-117,120,123,126-127,129
+catchfn/server/python/tests/test_contract.py
+  s_e1c5fc1a65c0cf::t_97643c51aab64b 1-94
+catchfn/server/python/tests/test_validation.py
+  s_e1c5fc1a65c0cf::t_7ba5b19ee719f4 1-38
+catchfn/server/typescript/README.md
+  s_7d0a48f0aaecda::t_ab650f5ed0910b 3-6,9,11-15,17-18,21-31
+catchfn/server/typescript/package.json
+  s_7d0a48f0aaecda::t_8cc648c9cf1fb2 19,43-44
+catchfn/server/typescript/src/__tests__/service.test.ts
+  s_e1c5fc1a65c0cf::t_22c224904acc7a 1-53
+catchfn/server/typescript/src/index.ts
+  s_7d0a48f0aaecda::t_e0d3fcecac9f31 1-2,4-5,8,13,20-21
+catchfn/server/typescript/src/router.ts
+  s_e1c5fc1a65c0cf::t_25713340adb60e 1-3,5-12,14-20,22-44
+catchfn/server/typescript/src/schema.ts
+  s_e1c5fc1a65c0cf::t_a7715c77b99363 1-23
+catchfn/server/typescript/src/service.ts
+  s_e1c5fc1a65c0cf::t_db9cb1abe39901 1-4,6-16,20-28,30-32,35-45,47-76,79-80,82-101
+catchfn/server/typescript/tsconfig.json
+  s_7d0a48f0aaecda::t_4bd2c170418743 4-8,18-20,22-29
+catchfn/typescript/README.md
+  s_7d0a48f0aaecda::t_08f4d536d5ba2c 260,263,265-266,269-270,272-274,277-299
+catchfn/typescript/__tests__/delivery.test.ts
+  s_e1c5fc1a65c0cf::t_81ac57b75c46a1 1-30
+catchfn/typescript/__tests__/privacy.test.ts
+  s_e1c5fc1a65c0cf::t_73f163dbe10228 1-59
+catchfn/typescript/package.json
+  s_e1c5fc1a65c0cf::t_67b64b744b8ada 14-18,28,63-81
+catchfn/typescript/scripts/browser-acceptance.mjs
+  s_7d0a48f0aaecda::t_29f79995d3f0dd 1-54
+catchfn/typescript/src/collectors/console.ts
+  s_e1c5fc1a65c0cf::t_4f5453ebff9adf 2-19,21-23,25-27,29,31-37,39-43,45-51,53-56
+catchfn/typescript/src/collectors/network.ts
+  s_e1c5fc1a65c0cf::t_f18c194e2f4696 1-20,22-27,29-42,44-46,48-73,75,77-83,85-89,91-95,97-108,110-113
+catchfn/typescript/src/core/catch-fn.ts
+  s_e1c5fc1a65c0cf::t_4a0deb698bcde5 5,21,43-48,51-55,70,83,95-114,149,165,175-176,183,198,202,222,226,231,234-258,260-272,287-327,329-333
+catchfn/typescript/src/core/types.ts
+  s_e1c5fc1a65c0cf::t_83f8e711caa627 84-86,93-94,99,138-139,142,169-189,281-299
+catchfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_34609da3509031 22-23
+catchfn/typescript/src/react.ts
+  s_e1c5fc1a65c0cf::t_d527037fe31448 1-14
+catchfn/typescript/src/reporter/widget.ts
+  s_e1c5fc1a65c0cf::t_f14cec1ad1bf24 1-143
+catchfn/typescript/src/utils/redaction.ts
+  s_e1c5fc1a65c0cf::t_1162c5b448db71 1-2,32-39,41,43,79-85
+catchfn/typescript/src/utils/serialization.ts
+  s_e1c5fc1a65c0cf::t_bc01df4439a78e 1-17,19-23,26,31-38,41-44,47-49
+catchfn/typescript/src/utils/size-limiter.ts
+  s_e1c5fc1a65c0cf::t_6c99f9967d0443 1,3,5-12
+catchfn/typescript/tsconfig.json
+  s_e1c5fc1a65c0cf::t_09ba8bdac52cde 5-9,28-35
+catchfn/typescript/tsup.config.ts
+  s_e1c5fc1a65c0cf::t_2cd6ba98b838cb 4
+package-lock.json
+  s_c1093e7194f7e3::t_3f9e44e04b0a8e 68-69,5632,5640-5642,5645-5648,5650-5653,5656-5660,5663-5672,5674-5692,5695-5699,5702-5724,5727-5736,5739-5743,5746-5750,5752-5753,5756-5760,5762-5769,5771-5772,5775,5778,5783-5905,5908-5918,5921-5930,5932-5938,5941-5958,5960-5964,5967-5990,5994-6080,9968-10151,30959-30967,32587-32595,33713-33716,36708-36720,42754-42759,47136-47144,49311-49319
+package.json
+  s_e1c5fc1a65c0cf::t_1ec22085431d73 63-64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "11a6f5fcd3c3080d4157325dbca7fda99a3e96c5",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_c1093e7194f7e3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "203316bd-9c88-41f4-b037-58d76f8b6cd9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

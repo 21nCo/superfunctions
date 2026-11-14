@@ -1,0 +1,49 @@
+browsefn/.conduct/browser-isolation-readiness.md
+  s_e1c5fc1a65c0cf::t_608951be6d18f7 1-121
+browsefn/.conduct/destination-policy-readiness.md
+  s_e1c5fc1a65c0cf::t_134e1d40e7f7de 8-12
+browsefn/README.md
+  s_e1c5fc1a65c0cf::t_0c0f768a76fc2e 258-266,275-367
+browsefn/docker/browser-worker.Dockerfile
+  s_e1c5fc1a65c0cf::t_8d0bc59829f1b9 1-5
+browsefn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_9aa1957a4bfbd8 112-113
+browsefn/typescript/src/web/isolation/docker-browser.ts
+  s_e1c5fc1a65c0cf::t_c7cb2a68cbe936 1-95
+browsefn/typescript/src/web/isolation/egress-proxy.ts
+  s_e1c5fc1a65c0cf::t_5ffb5ec215db97 1-162
+browsefn/typescript/src/web/isolation/lifecycle.ts
+  s_e1c5fc1a65c0cf::t_07df15aacde90b 1-42
+browsefn/typescript/src/web/isolation/worker.ts
+  s_e1c5fc1a65c0cf::t_90b6250598e343 1-57
+browsefn/typescript/src/web/providers/playwright.ts
+  s_e1c5fc1a65c0cf::t_1fe191683bc454 1-4,49,65,84-128,130-131,133-134
+browsefn/typescript/src/web/providers/puppeteer.ts
+  s_e1c5fc1a65c0cf::t_48b9f9b7aad54b 1-4,44,63,81-129,131-132,134-135
+browsefn/typescript/src/web/scraper.ts
+  s_e1c5fc1a65c0cf::t_dd5692e84f70c0 1-2,183,246,481-489
+browsefn/typescript/tests/browser-egress-proxy.test.ts
+  s_e1c5fc1a65c0cf::t_8d3dbd70c5a73e 1-113
+browsefn/typescript/tests/browser-isolation-broker.test.ts
+  s_e1c5fc1a65c0cf::t_8093518e2e7386 1-29
+browsefn/typescript/tests/browser-isolation-lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_e2fb4afe203c34 1-33
+browsefn/typescript/tests/browser-isolation.acceptance.test.ts
+  s_e1c5fc1a65c0cf::t_1ec4662d668963 1-168
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "70b13e594472a6df02e55cdfc9bfc66a57d78aa2",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
