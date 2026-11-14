@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { chmod, lstat, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { devNull } from "node:os";
 import path from "node:path";
@@ -71,6 +71,27 @@ async function git(args: string[], options: { cwd: string; signal?: AbortSignal;
     if ((error as { code?: unknown }).code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") throw new GitOutputLimitError(`git ${args.find(arg => !arg.startsWith("-")) ?? ""} printed more than the run's ${maxBuffer}-byte limit for Git output.`);
     throw error;
   }
+}
+
+/**
+ * Run a Git command whose output is a list of NUL-terminated entries, passing each entry to `onEntry` as it arrives, so
+ * no output limit applies however large the list is. Rejects when Git fails or `signal` aborts.
+ */
+function gitEntries(args: string[], options: { cwd: string; signal?: AbortSignal; env?: NodeJS.ProcessEnv }, onEntry: (entry: string) => void): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("git", [...TRUSTED_CONFIG, ...args], { cwd: options.cwd, env: { ...isolatedGitEnvironment(), ...options.env }, signal: options.signal, stdio: ["ignore", "pipe", "pipe"] });
+    let pending: Buffer = Buffer.alloc(0);
+    let stderr = "";
+    child.stdout.on("data", (chunk: Buffer) => {
+      const data = pending.length ? Buffer.concat([pending, chunk]) : chunk;
+      let start = 0;
+      for (let end = data.indexOf(0, start); end !== -1; end = data.indexOf(0, start)) { onEntry(data.toString("utf8", start, end)); start = end + 1; }
+      pending = data.subarray(start);
+    });
+    child.stderr.on("data", (chunk: Buffer) => { if (stderr.length < 4096) stderr += chunk.toString("utf8"); });
+    child.on("error", reject);
+    child.on("close", code => code === 0 ? resolve() : reject(new Error(`git ${args.find(arg => !arg.startsWith("-")) ?? ""} exited with ${String(code)}: ${stderr.trim()}`)));
+  });
 }
 
 /** Make every directory under `root` writable and searchable so a slot cannot block its own cleanup with permissions. */
@@ -166,15 +187,14 @@ class GitSlotWorkspace implements SlotWorkspace {
       }
       // Git trees cannot record empty directories, and Git skips nested .git entries, submodule contents and special
       // files (FIFOs, sockets, devices), so check those separately.
-      const entries = (await git([`--git-dir=${this.verifyGitDir}`, "ls-tree", "-r", "-t", "-z", this.expectedTree], options)).split("\0").filter(Boolean);
+      // The listing is streamed: only directories and submodules are kept, so a clean checkout of any size verifies.
       const expected = new Set<string>();
       const gitlinks = new Set<string>();
-      for (const entry of entries) {
-        const tab = entry.indexOf("\t");
-        const name = entry.slice(tab + 1);
+      await gitEntries([`--git-dir=${this.verifyGitDir}`, "ls-tree", "-r", "-t", "-z", this.expectedTree], options, entry => {
+        const name = entry.slice(entry.indexOf("\t") + 1);
         if (entry.startsWith("040000 ")) expected.add(name);
         else if (entry.startsWith("160000 ")) { expected.add(name); gitlinks.add(name); }
-      }
+      });
       const found = await walk(this.path, gitlinks, signal);
       if (found.nestedGitEntries.length) return { unchanged: false, reason: `The checkout has .git entries other than its own that Git does not compare: ${listed(found.nestedGitEntries)}.` };
       if (found.specialEntries.length) return { unchanged: false, reason: `The checkout has entries that are not files, directories or symlinks, which Git does not compare: ${listed(found.specialEntries)}.` };

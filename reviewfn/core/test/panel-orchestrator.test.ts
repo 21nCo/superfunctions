@@ -322,11 +322,15 @@ describe("slot workspaces", () => {
     } finally { await workspace.remove(); }
   });
 
-  it("reports Git output past the run's limit as an incomplete comparison, never as a change", async () => {
-    // The head tree listing is larger than 100 bytes; the tree hash (41 bytes) is not.
+  it("verifies an untouched checkout as unchanged when its head-tree listing is larger than the Git output limit", async () => {
+    // The head-tree listing is larger than 100 bytes; the tree hash (41 bytes) is not.
+    expect(Buffer.byteLength(git(repo, "ls-tree", "-r", "-t", "-z", `${head}^{tree}`))).toBeGreaterThan(100);
     const workspace = await new GitSlotWorkspaceProvider({ objectStore: repo, headCommit: head, parent, maxGitOutputBytes: 100 }).create("theta");
     try {
-      await expect(workspace.verify()).resolves.toEqual({ unchanged: false, incomplete: true, reason: expect.stringMatching(/did not finish: git ls-tree printed more than the run's 100-byte limit/) });
+      await expect(workspace.verify()).resolves.toEqual({ unchanged: true });
+      await mkdir(path.join(workspace.path, "src", "extra"));
+      await expect(workspace.verify()).resolves.toMatchObject({ unchanged: false, reason: expect.stringMatching(/directories that head .* does not: src\/extra/) });
+      await rm(path.join(workspace.path, "src", "extra"), { recursive: true });
       await writeFile(path.join(workspace.path, "src", "value.ts"), "changed\n");
       const changed = await workspace.verify();
       expect(changed).toMatchObject({ unchanged: false, reason: expect.stringMatching(/differs from head/) });

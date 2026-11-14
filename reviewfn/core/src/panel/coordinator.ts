@@ -328,17 +328,21 @@ export class PanelCoordinator {
     if (request.signal?.aborted) runController.abort();
     try {
       let records: SlotRecord[];
+      let owned: RunContext | undefined;
       const parent = await mkdtemp(path.join(this.dependencies.workspaceRoot ?? tmpdir(), "reviewfn-panel-"));
-      const provider = (this.dependencies.workspaces ?? (options => new GitSlotWorkspaceProvider(options)))({ objectStore: request.root, headCommit: prepared.change.headCommit, referenceCommits: [prepared.change.mergeBaseCommit, prepared.change.baseCommit, ...(request.since === undefined ? [] : [request.since])], parent });
-      const context: RunContext = { request, prepared, runId, secrets, resolved, provider, runSignal: runController.signal, cleanupErrors: [], pendingCleanups: new Map(), lastDeadline: Date.now(), graceMs: this.stageTimings(request.policy.limits.harnessTimeoutMs).graceMs };
       try {
+        // The checkout directory is owned from here: a provider that fails to initialize still leaves nothing behind.
+        const provider = (this.dependencies.workspaces ?? (options => new GitSlotWorkspaceProvider(options)))({ objectStore: request.root, headCommit: prepared.change.headCommit, referenceCommits: [prepared.change.mergeBaseCommit, prepared.change.baseCommit, ...(request.since === undefined ? [] : [request.since])], parent });
+        const context: RunContext = owned = { request, prepared, runId, secrets, resolved, provider, runSignal: runController.signal, cleanupErrors: [], pendingCleanups: new Map(), lastDeadline: Date.now(), graceMs: this.stageTimings(request.policy.limits.harnessTimeoutMs).graceMs };
         const stageOne = await this.runStage(1, context, undefined);
         // Stage 2 always runs, whatever stage 1 found, and is told what stage 1 reported.
         const stageTwo = await this.runStage(2, context, await this.priorFindings(stageOne, context, policyDigest));
         records = [...stageOne, ...stageTwo];
       } finally {
-        await this.releaseCheckouts(context, parent);
+        if (owned) await this.releaseCheckouts(owned, parent);
+        else await removeTree(parent).catch(() => undefined);
       }
+      const context = owned;
       const conclude = (canceled: boolean, supersedes: string[]) => this.conclude({ context, stageRecords: records, diagnostics, policyDigest, canceled, supersedes });
       // A cancellation observed before the report is stored restarts the conclusion in canceled mode, so nothing built
       // after it records a completed result, and the canceled-mode report names every artifact the first pass stored.

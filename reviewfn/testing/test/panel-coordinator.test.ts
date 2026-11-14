@@ -795,6 +795,14 @@ describe("PanelCoordinator checkout lifecycle", { timeout: 20_000 }, () => {
     await expectValid(result, setup, panelPolicy);
   });
 
+  it("removes the run's checkout directory when the workspace provider cannot be initialized", async () => {
+    const harness = new FakePanelHarness({ behaviors: { a: clean } });
+    const setup = coordinator(harness, { workspaces: () => { throw new Error("provider unavailable"); } });
+    await expect(setup.coordinator.run(request(panel([slot("a", 1)])))).rejects.toThrow("provider unavailable");
+    expect(harness.calls).toEqual([]);
+    expect(await readdir(workspaceRoot)).toEqual([]);
+  });
+
   it("fails, without voiding, a slot whose comparison stopped at a limit of the run", async () => {
     const harness = new FakePanelHarness({ behaviors: { big: clean } });
     const panelPolicy = panel([slot("big", 1)]);
