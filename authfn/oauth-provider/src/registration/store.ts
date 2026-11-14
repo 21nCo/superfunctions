@@ -9,6 +9,7 @@ interface RegistrationStore {
 
 const MODELS = {
   clients: 'oauth_provider_clients',
+  documents: 'oauth_provider_document_clients',
   events: 'oauth_provider_registration_events'
 } as const;
 
@@ -26,6 +27,17 @@ export function createRegistrationSchema(): AuthFnSchemaDefinition['schemas'] {
         name: { type: 'string', required: false, fieldName: 'name', maxLength: 255 },
         redirectUris: { type: 'json', required: true, fieldName: 'redirect_uris' },
         createdAt
+      }
+    },
+    {
+      // The last usable metadata document of each client_id URL, kept so a
+      // known client keeps working when a refetch is refused or fails.
+      modelName: MODELS.documents,
+      fields: {
+        id,
+        name: { type: 'string', required: false, fieldName: 'name', maxLength: 255 },
+        redirectUris: { type: 'json', required: true, fieldName: 'redirect_uris' },
+        fetchedAt: { type: 'date', required: true, fieldName: 'fetched_at' }
       }
     },
     {
@@ -83,10 +95,53 @@ export function findRegisteredClient(store: RegistrationStore, clientId: string)
   });
 }
 
+/** The last usable metadata document of a `client_id` URL (the record id). */
+export interface DocumentClientRecord {
+  id: string;
+  name?: string | null;
+  redirectUris: string[];
+  fetchedAt: Date;
+}
+
+export function findDocumentClient(store: RegistrationStore, clientId: string): Promise<DocumentClientRecord | null> {
+  return store.database.findOne<DocumentClientRecord>({
+    model: MODELS.documents,
+    where: [eq('id', clientId)],
+    namespace: namespace(store)
+  });
+}
+
+/** Stores `record` as the client's last usable document, replacing any earlier one. */
+export async function saveDocumentClient(store: RegistrationStore, record: DocumentClientRecord): Promise<void> {
+  const scope = { model: MODELS.documents, namespace: namespace(store) };
+  const { id, ...data } = record;
+  const update = () => store.database.updateMany({ ...scope, where: [eq('id', id)], data });
+  if (await update() > 0) {
+    return;
+  }
+  try {
+    await store.database.create({ ...scope, data: { ...record } });
+  } catch (error) {
+    // Another request stored it first: overwrite with this fetch.
+    if (await update() === 0) {
+      throw error;
+    }
+  }
+}
+
+export async function deleteDocumentClient(store: RegistrationStore, clientId: string): Promise<void> {
+  await store.database.deleteMany({ model: MODELS.documents, where: [eq('id', clientId)], namespace: namespace(store) });
+}
+
 export type RegistrationEventKind = 'register' | 'document';
 
 /** No resolvable client IP: such events count only toward the global limit. */
 const NO_IP = 'none';
+
+/** Window ids are zero-padded so that string order is window order in every adapter. */
+function windowIdOf(windowIndex: number): string {
+  return String(windowIndex).padStart(16, '0');
+}
 
 export interface RegistrationLimits {
   perIp: number;
@@ -109,7 +164,7 @@ export async function admitRegistrationEvent(
   const { kind, ip, now, limits } = input;
   const windowMs = limits.windowSeconds * 1000;
   const windowIndex = Math.floor(now.getTime() / windowMs);
-  const windowId = String(windowIndex);
+  const windowId = windowIdOf(windowIndex);
   const ipKey = ip === undefined ? NO_IP : hashSecret(ip);
   const id = createIdentifier('orv');
   const scope = { namespace: namespace(store) };
@@ -125,10 +180,12 @@ export async function admitRegistrationEvent(
     await store.database.deleteMany({ model: MODELS.events, where: [eq('id', id)], ...scope });
     return { admitted: false, retryAfterSeconds: Math.max(1, Math.ceil(((windowIndex + 1) * windowMs - now.getTime()) / 1000)) };
   }
-  // Keep the previous window too: a caller whose clock is still in it may be counting it.
+  // Prune only windows before the previous one: a caller whose clock lags may
+  // still be counting the previous window, and one whose clock leads (or a
+  // request delayed across the rollover) a later one, which must stay intact.
   await store.database.deleteMany({
     model: MODELS.events,
-    where: [eq('kind', kind), ...[windowId, String(windowIndex - 1)].map((value) => ({ field: 'windowId', operator: 'ne' as const, value }))],
+    where: [eq('kind', kind), { field: 'windowId', operator: 'lt', value: windowIdOf(windowIndex - 1) }],
     ...scope
   });
   return { admitted: true };

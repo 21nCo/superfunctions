@@ -71,13 +71,23 @@ export function declaresMoreThan(headers: Headers, maxBytes: number): boolean {
 }
 
 /**
- * Fetches and parses the metadata document at `url`; undefined when it cannot
- * be used: no 200 answer (redirects are not followed), more than 64 KB (declared or streamed),
- * invalid UTF-8 or JSON, or not finished within 5 seconds. The deadline covers
- * the body as well as the headers and holds even if `fetchImpl` ignores the
- * abort signal; the request and body are cancelled when it passes.
+ * The outcome of a metadata document fetch: the parsed document; `invalid`
+ * when the host answered with something that is not a document (a redirect,
+ * a status other than 200, more than 64 KB, declared or streamed, or not
+ * JSON); or `unavailable` when it gave no usable answer (a network error, no
+ * complete answer within 5 seconds, a 5xx, 408 or 429).
  */
-export async function fetchMetadataDocument(fetchImpl: typeof fetch, url: string): Promise<unknown> {
+export type MetadataDocumentFetch = { status: 'ok'; document: unknown } | { status: 'invalid' | 'unavailable' };
+
+const TRANSIENT_STATUSES = new Set([408, 429]);
+
+/**
+ * Fetches and parses the metadata document at `url` without following
+ * redirects. The 5-second deadline covers the body as well as the headers and
+ * holds even if `fetchImpl` ignores the abort signal; the request and body are
+ * cancelled when it passes.
+ */
+export async function fetchMetadataDocument(fetchImpl: typeof fetch, url: string): Promise<MetadataDocumentFetch> {
   const controller = new AbortController();
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -88,7 +98,7 @@ export async function fetchMetadataDocument(fetchImpl: typeof fetch, url: string
       reject(new Error('Client metadata document timed out'));
     }, METADATA_DOCUMENT_TIMEOUT_MS);
   });
-  const work = (async () => {
+  const work = (async (): Promise<MetadataDocumentFetch | string> => {
     const response = await fetchImpl(url, {
       method: 'GET',
       headers: { accept: 'application/json' },
@@ -99,20 +109,30 @@ export async function fetchMetadataDocument(fetchImpl: typeof fetch, url: string
     if (controller.signal.aborted || response.status !== 200 || response.redirected || !response.body ||
       declaresMoreThan(response.headers, METADATA_DOCUMENT_MAX_BYTES)) {
       await response.body?.cancel().catch(() => undefined);
-      return undefined;
+      const transient = controller.signal.aborted || response.status >= 500 || TRANSIENT_STATUSES.has(response.status);
+      return { status: transient ? 'unavailable' : 'invalid' };
     }
     reader = response.body.getReader();
     const text = await readCappedText(reader, METADATA_DOCUMENT_MAX_BYTES);
-    return text === null ? undefined : JSON.parse(text) as unknown;
+    return text === null ? { status: 'invalid' } : text;
   })();
+  let outcome: MetadataDocumentFetch | string;
   try {
-    return await Promise.race([work, deadline]);
+    outcome = await Promise.race([work, deadline]);
   } catch {
-    return undefined;
+    return { status: 'unavailable' };
   } finally {
     clearTimeout(timer);
     // Settle the abandoned branch quietly and release the connection.
     work.catch(() => undefined);
     controller.abort();
+  }
+  if (typeof outcome !== 'string') {
+    return outcome;
+  }
+  try {
+    return { status: 'ok', document: JSON.parse(outcome) as unknown };
+  } catch {
+    return { status: 'invalid' };
   }
 }
