@@ -88,13 +88,8 @@ export function createInsertControl(database: Adapter) {
       throw new Error(`injected ${operation} failure`);
     }
   };
-  const findManyModels: string[] = [];
   const wrapped: Adapter = {
     ...database,
-    findMany: async (params) => {
-      findManyModels.push(params.model);
-      return database.findMany(params);
-    },
     findOne: async (params) => {
       injectFailure('findOne', params);
       return database.findOne(params);
@@ -118,8 +113,6 @@ export function createInsertControl(database: Adapter) {
   };
   return {
     database: wrapped,
-    /** The model of every `findMany` the server ran, in order. */
-    findManyModels,
     arm: (model: string) => new Promise<void>((reached) => {
       paused = { model, reached, released: new Promise<void>((resolve) => { release = resolve; }) };
     }),

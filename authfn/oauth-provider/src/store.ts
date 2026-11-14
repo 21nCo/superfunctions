@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import {
   AUTHFN_LEGACY_USER_REFERENCE_MAX_LENGTH,
   type AuthFnRuntimeConfig,
@@ -122,8 +122,8 @@ export function createOAuthProviderSchema(): AuthFnSchemaDefinition['schemas'] {
     },
     {
       modelName: MODELS.disconnects,
-      // One row per triple, keyed by `disconnectRowId`; each disconnect
-      // writes a fresh `generation`.
+      // Found by triple: one row, or a few after concurrent first disconnects
+      // (see readGeneration); each disconnect writes a fresh `generation`.
       fields: {
         id,
         userId,
@@ -263,6 +263,17 @@ export function findGrant(store: OAuthStore, grantId: string): Promise<OAuthGran
 }
 
 /**
+ * The grant, while it is unrevoked and its user still exists and is not
+ * disabled (the same owner rule API keys follow); null otherwise. This is the
+ * one grant rule: token issuance checks it before staging and again after its
+ * claim commits, and `activeTokenState` checks it at every use.
+ */
+export async function findLiveGrant(store: OAuthStore, grantId: string): Promise<OAuthGrantRecord | null> {
+  const grant = await findGrant(store, grantId);
+  return grant && !grant.revokedAt && (await isActiveUser(store, grant.userId)) ? grant : null;
+}
+
+/**
  * Revokes a grant. Every code, access token and refresh token issued under it
  * stops working at once, because each validity check reads the grant.
  */
@@ -354,9 +365,8 @@ export async function revokeToken(store: OAuthStore, tokenId: string, now: Date)
 /**
  * The one validity rule for issued tokens: the token is of the expected
  * kind, unexpired and unrevoked, the claim that issued it committed (its code
- * or parent refresh token stores `issuingClaimId`), its grant is unrevoked,
- * and the user it acts for still exists and is not disabled (the same owner
- * rule API keys follow).
+ * or parent refresh token stores `issuingClaimId`), and its grant is live
+ * (`findLiveGrant`).
  */
 export async function loadActiveToken(
   store: OAuthStore,
@@ -383,11 +393,8 @@ export async function activeTokenState(
   if (!source?.claimId || source.claimId !== record.issuingClaimId) {
     return null;
   }
-  const grant = await findGrant(store, record.grantId);
-  if (!grant || grant.revokedAt) {
-    return null;
-  }
-  return (await isActiveUser(store, record.userId)) ? { record, grant } : null;
+  const grant = await findLiveGrant(store, record.grantId);
+  return grant ? { record, grant } : null;
 }
 
 /** The user exists and is not disabled; shared with the API-key owner rule. */
@@ -501,37 +508,35 @@ export async function revokeOAuthGrant(
 /** The generation before the triple's first disconnect. */
 const INITIAL_GENERATION = 'initial';
 
-function disconnectRowId({ userId, clientId, resource }: OAuthTriple): string {
-  return `odc_${createHash('sha256').update(JSON.stringify([userId, clientId, resource])).digest('hex')}`;
+type DisconnectRow = { id: string; generation: string };
+
+function findDisconnects(store: OAuthStore, triple: OAuthTriple): Promise<DisconnectRow[]> {
+  return store.database.findMany<DisconnectRow>({ model: MODELS.disconnects, where: whereTriple(triple), namespace: namespace(store) });
 }
 
 /**
- * The triple's disconnect generation: one row read by its ID, whatever the
- * disconnect history. Every disconnect stores a value never used before, so
- * a generation read before a disconnect never matches one read after it.
+ * The triple's disconnect generation, whatever the disconnect history: its
+ * disconnect row holds the value. Concurrent first disconnects can each add
+ * a row; the one with the lowest ID decides. Every value written is new and
+ * each disconnect overwrites every row, so a generation read before a
+ * disconnect never matches one read after it.
  */
 export async function readGeneration(store: OAuthStore, triple: OAuthTriple): Promise<string> {
-  const row = await findBy<{ generation: string }>(store, MODELS.disconnects, 'id', disconnectRowId(triple));
-  return row?.generation ?? INITIAL_GENERATION;
+  const [first] = (await findDisconnects(store, triple)).sort((a, b) => (a.id < b.id ? -1 : 1));
+  return first?.generation ?? INITIAL_GENERATION;
 }
 
 async function writeNewGeneration(store: OAuthStore, triple: OAuthTriple, now: Date): Promise<void> {
-  const id = disconnectRowId(triple);
-  if (!(await findBy(store, MODELS.disconnects, 'id', id))) {
-    // A concurrent first disconnect may create the row first; then this
-    // insert fails, and the update below still writes a new generation.
-    await insert(store, MODELS.disconnects, { ...triple, id, generation: createIdentifier('ogn'), createdAt: now, updatedAt: now })
-      .catch(() => undefined);
+  if ((await findDisconnects(store, triple)).length === 0) {
+    const id = createIdentifier('odc');
+    await insert(store, MODELS.disconnects, { ...triple, id, generation: createIdentifier('ogn'), createdAt: now, updatedAt: now });
   }
   await store.database.updateMany({
     model: MODELS.disconnects,
-    where: whereId(id),
+    where: whereTriple(triple),
     data: { generation: createIdentifier('ogn'), updatedAt: now },
     namespace: namespace(store)
   });
-  if (!(await findBy(store, MODELS.disconnects, 'id', id))) {
-    throw new Error('The OAuth disconnect generation was not stored');
-  }
 }
 
 function findConsents(store: OAuthStore, triple: OAuthTriple, generation: string): Promise<OAuthConsentRecord[]> {

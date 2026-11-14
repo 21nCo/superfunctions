@@ -121,6 +121,17 @@ describe('authorization endpoint', () => {
     expect(await malformed.json()).toEqual({ error: 'invalid_request', error_description: 'The decision body must be valid JSON' });
   });
 
+  /**
+   * Asserts that `location` is exactly `prefix`, `separator`, then code, state
+   * xyz and this server's issuer, in that order; returns the code.
+   */
+  function expectCodeRedirect(location: string, prefix: string, separator: '?' | '&'): string {
+    const code = new URLSearchParams(location.slice(prefix.length + 1)).get('code') ?? '';
+    expect(code).toMatch(/^[\w-]+$/);
+    expect(location).toBe(`${prefix}${separator}code=${code}&state=xyz&iss=${encodeURIComponent(ORIGIN)}`);
+    return code;
+  }
+
   it('sends the response to the registered redirect URI byte for byte, then the parameters (RFC 6749 3.1.2)', async () => {
     // Reserializing this query would rewrite it as ?flag=&v=a+b&p=x%2Fy%3Bz.
     const registered = 'https://tenant.example.com/cb?flag&v=a%20b&p=x/y;z';
@@ -132,16 +143,18 @@ describe('authorization endpoint', () => {
     const provider = await setupProvider({ clients: [tenant] });
     const query = (redirectUri: string, overrides: Record<string, string> = {}) =>
       provider.authorizeQuery({ client_id: tenant.clientId, redirect_uri: redirectUri, ...overrides }, tenant);
-    const iss = `&iss=${encodeURIComponent(ORIGIN)}`;
 
     expect((await provider.getAuthorize(query(registered))).status).toBe(200);
     const approved = await provider.decide({ ...provider.consents[0].params }, 'approve');
     const success = (await approved.json() as { data: { redirectTo: string } }).data.redirectTo;
-    expect(success).toMatch(new RegExp(`^${registered.replaceAll(/[.?/;%]/g, '\\$&')}&code=[^&]+&state=xyz${iss}$`));
+    const code = expectCodeRedirect(success, registered, '&');
+    // Exact comparison: a look-alike issuer or prefix fails.
+    expect(() => expectCodeRedirect(success.replace('auth.example.com', 'authXexampleYcom'), registered, '&')).toThrow();
+    expect(() => expectCodeRedirect(success.replace('tenant.example.com', 'tenantXexample.com'), registered, '&')).toThrow();
     const exchanged = await provider.token({
       grant_type: 'authorization_code',
       client_id: tenant.clientId,
-      code: new URL(success).searchParams.get('code')!,
+      code,
       redirect_uri: registered,
       code_verifier: RFC7636_VERIFIER
     });
@@ -181,11 +194,11 @@ describe('authorization endpoint', () => {
     expect((await provider.getAuthorize(provider.authorizeQuery({ client_id: native.clientId, redirect_uri: native.redirectUris[0] }, native))).status).toBe(200);
     const approved = await provider.decide({ ...provider.consents[0].params }, 'approve');
     const location = (await approved.json() as { data: { redirectTo: string } }).data.redirectTo;
-    expect(location).toMatch(new RegExp(`^com\\.example\\.app:/oauth/cb\\?code=[^&]+&state=xyz&iss=${encodeURIComponent(ORIGIN)}$`));
+    const code = expectCodeRedirect(location, native.redirectUris[0], '?');
     const exchanged = await provider.token({
       grant_type: 'authorization_code',
       client_id: native.clientId,
-      code: new URL(location).searchParams.get('code')!,
+      code,
       redirect_uri: native.redirectUris[0],
       code_verifier: RFC7636_VERIFIER
     });
@@ -327,6 +340,13 @@ describe('token endpoint', () => {
     });
     expect((await provider.introspect(issued.access_token)).body).toEqual({ active: false });
     expect(await (await provider.refresh(issued.refresh_token)).json()).toMatchObject({ error: 'invalid_grant' });
+
+    // A deleted user's tokens stay rejected, even with the user row gone.
+    const deleted = await setupProvider();
+    const tokens = await deleted.obtainTokens();
+    await deleted.database.deleteMany({ model: 'users', where: [{ field: 'id', operator: 'eq', value: deleted.user.id }], namespace: 'authfn' });
+    expect((await deleted.introspect(tokens.access_token)).body).toEqual({ active: false });
+    expect(await (await deleted.refresh(tokens.refresh_token)).json()).toMatchObject({ error: 'invalid_grant' });
   });
 });
 

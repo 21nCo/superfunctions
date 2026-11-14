@@ -4,8 +4,7 @@ import type { OAuthProviderRuntime } from '../runtime.js';
 import {
   claimCode,
   findCode,
-  findGrant,
-  isActiveUser,
+  findLiveGrant,
   revokeGrant,
   stageTokens,
   type IssuedTokens
@@ -59,8 +58,8 @@ export async function exchangeAuthorizationCode(
     throw new OAuthError('invalid_target', 'resource does not match the authorization request');
   }
 
-  const grant = await findGrant(runtime.store, record.grantId);
-  if (!grant || grant.revokedAt || !(await isActiveUser(runtime.store, grant.userId))) {
+  const grant = await findLiveGrant(runtime.store, record.grantId);
+  if (!grant) {
     throw invalidGrant('Authorization grant is no longer valid');
   }
 
@@ -71,6 +70,11 @@ export async function exchangeAuthorizationCode(
   if (!(await claimCode(runtime.store, record.id, now, claimId))) {
     await revokeGrant(runtime.store, record.grantId, 'code_replay', now);
     throw invalidGrant('Authorization code has already been used');
+  }
+  // A disconnect, revocation or user removal that completed before the claim
+  // committed wins: the code stays spent and its tokens are inert.
+  if (!(await findLiveGrant(runtime.store, record.grantId))) {
+    throw invalidGrant('Authorization grant is no longer valid');
   }
   return tokens;
 }

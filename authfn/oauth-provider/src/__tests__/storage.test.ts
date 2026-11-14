@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { disconnectOAuthClient, revokeOAuthGrant, verifyOAuthAccessToken, type OAuthTokenRecord } from '../index.js';
 import { activeTokenState } from '../store.js';
-import { MEMOTRON, setupProvider } from './harness.js';
+import { MEMOTRON, RFC6749_CLIENT, setupProvider } from './harness.js';
 
 type Tokens = { access_token: string; refresh_token: string };
 
@@ -41,6 +41,8 @@ describe('SQL storage (shipped Kysely adapter on SQLite)', () => {
 });
 
 type Provider = Awaited<ReturnType<typeof setupProvider>>;
+
+const userWhere = (provider: Provider) => [{ field: 'id', operator: 'eq' as const, value: provider.user.id }];
 
 const tokenRecords = (provider: Provider) =>
   provider.database.findMany<OAuthTokenRecord>({ model: 'oauth_provider_tokens', namespace: 'authfn' });
@@ -172,6 +174,61 @@ describe.each([['memory', false], ['SQL', true]])('token issuance commit point (
     const committed = await storedClaimId(provider, 'oauth_provider_tokens', parent.id);
     expect(children.filter((row) => row.issuingClaimId === committed)).toHaveLength(2);
     expect(await activeRows(provider)).toEqual([]);
+  });
+
+  // Each event ends the grant while the first token insert is paused, so it
+  // completes before the claim commits; the exchange must not return tokens.
+  const endings = {
+    disconnect: (provider: Provider) => disconnectOAuthClient({ database: provider.database },
+      { userId: provider.user.id, clientId: RFC6749_CLIENT.clientId, resource: MEMOTRON }),
+    disable: (provider: Provider) => provider.database.updateMany({
+      model: 'users', where: userWhere(provider), data: { metadata: { disabled: true } }, namespace: 'authfn'
+    }),
+    delete: (provider: Provider) => provider.database.deleteMany({ model: 'users', where: userWhere(provider), namespace: 'authfn' })
+  };
+  describe.each(['code', 'refresh'] as const)('a %s exchange', (flow) => {
+    it.each(Object.keys(endings) as (keyof typeof endings)[])('during which a %s completes is invalid_grant and leaves nothing active', async (ending) => {
+      const provider = await setupProvider({ sql });
+      let send: () => Promise<Response>;
+      if (flow === 'code') {
+        const code = (await provider.authorize()).searchParams.get('code')!;
+        send = () => provider.exchange(code);
+      } else {
+        const issued = await provider.obtainTokens();
+        send = () => provider.refresh(issued.refresh_token);
+      }
+      const staging = provider.control.arm('oauth_provider_tokens');
+      const pending = send();
+      await staging;
+      await endings[ending](provider);
+      provider.control.release();
+      const response = await pending;
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: 'invalid_grant' });
+      expect(await activeRows(provider)).toEqual([]);
+      // The credential stays spent.
+      expect(await (await send()).json()).toMatchObject({ error: 'invalid_grant' });
+    });
+  });
+
+  it('a rotation during which the refresh token is revoked (RFC 7009) is invalid_grant', async () => {
+    const provider = await setupProvider({ sql });
+    const issued = await provider.obtainTokens();
+    const staging = provider.control.arm('oauth_provider_tokens');
+    const pending = provider.refresh(issued.refresh_token);
+    await staging;
+    expect((await provider.revoke(issued.refresh_token)).status).toBe(200);
+    provider.control.release();
+    expect(await (await pending).json()).toMatchObject({ error: 'invalid_grant' });
+    expect(await activeRows(provider)).toEqual([]);
+  });
+
+  it('a disconnect after the response revokes the delivered tokens', async () => {
+    const provider = await setupProvider({ sql });
+    const issued = await provider.obtainTokens();
+    await endings.disconnect(provider);
+    expect((await provider.introspect(issued.access_token)).body).toEqual({ active: false });
+    expect(await (await provider.refresh(issued.refresh_token)).json()).toMatchObject({ error: 'invalid_grant' });
   });
 
   it('a failed grant lookup leaves the code redeemable once', async () => {

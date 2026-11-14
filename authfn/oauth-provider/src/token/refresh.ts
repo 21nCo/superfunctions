@@ -3,6 +3,7 @@ import type { OAuthProviderRuntime } from '../runtime.js';
 import {
   activeTokenState,
   claimRefreshToken,
+  findLiveGrant,
   findToken,
   revokeGrant,
   stageTokens,
@@ -54,6 +55,10 @@ export async function refreshAccessToken(
   if (!(await claimRefreshToken(runtime.store, record.id, now, claimId))) {
     await revokeGrant(runtime.store, record.grantId, 'refresh_reuse', now);
     throw invalidGrant('Refresh token has already been used');
+  }
+  // As for a code: a grant or user that ended before the claim committed wins.
+  if (!(await findLiveGrant(runtime.store, record.grantId))) {
+    throw invalidGrant('Refresh token is expired or revoked');
   }
   return tokens;
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { requireScopes } from 'authfn';
 import { disconnectOAuthClient, revokeOAuthGrant, verifyOAuthAccessToken } from '../index.js';
+import { readGeneration } from '../store.js';
 import {
   MCP_HOST,
   MEMOTRON,
@@ -426,7 +427,7 @@ describe('concurrent approvals', () => {
     await reached;
     const second = await provider.decide(write, 'approve');
     provider.control.release();
-    for (const response of [await first, second]) {
+    for (const [response, scope] of [[await first, 'memotron:read'], [second, 'memotron:write']] as const) {
       const callback = new URL((await response.json() as { data: { redirectTo: string } }).data.redirectTo);
       const exchanged = await provider.token({
         grant_type: 'authorization_code',
@@ -436,6 +437,7 @@ describe('concurrent approvals', () => {
         code_verifier: RFC7636_VERIFIER
       });
       expect(exchanged.status).toBe(200);
+      expect(await exchanged.json()).toMatchObject({ scope });
     }
 
     // Both approvals are remembered: the trusted client is silent for both.
@@ -465,9 +467,37 @@ describe('concurrent approvals', () => {
       }
       const rows = (model: string) => provider.database.findMany<{ scopes?: string[] }>({ model, namespace: 'authfn' });
       expect((await rows('oauth_provider_consents')).map((row) => [...row.scopes!].sort())).toEqual([['memotron:read', 'memotron:write']]);
-      // The generation is one row read by its ID, whatever the history.
+      // The generation is one row found by the triple, whatever the history.
       expect(await rows('oauth_provider_disconnects')).toHaveLength(1);
-      expect(provider.control.findManyModels).not.toContain('oauth_provider_disconnects');
+    }
+  );
+
+  it.each([['memory', false], ['SQL', true]])(
+    'reads the disconnect generation by user, client and resource, including concurrent first disconnects (%s)',
+    async (_, sql) => {
+      const provider = await setupProvider({ sql });
+      const store = { database: provider.database };
+      const triple = { userId: provider.user.id, clientId: RFC6749_CLIENT.clientId, resource: MEMOTRON };
+      const issued = await provider.obtainTokens();
+      const before = await readGeneration(store, triple);
+      await Promise.all([disconnectOAuthClient(store, triple), disconnectOAuthClient(store, triple)]);
+      const after = await readGeneration(store, triple);
+      expect(after).not.toBe(before);
+      expect((await provider.introspect(issued.access_token)).body).toEqual({ active: false });
+      // Every row of the triple holds the latest generation.
+      const generations = (await provider.database.findMany<{ generation: string }>({ model: 'oauth_provider_disconnects', namespace: 'authfn' }))
+        .map((row) => row.generation);
+      expect(new Set(generations)).toEqual(new Set([after]));
+      // Authorization after the disconnects works under the new generation.
+      expect((await provider.introspect((await provider.obtainTokens()).access_token)).body.active).toBe(true);
+      // A row stored under the earlier hash-derived ID is still read.
+      const legacy = { ...triple, resource: POINTRON };
+      await provider.database.create({
+        model: 'oauth_provider_disconnects',
+        data: { ...legacy, id: `odc_${'0'.repeat(64)}`, generation: 'ogn_legacy', createdAt: provider.now(), updatedAt: provider.now() },
+        namespace: 'authfn'
+      });
+      expect(await readGeneration(store, legacy)).toBe('ogn_legacy');
     }
   );
 });
