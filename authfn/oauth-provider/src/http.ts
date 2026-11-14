@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual } from 'node:crypto';
 import type { OAuthProviderClient } from './types.js';
 import type { OAuthProviderRuntime } from './runtime.js';
 
@@ -87,12 +87,11 @@ export function requireParam(params: Map<string, string>, name: string): string 
   return value;
 }
 
-/** Constant-time comparison of two secrets of any length. */
+/** Compares two secrets in time that depends only on their lengths. */
 export function secretsEqual(actual: string, expected: string): boolean {
-  return timingSafeEqual(
-    createHash('sha256').update(actual).digest(),
-    createHash('sha256').update(expected).digest()
-  );
+  const presented = Buffer.from(actual, 'utf8');
+  const stored = Buffer.from(expected, 'utf8');
+  return presented.length === stored.length && timingSafeEqual(presented, stored);
 }
 
 function clientAuthMethod(client: OAuthProviderClient): string {
@@ -122,9 +121,12 @@ export function authenticateClient(
   }
 
   const method = clientAuthMethod(client);
-  const presented = method === 'client_secret_basic'
-    ? basic?.clientSecret
-    : method === 'client_secret_post' ? params.get('client_secret') : undefined;
+  let presented: string | undefined;
+  if (method === 'client_secret_basic') {
+    presented = basic?.clientSecret;
+  } else if (method === 'client_secret_post') {
+    presented = params.get('client_secret');
+  }
   const sentOtherCredential = method === 'client_secret_basic'
     ? params.has('client_secret')
     : basic !== null || (method === 'none' && params.has('client_secret'));
@@ -138,13 +140,14 @@ export function authenticateClient(
   return client;
 }
 
+/**
+ * RFC 6749 5.2: 401 with a Basic challenge when the client tried the
+ * Authorization header; otherwise 400, without a challenge.
+ */
 function invalidClient(viaHeader: boolean): OAuthError {
-  return new OAuthError(
-    'invalid_client',
-    'Client authentication failed',
-    401,
-    viaHeader ? { 'www-authenticate': 'Basic realm="oauth"' } : {}
-  );
+  return viaHeader
+    ? new OAuthError('invalid_client', 'Client authentication failed', 401, { 'www-authenticate': 'Basic realm="oauth"' })
+    : new OAuthError('invalid_client', 'Client authentication failed', 400);
 }
 
 function readBasicCredentials(request: Request): { clientId: string; clientSecret: string } | null {
@@ -171,14 +174,22 @@ function readBasicCredentials(request: Request): { clientId: string; clientSecre
 }
 
 function formDecode(value: string): string {
-  return decodeURIComponent(value.replace(/\+/g, ' '));
+  return decodeURIComponent(value.replaceAll('+', ' '));
 }
 
+/** RFC 6750 2.1 `b64token`; the classes are disjoint, so matching is linear. */
+const BEARER_CREDENTIAL = /^[A-Za-z0-9\-._~+/]+=*$/;
+
+export function isBearerCredential(value: string): boolean {
+  return BEARER_CREDENTIAL.test(value);
+}
+
+/** The credential of an `Authorization: Bearer <b64token>` header, or null. */
 export function readBearerToken(request: Request): string | null {
   const header = request.headers.get('authorization')?.trim();
   if (!header || !/^bearer /i.test(header)) {
     return null;
   }
-  const token = header.slice(7).trim();
-  return token.length > 0 ? token : null;
+  const token = header.slice(7);
+  return isBearerCredential(token) ? token : null;
 }

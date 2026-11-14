@@ -1,4 +1,5 @@
 import type { Route } from '@superfunctions/http';
+import { AuthFnValidationError } from 'authfn/core/errors';
 import { assertValidCsrf, getCookieSessionState, requireCookieSession } from 'authfn/core/sessions';
 import { createAuthFnRouteMeta, readOptionalJson } from 'authfn/http/router';
 import { jsonSuccess } from 'authfn/http/envelopes';
@@ -11,7 +12,14 @@ import {
   resolveRequestedScopes,
   type OAuthProviderRuntime
 } from '../runtime.js';
-import { createGrantWithCode, findConsent, recordConsent, revokeGrant } from '../store.js';
+import {
+  countDisconnects,
+  createGrantWithCode,
+  deleteConsent,
+  findConsentScopes,
+  recordConsent,
+  revokeGrant
+} from '../store.js';
 import type { OAuthAuthorizationRequestParams, OAuthProviderClient, OAuthProviderUser } from '../types.js';
 
 export const OAUTH_AUTHORIZE_PATH = '/oauth/authorize';
@@ -90,7 +98,12 @@ function validateOrRespond(
   }
 }
 
-/** Builds the redirect back to the client, with `iss` (RFC 9207). */
+/**
+ * Builds the redirect back to the client, with `iss` (RFC 9207). The response
+ * parameters are appended to the registered query, which is kept as is (RFC
+ * 6749 3.1.2); configuration rejects a registered query that uses a response
+ * parameter name, so they never collide.
+ */
 async function clientRedirectUrl(
   runtime: OAuthProviderRuntime,
   request: Request,
@@ -100,10 +113,10 @@ async function clientRedirectUrl(
   const url = new URL(redirectUri);
   for (const [name, value] of Object.entries(values)) {
     if (value !== undefined) {
-      url.searchParams.set(name, value);
+      url.searchParams.append(name, value);
     }
   }
-  url.searchParams.set('iss', (await resolveEndpoints(runtime, request)).issuer);
+  url.searchParams.append('iss', (await resolveEndpoints(runtime, request)).issuer);
   return url.toString();
 }
 
@@ -119,36 +132,50 @@ function redirect(location: string): Response {
   return new Response(null, { status: 302, headers: { location, 'cache-control': 'no-store' } });
 }
 
-function consentCovers(consent: { scopes: string[] } | null, scopes: string[]): boolean {
-  return consent !== null && scopes.every((scope) => consent.scopes.includes(scope));
+function consentCovers(consented: string[] | null, scopes: string[]): boolean {
+  return consented !== null && scopes.every((scope) => consented.includes(scope));
 }
 
 /**
- * Creates the grant and its code, or returns `null` when the user's consent
- * was withdrawn meanwhile. A disconnect deletes the consent and then revokes
- * the grants it finds: a grant inserted before that lookup is revoked by the
- * disconnect, and one inserted after it fails the consent check below and is
- * revoked here, so no code outlives a completed disconnect.
+ * Creates the grant and its code: for an approval (`approved`), after
+ * recording the consent; otherwise only when remembered consent covers the
+ * scopes. Returns `null` when there is no such consent or the app was
+ * disconnected meanwhile. The disconnect markers are read before consent and
+ * again after the grant exists (see `disconnectOAuthClient`); on a new marker
+ * this authorization revokes its grant and removes the consent it recorded,
+ * so nothing it started outlives a completed disconnect.
  */
 async function issueCode(
   runtime: OAuthProviderRuntime,
   user: OAuthProviderUser,
-  request: AuthorizationRequest & { ok: true }
+  request: AuthorizationRequest & { ok: true },
+  approved: boolean
 ): Promise<Record<string, string | undefined> | null> {
+  const { store } = runtime;
   const triple = { clientId: request.client.clientId, userId: user.id, resource: request.params.resource };
-  const { grantId, code } = await createGrantWithCode(runtime.store, {
+  const disconnects = await countDisconnects(store, triple);
+  const consentId = approved
+    ? await recordConsent(store, { ...triple, scopes: request.scopes, now: runtime.now() })
+    : undefined;
+  if (!consentCovers(await findConsentScopes(store, triple), request.scopes)) {
+    return null;
+  }
+  const { grantId, code } = await createGrantWithCode(store, {
     ...triple,
     scopes: request.scopes,
     redirectUri: request.params.redirect_uri,
     codeChallenge: request.params.code_challenge,
     now: runtime.now()
   });
-  const consent = await findConsent(runtime.store, triple.userId, triple.clientId, triple.resource);
-  if (!consentCovers(consent, request.scopes)) {
-    await revokeGrant(runtime.store, grantId, 'consent_withdrawn', runtime.now());
-    return null;
+  if (await countDisconnects(store, triple) === disconnects &&
+    consentCovers(await findConsentScopes(store, triple), request.scopes)) {
+    return { code, state: request.params.state };
   }
-  return { code, state: request.params.state };
+  await revokeGrant(store, grantId, 'consent_withdrawn', runtime.now());
+  if (consentId) {
+    await deleteConsent(store, consentId);
+  }
+  return null;
 }
 
 export function createAuthorizeRoutes(runtime: OAuthProviderRuntime): Route[] {
@@ -178,9 +205,8 @@ export function createAuthorizeRoutes(runtime: OAuthProviderRuntime): Route[] {
         const user = { id: state.user.id, primaryEmail: state.user.primaryEmail };
 
         if (validated.client.trusted) {
-          const consent = await findConsent(runtime.store, user.id, validated.client.clientId, validated.params.resource);
-          // Without a code, consent was withdrawn meanwhile: ask again.
-          const values = consentCovers(consent, validated.scopes) ? await issueCode(runtime, user, validated) : null;
+          // Without a code there is no remembered consent: ask for it.
+          const values = await issueCode(runtime, user, validated, false);
           if (values) {
             return redirect(await clientRedirectUrl(runtime, request, validated.params.redirect_uri, values));
           }
@@ -211,7 +237,15 @@ export function createAuthorizeRoutes(runtime: OAuthProviderRuntime): Route[] {
       handler: async (request) => {
         const session = await requireCookieSession(runtime.ctx.config, request);
         assertValidCsrf(request, session);
-        const body: unknown = await readOptionalJson<Record<string, unknown>>(request);
+        let body: unknown;
+        try {
+          body = await readOptionalJson<Record<string, unknown>>(request);
+        } catch (error) {
+          if (error instanceof AuthFnValidationError) {
+            return oauthErrorResponse(new OAuthError('invalid_request', 'The decision body must be valid JSON'));
+          }
+          throw error;
+        }
         if (!isPlainObject(body)) {
           return oauthErrorResponse(new OAuthError('invalid_request', 'The decision body must be a JSON object'));
         }
@@ -235,14 +269,7 @@ export function createAuthorizeRoutes(runtime: OAuthProviderRuntime): Route[] {
           values = errorRedirectValues(validated.error, validated.state);
         } else if (decision === 'approve') {
           const user = { id: session.user.id, primaryEmail: session.user.primaryEmail };
-          await recordConsent(runtime.store, {
-            userId: user.id,
-            clientId: validated.client.clientId,
-            resource: validated.params.resource,
-            scopes: validated.scopes,
-            now: runtime.now()
-          });
-          values = await issueCode(runtime, user, validated) ?? errorRedirectValues(
+          values = await issueCode(runtime, user, validated, true) ?? errorRedirectValues(
             new OAuthError('access_denied', 'The authorization was withdrawn while it was being approved'),
             validated.params.state
           );

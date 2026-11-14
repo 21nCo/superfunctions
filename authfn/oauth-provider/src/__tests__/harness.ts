@@ -2,6 +2,10 @@ import { createHash } from 'node:crypto';
 import { authfn, type AuthFnRuntimeConfig } from 'authfn';
 import { createUser } from 'authfn/core/users';
 import { issueSession } from 'authfn/core/sessions';
+import Database from 'better-sqlite3';
+import { Kysely, SqliteDialect } from 'kysely';
+import { wrapWithSchema } from '../../../../packages/db/src/adapter/schema-codecs.js';
+import { kyselyAdapter } from '../../../../packages/db/src/adapters/kysely/index.js';
 import { memoryAdapter } from '../../../../packages/db/src/adapters/memory/index.js';
 import {
   authFnOAuthProviderPlugin,
@@ -22,16 +26,16 @@ export const POINTRON_SECRET = 'pointron-introspection-secret';
 export const RFC7636_VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
 export const RFC7636_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
 
-// RFC 6749 4.1.1 and 2.3.1: client s6BhdRkqt3, secret gX1fBat3bV
-// (Authorization: Basic czZCaGRSa3F0MzpnWDFmQmF0M2JW), redirect
-// https://client.example.com/cb, state xyz.
+// RFC 6749 4.1.1 and 2.3.1: the example client s6BhdRkqt3 with its public
+// example secret, redirect https://client.example.com/cb, state xyz. The
+// Basic header is the RFC's example value, derived here.
 export const RFC6749_CLIENT: OAuthProviderClient = {
   clientId: 's6BhdRkqt3',
   name: 'Example Client',
   clientSecret: 'gX1fBat3bV',
   redirectUris: ['https://client.example.com/cb']
 };
-export const RFC6749_BASIC = 'Basic czZCaGRSa3F0MzpnWDFmQmF0M2JW';
+export const RFC6749_BASIC = `Basic ${btoa(`${RFC6749_CLIENT.clientId}:${RFC6749_CLIENT.clientSecret}`)}`;
 
 /** A public MCP host with a loopback redirect. */
 export const MCP_HOST: OAuthProviderClient = {
@@ -61,18 +65,25 @@ export function createProviderApp() {
   return authfn({ scopes: REGISTRY, plugins: [authFnOAuthProviderPlugin()] });
 }
 
+type Adapter = AuthFnRuntimeConfig['database'];
+
 /**
- * Pauses the next insert into `model` after `arm()` until `release()`, to
- * force an interleaving with another operation; `arm()` resolves once the
- * insert is paused.
+ * Controls inserts: `arm(model)` pauses the next insert into `model` until
+ * `release()` and resolves once it is paused, to force an interleaving;
+ * `failNext(model, match)` makes the next matching insert throw.
  */
-export function createInsertPause(database: AuthFnRuntimeConfig['database'], model: string) {
-  let paused: { reached: () => void; released: Promise<void> } | undefined;
+export function createInsertControl(database: Adapter) {
+  let paused: { model: string; reached: () => void; released: Promise<void> } | undefined;
+  let failure: { model: string; match: (data: Record<string, unknown>) => boolean } | undefined;
   let release: () => void = () => {};
-  const wrapped: AuthFnRuntimeConfig['database'] = {
+  const wrapped: Adapter = {
     ...database,
     create: async (params) => {
-      const pause = params.model === model ? paused : undefined;
+      if (failure?.model === params.model && failure.match(params.data)) {
+        failure = undefined;
+        throw new Error('injected insert failure');
+      }
+      const pause = paused?.model === params.model ? paused : undefined;
       if (pause) {
         paused = undefined;
         pause.reached();
@@ -83,24 +94,73 @@ export function createInsertPause(database: AuthFnRuntimeConfig['database'], mod
   };
   return {
     database: wrapped,
-    arm: () => new Promise<void>((reached) => {
-      paused = { reached, released: new Promise<void>((resolve) => { release = resolve; }) };
+    arm: (model: string) => new Promise<void>((reached) => {
+      paused = { model, reached, released: new Promise<void>((resolve) => { release = resolve; }) };
     }),
-    release: () => release()
+    release: () => release(),
+    failNext: (model: string, match: (data: Record<string, unknown>) => boolean = () => true) => {
+      failure = { model, match };
+    }
   };
 }
 
-export async function setupProvider(options: { pauseInsertsInto?: string } = {}) {
-  const database = memoryAdapter({ debug: false });
-  const pause = createInsertPause(database, options.pauseInsertsInto ?? '');
+/**
+ * The shipped Kysely adapter on an in-memory SQLite database, with one column
+ * per schema field. SQLite has no JSON type, so JSON fields are stored as
+ * text. The adapter's `create` and `update` fail on SQLite (`selectAll` on an
+ * insert, `RETURNING "*"`), a packages/db defect outside this package, so
+ * inserts go through Kysely and `update` (used by AuthFn core sessions) runs
+ * as `updateMany` and `findOne`. The OAuth store's claims, reads and deletes
+ * use the adapter itself.
+ */
+function sqliteAdapter(): Adapter {
+  const sqlite = new Database(':memory:');
+  for (const table of createProviderApp().getSchema().schemas) {
+    sqlite.exec(`CREATE TABLE "${table.modelName}" (${Object.keys(table.fields).map((field) => `"${field}"`).join(', ')})`);
+  }
+  const db = new Kysely<Record<string, Record<string, unknown>>>({ dialect: new SqliteDialect({ database: sqlite }) });
+  const kysely = kyselyAdapter({
+    db,
+    dialect: 'sqlite',
+    schema: new Proxy({}, { get: (_, model) => model }) as Record<string, string>
+  });
+  const encode = (data: Record<string, unknown>) => Object.fromEntries(Object.entries(data).map(([name, value]) => [
+    name,
+    value instanceof Date ? value.toISOString() : value !== null && typeof value === 'object' ? JSON.stringify(value) : value
+  ]));
+  const decode = <T>(row: T): T => (row && Object.fromEntries(Object.entries(row).map(([name, value]) => [
+    name,
+    typeof value === 'string' && /^[[{]/.test(value) ? JSON.parse(value) : value
+  ]))) as T;
+  return {
+    ...kysely,
+    create: async (params) => {
+      await db.insertInto(params.model).values(encode(params.data)).execute();
+      return params.data;
+    },
+    findOne: async (params) => decode(await kysely.findOne(params)),
+    findMany: async (params) => (await kysely.findMany(params)).map(decode),
+    update: async (params) => {
+      await kysely.updateMany({ ...params, data: encode(params.data) });
+      return decode(await kysely.findOne(params));
+    },
+    updateMany: (params) => kysely.updateMany({ ...params, data: encode(params.data) })
+  } as Adapter;
+}
+
+export async function setupProvider(options: { sql?: boolean; clients?: OAuthProviderClient[] } = {}) {
+  const raw = options.sql ? sqliteAdapter() : memoryAdapter({ debug: false });
+  // Tests read and write rows the way the server does: through the schema.
+  const database = options.sql ? wrapWithSchema(raw, createProviderApp().getSchema()) : raw;
+  const control = createInsertControl(raw);
   let now = new Date('2026-11-14T00:00:00.000Z');
   const consents: OAuthConsentInput[] = [];
   const logins: OAuthLoginRequiredInput[] = [];
   const server = createProviderApp().createServer({
-    database: pause.database,
+    database: control.database,
     pluginRuntime: {
       oauthProvider: {
-        clients: [RFC6749_CLIENT, MCP_HOST, RHOMBUS],
+        clients: [RFC6749_CLIENT, MCP_HOST, RHOMBUS, ...(options.clients ?? [])],
         resources: RESOURCES,
         now: () => now,
         loginRequired: (input) => {
@@ -220,7 +280,7 @@ export async function setupProvider(options: { pauseInsertsInto?: string } = {})
   return {
     server,
     database,
-    pause,
+    control,
     coreConfig,
     user,
     session,

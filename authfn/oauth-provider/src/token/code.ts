@@ -53,7 +53,8 @@ export async function exchangeAuthorizationCode(
 
   // The conditional update is the single-use guarantee: a concurrent
   // redemption that loses the race is a replay.
-  if (!(await claimCode(runtime.store, record.id, now))) {
+  const claim = await claimCode(runtime.store, record.id, now);
+  if (!claim) {
     await revokeGrant(runtime.store, record.grantId, 'code_replay', now);
     throw invalidGrant('Authorization code has already been used');
   }
@@ -62,5 +63,5 @@ export async function exchangeAuthorizationCode(
   if (!grant || grant.revokedAt || !(await isActiveUser(runtime.store, grant.userId))) {
     throw invalidGrant('Authorization grant is no longer valid');
   }
-  return issueTokens(runtime.store, grant, grant.scopes, now);
+  return issueTokens(runtime.store, grant, grant.scopes, now, claim);
 }

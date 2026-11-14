@@ -9,7 +9,7 @@ import {
   requireParam,
   secretsEqual
 } from '../http.js';
-import { resolveEndpoints, type OAuthProviderRuntime } from '../runtime.js';
+import type { OAuthProviderRuntime } from '../runtime.js';
 import { loadActiveToken } from '../store.js';
 
 export const OAUTH_INTROSPECTION_PATH = '/oauth/introspect';
@@ -18,7 +18,9 @@ export const OAUTH_INTROSPECTION_PATH = '/oauth/introspect';
  * Token introspection (RFC 7662) for resource servers. The caller
  * authenticates with its resource's introspection secret, and a token is
  * reported active only when it is an active access token issued for that
- * resource: a token presented at the wrong audience is inactive.
+ * resource: a token presented at the wrong audience is inactive. The optional
+ * `iss` is omitted: tokens do not record the issuer they were issued under,
+ * and a request-dependent environment could resolve a different one.
  */
 export function createIntrospectionRoute(runtime: OAuthProviderRuntime): Route {
   return {
@@ -49,7 +51,6 @@ export function createIntrospectionRoute(runtime: OAuthProviderRuntime): Route {
         client_id: record.clientId,
         sub: record.userId,
         aud: record.resource,
-        iss: (await resolveEndpoints(runtime, request)).issuer,
         token_type: 'Bearer',
         iat: Math.floor(record.createdAt.getTime() / 1000),
         exp: Math.floor(record.expiresAt.getTime() / 1000)

@@ -22,7 +22,7 @@ export function createTokenRoute(runtime: OAuthProviderRuntime): Route {
         issued = await exchangeAuthorizationCode(runtime, client, params);
       } else if (grantType === 'refresh_token') {
         issued = await refreshAccessToken(runtime, client, params);
-      } else if (grantType === undefined) {
+      } else if (!grantType) {
         throw new OAuthError('invalid_request', 'Parameter grant_type is required');
       } else {
         throw new OAuthError('unsupported_grant_type', 'Only authorization_code and refresh_token are supported');

@@ -22,7 +22,7 @@ export function createRevocationRoute(runtime: OAuthProviderRuntime): Route {
       const params = await readFormBody(request);
       const client = authenticateClient(runtime, request, params);
       const record = await findToken(runtime.store, requireParam(params, 'token'));
-      if (record && record.clientId === client.clientId) {
+      if (record?.clientId === client.clientId) {
         const now = runtime.now();
         if (record.kind === 'refresh') {
           await revokeGrant(runtime.store, record.grantId, 'revoked', now);

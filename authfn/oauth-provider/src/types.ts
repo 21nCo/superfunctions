@@ -161,10 +161,12 @@ export interface OAuthConsentRecord {
   resource: string;
   scopes: string[];
   createdAt: Date;
-  updatedAt: Date;
 }
 
-/** An active access token, as introspection and `verifyOAuthAccessToken` report it. */
+/**
+ * An active access token as `verifyOAuthAccessToken` reports it. The
+ * introspection endpoint answers with RFC 7662 fields instead.
+ */
 export interface OAuthAccessTokenInfo {
   tokenId: string;
   grantId: string;

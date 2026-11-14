@@ -45,9 +45,11 @@ const auth = app.createServer({
 - Access tokens live 1 hour. Refresh tokens live 30 days and rotate on every use. Presenting a rotated refresh token again revokes the whole grant.
 - An authorization code works once, for one minute. When the client it was issued to presents a used code again, with the matching `redirect_uri` and `code_verifier`, the grant and every token issued from it are revoked. Anyone else presenting a used code gets `invalid_grant` and the grant is untouched.
 - The authorization request must send `resource`, which must exactly match a configured resource. `scope` must name scopes that resource offers; without `scope` the client asks for all of them.
-- Redirect URIs match exactly, except that an `http://127.0.0.1` or `http://[::1]` redirect URI may use any port.
+- Redirect URIs match exactly, except that an `http://127.0.0.1` or `http://[::1]` redirect URI may use any port. A registered redirect URI uses `https`, `http` to one of those loopback IPs, or a native app's own scheme; any other `http` URI, including `http://localhost`, is a configuration error. Its query is kept and the response parameters are appended to it, so it must not use `code`, `state`, `iss`, `error`, `error_description` or `error_uri`.
+- Client authentication failures are `invalid_client`: 401 with a `Basic` challenge when the client used the `Authorization` header, otherwise 400.
 - A `trusted` client asks for consent once per resource; later requests within the consented scopes skip the page. Any other client asks every time.
 - Tokens stop working when their grant is revoked or their user is deleted or disabled (`metadata.disabled`).
+- A code or refresh token is spent by a conditional write that also stores a claim ID, and the request that reads its own claim ID back wins; adapter row counts are not used. If storing the new tokens fails, the tokens already written are deleted and the code or refresh token can be used again.
 
 ## Host responsibilities
 
@@ -55,7 +57,7 @@ const auth = app.createServer({
 
 **Consent page.** `consent` receives the user, client, resource, scopes, the validated `params` and a `decisionUrl`. The page POSTs `{ ...params, decision: 'approve' | 'deny' }` as JSON to `decisionUrl` with the session cookie and the `x-authfn-csrf` header, then sends the browser to `data.redirectTo`.
 
-**Resource servers.** A remote resource server calls the introspection endpoint with `Authorization: Bearer <introspectionSecret>`. Only access tokens issued for that resource are reported active. A resource server in the same process can call `verifyOAuthAccessToken`:
+**Resource servers.** A remote resource server calls the introspection endpoint with `Authorization: Bearer <introspectionSecret>`; the secret must be an RFC 6750 `b64token` (letters, digits and `-._~+/`, optionally ending in `=`). Only access tokens issued for that resource are reported active. The response leaves out the optional `iss`, because tokens do not record the issuer they were issued under. A resource server in the same process can call `verifyOAuthAccessToken`:
 
 ```ts
 import { requireScopes } from 'authfn';
@@ -67,6 +69,6 @@ const token = await verifyOAuthAccessToken(store, bearer, { resource: 'https://m
 requireScopes(token, 'memotron:read', { registry: scopes });
 ```
 
-**Disconnecting an app.** `disconnectOAuthClient(store, { userId, clientId, resource })` removes the user's consent for that client and resource, so even a trusted client shows the consent page again, and revokes every grant the user gave that client for that resource: each authorization creates its own grant, so a client signed in on two devices holds two. Every code, access token and refresh token under those grants stops working. `revokeOAuthGrant(store, grantId, { userId })` does the same for the client and resource of one grant, for example the `grantId` that `verifyOAuthAccessToken` returns. An authorization in progress while the app is disconnected issues no usable code: it re-reads the consent after creating its grant and revokes that grant when the consent is gone, so the silent path of a trusted client shows the consent page and an approval redirects with `access_denied`.
+**Disconnecting an app.** `disconnectOAuthClient(store, { userId, clientId, resource })` removes the user's consent for that client and resource, so even a trusted client shows the consent page again, and revokes every grant the user gave that client for that resource: each authorization creates its own grant, so a client signed in on two devices holds two. Every code, access token and refresh token under those grants stops working. `revokeOAuthGrant(store, grantId, { userId })` does the same for the client and resource of one grant, for example the `grantId` that `verifyOAuthAccessToken` returns. A disconnect first records a disconnect marker for the user, client and resource. An authorization reads those markers before it reads or records consent and again after it creates its grant; when a new marker appeared, it revokes that grant and deletes the consent it recorded. So an authorization in progress while the app is disconnected issues no usable code and leaves no consent: the silent path of a trusted client shows the consent page and an approval redirects with `access_denied`. Each approval is stored as its own consent row and the remembered scopes are their union, so concurrent approvals do not overwrite each other.
 
 Account deletion in `authfn` does not yet delete this plugin's rows. Tokens of a deleted user stop working, but the rows remain.

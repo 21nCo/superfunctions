@@ -27,7 +27,7 @@ export async function refreshAccessToken(
   const token = requireParam(params, 'refresh_token');
   const now = runtime.now();
   const record = await findToken(runtime.store, token);
-  if (!record || record.kind !== 'refresh' || record.clientId !== client.clientId) {
+  if (record?.kind !== 'refresh' || record.clientId !== client.clientId) {
     throw invalidGrant('Refresh token is invalid');
   }
   if (record.rotatedAt) {
@@ -49,9 +49,10 @@ export async function refreshAccessToken(
     throw new OAuthError('invalid_scope', 'scope must not exceed the original grant');
   }
 
-  if (!(await claimRefreshToken(runtime.store, record.id, now))) {
+  const claim = await claimRefreshToken(runtime.store, record.id, now);
+  if (!claim) {
     await revokeGrant(runtime.store, record.grantId, 'refresh_reuse', now);
     throw invalidGrant('Refresh token has already been used');
   }
-  return issueTokens(runtime.store, active.grant, scopes, now);
+  return issueTokens(runtime.store, active.grant, scopes, now, claim);
 }

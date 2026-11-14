@@ -7,6 +7,8 @@ import {
   ORIGIN,
   POINTRON,
   POINTRON_SECRET,
+  REGISTRY,
+  RFC6749_BASIC,
   RFC6749_CLIENT,
   RFC7636_CHALLENGE,
   RFC7636_VERIFIER,
@@ -45,9 +47,10 @@ describe('authorization code flow (RFC 6749 4.1, RFC 7636 Appendix B, RFC 8707 2
       sub: provider.user.id,
       client_id: 's6BhdRkqt3',
       scope: 'memotron:read',
-      iss: ORIGIN,
       token_type: 'Bearer'
     });
+    // Tokens do not record their issuer, so introspection leaves out `iss`.
+    expect(introspection.body).not.toHaveProperty('iss');
     expect((introspection.body.exp as number) - (introspection.body.iat as number)).toBe(3600);
 
     const info = await verifyOAuthAccessToken({ database: provider.database }, tokens.access_token as string, {
@@ -55,8 +58,9 @@ describe('authorization code flow (RFC 6749 4.1, RFC 7636 Appendix B, RFC 8707 2
       now: provider.now
     });
     expect(info).toMatchObject({ userId: provider.user.id, resource: MEMOTRON, scopes: ['memotron:read'] });
-    expect(() => requireScopes(info, 'memotron:read')).not.toThrow();
-    expect(() => requireScopes(info, 'memotron:write')).toThrow(expect.objectContaining({ code: 'AUTHFN_INSUFFICIENT_SCOPE' }));
+    expect(() => requireScopes(info, 'memotron:read', { registry: REGISTRY })).not.toThrow();
+    expect(() => requireScopes(info, 'memotron:write', { registry: REGISTRY }))
+      .toThrow(expect.objectContaining({ code: 'AUTHFN_INSUFFICIENT_SCOPE' }));
   });
 });
 
@@ -124,7 +128,7 @@ describe('in-scope actors', () => {
       grant_type: 'authorization_code',
       code,
       redirect_uri: RFC6749_CLIENT.redirectUris[0]
-    }, { authorization: 'Basic czZCaGRSa3F0MzpnWDFmQmF0M2JW' });
+    }, { authorization: RFC6749_BASIC });
     expect(await missing.json()).toMatchObject({ error: 'invalid_request' });
 
     // A wrong verifier does not spend the code, so a stolen code cannot be
@@ -271,9 +275,9 @@ describe('in-scope actors', () => {
     expect((await provider.getAuthorize(provider.authorizeQuery(rhombus(POINTRON), RHOMBUS))).status).toBe(200);
   });
 
-  /** A provider whose next grant insert can be held while the user disconnects Rhombus. */
+  /** A provider whose next consent or grant insert can be held while the user disconnects Rhombus. */
   async function setupDisconnectRace() {
-    const provider = await setupProvider({ pauseInsertsInto: 'oauth_provider_grants' });
+    const provider = await setupProvider();
     const triple = { userId: provider.user.id, clientId: RHOMBUS.clientId, resource: MEMOTRON };
     const query = provider.authorizeQuery({
       client_id: RHOMBUS.clientId,
@@ -283,27 +287,26 @@ describe('in-scope actors', () => {
     return {
       provider,
       query,
-      /** Runs `request` with its grant insert held until the disconnect has returned. */
-      raceDisconnect: async (request: () => Promise<Response>) => {
-        const reached = provider.pause.arm();
+      /** Runs `request` with its insert into `model` held until the disconnect has returned. */
+      raceDisconnect: async (request: () => Promise<Response>, model = 'oauth_provider_grants') => {
+        const reached = provider.control.arm(model);
         const pending = request();
         await reached;
         await disconnectOAuthClient({ database: provider.database }, triple);
-        provider.pause.release();
+        provider.control.release();
         return pending;
       },
-      /** Every grant of the triple is revoked and the next authorization asks for consent. */
+      /** Every grant of the triple is revoked, no consent remains and the next authorization asks for it. */
       expectDisconnected: async () => {
-        const grants = await provider.database.findMany<{ resource: string; revokedAt: Date | null }>({
-          model: 'oauth_provider_grants',
-          where: [
-            { field: 'userId', operator: 'eq', value: triple.userId },
-            { field: 'clientId', operator: 'eq', value: triple.clientId }
-          ],
+        const rows = (model: string) => provider.database.findMany<{ revokedAt?: Date | null }>({
+          model,
+          where: Object.entries(triple).map(([field, value]) => ({ field, operator: 'eq' as const, value })),
           namespace: 'authfn'
         });
+        const grants = await rows('oauth_provider_grants');
         expect(grants.length).toBeGreaterThan(0);
         expect(grants.filter((grant) => grant.revokedAt === null)).toEqual([]);
+        expect(await rows('oauth_provider_consents')).toEqual([]);
         const consentsBefore = provider.consents.length;
         const next = await provider.getAuthorize(query);
         expect(next.status).toBe(200);
@@ -358,6 +361,56 @@ describe('in-scope actors', () => {
     // Approving again without a race works.
     const fresh = await provider.authorize(Object.fromEntries(query), RHOMBUS);
     expect((await race.exchange(fresh.searchParams.get('code')!)).status).toBe(200);
+  });
+
+  it('revoked grant: an approval that records its consent only after a disconnect issues no code and leaves no consent', async () => {
+    const race = await setupDisconnectRace();
+    const { provider, query } = race;
+    expect((await provider.getAuthorize(query)).status).toBe(200);
+    const params = { ...provider.consents[0].params };
+
+    const approved = await race.raceDisconnect(() => provider.decide(params, 'approve'), 'oauth_provider_consents');
+    const callback = new URL((await approved.json() as { data: { redirectTo: string } }).data.redirectTo);
+    expect(callback.searchParams.get('code')).toBeNull();
+    expect(callback.searchParams.get('error')).toBe('access_denied');
+    await race.expectDisconnected();
+  });
+});
+
+describe('concurrent approvals', () => {
+  it('keeps the scopes of every approval and issues a working code to each', async () => {
+    const provider = await setupProvider();
+    const rhombus = (scope: string) => provider.authorizeQuery({
+      client_id: RHOMBUS.clientId,
+      redirect_uri: RHOMBUS.redirectUris[0],
+      scope
+    }, RHOMBUS);
+    await provider.getAuthorize(rhombus('memotron:read'));
+    await provider.getAuthorize(rhombus('memotron:write'));
+    const [read, write] = provider.consents.map((consent) => ({ ...consent.params }));
+
+    // The first approval is held at its consent insert while the second runs.
+    const reached = provider.control.arm('oauth_provider_consents');
+    const first = provider.decide(read, 'approve');
+    await reached;
+    const second = await provider.decide(write, 'approve');
+    provider.control.release();
+    for (const response of [await first, second]) {
+      const callback = new URL((await response.json() as { data: { redirectTo: string } }).data.redirectTo);
+      const exchanged = await provider.token({
+        grant_type: 'authorization_code',
+        client_id: RHOMBUS.clientId,
+        code: callback.searchParams.get('code')!,
+        redirect_uri: RHOMBUS.redirectUris[0],
+        code_verifier: RFC7636_VERIFIER
+      });
+      expect(exchanged.status).toBe(200);
+    }
+
+    // Both approvals are remembered: the trusted client is silent for both.
+    const silent = await provider.getAuthorize(rhombus('memotron:read memotron:write'));
+    expect(silent.status).toBe(302);
+    expect(new URL(silent.headers.get('location')!).searchParams.get('code')).toEqual(expect.any(String));
   });
 });
 

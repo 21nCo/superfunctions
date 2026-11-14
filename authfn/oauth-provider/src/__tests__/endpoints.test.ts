@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { memoryAdapter } from '../../../../packages/db/src/adapters/memory/index.js';
 import { authfn } from 'authfn';
+import { secretsEqual } from '../http.js';
 import { authFnOAuthProviderPlugin } from '../index.js';
+import { trimTrailingSlashes } from '../runtime.js';
 import {
   MCP_HOST,
   MEMOTRON,
+  MEMOTRON_SECRET,
   ORIGIN,
   POINTRON,
   RESOURCES,
+  RFC6749_BASIC,
   RFC6749_CLIENT,
   RFC7636_VERIFIER,
   RHOMBUS,
@@ -103,6 +107,30 @@ describe('authorization endpoint', () => {
       expect(response.status).toBe(400);
       expect(await response.json()).toMatchObject({ error: 'invalid_request' });
     }
+    // Malformed JSON gets the same OAuth error, not the AuthFn envelope.
+    const malformed = await provider.handle('/auth/oauth/authorize', {
+      method: 'POST',
+      headers: { cookie: provider.cookie, 'content-type': 'application/json', 'x-authfn-csrf': provider.session.csrfToken },
+      body: '{"decision":'
+    });
+    expect(malformed.status).toBe(400);
+    expect(await malformed.json()).toEqual({ error: 'invalid_request', error_description: 'The decision body must be valid JSON' });
+  });
+
+  it('keeps the registered redirect query and appends the response to it (RFC 6749 3.1.2)', async () => {
+    const tenant = { clientId: 'tenant-app', name: 'Tenant App', redirectUris: ['https://tenant.example.com/cb?tenant=a&x=1'] };
+    const provider = await setupProvider({ clients: [tenant] });
+    const success = await provider.authorize({ client_id: tenant.clientId, redirect_uri: tenant.redirectUris[0] }, tenant);
+    expect([...success.searchParams.keys()]).toEqual(['tenant', 'x', 'code', 'state', 'iss']);
+    expect(success.searchParams.get('tenant')).toBe('a');
+
+    const failure = await provider.getAuthorize(provider.authorizeQuery({
+      client_id: tenant.clientId,
+      redirect_uri: tenant.redirectUris[0],
+      scope: 'memotron:admin'
+    }, tenant));
+    const location = new URL(failure.headers.get('location')!);
+    expect([...location.searchParams.keys()]).toEqual(['tenant', 'x', 'error', 'error_description', 'state', 'iss']);
   });
 
   it('asks a trusted client for consent once per resource, and an untrusted client every time', async () => {
@@ -154,8 +182,18 @@ describe('token endpoint', () => {
     expect(wrongSecret.headers.get('www-authenticate')).toContain('Basic');
     expect(await wrongSecret.json()).toMatchObject({ error: 'invalid_client' });
 
+    // RFC 6749 5.2: 401 and a challenge only for an Authorization header attempt.
     const noSecret = await provider.exchange(code, { client_id: RFC6749_CLIENT.clientId }, {} as { authorization: string });
-    expect(await noSecret.json()).toMatchObject({ error: 'invalid_client' });
+    const inBody = await provider.exchange(code, {
+      client_id: RFC6749_CLIENT.clientId,
+      client_secret: RFC6749_CLIENT.clientSecret!
+    }, {} as { authorization: string });
+    const noClient = await provider.token({ grant_type: 'authorization_code', code });
+    for (const response of [noSecret, inBody, noClient]) {
+      expect(response.status).toBe(400);
+      expect(response.headers.get('www-authenticate')).toBeNull();
+      expect(await response.json()).toMatchObject({ error: 'invalid_client' });
+    }
 
     const otherClient = await provider.exchange(code, { client_id: MCP_HOST.clientId }, {} as { authorization: string });
     expect(await otherClient.json()).toMatchObject({ error: 'invalid_grant' });
@@ -163,8 +201,12 @@ describe('token endpoint', () => {
     const otherRedirect = await provider.exchange(code, { redirect_uri: 'https://client.example.com/other' });
     expect(await otherRedirect.json()).toMatchObject({ error: 'invalid_grant' });
 
-    const unsupported = await provider.token({ grant_type: 'password' }, { authorization: 'Basic czZCaGRSa3F0MzpnWDFmQmF0M2JW' });
+    const unsupported = await provider.token({ grant_type: 'password' }, { authorization: RFC6749_BASIC });
     expect(await unsupported.json()).toMatchObject({ error: 'unsupported_grant_type' });
+    for (const form of [{}, { grant_type: '' }]) {
+      const missing = await provider.token(form, { authorization: RFC6749_BASIC });
+      expect(await missing.json()).toMatchObject({ error: 'invalid_request' });
+    }
 
     const json = await provider.handle('/auth/oauth/token', {
       method: 'POST',
@@ -214,6 +256,48 @@ describe('introspection (RFC 7662)', () => {
     expect(unauthenticated.status).toBe(401);
     expect(unauthenticated.body).toMatchObject({ error: 'invalid_token' });
     expect((await provider.introspect(issued.refresh_token)).body).toEqual({ active: false });
+
+    // RFC 6750 2.1: the credential is one b64token; anything else is refused.
+    for (const header of [`Bearer ${MEMOTRON_SECRET} extra`, `Bearer  ${MEMOTRON_SECRET}`, `Bearer ${MEMOTRON_SECRET},x`]) {
+      const response = await provider.handle('/auth/oauth/introspect', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', authorization: header },
+        body: new URLSearchParams({ token: issued.access_token })
+      });
+      expect(response.status).toBe(401);
+    }
+  });
+});
+
+describe('revocation (RFC 7009)', () => {
+  it('answers a failed client authentication like the token endpoint', async () => {
+    const provider = await setupProvider();
+    const issued = await provider.obtainTokens();
+    const revoke = (headers: Record<string, string>, form: Record<string, string> = {}) => provider.handle('/auth/oauth/revoke', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers },
+      body: new URLSearchParams({ token: issued.access_token, ...form })
+    });
+    const basic = await revoke({ authorization: `Basic ${btoa(`${RFC6749_CLIENT.clientId}:nope`)}` });
+    expect(basic.status).toBe(401);
+    expect(basic.headers.get('www-authenticate')).toContain('Basic');
+    for (const response of [await revoke({}), await revoke({}, { client_id: RFC6749_CLIENT.clientId, client_secret: 'nope' })]) {
+      expect(response.status).toBe(400);
+      expect(response.headers.get('www-authenticate')).toBeNull();
+    }
+    expect((await provider.introspect(issued.access_token)).body.active).toBe(true);
+  });
+});
+
+describe('helpers', () => {
+  it('trims trailing slashes in linear time and compares secrets of any length', () => {
+    expect(trimTrailingSlashes('https://auth.example.com///')).toBe('https://auth.example.com');
+    const slashes = `https://auth.example.com${'/'.repeat(100_000)}x`;
+    expect(trimTrailingSlashes(slashes)).toBe(slashes);
+    expect(trimTrailingSlashes('')).toBe('');
+    expect(secretsEqual('secret', 'secret')).toBe(true);
+    expect(secretsEqual('secret', 'secret2')).toBe(false);
+    expect(secretsEqual('secreT', 'secret')).toBe(false);
   });
 });
 
@@ -244,13 +328,48 @@ describe('configuration', () => {
     expect(() => create([RESOURCES[0], { ...RESOURCES[1], introspectionSecret: undefined }])).not.toThrow();
   });
 
+  it('accepts only redirect URIs that keep the response off plaintext networks and free of collisions', () => {
+    const create = (redirectUris: string[]) => createProviderApp().createServer({
+      database: memoryAdapter({ debug: false }),
+      pluginRuntime: { oauthProvider: { clients: [{ clientId: 'c', name: 'C', redirectUris }], resources: RESOURCES, ...hooks } }
+    });
+    for (const uri of [
+      'http://client.example.com/cb',
+      'http://localhost:8080/cb',
+      'https://client.example.com/cb?state=fixed',
+      'https://client.example.com/cb?code=1',
+      'https://client.example.com/cb?iss=x',
+      'https://client.example.com/cb#frag'
+    ]) {
+      expect(() => create([uri])).toThrow(expect.objectContaining({ code: 'AUTHFN_CONFIG_INVALID' }));
+    }
+    expect(() => create([
+      'https://client.example.com/cb?tenant=a',
+      'http://127.0.0.1/callback',
+      'http://[::1]:8080/callback',
+      'com.example.app:/oauth/callback'
+    ])).not.toThrow();
+  });
+
+  it('requires introspection secrets that are valid Bearer credentials (RFC 6750 2.1)', () => {
+    const create = (introspectionSecret: string) => createProviderApp().createServer({
+      database: memoryAdapter({ debug: false }),
+      pluginRuntime: { oauthProvider: { clients: [], resources: [{ ...RESOURCES[0], introspectionSecret }], ...hooks } }
+    });
+    for (const secret of ['has space', 'comma,secret', 'pad=ding', 'unicode-é']) {
+      expect(() => create(secret)).toThrow(expect.objectContaining({ code: 'AUTHFN_CONFIG_INVALID' }));
+    }
+    expect(() => create('abc-._~+/XYZ019==')).not.toThrow();
+  });
+
   it('declares its tables in the AuthFn schema', () => {
     const tables = authfn({ plugins: [authFnOAuthProviderPlugin()] }).getSchema().schemas.map((table) => table.modelName);
     expect(tables).toEqual(expect.arrayContaining([
       'oauth_provider_grants',
       'oauth_provider_codes',
       'oauth_provider_tokens',
-      'oauth_provider_consents'
+      'oauth_provider_consents',
+      'oauth_provider_disconnects'
     ]));
   });
 });

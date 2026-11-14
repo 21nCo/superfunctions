@@ -3,7 +3,7 @@ import { AuthFnConfigError } from 'authfn/core/errors';
 import { readPluginRuntimeConfig } from 'authfn/core/plugin-runtime';
 import { resolveEnvironment } from 'authfn/core/environment';
 import { assertRegisteredScopes } from 'authfn/core/scopes';
-import { OAuthError } from './http.js';
+import { isBearerCredential, OAuthError } from './http.js';
 import type {
   OAuthProviderClient,
   OAuthProviderPluginRuntimeConfig,
@@ -52,50 +52,87 @@ export function readOAuthProviderRuntimeConfig(config: AuthFnRuntimeConfig): OAu
 
   const clientIds = new Set<string>();
   for (const client of runtime.clients) {
-    if (typeof client?.clientId !== 'string' || client.clientId.length === 0 || clientIds.has(client.clientId)) {
-      throw configError('Each OAuth client needs a unique clientId');
-    }
-    clientIds.add(client.clientId);
-    if (!Array.isArray(client.redirectUris) || client.redirectUris.length === 0 ||
-      !client.redirectUris.every(isAbsoluteUriWithoutFragment)) {
-      throw configError(`OAuth client ${client.clientId} needs absolute redirect URIs without a fragment`);
-    }
-    const method = client.tokenEndpointAuthMethod;
-    if (method !== undefined && !['none', 'client_secret_basic', 'client_secret_post'].includes(method)) {
-      throw configError(`OAuth client ${client.clientId} has an unsupported token endpoint auth method`);
-    }
-    if ((method === 'none' && client.clientSecret) || (method && method !== 'none' && !client.clientSecret)) {
-      throw configError(`OAuth client ${client.clientId} auth method and clientSecret disagree`);
-    }
+    validateClient(client, clientIds);
   }
-
   const resourceIds = new Set<string>();
   const introspectionSecrets = new Set<string>();
   for (const resource of runtime.resources) {
-    if (!isAbsoluteUriWithoutFragment(resource?.resource) || resourceIds.has(resource.resource)) {
-      throw configError('Each OAuth resource must be a unique absolute URI without a fragment');
-    }
-    resourceIds.add(resource.resource);
-    // Introspection identifies the calling resource server by its secret, so
-    // a shared secret would make one resource answer for another's audience.
-    const secret = resource.introspectionSecret;
-    if (secret !== undefined) {
-      if (typeof secret !== 'string' || secret.length === 0 || introspectionSecrets.has(secret)) {
-        throw configError(`OAuth resource ${resource.resource} needs a unique, non-empty introspectionSecret`);
-      }
-      introspectionSecrets.add(secret);
-    }
-    if (!Array.isArray(resource.scopes) || resource.scopes.length === 0) {
-      throw configError(`OAuth resource ${resource.resource} needs at least one scope`);
-    }
-    try {
-      assertRegisteredScopes(config.scopes, resource.scopes);
-    } catch {
-      throw configError(`OAuth resource ${resource.resource} scopes must be grantable by the AuthFn scope registry`);
-    }
+    validateResource(config, resource, resourceIds, introspectionSecrets);
   }
-
   return runtime as OAuthProviderPluginRuntimeConfig;
+}
+
+function validateClient(client: OAuthProviderClient, clientIds: Set<string>): void {
+  if (typeof client?.clientId !== 'string' || client.clientId.length === 0 || clientIds.has(client.clientId)) {
+    throw configError('Each OAuth client needs a unique clientId');
+  }
+  clientIds.add(client.clientId);
+  if (!Array.isArray(client.redirectUris) || client.redirectUris.length === 0 ||
+    !client.redirectUris.every(isAllowedRedirectUri)) {
+    throw configError(
+      `OAuth client ${client.clientId} needs absolute redirect URIs without a fragment, using https, an http ` +
+      'loopback IP or a native app scheme, whose query has no OAuth response parameter'
+    );
+  }
+  const method = client.tokenEndpointAuthMethod;
+  if (method !== undefined && !['none', 'client_secret_basic', 'client_secret_post'].includes(method)) {
+    throw configError(`OAuth client ${client.clientId} has an unsupported token endpoint auth method`);
+  }
+  if ((method === 'none' && client.clientSecret) || (method && method !== 'none' && !client.clientSecret)) {
+    throw configError(`OAuth client ${client.clientId} auth method and clientSecret disagree`);
+  }
+}
+
+function validateResource(
+  config: AuthFnRuntimeConfig,
+  resource: OAuthProviderResource,
+  resourceIds: Set<string>,
+  introspectionSecrets: Set<string>
+): void {
+  if (!isAbsoluteUriWithoutFragment(resource?.resource) || resourceIds.has(resource.resource)) {
+    throw configError('Each OAuth resource must be a unique absolute URI without a fragment');
+  }
+  resourceIds.add(resource.resource);
+  // Introspection identifies the calling resource server by its secret, so
+  // a shared secret would make one resource answer for another's audience.
+  // The secret is sent as a Bearer credential, so it must fit that grammar.
+  const secret = resource.introspectionSecret;
+  if (secret !== undefined) {
+    if (typeof secret !== 'string' || !isBearerCredential(secret) || introspectionSecrets.has(secret)) {
+      throw configError(`OAuth resource ${resource.resource} needs a unique Bearer-token introspectionSecret`);
+    }
+    introspectionSecrets.add(secret);
+  }
+  if (!Array.isArray(resource.scopes) || resource.scopes.length === 0) {
+    throw configError(`OAuth resource ${resource.resource} needs at least one scope`);
+  }
+  try {
+    assertRegisteredScopes(config.scopes, resource.scopes);
+  } catch {
+    throw configError(`OAuth resource ${resource.resource} scopes must be grantable by the AuthFn scope registry`);
+  }
+}
+
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', '[::1]']);
+
+/** Parameters the authorization response adds to the redirect URI. */
+const RESPONSE_PARAMETERS = ['code', 'state', 'iss', 'error', 'error_description', 'error_uri'];
+
+/**
+ * A redirect URI that keeps the authorization response off plaintext
+ * networks (OAuth 2.1 2.3.1, RFC 8252 7): `https`, `http` only to a loopback
+ * IP literal, or a native app's own scheme. Its query must not use a
+ * response parameter name, which the response would otherwise duplicate.
+ */
+export function isAllowedRedirectUri(value: unknown): value is string {
+  if (!isAbsoluteUriWithoutFragment(value)) {
+    return false;
+  }
+  const url = new URL(value);
+  if (url.protocol === 'http:' && !LOOPBACK_HOSTS.has(url.hostname)) {
+    return false;
+  }
+  return RESPONSE_PARAMETERS.every((name) => !url.searchParams.has(name));
 }
 
 function configError(message: string): AuthFnConfigError {
@@ -113,7 +150,6 @@ export function isAbsoluteUriWithoutFragment(value: unknown): value is string {
   }
 }
 
-const LOOPBACK_HOSTS = new Set(['127.0.0.1', '[::1]']);
 
 /**
  * Exact redirect URI matching (OAuth 2.1), except that an `http` loopback IP
@@ -182,9 +218,18 @@ export interface OAuthEndpoints {
   introspection: string;
 }
 
+/** Removes trailing slashes in linear time. */
+export function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) {
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
+
 export async function resolveEndpoints(runtime: OAuthProviderRuntime, request: Request): Promise<OAuthEndpoints> {
   const environment = await resolveEnvironment(runtime.ctx.config, request);
-  const base = `${environment.baseUrl.replace(/\/+$/, '')}${runtime.ctx.basePath.replace(/\/+$/, '')}/oauth`;
+  const base = `${trimTrailingSlashes(environment.baseUrl)}${trimTrailingSlashes(runtime.ctx.basePath)}/oauth`;
   return {
     issuer: environment.issuer,
     authorization: `${base}/authorize`,
