@@ -707,9 +707,31 @@ describe('@billfn/provider-dodo', () => {
     // The operator-supplied reference stays one path segment.
     expect(fetchMock).toHaveBeenCalledWith('https://dodo.test/subscriptions/sub_legacy%2F1', expect.objectContaining({ method: 'GET' }));
 
-    // A record for another subscription is not imported under this reference.
+    // A record for another subscription is a provider fault, not a reference bound elsewhere.
     await expect(provider.importSubscription?.({ ...input, providerReference: 'sub_other' })).rejects.toMatchObject({
-      code: 'BILLFN_CONFLICT'
+      code: 'BILLFN_PROVIDER_ERROR'
+    });
+  });
+
+  it('reports a subscription Dodo does not have as missing and keeps other failures retryable', async () => {
+    const responses: Response[] = [
+      // Dodo's answer to GET /subscriptions/:id for an unknown id.
+      new Response(JSON.stringify({ code: 'NOT_FOUND', message: 'Subscription not found' }), { status: 404 }),
+      new Response('upstream unavailable', { status: 503 })
+    ];
+    const fetchMock = vi.fn(async () => responses.shift() as Response) as typeof fetch;
+    const provider = createDodoProvider({ apiKey: 'test', baseUrl: 'https://dodo.test', fetch: fetchMock });
+    const input = {
+      providerReference: 'sub_mistyped',
+      billingAccount: restorePurchasesInput().billingAccount,
+      plan: restorePurchasesInput().plan
+    };
+
+    await expect(provider.importSubscription?.(input)).resolves.toBeNull();
+    await expect(provider.importSubscription?.(input)).rejects.toMatchObject({
+      code: 'BILLFN_PROVIDER_ERROR',
+      retryable: true,
+      details: { status: 503 }
     });
   });
 });

@@ -6,7 +6,11 @@ import type { BillFnConfig, BillFnInstance } from './types.js';
 export type * from './types.js';
 export { getSchema, getSchemaMap } from './schema.js';
 export { createBillFnError, billFnErrorRegistry } from './errors.js';
-export { BILLFN_IMPORTED_AT_METADATA_KEY, createBillFnReconciliationWorker } from './service.js';
+export {
+  BILLFN_IMPORTED_AT_METADATA_KEY,
+  BILLFN_IMPORT_REPLAY_UNFINISHED_REASON,
+  createBillFnReconciliationWorker
+} from './service.js';
 
 export function createBillFn(config: BillFnConfig): BillFnInstance {
   const service = createBillFnService(config);

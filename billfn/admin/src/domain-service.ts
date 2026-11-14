@@ -62,10 +62,12 @@ function adminCodeForStatus(status: number): "not_found" | "forbidden" | "confli
 /** Maps an error BillFn throws to the admin error an operator sees; other errors pass through. */
 function adminErrorFromBillFn(error: unknown): unknown {
   if (error instanceof AdminError || typeof error !== "object" || error === null) return error;
-  const { code, status, message, retryable } = error as { code?: unknown; status?: unknown; message?: unknown; retryable?: unknown };
+  const { code, status, message, retryable, details } = error as { code?: unknown; status?: unknown; message?: unknown; retryable?: unknown; details?: unknown };
   if (typeof code !== "string" || !code.startsWith("BILLFN_") || typeof status !== "number") return error;
+  // Only the reason is passed on: it separates conflicts (an unfinished import replay from a reference bound elsewhere).
+  const reason = typeof details === "object" && details !== null ? (details as { reason?: unknown }).reason : undefined;
   return new AdminError(adminCodeForStatus(status), typeof message === "string" ? message : code, {
-    details: { code },
+    details: typeof reason === "string" ? { code, reason } : { code },
     retryable: retryable === true,
   });
 }

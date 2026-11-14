@@ -687,8 +687,44 @@ describe('@billfn/provider-apple', () => {
       expect(String(vi.mocked(fetchMock).mock.calls[0]?.[0])).toBe(
         'https://api.storekit.itunes.apple.com/inApps/v1/subscriptions/orig_legacy'
       );
-      await expect(apple.importSubscription?.({ providerReference: 'orig_missing', billingAccount, plan })).rejects.toMatchObject({
-        code: 'BILLFN_CONFLICT'
+    });
+
+    it('rejects a renewal transaction id as invalid input, naming the original transaction id', async () => {
+      // StoreKit answers for any transaction of the subscription; the import binds the original one.
+      const { provider: apple } = provider();
+
+      await expect(apple.importSubscription?.({ providerReference: 'txn_legacy_renewal', billingAccount, plan })).rejects.toMatchObject({
+        code: 'BILLFN_VALIDATION_ERROR',
+        retryable: false,
+        details: { originalTransactionIds: ['orig_other', 'orig_legacy'] }
+      });
+    });
+
+    it('reports a transaction neither StoreKit environment knows as missing', async () => {
+      // StoreKit's TransactionIdNotFoundError, answered by production and then by the sandbox fallback.
+      const notFound = JSON.stringify({ errorCode: 4040010, errorMessage: 'Transaction id not found.' });
+      const fetchMock = vi.fn(async () => new Response(notFound, { status: 404 })) as typeof fetch;
+      const apple = createAppleProvider({ fetch: fetchMock, tokenProvider: async () => 'token' });
+
+      await expect(apple.importSubscription?.({ providerReference: 'orig_missing', billingAccount, plan })).resolves.toBeNull();
+      expect(vi.mocked(fetchMock).mock.calls.map((call) => String(call[0]))).toEqual([
+        'https://api.storekit.itunes.apple.com/inApps/v1/subscriptions/orig_missing',
+        'https://api.storekit-sandbox.itunes.apple.com/inApps/v1/subscriptions/orig_missing'
+      ]);
+
+      // A response without transactions is missing too; a StoreKit outage stays a retryable provider error.
+      const empty = createAppleProvider({
+        fetch: vi.fn(async () => new Response(JSON.stringify({ environment: 'Production', data: [] }), { status: 200 })) as typeof fetch,
+        tokenProvider: async () => 'token'
+      });
+      await expect(empty.importSubscription?.({ providerReference: 'orig_legacy', billingAccount, plan })).resolves.toBeNull();
+      const down = createAppleProvider({
+        fetch: vi.fn(async () => new Response('', { status: 500 })) as typeof fetch,
+        tokenProvider: async () => 'token'
+      });
+      await expect(down.importSubscription?.({ providerReference: 'orig_legacy', billingAccount, plan })).rejects.toMatchObject({
+        code: 'BILLFN_PROVIDER_ERROR',
+        retryable: true
       });
     });
 

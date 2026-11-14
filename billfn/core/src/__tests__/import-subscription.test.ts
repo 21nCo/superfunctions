@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { memoryAdapter } from '@superfunctions/db/testing';
-import { BILLFN_IMPORTED_AT_METADATA_KEY, createBillFn } from '../index.js';
+import { BILLFN_IMPORTED_AT_METADATA_KEY, BILLFN_IMPORT_REPLAY_UNFINISHED_REASON, createBillFn } from '../index.js';
 import type {
   BillFnBillingEvent,
   BillFnCatalog,
@@ -176,9 +176,10 @@ function withSubscriptionReferenceUniqueness(db: Db): Db {
   } as Db;
 }
 
-function setup(options: ProviderOptions = {}) {
+function setup(options: ProviderOptions & { wrapDb?: (db: Db) => Db } = {}) {
   const base = memoryAdapter({ debug: false });
-  const db = withSubscriptionReferenceUniqueness(base);
+  const unique = withSubscriptionReferenceUniqueness(base);
+  const db = options.wrapDb ? options.wrapDb(unique) : unique;
   const clock = { current: new Date('2026-11-10T00:00:00.000Z') };
   const provider = createProvider(options);
   const billfn = createBillFn({
@@ -338,7 +339,12 @@ describe('billfn.services.subscriptions.import', () => {
       namespace: 'billfn'
     });
 
-    await expect(env.import({ billingAccountId })).rejects.toMatchObject({ code: 'BILLFN_CONFLICT' });
+    // Unlike a reference bound elsewhere, the operator can retry it.
+    await expect(env.import({ billingAccountId })).rejects.toMatchObject({
+      code: 'BILLFN_CONFLICT',
+      retryable: true,
+      details: { reason: BILLFN_IMPORT_REPLAY_UNFINISHED_REASON }
+    });
     // The binding and its audit record committed before the replay stopped.
     expect(await env.subscriptions()).toEqual([expect.objectContaining({ billingAccountId, status: 'active' })]);
     expect(await env.importEvents()).toHaveLength(1);
@@ -407,6 +413,11 @@ describe('billfn.services.subscriptions.import', () => {
     const [subscription] = await env.subscriptions();
     expect(await env.subscriptions()).toHaveLength(1);
     expect(await env.importEvents()).toEqual([expect.objectContaining({ billingAccountId: subscription.billingAccountId })]);
+    // The loser's billing account gets no entitlements from the reference.
+    expect(await env.db.findMany({ model: 'entitlementSnapshots', where: [], namespace: 'billfn' })).toEqual([
+      expect.objectContaining({ billingAccountId: subscription.billingAccountId })
+    ]);
+    expect(rejected[0].reason).toMatchObject({ retryable: false });
   });
 
   it('refuses a reference bound to another billing account without reading the provider or writing', async () => {
@@ -418,6 +429,7 @@ describe('billfn.services.subscriptions.import', () => {
 
     await expect(env.import({ billingAccountId: bob })).rejects.toMatchObject({
       code: 'BILLFN_CONFLICT',
+      retryable: false,
       message: expect.stringContaining('already bound to a different billing account')
     });
 
@@ -448,6 +460,85 @@ describe('billfn.services.subscriptions.import', () => {
     await expect(env.import({ billingAccountId })).rejects.toMatchObject({ code: 'BILLFN_CONFLICT' });
     expect(env.importSubscription).not.toHaveBeenCalled();
     expect(await env.subscriptions()).toEqual([]);
+  });
+
+  it('refuses a reference whose replacement a writer records and clears from pending between its reads', async () => {
+    let armed = false;
+    const replacedRead = (params: { model: string; where?: Array<{ field: string }> }) =>
+      params.model === 'replacedProviderReferences' || Boolean(params.where?.some((clause) => clause.field === 'replacedReferencesPending'));
+    // After the import's first replaced-reference read returns, the writer that dropped `sub_legacy` records it and clears pending.
+    const writerFinishes = async (db: Db, params: { model: string; where?: Array<{ field: string }> }) => {
+      if (!armed || !replacedRead(params)) {
+        return;
+      }
+      armed = false;
+      await db.create({
+        model: 'replacedProviderReferences',
+        data: {
+          id: 'rpr_1',
+          provider: 'dodo',
+          providerReference: 'sub_legacy',
+          subscriptionId: 'sub_row_other',
+          billingAccountId: 'ba_user_other',
+          replacedAt: '2026-11-09T00:00:00.000Z',
+          createdAt: '2026-11-09T00:00:00.000Z',
+          updatedAt: '2026-11-09T00:00:00.000Z'
+        },
+        namespace: 'billfn'
+      });
+      await db.updateMany({
+        model: 'subscriptions',
+        where: [{ field: 'id', operator: 'eq', value: 'sub_row_other' }],
+        data: { replacedReferencesPending: null, metadata: {} },
+        namespace: 'billfn'
+      });
+    };
+    const env = setup({
+      wrapDb: (db) =>
+        ({
+          ...db,
+          async findOne<T>(params: Parameters<Db['findOne']>[0]) {
+            const result = await db.findOne<T>(params);
+            await writerFinishes(db, params);
+            return result;
+          },
+          async findMany<T>(params: Parameters<Db['findMany']>[0]) {
+            const result = await db.findMany<T>(params);
+            await writerFinishes(db, params);
+            return result;
+          }
+        }) as Db
+    });
+    const billingAccountId = await env.account('alice');
+    // Another account's subscription dropped `sub_legacy` and has not recorded it yet.
+    await env.db.create({
+      model: 'subscriptions',
+      data: {
+        id: 'sub_row_other',
+        billingAccountId: 'ba_user_other',
+        planKey: 'nucleus',
+        priceId: 'price_nucleus_dodo_year',
+        provider: 'dodo',
+        providerSubscriptionId: 'sub_new',
+        status: 'active',
+        replacedReferencesPending: true,
+        metadata: { billfnPendingReplacedReferences: ['sub_legacy'] },
+        createdAt: '2026-11-09T00:00:00.000Z',
+        updatedAt: '2026-11-09T00:00:00.000Z'
+      },
+      namespace: 'billfn'
+    });
+    armed = true;
+
+    await expect(env.import({ billingAccountId })).rejects.toMatchObject({
+      code: 'BILLFN_CONFLICT',
+      message: expect.stringContaining('replaced')
+    });
+
+    expect(armed).toBe(false);
+    expect(env.importSubscription).not.toHaveBeenCalled();
+    expect(await env.subscriptions()).toEqual([expect.objectContaining({ id: 'sub_row_other' })]);
+    expect(await env.importEvents()).toEqual([]);
   });
 
   it('refuses a provider record whose product is not a subscription price of the plan', async () => {

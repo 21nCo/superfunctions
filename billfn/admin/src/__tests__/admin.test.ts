@@ -299,7 +299,47 @@ describe("@billfn/admin", () => {
       }, context);
       await expect(service("workspace_2").importSubscription({
         payload: { provider: "dodo", providerSubscriptionId: "sub_legacy", planKey: "nucleus" },
-      }, context)).rejects.toMatchObject({ code: "conflict", message: expect.stringContaining("different billing account") });
+      }, context)).rejects.toMatchObject({ code: "conflict", retryable: false, message: expect.stringContaining("different billing account") });
+    });
+
+    it("reports a reference the provider does not have as not found and an unfinished replay as a retryable conflict", async () => {
+      const { billfn, db, importSubscription } = importingBillFn();
+      const service = createBillFnDomainAdminService({ billfn, subject: () => ({ tenantId: "workspace_1" }) });
+      const payload = { provider: "dodo", providerSubscriptionId: "sub_legacy", planKey: "nucleus" } as const;
+
+      importSubscription.mockResolvedValueOnce(null as never);
+      await expect(service.importSubscription({ payload: { ...payload, providerSubscriptionId: "sub_mistyped" } }, context)).rejects.toMatchObject({
+        code: "not_found",
+        retryable: false,
+      });
+
+      // Another replay run, interrupted moments ago, still holds an unlinked event for the reference.
+      const now = new Date().toISOString();
+      await db.create({
+        model: "unlinkedWebhookEvents",
+        data: {
+          id: "uwe_dodo_evt_held",
+          provider: "dodo",
+          providerEventId: "evt_held",
+          providerReference: "sub_legacy",
+          eventType: "subscription.renewed",
+          occurredAt: now,
+          reason: "billing_account_metadata_missing",
+          status: "replaying",
+          event: {},
+          replayClaimId: "uwr_interrupted",
+          replayClaimedAt: now,
+          expiresAt: "2099-01-01T00:00:00.000Z",
+          createdAt: now,
+          updatedAt: now,
+        },
+        namespace: "billfn",
+      });
+      await expect(service.importSubscription({ payload }, context)).rejects.toMatchObject({
+        code: "conflict",
+        retryable: true,
+        details: { code: "BILLFN_CONFLICT", reason: "import_replay_unfinished" },
+      });
     });
   });
 });

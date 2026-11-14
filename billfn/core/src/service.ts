@@ -111,6 +111,8 @@ const BILLING_ACCOUNT_METADATA_KEY = 'billfn_billing_account_id';
  * metadata a subscription created outside BillFn lacks.
  */
 export const BILLFN_IMPORTED_AT_METADATA_KEY = 'billfnImportedAt';
+/** `details.reason` of the retryable `BILLFN_CONFLICT` an import raises when its replay did not finish. */
+export const BILLFN_IMPORT_REPLAY_UNFINISHED_REASON = 'import_replay_unfinished';
 /** Deliveries of one queue message refused by lease conflicts before it is dead-lettered. */
 const RECONCILIATION_QUEUE_MAX_LEASE_CONFLICT_ATTEMPTS = 5;
 
@@ -1239,7 +1241,14 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
       deps.metrics.track('subscription.imported', { provider: providerName });
 
       // A replay that does not finish fails the import; calling it again finishes the replay.
-      await replayUnlinkedWebhookEventsOrThrow(deps, applied.subscription);
+      try {
+        await replayUnlinkedWebhookEventsOrThrow(deps, applied.subscription);
+      } catch (error) {
+        if (isReconciliationLeaseConflict(error)) {
+          throw importReplayUnfinished();
+        }
+        throw error;
+      }
       const refreshed = await refreshProjectionAfterReplay(deps, applied);
       return ok({
         subscription: refreshed.subscription,
@@ -2136,19 +2145,28 @@ async function isBoundElsewhere(
   return Boolean(holder && holder.billingAccountId !== billingAccountId);
 }
 
-/** Whether a subscription write dropped this reference (recorded, or still pending on the subscription). */
-async function isReplacedProviderReference(deps: ServiceDeps, provider: BillingProviderName, reference: string) {
-  const replaced = await deps.db.findOne<BillFnReplacedProviderReference>({
-    model: TABLES.replacedProviderReferences,
-    where: [
-      { field: 'provider', operator: 'eq', value: provider },
-      { field: 'providerReference', operator: 'eq', value: reference }
-    ],
-    namespace: deps.namespace
+/**
+ * The import is bound and recorded, but another run holds the reference's
+ * unlinked events (including a run interrupted before it released them) or the
+ * replay reached its bound. Unlike a bound-elsewhere conflict it is retryable:
+ * calling import again, after the holder's lease expires, finishes the replay.
+ */
+function importReplayUnfinished() {
+  return createBillFnError({
+    code: 'BILLFN_CONFLICT',
+    message: 'The import is recorded but replaying its unlinked webhook events did not finish; import again to finish it',
+    details: { reason: BILLFN_IMPORT_REPLAY_UNFINISHED_REASON },
+    retryable: true
   });
-  if (replaced) {
-    return true;
-  }
+}
+
+/**
+ * Whether a subscription write dropped this reference (still pending on the
+ * subscription, or recorded). A writer records the reference before it clears
+ * pending, so pending is read first, as `namesReplacedReference` does: a writer
+ * that clears pending between the reads has already recorded it.
+ */
+async function isReplacedProviderReference(deps: ServiceDeps, provider: BillingProviderName, reference: string) {
   const pending = await deps.db.findMany<BillFnSubscription>({
     model: TABLES.subscriptions,
     where: [
@@ -2157,7 +2175,18 @@ async function isReplacedProviderReference(deps: ServiceDeps, provider: BillingP
     ],
     namespace: deps.namespace
   });
-  return pending.some((subscription) => pendingReplacedReferencesOf(subscription).includes(reference));
+  if (pending.some((subscription) => pendingReplacedReferencesOf(subscription).includes(reference))) {
+    return true;
+  }
+  const replaced = await deps.db.findOne<BillFnReplacedProviderReference>({
+    model: TABLES.replacedProviderReferences,
+    where: [
+      { field: 'provider', operator: 'eq', value: provider },
+      { field: 'providerReference', operator: 'eq', value: reference }
+    ],
+    namespace: deps.namespace
+  });
+  return Boolean(replaced);
 }
 
 function requireSubject(subject: BillableSubject | undefined): BillableSubject {

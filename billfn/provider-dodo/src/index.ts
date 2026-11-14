@@ -298,7 +298,7 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
     },
     async importSubscription(input: BillFnImportSubscriptionInput) {
       // A subscription created outside BillFn carries no billfn_* metadata, so only its identity is checked.
-      const response = await requestJson(
+      const result = await tryRequestJson(
         fetchImpl,
         `${baseUrl}/subscriptions/${encodeURIComponent(input.providerReference)}`,
         {
@@ -306,14 +306,28 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
           headers: createHeaders(config.apiKey)
         }
       );
-      const responseId = readString(response, ['subscription_id', 'id']);
-      if (responseId !== input.providerReference) {
+      if (!result.ok) {
+        // Dodo has no such subscription: BillFn reports it as not found, which a retry does not change.
+        if (result.error.status === 404) {
+          return null;
+        }
         throw createBillFnError({
-          code: 'BILLFN_CONFLICT',
-          message: 'Dodo subscription does not match the imported reference'
+          code: 'BILLFN_PROVIDER_ERROR',
+          message: `Dodo request failed with status ${result.error.status}`,
+          details: result.error
         });
       }
-      return { ...mapDodoState(true, response), providerSubscriptionId: responseId };
+      const responseId = readString(result.data, ['subscription_id', 'id']);
+      if (!responseId) {
+        return null;
+      }
+      if (responseId !== input.providerReference) {
+        throw createBillFnError({
+          code: 'BILLFN_PROVIDER_ERROR',
+          message: 'Dodo returned a different subscription than the imported reference'
+        });
+      }
+      return { ...mapDodoState(true, result.data), providerSubscriptionId: responseId };
     },
     async parseWebhook(input: BillFnParseWebhookInput): Promise<BillFnParsedWebhookEvent[]> {
       if (!config.webhookSecret) {

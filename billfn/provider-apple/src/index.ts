@@ -122,11 +122,38 @@ export function createAppleProvider(config: AppleProviderConfig): BillFnProvider
       });
     },
     async importSubscription(input: BillFnImportSubscriptionInput) {
-      const response = await requestStoreKitWithFallback(
-        fetchImpl,
-        config,
-        `/inApps/v1/subscriptions/${encodeURIComponent(input.providerReference)}`
-      );
+      let response: Awaited<ReturnType<typeof requestStoreKitWithFallback>>;
+      try {
+        response = await requestStoreKitWithFallback(
+          fetchImpl,
+          config,
+          `/inApps/v1/subscriptions/${encodeURIComponent(input.providerReference)}`
+        );
+      } catch (error) {
+        // Neither environment knows the transaction: BillFn reports it as not found.
+        if (providerErrorStatus(error) === 404) {
+          return null;
+        }
+        throw error;
+      }
+      const transactions = extractLastTransactionRecords(response.payload)
+        .map((record) => decodeSignedPayload(record, 'signedTransactionInfo'))
+        .filter((transaction): transaction is Record<string, unknown> => transaction !== null);
+      if (!transactions.some((transaction) => readString(transaction, ['originalTransactionId']) === input.providerReference)) {
+        if (transactions.length === 0) {
+          return null;
+        }
+        // StoreKit found the subscription by another of its transactions; the import binds its original transaction id.
+        throw createBillFnError({
+          code: 'BILLFN_VALIDATION_ERROR',
+          message: 'The Apple reference is not an original transaction id; import the subscription by its originalTransactionId',
+          details: {
+            originalTransactionIds: [
+              ...new Set(transactions.map((transaction) => readString(transaction, ['originalTransactionId'])).filter(Boolean))
+            ]
+          }
+        });
+      }
       // A purchase made outside BillFn carries no BillFn appAccountToken, so only the transaction is matched.
       return mapAppleSubscriptionResponse(response.payload, {
         productId: null,
@@ -393,6 +420,13 @@ function buildStoreKitBaseUrl(environment: 'production' | 'sandbox') {
   return environment === 'production'
     ? 'https://api.storekit.itunes.apple.com'
     : 'https://api.storekit-sandbox.itunes.apple.com';
+}
+
+function providerErrorStatus(error: unknown) {
+  if (!error || typeof error !== 'object' || !('details' in error)) {
+    return undefined;
+  }
+  return (error as { details?: { status?: unknown } }).details?.status;
 }
 
 function shouldFallbackToSandbox(error: unknown, environment: 'production' | 'sandbox') {
