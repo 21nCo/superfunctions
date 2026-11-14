@@ -66,6 +66,13 @@ export class FileArtifactStore implements ArtifactStore {
 
   private keyedMarker(physical: string): string { return `${this.copiesStem}-${sha256(physical).slice(0, 16)}`; }
 
+  /**
+   * The prefix of the staged copies this store writes: `.reviewfn-copy-<digest of the artifact root's realpath>-`.
+   * Stores that share an output directory but not an artifact root hold different leases, so each sweeps only the
+   * staged files under its own key; stores reaching one root through different spellings share both key and lease.
+   */
+  private async stagedPrefix(): Promise<string> { return `.reviewfn-copy-${sha256(await realpath(this.root)).slice(0, 16)}-`; }
+
   /** Report-copy writes; tests override this to inject a failure between the two copies. */
   protected async writeCopyFile(file: string, content: string): Promise<void> { await safeWrite(file, content); }
 
@@ -161,8 +168,8 @@ export class FileArtifactStore implements ArtifactStore {
   private async replaceCopyPair(json: string, markdown: string, previousMarkdown: Buffer | undefined, restoreMarker: () => Promise<void>): Promise<void> {
     const directory = this.reportCopiesDirectory!;
     const [jsonFile, markdownFile] = this.copyNames.map(name => path.join(directory, name));
-    const stamp = randomUUID();
-    const [stagedJson, stagedMarkdown] = ["json", "md"].map(suffix => path.join(directory, `.reviewfn-copy-${stamp}.${suffix}`));
+    const stamp = `${await this.stagedPrefix()}${randomUUID()}`;
+    const [stagedJson, stagedMarkdown] = ["json", "md"].map(suffix => path.join(directory, `${stamp}.${suffix}`));
     let markdownLeftover = false;
     try {
       await this.writeCopyFile(stagedJson, json);
@@ -178,7 +185,7 @@ export class FileArtifactStore implements ArtifactStore {
       if (!markdownLeftover) await restoreMarker().catch(() => undefined);
       throw error;
     } finally {
-      // Best effort: a staged file left here is swept by the next cleanup.
+      // Best effort: a staged file left here is swept by the next cleanup through this artifact root.
       await Promise.all([stagedJson, stagedMarkdown].map(file => rm(file, { force: true }).catch(() => undefined)));
     }
   }
@@ -279,14 +286,17 @@ export class FileArtifactStore implements ArtifactStore {
   }
 
   /**
-   * Remove staged copies (`.reviewfn-copy-<uuid>.json|md`) that an interrupted write left in the copies directory. Copy
-   * writes hold the store lease, so under the lease no staged file belongs to a write in progress.
+   * Remove staged copies (`.reviewfn-copy-<store key>-<uuid>.json|md`) that an interrupted write of this store left in
+   * the copies directory. Only names carrying this store's key are touched: this store's copy writes hold its lease, so
+   * under the lease none of them belongs to a write in progress. A staged file of a store with another artifact root
+   * may belong to that store's write in progress, under its own lease, and is left for that store's cleanup.
    */
   private async deleteStagedCopies(errors: string[]): Promise<void> {
+    const prefix = await this.stagedPrefix();
     // Refuse a symlinked copies directory or ancestor before listing it, as every other copy access does.
     const entries = await lstat(this.reportCopiesDirectory!).then(() => safeDirectory(this.reportCopiesDirectory!)).then(() => readdir(this.reportCopiesDirectory!)).catch((error: NodeJS.ErrnoException) => missing(error) ? [] : Promise.reject(error)).catch((error: unknown) => { errors.push(`Staged copies: ${error instanceof Error ? error.message : String(error)}`); return []; });
     for (const entry of entries) {
-      if (!/^\.reviewfn-copy-[0-9a-f-]{36}\.(json|md)$/.test(entry)) continue;
+      if (!entry.startsWith(prefix) || !/^[0-9a-f-]{36}\.(json|md)$/.test(entry.slice(prefix.length))) continue;
       const file = path.join(this.reportCopiesDirectory!, entry);
       try {
         if (!(await lstat(file)).isFile()) throw new Error("refusing non-regular staged copy");

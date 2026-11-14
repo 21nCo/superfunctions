@@ -103,6 +103,11 @@ describe("reviewfn panel exit codes", () => {
     expect(result.stdout.endsWith("\n") && result.stdout.trim().split("\n")).toHaveLength(1);
     expect(JSON.parse(result.stdout)).toEqual({ report: path.join(root, ".reviewfn", "output", "panel-report.json"), runId: report.runId });
     expect(markdown).toContain("Wrong value");
+    // The finding has no anchor of its own; the evidence it cites locates it, in the Markdown and the published summary.
+    expect(report.findings[0].anchor).toBeUndefined();
+    const location = `(code): value; \`src/value.ts:1\` at \`${head}\``;
+    expect(markdown).toContain(location);
+    expect(publication(report, parseArguments(["publish"]).flags).rendered).toContain(location);
     // The evidence of the run is retained under .reviewfn/artifacts, including the stored panel report and slot output.
     const artifacts = await readdir(path.join(root, ".reviewfn", "artifacts"));
     expect(artifacts.some(name => name.startsWith("panel-report-") && name.endsWith(".artifact"))).toBe(true);

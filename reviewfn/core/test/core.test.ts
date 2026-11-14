@@ -7,6 +7,7 @@ import { DEFAULT_CONFIG, DEFAULT_POLICY, FileArtifactStore, PANEL_REPORT_COPY_NA
 import { readFile, mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { realpathSync } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 
 function report(): ReviewReport {
@@ -170,25 +171,62 @@ it("expires the keyed marker of a deleted panel output directory once its copies
   for (const [entry, content] of [[".panel-report-copies-0000000000000000", "not json"], [".panel-report-copies-1111111111111111", "null"]]) await writeFile(path.join(artifacts, entry), content);
   expect((await kept().deleteExpired(new Date(Date.now() + 31 * 86_400_000))).errors).toEqual([]);
   const remaining = await markers();
-  expect(remaining.sort()).toEqual([".panel-report-copies-0000000000000000", ".panel-report-copies-1111111111111111", expect.any(String)].sort());
-  expect(JSON.parse(await readFile(path.join(artifacts, remaining.find(entry => !/-(0|1)+$/.test(entry))!), "utf8")).host).toBe("another-host");
+  // The third marker's name is a digest of a temporary path, so its sort position varies: match by content, not order.
+  const unreadable = [".panel-report-copies-0000000000000000", ".panel-report-copies-1111111111111111"];
+  expect(remaining).toHaveLength(3);
+  expect(remaining).toEqual(expect.arrayContaining(unreadable));
+  const third = remaining.find(entry => !unreadable.includes(entry))!;
+  expect(JSON.parse(await readFile(path.join(artifacts, third), "utf8"))).toMatchObject({ host: "another-host", directory: path.join(realpathSync(root), "elsewhere") });
   await expect(readFile(path.join(root, "kept", "panel-report.json"))).rejects.toThrow();
 });
 
-it("removes staged panel copies that an interrupted write left behind", async () => {
+/** The staged copy prefix of a store whose artifact root is `artifacts`: a digest of that root's realpath. */
+const stagedPrefix = (artifacts: string) => `.reviewfn-copy-${createHash("sha256").update(realpathSync(artifacts)).digest("hex").slice(0, 16)}-`;
+
+it("removes staged panel copies that an interrupted write of the same store left behind, and no other store's", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-staged-"));
   const store = new FileArtifactStore(path.join(root, "artifacts"), root, PANEL_REPORT_COPY_NAMES);
   await store.writeReportCopies("json", "md", 30);
-  const staged = [".reviewfn-copy-01234567-89ab-cdef-0123-456789abcdef.json", ".reviewfn-copy-01234567-89ab-cdef-0123-456789abcdef.md"];
-  for (const entry of staged) await writeFile(path.join(root, entry), "interrupted report");
+  const stamp = "01234567-89ab-cdef-0123-456789abcdef";
+  const staged = [`${stagedPrefix(path.join(root, "artifacts"))}${stamp}.json`, `${stagedPrefix(path.join(root, "artifacts"))}${stamp}.md`];
+  // Staged files of a store with another artifact root (another key, or the unkeyed form) are not this store's to sweep.
+  const foreign = [`.reviewfn-copy-0123456789abcdef-${stamp}.json`, `.reviewfn-copy-${stamp}.md`];
+  for (const entry of [...staged, ...foreign]) await writeFile(path.join(root, entry), "interrupted report");
   expect(await store.deleteExpired()).toEqual({ deleted: [], errors: [] });
-  expect((await fileSystem.readdir(root)).sort()).toEqual(["artifacts", "panel-report.json", "panel-report.md"]);
+  expect((await fileSystem.readdir(root)).sort()).toEqual([...foreign, "artifacts", "panel-report.json", "panel-report.md"].sort());
+  for (const entry of foreign) await fileSystem.rm(path.join(root, entry));
   // A symlinked copies directory is refused, not followed.
   await mkdir(path.join(root, "real"));
   await writeFile(path.join(root, "real", staged[0]), "elsewhere");
   await symlink(path.join(root, "real"), path.join(root, "link"));
   expect((await new FileArtifactStore(path.join(root, "artifacts"), path.join(root, "link"), PANEL_REPORT_COPY_NAMES).deleteExpired()).errors.join()).toMatch(/symlink/);
   expect(await fileSystem.readdir(path.join(root, "real"))).toEqual([staged[0]]);
+});
+
+it("keeps another store's in-flight staged copies when a store with a different artifact root cleans the same output directory", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-cross-store-"));
+  const output = path.join(root, "out");
+  await mkdir(output);
+  let paused!: () => void;
+  let resume!: () => void;
+  const stagedWritten = new Promise<void>(resolve => { paused = resolve; });
+  const release = new Promise<void>(resolve => { resume = resolve; });
+  class PausingStore extends FileArtifactStore {
+    protected override async writeCopyFile(file: string, content: string): Promise<void> {
+      await super.writeCopyFile(file, content);
+      // Pause once the staged JSON exists and before either rename.
+      if (file.endsWith(".json")) { paused(); await release; }
+    }
+  }
+  const writing = new PausingStore(path.join(root, "a"), output, PANEL_REPORT_COPY_NAMES).writeReportCopies("a-json", "a-md", 30);
+  await stagedWritten;
+  expect((await fileSystem.readdir(output)).filter(entry => entry.startsWith(".reviewfn-copy-"))).toHaveLength(1);
+  expect(await new FileArtifactStore(path.join(root, "b"), output, PANEL_REPORT_COPY_NAMES).deleteExpired()).toEqual({ deleted: [], errors: [] });
+  resume();
+  await writing;
+  expect(await readFile(path.join(output, "panel-report.json"), "utf8")).toBe("a-json");
+  expect(await readFile(path.join(output, "panel-report.md"), "utf8")).toBe("a-md");
+  expect((await fileSystem.readdir(output)).sort()).toEqual(["panel-report.json", "panel-report.md"]);
 });
 
 it.each([".json", ".md"])("replaces the panel copies as a pair, keeping the previous pair when writing the %s copy fails", async failing => {

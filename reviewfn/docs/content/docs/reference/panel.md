@@ -57,7 +57,7 @@ The Markdown report shows:
 - coverage limits;
 - a table with each slot's stage, lens, harness, model and terminal state, with the reasons for a `void` run and, for a `collapsed` run, the slot whose identity it shares;
 - the requirements summary, when the panel extracted requirements;
-- reported findings, grouped by severity and then by file. Each finding shows its origins, its verification verdict and its on-base label (also present on base, new in this change, or not checked against base);
+- reported findings, grouped by severity and then by file. Each finding shows its origins, its verification verdict, its on-base label (also present on base, new in this change, or not checked against base) and each piece of evidence it cites, with its kind, description and location (code anchor, source anchor, test receipt or artifact), so a finding without its own anchor can still be located;
 - dropped and suppressed findings, with their reasons, in a collapsed section;
 - the gate receipts.
 

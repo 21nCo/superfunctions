@@ -1,4 +1,4 @@
-import type { CodeAnchor } from "../types.js";
+import type { CodeAnchor, Evidence } from "../types.js";
 import { PANEL_CANCELED_REASON, type PanelFinding, type PanelFindingSeverity, type PanelReport, type PanelSlot, type SlotRun } from "./types.js";
 import { slotIdentityKey } from "./validate.js";
 
@@ -59,7 +59,24 @@ function originsText(finding: PanelFinding): string {
   return finding.origins.map(origin => `${escape(origin.slotId)} (${escape(origin.lens)} lens)`).join(", ");
 }
 
-function findingLines(finding: PanelFinding): string[] {
+/** Where a piece of evidence points: its code anchor, source anchor, test receipt or artifact digest. */
+function evidenceLocation(evidence: Evidence): string {
+  const location = evidence.code ? anchorText(evidence.code)
+    : evidence.source ? `source ${escape(`${evidence.source.sourceId}#${evidence.source.anchor}`)}`
+    : evidence.receiptId ? `receipt ${escape(evidence.receiptId)}`
+    : evidence.artifactDigest ? `artifact ${code(evidence.artifactDigest)}` : "no location recorded";
+  return evidence.sourceExclusionReason ? `${location}; source exclusion: ${escape(evidence.sourceExclusionReason)}` : location;
+}
+
+/** One nested line per evidence ID a finding cites, resolved against the report's evidence, so an unanchored finding can still be located. */
+function evidenceLines(ids: string[], evidence: Map<string, Evidence>): string[] {
+  return ids.map(id => {
+    const item = evidence.get(id);
+    return item ? `    - ${escape(id)} (${item.kind}): ${escape(item.description)}; ${evidenceLocation(item)}` : `    - ${escape(id)}: not in this report's evidence`;
+  });
+}
+
+function findingLines(finding: PanelFinding, evidence: Map<string, Evidence>): string[] {
   const onBase = ON_BASE_LABELS[finding.verification?.onBase ?? "not_checked"];
   const lines = [
     `- **${escape(finding.title)}** (${escape(finding.category)}; ${onBase})`,
@@ -69,13 +86,14 @@ function findingLines(finding: PanelFinding): string[] {
     `  - Impact: ${escape(finding.impact)}`,
     `  - Fix: ${escape(finding.direction)}`,
     `  - Evidence: ${finding.evidenceIds.map(escape).join(", ") || "none"}; ${escape(finding.basis)}`,
+    ...evidenceLines(finding.evidenceIds, evidence),
   ];
   if (finding.anchor) lines.push(`  - Anchor: ${anchorText(finding.anchor)}`);
   return lines;
 }
 
 /** Group `findings` by severity (critical first), then by file in code-point order, findings without a file last. */
-function groupedFindings(findings: PanelFinding[]): string[] {
+function groupedFindings(findings: PanelFinding[], evidence: Map<string, Evidence>): string[] {
   const lines: string[] = [];
   for (const severity of SEVERITIES) {
     const matching = findings.filter(finding => finding.severity === severity);
@@ -86,7 +104,7 @@ function groupedFindings(findings: PanelFinding[]): string[] {
     for (const finding of matching) files.set(finding.anchor?.path, [...(files.get(finding.anchor?.path) ?? []), finding]);
     const ordered: Array<string | undefined> = [...files.keys()].filter((file): file is string => file !== undefined).sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
     if (files.has(undefined)) ordered.push(undefined);
-    for (const file of ordered) lines.push(`#### ${file === undefined ? NO_FILE : code(file)}`, "", ...files.get(file)!.flatMap(findingLines), "");
+    for (const file of ordered) lines.push(`#### ${file === undefined ? NO_FILE : code(file)}`, "", ...files.get(file)!.flatMap(finding => findingLines(finding, evidence)), "");
   }
   return lines;
 }
@@ -106,8 +124,9 @@ function setAsideLines(finding: PanelFinding): string[] {
 
 /**
  * Render a panel report as Markdown: the run summary, every slot's terminal state with void and collapse reasons, the
- * requirements summary, reported findings grouped by severity then file (each with its origins, verification verdict
- * and on-base label), and dropped and suppressed findings with their reasons in a collapsed section. Advisory only.
+ * requirements summary, reported findings grouped by severity then file (each with its origins, verification verdict,
+ * on-base label and the location of every piece of evidence it cites), and dropped and suppressed findings with their
+ * reasons in a collapsed section. Advisory only.
  * Every free-text field, including harness-supplied categories, passes through `escape` or `code`; schema enums (stage,
  * terminal, severity, disposition, verdicts and coverage) are shown as-is, so callers render only reports that
  * pass `panelStructureIssues` or come from the coordinator.
@@ -155,7 +174,7 @@ export function renderPanelMarkdownReport(report: PanelReport): string {
   }
   lines.push("## Findings", "");
   if (!reported.length) lines.push("No findings were reported.", "");
-  else lines.push(...groupedFindings(reported));
+  else lines.push(...groupedFindings(reported, new Map(report.evidence.map(item => [item.id, item]))));
   if (setAside.length) {
     lines.push("## Dropped and suppressed findings", "", "<details>", `<summary>${setAside.length} finding(s) set aside, with reasons</summary>`, "", ...setAside.flatMap(setAsideLines), "", "</details>", "");
   }

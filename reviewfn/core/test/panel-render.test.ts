@@ -59,6 +59,18 @@ describe("renderPanelMarkdownReport", () => {
     expect(order).toEqual([...order].sort((left, right) => left - right));
   });
 
+  it("resolves every evidence ID a reported finding cites to its kind, description and location", () => {
+    const report = fixture();
+    report.evidence.push({ id: "E2", kind: "source", description: "issue text", source: { sourceId: "issue:1", anchor: "L2" } }, { id: "E3", kind: "test", description: "test run", receiptId: "test-0" });
+    report.findings[1].evidenceIds = ["E1", "E2", "E3", "E9"];
+    const markdown = renderPanelMarkdownReport(report);
+    const unanchored = markdown.slice(markdown.indexOf("- **Unanchored critical**"), markdown.indexOf("### Low (P3)"));
+    expect(unanchored).toContain(`    - E1 (code): value; \`src/b.ts:3\` at \`${head}\``);
+    expect(unanchored).toContain("    - E2 (source): issue text; source issue:1\\#L2");
+    expect(unanchored).toContain("    - E3 (test): test run; receipt test-0");
+    expect(unanchored).toContain("    - E9: not in this report's evidence");
+  });
+
   it("keeps dropped and suppressed findings out of the reported sections, inside one collapsed section with reasons", () => {
     const markdown = renderPanelMarkdownReport(fixture());
     const details = markdown.slice(markdown.indexOf("<details>"), markdown.indexOf("</details>"));

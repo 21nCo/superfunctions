@@ -35,6 +35,7 @@
   - Impact: wrong value
   - Fix: return the right value
   - Evidence: E1; inferred
+    - E1 (code): value; `src/b.ts:3` at `bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`
   - Anchor: `src/a.ts:1` at `bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`
 
 #### `src/b.ts`
@@ -46,6 +47,7 @@
   - Impact: wrong value
   - Fix: return the right value
   - Evidence: E1; inferred
+    - E1 (code): value; `src/b.ts:3` at `bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`
   - Anchor: `src/b.ts:3-5` at `bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`
 
 #### Not anchored to a file
@@ -57,6 +59,7 @@
   - Impact: wrong value
   - Fix: return the right value
   - Evidence: E1; inferred
+    - E1 (code): value; `src/b.ts:3` at `bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`
 
 ### Low (P3)
 
@@ -69,6 +72,7 @@
   - Impact: wrong value
   - Fix: return the right value
   - Evidence: E1; inferred
+    - E1 (code): value; `src/b.ts:3` at `bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`
   - Anchor: `src/b.ts:9` at `bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`
 
 ## Dropped and suppressed findings
