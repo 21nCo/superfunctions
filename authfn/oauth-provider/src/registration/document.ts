@@ -7,14 +7,17 @@ const MAX_CLIENT_ID_LENGTH = 255;
 
 /** Names that only resolve inside a host or private network. */
 const INTERNAL_SUFFIXES = ['localhost', 'local', 'internal', 'localdomain', 'home.arpa'];
+/** One DNS label: 1 to 63 letters, digits or inner hyphens (lowercase, as normalized). */
+const DNS_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 /**
  * A `client_id` that names a Client ID Metadata Document: an `https` URL with
- * a path, no query, fragment or credentials, written in its normalized form
- * (so no dot segments, default port or uppercase host), at most 255
- * characters. The host must be a public DNS name: IP literals, single-label
- * names and internal suffixes such as `localhost` and `.internal` are refused
- * before any request is made.
+ * a path, no query, fragment or credentials (not even an empty `?` or `#`),
+ * written in its normalized form (so no dot segments, default port or
+ * uppercase host), at most 255 characters. The host must be a public DNS
+ * name of at least two valid labels: IP literals, single-label names, empty
+ * labels and internal suffixes such as `localhost` and `.internal` are
+ * refused before any request is made.
  */
 export function isMetadataDocumentClientId(value: string): boolean {
   if (value.length > MAX_CLIENT_ID_LENGTH || !value.startsWith('https://')) {
@@ -27,9 +30,11 @@ export function isMetadataDocumentClientId(value: string): boolean {
     return false;
   }
   const host = url.hostname;
-  return url.href === value && url.pathname !== '/' && url.search === '' && url.hash === '' &&
+  const labels = host.split('.');
+  return url.href === value && url.pathname !== '/' && !value.includes('?') && !value.includes('#') &&
     url.username === '' && url.password === '' &&
-    host.includes('.') && !host.endsWith('.') && !host.startsWith('[') && !/^[\d.]+$/.test(host) &&
+    labels.length >= 2 && host.length <= 253 && labels.every((label) => DNS_LABEL.test(label)) &&
+    !/^[\d.]+$/.test(host) &&
     !INTERNAL_SUFFIXES.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
 }
 
@@ -69,22 +74,45 @@ function parseJson(bytes: Uint8Array): unknown {
   return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown;
 }
 
+/** The whole stream did not arrive before the deadline of {@link readCappedJson}. */
+export class BodyTimeoutError extends Error {}
+
 /**
- * Reads at most `maxBytes` of JSON from `reader`; null when the stream is
- * longer, after cancelling it. Invalid UTF-8 or JSON throws.
+ * Reads at most `maxBytes` of JSON from `reader` within `timeoutMs`; null
+ * when the stream is longer, after cancelling it. When the stream has not
+ * ended by the deadline, the reader is cancelled and it throws
+ * {@link BodyTimeoutError}. Invalid UTF-8 or JSON throws.
  */
 export async function readCappedJson(
   reader: ReadableStreamDefaultReader<Uint8Array>,
-  maxBytes: number
+  maxBytes: number,
+  timeoutMs: number
 ): Promise<{ value: unknown } | null> {
-  const bytes = await readCappedBytes(reader, maxBytes);
-  return bytes && { value: parseJson(bytes) };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new BodyTimeoutError('Request body timed out'));
+      reader.cancel().catch(() => undefined);
+    }, timeoutMs);
+  });
+  const read = readCappedBytes(reader, maxBytes);
+  try {
+    const bytes = await Promise.race([read, deadline]);
+    return bytes && { value: parseJson(bytes) };
+  } finally {
+    clearTimeout(timer);
+    read.catch(() => undefined);
+  }
 }
 
-/** A declared `content-length` over `maxBytes`. */
+/** A declared `content-length` over `maxBytes`, or one that is not a number. */
 export function declaresMoreThan(headers: Headers, maxBytes: number): boolean {
   const declared = headers.get('content-length');
-  return declared !== null && !(Number(declared) <= maxBytes);
+  if (declared === null) {
+    return false;
+  }
+  const length = Number(declared);
+  return Number.isNaN(length) || length > maxBytes;
 }
 
 /**

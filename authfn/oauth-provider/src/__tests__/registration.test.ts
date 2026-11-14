@@ -1,8 +1,11 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { describe, expect, it } from 'vitest';
+import { memoryAdapter } from '@superfunctions/db/adapters';
 import type { OAuthClientRegistrationConfig, OAuthProviderClient } from '../index.js';
-import { ORIGIN, RFC7636_VERIFIER, setupProvider } from './harness.js';
+import { createRegistrationSchema } from '../registration/store.js';
+import { createOAuthProviderSchema } from '../store.js';
+import { createProviderApp, ORIGIN, RESOURCES, RFC7636_VERIFIER, setupProvider } from './harness.js';
 
 type Provider = Awaited<ReturnType<typeof setupProvider>>;
 
@@ -201,6 +204,12 @@ describe('client ID metadata documents', () => {
       'https://intranet/client.json',
       'https://mcp.example.com/',
       'https://mcp.example.com/client.json?v=1',
+      'https://mcp.example.com/client.json?',
+      'https://mcp.example.com/client.json#',
+      'https://.example.com/client.json',
+      'https://foo..example.com/client.json',
+      'https://-mcp.example.com/client.json',
+      'https://mcp_host.example.com/client.json',
       'https://mcp.example.com/a/../client.json',
       'https://user:pass@mcp.example.com/client.json',
       'https://MCP.example.com/client.json',
@@ -311,6 +320,108 @@ describe('client ID metadata documents', () => {
       await expectRefusedClient(provider, await provider.getAuthorize(provider.authorizeQuery({}, DOCUMENT_CLIENT)));
       expect(documents.calls).toEqual([DOCUMENT_URL]);
     }
+  });
+});
+
+describe('registration configuration and limits', () => {
+  const hooks = { loginRequired: () => new Response(null), consent: () => new Response(null) };
+  const create = (registration: unknown) => createProviderApp().createServer({
+    database: memoryAdapter({ debug: false }),
+    pluginRuntime: { oauthProvider: { clients: [], resources: RESOURCES, registration, ...hooks } }
+  });
+
+  it('refuses to start metadata documents without a chosen fetch, or with a registration config that is not a plain object', () => {
+    const invalid = expect.objectContaining({ code: 'AUTHFN_CONFIG_INVALID' });
+    // The default fetch could reach a private address a public name resolves to.
+    expect(() => create({ metadataDocuments: true })).toThrow(invalid);
+    expect(() => create({ dynamic: true, metadataDocuments: true })).toThrow(invalid);
+    expect(() => create({ metadataDocuments: true, fetch: documentFetch({}).impl })).not.toThrow();
+    expect(() => create({ dynamic: true })).not.toThrow();
+    expect(() => create(new Date())).toThrow(invalid);
+    expect(() => create({ dynamic: true, rateLimit: new Map() })).toThrow(invalid);
+  });
+
+  it('ends a registration body that stalls under 64 KB after 5 seconds and releases its reader', async () => {
+    const provider = await setupProvider({ registration: { dynamic: true, rateLimit: { global: 1 } } });
+    const cancelled: number[] = [];
+    const stalled = (index: number) => new ReadableStream<Uint8Array>({
+      start: (controller) => controller.enqueue(new TextEncoder().encode('{"redirect_uris":')),
+      cancel: () => {
+        cancelled.push(index);
+      }
+    });
+    const started = Date.now();
+    const responses = await Promise.all([0, 1, 2].map((index) => provider.handle('/auth/oauth/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: stalled(index),
+      duplex: 'half'
+    } as RequestInit)));
+    const elapsed = Date.now() - started;
+    expect(elapsed).toBeGreaterThanOrEqual(4900);
+    expect(elapsed).toBeLessThan(7000);
+    for (const response of responses) {
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: 'invalid_client_metadata' });
+    }
+    expect(cancelled.sort()).toEqual([0, 1, 2]);
+    // The stalled uploads used none of the limit; a complete one registers.
+    expect((await provider.register({ redirect_uris: ['https://host.example.com/cb'] })).status).toBe(201);
+    expect(await registeredClients(provider)).toBe(1);
+  }, 15_000);
+
+  it('limits client_name to 100 characters counted in code points, by registration and by document', async () => {
+    const redirect_uris = ['https://host.example.com/cb'];
+    const astral = '\u{1F600}'.repeat(100);
+    const mixed = `a${'\u{1F600}'.repeat(98)}é`;
+    const provider = await setupProvider({ registration: { dynamic: true } });
+    for (const name of [astral, mixed, 'x'.repeat(100)]) {
+      const response = await provider.register({ redirect_uris, client_name: name });
+      expect(response.status).toBe(201);
+      expect(await response.json()).toMatchObject({ client_name: name });
+    }
+    for (const name of [`${astral}a`, 'x'.repeat(101)]) {
+      expect((await provider.register({ redirect_uris, client_name: name })).status).toBe(400);
+    }
+
+    for (const [name, accepted] of [[astral, true], [`${astral}\u{1F600}`, false]] as const) {
+      const documents = documentFetch({ [DOCUMENT_URL]: documentFor({ client_name: name }) });
+      const resolver = await setupProvider({ registration: { metadataDocuments: true, fetch: documents.impl } });
+      const response = await resolver.getAuthorize(resolver.authorizeQuery({}, DOCUMENT_CLIENT));
+      if (accepted) {
+        expect(response.status).toBe(200);
+        expect(resolver.consents[0].client.name).toBe(name);
+      } else {
+        await expectRefusedClient(resolver, response);
+      }
+    }
+  });
+
+  it('adds the registration tables to a custom schema that predates them', async () => {
+    const registrationModels = createRegistrationSchema().map((table) => table.modelName);
+    const schema = createOAuthProviderSchema().filter((table) => !registrationModels.includes(table.modelName));
+    const app = createProviderApp({ schema });
+    const models = app.getSchema().schemas.map((table) => table.modelName);
+    expect(models).toEqual(expect.arrayContaining(registrationModels));
+    expect(new Set(models).size).toBe(models.length);
+
+    // On SQL, tables exist only for the app schema, as after a migration.
+    const documents = documentFetch({ [DOCUMENT_URL]: documentFor() });
+    const provider = await setupProvider({
+      sql: true,
+      plugin: { schema },
+      registration: { dynamic: true, metadataDocuments: true, fetch: documents.impl }
+    });
+    const registered = await provider.register({ client_name: 'Custom', redirect_uris: ['https://host.example.com/cb'] });
+    expect(registered.status).toBe(201);
+    const clientId = (await registered.json() as { client_id: string }).client_id;
+    const client = { clientId, name: '', redirectUris: ['https://host.example.com/cb'] };
+    expect((await provider.getAuthorize(provider.authorizeQuery({}, client))).status).toBe(200);
+    expect((await provider.getAuthorize(provider.authorizeQuery({}, DOCUMENT_CLIENT))).status).toBe(200);
+
+    // With registration off, a registered-looking client_id is unknown, not a storage error.
+    const off = await setupProvider({ sql: true, plugin: { schema } });
+    await expectRefusedClient(off, await off.getAuthorize(off.authorizeQuery({}, { ...client, clientId: 'ocd_000000000000000000000000' })));
   });
 });
 

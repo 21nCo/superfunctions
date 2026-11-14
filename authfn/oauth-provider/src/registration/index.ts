@@ -5,10 +5,12 @@ import { handleOAuth, OAuthError, oauthJson } from '../http.js';
 import type { OAuthProviderRuntime } from '../runtime.js';
 import type { OAuthClientRegistrationConfig, OAuthProviderClient } from '../types.js';
 import {
+  BodyTimeoutError,
   declaresMoreThan,
   fetchMetadataDocument,
   isMetadataDocumentClientId,
-  readCappedJson
+  readCappedJson,
+  type MetadataDocumentFetch
 } from './document.js';
 import { isPlainObject, readPublicClientMetadata, SUPPORTED_GRANT_TYPES } from './metadata.js';
 import {
@@ -32,6 +34,8 @@ export { createRegistrationSchema } from './store.js';
 export const OAUTH_REGISTRATION_PATH = '/oauth/register';
 
 const MAX_REGISTRATION_BODY_BYTES = 64 * 1024;
+/** A registration request body must arrive within 5 seconds. */
+export const REGISTRATION_BODY_TIMEOUT_MS = 5000;
 const DEFAULT_LIMITS: RegistrationLimits = { perIp: 20, global: 200, windowSeconds: 3600 };
 /**
  * A metadata document is refetched at most once per 5 minutes across all
@@ -59,6 +63,11 @@ export function validateRegistrationConfig(registration: unknown): void {
     (fetchImpl !== undefined && typeof fetchImpl !== 'function')) {
     throw invalid('resolveClientIp and fetch must be functions');
   }
+  // A public host name can resolve to a private address, so the default
+  // fetch could reach internal services: the host must choose the egress.
+  if (registration.metadataDocuments === true && fetchImpl === undefined) {
+    throw invalid('metadataDocuments requires fetch, one that cannot reach private or internal addresses');
+  }
   if (rateLimit !== undefined && (!isPlainObject(rateLimit) || !Object.entries(rateLimit).every(([name, value]) =>
     ['perIp', 'global', 'windowSeconds'].includes(name) &&
     (value === undefined || (typeof value === 'number' && Number.isSafeInteger(value) && value > 0))))) {
@@ -73,7 +82,7 @@ function limitsOf(registration: OAuthClientRegistrationConfig | undefined): Regi
 async function clientIp(runtime: OAuthProviderRuntime, request: Request): Promise<string | undefined> {
   const resolve = runtime.config.registration?.resolveClientIp ?? runtime.ctx.config.rateLimit?.resolveClientIp;
   const ip = (await resolve?.(request))?.trim();
-  return ip ? ip : undefined;
+  return ip || undefined;
 }
 
 /** Admits one registration event or throws a 429 `temporarily_unavailable`. */
@@ -130,7 +139,9 @@ function publicClient(clientId: string, name: string | null | undefined, redirec
 export function withClientRegistration(runtime: OAuthProviderRuntime): OAuthProviderRuntime {
   const documents = new Map<string, { client: OAuthProviderClient; expiresAt: number }>();
   const pending = new Map<string, Promise<OAuthProviderClient | undefined>>();
-  const fetchDocument = (clientId: string) => fetchMetadataDocument(runtime.config.registration?.fetch ?? fetch, clientId);
+  const fetchImpl = runtime.config.registration?.fetch;
+  const fetchDocument = (clientId: string): Promise<MetadataDocumentFetch> =>
+    fetchImpl ? fetchMetadataDocument(fetchImpl, clientId) : Promise.resolve({ status: 'unavailable' });
 
   const resolveDocumentClient = (clientId: string, request: Request) => {
     const cached = documents.get(clientId);
@@ -226,7 +237,7 @@ export function withClientRegistration(runtime: OAuthProviderRuntime): OAuthProv
         const record = await findRegisteredClient(runtime.store, clientId);
         return record ? publicClient(record.id, record.name, record.redirectUris) : undefined;
       }
-      if (runtime.config.registration?.metadataDocuments && isMetadataDocumentClientId(clientId)) {
+      if (runtime.config.registration?.metadataDocuments && fetchImpl && isMetadataDocumentClientId(clientId)) {
         return resolveDocumentClient(clientId, request);
       }
       return undefined;
@@ -247,11 +258,16 @@ async function readRegistrationRequest(request: Request): Promise<unknown> {
     throw invalidBody('Request body must be a JSON object of at most 64 KB');
   }
   try {
-    const parsed = await readCappedJson(request.body.getReader(), MAX_REGISTRATION_BODY_BYTES);
+    // The deadline bounds how long a request can hold its handler before
+    // admission, however slowly it uploads.
+    const parsed = await readCappedJson(request.body.getReader(), MAX_REGISTRATION_BODY_BYTES, REGISTRATION_BODY_TIMEOUT_MS);
     if (parsed) {
       return parsed.value;
     }
-  } catch {
+  } catch (error) {
+    if (error instanceof BodyTimeoutError) {
+      throw invalidBody('Request body must arrive within 5 seconds');
+    }
     // Invalid UTF-8 or JSON.
   }
   throw invalidBody('Request body must be a JSON object of at most 64 KB');
@@ -260,7 +276,8 @@ async function readRegistrationRequest(request: Request): Promise<unknown> {
 /**
  * RFC 7591 dynamic client registration, when `registration.dynamic` is on.
  * Registers a public client (`token_endpoint_auth_method: none`, no secret)
- * and answers 201 with its metadata. Rate-limited per IP and overall.
+ * and answers 201 with its metadata. Rate-limited per IP and overall; the
+ * body must arrive within 5 seconds.
  * RFC 7592 client management is not offered.
  */
 export function createRegistrationRoutes(runtime: OAuthProviderRuntime): Route[] {

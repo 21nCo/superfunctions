@@ -28,8 +28,13 @@ export function isRegistrableRedirectUri(value: unknown): value is string {
   return url.protocol === 'https:' || (url.protocol === 'http:' && url.hostname === '127.0.0.1');
 }
 
+/** An object literal or parsed JSON object; not an array, class instance, `Date` or `Map`. */
 export function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value) as unknown;
+  return prototype === Object.prototype || prototype === null;
 }
 
 function invalidMetadata(description: string): OAuthError {
@@ -79,7 +84,8 @@ export function readPublicClientMetadata(body: unknown): PublicClientMetadata {
 
   const name = body.client_name;
   if (name !== undefined && (typeof name !== 'string' || name.trim().length === 0 ||
-    name.length > MAX_CLIENT_NAME_LENGTH || /\p{Cc}/u.test(name))) {
+    // Counted in code points, so a character outside the BMP counts once.
+    [...name].length > MAX_CLIENT_NAME_LENGTH || /\p{Cc}/u.test(name))) {
     throw invalidMetadata(`client_name must be 1 to ${MAX_CLIENT_NAME_LENGTH} characters without control characters`);
   }
 

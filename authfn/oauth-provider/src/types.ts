@@ -126,13 +126,14 @@ export interface OAuthClientRegistrationConfig {
   /**
    * The caller's IP for the per-IP limit. Defaults to AuthFn's
    * `rateLimit.resolveClientIp`; without either only the global limit applies.
+   * Read only an address your ingress sets, never a header callers can send.
    */
   resolveClientIp?: (request: Request) => string | null | undefined | Promise<string | null | undefined>;
   /**
-   * Fetches metadata documents; defaults to the global `fetch`. Supply an
-   * egress-restricted fetch to keep documents off internal networks: hosts
-   * that are IP literals, `localhost` or single-label names are refused
-   * before any fetch, but a public name can still resolve to a private address.
+   * Fetches metadata documents; required with `metadataDocuments`. It must
+   * not reach private or internal addresses: hosts that are IP literals,
+   * `localhost` or single-label names are refused before any fetch, but a
+   * public name can still resolve to a private address.
    */
   fetch?: typeof fetch;
 }

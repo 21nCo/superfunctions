@@ -12,6 +12,7 @@ import {
   type OAuthConsentInput,
   type OAuthLoginRequiredInput,
   type OAuthProviderClient,
+  type OAuthProviderPluginConfig,
   type OAuthProviderResource
 } from '../index.js';
 
@@ -61,8 +62,8 @@ export function challengeFor(verifier: string): string {
   return createHash('sha256').update(verifier).digest('base64url');
 }
 
-export function createProviderApp() {
-  return authfn({ scopes: REGISTRY, plugins: [authFnOAuthProviderPlugin()] });
+export function createProviderApp(config?: OAuthProviderPluginConfig) {
+  return authfn({ scopes: REGISTRY, plugins: [authFnOAuthProviderPlugin(config)] });
 }
 
 type Adapter = AuthFnRuntimeConfig['database'];
@@ -132,9 +133,9 @@ export function createInsertControl(database: Adapter) {
  * sessions) runs as `updateMany` and `findOne`. The OAuth store's claims,
  * generation reads and writes, other reads and deletes use the adapter itself.
  */
-function sqliteAdapter(): Adapter {
+function sqliteAdapter(app = createProviderApp()): Adapter {
   const sqlite = new Database(':memory:');
-  for (const table of createProviderApp().getSchema().schemas) {
+  for (const table of app.getSchema().schemas) {
     // `id` is an enforced primary key, as in a migrated database.
     const columns = Object.keys(table.fields).map((field) => `"${field}"${field === 'id' ? ' PRIMARY KEY' : ''}`);
     sqlite.exec(`CREATE TABLE "${table.modelName}" (${columns.join(', ')})`);
@@ -170,16 +171,23 @@ function sqliteAdapter(): Adapter {
 }
 
 export async function setupProvider(
-  options: { sql?: boolean; clients?: OAuthProviderClient[]; registration?: OAuthClientRegistrationConfig } = {}
+  options: {
+    sql?: boolean;
+    clients?: OAuthProviderClient[];
+    registration?: OAuthClientRegistrationConfig;
+    /** Plugin config, such as a custom `schema`; the SQL tables follow the resulting app schema. */
+    plugin?: OAuthProviderPluginConfig;
+  } = {}
 ) {
-  const raw = options.sql ? sqliteAdapter() : memoryAdapter({ debug: false });
+  const app = () => createProviderApp(options.plugin);
+  const raw = options.sql ? sqliteAdapter(app()) : memoryAdapter({ debug: false });
   // Tests read and write rows the way the server does: through the schema.
-  const database = options.sql ? wrapWithSchema(raw, createProviderApp().getSchema()) : raw;
+  const database = options.sql ? wrapWithSchema(raw, app().getSchema()) : raw;
   const control = createInsertControl(raw);
   let now = new Date('2026-11-14T00:00:00.000Z');
   const consents: OAuthConsentInput[] = [];
   const logins: OAuthLoginRequiredInput[] = [];
-  const createInstance = () => createProviderApp().createServer({
+  const createInstance = () => app().createServer({
     database: control.database,
     pluginRuntime: {
       oauthProvider: {

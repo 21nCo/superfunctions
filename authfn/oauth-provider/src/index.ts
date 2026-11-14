@@ -2,7 +2,12 @@ import type { AuthFnPlugin } from 'authfn';
 import { createAuthorizeRoutes } from './authorize/index.js';
 import { createIntrospectionRoute } from './introspection/index.js';
 import { createMetadataRoute } from './metadata/index.js';
-import { createRegistrationRoutes, validateRegistrationConfig, withClientRegistration } from './registration/index.js';
+import {
+  createRegistrationRoutes,
+  createRegistrationSchema,
+  validateRegistrationConfig,
+  withClientRegistration
+} from './registration/index.js';
 import { createRevocationRoute } from './revocation/index.js';
 import {
   createOAuthProviderRuntime,
@@ -37,7 +42,12 @@ export function authFnOAuthProviderPlugin(
 ): AuthFnPlugin<typeof OAUTH_PROVIDER_PLUGIN_NAME, OAuthProviderPluginRuntimeConfig, true> {
   return {
     name: OAUTH_PROVIDER_PLUGIN_NAME,
-    schema: () => config.schema ?? createOAuthProviderSchema(),
+    // A custom schema predating client registration still gets its tables,
+    // which `resolveClient` reads; a table it defines itself is kept.
+    schema: () => config.schema ? [
+      ...config.schema,
+      ...createRegistrationSchema().filter((table) => !config.schema!.some((own) => own.modelName === table.modelName))
+    ] : createOAuthProviderSchema(),
     validateConfig: (runtimeConfig) => {
       validateRegistrationConfig(readOAuthProviderRuntimeConfig(runtimeConfig).registration);
     },
