@@ -2219,7 +2219,11 @@ async function refuseRetiredImportReference(
 /**
  * After an import's write to `subscription`, which holds `reference`: refuses
  * the binding when a write of another subscription retired the reference, or
- * accepts it by clearing the pending marker, and returns the accepted row.
+ * accepts it by clearing the pending marker, and returns the accepted row:
+ * `ownState` when that row carries this write's state, and `acceptedHere` when
+ * this call cleared its pending marker. A lost acceptance write re-finds the
+ * row, which then carries another run's state (accepted by it or here), so the
+ * caller publishes that row's plan, never its own.
  * Nothing uses a pending row, so no entitlement, lifecycle event or import
  * event exists for it until this accepts it; a refusal deletes it, and an
  * interrupted run leaves it pending for the rerun to settle.
@@ -2234,10 +2238,12 @@ async function settleImportBinding(
   deps: ServiceDeps,
   subscription: BillFnSubscription,
   reference: string
-): Promise<BillFnSubscription> {
+): Promise<{ subscription: BillFnSubscription; ownState: boolean; acceptedHere: boolean }> {
   await refuseRetiredImportReference(deps, subscription.provider, reference, subscription);
   let current: BillFnSubscription | null = subscription;
   for (let attempt = 0; attempt < 50; attempt += 1) {
+    // Only the first attempt holds this run's write; a reload holds whatever wrote the row after it.
+    const ownState = attempt === 0;
     if (!current || current.providerSubscriptionId !== reference) {
       throw createBillFnError({
         code: 'BILLFN_CONFLICT',
@@ -2246,7 +2252,7 @@ async function settleImportBinding(
       });
     }
     if (!isImportPending(current)) {
-      return current;
+      return { subscription: current, ownState, acceptedHere: false };
     }
     const accepted: BillFnSubscription = {
       ...current,
@@ -2254,7 +2260,7 @@ async function settleImportBinding(
       updatedAt: nextSubscriptionUpdatedAt(deps.now(), current.updatedAt)
     };
     if (await writeOrderedSubscription(deps, current, accepted)) {
-      return accepted;
+      return { subscription: accepted, ownState, acceptedHere: true };
     }
     current = await findSubscriptionByProviderRef(deps, subscription.provider, reference);
     await Promise.resolve();
@@ -2975,8 +2981,15 @@ async function applyVerificationState(
       message: 'Unable to apply provider event state after multiple retries'
     });
   }
+  // Whether the row carries this call's state; otherwise it publishes the row's own plan, never `input.plan`.
+  let ownState = !liveStateSuperseded;
+  // Whether this call records the row's lifecycle event (an import that accepts another run's state records it).
+  let recordLifecycle = ownState;
   if (input.importReference) {
-    subscription = await settleImportBinding(deps, subscription, input.importReference);
+    const settled = await settleImportBinding(deps, subscription, input.importReference);
+    subscription = settled.subscription;
+    ownState = ownState && settled.ownState;
+    recordLifecycle = ownState || settled.acceptedHere;
   }
 
   const checkoutSession = input.checkoutSession
@@ -2989,15 +3002,16 @@ async function applyVerificationState(
       })
     : input.checkoutSession;
 
-  if (liveStateSuperseded) {
-    // The subscription's state did not change, so its entitlements stand and no lifecycle event is recorded.
-    const entitlements = await upsertEntitlements(
-      deps,
-      input.billingAccount.id,
-      requirePlan(deps.catalog, subscription.planKey),
-      subscription,
-      timestamp
-    );
+  // A superseded read leaves the subscription's state, so its entitlements stand and no lifecycle event is recorded;
+  // an import that ends on another run's state publishes that state's plan.
+  const entitlements = await upsertEntitlements(
+    deps,
+    input.billingAccount.id,
+    ownState ? input.plan : requirePlan(deps.catalog, subscription.planKey),
+    subscription,
+    timestamp
+  );
+  if (!recordLifecycle) {
     return {
       checkoutSession: checkoutSession ?? input.checkoutSession,
       subscription,
@@ -3005,8 +3019,6 @@ async function applyVerificationState(
       providerStateRaced
     };
   }
-
-  const entitlements = await upsertEntitlements(deps, input.billingAccount.id, input.plan, subscription, timestamp);
 
   await recordBillingEvent(deps, {
     // A provider event keys its lifecycle entry, so applying it again (a reclaimed replay) records it once.

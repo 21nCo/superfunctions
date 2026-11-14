@@ -313,6 +313,56 @@ function billingEventsOf(db: Db, billingAccountId: string) {
   });
 }
 
+/**
+ * Holds the subscriptions updates whose 1-based call numbers are in `holds`
+ * until released: `reached(n)` resolves once call n is held, `release(n)` lets
+ * it run (with the where clause it was issued with, so a stale ordered write
+ * then loses). Other updates run at once.
+ */
+function holdSubscriptionUpdates(holds: number[]) {
+  let calls = 0;
+  const gates = new Map(
+    holds.map((call) => {
+      let reached!: () => void;
+      let release!: () => void;
+      const reachedPromise = new Promise<void>((resolve) => {
+        reached = resolve;
+      });
+      const releasePromise = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return [call, { reached, release, reachedPromise, releasePromise }] as const;
+    })
+  );
+  const control = {
+    armed: false,
+    reached: (call: number) => gates.get(call)!.reachedPromise,
+    release: (call: number) => gates.get(call)!.release(),
+    wrap: (db: Db): Db =>
+      ({
+        ...db,
+        async updateMany(params: Parameters<Db['updateMany']>[0]) {
+          if (control.armed && params.model === 'subscriptions') {
+            calls += 1;
+            const gate = gates.get(calls);
+            if (gate) {
+              gate.reached();
+              await gate.releasePromise;
+            }
+          }
+          return db.updateMany(params);
+        }
+      }) as Db
+  };
+  return control;
+}
+
+function lifecycleEventsOf(db: Db, billingAccountId: string) {
+  return billingEventsOf(db, billingAccountId).then((events) =>
+    events.filter((event) => event.type.startsWith('billfn.subscription.') && event.type !== 'billfn.subscription.imported')
+  );
+}
+
 function unwrap<T>(response: { ok: true; data: T } | { ok: false }): T {
   if (!response.ok) {
     throw new Error('expected an ok envelope');
@@ -464,6 +514,81 @@ describe('billfn.services.subscriptions.import', () => {
     expect(unwrap(left).subscription.id).toBe(unwrap(right).subscription.id);
     expect(await env.subscriptions()).toHaveLength(1);
     expect(await env.importEvents()).toHaveLength(2);
+  });
+
+  it('publishes the plan of the state that wins when another import writes and accepts the row before its acceptance', async () => {
+    const holds = holdSubscriptionUpdates([1]);
+    let productId = 'pdt_nucleus_year';
+    const env = setup({ wrapDb: holds.wrap, record: (reference) => legacyRecord(reference, { productId }) });
+    const billingAccountId = await env.account('alice');
+    holds.armed = true;
+
+    // A creates its pending row with the nucleus state and is held at its acceptance write.
+    const first = env.import({ billingAccountId, planKey: 'nucleus' });
+    await holds.reached(1);
+    // B reads the product moved to team, writes that state onto the row and accepts it.
+    productId = 'pdt_team_month';
+    env.clock.current = new Date('2026-11-10T00:00:01.000Z');
+    const second = unwrap(await env.import({ billingAccountId, planKey: 'team' }));
+    holds.release(1);
+    const firstResult = unwrap(await first);
+
+    const [subscription] = await env.subscriptions();
+    expect(await env.subscriptions()).toHaveLength(1);
+    expect(subscription).toMatchObject({ planKey: 'team', priceId: 'price_team_dodo_month' });
+    expect(subscription.metadata?.[BILLFN_IMPORT_PENDING_METADATA_KEY]).toBeUndefined();
+    const team = { planKey: 'team', features: { memotron: true }, limits: { storage: 5000 } };
+    expect(await entitlementsOf(env.db, billingAccountId)).toEqual([expect.objectContaining(team)]);
+    for (const result of [firstResult, second]) {
+      expect(result.subscription).toMatchObject({ id: subscription.id, planKey: 'team' });
+      expect(result.entitlements).toMatchObject(team);
+      expect(result.billingEvent.payload).toMatchObject({ planKey: 'team' });
+    }
+    // Only the import whose state the row accepted records its lifecycle event.
+    expect(await lifecycleEventsOf(env.db, billingAccountId)).toEqual([
+      expect.objectContaining({ type: 'billfn.subscription.active', payload: expect.objectContaining({ priceId: 'price_team_dodo_month' }) })
+    ]);
+    expect(await env.importEvents()).toHaveLength(2);
+  });
+
+  it('publishes the plan of the state that wins when it accepts another import\'s state written before its acceptance', async () => {
+    // Update 1: A's acceptance write (held). 2: B's state write. 3: B's acceptance write (held). 4: A accepts B's state.
+    const holds = holdSubscriptionUpdates([1, 3]);
+    let productId = 'pdt_nucleus_year';
+    const env = setup({ wrapDb: holds.wrap, record: (reference) => legacyRecord(reference, { productId }) });
+    const billingAccountId = await env.account('alice');
+    holds.armed = true;
+
+    const first = env.import({ billingAccountId, planKey: 'nucleus' });
+    await holds.reached(1);
+    productId = 'pdt_team_month';
+    env.clock.current = new Date('2026-11-10T00:00:01.000Z');
+    const second = env.import({ billingAccountId, planKey: 'team' });
+    await holds.reached(3);
+    // A's acceptance write loses to B's state write, so A re-finds the row pending with B's state and accepts it.
+    env.clock.current = new Date('2026-11-10T00:00:02.000Z');
+    holds.release(1);
+    const firstResult = unwrap(await first);
+    // B's acceptance write then loses to A's, and B returns the row A accepted.
+    holds.release(3);
+    const secondResult = unwrap(await second);
+
+    const [subscription] = await env.subscriptions();
+    expect(await env.subscriptions()).toHaveLength(1);
+    expect(subscription).toMatchObject({ planKey: 'team', priceId: 'price_team_dodo_month' });
+    expect(subscription.metadata?.[BILLFN_IMPORT_PENDING_METADATA_KEY]).toBeUndefined();
+    const team = { planKey: 'team', features: { memotron: true }, limits: { storage: 5000 } };
+    expect(await entitlementsOf(env.db, billingAccountId)).toEqual([expect.objectContaining(team)]);
+    for (const result of [firstResult, secondResult]) {
+      expect(result.subscription).toMatchObject({ id: subscription.id, planKey: 'team' });
+      expect(result.entitlements).toMatchObject(team);
+      expect(result.billingEvent.payload).toMatchObject({ planKey: 'team' });
+    }
+    // The import that accepted the row records its lifecycle event once.
+    expect(await lifecycleEventsOf(env.db, billingAccountId)).toEqual([
+      expect.objectContaining({ type: 'billfn.subscription.active', payload: expect.objectContaining({ priceId: 'price_team_dodo_month' }) })
+    ]);
+    expect(await env.billfn.subscriptionProvider.isActive({ principalId: 'alice' })).toBe(true);
   });
 
   it('lets only one of two imports racing one reference into different billing accounts bind it', async () => {
