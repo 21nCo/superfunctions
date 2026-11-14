@@ -1,0 +1,35 @@
+filefn/docs/content/docs/recipes/cloudflare-workers.md
+  s_715d9789ca7204::t_1d3484ab0ef0a8 23-28,45-46,103,122,124,128
+filefn/docs/content/docs/reference/events.md
+  s_715d9789ca7204::t_6fd79bf22e325a 24
+filefn/docs/content/docs/reference/schema.md
+  s_715d9789ca7204::t_486f70bd6a14d7 103-104
+filefn/docs/static/llms-full.txt
+  s_715d9789ca7204::t_7abbf1067b306b 6464-6469,6486-6487,6544,6563,6565,6569,8013,8278-8279
+filefn/server/src/__tests__/processing.test.ts
+  s_715d9789ca7204::t_5c5a14210f26e0 371
+filefn/server/src/files/service.ts
+  s_715d9789ca7204::t_21123fea718610 744,787
+filefn/server/src/processing/service.ts
+  s_715d9789ca7204::t_b5bc3138e422d4 69-73,75,107-111,117-119,219-239,635,642-643,653,657-658,660,662-663,677,695-701,706,708-727,730,733-743,747-764,789-790,812-817,826,844-850,867-872,879,881-894
+filefn/server/src/storage-references.ts
+  s_715d9789ca7204::t_845cf527644e38 27-28,33,41-46,49,63,68,71,76
+filefn/server/tests/processing-jobs.test.ts
+  s_715d9789ca7204::t_46a6f403176b56 237,447-448,474,704-800,870-935
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7d62a3086b264453d0860b5e6a0f2f7b48ea42a9",
+  "prompts": {},
+  "sessions": {
+    "s_715d9789ca7204": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6e5667f3-a9dc-464f-b9a4-f2c87211c2e9",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
