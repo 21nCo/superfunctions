@@ -134,6 +134,35 @@ describe("NetworkCollector fetch capture", () => {
     expect(collector.size()).toBe(2); // Nothing new recorded.
   });
 
+  it("pins the two documented limits of the derived promise", async () => {
+    // 1) Only handlers on the returned promise count: a rejection handled
+    // solely on the page's own promise is reported once the caller drops it.
+    const reason = new TypeError("offline");
+    globalThis.fetch = (() => {
+      const page = Promise.reject(reason);
+      page.catch(() => undefined);
+      return page;
+    }) as unknown as typeof fetch;
+    const drop = () => void fetch("/pre-handled");
+    expect(await unhandledDuring(drop)).toEqual([]);
+    collector.start();
+    expect(await unhandledDuring(drop)).toEqual([reason]);
+    collector.stop();
+    // 2) Resolving the derived promise reads the page value's `then` once.
+    const response = new Response("ok", { status: 200 });
+    const page = Promise.resolve(response);
+    // Added after the page's promise fulfilled, which itself read `then`.
+    let thenReads = 0;
+    Object.defineProperty(response, "then", { get: () => void (thenReads += 1) });
+    globalThis.fetch = (() => page) as unknown as typeof fetch;
+    // Compared here, not in expect(), which reads `then` itself.
+    const without = (await fetch("/then-read")) === response;
+    const readsWithout = thenReads;
+    collector.start();
+    const withCollector = (await fetch("/then-read")) === response;
+    expect([without, readsWithout, withCollector, thenReads]).toEqual([true, 0, true, 1]);
+  });
+
   it("settles with the page's own value and records its status", async () => {
     const response = new Response("ok", { status: 202, statusText: "Accepted" });
     const page = Promise.resolve(response);

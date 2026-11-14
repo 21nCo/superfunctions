@@ -64,7 +64,8 @@ wrapper stays in that chain, passes calls through and records nothing.
 The network collector never changes the application's request: the original
 arguments pass through untouched (a `null` or `undefined` receiver of `fetch`
 becomes `globalThis`), and observation never runs the application's
-iterators, getters or conversions. The page's `fetch` and
+iterators, getters or conversions (except the fulfilled value's `then` read
+described below). The page's `fetch` and
 `XMLHttpRequest.prototype.open` run first. Before they run, observation reads
 only a string URL argument, or a platform `URL` argument through the `href`
 getter captured when catchfn loads. The `URL` is read only where that
@@ -93,18 +94,31 @@ that defers the native call, or through a reused `init` or `Request`,
 including values an earlier wrapper changed.
 
 When the page's `fetch` returns a plain platform `Promise` (not a subclass,
-with no own properties), `fetch` returns a promise derived from it through
-the `Promise.prototype.then` captured at load (SFNS-56 owner amendment of
-2026-11-14). It settles with the same value or reason one microtask later
-and carries the application's rejection handling: a rejection the
-application leaves unhandled is reported once, with the original reason, and
-a handled one is not reported. Observation records `status`, `statusText`,
-`duration` and response headers from it and never raises. Only that
-promise's identity changes. Any other result (a custom thenable, a `Promise`
-subclass, a promise with own properties) is returned unchanged, its `then`
-is never called by catchfn, and it is recorded when the call is made,
-without `status` or `duration`. A stopped wrapper reads nothing at all. What
-observation then records:
+with no own properties, while `Promise.prototype.constructor` and
+`Promise[Symbol.species]` are still the platform's), `fetch` returns a
+promise derived from it through the `Promise.prototype.then` captured at load
+(SFNS-56 owner amendment of 2026-11-14). It settles with the same value or
+reason one microtask later and carries the application's rejection handling:
+a rejection the application leaves unhandled is reported once, with the
+original reason, and a handled one is not reported. Observation records
+`status`, `statusText`, `duration` and response headers from it and never
+raises. Only that promise's identity changes. Two limits follow from deriving
+a native promise, and no script can avoid them:
+
+- Resolving the derived promise reads the page value's `then`, as resolving
+  any promise does. A platform `Response` has none, unless the page adds one
+  (on the response, `Response.prototype` or `Object.prototype`); a callable
+  one is then adopted.
+- Only handlers on the returned promise count. A rejection handled solely on
+  the page's own promise (by a `fetch` wrapper installed before `start()`, or
+  on a shared promise) is reported as unhandled if the caller drops the
+  returned promise.
+
+Any other result (a custom thenable, a `Promise` subclass, a promise with own
+properties, or any promise once the page replaced Promise's `constructor` or
+species) is returned unchanged, its `then` is never called by catchfn, and
+it is recorded when the call is made, without `status` or `duration`. A
+stopped wrapper reads nothing at all. What observation then records:
 
 - `init.headers` is captured only from a platform `Headers` object (not a
   subclass, and only while neither it nor `Headers.prototype` has a replaced
@@ -113,7 +127,9 @@ observation then records:
   accessor, a custom iterator, a non-string value, more than 200 pairs) is
   not read and the request is recorded without `requestHeaders`. The headers
   of a `Request` input and of the response are read from the platform's own
-  header list, so a replaced `Headers` iterator does not affect them.
+  header list, so a replaced `Headers` iterator does not affect them. On a
+  runtime whose `Headers.prototype.forEach` runs the iterator (Node 18.17,
+  probed at load), no headers are recorded while the iterator is replaced.
 - `init.method` and `init.headers` are read only from own data properties.
 - The URL is read from a string, a platform `URL` (only where the load-time
   probe found its `href` brand check trap-free) or a platform `Request`;

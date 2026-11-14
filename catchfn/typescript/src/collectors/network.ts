@@ -117,6 +117,31 @@ const URL_HREF_TRAP_FREE = ((): boolean => {
   return !trapped;
 })();
 
+/**
+ * Whether the captured Headers `forEach` walks the header list without
+ * calling `Symbol.iterator`, probed once at load with a Headers whose own
+ * iterator records a call. Browsers and Node 22 walk the list; Node 18.17's
+ * `forEach` is `for (const pair of this)`, which runs the live iterator, so
+ * there every Headers is read only while its iterator is the platform's.
+ */
+const HEADERS_FOR_EACH_ITERATOR_FREE = ((): boolean => {
+  if (!HEADERS || !HEADERS_FOR_EACH) return false;
+  let iterated = false;
+  try {
+    const probe = new HEADERS([["x-probe", "1"]]);
+    Object.defineProperty(probe, Symbol.iterator, {
+      value: () => {
+        iterated = true;
+        return [][Symbol.iterator]();
+      },
+    });
+    apply(HEADERS_FOR_EACH, probe, [() => undefined]);
+  } catch {
+    return false;
+  }
+  return !iterated;
+})();
+
 function text(value: string): string {
   return truncateToBytes(value, MAX_ENTRY_BYTES) ?? "";
 }
@@ -167,16 +192,17 @@ function isPlainArray(value: unknown): value is unknown[] {
 }
 
 /**
- * Pairs of a platform `Headers`, read through the captured `forEach`, which
- * walks the header list without calling any iterator. For an application
- * `Headers` passed as `init.headers` (`fromInit`), the platform iterates it
- * with `Symbol.iterator`, so an own or replaced iterator may make it send
- * other pairs: then it is unread. A `Request`'s or `Response`'s own headers
- * are the platform's header list itself, so no iterator patch changes them.
+ * Pairs of a platform `Headers`, read through the captured `forEach`. For an
+ * application `Headers` passed as `init.headers` (`fromInit`), the platform
+ * iterates it with `Symbol.iterator`, so an own or replaced iterator may make
+ * it send other pairs: then it is unread. A `Request`'s or `Response`'s own
+ * headers are the platform's header list itself, read whatever the iterator,
+ * unless this runtime's `forEach` runs the iterator (see
+ * {@link HEADERS_FOR_EACH_ITERATOR_FREE}); then they get the same check.
  */
 function platformHeaderPairs(value: object, fromInit: boolean): Array<[string, string]> | undefined {
   if (!HEADERS_FOR_EACH) return undefined;
-  if (fromInit) {
+  if (fromInit || !HEADERS_FOR_EACH_ITERATOR_FREE) {
     if (Object.getOwnPropertyDescriptor(value, Symbol.iterator)) return undefined;
     if (intrinsic(HEADERS_PROTOTYPE, Symbol.iterator, "value") !== HEADERS_ITERATOR) return undefined;
   }
@@ -244,6 +270,8 @@ function readInitHeaderPairs(value: Field): Array<[string, string]> | undefined 
  */
 function captureHeaders(value: Field, fromInit: boolean): Record<string, string> | undefined {
   if (!HEADERS || !HEADERS_FOR_EACH) return undefined;
+  // Where forEach runs the iterator, even the copy below would run a replaced one.
+  if (!HEADERS_FOR_EACH_ITERATOR_FREE && intrinsic(HEADERS_PROTOTYPE, Symbol.iterator, "value") !== HEADERS_ITERATOR) return undefined;
   try {
     let pairs: Array<[string, string]> | undefined;
     if (fromInit) pairs = readInitHeaderPairs(value);
@@ -350,9 +378,14 @@ function isPlainPromise(value: unknown): boolean {
  * with the same value or reason one microtask later, and it is what the
  * application handles or leaves unhandled: an unhandled rejection is reported
  * once, with the original reason, and a handled one is not reported. Only
- * that promise's identity changes. (Resolving it with the page's value reads
- * that value's `then`, as resolving any promise does; a platform Response
- * has none.) `onSettle` must not throw.
+ * that promise's identity changes. `onSettle` must not throw.
+ *
+ * Two limits follow from deriving a native promise, and no script can avoid
+ * them: resolving it with the page's value reads that value's `then`, as
+ * resolving any promise does (a platform Response has none unless the page
+ * adds one), and only handlers on the returned promise count, so a rejection
+ * handled solely on the page's own promise (by a wrapper installed earlier,
+ * or a shared promise) is reported if the caller drops the returned one.
  *
  * Returns undefined, without calling any `then`, for every other value (a
  * custom thenable, a Promise subclass, a promise with own properties, a
