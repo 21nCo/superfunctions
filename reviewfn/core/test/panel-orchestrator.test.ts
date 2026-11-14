@@ -338,6 +338,52 @@ describe("slot workspaces", () => {
     } finally { await workspace.remove(); }
   });
 
+  it("reports embedded repositories as a change even when Git's warnings about them exceed the Git output limit", async () => {
+    const workspace = await new GitSlotWorkspaceProvider({ objectStore: repo, headCommit: head, parent, maxGitOutputBytes: 200 }).create("iota");
+    try {
+      // `git add` warns about each embedded repository on standard error, well past 200 bytes.
+      for (const name of ["sub0", "sub1", "sub2"]) {
+        await mkdir(path.join(workspace.path, name));
+        git(path.join(workspace.path, name), "init", "--quiet");
+        await commitAll(path.join(workspace.path, name), name);
+      }
+      const check = await workspace.verify();
+      expect(check).toMatchObject({ unchanged: false, reason: expect.stringMatching(/differs from head [0-9a-f]+: sub0, sub1, sub2\./) });
+      expect(check.incomplete).toBeUndefined();
+    } finally { await workspace.remove(); }
+  });
+
+  it("reports a change whose listing exceeds the Git output limit as a change without its names, never as incomplete", async () => {
+    const workspace = await new GitSlotWorkspaceProvider({ objectStore: repo, headCommit: head, parent, maxGitOutputBytes: 200 }).create("kappa");
+    try {
+      for (let index = 0; index < 12; index += 1) await writeFile(path.join(workspace.path, `added-file-with-a-long-name-${index}.txt`), "x\n");
+      const check = await workspace.verify();
+      expect(check).toMatchObject({ unchanged: false, reason: expect.stringMatching(/differs from head [0-9a-f]+: tree differs\./) });
+      expect(check.incomplete).toBeUndefined();
+    } finally { await workspace.remove(); }
+  });
+
+  it.skipIf(process.platform === "win32")("never runs a Git found earlier on PATH in an untrusted directory", async () => {
+    // A world-writable directory first on PATH holds a fake `git` that records that it ran.
+    const fake = await mkdtemp(path.join(tmpdir(), "reviewfn-fake-git-"));
+    const marker = path.join(fake, "ran");
+    await writeFile(path.join(fake, "git"), `#!/bin/sh\ntouch '${marker}'\nexit 1\n`, { mode: 0o755 });
+    await chmod(fake, 0o777);
+    const original = process.env.PATH;
+    process.env.PATH = `${fake}${path.delimiter}${original ?? ""}`;
+    try {
+      const workspace = await provider().create("lambda");
+      await expect(workspace.verify()).resolves.toEqual({ unchanged: true });
+      await workspace.remove();
+      await expect(loadPanelPolicy({ root: repo, base: head, head, trustedFromBase: true })).rejects.toMatchObject({ code: "REVIEWFN_CONFIG_INVALID", message: expect.stringMatching(/has no panel policy/) });
+    } finally {
+      process.env.PATH = original;
+      await chmod(fake, 0o700);
+    }
+    try { await expect(lstat(marker)).rejects.toMatchObject({ code: "ENOENT" }); }
+    finally { await rm(fake, { recursive: true, force: true }); }
+  });
+
   it("fails creation for a commit the object store does not have and leaves nothing behind", async () => {
     const missing = new GitSlotWorkspaceProvider({ objectStore: repo, headCommit: "0".repeat(40), parent });
     await expect(missing.create("epsilon")).rejects.toThrow();

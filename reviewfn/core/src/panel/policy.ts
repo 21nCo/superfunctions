@@ -1,16 +1,13 @@
-import { execFile } from "node:child_process";
 import { devNull } from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
 
 import { stableStringify } from "../canonical.js";
 import { ReviewFnError } from "../errors.js";
-import { isolatedGitEnvironment } from "../git-environment.js";
+import { resolveTrustedExecutable } from "../executable.js";
 import { safeRead } from "../safe-files.js";
+import { runGit } from "./git.js";
 import { PANEL_DEFAULT_MAX_CONCURRENT_SLOTS, type PanelPolicy, type PanelSlot } from "./types.js";
 import { validatePanelPolicy } from "./validate.js";
-
-const execFileAsync = promisify(execFile);
 
 /** Repository-relative location of the panel policy. */
 export const PANEL_POLICY_PATH = ".reviewfn/panel.json";
@@ -89,25 +86,23 @@ function parseJson(text: string, origin: string): unknown {
   catch (error) { throw new ReviewFnError("REVIEWFN_CONFIG_INVALID", `The panel policy at ${origin} is not JSON: ${error instanceof Error ? error.message : String(error)}`); }
 }
 
-async function git(root: string, args: string[], signal?: AbortSignal): Promise<string> {
-  const { stdout } = await execFileAsync("git", ["-c", `core.hooksPath=${devNull}`, ...args], { cwd: root, env: isolatedGitEnvironment(), maxBuffer: MAX_POLICY_BYTES * 2, signal, encoding: "utf8" });
-  return stdout;
-}
-
 /**
  * The panel policy JSON committed at `revision`, read from the object store without the working tree, filters or
  * text conversion. `undefined` when the revision has no file at that path.
  */
 export async function readPanelPolicyAtRevision(root: string, revision: string, relative = PANEL_POLICY_PATH, signal?: AbortSignal): Promise<unknown | undefined> {
   const file = repositoryRelative(relative);
-  const commit = (await git(root, ["rev-parse", "--verify", "--end-of-options", `${revision}^{commit}`], signal)).trim();
-  const entry = await git(root, ["ls-tree", "-z", "--full-tree", commit, "--", file], signal);
+  // One trusted absolute Git for the whole read, never a PATH lookup at spawn time.
+  const executable = await resolveTrustedExecutable("git");
+  const git = (args: string[]) => runGit(executable, ["-c", `core.hooksPath=${devNull}`, ...args], { cwd: root, signal, maxOutputBytes: MAX_POLICY_BYTES * 2 });
+  const commit = (await git(["rev-parse", "--verify", "--end-of-options", `${revision}^{commit}`])).trim();
+  const entry = await git(["ls-tree", "-z", "--full-tree", commit, "--", file]);
   if (!entry) return undefined;
   const match = /^(\d{6}) (\w+) ([0-9a-f]{40,64})\t/.exec(entry);
   if (!match || match[2] !== "blob" || !["100644", "100755"].includes(match[1])) throw new ReviewFnError("REVIEWFN_CONFIG_INVALID", `The panel policy ${file} at ${commit} is not a regular file.`);
-  const size = Number((await git(root, ["cat-file", "-s", match[3]], signal)).trim());
+  const size = Number((await git(["cat-file", "-s", match[3]])).trim());
   if (!Number.isSafeInteger(size) || size > MAX_POLICY_BYTES) throw new ReviewFnError("REVIEWFN_CONFIG_INVALID", `The panel policy ${file} at ${commit} exceeds ${MAX_POLICY_BYTES} bytes.`);
-  return parseJson(await git(root, ["cat-file", "blob", match[3]], signal), `${commit}:${file}`);
+  return parseJson(await git(["cat-file", "blob", match[3]]), `${commit}:${file}`);
 }
 
 export interface PanelPolicyLoadOptions {

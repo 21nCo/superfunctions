@@ -5,7 +5,7 @@ import type { ChangeHunks, ChangeSnapshot, CodeAnchor, ContextManifest, FindingS
 import type { Lens } from "./lenses.js";
 import type { PanelSlot } from "./types.js";
 
-export const PANEL_PROMPT_VERSION = "reviewfn-panel-v1";
+export const PANEL_PROMPT_VERSION = "reviewfn-panel-v2";
 
 /** A finding an earlier stage reported, as a stage-2 slot sees it. */
 export interface PriorStageFinding {

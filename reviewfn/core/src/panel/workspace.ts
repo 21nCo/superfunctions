@@ -1,29 +1,28 @@
-import { execFile, spawn } from "node:child_process";
 import { chmod, lstat, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { devNull } from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
 
-import { isolatedGitEnvironment } from "../git-environment.js";
-
-const execFileAsync = promisify(execFile);
+import { resolveTrustedExecutable } from "../executable.js";
+import { GitOutputLimitError, runGit, type GitRunOptions } from "./git.js";
 
 /** Unset every attribute that would make checkout or hashing transform file bytes. */
 const LITERAL_ATTRIBUTES = "* -text -eol -working-tree-encoding -filter -ident -diff -merge\n";
 /** Configuration for Git commands the run trusts: no hooks, filesystem monitors, external ignores or line-ending conversion. */
 const TRUSTED_CONFIG = ["-c", `core.hooksPath=${devNull}`, "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-c", "core.autocrlf=false", "-c", "core.safecrlf=false", "-c", `core.attributesFile=${devNull}`, "-c", `core.excludesFile=${devNull}`, "-c", "core.symlinks=true", "-c", "core.fileMode=true", "-c", "core.ignoreCase=false", "-c", "core.precomposeUnicode=false", "-c", "core.protectNTFS=true", "-c", "core.longpaths=true"];
 const MAX_REPORTED_PATHS = 10;
-const DEFAULT_MAX_GIT_OUTPUT_BYTES = 64 * 1024 * 1024;
 
-/** Git printed more than the run lets it buffer: a limit of the run, not something the slot did. */
-class GitOutputLimitError extends Error {}
+/** Run a Git command the run trusts, with the trusted configuration, through the resolved absolute Git executable. */
+function git(executable: string, args: string[], options: GitRunOptions): Promise<string> {
+  return runGit(executable, [...TRUSTED_CONFIG, ...args], options);
+}
 
 export interface WorkspaceCheck {
   /** True only when the checkout's tree is exactly the head tree, with no extra directories. */
   unchanged: boolean;
   /**
-   * True when the comparison was stopped by its signal before it finished, so no difference was observed and the
-   * checkout was not shown to be unchanged either.
+   * True when the comparison was stopped, by its signal or by the run's Git output limit, before a difference was
+   * observed, so the checkout was not shown to be unchanged either. Once the checkout's tree differs from head it is
+   * reported changed, never incomplete.
    */
   incomplete?: boolean;
   /** Why the checkout is not shown to be unchanged: the observed difference, or why the comparison did not complete. */
@@ -34,9 +33,9 @@ export interface WorkspaceCheck {
 export interface SlotWorkspace {
   readonly path: string;
   /**
-   * Compare the checkout with the head tree. A comparison stopped by `signal`, or by a limit of the run's own such as the
-   * Git output buffer, reports `incomplete`; one that fails for any other reason reports the checkout as changed, because
-   * the slot left it in a state that cannot be compared.
+   * Compare the checkout with the head tree. A comparison stopped by `signal`, or by the run's Git output limit, before
+   * a difference was observed reports `incomplete`; one that fails for any other reason reports the checkout as changed,
+   * because the slot left it in a state that cannot be compared.
    */
   verify(signal?: AbortSignal): Promise<WorkspaceCheck>;
   /** Remove the checkout and everything the slot wrote into it. Safe to call more than once. */
@@ -58,40 +57,12 @@ export interface GitSlotWorkspaceOptions {
   referenceCommits?: string[];
   /** A run-owned directory to create checkouts in. */
   parent: string;
-  /** The most output a Git command may return; 64 MiB by default. A comparison past it is incomplete, never a change. */
+  /**
+   * The most standard output a Git command may return; 64 MiB by default. Git's diagnostics never count toward it. A
+   * comparison that reaches it before a difference is observed is incomplete; one that already observed a difference
+   * reports it without the changed names.
+   */
   maxGitOutputBytes?: number;
-}
-
-async function git(args: string[], options: { cwd: string; signal?: AbortSignal; env?: NodeJS.ProcessEnv; maxBuffer?: number }): Promise<string> {
-  const maxBuffer = options.maxBuffer ?? DEFAULT_MAX_GIT_OUTPUT_BYTES;
-  try {
-    const { stdout } = await execFileAsync("git", [...TRUSTED_CONFIG, ...args], { cwd: options.cwd, env: { ...isolatedGitEnvironment(), ...options.env }, maxBuffer, signal: options.signal, encoding: "utf8" });
-    return stdout;
-  } catch (error) {
-    if ((error as { code?: unknown }).code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") throw new GitOutputLimitError(`git ${args.find(arg => !arg.startsWith("-")) ?? ""} printed more than the run's ${maxBuffer}-byte limit for Git output.`);
-    throw error;
-  }
-}
-
-/**
- * Run a Git command whose output is a list of NUL-terminated entries, passing each entry to `onEntry` as it arrives, so
- * no output limit applies however large the list is. Rejects when Git fails or `signal` aborts.
- */
-function gitEntries(args: string[], options: { cwd: string; signal?: AbortSignal; env?: NodeJS.ProcessEnv }, onEntry: (entry: string) => void): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn("git", [...TRUSTED_CONFIG, ...args], { cwd: options.cwd, env: { ...isolatedGitEnvironment(), ...options.env }, signal: options.signal, stdio: ["ignore", "pipe", "pipe"] });
-    let pending: Buffer = Buffer.alloc(0);
-    let stderr = "";
-    child.stdout.on("data", (chunk: Buffer) => {
-      const data = pending.length ? Buffer.concat([pending, chunk]) : chunk;
-      let start = 0;
-      for (let end = data.indexOf(0, start); end !== -1; end = data.indexOf(0, start)) { onEntry(data.toString("utf8", start, end)); start = end + 1; }
-      pending = data.subarray(start);
-    });
-    child.stderr.on("data", (chunk: Buffer) => { if (stderr.length < 4096) stderr += chunk.toString("utf8"); });
-    child.on("error", reject);
-    child.on("close", code => code === 0 ? resolve() : reject(new Error(`git ${args.find(arg => !arg.startsWith("-")) ?? ""} exited with ${String(code)}: ${stderr.trim()}`)));
-  });
 }
 
 /** Make every directory under `root` writable and searchable so a slot cannot block its own cleanup with permissions. */
@@ -162,7 +133,7 @@ function listed(paths: string[]): string {
 class GitSlotWorkspace implements SlotWorkspace {
   private removed = false;
 
-  public constructor(private readonly directory: string, public readonly path: string, private readonly verifyGitDir: string, private readonly expectedTree: string, private readonly headCommit: string, private readonly maxBuffer?: number) {}
+  public constructor(private readonly directory: string, public readonly path: string, private readonly verifyGitDir: string, private readonly expectedTree: string, private readonly headCommit: string, private readonly gitExecutable: string, private readonly maxOutputBytes?: number) {}
 
   public async verify(signal?: AbortSignal): Promise<WorkspaceCheck> {
     try {
@@ -174,15 +145,17 @@ class GitSlotWorkspace implements SlotWorkspace {
       const index = path.join(this.directory, "verify.index");
       await rm(index, { force: true });
       const env = { GIT_INDEX_FILE: index };
-      const options = { cwd: this.directory, signal, env, maxBuffer: this.maxBuffer };
+      const run = (args: string[], overrides: Partial<GitRunOptions> = {}) => git(this.gitExecutable, args, { cwd: this.directory, signal, env, maxOutputBytes: this.maxOutputBytes, ...overrides });
       const gitDir = [`--git-dir=${this.verifyGitDir}`, `--work-tree=${this.path}`];
-      await git([...gitDir, "read-tree", this.expectedTree], options);
-      await git([...gitDir, "add", "--all", "--force", "--", "."], options);
-      const tree = (await git([...gitDir, "write-tree"], options)).trim();
+      await run([...gitDir, "read-tree", this.expectedTree]);
+      await run([...gitDir, "add", "--all", "--force", "--", "."]);
+      // Only standard output counts toward the run's Git output limit, so the slot cannot stop the comparison through the
+      // diagnostics its checkout provokes (embedded repositories, long paths): those are drained.
+      const tree = (await run([...gitDir, "write-tree"])).trim();
       if (tree !== this.expectedTree) {
-        // The trees differ either way; a listing past the output limit only loses the names.
-        const changed = await git([`--git-dir=${this.verifyGitDir}`, "diff-tree", "-r", "-z", "--no-renames", "--name-only", this.expectedTree, tree], options)
-          .then(listing => listing.split("\0").filter(Boolean), error => { if (error instanceof GitOutputLimitError) return []; throw error; });
+        // Once the tree differs the checkout is changed, whatever the listing does: a failed listing only loses the names.
+        const changed = await run([`--git-dir=${this.verifyGitDir}`, "diff-tree", "-r", "-z", "--no-renames", "--name-only", this.expectedTree, tree])
+          .then(listing => listing.split("\0").filter(Boolean), () => []);
         return { unchanged: false, reason: `The checkout differs from head ${this.headCommit}: ${changed.length ? listed(changed) : "tree differs"}.` };
       }
       // Git trees cannot record empty directories, and Git skips nested .git entries, submodule contents and special
@@ -190,10 +163,20 @@ class GitSlotWorkspace implements SlotWorkspace {
       // The listing is streamed: only directories and submodules are kept, so a clean checkout of any size verifies.
       const expected = new Set<string>();
       const gitlinks = new Set<string>();
-      await gitEntries([`--git-dir=${this.verifyGitDir}`, "ls-tree", "-r", "-t", "-z", this.expectedTree], options, entry => {
-        const name = entry.slice(entry.indexOf("\t") + 1);
-        if (entry.startsWith("040000 ")) expected.add(name);
-        else if (entry.startsWith("160000 ")) { expected.add(name); gitlinks.add(name); }
+      let pending: Buffer = Buffer.alloc(0);
+      await run([`--git-dir=${this.verifyGitDir}`, "ls-tree", "-r", "-t", "-z", this.expectedTree], {
+        onOutput: chunk => {
+          const data = pending.length ? Buffer.concat([pending, chunk]) : chunk;
+          let start = 0;
+          for (let end = data.indexOf(0, start); end !== -1; end = data.indexOf(0, start)) {
+            const entry = data.toString("utf8", start, end);
+            const name = entry.slice(entry.indexOf("\t") + 1);
+            if (entry.startsWith("040000 ")) expected.add(name);
+            else if (entry.startsWith("160000 ")) { expected.add(name); gitlinks.add(name); }
+            start = end + 1;
+          }
+          pending = data.subarray(start);
+        },
       });
       const found = await walk(this.path, gitlinks, signal);
       if (found.nestedGitEntries.length) return { unchanged: false, reason: `The checkout has .git entries other than its own that Git does not compare: ${listed(found.nestedGitEntries)}.` };
@@ -224,32 +207,38 @@ class GitSlotWorkspace implements SlotWorkspace {
  * head blobs byte for byte.
  */
 export class GitSlotWorkspaceProvider implements SlotWorkspaceProvider {
+  /** Resolved once per provider: every Git process of its checkouts runs this absolute executable, never a PATH lookup. */
+  private executable?: Promise<string>;
+
   public constructor(private readonly options: GitSlotWorkspaceOptions) {}
 
   public async create(slotId: string, signal?: AbortSignal): Promise<SlotWorkspace> {
+    const executable = await (this.executable ??= resolveTrustedExecutable("git"));
+    signal?.throwIfAborted();
+    const run = (args: string[], options: GitRunOptions) => git(executable, args, options);
     const directory = await mkdtemp(path.join(this.options.parent, `${slotId}-`));
     try {
       const checkout = path.join(directory, "checkout");
       const verifyGitDir = path.join(directory, "verify.git");
       const store = path.resolve(this.options.objectStore);
-      const objects = (await git(["rev-parse", "--path-format=absolute", "--git-path", "objects"], { cwd: store, signal })).trim();
-      const objectFormat = (await git(["rev-parse", "--show-object-format"], { cwd: store, signal })).trim();
+      const objects = (await run(["rev-parse", "--path-format=absolute", "--git-path", "objects"], { cwd: store, signal })).trim();
+      const objectFormat = (await run(["rev-parse", "--show-object-format"], { cwd: store, signal })).trim();
       const commits = [...new Set([this.options.headCommit, ...(this.options.referenceCommits ?? [])].filter(commit => /\S/.test(commit)))];
-      await git(["init", "--quiet", "--template=", `--object-format=${objectFormat}`, checkout], { cwd: directory, signal });
+      await run(["init", "--quiet", "--template=", `--object-format=${objectFormat}`, checkout], { cwd: directory, signal });
       // Protocol v2 serves any object by ID, so commits that no ref reaches are fetched too; nothing is written to the store.
-      await git(["-c", "protocol.version=2", "fetch", "--quiet", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--depth=1", "--", store, ...commits], { cwd: checkout, signal });
+      await run(["-c", "protocol.version=2", "fetch", "--quiet", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--depth=1", "--", store, ...commits], { cwd: checkout, signal });
       // info/attributes outranks every committed .gitattributes, so checkout writes the head blobs unchanged.
       await mkdir(path.join(checkout, ".git", "info"), { recursive: true, mode: 0o700 });
       await writeFile(path.join(checkout, ".git", "info", "attributes"), LITERAL_ATTRIBUTES, { mode: 0o600 });
-      await git(["checkout", "--quiet", "--detach", this.options.headCommit], { cwd: checkout, signal });
+      await run(["checkout", "--quiet", "--detach", this.options.headCommit], { cwd: checkout, signal });
       // The run-owned comparison directory reads the store through alternates; the slot never sees it.
-      await git(["init", "--quiet", "--bare", "--template=", `--object-format=${objectFormat}`, verifyGitDir], { cwd: directory, signal });
+      await run(["init", "--quiet", "--bare", "--template=", `--object-format=${objectFormat}`, verifyGitDir], { cwd: directory, signal });
       await mkdir(path.join(verifyGitDir, "objects", "info"), { recursive: true, mode: 0o700 });
       await mkdir(path.join(verifyGitDir, "info"), { recursive: true, mode: 0o700 });
       await writeFile(path.join(verifyGitDir, "objects", "info", "alternates"), `${objects}\n`, { mode: 0o600 });
       await writeFile(path.join(verifyGitDir, "info", "attributes"), LITERAL_ATTRIBUTES, { mode: 0o600 });
-      const expectedTree = (await git([`--git-dir=${verifyGitDir}`, "rev-parse", "--verify", "--end-of-options", `${this.options.headCommit}^{tree}`], { cwd: directory, signal })).trim();
-      return new GitSlotWorkspace(directory, checkout, verifyGitDir, expectedTree, this.options.headCommit, this.options.maxGitOutputBytes);
+      const expectedTree = (await run([`--git-dir=${verifyGitDir}`, "rev-parse", "--verify", "--end-of-options", `${this.options.headCommit}^{tree}`], { cwd: directory, signal })).trim();
+      return new GitSlotWorkspace(directory, checkout, verifyGitDir, expectedTree, this.options.headCommit, executable, this.options.maxGitOutputBytes);
     } catch (error) {
       await removeTree(directory).catch(() => undefined);
       throw error;

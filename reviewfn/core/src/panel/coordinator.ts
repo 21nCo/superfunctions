@@ -828,7 +828,8 @@ export class PanelCoordinator {
     if (uninspected.length) coverageReasons.push(`No completed slot inspected ${uninspected.slice(0, MAX_LISTED_PATHS).join(", ")}${uninspected.length > MAX_LISTED_PATHS ? ` and ${uninspected.length - MAX_LISTED_PATHS} more path(s)` : ""}.`);
     coverageReasons.push(...input.cleanupErrors);
     const report: PanelReport = { ...base, evidence: [...evidence.values()].filter(item => cited.has(item.id)), findings, coverage: "complete", coverageReasons: [] };
-    const validation = await settleReport(report, coverageReasons, request.policy, options);
+    // Cleanup and requirements-report errors carry raw error messages: redact every reason before it is returned or stored.
+    const validation = await settleReport(report, coverageReasons.map(reason => redactText(reason, context.secrets)), request.policy, options);
     // Cancellation is observed until the report is stored: one during validation restarts in canceled mode.
     if (!input.canceled && context.runSignal.aborted) return undefined;
     const stored = await this.dependencies.artifacts.put(PANEL_REPORT_ARTIFACT_KIND, JSON.stringify(report, null, 2), prepared.retention.reportDays);

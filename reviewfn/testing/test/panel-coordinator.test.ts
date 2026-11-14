@@ -76,7 +76,18 @@ async function expectValid(result: Awaited<ReturnType<PanelCoordinator["run"]>>,
   expect(result.validation.valid).toBe(true);
 }
 
-async function expectNoCheckouts(harness: FakePanelHarness): Promise<void> {
+/**
+ * Every checkout is removed. Removal runs in the background within the run's cleanup bound, so on a loaded host it may
+ * outlast a short bound (as after a cancellation): then the report must name each checkout still present, and the
+ * removal the run still owns must finish.
+ */
+async function expectNoCheckouts(harness: FakePanelHarness, result: Awaited<ReturnType<PanelCoordinator["run"]>>): Promise<void> {
+  const reasons = result.report.coverageReasons.join("\n");
+  const present = async () => (await Promise.all(harness.calls.map(async call => await lstat(call.workspace).then(() => call.workspace, () => undefined)))).filter(Boolean);
+  if (reasons.includes("was not confirmed removed by the end of the run")) {
+    for (const checkout of await present()) expect(reasons).toContain(`${checkout} was not removed: its removal did not finish by the end of the run.`);
+    for (let waited = 0; waited < 10_000 && ((await present()).length || (await readdir(workspaceRoot)).length); waited += 20) await new Promise(resolve => setTimeout(resolve, 20));
+  }
   for (const call of harness.calls) await expect(lstat(call.workspace)).rejects.toMatchObject({ code: "ENOENT" });
   expect(await readdir(workspaceRoot)).toEqual([]);
 }
@@ -201,7 +212,7 @@ describe("PanelCoordinator isolation and voiding", () => {
     expect(result.report.slotRuns.find(run => run.slotId === "reader")?.terminal).toBe("completed");
     expect(result.report.findings.map(item => item.title)).toEqual(["Reader finding"]);
     expect(harness.input("writer").workspace).not.toBe(harness.input("reader").workspace);
-    await expectNoCheckouts(harness);
+    await expectNoCheckouts(harness, result);
     await expectValid(result, setup, panelPolicy);
   });
 
@@ -229,7 +240,37 @@ describe("PanelCoordinator isolation and voiding", () => {
   });
 });
 
-describe("PanelCoordinator budgets, concurrency and cleanup", () => {
+describe("PanelCoordinator isolation under a Git output limit", () => {
+  it("voids a slot that adds embedded repositories when Git's warnings exceed the limit, and keeps the other slots' results", async () => {
+    const harness = new FakePanelHarness({
+      behaviors: {
+        nester: async input => {
+          // `git add` warns about each embedded repository on standard error, far past the 200-byte limit.
+          for (const name of ["sub0", "sub1", "sub2"]) {
+            const nested = path.join(input.workspace, name);
+            await mkdir(nested);
+            git(nested, "init", "--quiet");
+            await writeFile(path.join(nested, "file.txt"), name);
+            git(nested, "add", "--all");
+            git(nested, "commit", "--quiet", "-m", name);
+          }
+          return reporting("Nester finding")();
+        },
+        reader: reporting("Reader finding"),
+      },
+    });
+    const panelPolicy = panel([slot("nester", 1), slot("reader", 1)]);
+    const setup = coordinator(harness, { workspaces: options => new GitSlotWorkspaceProvider({ ...options, maxGitOutputBytes: 200 }) });
+    const result = await setup.coordinator.run(request(panelPolicy));
+    expect(result.report.slotRuns.map(run => [run.slotId, run.terminal, run.voidReasons])).toEqual([["nester", "void", ["workspace_mutated"]], ["reader", "completed", []]]);
+    expect(result.slots[0].reasons.join()).toMatch(/differs from head [0-9a-f]+: sub0, sub1, sub2/);
+    expect(result.report.findings.map(item => item.title)).toEqual(["Reader finding"]);
+    await expectNoCheckouts(harness, result);
+    await expectValid(result, setup, panelPolicy);
+  });
+});
+
+describe("PanelCoordinator budgets, concurrency and cleanup", { timeout: 20_000 }, () => {
   it("runs at most maxConcurrentSlots slots at once and removes every checkout", async () => {
     // Each run holds until a second run is active (or the last slot started), so the cap is reached whatever the host's
     // speed, and a missing cap shows as more than two at once.
@@ -244,19 +285,16 @@ describe("PanelCoordinator budgets, concurrency and cleanup", () => {
     expect(harness.calls).toHaveLength(5);
     expect(harness.maxActive).toBe(2);
     expect(result.quorum[0]).toMatchObject({ completed: 5, met: true });
-    await expectNoCheckouts(harness);
+    await expectNoCheckouts(harness, result);
   });
 
   it("removes each checkout after a failure, a timeout and a harness that ignores abort", async () => {
-    let earlier: string | undefined;
+    // Removal runs in the background (it neither holds a slot's place nor uses the stage's time), so the checkouts are
+    // checked once the run has returned.
     const harness = new FakePanelHarness({
       behaviors: {
-        thrower: input => { earlier = input.workspace; throw new Error("harness crashed"); },
-        sleeper: async input => {
-          // Slots run one at a time here, so the previous slot's checkout is already gone.
-          await expect(lstat(earlier!)).rejects.toMatchObject({ code: "ENOENT" });
-          await abortableDelay(60_000, input.signal); return clean();
-        },
+        thrower: () => { throw new Error("harness crashed"); },
+        sleeper: async input => { await abortableDelay(60_000, input.signal); return clean(); },
         stubborn: () => new Promise<SlotHarnessOutput>(() => undefined),
       },
     });
@@ -268,7 +306,7 @@ describe("PanelCoordinator budgets, concurrency and cleanup", () => {
     expect(result.slots[1].reasons.join()).toMatch(/exceeded its 50 ms timeout/);
     expect(result.slots[2].reasons.join()).toMatch(/did not stop/);
     expect(harness.input("sleeper").policy.limits.harnessTimeoutMs).toBe(50);
-    await expectNoCheckouts(harness);
+    await expectNoCheckouts(harness, result);
     await expectValid(result, setup, panelPolicy);
   });
 
@@ -306,7 +344,7 @@ describe("PanelCoordinator budgets, concurrency and cleanup", () => {
     expect(harness.calls.map(call => call.slot.id)).toEqual(["running"]);
     expect(result.report.coverageReasons).toContain("The panel run was canceled.");
     expect(result.report.verdict).not.toBe("ready");
-    await expectNoCheckouts(harness);
+    await expectNoCheckouts(harness, result);
     await expectValid(result, setup, panelPolicy);
   });
 });
@@ -553,7 +591,7 @@ describe("PanelCoordinator budget bounds", { timeout: 20_000 }, () => {
     expect(sawSignal).toBe(true);
     expect(result.report.slotRuns.map(run => [run.slotId, run.terminal, run.voidReasons])).toEqual([["slow", "timed_out", []], ["deaf", "timed_out", []], ["fast", "completed", []]]);
     for (const outcome of result.slots.slice(0, 2)) expect(outcome.reasons.join()).toMatch(/comparison did not finish within its 1500 ms bound/);
-    await expectNoCheckouts(harness);
+    await expectNoCheckouts(harness, result);
     await expectValid(result, setup, panelPolicy);
   });
 
@@ -569,7 +607,7 @@ describe("PanelCoordinator budget bounds", { timeout: 20_000 }, () => {
     const result = await setup.coordinator.run(request(panelPolicy));
     expect(result.report.slotRuns.map(run => [run.terminal, run.voidReasons])).toEqual([["timed_out", []]]);
     expect(result.slots[0].reasons.join()).toMatch(/comparison did not finish within its 200 ms bound/);
-    await expectNoCheckouts(harness);
+    await expectNoCheckouts(harness, result);
     await expectValid(result, setup, panelPolicy);
   });
 
@@ -589,8 +627,8 @@ describe("PanelCoordinator budget bounds", { timeout: 20_000 }, () => {
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error("the run did not end within 8 s")), 8_000)),
       ]);
       expect(result.report.slotRuns.map(run => [run.slotId, run.terminal, run.voidReasons])).toEqual([["deaf", "timed_out", []], ["stuck", "timed_out", []]]);
+      await expectNoCheckouts(harness, result);
     } finally { clearInterval(collector); }
-    await expectNoCheckouts(harness);
   });
 
   it("gives a slot that finished just before its harness timeout its full comparison bound", async () => {
@@ -629,7 +667,7 @@ describe("PanelCoordinator budget bounds", { timeout: 20_000 }, () => {
     expect(result.report.slotRuns.map(run => [run.slotId, run.terminal, run.voidReasons])).toEqual([["deaf", "timed_out", []], ["slow", "timed_out", []], ["probe", "completed", []]]);
     expect(result.slots[0].reasons.join()).toMatch(/did not stop/);
     expect(result.slots[1].reasons.join()).toMatch(/comparison did not finish within its 300 ms bound/);
-    await expectNoCheckouts(harness);
+    await expectNoCheckouts(harness, result);
   });
 
   it("applies the output limit per channel, as the harness enforces it, and bounds the stored telemetry", async () => {
@@ -780,6 +818,24 @@ describe("PanelCoordinator checkout lifecycle", { timeout: 20_000 }, () => {
     await expectValid(result, setup, panelPolicy);
   });
 
+  it("redacts a configured secret in a checkout removal error from the returned and stored reports", async () => {
+    const secret = "fixture-credential-7c41e9";
+    const harness = new FakePanelHarness({ behaviors: { a: clean } });
+    const panelPolicy = panel([slot("a", 1)]);
+    const factory = (provider: { parent: string }) => ({
+      create: async (slotId: string): Promise<SlotWorkspace> => {
+        const directory = await mkdtemp(path.join(provider.parent, `${slotId}-`));
+        return { path: directory, verify: async () => ({ unchanged: true }), remove: async () => { await rm(directory, { recursive: true, force: true }); throw new Error(`removal failed near ${secret}`); } };
+      },
+    });
+    const setup = coordinator(harness, { workspaces: factory, environment: { PATH: process.env.PATH, PANEL_FIXTURE_TOKEN: secret } });
+    const result = await ended(setup.coordinator.run(request(panelPolicy)));
+    expect(result.report.coverageReasons.join("\n")).toMatch(/Slot a checkout .* was not removed: removal failed near \[REDACTED\]/);
+    expect(result.report.coverage).toBe("incomplete");
+    expect(JSON.stringify(result)).not.toContain(secret);
+    for (const [key, value] of setup.artifacts.values) expect(Buffer.from(value).toString("utf8"), key).not.toContain(secret);
+  });
+
   it("starts no harness when the run is canceled while the checkout is created, and removes the checkout", async () => {
     const controller = new AbortController();
     const harness = new FakePanelHarness({ behaviors: { a: clean } });
@@ -819,7 +875,7 @@ describe("PanelCoordinator checkout lifecycle", { timeout: 20_000 }, () => {
   });
 });
 
-describe("PanelCoordinator slot outcome records", () => {
+describe("PanelCoordinator slot outcome records", { timeout: 20_000 }, () => {
   it("stores an output artifact with the final terminal and reasons for every slot run, however it ended", async () => {
     const controller = new AbortController();
     const harness = new FakePanelHarness({ behaviors: { first: clean, twin: async input => { controller.abort(); await abortableDelay(60_000, input.signal); return clean(); } } });
@@ -939,7 +995,7 @@ describe("PanelCoordinator admitted findings", () => {
   });
 });
 
-describe("PanelCoordinator run-level issues stay with their slot", () => {
+describe("PanelCoordinator run-level issues stay with their slot", { timeout: 20_000 }, () => {
   /** Checkouts for `failing` slots cannot be created. */
   function brokenCheckouts(...failing: string[]) {
     return (options: ConstructorParameters<typeof GitSlotWorkspaceProvider>[0]) => {
