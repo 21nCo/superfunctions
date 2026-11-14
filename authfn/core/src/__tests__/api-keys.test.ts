@@ -17,6 +17,7 @@ function createConfig(): AuthFnRuntimeConfig {
   return {
     database: memoryAdapter({ debug: false }),
     namespace: 'authfn',
+    scopes: { skills: ['read', 'write'] },
     plugins: [
       authFnApiKeyPlugin()
     ],
@@ -269,7 +270,7 @@ describe('authfn api key plugin', () => {
         },
         body: JSON.stringify({
           name: 'server-to-server',
-          scopes: ['read']
+          scopes: ['skills:read']
         })
       })
     );
@@ -299,7 +300,7 @@ describe('authfn api key plugin', () => {
     expect(listedBody.data.keys).toEqual([
       expect.objectContaining({
         id: createdBody.data.keyId,
-        scopes: ['read']
+        scopes: ['skills:read']
       })
     ]);
     expect(JSON.stringify(listedBody)).not.toContain(createdBody.data.secret);
@@ -419,7 +420,7 @@ describe('authfn api key plugin', () => {
         },
         body: JSON.stringify({
           name: 'authoritative',
-          scopes: ['read'],
+          scopes: ['skills:read'],
           metadata: {
             ownerUserId: 'override-attempt',
             scopes: ['override']
@@ -438,7 +439,8 @@ describe('authfn api key plugin', () => {
 
     expect(authenticated?.metadata).toMatchObject({
       ownerUserId: user.id,
-      scopes: ['read']
+      scopes: ['skills:read']
     });
+    expect(authenticated?.scopes).toEqual(['skills:read']);
   });
 });

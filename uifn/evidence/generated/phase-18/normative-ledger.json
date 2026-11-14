@@ -3,7 +3,7 @@
   "revision": "uifn-a11y-ledger-v1",
   "generatorVersion": "18.0.0",
   "catalogVersion": "1.0.0",
-  "definitionSha256": "6c2e985b5f8cda63f384af93678a473fe4c25b43ada3abdaf77ec4063c8bea71",
+  "definitionSha256": "fb552a6b363e746384fde907e236f5ae2cfb95dac1abfa6bdc302585eb8849ed",
   "normativeStandard": "WCAG 2.2 Level A and AA",
   "review": {
     "owner": "uifn-maintainer",

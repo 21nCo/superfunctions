@@ -20,6 +20,7 @@ import { assertEnvironmentOutputsAvailable, claimEnvironmentOutputs, makeStateDi
 import { newRuntimeId, recordRuntimeId } from "../src/runtime.js";
 import { preflightTasks } from "../src/tasks.js";
 import { createPlan, DevFnOrchestrator, domainAliases, readTaskJournal, recoverOrphanedProxyRoutes, resolveEndpointTemplates, resolveInstanceIdentity, resolveLocalHostname, runtimeDirectory, selectRuntime, taskInputRevision, taskScope } from "../src/index.js";
+import { caddyAdminLockPath } from "../../test-support/shared-locks.mjs";
 
 const execFileAsync = promisify(execFile);
 // What a start does under its instance lifecycle lock before it writes in its state directory, as a start killed right after it leaves it.
@@ -703,7 +704,7 @@ it("reruns an artifacts task whose instance or artifact directory a symlink belo
 }, 60_000);
 
 it.skipIf(process.env.DEVFN_REAL_PROXY !== "1")("routes two named runtimes of one checkout through the real proxy and removes only the stopped one's routes", async () => await withFileLock(
-  path.join(os.tmpdir(), "devfn-test-caddy-admin.lock"), async () => {
+  caddyAdminLockPath(), async () => {
     const { parent, primary } = await repository();
     const stateDir = path.join(parent, "state");
     const config = validateDevFnConfig({ version: 1, project: { id: "routes-fixture" }, ports: { web: { env: "PORT" } },

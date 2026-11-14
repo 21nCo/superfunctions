@@ -1,5 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createMenubarController, type MenubarProps, type MenubarController } from '@uifn/core/primitives/menubar';
+import { createUIFnRovingFocusAdapterBinding, uifnMenubarRovingTarget } from '@uifn/dom';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -19,6 +20,7 @@ export const MenubarDefinition: SolidPrimitiveDefinition<MenubarProps> = {
   inputNames: ["value","defaultValue","loop","dir"],
   context: MenubarContext,
   createController: createMenubarController as never,
+  domBindings: [/* @__PURE__ */ createUIFnRovingFocusAdapterBinding(uifnMenubarRovingTarget)],
 };
 
 function MenubarRootElement(props: JSX.IntrinsicElements['div']): JSX.Element {

@@ -1,5 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createFloatingPanelController, type FloatingPanelProps, type FloatingPanelController } from '@uifn/core/primitives/floating-panel';
+import { uifnOverlayAdapterBinding } from '@uifn/dom';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -19,6 +20,7 @@ export const FloatingPanelDefinition: SolidPrimitiveDefinition<FloatingPanelProp
   inputNames: ["open","defaultOpen","modal","placement","draggable","resizable"],
   context: FloatingPanelContext,
   createController: createFloatingPanelController as never,
+  domBindings: [uifnOverlayAdapterBinding],
 };
 
 function FloatingPanelRootElement(props: JSX.IntrinsicElements['div']): JSX.Element {

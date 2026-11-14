@@ -4,4 +4,6 @@ export default defineConfig({ test: { environment: "node", include: ["test/**/*.
   // Real Caddy fixtures share its fixed admin and listener ports across files.
   fileParallelism: process.env.DEVFN_REAL_PROXY !== "1",
   // Sibling DevFn packages run through Vitest as they do from the workspace, so node: module mocks reach them when installed from the registry too.
-  server: { deps: { inline: [/\/node_modules\/@devfn\//] } } } });
+  server: { deps: { inline: [/\/node_modules\/@devfn\//] } },
+  // Fail any test file or run that leaves a process running or a temp entry behind.
+  globalSetup: ["../test-support/leak-guard.mjs"], setupFiles: ["./test/leak-guard.setup.ts"] } });

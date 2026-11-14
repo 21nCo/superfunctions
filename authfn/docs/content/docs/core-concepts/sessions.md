@@ -20,6 +20,7 @@ Both modes use the same `authfn_sessions` table and the same lifecycle — only 
 interface AuthFnSession {
   id: string;                                  // session id (stable across rotations)
   type: 'session' | 'api-key';
+  credential?: { type: 'api-key'; id: string }; // set when an API key authenticated the request
   subject: {
     actorId: string;
     actorType: 'user' | 'api-key';
@@ -29,10 +30,11 @@ interface AuthFnSession {
     attributes?: Record<string, unknown>;
   };
   actorType: 'user' | 'api-key';
-  actorId: string;                             // user id or api-key id
+  actorId: string;                             // user id (an owned key's owner) or unowned api-key id
   tenantId?: string;
   regionId?: string;                           // present when multi-region is enabled
   methods: AuthFnAuthMethod[];                 // ['password'], ['email-otp'], ['oauth-google', 'two-factor'], …
+  scopes: string[];                            // ['*'] for user sessions; the key's grantable stored scopes for API keys
   primaryEmail?: string;
   expiresAt?: Date;
   metadata?: Record<string, unknown>;
@@ -153,7 +155,7 @@ Index on `userId`, `tokenHash`, `expiresAt`. Your migrations from `auth.getSchem
 
 ## API key sessions
 
-When a request authenticates via `Authorization: Bearer ak_…` (with the API keys plugin enabled), authfn issues a synthetic session: `type: 'api-key'`, `actorType: 'api-key'`, `methods: ['api-key']`. API key sessions are not persisted in `authfn_sessions`; the API key record itself is the source of truth. Revoking the key invalidates all of its sessions immediately.
+When a request authenticates via `Authorization: Bearer ak_…` (with the API keys plugin enabled), authfn issues a synthetic session: `type: 'api-key'`, `methods: ['api-key']`. In the TypeScript `authfn` package (0.5.0 and later), the session also carries `credential: { type: 'api-key', id }`, a user-owned key acts as its owner (`actorType: 'user'`, `actorId` = owner's user ID), and a key whose owner was deleted or is disabled authenticates as no one. An unowned service key keeps `actorType: 'api-key'` with the key ID as `actorId`. The Python SDK does not do this yet; see [SDKs → Python](../sdk/python#api-key-sessions). In the TypeScript `authfn` package (0.6.0 and later), every session carries `scopes`: interactive cookie and bearer sessions get `['*']` and API-key sessions get the key's stored scopes that the registry can grant; call `requireScopes(session, needed)` to enforce them (see [Plugins → API keys → Scopes](../plugins/api-keys#scopes)). API key sessions are not persisted in `authfn_sessions`; the API key record itself is the source of truth. Revoking the key invalidates all of its sessions immediately.
 
 ## Related
 

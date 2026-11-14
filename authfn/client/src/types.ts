@@ -30,6 +30,13 @@ export interface AuthFnSession {
   regionId?: string;
   resourceIds: string[];
   methods: AuthFnAuthMethod[];
+  /**
+   * Scopes the session grants, as `requireScopes` checks them on the server.
+   * The client only receives user sessions (`getSession` returns `null` for
+   * an API-key credential), and authfn 0.6.0+ servers send them with
+   * `['*']`. Servers before authfn 0.6.0 omit it.
+   */
+  scopes?: string[];
   primaryEmail?: string;
   expiresAt?: Date | string;
   metadata?: Record<string, unknown>;

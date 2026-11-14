@@ -1,5 +1,6 @@
 import { sha256 } from "./canonical.js";
-import type { CodeAnchor, ArtifactStore, ContextManifest, SourceReference, Assessment, Evidence, ReportPublisher, ReviewPolicy, ReviewReport, SourceControlAdapter, Verdict } from "./types.js";
+import { sinceRangeError, verifyChangeDetail, type ChangeDetailVerification } from "./change.js";
+import type { ChangeHunks, CodeAnchor, ArtifactStore, ContextManifest, SourceReference, Assessment, Evidence, ReportPublisher, ReviewPolicy, ReviewReport, SourceControlAdapter, TestReceipt, Verdict } from "./types.js";
 
 export interface ValidationResult {
   valid: boolean;
@@ -27,12 +28,14 @@ export function deriveVerdict(report: Pick<ReviewReport, "execution" | "coverage
   return "ready";
 }
 
-export async function validateReport(report: ReviewReport, policy: ReviewPolicy, sourceControl?: SourceControlAdapter, root?: string, context?: ContextManifest, artifacts?: ArtifactStore): Promise<ValidationResult> {
-  const errors: string[] = [];
-  const warnings: string[] = [];
-  if (context && context.digest !== report.contextManifestDigest) errors.push("Frozen context digest does not match the report.");
+/**
+ * Checker for source references against the frozen context: the source must be available, carry content, and have an
+ * accepted type (comments only when they may clarify), and the reference must cite a literal excerpt or a valid
+ * one-based line range. Without a context nothing is verifiable.
+ */
+export function sourceReferenceChecker(context: ContextManifest | undefined, policy: ReviewPolicy): (ref: SourceReference) => boolean {
   const sources = new Map(context?.sources.map(source => [source.id, source]) ?? []);
-  const referenceValid = (ref: SourceReference): boolean => {
+  return (ref: SourceReference): boolean => {
     const source = sources.get(ref.sourceId);
     if (!source || source.status !== "available" || !source.content || !policy.sourceAuthority.acceptedTypes.includes(source.type) || (source.type === "comment" && !policy.sourceAuthority.commentsMayClarify)) return false;
     // Explicit literal excerpts or one-based line ranges are verifiable; arbitrary labels are not.
@@ -40,11 +43,77 @@ export async function validateReport(report: ReviewReport, policy: ReviewPolicy,
     const match = /^L(\d+)(?:-L?(\d+))?$/.exec(ref.anchor);
     return !!match && Number(match[1]) > 0 && Number(match[2] ?? match[1]) >= Number(match[1]) && Number(match[2] ?? match[1]) <= source.content.split(/\r?\n/).length;
   };
+}
+
+/** A waiver must be a verifiable reference to a source the policy names as a waiver authority. */
+export function waiverReferenceValid(ref: SourceReference | undefined, referenceValid: (ref: SourceReference) => boolean, policy: ReviewPolicy): boolean {
+  return !!ref && referenceValid(ref) && policy.sourceAuthority.waiverAuthorities.includes(ref.sourceId);
+}
+
+/**
+ * Whether test evidence among `evidenceIds` reproduces a finding: a completed receipt at the reviewed head whose
+ * retained stdout and stderr artifacts match their digests. Without an artifact store nothing is reproduced.
+ */
+export async function reproductionVerified(evidenceIds: readonly string[], evidence: ReadonlyMap<string, Evidence>, receipts: readonly TestReceipt[], headCommit: string, artifacts?: ArtifactStore): Promise<boolean> {
+  for (const id of evidenceIds) {
+    const item = evidence.get(id);
+    const receipt = item?.kind === "test" ? receipts.find(test => test.id === item.receiptId && test.commit === headCommit && test.exitCode !== null && !test.timedOut && !test.canceled) : undefined;
+    if (!receipt || !artifacts) continue;
+    const stdout = receipt.stdoutArtifact ? await artifacts.get(receipt.stdoutArtifact) : undefined;
+    const stderr = receipt.stderrArtifact ? await artifacts.get(receipt.stderrArtifact) : undefined;
+    if (stdout && stderr && sha256(stdout) === receipt.stdoutDigest && sha256(stderr) === receipt.stderrDigest) return true;
+  }
+  return false;
+}
+
+/** Incremental-range check for `changeDetail.since` when source control can answer ancestry; prefixed with its code. */
+export async function sinceAncestryError(report: Pick<ReviewReport, "change" | "changeDetail">, sourceControl?: SourceControlAdapter, root?: string): Promise<string | undefined> {
+  const since = report.changeDetail?.since;
+  if (since === undefined || !sourceControl?.isAncestor || !root) return undefined;
+  const reason = await sinceRangeError(since, report.change.mergeBaseCommit, report.change.headCommit, (ancestor, descendant) => sourceControl.isAncestor!(root, ancestor, descendant));
+  return reason ? `REVIEWFN_SINCE_NOT_ANCESTOR: ${reason}` : undefined;
+}
+
+/** The delta `since..head` when `changeDetail` verified and records that exact range; otherwise undefined. */
+export function verifiedDeltaOf(report: Pick<ReviewReport, "change" | "changeDetail">, detail: ChangeDetailVerification): ChangeHunks | undefined {
+  const since = report.changeDetail?.since;
+  return detail.errors.length === 0 && since !== undefined && detail.delta?.baseCommit === since && detail.delta.headCommit === report.change.headCommit ? detail.delta : undefined;
+}
+
+/**
+ * Which commit a code anchor may cite: the reviewed head; the merge base only for a changed path absent at head;
+ * `since` only for a path the verified delta removed that is absent at head. Absence needs `sourceControl.pathExists`,
+ * so without source control and a nonempty root only head anchors pass, and source control is never called. This checks
+ * the commit only; `verifyAnchor` checks the lines.
+ */
+export function anchorCommitChecker(report: Pick<ReviewReport, "change" | "changeDetail">, verifiedDelta: ChangeHunks | undefined, sourceControl?: SourceControlAdapter, root?: string): (anchor: CodeAnchor) => Promise<boolean> {
+  const since = report.changeDetail?.since;
+  const deltaRemoved = new Set(verifiedDelta?.files.filter(file => file.status === "deleted" || file.status === "binary").map(file => file.path) ?? []);
+  const absentAtHead = async (path: string): Promise<boolean> => !!sourceControl?.pathExists && !!root && !(await sourceControl.pathExists(root, report.change.headCommit, path));
+  return async (anchor: CodeAnchor): Promise<boolean> => anchor.commit === report.change.headCommit
+    || (anchor.commit === report.change.mergeBaseCommit && report.change.changedPaths.includes(anchor.path) && await absentAtHead(anchor.path))
+    || (verifiedDelta !== undefined && anchor.commit === since && deltaRemoved.has(anchor.path) && await absentAtHead(anchor.path));
+}
+
+export async function validateReport(report: ReviewReport, policy: ReviewPolicy, sourceControl?: SourceControlAdapter, root?: string, context?: ContextManifest, artifacts?: ArtifactStore): Promise<ValidationResult> {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const changeDetail = await verifyChangeDetail(report, artifacts);
+  const since = report.changeDetail?.since;
+  // Paths the verified delta `since..head` lists: removed paths (deleted, or binary) may exist only at `since`,
+  // e.g. a file added after the merge base and deleted by a fix push, which the full change never lists.
+  const verifiedDelta = verifiedDeltaOf(report, changeDetail);
+  const deltaPathSet = new Set(verifiedDelta?.files.map(file => file.path) ?? []);
+  const deltaRemoved = new Set(verifiedDelta?.files.filter(file => file.status === "deleted" || file.status === "binary").map(file => file.path) ?? []);
+  if (context && context.digest !== report.contextManifestDigest) errors.push("Frozen context digest does not match the report.");
+  const referenceValid = sourceReferenceChecker(context, policy);
   if (report.execution === "completed") {
     for (const requirement of report.requirements) if (!requirement.statement.trim()) errors.push(`Requirement ${requirement.id} has a blank statement.`);
     if (!report.requirements.length) errors.push("No requirements were extracted; extraction coverage is unverified.");
     if (!report.inspectedPaths.length) errors.push("No code paths were inspected.");
     for (const changed of report.change.changedPaths) if (!report.inspectedPaths.includes(changed) && !report.uninspected.some(item => item.scope === changed && item.reason.trim().length > 0)) errors.push(`Changed path ${changed} has no inspected or explicitly uninspected scope.`);
+    const deltaPaths = Array.isArray(report.changeDetail?.deltaPaths) ? report.changeDetail.deltaPaths : [];
+    for (const changed of deltaPaths) if (!report.inspectedPaths.includes(changed) && !report.uninspected.some(item => item.scope === changed && item.reason.trim().length > 0)) errors.push(`Delta path ${changed} has no inspected or explicitly uninspected scope.`);
     for (const category of new Set([...policy.requiredCategories, ...(report.configuration.reviewCategories ?? [])])) if (!report.requirements.some(requirement => requirement.category === category)) errors.push(`Extraction coverage for required category ${category} is unverified.`);
     for (const source of context?.sources ?? []) {
       if (source.status !== "available" || !policy.sourceAuthority.acceptedTypes.includes(source.type) || (source.type === "comment" && !policy.sourceAuthority.commentsMayClarify)) continue;
@@ -83,7 +152,7 @@ export async function validateReport(report: ReviewReport, policy: ReviewPolicy,
     if (["implemented", "missing", "partial"].includes(assessment.status) && !assessment.evidenceIds.some(id => ["code", "diff", "test"].includes(evidence.get(id)?.kind ?? ""))) errors.push(`Assessment ${assessment.requirementId} claims ${assessment.status} without code or test evidence.`);
     if (assessment.confidence < 0 || assessment.confidence > 1) errors.push(`Assessment ${assessment.requirementId} has invalid confidence.`);
     if (assessment.status !== "not_applicable" && assessment.evidenceIds.length === 0) errors.push(`Assessment ${assessment.requirementId} has no evidence.`);
-    if (assessment.status === "not_applicable" && (!assessment.waiverReference || !referenceValid(assessment.waiverReference) || !policy.sourceAuthority.waiverAuthorities.includes(assessment.waiverReference.sourceId))) errors.push(`Assessment ${assessment.requirementId} is not_applicable without a waiver.`);
+    if (assessment.status === "not_applicable" && !waiverReferenceValid(assessment.waiverReference, referenceValid, policy)) errors.push(`Assessment ${assessment.requirementId} is not_applicable without a waiver.`);
     for (const id of assessment.evidenceIds) if (!evidence.has(id)) errors.push(`Assessment ${assessment.requirementId} references unknown evidence ${id}.`);
   }
   for (const finding of report.findings) {
@@ -91,16 +160,7 @@ export async function validateReport(report: ReviewReport, policy: ReviewPolicy,
     if (!finding.evidenceIds.length) errors.push(`Finding ${finding.fingerprint} has no evidence.`);
     if (!finding.evidenceIds.some(id => ["code", "diff", "test"].includes(evidence.get(id)?.kind ?? ""))) errors.push(`Finding ${finding.fingerprint} has no implementation evidence.`);
     if (finding.basis === "reproduced") {
-      let reproduced = false;
-      for (const id of finding.evidenceIds) {
-        const item = evidence.get(id);
-        const receipt = item?.kind === "test" ? report.tests.find(test => test.id === item.receiptId && test.commit === report.change.headCommit && test.exitCode !== null && !test.timedOut && !test.canceled) : undefined;
-        if (!receipt || !artifacts) continue;
-        const stdout = receipt.stdoutArtifact ? await artifacts.get(receipt.stdoutArtifact) : undefined;
-        const stderr = receipt.stderrArtifact ? await artifacts.get(receipt.stderrArtifact) : undefined;
-        if (stdout && stderr && sha256(stdout) === receipt.stdoutDigest && sha256(stderr) === receipt.stderrDigest) reproduced = true;
-      }
-      if (!reproduced) errors.push(`Finding ${finding.fingerprint} claims reproduction without a completed test receipt and verified retained logs.`);
+      if (!(await reproductionVerified(finding.evidenceIds, evidence, report.tests, report.change.headCommit, artifacts))) errors.push(`Finding ${finding.fingerprint} claims reproduction without a completed test receipt and verified retained logs.`);
     }
     if (![finding.title, finding.trigger, finding.impact, finding.direction].every(value => typeof value === "string" && value.trim().length > 0)) errors.push(`Finding ${finding.fingerprint} is missing actionable detail.`);
     for (const id of finding.evidenceIds) if (!evidence.has(id)) errors.push(`Finding ${finding.fingerprint} references unknown evidence ${id}.`);
@@ -111,7 +171,7 @@ export async function validateReport(report: ReviewReport, policy: ReviewPolicy,
     if (item.sourceExclusionReason !== undefined && (item.kind !== "source" || typeof item.sourceExclusionReason !== "string" || !item.sourceExclusionReason.trim())) errors.push(`Evidence ${item.id} has an invalid source exclusion reason.`);
     if (item.kind === "source" && (!item.source || !referenceValid(item.source))) errors.push(`Evidence ${item.id} has no verifiable source.`);
     if (["code", "diff"].includes(item.kind) && !item.code) errors.push(`Evidence ${item.id} has no code anchor.`);
-    if (item.kind === "diff" && item.code && !report.change.changedPaths.includes(item.code.path)) errors.push(`Diff evidence ${item.id} is outside changed paths.`);
+    if (item.kind === "diff" && item.code && !report.change.changedPaths.includes(item.code.path) && !deltaPathSet.has(item.code.path)) errors.push(`Diff evidence ${item.id} is outside changed paths.`);
     if (item.kind === "test" && !report.tests.some(test => test.id === item.receiptId && test.commit === report.change.headCommit)) errors.push(`Evidence ${item.id} references no reviewed test receipt.`);
     if (item.kind === "artifact") {
       const ids = [report.contextManifestArtifact, report.normalizedEventArtifact, report.redactedTranscriptArtifact].filter((id): id is string => !!id);
@@ -135,11 +195,12 @@ export async function validateReport(report: ReviewReport, policy: ReviewPolicy,
     }
   }
   if (sourceControl && root) {
-    const allowedCommit = async (anchor: CodeAnchor): Promise<boolean> => anchor.commit === report.change.headCommit || (anchor.commit === report.change.mergeBaseCommit && report.change.changedPaths.includes(anchor.path) && !!sourceControl.pathExists && !(await sourceControl.pathExists(root, report.change.headCommit, anchor.path)));
+    const allowedCommit = anchorCommitChecker(report, verifiedDelta, sourceControl, root);
     for (const inspected of report.inspectedPaths) {
       const inHead = await sourceControl.verifyAnchor(root, { commit: report.change.headCommit, path: inspected, startLine: 1 });
       const deletedFromBase = !inHead && report.change.changedPaths.includes(inspected) && await sourceControl.verifyAnchor(root, { commit: report.change.mergeBaseCommit, path: inspected, startLine: 1 });
-      if (!inHead && !deletedFromBase) errors.push(`Inspected path ${inspected} does not exist in the reviewed change.`);
+      const deletedSince = !inHead && !deletedFromBase && since !== undefined && deltaRemoved.has(inspected) && await sourceControl.verifyAnchor(root, { commit: since, path: inspected, startLine: 1 });
+      if (!inHead && !deletedFromBase && !deletedSince) errors.push(`Inspected path ${inspected} does not exist in the reviewed change.`);
     }
     for (const item of report.evidence) {
       if (item.code && !(await allowedCommit(item.code))) errors.push(`Evidence ${item.id} does not reference reviewed head ${report.change.headCommit}.`);
@@ -150,6 +211,10 @@ export async function validateReport(report: ReviewReport, policy: ReviewPolicy,
       if (finding.anchor && !(await sourceControl.verifyAnchor(root, finding.anchor))) errors.push(`Finding ${finding.fingerprint} has an invalid code anchor.`);
     }
   }
+
+  errors.push(...changeDetail.errors);
+  const sinceError = await sinceAncestryError(report, sourceControl, root);
+  if (sinceError) errors.push(sinceError);
 
   if (report.execution !== "completed" && report.verdict !== undefined) errors.push("A non-completed run cannot have a verdict.");
   if (report.coverage === "incomplete" && report.verdict === "ready") errors.push("Incomplete coverage cannot have a ready verdict.");

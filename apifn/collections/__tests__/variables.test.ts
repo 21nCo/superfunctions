@@ -1,11 +1,11 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   interpolateVariables,
   loadDotEnvFile,
   resolveVariableContext,
 } from "../src/variables.js";
+import { tempDir } from "./temp-dirs.js";
 
 describe("variable interpolation", () => {
   it("TV-ENV-002: interpolates variables in templates and warns unresolved", () => {
@@ -53,7 +53,7 @@ describe("variable interpolation", () => {
   });
 
   it("ENV-003: supports loading .env file", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "apifn-dotenv-"));
+    const dir = await tempDir("apifn-dotenv-");
     const envPath = path.join(dir, ".env");
     await writeFile(envPath, "API_KEY=dotenv-secret\nBASE_URL=http://dotenv.local\n", "utf8");
 

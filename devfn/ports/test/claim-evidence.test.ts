@@ -31,9 +31,10 @@ vi.mock("../src/listeners.js", async (importOriginal) => {
 
 import { processBirthSignature } from "@devfn/processes";
 import { allocateEphemeralPort, connectionRefused, FilePortRegistry, isPortAvailable, withFileLock } from "../src/index.js";
+import { caddyAdminLockPath } from "../../test-support/shared-locks.mjs";
 
 const withCaddyAdminPort = async <T>(action: () => Promise<T>): Promise<T> =>
-  await withFileLock(path.join(tmpdir(), "devfn-test-caddy-admin.lock"), action, { timeoutMs: 120_000 });
+  await withFileLock(caddyAdminLockPath(), action, { timeoutMs: 120_000 });
 
 async function abandonedClaim(dir: string, port: number): Promise<FilePortRegistry> {
   const registry = new FilePortRegistry(path.join(dir, "registry.json"), undefined, async () => true);

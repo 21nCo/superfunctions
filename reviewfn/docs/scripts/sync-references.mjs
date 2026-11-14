@@ -11,6 +11,7 @@ const pages = [
   ["security", "Security model", "Trust boundaries, Docker containment, credentials, and retention."],
   ["github-action", "GitHub Action and publication", "Set up a credential-free review job and a separate trusted publisher."],
   ["report-schema", "Report schema", "Execution, coverage, verdict, assessments, evidence, and findings."],
+  ["panel-report-schema", "Panel report schema", "Panel policy, slot identity, slot runs, panel findings, and the panel report."],
   ["evaluation", "Evaluation contract", "Measure frozen cases and report comparison confounds."],
 ];
 for (const [slug, title, description] of pages) {

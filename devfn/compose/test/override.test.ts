@@ -7,9 +7,13 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 import { checkReadinessNow, gatedLauncherStatus, processBirthSignature, runGatedCommand } from "@devfn/processes";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { ComposeController, composeProjectName, type ComposeLaunch, createComposeEnvironment, createComposeReadinessEnvironment, effectiveComposeServiceNetworks, fingerprintComposeSource, renderComposeOverride, type ManagedComposeService } from "../src/index.js";
 import { assertComposeSourceGraphBounded } from "../src/source-files.js";
+import { temporaryDirectories } from "../../test-support/temp-directories.mjs";
+
+// Removed after each test, whether it passes, fails or times out.
+const tempDir = temporaryDirectories(afterEach);
 
 const execFileAsync = promisify(execFile);
 /** The installed @devfn/processes build, which the spawned helper processes load directly. */
@@ -562,7 +566,7 @@ describe("ComposeController", () => {
   });
 
   it("passes the effective environment to every Compose query and lifecycle command", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "devfn-compose-"));
+    const root = tempDir("devfn-compose-");
     const calls: Array<{ args: readonly string[]; cwd?: string; appPort?: string; dockerHost?: string }> = [];
     const controller = stubbed(async (_file, args, options) => {
       calls.push({ args, cwd: options.cwd, appPort: options.env?.APP_PORT, dockerHost: options.env?.DOCKER_HOST });
@@ -609,7 +613,7 @@ describe("ComposeController", () => {
   });
 
   it("preserves user-owned services but reclaims abandoned DevFn containers", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "devfn-compose-owner-"));
+    const root = tempDir("devfn-compose-owner-");
     const runCase = async (projectName: string | undefined) => {
       const calls: readonly string[][] = [];
       let psCalls = 0;
@@ -849,7 +853,7 @@ describe("ComposeController", () => {
   }, 90_000);
 
   it("restores only user-owned containers that DevFn started", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "devfn-compose-mixed-"));
+    const root = tempDir("devfn-compose-mixed-");
     const calls: string[][] = [];
     let allCalls = 0;
     const controller = stubbed(async (_file, args) => {
@@ -887,7 +891,7 @@ describe("ComposeController", () => {
   });
 
   it("does not reclaim a container owned by another DevFn lifecycle", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "devfn-compose-other-owner-"));
+    const root = tempDir("devfn-compose-other-owner-");
     const calls: string[][] = [];
     const controller = stubbed(async (_file, args) => {
       calls.push([...args]);
@@ -904,7 +908,7 @@ describe("ComposeController", () => {
   });
 
   it("cleans a replacement DevFn container when startup journaling fails", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "devfn-compose-replace-"));
+    const root = tempDir("devfn-compose-replace-");
     const calls: string[][] = [];
     let psCalls = 0;
     const controller = stubbed(async (_file, args) => {
@@ -924,7 +928,7 @@ describe("ComposeController", () => {
   });
 
   it("journals Compose recovery when startup cleanup fails before container IDs are known", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "devfn-compose-recovery-"));
+    const root = tempDir("devfn-compose-recovery-");
     const calls: string[][] = [];
     let psCalls = 0;
     let cleanupFails = true;

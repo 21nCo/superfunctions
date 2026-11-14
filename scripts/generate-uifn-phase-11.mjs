@@ -3,6 +3,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { adapterDomBindingsSource } from './uifn-adapter-dom-bindings.mjs';
 
 const root = process.cwd();
 const catalogPath = path.join(root, 'uifn/catalog/generated/catalog.json');
@@ -61,12 +62,15 @@ ${component}.displayName = '${component}';`;
     ...primitive.inputs.map((entry) => entry.name),
     ...(primitive.name === 'Accordion' ? ['type'] : []),
     ...(primitive.name === 'Carousel' ? ['dir'] : []),
+    // AngleSlider's root also takes the native form field name its hidden input submits.
+    ...(primitive.name === 'AngleSlider' ? ['name'] : []),
   ];
+  const domBindings = adapterDomBindingsSource(primitive);
   return `'use client';
 
 import * as React from 'react';
 import { ${coreImports} } from '@uifn/core/primitives/${primitive.id}';
-import {
+${domBindings.importLine}import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
   useReactPrimitive,
@@ -85,7 +89,7 @@ const ${name}Definition: ReactPrimitiveDefinition<${input}> = {
   rootPart: '${rootPart.id}',
   inputNames: ${JSON.stringify(inputNames)},
   context: ${name}Context,
-  ${definitionRuntime}
+  ${definitionRuntime}${domBindings.field}
 };
 
 export type ${rootName}Props = ReactPrimitiveRootProps<${input}, '${intrinsic(rootPart.element)}'>;

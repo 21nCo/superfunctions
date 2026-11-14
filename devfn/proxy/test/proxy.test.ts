@@ -2,15 +2,20 @@ import { spawn } from "node:child_process";
 import { access, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { parsePersistedProxyRoutes, withFileLock } from "@devfn/ports";
 import { processBirthSignature } from "@devfn/processes";
 import { CaddyProxyController, proxyOwnerStatus, renderCaddyfile } from "../src/index.js";
+import { temporaryDirectories } from "../../test-support/temp-directories.mjs";
+import { caddyAdminLockPath } from "../../test-support/shared-locks.mjs";
+
+// Removed after each test, whether it passes, fails or times out.
+const tempDir = temporaryDirectories(afterEach);
 
 // Fixtures that need the fixed Caddy admin port 127.0.0.1:2019 free share one
 // machine-wide lock with other DevFn packages' fixtures that bind it.
 const withCaddyAdminPort = async <T>(action: () => Promise<T>): Promise<T> =>
-  await withFileLock(path.join(tmpdir(), "devfn-test-caddy-admin.lock"), action, { timeoutMs: 120_000 });
+  await withFileLock(caddyAdminLockPath(), action, { timeoutMs: 120_000 });
 
 /**
  * A state directory owned by this live process, with a Caddy command stub
@@ -76,7 +81,7 @@ describe("Caddy route rendering", () => {
   });
 
   it("fails closed on corrupt persisted route state", async () => {
-    const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-proxy-"));
+    const stateDir = tempDir("devfn-proxy-");
     await writeFile(path.join(stateDir, "proxy-routes.json"), "{not-json");
     await expect(new CaddyProxyController(stateDir).routes()).rejects.toMatchObject({ code: "DEVFN_PROXY_CONFIG_INVALID" });
   });

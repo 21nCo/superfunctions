@@ -1,22 +1,13 @@
-import {
-  type UIFnController,
-  type UIFnEnvironment,
-  type UIFnPartProps,
-  type UIFnSnapshot,
-  type UIFnStaticPrimitiveContract,
-} from '@uifn/core';
-import { mergePartProps } from '@uifn/core/parts';
+import type { UIFnController, UIFnSnapshot } from '@uifn/core/controller';
+import type { UIFnEnvironment } from '@uifn/core/environment';
+import { mergePartProps, type UIFnPartProps } from '@uifn/core/parts';
+import type { UIFnStaticPrimitiveContract } from '@uifn/core/primitives';
 import {
   acquireUIFnDomPlatform,
-  createUIFnMenuDomBinding,
   createUIFnNativeFormResetBinding,
-  createUIFnNavigationMenuDomBinding,
-  createUIFnOverlayDomBinding,
-  createUIFnPopupDomBinding,
   createUIFnPortal,
-  createUIFnRangeGestureDomBinding,
-  createUIFnRovingFocusDomBinding,
-  focusUIFnElement,
+  type UIFnAdapterDomBindingContext,
+  type UIFnAdapterDomBindingHandle,
   type UIFnDomResourceSnapshot,
   type UIFnPortalTarget,
 } from '@uifn/dom';
@@ -28,6 +19,24 @@ type AnyController = UIFnController<AnyRecord, AnyRecord, AnyRecord, AnyRecord>;
 type AnyStaticContract = UIFnStaticPrimitiveContract<AnyRecord, AnyRecord, AnyRecord>;
 export type SvelteElementName = Extract<keyof SvelteHTMLElements, string>;
 
+/** What a DOM binding installer receives when the bridge mounts: the bridge, its controller and DOM platform. */
+export type SvelteDomBindingContext = UIFnAdapterDomBindingContext<SveltePrimitiveBridge<any>>;
+export type SvelteDomBindingHandle = UIFnAdapterDomBindingHandle;
+/** Wires one kind of @uifn/dom behavior for a mounted primitive; the @uifn/dom adapter installers fit here. */
+export type SvelteDomBindingInstaller = (context: SvelteDomBindingContext) => void;
+
+/** Focus work a primitive must run after Svelte commits controller-driven attributes to the DOM. */
+export interface SvelteCommitFocusHandle {
+  /** The live controller's state changed; Svelte has not yet committed the matching action parameters. */
+  changed(): void;
+  /** A DOM commit for the live controller has landed. */
+  committed(): void;
+  destroy(): void;
+}
+
+/** Created for each live controller of a definition that lists it. */
+export type SvelteCommitFocus = (bridge: SveltePrimitiveBridge<any>, controller: AnyController) => SvelteCommitFocusHandle;
+
 export interface SveltePrimitiveDefinition<TInputs extends object = AnyRecord> {
   readonly name: string;
   readonly family: string;
@@ -37,6 +46,10 @@ export interface SveltePrimitiveDefinition<TInputs extends object = AnyRecord> {
   readonly contextKey: symbol;
   readonly createController?: (inputs: TInputs, environment: UIFnEnvironment) => AnyController;
   readonly contract?: AnyStaticContract;
+  /** The @uifn/dom behaviors this primitive wires, in installation order; none when absent. */
+  readonly domBindings?: readonly SvelteDomBindingInstaller[];
+  /** Focus work that waits for Svelte's DOM commit; none when absent. */
+  readonly commitFocus?: SvelteCommitFocus;
 }
 
 export interface SveltePrimitiveRenderPayload {
@@ -226,8 +239,7 @@ export class SveltePrimitiveBridge<TInputs extends object = AnyRecord> {
   private domRefreshEpoch = 0;
   private domCommitQueued = false;
   private domBindings: readonly SvelteDomBinding[] = [];
-  private cancelDeferredRovingFocus: (() => void) | null = null;
-  private menubarWasOpen = false;
+  private commitFocus: SvelteCommitFocusHandle | null = null;
 
   constructor(
     readonly definition: SveltePrimitiveDefinition<TInputs>,
@@ -291,12 +303,13 @@ export class SveltePrimitiveBridge<TInputs extends object = AnyRecord> {
     this.releaseController = null;
     this.destroyCurrent();
     this.current = this.create(true);
+    this.releaseCommitFocus();
+    this.commitFocus = this.definition.commitFocus?.(this, this.current) ?? null;
     this.releaseController = this.current.subscribe(() => {
       this.emit();
-      this.scheduleDeferredRovingFocus();
+      this.commitFocus?.changed();
     }, { emitInitial: false });
     this.live = true;
-    this.menubarWasOpen = Boolean(this.current.getState().value);
     this.refreshDomOwnership();
   }
 
@@ -318,10 +331,14 @@ export class SveltePrimitiveBridge<TInputs extends object = AnyRecord> {
     this.releaseDom = null;
     this.releaseController?.();
     this.releaseController = null;
-    this.cancelDeferredRovingFocus?.();
-    this.cancelDeferredRovingFocus = null;
+    this.releaseCommitFocus();
     this.destroyCurrent();
     this.live = false;
+  }
+
+  private releaseCommitFocus(): void {
+    this.commitFocus?.destroy();
+    this.commitFocus = null;
   }
 
   readonly subscribe = (listener: () => void): (() => void) => {
@@ -345,56 +362,6 @@ export class SveltePrimitiveBridge<TInputs extends object = AnyRecord> {
 
   private emit(): void {
     this.listeners.forEach((listener) => listener());
-  }
-
-  /**
-   * Svelte commits action parameters after controller subscribers run. Defer
-   * Menubar's focus transfer until the next frame so the new active item and
-   * its roving tabindex have both reached the DOM.
-   */
-  private scheduleDeferredRovingFocus(): void {
-    if (this.definition.name !== 'Menubar' || this.destroyed) return;
-    const controller = this.current;
-    const root = this.getElement(this.definition.rootPart);
-    if (!controller || !root) return;
-    const state = controller.getState();
-    const open = Boolean(state.value);
-    const shouldRestore = this.menubarWasOpen && !open;
-    this.menubarWasOpen = open;
-    if (!open && !shouldRestore) return;
-
-    this.cancelDeferredRovingFocus?.();
-    const ownerWindow = root.ownerDocument.defaultView;
-    if (!ownerWindow) return;
-    const focusAfterCommit = () => {
-      this.cancelDeferredRovingFocus = null;
-      if (this.destroyed || this.current !== controller) return;
-      const current = controller.getState();
-      const currentOpen = Boolean(current.value);
-      const activeKey = String(
-        currentOpen
-          ? current.activeItem ?? ''
-          : current.focusReturn ?? current.focusedMenu ?? '',
-      );
-      if (!activeKey) return;
-      const parts = currentOpen ? ['item', 'submenuTrigger'] : ['trigger'];
-      const target = parts
-        .map((part) => this.getElement(part, activeKey))
-        .find((element): element is HTMLElement => Boolean(element))
-        ?? (currentOpen
-          ? this.getElementEntries('item').find(({ element }) => element.tabIndex === 0)?.element
-          : null);
-      if (target?.isConnected && root.ownerDocument.activeElement !== target) {
-        target.focus({ preventScroll: true });
-      }
-    };
-    if (typeof ownerWindow.requestAnimationFrame === 'function') {
-      const frame = ownerWindow.requestAnimationFrame(focusAfterCommit);
-      this.cancelDeferredRovingFocus = () => ownerWindow.cancelAnimationFrame(frame);
-    } else {
-      const timer = ownerWindow.setTimeout(focusAfterCommit, 0);
-      this.cancelDeferredRovingFocus = () => ownerWindow.clearTimeout(timer);
-    }
   }
 
   readonly getSnapshot = (): Readonly<UIFnSnapshot<AnyRecord>> => {
@@ -512,15 +479,7 @@ export class SveltePrimitiveBridge<TInputs extends object = AnyRecord> {
         // subscribed focus, overlay, and navigation bindings expose update().
         if (binding.update?.length === 0) binding.update();
       });
-      const controller = this.current;
-      if (this.definition.name === 'Menubar' && controller) {
-        const state = controller.getState();
-        const activeItem = state.value ? String(state.activeItem ?? '') : '';
-        const target = activeItem
-          ? this.getElement('item', activeItem) ?? this.getElement('submenuTrigger', activeItem)
-          : null;
-        if (target?.isConnected) focusUIFnElement(target);
-      }
+      this.commitFocus?.committed();
     });
   }
 
@@ -560,118 +519,17 @@ export class SveltePrimitiveBridge<TInputs extends object = AnyRecord> {
           restoreOnDestroy: true,
         }));
       }
-      if (this.definition.family === 'modal-overlay') {
-        const content = this.getElement('content');
-        if (content && controller) {
-          bindings.push(createUIFnOverlayDomBinding({
-            platform: lease.platform,
-            controller: controller as never,
-            content,
-            trigger: () => {
-              if (this.definition.name !== 'Tour') return this.getElement('trigger');
-              const target = (controller.getState().currentStep as { target?: unknown } | undefined)?.target;
-              return typeof target === 'string'
-                ? content.ownerDocument.querySelector<HTMLElement>(target)
-                : null;
-            },
-            positioner: () => this.getElement('positioner'),
-            arrow: () => this.getElement('arrow'),
-            portalNode: this.getElement('portal') ?? this.getElement('positioner') ?? content,
-            portalManagedExternally: this.getElement('portal') !== null,
-            validateAccessibleName: true,
-          }));
-        }
-      }
-      if ((this.definition.name === 'Menu' || this.definition.name === 'ContextMenu') && controller) {
-        const trigger = this.getElement('trigger');
-        const content = this.getElement('content');
-        if (trigger && content) {
-          bindings.push(createUIFnMenuDomBinding({
-            platform: lease.platform,
-            controller: controller as never,
-            id: content.id,
-            trigger,
-            content,
-            positioner: () => this.getElement('positioner'),
-            portalManagedExternally: this.getElement('portal') !== null,
-            getItemElement: (id) => this.getElement('item', id),
-          }));
-        }
-      }
-      if (
-        controller
-        && ['Autocomplete', 'Combobox', 'Select', 'ColorPicker', 'DatePicker'].includes(this.definition.name)
-      ) {
-        const content = this.getElement('content');
-        const trigger = this.definition.name === 'Autocomplete'
-          ? this.getElement('input')
-          : this.getElement('trigger');
-        const reference = ['Autocomplete', 'Combobox', 'Select', 'ColorPicker'].includes(this.definition.name)
-          ? this.getElement('control') ?? this.getElement('input') ?? trigger
-          : this.definition.name === 'DatePicker'
-            ? this.getElement('input') ?? trigger
-            : trigger;
-        const setOpen = controller.actions.setOpen;
-        if (content && trigger && reference && typeof setOpen === 'function') {
-          bindings.push(createUIFnPopupDomBinding({
-            platform: lease.platform,
-            controller: controller as never,
-            id: root.id || `${this.definition.name.toLowerCase()}-popup`,
-            trigger: () => (
-              this.definition.name === 'Autocomplete'
-                ? this.getElement('input')
-                : this.getElement('trigger')
-            ),
-            reference: () => (
-              ['Autocomplete', 'Combobox', 'Select', 'ColorPicker'].includes(this.definition.name)
-                ? this.getElement('control') ?? this.getElement('input') ?? this.getElement('trigger')
-                : this.definition.name === 'DatePicker'
-                  ? this.getElement('input') ?? this.getElement('trigger')
-                  : this.getElement('trigger')
-            ),
-            content: () => this.getElement('content'),
-            positioner: () => this.getElement('positioner'),
-            portalNode: this.getElement('portal') ?? this.getElement('positioner'),
-            portalManagedExternally: this.getElement('portal') !== null,
-            placement: 'bottom-start',
-            matchReferenceWidth: ['Autocomplete', 'Combobox', 'Select'].includes(this.definition.name),
-            getOpen: (state: Record<string, unknown>) => state.open === true,
-            setOpen: (next: boolean) => (setOpen as (value: boolean) => void)(next),
-          }));
-        }
-      }
-      if (this.definition.name === 'NavigationMenu' && controller) {
-        bindings.push(createUIFnNavigationMenuDomBinding({
-          platform: lease.platform,
-          controller: controller as never,
-          getTriggerElement: (id) => this.getElement('trigger', id),
-        }));
-      }
-      const roving = rovingTarget(this.definition.name, controller?.getState() ?? null);
-      if (controller && roving) {
-        bindings.push(createUIFnRovingFocusDomBinding({
-          platform: lease.platform,
+      const portalManagedExternally = this.getElement('portal') !== null;
+      for (const install of this.definition.domBindings ?? []) {
+        install({
+          bridge: this,
           controller,
-          getActiveKey: (state) => roving.getActiveKey(state as AnyRecord),
-          getElement: (key) => roving.getParts(controller.getState())
-            .map((part) => roving.valueScoped ? this.getElement(part, key) : this.getElement(part))
-            .find(Boolean) ?? null,
-          // Svelte can register late compound children after the controller is
-          // already open. In that case a newly acquired Menubar binding must
-          // honor the active item instead of dropping the original focus job.
-          focusInitial: this.definition.name === 'Menubar' && Boolean(controller.getState().value),
-        }));
-      }
-      if (controller) {
-        for (const target of gestureTargets(this)) {
-          bindings.push(createUIFnRangeGestureDomBinding({
-            scope: lease.platform.scope,
-            primitive: this.definition.name as never,
-            element: target.element,
-            value: target.value,
-            controller: controller as never,
-          }));
-        }
+          platform: lease.platform,
+          root,
+          portalManagedExternally,
+          lateChildRegistration: true,
+          add: (binding) => bindings.push(binding),
+        });
       }
     } catch (error) {
       bindings.reverse().forEach((binding) => binding.destroy());
@@ -698,8 +556,7 @@ export class SveltePrimitiveBridge<TInputs extends object = AnyRecord> {
     this.domRefreshEpoch += 1;
     this.domRefreshQueued = false;
     this.domCommitQueued = false;
-    this.cancelDeferredRovingFocus?.();
-    this.cancelDeferredRovingFocus = null;
+    this.releaseCommitFocus();
     this.domBindings = [];
     this.releaseDom?.();
     this.releaseDom = null;
@@ -710,64 +567,4 @@ export class SveltePrimitiveBridge<TInputs extends object = AnyRecord> {
     this.elements.clear();
     this.live = false;
   }
-}
-
-function gestureTargets(bridge: SveltePrimitiveBridge<any>): ReadonlyArray<{ value?: unknown; element: HTMLElement }> {
-  const single = (part: string) => {
-    const element = bridge.getElement(part);
-    return element ? [{ element }] : [];
-  };
-  if (bridge.definition.name === 'Slider') return single('control');
-  if (bridge.definition.name === 'AngleSlider') return single('track');
-  if (bridge.definition.name === 'Carousel') return single('viewport');
-  if (bridge.definition.name === 'SignaturePad') return single('canvas');
-  if (bridge.definition.name === 'ImageCropper') return [...single('cropArea'), ...bridge.getElementEntries('handle')];
-  if (bridge.definition.name === 'ColorPicker') return [...single('area'), ...bridge.getElementEntries('channelSlider')];
-  if (bridge.definition.name === 'Splitter') return bridge.getElementEntries('resizeHandle').map(({ value, element }) => ({ value: Number(value), element }));
-  if (bridge.definition.name === 'ScrollArea') return bridge.getElementEntries('thumb');
-  return [];
-}
-
-interface RovingTarget {
-  getActiveKey(state: AnyRecord): string | null;
-  getParts(state: AnyRecord): readonly string[];
-  readonly valueScoped: boolean;
-}
-
-function rovingTarget(name: string, state: AnyRecord | null): RovingTarget | null {
-  if (!state) return null;
-  if (name === 'Menubar') return {
-    getActiveKey: (current) => String(current.value ? current.activeItem ?? '' : current.focusedMenu ?? '') || null,
-    getParts: (current) => current.value ? ['item', 'submenuTrigger'] : ['trigger'],
-    valueScoped: true,
-  };
-  const fixed = (stateKey: string, parts: readonly string[]): RovingTarget => ({
-    getActiveKey: (current) => String(current[stateKey] ?? '') || null,
-    getParts: () => parts,
-    valueScoped: true,
-  });
-  if (name === 'ColorPicker') return {
-    getActiveKey: (current) => current.open ? null : 'trigger',
-    getParts: () => ['trigger'],
-    valueScoped: false,
-  };
-  if (name === 'Editable') return {
-    getActiveKey: (current) => current.editing ? 'input' : 'preview',
-    getParts: (current) => current.editing ? ['input'] : ['preview'],
-    valueScoped: false,
-  };
-  if (name === 'PinInput') return {
-    getActiveKey: (current) => String(Math.max(0, Number(current.valueLength ?? 0) - (current.completed ? 1 : 0))),
-    getParts: () => ['input'],
-    valueScoped: true,
-  };
-  if (name === 'NavigationMenu') return fixed('focusedItem', ['trigger']);
-  if (name === 'Tabs') return fixed('focusedItem', ['trigger']);
-  if (name === 'Toolbar') return fixed('focusedItem', ['button', 'link']);
-  if (name === 'Pagination') return fixed('focusedPage', ['pageTrigger']);
-  if (name === 'TreeView') return fixed('focusedItem', ['item']);
-  if (['CheckboxGroup', 'Listbox', 'RadioGroup', 'SegmentGroup', 'ToggleGroup'].includes(name)) {
-    return fixed('focusedItem', ['itemControl', 'item']);
-  }
-  return null;
 }

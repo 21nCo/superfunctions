@@ -1,0 +1,14 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "test": {
+      "dependsOn": [
+        "^build",
+        "@superfunctions/http#build",
+        "@superfunctions/observability#build"
+      ],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/datafn/server/src/**"]
+    }
+  }
+}

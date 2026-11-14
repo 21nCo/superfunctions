@@ -1,5 +1,6 @@
 export * from "./artifacts.js";
 export * from "./canonical.js";
+export * from "./change.js";
 export * from "./coordinator.js";
 export * from "./defaults.js";
 export * from "./errors.js";
@@ -16,3 +17,6 @@ export * from "./safe-files.js";
 export * from "./executable.js";
 
 export * from "./git-environment.js";
+export * from "./panel/types.js";
+export * from "./panel/schema.js";
+export * from "./panel/validate.js";

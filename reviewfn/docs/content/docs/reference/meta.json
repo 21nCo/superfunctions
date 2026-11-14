@@ -1,4 +1,4 @@
 {
   "title": "Reference",
-  "pages": ["index", "configuration", "security", "github-action", "report-schema", "evaluation"]
+  "pages": ["index", "configuration", "security", "github-action", "report-schema", "panel-report-schema", "evaluation"]
 }

@@ -11,12 +11,19 @@ Let users authenticate a CLI tool against your authfn-backed service. The standa
 
 ## Plugins
 
-- `authFnApiKeyPlugin`.
+- `authFnApiKeyPlugin`, with a scope registry on `authfn()`:
+
+```ts
+const authApp = authfn({
+  scopes: { projects: ['read', 'write'] },
+  plugins: authFnPlugins(authFnApiKeyPlugin()),
+});
+```
 
 ## Web flow
 
 ```ts
-const created = await client.createApiKey({ name: 'CLI', scopes: ['read', 'write'] });
+const created = await client.createApiKey({ name: 'CLI', scopes: ['projects:read', 'projects:write'] });
 showOnce(created.data.secret);   // "sk_live_..." — display once, copy to clipboard
 ```
 
@@ -37,44 +44,34 @@ const response = await fetch('https://api.acme.com/projects', {
 
 ## Server-side authentication
 
-Your protected endpoint authenticates via `auth.provider` and uses `hasScope` to return HTTP 403 before loading protected data. Here `auth` is your AuthFn server and `app` is your application's HTTP router:
+Your protected endpoint authenticates via `auth.provider` and calls `requireScopes` to return HTTP 403 before loading protected data. Here `auth` is your AuthFn server and `app` is your application's HTTP router:
 
 ```ts
-import type { AuthFnSession } from 'authfn';
-
-function hasScope(session: AuthFnSession, scope: string): boolean {
-  const scopes = session.metadata?.scopes;
-  return Array.isArray(scopes) && scopes.includes(scope);
-}
+import { AuthFnError, requireScopes, type AuthFnSession } from 'authfn';
 
 app.get('/projects', async (c) => {
   let session: AuthFnSession | null;
   try {
     session = await auth.provider.authenticate(c.req.raw);
+    requireScopes(session, 'projects:read');
   } catch (error) {
-    if (error !== null && typeof error === 'object' &&
-        'code' in error && error.code === 'AUTHFN_API_KEY_REVOKED') {
-      return c.json({ error: 'unauthorized' }, 401);
+    if (error instanceof AuthFnError && (error.status === 401 || error.status === 403)) {
+      return c.json({ error: error.status === 401 ? 'unauthorized' : 'forbidden' }, error.status);
     }
     throw error;
   }
-  if (!session || session.actorType !== 'api-key') {
-    return c.json({ error: 'unauthorized' }, 401);
-  }
-  if (!hasScope(session, 'read')) {
-    return c.json({ error: 'forbidden' }, 403);
-  }
-  // session.actorId === api key id
-  // session.metadata.scopes === ['read', 'write']
+  // session.actorId === the key owner's user id (the key id for an unowned key)
+  // session.credential?.id === api key id (undefined for a signed-in browser session)
+  // session.scopes === ['projects:read', 'projects:write']
   return c.json({ projects: [] }); // Replace with your application's project data.
 });
 ```
 
-Missing, invalid, expired, revoked, or non-API-key credentials receive HTTP 401. The catch only handles the expected revocation error from authentication; unexpected provider failures and failures while loading project data remain host application errors. Active keys lacking `read` receive HTTP 403.
+Missing, invalid, expired, or revoked credentials receive HTTP 401. The catch only handles AuthFn's 401 and 403 errors from authentication and the scope check; unexpected provider failures and failures while loading project data remain host application errors. Keys lacking `projects:read` (or `projects:*`, or `*`) receive HTTP 403; a signed-in browser session carries `['*']` and passes.
 
 ## Per-key scopes
 
-Authorization is up to your application. `hasScope` in the server snippet above checks that `session.metadata.scopes` is an array containing the exact required scope. The handler owns the HTTP 403 response instead of throwing a generic error.
+Each key carries scopes from the registry. A key may hold a registered scope, `<owner>:*` for every action of one owner, or `*` for every registered scope; creating a key with any other scope fails with HTTP 400. See [Plugins → API keys → Scopes](../plugins/api-keys#scopes).
 
 ## Refreshing keys
 

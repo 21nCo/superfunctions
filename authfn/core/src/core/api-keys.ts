@@ -1,11 +1,17 @@
 import { randomBytes } from 'node:crypto';
-import type { AuthFnApiKeyRecord, AuthFnRuntimeConfig, AuthFnSession } from '../types.js';
+import type {
+  AuthFnApiKeyRecord,
+  AuthFnRuntimeConfig,
+  AuthFnSession,
+  AuthFnUserRecord
+} from '../types.js';
 import { AuthFnApiKeyRevokedError, AuthFnNotFoundError, AuthFnValidationError } from './errors.js';
 import {
   AUTHFN_DATABASE_KEY_MAX_LENGTH,
   AUTHFN_LEGACY_USER_REFERENCE_MAX_LENGTH,
   assertAuthFnDatabaseKeyLength
 } from './limits.js';
+import { assertRegisteredScopes, readStoredScopeGrant } from './scopes.js';
 import { hashSecret } from './sessions.js';
 import { findUserById } from './users.js';
 
@@ -13,6 +19,11 @@ export interface CreateApiKeyInput {
   /** Explicit null creates an unowned key for a trusted service principal. */
   userId: string | null;
   name: string;
+  /**
+   * Each entry must be a scope from `config.scopes`, `<owner>:*` for a
+   * registered owner, or `*`; anything else is rejected with
+   * `AUTHFN_VALIDATION_ERROR`. Omitted scopes grant nothing.
+   */
   scopes?: string[];
   metadata?: Record<string, unknown>;
   expiresAt?: Date;
@@ -38,12 +49,15 @@ export interface SanitizedApiKey {
 }
 
 export async function createApiKey(
-  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
+  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace' | 'scopes'>,
   input: CreateApiKeyInput,
   options?: { now?: () => Date; secretPrefix?: string }
 ): Promise<CreatedApiKey> {
   assertValidApiKeyName(input.name);
   assertValidApiKeyExpiry(input.expiresAt);
+  const scopes = input.scopes === undefined
+    ? undefined
+    : assertRegisteredScopes(config.scopes, input.scopes);
   let userId = input.userId;
   if (userId !== null) {
     const userIdLength = Array.from(userId).length;
@@ -70,7 +84,7 @@ export async function createApiKey(
     userId,
     name: input.name,
     secretHash: hashSecret(secret),
-    scopes: input.scopes,
+    scopes,
     metadata: input.metadata,
     expiresAt: input.expiresAt ?? null,
     revokedAt: null,
@@ -147,7 +161,7 @@ export async function revokeApiKeyById(
 }
 
 export async function authenticateApiKey(
-  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
+  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace' | 'scopes'>,
   secret: string,
   options?: { now?: () => Date }
 ): Promise<AuthFnSession | null> {
@@ -172,6 +186,16 @@ export async function authenticateApiKey(
     return null;
   }
 
+  // An owned key acts as its owner, so the owner must still be able to act:
+  // a deleted or disabled owner leaves the key authenticating as no one.
+  let owner: AuthFnUserRecord | null = null;
+  if (record.userId != null) {
+    owner = await findActiveApiKeyOwner(config, record.userId);
+    if (!owner) {
+      return null;
+    }
+  }
+
   const updatedRecord = await config.database.update<AuthFnApiKeyRecord>({
     model: 'api_keys',
     where: [{ field: 'id', operator: 'eq', value: record.id }],
@@ -182,24 +206,64 @@ export async function authenticateApiKey(
     namespace: namespace(config)
   });
 
+  // Keys stored before 0.6.0 may hold any JSON. The session grant keeps only
+  // entries the current registry could grant, and `requireScopes` expands
+  // them: a stored `*` covers every registered scope and `<owner>:*` every
+  // action of that registered owner. Unregistered entries grant nothing.
+  const grantedScopes = readStoredScopeGrant(config.scopes, updatedRecord.scopes);
+  // Deprecated `metadata.scopes` keeps every stored string for display; it is
+  // never a grant (`requireScopes` reads only `session.scopes`).
+  const storedScopes = Array.isArray(updatedRecord.scopes)
+    ? updatedRecord.scopes.filter((scope): scope is string => typeof scope === 'string')
+    : [];
+  const actor = owner
+    ? { actorId: owner.id, actorType: 'user' as const }
+    : { actorId: updatedRecord.id, actorType: 'api-key' as const };
+
   return {
     id: updatedRecord.id,
     type: 'api-key',
-    subject: {
-      actorId: updatedRecord.id,
-      actorType: 'api-key'
-    },
-    actorType: 'api-key',
-    actorId: updatedRecord.id,
+    subject: { ...actor },
+    ...actor,
+    credential: { type: 'api-key', id: updatedRecord.id },
     resourceIds: [],
     methods: ['api-key'],
+    scopes: [...grantedScopes],
     expiresAt: updatedRecord.expiresAt ?? undefined,
     metadata: {
       ...(updatedRecord.metadata ?? {}),
-      ownerUserId: updatedRecord.userId ?? undefined,
-      scopes: updatedRecord.scopes ?? []
+      // Deprecated: kept for one minor version; read `actorId` instead.
+      ownerUserId: owner?.id,
+      // Deprecated: read `session.scopes` (checked by `requireScopes`).
+      scopes: storedScopes
     }
   };
+}
+
+/**
+ * AuthFn has no user status column; a host disables a user by setting
+ * `metadata.disabled` to `true` on the user record. Every API-key path
+ * (`authenticateApiKey` and the placement-context issuer) checks it through
+ * `findActiveApiKeyOwner`; interactive sessions do not check it today.
+ */
+export function isAuthFnUserDisabled(user: Pick<AuthFnUserRecord, 'metadata'>): boolean {
+  return user.metadata?.disabled === true;
+}
+
+/**
+ * Loads the owner an API key acts as. Returns `null` when the owner was
+ * deleted or is disabled, so the key authenticates as no one. Shared by every
+ * API-key authentication path so they cannot disagree on owner eligibility.
+ */
+export async function findActiveApiKeyOwner(
+  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
+  userId: string
+): Promise<AuthFnUserRecord | null> {
+  const owner = await findUserById(config, userId);
+  if (!owner || isAuthFnUserDisabled(owner)) {
+    return null;
+  }
+  return owner;
 }
 
 export function sanitizeApiKeyRecord(record: AuthFnApiKeyRecord): SanitizedApiKey {

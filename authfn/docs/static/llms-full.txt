@@ -2051,7 +2051,7 @@ The HTTP status reflects the error class:
 | --- | --- | --- |
 | Validation, bad input | 400 | `AUTHFN_VALIDATION_ERROR`, `AUTHFN_OTP_INVALID` |
 | Authentication required | 401 | `AUTHFN_UNAUTHENTICATED`, `AUTHFN_INVALID_CREDENTIALS`, `AUTHFN_SESSION_EXPIRED`, `AUTHFN_2FA_REQUIRED` |
-| Forbidden | 403 | `AUTHFN_CSRF_INVALID`, `AUTHFN_EMAIL_NOT_VERIFIED` |
+| Forbidden | 403 | `AUTHFN_CSRF_INVALID`, `AUTHFN_EMAIL_NOT_VERIFIED`, `AUTHFN_INSUFFICIENT_SCOPE` |
 | Not found | 404 | `AUTHFN_NOT_FOUND`, `AUTHFN_REGION_NOT_FOUND` |
 | Conflict | 409 | `AUTHFN_CONFLICT`, `AUTHFN_OTP_REPLAYED`, `AUTHFN_OAUTH_STATE_REPLAYED`, `AUTHFN_REGION_MISMATCH` |
 | Rate limit | 429 | `AUTHFN_RATE_LIMITED` |
@@ -2143,6 +2143,7 @@ interface AuthFnErrorEnvelope {
 | `AUTHFN_CSRF_INVALID` | 403 | no | CSRF token missing, malformed, or doesn't match. |
 | `AUTHFN_DELIVERY_FAILED` | 503 | yes | Mail delivery for an OTP failed. Safe to retry. |
 | `AUTHFN_EMAIL_NOT_VERIFIED` | 403 | no | The action requires a verified email address. |
+| `AUTHFN_INSUFFICIENT_SCOPE` | 403 | no | `requireScopes` found a needed scope the session does not grant. `details.missingScopes` lists them. |
 | `AUTHFN_INTERNAL_ERROR` | 500 | yes | Generic kernel error. Logged with full context. |
 | `AUTHFN_INVALID_CREDENTIALS` | 401 | no | Password/email pair is wrong. |
 | `AUTHFN_NOT_FOUND` | 404 | no | The targeted resource doesn't exist. |
@@ -3695,6 +3696,7 @@ Both modes use the same `authfn_sessions` table and the same lifecycle — only 
 interface AuthFnSession {
   id: string;                                  // session id (stable across rotations)
   type: 'session' | 'api-key';
+  credential?: { type: 'api-key'; id: string }; // set when an API key authenticated the request
   subject: {
     actorId: string;
     actorType: 'user' | 'api-key';
@@ -3704,10 +3706,11 @@ interface AuthFnSession {
     attributes?: Record<string, unknown>;
   };
   actorType: 'user' | 'api-key';
-  actorId: string;                             // user id or api-key id
+  actorId: string;                             // user id (an owned key's owner) or unowned api-key id
   tenantId?: string;
   regionId?: string;                           // present when multi-region is enabled
   methods: AuthFnAuthMethod[];                 // ['password'], ['email-otp'], ['oauth-google', 'two-factor'], …
+  scopes: string[];                            // ['*'] for user sessions; the key's grantable stored scopes for API keys
   primaryEmail?: string;
   expiresAt?: Date;
   metadata?: Record<string, unknown>;
@@ -3828,7 +3831,7 @@ Index on `userId`, `tokenHash`, `expiresAt`. Your migrations from `auth.getSchem
 
 ## API key sessions
 
-When a request authenticates via `Authorization: Bearer ak_…` (with the API keys plugin enabled), authfn issues a synthetic session: `type: 'api-key'`, `actorType: 'api-key'`, `methods: ['api-key']`. API key sessions are not persisted in `authfn_sessions`; the API key record itself is the source of truth. Revoking the key invalidates all of its sessions immediately.
+When a request authenticates via `Authorization: Bearer ak_…` (with the API keys plugin enabled), authfn issues a synthetic session: `type: 'api-key'`, `methods: ['api-key']`. In the TypeScript `authfn` package (0.5.0 and later), the session also carries `credential: { type: 'api-key', id }`, a user-owned key acts as its owner (`actorType: 'user'`, `actorId` = owner's user ID), and a key whose owner was deleted or is disabled authenticates as no one. An unowned service key keeps `actorType: 'api-key'` with the key ID as `actorId`. The Python SDK does not do this yet; see [SDKs → Python](../sdk/python#api-key-sessions). In the TypeScript `authfn` package (0.6.0 and later), every session carries `scopes`: interactive cookie and bearer sessions get `['*']` and API-key sessions get the key's stored scopes that the registry can grant; call `requireScopes(session, needed)` to enforce them (see [Plugins → API keys → Scopes](../plugins/api-keys#scopes)). API key sessions are not persisted in `authfn_sessions`; the API key record itself is the source of truth. Revoking the key invalidates all of its sessions immediately.
 
 ## Related
 
@@ -5130,7 +5133,7 @@ If you're **comparing tools**, the highlights below are a cheatsheet against Bet
 
 - **User-owned or unowned** — cookie-session routes bind keys to the signed-in user's `userId`; trusted server code can explicitly pass `userId: null` to issue an unowned service key.
 - **Hashed at rest** — the plaintext is shown once at creation; only `secretHash` is persisted.
-- **Scoped** — keys carry an array of scope strings; your app decides what they mean.
+- **Scoped** — keys carry `<owner>:<action>` scopes from the registry your app declares; `requireScopes` enforces them.
 - **Named** — for a user's UI or a service ("CI", "personal laptop", "retrieval-worker").
 - **Revocable** — cookie-session routes revoke the caller's user-owned keys; trusted server code can revoke unowned keys with `revokeApiKeyById`. Both set `revokedAt`.
 
@@ -5139,6 +5142,7 @@ import { authfn, authFnPlugins } from 'authfn';
 import { authFnApiKeyPlugin } from '@authfn/api-keys';
 
 const authApp = authfn({
+  scopes: { repo: ['read', 'write'], account: ['read'] },
   plugins: authFnPlugins(authFnApiKeyPlugin({ secretPrefix: 'sk_live_' })),
 });
 ```
@@ -5150,11 +5154,13 @@ const authApp = authfn({
 | `secretPrefix` | `'authfn_'` | Prefix for the issued secret string. Useful for vendor-specific keys (`sk_live_`, `prj_`). |
 | `now` | `() => new Date()` | Clock injection for tests. |
 
+The scope registry is the `scopes` option on `authfn()` itself, not a plugin option; see [Scopes](#scopes).
+
 ## Routes
 
 | Method | Path | Operation ID | Notes |
 | --- | --- | --- | --- |
-| `POST` | `/auth/api-keys` | `createApiKey` | Body: `{ name?, scopes?, expiresAt?, metadata? }`. Returns plaintext once. |
+| `POST` | `/auth/api-keys` | `createApiKey` | Body: `{ name?, scopes?, expiresAt?, metadata? }`. Returns plaintext once. A scope outside the registry fails with HTTP 400 and stores nothing. |
 | `GET` | `/auth/api-keys` | `listApiKeys` | Lists the caller's keys. Plaintext is never returned again. |
 | `DELETE` | `/auth/api-keys/:keyId` | `revokeApiKey` | Revokes a key. |
 
@@ -5166,29 +5172,27 @@ const authApp = authfn({
 
 ## Authentication via API key
 
-When a request carries `Authorization: Bearer <secret>`, the kernel:
+When a request carries `Authorization: Bearer <secret>`, the TypeScript `authfn` kernel (0.5.0 and later):
 
 1. Looks up the key by `secretHash`; returns `null` if no key matches.
 2. Throws `AUTHFN_API_KEY_REVOKED` if `revokedAt` is set.
 3. Returns `null` if `expiresAt` is at or before the current time.
-4. Updates `lastUsedAt`.
-5. Synthesizes an `AuthFnSession` with `type: 'api-key'`, `actorType: 'api-key'`, `methods: ['api-key']`.
+4. For a user-owned key, loads the owner; returns `null` if the owner was deleted or is disabled (`metadata.disabled === true` on the user record).
+5. Updates `lastUsedAt`.
+6. Synthesizes an `AuthFnSession` with `type: 'api-key'`, `methods: ['api-key']`, `scopes` set to the key's stored scopes that the registry can grant (`[]` when it has none), and `credential: { type: 'api-key', id: <keyId> }`.
 
-The synthesized session is what `auth.provider.authenticate(request)` returns. Your application authorization logic should branch on `session.actorType`:
+In the TypeScript `authfn` package (0.5.0 and later), a user-owned key acts as its owner: the session carries `actorType: 'user'` and `actorId` set to the owner's user ID, so data you key by `actorId` is the owner's data. An unowned service key keeps `actorType: 'api-key'` with the key ID as `actorId`. AuthFn looks up the key and loads its owner only in the configured `namespace`; with an adapter that isolates namespaces, a key or owner from another tenant authenticates as no one.
 
-```ts
-if (session.actorType === 'api-key') {
-  const scopes = session.metadata?.scopes;
-  if (!Array.isArray(scopes) || !scopes.includes('repo:read')) {
-    return Response.json({ error: 'forbidden' }, { status: 403 });
-  }
-}
-```
+`session.metadata.ownerUserId` still carries the owner's user ID for one more minor version. It is deprecated; read `session.actorId` instead.
+
+> **Python SDK:** the Python `authfn` package has not adopted these rules or the scope registry yet. Its API-key sessions keep `actor_type` `'api-key'` with the key ID as `actor_id`, expose the owner only through `metadata.ownerUserId` (which metadata stored on the key can override), have no `credential` field, and do not check whether the owner was deleted or disabled. Disabling a user does not cut off their keys in a Python host; revoke the keys as well. See [SDKs → Python](../sdk/python#api-key-sessions).
+
+The synthesized session is what `auth.provider.authenticate(request)` returns. To tell a key apart from an interactive sign-in, branch on `session.type` (or `session.credential`), not on `session.actorType`. To authorize a request, call `requireScopes` (below) on any session rather than branching on its type.
 
 ## Issued plaintext shape
 
 ```ts
-const created = await client.createApiKey({ name: 'CI', scopes: ['build:run'] });
+const created = await client.createApiKey({ name: 'CI', scopes: ['repo:read'] });
 console.log(created.secret);   // shown once: "sk_live_<random>"
 ```
 
@@ -5196,44 +5200,58 @@ The plaintext follows `<secretPrefix><base64url(random)>`. Display it once, then
 
 ## Scopes
 
-`scopes` is an array of strings. authfn does not enforce any particular meaning — your application code decides what each scope grants. A common pattern is `<resource>:<verb>`:
-
-```
-repo:read repo:write account:read
-```
-
-Return an explicit HTTP 403 when an authenticated API-key request lacks the required scope. In this example, `auth` is your AuthFn server and `handleAuthorizedRequest` is your application's protected handler; it only runs after the scope check passes.
+A scope is `<owner>:<action>`: the owner is an app or API (`repo`, `memotron`) and the action is what it allows (`read`, `write`). Declare every scope your app accepts as a registry on `authfn()`; each owner maps to its actions:
 
 ```ts
-import type { AuthFnSession } from 'authfn';
+import { authfn, authFnPlugins, defineAuthFnScopes } from 'authfn';
+import { authFnApiKeyPlugin } from '@authfn/api-keys';
 
-function hasScope(session: AuthFnSession, scope: string): boolean {
-  const scopes = session.metadata?.scopes;
-  return Array.isArray(scopes) && scopes.includes(scope);
-}
+const scopes = defineAuthFnScopes({
+  repo: ['read', 'write'],
+  account: ['read'],
+});
+
+const authApp = authfn({ scopes, plugins: authFnPlugins(authFnApiKeyPlugin()) });
+```
+
+Owners and actions are 1–64 characters of `a-z`, `0-9`, `_`, `.` or `-`, starting with a letter or digit. `createServer` throws `AUTHFN_CONFIG_INVALID` for a malformed registry.
+
+A key may be granted:
+
+| Scope | Grants |
+| --- | --- |
+| `repo:read` | Exactly that registered scope. |
+| `repo:*` | Every action of the registered owner `repo`. |
+| `*` | Every registered scope. |
+
+Creating a key with any other scope, through the route or the `createApiKey` helper, fails with `AUTHFN_VALIDATION_ERROR` (HTTP 400) and `details.unknownScopes`; nothing is stored. Without a registry only `*` is accepted. A key created without scopes grants nothing.
+
+Every session carries `scopes: string[]`. Interactive cookie and bearer sessions carry `['*']`, so a signed-in user passes every check; an API-key session carries its key's stored scopes that the registry can grant. `requireScopes(session, needed)` is the shared check: it throws `AUTHFN_UNAUTHENTICATED` (401) when there is no session and `AUTHFN_INSUFFICIENT_SCOPE` (403, with `details.missingScopes`) unless the session grants every needed scope. `hasScopes` returns the same answer as a boolean. Both read only `session.scopes`; `session.metadata` is never a grant. Needed scopes must be concrete `<owner>:<action>` pairs; pass `{ registry: scopes }` to also check that each one is registered (and to type-check them against the registry). Either mistake is a host bug and throws a `TypeError`.
+
+Keys created before `authfn` 0.6.0 were never validated. When such a key authenticates, its session keeps only the stored entries the current registry can grant: a registered scope, `<owner>:*` for a registered owner, or `*`. Any other stored entry, such as an unregistered scope or `<owner>:*` for an unregistered owner, grants nothing, and a key with no stored scopes grants nothing. A legacy key that stored `*` still grants every registered scope, and a stored `<owner>:*` grants every action of that owner, so audit such keys and reissue them with narrower scopes. The deprecated `session.metadata.scopes` still lists every stored string but is never a grant.
+
+Return HTTP 401 for a missing or invalid credential and HTTP 403 for a missing scope. In this example, `auth` is your AuthFn server and `handleAuthorizedRequest` is your application's protected handler; it only runs after the scope check passes.
+
+```ts
+import { AuthFnError, requireScopes, type AuthFnSession } from 'authfn';
 
 async function handleRepositoryRequest(request: Request): Promise<Response> {
   let session: AuthFnSession | null;
   try {
     session = await auth.provider.authenticate(request);
+    requireScopes(session, 'repo:read');
   } catch (error) {
-    if (error !== null && typeof error === 'object' &&
-        'code' in error && error.code === 'AUTHFN_API_KEY_REVOKED') {
-      return Response.json({ error: 'unauthorized' }, { status: 401 });
+    if (error instanceof AuthFnError && (error.status === 401 || error.status === 403)) {
+      const body = { error: error.status === 401 ? 'unauthorized' : 'forbidden' };
+      return Response.json(body, { status: error.status });
     }
     throw error;
-  }
-  if (!session || session.actorType !== 'api-key') {
-    return Response.json({ error: 'unauthorized' }, { status: 401 });
-  }
-  if (!hasScope(session, 'repo:read')) {
-    return Response.json({ error: 'forbidden' }, { status: 403 });
   }
   return handleAuthorizedRequest(request, session);
 }
 ```
 
-Authentication and scope denial belong to your application's HTTP response layer: missing, invalid, expired, revoked, or non-API-key credentials receive HTTP 401; an active key without the required scope receives HTTP 403. The catch covers only authentication and only maps `AUTHFN_API_KEY_REVOKED`; unexpected failures propagate to your host's error handler, and protected work stays outside the catch. Do not throw a plain `Error` for scope denial: AuthFn's error handler normalizes it to `AUTHFN_INTERNAL_ERROR` (HTTP 500).
+Missing, invalid, expired, or revoked credentials receive HTTP 401; a session without `repo:read` receives HTTP 403. The catch maps only AuthFn's 401 and 403 errors; unexpected failures propagate to your host's error handler, and protected work stays outside the catch. Inside AuthFn's own router you can let `requireScopes` throw: AuthFn's error handler maps `AUTHFN_INSUFFICIENT_SCOPE` to HTTP 403.
 
 ## Unowned service keys
 
@@ -5242,11 +5260,12 @@ Trusted server code can issue an unowned key with the exported `createApiKey` he
 ```ts
 import { createApiKey, revokeApiKeyById } from 'authfn/core/api-keys';
 
-const config = { database, namespace: 'authfn' };
+// `scopes` is the same registry you pass to authfn().
+const config = { database, namespace: 'authfn', scopes };
 const serviceKey = await createApiKey(config, {
   userId: null,
   name: 'retrieval-worker',
-  scopes: ['skills:read'],
+  scopes: ['repo:read'],
   metadata: { servicePrincipalId: 'service:retrieval-worker' },
   expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
 });
@@ -5259,9 +5278,11 @@ await revokeApiKeyById(config, serviceKey.keyId);
 // Update your inventory and audit the successful revocation.
 ```
 
-These keys persist a null owner, use the same hashed-secret, expiry, and revocation behavior, and authenticate as `actorType: 'api-key'` with the key ID as their actor ID. Authentication exposes the stored scopes in `session.metadata.scopes` and leaves `session.metadata.ownerUserId` undefined. Your application must authorize service-principal issuance and use and enforce scopes; the helper does not create a user identity.
+These keys persist a null owner, use the same hashed-secret, expiry, and revocation behavior, and authenticate as `actorType: 'api-key'` with the key ID as their actor ID. Host routes that require `actorType: 'user'` reject them. Authentication exposes the stored scopes the registry can grant in `session.scopes` (every stored string is still mirrored, deprecated, in `session.metadata.scopes`) and leaves `session.metadata.ownerUserId` undefined. Your application must authorize service-principal issuance and use, and must call `requireScopes` on its routes; the helper does not create a user identity.
 
-Unowned keys authenticate through the normal `auth.provider.authenticate` path only. The opt-in [placement-context issuer](../recipes/placement-bound-auth-context) (`createAuthFnPlacementContextIssuer`) binds each API-key grant to its owning user's placement, so it rejects an unowned key with `AUTHFN_UNAUTHENTICATED`. Use a user-owned key when a service must derive placement-bound context.
+Unowned keys authenticate through the normal `auth.provider.authenticate` path only. The opt-in [placement-context issuer](../recipes/placement-bound-auth-context) (`createAuthFnPlacementContextIssuer`) binds each API-key grant to its owning user's placement, so it rejects an unowned key with `AUTHFN_UNAUTHENTICATED`. Use a user-owned key when a service must derive placement-bound context. The issuer applies the same owner check as `auth.provider.authenticate`: a key whose owner was deleted or is disabled fails with `AUTHFN_UNAUTHENTICATED` before any consumer runs or assertion is signed.
+
+AuthFn's own account routes (`GET /auth/session`, `GET`/`DELETE /auth/account`), password linking during sign-up, and the operator console accept only interactive sessions (`type: 'session'`), so a user-owned key cannot manage its owner's account even though it acts as that user.
 
 The cookie-session routes above remain user-owned: creation always uses the signed-in user's ID, and user listing and revocation exclude unowned keys. Manage unowned keys through trusted server code after applying your application's authorization policy.
 
@@ -5285,7 +5306,8 @@ After revocation, `auth.provider.authenticate(request)` rejects with `AUTHFN_API
 
 | Code | When |
 | --- | --- |
-| `AUTHFN_VALIDATION_ERROR` | Invalid name / scopes / expiresAt. |
+| `AUTHFN_VALIDATION_ERROR` | Invalid name or expiresAt, `scopes` that is present but not an array of strings, `null` included (`details.field` is `scopes`), or a scope outside the registry (`details.unknownScopes`). |
+| `AUTHFN_INSUFFICIENT_SCOPE` | `requireScopes` found a needed scope the session does not grant (`details.missingScopes`). |
 | `AUTHFN_UNAUTHENTICATED` | Caller is not signed in (key creation requires a session). |
 | `AUTHFN_API_KEY_REVOKED` | Key was used after revocation. |
 | `AUTHFN_NOT_FOUND` | `revokeApiKey` for a missing key id. |
@@ -8442,12 +8464,19 @@ Let users authenticate a CLI tool against your authfn-backed service. The standa
 
 ## Plugins
 
-- `authFnApiKeyPlugin`.
+- `authFnApiKeyPlugin`, with a scope registry on `authfn()`:
+
+```ts
+const authApp = authfn({
+  scopes: { projects: ['read', 'write'] },
+  plugins: authFnPlugins(authFnApiKeyPlugin()),
+});
+```
 
 ## Web flow
 
 ```ts
-const created = await client.createApiKey({ name: 'CLI', scopes: ['read', 'write'] });
+const created = await client.createApiKey({ name: 'CLI', scopes: ['projects:read', 'projects:write'] });
 showOnce(created.data.secret);   // "sk_live_..." — display once, copy to clipboard
 ```
 
@@ -8468,44 +8497,34 @@ const response = await fetch('https://api.acme.com/projects', {
 
 ## Server-side authentication
 
-Your protected endpoint authenticates via `auth.provider` and uses `hasScope` to return HTTP 403 before loading protected data. Here `auth` is your AuthFn server and `app` is your application's HTTP router:
+Your protected endpoint authenticates via `auth.provider` and calls `requireScopes` to return HTTP 403 before loading protected data. Here `auth` is your AuthFn server and `app` is your application's HTTP router:
 
 ```ts
-import type { AuthFnSession } from 'authfn';
-
-function hasScope(session: AuthFnSession, scope: string): boolean {
-  const scopes = session.metadata?.scopes;
-  return Array.isArray(scopes) && scopes.includes(scope);
-}
+import { AuthFnError, requireScopes, type AuthFnSession } from 'authfn';
 
 app.get('/projects', async (c) => {
   let session: AuthFnSession | null;
   try {
     session = await auth.provider.authenticate(c.req.raw);
+    requireScopes(session, 'projects:read');
   } catch (error) {
-    if (error !== null && typeof error === 'object' &&
-        'code' in error && error.code === 'AUTHFN_API_KEY_REVOKED') {
-      return c.json({ error: 'unauthorized' }, 401);
+    if (error instanceof AuthFnError && (error.status === 401 || error.status === 403)) {
+      return c.json({ error: error.status === 401 ? 'unauthorized' : 'forbidden' }, error.status);
     }
     throw error;
   }
-  if (!session || session.actorType !== 'api-key') {
-    return c.json({ error: 'unauthorized' }, 401);
-  }
-  if (!hasScope(session, 'read')) {
-    return c.json({ error: 'forbidden' }, 403);
-  }
-  // session.actorId === api key id
-  // session.metadata.scopes === ['read', 'write']
+  // session.actorId === the key owner's user id (the key id for an unowned key)
+  // session.credential?.id === api key id (undefined for a signed-in browser session)
+  // session.scopes === ['projects:read', 'projects:write']
   return c.json({ projects: [] }); // Replace with your application's project data.
 });
 ```
 
-Missing, invalid, expired, revoked, or non-API-key credentials receive HTTP 401. The catch only handles the expected revocation error from authentication; unexpected provider failures and failures while loading project data remain host application errors. Active keys lacking `read` receive HTTP 403.
+Missing, invalid, expired, or revoked credentials receive HTTP 401. The catch only handles AuthFn's 401 and 403 errors from authentication and the scope check; unexpected provider failures and failures while loading project data remain host application errors. Keys lacking `projects:read` (or `projects:*`, or `*`) receive HTTP 403; a signed-in browser session carries `['*']` and passes.
 
 ## Per-key scopes
 
-Authorization is up to your application. `hasScope` in the server snippet above checks that `session.metadata.scopes` is an array containing the exact required scope. The handler owns the HTTP 403 response instead of throwing a generic error.
+Each key carries scopes from the registry. A key may hold a registered scope, `<owner>:*` for every action of one owner, or `*` for every registered scope; creating a key with any other scope fails with HTTP 400. See [Plugins → API keys → Scopes](../plugins/api-keys#scopes).
 
 ## Refreshing keys
 
@@ -9415,7 +9434,7 @@ The context is frozen and contains:
 | `issuedAt` / `expiresAt` | Context lifetime. Capped by both `ttlSeconds` and session expiry. |
 | `audience` | Consumer allowlist entry such as `nucleum-datafn`. |
 | `assurance` | AuthFn methods on the session (`password`, `email-otp`, …). |
-| `scopes` | Present for user-owned API keys. |
+| `scopes` | API-key contexts only; absent for interactive user sessions. TypeScript issuer (`authfn` 0.6.0+, `@authfn/multi-region` 0.2.0+ only): always present for user-owned API keys and holds the key's stored scopes that the host [scope registry](../plugins/api-keys#scopes) can grant, the same list as the API-key session's `scopes`. The Python issuer does not filter yet: it signs every stored string scope, including unregistered ones such as `legacy:*`, and omits the claim when the key has no stored scope list. Verifiers must not treat a Python-signed `scopes` claim as registry-filtered. |
 | `requestId` | Correlation id. |
 | `actorType` | `user` or `api-key`. |
 | `userId` | Omitted unless `includeUserId: true`. |
@@ -9450,6 +9469,8 @@ remote = create_placement_context_verifier(
 verified = remote.verify_signed(issued["assertion"])
 ```
 
+The Python issuer does not apply the host scope registry yet: its `scopes` claim lists every stored string scope of the API key, or is omitted when the key has no stored scope list. Only the TypeScript issuer (`authfn` 0.6.0+, `@authfn/multi-region` 0.2.0+) signs registry-filtered scopes. Re-check scopes against your registry before trusting a Python-signed claim.
+
 ## Opaque subject lifecycle
 
 Provision the **same `subjectSecret` / `subject_secret` bytes in every regional issuer**
@@ -9481,6 +9502,7 @@ fixtures; it is not a claim of exhaustive parity for every Unicode hostname.
 | Logout, session revoke, API-key revoke | Fail closed (`AUTHFN_SESSION_REVOKED` / `AUTHFN_API_KEY_REVOKED`) | Remain verifiable until `expiresAt`. Bind DataFn tickets to `sessionVersion` and keep TTL short. |
 | Session expiry | `AUTHFN_SESSION_EXPIRED` | Same bounded expiry. |
 | Identity deleted / missing user row | `AUTHFN_UNAUTHENTICATED` | Existing grants expire; do not mint new tickets. |
+| API-key owner disabled (`metadata.disabled === true`; TypeScript `authfn` 0.5.0+ only, the Python issuer does not check it yet) | `AUTHFN_UNAUTHENTICATED` | Existing grants expire; re-enabling the owner restores the key. |
 | Placement `moving` or `deleting` | `AUTHFN_PLACEMENT_MOVING` | Downstream cells should fence on epoch. Re-bootstrap through the canonical gateway. |
 | Tombstone / missing placement | `AUTHFN_REGION_NOT_FOUND` | Fail closed. |
 | Directory unavailable | `AUTHFN_PLACEMENT_DIRECTORY_UNAVAILABLE` | Fail closed. Do not guess a region. |
@@ -9856,6 +9878,7 @@ const authApp = authfn({
   cookie: { /* ... */ },
   accountLinking: { /* ... */ },
   openApi: { title: "AuthFn API", version: "1.0.0" },
+  scopes: { memotron: ["read", "write"] }, // scopes API keys may be granted
   plugins: authFnPlugins(
     authFnPasswordPlugin(),
     authFnEmailOtpPlugin(),
@@ -9916,6 +9939,17 @@ openApi: {
 ```
 
 When enabled, the server exposes `auth.openApi()`. The kernel composes the spec from your plugins; this just labels it. See [concepts → openapi](../core-concepts/openapi).
+
+### `scopes`
+
+```ts
+scopes: defineAuthFnScopes({
+  memotron: ['read', 'write'],
+  pointron: ['read', 'write'],
+})
+```
+
+The scope registry (TypeScript `authfn` 0.6.0 and later). Each owner maps to its actions, registering `memotron:read`, `memotron:write`, and so on. API-key creation rejects any scope outside the registry except `<owner>:*` for a registered owner and `*`; without a registry only `*` is accepted. `createServer` throws `AUTHFN_CONFIG_INVALID` for a malformed registry. Check scopes on your routes with `requireScopes`; see [Plugins → API keys → Scopes](../plugins/api-keys#scopes).
 
 ## `app.createServer(config)` — runtime
 
@@ -10124,6 +10158,7 @@ The table below covers every code the kernel emits across all plugins.
 | `AUTHFN_INVALID_CREDENTIALS` | 401 | no | Password mismatch or unknown user. |
 | `AUTHFN_UNAUTHENTICATED` | 401 | no | No session present on a route that requires one. |
 | `AUTHFN_CSRF_INVALID` | 403 | no | Missing or wrong `X-CSRF-Token` on a state-changing request. |
+| `AUTHFN_INSUFFICIENT_SCOPE` | 403 | no | `requireScopes` found a needed scope the session does not grant. `details.requiredScopes`, `details.missingScopes`. |
 | `AUTHFN_2FA_REQUIRED` | 401 | yes | Sign-in succeeded credentials-wise; user must complete `/2fa/challenge`. `details.challengeId`. |
 | `AUTHFN_2FA_INVALID_CODE` | 401 | yes | Wrong TOTP / recovery code. |
 | `AUTHFN_OTP_INVALID` | 401 | yes | OTP code didn't match. |
@@ -10843,6 +10878,8 @@ if (result.ok) {
 }
 ```
 
+From `@authfn/client` 0.3.0, `AuthFnSession` has `scopes?: string[]`, the scopes the server checks with `requireScopes`. The client only receives user sessions (`getSession` returns `null` for an API-key credential); servers on `authfn` 0.6.0 and later send them with `['*']`, and older servers omit it.
+
 For convenience, the `AuthFnErrorCode` literal type is available from `authfn/core/errors` if you want to narrow further.
 
 ## Errors and retries
@@ -10900,6 +10937,7 @@ interface AuthFnConfig<TPlugins> {
   accountLinking?: AuthFnAccountLinkingConfig;
   plugins: TPlugins;
   openApi?: boolean | { title: string; version: string };
+  scopes?: AuthFnScopeRegistry;
 }
 ```
 
@@ -10972,6 +11010,8 @@ if (!session) {
 }
 ```
 
+To authorize, call `requireScopes(session, 'memotron:read')`: it throws `AUTHFN_UNAUTHENTICATED` (401) without a session and `AUTHFN_INSUFFICIENT_SCOPE` (403) when the session lacks a needed scope. `hasScopes` returns the same answer as a boolean. Scopes come from the `scopes` registry on `authfn()`; see [Plugins → API keys → Scopes](../plugins/api-keys#scopes).
+
 ## Placement-bound auth context
 
 Trusted gateway code can derive an immutable, privacy-preserving routing context after a valid session. This is opt-in and is not a public AuthFn route. See [Placement-bound auth context](../recipes/placement-bound-auth-context).
@@ -11021,6 +11061,7 @@ Core types and the canonical error hierarchy are exported from `authfn`:
 ```ts
 import {
   AuthFnConfigError,
+  AuthFnInsufficientScopeError,
   AuthFnInvalidCredentialsError,
   AuthFnPluginAbortedError,
   AuthFnRateLimitedError,
@@ -11205,7 +11246,19 @@ if session is None:
     return Response(status_code=401)
 ```
 
-`AuthFnSession` mirrors the TypeScript shape: `id`, `actor_id`, `actor_type`, `methods`, `primary_email`, `expires_at`, `metadata`, `region_id`.
+`AuthFnSession` has these fields: `id`, `type`, `subject`, `actor_type`, `actor_id`, `tenant_id`, `region_id`, `resource_ids`, `methods`, `primary_email`, `expires_at`, `metadata`. API-key sessions differ from the TypeScript shape; see below.
+
+The Python SDK has no typed scopes yet. Its `AuthFnSession` has no `scopes` field for cookie or API-key sessions, and there is no scope registry or `requireScopes` check; those exist only in the TypeScript `authfn` package (0.6.0 and later). See [Plugins → API keys → Scopes](../plugins/api-keys#scopes).
+
+### API key sessions
+
+API-key sessions in the Python SDK differ from the TypeScript `authfn` package (0.5.0 and later):
+
+- `actor_type` is `'api-key'` and `actor_id` is the key ID, even for a user-owned key. The session exposes the owner only through `metadata["ownerUserId"]`, and metadata stored on the key when it was created is merged over that entry, so do not rely on it to authorize access to the owner's data.
+- There is no `credential` field; check `session.type == "api-key"` to detect a key.
+- A key whose owner was disabled (`metadata.disabled` is `True` on the user record) still authenticates, and so does a key whose owner was deleted. The Python placement-context issuer also skips the disabled check. Disabling a user does not cut off their keys; revoke the keys too.
+
+The TypeScript rules (owned keys act as their owner, `credential`, the owner check) are described in [Plugins → API keys](../plugins/api-keys#authentication-via-api-key).
 
 ## Hooks
 

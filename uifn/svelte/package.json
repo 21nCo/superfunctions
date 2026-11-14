@@ -1,6 +1,6 @@
 {
   "name": "@uifn/svelte",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Catalog-complete, permanently headless Svelte 5 compounds for uifn primitives",
   "type": "module",
   "main": "dist/index.js",
@@ -26,6 +26,12 @@
       "import": "./dist/hooks/media-query.js",
       "default": "./dist/hooks/media-query.js"
     },
+    "./dom-bindings": {
+      "types": "./dist/dom-bindings.d.ts",
+      "svelte": "./dist/dom-bindings.js",
+      "import": "./dist/dom-bindings.js",
+      "default": "./dist/dom-bindings.js"
+    },
     "./*": {
       "types": "./dist/generated/*/index.d.ts",
       "svelte": "./dist/generated/*/index.js",
@@ -48,9 +54,9 @@
     "prepack": "npm run generate:check && npm run build"
   },
   "dependencies": {
-    "@uifn/adapter-kit": "0.0.1",
-    "@uifn/core": "0.0.2",
-    "@uifn/dom": "0.0.1"
+    "@uifn/adapter-kit": "0.0.2",
+    "@uifn/core": "0.0.3",
+    "@uifn/dom": "0.0.2"
   },
   "peerDependencies": {
     "svelte": ">=5.20.0 <6"

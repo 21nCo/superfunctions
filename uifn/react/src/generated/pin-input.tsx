@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { createPinInputController, type PinInputProps, type PinInputController } from '@uifn/core/primitives/pin-input';
+import { createUIFnRovingFocusAdapterBinding, uifnPinInputRovingTarget } from '@uifn/dom';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -22,6 +23,7 @@ const PinInputDefinition: ReactPrimitiveDefinition<PinInputProps> = {
   inputNames: ["value","defaultValue","length","mask","otp","name","disabled","readOnly","required"],
   context: PinInputContext,
   createController: createPinInputController as never,
+  domBindings: [/* @__PURE__ */ createUIFnRovingFocusAdapterBinding(uifnPinInputRovingTarget)],
 };
 
 export type PinInputRootProps = ReactPrimitiveRootProps<PinInputProps, 'div'>;

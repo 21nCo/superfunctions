@@ -62,8 +62,10 @@ export function describeAuthFnSqliteConformance(
     beforeEach(async () => {
       harness = await createHarness();
       await harness.exec(migrationStatements);
-      // Wired the way docs/recipes/self-hosting-sqlite-d1 shows.
+      // Wired the way docs/recipes/self-hosting-sqlite-d1 shows, plus the scope
+      // registry the API-key tests request scopes from.
       const authApp = authfn({
+        scopes: { bookmarks: ['read', 'write'] },
         plugins: authFnPlugins(authFnPasswordPlugin(), authFnApiKeyPlugin())
       });
       auth = authApp.createServer({
@@ -361,8 +363,10 @@ export function describeAuthFnSqliteConformance(
       const session = await auth.provider.authenticate(bearerRequest(secret));
       expect(session).toMatchObject({
         type: 'api-key',
-        actorType: 'api-key',
-        actorId: keyId,
+        actorType: 'user',
+        actorId: signedIn.userId,
+        subject: { actorType: 'user', actorId: signedIn.userId },
+        credential: { type: 'api-key', id: keyId },
         methods: ['api-key'],
         metadata: { ownerUserId: signedIn.userId, scopes: ['bookmarks:read'] }
       });
@@ -406,7 +410,8 @@ export function describeAuthFnSqliteConformance(
 
       expect((await row('authfn_api_keys', keyId)).expires_at).toBe(expiresAt.getTime());
       await expect(auth.provider.authenticate(bearerRequest(secret))).resolves.toMatchObject({
-        actorId: keyId,
+        actorId: signedIn.userId,
+        credential: { type: 'api-key', id: keyId },
         expiresAt
       });
 
@@ -415,6 +420,29 @@ export function describeAuthFnSqliteConformance(
       ]);
       await expect(auth.provider.authenticate(bearerRequest(secret))).resolves.toBeNull();
       expect((await row('authfn_api_keys', keyId)).last_used_at).toBeNull();
+    });
+
+    it('stops accepting an API key while its owner is disabled', async () => {
+      const signedIn = await signUp('owner@example.com');
+      const { keyId, secret } = await createKey(signedIn);
+      await expect(auth.provider.authenticate(bearerRequest(secret))).resolves.toMatchObject({
+        actorId: signedIn.userId
+      });
+      await harness.exec([`UPDATE "authfn_api_keys" SET "last_used_at" = NULL WHERE "id" = '${keyId}'`]);
+
+      // The disabled flag round-trips through the JSON metadata column.
+      await harness.exec([
+        `UPDATE "authfn_users" SET "metadata" = '{"disabled":true}' WHERE "id" = '${signedIn.userId}'`
+      ]);
+      await expect(auth.provider.authenticate(bearerRequest(secret))).resolves.toBeNull();
+      expect((await row('authfn_api_keys', keyId)).last_used_at).toBeNull();
+
+      await harness.exec([
+        `UPDATE "authfn_users" SET "metadata" = '{"disabled":false}' WHERE "id" = '${signedIn.userId}'`
+      ]);
+      await expect(auth.provider.authenticate(bearerRequest(secret))).resolves.toMatchObject({
+        actorId: signedIn.userId
+      });
     });
 
     async function createKey(

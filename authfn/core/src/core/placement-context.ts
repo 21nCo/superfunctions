@@ -26,8 +26,10 @@ import {
   AuthFnValidationError,
   toAuthFnError
 } from './errors.js';
+import { findActiveApiKeyOwner } from './api-keys.js';
 import { emitAuthEvent, eventRequestId } from './observability.js';
 import { getMultiRegionPluginConfig } from './regions.js';
+import { readStoredScopeGrant } from './scopes.js';
 import { getCookieSessionState, hashSecret } from './sessions.js';
 import { findUserById } from './users.js';
 
@@ -48,6 +50,10 @@ export interface AuthFnPlacementBoundAuthContext {
   readonly expiresAt: string;
   readonly audience: string;
   readonly assurance: readonly AuthFnAuthMethod[];
+  /**
+   * API-key contexts only: the key's stored scopes that the host scope
+   * registry can grant, matching the API-key session's `scopes`.
+   */
   readonly scopes?: readonly string[];
   readonly requestId: string;
   readonly actorType: AuthFnActorType;
@@ -477,11 +483,13 @@ async function resolveApiKeyPrincipal(
     }
     const userId = typeof record.userId === 'string' ? record.userId : undefined;
     if (!userId) throw new AuthFnUnauthenticatedError();
-    const user = await findUserById(config, userId);
+    // Same owner-eligibility rule as authenticateApiKey: a deleted or
+    // disabled owner leaves the key authenticating as no one.
+    const user = await findActiveApiKeyOwner(config, userId);
     if (!user) throw new AuthFnUnauthenticatedError();
-    const scopes = Array.isArray(record.scopes)
-      ? record.scopes.filter((scope): scope is string => typeof scope === 'string')
-      : undefined;
+    // Same grant authenticateApiKey gives session.scopes: only stored scopes
+    // the current registry can grant reach the derived and signed context.
+    const scopes = readStoredScopeGrant(config.scopes, record.scopes);
     return {
       userId: user.id,
       actorType: 'api-key',

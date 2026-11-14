@@ -10,6 +10,7 @@ export type AuthFnErrorCode =
   | 'AUTHFN_CSRF_INVALID'
   | 'AUTHFN_DELIVERY_FAILED'
   | 'AUTHFN_EMAIL_NOT_VERIFIED'
+  | 'AUTHFN_INSUFFICIENT_SCOPE'
   | 'AUTHFN_INTERNAL_ERROR'
   | 'AUTHFN_INVALID_CREDENTIALS'
   | 'AUTHFN_NOT_FOUND'
@@ -270,6 +271,16 @@ export class AuthFnCsrfInvalidError extends AuthFnError {
       details
     });
     this.name = 'AuthFnCsrfInvalidError';
+  }
+}
+
+export class AuthFnInsufficientScopeError extends AuthFnError {
+  constructor(message: string = 'Insufficient scope', details?: Record<string, unknown>) {
+    super('AUTHFN_INSUFFICIENT_SCOPE', message, {
+      status: 403,
+      details
+    });
+    this.name = 'AuthFnInsufficientScopeError';
   }
 }
 

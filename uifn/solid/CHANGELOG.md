@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.2 - 2026-11-03
+
+- Imports `@uifn/core` types from the subpath that owns them instead of the root entry. With `verbatimModuleSyntax`, the old type-only import compiled to `import {} from '@uifn/core'`, which loaded every primitive.
+- An app that imports one primitive no longer bundles unrelated primitives such as the QR-code generator (Tabs fixture: 71,734 to 41,133 gzip bytes).
+- Each primitive's definition lists the shared `@uifn/dom` adapter installers it uses (overlay, menu, popup, navigation menu, roving focus or range gesture) with its own parts and state keys, so a Tabs-only app bundles neither the Dialog, Select, Menu or Slider bindings nor any other primitive's roving-focus, gesture or popup parts, and only primitives that position a popup bundle floating-ui.
+- Depends on `@uifn/core` 0.0.3, `@uifn/dom` 0.0.2 and `@uifn/adapter-kit` 0.0.2.
+
 ## Unreleased
 
 - Replace the partial handwritten and generic Solid APIs with 69 catalog-generated native compound families and all 465 anatomy components.

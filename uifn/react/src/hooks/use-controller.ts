@@ -1,5 +1,6 @@
 import * as React from 'react';
-import type { UIFnController, UIFnEnvironment } from '@uifn/core';
+import type { UIFnController } from '@uifn/core/controller';
+import type { UIFnEnvironment } from '@uifn/core/environment';
 
 type AnyController = UIFnController<unknown, object, object>;
 

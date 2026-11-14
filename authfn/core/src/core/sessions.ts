@@ -31,6 +31,7 @@ import {
   type AuthFnResolvedCookiePolicy
 } from './cookies.js';
 import { emitAuthEvent, eventRequestId } from './observability.js';
+import { AUTHFN_ALL_SCOPES } from './scopes.js';
 import { findUserById } from './users.js';
 
 export interface IssueSessionInput {
@@ -447,6 +448,8 @@ function buildUserSession(
     resourceIds: [],
     primaryEmail: user.primaryEmail,
     methods: record.methods,
+    // An interactive user session holds every scope the user has.
+    scopes: [AUTHFN_ALL_SCOPES],
     expiresAt: record.expiresAt,
     metadata: record.metadata
   };

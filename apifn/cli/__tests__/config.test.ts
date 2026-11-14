@@ -1,11 +1,11 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { defineConfig, loadConfig } from "../src/index.js";
+import { tempDir } from "./temp-dirs.js";
 
 describe("config loading", () => {
   it("TV-CORE-003: loads default apifn.config.ts", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "apifn-cli-config-"));
+    const cwd = await tempDir("apifn-cli-config-");
     await writeFile(
       path.join(cwd, "apifn.config.ts"),
       [
@@ -25,7 +25,7 @@ describe("config loading", () => {
   });
 
   it("TV-CORE-003: config path is overridable", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "apifn-cli-config-"));
+    const cwd = await tempDir("apifn-cli-config-");
     const custom = path.join(cwd, "custom.config.ts");
 
     await writeFile(
@@ -43,7 +43,7 @@ describe("config loading", () => {
   });
 
   it("NEG-TV-CORE-003: invalid config field type throws clear error", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "apifn-cli-config-"));
+    const cwd = await tempDir("apifn-cli-config-");
     await writeFile(
       path.join(cwd, "apifn.config.ts"),
       [

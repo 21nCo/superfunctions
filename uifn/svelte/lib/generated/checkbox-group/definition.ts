@@ -1,5 +1,6 @@
 import { createCheckboxGroupController, type CheckboxGroupProps } from '@uifn/core/primitives/checkbox-group';
 import type { SveltePrimitiveDefinition } from '../../internal/compound.js';
+import { createUIFnRovingFocusAdapterBinding } from '@uifn/dom';
 
 export const CheckboxGroupDefinition: SveltePrimitiveDefinition<CheckboxGroupProps> = {
   name: 'CheckboxGroup',
@@ -9,4 +10,5 @@ export const CheckboxGroupDefinition: SveltePrimitiveDefinition<CheckboxGroupPro
   inputNames: ["value","defaultValue","name","disabled","readOnly","required"],
   contextKey: Symbol('uifn.CheckboxGroup'),
   createController: createCheckboxGroupController as never,
+  domBindings: [/* @__PURE__ */ createUIFnRovingFocusAdapterBinding({"stateKey":"focusedItem","parts":["itemControl","item"]})],
 };

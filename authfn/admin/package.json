@@ -1,6 +1,6 @@
 {
   "name": "@authfn/admin",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Framework-neutral admin routes and operations for AuthFn",
   "type": "module",
   "main": "./dist/index.js",

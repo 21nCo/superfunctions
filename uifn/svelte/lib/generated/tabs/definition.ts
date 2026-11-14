@@ -1,5 +1,6 @@
 import { createTabsController, type TabsProps } from '@uifn/core/primitives/tabs';
 import type { SveltePrimitiveDefinition } from '../../internal/compound.js';
+import { createUIFnRovingFocusAdapterBinding } from '@uifn/dom';
 
 export const TabsDefinition: SveltePrimitiveDefinition<TabsProps> = {
   name: 'Tabs',
@@ -9,4 +10,5 @@ export const TabsDefinition: SveltePrimitiveDefinition<TabsProps> = {
   inputNames: ["value","defaultValue","activationMode","orientation","loop","dir"],
   contextKey: Symbol('uifn.Tabs'),
   createController: createTabsController as never,
+  domBindings: [/* @__PURE__ */ createUIFnRovingFocusAdapterBinding({"stateKey":"focusedItem","parts":["trigger"]})],
 };

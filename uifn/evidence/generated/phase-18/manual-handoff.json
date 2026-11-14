@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "phase": "PHASE_18-to-PHASE_19",
   "ledgerRevision": "uifn-a11y-ledger-v1",
-  "definitionSha256": "6c2e985b5f8cda63f384af93678a473fe4c25b43ada3abdaf77ec4063c8bea71",
+  "definitionSha256": "fb552a6b363e746384fde907e236f5ae2cfb95dac1abfa6bdc302585eb8849ed",
   "jaws": {
     "status": "deferred-by-user",
     "releaseClaim": "Not part of the current 10/10 matrix."

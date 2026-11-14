@@ -3,6 +3,6 @@
   "algorithm": "Ed25519",
   "domain": "uifn-registry-v2",
   "keyId": "a72cc93c0e85e7af79cf582c",
-  "catalogSha256": "7ae7efc26b69564ece5b488bc1cbec398106ef43cbe18026e066962602b135d5",
-  "signatureBase64": "3FgxULyA8+wbPSlYN0/iEPXBQpuvVEVlptP5O6DYlEJbxQ8nTYAFtYeWqBv3G95LqpEooIxgax8WKd+Sb1IbDg=="
+  "catalogSha256": "69b4f24ce14475dac0a3bb9dc6e90550e6d20f8c2613b64bd25e01519a23eabc",
+  "signatureBase64": "VWuZccyVPdqbnrVybqH2IkQOCJLLuPdwJu3pxiAzsgoTD8UHMbF83uEcn0cSq/aFtqJQNK6A/1NR+chAguwiCw=="
 }

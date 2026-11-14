@@ -1,6 +1,6 @@
 {
   "name": "@filefn/server",
-  "version": "0.2.1",
+  "version": "0.3.1",
   "description": "FileFn server SDK for file upload/download handling",
   "type": "module",
   "main": "./dist/index.js",
@@ -14,9 +14,11 @@
   "files": ["dist"],
   "scripts": {
     "build": "npm run clean && tsc",
-    "test": "vitest run",
+    "test": "npm run test:node && npm run test:workers",
+    "test:node": "vitest run",
+    "test:workers": "vitest run --config tests/workers/vitest.config.ts",
     "test:watch": "vitest --watch",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tests/workers/tsconfig.json",
     "clean": "rm -rf dist"
   },
   "keywords": ["file", "upload", "server", "filefn"],
@@ -45,11 +47,15 @@
     "@superfunctions/observability": "0.0.3"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "4.20251120.0",
     "@filefn/processing": "0.1.2",
     "@superfunctions/storage-local": "0.2.1",
     "sharp": "^0.33.5",
     "@types/node": "^22.0.0",
     "typescript": "^5.6.0",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "hono": "4.11.9",
+    "miniflare": "4.20251113.0",
+    "wrangler": "4.49.0"
   }
 }

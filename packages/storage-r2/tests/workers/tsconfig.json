@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "../..",
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "baseUrl": "../..",
+    "paths": {
+      "@superfunctions/storage-r2": ["./src/index.ts"]
+    }
+  },
+  "include": ["./**/*.ts"],
+  "exclude": ["./**/node_modules"]
+}

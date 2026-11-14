@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "headroom": 0.1,
+  "note": "budgetGzipBytes is the measured gzip size plus headroom. Raising a budget means editing this file in the pull request that needs it.",
+  "fixtures": {
+    "react/tabs": {
+      "measuredGzipBytes": 37327,
+      "budgetGzipBytes": 41060
+    },
+    "react/menu": {
+      "measuredGzipBytes": 53003,
+      "budgetGzipBytes": 58304
+    },
+    "svelte/tabs": {
+      "measuredGzipBytes": 38754,
+      "budgetGzipBytes": 42630
+    },
+    "svelte/menu": {
+      "measuredGzipBytes": 53807,
+      "budgetGzipBytes": 59188
+    },
+    "solid/tabs": {
+      "measuredGzipBytes": 41133,
+      "budgetGzipBytes": 45247
+    },
+    "solid/menu": {
+      "measuredGzipBytes": 56271,
+      "budgetGzipBytes": 61899
+    }
+  }
+}

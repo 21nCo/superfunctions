@@ -1,5 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createTreeViewController, type TreeViewProps, type TreeViewController } from '@uifn/core/primitives/tree-view';
+import { createUIFnRovingFocusAdapterBinding } from '@uifn/dom';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -19,6 +20,7 @@ export const TreeViewDefinition: SolidPrimitiveDefinition<TreeViewProps> = {
   inputNames: ["expanded","defaultExpanded","selection","defaultSelection","items","selectionMode","dir"],
   context: TreeViewContext,
   createController: createTreeViewController as never,
+  domBindings: [/* @__PURE__ */ createUIFnRovingFocusAdapterBinding({"stateKey":"focusedItem","parts":["item"]})],
 };
 
 function TreeViewRootElement(props: JSX.IntrinsicElements['div']): JSX.Element {

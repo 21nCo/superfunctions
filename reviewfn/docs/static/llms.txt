@@ -13,6 +13,7 @@
 - [Evaluation contract](https://github.com/21nCo/super-functions/blob/dev/reviewfn/docs/content/docs/reference/evaluation.md) — Measure frozen cases and report comparison confounds.
 - [GitHub Action and publication](https://github.com/21nCo/super-functions/blob/dev/reviewfn/docs/content/docs/reference/github-action.md) — Set up a credential-free review job and a separate trusted publisher.
 - [Reference](https://github.com/21nCo/super-functions/blob/dev/reviewfn/docs/content/docs/reference/index.md) — Source-aligned ReviewFn contracts and operational guides.
+- [Panel report schema](https://github.com/21nCo/super-functions/blob/dev/reviewfn/docs/content/docs/reference/panel-report-schema.md) — Panel policy, slot identity, slot runs, panel findings, and the panel report.
 - [Report schema](https://github.com/21nCo/super-functions/blob/dev/reviewfn/docs/content/docs/reference/report-schema.md) — Execution, coverage, verdict, assessments, evidence, and findings.
 - [Security model](https://github.com/21nCo/super-functions/blob/dev/reviewfn/docs/content/docs/reference/security.md) — Trust boundaries, Docker containment, credentials, and retention.
 - [Security and isolation](https://github.com/21nCo/super-functions/blob/dev/reviewfn/docs/content/docs/security.md) — Prepare the trusted runner, containers, credentials, and output boundary.

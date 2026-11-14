@@ -1,5 +1,6 @@
 import { createContext, type JSX } from 'solid-js';
 import { createContextMenuController, type ContextMenuProps, type ContextMenuController } from '@uifn/core/primitives/context-menu';
+import { uifnMenuAdapterBinding } from '@uifn/dom';
 import {
   createSolidPrimitiveInstanceId,
   SolidPrimitivePart,
@@ -19,6 +20,7 @@ export const ContextMenuDefinition: SolidPrimitiveDefinition<ContextMenuProps> =
   inputNames: ["open","defaultOpen","dir","loop"],
   context: ContextMenuContext,
   createController: createContextMenuController as never,
+  domBindings: [uifnMenuAdapterBinding],
 };
 
 function ContextMenuRootElement(props: JSX.IntrinsicElements['div']): JSX.Element {

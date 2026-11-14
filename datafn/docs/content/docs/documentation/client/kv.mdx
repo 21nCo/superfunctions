@@ -59,6 +59,8 @@ Merge also supports debouncing:
 await client.kv.merge("preferences", { fontSize: 16 }, { debounceMs: 500 });
 ```
 
+When the merge syncs, the server merges the patch into the stored value the same way (`@datafn/server` 0.2.3 and later), so other devices and the writing device keep every top-level key after they pull. Merges of different top-level keys into the same key from several devices all survive, even when they reach the server at the same time: the server reports a merge as applied only after writing it under a row lock (inside a database transaction) or, on an adapter without transactions that reports updates matching no row (`strictUpdateNotFound`, as Drizzle on SQLite and Cloudflare D1 do), with a write conditional on the value it merged from, which it retries after a concurrent change. If the conditional write keeps missing under sustained contention on one key, the server writes nothing and returns an `INTERNAL` error with `retryable: true` on `/mutation` and `/push`, and sending the same mutation again applies it. On a custom adapter with neither transactions nor `strictUpdateNotFound`, a merge into an existing key is rejected with `DFQL_UNSUPPORTED` and `retryable: false` before anything is written; a merge into a missing key still creates it, and `kv.set` still replaces the value. Merges of the same top-level key are last-writer-wins, and a nested object in the patch replaces the stored nested object whole. On MySQL, whose transactions read from a snapshot (REPEATABLE READ), a `kv` merge sent inside an atomic `transact` after a query step, or with a mutation guard, can read the stored value as of that snapshot; `kv.merge` itself sends neither.
+
 ### delete
 
 Remove a key-value entry.

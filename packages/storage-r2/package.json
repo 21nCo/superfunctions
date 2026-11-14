@@ -1,7 +1,7 @@
 {
   "name": "@superfunctions/storage-r2",
-  "version": "0.2.1",
-  "description": "Cloudflare R2 storage adapter for @superfunctions/storage",
+  "version": "0.3.0",
+  "description": "Cloudflare R2 storage adapter for @superfunctions/storage (Workers-native; the adapter does not use or bundle the AWS SDK)",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -14,11 +14,13 @@
   "files": ["dist"],
   "scripts": {
     "build": "tsc",
-    "test": "vitest",
-    "typecheck": "tsc --noEmit",
+    "test": "npm run test:node && npm run test:workers",
+    "test:node": "vitest run",
+    "test:workers": "vitest run --config tests/workers/vitest.config.ts",
+    "typecheck": "tsc --noEmit && tsc -p tests/workers/tsconfig.json",
     "clean": "rm -rf dist"
   },
-  "keywords": ["storage", "r2", "cloudflare", "superfunctions"],
+  "keywords": ["storage", "r2", "cloudflare", "workers", "superfunctions"],
   "author": "21n",
   "license": "MIT",
   "bugs": { "url": "https://github.com/21nCo/super-functions/issues" },
@@ -29,13 +31,13 @@
   },
   "publishConfig": { "access": "public" },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.600.0",
-    "@aws-sdk/s3-request-presigner": "^3.600.0",
     "@superfunctions/storage": "0.2.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "miniflare": "4.20251113.0",
     "typescript": "^5.6.0",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "wrangler": "4.49.0"
   }
 }

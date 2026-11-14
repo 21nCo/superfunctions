@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { createSplitterController, type SplitterProps, type SplitterController } from '@uifn/core/primitives/splitter';
+import { createUIFnRangeGestureAdapterBinding, uifnSplitterGestureDriver } from '@uifn/dom';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -22,6 +23,7 @@ const SplitterDefinition: ReactPrimitiveDefinition<SplitterProps> = {
   inputNames: ["sizes","defaultSizes","minSizes","maxSizes","orientation","dir","disabled"],
   context: SplitterContext,
   createController: createSplitterController as never,
+  domBindings: [/* @__PURE__ */ createUIFnRangeGestureAdapterBinding(uifnSplitterGestureDriver, {"entries":["resizeHandle"],"numericEntryValues":true})],
 };
 
 export type SplitterRootProps = ReactPrimitiveRootProps<SplitterProps, 'div'>;

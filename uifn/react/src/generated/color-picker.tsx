@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { createColorPickerController, type ColorPickerProps, type ColorPickerController } from '@uifn/core/primitives/color-picker';
+import { createUIFnPopupAdapterBinding, createUIFnRangeGestureAdapterBinding, createUIFnRovingFocusAdapterBinding, uifnColorPickerGestureDriver, uifnPopupTriggerRovingTarget } from '@uifn/dom';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -22,6 +23,7 @@ const ColorPickerDefinition: ReactPrimitiveDefinition<ColorPickerProps> = {
   inputNames: ["value","defaultValue","open","defaultOpen","colorSpace","alpha","name","disabled","readOnly"],
   context: ColorPickerContext,
   createController: createColorPickerController as never,
+  domBindings: [/* @__PURE__ */ createUIFnPopupAdapterBinding({"trigger":"trigger","reference":["control","input","trigger"]}), /* @__PURE__ */ createUIFnRovingFocusAdapterBinding(uifnPopupTriggerRovingTarget), /* @__PURE__ */ createUIFnRangeGestureAdapterBinding(uifnColorPickerGestureDriver, {"parts":["area"],"entries":["channelSlider"]})],
 };
 
 export type ColorPickerRootProps = ReactPrimitiveRootProps<ColorPickerProps, 'div'>;

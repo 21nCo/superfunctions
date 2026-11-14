@@ -127,6 +127,49 @@ export interface ChangeSnapshot {
   capturedAt: string;
 }
 
+/** One zero-context unified-diff hunk header, as emitted by `git diff -U0`. */
+export interface ChangeHunk {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+}
+
+export interface ChangeHunkFile {
+  /** Head-side path; the removed path for deletions. */
+  path: string;
+  /** Base-side path of a rename. */
+  previousPath?: string;
+  /** Binary files have no hunks and are uninspectable for line-level evidence. */
+  status: "added" | "modified" | "deleted" | "renamed" | "binary";
+  hunks: ChangeHunk[];
+}
+
+/** Hunk-level model of `git diff --find-renames -U0 <baseCommit> <headCommit>`; files are sorted by path. */
+export interface ChangeHunks {
+  version: 1;
+  /** The commit the diff starts from: the merge base for the full change, or `since` for a delta. */
+  baseCommit: string;
+  headCommit: string;
+  files: ChangeHunkFile[];
+}
+
+/** Outcome of capturing change hunks; diffs over the byte limit are not parsed. */
+export type ChangeHunksCapture =
+  | { status: "parsed"; hunks: ChangeHunks }
+  | { status: "too_large"; limitBytes: number };
+
+/** Content-addressed `change-hunks` artifacts for the reviewed change and, for incremental runs, the delta. */
+export interface ChangeDetail {
+  hunksArtifact: string;
+  hunksDigest: string;
+  since?: string;
+  deltaHunksArtifact?: string;
+  deltaHunksDigest?: string;
+  /** Changed paths of `since..head`; each must be inspected or explicitly uninspected. */
+  deltaPaths?: string[];
+}
+
 export interface RunConfigurationProvenance {
   schemaVersion: 1;
   policyDigest: string;
@@ -162,6 +205,7 @@ export interface ReviewReport {
   normalizedEventArtifact?: string;
   redactedTranscriptArtifact?: string;
   limitations: string[];
+  changeDetail?: ChangeDetail;
 }
 
 export interface ReviewPolicy {
@@ -238,6 +282,11 @@ export interface HarnessInput {
   configuration: ReviewFnConfig;
   testReceipts: TestReceipt[];
   prompt: string;
+  /**
+   * Structured-output JSON Schema for this run, such as the panel's `lensOutputSchema`. Absent means the 0.1
+   * `harnessOutputSchema`. Outputs without `requirements` or `assessments` normalize them to empty arrays.
+   */
+  outputSchema?: Readonly<Record<string, unknown>>;
   signal?: AbortSignal;
 }
 
@@ -277,6 +326,10 @@ export interface SourceControlAdapter {
   currentHead(root: string, pullRequest?: number): Promise<string>;
   verifyAnchor(root: string, anchor: CodeAnchor): Promise<boolean>;
   pathExists?(root: string, commit: string, path: string): Promise<boolean>;
+  /** Capture `ChangeHunks` for `from..to` (full commit IDs) without parsing diffs over `maxBytes`. */
+  changeHunks?(root: string, from: string, to: string, maxBytes: number, signal?: AbortSignal): Promise<ChangeHunksCapture>;
+  /** Whether commit `ancestor` is an ancestor of, or equal to, commit `descendant`; false when either is not a commit. */
+  isAncestor?(root: string, ancestor: string, descendant: string): Promise<boolean>;
 }
 
 export interface HarnessAdapter {
@@ -325,5 +378,7 @@ export interface ReviewRunRequest {
   policy: ReviewPolicy;
   issue?: string;
   attemptId?: string;
+  /** Previously reviewed head (full 40- or 64-hex commit) to scope an incremental review to `since..head`. */
+  since?: string;
   signal?: AbortSignal;
 }

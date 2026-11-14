@@ -15,6 +15,7 @@ The table below covers every code the kernel emits across all plugins.
 | `AUTHFN_INVALID_CREDENTIALS` | 401 | no | Password mismatch or unknown user. |
 | `AUTHFN_UNAUTHENTICATED` | 401 | no | No session present on a route that requires one. |
 | `AUTHFN_CSRF_INVALID` | 403 | no | Missing or wrong `X-CSRF-Token` on a state-changing request. |
+| `AUTHFN_INSUFFICIENT_SCOPE` | 403 | no | `requireScopes` found a needed scope the session does not grant. `details.requiredScopes`, `details.missingScopes`. |
 | `AUTHFN_2FA_REQUIRED` | 401 | yes | Sign-in succeeded credentials-wise; user must complete `/2fa/challenge`. `details.challengeId`. |
 | `AUTHFN_2FA_INVALID_CODE` | 401 | yes | Wrong TOTP / recovery code. |
 | `AUTHFN_OTP_INVALID` | 401 | yes | OTP code didn't match. |

@@ -18,6 +18,7 @@ const authApp = authfn({
   cookie: { /* ... */ },
   accountLinking: { /* ... */ },
   openApi: { title: "AuthFn API", version: "1.0.0" },
+  scopes: { memotron: ["read", "write"] }, // scopes API keys may be granted
   plugins: authFnPlugins(
     authFnPasswordPlugin(),
     authFnEmailOtpPlugin(),
@@ -78,6 +79,17 @@ openApi: {
 ```
 
 When enabled, the server exposes `auth.openApi()`. The kernel composes the spec from your plugins; this just labels it. See [concepts → openapi](../core-concepts/openapi).
+
+### `scopes`
+
+```ts
+scopes: defineAuthFnScopes({
+  memotron: ['read', 'write'],
+  pointron: ['read', 'write'],
+})
+```
+
+The scope registry (TypeScript `authfn` 0.6.0 and later). Each owner maps to its actions, registering `memotron:read`, `memotron:write`, and so on. API-key creation rejects any scope outside the registry except `<owner>:*` for a registered owner and `*`; without a registry only `*` is accepted. `createServer` throws `AUTHFN_CONFIG_INVALID` for a malformed registry. Check scopes on your routes with `requireScopes`; see [Plugins → API keys → Scopes](../plugins/api-keys#scopes).
 
 ## `app.createServer(config)` — runtime
 

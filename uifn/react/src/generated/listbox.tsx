@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { createListboxController, type ListboxProps, type ListboxController } from '@uifn/core/primitives/listbox';
+import { createUIFnRovingFocusAdapterBinding } from '@uifn/dom';
 import {
   ReactPrimitivePart,
   ReactPrimitiveRoot,
@@ -22,6 +23,7 @@ const ListboxDefinition: ReactPrimitiveDefinition<ListboxProps> = {
   inputNames: ["value","defaultValue","items","multiple","orientation","name","disabled","readOnly","required"],
   context: ListboxContext,
   createController: createListboxController as never,
+  domBindings: [/* @__PURE__ */ createUIFnRovingFocusAdapterBinding({"stateKey":"focusedItem","parts":["itemControl","item"]})],
 };
 
 export type ListboxRootProps = ReactPrimitiveRootProps<ListboxProps, 'div'>;

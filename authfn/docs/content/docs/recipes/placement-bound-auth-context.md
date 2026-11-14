@@ -85,7 +85,7 @@ The context is frozen and contains:
 | `issuedAt` / `expiresAt` | Context lifetime. Capped by both `ttlSeconds` and session expiry. |
 | `audience` | Consumer allowlist entry such as `nucleum-datafn`. |
 | `assurance` | AuthFn methods on the session (`password`, `email-otp`, …). |
-| `scopes` | Present for user-owned API keys. |
+| `scopes` | API-key contexts only; absent for interactive user sessions. TypeScript issuer (`authfn` 0.6.0+, `@authfn/multi-region` 0.2.0+ only): always present for user-owned API keys and holds the key's stored scopes that the host [scope registry](../plugins/api-keys#scopes) can grant, the same list as the API-key session's `scopes`. The Python issuer does not filter yet: it signs every stored string scope, including unregistered ones such as `legacy:*`, and omits the claim when the key has no stored scope list. Verifiers must not treat a Python-signed `scopes` claim as registry-filtered. |
 | `requestId` | Correlation id. |
 | `actorType` | `user` or `api-key`. |
 | `userId` | Omitted unless `includeUserId: true`. |
@@ -120,6 +120,8 @@ remote = create_placement_context_verifier(
 verified = remote.verify_signed(issued["assertion"])
 ```
 
+The Python issuer does not apply the host scope registry yet: its `scopes` claim lists every stored string scope of the API key, or is omitted when the key has no stored scope list. Only the TypeScript issuer (`authfn` 0.6.0+, `@authfn/multi-region` 0.2.0+) signs registry-filtered scopes. Re-check scopes against your registry before trusting a Python-signed claim.
+
 ## Opaque subject lifecycle
 
 Provision the **same `subjectSecret` / `subject_secret` bytes in every regional issuer**
@@ -151,6 +153,7 @@ fixtures; it is not a claim of exhaustive parity for every Unicode hostname.
 | Logout, session revoke, API-key revoke | Fail closed (`AUTHFN_SESSION_REVOKED` / `AUTHFN_API_KEY_REVOKED`) | Remain verifiable until `expiresAt`. Bind DataFn tickets to `sessionVersion` and keep TTL short. |
 | Session expiry | `AUTHFN_SESSION_EXPIRED` | Same bounded expiry. |
 | Identity deleted / missing user row | `AUTHFN_UNAUTHENTICATED` | Existing grants expire; do not mint new tickets. |
+| API-key owner disabled (`metadata.disabled === true`; TypeScript `authfn` 0.5.0+ only, the Python issuer does not check it yet) | `AUTHFN_UNAUTHENTICATED` | Existing grants expire; re-enabling the owner restores the key. |
 | Placement `moving` or `deleting` | `AUTHFN_PLACEMENT_MOVING` | Downstream cells should fence on epoch. Re-bootstrap through the canonical gateway. |
 | Tombstone / missing placement | `AUTHFN_REGION_NOT_FOUND` | Fail closed. |
 | Directory unavailable | `AUTHFN_PLACEMENT_DIRECTORY_UNAVAILABLE` | Fail closed. Do not guess a region. |

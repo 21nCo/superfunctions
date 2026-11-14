@@ -1,3 +1,4 @@
+export * from './adapter-bindings';
 export * from './focus-scope';
 export * from './focusable';
 export * from './form';

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   APPROVED_SUPPORT_MATRIX,
@@ -149,4 +150,16 @@ it('preserves V1 UTF-16 seed hashes, including surrogate pairs', async () => {
   expect(hashSeed('hello')).toBe(1335831723);
   expect(hashSeed('😀')).toBe(3409036472);
   expect(hashSeed('a😀b')).toBe(2412414209);
+});
+
+// The catalog records each adapter's workspace version, and a source install rejects a project that pins
+// another one, so every scaffolded @uifn dependency must match the version this repository ships.
+const FRAMEWORK_INSTALL_MODES = PRESET_AXES.framework.flatMap(framework => PRESET_AXES.installMode.map(installMode => [framework, installMode] as const));
+it.each(FRAMEWORK_INSTALL_MODES)('pins %s %s plans to the workspace @uifn versions', (framework, installMode) => {
+  const pinned = compilePreset(normalizePreset({ framework, installMode })).project.packages.filter(p => p.name.startsWith('@uifn/'));
+  expect(pinned.map(p => p.name)).toContain(`@uifn/${framework}`);
+  for (const { name, version } of pinned) {
+    const workspace = JSON.parse(readFileSync(new URL(`../../../${name.slice('@uifn/'.length)}/package.json`, import.meta.url), 'utf8'));
+    expect({ name, version }).toEqual({ name: workspace.name, version: workspace.version });
+  }
 });

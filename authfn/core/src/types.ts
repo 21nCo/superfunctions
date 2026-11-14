@@ -4,6 +4,7 @@ import type { Adapter, RuntimeStores, TableSchema } from '@superfunctions/db';
 import type { Route, Router } from '@superfunctions/http';
 import type { ObservationEvent, ObservabilityInput, SuperfunctionObservability } from '@superfunctions/observability';
 import type { AuthFnErrorCode } from './core/errors.js';
+import type { AuthFnScopeRegistry } from './core/scopes.js';
 export {
   AuthFnAdminAmbiguousUserError,
   AuthFnAdminConfigError,
@@ -15,6 +16,7 @@ export {
   AuthFnDeliveryFailedError,
   AuthFnEmailNotVerifiedError,
   AuthFnError,
+  AuthFnInsufficientScopeError,
   AuthFnInternalError,
   AuthFnInvalidCredentialsError,
   AuthFnNotFoundError,
@@ -62,9 +64,23 @@ export type AuthFnAuthMethod =
 export type AuthFnOtpPurpose = 'verify-email' | 'sign-in' | 'sign-up' | 'reset-password';
 export type AuthFnSocialProviderId = 'google' | 'apple' | 'github';
 
+/**
+ * The credential that authenticated a non-interactive session. An API key owned
+ * by a user acts as that user (`actorType: 'user'`, `actorId` = owner), so hosts
+ * that must tell a key apart from an interactive sign-in check `type` or
+ * `credential` rather than `actorType`.
+ */
+export interface AuthFnSessionCredential {
+  type: 'api-key';
+  /** The API key ID; never the secret. */
+  id: string;
+}
+
 export interface AuthFnSession extends AuthSession {
   id: string;
   type: 'session' | 'api-key';
+  /** Present when an API key authenticated the request. */
+  credential?: AuthFnSessionCredential;
   subject: {
     actorId: string;
     actorType: AuthFnActorType;
@@ -78,6 +94,12 @@ export interface AuthFnSession extends AuthSession {
   tenantId?: string;
   regionId?: string;
   methods: AuthFnAuthMethod[];
+  /**
+   * Scopes this session grants, checked with `requireScopes`. Cookie and
+   * bearer user sessions carry `['*']`; API-key sessions carry the key's
+   * stored scopes that the host registry can grant (`[]` when none).
+   */
+  scopes: string[];
   primaryEmail?: string;
   expiresAt?: Date;
   metadata?: Record<string, unknown>;
@@ -562,6 +584,13 @@ export interface AuthFnConfig<TPlugins extends AuthFnPluginList = AuthFnPluginLi
   accountLinking?: AuthFnAccountLinkingConfig;
   plugins: TPlugins;
   openApi?: boolean | { title: string; version: string };
+  /**
+   * Scope registry: each owner maps to its actions, so `{ memotron: ['read', 'write'] }`
+   * registers `memotron:read` and `memotron:write`. API-key creation rejects any
+   * scope outside it other than `*` and `<owner>:*` for a registered owner.
+   * Omit to allow only `*`.
+   */
+  scopes?: AuthFnScopeRegistry;
 }
 
 export type AuthFnRateLimitMode = 'strict' | 'best-effort' | 'local';

@@ -1,4 +1,5 @@
 import { createAttemptId, digestJson } from "./canonical.js";
+import { CHANGE_HUNKS_ARTIFACT_KIND, binaryChangePaths, changeHunkPaths, isCommitId, serializeChangeHunks, sinceRangeError } from "./change.js";
 import { ReviewFnError } from "./errors.js";
 import { findingFingerprint } from "./identity.js";
 import { buildReviewPrompt } from "./prompt.js";
@@ -7,6 +8,9 @@ import { combineContextManifests } from "./repository-context.js";
 import { renderMarkdownReport } from "./render.js";
 import type {
   ArtifactStore,
+  ChangeDetail,
+  ChangeHunks,
+  ChangeSnapshot,
   ContextAdapter,
   ContextManifest,
   ContextSource,
@@ -74,6 +78,10 @@ export class ReviewCoordinator {
     diagnostics.push(...execution.diagnostics.map((diagnostic) => ({ ...diagnostic, message: `${this.dependencies.execution.id}: ${diagnostic.message}` })));
     if (!execution.ok && !execution.diagnostics.some(item => item.level === "error")) diagnostics.push({ code: "REVIEWFN_PREFLIGHT_FAILED", level: "error", message: "Execution preflight refused execution." });
     for (const message of await preflightPublishers(this.dependencies.publishers ?? [])) diagnostics.push({ code: "REVIEWFN_PUBLISHER_PREFLIGHT", level: "error", message });
+    if (request.since !== undefined) {
+      if (!isCommitId(request.since)) diagnostics.push({ code: "REVIEWFN_SINCE_INVALID", level: "error", message: "since must be a full 40- or 64-hex commit ID." });
+      if (!this.dependencies.sourceControl.changeHunks || !this.dependencies.sourceControl.isAncestor) diagnostics.push({ code: "REVIEWFN_SINCE_UNSUPPORTED", level: "error", message: `${this.dependencies.sourceControl.id} cannot capture change hunks or check ancestry, so an incremental review is not possible.` });
+    }
     if (request.config.fallback.length) diagnostics.push({ code: "REVIEWFN_FALLBACK_EXPLICIT", level: "info", message: "Fallbacks are declared but are never selected silently; an operator must rerun with the chosen compatible configuration." });
     return diagnostics;
   }
@@ -86,6 +94,7 @@ export class ReviewCoordinator {
     const retention = { reportDays: Math.min(request.config.retention.reportDays, request.policy.retention.reportDays), transcriptDays: Math.min(request.config.retention.transcriptDays, request.policy.retention.transcriptDays), testLogDays: Math.min(request.config.retention.testLogDays, request.policy.retention.testLogDays) };
     const now = this.dependencies.now ?? (() => new Date());
     const change = await this.dependencies.sourceControl.capture(request.root, request.base, request.head, request.pullRequest);
+    const changeDetail = await this.captureChangeDetail(request, change, retention.reportDays);
     const limits = this.contextLimits(request);
     const contextById = new Map(this.dependencies.contexts.map((adapter) => [adapter.id, adapter]));
     const manifests: Array<Omit<ContextManifest, "digest">> = [];
@@ -107,7 +116,7 @@ export class ReviewCoordinator {
     catch (error) { executionErrors.push(`Test execution failed: ${error instanceof Error ? error.message : String(error)}`); }
     const prompt = buildReviewPrompt({ change, context, config: request.config, policy: request.policy, tests });
     const { capturedAt: _capturedAt, ...identityChange } = change;
-    const runId = digestJson({ change: identityChange, contextDigest: context.digest, policy: request.policy, config: request.config, harnessVersion: this.dependencies.harness.capabilities.version, tests: tests.map(({ startedAt, finishedAt, runtimeMs, ...receipt }) => receipt), promptVersion: "reviewfn-v1" });
+    const runId = digestJson({ change: identityChange, contextDigest: context.digest, policy: request.policy, config: request.config, harnessVersion: this.dependencies.harness.capabilities.version, tests: tests.map(({ startedAt, finishedAt, runtimeMs, ...receipt }) => receipt), promptVersion: "reviewfn-v1", ...(request.since === undefined ? {} : { since: request.since }) });
     const attemptId = request.attemptId ?? createAttemptId();
     let output: HarnessOutput;
     try {
@@ -136,6 +145,7 @@ export class ReviewCoordinator {
     const eventArtifact = await this.dependencies.artifacts.put("normalized-events", JSON.stringify(redactJson(output.events, secrets), null, 2), retention.reportDays);
     const transcriptArtifact = request.config.retainTranscript && output.transcript ? await this.dependencies.artifacts.put("redacted-transcript", redactText(output.transcript, secrets), retention.transcriptDays) : undefined;
     const coverageReasons = [
+      ...changeDetail.coverageReasons,
       ...context.incompleteReasons,
       ...executionErrors,
       ...(output.terminal === "completed" ? [] : [`Harness terminal outcome: ${output.terminal}${output.error ? ` (${output.error})` : ""}.`]),
@@ -173,8 +183,9 @@ export class ReviewCoordinator {
       uninspected: output.uninspected,
       normalizedEventArtifact: eventArtifact.id,
       redactedTranscriptArtifact: transcriptArtifact?.id,
-      limitations: diagnostics.filter((diagnostic) => diagnostic.level === "warning").map((diagnostic) => diagnostic.message),
+      limitations: [...diagnostics.filter((diagnostic) => diagnostic.level === "warning").map((diagnostic) => diagnostic.message), ...changeDetail.limitations],
     };
+    if (changeDetail.detail) report.changeDetail = changeDetail.detail;
     report.verdict = deriveVerdict(report, request.policy);
     const validation = await validateReport(report, request.policy, this.dependencies.sourceControl, request.root, context, this.dependencies.artifacts);
     if (!validation.valid) {
@@ -195,6 +206,60 @@ export class ReviewCoordinator {
       }
     }
     return { report, rendered, publications, validation: { warnings: validation.warnings } };
+  }
+
+  /**
+   * Verify the incremental range and store hunk-level detail. An invalid `since` fails the run before any
+   * context, test or harness work; a diff that cannot be parsed makes coverage incomplete, never a silent full review.
+   */
+  private async captureChangeDetail(request: ReviewRunRequest, change: ChangeSnapshot, retentionDays: number): Promise<{ detail?: ChangeDetail; coverageReasons: string[]; limitations: string[] }> {
+    const source = this.dependencies.sourceControl;
+    const { since, root } = request;
+    const coverageReasons: string[] = [];
+    if (since !== undefined) {
+      const isAncestor = source.isAncestor?.bind(source);
+      const reason = isAncestor ? await sinceRangeError(since, change.mergeBaseCommit, change.headCommit, (ancestor, descendant) => isAncestor(root, ancestor, descendant)) : `${source.id} cannot check ancestry.`;
+      if (reason) throw new ReviewFnError("REVIEWFN_SINCE_NOT_ANCESTOR", `Incremental review range is invalid: ${reason}`, { since, headCommit: change.headCommit, mergeBaseCommit: change.mergeBaseCommit });
+    }
+    const changeHunks = source.changeHunks?.bind(source);
+    if (!changeHunks) return { coverageReasons, limitations: [] };
+    const maxBytes = request.policy.limits.maxOutputBytes;
+    const capture = async (label: string, from: string): Promise<ChangeHunks | undefined> => {
+      const range = `${from}..${change.headCommit}`;
+      try {
+        const captured = await changeHunks(root, from, change.headCommit, maxBytes, request.signal);
+        if (captured.status === "too_large") { coverageReasons.push(`${label} diff ${range} exceeds maxOutputBytes (${captured.limitBytes}) as raw or decoded UTF-8 bytes; its hunks were not parsed.`); return undefined; }
+        if (captured.hunks.baseCommit !== from || captured.hunks.headCommit !== change.headCommit) { coverageReasons.push(`${label} hunks do not cover ${range}.`); return undefined; }
+        return captured.hunks;
+      } catch (error) {
+        if (error instanceof ReviewFnError && error.code === "REVIEWFN_DIFF_UNSUPPORTED") { coverageReasons.push(`${label} diff ${range} could not be parsed: ${error.message}`); return undefined; }
+        if (request.signal?.aborted) throw new ReviewFnError("REVIEWFN_CANCELED", "Review canceled while capturing change hunks.");
+        throw error;
+      }
+    };
+    const hunks = await capture("Change", change.mergeBaseCommit);
+    const delta = since === undefined ? undefined : await capture("Incremental", since);
+    if (!hunks || (since !== undefined && !delta)) {
+      if (since !== undefined) coverageReasons.push(`Incremental review since ${since} has no recorded change detail.`);
+      return { coverageReasons, limitations: [] };
+    }
+    // The artifact store may refuse large documents (FileArtifactStore caps artifact size); that leaves the
+    // change detail unrecorded and coverage incomplete instead of failing a run that the diff alone allowed.
+    let detail: ChangeDetail;
+    try {
+      const stored = await this.dependencies.artifacts.put(CHANGE_HUNKS_ARTIFACT_KIND, serializeChangeHunks(hunks), retentionDays);
+      detail = { hunksArtifact: stored.id, hunksDigest: stored.digest };
+      if (since !== undefined && delta) {
+        const storedDelta = await this.dependencies.artifacts.put(CHANGE_HUNKS_ARTIFACT_KIND, serializeChangeHunks(delta), retentionDays);
+        Object.assign(detail, { since, deltaHunksArtifact: storedDelta.id, deltaHunksDigest: storedDelta.digest, deltaPaths: changeHunkPaths(delta) });
+      }
+    } catch (error) {
+      coverageReasons.push(`Change hunks could not be stored: ${error instanceof Error ? error.message : String(error)}`);
+      if (since !== undefined) coverageReasons.push(`Incremental review since ${since} has no recorded change detail.`);
+      return { coverageReasons, limitations: [] };
+    }
+    const limitations = [...new Set([...binaryChangePaths(hunks), ...(delta ? binaryChangePaths(delta) : [])])].map(path => `Binary file ${path} has no hunks; it is uninspectable for line-level evidence.`);
+    return { detail, coverageReasons, limitations };
   }
 
   private contextLimits(request: ReviewRunRequest): ContextManifest["limits"] {

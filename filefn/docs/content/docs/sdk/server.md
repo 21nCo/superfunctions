@@ -44,6 +44,8 @@ interface FileFn extends FileProvider {
 | `observability` | `ObservabilityInput<FileFnObservationEvent>` | undefined | Shared logging, typed events, metrics, traces and request observations. |
 | `authorizer` | `Authorizer` | default | Permission resolution. |
 | `namespace` | `string` | `"filefn"` | Table prefix. |
+| `basePath` | `string` | root | Path prefix the router serves under, e.g. `"/files"`. See [Cloudflare Workers](/docs/recipes/cloudflare-workers). |
+| `runtime` | `{ defer?(work: Promise<unknown>): void }` | undefined | Receives background work (queue-less processing, observability event delivery); wire to `ctx.waitUntil` on Workers. |
 | `defaultChunkSizeBytes` | `number` | `5 MiB` | Multipart chunk floor. |
 | `uploadSessionTtlSeconds` | `number` | `86400` | Session TTL. |
 | `signedUrlTtlSeconds` | `number` | `900` | Per-part signed URL TTL. |
@@ -85,6 +87,13 @@ const result = await fileFn.completeUploadSession({ uploadSessionId: session.upl
 ```
 
 `ctx` carries the principal — `{ principalId, tenantId, uploadSessionToken }`.
+
+## Expired upload sessions
+
+`fileFn.cleanupExpiredSessions()` deletes upload sessions that expired before
+completing, aborting their multipart uploads and proxy part objects, and returns
+`{ deletedSessions, abortedMultipart }`. Call it from a scheduled job such as a
+Workers cron trigger; filefn does not schedule it.
 
 ## Bound domain services
 

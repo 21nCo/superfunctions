@@ -10,6 +10,40 @@ npm install authfn
 
 Install only the plugin packages you use (`@authfn/password`, `@authfn/email-otp`, `@authfn/social-oauth`, `@authfn/api-keys`, `@authfn/two-factor`, `@authfn/multi-region`, `@authfn/native-handoff`) plus `@authfn/client` for browsers.
 
+## 0.6.0 release
+
+Scopes are now enforced. Declare the scopes your app accepts as a registry on `authfn()`, then call `requireScopes` before protected work:
+
+```ts
+import { authfn, authFnPlugins, defineAuthFnScopes, requireScopes } from 'authfn';
+import { authFnApiKeyPlugin } from '@authfn/api-keys';
+
+const scopes = defineAuthFnScopes({ memotron: ['read', 'write'], pointron: ['read', 'write'] });
+const authApp = authfn({ scopes, plugins: authFnPlugins(authFnApiKeyPlugin()) });
+const auth = authApp.createServer({ database }); // database: your @superfunctions/db adapter
+
+const session = await auth.provider.authenticate(request);
+requireScopes(session, 'memotron:read', { registry: scopes }); // 401 without a session, 403 AUTHFN_INSUFFICIENT_SCOPE without the scope
+```
+
+- Every session carries `scopes: string[]`. Cookie and bearer user sessions get `['*']`; API-key sessions get the key's stored scopes that the registry can grant.
+- A scope is `<owner>:<action>`. `<owner>:*` grants every action of that owner and `*` grants every registered scope.
+- API-key creation (the `POST /auth/api-keys` route and `createApiKey`) rejects any scope outside the registry with `400 AUTHFN_VALIDATION_ERROR` and `details.unknownScopes`. Without a registry only `*` is accepted. Trusted code calling `createApiKey` directly passes the registry as `config.scopes`.
+- `session.metadata.scopes` is deprecated; read `session.scopes`.
+
+Migration: declare a registry before creating keys with scopes. Keys stored before 0.6.0 were never validated, so an API-key session keeps only the stored entries the current registry can grant: a registered scope, `<owner>:*` for a registered owner, or `*`. Any other stored entry (an unregistered scope or an unregistered owner's `<owner>:*`) grants nothing, and a key stored without scopes grants nothing. A legacy key that stored `*` still grants every registered scope, and a stored `<owner>:*` every action of that owner, so audit such keys and reissue them with narrower scopes. The deprecated `session.metadata.scopes` still lists every stored string but is never a grant. `@authfn/api-keys` 0.2.0, `@authfn/password` 0.1.5, and `@authfn/email-otp`, `@authfn/social-oauth`, `@authfn/two-factor` and `@authfn/native-handoff` 0.1.4, and `@authfn/multi-region` 0.2.0 depend on `authfn` 0.6.0. Upgrade them together: an older plugin pins an older `authfn`, installs a second copy, and issues sessions without `scopes` (and `@authfn/multi-region` 0.1.3 re-exports a placement-context issuer that signs every stored API-key scope).
+
+## 0.5.0 release
+
+A session authenticated by a user-owned API key now acts as the key's owner: `actorType` is `'user'`, `actorId` is the owner's user ID, and the new `credential` field is `{ type: 'api-key', id: <keyId> }`. A host that keys data by `actorId` reaches the owner's data with the key. `type` stays `'api-key'`.
+
+- A key whose owner was deleted or is disabled (`metadata.disabled === true` on the user record) authenticates as no one, through `auth.provider.authenticate` and through the placement-context issuer alike.
+- An unowned service key keeps `actorType: 'api-key'` with the key ID as `actorId`, so routes that require a user reject it.
+- `session.metadata.ownerUserId` is deprecated and stays for one more minor version; read `actorId`.
+- AuthFn's own account routes and password linking still accept only interactive sessions (`type: 'session'`).
+
+Migration: if your host detects API keys with `session.actorType === 'api-key'`, check `session.type === 'api-key'` (or `session.credential`) instead; owned keys no longer match the old check.
+
 ## 0.4.1 release
 
 Concurrent sign-ups for the same email now return `409 AUTHFN_CONFLICT` to every request except the one that creates the user. Before, a request that passed the existence check but lost the insert to the unique index got a retryable `500 AUTHFN_INTERNAL_ERROR`. Password sign-up gets the fix through `@authfn/password` 0.1.3, which depends on `authfn` 0.4.1; `@authfn/password` and `@authfn/api-keys` 0.1.2 pin `authfn` 0.3.0. A storage conformance suite now runs password sign-in, sessions and API keys on better-sqlite3 and on a local Cloudflare D1 database in workerd; see [Self-hosting authfn on SQLite and D1](https://github.com/21nCo/super-functions/blob/dev/authfn/docs/content/docs/recipes/self-hosting-sqlite-d1.md).
@@ -22,7 +56,7 @@ The core API key helper accepts `userId: null` to create an unowned key for a tr
 import { createApiKey } from 'authfn/core/api-keys';
 
 const key = await createApiKey(
-  { database, namespace: 'authfn' },
+  { database, namespace: 'authfn', scopes: { skills: ['read'] } }, // 0.6.0+: pass the app's registry
   {
     userId: null,
     name: 'service-worker',

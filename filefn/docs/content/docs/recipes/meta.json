@@ -8,6 +8,7 @@
     "opfs-offline",
     "heic-conversion",
     "cdn-integration",
+    "cloudflare-workers",
     "virus-scanning",
     "signed-share-links",
     "custom-processor",

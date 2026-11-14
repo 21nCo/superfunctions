@@ -193,9 +193,96 @@ These pages mirror the detailed Markdown guides in `reviewfn/docs` so existing r
 - [Security model](https://github.com/21nCo/super-functions/blob/dev/reviewfn/docs/content/docs/reference/security.md)
 - [GitHub Action and publication](https://github.com/21nCo/super-functions/blob/dev/reviewfn/docs/content/docs/reference/github-action.md)
 - [Report schema](https://github.com/21nCo/super-functions/blob/dev/reviewfn/docs/content/docs/reference/report-schema.md)
+- [Panel report schema](https://github.com/21nCo/super-functions/blob/dev/reviewfn/docs/content/docs/reference/panel-report-schema.md)
 - [Evaluation contract](https://github.com/21nCo/super-functions/blob/dev/reviewfn/docs/content/docs/reference/evaluation.md)
 
 The [package map](https://github.com/21nCo/super-functions/blob/dev/reviewfn/docs/content/docs/packages.md) and [CLI quick start](https://github.com/21nCo/super-functions/blob/dev/reviewfn/docs/content/docs/getting-started.md) provide a shorter entry point.
+
+---
+
+<!-- page:docs:reference/panel-report-schema.md path:/docs/reference/panel-report-schema -->
+# Panel report schema
+
+> Panel policy, slot identity, slot runs, panel findings, and the panel report.
+
+
+A panel report records one ReviewFn panel run: several slots review the same frozen change, and their findings are combined by union. The panel contract lives in `@superfunctions/reviewfn-core` under `panel/`. Each document below has a JSON Schema (`panelPolicySchema`, `slotIdentitySchema`, `slotRunSchema`, `panelFindingSchema`, `panelReportSchema`, `lensOutputSchema`), TypeScript types, and a deterministic validator. The 0.1 `ReviewReport` v1 ([report schema](report-schema.md)) is unchanged. It is embedded as the panel's requirements report, and a 0.1 single-harness report validates exactly as before.
+
+## Severity
+
+Panel findings use the 0.1 `FindingSeverity`. Lens priorities map as P0 = `critical`, P1 = `high`, P2 = `medium`, P3 = `low`. A panel lens never emits `info`: the lens output schema excludes it, and the validator rejects it in panel findings with `REVIEWFN_PANEL_FINDING_INVALID`.
+
+## Panel policy
+
+`{ version: 1, slots, quorum: { stage1, stage2 }, requirementsSlot, maxConcurrentSlots?, incremental: "full" | "delta" }`. `requirementsSlot` names a stage-1 or stage-2 slot, or is `null` to skip requirement extraction. `maxConcurrentSlots` is 1–8, and 2 when absent. `panelPolicyDigest(policy)` is the canonical SHA-256 of the validated policy with that default applied; the report records it as `panelPolicyDigest`. Loading the policy and repository tightening belong to the panel orchestrator.
+
+A slot is `{ id, stage: 1 | 2 | "verifier", harness: { adapter, version }, inference: { provider, model, auth, credentialEnv? }, lens, budget: { timeoutMs, maxOutputBytes } }`. Slot IDs match `^[a-z0-9][a-z0-9-]{0,62}$` and are unique. As in 0.1, the model `configured` defers to the harness default.
+
+## Slot identity and runs
+
+A slot's identity is the tuple (harness adapter, harness-reported version, provider, resolved model, auth mode, credential fingerprint). The fingerprint is the first 16 hex characters of the SHA-256 of the credential value, or of the harness-reported account identity (`credentialFingerprint(value)`). The value itself is never recorded. The fingerprint is absent when neither was observed. `slotIdentityKey(identity)` compares identities. A run's harness adapter, provider and auth mode must equal its slot's. `harness.version` is the exact version the harness must report. A run that reports another version records that version truthfully, but it can never be `completed` or `collapsed`. This is a contract on whoever produces the report: such a run must be recorded as `failed` (or another terminal that does not count), and the validator rejects it otherwise, so a version drift cannot form a separate identity that escapes collapse.
+
+Within one stage, slots with the same identity count once toward quorum. The run that counts is the first `completed` run of that identity in policy order. A later run of the same identity that would also complete is recorded as `collapsed`, so a `collapsed` run always follows a counted run of its identity in its stage. Runs that end any other way (`failed`, `canceled`, `quota_exhausted`, `timed_out`, `malformed` or `void`) neither count nor collapse: if the first slot of an identity fails, a later slot of that identity can still complete and count. A stage-2 slot may share a stage-1 identity, because stages have separate quorums. Collapse affects quorum only: a `collapsed` run succeeded with its own lens, its findings name it as their origin, and a collapsed verifier's verifications stand. Verifier slots collapse by identity in the same way, although they have no quorum.
+
+A slot run is `{ slotId, identity, terminal, voidReasons, startedAt, finishedAt, outputArtifact?, outputDigest?, usage? }`. `terminal` is `completed`, `failed`, `canceled`, `quota_exhausted`, `timed_out`, `malformed`, `void` or `collapsed`. A `void` run lists at least one reason, and no other terminal lists any:
+
+- `model_mismatch`: the resolved model differs from a configured model other than `configured`. This takes precedence over every other outcome: whenever the harness reports a resolved model that differs, the run is `void` and its reasons include `model_mismatch`, even if it also failed or timed out. When the harness reports no resolved model, `identity.model` records the configured model.
+- `workspace_mutated`: the slot changed its checkout.
+- `disallowed_tool_use`: the harness reported a forbidden tool.
+
+Usage values (`inputTokens`, `outputTokens`, `costUsd`) appear only when the harness observed them. Timestamps are RFC 3339 UTC with in-range fields. The validator also rejects dates that do not exist, such as February 30, and a run that finishes before it starts.
+
+## Lens output
+
+Lens slots return `{ findings, evidence, inspectedPaths, uninspected }`, which is the 0.1 harness output without requirements or assessments. The requirements slot keeps the full 0.1 harness schema. `HarnessInput.outputSchema` selects the structured-output schema for a run. The Codex adapter first compiles it as given with strict Ajv, then checks that it lies inside the provider strict subset that the lens and 0.1 harness schemas use (`unsupportedOutputSchema`). In that subset, the root is a `type: "object"` schema and is the only place for `$defs` or `definitions`. Object schemas have `type: "object"`, `properties`, `required` naming only those properties, and `additionalProperties: false`. Array schemas have `items`, `minItems` and `maxItems`. Scalar schemas have `type` (a list of scalar types may include `"null"`), `enum`, `const`, and string or number constraints. `anyOf` is a pure union and `$ref` points to a local `$defs` or `definitions` entry; neither takes another keyword. `description` and `title` may appear anywhere. Any other keyword or shape, such as `allOf`, `oneOf`, `not`, `if`/`then`/`else`, `minProperties` or `$async`, fails the run before inference with a message naming it, distinct from the message for a schema that does not compile. Codex receives the provider-strict form (`strictProviderSchema`). Conversion is node-local: every property of an object schema is required, and a property gets a null alternative only when its own object schema does not require it. `const` and `enum` literals are copied verbatim. A property the caller schema requires keeps the values its own schema allows, including null when that schema allows it; a null the provider form added means the property is absent. The raw output must satisfy the provider-strict schema, or the caller schema as given, and no null is removed before this check. Nulls are dropped only afterwards, from the normalized result, which has empty requirements and assessments and must still be a valid 0.1 harness payload. Without `outputSchema`, Codex behaves as in 0.1.
+
+## Panel findings
+
+A panel finding is a 0.1 `Finding` plus the following fields:
+
+- `origins: [{ slotId, lens }]`: at least one, and each a stage-1 or stage-2 slot with that lens whose run is `completed` or `collapsed`.
+- `confidence`: 0–1. It is informational and never used for gating.
+- `ruleIds`.
+- `verification?: { verdict: "confirmed" | "refuted" | "inconclusive", slotId, evidenceIds, onBase: "present" | "absent" | "not_checked", reason }`.
+- `disposition: "reported" | "dropped" | "suppressed"`, with `dispositionReason` and, for suppression, `suppressionReference`.
+
+Verification comes from a `verifier` slot with a `completed` or `collapsed` run whose identity differs from every origin slot's identity. A confirmed or refuted verdict cites evidence. A dropped finding requires a refuted verification. A suppressed finding requires a `suppressionReference`, which is checked like a 0.1 waiver: it must be a verifiable reference (a literal excerpt or a valid line range) to an available, accepted source in the frozen context, and that source must be one of the policy's `sourceAuthority.waiverAuthorities`. Dropped and suppressed findings both require a `dispositionReason`. Dropped and suppressed findings stay in the report, so nothing disappears silently. Panel findings are lifecycle `new` until prior-finding provenance exists. Fingerprints are unique; agreement between slots is recorded in `origins`. The report records at most `policy.limits.maxFindings` panel findings, counting reported, dropped and suppressed findings alike; the panel orchestrator may add a separate bound for the slot union.
+
+## Panel report
+
+The report is `{ schemaVersion: 1, kind: "reviewfn-panel", runId, createdAt, change, changeDetail?, contextManifestDigest?, panelPolicyDigest, slots, slotRuns, requirementsReport?, gateReceipts, evidence, findings, clusters, coverage, coverageReasons, verdict? }`.
+
+- `contextManifestDigest` is the digest of the frozen context the run used. When a requirements report is present it must be equal to that report's digest, and it may be omitted. Source references are verified only against a supplied context with this digest (or the requirements report's). Without such a context they fail closed.
+- `gateReceipts` are 0.1 test receipts from the trusted gates.
+- `evidence` holds the 0.1 evidence items that panel findings and verifications cite. Each item is verified as in 0.1, and every check fails closed when the source control, context or artifact store it needs is not supplied:
+  - Code anchors on findings and evidence follow the 0.1 commit rule (`anchorCommitChecker`). An anchor cites the reviewed head. It may cite the merge base only for a changed path that source control reports absent at head, and `changeDetail.since` only for a path the verified delta removed that is absent at head. One narrow allowance exists for on-base evidence: evidence cited by at least one verification whose `onBase` is `present` or `absent`, and by no finding and no verification whose `onBase` is `not_checked`, may anchor at the merge base on any path. Every anchor must then be confirmed by `sourceControl.verifyAnchor`. Without source control or with an empty `root`, source control is never called: only head anchors and on-base evidence pass the commit rule, and they still fail as unverifiable.
+  - Diff evidence lies in the changed paths or the verified delta paths.
+  - Source evidence cites a verifiable source in the frozen context.
+  - Test evidence names exactly one gate receipt at the reviewed head.
+  - Artifact evidence names the digest of a slot run's retained `outputArtifact`.
+  - A reproduced finding needs a completed gate receipt at the reviewed head whose stdout and stderr artifacts match their digests in the artifact store.
+- `clusters` are `{ id, findingFingerprints }`. A finding belongs to at most one cluster.
+- `requirementsReport` comes from the run of the panel policy's `requirementsSlot`, as findings come from their origins. A `completed` or `collapsed` run must supply it, with execution `completed`. A run that ended any other way may supply a report that records its failure (execution other than `completed`), and no requirements report may exist without a run of that slot. The report's configuration names the slot's harness adapter and configured inference (provider, model, auth mode), and for a run that succeeded the slot's harness version. It must review the same change and change detail as the panel, and is validated with the 0.1 validator. Without it, the panel's own `changeDetail` is verified against its artifacts, and `changeDetail.since` is checked against head and merge base ancestry when source control can answer it, as in 0.1.
+- Incomplete coverage states at least one reason.
+
+`verdict` uses 0.1's derivation (`derivePanelVerdict`). It runs over the requirements report plus the reported panel findings; dropped and suppressed findings are excluded. Coverage is complete only if both the panel and the requirements report are complete. Without a requirements report no requirement was assessed, so the verdict is at most `needs_verification`. A requirements report whose run did not complete leaves the verdict absent, as in 0.1. Panel output stays advisory.
+
+## Validation codes
+
+`validatePanelReport(report, policy, { sourceControl?, root?, context?, artifacts?, panelPolicy? })` returns `{ valid, issues: [{ code, path, message }], verdict }`. `policy` is the 0.1 `ReviewPolicy` (blocking severities, source authority and limits). `panelPolicy` is the panel policy the run used: its digest must equal `panelPolicyDigest` and its slots the report's slots. It binds the requirements report to `requirementsSlot`, so without it a requirements report fails closed. Quorum and coverage derivation from slot runs belong to the panel orchestrator and are not checked here. `path` is an RFC 6901 JSON Pointer, and the empty string `""` is the document root. Structural problems are reported alone. `validatePanelPolicy(policy)` checks a panel policy, including that `requirementsSlot` names a stage-1 or stage-2 slot. The codes form a closed set:
+
+| Code | Meaning |
+| --- | --- |
+| `REVIEWFN_PANEL_SCHEMA` | The document does not match its JSON Schema, a timestamp is not a real time, the supplied panel policy is invalid or differs from the report's digest or slots, or a run contradicts its slot (harness adapter, provider or auth mode, a `completed` or `collapsed` run reporting another harness version, model mismatch not voided with `model_mismatch`, `model_mismatch` without a mismatch, finish before start). |
+| `REVIEWFN_PANEL_SLOT_DUPLICATE` | A slot ID is declared twice, a slot has two runs, a second completed run of an identity in a stage is not collapsed, or a collapsed run has no earlier completed run of its identity in its stage. |
+| `REVIEWFN_PANEL_SLOT_UNKNOWN` | A run or verification names no such slot (`validatePanelPolicy` also reports an unknown `requirementsSlot`). |
+| `REVIEWFN_PANEL_FINDING_INVALID` | `info` severity, more findings than `maxFindings`, a lifecycle other than `new`, a duplicate fingerprint or origin, missing, unknown or unverifiable evidence, unknown requirements, an unverified reproduction, an anchor whose commit the anchor rule above does not allow or that source control cannot confirm, or an invalid cluster. |
+| `REVIEWFN_PANEL_ORIGIN_UNKNOWN` | An origin is not a stage-1 or stage-2 slot with that lens whose run is `completed` or `collapsed`. Or the requirements report has no run of the bound panel policy's `requirementsSlot`, is absent although that run succeeded, or has an execution or configuration that contradicts that run and slot. |
+| `REVIEWFN_PANEL_VERIFICATION_INVALID` | The verifier is not a verifier slot with a `completed` or `collapsed` run, shares an origin slot's identity, or cites missing or unknown evidence. |
+| `REVIEWFN_PANEL_DISPOSITION_INVALID` | Dropped without a refuted verification, suppressed without a verifiable waiver-authority reference, a `suppressionReference` on a finding that is not suppressed, or dropped or suppressed without a reason. |
+| `REVIEWFN_PANEL_VERDICT_MISMATCH` | `verdict` differs from the derived verdict. |
+
+Errors from the 0.1 checks keep their 0.1 meaning: `REVIEWFN_CHANGE_DETAIL_MISMATCH` and `REVIEWFN_SINCE_NOT_ANCESTOR` keep their codes, and every other 0.1 error, including a requirements report for a different change, change detail or context, is `REVIEWFN_REPORT_INVALID`. Calendar validity of timestamps is a validator check beyond the JSON Schema pattern. `panelStructureIssues(kind, value)` is the structural TypeScript mirror of each JSON Schema. The tests check that it agrees with Ajv on every fixture and on systematic structural variants of each fixture.
 
 ---
 
@@ -216,6 +303,10 @@ Requirements contain immutable source anchors and exactly one assessment. Assess
 Findings carry a fingerprint, severity, concrete trigger/impact/direction, reproduced-versus-inferred basis, requirement links and lifecycle. Model confidence never substitutes for evidence validity. Fingerprints use path, optional symbol and finding semantics, excluding revision and line coordinates. They are correlation hints, not proof of historical lifecycle. Version 0.1 receives no prior-finding provenance, so only `new` findings validate; every historical lifecycle remains unproven. Ambiguous duplicate fingerprints fail validation; distinguish actual symbols or defect semantics before correlation.
 
 `contextManifestDigest` identifies the normalized snapshot bytes and `contextManifestArtifact` names the corresponding content-addressed stored artifact. Test receipts contain exact argv, commit, timing, exit status, stdout/stderr digests and limitations; they do not claim a retrievable log artifact unless one was actually persisted.
+
+`changeDetail` is optional and additive; a report without it validates as before. When present, `hunksArtifact` names a content-addressed `change-hunks` artifact whose SHA-256 is `hunksDigest`. The artifact is a `ChangeHunks` v1 document, `{ version: 1, baseCommit, headCommit, files: [{ path, previousPath?, status, hunks: [{ oldStart, oldLines, newStart, newLines }] }] }`, parsed from `git diff --no-color --no-ext-diff --find-renames -U0 <mergeBase> <head>`. `status` is `added`, `modified`, `deleted`, `renamed` or `binary`. Binary files have no hunks, and the report lists them as limitations because they cannot carry line-level evidence. Diffs larger than the policy's `maxOutputBytes` are not parsed: the report omits `changeDetail` and records incomplete coverage with the reason. The same holds when the artifact store refuses the hunks artifact. Combined diffs, word diffs and external diff drivers are rejected (`REVIEWFN_DIFF_UNSUPPORTED`).
+
+An incremental run sets `since` to the previously reviewed head, a full 40- or 64-hex commit. `since` must be an ancestor of the head and a descendant of, or equal to, the merge base. Otherwise the run fails before review with `REVIEWFN_SINCE_NOT_ANCESTOR`, and it never falls back to a full review. The report then also records `deltaHunksArtifact` and `deltaHunksDigest` for `since..head`, plus `deltaPaths`, the delta's changed paths. Like every changed path, each delta path must be inspected or explicitly uninspected. A delta path that the verified delta removes but the full change never lists (a file added after the merge base and deleted by a later push) is inspected at `since`; code and finding anchors may cite `since` only for such removed paths. The validator recomputes both digests from the stored artifacts and checks their commit ranges and paths against the change. Any mismatch fails with `REVIEWFN_CHANGE_DETAIL_MISMATCH`.
 
 The validator rejects duplicate identifiers, unknown requirements/evidence/sources, stale commit anchors, invalid line ranges, unjustified exclusions, over-limit findings, incomplete-ready reports and any verdict inconsistent with deterministic policy.
 

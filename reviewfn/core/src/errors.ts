@@ -7,7 +7,10 @@ export type ReviewFnErrorCode =
   | "REVIEWFN_REPORT_INVALID"
   | "REVIEWFN_STALE_HEAD"
   | "REVIEWFN_CANCELED"
-  | "REVIEWFN_ARTIFACT_UNSAFE";
+  | "REVIEWFN_ARTIFACT_UNSAFE"
+  | "REVIEWFN_SINCE_NOT_ANCESTOR"
+  | "REVIEWFN_DIFF_UNSUPPORTED"
+  | "REVIEWFN_CHANGE_DETAIL_MISMATCH";
 
 export class ReviewFnError extends Error {
   public constructor(

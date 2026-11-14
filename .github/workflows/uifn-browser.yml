@@ -1,7 +1,8 @@
 name: uifn browser tests
 
-# Adapter unit suites plus @uifn/dom's Playwright suite (including browser/adapters
-# scenarios) in Chromium, Firefox, and WebKit. Mobile projects are not run here.
+# Adapter unit suites and the per-primitive bundle-size check, plus @uifn/dom's Playwright
+# suite (including browser/adapters scenarios) in Chromium, Firefox, and WebKit. Mobile
+# projects are not run here.
 on:
   pull_request:
     branches:
@@ -11,6 +12,13 @@ on:
     paths:
       - "uifn/**"
       - ".github/workflows/uifn-browser.yml"
+      - "scripts/verify-uifn-bundle-size.mjs"
+      - "scripts/verify-uifn-bundle-size.test.mjs"
+      - "scripts/uifn-adapter-dom-bindings.mjs"
+      - "scripts/uifn-adapter-dom-bindings.test.mjs"
+      # A root dependency bump (floating-ui, Vite, framework plugins) changes bundle sizes without touching uifn/.
+      - "package.json"
+      - "package-lock.json"
   push:
     branches:
       - dev
@@ -61,6 +69,13 @@ jobs:
 
       - name: Solid adapter tests
         run: npm --workspace @uifn/solid run test
+
+      - name: Verify bundle size checker and adapter DOM-binding plan
+        run: node --test scripts/verify-uifn-bundle-size.test.mjs scripts/uifn-adapter-dom-bindings.test.mjs
+
+      # Vite production builds of one-primitive apps against uifn/examples/size-fixtures/budgets.json.
+      - name: Check per-primitive bundle size
+        run: node scripts/verify-uifn-bundle-size.mjs
 
   browser:
     name: uifn browser (${{ matrix.engine }})
