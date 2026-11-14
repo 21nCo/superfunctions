@@ -15,7 +15,7 @@ import { effectiveMaxConcurrentSlots } from "./policy.js";
 import { buildSlotPrompt, PANEL_PROMPT_VERSION, type PriorStageFinding, type SlotScope } from "./prompt.js";
 import { lensOutputSchema, validateLensPayload } from "./schema.js";
 import type { PanelFinding, PanelFindingSeverity, PanelPolicy, PanelReport, PanelReportValidationResult, PanelSlot, SlotIdentity, SlotRun, SlotRunTerminal, SlotVoidReason } from "./types.js";
-import { credentialFingerprint, derivePanelVerdict, panelPolicyDigest, slotIdentityKey, validatePanelPolicy, validatePanelReport } from "./validate.js";
+import { credentialFingerprint, derivePanelVerdict, panelPolicyDigest, panelStructureIssues, slotIdentityKey, validatePanelPolicy, validatePanelReport } from "./validate.js";
 import { GitSlotWorkspaceProvider, removeTree, type GitSlotWorkspaceOptions, type SlotWorkspace, type SlotWorkspaceProvider, type WorkspaceCheck } from "./workspace.js";
 
 /** Coverage reason code when a stage has fewer completed runs with distinct identities than its quorum. */
@@ -76,8 +76,9 @@ export interface PanelCoordinatorDependencies extends SharedRunDependencies {
   environment?: NodeJS.ProcessEnv;
   /**
    * The 0.1 adapter contract version (`config.harness.version`) to configure each harness with, by adapter ID, for a slot
-   * whose adapter differs from the run configuration's. Defaults to each harness's `capabilities.version` when the
-   * coordinator is constructed. A slot's `harness.version` is the harness-reported version and is never sent here.
+   * whose adapter differs from the run configuration's. Required for such a slot: an adapter's `capabilities.version` is
+   * never used, because adapters such as Codex overwrite it with the executable's version during preflight. A slot's
+   * `harness.version` is the harness-reported version and is never sent here.
    */
   harnessContractVersions?: Record<string, string>;
 }
@@ -148,12 +149,14 @@ function emptyOutput(terminal: HarnessOutput["terminal"], error: string): SlotHa
 
 /**
  * The configuration a slot runs under: the run's configuration with the slot's harness and inference. The harness keeps
- * the 0.1 adapter contract version: the run configuration's for the same adapter, otherwise `contractVersion`. The
- * slot's `harness.version` is what the harness must report, which is compared with the observed version, not configured.
+ * the 0.1 adapter contract version: the run configuration's for the same adapter, otherwise `contractVersion`, which is
+ * then required. The slot's `harness.version` is what the harness must report, which is compared with the observed
+ * version, not configured.
  */
 export function slotConfiguration(config: ReviewFnConfig, slot: PanelSlot, contractVersion?: string): ReviewFnConfig {
   const same = config.harness.adapter === slot.harness.adapter;
-  const version = same ? config.harness.version : contractVersion ?? config.harness.version;
+  if (!same && !nonblank(contractVersion)) throw new ReviewFnError("REVIEWFN_CONFIG_INVALID", `Slot ${slot.id} uses harness ${slot.harness.adapter}, whose adapter contract version is not configured.`);
+  const version = same ? config.harness.version : contractVersion!;
   return { ...config, harness: { adapter: slot.harness.adapter, version, ...(same && config.harness.executable ? { executable: config.harness.executable } : {}) }, inference: { ...slot.inference } };
 }
 
@@ -173,6 +176,47 @@ function settle<T>(promise: Promise<T>, signal: AbortSignal, graceMs: number): P
     if (signal.aborted) onAbort(); else signal.addEventListener("abort", onAbort, { once: true });
     promise.then(value => finish({ value, abandoned: false }), error => finish({ error, abandoned: false }));
   });
+}
+
+const PAYLOAD_FIELDS = ["requirements", "assessments", "evidence", "findings", "inspectedPaths", "uninspected"] as const;
+
+/** UTF-8 bytes of the structured payload a harness returned; 0 when it cannot be serialized (payload validation fails it). */
+function structuredPayloadBytes(raw: unknown): number {
+  if (!raw || typeof raw !== "object") return 0;
+  try { return Buffer.byteLength(JSON.stringify(Object.fromEntries(PAYLOAD_FIELDS.map(key => [key, (raw as Record<string, unknown>)[key]]))) ?? ""); }
+  catch { return 0; }
+}
+
+/** `text` cut to at most `maxBytes` UTF-8 bytes without splitting a character. */
+function truncateUtf8(text: string, maxBytes: number): string {
+  let cut = Buffer.from(text, "utf8").subarray(0, maxBytes).toString("utf8");
+  while (Buffer.byteLength(cut) > maxBytes || cut.endsWith("\uFFFD")) cut = cut.slice(0, -1);
+  return cut;
+}
+
+/**
+ * Keep at most `maxBytes` of the transcript and of the serialized events (whole events, in order), and say what was not
+ * kept. The terminal is unchanged: the panel neither consumes nor validates this telemetry.
+ */
+function boundTelemetry(output: SlotHarnessOutput, maxBytes: number): string[] {
+  const reasons: string[] = [];
+  if (typeof output.transcript === "string") {
+    const bytes = Buffer.byteLength(output.transcript);
+    if (bytes > maxBytes) { output.transcript = truncateUtf8(output.transcript, maxBytes); reasons.push(`The slot transcript (${bytes} bytes) exceeded its ${maxBytes}-byte limit; only its first ${maxBytes} bytes were kept.`); }
+  }
+  if (Array.isArray(output.events)) {
+    let used = 2;
+    let kept = 0;
+    for (const event of output.events) {
+      let size: number;
+      try { size = Buffer.byteLength(JSON.stringify(event) ?? "null") + 1; } catch { break; }
+      if (used + size > maxBytes) break;
+      used += size;
+      kept += 1;
+    }
+    if (kept < output.events.length) { reasons.push(`The slot reported ${output.events.length} events, more than its ${maxBytes}-byte limit holds; only the first ${kept} were kept.`); output.events = output.events.slice(0, kept); }
+  } else output.events = [];
+  return reasons;
 }
 
 function observedUsage(usage: SlotObservation["usage"]): SlotRun["usage"] | undefined {
@@ -197,9 +241,8 @@ export class PanelCoordinator {
 
   public constructor(private readonly dependencies: PanelCoordinatorDependencies) {
     this.lenses = dependencies.lenses ?? defaultLensRegistry();
-    // Captured now: some adapters overwrite capabilities.version with the reported version during preflight.
-    this.contractVersions = new Map(dependencies.harnesses.map(harness => [harness.capabilities.id, harness.capabilities.version]));
-    for (const [id, version] of Object.entries(dependencies.harnessContractVersions ?? {})) this.contractVersions.set(id, version);
+    // Only an explicit, immutable source: capabilities.version may be overwritten by any preflight of the adapter.
+    this.contractVersions = new Map(Object.entries(dependencies.harnessContractVersions ?? {}));
   }
 
   private slotConfig(config: ReviewFnConfig, slot: PanelSlot): ReviewFnConfig {
@@ -243,11 +286,15 @@ export class PanelCoordinator {
         // Every slot removed its own checkout; this also removes anything an abandoned harness left, before the report is built.
         await removeTree(parent).catch(error => { cleanupErrors.push(`The run's checkout directory was not removed: ${message(error)}`); });
       }
-      const quorum = collapseAndCount(records, policy);
-      // Every slot's outcome is stored once its final terminal (after collapse) is known, whatever ended it.
-      await this.storeSlotOutputs(records, context);
-      const requirementsReport = await this.requirementsReport(records, context, diagnostics);
-      return await this.assemble({ context, records, quorum, requirementsReport, policyDigest });
+      const conclude = (canceled: boolean, supersedes?: string) => this.conclude({ context, stageRecords: records, diagnostics, policyDigest, canceled, supersedes });
+      // A cancellation observed before the report is stored restarts the conclusion in canceled mode, so nothing built
+      // after it records a completed result.
+      const first = context.runSignal.aborted ? undefined : await conclude(false);
+      if (!first) return (await conclude(true))!;
+      if (!context.runSignal.aborted) return first;
+      // Canceled while the report was stored: a superseding report records the cancellation, and the run rejects.
+      const superseding = (await conclude(true, first.reportArtifact))!;
+      throw new ReviewFnError("REVIEWFN_CANCELED", "The panel run was canceled while its report was stored; a superseding report records the cancellation.", { reportArtifact: superseding.reportArtifact, supersededReportArtifact: first.reportArtifact });
     } finally {
       request.signal?.removeEventListener("abort", forwardAbort);
     }
@@ -266,6 +313,7 @@ export class PanelCoordinator {
     for (const slot of reviewSlots) {
       if (!this.lenses.has(slot.lens)) diagnostics.push({ code: "REVIEWFN_PANEL_LENS_UNKNOWN", level: "error", message: `Slot ${slot.id} uses lens ${slot.lens}, which is not registered.` });
       if (!harnesses.has(slot.harness.adapter)) diagnostics.push({ code: "REVIEWFN_PANEL_HARNESS_MISSING", level: "error", message: `Slot ${slot.id} uses harness ${slot.harness.adapter}, which is not installed.` });
+      else if (slot.harness.adapter !== request.config.harness.adapter && !nonblank(this.contractVersions.get(slot.harness.adapter))) diagnostics.push({ code: "REVIEWFN_PANEL_HARNESS_CONTRACT_UNKNOWN", level: "error", message: `Slot ${slot.id} uses harness ${slot.harness.adapter}, which differs from the configured harness; set its adapter contract version in harnessContractVersions.` });
       diagnostics.push(...harnessAuthDiagnostics(request, slot.harness.adapter, slot.inference.auth).map(item => ({ ...item, message: `Slot ${slot.id}: ${item.message}` })));
     }
     const verifiers = request.panelPolicy.slots.filter(slot => slot.stage === "verifier");
@@ -276,7 +324,7 @@ export class PanelCoordinator {
     const results = new Map<string, Promise<PreflightResult>>();
     for (const slot of reviewSlots) {
       const harness = harnesses.get(slot.harness.adapter);
-      if (!harness) continue;
+      if (!harness || (slot.harness.adapter !== request.config.harness.adapter && !nonblank(this.contractVersions.get(slot.harness.adapter)))) continue;
       const config = this.slotConfig(request.config, slot);
       const key = stableStringify({ adapter: slot.harness.adapter, harness: config.harness, inference: config.inference });
       let pending = results.get(key);
@@ -326,10 +374,24 @@ export class PanelCoordinator {
     const startedAt = now().toISOString();
     const baseIdentity = this.configuredIdentity(slot, context);
     const requirements = request.panelPolicy.requirementsSlot === slot.id;
-    const finish = (terminal: SlotRunTerminal, reasons: string[], output: SlotHarnessOutput, extra: Partial<SlotRun> = {}, promptDigest = "", transcriptArtifact?: string): SlotRecord => ({
-      slot, output: redactJson(output, context.secrets), reasons: reasons.map(reason => redactText(reason, context.secrets)), promptDigest, ...(transcriptArtifact ? { transcriptArtifact } : {}),
-      run: { slotId: slot.id, identity: baseIdentity, terminal, voidReasons: [], startedAt, finishedAt: now().toISOString(), ...extra },
-    });
+    // Every terminal path ends here, so the one void precedence applies to all of them: a resolved or served model other
+    // than the configured one voids the run, even one that ended before the harness ran (identity from preflight).
+    const finish = (terminal: SlotRunTerminal, reasons: string[], output: SlotHarnessOutput, extra: Partial<SlotRun> = {}, promptDigest = "", transcriptArtifact?: string): SlotRecord => {
+      const identity = extra.identity ?? baseIdentity;
+      const voidReasons = [...(extra.voidReasons ?? [])];
+      const allReasons = [...reasons];
+      if (slot.inference.model !== "configured" && identity.model !== slot.inference.model && !voidReasons.includes("model_mismatch")) {
+        voidReasons.unshift("model_mismatch");
+        allReasons.push(`Preflight resolved model ${identity.model}, not the configured ${slot.inference.model}.`);
+      }
+      // A clock that steps back never records a run finishing before it started.
+      const finished = now().toISOString();
+      const finishedAt = Date.parse(finished) < Date.parse(startedAt) ? startedAt : finished;
+      return {
+        slot, output: redactJson(output, context.secrets), reasons: allReasons.map(reason => redactText(reason, context.secrets)), promptDigest, ...(transcriptArtifact ? { transcriptArtifact } : {}),
+        run: { slotId: slot.id, ...extra, identity, terminal: voidReasons.length ? "void" : terminal, voidReasons, startedAt, finishedAt },
+      };
+    };
     if (context.runSignal.aborted) return finish("canceled", ["The panel run was canceled before the slot started."], emptyOutput("canceled", "The panel run was canceled before the slot started."));
     const stageBudget = `Stage ${slot.stage} exhausted its ${request.policy.limits.harnessTimeoutMs} ms budget`;
     if (deadline - Date.now() <= 0) return finish("timed_out", [`${stageBudget} before the slot started.`], emptyOutput("timed_out", "Stage budget exhausted."));
@@ -369,10 +431,8 @@ export class PanelCoordinator {
       else if (settled.error !== undefined) raw = emptyOutput(timedOut ? "timed_out" : context.runSignal.aborted ? "canceled" : "failed", message(settled.error));
       else raw = settled.value as SlotHarnessOutput;
       const observed: SlotObservation = raw && typeof raw === "object" && raw.observed && typeof raw.observed === "object" ? raw.observed : {};
-      // Everything the harness returned counts against its output budget, including events and the transcript.
-      let outputBytes = 0;
-      try { outputBytes = Buffer.byteLength(JSON.stringify(raw ?? null) ?? ""); }
-      catch { /* Unserializable output fails payload validation below. */ }
+      // The output limit applies per channel, as the harness enforces it: the structured payload must fit within it.
+      const payloadBytes = structuredPayloadBytes(raw);
       let output: SlotHarnessOutput = normalizeHarnessOutput(raw, { secrets: context.secrets, aborted: context.runSignal.aborted, payloadErrors: requirements ? undefined : payload => validateLensPayload({ findings: payload.findings, evidence: payload.evidence, inspectedPaths: payload.inspectedPaths, uninspected: payload.uninspected }) });
       // Only a harness terminal is taken from the harness; anything else (missing, unknown, or the panel's own `void` and
       // `collapsed`) makes the run malformed, with no findings, so it neither counts nor skips the panel's checks.
@@ -383,7 +443,9 @@ export class PanelCoordinator {
       }
       if (!requirements) output = { ...output, requirements: [], assessments: [] };
       if (timedOut && !context.runSignal.aborted) { output.terminal = "timed_out"; reasons.push(timeoutMs < slotLimit ? `${stageBudget} while the slot ran.` : `The slot exceeded its ${timeoutMs} ms timeout.`); }
-      else if (outputBytes > maxOutputBytes && output.terminal !== "canceled") { output.terminal = "timed_out"; reasons.push(`The slot output (${outputBytes} bytes) exceeded its ${maxOutputBytes}-byte limit.`); }
+      else if (payloadBytes > maxOutputBytes && output.terminal !== "canceled") { output.terminal = "timed_out"; reasons.push(`The slot's structured output (${payloadBytes} bytes) exceeded its ${maxOutputBytes}-byte limit.`); }
+      // The transcript and events are telemetry the harness bounds itself; the panel keeps at most the limit of each.
+      reasons.push(...boundTelemetry(output, maxOutputBytes));
       if (output.terminal !== "completed" && output.error) reasons.push(redactText(output.error, context.secrets));
       if (output.terminal === "malformed") reasons.push(...output.uninspected.map(item => `${item.scope}: ${item.reason}`));
       // The comparison has its own bound, whatever stage time is left, and stops on run cancellation. Only an observed
@@ -445,8 +507,35 @@ export class PanelCoordinator {
     return { unchanged: false, ...(typeof check.reason === "string" ? { reason: check.reason } : {}) };
   }
 
+  /**
+   * Turn the stage results into one stored panel report. Works on copies of `stageRecords`, so it can run again. Not in
+   * canceled mode, it returns undefined, storing no report, once it observes a cancellation. In canceled mode the report
+   * records the cancellation, and a completed requirements slot is canceled: its requirements report would otherwise
+   * record a completed execution after the run was canceled.
+   */
+  private async conclude(input: { context: RunContext; stageRecords: SlotRecord[]; diagnostics: PreflightDiagnostic[]; policyDigest: string; canceled: boolean; supersedes?: string }): Promise<PanelRunResult | undefined> {
+    const { context, canceled } = input;
+    const records = input.stageRecords.map(record => ({ ...record, run: structuredClone(record.run), reasons: [...record.reasons] }));
+    const cleanupErrors = [...context.cleanupErrors];
+    const interrupted = () => !canceled && context.runSignal.aborted;
+    if (canceled) {
+      const requirements = records.find(record => record.slot.id === context.request.panelPolicy.requirementsSlot);
+      if (requirements?.run.terminal === "completed") {
+        requirements.run.terminal = "canceled";
+        requirements.reasons.push("The panel run was canceled before the requirements report was recorded, so the requirements slot's result was not accepted.");
+      }
+    }
+    const quorum = collapseAndCount(records, context.request.panelPolicy);
+    // Every slot's outcome is stored once its final terminal (after collapse) is known, whatever ended it.
+    await this.storeSlotOutputs(records, context, cleanupErrors);
+    if (interrupted()) return undefined;
+    const requirementsReport = await this.requirementsReport(records, context, input.diagnostics);
+    if (interrupted()) return undefined;
+    return this.assemble({ context, records, quorum, requirementsReport, policyDigest: input.policyDigest, cleanupErrors, canceled, supersedes: input.supersedes });
+  }
+
   /** Store each slot's outcome (terminal, reasons, identity and output) and bind it to its run by digest. */
-  private async storeSlotOutputs(records: SlotRecord[], context: RunContext): Promise<void> {
+  private async storeSlotOutputs(records: SlotRecord[], context: RunContext, cleanupErrors: string[]): Promise<void> {
     for (const record of records) {
       const lens = this.lenses.get(record.slot.lens);
       const { output, run } = record;
@@ -464,7 +553,7 @@ export class PanelCoordinator {
       } catch (error) {
         const reason = `The output of slot ${record.slot.id} could not be stored: ${redactText(message(error), context.secrets)}`;
         record.reasons.push(reason);
-        context.cleanupErrors.push(reason);
+        cleanupErrors.push(reason);
       }
     }
   }
@@ -475,9 +564,9 @@ export class PanelCoordinator {
     const record = records.find(item => item.slot.id === slotId);
     if (!record) return { reasons: [] };
     const output = structuredClone(record.output) as HarnessOutput;
-    // A run that does not count (void, or a harness version other than the pinned one) never yields a completed report.
+    // A run that does not count (void, canceled, or a harness version other than the pinned one) never yields a completed report.
     if (!COUNTING.has(record.run.terminal)) {
-      if (output.terminal === "completed") output.terminal = "failed";
+      if (output.terminal === "completed") output.terminal = record.run.terminal === "canceled" ? "canceled" : "failed";
       output.error = `Requirements slot ${record.slot.id} is ${record.run.terminal}: ${record.reasons.join(" ")}`;
     }
     const config = this.slotConfig(context.request.config, record.slot);
@@ -522,7 +611,7 @@ export class PanelCoordinator {
       if (record.run.terminal !== "completed") continue;
       const candidates = slotCandidates(record);
       candidates.findings = candidates.findings.map(finding => ({ ...finding, requirementIds: [] }));
-      const excluded = await invalidCandidates(base, candidates, context.request, this.validationOptions(context));
+      const excluded = await invalidCandidates(base, records.indexOf(record), candidates, context.request, this.validationOptions(context));
       candidates.findings.forEach((finding, index) => {
         if (excluded.has(index)) return;
         const existing = merged.get(finding.fingerprint);
@@ -533,7 +622,7 @@ export class PanelCoordinator {
     return [...merged.values()];
   }
 
-  private async assemble(input: { context: RunContext; records: SlotRecord[]; quorum: PanelQuorumStatus[]; requirementsReport: { report?: ReviewReport; reasons: string[] }; policyDigest: string }): Promise<PanelRunResult> {
+  private async assemble(input: { context: RunContext; records: SlotRecord[]; quorum: PanelQuorumStatus[]; requirementsReport: { report?: ReviewReport; reasons: string[] }; policyDigest: string; cleanupErrors: string[]; canceled: boolean; supersedes?: string }): Promise<PanelRunResult | undefined> {
     const { context, records, quorum } = input;
     const { request, prepared } = context;
     const now = this.dependencies.now ?? (() => new Date());
@@ -542,7 +631,8 @@ export class PanelCoordinator {
       ...prepared.context.incompleteReasons,
       ...prepared.executionErrors,
       ...prepared.tests.filter(receipt => receipt.exitCode !== 0 || receipt.timedOut || receipt.canceled).map(receipt => `Test ${receipt.id} did not pass (exit ${String(receipt.exitCode)}).`),
-      ...(context.runSignal.aborted ? [CANCELED_REASON] : []),
+      ...(input.canceled || context.runSignal.aborted ? [CANCELED_REASON] : []),
+      ...(input.supersedes ? [`This report supersedes report ${input.supersedes}, which was stored before the cancellation was observed.`] : []),
       ...quorum.filter(item => !item.met).map(item => `${PANEL_QUORUM_UNMET}: stage ${item.stage} has ${item.completed} completed slot run(s) with distinct identities; its quorum is ${item.required}.`),
       ...input.requirementsReport.reasons,
     ];
@@ -553,7 +643,7 @@ export class PanelCoordinator {
     const contributing = records.filter(record => COUNTING.has(record.run.terminal));
     for (const record of contributing) {
       const candidates = slotCandidates(record);
-      const excluded = await invalidCandidates(base, candidates, request, options);
+      const excluded = await invalidCandidates(base, records.indexOf(record), candidates, request, options);
       for (const [index, reason] of excluded) coverageReasons.push(`Slot ${record.slot.id} finding "${candidates.findings[index].title}" was excluded: ${reason}`);
       candidates.findings.forEach((finding, index) => {
         if (excluded.has(index)) return;
@@ -591,14 +681,12 @@ export class PanelCoordinator {
     if (!contributing.length) coverageReasons.push("No slot completed, so nothing in the change was reviewed.");
     for (const record of contributing) coverageReasons.push(...record.output.uninspected.map(item => `Slot ${record.slot.id} did not inspect ${item.scope}: ${item.reason}`));
     if (uninspected.length) coverageReasons.push(`No completed slot inspected ${uninspected.slice(0, MAX_LISTED_PATHS).join(", ")}${uninspected.length > MAX_LISTED_PATHS ? ` and ${uninspected.length - MAX_LISTED_PATHS} more path(s)` : ""}.`);
-    coverageReasons.push(...context.cleanupErrors);
+    coverageReasons.push(...input.cleanupErrors);
     const report: PanelReport = { ...base, evidence: [...evidence.values()].filter(item => cited.has(item.id)), findings, coverage: "complete", coverageReasons: [] };
-    let validation = await settleReport(report, coverageReasons, request.policy, options);
-    // Cancellation is observed until the report is stored: an abort during validation still marks it incomplete.
-    if (context.runSignal.aborted && !report.coverageReasons.includes(CANCELED_REASON)) validation = await settleReport(report, [...report.coverageReasons, CANCELED_REASON], request.policy, options);
+    const validation = await settleReport(report, coverageReasons, request.policy, options);
+    // Cancellation is observed until the report is stored: one during validation restarts in canceled mode.
+    if (!input.canceled && context.runSignal.aborted) return undefined;
     const stored = await this.dependencies.artifacts.put(PANEL_REPORT_ARTIFACT_KIND, JSON.stringify(report, null, 2), prepared.retention.reportDays);
-    // An abort while the report was stored cannot change it, so the run reports the cancellation instead of a result.
-    if (context.runSignal.aborted && !report.coverageReasons.includes(CANCELED_REASON)) throw new ReviewFnError("REVIEWFN_CANCELED", "The panel run was canceled while its report was stored; the stored report does not record the cancellation.", { reportArtifact: stored.id });
     const slots = records.map(record => ({ slotId: record.slot.id, stage: record.slot.stage, terminal: record.run.terminal, reasons: record.reasons, admittedFindings: admitted.get(record.slot.id) ?? 0 }));
     return { report, reportArtifact: stored.id, slots, quorum, validation };
   }
@@ -661,11 +749,13 @@ async function settleReport(report: PanelReport, reasons: string[], policy: Revi
 
 /**
  * Indexes of a slot's findings that the panel contract rejects, each with its reasons. The slot's findings are validated
- * alone against the run's report so one slot's invalid finding never removes another slot's valid one. A structural
+ * alone against the run's report so one slot's invalid finding never removes another slot's valid one. An issue in a
+ * slot run belongs to that slot only: one in the slot's own run (`ownRun`, its index in `base.slotRuns`) excludes all of
+ * its findings, and one in another slot's run is that run's problem, reported by the final validation. A structural
  * issue stops the validator before its semantic checks, so the remaining findings are validated again without the
- * excluded ones; if the report itself fails a structural check, no finding of the slot can be shown valid.
+ * excluded ones; while the report fails any other structural check, no finding of the slot can be shown valid.
  */
-async function invalidCandidates(base: PanelReport, candidates: { findings: PanelFinding[]; evidence: Map<string, Evidence> }, request: PanelRunRequest, options: Parameters<typeof validatePanelReport>[2]): Promise<Map<number, string>> {
+async function invalidCandidates(base: PanelReport, ownRun: number, candidates: { findings: PanelFinding[]; evidence: Map<string, Evidence> }, request: PanelRunRequest, options: Parameters<typeof validatePanelReport>[2]): Promise<Map<number, string>> {
   const excluded = new Map<number, string>();
   const add = (index: number, reason: string) => excluded.set(index, excluded.has(index) ? `${excluded.get(index)}; ${reason}` : reason);
   for (;;) {
@@ -677,9 +767,15 @@ async function invalidCandidates(base: PanelReport, candidates: { findings: Pane
     const verdict = derivePanelVerdict(provisional, request.policy);
     if (verdict === undefined) delete provisional.verdict; else provisional.verdict = verdict;
     const validation = await validatePanelReport(provisional, request.policy, options);
+    // Structural issues are reported alone, without the semantic checks of any finding.
+    const structural = panelStructureIssues("panelReport", provisional).length > 0;
     const before = excluded.size;
     let unattributed: string | undefined;
+    let ownRunIssue: string | undefined;
     for (const issue of validation.issues) {
+      const runMatch = /^\/slotRuns\/(\d+)(?:\/|$)/.exec(issue.path);
+      if (runMatch && Number(runMatch[1]) === ownRun) { ownRunIssue ??= `${issue.path}: ${issue.message}`; continue; }
+      if (runMatch && !structural) continue;
       const findingMatch = /^\/findings\/(\d+)(?:\/|$)/.exec(issue.path);
       const target = findingMatch ? remaining[Number(findingMatch[1])] : undefined;
       if (target) { add(target.index, issue.message); continue; }
@@ -690,6 +786,10 @@ async function invalidCandidates(base: PanelReport, candidates: { findings: Pane
         continue;
       }
       if (issue.code === "REVIEWFN_PANEL_SCHEMA") unattributed ??= `${issue.path || "/"}: ${issue.message}`;
+    }
+    if (ownRunIssue) {
+      for (const item of remaining) add(item.index, `the slot's own run is invalid (${ownRunIssue})`);
+      return excluded;
     }
     if (excluded.size > before) continue;
     if (unattributed) for (const item of remaining) add(item.index, `the slot's findings could not be validated (${unattributed})`);

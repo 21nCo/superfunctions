@@ -370,7 +370,7 @@ describe("PanelCoordinator harness versions", () => {
     const harness = new FakePanelHarness({ reportedVersion: "fake-cli 2.0.1" });
     const other = new FakePanelHarness({ id: "other", version: "7", reportedVersion: "other-cli 3" });
     const panelPolicy = panel([slot("pinned", 1, undefined, { harness: { adapter: "fake", version: "fake-cli 2.0.1" } }), slot("foreign", 1, undefined, { harness: { adapter: "other", version: "other-cli 3" } }), slot("stale", 1, undefined, { harness: { adapter: "fake", version: "fake-cli 1.9" } })]);
-    const setup = coordinator(harness, { harnesses: [harness, other] });
+    const setup = coordinator(harness, { harnesses: [harness, other], harnessContractVersions: { other: "7" } });
     const result = await setup.coordinator.run(request(panelPolicy));
     expect(harness.preflights.map(item => item.harness.version)).toEqual(["1", "1"]);
     expect(other.preflights.map(item => item.harness.version)).toEqual(["7"]);
@@ -378,6 +378,32 @@ describe("PanelCoordinator harness versions", () => {
     expect(result.report.slotRuns.map(run => [run.slotId, run.terminal, run.identity.harnessVersion])).toEqual([["pinned", "completed", "fake-cli 2.0.1"], ["foreign", "completed", "other-cli 3"], ["stale", "failed", "fake-cli 2.0.1"]]);
     expect(result.slots[2].reasons.join()).toMatch(/reported version fake-cli 2\.0\.1, not the pinned fake-cli 1\.9/);
     await expectValid(result, setup, panelPolicy);
+  });
+
+  it("never takes a contract version from capabilities.version, which a preflight may have overwritten", async () => {
+    // Like Codex: every successful preflight overwrites capabilities.version with the executable's version.
+    const harness = new FakePanelHarness({ reportedVersion: "fake-cli 2.0.1", overwriteVersionOnPreflight: true });
+    const other = new FakePanelHarness({ id: "other", version: "7", reportedVersion: "other-cli 3", overwriteVersionOnPreflight: true });
+    await other.preflight({ ...config, harness: { adapter: "other", version: "7" } });
+    await harness.preflight(config);
+    expect([harness.capabilities.version, other.capabilities.version]).toEqual(["fake-cli 2.0.1", "other-cli 3"]);
+    const panelPolicy = panel([slot("pinned", 1, undefined, { harness: { adapter: "fake", version: "fake-cli 2.0.1" } }), slot("foreign", 1, undefined, { harness: { adapter: "other", version: "other-cli 3" } })]);
+    // Without an explicit contract version for the foreign adapter, the run refuses to start.
+    const refused = coordinator(harness, { harnesses: [harness, other] });
+    await expect(refused.coordinator.run(request(panelPolicy))).rejects.toMatchObject({ code: "REVIEWFN_PREFLIGHT_FAILED", details: { diagnostics: [expect.objectContaining({ code: "REVIEWFN_PANEL_HARNESS_CONTRACT_UNKNOWN" })] } });
+    const setup = coordinator(harness, { harnesses: [harness, other], harnessContractVersions: { other: "7" } });
+    const result = await setup.coordinator.run(request(panelPolicy));
+    expect([harness.input("pinned").configuration.harness.version, other.input("foreign").configuration.harness.version]).toEqual(["1", "7"]);
+    expect(result.report.slotRuns.map(run => run.terminal)).toEqual(["completed", "completed"]);
+    await expectValid(result, setup, panelPolicy);
+  });
+
+  it("refuses a foreign adapter without an explicit contract version, even when capabilities.version is untouched", async () => {
+    const harness = new FakePanelHarness();
+    const other = new FakePanelHarness({ id: "other", version: "7" });
+    const panelPolicy = panel([slot("foreign", 1, undefined, { harness: { adapter: "other", version: "7" } })]);
+    await expect(coordinator(harness, { harnesses: [harness, other] }).coordinator.run(request(panelPolicy))).rejects.toMatchObject({ code: "REVIEWFN_PREFLIGHT_FAILED" });
+    expect(other.preflights).toEqual([]);
   });
 });
 
@@ -454,13 +480,34 @@ describe("PanelCoordinator budget bounds", () => {
     await expectValid(result, setup, panelPolicy);
   });
 
-  it("counts events and the transcript against the slot's output budget", async () => {
-    const harness = new FakePanelHarness({ behaviors: { chatty: () => slotOutput({ inspectedPaths: ["src/value.ts", "src/other.ts"], events: Array.from({ length: 50 }, (_, index) => ({ type: "progress", message: `step ${index} ${"x".repeat(40)}` })) as SlotHarnessOutput["events"] }), verbose: () => ({ ...clean(), transcript: "y".repeat(5_000) }), quiet: clean } });
+  it("applies the output limit per channel, as the harness enforces it, and bounds the stored telemetry", async () => {
+    const events = (count: number) => Array.from({ length: count }, (_, index) => ({ type: "progress", message: `step ${index} ${"x".repeat(40)}` })) as SlotHarnessOutput["events"];
+    const sized = () => slotOutput({ inspectedPaths: ["src/value.ts", "src/other.ts"], uninspected: [], evidence: [evidence()], findings: [finding("Padded ".padEnd(400, "p"))] });
+    const harness = new FakePanelHarness({ behaviors: {
+      // Payload, transcript and events each within 2,000 bytes; together well over it.
+      within: () => ({ ...sized(), transcript: "y".repeat(1_900), events: events(20) }),
+      // Transcript and events over the limit: kept completed, stored bounded with reasons.
+      verbose: () => ({ ...clean(), transcript: "z".repeat(5_000), events: events(60) }),
+      // The structured payload alone is over the limit.
+      oversized: () => slotOutput({ inspectedPaths: ["src/value.ts", "src/other.ts", ...Array.from({ length: 200 }, (_, index) => `src/generated/${index}.ts`)] }),
+    } });
     const budget = { timeoutMs: 60_000, maxOutputBytes: 2_000 };
-    const panelPolicy = panel([slot("chatty", 1, undefined, { budget }), slot("verbose", 1, undefined, { budget }), slot("quiet", 1, undefined, { budget })]);
-    const result = await coordinator(harness).coordinator.run(request(panelPolicy));
-    expect(result.report.slotRuns.map(run => run.terminal)).toEqual(["timed_out", "timed_out", "completed"]);
-    expect(result.slots[0].reasons.join()).toMatch(/exceeded its 2000-byte limit/);
+    const panelPolicy = panel([slot("within", 1, undefined, { budget }), slot("verbose", 1, undefined, { budget }), slot("oversized", 1, undefined, { budget })]);
+    const setup = coordinator(harness);
+    const result = await setup.coordinator.run(request(panelPolicy, { config: { ...config, retainTranscript: true } }));
+    expect(result.report.slotRuns.map(run => run.terminal)).toEqual(["completed", "completed", "timed_out"]);
+    expect(result.slots[0].reasons).toEqual([]);
+    expect(result.report.findings.map(item => item.origins[0].slotId)).toEqual(["within"]);
+    expect(result.slots[1].reasons.join("\n")).toMatch(/transcript \(5000 bytes\) exceeded its 2000-byte limit/);
+    expect(result.slots[1].reasons.join("\n")).toMatch(/60 events, more than its 2000-byte limit holds/);
+    expect(result.slots[2].reasons.join()).toMatch(/structured output \(\d+ bytes\) exceeded its 2000-byte limit/);
+    const verbose = await slotDocument(setup, result.report.slotRuns[1].outputArtifact);
+    const kept = (verbose.output as { events: unknown[] }).events;
+    expect(kept.length).toBeGreaterThan(0);
+    expect(Buffer.byteLength(JSON.stringify(kept))).toBeLessThanOrEqual(2_000);
+    const transcript = Buffer.from((await setup.artifacts.get(verbose.redactedTranscriptArtifact as string))!).toString("utf8");
+    expect(transcript).toBe("z".repeat(2_000));
+    await expectValid(result, setup, panelPolicy);
   });
 });
 
@@ -581,5 +628,105 @@ describe("PanelCoordinator admitted findings", () => {
     expect(result.report.findings.map(item => item.title)).toEqual(["Severe"]);
     expect(result.slots[0].admittedFindings).toBe(1);
     expect(result.report.coverageReasons.join("\n")).toMatch(/more than maxFindings \(1\); 1 lower-severity/);
+  });
+});
+
+describe("PanelCoordinator run-level issues stay with their slot", () => {
+  /** Checkouts for `failing` slots cannot be created. */
+  function brokenCheckouts(...failing: string[]) {
+    return (options: ConstructorParameters<typeof GitSlotWorkspaceProvider>[0]) => {
+      const real = new GitSlotWorkspaceProvider(options);
+      return { create: async (slotId: string, signal?: AbortSignal) => { if (failing.includes(slotId)) throw new Error("disk full"); return real.create(slotId, signal); } };
+    };
+  }
+  // Preflight resolves another model than slot broken configures.
+  const drifting = (behaviors: ConstructorParameters<typeof FakePanelHarness>[0]["behaviors"] = {}) => new FakePanelHarness({ behaviors, resolveModel: item => item.inference.model === "model-broken" ? "drifted" : item.inference.model });
+
+  it("voids an early-exit run whose preflight resolved another model, and keeps the other slots' findings", async () => {
+    const harness = drifting({ fine: reporting("Real bug") });
+    const panelPolicy = panel([slot("broken", 1), slot("fine", 1)]);
+    const setup = coordinator(harness, { workspaces: brokenCheckouts("broken") });
+    const result = await setup.coordinator.run(request(panelPolicy));
+    expect(result.report.slotRuns.map(run => [run.slotId, run.terminal, run.voidReasons, run.identity.model])).toEqual([["broken", "void", ["model_mismatch"], "drifted"], ["fine", "completed", [], "model-fine"]]);
+    expect(result.slots[0].reasons).toEqual(["The slot checkout could not be created: disk full", "Preflight resolved model drifted, not the configured model-broken."]);
+    expect(result.report.findings.map(item => item.title)).toEqual(["Real bug"]);
+    expect(result.report.coverageReasons.join("\n")).not.toMatch(/excluded/);
+    await expectValid(result, setup, panelPolicy);
+  });
+
+  it("gives stage 2 the stage-1 findings of a sibling of an early-exit run, and voids a canceled one alike", async () => {
+    const controller = new AbortController();
+    const harness = drifting({ fine: reporting("Real bug"), stop: () => { controller.abort(); return clean(); } });
+    // broken fails before its harness runs; stage 2 then sees fine's finding. The second run cancels before broken starts.
+    const panelPolicy = panel([slot("broken", 1), slot("fine", 1), slot("second", 2)], { maxConcurrentSlots: 1 });
+    const setup = coordinator(harness, { workspaces: brokenCheckouts("broken") });
+    const result = await setup.coordinator.run(request(panelPolicy));
+    expect(harness.input("second").prompt).toContain("Real bug");
+    expect(result.report.findings.map(item => item.title)).toEqual(["Real bug"]);
+    await expectValid(result, setup, panelPolicy);
+
+    const canceledPolicy = panel([slot("stop", 1), slot("broken", 1), slot("fine", 2)], { maxConcurrentSlots: 1 });
+    const canceled = coordinator(drifting({ stop: () => { controller.abort(); return clean(); } }));
+    const outcome = await canceled.coordinator.run(request(canceledPolicy, { signal: controller.signal }));
+    expect(outcome.report.slotRuns.map(run => [run.slotId, run.terminal, run.voidReasons])).toEqual([["stop", "canceled", []], ["broken", "void", ["model_mismatch"]], ["fine", "canceled", []]]);
+    await expectValid(outcome, canceled, canceledPolicy);
+  });
+
+  it("never records a run finishing before it started when the clock steps back", async () => {
+    let tick = Date.parse("2026-06-01T00:00:00.000Z");
+    const now = () => new Date(tick -= 1_000);
+    const harness = new FakePanelHarness({ behaviors: { a: reporting("Wrong value") } });
+    const panelPolicy = panel([slot("a", 1)]);
+    const setup = coordinator(harness, { now });
+    const result = await setup.coordinator.run(request(panelPolicy));
+    const [run] = result.report.slotRuns;
+    expect(Date.parse(run.finishedAt)).toBeGreaterThanOrEqual(Date.parse(run.startedAt));
+    expect(result.report.findings.map(item => item.title)).toEqual(["Wrong value"]);
+    await expectValid(result, setup, panelPolicy);
+  });
+});
+
+describe("PanelCoordinator cancellation and the requirements report", () => {
+  const panelPolicy = panel([slot("r", 1)], { requirementsSlot: "r" });
+
+  it("supersedes a report stored while the run was canceled, and names the superseding report", async () => {
+    const controller = new AbortController();
+    const harness = new FakePanelHarness({ behaviors: { r: () => requirementsHarnessOutput() } });
+    const setup = coordinator(harness);
+    const put = setup.artifacts.put.bind(setup.artifacts);
+    let reports = 0;
+    setup.artifacts.put = async (kind, content) => { const stored = await put(kind, content); if (kind === "panel-report" && ++reports === 1) controller.abort(); return stored; };
+    const error = await setup.coordinator.run(request(panelPolicy, { signal: controller.signal })).catch((caught: unknown) => caught) as { code: string; details: { reportArtifact: string; supersededReportArtifact: string } };
+    expect(error.code).toBe("REVIEWFN_CANCELED");
+    const read = async (id: string) => JSON.parse(Buffer.from((await setup.artifacts.get(id))!).toString("utf8"));
+    // The first report would have been ready; the one the error names records the cancellation instead.
+    const superseded = await read(error.details.supersededReportArtifact);
+    expect([superseded.verdict, superseded.requirementsReport.execution]).toEqual(["ready", "completed"]);
+    const report = await read(error.details.reportArtifact);
+    expect(error.details.reportArtifact).not.toBe(error.details.supersededReportArtifact);
+    expect(report.coverage).toBe("incomplete");
+    expect(report.coverageReasons).toEqual(expect.arrayContaining(["The panel run was canceled.", `This report supersedes report ${error.details.supersededReportArtifact}, which was stored before the cancellation was observed.`]));
+    expect(report.verdict).not.toBe("ready");
+    expect(report.slotRuns[0].terminal).toBe("canceled");
+    expect(report.requirementsReport.execution).toBe("canceled");
+    expect(report.requirementsReport.verdict).not.toBe("ready");
+    const contextKey = [...setup.artifacts.values.keys()].find(key => key.startsWith("context-manifest-"))!;
+    const context = await read(contextKey);
+    expect((await validatePanelReport(report, policy, { sourceControl: setup.source, root: repo, context, artifacts: setup.artifacts, panelPolicy })).issues).toEqual([]);
+  });
+
+  it("never builds a completed requirements report after a cancellation that arrives once every slot finished", async () => {
+    const controller = new AbortController();
+    const harness = new FakePanelHarness({ behaviors: { r: () => requirementsHarnessOutput() } });
+    const setup = coordinator(harness);
+    const put = setup.artifacts.put.bind(setup.artifacts);
+    setup.artifacts.put = async (kind, content) => { if (kind === "panel-slot-output") controller.abort(); return put(kind, content); };
+    const result = await setup.coordinator.run(request(panelPolicy, { signal: controller.signal }));
+    expect(result.report.coverageReasons).toContain("The panel run was canceled.");
+    expect(result.report.verdict).not.toBe("ready");
+    expect(result.report.requirementsReport?.execution).toBe("canceled");
+    expect(result.slots[0].reasons.join()).toMatch(/canceled before the requirements report was recorded/);
+    expect([...setup.artifacts.values.keys()].filter(key => key.startsWith("panel-report-"))).toEqual([result.reportArtifact]);
+    await expectValid(result, setup, panelPolicy);
   });
 });
