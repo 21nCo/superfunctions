@@ -109,15 +109,17 @@ export function authenticateClient(
   params: Map<string, string>
 ): OAuthProviderClient {
   const basic = readBasicCredentials(request);
+  // Any Authorization header is an attempt to authenticate with it (RFC 6749 5.2).
+  const viaHeader = request.headers.has('authorization');
   const bodyId = params.get('client_id');
   const clientId = basic?.clientId ?? bodyId;
   if (!clientId || (basic && bodyId !== undefined && bodyId !== basic.clientId)) {
-    throw invalidClient(basic !== null);
+    throw invalidClient(viaHeader);
   }
 
   const client = runtime.findClient(clientId);
   if (!client) {
-    throw invalidClient(basic !== null);
+    throw invalidClient(viaHeader);
   }
 
   const method = clientAuthMethod(client);
@@ -131,10 +133,10 @@ export function authenticateClient(
     ? params.has('client_secret')
     : basic !== null || (method === 'none' && params.has('client_secret'));
   if (sentOtherCredential) {
-    throw invalidClient(basic !== null);
+    throw invalidClient(viaHeader);
   }
   if (method !== 'none' && (!presented || !client.clientSecret || !secretsEqual(presented, client.clientSecret))) {
-    throw invalidClient(basic !== null);
+    throw invalidClient(viaHeader);
   }
 
   return client;

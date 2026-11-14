@@ -279,9 +279,11 @@ describe('revocation (RFC 7009)', () => {
       headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers },
       body: new URLSearchParams({ token: issued.access_token, ...form })
     });
-    const basic = await revoke({ authorization: `Basic ${btoa(`${RFC6749_CLIENT.clientId}:nope`)}` });
-    expect(basic.status).toBe(401);
-    expect(basic.headers.get('www-authenticate')).toContain('Basic');
+    for (const authorization of [`Basic ${btoa(`${RFC6749_CLIENT.clientId}:nope`)}`, 'Basic']) {
+      const basic = await revoke({ authorization }, { client_id: RFC6749_CLIENT.clientId });
+      expect(basic.status).toBe(401);
+      expect(basic.headers.get('www-authenticate')).toContain('Basic');
+    }
     for (const response of [await revoke({}), await revoke({}, { client_id: RFC6749_CLIENT.clientId, client_secret: 'nope' })]) {
       expect(response.status).toBe(400);
       expect(response.headers.get('www-authenticate')).toBeNull();

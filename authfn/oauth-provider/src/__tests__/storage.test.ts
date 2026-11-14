@@ -73,6 +73,21 @@ describe.each([['memory', false], ['SQL', true]])('token issuance failure (%s)',
     }
   );
 
+  it('a failed read after a reuse revocation leaves the grant revoked', async () => {
+    const provider = await setupProvider({ sql });
+    const issued = await provider.obtainTokens();
+    const next = await (await provider.refresh(issued.refresh_token)).json() as Tokens;
+    // Reusing the spent refresh token revokes the grant; its read-back fails.
+    provider.control.failNext('oauth_provider_grants', () => true, 'findOne');
+    expect((await provider.refresh(issued.refresh_token)).status).toBe(500);
+    expect((await provider.introspect(next.access_token)).body).toEqual({ active: false });
+    const grants = await provider.database.findMany<{ revokedAt: Date | null; updatedAt: Date | null }>({
+      model: 'oauth_provider_grants',
+      namespace: 'authfn'
+    });
+    expect(grants).toEqual([expect.objectContaining({ revokedAt: expect.any(Date), updatedAt: expect.any(Date) })]);
+  });
+
   it.each(['access', 'refresh'])('a failed %s token write leaves the refresh token redeemable once', async (kind) => {
     const provider = await setupProvider({ sql });
     const issued = await provider.obtainTokens();

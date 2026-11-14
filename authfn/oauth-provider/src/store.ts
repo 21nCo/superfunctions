@@ -166,14 +166,16 @@ export interface OAuthClaim {
  * back: the caller whose claim ID is stored won. Exactly one concurrent caller
  * wins; that is the single-use guarantee for codes and refresh tokens. The
  * adapter's affected-row count is never consulted, because adapters do not
- * all report it reliably.
+ * all report it reliably. Only a `releasable` claim (spending a code or
+ * refresh token) is undone when its read-back fails; a revocation never is.
  */
 async function claimIfUnset(
   store: OAuthStore,
   model: Model,
   id: string,
   unset: string[],
-  data: Record<string, unknown>
+  data: Record<string, unknown>,
+  releasable = true
 ): Promise<OAuthClaim | null> {
   const claimId = createIdentifier('ocl');
   const reset = Object.fromEntries([...Object.keys(data), 'claimId'].map((field) => [field, null]));
@@ -188,7 +190,8 @@ async function claimIfUnset(
     }
   };
   await store.database.updateMany({ model, where: whereId(id, unset), data: { ...data, claimId }, namespace: namespace(store) });
-  const row = await releaseOnFailure(claim, () => findBy<{ claimId?: string | null }>(store, model, 'id', id));
+  const readBack = () => findBy<{ claimId?: string | null }>(store, model, 'id', id);
+  const row = releasable ? await releaseOnFailure(claim, readBack) : await readBack();
   return row?.claimId === claimId ? claim : null;
 }
 
@@ -264,7 +267,7 @@ export function findGrant(store: OAuthStore, grantId: string): Promise<OAuthGran
  */
 export async function revokeGrant(store: OAuthStore, grantId: string, reason: string, now: Date): Promise<boolean> {
   const data = { revokedAt: now, revokedReason: reason, updatedAt: now };
-  return (await claimIfUnset(store, MODELS.grants, grantId, ['revokedAt'], data)) !== null;
+  return (await claimIfUnset(store, MODELS.grants, grantId, ['revokedAt'], data, false)) !== null;
 }
 
 export interface IssuedTokens {
