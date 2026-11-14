@@ -54,6 +54,8 @@ interface ReservationRecord extends FileIdOwner {
   /** How many inits, or running completion calls, rely on it. */
   size: number;
   expiresAt: string;
+  /** Random, and new on every change, so a compare-and-set sees any change since its read. */
+  idempotencyPayloadHash: string;
 }
 
 /** Whether `owner` is the named principal (in the same tenant) that `record` names. */
@@ -110,12 +112,32 @@ export function createFileIdReservations(config: { db: Adapter; namespace: strin
     return !!reservation && holdsReservation(reservation, claimant) && !isLapsed(reservation);
   }
 
+  /** Matches `reservation` only as it was read. */
   function where(fileId: string, reservation: ReservationRecord) {
     return [
       { field: 'uploadSessionId', operator: 'eq' as const, value: fileIdReservationId(fileId) },
       { field: 'storageKey', operator: 'eq' as const, value: reservation.storageKey },
-      { field: 'size', operator: 'eq' as const, value: reservation.size },
+      { field: 'idempotencyPayloadHash', operator: 'eq' as const, value: reservation.idempotencyPayloadHash },
     ];
+  }
+
+  const newStamp = () => randomBytes(12).toString('hex');
+
+  // Some adapters report no affected-row count (0), so a 0 is checked by
+  // reading the row back: the update applied if the row carries its stamp,
+  // and the delete applied if the row (its token is never reused) is gone.
+
+  /** Updates `reservation` as it was read; reports whether it did. */
+  async function swap(fileId: string, reservation: ReservationRecord, data: Partial<ReservationRecord>): Promise<boolean> {
+    const stamp = newStamp();
+    const changed = await db.updateMany({ model: 'uploadSessions', where: where(fileId, reservation), data: { ...data, idempotencyPayloadHash: stamp }, namespace });
+    return changed > 0 || (await find(fileId))?.idempotencyPayloadHash === stamp;
+  }
+
+  /** Deletes `reservation` as it was read; reports whether it is gone. */
+  async function remove(fileId: string, reservation: ReservationRecord): Promise<boolean> {
+    const changed = await db.deleteMany({ model: 'uploadSessions', where: where(fileId, reservation), namespace });
+    return changed > 0 || (await find(fileId))?.storageKey !== reservation.storageKey;
   }
 
   function insert(fileId: string, claimant: FileIdClaimant, policy: string, token: string, expiresAt: string) {
@@ -138,7 +160,7 @@ export function createFileIdReservations(config: { db: Adapter; namespace: strin
         tenantId: claimant.tenantId,
         metadata: null,
         idempotencyKey: null,
-        idempotencyPayloadHash: null,
+        idempotencyPayloadHash: newStamp(),
         completionVersionId: null,
         uploadSessionToken: null,
         uploadSessionTokenHash: null,
@@ -171,13 +193,10 @@ export function createFileIdReservations(config: { db: Adapter; namespace: strin
       for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
         const existing = await find(fileId);
         if (existing && isLapsed(existing)) {
-          await db.deleteMany({ model: 'uploadSessions', where: where(fileId, existing), namespace });
+          await remove(fileId, existing);
         } else if (existing) {
           if (!holdsReservation(existing, claimant)) return { held: false, token: null };
-          const data = { size: existing.size + 1, expiresAt };
-          if ((await db.updateMany({ model: 'uploadSessions', where: where(fileId, existing), data, namespace })) > 0) {
-            return { held: true, token: existing.storageKey };
-          }
+          if (await swap(fileId, existing, { size: existing.size + 1, expiresAt })) return { held: true, token: existing.storageKey };
         } else {
           const token = `${fileIdReservationId(fileId)}/${randomBytes(12).toString('hex')}`;
           try {
@@ -201,10 +220,10 @@ export function createFileIdReservations(config: { db: Adapter; namespace: strin
       for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
         const reservation = await find(fileId);
         if (reservation?.storageKey !== token) return;
-        const changed = reservation.size > 1
-          ? await db.updateMany({ model: 'uploadSessions', where: where(fileId, reservation), data: { size: reservation.size - 1 }, namespace })
-          : await db.deleteMany({ model: 'uploadSessions', where: where(fileId, reservation), namespace });
-        if (changed > 0) return;
+        const done = reservation.size > 1
+          ? await swap(fileId, reservation, { size: reservation.size - 1 })
+          : await remove(fileId, reservation);
+        if (done) return;
       }
     },
 

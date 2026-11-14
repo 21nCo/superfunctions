@@ -39,8 +39,8 @@ function hold(): Hold & { wait: Promise<void>; arrive: () => void } {
  * `uploadSessions.uploadSessionId` the way Postgres does. `holdNext` parks the
  * next matching operation before it runs.
  */
-function createDb(options: { enforceUnique?: boolean } = {}) {
-  const { enforceUnique = true } = options;
+function createDb(options: { enforceUnique?: boolean; reportsCounts?: boolean } = {}) {
+  const { enforceUnique = true, reportsCounts = true } = options;
   const tables = new Map<string, Row[]>();
   const holds: Array<{ op: Op; model: string; when: (params: any) => boolean; h: ReturnType<typeof hold> }> = [];
 
@@ -110,14 +110,14 @@ function createDb(options: { enforceUnique?: boolean } = {}) {
       const rows = table(params.model);
       const kept = rows.filter((row) => !match(row, params.where));
       tables.set(params.model, kept);
-      return rows.length - kept.length;
+      return reportsCounts ? rows.length - kept.length : 0;
     },
     async createMany() { return []; },
     async updateMany(params: any) {
       await gate('updateMany', params);
       const rows = table(params.model).filter((row) => match(row, params.where));
       for (const row of rows) Object.assign(row, params.data);
-      return rows.length;
+      return reportsCounts ? rows.length : 0;
     },
     async upsert() { throw new Error('not used'); },
     async count() { return 0; },
@@ -183,11 +183,13 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
     anonymous?: boolean;
     /** Runs on the shipped memory adapter, which enforces no unique keys. */
     shippedMemory?: boolean;
+    /** Runs on an adapter whose updateMany and deleteMany report 0 rows, as Kysely's do. */
+    noCounts?: boolean;
     quotaAllowed?: boolean;
     failMultipartInit?: boolean;
   } = {}) {
     const { layout = 'default', mode = 'multipart', anonymous = false } = options;
-    db = createDb();
+    db = createDb({ reportsCounts: !options.noCounts });
     database = options.shippedMemory ? memoryAdapter() : db.adapter;
     objects = new Map();
     publishedUploads = [];
@@ -1200,10 +1202,62 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
     const res = await init('user_a', { fileId });
     const uploadSessionId = res.body.data.uploadSessionId;
     const part = await call('POST', `/upload/${uploadSessionId}/parts/1/complete`, 'user_a', { etag: 'etag-x', size: 3 });
-    expect(part.status).toBeGreaterThanOrEqual(400);
+    expect(part.status).toBe(409);
+    expect(part.body.error.code).toBe('FILEFN_UPLOAD_INCOMPLETE');
     expect(db.rows('uploadParts').filter((row) => row.uploadSessionId === uploadSessionId)).toHaveLength(0);
     expect((await call('POST', `/upload/${uploadSessionId}/abort`, 'user_a')).status).toBe(200);
     expect(objects.get(legacyKey)).toBe('LEGACY');
+  });
+
+  it('settles reliance on an adapter that reports no affected-row counts', async () => {
+    build({ anonymous: true, noCounts: true });
+    const fileId = 'file_no_row_counts1';
+    const [one, two] = [await initAndUpload('user_a', fileId), await initAndUpload('user_a', fileId)];
+    expect(reservationRow(fileId)).toMatchObject({ ownerId: 'user_a', size: 2 });
+    expect((await init('user_b', { fileId })).status).toBe(403);
+    expect((await complete('user_a', one)).status).toBe(200);
+    expect((await complete('user_a', two)).status).toBe(200);
+
+    beforeMultipartInit = async () => { throw new Error('storage unavailable'); };
+    expect((await init('user_a', { fileId: 'file_no_row_counts2' })).status).toBe(500);
+    expect(reservationRow('file_no_row_counts2')).toBeUndefined();
+    beforeMultipartInit = null;
+
+    const anonId = 'file_no_row_counts3';
+    const token = { 'x-upload-session-token': '' };
+    const anon = await init('', { fileId: anonId });
+    token['x-upload-session-token'] = anon.body.data.uploadSessionToken;
+    await call('POST', `/upload/${anon.body.data.uploadSessionId}/parts/1/complete`, '', { etag: 'etag-anon', size: 3 }, token);
+    failNextPublish = true;
+    expect((await call('POST', `/upload/${anon.body.data.uploadSessionId}/complete`, '', undefined, token)).status).toBe(500);
+    expect(reservationRow(anonId)).toBeUndefined();
+  });
+
+  it('never lets a takeover of a lapsed claim remove a claim renewed since it was read', async () => {
+    build({ anonymous: true });
+    const fileId = 'file_claim_renewed01';
+    const res = await init('', { fileId });
+    const session = sessionRow(res.body.data.uploadSessionId);
+    const store = createFileIdReservations({ db: db.adapter, namespace: 'filefn' });
+    const running = await store.acquire(fileId, session as any, 'capture');
+    const isClaim = (params: any) => params.where?.[0]?.value === fileIdReservationId(fileId);
+
+    // A sibling call renews the claim but is held before its write lands.
+    const renewing = db.holdNext('updateMany', 'uploadSessions', isClaim);
+    const sibling = store.acquire(fileId, session as any, 'capture');
+    await renewing.reached;
+    // Meanwhile the lease runs out, and a named init reads the lapsed claim.
+    reservationRow(fileId)!.expiresAt = new Date(Date.now() - 1000).toISOString();
+    const takingOver = db.holdNext('deleteMany', 'uploadSessions', isClaim);
+    const taker = init('user_a', { fileId });
+    await takingOver.reached;
+    renewing.release();
+    expect((await sibling).held).toBe(true);
+    await store.drop(fileId, running.token!);
+    takingOver.release();
+
+    expect((await taker).status).toBe(403);
+    expect(reservationRow(fileId)).toMatchObject({ storageUploadId: session.uploadSessionId, size: 1 });
   });
 
   it('settles one reservation owner even on an adapter that does not enforce the unique key', async () => {

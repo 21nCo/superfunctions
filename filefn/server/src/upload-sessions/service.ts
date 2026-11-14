@@ -859,8 +859,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       }
       // A proxy part is recorded when its bytes are uploaded through the
       // server (uploadPartBytes), under a key scoped to its session; it may
-      // only be confirmed here.
-      if (session.uploadMode === 'proxy') throw errors.noSupportedUploadMode();
+      // only be confirmed here: until then the upload is incomplete (409).
+      if (session.uploadMode === 'proxy') throw errors.uploadIncomplete();
 
       await db.create({
         model: 'uploadParts',

@@ -184,7 +184,7 @@ describe('Offline Client', () => {
     const file = new File(['content'], 'test.txt', { type: 'text/plain' });
 
     for (const fileId of ['not-a-file-id', 'file_short', '']) {
-      expect(() => client.uploadFile({ policy: 'p', file, fileId })).toThrow(/FILEFN_INVALID_FILE_ID/);
+      expect(() => client.uploadFile({ policy: 'p', file, fileId })).toThrow(expect.objectContaining({ code: 'FILEFN_INVALID_FILE_ID' }));
     }
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(stagedUploads.size).toBe(0);
