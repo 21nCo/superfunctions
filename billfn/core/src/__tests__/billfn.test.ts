@@ -204,7 +204,7 @@ function createMockProvider(provider: 'dodo' | 'apple'): BillFnProviderAdapter {
 describe('@billfn/core', () => {
   it('keeps schema model names logical for custom namespaces and enforces provider reference uniqueness', () => {
     const schema = getSchema({ namespace: 'custom_billfn' });
-    expect(schema.version).toBe(3);
+    expect(schema.version).toBe(4);
     expect(schema.schemas.map((table) => table.modelName)).toContain('subscriptions');
     expect(schema.schemas.some((table) => table.modelName.startsWith('custom_billfn_'))).toBe(false);
     const subscriptions = schema.schemas.find((table) => table.modelName === 'subscriptions');
@@ -214,8 +214,23 @@ describe('@billfn/core', () => {
     expect(subscriptions?.indexes?.find(
       (index) => index.fields.join(',') === 'provider,providerChargeId'
     )?.unique).toBe(true);
+    expect(subscriptions?.fields.replacedReferencesPending).toEqual({ type: 'boolean', required: false });
+    expect(subscriptions?.indexes?.some(
+      (index) => index.fields.join(',') === 'provider,replacedReferencesPending'
+    )).toBe(true);
     const receipts = schema.schemas.find((table) => table.modelName === 'webhookReceipts');
     expect(receipts?.fields.processingClaimedAt).toEqual({ type: 'string', required: false });
+    const unlinked = schema.schemas.find((table) => table.modelName === 'unlinkedWebhookEvents');
+    expect(unlinked?.indexes?.find(
+      (index) => index.fields.join(',') === 'provider,providerEventId'
+    )?.unique).toBe(true);
+    expect(unlinked?.indexes?.some(
+      (index) => index.fields.join(',') === 'provider,providerReference,status'
+    )).toBe(true);
+    const replaced = schema.schemas.find((table) => table.modelName === 'replacedProviderReferences');
+    expect(replaced?.indexes?.find(
+      (index) => index.fields.join(',') === 'provider,providerReference'
+    )?.unique).toBe(true);
   });
 
   it('creates, verifies, and reads entitlements for a Dodo checkout', async () => {
@@ -614,7 +629,9 @@ describe('@billfn/core', () => {
       catalog,
       providers: {
         dodo: provider
-      }
+      },
+      // The checkout is verified before the renewal event occurs.
+      now: () => new Date('2026-05-01T00:00:00.000Z')
     });
 
     const created = await billfn.createCheckout({
@@ -1148,7 +1165,9 @@ describe('@billfn/core', () => {
     const billfn = createBillFn({
       db: racingDb,
       catalog,
-      providers: { dodo: provider }
+      providers: { dodo: provider },
+      // The checkout is verified before any of the provider events below occur.
+      now: () => new Date('2026-05-01T00:00:00.000Z')
     });
     const created = await billfn.createCheckout({
       subject: { principalId: 'out_of_order_user' },
@@ -1314,7 +1333,18 @@ describe('@billfn/core', () => {
   });
 
   it('re-enqueues an unfinished webhook receipt after its prior job failed', async () => {
-    const db = memoryAdapter({ debug: false });
+    const memoryDb = memoryAdapter({ debug: false });
+    let failUnlinkedStore = true;
+    const db = {
+      ...memoryDb,
+      async create<T>(params: Parameters<typeof memoryDb.create>[0]): Promise<T> {
+        if (params.model === 'unlinkedWebhookEvents' && failUnlinkedStore) {
+          failUnlinkedStore = false;
+          throw new Error('injected unlinked store failure');
+        }
+        return memoryDb.create<T>(params);
+      }
+    };
     const queue = new MemoryQueueAdapter();
     const provider: BillFnProviderAdapter = {
       ...createMockProvider('dodo'),
@@ -1348,9 +1378,9 @@ describe('@billfn/core', () => {
       where: [{ field: 'providerEventId', operator: 'eq', value: 'evt_failed_redelivery' }],
       namespace: 'billfn'
     });
-    await expect(billfn.runReconciliationJob({ jobId: firstJob?.id ?? '' })).rejects.toMatchObject({
-      code: 'BILLFN_NOT_FOUND'
-    });
+    await expect(billfn.runReconciliationJob({ jobId: firstJob?.id ?? '' })).rejects.toThrow(
+      'injected unlinked store failure'
+    );
 
     const retried = await billfn.handleWebhook({ provider: 'dodo', rawBody: '{}', headers: new Headers() });
     const jobs = await db.findMany({
@@ -2037,10 +2067,21 @@ describe('@billfn/core', () => {
     const firstClaimGate = new Promise<void>((resolve) => {
       releaseFirstClaim = resolve;
     });
+    let subscriptionWrites = 0;
     const gatedDb = {
       ...db,
+      async update<T>(params: Parameters<typeof db.update>[0]): Promise<T | null> {
+        const updated = await db.update<T>(params);
+        if (params.model === 'subscriptions' && updated) {
+          subscriptionWrites += 1;
+        }
+        return updated;
+      },
       async updateMany(params: Parameters<typeof db.updateMany>[0]): Promise<number> {
         const affected = await db.updateMany(params);
+        if (params.model === 'subscriptions' && affected === 1) {
+          subscriptionWrites += 1;
+        }
         if (
           params.model === 'webhookReceipts' &&
           String(params.data.processingJobId).startsWith(`${firstReplayJobId}:attempt:`) &&
@@ -2086,7 +2127,10 @@ describe('@billfn/core', () => {
       where: [{ field: 'type', operator: 'eq', value: 'billfn.subscription.active' }],
       namespace: 'billfn'
     });
-    expect(eventsAfter).toHaveLength(eventsBefore.length + 1);
+    // Only the claim holder applies the event; its lifecycle entry is keyed by the provider event, which
+    // the original delivery already recorded.
+    expect(subscriptionWrites).toBe(1);
+    expect(eventsAfter).toHaveLength(eventsBefore.length);
   });
 
   it('skips already processed notification-history receipts during replay', async () => {

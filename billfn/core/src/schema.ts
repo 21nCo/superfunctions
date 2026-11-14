@@ -38,13 +38,15 @@ export function getSchema(_options: BillFnSchemaOptions = {}): { version: number
       trialEnd: { type: 'string', required: false },
       autoRenew: { type: 'boolean', required: true },
       metadata: { type: 'json', required: false },
+      replacedReferencesPending: { type: 'boolean', required: false },
       createdAt: { type: 'string', required: true },
       updatedAt: { type: 'string', required: true }
     },
     indexes: [
       { name: 'subscriptions_billing_account_updated_idx', fields: ['billingAccountId', 'updatedAt'] },
       { name: 'subscriptions_provider_subscription_idx', fields: ['provider', 'providerSubscriptionId'], unique: true },
-      { name: 'subscriptions_provider_charge_idx', fields: ['provider', 'providerChargeId'], unique: true }
+      { name: 'subscriptions_provider_charge_idx', fields: ['provider', 'providerChargeId'], unique: true },
+      { name: 'subscriptions_replaced_references_pending_idx', fields: ['provider', 'replacedReferencesPending'] }
     ]
   };
 
@@ -135,6 +137,57 @@ export function getSchema(_options: BillFnSchemaOptions = {}): { version: number
     },
     indexes: [
       { name: 'webhook_receipts_provider_event_idx', fields: ['provider', 'providerEventId'], unique: true }
+    ]
+  };
+
+  const unlinkedWebhookEvents: TableSchema = {
+    modelName: 'unlinkedWebhookEvents',
+    fields: {
+      id: { type: 'string', required: true, unique: true },
+      provider: { type: 'string', required: true },
+      providerEventId: { type: 'string', required: true },
+      providerReference: { type: 'string', required: true },
+      providerSecondaryReference: { type: 'string', required: false },
+      eventType: { type: 'string', required: true },
+      occurredAt: { type: 'string', required: false },
+      reason: { type: 'string', required: true },
+      metadataBillingAccountId: { type: 'string', required: false },
+      status: { type: 'string', required: true },
+      event: { type: 'json', required: true },
+      replayClaimId: { type: 'string', required: false },
+      replayClaimedAt: { type: 'string', required: false },
+      replayedAt: { type: 'string', required: false },
+      subscriptionId: { type: 'string', required: false },
+      error: { type: 'string', required: false },
+      expiresAt: { type: 'string', required: true },
+      createdAt: { type: 'string', required: true },
+      updatedAt: { type: 'string', required: true }
+    },
+    indexes: [
+      { name: 'unlinked_webhook_events_provider_event_idx', fields: ['provider', 'providerEventId'], unique: true },
+      { name: 'unlinked_webhook_events_provider_reference_idx', fields: ['provider', 'providerReference', 'status'] },
+      {
+        name: 'unlinked_webhook_events_provider_secondary_reference_idx',
+        fields: ['provider', 'providerSecondaryReference', 'status']
+      },
+      { name: 'unlinked_webhook_events_expires_idx', fields: ['expiresAt'] }
+    ]
+  };
+
+  const replacedProviderReferences: TableSchema = {
+    modelName: 'replacedProviderReferences',
+    fields: {
+      id: { type: 'string', required: true, unique: true },
+      provider: { type: 'string', required: true },
+      providerReference: { type: 'string', required: true },
+      subscriptionId: { type: 'string', required: true },
+      billingAccountId: { type: 'string', required: true },
+      replacedAt: { type: 'string', required: true },
+      createdAt: { type: 'string', required: true },
+      updatedAt: { type: 'string', required: true }
+    },
+    indexes: [
+      { name: 'replaced_provider_references_provider_reference_idx', fields: ['provider', 'providerReference'], unique: true }
     ]
   };
 
@@ -250,11 +303,13 @@ export function getSchema(_options: BillFnSchemaOptions = {}): { version: number
     refunds,
     subscriptionChangeRequests,
     reconciliationJobs,
-    reconciliationCursors
+    reconciliationCursors,
+    unlinkedWebhookEvents,
+    replacedProviderReferences
   ];
 
   return {
-    version: 3,
+    version: 4,
     schemas
   };
 }

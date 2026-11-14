@@ -119,6 +119,11 @@ export interface BillFnSubscription {
   trialEnd?: string;
   autoRenew: boolean;
   metadata?: Record<string, unknown>;
+  /**
+   * Set while references a committed mutation's write dropped could not be
+   * recorded as replaced; they are saved in metadata and recorded by the next write.
+   */
+  replacedReferencesPending?: boolean | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -181,6 +186,72 @@ export interface BillFnWebhookReceipt {
   processingJobId?: string | null;
   processingClaimedAt?: string | null;
   processedAt?: string | null;
+}
+
+/**
+ * Why a verified webhook event could not be applied to a subscription:
+ * - `billing_account_metadata_missing`: the provider record carries no `billfn_billing_account_id` metadata.
+ * - `billing_account_not_found`: the metadata names a billing account that does not exist.
+ * - `price_not_found`: the event's product or price is not in the catalog.
+ * - `billing_account_unavailable`: a subscription matches the reference but its billing account is gone.
+ * - `provider_reference_replaced`: a subscription write (an event, a replay, a provider read or a mutation) dropped the reference, possibly before this event was first delivered, and no subscription holds it.
+ */
+export type BillFnUnlinkedWebhookEventReason =
+  | 'billing_account_metadata_missing'
+  | 'billing_account_not_found'
+  | 'price_not_found'
+  | 'billing_account_unavailable'
+  | 'provider_reference_replaced';
+
+/**
+ * `unlinked` waits for its provider reference to be linked to a subscription;
+ * `replaying` is claimed by a replay run; `replayed` was applied and `skipped`
+ * was older than the subscription's current provider state.
+ */
+export type BillFnUnlinkedWebhookEventStatus = 'unlinked' | 'replaying' | 'replayed' | 'skipped';
+
+/** A verified webhook event kept until its provider reference is linked to a subscription. */
+export interface BillFnUnlinkedWebhookEvent {
+  id: string;
+  provider: BillingProviderName;
+  providerEventId: string;
+  /** The provider subscription id, or the provider charge id for a one-time payment. */
+  providerReference: string;
+  /** The charge of an event that also names its subscription, so linking either reference replays it. */
+  providerSecondaryReference?: string | null;
+  eventType: string;
+  occurredAt?: string | null;
+  reason: BillFnUnlinkedWebhookEventReason;
+  /** The `billfn_billing_account_id` metadata value, when the provider record carried one. */
+  metadataBillingAccountId?: string | null;
+  status: BillFnUnlinkedWebhookEventStatus;
+  /** The parsed provider event, replayed once the reference is linked. */
+  event: Record<string, unknown>;
+  replayClaimId?: string | null;
+  replayClaimedAt?: string | null;
+  replayedAt?: string | null;
+  subscriptionId?: string | null;
+  error?: string | null;
+  expiresAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * A provider reference a subscription write dropped (for example the previous
+ * charge after a renewal). While no subscription holds it, no event naming it
+ * bootstraps another subscription. Rows are never deleted.
+ */
+export interface BillFnReplacedProviderReference {
+  id: string;
+  provider: BillingProviderName;
+  providerReference: string;
+  /** The subscription whose latest write dropped the reference. */
+  subscriptionId: string;
+  billingAccountId: string;
+  replacedAt: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface BillFnBillingEvent {
@@ -287,6 +358,12 @@ export interface BillFnVerifiedBillingState {
   checkoutStatus: CheckoutSessionStatus;
   providerSubscriptionId?: string;
   providerChargeId?: string;
+  /**
+   * The catalog price or provider product id the provider record names, set
+   * by an adapter whose record carries it in a form BillFn cannot read from
+   * `raw` (Apple's signed transaction). BillFn reads it before `raw`.
+   */
+  providerProductId?: string;
   currentPeriodStart?: string;
   currentPeriodEnd?: string;
   autoRenew?: boolean;

@@ -3,7 +3,7 @@ title: Schema
 description: The normalized BillFn persistence model in the current TypeScript core.
 ---
 
-`getSchema()` in `@billfn/core` currently returns version `3` with twelve table definitions.
+`getSchema()` in `@billfn/core` currently returns version `4` with fourteen table definitions.
 
 ## Tables
 
@@ -21,6 +21,8 @@ description: The normalized BillFn persistence model in the current TypeScript c
 | `subscriptionChangeRequests` | Subscription change intent and fallback tracking |
 | `reconciliationJobs` | Operational replay and sync jobs |
 | `reconciliationCursors` | Provider backfill cursors |
+| `unlinkedWebhookEvents` | Verified webhook events waiting for their provider reference to be linked, kept 90 days |
+| `replacedProviderReferences` | Provider references a subscription write dropped, so no event naming them bootstraps another subscription |
 
 ## Important Indexes
 
@@ -34,6 +36,11 @@ Phase 1 relies on a few critical indexes:
 - `entitlementSnapshots.billingAccountId` as a unique current snapshot
 - `usageMeters.billingAccountId + resource` as a unique usage meter
 - `webhookReceipts.provider + providerEventId` as a unique dedupe key
+- `unlinkedWebhookEvents.provider + providerEventId` as a unique dedupe key
+- `unlinkedWebhookEvents.provider + providerReference + status` and `provider + providerSecondaryReference + status` for replay on link
+- `unlinkedWebhookEvents.expiresAt` for the 90-day retention purge
+- `replacedProviderReferences.provider + providerReference` as a unique key
+- `subscriptions.provider + replacedReferencesPending` for the subscriptions holding references not yet recorded as replaced
 
 ## Example
 
@@ -45,4 +52,51 @@ console.log(schema.version);
 console.log(schema.schemas.map((table) => table.modelName));
 ```
 
-The Python SDK mirrors schema version `3`, including the four lifecycle and reconciliation tables. Both helpers expose the same twelve logical model names and mark record identifiers as unique.
+The Python SDK mirrors schema version `4`. Both helpers expose the same fourteen logical model names and mark record identifiers as unique.
+
+## Migrations
+
+### Schema 3 to 4 (`@billfn/core` 0.2.0)
+
+Version `4` adds two tables, `unlinkedWebhookEvents` and `replacedProviderReferences`, and one optional boolean field to `subscriptions`, `replacedReferencesPending`, with the index `subscriptions_replaced_references_pending_idx` on `provider, replacedReferencesPending`. Create them before deploying `@billfn/core` 0.2.0: webhook processing writes to `unlinkedWebhookEvents` as soon as an event names a provider reference BillFn has not linked, every subscription write that drops a provider reference writes to `replacedProviderReferences` first, and a committed mutation that cannot do so sets `replacedReferencesPending`. Existing rows need no backfill (the field is null). The migration is additive, so rolling back to 0.1.x leaves the tables and the field unused.
+
+#### `unlinkedWebhookEvents`
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `id` | string, unique | yes |
+| `provider` | string | yes |
+| `providerEventId` | string | yes |
+| `providerReference` | string | yes |
+| `providerSecondaryReference` | string | no |
+| `eventType` | string | yes |
+| `occurredAt` | string | no |
+| `reason` | string | yes |
+| `metadataBillingAccountId` | string | no |
+| `status` | string | yes |
+| `event` | json | yes |
+| `replayClaimId` | string | no |
+| `replayClaimedAt` | string | no |
+| `replayedAt` | string | no |
+| `subscriptionId` | string | no |
+| `error` | string | no |
+| `expiresAt` | string | yes |
+| `createdAt` | string | yes |
+| `updatedAt` | string | yes |
+
+Indexes: unique `unlinked_webhook_events_provider_event_idx` on `provider, providerEventId`; `unlinked_webhook_events_provider_reference_idx` on `provider, providerReference, status`; `unlinked_webhook_events_provider_secondary_reference_idx` on `provider, providerSecondaryReference, status`; `unlinked_webhook_events_expires_idx` on `expiresAt`.
+
+#### `replacedProviderReferences`
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `id` | string, unique | yes |
+| `provider` | string | yes |
+| `providerReference` | string | yes |
+| `subscriptionId` | string | yes |
+| `billingAccountId` | string | yes |
+| `replacedAt` | string | yes |
+| `createdAt` | string | yes |
+| `updatedAt` | string | yes |
+
+Index: unique `replaced_provider_references_provider_reference_idx` on `provider, providerReference`.

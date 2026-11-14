@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-BILLFN_SCHEMA_VERSION = 3
+BILLFN_SCHEMA_VERSION = 4
 
 
 def get_schema() -> Dict[str, Any]:
@@ -41,6 +41,7 @@ def get_schema() -> Dict[str, Any]:
             "trialEnd": {"type": "string", "required": False},
             "autoRenew": {"type": "boolean", "required": True},
             "metadata": {"type": "json", "required": False},
+            "replacedReferencesPending": {"type": "boolean", "required": False},
             "createdAt": {"type": "string", "required": True},
             "updatedAt": {"type": "string", "required": True},
         },
@@ -55,6 +56,10 @@ def get_schema() -> Dict[str, Any]:
                 "name": "subscriptions_provider_charge_idx",
                 "fields": ["provider", "providerChargeId"],
                 "unique": True,
+            },
+            {
+                "name": "subscriptions_replaced_references_pending_idx",
+                "fields": ["provider", "replacedReferencesPending"],
             },
         ],
     }
@@ -269,6 +274,71 @@ def get_schema() -> Dict[str, Any]:
         ],
     }
 
+    unlinked_webhook_events: Dict[str, Any] = {
+        "modelName": "unlinkedWebhookEvents",
+        "fields": {
+            "id": {"type": "string", "required": True, "unique": True},
+            "provider": {"type": "string", "required": True},
+            "providerEventId": {"type": "string", "required": True},
+            "providerReference": {"type": "string", "required": True},
+            "providerSecondaryReference": {"type": "string", "required": False},
+            "eventType": {"type": "string", "required": True},
+            "occurredAt": {"type": "string", "required": False},
+            "reason": {"type": "string", "required": True},
+            "metadataBillingAccountId": {"type": "string", "required": False},
+            "status": {"type": "string", "required": True},
+            "event": {"type": "json", "required": True},
+            "replayClaimId": {"type": "string", "required": False},
+            "replayClaimedAt": {"type": "string", "required": False},
+            "replayedAt": {"type": "string", "required": False},
+            "subscriptionId": {"type": "string", "required": False},
+            "error": {"type": "string", "required": False},
+            "expiresAt": {"type": "string", "required": True},
+            "createdAt": {"type": "string", "required": True},
+            "updatedAt": {"type": "string", "required": True},
+        },
+        "indexes": [
+            {
+                "name": "unlinked_webhook_events_provider_event_idx",
+                "fields": ["provider", "providerEventId"],
+                "unique": True,
+            },
+            {
+                "name": "unlinked_webhook_events_provider_reference_idx",
+                "fields": ["provider", "providerReference", "status"],
+            },
+            {
+                "name": "unlinked_webhook_events_provider_secondary_reference_idx",
+                "fields": ["provider", "providerSecondaryReference", "status"],
+            },
+            {
+                "name": "unlinked_webhook_events_expires_idx",
+                "fields": ["expiresAt"],
+            },
+        ],
+    }
+
+    replaced_provider_references: Dict[str, Any] = {
+        "modelName": "replacedProviderReferences",
+        "fields": {
+            "id": {"type": "string", "required": True, "unique": True},
+            "provider": {"type": "string", "required": True},
+            "providerReference": {"type": "string", "required": True},
+            "subscriptionId": {"type": "string", "required": True},
+            "billingAccountId": {"type": "string", "required": True},
+            "replacedAt": {"type": "string", "required": True},
+            "createdAt": {"type": "string", "required": True},
+            "updatedAt": {"type": "string", "required": True},
+        },
+        "indexes": [
+            {
+                "name": "replaced_provider_references_provider_reference_idx",
+                "fields": ["provider", "providerReference"],
+                "unique": True,
+            },
+        ],
+    }
+
     schemas: List[Dict[str, Any]] = [
         billing_accounts,
         subscriptions,
@@ -282,6 +352,8 @@ def get_schema() -> Dict[str, Any]:
         subscription_change_requests,
         reconciliation_jobs,
         reconciliation_cursors,
+        unlinked_webhook_events,
+        replaced_provider_references,
     ]
 
     return {"version": BILLFN_SCHEMA_VERSION, "schemas": schemas}

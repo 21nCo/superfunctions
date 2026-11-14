@@ -63,8 +63,14 @@ function importedPackages(text: string): string[] {
   return names;
 }
 
+/**
+ * The declaration emit type-checks all of core in process: about a second
+ * alone, several on a loaded two-vCPU CI runner beside the replay suites.
+ */
+const DECLARATION_EMIT_TIMEOUT_MS = 120_000;
+
 describe('published declarations', () => {
-  it('import only packages every host installs', () => {
+  it('import only packages every host installs', { timeout: DECLARATION_EMIT_TIMEOUT_MS }, () => {
     const declarations = emitDeclarations();
     expect(declarations.size).toBeGreaterThan(0);
     const required = new Set([
