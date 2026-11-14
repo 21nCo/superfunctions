@@ -71,7 +71,7 @@ function validateClient(client: OAuthProviderClient, clientIds: Set<string>): vo
     !client.redirectUris.every(isAllowedRedirectUri)) {
     throw configError(
       `OAuth client ${client.clientId} needs absolute redirect URIs without a fragment, using https, an http ` +
-      'loopback IP or a native app scheme, whose query has no OAuth response parameter'
+      'loopback IP or a reverse-domain native app scheme, whose query has no OAuth response parameter'
     );
   }
   const method = client.tokenEndpointAuthMethod;
@@ -119,20 +119,29 @@ const LOOPBACK_HOSTS = new Set(['127.0.0.1', '[::1]']);
 const RESPONSE_PARAMETERS = ['code', 'state', 'iss', 'error', 'error_description', 'error_uri'];
 
 /**
+ * A private-use URI scheme in reverse domain name form (RFC 8252 7.1), such
+ * as `com.example.app:`. The dot is outside both character classes, so
+ * matching is linear.
+ */
+const PRIVATE_USE_SCHEME = /^[a-z][a-z0-9+-]*(?:\.[a-z0-9+-]+)+:$/;
+
+/**
  * A redirect URI that keeps the authorization response off plaintext
- * networks (OAuth 2.1 2.3.1, RFC 8252 7): `https`, `http` only to a loopback
- * IP literal, or a native app's own scheme. Its query must not use a
- * response parameter name, which the response would otherwise duplicate.
+ * networks and out of the browser's own schemes (OAuth 2.1 2.3.1, RFC 8252
+ * 7): `https`, `http` only to a loopback IP literal, or a native app's
+ * reverse-domain private-use scheme. Every other scheme (`javascript`,
+ * `data`, `file`, `ws`, a dotless custom scheme, ...) is rejected. Its query
+ * must not use a response parameter name, which the response would otherwise
+ * duplicate.
  */
 export function isAllowedRedirectUri(value: unknown): value is string {
   if (!isAbsoluteUriWithoutFragment(value)) {
     return false;
   }
   const url = new URL(value);
-  if (url.protocol === 'http:' && !LOOPBACK_HOSTS.has(url.hostname)) {
-    return false;
-  }
-  return RESPONSE_PARAMETERS.every((name) => !url.searchParams.has(name));
+  const allowedScheme = url.protocol === 'https:' ||
+    (url.protocol === 'http:' ? LOOPBACK_HOSTS.has(url.hostname) : PRIVATE_USE_SCHEME.test(url.protocol));
+  return allowedScheme && RESPONSE_PARAMETERS.every((name) => !url.searchParams.has(name));
 }
 
 function configError(message: string): AuthFnConfigError {

@@ -117,20 +117,57 @@ describe('authorization endpoint', () => {
     expect(await malformed.json()).toEqual({ error: 'invalid_request', error_description: 'The decision body must be valid JSON' });
   });
 
-  it('keeps the registered redirect query and appends the response to it (RFC 6749 3.1.2)', async () => {
-    const tenant = { clientId: 'tenant-app', name: 'Tenant App', redirectUris: ['https://tenant.example.com/cb?tenant=a&x=1'] };
+  it('sends the response to the registered redirect URI byte for byte, then the parameters (RFC 6749 3.1.2)', async () => {
+    // Reserializing this query would rewrite it as ?flag=&v=a+b&p=x%2Fy%3Bz.
+    const registered = 'https://tenant.example.com/cb?flag&v=a%20b&p=x/y;z';
+    const tenant = {
+      clientId: 'tenant-app',
+      name: 'Tenant App',
+      redirectUris: [registered, 'https://tenant.example.com/open?', 'https://tenant.example.com/plain']
+    };
     const provider = await setupProvider({ clients: [tenant] });
-    const success = await provider.authorize({ client_id: tenant.clientId, redirect_uri: tenant.redirectUris[0] }, tenant);
-    expect([...success.searchParams.keys()]).toEqual(['tenant', 'x', 'code', 'state', 'iss']);
-    expect(success.searchParams.get('tenant')).toBe('a');
+    const query = (redirectUri: string, overrides: Record<string, string> = {}) =>
+      provider.authorizeQuery({ client_id: tenant.clientId, redirect_uri: redirectUri, ...overrides }, tenant);
+    const iss = `&iss=${encodeURIComponent(ORIGIN)}`;
 
-    const failure = await provider.getAuthorize(provider.authorizeQuery({
+    expect((await provider.getAuthorize(query(registered))).status).toBe(200);
+    const approved = await provider.decide({ ...provider.consents[0].params }, 'approve');
+    const success = (await approved.json() as { data: { redirectTo: string } }).data.redirectTo;
+    expect(success).toMatch(new RegExp(`^${registered.replaceAll(/[.?/;%]/g, '\\$&')}&code=[^&]+&state=xyz${iss}$`));
+    const exchanged = await provider.token({
+      grant_type: 'authorization_code',
       client_id: tenant.clientId,
-      redirect_uri: tenant.redirectUris[0],
-      scope: 'memotron:admin'
-    }, tenant));
-    const location = new URL(failure.headers.get('location')!);
-    expect([...location.searchParams.keys()]).toEqual(['tenant', 'x', 'error', 'error_description', 'state', 'iss']);
+      code: new URL(success).searchParams.get('code')!,
+      redirect_uri: registered,
+      code_verifier: RFC7636_VERIFIER
+    });
+    expect(exchanged.status).toBe(200);
+
+    const denied = await provider.decide({ ...provider.consents[0].params }, 'deny');
+    expect((await denied.json() as { data: { redirectTo: string } }).data.redirectTo.startsWith(`${registered}&error=access_denied&`)).toBe(true);
+    const invalid = await provider.getAuthorize(query(registered, { scope: 'memotron:admin' }));
+    expect(invalid.headers.get('location')!.startsWith(`${registered}&error=invalid_scope&`)).toBe(true);
+    const open = await provider.getAuthorize(query('https://tenant.example.com/open?', { scope: 'memotron:admin' }));
+    expect(open.headers.get('location')!.startsWith('https://tenant.example.com/open?error=invalid_scope&')).toBe(true);
+    const plain = await provider.getAuthorize(query('https://tenant.example.com/plain', { scope: 'memotron:admin' }));
+    expect(plain.headers.get('location')!.startsWith('https://tenant.example.com/plain?error=invalid_scope&')).toBe(true);
+  });
+
+  it('redirects to a native app\'s reverse-domain scheme (RFC 8252 7.1)', async () => {
+    const native = { clientId: 'native-app', name: 'Native App', redirectUris: ['com.example.app:/oauth/cb'] };
+    const provider = await setupProvider({ clients: [native] });
+    expect((await provider.getAuthorize(provider.authorizeQuery({ client_id: native.clientId, redirect_uri: native.redirectUris[0] }, native))).status).toBe(200);
+    const approved = await provider.decide({ ...provider.consents[0].params }, 'approve');
+    const location = (await approved.json() as { data: { redirectTo: string } }).data.redirectTo;
+    expect(location).toMatch(new RegExp(`^com\\.example\\.app:/oauth/cb\\?code=[^&]+&state=xyz&iss=${encodeURIComponent(ORIGIN)}$`));
+    const exchanged = await provider.token({
+      grant_type: 'authorization_code',
+      client_id: native.clientId,
+      code: new URL(location).searchParams.get('code')!,
+      redirect_uri: native.redirectUris[0],
+      code_verifier: RFC7636_VERIFIER
+    });
+    expect(exchanged.status).toBe(200);
   });
 
   it('asks a trusted client for consent once per resource, and an untrusted client every time', async () => {
@@ -216,6 +253,29 @@ describe('token endpoint', () => {
     expect(await json.json()).toMatchObject({ error: 'invalid_request' });
 
     expect((await provider.exchange(code)).status).toBe(200);
+  });
+
+  it('refuses any Authorization header from a client not registered for Basic (RFC 6749 2.3)', async () => {
+    const post = { clientId: 'post-client', name: 'Post', clientSecret: 'post-secret', tokenEndpointAuthMethod: 'client_secret_post' as const, redirectUris: ['https://post.example.com/cb'] };
+    const provider = await setupProvider({ clients: [post] });
+    const credentials = [{ client_id: MCP_HOST.clientId }, { client_id: post.clientId, client_secret: post.clientSecret }];
+    for (const path of ['/auth/oauth/token', '/auth/oauth/revoke']) {
+      const call = (form: Record<string, string>, headers: Record<string, string> = {}) => provider.handle(path, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers },
+        body: new URLSearchParams({ grant_type: 'authorization_code', code: 'unknown', token: 'unknown', ...form })
+      });
+      for (const form of credentials) {
+        // Without a header the client authenticates.
+        expect((await call(form)).status).toBe(path === '/auth/oauth/token' ? 400 : 200);
+        for (const authorization of ['Bearer abc', 'Basic', 'Basic !!!', 'garbage', RFC6749_BASIC]) {
+          const response = await call(form, { authorization });
+          expect(response.status).toBe(401);
+          expect(response.headers.get('www-authenticate')).toContain('Basic');
+          expect(await response.json()).toMatchObject({ error: 'invalid_client' });
+        }
+      }
+    }
   });
 
   it('narrows a refresh to a subset of the granted scopes only', async () => {
@@ -339,6 +399,16 @@ describe('configuration', () => {
     for (const uri of [
       'http://client.example.com/cb',
       'http://localhost:8080/cb',
+      'javascript:alert(1)',
+      'data:text/html,x',
+      'file:///tmp/cb',
+      'vbscript:x',
+      'blob:https://a.example/x',
+      'about:blank',
+      'ftp://a.example/cb',
+      'ws://a.example/cb',
+      'wss://a.example/cb',
+      'myapp:/cb',
       'https://client.example.com/cb?state=fixed',
       'https://client.example.com/cb?code=1',
       'https://client.example.com/cb?iss=x',
@@ -350,6 +420,8 @@ describe('configuration', () => {
       'https://client.example.com/cb?tenant=a',
       'http://127.0.0.1/callback',
       'http://[::1]:8080/callback',
+      'http://[::1]/callback',
+      'http://127.0.0.1:8080/cb',
       'com.example.app:/oauth/callback'
     ])).not.toThrow();
   });

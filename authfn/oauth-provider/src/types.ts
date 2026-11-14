@@ -151,6 +151,10 @@ export interface OAuthTokenRecord {
   /** A refresh token is rotated (spent) once it has been exchanged. */
   rotatedAt?: Date | null;
   revokedAt?: Date | null;
+  /** The code or refresh token exchanged for this token. */
+  sourceId: string;
+  /** The claim on `sourceId` that commits this token; valid only once stored there. */
+  issuingClaimId: string;
   createdAt: Date;
 }
 

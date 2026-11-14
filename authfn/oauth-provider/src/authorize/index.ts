@@ -99,10 +99,11 @@ function validateOrRespond(
 }
 
 /**
- * Builds the redirect back to the client, with `iss` (RFC 9207). The response
- * parameters are appended to the registered query, which is kept as is (RFC
- * 6749 3.1.2); configuration rejects a registered query that uses a response
- * parameter name, so they never collide.
+ * Builds the redirect back to the client, with `iss` (RFC 9207): the
+ * redirect URI byte for byte, then the form-encoded response parameters
+ * (RFC 6749 3.1.2). The registered query is never parsed and reserialized;
+ * configuration rejects one that uses a response parameter name, so they
+ * never collide.
  */
 async function clientRedirectUrl(
   runtime: OAuthProviderRuntime,
@@ -110,14 +111,20 @@ async function clientRedirectUrl(
   redirectUri: string,
   values: Record<string, string | undefined>
 ): Promise<string> {
-  const url = new URL(redirectUri);
+  const response = new URLSearchParams();
   for (const [name, value] of Object.entries(values)) {
     if (value !== undefined) {
-      url.searchParams.append(name, value);
+      response.append(name, value);
     }
   }
-  url.searchParams.append('iss', (await resolveEndpoints(runtime, request)).issuer);
-  return url.toString();
+  response.append('iss', (await resolveEndpoints(runtime, request)).issuer);
+  let separator = '&';
+  if (!redirectUri.includes('?')) {
+    separator = '?';
+  } else if (redirectUri.endsWith('?') || redirectUri.endsWith('&')) {
+    separator = '';
+  }
+  return `${redirectUri}${separator}${response.toString()}`;
 }
 
 function errorRedirectValues(error: OAuthError, state: string | undefined): Record<string, string | undefined> {

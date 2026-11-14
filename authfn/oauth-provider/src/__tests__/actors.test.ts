@@ -442,6 +442,22 @@ describe('concurrent approvals', () => {
     const silent = await provider.getAuthorize(rhombus('memotron:read memotron:write'));
     expect(silent.status).toBe(302);
     expect(new URL(silent.headers.get('location')!).searchParams.get('code')).toEqual(expect.any(String));
+    const consentRows = () => provider.database.findMany<{ scopes: string[] }>({ model: 'oauth_provider_consents', namespace: 'authfn' });
+    expect((await consentRows()).map((row) => row.scopes).sort()).toEqual([['memotron:read'], ['memotron:write']]);
+
+    // A later approval stores the union and replaces the rows it read.
+    expect((await provider.decide(read, 'approve')).status).toBe(200);
+    expect((await consentRows()).map((row) => [...row.scopes].sort())).toEqual([['memotron:read', 'memotron:write']]);
+  });
+
+  it('keeps one consent row per user, client and resource across repeated approvals, without listing disconnects', async () => {
+    const provider = await setupProvider();
+    for (const scope of ['memotron:read', 'memotron:write', 'memotron:read', 'memotron:read memotron:write']) {
+      expect((await provider.authorize({ scope })).searchParams.get('code')).toEqual(expect.any(String));
+    }
+    const rows = await provider.database.findMany<{ scopes: string[] }>({ model: 'oauth_provider_consents', namespace: 'authfn' });
+    expect(rows.map((row) => [...row.scopes].sort())).toEqual([['memotron:read', 'memotron:write']]);
+    expect(provider.control.findManyModels).not.toContain('oauth_provider_disconnects');
   });
 });
 

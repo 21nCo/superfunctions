@@ -93,6 +93,10 @@ export function createOAuthProviderSchema(): AuthFnSchemaDefinition['schemas'] {
         rotatedAt: date('rotated_at', false),
         revokedAt: date('revoked_at', false),
         claimId,
+        // The code or refresh token this token was issued for, and the claim
+        // that must have spent it: the token is valid only once it has.
+        sourceId: ref('source_id'),
+        issuingClaimId: { type: 'string', required: true, fieldName: 'issuing_claim_id', maxLength: 64 },
         createdAt: date('created_at')
       },
       indexes: [
@@ -112,12 +116,12 @@ export function createOAuthProviderSchema(): AuthFnSchemaDefinition['schemas'] {
         generation: { type: 'number', required: true, fieldName: 'generation' },
         createdAt: date('created_at')
       },
-      indexes: [{ name: 'idx_authfn_oauth_provider_consents_user_id', fields: ['userId'] }]
+      indexes: [{ name: 'idx_authfn_oauth_provider_consents_triple', fields: ['userId', 'clientId', 'resource'] }]
     },
     {
       modelName: MODELS.disconnects,
       fields: { id, userId, clientId: ref('client_id'), resource: text('resource'), createdAt: date('created_at') },
-      indexes: [{ name: 'idx_authfn_oauth_provider_disconnects_user_id', fields: ['userId'] }]
+      indexes: [{ name: 'idx_authfn_oauth_provider_disconnects_triple', fields: ['userId', 'clientId', 'resource'] }]
     }
   ];
 }
@@ -155,21 +159,16 @@ function whereId(id: string, unset: string[] = []) {
   ];
 }
 
-/** A won claim; `release` undoes it unless someone else has claimed the row since. */
-export interface OAuthClaim {
-  release(): Promise<void>;
-}
+const CODE_ID_PREFIX = 'oco';
 
 /**
  * Updates the row `id` only while every field in `unset` is still null, in one
- * conditional statement that also writes a fresh claim ID, then reads the row
- * back: the caller whose claim ID is stored won. Exactly one concurrent caller
- * wins; that is the single-use guarantee for codes and refresh tokens. The
- * adapter's affected-row count is never consulted, because adapters do not
- * all report it reliably. Only a `releasable` claim (spending a code or
- * refresh token) is undone when its write or read-back fails, for example
- * when the write commits but its acknowledgement is lost; a revocation never
- * is. Releasing matches this claim's ID, so it never undoes another's.
+ * conditional statement that also writes `claimId`, then reads the row back:
+ * the caller whose claim ID is stored won. Exactly one concurrent caller wins;
+ * that is the single-use guarantee for codes and refresh tokens. The adapter's
+ * affected-row count is never consulted, because adapters do not all report
+ * it reliably. When the write throws, the read-back still decides: it may have
+ * committed before its acknowledgement was lost. A claim is never undone.
  */
 async function claimIfUnset(
   store: OAuthStore,
@@ -177,40 +176,23 @@ async function claimIfUnset(
   id: string,
   unset: string[],
   data: Record<string, unknown>,
-  releasable = true
-): Promise<OAuthClaim | null> {
-  const claimId = createIdentifier('ocl');
-  const reset = Object.fromEntries([...Object.keys(data), 'claimId'].map((field) => [field, null]));
-  const claim: OAuthClaim = {
-    release: async () => {
-      await store.database.updateMany({
-        model,
-        where: [...whereId(id), { field: 'claimId', operator: 'eq', value: claimId }],
-        data: reset,
-        namespace: namespace(store)
-      });
-    }
-  };
-  const claimAndReadBack = async () => {
-    await store.database.updateMany({ model, where: whereId(id, unset), data: { ...data, claimId }, namespace: namespace(store) });
-    return findBy<{ claimId?: string | null }>(store, model, 'id', id);
-  };
-  const row = releasable ? await releaseOnFailure(claim, claimAndReadBack) : await claimAndReadBack();
-  return row?.claimId === claimId ? claim : null;
-}
-
-/**
- * Runs `step` for a won claim. If it throws, the claim is released (only
- * while it is still this caller's), so a client retrying after a failure that
- * issued nothing is not treated as replaying its code or refresh token.
- */
-export async function releaseOnFailure<T>(claim: OAuthClaim, step: () => Promise<T>): Promise<T> {
+  claimId = createIdentifier('ocl')
+): Promise<boolean> {
+  let writeError: { error: unknown } | undefined;
   try {
-    return await step();
+    await store.database.updateMany({ model, where: whereId(id, unset), data: { ...data, claimId }, namespace: namespace(store) });
   } catch (error) {
-    await claim.release().catch(() => undefined);
-    throw error;
+    writeError = { error };
   }
+  const row = await findBy<{ claimId?: string | null }>(store, model, 'id', id);
+  if (row?.claimId === claimId) {
+    return true;
+  }
+  // Unclaimed after a failed write: nothing happened, so report the failure.
+  if (writeError && !row?.claimId) {
+    throw writeError.error;
+  }
+  return false;
 }
 
 export async function createGrantWithCode(
@@ -239,7 +221,7 @@ export async function createGrantWithCode(
   const code = createSecret('oac');
   const record: OAuthAuthorizationCodeRecord = {
     ...shared,
-    id: createIdentifier('oco'),
+    id: createIdentifier(CODE_ID_PREFIX),
     codeHash: hashSecret(code),
     grantId: grant.id,
     redirectUri,
@@ -256,9 +238,12 @@ export function findCode(store: OAuthStore, code: string): Promise<OAuthAuthoriz
   return findBy(store, MODELS.codes, 'codeHash', hashSecret(code));
 }
 
-/** Atomically marks a code consumed; null when another caller already did. */
-export function claimCode(store: OAuthStore, codeId: string, now: Date): Promise<OAuthClaim | null> {
-  return claimIfUnset(store, MODELS.codes, codeId, ['consumedAt'], { consumedAt: now });
+/**
+ * Atomically marks a code consumed with `claimId`, which commits the tokens
+ * staged under it; false when another caller already did.
+ */
+export function claimCode(store: OAuthStore, codeId: string, now: Date, claimId: string): Promise<boolean> {
+  return claimIfUnset(store, MODELS.codes, codeId, ['consumedAt'], { consumedAt: now }, claimId);
 }
 
 export function findGrant(store: OAuthStore, grantId: string): Promise<OAuthGrantRecord | null> {
@@ -271,7 +256,7 @@ export function findGrant(store: OAuthStore, grantId: string): Promise<OAuthGran
  */
 export async function revokeGrant(store: OAuthStore, grantId: string, reason: string, now: Date): Promise<boolean> {
   const data = { revokedAt: now, revokedReason: reason, updatedAt: now };
-  return (await claimIfUnset(store, MODELS.grants, grantId, ['revokedAt'], data, false)) !== null;
+  return claimIfUnset(store, MODELS.grants, grantId, ['revokedAt'], data);
 }
 
 export interface IssuedTokens {
@@ -282,21 +267,25 @@ export interface IssuedTokens {
 }
 
 /**
- * Issues a one-hour access token for `scopes` and a 30-day refresh token for
- * the full grant scope, in exchange for the code or refresh token `claim` won.
- * Both tokens are stored or neither is: when a write fails, the tokens already
- * written are deleted and the claim is released, so the client can retry with
- * the same code or refresh token.
+ * Stages a one-hour access token for `scopes` and a 30-day refresh token for
+ * the full grant scope, in exchange for the code or refresh token `sourceId`.
+ * Both are written before the caller claims the source with the returned
+ * `claimId` (`claimCode`, `claimRefreshToken`), and neither is valid until
+ * that claim commits: the claim is the single commit point. A failure before
+ * it leaves the source unspent and the staged rows inert; a lost race leaves
+ * the loser's rows inert. If the response is lost after the claim, a retry is
+ * a replay, which revokes the grant (RFC 6749 4.1.2).
  */
-export async function issueTokens(
+export async function stageTokens(
   store: OAuthStore,
   grant: OAuthGrantRecord,
   scopes: string[],
   now: Date,
-  claim: OAuthClaim
-): Promise<IssuedTokens> {
+  sourceId: string
+): Promise<{ tokens: IssuedTokens; claimId: string }> {
   const accessToken = createSecret('oat');
   const refreshToken = createSecret('ort');
+  const claimId = createIdentifier('ocl');
   const base = {
     grantId: grant.id,
     clientId: grant.clientId,
@@ -304,6 +293,8 @@ export async function issueTokens(
     resource: grant.resource,
     rotatedAt: null,
     revokedAt: null,
+    sourceId,
+    issuingClaimId: claimId,
     createdAt: now
   };
   const access: OAuthTokenRecord = {
@@ -322,27 +313,21 @@ export async function issueTokens(
     scopes: grant.scopes,
     expiresAt: addSeconds(now, OAUTH_REFRESH_TOKEN_TTL_SECONDS)
   };
-  await releaseOnFailure(claim, async () => {
-    try {
-      await insert(store, MODELS.tokens, access);
-      await insert(store, MODELS.tokens, refresh);
-    } catch (error) {
-      for (const id of [access.id, refresh.id]) {
-        await store.database.deleteMany({ model: MODELS.tokens, where: whereId(id), namespace: namespace(store) }).catch(() => 0);
-      }
-      throw error;
-    }
-  });
-  return { accessToken, refreshToken, accessTokenExpiresIn: OAUTH_ACCESS_TOKEN_TTL_SECONDS, scopes };
+  await insert(store, MODELS.tokens, access);
+  await insert(store, MODELS.tokens, refresh);
+  return { tokens: { accessToken, refreshToken, accessTokenExpiresIn: OAUTH_ACCESS_TOKEN_TTL_SECONDS, scopes }, claimId };
 }
 
 export function findToken(store: OAuthStore, token: string): Promise<OAuthTokenRecord | null> {
   return findBy(store, MODELS.tokens, 'tokenHash', hashSecret(token));
 }
 
-/** Atomically spends a refresh token; null when it was already rotated or revoked. */
-export function claimRefreshToken(store: OAuthStore, tokenId: string, now: Date): Promise<OAuthClaim | null> {
-  return claimIfUnset(store, MODELS.tokens, tokenId, ['rotatedAt', 'revokedAt'], { rotatedAt: now });
+/**
+ * Atomically spends a refresh token with `claimId`, which commits the tokens
+ * staged under it; false when it was already rotated or revoked.
+ */
+export function claimRefreshToken(store: OAuthStore, tokenId: string, now: Date, claimId: string): Promise<boolean> {
+  return claimIfUnset(store, MODELS.tokens, tokenId, ['rotatedAt', 'revokedAt'], { rotatedAt: now }, claimId);
 }
 
 export async function revokeToken(store: OAuthStore, tokenId: string, now: Date): Promise<void> {
@@ -356,8 +341,10 @@ export async function revokeToken(store: OAuthStore, tokenId: string, now: Date)
 
 /**
  * The one validity rule for issued tokens: the token is of the expected
- * kind, unexpired and unrevoked, its grant is unrevoked, and the user it acts
- * for still exists and is not disabled (the same owner rule API keys follow).
+ * kind, unexpired and unrevoked, the claim that issued it committed (its code
+ * or parent refresh token stores `issuingClaimId`), its grant is unrevoked,
+ * and the user it acts for still exists and is not disabled (the same owner
+ * rule API keys follow).
  */
 export async function loadActiveToken(
   store: OAuthStore,
@@ -377,6 +364,11 @@ export async function activeTokenState(
   now: Date
 ): Promise<{ record: OAuthTokenRecord; grant: OAuthGrantRecord } | null> {
   if (record.kind !== kind || record.revokedAt || record.expiresAt.getTime() <= now.getTime()) {
+    return null;
+  }
+  const sourceModel = record.sourceId.startsWith(`${CODE_ID_PREFIX}_`) ? MODELS.codes : MODELS.tokens;
+  const source = await findBy<{ claimId?: string | null }>(store, sourceModel, 'id', record.sourceId);
+  if (!source?.claimId || source.claimId !== record.issuingClaimId) {
     return null;
   }
   const grant = await findGrant(store, record.grantId);
@@ -495,34 +487,51 @@ export async function revokeOAuthGrant(
 }
 
 /** How many times the triple was disconnected; markers are never removed. */
-export async function countDisconnects(store: OAuthStore, triple: OAuthTriple): Promise<number> {
-  return (await store.database.findMany({ model: MODELS.disconnects, where: whereTriple(triple), namespace: namespace(store) })).length;
+export function countDisconnects(store: OAuthStore, triple: OAuthTriple): Promise<number> {
+  return store.database.count({ model: MODELS.disconnects, where: whereTriple(triple), namespace: namespace(store) });
+}
+
+function findConsents(store: OAuthStore, triple: OAuthTriple, generation: number): Promise<OAuthConsentRecord[]> {
+  return store.database.findMany<OAuthConsentRecord>({
+    model: MODELS.consents,
+    where: [...whereTriple(triple), { field: 'generation', operator: 'eq', value: generation }],
+    namespace: namespace(store)
+  });
+}
+
+function unionScopes(records: OAuthConsentRecord[], scopes: string[] = []): string[] {
+  return [...new Set([...records.flatMap((record) => record.scopes), ...scopes])];
 }
 
 /**
  * The scopes the user has approved for the triple since its latest disconnect
  * (`generation`, from `countDisconnects`): the union of those approvals, or
- * null when there is none. Each approval is its own row, so concurrent
- * approvals never overwrite each other, and an approval made before a
- * disconnect never counts after it, even if it was written late.
+ * null when there is none. An approval made before a disconnect never counts
+ * after it, even if it was written late.
  */
 export async function findConsentScopes(store: OAuthStore, triple: OAuthTriple, generation: number): Promise<string[] | null> {
-  const records = await store.database.findMany<OAuthConsentRecord>({
-    model: MODELS.consents,
-    where: [...whereTriple(triple), { field: 'generation', operator: 'eq', value: generation }],
-    namespace: namespace(store)
-  });
-  return records.length === 0 ? null : [...new Set(records.flatMap((record) => record.scopes))];
+  const records = await findConsents(store, triple, generation);
+  return records.length === 0 ? null : unionScopes(records);
 }
 
-/** Records that the user approved `scopes` for the triple in `generation`; returns the approval's ID. */
+/**
+ * Records that the user approved `scopes` for the triple in `generation`;
+ * returns the approval's ID. The new row stores the union of the approvals it
+ * read, which it then deletes, so a generation keeps one row plus one per
+ * approval that ran concurrently. Concurrent approvals never overwrite each
+ * other: each only deletes rows written before it read them.
+ */
 export async function recordConsent(
   store: OAuthStore,
   input: OAuthTriple & { scopes: string[]; generation: number; now: Date }
 ): Promise<string> {
-  const { now, ...consent } = input;
+  const { now, scopes, ...consent } = input;
+  const earlier = await findConsents(store, consent, consent.generation);
   const id = createIdentifier('ocs');
-  await insert(store, MODELS.consents, { ...consent, id, createdAt: now });
+  await insert(store, MODELS.consents, { ...consent, scopes: unionScopes(earlier, scopes), id, createdAt: now });
+  for (const record of earlier) {
+    await deleteConsent(store, record.id);
+  }
   return id;
 }
 

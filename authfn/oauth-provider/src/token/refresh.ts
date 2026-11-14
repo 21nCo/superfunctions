@@ -4,8 +4,8 @@ import {
   activeTokenState,
   claimRefreshToken,
   findToken,
-  issueTokens,
   revokeGrant,
+  stageTokens,
   type IssuedTokens
 } from '../store.js';
 import type { OAuthProviderClient } from '../types.js';
@@ -49,10 +49,11 @@ export async function refreshAccessToken(
     throw new OAuthError('invalid_scope', 'scope must not exceed the original grant');
   }
 
-  const claim = await claimRefreshToken(runtime.store, record.id, now);
-  if (!claim) {
+  // Staged tokens become valid only when this claim on the refresh token commits.
+  const { tokens, claimId } = await stageTokens(runtime.store, active.grant, scopes, now, record.id);
+  if (!(await claimRefreshToken(runtime.store, record.id, now, claimId))) {
     await revokeGrant(runtime.store, record.grantId, 'refresh_reuse', now);
     throw invalidGrant('Refresh token has already been used');
   }
-  return issueTokens(runtime.store, active.grant, scopes, now, claim);
+  return tokens;
 }

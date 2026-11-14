@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { disconnectOAuthClient, revokeOAuthGrant, verifyOAuthAccessToken } from '../index.js';
+import { disconnectOAuthClient, revokeOAuthGrant, verifyOAuthAccessToken, type OAuthTokenRecord } from '../index.js';
+import { activeTokenState } from '../store.js';
 import { MEMOTRON, setupProvider } from './harness.js';
 
 type Tokens = { access_token: string; refresh_token: string };
@@ -39,43 +40,149 @@ describe('SQL storage (shipped Kysely adapter on SQLite)', () => {
   });
 });
 
-describe.each([['memory', false], ['SQL', true]])('token issuance failure (%s)', (_, sql) => {
-  const tokenRows = async (provider: Awaited<ReturnType<typeof setupProvider>>) =>
-    (await provider.database.findMany({ model: 'oauth_provider_tokens', namespace: 'authfn' })).length;
+type Provider = Awaited<ReturnType<typeof setupProvider>>;
 
-  it.each(['access', 'refresh'])('a failed %s token write leaves the code redeemable once', async (kind) => {
+const tokenRecords = (provider: Provider) =>
+  provider.database.findMany<OAuthTokenRecord>({ model: 'oauth_provider_tokens', namespace: 'authfn' });
+
+/** The stored token rows that the validity rule accepts. */
+async function activeRows(provider: Provider): Promise<OAuthTokenRecord[]> {
+  const store = { database: provider.database };
+  const active: OAuthTokenRecord[] = [];
+  for (const record of await tokenRecords(provider)) {
+    if (await activeTokenState(store, record, record.kind, provider.now())) {
+      active.push(record);
+    }
+  }
+  return active;
+}
+
+const storedClaimId = async (provider: Provider, model: string, id: string) =>
+  (await provider.database.findOne<{ claimId: string | null }>({
+    model,
+    where: [{ field: 'id', operator: 'eq', value: id }],
+    namespace: 'authfn'
+  }))?.claimId;
+
+// The claim on the code or refresh token is the single commit point: tokens
+// are staged before it and are valid only once it stores their claim ID.
+describe.each([['memory', false], ['SQL', true]])('token issuance commit point (%s)', (_, sql) => {
+  it.each(['access', 'refresh'])('a failed %s token write leaves the code redeemable once and its staged rows inert', async (kind) => {
     const provider = await setupProvider({ sql });
     const code = (await provider.authorize()).searchParams.get('code')!;
     provider.control.failNext('oauth_provider_tokens', ({ data }) => data?.kind === kind);
     expect((await provider.exchange(code)).status).toBe(500);
-    expect(await tokenRows(provider)).toBe(0);
+    expect(await activeRows(provider)).toEqual([]);
 
     const retried = await provider.exchange(code);
     expect(retried.status).toBe(200);
     const issued = await retried.json() as Tokens;
+    expect(await tokenRecords(provider)).toHaveLength(kind === 'access' ? 2 : 3);
+    expect((await activeRows(provider)).map((row) => row.kind).sort()).toEqual(['access', 'refresh']);
     expect(await (await provider.exchange(code)).json()).toMatchObject({ error: 'invalid_grant' });
     expect((await provider.introspect(issued.access_token)).body).toEqual({ active: false });
   });
 
-  // An exchange reads the code, claims it, reads it back, then reads the grant.
+  it.each(['access', 'refresh'])('a failed %s token write leaves the refresh token redeemable once and its staged rows inert', async (kind) => {
+    const provider = await setupProvider({ sql });
+    const issued = await provider.obtainTokens();
+    provider.control.failNext('oauth_provider_tokens', ({ data }) => data?.kind === kind);
+    expect((await provider.refresh(issued.refresh_token)).status).toBe(500);
+    expect(await activeRows(provider)).toHaveLength(2);
+    expect((await provider.introspect(issued.access_token)).body.active).toBe(true);
+
+    const retried = await provider.refresh(issued.refresh_token);
+    expect(retried.status).toBe(200);
+    const next = await retried.json() as Tokens;
+    // The original pair and the retry's pair; never the failed attempt's row.
+    expect(await activeRows(provider)).toHaveLength(4);
+    expect(await (await provider.refresh(issued.refresh_token)).json()).toMatchObject({ error: 'invalid_grant' });
+    expect((await provider.introspect(next.access_token)).body).toEqual({ active: false });
+  });
+
+  it('a code claim write that fails before applying leaves the code redeemable and nothing active', async () => {
+    const provider = await setupProvider({ sql });
+    const code = (await provider.authorize()).searchParams.get('code')!;
+    provider.control.failNext('oauth_provider_codes', () => true, 'updateManyRejected');
+    expect((await provider.exchange(code)).status).toBe(500);
+    expect(await tokenRecords(provider)).toHaveLength(2);
+    expect(await activeRows(provider)).toEqual([]);
+    const retried = await provider.exchange(code);
+    expect(retried.status).toBe(200);
+    expect((await provider.introspect((await retried.json() as Tokens).access_token)).body.active).toBe(true);
+  });
+
   it.each([
-    ['claim write (committed, unacknowledged)', 'oauth_provider_codes', 1, 'updateMany'],
-    ['claim read-back', 'oauth_provider_codes', 2, 'findOne'],
-    ['grant lookup', 'oauth_provider_grants', 1, 'findOne']
-  ] as const)(
-    'a failed %s leaves the code redeemable once',
-    async (_step, model, nth, operation) => {
-      const provider = await setupProvider({ sql });
-      const code = (await provider.authorize()).searchParams.get('code')!;
-      let calls = 0;
-      provider.control.failNext(model, () => ++calls === nth, operation);
-      expect((await provider.exchange(code)).status).toBe(500);
-      const retried = await provider.exchange(code);
-      expect(retried.status).toBe(200);
-      const issued = await retried.json() as Tokens;
-      expect((await provider.introspect(issued.access_token)).body.active).toBe(true);
+    ['code', 'oauth_provider_codes'],
+    ['refresh', 'oauth_provider_tokens']
+  ] as const)('a %s claim that commits but loses its acknowledgement is decided by its read-back', async (grant, model) => {
+    const provider = await setupProvider({ sql });
+    const code = (await provider.authorize()).searchParams.get('code')!;
+    let response: Response;
+    if (grant === 'code') {
+      provider.control.failNext(model, () => true, 'updateMany');
+      response = await provider.exchange(code);
+    } else {
+      const issued = await (await provider.exchange(code)).json() as Tokens;
+      provider.control.failNext(model, () => true, 'updateMany');
+      response = await provider.refresh(issued.refresh_token);
     }
-  );
+    expect(response.status).toBe(200);
+    expect((await provider.introspect((await response.json() as Tokens).access_token)).body.active).toBe(true);
+  });
+
+  it('a claim whose acknowledgement and read-back both fail is spent: a retry is a replay that revokes the grant', async () => {
+    const provider = await setupProvider({ sql });
+    const code = (await provider.authorize()).searchParams.get('code')!;
+    let codeReads = 0;
+    provider.control.failNext('oauth_provider_codes', () => true, 'updateMany');
+    // findCode is the first read of the code row; the claim read-back the second.
+    provider.control.failNext('oauth_provider_codes', () => ++codeReads === 2, 'findOne');
+    expect((await provider.exchange(code)).status).toBe(500);
+    // The claim committed, so the undelivered tokens are active until the replay.
+    expect(await activeRows(provider)).toHaveLength(2);
+    expect(await (await provider.exchange(code)).json()).toMatchObject({ error: 'invalid_grant' });
+    expect(await activeRows(provider)).toEqual([]);
+  });
+
+  it('of two concurrent exchanges of one code, one succeeds and the loser\'s staged tokens never become valid', async () => {
+    const provider = await setupProvider({ sql });
+    const callback = await provider.authorize();
+    const code = callback.searchParams.get('code')!;
+    const statuses = (await Promise.all([provider.exchange(code), provider.exchange(code)])).map((response) => response.status);
+    expect(statuses.sort()).toEqual([200, 400]);
+    const codeRow = (await provider.database.findMany<{ id: string }>({ model: 'oauth_provider_codes', namespace: 'authfn' }))[0];
+    const committed = await storedClaimId(provider, 'oauth_provider_codes', codeRow.id);
+    const rows = await tokenRecords(provider);
+    expect(rows).toHaveLength(4);
+    expect(rows.filter((row) => row.issuingClaimId === committed)).toHaveLength(2);
+    expect(await activeRows(provider)).toEqual([]);
+  });
+
+  it('of two concurrent rotations of one refresh token, one succeeds and the loser\'s staged tokens never become valid', async () => {
+    const provider = await setupProvider({ sql });
+    const issued = await provider.obtainTokens();
+    const statuses = (await Promise.all([provider.refresh(issued.refresh_token), provider.refresh(issued.refresh_token)]))
+      .map((response) => response.status);
+    expect(statuses.sort()).toEqual([200, 400]);
+    const rows = await tokenRecords(provider);
+    const parent = rows.find((row) => row.kind === 'refresh' && row.rotatedAt)!;
+    const children = rows.filter((row) => row.sourceId === parent.id);
+    expect(children).toHaveLength(4);
+    const committed = await storedClaimId(provider, 'oauth_provider_tokens', parent.id);
+    expect(children.filter((row) => row.issuingClaimId === committed)).toHaveLength(2);
+    expect(await activeRows(provider)).toEqual([]);
+  });
+
+  it('a failed grant lookup leaves the code redeemable once', async () => {
+    const provider = await setupProvider({ sql });
+    const code = (await provider.authorize()).searchParams.get('code')!;
+    provider.control.failNext('oauth_provider_grants', () => true, 'findOne');
+    expect((await provider.exchange(code)).status).toBe(500);
+    const retried = await provider.exchange(code);
+    expect(retried.status).toBe(200);
+    expect((await provider.introspect((await retried.json() as Tokens).access_token)).body.active).toBe(true);
+  });
 
   it('a failed read after a reuse revocation leaves the grant revoked', async () => {
     const provider = await setupProvider({ sql });
@@ -90,30 +197,5 @@ describe.each([['memory', false], ['SQL', true]])('token issuance failure (%s)',
       namespace: 'authfn'
     });
     expect(grants).toEqual([expect.objectContaining({ revokedAt: expect.any(Date), updatedAt: expect.any(Date) })]);
-  });
-
-  it('a refresh claim that commits but loses its acknowledgement leaves the refresh token redeemable once', async () => {
-    const provider = await setupProvider({ sql });
-    const issued = await provider.obtainTokens();
-    provider.control.failNext('oauth_provider_tokens', () => true, 'updateMany');
-    expect((await provider.refresh(issued.refresh_token)).status).toBe(500);
-    const retried = await provider.refresh(issued.refresh_token);
-    expect(retried.status).toBe(200);
-    expect((await provider.introspect((await retried.json() as Tokens).access_token)).body.active).toBe(true);
-  });
-
-  it.each(['access', 'refresh'])('a failed %s token write leaves the refresh token redeemable once', async (kind) => {
-    const provider = await setupProvider({ sql });
-    const issued = await provider.obtainTokens();
-    provider.control.failNext('oauth_provider_tokens', ({ data }) => data?.kind === kind);
-    expect((await provider.refresh(issued.refresh_token)).status).toBe(500);
-    expect(await tokenRows(provider)).toBe(2);
-    expect((await provider.introspect(issued.access_token)).body.active).toBe(true);
-
-    const retried = await provider.refresh(issued.refresh_token);
-    expect(retried.status).toBe(200);
-    const next = await retried.json() as Tokens;
-    expect(await (await provider.refresh(issued.refresh_token)).json()).toMatchObject({ error: 'invalid_grant' });
-    expect((await provider.introspect(next.access_token)).body).toEqual({ active: false });
   });
 });

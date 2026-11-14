@@ -6,9 +6,8 @@ import {
   findCode,
   findGrant,
   isActiveUser,
-  issueTokens,
-  releaseOnFailure,
   revokeGrant,
+  stageTokens,
   type IssuedTokens
 } from '../store.js';
 import type { OAuthProviderClient } from '../types.js';
@@ -60,21 +59,18 @@ export async function exchangeAuthorizationCode(
     throw new OAuthError('invalid_target', 'resource does not match the authorization request');
   }
 
-  // The conditional update is the single-use guarantee: a concurrent
-  // redemption that loses the race is a replay.
-  const claim = await claimCode(runtime.store, record.id, now);
-  if (!claim) {
+  const grant = await findGrant(runtime.store, record.grantId);
+  if (!grant || grant.revokedAt || !(await isActiveUser(runtime.store, grant.userId))) {
+    throw invalidGrant('Authorization grant is no longer valid');
+  }
+
+  // The tokens are staged first; the conditional claim on the code commits
+  // them and is the single-use guarantee: a concurrent redemption that loses
+  // the race is a replay, and its staged tokens never become valid.
+  const { tokens, claimId } = await stageTokens(runtime.store, grant, grant.scopes, now, record.id);
+  if (!(await claimCode(runtime.store, record.id, now, claimId))) {
     await revokeGrant(runtime.store, record.grantId, 'code_replay', now);
     throw invalidGrant('Authorization code has already been used');
   }
-
-  // A failed lookup releases the claim; a revoked grant or inactive user does not.
-  const grant = await releaseOnFailure(claim, async () => {
-    const found = await findGrant(runtime.store, record.grantId);
-    return found && !found.revokedAt && (await isActiveUser(runtime.store, found.userId)) ? found : null;
-  });
-  if (!grant) {
-    throw invalidGrant('Authorization grant is no longer valid');
-  }
-  return issueTokens(runtime.store, grant, grant.scopes, now, claim);
+  return tokens;
 }

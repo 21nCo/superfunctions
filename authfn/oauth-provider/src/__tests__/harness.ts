@@ -67,32 +67,40 @@ export function createProviderApp() {
 
 type Adapter = AuthFnRuntimeConfig['database'];
 
-type Operation = 'create' | 'findOne' | 'updateMany';
+type Operation = 'create' | 'findOne' | 'updateMany' | 'updateManyRejected';
 
 /**
  * Controls storage calls: `arm(model)` pauses the next insert into `model`
  * until `release()` and resolves once it is paused, to force an interleaving;
  * `failNext(model, match, operation)` makes the next matching insert or
- * `findOne` throw, or the next `updateMany` commit and then throw, as when
- * its acknowledgement is lost.
+ * `findOne` throw, the next `updateMany` commit and then throw, as when its
+ * acknowledgement is lost, or (`updateManyRejected`) throw without applying.
  */
 export function createInsertControl(database: Adapter) {
   let paused: { model: string; reached: () => void; released: Promise<void> } | undefined;
-  let failure: { model: string; operation: Operation; match: (params: { data?: Record<string, unknown> }) => boolean } | undefined;
+  const failures: { model: string; operation: Operation; match: (params: { data?: Record<string, unknown> }) => boolean }[] = [];
   let release: () => void = () => {};
   const injectFailure = (operation: Operation, params: { model: string; data?: Record<string, unknown> }) => {
-    if (failure?.operation === operation && failure.model === params.model && failure.match(params)) {
-      failure = undefined;
+    const index = failures.findIndex((failure) =>
+      failure.operation === operation && failure.model === params.model && failure.match(params));
+    if (index >= 0) {
+      failures.splice(index, 1);
       throw new Error(`injected ${operation} failure`);
     }
   };
+  const findManyModels: string[] = [];
   const wrapped: Adapter = {
     ...database,
+    findMany: async (params) => {
+      findManyModels.push(params.model);
+      return database.findMany(params);
+    },
     findOne: async (params) => {
       injectFailure('findOne', params);
       return database.findOne(params);
     },
     updateMany: async (params) => {
+      injectFailure('updateManyRejected', params);
       const updated = await database.updateMany(params);
       injectFailure('updateMany', params);
       return updated;
@@ -110,12 +118,14 @@ export function createInsertControl(database: Adapter) {
   };
   return {
     database: wrapped,
+    /** The model of every `findMany` the server ran, in order. */
+    findManyModels,
     arm: (model: string) => new Promise<void>((reached) => {
       paused = { model, reached, released: new Promise<void>((resolve) => { release = resolve; }) };
     }),
     release: () => release(),
     failNext: (model: string, match: (params: { data?: Record<string, unknown> }) => boolean, operation: Operation = 'create') => {
-      failure = { model, operation, match };
+      failures.push({ model, operation, match });
     }
   };
 }
@@ -124,10 +134,11 @@ export function createInsertControl(database: Adapter) {
  * The shipped Kysely adapter on an in-memory SQLite database, with one column
  * per schema field. SQLite has no JSON type, so JSON fields are stored as
  * text. The adapter's `create` and `update` fail on SQLite (`selectAll` on an
- * insert, `RETURNING "*"`), a packages/db defect outside this package, so
- * inserts go through Kysely and `update` (used by AuthFn core sessions) runs
- * as `updateMany` and `findOne`. The OAuth store's claims, reads and deletes
- * use the adapter itself.
+ * insert, `RETURNING "*"`), and its `count` selects `count("*")`, which no
+ * dialect accepts: packages/db defects outside this package (AUTH-13). So
+ * inserts and counts go through Kysely directly, and `update` (used by AuthFn
+ * core sessions) runs as `updateMany` and `findOne`. The OAuth store's
+ * claims, reads and deletes use the adapter itself.
  */
 function sqliteAdapter(): Adapter {
   const sqlite = new Database(':memory:');
@@ -160,7 +171,17 @@ function sqliteAdapter(): Adapter {
       await kysely.updateMany({ ...params, data: encode(params.data) });
       return decode(await kysely.findOne(params));
     },
-    updateMany: (params) => kysely.updateMany({ ...params, data: encode(params.data) })
+    updateMany: (params) => kysely.updateMany({ ...params, data: encode(params.data) }),
+    count: async (params) => {
+      let query = db.selectFrom(params.model).select((eb) => eb.fn.countAll<number>().as('count'));
+      for (const { field, operator, value } of params.where ?? []) {
+        if (operator !== 'eq') {
+          throw new Error(`count supports eq only, not ${operator}`);
+        }
+        query = query.where(field, '=', value as string);
+      }
+      return Number((await query.executeTakeFirstOrThrow()).count);
+    }
   } as Adapter;
 }
 

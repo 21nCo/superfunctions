@@ -129,9 +129,11 @@ export function authenticateClient(
   } else if (method === 'client_secret_post') {
     presented = params.get('client_secret');
   }
+  // A client not registered for Basic must not send an Authorization header
+  // of any scheme, parsable or not (RFC 6749 2.3: one method per request).
   const sentOtherCredential = method === 'client_secret_basic'
     ? params.has('client_secret')
-    : basic !== null || (method === 'none' && params.has('client_secret'));
+    : viaHeader || (method === 'none' && params.has('client_secret'));
   if (sentOtherCredential) {
     throw invalidClient(viaHeader);
   }
