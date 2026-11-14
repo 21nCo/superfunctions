@@ -50,6 +50,38 @@ export interface UploadInput {
   file: File | Blob;
   fileName?: string;
   metadata?: Record<string, unknown>;
+  /**
+   * File ID to upload under, so an offline capture keeps one ID before and
+   * after it syncs. Defaults to `generateFileId()`.
+   *
+   * - Must match `file_[A-Za-z0-9_-]{8,64}`; the server rejects any other value
+   *   on `upload/init` with 400 `FILEFN_INVALID_FILE_ID`.
+   * - A new ID (no file yet) is reserved for the signed-in caller on
+   *   `upload/init`, and the file is created owned by that caller when the
+   *   upload completes. The first caller to init an ID keeps it: another
+   *   principal's `upload/init` under it fails with 403 `FILEFN_FORBIDDEN`, so
+   *   it never uploads. The ID stays reserved to its owner even if the file is
+   *   later deleted.
+   * - An anonymous caller claims the ID for its upload session only when the
+   *   upload completes, just before the bytes are stored, and holds it while
+   *   that completion runs (at most 15 minutes per call). A failed completion
+   *   frees the ID, so a retry, with this session or a new one, may complete.
+   *   Its `upload/init` fails with 403 while someone else holds the ID; it may
+   *   init again without a key.
+   * - Only a completion can fail with 403 after the parts were uploaded: an
+   *   anonymous one whose ID someone else reserved or claimed first, or one
+   *   that lost write permission on an existing file after init. The session
+   *   is then aborted, and nothing it uploaded is kept.
+   * - An existing ID replaces that file with a new version. When the server
+   *   configures a `fileWriteChecker`, this needs write permission on the
+   *   file; otherwise `upload/init` fails with 403.
+   * - Retrying `upload/init` under the same ID is safe. With the same
+   *   `idempotencyKey` it returns the same upload session. Without one, the
+   *   same signed-in caller gets a new session for the same ID, and each
+   *   session that completes adds a version of the one file; this keeps each
+   *   version's bytes only when the policy's `storagePath` differs per
+   *   upload (the default does).
+   */
   fileId?: string;
   idempotencyKey?: string;
   preprocessors?: UploadPreprocessor[];

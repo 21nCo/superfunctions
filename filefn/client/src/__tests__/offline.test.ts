@@ -178,6 +178,18 @@ describe('Offline Client', () => {
     expect(stagedUploads.size).toBe(0);
   });
 
+  it('rejects a malformed fileId before staging an offline upload', async () => {
+    Object.defineProperty(navigator, 'onLine', { value: false });
+    const client = createFileFnClient({ baseUrl: 'http://test', offline: { enabled: true } });
+    const file = new File(['content'], 'test.txt', { type: 'text/plain' });
+
+    for (const fileId of ['not-a-file-id', 'file_short', '']) {
+      expect(() => client.uploadFile({ policy: 'p', file, fileId })).toThrow(expect.objectContaining({ code: 'FILEFN_INVALID_FILE_ID' }));
+    }
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(stagedUploads.size).toBe(0);
+  });
+
   it('persists idempotency keys through offline replay', async () => {
     Object.defineProperty(navigator, 'onLine', { value: false });
 

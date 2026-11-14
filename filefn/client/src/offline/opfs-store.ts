@@ -1,4 +1,5 @@
 import type { PendingLocalDescriptor } from '../types.js';
+import { isValidFileId } from '../upload-manager.js';
 import type { PendingLocalSourceMetadata } from '../preprocessing/types.js';
 
 export interface PendingUpload {
@@ -50,6 +51,25 @@ function deriveFallbackLocalSource(upload: Pick<PendingUpload, 'fileName' | 'mim
     opfsDataFile: 'data.bin',
     previewBehavior: 'download-only',
   };
+}
+
+/**
+ * File ID of a pending upload staged without one. It is derived from the
+ * upload session ID, so every read of the same upload gives the same ID, and
+ * it matches the grammar `upload/init` accepts, `file_[A-Za-z0-9_-]{8,64}`.
+ */
+export function fallbackFileId(uploadSessionId: string): string {
+  return `file_${uploadSessionId.replace(/[^A-Za-z0-9_-]/g, '_').padEnd(8, '_').slice(0, 64)}`;
+}
+
+/**
+ * File ID of a pending upload. Earlier clients persisted the upload session ID
+ * (`offline_...`) as the file ID of an upload staged without one; that, like a
+ * missing ID, is outside the grammar and resolves to `fallbackFileId`. A valid
+ * ID is kept as staged.
+ */
+function resolveFileId(fileId: string | undefined, uploadSessionId: string): string {
+  return isValidFileId(fileId) ? fileId : fallbackFileId(uploadSessionId);
 }
 
 export interface OPFSStoreConfig {
@@ -118,7 +138,7 @@ export class OPFSStore {
 
       const metadata = {
         uploadSessionId: upload.uploadSessionId,
-        fileId: upload.fileId || upload.uploadSessionId,
+        fileId: resolveFileId(upload.fileId, upload.uploadSessionId),
         policy: upload.policy,
         idempotencyKey: upload.idempotencyKey,
         fileName: upload.fileName,
@@ -160,7 +180,7 @@ export class OPFSStore {
 
       return {
         ...metadata,
-        fileId: metadata.fileId || uploadSessionId,
+        fileId: resolveFileId(metadata.fileId, uploadSessionId),
         localSource: metadata.localSource || deriveFallbackLocalSource(metadata),
         fileData,
       };
@@ -224,7 +244,7 @@ export class OPFSStore {
       url = URL.createObjectURL(blob);
       this.localObjectUrls.set(upload.uploadSessionId, url);
     }
-    const resolvedFileId = upload.fileId ?? upload.uploadSessionId;
+    const resolvedFileId = resolveFileId(upload.fileId, upload.uploadSessionId);
     const resolvedLocalSource = upload.localSource ?? deriveFallbackLocalSource(upload);
 
     return {
@@ -314,7 +334,7 @@ export class OPFSStore {
       const metadata = JSON.parse(metaText);
       return {
         ...metadata,
-        fileId: metadata.fileId || uploadSessionId,
+        fileId: resolveFileId(metadata.fileId, uploadSessionId),
         localSource: metadata.localSource || deriveFallbackLocalSource(metadata),
       };
     } catch {

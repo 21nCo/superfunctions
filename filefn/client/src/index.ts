@@ -1,5 +1,5 @@
 import { createHttpClient, FileFnHttpError } from './client.js';
-import { UploadManager, generateFileId, prepareUploadInput } from './upload-manager.js';
+import { UploadManager, generateFileId, isValidFileId, prepareUploadInput } from './upload-manager.js';
 import type {
   ArtifactDescriptor,
   FileFnClientConfig,
@@ -271,6 +271,15 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
       };
 
       if (config.offline?.enabled && shouldUseOfflineMode(true)) {
+        // Offline, the server sees the ID only when the upload syncs, so a
+        // malformed one is rejected here rather than on every sync attempt.
+        if (!isValidFileId(normalizedInput.fileId)) {
+          const error = new TypeError(
+            `Invalid fileId ${JSON.stringify(normalizedInput.fileId)}: it must match file_[A-Za-z0-9_-]{8,64}`
+          ) as TypeError & { code?: string };
+          error.code = 'FILEFN_INVALID_FILE_ID';
+          throw error;
+        }
         const { store: activeOfflineStore, sync: activeOfflineSync } = ensureOfflineSupport();
         const uploadSessionId = generateOfflineSessionId();
         let aborted = false;

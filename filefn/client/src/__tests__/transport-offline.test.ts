@@ -76,7 +76,7 @@ describe('offline replay transport', () => {
       getAuthHeaders: () => ({ 'x-csrf-token': 'csrf-before-reload' }),
       offline: { enabled: true },
     });
-    beforeReload.uploadFile({ policy: 'p', file: new Blob(['hello'], { type: 'text/plain' }), fileName: 'a.txt', fileId: 'file_1' });
+    beforeReload.uploadFile({ policy: 'p', file: new Blob(['hello'], { type: 'text/plain' }), fileName: 'a.txt', fileId: 'file_00000001' });
     await vi.waitFor(() => expect(persisted.size).toBe(1));
     expect(stagingFetch).not.toHaveBeenCalled();
     // Auth material is resolved at replay time and never written to OPFS.
@@ -95,7 +95,7 @@ describe('offline replay transport', () => {
         return envelope({ url: '/upload/sess_1/parts/1', headers: {}, expiresAt: 'x' });
       }
       if (url.endsWith('/parts/1')) return envelope({ etag: 'proxy-etag', recorded: true });
-      if (url.endsWith('/upload/sess_1/complete')) return envelope({ fileId: 'file_1', versionId: 'ver_1' });
+      if (url.endsWith('/upload/sess_1/complete')) return envelope({ fileId: 'file_00000001', versionId: 'ver_1' });
       return new Response('not found', { status: 404 });
     });
     const afterReload = createFileFnClient({
@@ -107,7 +107,7 @@ describe('offline replay transport', () => {
     });
 
     // Touching offline state starts the client's sync loop, which replays the staged upload.
-    await afterReload.getPendingLocalDescriptor('file_1');
+    await afterReload.getPendingLocalDescriptor('file_00000001');
     await vi.waitFor(() => expect(persisted.size).toBe(0));
 
     expect(globalFetch).not.toHaveBeenCalled();

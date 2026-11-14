@@ -183,11 +183,64 @@ describe('OPFSStore', () => {
       expect(retrieved!.size).toBe(testData.length);
       expect(retrieved!.mimeType).toBe('text/plain');
       expect(new Uint8Array(retrieved!.fileData)).toEqual(testData);
-      expect(retrieved!.fileId).toBe('offline_001');
+      // Staged without a fileId: a stable ID inside the server's grammar, not the session ID.
+      expect(retrieved!.fileId).toBe('file_offline_001');
+      expect(retrieved!.fileId).toMatch(/^file_[A-Za-z0-9_-]{8,64}$/);
       expect(retrieved!.localSource).toMatchObject({
         mode: 'local-object-url',
         previewBehavior: 'download-only',
       });
+    });
+
+    it('keeps a valid fileId that equals its upload session ID across staging and reload', async () => {
+      const id = 'file_same_as_session';
+      const store = new OPFSStore();
+      await store.init();
+      await store.stagePendingUpload({
+        uploadSessionId: id,
+        fileId: id,
+        policy: 'images',
+        fileName: 'same.jpg',
+        size: 4,
+        mimeType: 'image/jpeg',
+        fileData: new TextEncoder().encode('same').buffer,
+        createdAt: new Date().toISOString(),
+        retryCount: 0,
+      });
+      const reloaded = new OPFSStore();
+      await reloaded.init();
+      expect((await reloaded.getPendingUpload(id))!.fileId).toBe(id);
+      expect((await reloaded.getPendingLocalDescriptor(id))?.uploadSessionId).toBe(id);
+    });
+
+    it('gives legacy metadata whose fileId is its session ID the same grammar-valid ID on every read', async () => {
+      const store = new OPFSStore();
+      await store.init();
+      const sessionId = generateOfflineSessionId();
+      await store.stagePendingUpload({
+        uploadSessionId: sessionId,
+        fileId: 'file_dropped_later',
+        policy: 'images',
+        fileName: 'legacy.jpg',
+        size: 6,
+        mimeType: 'image/jpeg',
+        fileData: new TextEncoder().encode('legacy').buffer,
+        createdAt: new Date().toISOString(),
+        retryCount: 0,
+      });
+      // Rewrite the metadata the way an earlier client staged an upload without
+      // a fileId: it persisted the upload session ID as the file ID.
+      const dir = await (await mockRoot.getDirectoryHandle('filefn-pending-uploads')).getDirectoryHandle(sessionId);
+      const meta = await dir.getFileHandle('metadata.json');
+      const legacy = JSON.parse(await (await meta.getFile()).text());
+      legacy.fileId = sessionId;
+      await (await meta.createWritable()).write(JSON.stringify(legacy));
+
+      const fileId = (await store.getPendingUpload(sessionId))!.fileId!;
+      expect(fileId).toMatch(/^file_[A-Za-z0-9_-]{8,64}$/);
+      expect(fileId).not.toBe(sessionId);
+      expect((await store.getPendingUpload(sessionId))!.fileId).toBe(fileId);
+      expect((await store.getPendingLocalDescriptor(fileId))?.uploadSessionId).toBe(sessionId);
     });
 
     it('TV-CLIENT-002: should resolve a pending-local descriptor by fileId', async () => {
@@ -229,7 +282,7 @@ describe('OPFSStore', () => {
 
       await store.stagePendingUpload({
         uploadSessionId: 'offline_old_001',
-        fileId: 'file_reused',
+        fileId: 'file_reused_01',
         policy: 'images',
         fileName: 'older.jpg',
         size: 12,
@@ -240,7 +293,7 @@ describe('OPFSStore', () => {
       });
       await store.stagePendingUpload({
         uploadSessionId: 'offline_new_001',
-        fileId: 'file_reused',
+        fileId: 'file_reused_01',
         policy: 'images',
         fileName: 'newer.jpg',
         size: 12,
@@ -250,7 +303,7 @@ describe('OPFSStore', () => {
         retryCount: 0,
       });
 
-      const descriptor = await store.getPendingLocalDescriptor('file_reused');
+      const descriptor = await store.getPendingLocalDescriptor('file_reused_01');
 
       expect(descriptor?.uploadSessionId).toBe('offline_new_001');
       expect(descriptor?.source.fileName).toBe('newer.jpg');
@@ -510,8 +563,11 @@ describe('OfflineSync', () => {
       expect(result.failed).toHaveLength(0);
       expect(result.totalProcessed).toBe(2);
 
-      // Verify uploads were called
+      // Verify uploads were called, each under a file ID the server accepts.
       expect(mockClient.uploadFile).toHaveBeenCalledTimes(2);
+      for (const [input] of vi.mocked(mockClient.uploadFile).mock.calls) {
+        expect(input.fileId).toMatch(/^file_[A-Za-z0-9_-]{8,64}$/);
+      }
 
       // Verify uploads were deleted
       const remainingUploads = await mockStore.listPendingUploads();

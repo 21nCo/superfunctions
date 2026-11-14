@@ -35,6 +35,7 @@ Every error response from filefn follows the same envelope:
 | `FILEFN_RATE_LIMITED` | 429 | The route's rate limit was exceeded. `details.resetAt` tells you when to retry. |
 | `FILEFN_INVALID_PART_NUMBER` | 400 | `partNumber` is not a positive integer. |
 | `FILEFN_INVALID_ETAG` | 400 | The etag passed to `complete-part` is malformed. |
+| `FILEFN_INVALID_FILE_ID` | 400 | The `fileId` passed to `upload/init` does not match `file_[A-Za-z0-9_-]{8,64}`. |
 | `FILEFN_UPLOAD_INCOMPLETE` | 409 | `complete` was called but parts are missing. |
 | `FILEFN_UPLOAD_EXPIRED` | 410 | The session TTL expired. |
 | `FILEFN_UPLOAD_ABORTED` | 410 | The session was aborted. |
