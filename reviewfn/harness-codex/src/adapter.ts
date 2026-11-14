@@ -115,7 +115,8 @@ export class CodexHarnessAdapter implements HarnessAdapter {
     if (forbiddenInstructionChanges.length) return emptyFailure("failed", `Review target changes auto-loaded instruction/configuration paths: ${forbiddenInstructionChanges.join(", ")}. Trusted policy refuses inference.`);
     // A caller-supplied output schema (for example the panel lens schema) replaces the 0.1 harness schema; it must compile before inference.
     let validatePayload: (value: unknown) => string[] = validateHarnessPayload;
-    // Strict provider output carries null for each optional property; only nulls the schema rejects are omitted before validation.
+    // Strict provider output carries null for each optional property. Without outputSchema every null is omitted, as in 0.1;
+    // with a caller schema only the nulls that schema rejects are omitted before validation.
     let omitNulls: (value: unknown) => unknown = omitOptionalNulls;
     if (input.outputSchema) {
       try { validatePayload = structuredOutputValidator(input.outputSchema); omitNulls = omitOptionalNullsFor(input.outputSchema); }
