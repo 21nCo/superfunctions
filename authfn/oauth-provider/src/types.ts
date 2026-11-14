@@ -98,8 +98,49 @@ export interface OAuthConsentInput {
 export interface OAuthProviderPluginConfig extends AuthFnBundledPluginConfig {
 }
 
+/** Registrations (or metadata document fetches) admitted per window. */
+export interface OAuthClientRegistrationRateLimit {
+  /** Per client IP, when the IP is known. Defaults to 20. */
+  perIp?: number;
+  /** Across all callers. Defaults to 200. */
+  global?: number;
+  /** Fixed window length. Defaults to 3600 (one hour). */
+  windowSeconds?: number;
+}
+
+/**
+ * Self-registration for public clients such as MCP hosts. Every client
+ * registered this way is public (`token_endpoint_auth_method: none`), never
+ * trusted, and may only use `https` or `http://127.0.0.1[:port]` redirect URIs.
+ */
+export interface OAuthClientRegistrationConfig {
+  /** Accept RFC 7591 dynamic client registration at `{basePath}/oauth/register`. */
+  dynamic?: boolean;
+  /**
+   * Accept an `https` URL as `client_id` that serves the client's metadata
+   * (a Client ID Metadata Document). It is fetched with a 5-second timeout
+   * and a 64 KB cap.
+   */
+  metadataDocuments?: boolean;
+  rateLimit?: OAuthClientRegistrationRateLimit;
+  /**
+   * The caller's IP for the per-IP limit. Defaults to AuthFn's
+   * `rateLimit.resolveClientIp`; without either only the global limit applies.
+   */
+  resolveClientIp?: (request: Request) => string | null | undefined | Promise<string | null | undefined>;
+  /**
+   * Fetches metadata documents; defaults to the global `fetch`. Supply an
+   * egress-restricted fetch to keep documents off internal networks: hosts
+   * that are IP literals, `localhost` or single-label names are refused
+   * before any fetch, but a public name can still resolve to a private address.
+   */
+  fetch?: typeof fetch;
+}
+
 export interface OAuthProviderPluginRuntimeConfig {
   clients: OAuthProviderClient[];
+  /** Client self-registration; off unless configured. */
+  registration?: OAuthClientRegistrationConfig;
   resources: OAuthProviderResource[];
   /** Renders the sign-in step when the authorization request has no session. */
   loginRequired: (input: OAuthLoginRequiredInput) => Response | Promise<Response>;

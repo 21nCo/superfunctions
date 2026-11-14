@@ -8,6 +8,7 @@ import { wrapWithSchema } from '@superfunctions/db';
 import { kyselyAdapter, memoryAdapter } from '@superfunctions/db/adapters';
 import {
   authFnOAuthProviderPlugin,
+  type OAuthClientRegistrationConfig,
   type OAuthConsentInput,
   type OAuthLoginRequiredInput,
   type OAuthProviderClient,
@@ -166,7 +167,9 @@ function sqliteAdapter(): Adapter {
   } as Adapter;
 }
 
-export async function setupProvider(options: { sql?: boolean; clients?: OAuthProviderClient[] } = {}) {
+export async function setupProvider(
+  options: { sql?: boolean; clients?: OAuthProviderClient[]; registration?: OAuthClientRegistrationConfig } = {}
+) {
   const raw = options.sql ? sqliteAdapter() : memoryAdapter({ debug: false });
   // Tests read and write rows the way the server does: through the schema.
   const database = options.sql ? wrapWithSchema(raw, createProviderApp().getSchema()) : raw;
@@ -180,6 +183,7 @@ export async function setupProvider(options: { sql?: boolean; clients?: OAuthPro
       oauthProvider: {
         clients: [RFC6749_CLIENT, MCP_HOST, RHOMBUS, ...(options.clients ?? [])],
         resources: RESOURCES,
+        registration: options.registration,
         now: () => now,
         loginRequired: (input) => {
           logins.push(input);
@@ -285,6 +289,14 @@ export async function setupProvider(options: { sql?: boolean; clients?: OAuthPro
       body: new URLSearchParams({ token: tokenValue })
     });
 
+  /** RFC 7591 registration request; `ip` is sent as `x-test-ip` for a test `resolveClientIp`. */
+  const register = (metadata: unknown, ip?: string) =>
+    handle('/auth/oauth/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(ip ? { 'x-test-ip': ip } : {}) },
+      body: typeof metadata === 'string' ? metadata : JSON.stringify(metadata)
+    });
+
   /** Authorizes and exchanges, returning the RFC 6749 5.1 token response. */
   const obtainTokens = async (overrides: Record<string, string | undefined> = {}) => {
     const callback = await authorize(overrides);
@@ -315,6 +327,7 @@ export async function setupProvider(options: { sql?: boolean; clients?: OAuthPro
     refresh,
     introspect,
     revoke,
+    register,
     obtainTokens,
     advance: (seconds: number) => {
       now = new Date(now.getTime() + seconds * 1000);

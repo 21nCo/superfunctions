@@ -35,12 +35,13 @@ type AuthorizationRequest =
  * cannot be trusted with a redirect (RFC 6749 4.1.2.1); anything else is
  * returned for an error redirect.
  */
-function validateAuthorizationRequest(
+async function validateAuthorizationRequest(
   runtime: OAuthProviderRuntime,
+  request: Request,
   params: Map<string, string>
-): AuthorizationRequest {
+): Promise<AuthorizationRequest> {
   const clientId = params.get('client_id');
-  const client = clientId ? runtime.findClient(clientId) : undefined;
+  const client = clientId ? await runtime.resolveClient(clientId, request) : undefined;
   if (!client) {
     throw new OAuthError('invalid_request', 'Unknown client_id');
   }
@@ -84,12 +85,13 @@ function validateAuthorizationRequest(
 }
 
 /** Validates, answering a client or redirect URI problem directly. */
-function validateOrRespond(
+async function validateOrRespond(
   runtime: OAuthProviderRuntime,
+  request: Request,
   readParams: () => Map<string, string>
-): AuthorizationRequest | Response {
+): Promise<AuthorizationRequest | Response> {
   try {
-    return validateAuthorizationRequest(runtime, readParams());
+    return await validateAuthorizationRequest(runtime, request, readParams());
   } catch (error) {
     if (error instanceof OAuthError) {
       return oauthErrorResponse(error);
@@ -195,7 +197,11 @@ export function createAuthorizeRoutes(runtime: OAuthProviderRuntime): Route[] {
       path: OAUTH_AUTHORIZE_PATH,
       meta: createAuthFnRouteMeta('oauthAuthorize', 'OAuth 2.1 authorization endpoint', { mode: 'hybrid' }),
       handler: async (request) => {
-        const validated = validateOrRespond(runtime, () => readSingleParams(new URL(request.url).searchParams));
+        const validated = await validateOrRespond(
+          runtime,
+          request,
+          () => readSingleParams(new URL(request.url).searchParams)
+        );
         if (validated instanceof Response) {
           return validated;
         }
@@ -260,7 +266,7 @@ export function createAuthorizeRoutes(runtime: OAuthProviderRuntime): Route[] {
           return oauthErrorResponse(new OAuthError('invalid_request', 'The decision body must be a JSON object'));
         }
         const params = new Map<string, string>();
-        const validated = validateOrRespond(runtime, () => {
+        const validated = await validateOrRespond(runtime, request, () => {
           for (const [name, value] of Object.entries(body)) {
             if (typeof value !== 'string') {
               throw new OAuthError('invalid_request', `Parameter ${name} must be a string`);
