@@ -856,7 +856,8 @@ export interface BillFnInstance {
        * with `BILLFN_CONFLICT`. Every successful import records a `billfn.subscription.imported`
        * billing event with the operator before each write that leaves a subscription
        * usable (accepting a new binding, a re-import's change, or adding its import
-       * marker), and before its replay, so no state an import publishes lacks one.
+       * marker), and before its replay. A state the replay writes is recorded after
+       * the replay, when the call gets that far.
        */
       import(input: BillFnImportSubscriptionRequest): Promise<BillFnImportSubscriptionResponse>;
     };
