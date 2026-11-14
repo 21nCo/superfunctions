@@ -1,0 +1,39 @@
+billfn/admin/src/__tests__/admin.test.ts
+  s_ca712d9f004878::t_abb0047c7e0ec2 302-342
+billfn/admin/src/domain-service.ts
+  s_ca712d9f004878::t_1b1e6fcc0198b5 65,67-68,70
+billfn/core/src/__tests__/import-subscription.test.ts
+  s_ca712d9f004878::t_1f894aa47a8219 3,179,181-182,342-347,416-420,432,465-543
+billfn/core/src/errors.ts
+  s_ca712d9f004878::t_4b744712399b1a 4-5,77-78,80,86-95
+billfn/core/src/index.ts
+  s_ca712d9f004878::t_293aa87ab59986 9-13
+billfn/core/src/service.ts
+  s_ca712d9f004878::t_cf95464caa6553 114-115,1244-1251,2148-2168,2170-2171,2174,2178,2181-2182,2185,2189
+billfn/docs/content/docs/server/reconciliation.mdx
+  s_ca712d9f004878::t_70d1c98a8f7521 79-81
+billfn/provider-apple/src/__tests__/provider.test.ts
+  s_ca712d9f004878::t_d598bb9b525b61 690-727
+billfn/provider-dodo/src/__tests__/provider.test.ts
+  s_ca712d9f004878::t_02e74734b301f3 710,712-734
+billfn/provider-apple/src/index.ts
+  s_ca712d9f004878::t_8c866cb14887a5 125-156,425-431
+billfn/provider-dodo/src/index.ts
+  s_ca712d9f004878::t_fe1e7a72810557 301,309-323,326-327,330
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3b94802dc95fa2b797cc25b2854f081ccafffaa3",
+  "prompts": {},
+  "sessions": {
+    "s_ca712d9f004878": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e7d3367-bcef-435f-b7f9-6c0a9a38bf8b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
