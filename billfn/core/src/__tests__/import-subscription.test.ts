@@ -106,7 +106,7 @@ function createProvider(options: ProviderOptions = {}) {
       checkoutStatus: 'succeeded',
       providerSubscriptionId: record.subscription_id as string,
       currentPeriodEnd: record.next_billing_date as string,
-      autoRenew: status === 'active',
+      autoRenew: (record.auto_renew as boolean | undefined) ?? status === 'active',
       raw: record
     };
   });
@@ -407,6 +407,9 @@ describe('billfn.services.subscriptions.import', () => {
           planKey: 'nucleus',
           priceId: 'price_nucleus_dodo_year',
           status: 'active',
+          currentPeriodStart: null,
+          currentPeriodEnd: '2027-01-01T00:00:00.000Z',
+          autoRenew: true,
           operator: OPERATOR,
           reason: 'TIDY-558 cutover'
         }
@@ -432,6 +435,9 @@ describe('billfn.services.subscriptions.import', () => {
     // The cancellation occurred after the import's provider read started, so it is applied over the read.
     expect(data.subscription).toMatchObject({ providerSubscriptionId: 'sub_legacy', status: 'canceled' });
     expect(data.entitlements.status).toBe('inactive');
+    // The returned event describes the returned (replayed) state; the audit recorded before acceptance stays.
+    expect(data.billingEvent.payload).toMatchObject({ subscriptionId: data.subscription.id, status: 'canceled', autoRenew: false });
+    expect((await env.importEvents()).map((event) => event.payload.status).sort()).toEqual(['active', 'canceled']);
     expect((await env.unlinked()).map((row) => [row.providerEventId, row.status, row.subscriptionId])).toEqual([
       ['evt_new_cancel', 'replayed', data.subscription.id],
       ['evt_old_renewal', 'skipped', data.subscription.id]
@@ -512,10 +518,10 @@ describe('billfn.services.subscriptions.import', () => {
     expect(rerun.subscription).toMatchObject({ status: 'canceled' });
     expect(await env.subscriptions()).toHaveLength(1);
     expect(await env.unlinked()).toEqual([expect.objectContaining({ providerEventId: 'evt_cancel', status: 'replayed' })]);
-    // A rerun of the operator's request (same requestId) keeps its one audit event.
-    expect(await env.importEvents()).toEqual([
-      expect.objectContaining({ payload: expect.objectContaining({ subscriptionId: rerun.subscription.id, operator: OPERATOR }) })
-    ]);
+    // A rerun of the operator's request (same requestId) keeps its audit of the accepted state and records the
+    // canceled state it returns once.
+    expect(rerun.billingEvent.payload).toMatchObject({ subscriptionId: rerun.subscription.id, status: 'canceled', operator: OPERATOR });
+    expect((await env.importEvents()).map((event) => event.payload.status).sort()).toEqual(['active', 'canceled']);
   });
 
   it('ends two racing imports of one reference into one billing account with one subscription', async () => {
@@ -1300,6 +1306,99 @@ describe('billfn.services.subscriptions.import', () => {
     expect(await byOperator2()).toEqual([expect.objectContaining({ payload: expect.objectContaining({ planKey: 'team', operator }) })]);
     unwrap(await env.import({ billingAccountId, planKey: 'team', operator }));
     expect(await byOperator2()).toHaveLength(1);
+  });
+
+  it.each([
+    ['its import audit write fails', (model: string, type?: string) => model === 'billingEvents' && type === 'billfn.subscription.imported', false],
+    ['its entitlement write fails', (model: string) => model === 'entitlementSnapshots', true]
+  ])('never marks an accepted row imported without its operator audit when a newer event supersedes the read and %s', async (_name, fails, markedAfter) => {
+    let armed = false;
+    let delivered = false;
+    const fail = (model: string, data: unknown) => {
+      if (armed && fails(model, (data as { type?: string } | undefined)?.type)) {
+        armed = false;
+        throw new Error('process interrupted');
+      }
+    };
+    const env = setup({
+      wrapDb: (db) =>
+        ({
+          ...db,
+          async create<T>(params: Parameters<Db['create']>[0]): Promise<T> {
+            fail(params.model, params.data);
+            return db.create<T>(params);
+          },
+          async updateMany(params: Parameters<Db['updateMany']>[0]) {
+            fail(params.model, params.data);
+            return db.updateMany(params);
+          }
+        }) as Db,
+      async duringRead() {
+        if (!delivered) {
+          delivered = true;
+          // Newer than the read: the import only links its marker to the row and keeps the event's state.
+          await env.deliver([legacyEvent('evt_newer', 'sub_legacy', 'active', '2026-11-10T00:00:05.000Z')]);
+          armed = true;
+        }
+      }
+    });
+    const billingAccountId = await env.account('alice');
+    // A subscription BillFn already holds (a checkout's), accepted and never imported.
+    await env.db.create({
+      model: 'subscriptions',
+      data: {
+        id: 'sub_checkout',
+        billingAccountId,
+        planKey: 'nucleus',
+        priceId: 'price_nucleus_dodo_year',
+        provider: 'dodo',
+        providerSubscriptionId: 'sub_legacy',
+        status: 'active',
+        autoRenew: true,
+        metadata: {},
+        createdAt: '2026-11-09T00:00:00.000Z',
+        updatedAt: '2026-11-09T00:00:00.000Z'
+      },
+      namespace: 'billfn'
+    });
+
+    await expect(env.import({ billingAccountId, reason: 'cutover' })).rejects.toThrow('process interrupted');
+
+    const marked = async () => (await env.subscriptions())[0]?.metadata?.[BILLFN_IMPORTED_AT_METADATA_KEY] !== undefined;
+    const audit = expect.objectContaining({ payload: expect.objectContaining({ subscriptionId: 'sub_checkout', operator: OPERATOR, reason: 'cutover' }) });
+    expect(await marked()).toBe(markedAfter);
+    expect(await env.importEvents()).toEqual(markedAfter ? [audit] : []);
+
+    const rerun = unwrap(await env.import({ billingAccountId, reason: 'cutover' }));
+    expect(rerun.subscription).toMatchObject({ id: 'sub_checkout', status: 'active' });
+    expect(await marked()).toBe(true);
+    expect(await env.importEvents()).toEqual([audit]);
+    expect(rerun.billingEvent.payload).toMatchObject({ subscriptionId: 'sub_checkout', status: 'active' });
+  });
+
+  it('records a same-request rerun that finds a changed period or renewal once each, and dedupes a return to a recorded state', async () => {
+    let record = legacyRecord('sub_legacy');
+    const env = setup({ record: () => record });
+    const billingAccountId = await env.account('alice');
+    const rerun = async (next: Record<string, unknown>) => {
+      record = next;
+      env.clock.current = new Date(env.clock.current.getTime() + 60_000);
+      return unwrap(await env.import({ billingAccountId })).billingEvent;
+    };
+    const first = unwrap(await env.import({ billingAccountId })).billingEvent;
+
+    const renewed = await rerun({ ...legacyRecord('sub_legacy'), next_billing_date: '2028-01-01T00:00:00.000Z' });
+    const autoRenewOff = await rerun({ ...legacyRecord('sub_legacy'), next_billing_date: '2028-01-01T00:00:00.000Z', auto_renew: false });
+
+    expect(renewed.payload).toMatchObject({ currentPeriodEnd: '2028-01-01T00:00:00.000Z', autoRenew: true });
+    expect(autoRenewOff.payload).toMatchObject({ currentPeriodEnd: '2028-01-01T00:00:00.000Z', autoRenew: false });
+    expect(new Set([first.id, renewed.id, autoRenewOff.id]).size).toBe(3);
+    expect(await env.importEvents()).toHaveLength(3);
+
+    // A->B->A in one request: the return to a state the request already recorded is that event (documented dedupe).
+    const back = await rerun({ ...legacyRecord('sub_legacy'), next_billing_date: '2028-01-01T00:00:00.000Z' });
+    expect(back).toEqual(renewed);
+    expect(await env.importEvents()).toHaveLength(3);
   });
 
   it('refuses a provider record whose product is not a subscription price of the plan', async () => {

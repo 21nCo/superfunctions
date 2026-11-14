@@ -211,7 +211,10 @@ type ApplyVerificationStateInput = {
    * import creates is pending until that check accepts it.
    */
   importReference?: string;
-  /** With `importReference`: the import run's audit event for a row, recorded before the row is accepted. */
+  /**
+   * With `importReference`: the import run's audit event for a row state, recorded before every write that
+   * leaves the row usable (`updateSubscriptionAfterImportAudit`).
+   */
   importAudit?: (subscription: BillFnSubscription) => BillFnBillingEvent;
 };
 type ProjectionResult = {
@@ -1221,7 +1224,8 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
       }
       const selection = requireImportPrice(plan, providerName, state);
       // One audit event per import run and state it records, never changed once written. The run is the operator's
-      // request (a rerun of it that records the same state adds none) or, without a requestId, this call.
+      // request (a rerun of it that records a state it already recorded adds none, even after another state) or,
+      // without a requestId, this call. The state is every field the event shows and the import marker.
       const run = operator.requestId ? ['request', operator.requestId] : ['call', deps.generateId('run')];
       const importAudit = (subscription: BillFnSubscription): BillFnBillingEvent => ({
         id: `evt_import_${createHash('sha256')
@@ -1238,7 +1242,11 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
               subscription.id,
               subscription.planKey,
               subscription.priceId,
-              subscription.status
+              subscription.status,
+              subscription.currentPeriodStart ?? null,
+              subscription.currentPeriodEnd ?? null,
+              subscription.autoRenew,
+              subscription.metadata?.[BILLFN_IMPORTED_AT_METADATA_KEY] ?? null
             ])
           )
           .digest('base64url')}`,
@@ -1251,6 +1259,9 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
           planKey: subscription.planKey,
           priceId: subscription.priceId,
           status: subscription.status,
+          currentPeriodStart: subscription.currentPeriodStart ?? null,
+          currentPeriodEnd: subscription.currentPeriodEnd ?? null,
+          autoRenew: subscription.autoRenew,
           operator,
           ...(input.reason ? { reason: input.reason } : {})
         },
@@ -1279,19 +1290,6 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         throw error;
       }
 
-      // A binding this run accepted already has it (written before acceptance); a re-import, or a run that returns
-      // another run's accepted row, records it here, before the replay, so a retried replay is still recorded.
-      const recorded = importAudit(applied.subscription);
-      await recordBillingEvent(deps, recorded);
-      // The first write of an event wins, so a rerun returns the event as recorded.
-      const billingEvent =
-        (await deps.db.findOne<BillFnBillingEvent>({
-          model: TABLES.billingEvents,
-          where: [{ field: 'id', operator: 'eq', value: recorded.id }],
-          namespace: deps.namespace
-        })) ?? recorded;
-      deps.metrics.track('subscription.imported', { provider: providerName });
-
       // A replay that does not finish fails the import; calling it again finishes the replay.
       try {
         await replayUnlinkedWebhookEventsOrThrow(deps, applied.subscription);
@@ -1302,6 +1300,18 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         throw error;
       }
       const refreshed = await refreshProjectionAfterReplay(deps, applied);
+      // Every write of this run was preceded by its audit; the event returned is the one for the state returned
+      // (after the replay), recorded here when no write recorded it. The first write wins, so a rerun returns it
+      // as recorded.
+      const recorded = importAudit(refreshed.subscription);
+      await recordBillingEvent(deps, recorded);
+      const billingEvent =
+        (await deps.db.findOne<BillFnBillingEvent>({
+          model: TABLES.billingEvents,
+          where: [{ field: 'id', operator: 'eq', value: recorded.id }],
+          namespace: deps.namespace
+        })) ?? recorded;
+      deps.metrics.track('subscription.imported', { provider: providerName });
       return ok({
         subscription: refreshed.subscription,
         entitlements: refreshed.entitlements,
@@ -2306,10 +2316,7 @@ async function settleImportBinding(
       metadata: withoutImportPending(current.metadata),
       updatedAt: nextSubscriptionUpdatedAt(deps.now(), current.updatedAt)
     };
-    if (audit) {
-      await recordBillingEvent(deps, audit(accepted));
-    }
-    if (await writeOrderedSubscription(deps, current, accepted)) {
+    if (await updateSubscriptionAfterImportAudit(deps, current, accepted, audit)) {
       return { subscription: accepted, ownState, acceptedHere: true };
     }
     current = await findSubscriptionByProviderRef(deps, subscription.provider, reference);
@@ -2902,16 +2909,8 @@ async function applyVerificationState(
         subscription = baseSubscription;
         break;
       }
-      const updated = await deps.db.updateMany({
-        model: TABLES.subscriptions,
-        where: [
-          { field: 'id', operator: 'eq', value: baseSubscription.id },
-          { field: 'updatedAt', operator: 'eq', value: baseSubscription.updatedAt }
-        ],
-        data: linked,
-        namespace: deps.namespace
-      });
-      if (updated === 1) {
+      // An import that adds its marker or references to an accepted row records its audit first.
+      if (await updateSubscriptionAfterImportAudit(deps, baseSubscription, linked, input.importAudit)) {
         subscription = linked;
         break;
       }
@@ -2971,22 +2970,10 @@ async function applyVerificationState(
       // clears it, the order `namesReplacedReference` reads against.
       const pending = await recordDroppedReferences(deps, baseSubscription, record, Boolean(input.committedAt));
       Object.assign(record, withPendingReplacements(record.metadata, pending));
-      if (input.importAudit && !isImportPending(baseSubscription)) {
-        // A re-import changes an accepted (usable) row: its operator's event is recorded before the change.
-        await recordBillingEvent(deps, input.importAudit(record));
-      }
       // Every update is ordered against the row it was computed from, so a provider-state time and the
-      // pending references it clears always come from the row it replaces.
-      const updated = await deps.db.updateMany({
-        model: TABLES.subscriptions,
-        where: [
-          { field: 'id', operator: 'eq', value: baseSubscription.id },
-          { field: 'updatedAt', operator: 'eq', value: baseSubscription.updatedAt }
-        ],
-        data: record,
-        namespace: deps.namespace
-      });
-      if (updated === 1) {
+      // pending references it clears always come from the row it replaces. A re-import of an accepted row
+      // records its audit first.
+      if (await updateSubscriptionAfterImportAudit(deps, baseSubscription, record, input.importAudit)) {
         subscription = record;
         break;
       }
@@ -3213,6 +3200,33 @@ async function linkableMissingReferences(
     }
   }
   return data;
+}
+
+/**
+ * The ordered update every subscription write of `applyVerificationState` and an import's acceptance
+ * (`settleImportBinding`) goes through. With an import's audit, a write that leaves the row usable (not
+ * pending) records the run's audit for the state it publishes first, so no later failure or interruption leaves
+ * an import's change without its operator. A row an import creates is pending until this accepts it.
+ */
+async function updateSubscriptionAfterImportAudit(
+  deps: ServiceDeps,
+  current: BillFnSubscription,
+  next: BillFnSubscription,
+  importAudit: ApplyVerificationStateInput['importAudit']
+) {
+  if (importAudit && !isImportPending(next)) {
+    await recordBillingEvent(deps, importAudit(next));
+  }
+  const updated = await deps.db.updateMany({
+    model: TABLES.subscriptions,
+    where: [
+      { field: 'id', operator: 'eq', value: current.id },
+      { field: 'updatedAt', operator: 'eq', value: current.updatedAt }
+    ],
+    data: next,
+    namespace: deps.namespace
+  });
+  return updated === 1;
 }
 
 /** Writes a subscription row ordered against the row it was computed from; false when that row changed. */

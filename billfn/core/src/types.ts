@@ -780,8 +780,9 @@ export interface BillFnImportSubscriptionResponseData {
   entitlements: BillFnEntitlementSnapshot;
   /**
    * The `billfn.subscription.imported` billing event for the subscription state
-   * this import returns. A rerun of the same request (`operator.requestId`) that
-   * finds the same state returns the event an earlier call recorded.
+   * this import returns, after its replay. A rerun of the same request
+   * (`operator.requestId`) that finds a state the request already recorded
+   * returns the event an earlier call recorded for it.
    */
   billingEvent: BillFnBillingEvent;
 }
