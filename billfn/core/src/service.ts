@@ -192,6 +192,15 @@ type ApplyVerificationStateInput = {
   keepMutationWindow?: boolean;
   /** Metadata keys written only when the subscription lacks them (the provider record's keys still win). */
   metadataDefaults?: Record<string, unknown>;
+  /**
+   * Set by an import: the provider subscription reference it binds. The write
+   * only ever lands on a row that holds the reference (a lost ordered write
+   * looks the reference up again rather than rereading the row, so it never
+   * moves the reference back onto a row a writer took it from), and after the
+   * write the reference is checked against the ones subscription writes
+   * retired (`refuseRetiredImportBinding`), before any entitlement or event.
+   */
+  importReference?: string;
 };
 type ProjectionResult = {
   checkoutSession: BillFnCheckoutSession | undefined;
@@ -1175,12 +1184,10 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         throw importBoundElsewhere(providerName);
       }
       if (!bound && (await isReplacedProviderReference(deps, providerName, reference))) {
-        throw createBillFnError({
-          code: 'BILLFN_CONFLICT',
-          message: 'The provider reference was replaced by another subscription and cannot be imported'
-        });
+        throw importReferenceReplaced();
       }
-      // Resolved after every check above, so a refused import never creates the subject's billing account.
+      // Resolved after the checks above, so an import they refuse never creates the subject's billing account;
+      // one refused after the provider read keeps it.
       const billingAccount = await resolveImportBillingAccount(deps, input);
 
       // Events that occurred before this live read are already reflected in its state.
@@ -1210,7 +1217,9 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
           state,
           liveStateObservedAt: importObservedAt,
           // A rerun or a racing import keeps the first import's time.
-          metadataDefaults: { [BILLFN_IMPORTED_AT_METADATA_KEY]: importObservedAt }
+          metadataDefaults: { [BILLFN_IMPORTED_AT_METADATA_KEY]: importObservedAt },
+          // A write may retire the reference while the provider is read (the check above ran before the read).
+          importReference: reference
         });
       } catch (error) {
         if (hasErrorCode(error, 'BILLFN_CONFLICT') && (await isBoundElsewhere(deps, providerName, state, billingAccount.id))) {
@@ -2160,13 +2169,64 @@ function importReplayUnfinished() {
   });
 }
 
+function importReferenceReplaced() {
+  return createBillFnError({
+    code: 'BILLFN_CONFLICT',
+    message: 'The provider reference was replaced by another subscription and cannot be imported'
+  });
+}
+
+/**
+ * After an import's write to `subscription`, which holds `reference`: refuses
+ * the binding when a write of another subscription retired the reference. A
+ * row this import created is deleted first (while it still holds the
+ * reference), so the refused import leaves no subscription, entitlement or
+ * import event. A row it only updated already held the reference; when a
+ * racing import created that row on the retired reference, that import's own
+ * check deletes it.
+ *
+ * Why the check after the write is enough: a reference is held by at most one
+ * row (unique index), so a writer that retired it took it off its row before
+ * this write held it, and recorded it before that, or saved it pending in that
+ * same write. Read pending, then recorded, now, one of the reads sees it.
+ */
+async function refuseRetiredImportBinding(
+  deps: ServiceDeps,
+  subscription: BillFnSubscription,
+  reference: string,
+  created: boolean
+) {
+  if (!(await isReplacedProviderReference(deps, subscription.provider, reference, subscription.id))) {
+    return;
+  }
+  if (created) {
+    await deps.db.deleteMany({
+      model: TABLES.subscriptions,
+      where: [
+        { field: 'id', operator: 'eq', value: subscription.id },
+        { field: 'providerSubscriptionId', operator: 'eq', value: reference }
+      ],
+      namespace: deps.namespace
+    });
+  }
+  deps.metrics.track('subscription.import.replaced_reference_refused', { provider: subscription.provider });
+  throw importReferenceReplaced();
+}
+
 /**
  * Whether a subscription write dropped this reference (still pending on the
  * subscription, or recorded). A writer records the reference before it clears
  * pending, so pending is read first, as `namesReplacedReference` does: a writer
- * that clears pending between the reads has already recorded it.
+ * that clears pending between the reads has already recorded it. `holderId`,
+ * the row that holds the reference now, is not counted: a reference it dropped
+ * and holds again, or one a write that lost its race on it recorded, is held.
  */
-async function isReplacedProviderReference(deps: ServiceDeps, provider: BillingProviderName, reference: string) {
+async function isReplacedProviderReference(
+  deps: ServiceDeps,
+  provider: BillingProviderName,
+  reference: string,
+  holderId?: string
+) {
   const pending = await deps.db.findMany<BillFnSubscription>({
     model: TABLES.subscriptions,
     where: [
@@ -2175,7 +2235,11 @@ async function isReplacedProviderReference(deps: ServiceDeps, provider: BillingP
     ],
     namespace: deps.namespace
   });
-  if (pending.some((subscription) => pendingReplacedReferencesOf(subscription).includes(reference))) {
+  if (
+    pending.some(
+      (subscription) => subscription.id !== holderId && pendingReplacedReferencesOf(subscription).includes(reference)
+    )
+  ) {
     return true;
   }
   const replaced = await deps.db.findOne<BillFnReplacedProviderReference>({
@@ -2186,7 +2250,7 @@ async function isReplacedProviderReference(deps: ServiceDeps, provider: BillingP
     ],
     namespace: deps.namespace
   });
-  return Boolean(replaced);
+  return Boolean(replaced && replaced.subscriptionId !== holderId);
 }
 
 function requireSubject(subject: BillableSubject | undefined): BillableSubject {
@@ -2645,6 +2709,7 @@ async function applyVerificationState(
       input.checkoutSession?.checkoutSessionId
     ));
   let subscription: BillFnSubscription | null = null;
+  let created = false;
   let timestamp = toIsoString(deps.now());
   let liveStateSuperseded = false;
   let providerStateRaced: { priceId: string } | undefined;
@@ -2656,6 +2721,13 @@ async function applyVerificationState(
       throw createBillFnError({
         code: 'BILLFN_CONFLICT',
         message: 'Provider billing reference belongs to a different billing account'
+      });
+    }
+    if (input.importReference && baseSubscription && baseSubscription.providerSubscriptionId !== input.importReference) {
+      // Found by another reference the provider record names: an import never moves its reference onto such a row.
+      throw createBillFnError({
+        code: 'BILLFN_CONFLICT',
+        message: 'The provider record names a reference another subscription holds'
       });
     }
     const order = baseSubscription && input.occurredAt ? orderProviderEvent(baseSubscription, input.occurredAt) : 'apply';
@@ -2706,8 +2778,8 @@ async function applyVerificationState(
         subscription = linked;
         break;
       }
-      const current = await getSubscriptionById(deps, baseSubscription.id);
-      if (!current) {
+      const current = await reloadAfterLostWrite(deps, input, baseSubscription);
+      if (!current && !input.importReference) {
         throw createBillFnError({
           code: 'BILLFN_CONFLICT',
           message: 'Subscription changed while applying provider state'
@@ -2774,8 +2846,8 @@ async function applyVerificationState(
         break;
       }
       // A lost race leaves its records: a reference the winner keeps is held, so its events still link to it.
-      const current = await getSubscriptionById(deps, baseSubscription.id);
-      if (!current) {
+      const current = await reloadAfterLostWrite(deps, input, baseSubscription);
+      if (!current && !input.importReference) {
         throw createBillFnError({
           code: 'BILLFN_CONFLICT',
           message: 'Subscription changed while applying provider event state'
@@ -2792,6 +2864,7 @@ async function applyVerificationState(
         data: record,
         namespace: deps.namespace
       });
+      created = true;
       break;
     } catch (error) {
       if (!isDuplicateRecordError(error)) {
@@ -2817,6 +2890,9 @@ async function applyVerificationState(
       code: 'BILLFN_CONFLICT',
       message: 'Unable to apply provider event state after multiple retries'
     });
+  }
+  if (input.importReference) {
+    await refuseRetiredImportBinding(deps, subscription, input.importReference, created);
   }
 
   const checkoutSession = input.checkoutSession
@@ -2874,6 +2950,18 @@ async function applyVerificationState(
     entitlements,
     providerStateRaced
   };
+}
+
+/**
+ * The row to retry a lost ordered write against: the row again, or for an
+ * import the row that holds its reference now (null when none does, and the
+ * import creates one), so the import never writes its reference back onto a
+ * row a writer took it from.
+ */
+function reloadAfterLostWrite(deps: ServiceDeps, input: ApplyVerificationStateInput, subscription: BillFnSubscription) {
+  return input.importReference
+    ? findSubscriptionByProviderRef(deps, input.price.provider, input.importReference)
+    : getSubscriptionById(deps, subscription.id);
 }
 
 /**

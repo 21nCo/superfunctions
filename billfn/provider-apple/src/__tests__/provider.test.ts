@@ -700,7 +700,7 @@ describe('@billfn/provider-apple', () => {
       });
     });
 
-    it('reports a transaction neither StoreKit environment knows as missing', async () => {
+    it('reports a transaction StoreKit does not know as missing', async () => {
       // StoreKit's TransactionIdNotFoundError, answered by production and then by the sandbox fallback.
       const notFound = JSON.stringify({ errorCode: 4040010, errorMessage: 'Transaction id not found.' });
       const fetchMock = vi.fn(async () => new Response(notFound, { status: 404 })) as typeof fetch;
@@ -711,6 +711,13 @@ describe('@billfn/provider-apple', () => {
         'https://api.storekit.itunes.apple.com/inApps/v1/subscriptions/orig_missing',
         'https://api.storekit-sandbox.itunes.apple.com/inApps/v1/subscriptions/orig_missing'
       ]);
+
+      // Any other production 404 is missing at once: only a transaction production does not know is read from the sandbox.
+      const otherNotFound = JSON.stringify({ errorCode: 4040002, errorMessage: 'Account not found. Please try again.' });
+      const productionOnly = vi.fn(async () => new Response(otherNotFound, { status: 404 })) as typeof fetch;
+      const appleProduction = createAppleProvider({ fetch: productionOnly, tokenProvider: async () => 'token' });
+      await expect(appleProduction.importSubscription?.({ providerReference: 'orig_missing', billingAccount, plan })).resolves.toBeNull();
+      expect(vi.mocked(productionOnly)).toHaveBeenCalledTimes(1);
 
       // A response without transactions is missing too; a StoreKit outage stays a retryable provider error.
       const empty = createAppleProvider({

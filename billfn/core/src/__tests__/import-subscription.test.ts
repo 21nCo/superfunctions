@@ -231,6 +231,52 @@ function setup(options: ProviderOptions & { wrapDb?: (db: Db) => Db } = {}) {
   };
 }
 
+/**
+ * A subscription write that replaces `sub_legacy` on its row with
+ * `sub_replacement`, as a plan change does: it records the dropped reference
+ * before the write, or (a committed provider mutation that could not record it)
+ * saves it pending in that same write.
+ */
+async function replaceLegacyReference(db: Db, subscriptionId: string, mode: 'recorded' | 'pending') {
+  const row = await db.findOne<BillFnSubscription>({
+    model: 'subscriptions',
+    where: [{ field: 'id', operator: 'eq', value: subscriptionId }],
+    namespace: 'billfn'
+  });
+  if (!row) {
+    throw new Error(`no subscription ${subscriptionId}`);
+  }
+  const at = new Date(Date.parse(row.updatedAt) + 1000).toISOString();
+  if (mode === 'recorded') {
+    await db.create({
+      model: 'replacedProviderReferences',
+      data: {
+        id: 'rpr_dodo_legacy',
+        provider: 'dodo',
+        providerReference: 'sub_legacy',
+        subscriptionId: row.id,
+        billingAccountId: row.billingAccountId,
+        replacedAt: at,
+        createdAt: at,
+        updatedAt: at
+      },
+      namespace: 'billfn'
+    });
+  }
+  await db.updateMany({
+    model: 'subscriptions',
+    where: [{ field: 'id', operator: 'eq', value: row.id }],
+    data: {
+      providerSubscriptionId: 'sub_replacement',
+      updatedAt: at,
+      ...(mode === 'pending'
+        ? { replacedReferencesPending: true, metadata: { ...row.metadata, billfnPendingReplacedReferences: ['sub_legacy'] } }
+        : {})
+    },
+    namespace: 'billfn'
+  });
+}
+
 function unwrap<T>(response: { ok: true; data: T } | { ok: false }): T {
   if (!response.ok) {
     throw new Error('expected an ok envelope');
@@ -541,6 +587,112 @@ describe('billfn.services.subscriptions.import', () => {
     expect(await env.importEvents()).toEqual([]);
   });
 
+  it.each(['recorded', 'pending'] as const)(
+    'refuses a rerun whose bound reference a write retires during the provider read (%s)',
+    async (mode) => {
+      let duringRead: (() => Promise<void>) | undefined;
+      const env = setup({
+        async duringRead() {
+          const run = duringRead;
+          duringRead = undefined;
+          await run?.();
+        }
+      });
+      const billingAccountId = await env.account('alice');
+      const first = unwrap(await env.import({ billingAccountId }));
+      const entitlementsBefore = await env.db.findMany({ model: 'entitlementSnapshots', where: [], namespace: 'billfn' });
+      env.clock.current = new Date('2026-11-12T00:00:00.000Z');
+      // The rerun finds `sub_legacy` bound, so no check runs before its read; the plan change lands during it.
+      duringRead = () => replaceLegacyReference(env.db, first.subscription.id, mode);
+      const eventsBefore = await env.db.findMany({ model: 'billingEvents', where: [], namespace: 'billfn' });
+
+      await expect(env.import({ billingAccountId })).rejects.toMatchObject({
+        code: 'BILLFN_CONFLICT',
+        retryable: false,
+        message: expect.stringContaining('replaced')
+      });
+
+      expect(duringRead).toBeUndefined();
+      // Only the replacement row remains: no row on the retired reference, and no event or entitlement change for it.
+      expect(await env.subscriptions()).toEqual([
+        expect.objectContaining({ id: first.subscription.id, providerSubscriptionId: 'sub_replacement' })
+      ]);
+      expect(await env.db.findMany({ model: 'billingEvents', where: [], namespace: 'billfn' })).toEqual(eventsBefore);
+      expect(await env.importEvents()).toHaveLength(1);
+      expect(await env.db.findMany({ model: 'entitlementSnapshots', where: [], namespace: 'billfn' })).toEqual(entitlementsBefore);
+    }
+  );
+
+  it('refuses an import whose reference another account imports and a write retires during its provider read', async () => {
+    let alice = '';
+    let reads = 0;
+    const env = setup({
+      async duringRead() {
+        reads += 1;
+        if (reads !== 1) {
+          return;
+        }
+        // Bob's check found `sub_legacy` unbound; while Bob's read runs, Alice imports it and a plan change retires it.
+        const imported = unwrap(await env.import({ billingAccountId: alice }));
+        await replaceLegacyReference(env.db, imported.subscription.id, 'recorded');
+      }
+    });
+    alice = await env.account('alice');
+    const bob = await env.account('bob');
+
+    await expect(env.import({ billingAccountId: bob })).rejects.toMatchObject({
+      code: 'BILLFN_CONFLICT',
+      retryable: false,
+      message: expect.stringContaining('replaced')
+    });
+
+    expect(reads).toBe(2);
+    expect(await env.subscriptions()).toEqual([
+      expect.objectContaining({ billingAccountId: alice, providerSubscriptionId: 'sub_replacement' })
+    ]);
+    expect(await env.importEvents()).toEqual([expect.objectContaining({ billingAccountId: alice })]);
+    expect(await env.db.findMany({ model: 'entitlementSnapshots', where: [], namespace: 'billfn' })).toEqual([
+      expect.objectContaining({ billingAccountId: alice })
+    ]);
+    expect(await env.billfn.subscriptionProvider.isActive({ principalId: 'bob' })).toBe(false);
+  });
+
+  it('never writes the reference back onto a row a write took it from while the import was writing', async () => {
+    let armed = false;
+    const env = setup({
+      wrapDb: (db) =>
+        ({
+          ...db,
+          async updateMany(params: Parameters<Db['updateMany']>[0]) {
+            const data = params.data as Partial<BillFnSubscription>;
+            const target = params.where?.find((clause) => clause.field === 'id')?.value;
+            if (armed && params.model === 'subscriptions' && data.providerSubscriptionId === 'sub_legacy' && typeof target === 'string') {
+              armed = false;
+              // The plan change commits between the import's lookup and its ordered write, so that write is lost.
+              await replaceLegacyReference(db, target, 'recorded');
+            }
+            return db.updateMany(params);
+          }
+        }) as Db
+    });
+    const billingAccountId = await env.account('alice');
+    const first = unwrap(await env.import({ billingAccountId }));
+    env.clock.current = new Date('2026-11-12T00:00:00.000Z');
+    armed = true;
+
+    await expect(env.import({ billingAccountId })).rejects.toMatchObject({ code: 'BILLFN_CONFLICT', retryable: false });
+
+    expect(armed).toBe(false);
+    expect(await env.subscriptions()).toEqual([
+      expect.objectContaining({ id: first.subscription.id, providerSubscriptionId: 'sub_replacement' })
+    ]);
+    // The replacement reference stays held, never recorded as replaced by the import.
+    expect(
+      await env.db.findMany({ model: 'replacedProviderReferences', where: [], namespace: 'billfn' })
+    ).toEqual([expect.objectContaining({ providerReference: 'sub_legacy' })]);
+    expect(await env.importEvents()).toHaveLength(1);
+  });
+
   it('refuses a provider record whose product is not a subscription price of the plan', async () => {
     const env = setup({ record: (reference) => legacyRecord(reference, { productId: 'pdt_team_month' }) });
     const billingAccountId = await env.account('alice');
@@ -581,7 +733,7 @@ describe('billfn.services.subscriptions.import', () => {
     expect(await env.subscriptions()).toEqual([]);
   });
 
-  it('creates the billing account of a given subject that has none yet, only for an import it accepts', async () => {
+  it('creates the billing account of a given subject that has none yet, never for an import refused before the provider read', async () => {
     const env = setup();
     await expect(env.import({ billingAccountId: 'ba_user_carol', subject: { principalId: 'carol' }, planKey: 'unknown' })).rejects.toMatchObject({
       code: 'BILLFN_NOT_FOUND'

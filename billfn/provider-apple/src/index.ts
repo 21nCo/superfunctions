@@ -130,7 +130,7 @@ export function createAppleProvider(config: AppleProviderConfig): BillFnProvider
           `/inApps/v1/subscriptions/${encodeURIComponent(input.providerReference)}`
         );
       } catch (error) {
-        // Neither environment knows the transaction: BillFn reports it as not found.
+        // StoreKit answered 404 (a transaction production does not know is read from the sandbox first): not found.
         if (providerErrorStatus(error) === 404) {
           return null;
         }
