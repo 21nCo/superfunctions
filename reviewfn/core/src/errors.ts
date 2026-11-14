@@ -10,7 +10,8 @@ export type ReviewFnErrorCode =
   | "REVIEWFN_ARTIFACT_UNSAFE"
   | "REVIEWFN_SINCE_NOT_ANCESTOR"
   | "REVIEWFN_DIFF_UNSUPPORTED"
-  | "REVIEWFN_CHANGE_DETAIL_MISMATCH";
+  | "REVIEWFN_CHANGE_DETAIL_MISMATCH"
+  | "REVIEWFN_PANEL_POLICY_WEAKENED";
 
 export class ReviewFnError extends Error {
   public constructor(
