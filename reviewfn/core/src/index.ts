@@ -20,3 +20,8 @@ export * from "./git-environment.js";
 export * from "./panel/types.js";
 export * from "./panel/schema.js";
 export * from "./panel/validate.js";
+export * from "./panel/lenses.js";
+export * from "./panel/policy.js";
+export * from "./panel/prompt.js";
+export * from "./panel/workspace.js";
+export * from "./panel/coordinator.js";

@@ -4,6 +4,8 @@ ReviewFn uses versioned JSON files at `.reviewfn/config.json` and `.reviewfn/pol
 
 In GitHub Actions, pass `--trusted-config-from-base`. ReviewFn reads both files using `git show BASE:path`, so a pull request cannot weaken the policy controlling its own review.
 
+A review panel adds `.reviewfn/panel.json`. The CLI and the GitHub Action do not read it yet; callers of the core API load it with `loadPanelPolicy`, which trusts the base revision's copy when told to and accepts a repository copy only if it tightens that copy; see [Panel orchestration](panel-report-schema.md#panel-orchestration).
+
 The configuration selects the profile, harness, inference provider/model/auth, context adapters, approved argv test commands, outputs and retention. Commands are argv arrays and never pass through a shell. Profiles contain 1–80 letters, digits, underscores or hyphens so accepted configurations remain publishable. Optional context identities must be nonempty strings when present.
 
 `composio-linear` requires:
