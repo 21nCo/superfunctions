@@ -327,18 +327,23 @@ function boundPanelPolicy(report: PanelReport, policy: PanelPolicy | undefined, 
 }
 
 /**
- * Like a finding's origin, the requirements report must come from a run that succeeded: it is present exactly when the
- * panel policy's `requirementsSlot` has a `completed` or `collapsed` run.
+ * The requirements report comes from the run of the panel policy's `requirementsSlot`. A `completed` or `collapsed` run
+ * produced a completed requirements report, which must be present. Any other run may only record its failure in a report
+ * whose execution did not complete, so the verdict stays absent as in 0.1.
  */
 function requirementsProvenanceIssues(report: PanelReport, policy: PanelPolicy | undefined, issues: Issues): void {
   const slotId = policy?.requirementsSlot ?? null;
   const run = slotId === null ? undefined : report.slotRuns.find(item => item.slotId === slotId);
-  const produced = run !== undefined && COUNTING.has(run.terminal);
-  if (report.requirementsReport && !produced) {
-    const reason = !policy ? "cannot be attributed without the panel policy the report records" : slotId === null ? "has no requirementsSlot in the panel policy" : `needs a completed or collapsed run of requirements slot ${slotId}`;
+  const succeeded = run !== undefined && COUNTING.has(run.terminal);
+  const requirements = report.requirementsReport;
+  if (!requirements) {
+    if (succeeded) add(issues, "REVIEWFN_PANEL_ORIGIN_UNKNOWN", "/requirementsReport", `Requirements slot ${String(slotId)} is ${run.terminal} but the report has no requirements report.`);
+  } else if (!run) {
+    const reason = !policy ? "cannot be attributed without the panel policy the report records" : slotId === null ? "has no requirementsSlot in the panel policy" : `has no run of requirements slot ${slotId}`;
     add(issues, "REVIEWFN_PANEL_ORIGIN_UNKNOWN", "/requirementsReport", `The requirements report ${reason}.`);
+  } else if (succeeded !== (requirements.execution === "completed")) {
+    add(issues, "REVIEWFN_PANEL_ORIGIN_UNKNOWN", "/requirementsReport/execution", `Requirements slot ${String(slotId)} is ${run.terminal}, which contradicts a requirements report whose execution is ${requirements.execution}.`);
   }
-  if (!report.requirementsReport && produced) add(issues, "REVIEWFN_PANEL_ORIGIN_UNKNOWN", "/requirementsReport", `Requirements slot ${String(slotId)} is ${run.terminal} but the report has no requirements report.`);
 }
 
 function slotRunIssues(report: PanelReport, slots: Map<string, PanelSlot>, issues: Issues): void {

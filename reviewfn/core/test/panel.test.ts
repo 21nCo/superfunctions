@@ -211,9 +211,17 @@ describe("panel report v1", () => {
   });
 
   it("has no verdict when the requirements run did not complete", async () => {
-    const value = mutate(panelReport(), report => { report.requirementsReport!.execution = "failed"; delete report.requirementsReport!.verdict; delete report.verdict; });
-    expect(await validatePanelReport(value, policy, options)).toMatchObject({ valid: true, verdict: undefined });
-    expect(codes((await validatePanelReport({ ...value, verdict: "changes_requested" }, policy, options)).issues)).toEqual(["REVIEWFN_PANEL_VERDICT_MISMATCH"]);
+    // The requirements slot lens-a failed and recorded that in its report; lens-b, of the same identity, counts instead.
+    const failed = (terminal: SlotRun["terminal"]) => mutate(panelReport(), report => {
+      report.slotRuns[0].terminal = terminal;
+      report.slotRuns[1].terminal = terminal === "completed" ? "collapsed" : "completed";
+      for (const item of report.findings) item.origins = [{ slotId: "lens-b", lens: "security" }];
+      report.requirementsReport!.execution = "failed"; delete report.requirementsReport!.verdict; delete report.verdict;
+    });
+    expect(await validatePanelReport(failed("failed"), policy, options)).toMatchObject({ valid: true, verdict: undefined });
+    expect(codes((await validatePanelReport({ ...failed("failed"), verdict: "changes_requested" }, policy, options)).issues)).toEqual(["REVIEWFN_PANEL_VERDICT_MISMATCH"]);
+    // A run that succeeded cannot carry a report whose execution failed.
+    expect((await validatePanelReport(failed("completed"), policy, options)).issues.map(issue => `${issue.code} ${issue.path}`)).toEqual(["REVIEWFN_PANEL_ORIGIN_UNKNOWN /requirementsReport/execution"]);
   });
 
   it("rejects dropped or suppressed findings without their justification", () => {
@@ -366,11 +374,11 @@ describe("slot run collapse and model mismatch", () => {
     expect(await slotIssues(value)).toEqual([]);
     // A void requirements slot cannot supply the requirements report that would make the panel ready.
     const voidProducer = mutate(value, report => { report.requirementsReport = requirementsReport(); delete report.contextManifestDigest; report.verdict = "ready"; });
-    expect(await slotIssues(voidProducer)).toEqual(["REVIEWFN_PANEL_ORIGIN_UNKNOWN /requirementsReport"]);
+    expect(await slotIssues(voidProducer)).toEqual(["REVIEWFN_PANEL_ORIGIN_UNKNOWN /requirementsReport/execution"]);
   });
 
-  it("accepts a requirements report only from a requirements slot whose run succeeded", async () => {
-    const producedBy = (terminal: SlotRun["terminal"] | "missing", requirementsSlot: string | null = "lens-a") => mutate(panelReport(), report => {
+  it("binds the requirements report's execution to its requirements slot's run", async () => {
+    const producedBy = (terminal: SlotRun["terminal"] | "missing", requirementsSlot: string | null = "lens-a", execution: "completed" | "failed" = "completed") => mutate(panelReport(), report => {
       // lens-b runs first in this variant, so lens-a may be completed, collapsed or end any other way.
       for (const item of report.findings) item.origins = [{ slotId: "lens-b", lens: "security" }];
       run(report, "lens-b").terminal = "completed";
@@ -378,9 +386,17 @@ describe("slot run collapse and model mismatch", () => {
       else Object.assign(run(report, "lens-a"), { terminal, voidReasons: terminal === "void" ? ["workspace_mutated"] : [] });
       [report.slots[0], report.slots[1]] = [report.slots[1], report.slots[0]];
       sign(report, { ...panelPolicy, slots: report.slots, requirementsSlot });
+      if (execution !== "completed") { report.requirementsReport!.execution = execution; delete report.requirementsReport!.verdict; }
+      report.verdict = derivePanelVerdict(report, policy);
     });
     expect(await slotIssues(producedBy("collapsed"))).toEqual([]);
-    for (const terminal of ["failed", "canceled", "quota_exhausted", "timed_out", "malformed", "void", "missing"] as const) expect(await slotIssues(producedBy(terminal))).toEqual(["REVIEWFN_PANEL_ORIGIN_UNKNOWN /requirementsReport"]);
+    expect(await slotIssues(producedBy("collapsed", "lens-a", "failed"))).toEqual(["REVIEWFN_PANEL_ORIGIN_UNKNOWN /requirementsReport/execution"]);
+    for (const terminal of ["failed", "canceled", "quota_exhausted", "timed_out", "malformed", "void"] as const) {
+      // A run that did not succeed cannot supply a completed requirements report, but may record its failure.
+      expect(await slotIssues(producedBy(terminal))).toEqual(["REVIEWFN_PANEL_ORIGIN_UNKNOWN /requirementsReport/execution"]);
+      expect(await slotIssues(producedBy(terminal, "lens-a", "failed"))).toEqual([]);
+    }
+    expect(await slotIssues(producedBy("missing"))).toEqual(["REVIEWFN_PANEL_ORIGIN_UNKNOWN /requirementsReport"]);
     expect(await slotIssues(producedBy("collapsed", null))).toEqual(["REVIEWFN_PANEL_ORIGIN_UNKNOWN /requirementsReport"]);
     // A succeeded requirements slot whose report is missing is reported too, so nothing disappears silently.
     const lost = mutate(panelReport(), report => { delete report.requirementsReport; report.contextManifestDigest = context.digest; for (const item of report.findings) item.requirementIds = []; report.verdict = derivePanelVerdict(report, policy); });

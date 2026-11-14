@@ -136,6 +136,14 @@ describe("CodexHarnessAdapter outputSchema", () => {
     expect(output.findings[0]).not.toHaveProperty("anchor");
   });
 
+  it("accepts output that satisfies the caller schema as given, with optional properties omitted", async () => {
+    const { anchor: _anchor, ...finding } = lensFinding("high");
+    const output = await recordingAdapter({ findings: [finding], evidence: [{ id: "E1", kind: "code", description: "loop bound", code: { commit: head, path: "src/index.ts" } }], inspectedPaths: [], uninspected: [] }).adapter.run({ ...input, outputSchema: lensOutputSchema });
+    expect(output.error).toBeUndefined();
+    expect(output.terminal).toBe("completed");
+    expect(output.findings).toEqual([finding]);
+  });
+
   it("rejects output that satisfies a custom schema but is not a harness payload", async () => {
     const custom = { type: "object", additionalProperties: false, required: ["summary"], properties: { summary: { type: "string" } } };
     const { adapter } = recordingAdapter({ summary: "fine" });
@@ -143,11 +151,31 @@ describe("CodexHarnessAdapter outputSchema", () => {
     expect(output.terminal).toBe("malformed");
   });
 
-  it("fails before inference when outputSchema does not compile", async () => {
+  it.each([
+    ["an unknown keyword", { type: "object", notAKeyword: true }],
+    ["a non-iterable required", { type: "object", properties: { a: { type: "string" } }, required: 5 }],
+    ["a string required", { type: "object", properties: { a: { type: "string" } }, required: "ab" }],
+    ["a required property that is not declared", { type: "object", properties: { a: { type: "string" } }, required: ["a", "b"] }],
+    ["a nested non-iterable required", { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, notes: { type: "object", properties: { a: { type: "string" } }, required: true } } }],
+    ["minProperties, which the provider-strict form cannot preserve", { ...lensOutputSchema, minProperties: 5, properties: { ...lensOutputSchema.properties, notes: { type: "string" } } }],
+    ["a nested dependentRequired", { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, notes: { type: "object", properties: { a: { type: "string" }, b: { type: "string" } }, dependentRequired: { a: ["b"] } } } }],
+  ])("fails before inference when outputSchema has %s", async (_name, outputSchema) => {
     const { adapter, seen } = recordingAdapter(lensPayload());
-    const output = await adapter.run({ ...input, outputSchema: { type: "object", notAKeyword: true } });
+    const output = await adapter.run({ ...input, outputSchema });
     expect(output.terminal).toBe("failed");
     expect(output.error).toMatch(/outputSchema/);
     expect(seen.invoked).toBe(false);
+  });
+
+  it("keeps a caller's required entry that only an allOf branch declares", async () => {
+    // notes is required at the root but declared only in the allOf branch, so the strict form must keep it required.
+    const { additionalProperties: _closed, ...open } = lensOutputSchema;
+    const custom = { ...open, required: [...lensOutputSchema.required, "notes"], allOf: [{ type: "object", properties: { notes: { type: "string" } } }] };
+    expect((strictProviderSchema(custom) as { required: string[] }).required).toContain("notes");
+    const missing = await recordingAdapter(lensPayload()).adapter.run({ ...input, outputSchema: custom });
+    expect(missing.terminal).toBe("malformed");
+    const present = await recordingAdapter({ ...lensPayload(), notes: "set" }).adapter.run({ ...input, outputSchema: custom });
+    expect(present.error).toBeUndefined();
+    expect(present.terminal).toBe("completed");
   });
 });

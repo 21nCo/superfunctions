@@ -113,15 +113,21 @@ export class CodexHarnessAdapter implements HarnessAdapter {
     }
     const forbiddenInstructionChanges = input.change.changedPaths.filter((changed) => /(^|\/)(AGENTS(?:\.override)?\.md|\.codex\/|\.agents\/|\.claude\/)/i.test(changed));
     if (forbiddenInstructionChanges.length) return emptyFailure("failed", `Review target changes auto-loaded instruction/configuration paths: ${forbiddenInstructionChanges.join(", ")}. Trusted policy refuses inference.`);
-    // A caller-supplied output schema (for example the panel lens schema) replaces the 0.1 harness schema. Codex receives its
-    // provider-strict form, where each optional property is required and nullable, and the raw output is validated against
-    // exactly that schema, so Ajv decides which nulls a union branch or conditional allows. It must compile before inference.
-    const providerSchema = strictProviderSchema(input.outputSchema);
+    // A caller-supplied output schema (for example the panel lens schema) replaces the 0.1 harness schema. It must compile as
+    // given before inference. Codex receives its provider-strict form, where each optional property is required and nullable,
+    // and the raw output is validated against exactly that schema, so Ajv decides which nulls a union branch or conditional allows.
+    let providerSchema: unknown;
     let validateProviderOutput: ((value: unknown) => string[]) | undefined;
+    let validateCallerOutput: ((value: unknown) => string[]) | undefined;
     if (input.outputSchema) {
-      try { validateProviderOutput = structuredOutputValidator(providerSchema as Record<string, unknown>); }
-      catch (error) { return emptyFailure("failed", `outputSchema is not a valid JSON Schema: ${error instanceof Error ? error.message : String(error)}`); }
-    }
+      try {
+        validateCallerOutput = structuredOutputValidator(input.outputSchema);
+        const keyword = presenceKeyword(input.outputSchema);
+        if (keyword) throw new Error(`${keyword} depends on which properties are present, which the provider-strict form cannot preserve.`);
+        providerSchema = providerSchemaFor(input.outputSchema);
+        validateProviderOutput = structuredOutputValidator(providerSchema as Record<string, unknown>);
+      } catch (error) { return emptyFailure("failed", `outputSchema is not a valid JSON Schema: ${error instanceof Error ? error.message : String(error)}`); }
+    } else providerSchema = strictProviderSchema();
     const directory = await mkdtemp(path.join(tmpdir(), "reviewfn-codex-"));
     const schemaPath = path.join(directory, "schema.json");
     const outputPath = path.join(directory, "result.json");
@@ -165,10 +171,11 @@ export class CodexHarnessAdapter implements HarnessAdapter {
       try {
         const provided = redactJson(JSON.parse(text), secrets);
         let parsed: Omit<HarnessOutput, "terminal" | "events" | "transcript">;
-        if (validateProviderOutput) {
-          // No null is removed before this check: the provider-strict schema itself says which nulls are allowed.
+        if (validateProviderOutput && validateCallerOutput) {
+          // No null is removed before this check: the provider-strict schema itself says which nulls are allowed. Output that
+          // already satisfies the caller schema as given (optional properties omitted rather than null) is accepted as well.
           const errors = validateProviderOutput(provided);
-          if (errors.length) throw new Error(errors.join("; "));
+          if (errors.length && validateCallerOutput(provided).length) throw new Error(errors.join("; "));
           // Lens output has no requirements or assessments; the normalized result must still be a 0.1 harness payload,
           // where a null is an absent value whatever the caller schema allowed.
           const fields = provided as Partial<typeof parsed>;
@@ -187,6 +194,28 @@ export class CodexHarnessAdapter implements HarnessAdapter {
   }
 
   private executableFor(config: ReviewFnConfig): string { return config.harness.executable ?? this.executable; }
+}
+
+const providerSchemas = new WeakMap<object, unknown>();
+/** The provider-strict form of a caller schema, cached by object identity so its compiled validator is reused. */
+function providerSchemaFor(schema: Readonly<Record<string, unknown>>): unknown {
+  if (!providerSchemas.has(schema)) providerSchemas.set(schema, strictProviderSchema(schema));
+  return providerSchemas.get(schema);
+}
+
+/** Keywords whose meaning depends on which properties are present; the provider-strict form encodes absence as null. */
+const PRESENCE_KEYWORDS = new Set(["minProperties", "maxProperties", "dependentRequired", "dependentSchemas", "dependencies", "patternProperties", "propertyNames", "unevaluatedProperties"]);
+function presenceKeyword(schema: unknown): string | undefined {
+  if (Array.isArray(schema)) return schema.map(presenceKeyword).find(Boolean);
+  if (!schema || typeof schema !== "object") return undefined;
+  for (const [key, value] of Object.entries(schema)) {
+    if (PRESENCE_KEYWORDS.has(key)) return key;
+    if (["const", "enum", "default", "examples"].includes(key)) continue;
+    // Property and definition maps are keyed by names, not keywords.
+    const found = ["properties", "$defs", "definitions"].includes(key) && value && typeof value === "object" ? presenceKeyword(Object.values(value)) : presenceKeyword(value);
+    if (found) return found;
+  }
+  return undefined;
 }
 
 function minimalEnvironment(source: NodeJS.ProcessEnv, config: ReviewFnConfig): NodeJS.ProcessEnv {
