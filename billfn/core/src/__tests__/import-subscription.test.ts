@@ -490,7 +490,10 @@ describe('billfn.services.subscriptions.import', () => {
     expect(rerun.subscription).toMatchObject({ status: 'canceled' });
     expect(await env.subscriptions()).toHaveLength(1);
     expect(await env.unlinked()).toEqual([expect.objectContaining({ providerEventId: 'evt_cancel', status: 'replayed' })]);
-    expect(await env.importEvents()).toHaveLength(2);
+    // A rerun of the operator's request (same requestId) keeps its one audit event.
+    expect(await env.importEvents()).toEqual([
+      expect.objectContaining({ payload: expect.objectContaining({ subscriptionId: rerun.subscription.id, operator: OPERATOR }) })
+    ]);
   });
 
   it('ends two racing imports of one reference into one billing account with one subscription', async () => {
@@ -510,7 +513,10 @@ describe('billfn.services.subscriptions.import', () => {
     });
     const billingAccountId = await env.account('alice');
 
-    const [left, right] = await Promise.all([env.import({ billingAccountId }), env.import({ billingAccountId })]);
+    const [left, right] = await Promise.all([
+      env.import({ billingAccountId }),
+      env.import({ billingAccountId, operator: { ...OPERATOR, requestId: 'request_2' } })
+    ]);
 
     expect(unwrap(left).subscription.id).toBe(unwrap(right).subscription.id);
     expect(await env.subscriptions()).toHaveLength(1);
@@ -1048,6 +1054,189 @@ describe('billfn.services.subscriptions.import', () => {
       expect(await entitlementsOf(env.db, billingAccountId)).toEqual(entitlementsBefore);
     }
   );
+
+  it('never accepts or projects another account\'s row its reload finds, and never deletes a row another import accepted', async () => {
+    // Update 1: A's acceptance write (held). Bob is held in his provider read, then after creating his pending row.
+    const holds = holdSubscriptionUpdates([1]);
+    let alice = '';
+    let bob = '';
+    let bobRow = '';
+    let releaseBobRead!: () => void;
+    const bobRead = new Promise<void>((resolve) => (releaseBobRead = resolve));
+    let bobCreated!: () => void;
+    const bobCreatedPromise = new Promise<void>((resolve) => (bobCreated = resolve));
+    let releaseBobSettle!: () => void;
+    const bobSettle = new Promise<void>((resolve) => (releaseBobSettle = resolve));
+    const env = setup({
+      wrapDb: (db) => {
+        const held = holds.wrap(db);
+        return {
+          ...held,
+          async create<T>(params: Parameters<Db['create']>[0]): Promise<T> {
+            const created = await held.create<T>(params);
+            const data = params.data as Partial<BillFnSubscription>;
+            if (params.model === 'subscriptions' && data.billingAccountId === bob) {
+              bobRow = data.id!;
+              bobCreated();
+              await bobSettle;
+            }
+            return created;
+          }
+        } as Db;
+      },
+      async duringRead(input) {
+        if (input.billingAccount.id === bob) {
+          await bobRead;
+        }
+      }
+    });
+    alice = await env.account('alice');
+    bob = await env.account('bob');
+    holds.armed = true;
+
+    // Bob finds `sub_legacy` unbound and is held in his read; Alice's import A creates its pending row and is held at acceptance.
+    const bobImport = env.import({ billingAccountId: bob });
+    const first = env.import({ billingAccountId: alice });
+    await holds.reached(1);
+    // Another Alice import accepts that row, and a plan change retires `sub_legacy` from it.
+    const accepted = unwrap(await env.import({ billingAccountId: alice, operator: { ...OPERATOR, requestId: 'request_2' } }));
+    await replaceLegacyReference(env.db, accepted.subscription.id, 'recorded');
+    // Bob creates a pending row on the freed reference and is held before settling it; then A resumes.
+    releaseBobRead();
+    await bobCreatedPromise;
+    holds.release(1);
+    await expect(first).rejects.toMatchObject({ code: 'BILLFN_CONFLICT', retryable: false });
+    releaseBobSettle();
+    await expect(bobImport).rejects.toMatchObject({ code: 'BILLFN_CONFLICT', retryable: false, message: expect.stringContaining('replaced') });
+
+    expect(await env.subscriptions()).toEqual([
+      expect.objectContaining({ id: accepted.subscription.id, billingAccountId: alice, providerSubscriptionId: 'sub_replacement' })
+    ]);
+    expect((await billingEventsOf(env.db, alice)).filter((event) => event.payload.subscriptionId === bobRow)).toEqual([]);
+    expect(await entitlementsOf(env.db, alice)).toEqual([expect.objectContaining({ planKey: 'nucleus', status: 'active' })]);
+    expect(await entitlementsOf(env.db, bob)).toEqual([]);
+    expect(await billingEventsOf(env.db, bob)).toEqual([]);
+    expect(await env.billfn.subscriptionProvider.isActive({ principalId: 'bob' })).toBe(false);
+  });
+
+  it('fails as bound elsewhere, leaving the row untouched, when its reload finds another account\'s pending row', async () => {
+    const holds = holdSubscriptionUpdates([1]);
+    const env = setup({ wrapDb: holds.wrap });
+    const alice = await env.account('alice');
+    const bob = await env.account('bob');
+    holds.armed = true;
+
+    const first = env.import({ billingAccountId: alice });
+    await holds.reached(1);
+    // While A is held at acceptance, its row is gone and another account's import holds the (not retired) reference pending.
+    const [row] = await env.subscriptions();
+    await env.db.deleteMany({ model: 'subscriptions', where: [{ field: 'id', operator: 'eq', value: row.id }], namespace: 'billfn' });
+    const foreign = { ...row, id: 'sub_bob_pending', billingAccountId: bob, updatedAt: '2026-11-10T00:00:01.000Z' };
+    await env.db.create({ model: 'subscriptions', data: foreign, namespace: 'billfn' });
+    holds.release(1);
+
+    await expect(first).rejects.toMatchObject({
+      code: 'BILLFN_CONFLICT',
+      retryable: false,
+      message: expect.stringContaining('already bound to a different billing account')
+    });
+    expect(await env.subscriptions()).toEqual([foreign]);
+    expect(await entitlementsOf(env.db, alice)).toEqual([]);
+    expect(await entitlementsOf(env.db, bob)).toEqual([]);
+  });
+
+  it('never deletes a row another import accepted after a refused import read it pending', async () => {
+    let alice = '';
+    let bob = '';
+    let reads = 0;
+    let armed = false;
+    const env = setup({
+      wrapDb: (db) =>
+        ({
+          ...db,
+          async findOne<T>(params: Parameters<Db['findOne']>[0]): Promise<T | null> {
+            const found = await db.findOne<T>(params);
+            if (armed && params.model === 'replacedProviderReferences') {
+              armed = false;
+              // Between Bob's read of his pending row and its refusal, the stored row is accepted.
+              const [pending] = await db.findMany<BillFnSubscription>({
+                model: 'subscriptions',
+                where: [{ field: 'billingAccountId', operator: 'eq', value: bob }],
+                namespace: 'billfn'
+              });
+              await db.updateMany({
+                model: 'subscriptions',
+                where: [{ field: 'id', operator: 'eq', value: pending.id }],
+                data: { metadata: { ...pending.metadata, [BILLFN_IMPORT_PENDING_METADATA_KEY]: undefined }, updatedAt: '2026-11-10T00:00:09.000Z' },
+                namespace: 'billfn'
+              });
+            }
+            return found;
+          }
+        }) as Db,
+      async duringRead() {
+        reads += 1;
+        if (reads !== 1) {
+          return;
+        }
+        const imported = unwrap(await env.import({ billingAccountId: alice }));
+        await replaceLegacyReference(env.db, imported.subscription.id, 'recorded');
+        armed = true;
+      }
+    });
+    alice = await env.account('alice');
+    bob = await env.account('bob');
+
+    await expect(env.import({ billingAccountId: bob })).rejects.toMatchObject({ code: 'BILLFN_CONFLICT', retryable: false });
+
+    expect(await env.subscriptions()).toEqual([
+      expect.objectContaining({ billingAccountId: alice, providerSubscriptionId: 'sub_replacement' }),
+      expect.objectContaining({ billingAccountId: bob, providerSubscriptionId: 'sub_legacy', updatedAt: '2026-11-10T00:00:09.000Z' })
+    ]);
+  });
+
+  it.each([
+    ['its lifecycle event write fails', (model: string, type?: string) => model === 'billingEvents' && type === 'billfn.subscription.active', false, true],
+    ['its import audit write fails', (model: string, type?: string) => model === 'billingEvents' && type === 'billfn.subscription.imported', true, false],
+    ['it stops right after acceptance', (model: string) => model === 'entitlementSnapshots', false, false]
+  ])('never leaves an accepted binding without its operator audit when %s, and a rerun records it once', async (_name, fails, pendingAfter, activeAfter) => {
+    let armed = false;
+    const fail = (model: string, data: unknown) => {
+      if (armed && fails(model, (data as { type?: string } | undefined)?.type)) {
+        armed = false;
+        throw new Error('process interrupted');
+      }
+    };
+    const env = setup({
+      wrapDb: (db) =>
+        ({
+          ...db,
+          async create<T>(params: Parameters<Db['create']>[0]): Promise<T> {
+            fail(params.model, params.data);
+            return db.create<T>(params);
+          },
+          async updateMany(params: Parameters<Db['updateMany']>[0]) {
+            fail(params.model, params.data);
+            return db.updateMany(params);
+          }
+        }) as Db
+    });
+    const billingAccountId = await env.account('alice');
+    armed = true;
+    const audit = expect.objectContaining({ payload: expect.objectContaining({ operator: OPERATOR, reason: 'cutover' }) });
+
+    await expect(env.import({ billingAccountId, reason: 'cutover' })).rejects.toThrow('process interrupted');
+
+    const [row] = await env.subscriptions();
+    expect(row.metadata?.[BILLFN_IMPORT_PENDING_METADATA_KEY] === true).toBe(pendingAfter);
+    expect(await env.billfn.subscriptionProvider.isActive({ principalId: 'alice' })).toBe(activeAfter);
+    expect(await env.importEvents()).toEqual(pendingAfter ? [] : [audit]);
+
+    const rerun = unwrap(await env.import({ billingAccountId, reason: 'cutover' }));
+    expect(rerun.subscription).toMatchObject({ id: row.id, status: 'active' });
+    expect(await env.importEvents()).toEqual([audit]);
+    expect(await env.billfn.subscriptionProvider.isActive({ principalId: 'alice' })).toBe(true);
+  });
 
   it('refuses a provider record whose product is not a subscription price of the plan', async () => {
     const env = setup({ record: (reference) => legacyRecord(reference, { productId: 'pdt_team_month' }) });

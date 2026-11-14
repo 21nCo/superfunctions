@@ -655,7 +655,11 @@ export interface BillFnRestorePurchasesRequest {
 export interface BillFnImportOperator {
   id: string;
   type?: string;
-  /** The operator request that ran the import, for audit correlation. */
+  /**
+   * The operator request that ran the import, for audit correlation. It also
+   * identifies the run: calling import again with the same request keeps one
+   * `billfn.subscription.imported` event (rewritten to the state it returns).
+   */
   requestId?: string;
 }
 
@@ -844,8 +848,9 @@ export interface BillFnInstance {
        * Binds an existing provider subscription to a billing account, syncs its
        * state from the provider and replays its unlinked webhook events. Idempotent
        * per provider reference; a reference bound to another billing account fails
-       * with `BILLFN_CONFLICT`. Every import records a `billfn.subscription.imported`
-       * billing event with the operator.
+       * with `BILLFN_CONFLICT`. Every successful import records a `billfn.subscription.imported`
+       * billing event with the operator, before it accepts a new binding, so an
+       * accepted binding always has one.
        */
       import(input: BillFnImportSubscriptionRequest): Promise<BillFnImportSubscriptionResponse>;
     };
