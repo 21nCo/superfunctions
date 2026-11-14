@@ -70,18 +70,20 @@ export function createProviderApp(config?: OAuthProviderPluginConfig) {
 
 type Adapter = AuthFnRuntimeConfig['database'];
 
-type Operation = 'create' | 'findOne' | 'updateMany' | 'updateManyRejected';
+type Operation = 'create' | 'createCommitted' | 'findOne' | 'updateMany' | 'updateManyRejected';
 
-type PausedOperation = 'create' | 'findMany' | 'updateMany';
+type PausedOperation = 'create' | 'findMany' | 'updateMany' | 'updateManyApplied';
 
 /**
  * Controls storage calls: `arm(model)` pauses the next insert into `model`
  * (or, with `operation`, the next `findMany` or `updateMany` on it whose
- * params `match`) until `release()` and resolves once it is paused, to force
+ * params `match`, or with `updateManyApplied` the next such `updateMany`
+ * after it applied) until `release()` and resolves once it is paused, to force
  * an interleaving;
  * `failNext(model, match, operation)` makes the next matching insert or
- * `findOne` throw, the next `updateMany` commit and then throw, as when its
- * acknowledgement is lost, or (`updateManyRejected`) throw without applying.
+ * `findOne` throw, the next insert (`createCommitted`) or `updateMany` commit
+ * and then throw, as when its acknowledgement is lost, or
+ * (`updateManyRejected`) throw without applying.
  */
 export function createInsertControl(database: Adapter) {
   let paused: {
@@ -123,13 +125,16 @@ export function createInsertControl(database: Adapter) {
       await pauseIfArmed('updateMany', params);
       injectFailure('updateManyRejected', params);
       const updated = await database.updateMany(params);
+      await pauseIfArmed('updateManyApplied', params);
       injectFailure('updateMany', params);
       return updated;
     },
     create: async (params) => {
       injectFailure('create', params);
       await pauseIfArmed('create', params);
-      return database.create(params);
+      const created = await database.create(params);
+      injectFailure('createCommitted', params);
+      return created;
     }
   };
   return {

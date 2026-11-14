@@ -8,7 +8,9 @@ import {
   verifyOAuthAccessToken,
   type OAuthProviderClient
 } from '../index.js';
-import { createDeviceSchema } from '../device/index.js';
+import { createDeviceSchema, OAUTH_DEVICE_CODE_TTL_SECONDS } from '../device/index.js';
+import { createDeviceCode, findDeviceCode } from '../device/store.js';
+import { OAUTH_REFRESH_TOKEN_TTL_SECONDS } from '../types.js';
 import { createOAuthProviderSchema } from '../store.js';
 import { MEMOTRON, ORIGIN, POINTRON, RESOURCES, RFC6749_BASIC, RFC6749_CLIENT, createProviderApp, setupProvider } from './harness.js';
 
@@ -482,4 +484,179 @@ describe('in-scope actors (AUTH-9)', () => {
     await shared.handle('/auth/oauth/device?user_code=DDDD-DDDD', { headers: { cookie: otherCookie } });
     expect(shared.verifications.at(-1)).toMatchObject({ user: { id: other.id }, error: 'too_many_attempts' });
   });
+});
+
+describe('device grant storage and request bounds', () => {
+  const DEVICE_CODES = 'oauth_provider_device_codes';
+  const errorOf = async (response: Promise<Response>) => (await (await response).json() as { error: string }).error;
+
+  it.each([false, true])('each poll has one outcome, stored once, against a last poll time that never moves back (sql: %s)', async (sql) => {
+    const provider = await setupDevice({ sql });
+    const device = await provider.start();
+    const interval = async () => (await provider.row(device.device_code))?.interval;
+    const pollWrite = ({ data }: { data?: Record<string, unknown> }) => data?.pollClaim !== undefined;
+
+    // A commits its poll, then B commits over it before A reads its write back:
+    // A was admitted, B was too fast, and the interval grew once.
+    let paused = provider.control.arm(DEVICE_CODES, 'updateManyApplied', pollWrite);
+    const a = errorOf(provider.poll(device.device_code));
+    await paused;
+    expect(await provider.pollError(device.device_code)).toBe('slow_down');
+    provider.control.release();
+    expect(await a).toBe('authorization_pending');
+    expect(await interval()).toBe(10);
+
+    // Both early, the same way: two slow_down answers, two increments.
+    provider.advance(1);
+    paused = provider.control.arm(DEVICE_CODES, 'updateManyApplied', pollWrite);
+    const early = errorOf(provider.poll(device.device_code));
+    await paused;
+    expect(await provider.pollError(device.device_code)).toBe('slow_down');
+    provider.control.release();
+    expect(await early).toBe('slow_down');
+    expect(await interval()).toBe(20);
+
+    // A poll that read the clock before a later poll committed does not move
+    // the last poll time back, so the poll after it is still judged from the later one.
+    provider.advance(20);
+    paused = provider.control.arm(DEVICE_CODES, 'updateMany', pollWrite);
+    const delayed = errorOf(provider.poll(device.device_code));
+    await paused;
+    provider.advance(25);
+    expect(await provider.pollError(device.device_code)).toBe('authorization_pending');
+    provider.control.release();
+    expect(await delayed).toBe('slow_down');
+    expect(await interval()).toBe(25);
+    provider.advance(24);
+    expect(await provider.pollError(device.device_code)).toBe('slow_down');
+
+    // Many concurrent polls: at most one admitted, every other answer a stored slow_down.
+    provider.advance(60);
+    const before = await interval() as number;
+    const answers = await Promise.all(Array.from({ length: 12 }, () => errorOf(provider.poll(device.device_code))));
+    const slowed = answers.filter((answer) => answer === 'slow_down').length;
+    expect(answers.filter((answer) => answer === 'authorization_pending').length).toBeLessThanOrEqual(1);
+    expect(slowed + answers.filter((answer) => answer === 'authorization_pending').length).toBe(12);
+    expect(await interval()).toBe(before + 5 * slowed);
+  });
+
+  it.each(['before its grant is created', 'before its decision is recorded'] as const)(
+    'an approval that crosses the code\'s expiry %s records nothing and leaves no live grant',
+    async (boundary) => {
+      const provider = await setupDevice();
+      const device = await provider.start();
+      const atGrant = provider.control.arm('oauth_provider_grants');
+      const decision = provider.decide(device.user_code, 'approve');
+      await atGrant;
+      if (boundary === 'before its decision is recorded') {
+        provider.control.release();
+        await provider.control.arm('oauth_provider_disconnects', 'findMany');
+      }
+      provider.advance(600);
+      provider.control.release();
+      const response = await decision;
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: 'invalid_grant' });
+      expect((await provider.row(device.device_code))?.decision ?? null).toBeNull();
+      const grants = await provider.database.findMany<{ revokedAt?: Date | null }>({
+        model: 'oauth_provider_grants',
+        where: [{ field: 'clientId', operator: 'eq', value: CLI.clientId }],
+        namespace: 'authfn'
+      });
+      expect(grants).toHaveLength(1);
+      expect(grants[0].revokedAt).toBeTruthy();
+      expect(await provider.pollError(device.device_code)).toBe('expired_token');
+      expect(await provider.cliTokens()).toHaveLength(0);
+    }
+  );
+
+  it('a device code insert whose acknowledgement is lost is returned, a failed one is not retried, and only a taken user code is replaced', async () => {
+    const provider = await setupDevice();
+    const rows = () => provider.database.findMany({ model: DEVICE_CODES, namespace: 'authfn' });
+
+    provider.control.failNext(DEVICE_CODES, () => true, 'createCommitted');
+    const committed = await provider.start();
+    expect(await rows()).toHaveLength(1);
+    expect(await provider.pollError(committed.device_code)).toBe('authorization_pending');
+
+    provider.control.failNext(DEVICE_CODES, () => true, 'create');
+    expect((await provider.requestDeviceCode()).status).toBe(500);
+    expect(await rows()).toHaveLength(1);
+
+    // Another row takes the generated user code just before the insert.
+    let collided = false;
+    const database = {
+      ...provider.database,
+      create: async (params: Parameters<typeof provider.database.create>[0]) => {
+        if (!collided && params.model === DEVICE_CODES) {
+          collided = true;
+          await provider.database.create({ ...params, data: { ...params.data, id: 'odv_other', deviceCodeHash: 'other' } });
+          throw new Error('unique violation');
+        }
+        return provider.database.create(params);
+      }
+    } as typeof provider.database;
+    const created = await createDeviceCode({ database }, { clientId: CLI.clientId, resource: MEMOTRON, scopes: [], now: provider.now() });
+    expect(await rows()).toHaveLength(3);
+    expect(await findDeviceCode({ database }, created.deviceCode)).not.toBeNull();
+  });
+
+  it('keeps an exchanged device code row while its tokens can be valid, then prunes it', async () => {
+    const provider = await setupDevice();
+    const device = await provider.start();
+    await provider.decide(device.user_code, 'approve');
+    const tokens = await (await provider.poll(device.device_code)).json() as { refresh_token: string };
+
+    provider.advance(OAUTH_REFRESH_TOKEN_TTL_SECONDS - 1);
+    await provider.start();
+    expect(await provider.row(device.device_code)).not.toBeNull();
+    const refreshed = await provider.token({ grant_type: 'refresh_token', refresh_token: tokens.refresh_token, client_id: CLI.clientId });
+    expect(refreshed.status).toBe(200);
+
+    provider.advance(OAUTH_DEVICE_CODE_TTL_SECONDS + 2);
+    await provider.start();
+    expect(await provider.row(device.device_code)).toBeNull();
+  });
+
+  it('bounds the anonymous device authorization body in size and time before authenticating or counting it', async () => {
+    const provider = await setupDevice({ device: { authorizationRateLimit: { global: 1 } } });
+    await provider.start();
+    expect((await provider.requestDeviceCode()).status).toBe(429);
+    const rows = () => provider.database.findMany({ model: DEVICE_CODES, namespace: 'authfn' });
+    const send = (body: BodyInit, headers: Record<string, string> = {}) => provider.handle('/auth/oauth/device_authorization', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers },
+      body,
+      duplex: 'half'
+    } as RequestInit);
+    const cancelled: string[] = [];
+    const stream = (name: string, chunks: string[], end: boolean) => new ReadableStream<Uint8Array>({
+      start: (controller) => {
+        chunks.forEach((chunk) => controller.enqueue(new TextEncoder().encode(chunk)));
+        if (end) {
+          controller.close();
+        }
+      },
+      cancel: () => {
+        cancelled.push(name);
+      }
+    });
+    const form = `client_id=${CLI.clientId}&resource=${encodeURIComponent(MEMOTRON)}&scope=`;
+
+    // A declared length over the limit is refused without waiting for the body.
+    const declaredAt = Date.now();
+    const declared = await send(stream('declared', [form], false), { 'content-length': String(64 * 1024) });
+    expect(Date.now() - declaredAt).toBeLessThan(1000);
+    const oversized = await send(`${form}${'x'.repeat(8 * 1024)}`);
+    const chunked = await send(stream('chunked', [form, 'x'.repeat(4096), 'x'.repeat(4096)], false));
+    const started = Date.now();
+    const stalled = await send(stream('stalled', [form], false));
+    expect(Date.now() - started).toBeGreaterThanOrEqual(4900);
+    for (const response of [declared, oversized, chunked, stalled]) {
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: 'invalid_request' });
+    }
+    expect(cancelled.sort()).toEqual(['chunked', 'declared', 'stalled']);
+    expect(await rows()).toHaveLength(1);
+  }, 15_000);
 });

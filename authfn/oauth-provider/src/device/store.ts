@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { AUTHFN_LEGACY_USER_REFERENCE_MAX_LENGTH, type AuthFnRuntimeConfig, type AuthFnSchemaDefinition } from 'authfn';
 import { hashSecret } from 'authfn/core/sessions';
 import { claimIfUnset } from '../store.js';
+import { OAUTH_REFRESH_TOKEN_TTL_SECONDS } from '../types.js';
 
 interface DeviceStore {
   database: AuthFnRuntimeConfig['database'];
@@ -39,12 +40,14 @@ export function createDeviceSchema(): AuthFnSchemaDefinition['schemas'] {
       resource: { type: 'string', required: true, fieldName: 'resource' },
       scopes: { type: 'json', required: true, fieldName: 'scopes' },
       expiresAt: date('expires_at'),
-      // expiresAt as 16-digit milliseconds, compared as a string to prune expired rows in every adapter.
-      expiresKey: { type: 'string', required: true, fieldName: 'expires_key', maxLength: 16 },
+      // When the row stops being needed, as 16-digit milliseconds compared as a
+      // string in every adapter: the code's expiry, and once it is exchanged
+      // the expiry of the tokens issued for it. Pruned a code lifetime later.
+      pruneKey: { type: 'string', required: true, fieldName: 'prune_key', maxLength: 16 },
       // Seconds the client must wait between polls; grows with each slow_down.
       interval: { type: 'number', required: true, fieldName: 'interval' },
-      // `<poll time, 16-digit ms>:<random>` of the last admitted poll.
-      pollClaim: { type: 'string', required: true, fieldName: 'poll_claim', maxLength: 64 },
+      // `<last poll time, 16-digit ms>:<IDs of the last committed polls>` (see admitPoll).
+      pollClaim: { type: 'string', required: true, fieldName: 'poll_claim', maxLength: 255 },
       // Set once by the user's approval or denial, with the claim that set it.
       decisionClaimId: { type: 'string', required: false, fieldName: 'decision_claim_id', maxLength: 64 },
       decision: { type: 'string', required: false, fieldName: 'decision', maxLength: 16 },
@@ -60,7 +63,7 @@ export function createDeviceSchema(): AuthFnSchemaDefinition['schemas'] {
     indexes: [
       { name: 'idx_authfn_oauth_provider_device_codes_device_code_hash', fields: ['deviceCodeHash'], unique: true },
       { name: 'idx_authfn_oauth_provider_device_codes_user_code_hash', fields: ['userCodeHash'], unique: true },
-      { name: 'idx_authfn_oauth_provider_device_codes_expires_key', fields: ['expiresKey'] }
+      { name: 'idx_authfn_oauth_provider_device_codes_prune_key', fields: ['pruneKey'] }
     ]
   }];
 }
@@ -75,7 +78,7 @@ export interface DeviceCodeRecord {
   resource: string;
   scopes: string[];
   expiresAt: Date;
-  expiresKey: string;
+  pruneKey: string;
   interval: number;
   pollClaim: string;
   decisionClaimId?: string | null;
@@ -99,14 +102,20 @@ function timeKey(ms: number): string {
   return String(Math.max(0, ms)).padStart(16, '0');
 }
 
-/** Zero-padded so that the poll time can be read back from the claim. */
-function pollClaimAt(ms: number): string {
-  return `${timeKey(ms)}:${randomBytes(9).toString('hex')}`;
+/** Polls whose commit a poll can still recognize after later polls committed. */
+const POLL_HISTORY = 16;
+
+function pollId(): string {
+  return randomBytes(6).toString('hex');
 }
 
-/** The time of the poll a claim admitted, in milliseconds (0 before the first poll). */
-export function pollClaimTime(pollClaim: string): number {
-  return Number(pollClaim.slice(0, 16));
+/** The stored poll state: the last poll time and the IDs of the last committed polls, oldest first. */
+function readPollClaim(pollClaim: string): { at: number; ids: string[] } {
+  return { at: Number(pollClaim.slice(0, 16)), ids: pollClaim.slice(17).split(',') };
+}
+
+function writePollClaim(at: number, ids: string[]): string {
+  return `${timeKey(at)}:${ids.slice(-POLL_HISTORY).join(',')}`;
 }
 
 /** A random user code, shown as `XXXX-XXXX`. */
@@ -140,8 +149,10 @@ export function normalizeUserCode(value: string | null | undefined): string | nu
 
 /**
  * Stores a pending device authorization and returns its codes. Only hashes
- * are stored. A user code already taken (by any stored row, which the unique
- * index enforces) is replaced with a fresh one, up to three tries.
+ * are stored. When the insert throws, the row is read back by its device code:
+ * an insert that committed before its acknowledgement was lost is returned.
+ * Only a user code confirmed taken by another row (the unique index) is
+ * replaced with a fresh one, up to three tries; any other failure is thrown.
  */
 export async function createDeviceCode(
   store: DeviceStore,
@@ -159,9 +170,9 @@ export async function createDeviceCode(
       deviceCodeHash: hashSecret(deviceCode),
       userCodeHash: hashSecret(userCode),
       expiresAt,
-      expiresKey: timeKey(expiresAt.getTime()),
+      pruneKey: timeKey(expiresAt.getTime()),
       interval: OAUTH_DEVICE_POLL_INTERVAL_SECONDS,
-      pollClaim: pollClaimAt(0),
+      pollClaim: writePollClaim(0, [pollId()]),
       decisionClaimId: null,
       decision: null,
       decidedAt: null,
@@ -175,25 +186,33 @@ export async function createDeviceCode(
       await store.database.create({ model: DEVICE_CODE_MODEL, data: { ...record }, namespace: namespace(store) });
       return { deviceCode, userCode };
     } catch (error) {
+      if ((await findBy(store, 'deviceCodeHash', record.deviceCodeHash))?.id === record.id) {
+        return { deviceCode, userCode };
+      }
+      if (!(await findBy(store, 'userCodeHash', record.userCodeHash))) {
+        throw error;
+      }
       lastError = error;
     }
   }
   throw lastError;
 }
 
+function findBy(store: DeviceStore, field: 'deviceCodeHash' | 'userCodeHash', hash: string): Promise<DeviceCodeRecord | null> {
+  return store.database.findOne<DeviceCodeRecord>({ model: DEVICE_CODE_MODEL, where: [eq(field, hash)], namespace: namespace(store) });
+}
+
 /**
- * Deletes device codes that expired more than one lifetime before `now`
- * without being exchanged. Exchanged rows are kept: the tokens issued for
- * them are valid only while the row exists. The extra lifetime leaves a
+ * Deletes device codes no longer needed for more than one code lifetime: one
+ * never exchanged expired, or every token issued for an exchanged one did
+ * (`pruneKey`). Tokens issued for a device code are valid only while its row
+ * exists, so an exchanged row outlives them. The extra lifetime leaves a
  * request that read a code just before it expired time to finish.
  */
 export async function pruneDeviceCodes(store: DeviceStore, now: Date): Promise<void> {
   await store.database.deleteMany({
     model: DEVICE_CODE_MODEL,
-    where: [
-      { field: 'consumedAt', operator: 'eq', value: null },
-      { field: 'expiresKey', operator: 'lt', value: timeKey(now.getTime() - OAUTH_DEVICE_CODE_TTL_SECONDS * 1000) }
-    ],
+    where: [{ field: 'pruneKey', operator: 'lt', value: timeKey(now.getTime() - OAUTH_DEVICE_CODE_TTL_SECONDS * 1000) }],
     namespace: namespace(store)
   });
 }
@@ -221,43 +240,65 @@ export async function findByUserCode(store: DeviceStore, userCode: string): Prom
   return rows.length === 1 ? rows[0] : null;
 }
 
-/** Concurrent polls of one code settle in at most this many rounds each. */
-const POLL_ATTEMPTS = 8;
+/** A poll still losing after this many rounds (more concurrent polls of one code) writes nothing. */
+const POLL_ATTEMPTS = POLL_HISTORY;
+
+/** `busy`: the poll lost every round to concurrent polls of the code and changed nothing. */
+export type PollOutcome = 'admitted' | 'slow_down' | 'busy';
 
 /**
- * Admits one poll of `record` unless it comes within the current interval of
- * the last admitted one. A poll that is too fast adds 5 seconds to the
- * interval (RFC 8628 3.5) and also counts as the last poll, so a client that
- * keeps polling early keeps being slowed. The update is conditional on the
- * poll claim read before it and read back. A poll whose update lost to a
- * concurrent one reads the row again and retries, so it is judged against
- * the poll that won: each concurrent poll after the first is too fast and
- * stores its own 5 seconds. Only a poll still losing after 8 rounds (more
- * than 8 concurrent polls of one code) is slowed without adding to the
- * interval, which the others have already raised.
+ * Judges one poll of `record` against the last poll (RFC 8628 3.5). A poll
+ * within the current interval is `slow_down`: it adds 5 seconds to the
+ * interval and counts as the last poll, so a client that keeps polling early
+ * keeps being slowed. The last poll time never moves backwards: a poll that
+ * arrives with an earlier `now` than the stored one is too fast.
+ *
+ * Each poll has one outcome, stored once. Its update is conditional on the
+ * poll state it read and appends its own ID to the IDs of the last committed
+ * polls, then reads the row back. Its ID in that history means it committed,
+ * even if later polls overwrote the state since; the state it read still in
+ * the history without it means it lost to a concurrent poll, so it reads
+ * again and is judged against the winner. Adapter row counts are not used.
+ * Only when more than 16 polls committed between its write and its read-back
+ * can it not tell; it then answers as judged, which can only leave the stored
+ * interval below what the client applies, never above.
  */
-export async function admitPoll(store: DeviceStore, record: DeviceCodeRecord, now: Date): Promise<boolean> {
+export async function admitPoll(store: DeviceStore, record: DeviceCodeRecord, now: Date): Promise<PollOutcome> {
+  const id = pollId();
   let current: DeviceCodeRecord | null = record;
   for (let attempt = 0; current && attempt < POLL_ATTEMPTS; attempt += 1) {
-    const tooFast = now.getTime() - pollClaimTime(current.pollClaim) < current.interval * 1000;
-    const pollClaim = pollClaimAt(now.getTime());
-    await store.database.updateMany({
-      model: DEVICE_CODE_MODEL,
-      where: [eq('id', current.id), eq('pollClaim', current.pollClaim)],
-      data: { pollClaim, interval: tooFast ? current.interval + OAUTH_DEVICE_POLL_INTERVAL_SECONDS : current.interval },
-      namespace: namespace(store)
-    });
+    const last = readPollClaim(current.pollClaim);
+    const tooFast = now.getTime() - last.at < current.interval * 1000;
+    const outcome = tooFast ? 'slow_down' : 'admitted';
+    let writeError: { error: unknown } | undefined;
+    try {
+      await store.database.updateMany({
+        model: DEVICE_CODE_MODEL,
+        where: [eq('id', current.id), eq('pollClaim', current.pollClaim)],
+        data: {
+          pollClaim: writePollClaim(Math.max(now.getTime(), last.at), [...last.ids, id]),
+          interval: tooFast ? current.interval + OAUTH_DEVICE_POLL_INTERVAL_SECONDS : current.interval
+        },
+        namespace: namespace(store)
+      });
+    } catch (error) {
+      writeError = { error };
+    }
     const stored: DeviceCodeRecord | null = await store.database.findOne<DeviceCodeRecord>({
       model: DEVICE_CODE_MODEL,
       where: [eq('id', current.id)],
       namespace: namespace(store)
     });
-    if (stored?.pollClaim === pollClaim) {
-      return !tooFast;
+    const committed = stored ? readPollClaim(stored.pollClaim).ids : [];
+    if (committed.includes(id) || (stored && !committed.includes(last.ids[last.ids.length - 1]))) {
+      return outcome;
+    }
+    if (writeError) {
+      throw writeError.error;
     }
     current = stored;
   }
-  return false;
+  return 'busy';
 }
 
 /**
@@ -276,8 +317,11 @@ export function claimDecision(
 
 /**
  * Spends an approved device code with `claimId`, which commits the tokens
- * staged under it; false when another exchange already did.
+ * staged under it, and keeps the row until they expire; false when another
+ * exchange already did.
  */
 export function claimDeviceCode(store: DeviceStore, recordId: string, now: Date, claimId: string): Promise<boolean> {
-  return claimIfUnset(store, DEVICE_CODE_MODEL, recordId, ['consumedAt'], { consumedAt: now }, claimId);
+  // The tokens staged under `claimId` expire by then; the row backs them until it.
+  const pruneKey = timeKey(now.getTime() + OAUTH_REFRESH_TOKEN_TTL_SECONDS * 1000);
+  return claimIfUnset(store, DEVICE_CODE_MODEL, recordId, ['consumedAt'], { consumedAt: now, pruneKey }, claimId);
 }

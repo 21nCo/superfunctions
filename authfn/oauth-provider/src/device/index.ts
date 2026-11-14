@@ -8,9 +8,11 @@ import {
   handleOAuth,
   OAuthError,
   oauthJson,
-  readFormBody,
+  readSingleParams,
   requireParam
 } from '../http.js';
+import { BodyTimeoutError, declaresMoreThan, readCappedBody } from '../registration/document.js';
+import { REGISTRATION_BODY_TIMEOUT_MS } from '../registration/index.js';
 import { isPlainObject } from '../registration/metadata.js';
 import { admitRegistrationEvent } from '../registration/store.js';
 import {
@@ -83,6 +85,42 @@ export function validateDeviceConfig(device: unknown): void {
   if (resolveClientIp !== undefined && typeof resolveClientIp !== 'function') {
     throw invalid('resolveClientIp must be a function');
   }
+}
+
+/** The largest device authorization request body; its parameters are a few short strings. */
+const MAX_DEVICE_AUTHORIZATION_BODY_BYTES = 8 * 1024;
+
+/**
+ * Reads the form body of an anonymous device authorization request, bounded
+ * before anything else runs: a declared or streamed body over 8 KB, or one
+ * that has not arrived within 5 seconds, is an `invalid_request` and the
+ * stream is cancelled.
+ */
+async function readCappedFormBody(request: Request): Promise<Map<string, string>> {
+  const contentType = request.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
+  if (contentType !== 'application/x-www-form-urlencoded') {
+    throw new OAuthError('invalid_request', 'Request body must be application/x-www-form-urlencoded');
+  }
+  const tooLarge = new OAuthError('invalid_request', 'Request body must be at most 8 KB');
+  if (declaresMoreThan(request.headers, MAX_DEVICE_AUTHORIZATION_BODY_BYTES)) {
+    await request.body?.cancel().catch(() => undefined);
+    throw tooLarge;
+  }
+  let bytes: Uint8Array | null = new Uint8Array();
+  try {
+    if (request.body) {
+      bytes = await readCappedBody(request.body.getReader(), MAX_DEVICE_AUTHORIZATION_BODY_BYTES, REGISTRATION_BODY_TIMEOUT_MS);
+    }
+  } catch (error) {
+    if (error instanceof BodyTimeoutError) {
+      throw new OAuthError('invalid_request', 'Request body must arrive within 5 seconds');
+    }
+    throw error;
+  }
+  if (!bytes) {
+    throw tooLarge;
+  }
+  return readSingleParams(new URLSearchParams(new TextDecoder().decode(bytes)));
 }
 
 /**
@@ -169,8 +207,10 @@ async function lookUpUserCode(
  * the request as denied, so the device gets `access_denied`. A disconnect
  * after the second read finds the grant, which already exists, and revokes
  * it; the device then also gets `access_denied` (see `exchangeDeviceCode`).
- * An approval interrupted anywhere before the decision leaves the request
- * pending. Returns whether the device will receive tokens.
+ * The code must still be unexpired when the decision is recorded; otherwise
+ * the new grant is revoked, nothing is recorded and it throws `invalid_grant`. An approval
+ * interrupted anywhere before the decision leaves the request pending.
+ * Returns whether the device will receive tokens.
  */
 async function approve(
   runtime: OAuthProviderRuntime,
@@ -186,7 +226,12 @@ async function approve(
     await claimDecision(store, record.id, { decision: 'denied', userId: user.id, now: runtime.now() });
     return 'withdrawn';
   }
-  if (!(await claimDecision(store, record.id, { decision: 'approved', userId: user.id, grantId: grant.id, now: runtime.now() }))) {
+  const now = runtime.now();
+  if (record.expiresAt.getTime() <= now.getTime()) {
+    await revokeGrant(store, grant.id, 'device_code_expired', now);
+    throw new OAuthError('invalid_grant', 'The user code has expired');
+  }
+  if (!(await claimDecision(store, record.id, { decision: 'approved', userId: user.id, grantId: grant.id, now }))) {
     await revokeGrant(store, grant.id, 'device_decided', runtime.now());
     return 'decided';
   }
@@ -214,7 +259,7 @@ export function createDeviceRoutes(runtime: OAuthProviderRuntime): Route[] {
       path: OAUTH_DEVICE_AUTHORIZATION_PATH,
       meta: createAuthFnRouteMeta('oauthDeviceAuthorization', 'OAuth 2.0 device authorization endpoint', { mode: 'none' }),
       handler: (request) => handleOAuth(async () => {
-        const params = await readFormBody(request);
+        const params = await readCappedFormBody(request);
         const client = await authenticateClient(runtime, request, params);
         if (!runtime.findClient(client.clientId)) {
           throw new OAuthError('unauthorized_client', 'This client may not use the device authorization grant');
@@ -373,7 +418,13 @@ export async function exchangeDeviceCode(
   if (resource !== undefined && resource !== record.resource) {
     throw new OAuthError('invalid_target', 'resource does not match the device authorization request');
   }
-  if (!(await admitPoll(runtime.store, record, now))) {
+  const poll = await admitPoll(runtime.store, record, now);
+  if (poll === 'busy') {
+    throw new OAuthError('temporarily_unavailable', 'Too many concurrent polls of this device code; try again later', 429, {
+      'retry-after': String(record.interval)
+    });
+  }
+  if (poll === 'slow_down') {
     throw deviceError('slow_down', 'Polling too fast; wait longer between requests');
   }
   if (!record.decidedAt) {
