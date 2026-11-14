@@ -1,68 +1,16 @@
 #!/usr/bin/env node
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import path from "node:path";
-import { tmpdir, devNull } from "node:os";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-const execFileAsync = promisify(execFile);
+import { tmpdir } from "node:os";
 
-import { ComposioLinearContextAdapter } from "@superfunctions/reviewfn-context-composio";
-import { isolatedGitEnvironment, safeRead, FileArtifactStore, RepositoryMarkdownContextAdapter, ReviewCoordinator, ReviewFnError, renderMarkdownReport, validateConfig, validatePolicy, type ContextAdapter, type ReviewFnConfig, type ReviewPolicy, type ReviewReport } from "@superfunctions/reviewfn-core";
-import { redactRepositoryRemote, githubRepositoryIdentity, GitHubAdvisoryPublisher, GitHubApi, GitSourceControlAdapter } from "@superfunctions/reviewfn-github";
+import { safeRead, FileArtifactStore, ReviewCoordinator, ReviewFnError, renderMarkdownReport, type ReviewFnConfig, type ReviewReport } from "@superfunctions/reviewfn-core";
+import { githubRepositoryIdentity, GitHubAdvisoryPublisher, GitHubApi, GitSourceControlAdapter } from "@superfunctions/reviewfn-github";
 import { CodexHarnessAdapter } from "@superfunctions/reviewfn-harness-codex";
 import { evaluate, type EvaluationCase, type EvaluationOutcome } from "@superfunctions/reviewfn-testing";
 
-import { initializeConfiguration, loadConfig, loadPolicy, loadTrustedConfigFromBase, loadTrustedPolicyFromBase } from "./config.js";
+import { initializeConfiguration, initializePanelPolicy } from "./config.js";
 import { LocalIsolatedExecutionAdapter } from "./execution.js";
-
-interface Arguments { command?: string; flags: Map<string, string | true>; positionals: string[] }
-
-function parseArguments(argv: string[]): Arguments {
-  const [command, ...rest] = argv;
-  const flags = new Map<string, string | true>();
-  const positionals: string[] = [];
-  for (let index = 0; index < rest.length; index += 1) {
-    const value = rest[index];
-    if (!value.startsWith("--")) { positionals.push(value); continue; }
-    const separator = value.indexOf("=");
-    const name = value.slice(2, separator < 0 ? undefined : separator);
-    const inline = separator < 0 ? undefined : value.slice(separator + 1);
-    if (inline !== undefined) flags.set(name, inline);
-    else if (rest[index + 1] && !rest[index + 1].startsWith("--")) flags.set(name, rest[++index]);
-    else flags.set(name, true);
-  }
-  return { command, flags, positionals };
-}
-
-function required(flags: Map<string, string | true>, name: string): string {
-  const value = flags.get(name);
-  if (typeof value !== "string" || value.length === 0) throw new Error(`--${name} is required.`);
-  return value;
-}
-
-function optional(flags: Map<string, string | true>, name: string): string | undefined {
-  const value = flags.get(name);
-  return typeof value === "string" ? value : undefined;
-}
-
-async function configuration(root: string, base: string, flags: Map<string, string | true>): Promise<{ config: ReviewFnConfig; policy: ReviewPolicy }> {
-  const trusted = flags.has("trusted-config-from-base") || process.env.GITHUB_ACTIONS === "true";
-  const configRelative = optional(flags, "config") ?? ".reviewfn/config.json";
-  const policyRelative = optional(flags, "policy") ?? ".reviewfn/policy.json";
-  const config = trusted ? await loadTrustedConfigFromBase(root, base, configRelative) : await loadConfig(path.resolve(root, configRelative));
-  const policy = trusted ? await loadTrustedPolicyFromBase(root, base, policyRelative) : await loadPolicy(path.resolve(root, policyRelative));
-  if (config.output.mode !== policy.mode) throw new Error(`Configuration output mode ${config.output.mode} does not match trusted policy mode ${policy.mode}.`);
-  return { config: validateConfig(config), policy: validatePolicy(policy) };
-}
-
-function contextAdapters(config: ReviewFnConfig): ContextAdapter[] {
-  const adapters = new Map<string, ContextAdapter>();
-  for (const item of config.context) {
-    if (item.adapter === "repository-markdown") adapters.set(item.adapter, new RepositoryMarkdownContextAdapter());
-    else if (item.adapter === "composio-linear") adapters.set(item.adapter, new ComposioLinearContextAdapter());
-  }
-  return [...adapters.values()];
-}
+import { contextAdapters, createReviewSnapshot, loadRunConfiguration, optional, parseArguments, publication, renderStoredReport, required, runPanelCommand } from "./panel.js";
 
 async function createCoordinator(root: string, config: ReviewFnConfig, pullRequest?: number, targetBranch?: string) {
   if (process.env.GITHUB_TOKEN) throw new Error("Review execution must not receive GITHUB_TOKEN; use the separate publish command in a credentialed job.");
@@ -83,7 +31,7 @@ async function run(): Promise<number> {
   const root = path.resolve(optional(args.flags, "root") ?? process.cwd());
   if (!args.command || args.command === "help" || args.flags.has("help")) { process.stdout.write(help()); return 0; }
   if (args.command === "init") {
-    const files = await initializeConfiguration(root);
+    const files = args.flags.has("panel") ? [await initializePanelPolicy(root)] : await initializeConfiguration(root);
     process.stdout.write(`${files.map((file) => path.relative(root, file)).join("\n")}\n`);
     return 0;
   }
@@ -92,16 +40,32 @@ async function run(): Promise<number> {
     process.stdout.write(renderMarkdownReport(JSON.parse(await readFile(input, "utf8")) as ReviewReport));
     return 0;
   }
+  if (args.command === "report") {
+    process.stdout.write(await renderStoredReport(args.flags, root));
+    return 0;
+  }
+  if (args.command === "panel") {
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    process.once("SIGINT", abort);
+    process.once("SIGTERM", abort);
+    try { return await runPanelCommand(args.flags, { signal: controller.signal }); }
+    finally {
+      process.removeListener("SIGINT", abort);
+      process.removeListener("SIGTERM", abort);
+    }
+  }
   if (args.command === "publish") {
-    const report = JSON.parse((await safeRead(path.resolve(root, required(args.flags, "input")))).toString("utf8")) as ReviewReport;
+    const value: unknown = JSON.parse((await safeRead(path.resolve(root, required(args.flags, "input")))).toString("utf8"));
     const repository = required(args.flags, "repository").split("/");
     const pullRequest = Number(required(args.flags, "pull-request"));
     const expectedHead = required(args.flags, "head");
     if (repository.length !== 2 || !process.env.GITHUB_TOKEN || !Number.isInteger(pullRequest) || pullRequest <= 0) throw new Error("Publication requires repository, PR number and GITHUB_TOKEN.");
-    if (report.change.headCommit !== expectedHead || report.change.pullRequest !== pullRequest || report.execution !== "completed" || report.configuration.profile !== required(args.flags, "profile")) throw new Error("Artifact does not match trusted publication identity or is not completed.");
+    const { report, rendered, profile } = publication(value, args.flags);
+    if (report.change.headCommit !== expectedHead || report.change.pullRequest !== pullRequest) throw new Error("Artifact does not match trusted publication identity or is not completed.");
     if (githubRepositoryIdentity(report.change.repositoryId) !== repository.join("/").toLowerCase()) throw new Error("Artifact repository does not match the trusted publication target.");
     const publisher = new GitHubAdvisoryPublisher({ api: new GitHubApi({ owner: repository[0], repository: repository[1], token: process.env.GITHUB_TOKEN }), pullRequest, publisherLogin: optional(args.flags, "publisher-login") });
-    const result = await publisher.publish({ report, rendered: renderMarkdownReport(report), expectedHead, profile: report.configuration.profile });
+    const result = await publisher.publish({ report, rendered, expectedHead, profile });
     process.stdout.write(`${JSON.stringify(result)}\n`);
     return result.status === "failed" || result.status === "stale" ? 1 : 0;
   }
@@ -116,25 +80,12 @@ async function run(): Promise<number> {
   const pullRequestText = optional(args.flags, "pull-request") ?? process.env.GITHUB_EVENT_PULL_REQUEST_NUMBER;
   const pullRequest = pullRequestText === undefined ? undefined : Number(pullRequestText);
   if (pullRequestText !== undefined && (!Number.isInteger(pullRequest) || pullRequest! <= 0)) throw new Error("--pull-request must be a positive integer.");
-  const { config, policy } = await configuration(root, base, args.flags);
+  const { config, policy } = await loadRunConfiguration(root, base, args.flags);
   const owned = await mkdtemp(path.join(tmpdir(), "reviewfn-run-"));
   try {
-  const snapshot = path.join(owned, "checkout");
-  const snapshotEnvironment = isolatedGitEnvironment();
-  const immutableHead = (await execFileAsync("git", ["rev-parse", "--verify", "--end-of-options", `${head}^{commit}`], { cwd: root })).stdout.trim();
-  const immutableBase = (await execFileAsync("git", ["rev-parse", "--verify", "--end-of-options", `${base}^{commit}`], { cwd: root })).stdout.trim();
-  await execFileAsync("git", ["-c", `core.hooksPath=${devNull}`, "clone", "--template=", "--no-local", "--no-checkout", root, snapshot], { env: snapshotEnvironment, maxBuffer: 1_000_000 });
-  // info/attributes outranks every committed .gitattributes, including nested files.
-  await mkdir(path.join(snapshot, ".git", "info"), { recursive: true, mode: 0o700 });
-  await writeFile(path.join(snapshot, ".git", "info", "attributes"), "* -text -eol -working-tree-encoding -filter -ident\n", { mode: 0o600 });
-  await execFileAsync("git", ["-c", `core.hooksPath=${devNull}`, "-c", `core.attributesFile=${devNull}`, "-c", "core.autocrlf=false", "checkout", "--detach", immutableHead], { cwd: snapshot, env: snapshotEnvironment, maxBuffer: 1_000_000 });
-  const remote = (await execFileAsync("git", ["config", "--get", "remote.origin.url"], { cwd: root }).catch(() => ({ stdout: "local" }))).stdout.trim();
-  const safeRemote = redactRepositoryRemote(remote);
-  await execFileAsync("git", ["remote", "set-url", "origin", safeRemote], { cwd: snapshot });
-  const symbolicBase = (await execFileAsync("git", ["rev-parse", "--symbolic-full-name", "--verify", "--end-of-options", base], { cwd: root })).stdout.trim();
-  const targetBranch = optional(args.flags, "target-branch") ?? (symbolicBase.startsWith("refs/") ? symbolicBase.replace(/^refs\/(heads|remotes)\//, "") : process.env.GITHUB_BASE_REF ?? "unknown");
-  const coordinator = await createCoordinator(snapshot, config, pullRequest, targetBranch);
-  const request = { root: snapshot, base: immutableBase, head: immutableHead, pullRequest, config, policy, issue: optional(args.flags, "issue") };
+  const snapshot = await createReviewSnapshot(root, owned, base, head, optional(args.flags, "target-branch"));
+  const coordinator = await createCoordinator(snapshot.root, config, pullRequest, snapshot.targetBranch);
+  const request = { root: snapshot.root, base: snapshot.base, head: snapshot.head, pullRequest, config, policy, issue: optional(args.flags, "issue") };
   if (args.command === "preflight") {
     const diagnostics = await coordinator.preflight(request);
     process.stdout.write(`${JSON.stringify({ ok: !diagnostics.some((item) => item.level === "error"), diagnostics }, null, 2)}\n`);
@@ -166,7 +117,7 @@ async function run(): Promise<number> {
 }
 
 function help(): string {
-  return `ReviewFn — evidence-backed pull request review\n\nUsage:\n  reviewfn init [--root PATH]\n  reviewfn preflight --base REF --head REF [--issue ID] [--trusted-config-from-base]\n  reviewfn review --base REF --head REF [--pull-request N] [--issue ID] [--output DIR]\n  reviewfn publish --input report.json --repository OWNER/REPO --pull-request N --head SHA --profile NAME\n  reviewfn render --input report.json\n  reviewfn evaluate --input evaluation.json\n\nReview is advisory by default. Configuration and policy are loaded from .reviewfn/.\n`;
+  return `ReviewFn — evidence-backed pull request review\n\nUsage:\n  reviewfn init [--root PATH] [--panel]\n  reviewfn preflight --base REF --head REF [--issue ID] [--trusted-config-from-base]\n  reviewfn review --base REF --head REF [--pull-request N] [--issue ID] [--output DIR]\n  reviewfn publish --input report.json --repository OWNER/REPO --pull-request N --head SHA --profile NAME\n  reviewfn panel --base REF --head REF [--since SHA] [--issue ID] [--pull-request N] [--output DIR] [--json]\n  reviewfn report [--panel] [--input FILE]\n  reviewfn publish --input panel-report.json --repository OWNER/REPO --pull-request N --head SHA [--profile panel]\n  reviewfn render --input report.json\n  reviewfn evaluate --input evaluation.json\n\nReview is advisory by default. Configuration and policy are loaded from .reviewfn/, and the panel policy from .reviewfn/panel.json.\nreviewfn panel exits 0 (complete), 2 (incomplete coverage or quorum not met), 3 (preflight failed), 4 (canceled) or 1 (other error).\n`;
 }
 
 run().then((code) => { process.exitCode = code; }).catch((error) => {

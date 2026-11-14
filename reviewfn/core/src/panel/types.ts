@@ -36,6 +36,9 @@ export interface PanelPolicy {
 
 export const PANEL_DEFAULT_MAX_CONCURRENT_SLOTS = 2;
 
+/** The coverage reason a canceled panel run records; a report carrying it is never published or treated as completed. */
+export const PANEL_CANCELED_REASON = "The panel run was canceled.";
+
 /**
  * Slot identity: (harness adapter, harness version, provider, resolved model, auth mode, credential fingerprint).
  * Within a stage, the first `completed` run of an identity in policy order counts toward quorum; a later run of the

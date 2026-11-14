@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ReviewReport } from "@superfunctions/reviewfn-core";
+import { PANEL_CANCELED_REASON, type PanelReport, type ReviewReport } from "@superfunctions/reviewfn-core";
 import { githubRepositoryIdentity, GitHubAdvisoryPublisher, GitHubApi, GitSourceControlAdapter } from "../src/index.js";
 
 function report(repository = "repo"): ReviewReport {
@@ -155,4 +155,55 @@ it.each(["https://git.example.com/acme/repo.git", "git@git.example.com:acme/repo
   const result = await new GitHubAdvisoryPublisher({ api, pullRequest: 1 }).publish({ report: value, rendered: "report", expectedHead: "b".repeat(40), profile: "requirements" });
   expect(result.status).toBe(remote.includes("other.example") ? "failed" : "published");
   expect(calls > 0).toBe(!remote.includes("other.example"));
+});
+
+describe("GitHubAdvisoryPublisher with panel reports", () => {
+  function panelReport(coverageReasons: string[] = []): PanelReport {
+    const { change } = report();
+    return { schemaVersion: 1, kind: "reviewfn-panel", runId: "panel-run", createdAt: "2026-01-01T00:00:00.000Z", change, panelPolicyDigest: "e".repeat(64), slots: [], slotRuns: [], gateReceipts: [], evidence: [], findings: [], clusters: [], coverage: coverageReasons.length ? "incomplete" : "complete", coverageReasons, verdict: "needs_verification" };
+  }
+  function github() {
+    const comments: Array<{ id: number; body: string; user: { login: string } }> = [];
+    const checks: Array<{ id: number; external_id: string; body: Record<string, unknown> }> = [];
+    const writes: Array<{ method: string; url: string }> = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input); const method = init?.method ?? "GET";
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
+      if (method !== "GET") writes.push({ method, url });
+      if (url.includes("/pulls/1")) return json({ head: { sha: "b".repeat(40) } });
+      if (url.includes("/issues/1/comments") && method === "GET") return json(comments);
+      if (url.includes("/issues/1/comments") && method === "POST") { comments.push({ id: comments.length + 1, user: { login: "github-actions[bot]" }, body: body.body }); return json(comments.at(-1), 201); }
+      const commentPatch = url.match(/\/issues\/comments\/(\d+)$/);
+      if (commentPatch && method === "PATCH") { const comment = comments.find(item => item.id === Number(commentPatch[1]))!; comment.body = body.body; return json(comment); }
+      if (url.includes("/commits/") && url.includes("/check-runs")) return json({ check_runs: checks.map(({ id, external_id }) => ({ id, external_id })) });
+      if (url.endsWith("/check-runs") && method === "POST") { checks.push({ id: checks.length + 10, external_id: body.external_id, body }); return json(checks.at(-1), 201); }
+      const checkPatch = url.match(/\/check-runs\/(\d+)$/);
+      if (checkPatch && method === "PATCH") { const check = checks.find(item => item.id === Number(checkPatch[1]))!; check.body = body; return json(check); }
+      return json({ error: "unexpected" }, 500);
+    };
+    return { comments, checks, writes, publisher: new GitHubAdvisoryPublisher({ api: new GitHubApi({ owner: "acme", repository: "repo", token: "secret", fetch: fetcher }), pullRequest: 1 }) };
+  }
+
+  it("publishes one summary and one neutral check, and re-publishing the same run updates them", async () => {
+    const { comments, checks, publisher } = github();
+    const first = await publisher.publish({ report: panelReport(), rendered: "# ReviewFn panel report\n\nfirst", expectedHead: "b".repeat(40), profile: "panel" });
+    expect(first.status).toBe("published");
+    const second = await publisher.publish({ report: panelReport(), rendered: "# ReviewFn panel report\n\nsecond", expectedHead: "b".repeat(40), profile: "panel" });
+    expect(second).toEqual({ status: "updated", reference: first.reference });
+    expect(comments).toHaveLength(1);
+    expect(comments[0].body).toBe("<!-- reviewfn:panel -->\n<!-- reviewfn-run:panel-run -->\n# ReviewFn panel report\n\nsecond");
+    expect(checks).toHaveLength(1);
+    expect(checks[0].body).toMatchObject({ name: "ReviewFn / panel", external_id: "panel:panel-run", status: "completed", conclusion: "neutral", output: { title: "ReviewFn: needs_verification", summary: "# ReviewFn panel report\n\nsecond" } });
+    expect((await publisher.publish({ report: panelReport(), rendered: "# ReviewFn panel report\n\nsecond", expectedHead: "b".repeat(40), profile: "panel" })).status).toBe("unchanged");
+    expect(comments).toHaveLength(1);
+    expect(checks).toHaveLength(1);
+  });
+
+  it("refuses a canceled panel run without writing", async () => {
+    const { writes, publisher } = github();
+    const result = await publisher.publish({ report: panelReport([PANEL_CANCELED_REASON]), rendered: "canceled", expectedHead: "b".repeat(40), profile: "panel" });
+    expect(result.status).toBe("failed");
+    expect(writes).toEqual([]);
+  });
 });

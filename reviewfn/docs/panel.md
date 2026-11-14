@@ -1,0 +1,61 @@
+# Panel review
+
+A panel review runs several harness slots over one frozen change and combines their findings into one advisory panel report. The panel policy, slot identity, quorum and report contract are described in the [panel report schema](panel-report-schema.md). This page covers the CLI.
+
+## Commands
+
+```sh
+reviewfn init --panel
+reviewfn panel --base REF --head REF [--since SHA] [--issue KEY] [--pull-request N] [--output DIR] [--json]
+reviewfn report --panel [--input FILE]
+reviewfn publish --input .reviewfn/output/panel-report.json --repository OWNER/REPO --pull-request N --head SHA
+```
+
+- `reviewfn init --panel` writes `.reviewfn/panel.json` and refuses to overwrite an existing file. The template has a general stage-1 slot, which also extracts requirements, and a general stage-2 slot, both on the Codex harness. Each slot's `harness.version` is the exact version the harness reports, such as the output of `codex --version`. Update it to match the installed harness; a run that reports another version never counts.
+- `reviewfn panel` loads `.reviewfn/config.json`, `.reviewfn/policy.json` and `.reviewfn/panel.json`. In GitHub Actions, or with `--trusted-config-from-base`, it reads them from the base revision, and a head copy of the panel policy may only tighten the base copy. It reviews a private snapshot of the repository at the head commit. `--since` names an earlier reviewed commit for an incremental (`delta`) panel. `--issue` selects the issue for context adapters. `--pull-request` binds the run to a pull request, as in 0.1. `--panel FILE` reads the panel policy from another repository-relative path.
+- `reviewfn report --panel` re-renders a stored panel report (`.reviewfn/output/panel-report.json` by default) after checking its structure. Without `--panel`, it renders a 0.1 `report.json`.
+- `reviewfn publish` accepts a panel report as well as a 0.1 report. A panel report publishes under the `panel` profile only, as one summary comment and one neutral `ReviewFn / panel` check. Publishing the same run again updates them; a canceled run is never published. Publication stays a separate, credentialed job.
+
+## Outputs
+
+The run writes `panel-report.json` and `panel-report.md` to the output directory (`.reviewfn/output` by default). Its evidence, including each slot's redacted output, the context manifest and the stored panel report, is kept in the content-addressed store under `.reviewfn/artifacts`, with the retention the policy sets. Add both directories to the repository's ignore rules.
+
+Without `--json`, the rendered Markdown is printed on stdout. With `--json`, stdout carries exactly one JSON line, `{"report":"<absolute path of panel-report.json>","runId":"<run ID>"}`, for scripting. Errors are one JSON object on stderr, `{ "error": "<code>", "message": "…", "details": … }`.
+
+## Exit codes
+
+The exit codes form a closed set. The verdict never changes the exit code, because panel output is advisory.
+
+| Code | Meaning |
+| --- | --- |
+| 0 | The run completed and its coverage is complete. |
+| 2 | The run completed with incomplete coverage, or a stage's quorum was not met. The report is written. |
+| 3 | Preflight failed: invalid configuration or panel policy, a panel policy the head weakens, an unsupported or missing harness adapter, or a component's preflight refused the run. No report is written. |
+| 4 | The run was canceled (SIGINT or SIGTERM). When the run had started, the report that records the cancellation is written. |
+| 1 | Any other error, such as an invalid argument or an output directory that cannot be written. |
+
+## Harness adapters
+
+Harness adapters are optional peer installs. A slot's `harness.adapter` is resolved through a fixed table, and adapters are never loaded from arbitrary module paths:
+
+| `harness.adapter` | Package | Export |
+| --- | --- | --- |
+| `codex` | `@superfunctions/reviewfn-harness-codex` | `CodexHarnessAdapter` |
+| `claude-code` | `@superfunctions/reviewfn-harness-claude-code` | `ClaudeCodeHarnessAdapter` |
+| `cli` | `@superfunctions/reviewfn-harness-cli` | `CliHarnessAdapter` |
+
+The CLI constructs each adapter once with `{ executable?, environment }`. The executable is passed only to the adapter that `config.harness` names. A slot whose adapter package is not installed fails preflight with `REVIEWFN_HARNESS_NOT_INSTALLED`. An adapter outside the table fails with `REVIEWFN_HARNESS_UNSUPPORTED`. A package that does not export a matching adapter fails with `REVIEWFN_HARNESS_LOAD_FAILED`. For an adapter other than the configured harness, the adapter contract version is read from its capabilities before any preflight. Verifier slots are not run by this release, so their adapters are not loaded.
+
+## Report rendering
+
+The Markdown report shows:
+
+- the run summary: run ID, reviewed head, base, coverage, verdict and finding counts;
+- coverage limits;
+- a table with each slot's stage, lens, harness, model and terminal state, with the reasons for a `void` run and, for a `collapsed` run, the slot whose identity it shares;
+- the requirements summary, when the panel extracted requirements;
+- reported findings, grouped by severity and then by file. Each finding shows its origins, its verification verdict and its on-base label (also present on base, new in this change, or not checked against base);
+- dropped and suppressed findings, with their reasons, in a collapsed section;
+- the gate receipts.
+
+`renderPanelMarkdownReport` in `@superfunctions/reviewfn-core` produces this rendering, and the GitHub summary uses the same text.
