@@ -68,7 +68,10 @@ function evidenceLocation(evidence: Evidence): string {
   return evidence.sourceExclusionReason ? `${location}; source exclusion: ${escape(evidence.sourceExclusionReason)}` : location;
 }
 
-/** One nested line per evidence ID a finding cites, resolved against the report's evidence, so an unanchored finding can still be located. */
+/**
+ * One nested line per cited evidence ID (a finding's own, or its verification's, which backs the verdict and the
+ * on-base label), resolved against the report's evidence, so an unanchored finding can still be located.
+ */
 function evidenceLines(ids: string[], evidence: Map<string, Evidence>): string[] {
   return ids.map(id => {
     const item = evidence.get(id);
@@ -82,6 +85,7 @@ function findingLines(finding: PanelFinding, evidence: Map<string, Evidence>): s
     `- **${escape(finding.title)}** (${escape(finding.category)}; ${onBase})`,
     `  - Origins: ${originsText(finding)}`,
     `  - Verification: ${verificationText(finding)}`,
+    ...evidenceLines(finding.verification?.evidenceIds ?? [], evidence),
     `  - Trigger: ${escape(finding.trigger)}`,
     `  - Impact: ${escape(finding.impact)}`,
     `  - Fix: ${escape(finding.direction)}`,
@@ -109,13 +113,14 @@ function groupedFindings(findings: PanelFinding[], evidence: Map<string, Evidenc
   return lines;
 }
 
-function setAsideLines(finding: PanelFinding): string[] {
+function setAsideLines(finding: PanelFinding, evidence: Map<string, Evidence>): string[] {
   const reference = finding.suppressionReference;
   const lines = [
     `- **${escape(finding.title)}** (${finding.severity}; ${finding.disposition})`,
     `  - Reason: ${escape(finding.dispositionReason ?? "no reason recorded")}`,
     `  - Origins: ${originsText(finding)}`,
     `  - Verification: ${verificationText(finding)}`,
+    ...evidenceLines(finding.verification?.evidenceIds ?? [], evidence),
   ];
   if (reference) lines.push(`  - Suppressed by: ${escape(`${reference.sourceId}#${reference.anchor}`)}`);
   if (finding.anchor) lines.push(`  - Anchor: ${anchorText(finding.anchor)}`);
@@ -125,7 +130,7 @@ function setAsideLines(finding: PanelFinding): string[] {
 /**
  * Render a panel report as Markdown: the run summary, every slot's terminal state with void and collapse reasons, the
  * requirements summary, reported findings grouped by severity then file (each with its origins, verification verdict,
- * on-base label and the location of every piece of evidence it cites), and dropped and suppressed findings with their
+ * on-base label and the location of every piece of evidence it or its verification cites), and dropped and suppressed findings with their
  * reasons in a collapsed section. Advisory only.
  * Every free-text field, including harness-supplied categories, passes through `escape` or `code`; schema enums (stage,
  * terminal, severity, disposition, verdicts and coverage) are shown as-is, so callers render only reports that
@@ -136,6 +141,7 @@ export function renderPanelMarkdownReport(report: PanelReport): string {
   const runs = new Map(report.slotRuns.map(run => [run.slotId, run]));
   const reported = report.findings.filter(finding => finding.disposition === "reported");
   const setAside = report.findings.filter(finding => finding.disposition !== "reported");
+  const evidence = new Map(report.evidence.map(item => [item.id, item]));
   const count = (disposition: PanelFinding["disposition"]) => report.findings.filter(finding => finding.disposition === disposition).length;
   const lines = [
     "# ReviewFn panel report",
@@ -174,9 +180,9 @@ export function renderPanelMarkdownReport(report: PanelReport): string {
   }
   lines.push("## Findings", "");
   if (!reported.length) lines.push("No findings were reported.", "");
-  else lines.push(...groupedFindings(reported, new Map(report.evidence.map(item => [item.id, item]))));
+  else lines.push(...groupedFindings(reported, evidence));
   if (setAside.length) {
-    lines.push("## Dropped and suppressed findings", "", "<details>", `<summary>${setAside.length} finding(s) set aside, with reasons</summary>`, "", ...setAside.flatMap(setAsideLines), "", "</details>", "");
+    lines.push("## Dropped and suppressed findings", "", "<details>", `<summary>${setAside.length} finding(s) set aside, with reasons</summary>`, "", ...setAside.flatMap(finding => setAsideLines(finding, evidence)), "", "</details>", "");
   }
   lines.push("## Verification", "");
   if (!report.gateReceipts.length) lines.push("No tests were run.");

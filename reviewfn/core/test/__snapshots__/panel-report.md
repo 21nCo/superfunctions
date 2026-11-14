@@ -43,6 +43,7 @@
 - **Critical in b** (correctness; new in this change)
   - Origins: alpha (general lens)
   - Verification: confirmed by checker: reproduced at head; evidence E1
+    - E1 (code): value; `src/b.ts:3` at `bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`
   - Trigger: when Critical in b
   - Impact: wrong value
   - Fix: return the right value
@@ -84,6 +85,7 @@
   - Reason: The verifier showed the lock is held\.
   - Origins: alpha (general lens)
   - Verification: refuted by checker: lock held; evidence E1
+    - E1 (code): value; `src/b.ts:3` at `bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`
 - **Waived \<script\> \| pipe** (medium; suppressed)
   - Reason: Accepted by the issue owner\.
   - Origins: alpha (general lens)

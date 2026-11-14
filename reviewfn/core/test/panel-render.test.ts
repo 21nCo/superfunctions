@@ -71,6 +71,20 @@ describe("renderPanelMarkdownReport", () => {
     expect(unanchored).toContain("    - E9: not in this report's evidence");
   });
 
+  it("resolves the evidence a verification cites, including a base location the finding itself does not cite", () => {
+    const report = fixture();
+    report.evidence.push({ id: "B1", kind: "code", description: "same code on base", code: { commit: base, path: "src/a.ts", startLine: 1 } });
+    const [, , , onBase, dropped] = report.findings;
+    onBase.verification = { ...onBase.verification!, verdict: "confirmed", evidenceIds: ["B1"] };
+    dropped.verification = { ...dropped.verification!, evidenceIds: ["B1"] };
+    const markdown = renderPanelMarkdownReport(report);
+    const reported = markdown.slice(markdown.indexOf("- **Critical in a**"), markdown.indexOf("#### `src/b.ts`"));
+    const line = `    - B1 (code): same code on base; \`src/a.ts:1\` at \`${base}\``;
+    expect(reported).toContain(`  - Verification: confirmed by checker: also on base; evidence B1\n${line}`);
+    const setAside = markdown.slice(markdown.indexOf("- **Refuted race**"), markdown.indexOf("- **Waived"));
+    expect(setAside).toContain(`  - Verification: refuted by checker: lock held; evidence B1\n${line}`);
+  });
+
   it("keeps dropped and suppressed findings out of the reported sections, inside one collapsed section with reasons", () => {
     const markdown = renderPanelMarkdownReport(fixture());
     const details = markdown.slice(markdown.indexOf("<details>"), markdown.indexOf("</details>"));
