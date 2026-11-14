@@ -1,0 +1,35 @@
+billfn/core/src/__tests__/billfn.test.ts
+  s_c12b783c550ece::t_709a4df140b2d0 226-229
+billfn/core/src/__tests__/unlinked-webhooks.test.ts
+  s_c12b783c550ece::t_b948e067fe2205 3366-3367,3420,3423-3425,3427,3496-3644
+billfn/core/src/schema.ts
+  s_c12b783c550ece::t_bd8116463972f0 175-191,305-306
+billfn/core/src/service.ts
+  s_c12b783c550ece::t_d5801b220a7817 54,87-88,187-188,191-192,381,404-406,427,511-518,522-525,531,1421-1426,1538-1542,1717-1718,1724-1730,2409,2514-2516,2532,2585-2591,2646-2647,3313-3314,3539-3542,3579-3580,3582-3583,3640-3641,3643-3646,3679-3683,3685,3690-3695,3697,3702,3704-3712,3716-3719,3721-3724,3726-3755,3758-3763,3767,3770-3771,3773-3790,4049,4058,4060-4065,4068-4070,4074-4077,4106,4127-4131,4134-4135,4137-4144,4148,4155-4156,4158
+billfn/core/src/types.ts
+  s_c12b783c550ece::t_539630eef50d83 235-251
+billfn/docs/content/docs/reference/schema.mdx
+  s_c12b783c550ece::t_753681948f8a96 6,25,42,54,60-62,87-101
+billfn/docs/content/docs/server/reconciliation.mdx
+  s_c12b783c550ece::t_1ba3293c214ad1 42,46-52,56
+billfn/python/billfn/schema.py
+  s_c12b783c550ece::t_9ffb31ca5a6e3d 316-336,351
+billfn/python/tests/test_schema.py
+  s_c12b783c550ece::t_8809160515940e 23,56-59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9358820774c0c2e9480e694ccb3cb2bc9c900458",
+  "prompts": {},
+  "sessions": {
+    "s_c12b783c550ece": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_c12b783c550ece",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
