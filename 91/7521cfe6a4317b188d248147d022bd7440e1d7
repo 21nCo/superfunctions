@@ -1,0 +1,25 @@
+authfn/oauth-provider/README.md
+  s_b66d0e9dd4fae0::t_1a0df48e69d683 103,106,108,112
+authfn/oauth-provider/src/device/index.ts
+  s_b66d0e9dd4fae0::t_cc3cee29402ca5 210-212,239-242,427
+authfn/oauth-provider/src/device/store.ts
+  s_b66d0e9dd4fae0::t_6456b8465a110a 4,43-45,205-207,209-215,218,221,224-236,265-269,284-285,314,317-320
+authfn/oauth-provider/src/__tests__/device.test.ts
+  s_b66d0e9dd4fae0::t_dbacebaeae964a 543-568,578-580,587,631,642,644,647-654
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "917521cfe6a4317b188d248147d022bd7440e1d7",
+  "prompts": {},
+  "sessions": {
+    "s_b66d0e9dd4fae0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9c393cf-f180-42b3-b545-a1dbf02818e0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
