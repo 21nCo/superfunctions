@@ -104,6 +104,19 @@ export function createFileIdReservations(config: { db: Adapter; namespace: strin
     find,
     release,
 
+    /** Releases the reservation `token` made unless another init has relied on it since. */
+    async releaseUnrelied(fileId: string, token: string): Promise<void> {
+      await db.deleteMany({
+        model: 'uploadSessions',
+        where: [
+          { field: 'uploadSessionId', operator: 'eq', value: fileIdReservationId(fileId) },
+          { field: 'storageKey', operator: 'eq', value: token },
+          { field: 'size', operator: 'eq', value: 0 },
+        ],
+        namespace,
+      });
+    },
+
     /** Whether someone other than `claimant` holds a live reservation of `fileId`. */
     async heldByOther(fileId: string, claimant: FileIdClaimant): Promise<boolean> {
       const reservation = await find(fileId);
@@ -122,6 +135,18 @@ export function createFileIdReservations(config: { db: Adapter; namespace: strin
       let existing = await find(fileId);
       if (existing && !holdsReservation(existing, claimant) && (await isLapsed(existing))) {
         await release(fileId, existing.storageKey);
+        existing = await find(fileId);
+      }
+      if (existing && holdsReservation(existing, claimant)) {
+        // Mark it relied on, so the init that made it keeps it if that init
+        // fails (see `releaseUnrelied`). If that init released it first, fall
+        // through and reserve the ID again.
+        await db.update({
+          model: 'uploadSessions',
+          where: [{ field: 'uploadSessionId', operator: 'eq', value: fileIdReservationId(fileId) }, { field: 'storageKey', operator: 'eq', value: existing.storageKey }],
+          data: { size: 1 },
+          namespace,
+        });
         existing = await find(fileId);
       }
       if (existing) return { held: holdsReservation(existing, claimant), token: null };

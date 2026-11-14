@@ -99,6 +99,11 @@ export interface UploadSession {
   uploadSessionTokenHash?: string | null;
 }
 
+/** What one completion call has claimed, so only it gives the claim up. */
+interface CompletionAttempt {
+  claim?: { fileId: string; token: string };
+}
+
 interface FileOwnerRecord {
   fileId: string;
   currentVersionId: string;
@@ -252,25 +257,33 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
    * checker); a missing one must not be reserved by anyone else. A refused
    * session is ended. Returns whether the file existed.
    */
-  async function assertMayCompleteInto(session: UploadSession, ctx: FileProviderContext): Promise<boolean> {
+  async function assertMayCompleteInto(session: UploadSession, ctx: FileProviderContext, attempt: CompletionAttempt): Promise<boolean> {
     const fileId = session.fileId!;
+    if (session.ownerId === 'anonymous') {
+      // An anonymous session claims the ID before it publishes, so a named
+      // init or another anonymous completion meanwhile gets 403. It claims
+      // before it looks for the file: a completion that created the file
+      // gives its claim up only afterwards.
+      // A file that exists already needs write permission instead.
+      const claim = await reservations.reserve(fileId, session, session.policy);
+      if (claim.token) attempt.claim = { fileId, token: claim.token };
+      if (!claim.held && !(await findFile(fileId))) {
+        await endSession(session);
+        throw errors.forbidden({ fileId, operation: 'create' });
+      }
+    }
     if (await findFile(fileId)) {
+      if (attempt.claim) {
+        await reservations.release(fileId, attempt.claim.token);
+        attempt.claim = undefined;
+      }
       if (fileWriteChecker && !(await fileWriteChecker.canWriteFile(fileId, ctx))) {
         await endSession(session);
         throw errors.forbidden({ fileId, operation: 'replace' });
       }
       return true;
     }
-    if (session.ownerId === 'anonymous') {
-      // An anonymous session claims the ID before it publishes, so a named
-      // init or another anonymous completion meanwhile gets 403.
-      if (!(await reservations.reserve(fileId, session, session.policy)).held) {
-        await endSession(session);
-        throw errors.forbidden({ fileId, operation: 'create' });
-      }
-    } else {
-      await assertNotReservedByOther(fileId, session, false);
-    }
+    if (session.ownerId !== 'anonymous') await assertNotReservedByOther(fileId, session, false);
     return false;
   }
 
@@ -304,7 +317,11 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       ? await fileWriteChecker.canWriteFile(file.fileId, ctx)
       : isNamedOwner(file, session);
     if (!allowed) {
-      await endSession(session, true);
+      // While this anonymous session holds the claim, only another call
+      // completing the same session can have created the file: leave the
+      // session to that call.
+      const claim = session.ownerId === 'anonymous' ? await reservations.find(file.fileId) : null;
+      if (!claim || !holdsReservation(claim, session)) await endSession(session, true);
       throw errors.forbidden({ fileId: file.fileId, operation: 'replace' });
     }
   }
@@ -357,7 +374,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     await deleteProxyTempPartObjects(session);
     const where = [{ field: 'uploadSessionId', operator: 'eq' as const, value: session.uploadSessionId }];
     await db.deleteMany({ model: 'uploadParts', where, namespace });
-    await db.update({ model: 'uploadSessions', where, data: { status: 'aborted' }, namespace });
+    // A session another call has completed stays completed.
+    await db.update({ model: 'uploadSessions', where: [...where, { field: 'status', operator: 'ne', value: 'completed' }], data: { status: 'aborted' }, namespace });
     await reservations.releaseClaimOf(session);
 
     if (!published || !storage.deleteObject) return;
@@ -556,18 +574,9 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         reservationToken = reservation.token;
       }
       // If the upload never starts, drop the reservation this request made,
-      // unless another session of the same caller already relies on it.
+      // unless another init of the same caller has relied on it since.
       const releaseReservation = async (error: unknown): Promise<never> => {
-        const relied = reservationToken && await db.findOne({
-          model: 'uploadSessions',
-          where: [
-            { field: 'fileId', operator: 'eq', value: fileId },
-            { field: 'ownerId', operator: 'eq', value: owner.ownerId },
-            { field: 'status', operator: 'ne', value: 'aborted' },
-          ],
-          namespace,
-        });
-        if (reservationToken && !relied) await reservations.release(fileId, reservationToken).catch(() => undefined);
+        if (reservationToken) await reservations.releaseUnrelied(fileId, reservationToken).catch(() => undefined);
         throw error;
       };
 
@@ -855,19 +864,20 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     },
 
     async completeSession(uploadSessionId: string, ctx: FileProviderContext, uploadSessionToken?: string): Promise<{ fileId: string; versionId: string }> {
+      const attempt: CompletionAttempt = {};
       try {
-        return await this.publishSession(uploadSessionId, ctx, uploadSessionToken);
+        return await this.publishSession(uploadSessionId, ctx, uploadSessionToken, attempt);
       } catch (error) {
-        // A failed completion created no file, so it gives up any anonymous
-        // claim it made; the client may retry under the same ID.
-        const session = await findSession(uploadSessionId);
-        if (session && session.status !== 'completed') await reservations.releaseClaimOf(session).catch(() => undefined);
+        // A failed completion gives up the claim it made itself, so the client
+        // may retry under the same ID. A call that was refused access, or that
+        // found the claim already held by its session, claimed nothing.
+        if (attempt.claim) await reservations.release(attempt.claim.fileId, attempt.claim.token).catch(() => undefined);
         throw error;
       }
     },
 
     /** Completes a session: publishes its object and creates or updates its file. */
-    async publishSession(uploadSessionId: string, ctx: FileProviderContext, uploadSessionToken?: string): Promise<{ fileId: string; versionId: string }> {
+    async publishSession(uploadSessionId: string, ctx: FileProviderContext, uploadSessionToken?: string, attempt: CompletionAttempt = {}): Promise<{ fileId: string; versionId: string }> {
       const session = await findSession(uploadSessionId);
 
       if (!session) throw errors.sessionNotFound();
@@ -911,7 +921,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         }
       }
 
-      const fileExistedBeforePublish = session.fileId ? await assertMayCompleteInto(session, ctx) : false;
+      const fileExistedBeforePublish = session.fileId ? await assertMayCompleteInto(session, ctx, attempt) : false;
       const policy = policies.get(session.policy);
       const policyStorageTarget = policy ? resolveStorageTarget(policy) : undefined;
 
@@ -1112,9 +1122,6 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         namespace,
       });
 
-      // The file exists now, so an anonymous claim on its ID is no longer needed.
-      await reservations.releaseClaimOf(session);
-
       // Update session
       await db.update({
         model: 'uploadSessions',
@@ -1122,6 +1129,9 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         data: { status: 'completed', fileId, completionVersionId: versionId },
         namespace,
       });
+
+      // The file exists now, so an anonymous claim on its ID is no longer needed.
+      await reservations.releaseClaimOf(session);
 
       await db.deleteMany({
         model: 'uploadParts',

@@ -763,6 +763,31 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
       expect((await init('user_b', { fileId })).status).toBe(403);
     });
 
+    it("is kept when a failed init's retry, still starting, relies on it", async () => {
+      const fileId = 'file_rollback_inflight';
+      const [setupA, setupB] = [hold(), hold()];
+      beforeMultipartInit = async () => {
+        setupA.arrive();
+        await setupA.wait;
+        throw new Error('storage unavailable');
+      };
+      const failing = init('user_a', { fileId });
+      await setupA.reached;
+      beforeMultipartInit = async () => {
+        setupB.arrive();
+        await setupB.wait;
+      };
+      const retry = init('user_a', { fileId });
+      await setupB.reached;
+      setupA.release();
+      expect((await failing).status).toBe(500);
+
+      expect((await init('user_b', { fileId })).status).toBe(403);
+      setupB.release();
+      expect((await retry).status).toBe(200);
+      expect(reservationRow(fileId)).toMatchObject({ ownerId: 'user_a' });
+    });
+
     it("is kept when a failed init's retry already relies on it", async () => {
       const fileId = 'file_rollback_relied1';
       const setup = hold();
@@ -898,6 +923,56 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
       publishing.release();
       expect((await pending).status).toBe(200);
       expect(publishedUploads).toEqual([sessionRow(first.uploadSessionId).storageUploadId]);
+    });
+
+    it('keeps the claim when a completion call without its token fails meanwhile', async () => {
+      const fileId = 'file_anon_bad_token01';
+      const anon = await anonymousInitAndUpload(fileId);
+      const publishing = holdNextPublish();
+      const pending = call('POST', `/upload/${anon.uploadSessionId}/complete`, '', undefined, anon.token);
+      await publishing.reached;
+
+      const stranger = await call('POST', `/upload/${anon.uploadSessionId}/complete`, '', undefined, { 'x-upload-session-token': 'wrong' });
+      expect(stranger.status).not.toBe(200);
+      expect((await init('user_a', { fileId })).status).toBe(403);
+      publishing.release();
+      expect((await pending).status).toBe(200);
+      expect(fileRows(fileId)).toEqual([expect.objectContaining({ ownerId: 'anonymous' })]);
+    });
+
+    it('lets a duplicate completion of the same session fail without undoing the one that created the file', async () => {
+      const fileId = 'file_anon_duplicate01';
+      const anon = await anonymousInitAndUpload(fileId);
+      const complete = () => call('POST', `/upload/${anon.uploadSessionId}/complete`, '', undefined, anon.token);
+      const publishing = holdNextPublish();
+      const first = complete();
+      await publishing.reached;
+      const second = await complete();
+      expect(second.status).toBe(200);
+      publishing.release();
+      await first;
+
+      // The file's bytes are still stored, and a later retry returns the original result.
+      expect(objects.get(versionRows(fileId)[0].storageKey)).toBe(sessionRow(anon.uploadSessionId).storageUploadId);
+      const retry = await complete();
+      expect(retry.status).toBe(200);
+      expect(retry.body.data).toEqual(second.body.data);
+    });
+
+    it('re-checks for the file once it holds the claim, so a late completion stores nothing', async () => {
+      build({ anonymous: true, layout: 'shared' });
+      const fileId = 'file_anon_late_claim1';
+      const [late, winner] = [await anonymousInitAndUpload(fileId), await anonymousInitAndUpload(fileId)];
+      // The late completion is about to claim the ID while the winner completes.
+      const claiming = db.holdNext('findOne', 'uploadSessions', (params) => params.where?.[0]?.value === fileIdReservationId(fileId));
+      const pendingLate = call('POST', `/upload/${late.uploadSessionId}/complete`, '', undefined, late.token);
+      await claiming.reached;
+      expect((await call('POST', `/upload/${winner.uploadSessionId}/complete`, '', undefined, winner.token)).status).toBe(200);
+      claiming.release();
+
+      expect((await pendingLate).status).toBe(403);
+      expect(publishedUploads).toEqual([sessionRow(winner.uploadSessionId).storageUploadId]);
+      expect(objects.get(SHARED_PATH({ fileId }))).toBe(sessionRow(winner.uploadSessionId).storageUploadId);
     });
 
     it('gives up its claim when its completion fails, so a retry under the ID succeeds', async () => {
