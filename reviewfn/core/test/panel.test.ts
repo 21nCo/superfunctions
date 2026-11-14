@@ -2,7 +2,7 @@ import { Ajv } from "ajv";
 import { describe, expect, it } from "vitest";
 
 import {
-  DEFAULT_POLICY, PANEL_PRIORITY_SEVERITY, PANEL_VALIDATION_CODES, credentialFingerprint, derivePanelVerdict, lensOutputSchema, omitOptionalNullsFor, panelFindingSchema,
+  DEFAULT_POLICY, PANEL_PRIORITY_SEVERITY, PANEL_VALIDATION_CODES, credentialFingerprint, derivePanelVerdict, lensOutputSchema, omitOptionalNullsFor, panelFindingSchema, validateStructuredOutput,
   panelPolicyDigest, panelPolicySchema, panelReportSchema, panelStructureIssues, serializeChangeHunks, sha256, slotIdentityKey, slotIdentitySchema, slotRunSchema,
   validatePanelFinding, validatePanelPolicy, validatePanelReport, validateReport, validateSlotIdentity, validateSlotRun,
   type ArtifactStore, type ContextManifest, type LensOutput, type PanelFinding, type PanelPolicy, type PanelReport, type PanelStructure, type ReviewReport, type SlotRun, type SourceControlAdapter,
@@ -561,21 +561,24 @@ describe("panel policy and slot identity", () => {
       { type: "object", additionalProperties: false, required: ["kind"], properties: { kind: { const: "y" }, a: { type: "string" } } },
     ] });
     expect(union({ kind: "y", a: null })).toEqual({ kind: "y" });
-    // a required nullable property in the applicable branch, with optional nulls an inapplicable branch also rejects
+    // The documented limit: an inapplicable union branch that also rejects a required null gets it omitted, so the
+    // output fails validation and the adapter reports it malformed.
     const typed = (kind: string, required: string[], properties: Record<string, unknown>) => ({ type: "object", additionalProperties: false, required: ["kind", ...required], properties: { kind: { const: kind }, ...properties } });
-    for (const keyword of ["anyOf", "oneOf"]) {
-      const mixed = omitOptionalNullsFor({ [keyword]: [typed("x", ["a"], { a: nullable, note: { type: "string" } }), typed("y", ["a"], { a: { type: "string" }, note: { type: "string" } })] });
-      expect(mixed({ kind: "x", a: null, note: null })).toEqual({ kind: "x", a: null });
-    }
-    const second = omitOptionalNullsFor({ anyOf: [typed("x", ["a"], { a: { type: "string" } }), typed("y", ["a"], { a: nullable, b: { type: "string" } })] });
-    expect(second({ kind: "y", a: null, b: null })).toEqual({ kind: "y", a: null });
-    const untyped = omitOptionalNullsFor({ anyOf: [
-      { type: "object", additionalProperties: false, required: ["p"], properties: { p: nullable, q: { type: "string" } } },
-      { type: "object", additionalProperties: false, required: ["kind"], properties: { kind: { const: "b" }, p: { type: "string" } } },
-    ] });
-    expect(untyped({ p: null, q: null })).toEqual({ p: null });
-    const conditional = omitOptionalNullsFor({ type: "object", required: ["a"], properties: { flag: { type: "string" }, a: nullable }, if: { type: "object", required: ["flag"], properties: { flag: { type: "string" } } }, then: { type: "object", properties: { a: { type: "string" } } } });
-    expect(conditional({ flag: null, a: null })).toEqual({ a: null });
+    const mixedSchema = { anyOf: [typed("x", ["a"], { a: nullable, note: { type: "string" } }), typed("y", ["a"], { a: { type: "string" }, note: { type: "string" } })] };
+    const mixed = omitOptionalNullsFor(mixedSchema)({ kind: "x", a: null, note: null });
+    expect(mixed).toEqual({ kind: "x" });
+    expect(validateStructuredOutput(mixedSchema, mixed)).not.toEqual([]);
+  });
+
+  it("omits nulls in linear rounds, so large invalid output fails promptly", () => {
+    const item = { fingerprint: "f", severity: "high", category: "c", title: "t", trigger: "t", impact: "i", direction: "d", anchor: null, evidenceIds: [], basis: "inferred", requirementIds: [], lifecycle: "new" };
+    const findings = Array.from({ length: 3000 }, (_, index) => ({ ...item, fingerprint: `f${index}` }));
+    findings[0] = { ...findings[0], severity: "info" };
+    const started = performance.now();
+    const result = omitOptionalNullsFor(lensOutputSchema)({ findings, evidence: [], inspectedPaths: [], uninspected: [] }) as { findings: Array<Record<string, unknown>> };
+    expect(performance.now() - started).toBeLessThan(5_000);
+    expect(result.findings.every(finding => !("anchor" in finding))).toBe(true);
+    expect(validateStructuredOutput(lensOutputSchema, result)).not.toEqual([]);
     expect(() => omitOptionalNullsFor({ type: "object", notAKeyword: true })).toThrow();
   });
 
