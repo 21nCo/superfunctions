@@ -1,0 +1,21 @@
+scripts/verify-uifn-bundle-size.mjs
+  s_0d3a6b69a85c77::t_dc06e1dca10c57 14,294-296
+uifn/examples/size-fixtures/README.md
+  s_0d3a6b69a85c77::t_f471a3b06c46be 23-26
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a55288bbdbb9f041d30bb0107b1cb7088dfed28c",
+  "prompts": {},
+  "sessions": {
+    "s_0d3a6b69a85c77": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0c512431-5a62-4efb-bef7-bca5d5a1aefd",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
