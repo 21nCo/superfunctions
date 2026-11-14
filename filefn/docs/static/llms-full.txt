@@ -4086,6 +4086,8 @@ interface FlowFnQueue {
 | `GET /proxy/files/:fileId/artifacts/:artifactId/download` | Proxy-mode download. |
 | `POST /:fileId/process` | Manually trigger processors (re-process / lazy mode). |
 
+With a queue configured, `POST /:fileId/process` enqueues a job with the same idempotency key as the upload's job: the file version and its processor names. If every processor already finished for that key, the consumer acknowledges the job as a duplicate and emits no `processing.completed` or `processing.failed` after its `processing.started`. Re-running processors for a version that was already processed needs a different processor list. For the Cloudflare Queues consumer, see [Cloudflare Workers › Queued processing](../recipes/cloudflare-workers#queued-processing).
+
 ## Events
 
 ```ts
@@ -6551,10 +6553,11 @@ async queue(batch: MessageBatch, env: Env, ctx: ExecutionContext) {
 },
 ```
 
-`createProcessingJobHandler(fileFn)` runs the configured processors for each message and records artifacts through that FileFn instance, once per job idempotency key. Each processor that finishes writes a run row (kind `filefn.processing-run`) after its artifacts, and a redelivered job skips processors that have one. Processors that share a name are told apart by their order in `processors`. Run rows have no stored object, and the artifact list, lookup and download operations never return them.
+`createProcessingJobHandler(fileFn)` runs the configured processors for each message and records artifacts through that FileFn instance, once per job idempotency key. Each processor that finishes writes a run row (kind `filefn.processing-run`) after its artifacts, and a redelivered job skips processors that have one. Processors that share a name are told apart by their position among the processors with that name. Run rows have no stored object, and the artifact list, lookup and download operations never return them.
 
-- A job whose file version was deleted, before or during the run, is acknowledged and dropped, and the run removes the rows and objects it wrote for that version.
+- A job whose file was deleted before the run is acknowledged and dropped. If the delete lands during the run, the job checks the version again after its writes: when the version is gone, it removes the rows it wrote for that version and their objects, and is dropped without `processing.completed`. A delete removes the file's versions before it lists the file's artifacts, so artifacts a job finished writing earlier are removed by the delete, even if the job already reported `processing.completed`. Neither removes an object that another file's version or artifact references with the same key in the same storage target.
 - A processor failure calls `message.retry()`. Set `maxRetries` to the consumer's `max_retries` (Cloudflare's default is 3): on the delivery whose `attempts` exceeds it, the handler emits `processing.failed` and acknowledges the message.
+- `retryDelaySeconds` (handler) and `delaySeconds` (producer) accept at most 43200, the 12-hour limit Cloudflare Queues sets on message delays; a larger value throws when the handler or producer is created.
 - A message body that is not a processing job is acknowledged and dropped. Optional fields over 512 characters (`requestId`, `jobId`, `idempotencyKey`) are ignored rather than rejected.
 - Each artifact's `metadata.processing` holds `{ processor, durationMs, idempotencyKey }`. FileFn reserves that key and overwrites a processor's own `processing` metadata.
 
@@ -8000,8 +8003,8 @@ filefn emits seven typed events. Subscribe via `fileFn.events.on(name, listener)
 | Event | Fires | Payload (key fields) |
 | --- | --- | --- |
 | `processing.started` | After upload completes; processors begin. | `fileId`, `versionId` |
-| `processing.completed` | After all processors finish. | `fileId`, `versionId`, `artifactsCreated` |
-| `processing.failed` | A processor threw / returned `success: false`. | `fileId`, `versionId`, `error?` |
+| `processing.completed` | After all processors finish. A queued job emits it once per idempotency key; a duplicate delivery emits nothing. | `fileId`, `versionId`, `artifactsCreated` |
+| `processing.failed` | A processor threw / returned `success: false`. For a queued job (`createProcessingJobHandler`), only on the final delivery, once the queue's retries are used up. | `fileId`, `versionId`, `error?` |
 
 ## Common envelope fields
 
@@ -8258,10 +8261,15 @@ Indexes: `(fileId)`, `(checksumSha256Base64, tenantId)` for dedup lookups.
 | `storageKey` | string | |
 | `mimeType` | string | |
 | `size` | number? | |
-| `metadata` | json? | |
+| `metadata` | json? | `metadata.processing` is reserved; see below. |
 | `createdAt` | string | |
 
 Indexes: `(fileId)`, `(versionId)`.
+
+Queued processing (`createProcessingJobHandler`) writes two things here:
+
+- Each artifact's `metadata.processing` holds `{ processor, durationMs, idempotencyKey }`. FileFn overwrites a processor's own `processing` metadata key.
+- One row of kind `filefn.processing-run` (`PROCESSING_RUN_KIND`) per processor instance and job idempotency key, written after that processor's artifacts, records that the processor finished, including runs with no artifacts. Its `artifactId` starts with `run_`, its `storageKey` names no stored object, and `metadata.processingRun` holds `{ processor, instance, idempotencyKey, durationMs, artifactCount }`. The artifact list, lookup and download operations never return these rows, and deleting the file removes them.
 
 ## `filefn_file_permissions`
 
@@ -8978,8 +8986,15 @@ export {
   createGrantsService,
   createSharesService,
   createProcessingService,
+
+  // Queued processing
+  createProcessingJobHandler,
+  PROCESSING_QUEUE_NAME, // "filefn.processing"
+  PROCESSING_RUN_KIND,   // "filefn.processing-run"
 } from "@filefn/server";
 ```
+
+`createProcessingJobHandler(fileFn, { maxRetries?, retryDelaySeconds? })` consumes the `filefn.processing` jobs FileFn enqueues through `processing.flowFn`. Its `queue(batch)` method is a Cloudflare Queues consumer and `handle(body, { attempts })` runs one job. The Cloudflare Queues producer is `createCloudflareFlowFnProvider` from `@filefn/processing/queues/cloudflare`. See [Cloudflare Workers › Queued processing](../recipes/cloudflare-workers#queued-processing).
 
 ## See also
 

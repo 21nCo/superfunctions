@@ -36,8 +36,11 @@ export interface CloudflareFlowFnProvider {
   getQueue(name: string): CloudflareFlowFnQueue | undefined;
 }
 
+/** The longest delay Cloudflare Queues accepts for a message: 12 hours. */
+export const MAX_QUEUE_DELAY_SECONDS = 43_200;
+
 export interface CloudflareQueueProducerSettings {
-  /** Delays first delivery of every message by this many seconds. */
+  /** Delays first delivery of every message by this many seconds, at most 43200 (12 hours). */
   delaySeconds?: number;
   /** Generates the `jobId` added to each message; defaults to `crypto.randomUUID()`. */
   generateJobId?: () => string;
@@ -68,8 +71,13 @@ function assertBinding(queue: unknown, name: string): asserts queue is Cloudflar
 
 function assertSettings(settings: CloudflareQueueProducerSettings): void {
   const { delaySeconds, generateJobId } = settings;
-  if (delaySeconds !== undefined && (!Number.isInteger(delaySeconds) || delaySeconds < 0)) {
-    throw new TypeError('FILEFN_QUEUE_DELAY_INVALID: delaySeconds must be a non-negative integer');
+  if (
+    delaySeconds !== undefined &&
+    (!Number.isInteger(delaySeconds) || delaySeconds < 0 || delaySeconds > MAX_QUEUE_DELAY_SECONDS)
+  ) {
+    throw new TypeError(
+      `FILEFN_QUEUE_DELAY_INVALID: delaySeconds must be an integer from 0 to ${MAX_QUEUE_DELAY_SECONDS}`,
+    );
   }
   if (generateJobId !== undefined && typeof generateJobId !== 'function') {
     throw new TypeError('FILEFN_QUEUE_JOB_ID_INVALID: generateJobId must be a function');

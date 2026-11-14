@@ -7,6 +7,7 @@ import { resolveArtifactStorageTarget, resolveStorageTarget, type PolicyRegistry
 import type { Logger } from '../observability/logger.js';
 import * as errors from '../errors.js';
 import { createBackgroundScheduler, type BackgroundScheduler } from '../runtime.js';
+import { findReferencedStorageRefs, parseStorageRef, storageRef } from '../storage-references.js';
 
 export interface Processor {
   name: string;
@@ -66,7 +67,7 @@ export interface ProcessingJob {
 /** Result of running one queued processing job. */
 export type ProcessingJobOutcome =
   /** Every applicable processor succeeded; processors with a run recorded for this key were skipped. */
-  | { status: 'completed'; artifactsCreated: number; skippedProcessors: string[] }
+  | { status: 'completed'; artifactsCreated: number; skippedProcessors: ProcessorInstance[] }
   /** Every applicable processor already has a run recorded for this idempotency key. */
   | { status: 'duplicate' }
   /** Nothing to process: the body is not a job, or the file version no longer exists. */
@@ -75,6 +76,16 @@ export type ProcessingJobOutcome =
   | { status: 'retry'; errors: string[] }
   /** A processor failed on the last delivery; `processing.failed` was emitted. */
   | { status: 'failed'; errors: string[] };
+
+/**
+ * One configured processor: its name and its 1-based position among the
+ * configured processors with that name (the bundled gzip and deflate
+ * compression processors are both named `compression`).
+ */
+export interface ProcessorInstance {
+  processor: string;
+  instance: number;
+}
 
 export interface ProcessingJobDelivery {
   /** 1-based delivery attempt, e.g. a Cloudflare message's `attempts`. */
@@ -166,8 +177,9 @@ interface FileVersionRecord {
 /** Crockford base32, lowercase, matching the alphabet of generated FileFn IDs. */
 const ID_ALPHABET = '0123456789abcdefghjkmnpqrstvwxyz';
 
-function derivedId(prefix: string, parts: string[]): string {
-  const digest = createHash('sha256').update(parts.join('\u0000')).digest();
+function derivedId(prefix: string, parts: (string | number)[]): string {
+  // JSON keeps the parts apart whatever characters they contain.
+  const digest = createHash('sha256').update(JSON.stringify(parts)).digest();
   let suffix = '';
   for (let index = 0; index < 20; index += 1) {
     suffix += ID_ALPHABET[digest[index] & 31];
@@ -184,9 +196,14 @@ function artifactIdFor(fileId: string, versionId: string, kind: string): string 
   return derivedId('art', [fileId, versionId, kind]);
 }
 
-/** Derives the ID of the run row for one processor and idempotency key. */
-function processingRunIdFor(fileId: string, versionId: string, idempotencyKey: string, processorKey: string): string {
-  return derivedId('run', [PROCESSING_RUN_KIND, fileId, versionId, idempotencyKey, processorKey]);
+/** Derives the ID of the run row for one processor instance and idempotency key. */
+function processingRunIdFor(
+  fileId: string,
+  versionId: string,
+  idempotencyKey: string,
+  instance: ProcessorInstance,
+): string {
+  return derivedId('run', [PROCESSING_RUN_KIND, fileId, versionId, idempotencyKey, instance.processor, instance.instance]);
 }
 
 function errorMessage(error: unknown): string {
@@ -221,23 +238,29 @@ function parseProcessingJob(body: unknown): Omit<ProcessingJob, 'idempotencyKey'
   };
 }
 
-/** A configured processor and the key that identifies it in run records. */
+/** A configured processor and the instance that identifies it in run records. */
 interface ProcessorEntry {
   processor: Processor;
-  key: string;
+  instance: ProcessorInstance;
+  /** Names the processor in error messages; never used as an identity. */
+  label: string;
 }
 
 /**
- * Keys each configured processor by its name. Processors that share a name
- * (gzip and deflate compression are both `compression`) are told apart by
- * their order: `compression`, `compression#2`.
+ * Identifies each configured processor by its name and its position among
+ * the processors with that name, kept as separate values so no name can
+ * stand for another processor's instance.
  */
 function processorEntriesFor(processors: Processor[]): ProcessorEntry[] {
   const seen = new Map<string, number>();
   return processors.map((processor) => {
-    const occurrence = (seen.get(processor.name) ?? 0) + 1;
-    seen.set(processor.name, occurrence);
-    return { processor, key: occurrence === 1 ? processor.name : `${processor.name}#${occurrence}` };
+    const instance = (seen.get(processor.name) ?? 0) + 1;
+    seen.set(processor.name, instance);
+    return {
+      processor,
+      instance: { processor: processor.name, instance },
+      label: instance === 1 ? processor.name : `${processor.name} (instance ${instance})`,
+    };
   });
 }
 
@@ -606,10 +629,10 @@ export function createProcessingService(config: ProcessingServiceConfig) {
   async function recordProcessingRun(
     input: Pick<ProcessorInput, 'fileId' | 'versionId'>,
     idempotencyKey: string,
-    processorKey: string,
+    instance: ProcessorInstance,
     details: { durationMs: number; artifactCount: number },
   ): Promise<void> {
-    const artifactId = processingRunIdFor(input.fileId, input.versionId, idempotencyKey, processorKey);
+    const artifactId = processingRunIdFor(input.fileId, input.versionId, idempotencyKey, instance);
     try {
       await db.create({
         model: 'fileArtifacts',
@@ -622,7 +645,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
           storageKey: `filefn/processing-runs/${artifactId}`,
           mimeType: 'application/json',
           size: 0,
-          metadata: { processingRun: { processor: processorKey, idempotencyKey, ...details } },
+          metadata: { processingRun: { ...instance, idempotencyKey, ...details } },
           createdAt: new Date().toISOString(),
         },
         namespace,
@@ -640,20 +663,12 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     }
   }
 
-  async function isStorageKeyReferenced(storageKey: string): Promise<boolean> {
-    const where = [{ field: 'storageKey', operator: 'eq' as const, value: storageKey }];
-    const artifacts = await db.findMany<FileArtifactRecord>({ model: 'fileArtifacts', where, limit: 1, namespace });
-    if (artifacts.length > 0) {
-      return true;
-    }
-    const versions = await db.findMany<FileVersionRecord>({ model: 'fileVersions', where, limit: 1, namespace });
-    return versions.length > 0;
-  }
-
   /**
    * Removes what processing left for a deleted version: its rows, and the
    * objects this run uploaded or the rows named, unless another row still
-   * references them (deduplicated files can share storage keys).
+   * references the same object (deduplicated files can share storage keys).
+   * The rows go first, so of two cleanups racing over one object the later
+   * one sees no reference and deletes it.
    */
   async function discardDeletedVersionOutput(
     input: Pick<ProcessorInput, 'fileId' | 'versionId'>,
@@ -665,19 +680,20 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       { field: 'versionId', operator: 'eq' as const, value: input.versionId },
     ];
     const rows = await db.findMany<FileArtifactRecord>({ model: 'fileArtifacts', where, namespace });
-    const storageKeys = new Set(writes.uploadedKeys);
+    const refs = new Set([...writes.uploadedKeys].map((key) => storageRef(target, key)));
     for (const row of rows) {
       if (row.kind !== PROCESSING_RUN_KIND) {
-        storageKeys.add(row.storageKey);
+        refs.add(storageRef(target, row.storageKey));
       }
     }
     await db.deleteMany({ model: 'fileArtifacts', where, namespace });
-    for (const storageKey of storageKeys) {
-      if (await isStorageKeyReferenced(storageKey)) {
+    const referenced = await findReferencedStorageRefs({ db, namespace, policies }, refs);
+    for (const ref of refs) {
+      if (referenced.has(ref)) {
         continue;
       }
       try {
-        await storage.deleteObject({ key: storageKey, target });
+        await storage.deleteObject(parseStorageRef(ref));
       } catch {
         // Best effort, as in deleteFile: the object may never have been written.
       }
@@ -728,9 +744,9 @@ export function createProcessingService(config: ProcessingServiceConfig) {
 
     const recordedRuns = await findProcessingRuns(input.fileId, input.versionId);
     const isRecorded = (entry: ProcessorEntry) =>
-      recordedRuns.has(processingRunIdFor(input.fileId, input.versionId, idempotencyKey, entry.key));
+      recordedRuns.has(processingRunIdFor(input.fileId, input.versionId, idempotencyKey, entry.instance));
     const pending = applicable.filter((entry) => !isRecorded(entry));
-    const skippedProcessors = applicable.filter(isRecorded).map((entry) => entry.key);
+    const skippedProcessors = applicable.filter(isRecorded).map((entry) => entry.instance);
     if (pending.length === 0) {
       return { status: 'duplicate' };
     }
@@ -752,18 +768,18 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         return dropDeletedVersion();
       }
       if (!run.result) {
-        processingErrors.push(`${entry.key}: ${run.error ?? 'processor reported failure'}`);
+        processingErrors.push(`${entry.label}: ${run.error ?? 'processor reported failure'}`);
         continue;
       }
       const recordedBefore = writes.artifactsRecorded;
       try {
         await recordArtifacts(input, entry.processor, run, artifactStorageTarget, idempotencyKey, writes);
-        await recordProcessingRun(input, idempotencyKey, entry.key, {
+        await recordProcessingRun(input, idempotencyKey, entry.instance, {
           durationMs: run.durationMs,
           artifactCount: writes.artifactsRecorded - recordedBefore,
         });
       } catch (error) {
-        processingErrors.push(`${entry.key}: ${errorMessage(error)}`);
+        processingErrors.push(`${entry.label}: ${errorMessage(error)}`);
       }
     }
 
@@ -920,8 +936,9 @@ export function createProcessingService(config: ProcessingServiceConfig) {
 
     /**
      * Runs one queued processing job: the processors that apply to the job's
-     * file version and have no run recorded for the job's idempotency key. Never throws; the outcome tells the queue consumer
-     * whether to acknowledge or redeliver the message.
+     * file version and have no run recorded for the job's idempotency key.
+     * Never throws; the outcome tells the queue consumer whether to
+     * acknowledge or redeliver the message.
      */
     async processJob(body: unknown, delivery: ProcessingJobDelivery): Promise<ProcessingJobOutcome> {
       const job = parseProcessingJob(body);

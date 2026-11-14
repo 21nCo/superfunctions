@@ -526,6 +526,7 @@ export type {
   ProcessingJob,
   ProcessingJobDelivery,
   ProcessingJobOutcome,
+  ProcessorInstance,
   ProcessingService,
   Processor,
   ProcessorInput,

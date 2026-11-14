@@ -12,6 +12,9 @@ export function bindProcessingJobs(fileFn: object, service: ProcessingService): 
 /** Cloudflare's default consumer `max_retries`. */
 const DEFAULT_MAX_RETRIES = 3;
 
+/** The longest delay Cloudflare Queues accepts for a message: 12 hours. */
+const MAX_RETRY_DELAY_SECONDS = 43_200;
+
 export interface ProcessingJobHandlerOptions {
   /**
    * Redeliveries the queue makes after the first attempt: the consumer's
@@ -20,7 +23,10 @@ export interface ProcessingJobHandlerOptions {
    * `processing.failed` instead of being retried.
    */
   maxRetries?: number;
-  /** Delay for a redelivered message; omitted uses the queue's `retry_delay`. */
+  /**
+   * Delay in seconds for a redelivered message, at most 43200 (12 hours,
+   * Cloudflare's limit); omitted uses the queue's `retry_delay`.
+   */
   retryDelaySeconds?: number;
 }
 
@@ -56,9 +62,9 @@ export interface ProcessingJobHandler {
   queue(batch: ProcessingQueueBatch): Promise<void>;
 }
 
-function assertNonNegativeInteger(name: string, value: number | undefined): void {
-  if (value !== undefined && (!Number.isInteger(value) || value < 0)) {
-    throw new TypeError(`FILEFN_PROCESSING_HANDLER_CONFIG_INVALID: ${name} must be a non-negative integer`);
+function assertNonNegativeInteger(name: string, value: number | undefined, max = Number.MAX_SAFE_INTEGER): void {
+  if (value !== undefined && (!Number.isInteger(value) || value < 0 || value > max)) {
+    throw new TypeError(`FILEFN_PROCESSING_HANDLER_CONFIG_INVALID: ${name} must be an integer from 0 to ${max}`);
   }
 }
 
@@ -90,7 +96,7 @@ export function createProcessingJobHandler(
     throw new Error('FILEFN_PROCESSING_DISABLED: enable processing and configure processors to consume processing jobs');
   }
   assertNonNegativeInteger('maxRetries', options.maxRetries);
-  assertNonNegativeInteger('retryDelaySeconds', options.retryDelaySeconds);
+  assertNonNegativeInteger('retryDelaySeconds', options.retryDelaySeconds, MAX_RETRY_DELAY_SECONDS);
   const maxRetries = options.maxRetries ?? DEFAULT_MAX_RETRIES;
   const retryOptions = options.retryDelaySeconds === undefined
     ? undefined

@@ -7,6 +7,8 @@ import type { QuotaProvider } from '../upload-sessions/service.js';
 import { resolveArtifactStorageTarget, resolveStorageTarget, type PolicyRegistry } from '../policies.js';
 import * as errors from '../errors.js';
 import { createFileDeletedEvent } from '../events.js';
+import { PROCESSING_RUN_KIND } from '../processing/service.js';
+import { findReferencedStorageRefs, parseStorageRef, storageRef } from '../storage-references.js';
 
 export interface FileRecord {
   fileId: string;
@@ -648,12 +650,6 @@ export function createFileService(config: FileServiceConfig) {
         namespace,
       });
 
-      const artifacts = await db.findMany<FileArtifactRecord>({
-        model: 'fileArtifacts',
-        where: [{ field: 'fileId', operator: 'eq', value: fileId }],
-        namespace,
-      });
-
       const pendingSessions = await db.findMany<UploadSessionRecord>({
         model: 'uploadSessions',
         where: [
@@ -702,65 +698,6 @@ export function createFileService(config: FileServiceConfig) {
         });
       }
 
-      const versionBytesByStorageKey = new Map<string, number>();
-      const targetKeyFor = (target: string, key: string) => `${target}\u0000${key}`;
-      const fileStorageTarget = resolveStorageTarget(policies?.get(file.policy) ?? {});
-      const artifactStorageTarget = resolveArtifactStorageTarget(policies?.get(file.policy) ?? {});
-      for (const version of versions) {
-        const ref = targetKeyFor(fileStorageTarget, version.storageKey);
-        const existing = versionBytesByStorageKey.get(ref) ?? 0;
-        versionBytesByStorageKey.set(ref, Math.max(existing, version.size));
-      }
-
-      const candidateStorageKeys = new Set<string>();
-      for (const version of versions) {
-        candidateStorageKeys.add(targetKeyFor(fileStorageTarget, version.storageKey));
-      }
-      for (const artifact of artifacts) {
-        candidateStorageKeys.add(targetKeyFor(artifactStorageTarget, artifact.storageKey));
-      }
-
-      const storageKeysReferencedElsewhere = new Set<string>();
-      if (candidateStorageKeys.size > 0) {
-        const allVersions = await db.findMany<Pick<FileVersionRecord, 'fileId' | 'storageKey'>>({
-          model: 'fileVersions',
-          where: [],
-          select: ['fileId', 'storageKey'],
-          namespace,
-        });
-
-        const allFiles = await db.findMany<Pick<FileRecord, 'fileId' | 'policy'>>({
-          model: 'files',
-          where: [],
-          select: ['fileId', 'policy'],
-          namespace,
-        });
-        const policyByFileId = new Map(allFiles.map((entry) => [entry.fileId, entry.policy]));
-
-        for (const version of allVersions) {
-          const versionTarget = resolveStorageTarget(policies?.get(policyByFileId.get(version.fileId) ?? '') ?? {});
-          const ref = targetKeyFor(versionTarget, version.storageKey);
-          if (version.fileId !== fileId && candidateStorageKeys.has(ref)) {
-            storageKeysReferencedElsewhere.add(ref);
-          }
-        }
-
-        const allArtifacts = await db.findMany<Pick<FileArtifactRecord, 'fileId' | 'storageKey'>>({
-          model: 'fileArtifacts',
-          where: [],
-          select: ['fileId', 'storageKey'],
-          namespace,
-        });
-
-        for (const artifact of allArtifacts) {
-          const artifactTarget = resolveArtifactStorageTarget(policies?.get(policyByFileId.get(artifact.fileId) ?? '') ?? {});
-          const ref = targetKeyFor(artifactTarget, artifact.storageKey);
-          if (artifact.fileId !== fileId && candidateStorageKeys.has(ref)) {
-            storageKeysReferencedElsewhere.add(ref);
-          }
-        }
-      }
-
       await db.deleteMany({
         model: 'filePermissions',
         where: [{ field: 'fileId', operator: 'eq', value: fileId }],
@@ -773,14 +710,48 @@ export function createFileService(config: FileServiceConfig) {
         namespace,
       });
 
+      // Versions go before artifacts are listed. A queued processing job checks
+      // its version after writing, so an artifact it writes before this point
+      // is in the list below, and one it writes later is removed by the job.
       await db.deleteMany({
+        model: 'fileVersions',
+        where: [{ field: 'fileId', operator: 'eq', value: fileId }],
+        namespace,
+      });
+
+      const artifacts = await db.findMany<FileArtifactRecord>({
         model: 'fileArtifacts',
         where: [{ field: 'fileId', operator: 'eq', value: fileId }],
         namespace,
       });
 
+      const versionBytesByStorageKey = new Map<string, number>();
+      const fileStorageTarget = resolveStorageTarget(policies?.get(file.policy) ?? {});
+      const artifactStorageTarget = resolveArtifactStorageTarget(policies?.get(file.policy) ?? {});
+      for (const version of versions) {
+        const ref = storageRef(fileStorageTarget, version.storageKey);
+        const existing = versionBytesByStorageKey.get(ref) ?? 0;
+        versionBytesByStorageKey.set(ref, Math.max(existing, version.size));
+      }
+
+      const candidateStorageKeys = new Set<string>();
+      for (const version of versions) {
+        candidateStorageKeys.add(storageRef(fileStorageTarget, version.storageKey));
+      }
+      for (const artifact of artifacts) {
+        if (artifact.kind !== PROCESSING_RUN_KIND) {
+          candidateStorageKeys.add(storageRef(artifactStorageTarget, artifact.storageKey));
+        }
+      }
+
+      const storageKeysReferencedElsewhere = await findReferencedStorageRefs(
+        { db, namespace, policies },
+        candidateStorageKeys,
+        fileId,
+      );
+
       await db.deleteMany({
-        model: 'fileVersions',
+        model: 'fileArtifacts',
         where: [{ field: 'fileId', operator: 'eq', value: fileId }],
         namespace,
       });
@@ -806,10 +777,7 @@ export function createFileService(config: FileServiceConfig) {
           continue;
         }
         try {
-          const split = ref.indexOf('\u0000');
-          const target = ref.slice(0, split);
-          const key = ref.slice(split + 1);
-          await storage.deleteObject({ key, target });
+          await storage.deleteObject(parseStorageRef(ref));
           totalBytesFreed += versionBytesByStorageKey.get(ref) ?? 0;
         } catch {
           // Continue on storage errors (object may already be deleted)

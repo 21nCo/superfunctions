@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   createCloudflareFlowFnProvider,
   createCloudflareQueueProducer,
+  MAX_QUEUE_DELAY_SECONDS,
   PROCESSING_QUEUE_NAME,
   type CloudflareQueueBinding,
 } from '../src/queues/cloudflare.js';
@@ -49,6 +50,20 @@ describe('Cloudflare Queues producer', () => {
     await producer.add(job);
 
     expect(binding.send).toHaveBeenCalledWith(expect.anything(), { contentType: 'json', delaySeconds: 30 });
+  });
+
+  it('accepts a delay up to the 12-hour Cloudflare limit and refuses a longer one at creation', async () => {
+    const binding = createBinding();
+    const producer = createCloudflareQueueProducer({ queue: binding, delaySeconds: 43_200, generateJobId: () => 'j' });
+    await producer.add(job);
+    expect(binding.send).toHaveBeenCalledWith(expect.anything(), { contentType: 'json', delaySeconds: 43_200 });
+    expect(MAX_QUEUE_DELAY_SECONDS).toBe(43_200);
+
+    expect(() => createCloudflareQueueProducer({ queue: createBinding(), delaySeconds: 43_201 })).toThrow(
+      'FILEFN_QUEUE_DELAY_INVALID',
+    );
+    expect(() => createCloudflareFlowFnProvider({ [PROCESSING_QUEUE_NAME]: createBinding() }, { delaySeconds: 43_201 }))
+      .toThrow('FILEFN_QUEUE_DELAY_INVALID');
   });
 
   it('rejects add when the binding rejects the send', async () => {

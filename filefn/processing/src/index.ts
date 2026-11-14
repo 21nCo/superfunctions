@@ -80,6 +80,7 @@ export { createCommandAudioProvider } from './providers/audio-command.js';
 export {
   createCloudflareFlowFnProvider,
   createCloudflareQueueProducer,
+  MAX_QUEUE_DELAY_SECONDS,
   PROCESSING_QUEUE_NAME,
 } from './queues/cloudflare.js';
 export type {

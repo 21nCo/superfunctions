@@ -107,7 +107,10 @@ function setup(processors: Processor[], overrides: Partial<FileFnConfig> = {}) {
     database,
     storage: createMemoryStorage(),
     namespace: 'jobs_test',
-    policies: [{ name: 'note', contentTypes: ['text/plain'], visibility: 'private' }],
+    policies: [
+      { name: 'note', contentTypes: ['text/plain'], visibility: 'private' },
+      { name: 'archived-note', contentTypes: ['text/plain'], visibility: 'private', artifactStorageTarget: 'archive' },
+    ],
     processing: {
       enabled: true,
       processors,
@@ -118,10 +121,10 @@ function setup(processors: Processor[], overrides: Partial<FileFnConfig> = {}) {
   return { fileFn, queue, database };
 }
 
-async function uploadNote(fileFn: FileFn, text = 'queued bytes') {
+async function uploadNote(fileFn: FileFn, text = 'queued bytes', policy = 'note') {
   const body = Buffer.from(text);
   const session = await fileFn.createUploadSession({
-    policy: 'note', fileName: 'note.txt', size: body.length, mimeType: 'text/plain',
+    policy, fileName: 'note.txt', size: body.length, mimeType: 'text/plain',
   }, owner);
   const part = await fileFn.services.uploads.uploadPartBytes(session.uploadSessionId, 1, body, body.length, owner);
   await fileFn.completeUploadPart({
@@ -144,6 +147,42 @@ function message(body: unknown, attempts: number): ProcessingQueueMessage & {
   retry: ReturnType<typeof vi.fn>;
 } {
   return { body, attempts, ack: vi.fn(), retry: vi.fn() };
+}
+
+/**
+ * Holds the first `deleteMany` of `model` until released: `before` holds it
+ * before the rows go, `after` once they are gone.
+ */
+function pauseDeleteMany(database: Adapter, model: string, when: 'before' | 'after') {
+  let reached!: () => void;
+  let release!: () => void;
+  const reachedPromise = new Promise<void>((resolve) => {
+    reached = resolve;
+  });
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let armed = true;
+  const adapter = new Proxy(database, {
+    get(target, property, receiver) {
+      if (property !== 'deleteMany') return Reflect.get(target, property, receiver);
+      return async (params: Parameters<Adapter['deleteMany']>[0]) => {
+        const pause = armed && params.model === model;
+        if (pause) armed = false;
+        if (pause && when === 'before') {
+          reached();
+          await released;
+        }
+        const result = await target.deleteMany(params);
+        if (pause && when === 'after') {
+          reached();
+          await released;
+        }
+        return result;
+      };
+    },
+  });
+  return { adapter, reached: reachedPromise, release };
 }
 
 function nextTurn() {
@@ -401,10 +440,10 @@ describe('processing jobs', () => {
     const handler = createProcessingJobHandler(fileFn);
 
     expect(await handler.handle(queue.jobs[0], { attempts: 1 })).toEqual({
-      status: 'retry', errors: ['compression#2: deflate stream error'],
+      status: 'retry', errors: ['compression (instance 2): deflate stream error'],
     });
     expect(await handler.handle(queue.jobs[0], { attempts: 2 })).toEqual({
-      status: 'completed', artifactsCreated: 1, skippedProcessors: ['compression'],
+      status: 'completed', artifactsCreated: 1, skippedProcessors: [{ processor: 'compression', instance: 1 }],
     });
     expect(await handler.handle(queue.jobs[0], { attempts: 1 })).toEqual({ status: 'duplicate' });
 
@@ -412,6 +451,31 @@ describe('processing jobs', () => {
     expect(deflate.inputs).toHaveLength(2);
     expect((await listArtifacts(fileFn, fileId)).map((artifact) => artifact.kind).sort())
       .toEqual(['compressed-deflate', 'compressed-gzip']);
+  });
+
+  it('keeps a failed processor pending when another processor is literally named like its instance', async () => {
+    const first = textProcessor('compression', { kinds: ['first'] });
+    const second = textProcessor('compression', {
+      kinds: ['second'],
+      fail: (call) => (call === 1 ? new Error('second failed') : null),
+    });
+    const literal = textProcessor('compression#2', { kinds: ['literal'] });
+    const { fileFn, queue } = setup([first, second, literal]);
+    const { fileId } = await uploadNote(fileFn);
+    const handler = createProcessingJobHandler(fileFn);
+
+    expect(await handler.handle(queue.jobs[0], { attempts: 1 })).toEqual({
+      status: 'retry', errors: ['compression (instance 2): second failed'],
+    });
+    expect(await handler.handle(queue.jobs[0], { attempts: 2 })).toEqual({
+      status: 'completed',
+      artifactsCreated: 1,
+      skippedProcessors: [{ processor: 'compression', instance: 1 }, { processor: 'compression#2', instance: 1 }],
+    });
+
+    expect([first.inputs.length, second.inputs.length, literal.inputs.length]).toEqual([1, 2, 1]);
+    expect((await listArtifacts(fileFn, fileId)).map((artifact) => artifact.kind).sort())
+      .toEqual(['first', 'literal', 'second']);
   });
 
   it('does not rerun a processor that produced no artifacts when its job is delivered again', async () => {
@@ -516,7 +580,98 @@ describe('processing jobs', () => {
       await expectNothingLeft(database, storage, uploads);
     });
 
-    it('keeps an object another file still references', async () => {
+    it('removes the artifacts a job finished while the delete was in progress', async () => {
+      const storage = createMemoryStorage();
+      const uploads: { key: string; target?: string }[] = [];
+      const recordingStorage: StorageAdapter = {
+        ...storage,
+        async openUploadStream(input) {
+          if (input.key.endsWith('.uppercase')) uploads.push({ key: input.key, target: input.target });
+          return storage.openUploadStream!(input);
+        },
+      };
+      // The delete has read the file's rows but not yet removed its versions.
+      const paused = pauseDeleteMany(withUniqueArtifactIds(memoryAdapter()), 'fileVersions', 'before');
+      const { fileFn, queue } = setup([textProcessor('uppercase')], { storage: recordingStorage, database: paused.adapter });
+      const { fileId } = await uploadNote(fileFn);
+
+      const deleting = fileFn.deleteFile({ fileId }, owner);
+      await paused.reached;
+      expect(await createProcessingJobHandler(fileFn).handle(queue.jobs[0])).toMatchObject({ status: 'completed' });
+      paused.release();
+      await deleting;
+
+      await expectNothingLeft(paused.adapter, storage, uploads);
+    });
+
+    it('drops a job whose writes land after the delete removed the version', async () => {
+      const storage = createMemoryStorage();
+      const uploads: { key: string; target?: string }[] = [];
+      let deleteDuringUpload: (() => Promise<void>) | undefined;
+      const deletingStorage: StorageAdapter = {
+        ...storage,
+        async openUploadStream(input) {
+          if (input.key.endsWith('.uppercase')) {
+            uploads.push({ key: input.key, target: input.target });
+            const pending = deleteDuringUpload;
+            deleteDuringUpload = undefined;
+            await pending?.();
+          }
+          return storage.openUploadStream!(input);
+        },
+      };
+      // The delete has removed the versions but not yet listed the artifacts.
+      const paused = pauseDeleteMany(withUniqueArtifactIds(memoryAdapter()), 'fileVersions', 'after');
+      const completed = vi.fn();
+      const { fileFn, queue } = setup([textProcessor('uppercase')], { storage: deletingStorage, database: paused.adapter });
+      fileFn.events.on('processing.completed', completed);
+      const { fileId } = await uploadNote(fileFn);
+      let deleting: Promise<void> | undefined;
+      deleteDuringUpload = async () => {
+        deleting = fileFn.deleteFile({ fileId }, owner);
+        await paused.reached;
+      };
+
+      expect(await createProcessingJobHandler(fileFn).handle(queue.jobs[0])).toEqual({
+        status: 'dropped', reason: 'version-deleted',
+      });
+      paused.release();
+      await deleting;
+
+      expect(completed).not.toHaveBeenCalled();
+      await expectNothingLeft(paused.adapter, storage, uploads);
+    });
+
+    it('deletes an object whose key another file uses only in a different storage target', async () => {
+      const storage = createMemoryStorage();
+      let deleteDuringUpload: (() => Promise<void>) | undefined;
+      const deletingStorage: StorageAdapter = {
+        ...storage,
+        async openUploadStream(input) {
+          const pending = deleteDuringUpload;
+          deleteDuringUpload = undefined;
+          await pending?.();
+          return storage.openUploadStream!(input);
+        },
+      };
+      const shared = textProcessor('stamp', { storageKeyFor: () => 'artifacts/shared-stamp' });
+      const { fileFn, queue } = setup([shared], { storage: deletingStorage });
+      // The archived file's artifact has the same key in the `archive` target.
+      const archived = await uploadNote(fileFn, 'archived', 'archived-note');
+      const removed = await uploadNote(fileFn, 'removed');
+      const handler = createProcessingJobHandler(fileFn);
+      expect(await handler.handle(queue.jobs[0])).toMatchObject({ status: 'completed' });
+      deleteDuringUpload = () => fileFn.deleteFile({ fileId: removed.fileId }, owner);
+
+      expect(await handler.handle(queue.jobs[1])).toEqual({ status: 'dropped', reason: 'version-deleted' });
+
+      await expect(storage.statObject({ key: 'artifacts/shared-stamp', target: 'durable' }))
+        .rejects.toThrow('object not found');
+      const [artifact] = await listArtifacts(fileFn, archived.fileId);
+      await expect(readArtifact(fileFn, archived.fileId, artifact.artifactId)).resolves.toBe('stamp:ARCHIVED');
+    });
+
+    it('keeps an object another file still references in the same storage target', async () => {
       const storage = createMemoryStorage();
       let deleteDuringUpload: (() => Promise<void>) | undefined;
       const deletingStorage: StorageAdapter = {
@@ -600,5 +755,8 @@ describe('processing jobs', () => {
     expect(() => createProcessingJobHandler({ ...fileFn })).toThrow('FILEFN_PROCESSING_HANDLER_UNBOUND');
     expect(() => createProcessingJobHandler(disabled)).toThrow('FILEFN_PROCESSING_DISABLED');
     expect(() => createProcessingJobHandler(fileFn, { maxRetries: -1 })).toThrow('FILEFN_PROCESSING_HANDLER_CONFIG_INVALID');
+    // Cloudflare Queues accepts message delays of at most 12 hours.
+    expect(() => createProcessingJobHandler(fileFn, { retryDelaySeconds: 43_200 })).not.toThrow();
+    expect(() => createProcessingJobHandler(fileFn, { retryDelaySeconds: 43_201 })).toThrow('FILEFN_PROCESSING_HANDLER_CONFIG_INVALID');
   });
 });

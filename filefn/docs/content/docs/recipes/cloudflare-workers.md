@@ -112,10 +112,11 @@ async queue(batch: MessageBatch, env: Env, ctx: ExecutionContext) {
 },
 ```
 
-`createProcessingJobHandler(fileFn)` runs the configured processors for each message and records artifacts through that FileFn instance, once per job idempotency key. Each processor that finishes writes a run row (kind `filefn.processing-run`) after its artifacts, and a redelivered job skips processors that have one. Processors that share a name are told apart by their order in `processors`. Run rows have no stored object, and the artifact list, lookup and download operations never return them.
+`createProcessingJobHandler(fileFn)` runs the configured processors for each message and records artifacts through that FileFn instance, once per job idempotency key. Each processor that finishes writes a run row (kind `filefn.processing-run`) after its artifacts, and a redelivered job skips processors that have one. Processors that share a name are told apart by their position among the processors with that name. Run rows have no stored object, and the artifact list, lookup and download operations never return them.
 
-- A job whose file version was deleted, before or during the run, is acknowledged and dropped, and the run removes the rows and objects it wrote for that version.
+- A job whose file was deleted before the run is acknowledged and dropped. If the delete lands during the run, the job checks the version again after its writes: when the version is gone, it removes the rows it wrote for that version and their objects, and is dropped without `processing.completed`. A delete removes the file's versions before it lists the file's artifacts, so artifacts a job finished writing earlier are removed by the delete, even if the job already reported `processing.completed`. Neither removes an object that another file's version or artifact references with the same key in the same storage target.
 - A processor failure calls `message.retry()`. Set `maxRetries` to the consumer's `max_retries` (Cloudflare's default is 3): on the delivery whose `attempts` exceeds it, the handler emits `processing.failed` and acknowledges the message.
+- `retryDelaySeconds` (handler) and `delaySeconds` (producer) accept at most 43200, the 12-hour limit Cloudflare Queues sets on message delays; a larger value throws when the handler or producer is created.
 - A message body that is not a processing job is acknowledged and dropped. Optional fields over 512 characters (`requestId`, `jobId`, `idempotencyKey`) are ignored rather than rejected.
 - Each artifact's `metadata.processing` holds `{ processor, durationMs, idempotencyKey }`. FileFn reserves that key and overwrites a processor's own `processing` metadata.
 

@@ -21,8 +21,8 @@ filefn emits seven typed events. Subscribe via `fileFn.events.on(name, listener)
 | Event | Fires | Payload (key fields) |
 | --- | --- | --- |
 | `processing.started` | After upload completes; processors begin. | `fileId`, `versionId` |
-| `processing.completed` | After all processors finish. | `fileId`, `versionId`, `artifactsCreated` |
-| `processing.failed` | A processor threw / returned `success: false`. | `fileId`, `versionId`, `error?` |
+| `processing.completed` | After all processors finish. A queued job emits it once per idempotency key; a duplicate delivery emits nothing. | `fileId`, `versionId`, `artifactsCreated` |
+| `processing.failed` | A processor threw / returned `success: false`. For a queued job (`createProcessingJobHandler`), only on the final delivery, once the queue's retries are used up. | `fileId`, `versionId`, `error?` |
 
 ## Common envelope fields
 
