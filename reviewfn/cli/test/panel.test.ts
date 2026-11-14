@@ -217,6 +217,24 @@ describe("reviewfn panel exit codes", () => {
     expect(await readdir(output)).toEqual([]);
   });
 
+  it("exits 4, not 1, when saving the report copies fails for a canceled run", async () => {
+    await repository(panel([slot("one", 1)]));
+    expect((await invoke(["--base", base, "--head", head], codex())).code).toBe(PANEL_EXIT_CODES.complete);
+    const { report } = await stored();
+    const empty = await mkdtemp(path.join(tmpdir(), "reviewfn-cli-owned-")); owned.push(empty);
+    // The output directory is a file, so writing the copies fails after the commit point.
+    await writeFile(path.join(root, "blocked"), "");
+    const locations = { ownedArtifacts: empty, artifactsDirectory: path.join(root, ".reviewfn", "artifacts"), outputDirectory: path.join(root, "blocked"), reportDays: 30 };
+    const canceledReport = { ...report, coverage: "incomplete" as const, coverageReasons: [PANEL_CANCELED_REASON] };
+    expect(await savePanelRun(canceledReport, true, locations)).toMatchObject({ exitCode: PANEL_EXIT_CODES.canceled, error: expect.objectContaining({ code: "REVIEWFN_CANCELED" }) });
+    // Canceled after the commit point, while the copies were being written.
+    let reads = 0;
+    const abortedDuringWrite = { get aborted() { return reads++ > 0; } } as AbortSignal;
+    expect(await savePanelRun(report, true, locations, abortedDuringWrite)).toMatchObject({ exitCode: PANEL_EXIT_CODES.canceled, error: expect.objectContaining({ code: "REVIEWFN_CANCELED" }) });
+    // The same failure without a cancellation is any other error.
+    expect((await savePanelRun(report, true, locations)).exitCode).toBe(PANEL_EXIT_CODES.error);
+  });
+
   it("exits 4 when canceled before the run starts", async () => {
     await repository(panel([slot("one", 1)]));
     const controller = new AbortController();
@@ -233,6 +251,12 @@ describe("reviewfn panel exit codes", () => {
     const invalid = await invoke(["--base", base, "--head", head, "--pull-request", "1x"], codex());
     expect(invalid.code).toBe(PANEL_EXIT_CODES.error);
     expect(JSON.parse(invalid.stderr).message).toMatch(/pull-request/);
+    for (const name of ["base", "head", "since", "issue", "pull-request", "panel", "output", "root", "config", "policy", "target-branch"]) {
+      // A bare value flag, last on the command line, is rejected rather than ignored or replaced by its default.
+      const bare = await invoke(["--base", base, "--head", head, `--${name}`], codex());
+      expect(bare.code).toBe(PANEL_EXIT_CODES.error);
+      expect(JSON.parse(bare.stderr).message).toBe(`--${name} requires a value.`);
+    }
     await writeFile(path.join(root, "not-a-directory"), "");
     const unwritable = await invoke(["--base", base, "--head", head, "--output", "not-a-directory"], codex());
     expect(unwritable.code).toBe(PANEL_EXIT_CODES.error);
@@ -250,6 +274,17 @@ describe("reviewfn panel exit codes", () => {
     const { report } = await stored();
     expect(report.changeDetail?.since).toBe(middle);
     expect(harness.input("one").change.headCommit).toBe(head);
+  });
+
+  it("exits 3 when --base, --head or --since names a commit that does not exist", async () => {
+    await repository(panel([slot("one", 1)]));
+    const harness = codex();
+    for (const argv of [["--base", "no-such-ref", "--head", head], ["--base", base, "--head", "no-such-ref"], ["--base", base, "--head", head, "--since", "no-such-ref"]]) {
+      const result = await invoke(argv, harness);
+      expect(result.code).toBe(PANEL_EXIT_CODES.preflight);
+      expect(JSON.parse(result.stderr).message).toContain("no-such-ref");
+    }
+    expect(harness.calls).toHaveLength(0);
   });
 
   it("reads the panel policy from the base revision in trusted mode, so the head cannot weaken it", async () => {

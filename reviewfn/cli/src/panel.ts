@@ -216,12 +216,15 @@ interface PanelInvocation {
   artifactsDirectory: string;
 }
 
+/** Every `reviewfn panel` flag that takes a value; given bare, it is an invalid argument (exit 1). */
+const PANEL_VALUE_FLAGS = ["base", "head", "since", "issue", "pull-request", "panel", "output", "root", "config", "policy", "target-branch"] as const;
+
 function panelInvocation(flags: Flags, environment: NodeJS.ProcessEnv): PanelInvocation {
+  for (const name of PANEL_VALUE_FLAGS) if (flags.get(name) === true) throw new Error(`--${name} requires a value.`);
   const root = path.resolve(optional(flags, "root") ?? process.cwd());
   const pullRequestText = optional(flags, "pull-request") ?? environment.GITHUB_EVENT_PULL_REQUEST_NUMBER;
   const pullRequest = pullRequestText === undefined ? undefined : Number(pullRequestText);
   if (pullRequestText !== undefined && (!/^[0-9]+$/.test(pullRequestText) || !Number.isSafeInteger(pullRequest) || pullRequest! <= 0)) throw new Error("--pull-request must be a positive integer.");
-  for (const name of ["since", "issue", "output"]) if (flags.get(name) === true) throw new Error(`--${name} requires a value.`);
   return {
     root, base: required(flags, "base"), head: required(flags, "head"), since: optional(flags, "since"), issue: optional(flags, "issue"), pullRequest, json: flags.has("json"),
     outputDirectory: path.resolve(root, optional(flags, "output") ?? ".reviewfn/output"),
@@ -259,7 +262,8 @@ export interface SavedPanelRun {
  * write `panel-report.json` and `panel-report.md` under report-copy retention. Cancellation is checked once, right before
  * the copies are written: a cancellation before that point writes no copies and exits 4 unless the report itself already
  * records the cancellation; from that point on the saved report alone decides the exit code, so an exit 4 with saved
- * copies always means the saved report records `PANEL_CANCELED_REASON` and cannot be published.
+ * copies always means the saved report records `PANEL_CANCELED_REASON` and cannot be published. A failure while saving
+ * exits 4 when the signal is aborted or the report records the cancellation, and 1 otherwise.
  */
 export async function savePanelRun(report: PanelReport, quorumMet: boolean, locations: PanelOutputLocations, signal?: AbortSignal): Promise<SavedPanelRun> {
   const canceled = (): SavedPanelRun => ({ exitCode: PANEL_EXIT_CODES.canceled, error: new ReviewFnError("REVIEWFN_CANCELED", "The panel run was canceled before its report was saved; no panel report was written.", { runId: report.runId }) });
@@ -280,7 +284,9 @@ export async function savePanelRun(report: PanelReport, quorumMet: boolean, loca
     if (cleanup.errors.length) return { reportPath, rendered, exitCode: PANEL_EXIT_CODES.error, error: new ReviewFnError("REVIEWFN_RETENTION_CLEANUP_FAILED", "Panel outputs were saved, but retention cleanup failed; inspect the artifact store and retry cleanup.", { errors: cleanup.errors }) };
     return { reportPath, rendered, exitCode: report.coverage !== "complete" || !quorumMet ? PANEL_EXIT_CODES.incomplete : PANEL_EXIT_CODES.complete };
   } catch (error) {
+    // Any failure of a canceled run exits 4: the signal was aborted, or the report records the cancellation.
     if (!committed && signal?.aborted) return canceled();
+    if (signal?.aborted || panelReportCanceled(report)) return { exitCode: PANEL_EXIT_CODES.canceled, error: new ReviewFnError("REVIEWFN_CANCELED", "The panel run was canceled, and saving its report failed; the output directory may hold an incomplete report copy.", { runId: report.runId, cause: errorPayload(error) }) };
     return { exitCode: PANEL_EXIT_CODES.error, error };
   }
 }
@@ -301,7 +307,7 @@ export async function runPanelCommand(flags: Flags, dependencies: PanelCommandDe
   try { invocation = panelInvocation(flags, environment); }
   catch (error) { return fail(PANEL_EXIT_CODES.error, error); }
   const owned = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-cli-"));
-  try {
+  const code = await (async (): Promise<number> => { try {
     const ownedArtifacts = path.join(owned, "artifacts");
     let coordinator: PanelCoordinator;
     let request: Parameters<PanelCoordinator["run"]>[0];
@@ -354,7 +360,14 @@ export async function runPanelCommand(flags: Flags, dependencies: PanelCommandDe
     // Only reading a stored canceled report reaches here; nothing was written to the output directory.
     if (signal?.aborted) return canceled(error, "while its report was read");
     return fail(PANEL_EXIT_CODES.error, error);
-  } finally { await rm(owned, { recursive: true, force: true }); }
+  } })();
+  // The private snapshot holds a copy of the repository: a run that cannot remove it does not exit 0 or 2.
+  try { await rm(owned, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
+  catch (error) {
+    if (code !== PANEL_EXIT_CODES.complete && code !== PANEL_EXIT_CODES.incomplete) return code;
+    return fail(PANEL_EXIT_CODES.error, new Error(`The panel run's private snapshot ${owned} was not removed: ${error instanceof Error ? error.message : String(error)}`));
+  }
+  return code;
 }
 
 /**

@@ -12,7 +12,7 @@ reviewfn publish --input .reviewfn/output/panel-report.json --repository OWNER/R
 ```
 
 - `reviewfn init --panel` writes `.reviewfn/panel.json` and refuses to overwrite an existing file. The template has a general stage-1 slot, which also extracts requirements, and a general stage-2 slot, both on the Codex harness. Each slot's `harness.version` is the exact version the harness reports, such as the output of `codex --version`. Update it to match the installed harness; a run that reports another version never counts.
-- `reviewfn panel` loads `.reviewfn/config.json`, `.reviewfn/policy.json` and `.reviewfn/panel.json`. In GitHub Actions, or with `--trusted-config-from-base`, it reads them from the base revision, and a head copy of the panel policy may only tighten the base copy. It reviews a private snapshot of the repository at the head commit. `--since` names an earlier reviewed commit for an incremental (`delta`) panel. `--issue` selects the issue for context adapters. `--pull-request` binds the run to a pull request, as in 0.1. `--panel FILE` reads the panel policy from another repository-relative path.
+- `reviewfn panel` loads `.reviewfn/config.json`, `.reviewfn/policy.json` and `.reviewfn/panel.json`. In GitHub Actions, or with `--trusted-config-from-base`, it reads them from the base revision, and a head copy of the panel policy may only tighten the base copy. It reviews a private snapshot of the repository at the head commit. `--since` names an earlier reviewed commit. Slots review only the change since that commit (a delta panel) when the panel policy sets `incremental: "delta"`; the `init --panel` template sets `"full"`, under which every slot reviews the whole change and `--since` only records the commit in the report. `--issue` selects the issue for context adapters. `--pull-request` binds the run to a pull request, as in 0.1. `--panel FILE` reads the panel policy from another repository-relative path.
 - `reviewfn report --panel` re-renders a stored panel report (`.reviewfn/output/panel-report.json` by default) after checking its structure. Without `--panel`, it renders a 0.1 `report.json`.
 - `reviewfn publish` accepts a panel report as well as a 0.1 report. A panel report publishes under the `panel` profile only, as one summary comment and one neutral `ReviewFn / panel` check. Publishing the same run again updates them; a canceled run is never published. Publication stays a separate, credentialed job.
 
@@ -30,13 +30,13 @@ The exit codes form a closed set. The verdict never changes the exit code, becau
 | --- | --- |
 | 0 | The run completed and its coverage is complete. |
 | 2 | The run completed with incomplete coverage, or a stage's quorum was not met. The report is written. |
-| 3 | Preflight failed: invalid configuration or panel policy, a panel policy the head weakens, an unsupported or missing harness adapter, or a component's preflight refused the run. No report is written. |
-| 4 | The run was canceled (SIGINT or SIGTERM). Any failure while canceled, including a preflight that the cancellation interrupted, exits 4. A report is written only when it records the cancellation; such a report is never published. A cancellation after the run's report was assembled but before it was saved writes no report. |
-| 1 | Any other error, such as an invalid argument or an output directory that cannot be written. |
+| 3 | Preflight failed: invalid configuration or panel policy, a panel policy the head weakens, an unsupported or missing harness adapter, a `--base`, `--head` or `--since` ref that does not name a commit, a private repository snapshot that cannot be made, or a component's preflight refused the run. No report is written. |
+| 4 | The run was canceled (SIGINT or SIGTERM). Any failure while canceled, including a preflight that the cancellation interrupted or a report copy that could not be written, exits 4. A report is written only when it records the cancellation; such a report is never published. A cancellation after the run's report was assembled but before it was saved writes no report. |
+| 1 | Any other error, such as an invalid argument (including a value flag given without a value) or an output directory that cannot be written. |
 
 ## Harness adapters
 
-Harness adapters are optional peer installs. A slot's `harness.adapter` is resolved through a fixed table, and adapters are never loaded from arbitrary module paths. In this release only `@superfunctions/reviewfn-harness-codex` is published; the `claude-code` and `cli` packages are planned, and until they ship a slot naming them fails with `REVIEWFN_HARNESS_NOT_INSTALLED`:
+A slot's `harness.adapter` is resolved through a fixed table to an installed package, and adapters are never loaded from arbitrary module paths. The intended model is that adapters are optional peer installs. In this release the Codex adapter, `@superfunctions/reviewfn-harness-codex`, ships as a direct dependency of the CLI. The `claude-code` and `cli` packages are not published yet; once they are, each resolves when it is installed next to the CLI, and until then a slot naming them fails with `REVIEWFN_HARNESS_NOT_INSTALLED`:
 
 | `harness.adapter` | Package | Export |
 | --- | --- | --- |
