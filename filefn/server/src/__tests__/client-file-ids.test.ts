@@ -6,7 +6,7 @@ import { createFileFn, type FileFn } from '../index.js';
 import { generateFileFnId } from '../ids.js';
 import { createDefaultAuthorizer } from '../authz/authorizer.js';
 import { CLIENT_FILE_ID_PATTERN, isValidClientFileId } from '../upload-sessions/file-id.js';
-import { createFileIdReservations, fileIdReservationId } from '../upload-sessions/file-id-reservations.js';
+import { COMPLETION_GRACE_MS, createFileIdReservations, fileIdReservationId } from '../upload-sessions/file-id-reservations.js';
 
 const CAPS: AdapterCapabilities = {
   types: { json: true, dates: true, booleans: true, bigint: false, uuid: false, enum: false },
@@ -225,7 +225,13 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
         },
         async openUploadStream(input) {
           // Publishing the final object, not a part.
-          if (!/\.part\d+$/.test(input.key)) await passPublishGate();
+          if (!/\.part\d+$/.test(input.key)) {
+            await passPublishGate();
+            if (failNextPublish) {
+              failNextPublish = false;
+              throw new Error('storage unavailable');
+            }
+          }
           let content = '';
           const decoder = new TextDecoder();
           return new WritableStream<Uint8Array>({
@@ -763,29 +769,84 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
       expect((await init('user_b', { fileId })).status).toBe(403);
     });
 
-    it("is kept when a failed init's retry, still starting, relies on it", async () => {
-      const fileId = 'file_rollback_inflight';
-      const [setupA, setupB] = [hold(), hold()];
+    it('is reserved again by a retry still starting when the init that made it fails', async () => {
+      for (const intruder of [false, true]) {
+        build();
+        const fileId = intruder ? 'file_rollback_taken01' : 'file_rollback_inflight';
+        const [setupA, setupB] = [hold(), hold()];
+        beforeMultipartInit = async () => {
+          setupA.arrive();
+          await setupA.wait;
+          throw new Error('storage unavailable');
+        };
+        const failing = init('user_a', { fileId });
+        await setupA.reached;
+        beforeMultipartInit = async () => {
+          setupB.arrive();
+          await setupB.wait;
+        };
+        const retry = init('user_a', { fileId });
+        await setupB.reached;
+        setupA.release();
+        expect((await failing).status).toBe(500);
+
+        // No session relied on the reservation yet, so another principal may
+        // take the ID now; the retry then never starts. Either way one owner.
+        if (intruder) expect((await init('user_b', { fileId })).status).toBe(200);
+        setupB.release();
+        expect((await retry).status).toBe(intruder ? 403 : 200);
+        const owner = intruder ? 'user_b' : 'user_a';
+        expect(reservationRow(fileId)).toMatchObject({ ownerId: owner });
+        expect((await init(intruder ? 'user_a' : 'user_b', { fileId })).status).toBe(403);
+        if (intruder) expect(sessionsOf('user_a').map((row) => row.status)).toEqual(['aborted']);
+      }
+    });
+
+    it('is kept for a same-owner init that lost the insert race when the init that made it fails', async () => {
+      const fileId = 'file_conflict_loser01';
+      // user_a's first init is held just before it inserts the reservation.
+      const inserting = db.holdNext('create', 'uploadSessions', isReservationInsert);
+      const loser = init('user_a', { fileId });
+      await inserting.reached;
+      const setup = hold();
       beforeMultipartInit = async () => {
-        setupA.arrive();
-        await setupA.wait;
+        setup.arrive();
+        await setup.wait;
         throw new Error('storage unavailable');
       };
-      const failing = init('user_a', { fileId });
-      await setupA.reached;
-      beforeMultipartInit = async () => {
-        setupB.arrive();
-        await setupB.wait;
-      };
-      const retry = init('user_a', { fileId });
-      await setupB.reached;
-      setupA.release();
-      expect((await failing).status).toBe(500);
+      const inserter = init('user_a', { fileId });
+      await setup.reached;
+      inserting.release();
+      expect((await loser).status).toBe(200);
+      setup.release();
+      expect((await inserter).status).toBe(500);
 
-      expect((await init('user_b', { fileId })).status).toBe(403);
-      setupB.release();
-      expect((await retry).status).toBe(200);
       expect(reservationRow(fileId)).toMatchObject({ ownerId: 'user_a' });
+      expect((await init('user_b', { fileId })).status).toBe(403);
+    });
+
+    it.each([false, true])('is removed when every init relying on it fails (shipped memory adapter: %s)', async (shippedMemory) => {
+      build({ shippedMemory });
+      const fileId = 'file_all_setups_fail';
+      const setup = hold();
+      beforeMultipartInit = async () => {
+        setup.arrive();
+        await setup.wait;
+        throw new Error('storage unavailable');
+      };
+      const first = init('user_a', { fileId });
+      await setup.reached;
+      beforeMultipartInit = async () => { throw new Error('storage unavailable'); };
+      expect((await init('user_a', { fileId })).status).toBe(500);
+      setup.release();
+      expect((await first).status).toBe(500);
+
+      const rows = await database.findMany({
+        model: 'uploadSessions',
+        where: [{ field: 'uploadSessionId', operator: 'eq', value: fileIdReservationId(fileId) }],
+        namespace: 'filefn',
+      });
+      expect(rows).toHaveLength(0);
     });
 
     it("is kept when a failed init's retry already relies on it", async () => {
@@ -940,7 +1001,7 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
       expect(fileRows(fileId)).toEqual([expect.objectContaining({ ownerId: 'anonymous' })]);
     });
 
-    it('lets a duplicate completion of the same session fail without undoing the one that created the file', async () => {
+    it('answers a duplicate completion of the same session with the original result, without undoing the file', async () => {
       const fileId = 'file_anon_duplicate01';
       const anon = await anonymousInitAndUpload(fileId);
       const complete = () => call('POST', `/upload/${anon.uploadSessionId}/complete`, '', undefined, anon.token);
@@ -975,16 +1036,123 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
       expect(objects.get(SHARED_PATH({ fileId }))).toBe(sessionRow(winner.uploadSessionId).storageUploadId);
     });
 
-    it('gives up its claim when its completion fails, so a retry under the ID succeeds', async () => {
+    it('keeps the claim for its session when a completion fails: the session may retry, and an abort frees the ID', async () => {
       const fileId = 'file_anon_failed_pub1';
       const first = await anonymousInitAndUpload(fileId);
       failNextPublish = true;
       expect((await call('POST', `/upload/${first.uploadSessionId}/complete`, '', undefined, first.token)).status).toBe(500);
-      expect(reservationRow(fileId)).toBeUndefined();
+      expect(reservationRow(fileId)).toMatchObject({ storageUploadId: first.uploadSessionId });
+      expect((await init('', { fileId })).status).toBe(403);
+      expect((await init('user_a', { fileId })).status).toBe(403);
+      expect((await call('POST', `/upload/${first.uploadSessionId}/complete`, '', undefined, first.token)).status).toBe(200);
 
-      const retry = await anonymousInitAndUpload(fileId);
+      const other = 'file_anon_aborted_01';
+      const aborted = await anonymousInitAndUpload(other);
+      failNextPublish = true;
+      expect((await call('POST', `/upload/${aborted.uploadSessionId}/complete`, '', undefined, aborted.token)).status).toBe(500);
+      expect((await call('POST', `/upload/${aborted.uploadSessionId}/abort`, '', undefined, aborted.token)).status).toBe(200);
+      expect(reservationRow(other)).toBeUndefined();
+      const retry = await anonymousInitAndUpload(other);
       expect((await call('POST', `/upload/${retry.uploadSessionId}/complete`, '', undefined, retry.token)).status).toBe(200);
     });
+
+    describe.each(['multipart', 'proxy'] as const)('keeps the claim while any call completing its session publishes, in %s mode', (mode) => {
+      beforeEach(() => build({ anonymous: true, layout: 'shared', mode }));
+
+      it('so after the claiming call fails a named init gets 403, and the file keeps its bytes', async () => {
+        const fileId = 'file_anon_sibling_pub';
+        const anon = await anonymousInitAndUpload(fileId, 'AAA');
+        const complete = () => call('POST', `/upload/${anon.uploadSessionId}/complete`, '', undefined, anon.token);
+        // The first call claims the ID and is held publishing; so is the second.
+        const claiming = holdNextPublish();
+        const first = complete();
+        await claiming.reached;
+        const sibling = holdNextPublish();
+        const second = complete();
+        await sibling.reached;
+        failNextPublish = true;
+        claiming.release();
+        expect((await first).status).toBe(500);
+
+        expect((await init('user_a', { fileId })).status).toBe(403);
+        expect(sessionsOf('user_a')).toHaveLength(0);
+        sibling.release();
+        expect((await second).status).toBe(200);
+        const expected = mode === 'proxy' ? 'AAA' : sessionRow(anon.uploadSessionId).storageUploadId;
+        expectFile(fileId, 'anonymous', (await second).body.data.versionId, expected);
+      });
+    });
+
+    it('lets a claim lapse once its session expired and the completion grace passed', async () => {
+      const fileId = 'file_anon_stuck_claim';
+      const stale = await anonymousInitAndUpload(fileId);
+      // Its completion claimed the ID, then died before ending the session.
+      const store = createFileIdReservations({ db: db.adapter, namespace: 'filefn' });
+      expect((await store.reserve(fileId, sessionRow(stale.uploadSessionId) as any, 'capture')).held).toBe(true);
+
+      sessionRow(stale.uploadSessionId).expiresAt = new Date(Date.now() - 60_000).toISOString();
+      expect((await init('', { fileId })).status).toBe(403);
+      // Cleanup leaves a session whose claim is within the grace to a later run.
+      expect((await fileFn.cleanupExpiredSessions()).deletedSessions).toBe(0);
+      expect(reservationRow(fileId)).toMatchObject({ storageUploadId: stale.uploadSessionId });
+      sessionRow(stale.uploadSessionId).expiresAt = new Date(Date.now() - COMPLETION_GRACE_MS - 1000).toISOString();
+      const fresh = await anonymousInitAndUpload(fileId);
+      expect((await call('POST', `/upload/${fresh.uploadSessionId}/complete`, '', undefined, fresh.token)).status).toBe(200);
+
+      expect((await call('POST', `/upload/${stale.uploadSessionId}/complete`, '', undefined, stale.token)).status).toBe(410);
+      expect(publishedUploads).toEqual([sessionRow(fresh.uploadSessionId).storageUploadId]);
+    });
+
+    it('settles an overlapping completion of a session another call completed on the shipped memory adapter', async () => {
+      build({ anonymous: true, shippedMemory: true });
+      const fileId = 'file_anon_memory_dup';
+      const anon = await anonymousInitAndUpload(fileId);
+      const complete = () => call('POST', `/upload/${anon.uploadSessionId}/complete`, '', undefined, anon.token);
+      const publishing = holdNextPublish();
+      const first = complete();
+      await publishing.reached;
+      const second = await complete();
+      expect(second.status).toBe(200);
+      publishing.release();
+      expect((await first).status).toBe(403);
+
+      const session = await database.findOne<Row>({ model: 'uploadSessions', where: [{ field: 'uploadSessionId', operator: 'eq', value: anon.uploadSessionId }], namespace: 'filefn' });
+      expect(session).toMatchObject({ status: 'completed', completionVersionId: second.body.data.versionId });
+      expect((await complete()).body.data).toEqual(second.body.data);
+    });
+  });
+
+  it('refuses at init an ID created after its lookup by someone the caller may not write for', async () => {
+    build({ anonymous: true });
+    const fileId = 'file_created_meanwhile';
+    const reserving = db.holdNext('findOne', 'uploadSessions', (params) => params.where?.[0]?.value === fileIdReservationId(fileId));
+    const late = init('user_b', { fileId });
+    await reserving.reached;
+    const anon = await init('', { fileId });
+    const token = { 'x-upload-session-token': anon.body.data.uploadSessionToken };
+    await call('POST', `/upload/${anon.body.data.uploadSessionId}/parts/1/complete`, '', { etag: 'etag-anon', size: 3 }, token);
+    expect((await call('POST', `/upload/${anon.body.data.uploadSessionId}/complete`, '', undefined, token)).status).toBe(200);
+    reserving.release();
+
+    const res = await late;
+    expect(res.status).toBe(403);
+    expect(res.body.error.details).toMatchObject({ operation: 'replace' });
+    expect(reservationRow(fileId)).toBeUndefined();
+    expect(sessionsOf('user_b')).toHaveLength(0);
+  });
+
+  it('refuses a part completion on a proxy session, so no session records an unscoped part key', async () => {
+    build({ layout: 'shared', mode: 'proxy' });
+    const fileId = 'file_proxy_no_record';
+    const legacyKey = `${SHARED_PATH({ fileId })}.part1`;
+    objects.set(legacyKey, 'LEGACY');
+    const res = await init('user_a', { fileId });
+    const uploadSessionId = res.body.data.uploadSessionId;
+    const part = await call('POST', `/upload/${uploadSessionId}/parts/1/complete`, 'user_a', { etag: 'etag-x', size: 3 });
+    expect(part.status).toBeGreaterThanOrEqual(400);
+    expect(db.rows('uploadParts').filter((row) => row.uploadSessionId === uploadSessionId)).toHaveLength(0);
+    expect((await call('POST', `/upload/${uploadSessionId}/abort`, 'user_a')).status).toBe(200);
+    expect(objects.get(legacyKey)).toBe('LEGACY');
   });
 
   it('settles one reservation owner even on an adapter that does not enforce the unique key', async () => {

@@ -192,6 +192,27 @@ describe('OPFSStore', () => {
       });
     });
 
+    it('keeps a valid fileId that equals its upload session ID across staging and reload', async () => {
+      const id = 'file_same_as_session';
+      const store = new OPFSStore();
+      await store.init();
+      await store.stagePendingUpload({
+        uploadSessionId: id,
+        fileId: id,
+        policy: 'images',
+        fileName: 'same.jpg',
+        size: 4,
+        mimeType: 'image/jpeg',
+        fileData: new TextEncoder().encode('same').buffer,
+        createdAt: new Date().toISOString(),
+        retryCount: 0,
+      });
+      const reloaded = new OPFSStore();
+      await reloaded.init();
+      expect((await reloaded.getPendingUpload(id))!.fileId).toBe(id);
+      expect((await reloaded.getPendingLocalDescriptor(id))?.uploadSessionId).toBe(id);
+    });
+
     it('gives legacy metadata whose fileId is its session ID the same grammar-valid ID on every read', async () => {
       const store = new OPFSStore();
       await store.init();
@@ -261,7 +282,7 @@ describe('OPFSStore', () => {
 
       await store.stagePendingUpload({
         uploadSessionId: 'offline_old_001',
-        fileId: 'file_reused',
+        fileId: 'file_reused_01',
         policy: 'images',
         fileName: 'older.jpg',
         size: 12,
@@ -272,7 +293,7 @@ describe('OPFSStore', () => {
       });
       await store.stagePendingUpload({
         uploadSessionId: 'offline_new_001',
-        fileId: 'file_reused',
+        fileId: 'file_reused_01',
         policy: 'images',
         fileName: 'newer.jpg',
         size: 12,
@@ -282,7 +303,7 @@ describe('OPFSStore', () => {
         retryCount: 0,
       });
 
-      const descriptor = await store.getPendingLocalDescriptor('file_reused');
+      const descriptor = await store.getPendingLocalDescriptor('file_reused_01');
 
       expect(descriptor?.uploadSessionId).toBe('offline_new_001');
       expect(descriptor?.source.fileName).toBe('newer.jpg');

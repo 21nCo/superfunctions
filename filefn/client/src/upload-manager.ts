@@ -103,6 +103,11 @@ function derivePendingLocalSource(
   };
 }
 
+/** Whether `value` is a file ID `upload/init` accepts: `file_[A-Za-z0-9_-]{8,64}`. */
+export function isValidFileId(value: unknown): value is string {
+  return typeof value === 'string' && /^file_[A-Za-z0-9_-]{8,64}$/.test(value);
+}
+
 export function generateFileId(): string {
   const cryptoApi = globalThis.crypto;
   if (cryptoApi && typeof cryptoApi.randomUUID === 'function') {

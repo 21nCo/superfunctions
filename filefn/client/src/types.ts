@@ -62,16 +62,19 @@ export interface UploadInput {
    *   principal's `upload/init` under it fails with 403 `FILEFN_FORBIDDEN`, so
    *   it never uploads. The ID stays reserved to its owner even if the file is
    *   later deleted.
-   * - An anonymous caller claims the ID only when its upload completes, just
-   *   before the bytes are stored, and gives the claim up once the file
-   *   exists or the completion fails. Its `upload/init` fails with 403 if
-   *   someone else holds the ID; it may init again without a key.
+   * - An anonymous caller claims the ID for its upload session only when the
+   *   upload completes, just before the bytes are stored. The session keeps
+   *   the claim, so a failed completion may be retried, until the file
+   *   exists, the session is aborted, or the session expired more than 15
+   *   minutes ago. Its `upload/init` fails with 403 if someone else holds the
+   *   ID; it may init again without a key.
    * - Only a completion can fail with 403 after the parts were uploaded: an
    *   anonymous one whose ID someone else reserved or claimed first, or one
    *   that lost write permission on an existing file after init. The session
    *   is then aborted, and nothing it uploaded is kept.
-   * - An existing ID replaces that file with a new version and needs write
-   *   permission on it; otherwise `upload/init` fails with 403.
+   * - An existing ID replaces that file with a new version. When the server
+   *   configures a `fileWriteChecker`, this needs write permission on the
+   *   file; otherwise `upload/init` fails with 403.
    * - Retrying `upload/init` under the same ID is safe. With the same
    *   `idempotencyKey` it returns the same upload session. Without one, the
    *   same signed-in caller gets a new session for the same ID, and each

@@ -1,4 +1,5 @@
 import type { PendingLocalDescriptor } from '../types.js';
+import { isValidFileId } from '../upload-manager.js';
 import type { PendingLocalSourceMetadata } from '../preprocessing/types.js';
 
 export interface PendingUpload {
@@ -63,11 +64,12 @@ export function fallbackFileId(uploadSessionId: string): string {
 
 /**
  * File ID of a pending upload. Earlier clients persisted the upload session ID
- * as the file ID of an upload staged without one; that, like a missing ID,
- * resolves to `fallbackFileId`.
+ * (`offline_...`) as the file ID of an upload staged without one; that, like a
+ * missing ID, is outside the grammar and resolves to `fallbackFileId`. A valid
+ * ID is kept as staged.
  */
 function resolveFileId(fileId: string | undefined, uploadSessionId: string): string {
-  return fileId && fileId !== uploadSessionId ? fileId : fallbackFileId(uploadSessionId);
+  return isValidFileId(fileId) ? fileId : fallbackFileId(uploadSessionId);
 }
 
 export interface OPFSStoreConfig {
