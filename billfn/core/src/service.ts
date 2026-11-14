@@ -1220,30 +1220,28 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         });
       }
       const selection = requireImportPrice(plan, providerName, state);
-      // One audit event per import run and state it records: a rerun of the operator's request (same requestId)
-      // that records the same state adds none, and an event once written is never changed.
-      const runId = operator.requestId ? null : deps.generateId('evt');
+      // One audit event per import run and state it records, never changed once written. The run is the operator's
+      // request (a rerun of it that records the same state adds none) or, without a requestId, this call.
+      const run = operator.requestId ? ['request', operator.requestId] : ['call', deps.generateId('run')];
       const importAudit = (subscription: BillFnSubscription): BillFnBillingEvent => ({
-        id:
-          runId ??
-          `evt_import_${createHash('sha256')
-            .update(
-              JSON.stringify([
-                providerName,
-                reference,
-                billingAccount.id,
-                operator.id,
-                operator.type ?? null,
-                operator.requestId,
-                plan.planKey,
-                input.reason ?? null,
-                subscription.id,
-                subscription.planKey,
-                subscription.priceId,
-                subscription.status
-              ])
-            )
-            .digest('base64url')}`,
+        id: `evt_import_${createHash('sha256')
+          .update(
+            JSON.stringify([
+              providerName,
+              reference,
+              billingAccount.id,
+              operator.id,
+              operator.type ?? null,
+              ...run,
+              plan.planKey,
+              input.reason ?? null,
+              subscription.id,
+              subscription.planKey,
+              subscription.priceId,
+              subscription.status
+            ])
+          )
+          .digest('base64url')}`,
         billingAccountId: billingAccount.id,
         type: 'billfn.subscription.imported',
         payload: {

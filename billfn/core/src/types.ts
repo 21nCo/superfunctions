@@ -778,7 +778,11 @@ export interface BillFnSyncSubscriptionResponseData {
 export interface BillFnImportSubscriptionResponseData {
   subscription: BillFnSubscription;
   entitlements: BillFnEntitlementSnapshot;
-  /** The `billfn.subscription.imported` billing event this import recorded. */
+  /**
+   * The `billfn.subscription.imported` billing event for the subscription state
+   * this import returns. A rerun of the same request (`operator.requestId`) that
+   * finds the same state returns the event an earlier call recorded.
+   */
   billingEvent: BillFnBillingEvent;
 }
 

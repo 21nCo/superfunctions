@@ -545,7 +545,12 @@ describe('billfn.services.subscriptions.import', () => {
     expect(await env.importEvents()).toHaveLength(2);
   });
 
-  it('publishes the plan of the state that wins when another import writes and accepts the row before its acceptance', async () => {
+  const ALICE_OPERATORS = [
+    ['with', OPERATOR],
+    ['without', { id: 'operator_1', type: 'user' }]
+  ] as const;
+
+  it.each(ALICE_OPERATORS)('publishes the plan of the state that wins when another import writes and accepts the row before its acceptance (%s a requestId)', async (_name, operator) => {
     const holds = holdSubscriptionUpdates([1]);
     let productId = 'pdt_nucleus_year';
     const env = setup({ wrapDb: holds.wrap, record: (reference) => legacyRecord(reference, { productId }) });
@@ -553,12 +558,12 @@ describe('billfn.services.subscriptions.import', () => {
     holds.armed = true;
 
     // A creates its pending row with the nucleus state and is held at its acceptance write.
-    const first = env.import({ billingAccountId, planKey: 'nucleus' });
+    const first = env.import({ billingAccountId, planKey: 'nucleus', operator });
     await holds.reached(1);
     // B reads the product moved to team, writes that state onto the row and accepts it.
     productId = 'pdt_team_month';
     env.clock.current = new Date('2026-11-10T00:00:01.000Z');
-    const second = unwrap(await env.import({ billingAccountId, planKey: 'team' }));
+    const second = unwrap(await env.import({ billingAccountId, planKey: 'team', operator }));
     holds.release(1);
     const firstResult = unwrap(await first);
 
@@ -581,7 +586,7 @@ describe('billfn.services.subscriptions.import', () => {
     expect((await env.importEvents()).map((event) => event.payload.planKey).sort()).toEqual(['nucleus', 'team', 'team']);
   });
 
-  it('publishes the plan of the state that wins when it accepts another import\'s state written before its acceptance', async () => {
+  it.each(ALICE_OPERATORS)('publishes the plan of the state that wins when it accepts another import\'s state written before its acceptance (%s a requestId)', async (_name, operator) => {
     // Update 1: A's acceptance write (held). 2: B's state write. 3: B's acceptance write (held). 4: A accepts B's state.
     const holds = holdSubscriptionUpdates([1, 3]);
     let productId = 'pdt_nucleus_year';
@@ -589,11 +594,11 @@ describe('billfn.services.subscriptions.import', () => {
     const billingAccountId = await env.account('alice');
     holds.armed = true;
 
-    const first = env.import({ billingAccountId, planKey: 'nucleus' });
+    const first = env.import({ billingAccountId, planKey: 'nucleus', operator });
     await holds.reached(1);
     productId = 'pdt_team_month';
     env.clock.current = new Date('2026-11-10T00:00:01.000Z');
-    const second = env.import({ billingAccountId, planKey: 'team' });
+    const second = env.import({ billingAccountId, planKey: 'team', operator });
     await holds.reached(3);
     // A's acceptance write loses to B's state write, so A re-finds the row pending with B's state and accepts it.
     env.clock.current = new Date('2026-11-10T00:00:02.000Z');
@@ -619,6 +624,8 @@ describe('billfn.services.subscriptions.import', () => {
       expect.objectContaining({ type: 'billfn.subscription.active', payload: expect.objectContaining({ priceId: 'price_team_dodo_month' }) })
     ]);
     expect(await env.billfn.subscriptionProvider.isActive({ principalId: 'alice' })).toBe(true);
+    // A's event for the nucleus state it did not accept stays; each import records the team state it returned.
+    expect((await env.importEvents()).map((event) => event.payload.planKey).sort()).toEqual(['nucleus', 'team', 'team']);
   });
 
   it('lets only one of two imports racing one reference into different billing accounts bind it', async () => {
