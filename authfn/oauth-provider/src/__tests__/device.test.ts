@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { issueSession } from 'authfn/core/sessions';
+import { hashSecret, issueSession } from 'authfn/core/sessions';
+import { memoryAdapter } from '@superfunctions/db/adapters';
 import { createUser } from 'authfn/core/users';
 import {
   disconnectOAuthClient,
@@ -9,7 +10,7 @@ import {
 } from '../index.js';
 import { createDeviceSchema } from '../device/index.js';
 import { createOAuthProviderSchema } from '../store.js';
-import { MEMOTRON, ORIGIN, POINTRON, RFC6749_BASIC, RFC6749_CLIENT, createProviderApp, setupProvider } from './harness.js';
+import { MEMOTRON, ORIGIN, POINTRON, RESOURCES, RFC6749_BASIC, RFC6749_CLIENT, createProviderApp, setupProvider } from './harness.js';
 
 /** A public CLI client, configured ahead of time. */
 const CLI: OAuthProviderClient = {
@@ -70,7 +71,26 @@ async function setupDevice(options: Parameters<typeof setupProvider>[0] = {}) {
     return (await response.json() as { error: string }).error;
   };
 
-  return { ...provider, requestDeviceCode, start, openPage, decide, poll, pollError };
+  /** The stored row of a device code. */
+  const row = (deviceCode: string) => provider.database.findOne<{ interval: number; decision?: string | null }>({
+    model: 'oauth_provider_device_codes',
+    where: [{ field: 'deviceCodeHash', operator: 'eq', value: hashSecret(deviceCode) }],
+    namespace: 'authfn'
+  });
+
+  /** Every access and refresh token stored for the CLI, usable or not. */
+  const cliTokens = () => provider.database.findMany({
+    model: 'oauth_provider_tokens',
+    where: [{ field: 'clientId', operator: 'eq', value: CLI.clientId }],
+    namespace: 'authfn'
+  });
+
+  const disconnect = () => disconnectOAuthClient(
+    { database: provider.database },
+    { userId: provider.user.id, clientId: CLI.clientId, resource: MEMOTRON, now: provider.now }
+  );
+
+  return { ...provider, requestDeviceCode, start, openPage, decide, poll, pollError, row, cliTokens, disconnect };
 }
 
 describe('device authorization grant (RFC 8628)', () => {
@@ -157,12 +177,33 @@ describe('device authorization grant (RFC 8628)', () => {
     const { client_id: registeredId } = await registered.json() as { client_id: string };
     await expectError(await provider.requestDeviceCode({ client_id: registeredId }), 400, 'unauthorized_client');
 
-    // A device code is bound to its client.
+    // A device code is bound to its client and its resource; neither
+    // mismatch spends it.
     const device = await provider.start();
     await provider.decide(device.user_code, 'approve');
     const stolen = await provider.poll(device.device_code, 'mcp-host');
     await expectError(stolen, 400, 'invalid_grant');
-    expect((await provider.poll(device.device_code)).status).toBe(200);
+    const form = { grant_type: OAUTH_DEVICE_CODE_GRANT_TYPE, device_code: device.device_code, client_id: CLI.clientId };
+    await expectError(await provider.token({ ...form, resource: POINTRON }), 400, 'invalid_target');
+    expect((await provider.token({ ...form, resource: MEMOTRON })).status).toBe(200);
+  });
+
+  it('refuses to start with a malformed deviceAuthorization config', () => {
+    const create = (deviceAuthorization: unknown) => createProviderApp().createServer({
+      database: memoryAdapter({ debug: false }),
+      pluginRuntime: {
+        oauthProvider: {
+          clients: [], resources: RESOURCES, deviceAuthorization,
+          loginRequired: () => new Response(null), consent: () => new Response(null)
+        }
+      }
+    });
+    const invalid = expect.objectContaining({ code: 'AUTHFN_CONFIG_INVALID' });
+    const verification = () => new Response(null);
+    expect(() => create({ verification, authorizationRateLimit: { perIp: 0 } })).toThrow(invalid);
+    expect(() => create({ verification, authorizationRateLimit: { perUser: 5 } })).toThrow(invalid);
+    expect(() => create({ verification, resolveClientIp: 'x-forwarded-for' })).toThrow(invalid);
+    expect(() => create({ verification, authorizationRateLimit: { perIp: 5, global: undefined }, resolveClientIp: () => '203.0.113.1' })).not.toThrow();
   });
 
   it('is off unless configured: no endpoints, no grant type, nothing advertised', async () => {
@@ -206,19 +247,64 @@ describe('device authorization grant (RFC 8628)', () => {
     expect(await provider.pollError(device.device_code)).toBe('authorization_pending');
   });
 
-  it('an approval during which the app is disconnected issues no usable grant', async () => {
-    const provider = await setupDevice();
-    const device = await provider.start();
-    const paused = provider.control.arm('oauth_provider_grants');
-    const decision = provider.decide(device.user_code, 'approve');
-    await paused;
-    await disconnectOAuthClient({ database: provider.database }, { userId: provider.user.id, clientId: CLI.clientId, resource: MEMOTRON, now: provider.now });
-    provider.control.release();
-    const response = await decision;
-    expect(response.status).toBe(400);
-    expect(await response.json()).toMatchObject({ error: 'access_denied' });
-    expect(await provider.pollError(device.device_code)).toBe('invalid_grant');
-  });
+  it.each(['resumes', 'never resumes'] as const)(
+    'an approval overlapping a disconnect publishes nothing exchangeable before its generation check (approval %s)',
+    async (mode) => {
+      const provider = await setupDevice();
+      const device = await provider.start();
+      // The approval reads the generation, then pauses before creating its
+      // grant while the app is disconnected.
+      const atGrant = provider.control.arm('oauth_provider_grants');
+      const decision = provider.decide(device.user_code, 'approve');
+      await atGrant;
+      await provider.disconnect();
+      // It creates the grant and pauses again at its second generation read.
+      provider.control.release();
+      const atCheck = provider.control.arm('oauth_provider_disconnects', 'findMany');
+      await atCheck;
+      // The device polls meanwhile: nothing has been published to it.
+      expect(await provider.pollError(device.device_code)).toBe('authorization_pending');
+      if (mode === 'resumes') {
+        provider.control.release();
+        const response = await decision;
+        expect(response.status).toBe(400);
+        expect(await response.json()).toMatchObject({ error: 'access_denied' });
+        expect((await provider.row(device.device_code))?.decision).toBe('denied');
+        provider.advance(5);
+        expect(await provider.pollError(device.device_code)).toBe('access_denied');
+      } else {
+        provider.advance(5);
+        expect(await provider.pollError(device.device_code)).toBe('authorization_pending');
+        provider.advance(600);
+        expect(await provider.pollError(device.device_code)).toBe('expired_token');
+      }
+      expect(await provider.cliTokens()).toHaveLength(0);
+    }
+  );
+
+  it.each(['resumes', 'never resumes'] as const)(
+    'a disconnect after the approval\'s generation check revokes its grant; the device gets access_denied (approval %s)',
+    async (mode) => {
+      const provider = await setupDevice();
+      const device = await provider.start();
+      // The approval has created its grant and checked the generation; it
+      // pauses before recording the decision while the app is disconnected.
+      const atDecision = provider.control.arm('oauth_provider_device_codes', 'updateMany', ({ data }) => data?.decision === 'approved');
+      const decision = provider.decide(device.user_code, 'approve');
+      await atDecision;
+      expect(await provider.disconnect()).toBe(1);
+      expect(await provider.pollError(device.device_code)).toBe('authorization_pending');
+      provider.advance(5);
+      if (mode === 'resumes') {
+        provider.control.release();
+        expect((await decision).status).toBe(200);
+        expect(await provider.pollError(device.device_code)).toBe('access_denied');
+      } else {
+        expect(await provider.pollError(device.device_code)).toBe('authorization_pending');
+      }
+      expect(await provider.cliTokens()).toHaveLength(0);
+    }
+  );
 
   it('a device code claim write that fails before applying leaves the code redeemable, not replayed', async () => {
     const provider = await setupDevice();
@@ -264,10 +350,14 @@ describe('in-scope actors (AUTH-9)', () => {
     provider.advance(15);
     expect(await provider.pollError(device.device_code)).toBe('authorization_pending');
 
-    // Of concurrent polls only one is answered; the others are too fast.
+    // Of concurrent polls only one is answered; the others are too fast and
+    // each adds 5 seconds: 15 + 5 + 5.
     provider.advance(15);
     const results = await Promise.all([1, 2, 3].map(async () => (await (await provider.poll(device.device_code)).json() as { error: string }).error));
     expect(results.sort()).toEqual(['authorization_pending', 'slow_down', 'slow_down']);
+    expect((await provider.row(device.device_code))?.interval).toBe(25);
+    provider.advance(24);
+    expect(await provider.pollError(device.device_code)).toBe('slow_down');
 
     // Even approved, a fast poll gets no tokens.
     await provider.decide(device.user_code, 'approve');
@@ -325,6 +415,39 @@ describe('in-scope actors (AUTH-9)', () => {
       namespace: 'authfn'
     });
     expect(grants.filter((grant) => !grant.revokedAt)).toHaveLength(outcomes.includes('approved') ? 1 : 0);
+  });
+
+  it('anonymous device authorization requests are limited per client IP and overall; expired unused codes are pruned', async () => {
+    const provider = await setupDevice({
+      device: { authorizationRateLimit: { perIp: 2, global: 3 }, resolveClientIp: (request) => request.headers.get('x-test-ip') }
+    });
+    const rows = () => provider.database.findMany({ model: 'oauth_provider_device_codes', namespace: 'authfn' });
+    const from = (ip: string) => provider.requestDeviceCode({}, { 'x-test-ip': ip });
+    const first = await (await from('203.0.113.1')).json() as DeviceAuthorization;
+    expect((await from('203.0.113.1')).status).toBe(200);
+    const refused = await from('203.0.113.1');
+    expect(refused.status).toBe(429);
+    expect(refused.headers.get('retry-after')).toBe('600');
+    expect(await refused.json()).toMatchObject({ error: 'temporarily_unavailable' });
+    expect((await from('203.0.113.2')).status).toBe(200);
+    // The overall limit holds across IPs.
+    expect((await from('203.0.113.3')).status).toBe(429);
+    // Refused requests stored no code.
+    expect(await rows()).toHaveLength(3);
+
+    // One code is exchanged; the other two are never used.
+    await provider.decide(first.user_code, 'approve');
+    const tokens = await (await provider.poll(first.device_code)).json() as { access_token: string };
+    // Codes expire after 600 seconds and are pruned a lifetime later.
+    provider.advance(1200);
+    expect((await from('203.0.113.1')).status).toBe(200);
+    expect(await rows()).toHaveLength(4);
+    provider.advance(1);
+    expect((await from('203.0.113.1')).status).toBe(200);
+    // The exchanged code stays, since its tokens are valid only while it exists.
+    expect(await rows()).toHaveLength(3);
+    expect(await provider.row(first.device_code)).not.toBeNull();
+    expect((await provider.introspect(tokens.access_token)).body).toMatchObject({ active: true });
   });
 
   it('user-code brute force: lookups are limited per user and overall, found or not', async () => {

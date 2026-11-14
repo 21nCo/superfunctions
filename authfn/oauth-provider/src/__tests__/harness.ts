@@ -72,15 +72,25 @@ type Adapter = AuthFnRuntimeConfig['database'];
 
 type Operation = 'create' | 'findOne' | 'updateMany' | 'updateManyRejected';
 
+type PausedOperation = 'create' | 'findMany' | 'updateMany';
+
 /**
  * Controls storage calls: `arm(model)` pauses the next insert into `model`
- * until `release()` and resolves once it is paused, to force an interleaving;
+ * (or, with `operation`, the next `findMany` or `updateMany` on it whose
+ * params `match`) until `release()` and resolves once it is paused, to force
+ * an interleaving;
  * `failNext(model, match, operation)` makes the next matching insert or
  * `findOne` throw, the next `updateMany` commit and then throw, as when its
  * acknowledgement is lost, or (`updateManyRejected`) throw without applying.
  */
 export function createInsertControl(database: Adapter) {
-  let paused: { model: string; reached: () => void; released: Promise<void> } | undefined;
+  let paused: {
+    model: string;
+    operation: PausedOperation;
+    match: (params: { data?: Record<string, unknown> }) => boolean;
+    reached: () => void;
+    released: Promise<void>;
+  } | undefined;
   const failures: { model: string; operation: Operation; match: (params: { data?: Record<string, unknown> }) => boolean }[] = [];
   let release: () => void = () => {};
   const injectFailure = (operation: Operation, params: { model: string; data?: Record<string, unknown> }) => {
@@ -91,13 +101,26 @@ export function createInsertControl(database: Adapter) {
       throw new Error(`injected ${operation} failure`);
     }
   };
+  const pauseIfArmed = async (operation: PausedOperation, params: { model: string; data?: Record<string, unknown> }) => {
+    const pause = paused?.model === params.model && paused.operation === operation && paused.match(params) ? paused : undefined;
+    if (pause) {
+      paused = undefined;
+      pause.reached();
+      await pause.released;
+    }
+  };
   const wrapped: Adapter = {
     ...database,
     findOne: async (params) => {
       injectFailure('findOne', params);
       return database.findOne(params);
     },
+    findMany: async (params) => {
+      await pauseIfArmed('findMany', params);
+      return database.findMany(params);
+    },
     updateMany: async (params) => {
+      await pauseIfArmed('updateMany', params);
       injectFailure('updateManyRejected', params);
       const updated = await database.updateMany(params);
       injectFailure('updateMany', params);
@@ -105,19 +128,18 @@ export function createInsertControl(database: Adapter) {
     },
     create: async (params) => {
       injectFailure('create', params);
-      const pause = paused?.model === params.model ? paused : undefined;
-      if (pause) {
-        paused = undefined;
-        pause.reached();
-        await pause.released;
-      }
+      await pauseIfArmed('create', params);
       return database.create(params);
     }
   };
   return {
     database: wrapped,
-    arm: (model: string) => new Promise<void>((reached) => {
-      paused = { model, reached, released: new Promise<void>((resolve) => { release = resolve; }) };
+    arm: (
+      model: string,
+      operation: PausedOperation = 'create',
+      match: (params: { data?: Record<string, unknown> }) => boolean = () => true
+    ) => new Promise<void>((reached) => {
+      paused = { model, operation, match, reached, released: new Promise<void>((resolve) => { release = resolve; }) };
     }),
     release: () => release(),
     failNext: (model: string, match: (params: { data?: Record<string, unknown> }) => boolean, operation: Operation = 'create') => {

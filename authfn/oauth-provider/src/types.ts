@@ -77,7 +77,7 @@ export interface OAuthAuthorizationRequestParams {
 
 export interface OAuthLoginRequiredInput {
   request: Request;
-  /** The authorization URL to return to after sign-in. */
+  /** The URL to return to after sign-in: the authorization request or the device verification page. */
   returnTo: string;
 }
 

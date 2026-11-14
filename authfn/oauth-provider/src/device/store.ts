@@ -39,6 +39,8 @@ export function createDeviceSchema(): AuthFnSchemaDefinition['schemas'] {
       resource: { type: 'string', required: true, fieldName: 'resource' },
       scopes: { type: 'json', required: true, fieldName: 'scopes' },
       expiresAt: date('expires_at'),
+      // expiresAt as 16-digit milliseconds, compared as a string to prune expired rows in every adapter.
+      expiresKey: { type: 'string', required: true, fieldName: 'expires_key', maxLength: 16 },
       // Seconds the client must wait between polls; grows with each slow_down.
       interval: { type: 'number', required: true, fieldName: 'interval' },
       // `<poll time, 16-digit ms>:<random>` of the last admitted poll.
@@ -57,7 +59,8 @@ export function createDeviceSchema(): AuthFnSchemaDefinition['schemas'] {
     },
     indexes: [
       { name: 'idx_authfn_oauth_provider_device_codes_device_code_hash', fields: ['deviceCodeHash'], unique: true },
-      { name: 'idx_authfn_oauth_provider_device_codes_user_code_hash', fields: ['userCodeHash'], unique: true }
+      { name: 'idx_authfn_oauth_provider_device_codes_user_code_hash', fields: ['userCodeHash'], unique: true },
+      { name: 'idx_authfn_oauth_provider_device_codes_expires_key', fields: ['expiresKey'] }
     ]
   }];
 }
@@ -72,6 +75,7 @@ export interface DeviceCodeRecord {
   resource: string;
   scopes: string[];
   expiresAt: Date;
+  expiresKey: string;
   interval: number;
   pollClaim: string;
   decisionClaimId?: string | null;
@@ -90,9 +94,14 @@ function namespace(store: DeviceStore): string {
 
 const eq = (field: string, value: string) => ({ field, operator: 'eq' as const, value });
 
+/** Zero-padded so that string order is time order in every adapter. */
+function timeKey(ms: number): string {
+  return String(Math.max(0, ms)).padStart(16, '0');
+}
+
 /** Zero-padded so that the poll time can be read back from the claim. */
 function pollClaimAt(ms: number): string {
-  return `${String(Math.max(0, ms)).padStart(16, '0')}:${randomBytes(9).toString('hex')}`;
+  return `${timeKey(ms)}:${randomBytes(9).toString('hex')}`;
 }
 
 /** The time of the poll a claim admitted, in milliseconds (0 before the first poll). */
@@ -143,12 +152,14 @@ export async function createDeviceCode(
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const deviceCode = `odk_${randomBytes(32).toString('base64url')}`;
     const userCode = createUserCode();
+    const expiresAt = new Date(now.getTime() + OAUTH_DEVICE_CODE_TTL_SECONDS * 1000);
     const record: DeviceCodeRecord = {
       ...shared,
       id: `${DEVICE_CODE_ID_PREFIX}_${randomBytes(12).toString('hex')}`,
       deviceCodeHash: hashSecret(deviceCode),
       userCodeHash: hashSecret(userCode),
-      expiresAt: new Date(now.getTime() + OAUTH_DEVICE_CODE_TTL_SECONDS * 1000),
+      expiresAt,
+      expiresKey: timeKey(expiresAt.getTime()),
       interval: OAUTH_DEVICE_POLL_INTERVAL_SECONDS,
       pollClaim: pollClaimAt(0),
       decisionClaimId: null,
@@ -168,6 +179,23 @@ export async function createDeviceCode(
     }
   }
   throw lastError;
+}
+
+/**
+ * Deletes device codes that expired more than one lifetime before `now`
+ * without being exchanged. Exchanged rows are kept: the tokens issued for
+ * them are valid only while the row exists. The extra lifetime leaves a
+ * request that read a code just before it expired time to finish.
+ */
+export async function pruneDeviceCodes(store: DeviceStore, now: Date): Promise<void> {
+  await store.database.deleteMany({
+    model: DEVICE_CODE_MODEL,
+    where: [
+      { field: 'consumedAt', operator: 'eq', value: null },
+      { field: 'expiresKey', operator: 'lt', value: timeKey(now.getTime() - OAUTH_DEVICE_CODE_TTL_SECONDS * 1000) }
+    ],
+    namespace: namespace(store)
+  });
 }
 
 export function findDeviceCode(store: DeviceStore, deviceCode: string): Promise<DeviceCodeRecord | null> {
@@ -193,29 +221,43 @@ export async function findByUserCode(store: DeviceStore, userCode: string): Prom
   return rows.length === 1 ? rows[0] : null;
 }
 
+/** Concurrent polls of one code settle in at most this many rounds each. */
+const POLL_ATTEMPTS = 8;
+
 /**
  * Admits one poll of `record` unless it comes within the current interval of
  * the last admitted one. A poll that is too fast adds 5 seconds to the
  * interval (RFC 8628 3.5) and also counts as the last poll, so a client that
  * keeps polling early keeps being slowed. The update is conditional on the
- * poll claim read with `record` and read back: of concurrent polls exactly
- * one is decided, the others are too fast.
+ * poll claim read before it and read back. A poll whose update lost to a
+ * concurrent one reads the row again and retries, so it is judged against
+ * the poll that won: each concurrent poll after the first is too fast and
+ * stores its own 5 seconds. Only a poll still losing after 8 rounds (more
+ * than 8 concurrent polls of one code) is slowed without adding to the
+ * interval, which the others have already raised.
  */
 export async function admitPoll(store: DeviceStore, record: DeviceCodeRecord, now: Date): Promise<boolean> {
-  const tooFast = now.getTime() - pollClaimTime(record.pollClaim) < record.interval * 1000;
-  const pollClaim = pollClaimAt(now.getTime());
-  await store.database.updateMany({
-    model: DEVICE_CODE_MODEL,
-    where: [eq('id', record.id), eq('pollClaim', record.pollClaim)],
-    data: { pollClaim, interval: tooFast ? record.interval + OAUTH_DEVICE_POLL_INTERVAL_SECONDS : record.interval },
-    namespace: namespace(store)
-  });
-  const stored = await store.database.findOne<DeviceCodeRecord>({
-    model: DEVICE_CODE_MODEL,
-    where: [eq('id', record.id)],
-    namespace: namespace(store)
-  });
-  return !tooFast && stored?.pollClaim === pollClaim;
+  let current: DeviceCodeRecord | null = record;
+  for (let attempt = 0; current && attempt < POLL_ATTEMPTS; attempt += 1) {
+    const tooFast = now.getTime() - pollClaimTime(current.pollClaim) < current.interval * 1000;
+    const pollClaim = pollClaimAt(now.getTime());
+    await store.database.updateMany({
+      model: DEVICE_CODE_MODEL,
+      where: [eq('id', current.id), eq('pollClaim', current.pollClaim)],
+      data: { pollClaim, interval: tooFast ? current.interval + OAUTH_DEVICE_POLL_INTERVAL_SECONDS : current.interval },
+      namespace: namespace(store)
+    });
+    const stored: DeviceCodeRecord | null = await store.database.findOne<DeviceCodeRecord>({
+      model: DEVICE_CODE_MODEL,
+      where: [eq('id', current.id)],
+      namespace: namespace(store)
+    });
+    if (stored?.pollClaim === pollClaim) {
+      return !tooFast;
+    }
+    current = stored;
+  }
+  return false;
 }
 
 /**

@@ -36,6 +36,7 @@ import {
   findByUserCode,
   findDeviceCode,
   normalizeUserCode,
+  pruneDeviceCodes,
   OAUTH_DEVICE_CODE_TTL_SECONDS,
   OAUTH_DEVICE_POLL_INTERVAL_SECONDS,
   type DeviceCodeRecord
@@ -49,6 +50,19 @@ export const OAUTH_DEVICE_AUTHORIZATION_PATH = '/oauth/device_authorization';
 export const OAUTH_DEVICE_VERIFICATION_PATH = '/oauth/device';
 
 const DEFAULT_RATE_LIMIT = { perUser: 10, global: 1000, windowSeconds: 600 };
+const DEFAULT_AUTHORIZATION_RATE_LIMIT = { perIp: 20, global: 1000, windowSeconds: 600 };
+
+/** True when `limits` is absent or an object of positive integers named in `names`. */
+function validLimits(limits: unknown, names: string[]): boolean {
+  return limits === undefined || (isPlainObject(limits) && Object.entries(limits).every(([name, value]) =>
+    names.includes(name) &&
+    (value === undefined || (typeof value === 'number' && Number.isSafeInteger(value) && value > 0))));
+}
+
+/** The configured limits over the defaults; an `undefined` value keeps the default. */
+function limitsWithDefaults<T extends object>(defaults: T, configured: Partial<T> | undefined): T {
+  return { ...defaults, ...Object.fromEntries(Object.entries(configured ?? {}).filter(([, value]) => value !== undefined)) };
+}
 
 /** Rejects a malformed `pluginRuntime.oauthProvider.deviceAuthorization` at startup. */
 export function validateDeviceConfig(device: unknown): void {
@@ -59,11 +73,40 @@ export function validateDeviceConfig(device: unknown): void {
   if (!isPlainObject(device) || typeof device.verification !== 'function') {
     throw invalid('needs a verification hook');
   }
-  const { rateLimit } = device as Partial<OAuthDeviceAuthorizationConfig>;
-  if (rateLimit !== undefined && (!isPlainObject(rateLimit) || !Object.entries(rateLimit).every(([name, value]) =>
-    ['perUser', 'global', 'windowSeconds'].includes(name) &&
-    (value === undefined || (typeof value === 'number' && Number.isSafeInteger(value) && value > 0))))) {
+  const { rateLimit, authorizationRateLimit, resolveClientIp } = device as Partial<OAuthDeviceAuthorizationConfig>;
+  if (!validLimits(rateLimit, ['perUser', 'global', 'windowSeconds'])) {
     throw invalid('rateLimit takes positive integers perUser, global and windowSeconds');
+  }
+  if (!validLimits(authorizationRateLimit, ['perIp', 'global', 'windowSeconds'])) {
+    throw invalid('authorizationRateLimit takes positive integers perIp, global and windowSeconds');
+  }
+  if (resolveClientIp !== undefined && typeof resolveClientIp !== 'function') {
+    throw invalid('resolveClientIp must be a function');
+  }
+}
+
+/**
+ * Counts one device authorization request per client IP and overall, or
+ * throws a 429 `temporarily_unavailable` before anything is stored.
+ */
+async function admitDeviceAuthorization(
+  runtime: OAuthProviderRuntime,
+  device: OAuthDeviceAuthorizationConfig,
+  request: Request
+): Promise<void> {
+  const resolve = device.resolveClientIp ?? runtime.ctx.config.rateLimit?.resolveClientIp;
+  const ip = (await resolve?.(request))?.trim() || undefined;
+  const { perIp, global, windowSeconds } = limitsWithDefaults(DEFAULT_AUTHORIZATION_RATE_LIMIT, device.authorizationRateLimit);
+  const result = await admitRegistrationEvent(runtime.store, {
+    kind: 'device_code',
+    ip,
+    now: runtime.now(),
+    limits: { perIp, global, windowSeconds }
+  });
+  if (!result.admitted) {
+    throw new OAuthError('temporarily_unavailable', 'Too many device authorization requests; try again later', 429, {
+      'retry-after': String(result.retryAfterSeconds)
+    });
   }
 }
 
@@ -76,8 +119,7 @@ async function admitUserCodeLookup(
   device: OAuthDeviceAuthorizationConfig,
   user: OAuthProviderUser
 ): Promise<number | null> {
-  const configured = Object.fromEntries(Object.entries(device.rateLimit ?? {}).filter(([, value]) => value !== undefined));
-  const { perUser, global, windowSeconds } = { ...DEFAULT_RATE_LIMIT, ...configured };
+  const { perUser, global, windowSeconds } = limitsWithDefaults(DEFAULT_RATE_LIMIT, device.rateLimit);
   const result = await admitRegistrationEvent(runtime.store, {
     kind: 'user_code',
     ip: `user:${user.id}`,
@@ -119,11 +161,16 @@ async function lookUpUserCode(
 }
 
 /**
- * Approves a pending device authorization for `user`: creates its grant, then
- * records the decision, which only one decision wins. The disconnect
- * generation is read before the grant is created and again after the
- * decision, as an authorization code approval does; a disconnect in between
- * revokes the new grant. Returns whether the device will receive tokens.
+ * Approves a pending device authorization for `user`: creates its grant,
+ * checks the disconnect generation, and only then records the decision,
+ * which makes the code exchangeable and which only one decision wins. As for
+ * an authorization code, the generation is read before the grant is created
+ * and again after: a disconnect in between revokes the new grant and records
+ * the request as denied, so the device gets `access_denied`. A disconnect
+ * after the second read finds the grant, which already exists, and revokes
+ * it; the device then also gets `access_denied` (see `exchangeDeviceCode`).
+ * An approval interrupted anywhere before the decision leaves the request
+ * pending. Returns whether the device will receive tokens.
  */
 async function approve(
   runtime: OAuthProviderRuntime,
@@ -134,13 +181,14 @@ async function approve(
   const triple = { userId: user.id, clientId: record.clientId, resource: record.resource };
   const generation = await readGeneration(store, triple);
   const grant = await createGrant(store, { ...triple, scopes: record.scopes, now: runtime.now() });
+  if (await readGeneration(store, triple) !== generation) {
+    await revokeGrant(store, grant.id, 'consent_withdrawn', runtime.now());
+    await claimDecision(store, record.id, { decision: 'denied', userId: user.id, now: runtime.now() });
+    return 'withdrawn';
+  }
   if (!(await claimDecision(store, record.id, { decision: 'approved', userId: user.id, grantId: grant.id, now: runtime.now() }))) {
     await revokeGrant(store, grant.id, 'device_decided', runtime.now());
     return 'decided';
-  }
-  if (await readGeneration(store, triple) !== generation) {
-    await revokeGrant(store, grant.id, 'consent_withdrawn', runtime.now());
-    return 'withdrawn';
   }
   return 'approved';
 }
@@ -173,6 +221,8 @@ export function createDeviceRoutes(runtime: OAuthProviderRuntime): Route[] {
         }
         const resource = requireResource(runtime, params.get('resource'));
         const scopes = resolveRequestedScopes(resource, params.get('scope'));
+        await admitDeviceAuthorization(runtime, device, request);
+        await pruneDeviceCodes(runtime.store, runtime.now());
         const { deviceCode, userCode } = await createDeviceCode(runtime.store, {
           clientId: client.clientId,
           resource: resource.resource,
@@ -291,8 +341,10 @@ function deviceError(error: 'authorization_pending' | 'slow_down' | 'access_deni
  * Device access token request (RFC 8628 3.4, 3.5). The device polls with its
  * device code: `authorization_pending` until the user decides, `slow_down`
  * for a poll within the interval of the previous one (which adds 5 seconds
- * to it), `access_denied` after a denial and `expired_token` after 10
- * minutes. An approval yields the same tokens as an authorization code: an
+ * to it), `access_denied` after a denial or once the approved grant was
+ * revoked (the app was disconnected, or the user disabled) and
+ * `expired_token` after 10 minutes. A `resource` other than the requested
+ * one is `invalid_target` and leaves the code as it was. An approval yields the same tokens as an authorization code: an
  * access token for the approved scopes and a refresh token under the grant.
  * The device code works once; when its client presents it again after the
  * exchange, the grant is revoked, as for a replayed authorization code.
@@ -317,6 +369,10 @@ export async function exchangeDeviceCode(
   if (record.expiresAt.getTime() <= now.getTime()) {
     throw deviceError('expired_token', 'Device code has expired');
   }
+  const resource = params.get('resource');
+  if (resource !== undefined && resource !== record.resource) {
+    throw new OAuthError('invalid_target', 'resource does not match the device authorization request');
+  }
   if (!(await admitPoll(runtime.store, record, now))) {
     throw deviceError('slow_down', 'Polling too fast; wait longer between requests');
   }
@@ -329,7 +385,7 @@ export async function exchangeDeviceCode(
 
   const grant = await findLiveGrant(runtime.store, record.grantId);
   if (!grant) {
-    throw deviceError('invalid_grant', 'Authorization grant is no longer valid');
+    throw deviceError('access_denied', 'The authorization was withdrawn');
   }
   // As for a code: the staged tokens become valid only when the claim on the
   // device code commits, and a concurrent exchange that loses is a replay.

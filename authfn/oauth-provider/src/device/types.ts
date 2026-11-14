@@ -13,6 +13,16 @@ export interface OAuthDeviceUserCodeRateLimit {
   windowSeconds?: number;
 }
 
+/** Device authorization requests admitted per window; each one stores a pending code. */
+export interface OAuthDeviceAuthorizationRateLimit {
+  /** Per client IP, when the IP is known (see `resolveClientIp`). Defaults to 20. */
+  perIp?: number;
+  /** Across all callers. Defaults to 1000. */
+  global?: number;
+  /** Fixed window length. Defaults to 600 (ten minutes, one code's lifetime). */
+  windowSeconds?: number;
+}
+
 /** Why the user code on the verification page was not accepted. */
 export type OAuthDeviceVerificationError = 'invalid_user_code' | 'expired_user_code' | 'too_many_attempts';
 
@@ -63,4 +73,16 @@ export interface OAuthDeviceAuthorizationConfig {
   verification: (input: OAuthDeviceVerificationInput) => Response | Promise<Response>;
   /** Limits user code lookups, the guessing surface for user codes. */
   rateLimit?: OAuthDeviceUserCodeRateLimit;
+  /**
+   * Limits requests to the device authorization endpoint, which anyone who
+   * knows a configured client's `client_id` can call.
+   */
+  authorizationRateLimit?: OAuthDeviceAuthorizationRateLimit;
+  /**
+   * The caller's IP for the per-IP limit of `authorizationRateLimit`.
+   * Defaults to AuthFn's `rateLimit.resolveClientIp`; without either only the
+   * global limit applies. Read only an address your ingress sets, never a
+   * header callers can send.
+   */
+  resolveClientIp?: (request: Request) => string | null | undefined | Promise<string | null | undefined>;
 }

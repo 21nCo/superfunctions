@@ -27,6 +27,7 @@ export {
   OAUTH_DEVICE_POLL_INTERVAL_SECONDS,
   OAUTH_DEVICE_VERIFICATION_PATH,
   type OAuthDeviceAuthorizationConfig,
+  type OAuthDeviceAuthorizationRateLimit,
   type OAuthDeviceUserCodeRateLimit,
   type OAuthDeviceVerificationError,
   type OAuthDeviceVerificationInput
