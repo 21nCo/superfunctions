@@ -194,7 +194,7 @@ export interface BillFnWebhookReceipt {
  * - `billing_account_not_found`: the metadata names a billing account that does not exist.
  * - `price_not_found`: the event's product or price is not in the catalog.
  * - `billing_account_unavailable`: a subscription matches the reference but its billing account is gone.
- * - `provider_reference_replaced`: the reference matched a subscription until a replayed event replaced it.
+ * - `provider_reference_replaced`: a subscription write (an event, a replay, a provider read or a mutation) dropped the reference, possibly before this event was first delivered, and no subscription holds it.
  */
 export type BillFnUnlinkedWebhookEventReason =
   | 'billing_account_metadata_missing'
@@ -240,7 +240,7 @@ export interface BillFnUnlinkedWebhookEvent {
 /**
  * A provider reference a subscription write dropped (for example the previous
  * charge after a renewal). While no subscription holds it, no event naming it
- * bootstraps or links another subscription.
+ * bootstraps another subscription. Rows are never deleted.
  */
 export interface BillFnReplacedProviderReference {
   id: string;

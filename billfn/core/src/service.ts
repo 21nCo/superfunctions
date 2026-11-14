@@ -2485,8 +2485,9 @@ async function applyVerificationState(
 
     if (baseSubscription) {
       // A reference this write drops is recorded as replaced before it, so no failure or interruption
-      // after the write lets an event on it bootstrap or link another subscription; one a committed
-      // mutation cannot record is saved pending with the write.
+      // after the write lets an event on it bootstrap another subscription; one a committed mutation
+      // cannot record is saved pending with the write. A pending one is recorded before this write
+      // clears it, the order `namesReplacedReference` reads against.
       const pending = await recordDroppedReferences(deps, baseSubscription, record, Boolean(input.committedAt));
       Object.assign(record, withPendingReplacements(record.metadata, pending));
       // A provider-state time is only written by an update ordered against the row it was computed from.
@@ -3648,7 +3649,10 @@ async function recordReplacedReferenceEvents(deps: ServiceDeps, provider: Billin
  * (`recordReplacedProviderReferences`), then marks the retained events on them.
  * A failure throws, except during a committed provider mutation, which is never
  * failed by it: the references it could not record are returned, and its write
- * saves them pending (`withPendingReplacements`).
+ * saves them pending (`withPendingReplacements`). Pending references are
+ * recorded here before the caller's write clears them, so a guard that reads
+ * pending and then recorded references never misses one
+ * (`namesReplacedReference`).
  */
 async function recordDroppedReferences(
   deps: ServiceDeps,
@@ -3748,7 +3752,16 @@ function withPendingReplacements(metadata: Record<string, unknown> | undefined, 
  * subscription write dropped and recorded, one a committed mutation's write
  * saved pending (any subscription of the provider), or the one it was
  * retained on when a replay replaced it. A reference a subscription holds
- * again resolves to it first.
+ * again resolves to it first. Only bootstrap is gated by it.
+ *
+ * Linearization contract with the writers: a write that drops a held
+ * reference either records it (`recordDroppedReferences`) before the write or
+ * saves it pending in that same write; a later write records a pending
+ * reference before its write clears the pending flag; recorded references are
+ * never deleted. The reads therefore run one after another in the opposite
+ * order, after the caller found no holder: pending, then recorded, then the
+ * retained event. A writer that clears pending between them has already
+ * recorded the reference, so one of the reads sees it.
  */
 async function namesReplacedReference(
   deps: ServiceDeps,
@@ -3760,38 +3773,36 @@ async function namesReplacedReference(
     (reference): reference is string => typeof reference === 'string' && reference.length > 0
   );
   const named = new Set(references);
-  const [replaced, pending, retained] = await Promise.all([
-    references.length > 0
-      ? deps.db.findMany<BillFnReplacedProviderReference>({
-          model: TABLES.replacedProviderReferences,
-          where: [
-            { field: 'provider', operator: 'eq', value: provider },
-            { field: 'providerReference', operator: 'in', value: references }
-          ],
-          namespace: deps.namespace
-        })
-      : [],
-    references.length > 0
-      ? deps.db.findMany<BillFnSubscription>({
-          model: TABLES.subscriptions,
-          where: [
-            { field: 'provider', operator: 'eq', value: provider },
-            { field: 'replacedReferencesPending', operator: 'eq', value: true }
-          ],
-          namespace: deps.namespace
-        })
-      : [],
-    deps.db.findOne<BillFnUnlinkedWebhookEvent>({
-      model: TABLES.unlinkedWebhookEvents,
-      where: [{ field: 'id', operator: 'eq', value: buildUnlinkedWebhookEventId(provider, event.providerEventId) }],
+  if (named.size > 0) {
+    const pending = await deps.db.findMany<BillFnSubscription>({
+      model: TABLES.subscriptions,
+      where: [
+        { field: 'provider', operator: 'eq', value: provider },
+        { field: 'replacedReferencesPending', operator: 'eq', value: true }
+      ],
       namespace: deps.namespace
-    })
-  ]);
-  return (
-    replaced.length > 0 ||
-    pending.some((subscription) => pendingReplacedReferencesOf(subscription).some((reference) => named.has(reference))) ||
-    retained?.reason === 'provider_reference_replaced'
-  );
+    });
+    if (pending.some((subscription) => pendingReplacedReferencesOf(subscription).some((reference) => named.has(reference)))) {
+      return true;
+    }
+    const replaced = await deps.db.findMany<BillFnReplacedProviderReference>({
+      model: TABLES.replacedProviderReferences,
+      where: [
+        { field: 'provider', operator: 'eq', value: provider },
+        { field: 'providerReference', operator: 'in', value: references }
+      ],
+      namespace: deps.namespace
+    });
+    if (replaced.length > 0) {
+      return true;
+    }
+  }
+  const retained = await deps.db.findOne<BillFnUnlinkedWebhookEvent>({
+    model: TABLES.unlinkedWebhookEvents,
+    where: [{ field: 'id', operator: 'eq', value: buildUnlinkedWebhookEventId(provider, event.providerEventId) }],
+    namespace: deps.namespace
+  });
+  return retained?.reason === 'provider_reference_replaced';
 }
 
 function namesAnyReference(row: BillFnUnlinkedWebhookEvent, references: string[]) {

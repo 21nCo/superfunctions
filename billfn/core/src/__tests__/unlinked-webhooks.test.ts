@@ -3655,3 +3655,104 @@ describe('provider-wide replaced references and bounded replay continuation (PR 
     expect(await entitlementStatus(billfn, 'drain_user')).toBe('inactive');
   }, 60_000);
 });
+
+describe('replaced-reference guard reads ordered against the writes that record them (PR #308 round 7)', () => {
+  it.each([
+    { recoveryBefore: 0, when: 'after the holder lookup, before the first guard read' },
+    { recoveryBefore: 1, when: 'between the guard reads' }
+  ])(
+    'never bootstraps a first-time event naming another account on a pending charge when the write recording it runs $when',
+    async ({ recoveryBefore }) => {
+      const fault = { armed: false };
+      const failRecord = async (params: { model: string }, next: () => Promise<unknown>) => {
+        if (params.model === 'replacedProviderReferences' && fault.armed) {
+          throw new Error('injected record failure');
+        }
+        return next();
+      };
+      // Each store read of the guard (pending subscriptions or recorded references) is counted in
+      // invocation order; the recovery write runs once every earlier read finished and before the
+      // read at `recoveryBefore` executes, whichever order the guard uses.
+      const guard = { armed: false, reads: [] as Promise<void>[], recovery: async () => {} };
+      const isGuardRead = (params: Parameters<Db['findMany']>[0]) =>
+        params.model === 'replacedProviderReferences' ||
+        (params.model === 'subscriptions' && (params.where ?? []).some((clause) => clause.field === 'replacedReferencesPending'));
+      const db = interceptDb(memoryAdapter({ debug: false }), {
+        create: failRecord,
+        updateMany: failRecord,
+        findMany: async (params, next) => {
+          if (!guard.armed || !isGuardRead(params)) {
+            return next();
+          }
+          const earlier = [...guard.reads];
+          let finished = () => {};
+          guard.reads.push(new Promise<void>((resolve) => (finished = resolve)));
+          try {
+            if (earlier.length === recoveryBefore) {
+              await Promise.all(earlier);
+              guard.armed = false;
+              await guard.recovery();
+            }
+            return await next();
+          } finally {
+            finished();
+          }
+        }
+      });
+      const canceledState = { subscriptionStatus: 'canceled' as const, checkoutStatus: 'succeeded' as const, providerSubscriptionId: 'sub_ord', providerChargeId: 'pay_ord_2', autoRenew: false };
+      const calls = { cancel: 0 };
+      const base = createProvider({});
+      const provider: BillFnProviderAdapter = {
+        ...base,
+        capabilities: { ...base.capabilities, cancelSubscription: true },
+        async cancelSubscription() {
+          calls.cancel += 1;
+          fault.armed = true;
+          return { operationStatus: 'applied', billingState: canceledState };
+        }
+      };
+      const config = { db, catalog, now: () => new Date('2026-11-01T00:00:01.000Z'), providers: { dodo: provider } };
+      const billfn = createBillFn(config);
+      await billfn.quotaProvider.recordUsage({ principalId: 'ord_user', bytes: 0 });
+      await billfn.quotaProvider.recordUsage({ principalId: 'ord_other_user', bytes: 0 });
+      await deliver(billfn, [bootstrapEvent('ord', { chargeId: 'pay_ord_1' })]);
+      const canceled = await billfn.cancelSubscription({ subject: { principalId: 'ord_user' } });
+      fault.armed = false;
+      expect(canceled.ok && canceled.data.subscription).toMatchObject({ status: 'canceled', providerChargeId: 'pay_ord_2' });
+      const stored = async () => (await db.findMany<BillFnSubscription>({ model: 'subscriptions', where: [], namespace: 'billfn' }))[0];
+      expect(await stored()).toMatchObject({ replacedReferencesPending: true });
+
+      // A later canceled event on the subscription records pay_ord_1 and clears it pending, while
+      // another process checks a first-time event for pay_ord_1 naming the other account.
+      const other = createBillFn(config);
+      const recovery = { runs: 0 };
+      guard.recovery = async () => {
+        recovery.runs += 1;
+        await deliver(other, [subscriptionEvent({ eventId: 'evt_ord_next', subscriptionId: 'sub_ord', chargeId: 'pay_ord_2', status: 'canceled', occurredAt: '2026-11-01T00:00:05.000Z' })]);
+      };
+      guard.armed = true;
+      const late = subscriptionEvent({ eventId: 'evt_ord_late', chargeId: 'pay_ord_1', status: 'active', occurredAt: '2026-11-01T00:00:00.500Z', billingAccountId: 'ba_user_ord_other_user' });
+      expect((await deliver(createBillFn(config), [late])).ok).toBe(true);
+      guard.armed = false;
+      // A guard that stopped at the pending reference before that read ran leaves the write to run after it.
+      if (recovery.runs === 0) {
+        await guard.recovery();
+      }
+      expect(recovery.runs).toBe(1);
+
+      expect(await db.findMany({ model: 'subscriptions', where: [], namespace: 'billfn' })).toEqual([
+        expect.objectContaining({ billingAccountId: 'ba_user_ord_user', status: 'canceled', providerChargeId: 'pay_ord_2' })
+      ]);
+      expect(await db.findMany({ model: 'unlinkedWebhookEvents', where: [], namespace: 'billfn' })).toEqual([
+        expect.objectContaining({ providerEventId: 'evt_ord_late', status: 'unlinked', reason: 'provider_reference_replaced' })
+      ]);
+      expect(await db.findMany({ model: 'replacedProviderReferences', where: [], namespace: 'billfn' })).toEqual([
+        expect.objectContaining({ providerReference: 'pay_ord_1', billingAccountId: 'ba_user_ord_user' })
+      ]);
+      expect((await stored())?.replacedReferencesPending).toBeNull();
+      expect(await entitlementStatus(billfn, 'ord_user')).toBe('inactive');
+      expect(await entitlementStatus(billfn, 'ord_other_user')).not.toBe('active');
+      expect(calls.cancel).toBe(1);
+    }
+  );
+});
