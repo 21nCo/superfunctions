@@ -676,6 +676,13 @@ describe("panel policy and slot identity", () => {
     expect(unsupportedOutputSchema(object({ a: {} }))).toBe("a schema without type, enum or const at /properties/a");
     expect(unsupportedOutputSchema(object({ a: true }))).toBe("a schema that is not an object at /properties/a");
     expect(unsupportedOutputSchema({ anyOf: [object({})] })).toMatch(/^anyOf at the root/);
+    expect(unsupportedOutputSchema({ ...object({}), $async: true })).toBe("$async at /");
+  });
+
+  it("refuses an $async schema instead of reading its promise as valid", () => {
+    const schema = { $async: true, type: "object", additionalProperties: false, required: ["a"], properties: { a: { type: "string" } } };
+    expect(() => validateStructuredOutput(schema, {})).toThrow(/\$async/);
+    expect(() => validateStructuredOutput(schema, { a: "set" })).toThrow(/\$async/);
   });
 
   it("converts node-locally and copies literal data verbatim", () => {

@@ -188,6 +188,8 @@ function compile(schema: Readonly<Record<string, unknown>>): ValidateFunction {
   if (!validate) {
     // One Ajv instance per schema: Ajv retains every schema it compiles, and caller schemas may reuse an `$id`.
     validate = new Ajv({ allErrors: true, strict: true }).compile(schema);
+    // An $async validator returns a promise, which would read as valid and leave its rejection unhandled.
+    if ((validate as { $async?: boolean }).$async) throw new Error("strict mode: $async schemas are not supported for structured output");
     compiled.set(schema, validate);
   }
   return validate;
@@ -195,7 +197,7 @@ function compile(schema: Readonly<Record<string, unknown>>): ValidateFunction {
 
 /**
  * Compile a structured-output JSON Schema such as `lensOutputSchema` into a validator returning error messages.
- * Throws when the schema cannot be compiled; compiled schemas are cached by object identity.
+ * Throws when the schema cannot be compiled or is `$async`; compiled schemas are cached by object identity.
  */
 export function structuredOutputValidator(schema: Readonly<Record<string, unknown>>): (value: unknown) => string[] {
   const compiledValidator = compile(schema);

@@ -20,12 +20,6 @@ function lensPayload(severity = "high") {
   return { findings: [lensFinding(severity)], evidence: [{ id: "E1", kind: "code", description: "loop bound", source: null, code: { commit: head, path: "src/index.ts", startLine: 3, endLine: null, symbol: null }, receiptId: null, artifactDigest: null, sourceExclusionReason: null }], inspectedPaths: ["src/index.ts"], uninspected: [] };
 }
 
-/** The lens schema without its closed root, so a test can add root properties through combinators. */
-function open(): Record<string, unknown> {
-  const { additionalProperties: _closed, ...rest } = lensOutputSchema;
-  return rest;
-}
-
 /** A fake Codex that records the schema it was given and answers with `payload`. */
 function recordingAdapter(payload: unknown) {
   const seen: { schema?: unknown; invoked: boolean } = { invoked: false };
@@ -193,7 +187,7 @@ describe("CodexHarnessAdapter outputSchema", () => {
     ["additionalProperties", "uses", "an object without additionalProperties false", notesSchema({ type: "object", properties: { a: { type: "string" } } })],
     ["additionalProperties", "invalid", "properties without type object", notesSchema({ properties: { a: { type: "string" } }, additionalProperties: false })],
     ["required", "invalid", "a required property that is not declared", { ...lensOutputSchema, required: [...lensOutputSchema.required, "notes"] }],
-    ["$async", "uses", "$async", { ...lensOutputSchema, $async: true }],
+    ["$async", "invalid", "$async", { ...lensOutputSchema, $async: true }],
     ["$defs", "uses", "nested $defs", notesSchema(object({ a: { $ref: "#/$defs/codeAnchor" } }, { $defs: { x: { type: "string" } } }))],
     ["default", "uses", "a default", notesSchema({ type: "string", default: "x" })],
   ])("fails before inference when outputSchema has %s (%s: %s)", async (keyword, kind, _name, outputSchema) => {
