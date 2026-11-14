@@ -146,10 +146,22 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
   let publishedUploads: string[];
   let multipartUploadsStarted: number;
   let abortedUploads: string[];
+  /** Runs before the next multipart upload starts; it may hold or throw. */
+  let beforeMultipartInit: (() => Promise<void>) | null;
+  let failNextPublish: boolean;
   let publishGate: ReturnType<typeof hold> | null;
   let fileFn: FileFn;
 
-  /** Holds the next multipart completion (publish) until released. */
+  async function passPublishGate(): Promise<void> {
+    const gate = publishGate;
+    if (gate) {
+      publishGate = null;
+      gate.arrive();
+      await gate.wait;
+    }
+  }
+
+  /** Holds the next publish (multipart completion, or proxy stitch) until released. */
   function holdNextPublish(): Hold {
     const h = hold();
     publishGate = h;
@@ -174,6 +186,8 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
     publishedUploads = [];
     multipartUploadsStarted = 0;
     abortedUploads = [];
+    beforeMultipartInit = null;
+    failNextPublish = false;
     publishGate = null;
     const proxy = mode === 'proxy';
     fileFn = createFileFn({
@@ -194,20 +208,24 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
         },
         async createMultipartUpload() {
           if (options.failMultipartInit) throw new Error('storage unavailable');
+          const hook = beforeMultipartInit;
+          beforeMultipartInit = null;
+          if (hook) await hook();
           multipartUploadsStarted += 1;
           return { uploadId: `mpu_${multipartUploadsStarted}` };
         },
         async completeMultipartUpload(input) {
-          const gate = publishGate;
-          if (gate) {
-            publishGate = null;
-            gate.arrive();
-            await gate.wait;
+          await passPublishGate();
+          if (failNextPublish) {
+            failNextPublish = false;
+            throw new Error('storage unavailable');
           }
           objects.set(input.key, input.uploadId);
           publishedUploads.push(input.uploadId);
         },
         async openUploadStream(input) {
+          // Publishing the final object, not a part.
+          if (!/\.part\d+$/.test(input.key)) await passPublishGate();
           let content = '';
           const decoder = new TextDecoder();
           return new WritableStream<Uint8Array>({
@@ -745,6 +763,25 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
       expect((await init('user_b', { fileId })).status).toBe(403);
     });
 
+    it("is kept when a failed init's retry already relies on it", async () => {
+      const fileId = 'file_rollback_relied1';
+      const setup = hold();
+      beforeMultipartInit = async () => {
+        setup.arrive();
+        await setup.wait;
+        throw new Error('storage unavailable');
+      };
+      const failing = init('user_a', { fileId });
+      await setup.reached;
+      // The first init made the reservation; its retry is admitted under it.
+      expect((await init('user_a', { fileId })).status).toBe(200);
+      setup.release();
+      expect((await failing).status).toBe(500);
+
+      expect(reservationRow(fileId)).toMatchObject({ ownerId: 'user_a' });
+      expect((await init('user_b', { fileId })).status).toBe(403);
+    });
+
     it('is made only once the upload is admitted', async () => {
       build({ quotaAllowed: false });
       expect((await init('user_a', { fileId: 'file_over_quota_01' })).status).toBe(402);
@@ -782,8 +819,8 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
       expect(done.status).toBe(200);
       expect(done.body.data.fileId).toBe(fileId);
       expect(fileRows(fileId)).toEqual([expect.objectContaining({ ownerId: 'anonymous', currentVersionId: done.body.data.versionId })]);
-      // The ID was reserved for the anonymous session that created the file.
-      expect(reservationRow(fileId)).toMatchObject({ ownerId: 'anonymous', storageUploadId: sessionsOf('anonymous')[0].uploadSessionId });
+      // Its claim on the ID ended once the file existed.
+      expect(reservationRow(fileId)).toBeUndefined();
     });
 
     it('gets 403 at init under an ID a named principal reserved', async () => {
@@ -808,7 +845,7 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
       return { uploadSessionId: uploadSessionId as string, token };
     }
 
-    describe.each(['multipart', 'proxy'] as const)('holds the ID from init, with a storage path shared by the ID, in %s mode', (mode) => {
+    describe.each(['multipart', 'proxy'] as const)('claims the ID before it publishes, with a storage path shared by the ID, in %s mode', (mode) => {
       beforeEach(() => build({ anonymous: true, layout: 'shared', mode }));
 
       it('so a named init while its completion publishes gets 403, and one owner keeps its bytes', async () => {
@@ -816,7 +853,7 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
         const anon = await anonymousInitAndUpload(fileId, 'AAA');
         const publishing = holdNextPublish();
         const pending = call('POST', `/upload/${anon.uploadSessionId}/complete`, '', undefined, anon.token);
-        if (mode === 'multipart') await publishing.reached;
+        await publishing.reached;
 
         const named = await init('user_a', { fileId });
         expect(named.status).toBe(403);
@@ -826,7 +863,9 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
 
         expect(done.status).toBe(200);
         expect(fileRows(fileId)).toEqual([expect.objectContaining({ ownerId: 'anonymous' })]);
-        expect(reservationRow(fileId)).toMatchObject({ ownerId: 'anonymous', storageUploadId: anon.uploadSessionId });
+        // The claim is given up once the file exists; user_a now needs write permission.
+        expect(reservationRow(fileId)).toBeUndefined();
+        expect((await init('user_a', { fileId })).status).toBe(403);
         // The download path serves the anonymous upload's bytes; user_a stored none.
         expect(multipartUploadsStarted).toBe(mode === 'multipart' ? 1 : 0);
         const expected = mode === 'proxy' ? 'AAA' : sessionRow(anon.uploadSessionId).storageUploadId;
@@ -834,28 +873,42 @@ describe('client-chosen file IDs on upload/init (FILE-5)', () => {
       });
     });
 
-    it('refuses another anonymous session until the holder is aborted, and replays an idempotent retry', async () => {
-      const fileId = 'file_anon_vs_anon_01';
-      const first = await anonymousInitAndUpload(fileId, 'abc', { 'x-idempotency-key': 'idem_anon_1' });
-      const replay = await init('', { fileId }, { 'x-idempotency-key': 'idem_anon_1' });
-      expect(replay.body.data.uploadSessionId).toBe(first.uploadSessionId);
-      expect((await init('', { fileId })).status).toBe(403);
-      expect((await init('user_a', { fileId })).status).toBe(403);
+    it('may init again without a key after a lost response, and one file results', async () => {
+      const fileId = 'file_anon_lost_init1';
+      const lost = await anonymousInitAndUpload(fileId);
+      const retry = await anonymousInitAndUpload(fileId);
+      expect(retry.uploadSessionId).not.toBe(lost.uploadSessionId);
 
-      expect((await call('POST', `/upload/${first.uploadSessionId}/abort`, '', undefined, first.token)).status).toBe(200);
-      expect(reservationRow(fileId)).toBeUndefined();
-      expect((await init('user_a', { fileId })).status).toBe(200);
+      const done = await call('POST', `/upload/${retry.uploadSessionId}/complete`, '', undefined, retry.token);
+      expect(done.status).toBe(200);
+      expect(fileRows(fileId)).toEqual([expect.objectContaining({ ownerId: 'anonymous', currentVersionId: done.body.data.versionId })]);
     });
 
-    it('lets the ID go once the holding session expires', async () => {
-      const fileId = 'file_anon_expired_01';
+    it('refuses a second completion while another session holds the claim; it publishes nothing', async () => {
+      const fileId = 'file_anon_two_complete';
+      const [first, second] = [await anonymousInitAndUpload(fileId), await anonymousInitAndUpload(fileId)];
+      const publishing = holdNextPublish();
+      const pending = call('POST', `/upload/${first.uploadSessionId}/complete`, '', undefined, first.token);
+      await publishing.reached;
+
+      const refused = await call('POST', `/upload/${second.uploadSessionId}/complete`, '', undefined, second.token);
+      expect(refused.status).toBe(403);
+      expect(sessionRow(second.uploadSessionId).status).toBe('aborted');
+      expect(abortedUploads).toEqual([sessionRow(second.uploadSessionId).storageUploadId]);
+      publishing.release();
+      expect((await pending).status).toBe(200);
+      expect(publishedUploads).toEqual([sessionRow(first.uploadSessionId).storageUploadId]);
+    });
+
+    it('gives up its claim when its completion fails, so a retry under the ID succeeds', async () => {
+      const fileId = 'file_anon_failed_pub1';
       const first = await anonymousInitAndUpload(fileId);
-      sessionRow(first.uploadSessionId).expiresAt = new Date(Date.now() - 1000).toISOString();
-      const second = await init('', { fileId });
-      expect(second.status).toBe(200);
-      expect(reservationRow(fileId)).toMatchObject({ storageUploadId: second.body.data.uploadSessionId });
-      // The expired session can no longer complete.
-      expect((await call('POST', `/upload/${first.uploadSessionId}/complete`, '', undefined, first.token)).status).toBe(410);
+      failNextPublish = true;
+      expect((await call('POST', `/upload/${first.uploadSessionId}/complete`, '', undefined, first.token)).status).toBe(500);
+      expect(reservationRow(fileId)).toBeUndefined();
+
+      const retry = await anonymousInitAndUpload(fileId);
+      expect((await call('POST', `/upload/${retry.uploadSessionId}/complete`, '', undefined, retry.token)).status).toBe(200);
     });
   });
 

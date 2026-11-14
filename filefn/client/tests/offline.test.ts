@@ -192,7 +192,7 @@ describe('OPFSStore', () => {
       });
     });
 
-    it('gives legacy metadata without a fileId the same grammar-valid ID on every read', async () => {
+    it('gives legacy metadata whose fileId is its session ID the same grammar-valid ID on every read', async () => {
       const store = new OPFSStore();
       await store.init();
       const sessionId = generateOfflineSessionId();
@@ -207,11 +207,12 @@ describe('OPFSStore', () => {
         createdAt: new Date().toISOString(),
         retryCount: 0,
       });
-      // Rewrite the metadata the way a client staged it before uploads carried a fileId.
+      // Rewrite the metadata the way an earlier client staged an upload without
+      // a fileId: it persisted the upload session ID as the file ID.
       const dir = await (await mockRoot.getDirectoryHandle('filefn-pending-uploads')).getDirectoryHandle(sessionId);
       const meta = await dir.getFileHandle('metadata.json');
       const legacy = JSON.parse(await (await meta.getFile()).text());
-      delete legacy.fileId;
+      legacy.fileId = sessionId;
       await (await meta.createWritable()).write(JSON.stringify(legacy));
 
       const fileId = (await store.getPendingUpload(sessionId))!.fileId!;

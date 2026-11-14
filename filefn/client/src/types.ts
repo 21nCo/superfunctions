@@ -56,20 +56,20 @@ export interface UploadInput {
    *
    * - Must match `file_[A-Za-z0-9_-]{8,64}`; the server rejects any other value
    *   on `upload/init` with 400 `FILEFN_INVALID_FILE_ID`.
-   * - A new ID (no file yet) is reserved on `upload/init`, and the file is
-   *   created under it when the upload completes. The first caller to init an
-   *   ID keeps it: anyone else's `upload/init` under it fails with 403
-   *   `FILEFN_FORBIDDEN`, so it never uploads. A signed-in caller's ID stays
-   *   reserved to it even if the file is later deleted.
-   * - An anonymous caller's reservation belongs to its upload session: another
-   *   anonymous `upload/init` under the ID fails with 403 until that session
-   *   completes, and the ID is free again once the session is aborted or
-   *   expires. Retry an anonymous `upload/init` with the same
-   *   `idempotencyKey`.
-   * - A completion can still fail with 403 after its parts were uploaded:
-   *   when write permission on an existing file was lost after init, or when
-   *   its reservation was lost (an anonymous session that expired, say). The
-   *   session is then aborted.
+   * - A new ID (no file yet) is reserved for the signed-in caller on
+   *   `upload/init`, and the file is created owned by that caller when the
+   *   upload completes. The first caller to init an ID keeps it: another
+   *   principal's `upload/init` under it fails with 403 `FILEFN_FORBIDDEN`, so
+   *   it never uploads. The ID stays reserved to its owner even if the file is
+   *   later deleted.
+   * - An anonymous caller claims the ID only when its upload completes, just
+   *   before the bytes are stored, and gives the claim up once the file
+   *   exists or the completion fails. Its `upload/init` fails with 403 if
+   *   someone else holds the ID; it may init again without a key.
+   * - Only a completion can fail with 403 after the parts were uploaded: an
+   *   anonymous one whose ID someone else reserved or claimed first, or one
+   *   that lost write permission on an existing file after init. The session
+   *   is then aborted, and nothing it uploaded is kept.
    * - An existing ID replaces that file with a new version and needs write
    *   permission on it; otherwise `upload/init` fails with 403.
    * - Retrying `upload/init` under the same ID is safe. With the same

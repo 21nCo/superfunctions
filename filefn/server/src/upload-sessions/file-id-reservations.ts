@@ -8,8 +8,9 @@ import { randomBytes } from 'crypto';
  * what makes the first reservation of an ID win; it is not an upload session:
  * session lookups skip it, its `status` is `completed` and it never expires,
  * so expired-session cleanup keeps it, and its `fileId` is null, so deleting
- * the file keeps it too. The ID stays with its first owner; an anonymous
- * owner is one upload session, whose claim lapses if it never completes.
+ * the file keeps it too. The ID stays with its first owner. An anonymous
+ * caller claims an ID for one upload session only while that session's
+ * completion creates the file; the claim is released once the file exists.
  */
 export const FILE_ID_RESERVATION_MODE = 'file-id-reservation';
 
@@ -84,21 +85,30 @@ export function createFileIdReservations(config: { db: Adapter; namespace: strin
     });
   }
 
-  /** An anonymous claim lapses once its session is gone, aborted, or expired without completing. */
+  /**
+   * An anonymous claim lapses once its session has ended or is gone (expired
+   * sessions are deleted by cleanup, which releases their claims). Its session
+   * exists before it claims, since it claims only on completion.
+   */
   async function isLapsed(reservation: ReservationRecord): Promise<boolean> {
     if (reservation.ownerId !== 'anonymous' || !reservation.storageUploadId) return false;
-    const session = await db.findOne<{ status: string; expiresAt: string }>({
+    const session = await db.findOne<{ status: string }>({
       model: 'uploadSessions',
       where: [{ field: 'uploadSessionId', operator: 'eq', value: reservation.storageUploadId }],
       namespace,
     });
-    if (!session || session.status === 'aborted') return true;
-    return session.status !== 'completed' && new Date(session.expiresAt).getTime() <= Date.now();
+    return !session || session.status === 'aborted' || session.status === 'completed';
   }
 
   return {
     find,
     release,
+
+    /** Whether someone other than `claimant` holds a live reservation of `fileId`. */
+    async heldByOther(fileId: string, claimant: FileIdClaimant): Promise<boolean> {
+      const reservation = await find(fileId);
+      return !!reservation && !holdsReservation(reservation, claimant) && !(await isLapsed(reservation));
+    },
 
     /**
      * Reserves `fileId` for `claimant` unless someone else holds it, and

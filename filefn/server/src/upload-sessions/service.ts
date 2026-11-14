@@ -63,8 +63,8 @@ export interface CreateSessionInput {
   /**
    * Client-chosen file ID (`file_[A-Za-z0-9_-]{8,64}`); omit or pass null to
    * let the server generate one. An ID with no file is reserved on init for a
-   * named caller, or an anonymous caller's session (first caller wins; anyone
-   * else gets 403, the same named one may init again).
+   * named caller (first caller wins; another principal gets 403, the same one
+   * may init again); an anonymous session claims it on completion.
    * An ID with a file replaces it with a new version:
    * init checks write permission with the configured `fileWriteChecker`, and
    * completion checks it again.
@@ -261,7 +261,16 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       }
       return true;
     }
-    await assertNotReservedByOther(fileId, session, false);
+    if (session.ownerId === 'anonymous') {
+      // An anonymous session claims the ID before it publishes, so a named
+      // init or another anonymous completion meanwhile gets 403.
+      if (!(await reservations.reserve(fileId, session, session.policy)).held) {
+        await endSession(session);
+        throw errors.forbidden({ fileId, operation: 'create' });
+      }
+    } else {
+      await assertNotReservedByOther(fileId, session, false);
+    }
     return false;
   }
 
@@ -529,23 +538,36 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         uploadSessionTokenHash = hashUploadSessionToken(uploadSessionToken);
       }
 
-      // A new client-chosen ID is reserved for this caller: a named principal,
-      // or, for an anonymous caller, this session. The first caller wins, so
-      // anyone else gets 403 here and never uploads under it; the same named
-      // caller may init again (a retry). Admission is settled by now, so a
-      // rejected request reserves nothing.
+      // A new client-chosen ID is reserved for a named caller. The first
+      // caller wins, so anyone else gets 403 here and never uploads under it;
+      // the same named caller may init again (a retry). Admission is settled
+      // by now, so a rejected request reserves nothing. An anonymous caller
+      // claims the ID only when it completes (so it may init again without a
+      // key), and gets 403 here while someone else holds it.
+      const owner = { ownerId: ctx.principalId || 'anonymous', tenantId: ctx.tenantId || null };
       let reservationToken: string | null = null;
-      if (reserveFileId) {
-        const claimant = { ownerId: ctx.principalId || 'anonymous', tenantId: ctx.tenantId || null, uploadSessionId };
-        const reservation = await reservations.reserve(fileId, claimant, input.policy);
+      if (reserveFileId && owner.ownerId === 'anonymous') {
+        if (await reservations.heldByOther(fileId, owner)) throw errors.forbidden({ fileId, operation: 'create' });
+      } else if (reserveFileId) {
+        const reservation = await reservations.reserve(fileId, owner, input.policy);
         if (!reservation.held) {
           throw errors.forbidden({ fileId, operation: 'create' });
         }
         reservationToken = reservation.token;
       }
-      // If the upload never starts, drop the reservation this request made.
+      // If the upload never starts, drop the reservation this request made,
+      // unless another session of the same caller already relies on it.
       const releaseReservation = async (error: unknown): Promise<never> => {
-        if (reservationToken) await reservations.release(fileId, reservationToken).catch(() => undefined);
+        const relied = reservationToken && await db.findOne({
+          model: 'uploadSessions',
+          where: [
+            { field: 'fileId', operator: 'eq', value: fileId },
+            { field: 'ownerId', operator: 'eq', value: owner.ownerId },
+            { field: 'status', operator: 'ne', value: 'aborted' },
+          ],
+          namespace,
+        });
+        if (reservationToken && !relied) await reservations.release(fileId, reservationToken).catch(() => undefined);
         throw error;
       };
 
@@ -833,6 +855,19 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     },
 
     async completeSession(uploadSessionId: string, ctx: FileProviderContext, uploadSessionToken?: string): Promise<{ fileId: string; versionId: string }> {
+      try {
+        return await this.publishSession(uploadSessionId, ctx, uploadSessionToken);
+      } catch (error) {
+        // A failed completion created no file, so it gives up any anonymous
+        // claim it made; the client may retry under the same ID.
+        const session = await findSession(uploadSessionId);
+        if (session && session.status !== 'completed') await reservations.releaseClaimOf(session).catch(() => undefined);
+        throw error;
+      }
+    },
+
+    /** Completes a session: publishes its object and creates or updates its file. */
+    async publishSession(uploadSessionId: string, ctx: FileProviderContext, uploadSessionToken?: string): Promise<{ fileId: string; versionId: string }> {
       const session = await findSession(uploadSessionId);
 
       if (!session) throw errors.sessionNotFound();
@@ -1076,6 +1111,9 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         },
         namespace,
       });
+
+      // The file exists now, so an anonymous claim on its ID is no longer needed.
+      await reservations.releaseClaimOf(session);
 
       // Update session
       await db.update({
