@@ -1268,6 +1268,40 @@ describe('billfn.services.subscriptions.import', () => {
     expect(await env.billfn.subscriptionProvider.isActive({ principalId: 'alice' })).toBe(true);
   });
 
+  it('records a re-import\'s operator before it changes an accepted subscription, even when a later write fails', async () => {
+    let productId = 'pdt_nucleus_year';
+    let armed = false;
+    const env = setup({
+      record: (reference) => legacyRecord(reference, { productId }),
+      wrapDb: (db) =>
+        ({
+          ...db,
+          async create<T>(params: Parameters<Db['create']>[0]): Promise<T> {
+            if (armed && params.model === 'billingEvents' && (params.data as { type?: string }).type === 'billfn.subscription.active') {
+              armed = false;
+              throw new Error('process interrupted');
+            }
+            return db.create<T>(params);
+          }
+        }) as Db
+    });
+    const billingAccountId = await env.account('alice');
+    unwrap(await env.import({ billingAccountId }));
+    productId = 'pdt_team_month';
+    env.clock.current = new Date('2026-11-12T00:00:00.000Z');
+    armed = true;
+    const operator = { id: 'operator_2', type: 'user', requestId: 'request_2' };
+
+    await expect(env.import({ billingAccountId, planKey: 'team', operator })).rejects.toThrow('process interrupted');
+
+    expect(await env.subscriptions()).toEqual([expect.objectContaining({ planKey: 'team' })]);
+    const byOperator2 = async () =>
+      (await env.importEvents()).filter((event) => (event.payload.operator as { id: string }).id === 'operator_2');
+    expect(await byOperator2()).toEqual([expect.objectContaining({ payload: expect.objectContaining({ planKey: 'team', operator }) })]);
+    unwrap(await env.import({ billingAccountId, planKey: 'team', operator }));
+    expect(await byOperator2()).toHaveLength(1);
+  });
+
   it('refuses a provider record whose product is not a subscription price of the plan', async () => {
     const env = setup({ record: (reference) => legacyRecord(reference, { productId: 'pdt_team_month' }) });
     const billingAccountId = await env.account('alice');

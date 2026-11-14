@@ -2971,6 +2971,10 @@ async function applyVerificationState(
       // clears it, the order `namesReplacedReference` reads against.
       const pending = await recordDroppedReferences(deps, baseSubscription, record, Boolean(input.committedAt));
       Object.assign(record, withPendingReplacements(record.metadata, pending));
+      if (input.importAudit && !isImportPending(baseSubscription)) {
+        // A re-import changes an accepted (usable) row: its operator's event is recorded before the change.
+        await recordBillingEvent(deps, input.importAudit(record));
+      }
       // Every update is ordered against the row it was computed from, so a provider-state time and the
       // pending references it clears always come from the row it replaces.
       const updated = await deps.db.updateMany({
@@ -3335,7 +3339,8 @@ async function recordBillingEvent(deps: ServiceDeps, event: BillFnBillingEvent) 
       namespace: deps.namespace
     });
   } catch (error) {
-    // A provider-event-keyed entry already recorded by an earlier apply of the same event.
+    // Already recorded: a provider-event-keyed entry by an earlier apply of the same event, or a digest-keyed
+    // import event by an earlier write of the same import run and state. The first write wins.
     if (!isDuplicateRecordError(error)) {
       throw error;
     }
