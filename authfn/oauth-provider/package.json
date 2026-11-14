@@ -1,6 +1,6 @@
 {
   "name": "@authfn/oauth-provider",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "OAuth 2.1 authorization server plugin for AuthFn",
   "repository": {
     "type": "git",
@@ -31,6 +31,7 @@
     "@superfunctions/http": "0.2.0"
   },
   "devDependencies": {
+    "@superfunctions/db": "0.2.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
     "better-sqlite3": "^12.5.0",

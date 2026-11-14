@@ -4,9 +4,8 @@ import { createUser } from 'authfn/core/users';
 import { issueSession } from 'authfn/core/sessions';
 import Database from 'better-sqlite3';
 import { Kysely, SqliteDialect } from 'kysely';
-import { wrapWithSchema } from '../../../../packages/db/src/adapter/schema-codecs.js';
-import { kyselyAdapter } from '../../../../packages/db/src/adapters/kysely/index.js';
-import { memoryAdapter } from '../../../../packages/db/src/adapters/memory/index.js';
+import { wrapWithSchema } from '@superfunctions/db';
+import { kyselyAdapter, memoryAdapter } from '@superfunctions/db/adapters';
 import {
   authFnOAuthProviderPlugin,
   type OAuthConsentInput,
