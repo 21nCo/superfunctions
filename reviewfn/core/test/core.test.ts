@@ -183,6 +183,12 @@ it("removes staged panel copies that an interrupted write left behind", async ()
   for (const entry of staged) await writeFile(path.join(root, entry), "interrupted report");
   expect(await store.deleteExpired()).toEqual({ deleted: [], errors: [] });
   expect((await fileSystem.readdir(root)).sort()).toEqual(["artifacts", "panel-report.json", "panel-report.md"]);
+  // A symlinked copies directory is refused, not followed.
+  await mkdir(path.join(root, "real"));
+  await writeFile(path.join(root, "real", staged[0]), "elsewhere");
+  await symlink(path.join(root, "real"), path.join(root, "link"));
+  expect((await new FileArtifactStore(path.join(root, "artifacts"), path.join(root, "link"), PANEL_REPORT_COPY_NAMES).deleteExpired()).errors.join()).toMatch(/symlink/);
+  expect(await fileSystem.readdir(path.join(root, "real"))).toEqual([staged[0]]);
 });
 
 it.each([".json", ".md"])("replaces the panel copies as a pair, keeping the previous pair when writing the %s copy fails", async failing => {

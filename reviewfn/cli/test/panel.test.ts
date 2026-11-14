@@ -312,15 +312,16 @@ describe("reviewfn panel exit codes", () => {
     expect((await invoke(["--base", base, "--head", head], codex())).code).toBe(PANEL_EXIT_CODES.complete);
     const { report } = await stored();
     const fail = () => { throw new Error("simulated save failure"); };
-    // [case, hooks given the controller, exit code, whether the run's copies and evidence are saved]
-    const cases: [string, (controller: AbortController) => ConstructorParameters<typeof ScriptedStore>[1], number, boolean][] = [
-      ["canceled during retention cleanup", controller => ({ cleanup: () => controller.abort() }), PANEL_EXIT_CODES.canceled, false],
-      ["canceled while the Markdown copy fails", controller => ({ markdown: () => { controller.abort(); fail(); } }), PANEL_EXIT_CODES.canceled, false],
-      ["the Markdown copy fails", () => ({ markdown: fail }), PANEL_EXIT_CODES.error, false],
-      ["canceled once the copies are being written", controller => ({ markdown: () => controller.abort() }), PANEL_EXIT_CODES.complete, true],
-      ["canceled while the saved run's import fails", controller => ({ importing: () => { controller.abort(); fail(); } }), PANEL_EXIT_CODES.error, true],
+    // [case, hooks given the controller, exit code, whether the run's copies are saved, whether its evidence is imported]
+    const cases: [string, (controller: AbortController) => ConstructorParameters<typeof ScriptedStore>[1], number, boolean, boolean][] = [
+      ["canceled during retention cleanup", controller => ({ cleanup: () => controller.abort() }), PANEL_EXIT_CODES.canceled, false, false],
+      // Once saving has begun a cancellation no longer applies: a failure is exit 1, never an exit 4 with saved output.
+      ["canceled while the import fails", controller => ({ importing: () => { controller.abort(); fail(); } }), PANEL_EXIT_CODES.error, false, false],
+      ["the import fails", () => ({ importing: fail }), PANEL_EXIT_CODES.error, false, false],
+      ["canceled while the Markdown copy fails", controller => ({ markdown: () => { controller.abort(); fail(); } }), PANEL_EXIT_CODES.error, false, true],
+      ["canceled once the copies are being written", controller => ({ markdown: () => controller.abort() }), PANEL_EXIT_CODES.complete, true, true],
     ];
-    for (const [name, hooks, exitCode, saved] of cases) {
+    for (const [name, hooks, exitCode, saved, imported] of cases) {
       const ownedArtifacts = await mkdtemp(path.join(tmpdir(), "reviewfn-cli-owned-")); owned.push(ownedArtifacts);
       const { id } = await new FileArtifactStore(ownedArtifacts).put("panel-report", JSON.stringify({ ...report, runId: name }), 30);
       const locations = { ownedArtifacts, artifactsDirectory: path.join(root, ".reviewfn", "artifacts"), outputDirectory: path.join(root, name.replaceAll(" ", "-")), reportDays: 30 };
@@ -328,7 +329,7 @@ describe("reviewfn panel exit codes", () => {
       const result = await savePanelRun(report, true, locations, controller.signal, new ScriptedStore(locations, hooks(controller)));
       expect([name, result.exitCode]).toEqual([name, exitCode]);
       expect([name, (await readdir(locations.outputDirectory).catch(() => [])).sort()]).toEqual([name, saved ? ["panel-report.json", "panel-report.md"] : []]);
-      expect([name, (await readdir(locations.artifactsDirectory)).includes(`${id}.artifact`)]).toEqual([name, saved && exitCode !== PANEL_EXIT_CODES.error]);
+      expect([name, (await readdir(locations.artifactsDirectory)).includes(`${id}.artifact`)]).toEqual([name, imported]);
     }
   });
 

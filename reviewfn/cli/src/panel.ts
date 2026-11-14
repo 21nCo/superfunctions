@@ -266,35 +266,33 @@ export interface SavedPanelRun {
 }
 
 /**
- * Save a finished panel run: expire old artifacts and report copies, write `panel-report.json` and `panel-report.md` as
- * one pair under report-copy retention, then import the run's evidence into the artifact store. Cancellation is checked
- * once, right before the copies are written, and nothing of the run is saved before that point. A cancellation before
- * it, or a failed copy write, leaves no copy and no imported artifact of the run; it exits 4 when the signal is aborted
- * or the report records the cancellation, and 1 otherwise. Once the copies are written the run is saved: a later
- * cancellation does not change the exit code, and an import failure exits 1 (4 when the report records the
- * cancellation). So an exit 4 with saved copies always means they record `PANEL_CANCELED_REASON` and cannot be
- * published. `store` is a test seam.
+ * Save a finished panel run: expire old artifacts and report copies, import the run's evidence into the artifact store,
+ * then write `panel-report.json` and `panel-report.md` as a pair under report-copy retention. Cancellation is checked
+ * once, after cleanup and before saving begins; nothing of the run is saved before that point. A cancellation before it,
+ * or a failure while canceled before it, saves nothing and exits 4. Once saving begins it is not interrupted: the
+ * saved report decides the exit code, and any failure exits 1 (4 only when the report records the cancellation), so an
+ * exit 4 never leaves an uncanceled report of the run. `store` is a test seam.
  */
 export async function savePanelRun(report: PanelReport, quorumMet: boolean, locations: PanelOutputLocations, signal?: AbortSignal, store: FileArtifactStore = new FileArtifactStore(locations.artifactsDirectory, locations.outputDirectory, PANEL_REPORT_COPY_NAMES)): Promise<SavedPanelRun> {
   const recordsCancellation = panelReportCanceled(report);
-  let saved = false;
+  let saving = false;
   try {
     const cleanup = await store.deleteExpired();
     const rendered = renderPanelMarkdownReport(report);
     if (signal?.aborted && !recordsCancellation) return { exitCode: PANEL_EXIT_CODES.canceled, error: new ReviewFnError("REVIEWFN_CANCELED", "The panel run was canceled before its report was saved; nothing of the run was saved.", { runId: report.runId }) };
-    await safeDirectory(locations.outputDirectory);
-    await store.writeReportCopies(`${JSON.stringify(report, null, 2)}\n`, rendered, locations.reportDays);
-    saved = true;
+    saving = true;
     // Merge retained artifacts without shortening expiration for prior references.
     await store.importFrom(locations.ownedArtifacts);
+    await safeDirectory(locations.outputDirectory);
+    await store.writeReportCopies(`${JSON.stringify(report, null, 2)}\n`, rendered, locations.reportDays);
     const reportPath = path.join(locations.outputDirectory, PANEL_REPORT_COPY_NAMES.json);
     if (recordsCancellation) return { reportPath, rendered, exitCode: PANEL_EXIT_CODES.canceled, error: new ReviewFnError("REVIEWFN_CANCELED", "The panel run was canceled; the saved report records the cancellation.", { runId: report.runId }) };
     if (cleanup.errors.length) return { reportPath, rendered, exitCode: PANEL_EXIT_CODES.error, error: new ReviewFnError("REVIEWFN_RETENTION_CLEANUP_FAILED", "Panel outputs were saved, but retention cleanup failed; inspect the artifact store and retry cleanup.", { errors: cleanup.errors }) };
     return { reportPath, rendered, exitCode: report.coverage !== "complete" || !quorumMet ? PANEL_EXIT_CODES.incomplete : PANEL_EXIT_CODES.complete };
   } catch (error) {
-    // A failure before the copies are saved exits 4 for a canceled run; after it, only a report that records the
+    // Before saving begins, a failure of a canceled run exits 4; once it has begun, only a report that records the
     // cancellation does.
-    if (recordsCancellation || (!saved && signal?.aborted)) return { exitCode: PANEL_EXIT_CODES.canceled, error: new ReviewFnError("REVIEWFN_CANCELED", saved ? "The panel run was canceled; its report records the cancellation, but importing its evidence failed." : "The panel run was canceled, and saving its report failed before its copies were saved; nothing of the run was saved unless the cause says otherwise.", { runId: report.runId, cause: errorPayload(error) }) };
+    if (recordsCancellation || (!saving && signal?.aborted)) return { exitCode: PANEL_EXIT_CODES.canceled, error: new ReviewFnError("REVIEWFN_CANCELED", saving ? "The panel run was canceled, and saving its report, which records the cancellation, failed." : "The panel run was canceled before its report was saved; nothing of the run was saved.", { runId: report.runId, cause: errorPayload(error) }) };
     return { exitCode: PANEL_EXIT_CODES.error, error };
   }
 }

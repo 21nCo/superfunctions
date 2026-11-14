@@ -27,7 +27,11 @@ export class FileArtifactStore implements ArtifactStore {
   private readonly copyNames: readonly [string, string];
   private readonly copiesStem: string;
   private readonly copiesMarkerKeyed: boolean;
-  /** Panel copies are replaced as a pair (both or neither); the 0.1 copies keep their copy-by-copy writes. */
+  /**
+   * Panel copies are staged and replaced as a pair, and a failed write restores the previous pair; only a crash, or a
+   * failed restore, between the two renames can leave a mixed pair, which retention still expires. The 0.1 copies keep
+   * their copy-by-copy writes.
+   */
   private readonly copiesPaired: boolean;
 
   /**
@@ -174,7 +178,8 @@ export class FileArtifactStore implements ArtifactStore {
       if (!markdownLeftover) await restoreMarker().catch(() => undefined);
       throw error;
     } finally {
-      await Promise.all([stagedJson, stagedMarkdown].map(file => rm(file, { force: true })));
+      // Best effort: a staged file left here is swept by the next cleanup.
+      await Promise.all([stagedJson, stagedMarkdown].map(file => rm(file, { force: true }).catch(() => undefined)));
     }
   }
 
@@ -278,7 +283,8 @@ export class FileArtifactStore implements ArtifactStore {
    * writes hold the store lease, so under the lease no staged file belongs to a write in progress.
    */
   private async deleteStagedCopies(errors: string[]): Promise<void> {
-    const entries = await readdir(this.reportCopiesDirectory!).catch((error: NodeJS.ErrnoException) => missing(error) ? [] : Promise.reject(error)).catch((error: unknown) => { errors.push(`Staged copies: ${error instanceof Error ? error.message : String(error)}`); return []; });
+    // Refuse a symlinked copies directory or ancestor before listing it, as every other copy access does.
+    const entries = await lstat(this.reportCopiesDirectory!).then(() => safeDirectory(this.reportCopiesDirectory!)).then(() => readdir(this.reportCopiesDirectory!)).catch((error: NodeJS.ErrnoException) => missing(error) ? [] : Promise.reject(error)).catch((error: unknown) => { errors.push(`Staged copies: ${error instanceof Error ? error.message : String(error)}`); return []; });
     for (const entry of entries) {
       if (!/^\.reviewfn-copy-[0-9a-f-]{36}\.(json|md)$/.test(entry)) continue;
       const file = path.join(this.reportCopiesDirectory!, entry);
