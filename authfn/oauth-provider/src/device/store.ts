@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { AUTHFN_LEGACY_USER_REFERENCE_MAX_LENGTH, type AuthFnRuntimeConfig, type AuthFnSchemaDefinition } from 'authfn';
 import { hashSecret } from 'authfn/core/sessions';
 import { claimIfUnset, findGrant } from '../store.js';
+import type { OAuthTokenRecord } from '../types.js';
 import { OAUTH_REFRESH_TOKEN_TTL_SECONDS } from '../types.js';
 
 interface DeviceStore {
@@ -209,10 +210,11 @@ const PRUNE_BATCH = 100;
  * Deletes device codes no longer needed for more than one code lifetime
  * (`pruneKey`). A code never exchanged is deleted once expired. An exchanged
  * one backs the tokens issued for it until they expire, and after that its
- * replay still revokes the grant and the rotated tokens under it, so it is
- * deleted only once its grant is revoked; while the grant is live its
- * `pruneKey` moves a refresh token lifetime ahead. The extra code lifetime
- * leaves a request that read a code just before it expired time to finish.
+ * replay still revokes the grant and the refreshed tokens under it, so it is
+ * kept while its grant is unrevoked and holds an unexpired refresh token not
+ * yet rotated or revoked: its `pruneKey` then moves to the latest such
+ * token's expiry. The extra code lifetime leaves a request that read a code
+ * just before it expired time to finish.
  */
 export async function pruneDeviceCodes(store: DeviceStore, now: Date): Promise<void> {
   const due = { field: 'pruneKey', operator: 'lt' as const, value: timeKey(now.getTime() - OAUTH_DEVICE_CODE_TTL_SECONDS * 1000) };
@@ -225,15 +227,28 @@ export async function pruneDeviceCodes(store: DeviceStore, now: Date): Promise<v
     model: DEVICE_CODE_MODEL, where: [due], limit: PRUNE_BATCH, namespace: namespace(store)
   });
   for (const row of exchanged) {
-    const grant = row.grantId ? await findGrant(store, row.grantId) : null;
+    const until = row.grantId ? await refreshableUntil(store, row.grantId, now) : 0;
     const where = [eq('id', row.id), eq('pruneKey', row.pruneKey)];
-    if (grant && !grant.revokedAt) {
-      const pruneKey = timeKey(now.getTime() + OAUTH_REFRESH_TOKEN_TTL_SECONDS * 1000);
-      await store.database.updateMany({ model: DEVICE_CODE_MODEL, where, data: { pruneKey }, namespace: namespace(store) });
+    if (until > now.getTime()) {
+      await store.database.updateMany({ model: DEVICE_CODE_MODEL, where, data: { pruneKey: timeKey(until) }, namespace: namespace(store) });
     } else {
       await store.database.deleteMany({ model: DEVICE_CODE_MODEL, where, namespace: namespace(store) });
     }
   }
+}
+
+/** The latest expiry of a usable refresh token under a live grant, in ms; 0 when there is none. */
+async function refreshableUntil(store: DeviceStore, grantId: string, now: Date): Promise<number> {
+  const grant = await findGrant(store, grantId);
+  if (!grant || grant.revokedAt) {
+    return 0;
+  }
+  const tokens = await store.database.findMany<OAuthTokenRecord>({
+    model: 'oauth_provider_tokens',
+    where: [eq('grantId', grantId), eq('kind', 'refresh'), { field: 'rotatedAt', operator: 'eq', value: null }, { field: 'revokedAt', operator: 'eq', value: null }],
+    namespace: namespace(store)
+  });
+  return Math.max(0, ...tokens.map((token) => new Date(token.expiresAt).getTime()).filter((expiry) => expiry > now.getTime()));
 }
 
 export function findDeviceCode(store: DeviceStore, deviceCode: string): Promise<DeviceCodeRecord | null> {
@@ -345,6 +360,18 @@ export function claimDecision(
  * staged under it, and keeps the row until they expire; false when another
  * exchange already did.
  */
+/** The claim ID prefix that marks a code closed because it expired before its approval completed. */
+export const EXPIRED_CLAIM_PREFIX = 'odx';
+
+/**
+ * Spends an approved code that expired while its approval ran, so that no
+ * exchange can commit after it; false when an exchange committed first.
+ */
+export function closeExpiredDeviceCode(store: DeviceStore, recordId: string, now: Date): Promise<boolean> {
+  const claimId = `${EXPIRED_CLAIM_PREFIX}_${randomBytes(12).toString('hex')}`;
+  return claimIfUnset(store, DEVICE_CODE_MODEL, recordId, ['consumedAt'], { consumedAt: now }, claimId);
+}
+
 export function claimDeviceCode(store: DeviceStore, recordId: string, now: Date, claimId: string): Promise<boolean> {
   // The tokens staged under `claimId` expire by then; the row backs them until it.
   const pruneKey = timeKey(now.getTime() + OAUTH_REFRESH_TOKEN_TTL_SECONDS * 1000);

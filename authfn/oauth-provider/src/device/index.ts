@@ -34,7 +34,9 @@ import {
   admitPoll,
   claimDecision,
   claimDeviceCode,
+  closeExpiredDeviceCode,
   createDeviceCode,
+  EXPIRED_CLAIM_PREFIX,
   findByUserCode,
   findDeviceCode,
   normalizeUserCode,
@@ -209,7 +211,8 @@ async function lookUpUserCode(
  * it; the device then also gets `access_denied` (see `exchangeDeviceCode`).
  * Expiry is checked before the decision is recorded and again after: an
  * approval that crosses it revokes its grant and throws `invalid_grant`
- * (recording nothing when it crossed before the write). An approval
+ * (recording nothing when it crossed before the write, and spending the code
+ * when after, unless the device already exchanged it in time). An approval
  * interrupted anywhere before the decision leaves the request pending.
  * Returns whether the device will receive tokens.
  */
@@ -236,7 +239,9 @@ async function approve(
     await revokeGrant(store, grant.id, 'device_decided', runtime.now());
     return 'decided';
   }
-  if (record.expiresAt.getTime() <= runtime.now().getTime()) {
+  // Expired by the time the decision was written: spend the code so nothing
+  // can exchange it, unless an exchange that found it unexpired already did.
+  if (record.expiresAt.getTime() <= runtime.now().getTime() && await closeExpiredDeviceCode(store, record.id, runtime.now())) {
     await revokeGrant(store, grant.id, 'device_code_expired', runtime.now());
     throw new OAuthError('invalid_grant', 'The user code has expired');
   }
@@ -394,7 +399,9 @@ function deviceError(error: 'authorization_pending' | 'slow_down' | 'access_deni
  * to it), `access_denied` after a denial or once the approved grant was
  * revoked (the app was disconnected, or the user disabled) and
  * `expired_token` after 10 minutes. A `resource` other than the requested
- * one is `invalid_target` and leaves the code as it was. An approval yields the same tokens as an authorization code: an
+ * one is `invalid_target` and leaves the code as it was. A poll that loses to
+ * 16 concurrent polls, or cannot tell whether it was stored, is a 429
+ * `temporarily_unavailable` with `Retry-After`. An approval yields the same tokens as an authorization code: an
  * access token for the approved scopes and a refresh token under the grant.
  * The device code works once; when its client presents it again after the
  * exchange, the grant is revoked, as for a replayed authorization code.
@@ -411,6 +418,9 @@ export async function exchangeDeviceCode(
     throw deviceError('invalid_grant', 'Device code is invalid');
   }
   if (record.consumedAt) {
+    if (record.claimId?.startsWith(`${EXPIRED_CLAIM_PREFIX}_`)) {
+      throw deviceError('expired_token', 'Device code has expired');
+    }
     if (record.grantId) {
       await revokeGrant(runtime.store, record.grantId, 'code_replay', now);
     }

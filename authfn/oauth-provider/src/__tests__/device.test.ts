@@ -597,6 +597,22 @@ describe('device grant storage and request bounds', () => {
     }
   );
 
+  it('an approval whose decision is written in time keeps the tokens the device exchanged before the code expired', async () => {
+    const provider = await setupDevice();
+    const device = await provider.start();
+    const written = provider.control.arm(DEVICE_CODES, 'updateManyApplied', ({ data }) => data?.decision === 'approved');
+    const decision = provider.decide(device.user_code, 'approve');
+    await written;
+    provider.advance(599);
+    const exchanged = await provider.poll(device.device_code);
+    expect(exchanged.status).toBe(200);
+    const tokens = await exchanged.json() as { access_token: string };
+    provider.advance(1);
+    provider.control.release();
+    expect(await (await decision).json()).toMatchObject({ data: { decision: 'approved' } });
+    expect((await provider.introspect(tokens.access_token)).body).toMatchObject({ active: true });
+  });
+
   it('a device code insert whose acknowledgement is lost is returned, a failed one is not retried, and only a taken user code is replaced', async () => {
     const provider = await setupDevice();
     const rows = () => provider.database.findMany({ model: DEVICE_CODES, namespace: 'authfn' });
@@ -653,6 +669,14 @@ describe('device grant storage and request bounds', () => {
     provider.advance(OAUTH_REFRESH_TOKEN_TTL_SECONDS + OAUTH_DEVICE_CODE_TTL_SECONDS + 1);
     await provider.start();
     expect(await provider.row(device.device_code)).toBeNull();
+
+    // An abandoned login, never refreshed or disconnected, goes once its refresh token expired.
+    const abandoned = await provider.start();
+    await provider.decide(abandoned.user_code, 'approve');
+    expect((await provider.poll(abandoned.device_code)).status).toBe(200);
+    provider.advance(OAUTH_REFRESH_TOKEN_TTL_SECONDS + OAUTH_DEVICE_CODE_TTL_SECONDS + 1);
+    await provider.start();
+    expect(await provider.row(abandoned.device_code)).toBeNull();
   });
 
   it('bounds the anonymous device authorization body in size and time before authenticating or counting it', async () => {
