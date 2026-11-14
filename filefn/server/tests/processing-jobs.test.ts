@@ -709,7 +709,7 @@ describe('processing jobs', () => {
      * uploads its artifact, so the delete lists no artifacts; once it is done,
      * `fault` fails once in the job.
      */
-    async function interruptedCleanup(fault: Fault) {
+    async function interruptedCleanup(fault: Fault, logError: (message: string, context?: unknown) => void = () => {}) {
       const storage = createMemoryStorage();
       const uploads: { key: string; target?: string }[] = [];
       let armed = false;
@@ -762,7 +762,11 @@ describe('processing jobs', () => {
       });
       const completed = vi.fn();
       const failed = vi.fn();
-      const { fileFn, queue } = setup([textProcessor('uppercase')], { storage: faultyStorage, database });
+      const { fileFn, queue } = setup([textProcessor('uppercase')], {
+        storage: faultyStorage,
+        database,
+        observability: { logger: { error: logError } },
+      });
       fileFn.events.on('processing.completed', completed);
       fileFn.events.on('processing.failed', failed);
       const { fileId } = await uploadNote(fileFn, 'archived', 'archived-note');
@@ -796,6 +800,28 @@ describe('processing jobs', () => {
       expect(completed).not.toHaveBeenCalled();
       expect(failed).not.toHaveBeenCalled();
     });
+
+    it.each<Fault>(['reference-scan', 'object-delete'])(
+      'drops the job without processing.failed and logs the kept rows when the %s fails on the last delivery',
+      async (fault) => {
+        const logError = vi.fn();
+        const { handler, queue, database, completed, failed } = await interruptedCleanup(fault, logError);
+
+        // The default retry limit is 3, so the 4th delivery is the last.
+        expect(await handler.handle(queue.jobs[0], { attempts: 4 })).toEqual({ status: 'dropped', reason: 'version-deleted' });
+
+        expect(failed).not.toHaveBeenCalled();
+        expect(completed).not.toHaveBeenCalled();
+        const kept = await database.findMany<{ artifactId: string; kind: string }>({
+          model: 'fileArtifacts', where: [], namespace: 'jobs_test',
+        });
+        expect(kept.map((row) => row.kind)).toContain('uppercase');
+        expect(logError).toHaveBeenCalledWith(
+          expect.stringContaining('cleanup not finished'),
+          expect.objectContaining({ keptArtifactIds: expect.arrayContaining(kept.map((row) => row.artifactId)) }),
+        );
+      },
+    );
   });
 
   describe('when a file delete fails after its versions are removed', () => {
@@ -931,6 +957,97 @@ describe('processing jobs', () => {
     it('emits processing.completed on redelivery when a listener threw', async () => {
       await expectOneCompletion({ failListener: true });
     });
+  });
+
+  it('removes the completion row of a job whose version is deleted while the row is written', async () => {
+    const storage = createMemoryStorage();
+    let deleteDuringCompletion: (() => Promise<void>) | undefined;
+    const database = new Proxy(withUniqueArtifactIds(memoryAdapter()), {
+      get(target, property, receiver) {
+        if (property !== 'create') return Reflect.get(target, property, receiver);
+        return async (params: Parameters<Adapter['create']>[0]) => {
+          const metadata = (params.data as { metadata?: Record<string, unknown> }).metadata;
+          if (params.model === 'fileArtifacts' && metadata?.processingCompleted) {
+            // The delete lists and removes the job's other rows before this one exists.
+            const pending = deleteDuringCompletion;
+            deleteDuringCompletion = undefined;
+            await pending?.();
+          }
+          return target.create(params);
+        };
+      },
+    });
+    const { fileFn, queue } = setup([textProcessor('uppercase')], { storage, database });
+    const { fileId, versionId } = await uploadNote(fileFn);
+    const version = await fileFn.services.files.getVersion(fileId, versionId, owner);
+    deleteDuringCompletion = () => fileFn.deleteFile({ fileId }, owner);
+
+    expect(await createProcessingJobHandler(fileFn).handle(queue.jobs[0])).toEqual({
+      status: 'dropped', reason: 'version-deleted',
+    });
+
+    expect(await database.findMany({ model: 'fileArtifacts', where: [], namespace: 'jobs_test' })).toEqual([]);
+    await expect(storage.statObject({ key: `${version.storageKey}.uppercase`, target: 'durable' }))
+      .rejects.toThrow('object not found');
+  });
+
+  it.each([
+    [1, [{ status: 'retry' }, { status: 'duplicate' }]],
+    [4, [{ status: 'completed', artifactsCreated: 1 }]],
+  ])('reports no failure after processing.completed when the version read after the completion row fails (attempt %i)', async (attempts, outcomes) => {
+    let failNextVersionRead = false;
+    const database = new Proxy(withUniqueArtifactIds(memoryAdapter()), {
+      get(target, property, receiver) {
+        if (property === 'create') {
+          return async (params: Parameters<Adapter['create']>[0]) => {
+            const created = await target.create(params);
+            const metadata = (params.data as { metadata?: Record<string, unknown> }).metadata;
+            if (metadata?.processingCompleted) failNextVersionRead = true;
+            return created;
+          };
+        }
+        if (property === 'findOne') {
+          return async (params: Parameters<Adapter['findOne']>[0]) => {
+            if (failNextVersionRead && params.model === 'fileVersions') {
+              failNextVersionRead = false;
+              throw new Error('database connection lost');
+            }
+            return target.findOne(params);
+          };
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const { fileFn, queue } = setup([textProcessor('uppercase')], { database });
+    const completed = vi.fn();
+    const failed = vi.fn();
+    fileFn.events.on('processing.completed', completed);
+    fileFn.events.on('processing.failed', failed);
+    await uploadNote(fileFn);
+    const handler = createProcessingJobHandler(fileFn);
+
+    for (const [index, outcome] of outcomes.entries()) {
+      expect(await handler.handle(queue.jobs[0], { attempts: attempts + index })).toMatchObject(outcome);
+    }
+
+    expect(completed).toHaveBeenCalledTimes(1);
+    expect(failed).not.toHaveBeenCalled();
+  });
+
+  it('runs a processor added to the configured list after the FileFn was created', async () => {
+    const first = textProcessor('first');
+    const late = textProcessor('late');
+    const processors: Processor[] = [first];
+    const { fileFn, queue } = setup(processors);
+    processors.push(late);
+    const { fileId } = await uploadNote(fileFn);
+
+    expect(await createProcessingJobHandler(fileFn).handle(queue.jobs[0])).toMatchObject({
+      status: 'completed', artifactsCreated: 2,
+    });
+
+    expect(late.inputs).toHaveLength(1);
+    expect((await listArtifacts(fileFn, fileId)).map((artifact) => artifact.kind).sort()).toEqual(['first', 'late']);
   });
 
   it('enqueues and runs a job whose request ID or processor list is longer than a job field allows', async () => {

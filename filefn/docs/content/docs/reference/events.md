@@ -22,7 +22,7 @@ filefn emits seven typed events. Subscribe via `fileFn.events.on(name, listener)
 | --- | --- | --- |
 | `processing.started` | After upload completes; processors begin. | `fileId`, `versionId` |
 | `processing.completed` | After all processors finish. For a queued job it is at least once: a delivery that fails or is evicted after the last processor finished, but before the job recorded its completion, leaves the next delivery to emit it; overlapping deliveries of one job can each emit it; a delivery that finds the completion recorded emits nothing. For a queued job, `artifactsCreated` counts the job's artifacts across its deliveries. Artifacts and run rows are still written once per idempotency key. | `fileId`, `versionId`, `artifactsCreated` |
-| `processing.failed` | A processor threw / returned `success: false`. For a queued job (`createProcessingJobHandler`), only on the final delivery, once the queue's retries are used up. | `fileId`, `versionId`, `error?` |
+| `processing.failed` | A processor threw / returned `success: false`. For a queued job (`createProcessingJobHandler`), only on the final delivery, once the queue's retries are used up, and never for a job whose file version was deleted (a cleanup of that version's output that fails on the final delivery is logged as an error and not retried). | `fileId`, `versionId`, `error?` |
 
 ## Common envelope fields
 

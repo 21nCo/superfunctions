@@ -76,7 +76,10 @@ export type ProcessingJobOutcome =
   | { status: 'duplicate' }
   /** Nothing to process: the body is not a job, or the file version no longer exists. */
   | { status: 'dropped'; reason: 'invalid-job' | 'version-deleted' }
-  /** A processor failed and the delivery is not the last; the queue should redeliver. */
+  /**
+   * A processor failed, or cleanup of a deleted version's output failed, and
+   * the delivery is not the last; the queue should redeliver.
+   */
   | { status: 'retry'; errors: string[] }
   /** A processor failed on the last delivery; `processing.failed` was emitted. */
   | { status: 'failed'; errors: string[] };
@@ -269,6 +272,19 @@ function parseProcessingJob(body: unknown): Omit<ProcessingJob, 'idempotencyKey'
   };
 }
 
+/**
+ * Cleanup of a deleted version's processing output failed. The job is about
+ * a version that no longer exists, so it is never a processing failure: the
+ * cleanup is retried while the queue redelivers, and the rows it kept are
+ * logged after the last delivery.
+ */
+class DeletedVersionCleanupError extends Error {
+  constructor(readonly keptArtifactIds: string[], cause: unknown) {
+    super(`cleanup of deleted version output failed: ${errorMessage(cause)}`);
+    this.name = 'DeletedVersionCleanupError';
+  }
+}
+
 /** A configured processor and the instance that identifies it in run records. */
 interface ProcessorEntry {
   processor: Processor;
@@ -352,7 +368,6 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     maxFileBytes = 50 * 1024 * 1024,
   } = config;
   const background = config.background ?? createBackgroundScheduler(undefined, logger);
-  const processorEntries = processorEntriesFor(processors);
 
   const QUEUE_NAME = PROCESSING_QUEUE_NAME;
 
@@ -705,14 +720,28 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     writes: ProcessingWrites,
     runTarget?: string,
   ): Promise<void> {
-    const rows = await db.findMany<FileArtifactRecord>({
-      model: 'fileArtifacts',
-      where: [
-        { field: 'fileId', operator: 'eq', value: input.fileId },
-        { field: 'versionId', operator: 'eq', value: input.versionId },
-      ],
-      namespace,
-    });
+    let rows: FileArtifactRecord[] = [];
+    try {
+      rows = await db.findMany<FileArtifactRecord>({
+        model: 'fileArtifacts',
+        where: [
+          { field: 'fileId', operator: 'eq', value: input.fileId },
+          { field: 'versionId', operator: 'eq', value: input.versionId },
+        ],
+        namespace,
+      });
+      await discardRows(input, rows, writes, runTarget);
+    } catch (error) {
+      throw new DeletedVersionCleanupError(rows.map((row) => row.artifactId), error);
+    }
+  }
+
+  async function discardRows(
+    input: Pick<ProcessorInput, 'fileId' | 'versionId'>,
+    rows: FileArtifactRecord[],
+    writes: ProcessingWrites,
+    runTarget?: string,
+  ): Promise<void> {
     if (rows.length === 0 && writes.uploadedKeys.size === 0) {
       return;
     }
@@ -783,6 +812,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
 
   async function processValidJob(
     job: NonNullable<ReturnType<typeof parseProcessingJob>>,
+    delivery: ProcessingJobDelivery,
   ): Promise<ProcessingJobOutcome> {
     const found = await findVersion(job.fileId, job.versionId);
     if (!found) {
@@ -802,7 +832,9 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       tenantId: file.tenantId ?? undefined,
     };
     const idempotencyKey = job.idempotencyKey ?? buildProcessingIdempotencyKey(input.fileId, input.versionId, processors);
-    const applicable = processorEntries.filter((entry) => supportsProcessor(entry.processor, input.mimeType));
+    // Read the configured list per job, as the producer and runProcessing do:
+    // processors may be added to it after the FileFn instance is created.
+    const applicable = processorEntriesFor(processors).filter((entry) => supportsProcessor(entry.processor, input.mimeType));
     if (applicable.length === 0) {
       // As runProcessing does, a version no processor applies to completes without an event.
       return { status: 'completed', artifactsCreated: 0, skippedProcessors: [] };
@@ -890,6 +922,26 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         versionId: input.versionId,
         error: errorMessage(error),
       });
+    }
+    // A delete whose artifact listing ran before the completion row was
+    // written would leave that row behind.
+    let versionAfterCompletion: Awaited<ReturnType<typeof findVersion>>;
+    try {
+      versionAfterCompletion = await findVersion(input.fileId, input.versionId);
+    } catch (error) {
+      // A redelivery checks again (and finds the job a duplicate otherwise);
+      // the last delivery must not report a failure after processing.completed.
+      if (!delivery.finalAttempt) throw error;
+      logger?.warn('processing job version check after completion failed', {
+        requestId: job.requestId,
+        fileId: input.fileId,
+        versionId: input.versionId,
+        error: errorMessage(error),
+      });
+      versionAfterCompletion = found;
+    }
+    if (!versionAfterCompletion) {
+      return dropDeletedVersion();
     }
     return { status: 'completed', artifactsCreated, skippedProcessors: skipped.map((entry) => entry.instance) };
   }
@@ -1046,9 +1098,26 @@ export function createProcessingService(config: ProcessingServiceConfig) {
 
       let outcome: ProcessingJobOutcome;
       try {
-        outcome = await processValidJob(job);
+        outcome = await processValidJob(job, delivery);
       } catch (error) {
-        outcome = { status: 'retry', errors: [errorMessage(error)] };
+        if (!(error instanceof DeletedVersionCleanupError)) {
+          outcome = { status: 'retry', errors: [errorMessage(error)] };
+        } else if (!delivery.finalAttempt) {
+          logger?.warn('processing job will be retried to finish cleanup of a deleted version', {
+            ...logContext,
+            error: error.message,
+          });
+          return { status: 'retry', errors: [error.message] };
+        } else {
+          // Never `processing.failed`: the version is gone, so the job is
+          // dropped. No further delivery resumes the cleanup.
+          logger?.error('processing job dropped: deleted version cleanup not finished; rows kept', {
+            ...logContext,
+            keptArtifactIds: error.keptArtifactIds,
+            error: error.message,
+          });
+          return { status: 'dropped', reason: 'version-deleted' };
+        }
       }
 
       if (outcome.status === 'dropped') {

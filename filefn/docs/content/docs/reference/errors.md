@@ -90,7 +90,7 @@ Wire-format envelope:
 
 | Code | HTTP | Cause | Fix |
 | --- | --- | --- | --- |
-| `FILEFN_PROCESSING_ENQUEUE_FAILED` | 503 | `flowFn.enqueue` threw. | Check queue health; retry. |
+| `FILEFN_PROCESSING_ENQUEUE_FAILED` | 503 | The processing queue's `add` rejected. | Check queue health; retry. |
 | `FILEFN_INVALID_RENDER_INTENT` | 400 | Unknown render intent. | Use `thumbnail` / `preview` / `full` (or a registered custom intent). |
 
 ## See also

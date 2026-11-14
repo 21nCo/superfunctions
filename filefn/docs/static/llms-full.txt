@@ -1432,7 +1432,7 @@ If you want processing in a separate worker (recommended for heavy CPU work):
 
 1. Configure `processing.flowFn` with a queue provider.
 2. The kernel enqueues a job per upload instead of running processors inline.
-3. The worker runs processors, calls back into filefn's `processingService.recordArtifact(...)`, and emits `processing.completed`.
+3. The queue consumer passes each job to `createProcessingJobHandler(fileFn)`, which runs the processors, records their artifacts and emits `processing.completed`.
 
 See [Features › Processing](../features/processing) for the pattern.
 
@@ -4067,15 +4067,18 @@ const fileFn = createFileFn({
 });
 ```
 
-When configured, `complete` enqueues a job instead of running processors inline. A worker picks it up, runs the processors, and calls `processingService.recordArtifact(...)` per artifact.
+When configured, `complete` enqueues a job on the `filefn.processing` queue (`PROCESSING_QUEUE_NAME`) instead of running processors inline. The consumer passes each job to `createProcessingJobHandler(fileFn)`, which runs the configured processors and records their artifacts through that FileFn instance, once per job idempotency key.
 
-You can swap `@flowfn/server` for any queue that implements:
+You can swap `@flowfn/server` for any provider whose `getQueue(name)` returns a queue that implements:
 
 ```ts
 interface FlowFnQueue {
-  enqueue(job: { fileId: string; versionId: string; storageKey: string; mimeType: string; size: number; fileName: string; tenantId?: string }): Promise<{ jobId: string }>;
+  name: string;
+  add(job: unknown): Promise<{ jobId: string }>;
 }
 ```
+
+For Cloudflare Queues, `@filefn/processing/queues/cloudflare` provides `createCloudflareFlowFnProvider`.
 
 ## Routes
 
@@ -6562,7 +6565,7 @@ async queue(batch: MessageBatch, env: Env, ctx: ExecutionContext) {
 
 `createProcessingJobHandler(fileFn)` runs the configured processors for each message and records artifacts through that FileFn instance. Artifacts and run rows are written once per job idempotency key. Each processor that finishes writes a run row (kind `filefn.processing-run`) after its artifacts, and a redelivered job skips processors that have one. `processing.completed` is at least once: once every processor has a run row, the job emits it and then records that it did in another run row. A delivery that fails or is evicted before that record emits it again on the next delivery, with `artifactsCreated` counting the job's artifacts across its deliveries. Overlapping deliveries of one job can each emit it, and a delivery that finds the completion recorded emits nothing. Processors that share a name are told apart by their position among the processors with that name. Run rows have no stored object, and the artifact list, lookup and download operations never return them.
 
-- A job whose file version is gone, before or after its writes, is acknowledged and dropped without `processing.completed`, once it has removed the rows left for that version and the objects they name. The rows are removed last, so a cleanup that fails (a reference scan or object delete error) keeps them and is retried, and the next delivery resumes it. An object this delivery uploaded before it wrote the object's row is removed best effort. A delete removes the file's version objects and releases their quota before it lists the file's artifacts, so a delete that fails later can be retried, and artifacts a job finished writing earlier are removed by the delete, even if the job already reported `processing.completed`. Neither removes an object that another file's version or artifact references with the same key in the same storage target.
+- A job whose file version is gone, before or after its writes, is acknowledged and dropped without `processing.completed`, once it has removed the rows left for that version and the objects they name. The rows are removed last, so a cleanup that fails (a reference scan or object delete error) keeps them and is retried, and the next delivery resumes it. A cleanup that fails on the last delivery is not retried: the job is still dropped without `processing.failed`, the handler logs an error naming the kept rows, and those rows and their objects stay. An object this delivery uploaded before it wrote the object's row is removed best effort. A delete removes the file's version objects and releases their quota before it lists the file's artifacts, so a delete that fails later can be retried, and artifacts a job finished writing earlier are removed by the delete, even if the job already reported `processing.completed`. Neither removes an object that another file's version or artifact references with the same key in the same storage target.
 - A processor failure calls `message.retry()`. Set `maxRetries` to the consumer's `max_retries` (Cloudflare's default is 3): on the delivery whose `attempts` exceeds it, the handler emits `processing.failed` and acknowledges the message.
 - `retryDelaySeconds` (handler) and `delaySeconds` (producer) accept at most 43200, the 12-hour limit Cloudflare Queues sets on message delays; a larger value throws when the handler or producer is created.
 - A message body that is not a processing job is acknowledged and dropped. Optional fields over 512 characters (`requestId`, `jobId`, `idempotencyKey`) are ignored rather than rejected.
@@ -7707,7 +7710,7 @@ Default authorizer reads `filefn_file_permissions` and respects ownership.
 | `dedup.enabled` | `boolean` | `false` | Content-addressable storage. |
 | `processing.enabled` | `boolean` | `false` | Run processors after upload. |
 | `processing.processors` | `Processor[]` | `[]` | Processors to register. |
-| `processing.flowFn` | `FlowFnQueue` | undefined | Queue for async processing. |
+| `processing.flowFn` | `FlowFnProvider` | undefined | Queue provider for async processing; FileFn enqueues on `getQueue("filefn.processing")`. |
 
 ## Misc
 
@@ -7973,7 +7976,7 @@ Wire-format envelope:
 
 | Code | HTTP | Cause | Fix |
 | --- | --- | --- | --- |
-| `FILEFN_PROCESSING_ENQUEUE_FAILED` | 503 | `flowFn.enqueue` threw. | Check queue health; retry. |
+| `FILEFN_PROCESSING_ENQUEUE_FAILED` | 503 | The processing queue's `add` rejected. | Check queue health; retry. |
 | `FILEFN_INVALID_RENDER_INTENT` | 400 | Unknown render intent. | Use `thumbnail` / `preview` / `full` (or a registered custom intent). |
 
 ## See also
@@ -8011,7 +8014,7 @@ filefn emits seven typed events. Subscribe via `fileFn.events.on(name, listener)
 | --- | --- | --- |
 | `processing.started` | After upload completes; processors begin. | `fileId`, `versionId` |
 | `processing.completed` | After all processors finish. For a queued job it is at least once: a delivery that fails or is evicted after the last processor finished, but before the job recorded its completion, leaves the next delivery to emit it; overlapping deliveries of one job can each emit it; a delivery that finds the completion recorded emits nothing. For a queued job, `artifactsCreated` counts the job's artifacts across its deliveries. Artifacts and run rows are still written once per idempotency key. | `fileId`, `versionId`, `artifactsCreated` |
-| `processing.failed` | A processor threw / returned `success: false`. For a queued job (`createProcessingJobHandler`), only on the final delivery, once the queue's retries are used up. | `fileId`, `versionId`, `error?` |
+| `processing.failed` | A processor threw / returned `success: false`. For a queued job (`createProcessingJobHandler`), only on the final delivery, once the queue's retries are used up, and never for a job whose file version was deleted (a cleanup of that version's output that fails on the final delivery is logged as an error and not retried). | `fileId`, `versionId`, `error?` |
 
 ## Common envelope fields
 

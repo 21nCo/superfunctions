@@ -80,7 +80,9 @@ function normalizeAttempts(attempts: number | undefined): number {
  * its artifacts, and a redelivered job skips processors with a recorded run.
  *
  * A job whose file version was deleted, before or during the run, is dropped
- * and leaves no artifacts for that version. A processor failure asks
+ * and leaves no artifacts for that version; a failed cleanup is retried, and
+ * after the last delivery it is logged with the rows it kept, never recorded
+ * as `processing.failed`. A processor failure asks
  * the queue to retry until the last delivery (see `maxRetries`), which records
  * `processing.failed`.
  */

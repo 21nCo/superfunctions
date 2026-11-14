@@ -115,15 +115,18 @@ const fileFn = createFileFn({
 });
 ```
 
-When configured, `complete` enqueues a job instead of running processors inline. A worker picks it up, runs the processors, and calls `processingService.recordArtifact(...)` per artifact.
+When configured, `complete` enqueues a job on the `filefn.processing` queue (`PROCESSING_QUEUE_NAME`) instead of running processors inline. The consumer passes each job to `createProcessingJobHandler(fileFn)`, which runs the configured processors and records their artifacts through that FileFn instance, once per job idempotency key.
 
-You can swap `@flowfn/server` for any queue that implements:
+You can swap `@flowfn/server` for any provider whose `getQueue(name)` returns a queue that implements:
 
 ```ts
 interface FlowFnQueue {
-  enqueue(job: { fileId: string; versionId: string; storageKey: string; mimeType: string; size: number; fileName: string; tenantId?: string }): Promise<{ jobId: string }>;
+  name: string;
+  add(job: unknown): Promise<{ jobId: string }>;
 }
 ```
+
+For Cloudflare Queues, `@filefn/processing/queues/cloudflare` provides `createCloudflareFlowFnProvider`.
 
 ## Routes
 
