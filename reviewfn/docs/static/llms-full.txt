@@ -110,7 +110,7 @@ ReviewFn uses versioned JSON files at `.reviewfn/config.json` and `.reviewfn/pol
 
 In GitHub Actions, pass `--trusted-config-from-base`. ReviewFn reads both files using `git show BASE:path`, so a pull request cannot weaken the policy controlling its own review.
 
-A review panel adds `.reviewfn/panel.json`. The CLI and the GitHub Action do not read it yet; callers of the core API load it with `loadPanelPolicy`, which trusts the base revision's copy when told to and accepts a repository copy only if it tightens that copy; see [Panel orchestration](panel-report-schema.md#panel-orchestration).
+A review panel adds `.reviewfn/panel.json`, which `reviewfn init --panel` writes as a template. `reviewfn panel` reads it (or the repository-relative path given by `--panel FILE`) with `loadPanelPolicy`, which trusts the base revision's copy in GitHub Actions or with `--trusted-config-from-base` and accepts a head copy only if it tightens that copy; see [Panel review](panel.md) and [Panel orchestration](panel-report-schema.md#panel-orchestration). The GitHub Action does not run a panel.
 
 The configuration selects the profile, harness, inference provider/model/auth, context adapters, approved argv test commands, outputs and retention. Commands are argv arrays and never pass through a shell. Profiles contain 1–80 letters, digits, underscores or hyphens so accepted configurations remain publishable. Optional context identities must be nonempty strings when present.
 
@@ -196,6 +196,7 @@ These pages mirror the detailed Markdown guides in `reviewfn/docs` so existing r
 - [GitHub Action and publication](https://github.com/21nCo/super-functions/blob/dev/reviewfn/docs/content/docs/reference/github-action.md)
 - [Report schema](https://github.com/21nCo/super-functions/blob/dev/reviewfn/docs/content/docs/reference/report-schema.md)
 - [Panel report schema](https://github.com/21nCo/super-functions/blob/dev/reviewfn/docs/content/docs/reference/panel-report-schema.md)
+- [Panel review CLI](https://github.com/21nCo/super-functions/blob/dev/reviewfn/docs/content/docs/reference/panel.md)
 - [Evaluation contract](https://github.com/21nCo/super-functions/blob/dev/reviewfn/docs/content/docs/reference/evaluation.md)
 
 The [package map](https://github.com/21nCo/super-functions/blob/dev/reviewfn/docs/content/docs/packages.md) and [CLI quick start](https://github.com/21nCo/super-functions/blob/dev/reviewfn/docs/content/docs/getting-started.md) provide a shorter entry point.
@@ -308,6 +309,74 @@ Errors from the 0.1 checks keep their 0.1 meaning: `REVIEWFN_CHANGE_DETAIL_MISMA
 
 ---
 
+<!-- page:docs:reference/panel.md path:/docs/reference/panel -->
+# Panel review CLI
+
+> Run a review panel, its exit codes, harness adapters, outputs and report rendering.
+
+
+A panel review runs several harness slots over one frozen change and combines their findings into one advisory panel report. The panel policy, slot identity, quorum and report contract are described in the [panel report schema](panel-report-schema.md). This page covers the CLI.
+
+## Commands
+
+```sh
+reviewfn init --panel
+reviewfn panel --base REF --head REF [--since SHA] [--issue KEY] [--pull-request N] [--panel FILE] [--output DIR] [--trusted-config-from-base] [--json]
+reviewfn report --panel [--input FILE]
+reviewfn publish --input .reviewfn/output/panel-report.json --repository OWNER/REPO --pull-request N --head SHA
+```
+
+- `reviewfn init --panel` writes `.reviewfn/panel.json` and refuses to overwrite an existing file. The template has a general stage-1 slot, which also extracts requirements, and a general stage-2 slot, both on the Codex harness. Each slot's `harness.version` is the exact version the harness reports, such as the output of `codex --version`. Update it to match the installed harness; a run that reports another version never counts.
+- `reviewfn panel` loads `.reviewfn/config.json`, `.reviewfn/policy.json` and `.reviewfn/panel.json`. In GitHub Actions, or with `--trusted-config-from-base`, it reads them from the base revision, and a head copy of the panel policy may only tighten the base copy. It reviews a private snapshot of the repository at the head commit. `--since` names an earlier reviewed commit for an incremental (`delta`) panel. `--issue` selects the issue for context adapters. `--pull-request` binds the run to a pull request, as in 0.1. `--panel FILE` reads the panel policy from another repository-relative path.
+- `reviewfn report --panel` re-renders a stored panel report (`.reviewfn/output/panel-report.json` by default) after checking its structure. Without `--panel`, it renders a 0.1 `report.json`.
+- `reviewfn publish` accepts a panel report as well as a 0.1 report. A panel report publishes under the `panel` profile only, as one summary comment and one neutral `ReviewFn / panel` check. Publishing the same run again updates them; a canceled run is never published. Publication stays a separate, credentialed job.
+
+## Outputs
+
+The run writes `panel-report.json` and `panel-report.md` to the output directory (`.reviewfn/output` by default). Its evidence, including each slot's redacted output, the context manifest and the stored panel report, is kept in the content-addressed store under `.reviewfn/artifacts`, with the retention the policy sets. The two report copies have the same report retention (the smaller of the config and policy `reportDays`): each run expires old artifacts and copies, and idle stores need the scheduled cleanup described in [security](security.md). Add both directories to the repository's ignore rules.
+
+Without `--json`, the rendered Markdown is printed on stdout. With `--json`, stdout carries exactly one JSON line, `{"report":"<absolute path of panel-report.json>","runId":"<run ID>"}`, for scripting. Errors are one JSON object on stderr, `{ "error": "<code>", "message": "…", "details": … }`.
+
+## Exit codes
+
+The exit codes form a closed set. The verdict never changes the exit code, because panel output is advisory.
+
+| Code | Meaning |
+| --- | --- |
+| 0 | The run completed and its coverage is complete. |
+| 2 | The run completed with incomplete coverage, or a stage's quorum was not met. The report is written. |
+| 3 | Preflight failed: invalid configuration or panel policy, a panel policy the head weakens, an unsupported or missing harness adapter, or a component's preflight refused the run. No report is written. |
+| 4 | The run was canceled (SIGINT or SIGTERM). Any failure while canceled, including a preflight that the cancellation interrupted, exits 4. A report is written only when it records the cancellation; such a report is never published. A cancellation after the run's report was assembled but before it was saved writes no report. |
+| 1 | Any other error, such as an invalid argument or an output directory that cannot be written. |
+
+## Harness adapters
+
+Harness adapters are optional peer installs. A slot's `harness.adapter` is resolved through a fixed table, and adapters are never loaded from arbitrary module paths. In this release only `@superfunctions/reviewfn-harness-codex` is published; the `claude-code` and `cli` packages are planned, and until they ship a slot naming them fails with `REVIEWFN_HARNESS_NOT_INSTALLED`:
+
+| `harness.adapter` | Package | Export |
+| --- | --- | --- |
+| `codex` | `@superfunctions/reviewfn-harness-codex` | `CodexHarnessAdapter` |
+| `claude-code` | `@superfunctions/reviewfn-harness-claude-code` | `ClaudeCodeHarnessAdapter` |
+| `cli` | `@superfunctions/reviewfn-harness-cli` | `CliHarnessAdapter` |
+
+The CLI constructs each adapter once with `{ executable?, environment }`. The executable is passed only to the adapter that `config.harness` names. A slot whose adapter package is not installed fails preflight with `REVIEWFN_HARNESS_NOT_INSTALLED`. An adapter outside the table fails with `REVIEWFN_HARNESS_UNSUPPORTED`. A package that does not export a matching adapter fails with `REVIEWFN_HARNESS_LOAD_FAILED`. For an adapter other than the configured harness, the adapter contract version is read from its capabilities before any preflight. Verifier slots are not run by this release, so their adapters are not loaded.
+
+## Report rendering
+
+The Markdown report shows:
+
+- the run summary: run ID, reviewed head, base, coverage, verdict and finding counts;
+- coverage limits;
+- a table with each slot's stage, lens, harness, model and terminal state, with the reasons for a `void` run and, for a `collapsed` run, the slot whose identity it shares;
+- the requirements summary, when the panel extracted requirements;
+- reported findings, grouped by severity and then by file. Each finding shows its origins, its verification verdict and its on-base label (also present on base, new in this change, or not checked against base);
+- dropped and suppressed findings, with their reasons, in a collapsed section;
+- the gate receipts.
+
+`renderPanelMarkdownReport` in `@superfunctions/reviewfn-core` produces this rendering, and the GitHub summary uses the same text.
+
+---
+
 <!-- page:docs:reference/report-schema.md path:/docs/reference/report-schema -->
 # Report schema
 
@@ -352,7 +421,7 @@ Codex disables project-document loading and user config. Changes to `AGENTS.md`,
 
 The review CLI refuses a process environment containing `GITHUB_TOKEN`. Publication uses a separate trusted job and a retained report, without running repository code or inference. Use a per-repository/PR/profile concurrency group for cross-run serialization. Head checks occur after comment discovery and before comment/check writes. GitHub does not provide a transaction spanning head changes and comment creation; a race after a check is reported stale, and every comment names its reviewed SHA. Checks remain neutral.
 
-Artifact filenames and metadata identities are validated. Reads and writes reject target and parent symlinks, apart from known root-owned macOS system aliases. Atomic private output writes occur outside the untrusted execution boundary. Retention validates matching metadata IDs before deletion. Tests retain redacted logs; transcripts require `retainTranscript: true`; events and all harness output are redacted using both detected secrets and the explicitly configured credential value. The CLI applies retention cleanup when saving a new run. Operators must schedule `new FileArtifactStore(artifactsDirectory, outputDirectory).deleteExpired()` for idle stores; the optional second directory includes CLI report.json/report.md copies in expiry cleanup. Shared content keeps the longest active expiration, including imports from run workspaces. Store mutations serialize through .retention.lock; after a crashed writer, the lock records PID, hostname, and acquisition time. Remove it only after confirming the owning process is dead on the recorded host; never reclaim an ambiguous or active owner automatically. Exports changed outside ReviewFn are preserved with a cleanup error rather than deleted. Failed copy writes retain expiry coverage for both old and proposed bytes; cleanup also removes content-addressed data orphaned before its metadata commit. The CLI saves the new review outputs but exits nonzero with REVIEWFN_RETENTION_CLEANUP_FAILED when cleanup reports errors.
+Artifact filenames and metadata identities are validated. Reads and writes reject target and parent symlinks, apart from known root-owned macOS system aliases. Atomic private output writes occur outside the untrusted execution boundary. Retention validates matching metadata IDs before deletion. Tests retain redacted logs; transcripts require `retainTranscript: true`; events and all harness output are redacted using both detected secrets and the explicitly configured credential value. The CLI applies retention cleanup when saving a new run. Operators must schedule `new FileArtifactStore(artifactsDirectory, outputDirectory).deleteExpired()` for idle stores; the optional second directory includes CLI report.json/report.md copies in expiry cleanup. `reviewfn panel` keeps its evidence in `.reviewfn/artifacts` and its panel-report.json/panel-report.md copies under the same report retention (the smaller of the config and policy `reportDays`); schedule `new FileArtifactStore(".reviewfn/artifacts", outputDirectory, PANEL_REPORT_COPY_NAMES).deleteExpired()` for each panel output directory, since the panel copies' retention metadata is kept per output directory. Shared content keeps the longest active expiration, including imports from run workspaces. Store mutations serialize through .retention.lock; after a crashed writer, the lock records PID, hostname, and acquisition time. Remove it only after confirming the owning process is dead on the recorded host; never reclaim an ambiguous or active owner automatically. Exports changed outside ReviewFn are preserved with a cleanup error rather than deleted. Failed copy writes retain expiry coverage for both old and proposed bytes; cleanup also removes content-addressed data orphaned before its metadata commit. The CLI saves the new review outputs but exits nonzero with REVIEWFN_RETENTION_CLEANUP_FAILED when cleanup reports errors.
 
 Public forks never receive repository secrets. A proxy and isolated runner must be deliberately provisioned before enabling reviews. The publisher must download only the artifact from its trusted review job and verify PR/head/profile against event metadata. Never execute a PR-owned workflow, package or image with publication credentials.
 

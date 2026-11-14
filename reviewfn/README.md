@@ -42,7 +42,7 @@ npx reviewfn panel --base origin/main --head HEAD --issue ENG-123
 npx reviewfn report --panel
 ```
 
-The run writes `.reviewfn/output/panel-report.json` and `.reviewfn/output/panel-report.md`, with its evidence under `.reviewfn/artifacts`. Harness adapters are optional peer installs, resolved only from a fixed table (`codex`, `claude-code`, `cli`); a slot whose adapter package is missing fails preflight with `REVIEWFN_HARNESS_NOT_INSTALLED`. The exit code is 0 for complete coverage, 2 for incomplete coverage or an unmet quorum, 3 for a failed preflight, 4 for a canceled run and 1 for any other error. The verdict never changes it. See [panel review](./docs/panel.md).
+The run writes `.reviewfn/output/panel-report.json` and `.reviewfn/output/panel-report.md`, with its evidence under `.reviewfn/artifacts`. Harness adapters are optional peer installs, resolved only from a fixed table (`codex`, `claude-code`, `cli`). Only the Codex adapter package is published so far; a slot whose adapter package is missing, including `claude-code` and `cli` until their packages ship, fails preflight with `REVIEWFN_HARNESS_NOT_INSTALLED`. The exit code is 0 for complete coverage, 2 for incomplete coverage or an unmet quorum, 3 for a failed preflight, 4 for a canceled run and 1 for any other error. The verdict never changes it. See [panel review](./docs/panel.md).
 
 ## Guarantees
 

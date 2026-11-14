@@ -77,6 +77,29 @@ describe("renderPanelMarkdownReport", () => {
     expect(markdown).toContain("| checker | verifier | general | codex codex-cli 1\\.0\\.0 | openai/model-v | not run |  |");
   });
 
+  it("escapes harness-supplied categories and every other untrusted string outside code spans", () => {
+    const hostile = "@octocat <img src=x> [link](https://e.x) | `tick`\nnext";
+    const report = fixture();
+    const [reported, , , , dropped, suppressed] = report.findings;
+    reported.category = hostile;
+    for (const item of [reported, dropped, suppressed]) Object.assign(item, { title: hostile, trigger: hostile, impact: hostile, direction: hostile, evidenceIds: [hostile], origins: [{ slotId: "alpha", lens: hostile }] });
+    dropped.dispositionReason = hostile;
+    dropped.verification = { ...dropped.verification!, reason: hostile, evidenceIds: [hostile] };
+    suppressed.suppressionReference = { sourceId: hostile, anchor: hostile };
+    report.slots[0] = { ...report.slots[0], lens: hostile };
+    report.slotRuns[0] = { ...report.slotRuns[0], identity: { ...report.slotRuns[0].identity, harnessVersion: hostile, model: hostile } };
+    report.coverageReasons = [hostile];
+    report.gateReceipts[0] = { ...report.gateReceipts[0], command: [hostile] };
+    const markdown = renderPanelMarkdownReport(report);
+    expect(markdown).toContain("- **&#64;octocat \\<img src=x\\> \\[link\\]\\(https://e\\.x\\) \\| \\`tick\\` next** (&#64;octocat \\<img src=x\\> \\[link\\]\\(https://e\\.x\\) \\| \\`tick\\` next; not checked against base)");
+    // No mention, raw HTML, link, line break or unescaped pipe from the hostile text survives anywhere.
+    expect(markdown).not.toContain("@octocat");
+    expect(markdown).not.toMatch(/(^|[^\\])<img/);
+    expect(markdown).not.toMatch(/(^|[^\\])\]\(/);
+    expect(markdown).not.toMatch(/(^|[^\\])\| `tick/);
+    expect(markdown.split("\n").some(line => line.startsWith("next"))).toBe(false);
+  });
+
   it("identifies panel reports and canceled panel runs", () => {
     expect(isPanelReport(fixture())).toBe(true);
     expect(isPanelReport({ schemaVersion: 1, execution: "completed" })).toBe(false);

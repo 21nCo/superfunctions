@@ -6,7 +6,7 @@ A panel review runs several harness slots over one frozen change and combines th
 
 ```sh
 reviewfn init --panel
-reviewfn panel --base REF --head REF [--since SHA] [--issue KEY] [--pull-request N] [--output DIR] [--json]
+reviewfn panel --base REF --head REF [--since SHA] [--issue KEY] [--pull-request N] [--panel FILE] [--output DIR] [--trusted-config-from-base] [--json]
 reviewfn report --panel [--input FILE]
 reviewfn publish --input .reviewfn/output/panel-report.json --repository OWNER/REPO --pull-request N --head SHA
 ```
@@ -18,7 +18,7 @@ reviewfn publish --input .reviewfn/output/panel-report.json --repository OWNER/R
 
 ## Outputs
 
-The run writes `panel-report.json` and `panel-report.md` to the output directory (`.reviewfn/output` by default). Its evidence, including each slot's redacted output, the context manifest and the stored panel report, is kept in the content-addressed store under `.reviewfn/artifacts`, with the retention the policy sets. Add both directories to the repository's ignore rules.
+The run writes `panel-report.json` and `panel-report.md` to the output directory (`.reviewfn/output` by default). Its evidence, including each slot's redacted output, the context manifest and the stored panel report, is kept in the content-addressed store under `.reviewfn/artifacts`, with the retention the policy sets. The two report copies have the same report retention (the smaller of the config and policy `reportDays`): each run expires old artifacts and copies, and idle stores need the scheduled cleanup described in [security](security.md). Add both directories to the repository's ignore rules.
 
 Without `--json`, the rendered Markdown is printed on stdout. With `--json`, stdout carries exactly one JSON line, `{"report":"<absolute path of panel-report.json>","runId":"<run ID>"}`, for scripting. Errors are one JSON object on stderr, `{ "error": "<code>", "message": "…", "details": … }`.
 
@@ -31,12 +31,12 @@ The exit codes form a closed set. The verdict never changes the exit code, becau
 | 0 | The run completed and its coverage is complete. |
 | 2 | The run completed with incomplete coverage, or a stage's quorum was not met. The report is written. |
 | 3 | Preflight failed: invalid configuration or panel policy, a panel policy the head weakens, an unsupported or missing harness adapter, or a component's preflight refused the run. No report is written. |
-| 4 | The run was canceled (SIGINT or SIGTERM). When the run had started, the report that records the cancellation is written. |
+| 4 | The run was canceled (SIGINT or SIGTERM). Any failure while canceled, including a preflight that the cancellation interrupted, exits 4. A report is written only when it records the cancellation; such a report is never published. A cancellation after the run's report was assembled but before it was saved writes no report. |
 | 1 | Any other error, such as an invalid argument or an output directory that cannot be written. |
 
 ## Harness adapters
 
-Harness adapters are optional peer installs. A slot's `harness.adapter` is resolved through a fixed table, and adapters are never loaded from arbitrary module paths:
+Harness adapters are optional peer installs. A slot's `harness.adapter` is resolved through a fixed table, and adapters are never loaded from arbitrary module paths. In this release only `@superfunctions/reviewfn-harness-codex` is published; the `claude-code` and `cli` packages are planned, and until they ship a slot naming them fails with `REVIEWFN_HARNESS_NOT_INSTALLED`:
 
 | `harness.adapter` | Package | Export |
 | --- | --- | --- |

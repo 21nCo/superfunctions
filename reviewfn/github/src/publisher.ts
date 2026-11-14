@@ -12,7 +12,7 @@ interface CheckRunsResponse { check_runs: CheckRun[] }
 
 /**
  * A publication request for a 0.1 review report or a panel report. Both render into the same single summary comment
- * and neutral check per profile, keyed by the report's run ID.
+ * per profile (keyed by profile, so a later run replaces it) and one neutral check per profile and run ID.
  */
 export interface GitHubPublishRequest extends Omit<PublishRequest, "report"> {
   report: PublishRequest["report"] | PanelReport;

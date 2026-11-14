@@ -4,11 +4,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DEFAULT_CONFIG, DEFAULT_POLICY, PANEL_CANCELED_REASON, PANEL_QUORUM_UNMET, parsePanelPolicy, type PanelPolicy, type PanelReport, type PanelSlot } from "@superfunctions/reviewfn-core";
+import { DEFAULT_CONFIG, DEFAULT_POLICY, FileArtifactStore, PANEL_CANCELED_REASON, PANEL_QUORUM_UNMET, PANEL_REPORT_COPY_NAMES, parsePanelPolicy, type PanelPolicy, type PanelReport, type PanelSlot, type ReviewFnConfig } from "@superfunctions/reviewfn-core";
 import { FakeExecutionAdapter, FakePanelHarness, abortableDelay, slotOutput, type SlotBehavior } from "@superfunctions/reviewfn-testing";
 
 import { initializePanelPolicy, PANEL_POLICY_TEMPLATE } from "../src/config.js";
-import { PANEL_EXIT_CODES, PANEL_HARNESS_PACKAGES, parseArguments, publication, renderStoredReport, resolvePanelHarnesses, runPanelCommand, type PanelCommandDependencies } from "../src/panel.js";
+import { PANEL_EXIT_CODES, PANEL_HARNESS_PACKAGES, parseArguments, publication, renderStoredReport, resolvePanelHarnesses, runPanelCommand, savePanelRun, type PanelCommandDependencies } from "../src/panel.js";
 
 const environment = { PATH: process.env.PATH, HOME: process.env.HOME };
 const config = { ...DEFAULT_CONFIG, context: [{ adapter: "repository-markdown", paths: ["README.md"] }], harness: { adapter: "codex", version: "1" }, execution: { ...DEFAULT_CONFIG.execution, tests: [] } };
@@ -127,6 +127,18 @@ describe("reviewfn panel exit codes", () => {
     expect((await stored()).report.coverage).toBe("incomplete");
   });
 
+  it("keeps panel-report.json and panel-report.md under report retention, so cleanup expires them", async () => {
+    await repository(panel([slot("one", 1)]));
+    expect((await invoke(["--base", base, "--head", head], codex())).code).toBe(PANEL_EXIT_CODES.complete);
+    const output = path.join(root, ".reviewfn", "output");
+    const store = new FileArtifactStore(path.join(root, ".reviewfn", "artifacts"), output, PANEL_REPORT_COPY_NAMES);
+    const reportDays = Math.min(config.retention.reportDays, DEFAULT_POLICY.retention.reportDays);
+    expect((await store.deleteExpired(new Date(Date.now() + (reportDays - 1) * 86_400_000))).errors).toEqual([]);
+    expect((await readdir(output)).sort()).toEqual(["panel-report.json", "panel-report.md"]);
+    expect((await store.deleteExpired(new Date(Date.now() + (reportDays + 1) * 86_400_000))).errors).toEqual([]);
+    expect(await readdir(output)).toEqual([]);
+  });
+
   it("exits 3 with REVIEWFN_HARNESS_NOT_INSTALLED when a slot's adapter package is missing, before any harness runs", async () => {
     await repository(panel([slot("one", 1), slot("claude", 1, "model-claude", "claude-code")]));
     const harness = codex();
@@ -165,6 +177,44 @@ describe("reviewfn panel exit codes", () => {
     expect(report.slotRuns.map(run => run.terminal)).toEqual(["canceled", "canceled"]);
     expect(JSON.parse(result.stdout).runId).toBe(report.runId);
     expect(() => publication(report, parseArguments(["publish"]).flags)).toThrow(/not canceled/);
+  });
+
+  it("exits 4, not 3, when the run is canceled while a harness preflight is running", async () => {
+    await repository(panel([slot("one", 1)]));
+    const controller = new AbortController();
+    // A harness whose preflight observes the abort and rejects, as a real adapter does when its probe is killed.
+    class AbortedPreflight extends FakePanelHarness {
+      public override async preflight(_config: ReviewFnConfig): Promise<never> { controller.abort(); throw new Error("preflight probe was killed"); }
+    }
+    const harness = new AbortedPreflight({ id: "codex" });
+    const result = await invoke(["--base", base, "--head", head], harness, { signal: controller.signal });
+    expect(result.code).toBe(PANEL_EXIT_CODES.canceled);
+    expect(JSON.parse(result.stderr).error).toBe("REVIEWFN_CANCELED");
+    await expect(readFile(path.join(root, ".reviewfn", "output", "panel-report.json"))).rejects.toThrow();
+  });
+
+  it("writes no report and exits 4 when canceled after the run returned but before its report was saved", async () => {
+    await repository(panel([slot("one", 1)]));
+    expect((await invoke(["--base", base, "--head", head], codex())).code).toBe(PANEL_EXIT_CODES.complete);
+    const { report } = await stored();
+    const empty = await mkdtemp(path.join(tmpdir(), "reviewfn-cli-owned-")); owned.push(empty);
+    const locations = { ownedArtifacts: empty, artifactsDirectory: path.join(root, ".reviewfn", "artifacts"), outputDirectory: path.join(root, "late"), reportDays: 30 };
+    const controller = new AbortController();
+    controller.abort();
+    const late = await savePanelRun(report, true, locations, controller.signal);
+    expect(late).toMatchObject({ exitCode: PANEL_EXIT_CODES.canceled, error: expect.objectContaining({ code: "REVIEWFN_CANCELED" }) });
+    expect(late.reportPath).toBeUndefined();
+    expect(await readdir(locations.outputDirectory).catch(() => [])).toEqual([]);
+    // A report that records the cancellation is saved (it cannot be published) and still exits 4.
+    const canceledReport = { ...report, coverage: "incomplete" as const, coverageReasons: [PANEL_CANCELED_REASON] };
+    const recorded = await savePanelRun(canceledReport, true, locations, controller.signal);
+    expect(recorded.exitCode).toBe(PANEL_EXIT_CODES.canceled);
+    expect(JSON.parse(await readFile(recorded.reportPath!, "utf8")).coverageReasons).toEqual([PANEL_CANCELED_REASON]);
+    // Saving to another output directory leaves the first directory's copies under their own retention.
+    const output = path.join(root, ".reviewfn", "output");
+    const first = new FileArtifactStore(locations.artifactsDirectory, output, PANEL_REPORT_COPY_NAMES);
+    expect((await first.deleteExpired(new Date(Date.now() + 400 * 86_400_000))).errors).toEqual([]);
+    expect(await readdir(output)).toEqual([]);
   });
 
   it("exits 4 when canceled before the run starts", async () => {

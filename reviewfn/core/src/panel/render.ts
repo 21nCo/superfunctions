@@ -62,13 +62,13 @@ function originsText(finding: PanelFinding): string {
 function findingLines(finding: PanelFinding): string[] {
   const onBase = ON_BASE_LABELS[finding.verification?.onBase ?? "not_checked"];
   const lines = [
-    `- **${escape(finding.title)}** (${finding.category}; ${onBase})`,
+    `- **${escape(finding.title)}** (${escape(finding.category)}; ${onBase})`,
     `  - Origins: ${originsText(finding)}`,
     `  - Verification: ${verificationText(finding)}`,
     `  - Trigger: ${escape(finding.trigger)}`,
     `  - Impact: ${escape(finding.impact)}`,
     `  - Fix: ${escape(finding.direction)}`,
-    `  - Evidence: ${finding.evidenceIds.map(escape).join(", ") || "none"}; ${finding.basis}`,
+    `  - Evidence: ${finding.evidenceIds.map(escape).join(", ") || "none"}; ${escape(finding.basis)}`,
   ];
   if (finding.anchor) lines.push(`  - Anchor: ${anchorText(finding.anchor)}`);
   return lines;
@@ -108,6 +108,9 @@ function setAsideLines(finding: PanelFinding): string[] {
  * Render a panel report as Markdown: the run summary, every slot's terminal state with void and collapse reasons, the
  * requirements summary, reported findings grouped by severity then file (each with its origins, verification verdict
  * and on-base label), and dropped and suppressed findings with their reasons in a collapsed section. Advisory only.
+ * Every free-text field, including harness-supplied categories, passes through `escape` or `code`; schema enums (stage,
+ * terminal, severity, disposition, verdicts and coverage) are shown as-is, so callers render only reports that
+ * pass `panelStructureIssues` or come from the coordinator.
  */
 export function renderPanelMarkdownReport(report: PanelReport): string {
   const slots = new Map(report.slots.map(slot => [slot.id, slot]));

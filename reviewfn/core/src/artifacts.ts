@@ -14,8 +14,33 @@ function validateKind(kind: string): void {
   if (!/^[a-z][a-z0-9-]{0,63}$/.test(kind)) throw new ReviewFnError("REVIEWFN_ARTIFACT_UNSAFE", `Unsafe artifact kind ${kind}.`);
 }
 
+/** The file names of a set of JSON and Markdown report copies kept under report-copy retention. */
+export interface ReportCopyNames { json: string; markdown: string }
+
+/** The 0.1 review report copies (`report.json`, `report.md`); retention metadata in `<artifacts>/.report-copies`. */
+export const REVIEW_REPORT_COPY_NAMES: ReportCopyNames = Object.freeze({ json: "report.json", markdown: "report.md" });
+/** The panel report copies (`panel-report.json`, `panel-report.md`); retention metadata in `<artifacts>/.panel-report-copies-<directory digest>`. */
+export const PANEL_REPORT_COPY_NAMES: ReportCopyNames = Object.freeze({ json: "panel-report.json", markdown: "panel-report.md" });
+
 export class FileArtifactStore implements ArtifactStore {
-  public constructor(private readonly root: string, private readonly reportCopiesDirectory?: string) {}
+  private readonly copyNames: readonly [string, string];
+  private readonly copiesMarker: string;
+
+  /**
+   * `reportCopiesDirectory` holds the report copies this store writes and expires; `copyNames` selects which set
+   * (0.1 review copies by default). Each set keeps its own retention metadata in the store, named after its JSON copy:
+   * `.report-copies` for the 0.1 copies, whose store lives inside their output directory. Any other set's store can be
+   * shared by several output directories, so its metadata name also carries a digest of the copies directory, and
+   * cleanup for one output directory never drops the retention of another's copies.
+   */
+  public constructor(private readonly root: string, private readonly reportCopiesDirectory?: string, copyNames: ReportCopyNames = REVIEW_REPORT_COPY_NAMES) {
+    for (const name of [copyNames.json, copyNames.markdown]) if (!/^[a-z][a-z0-9-]*\.(json|md)$/.test(name)) throw new ReviewFnError("REVIEWFN_ARTIFACT_UNSAFE", `Unsafe report copy name ${name}.`);
+    if (!copyNames.json.endsWith(".json") || !copyNames.markdown.endsWith(".md")) throw new ReviewFnError("REVIEWFN_ARTIFACT_UNSAFE", "Report copy names must be a .json file and a .md file.");
+    this.copyNames = [copyNames.json, copyNames.markdown];
+    const stem = `.${copyNames.json.slice(0, -".json".length)}-copies`;
+    const review = copyNames.json === REVIEW_REPORT_COPY_NAMES.json && copyNames.markdown === REVIEW_REPORT_COPY_NAMES.markdown;
+    this.copiesMarker = review || !reportCopiesDirectory ? stem : `${stem}-${sha256(path.resolve(reportCopiesDirectory)).slice(0, 16)}`;
+  }
 
   public put(kind: string, content: string | Uint8Array, retentionDays: number) { return this.withLease(() => this.putUnlocked(kind, content, retentionDays)); }
   public importFrom(sourceRoot: string) { return this.withLease(() => this.importUnlocked(sourceRoot)); }
@@ -71,11 +96,12 @@ export class FileArtifactStore implements ArtifactStore {
   private async writeCopiesUnlocked(json: string, markdown: string, retentionDays: number): Promise<void> {
     if (!this.reportCopiesDirectory || !Number.isInteger(retentionDays) || retentionDays <= 0) throw new Error("Report-copy directory and positive retention are required.");
     await this.ensureSafeRoot();
-    const marker = path.join(this.root, ".report-copies");
+    const marker = path.join(this.root, this.copiesMarker);
     const previousRaw = await safeRead(marker).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? undefined : Promise.reject(error));
-    const previous = previousRaw ? parseReportCopies(previousRaw) : {};
+    const previous = previousRaw ? parseReportCopies(previousRaw, this.copyNames) : {};
     const metadata: ReportCopies = {};
-    for (const [name, content] of [["report.json", json], ["report.md", markdown]]) {
+    const [jsonName, markdownName] = this.copyNames;
+    for (const [name, content] of [[jsonName, json], [markdownName, markdown]]) {
       const current = await safeRead(path.join(this.reportCopiesDirectory, name)).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? undefined : Promise.reject(error));
       const prior = (previous[name] ?? []).filter(reference => current && reference.digest === sha256(current));
       const next = { digest: sha256(content), expiresAt: new Date(Date.now() + retentionDays * 86_400_000).toISOString() };
@@ -85,8 +111,8 @@ export class FileArtifactStore implements ArtifactStore {
       metadata[name] = [...references.values()];
     }
     await safeWrite(marker, JSON.stringify(metadata));
-    await safeWrite(path.join(this.reportCopiesDirectory, "report.json"), json);
-    await safeWrite(path.join(this.reportCopiesDirectory, "report.md"), markdown);
+    await safeWrite(path.join(this.reportCopiesDirectory, jsonName), json);
+    await safeWrite(path.join(this.reportCopiesDirectory, markdownName), markdown);
   }
 
   private async mergeMetadata(file: string, metadata: ArtifactMetadata): Promise<void> {
@@ -139,12 +165,12 @@ export class FileArtifactStore implements ArtifactStore {
     }
     if (this.reportCopiesDirectory) {
       try {
-        const raw = await safeRead(path.join(this.root, ".report-copies")).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? undefined : Promise.reject(error));
+        const raw = await safeRead(path.join(this.root, this.copiesMarker)).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? undefined : Promise.reject(error));
         if (raw) {
-          const metadata = parseReportCopies(raw);
+          const metadata = parseReportCopies(raw, this.copyNames);
           let remaining = false;
           const expiredCopies: string[] = [];
-          for (const name of ["report.json", "report.md"]) {
+          for (const name of this.copyNames) {
             const file = path.join(this.reportCopiesDirectory, name);
             const content = await safeRead(file).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? undefined : Promise.reject(error));
             if (!content) continue;
@@ -155,7 +181,7 @@ export class FileArtifactStore implements ArtifactStore {
           }
           // Validate both copies before deleting either when an export changed.
           for (const file of expiredCopies) await rm(file, { force: true });
-          if (!remaining) await rm(path.join(this.root, ".report-copies"));
+          if (!remaining) await rm(path.join(this.root, this.copiesMarker));
         }
       } catch (error) { errors.push(`Report copies: ${error instanceof Error ? error.message : String(error)}`); }
     }
@@ -185,9 +211,9 @@ function validateMetadata(metadata: ArtifactMetadata, entry: string): void {
 }
 
 type ReportCopies = Record<string, { digest: string; expiresAt: string }[]>;
-function parseReportCopies(raw: Buffer): ReportCopies {
+function parseReportCopies(raw: Buffer, names: readonly string[]): ReportCopies {
   const value = JSON.parse(raw.toString("utf8")) as ReportCopies;
-  for (const name of ["report.json", "report.md"]) {
+  for (const name of names) {
     if (!Array.isArray(value?.[name]) || value[name].length < 1 || value[name].length > 2 || value[name].some(reference => !reference || !/^[a-f0-9]{64}$/.test(reference.digest) || !Number.isFinite(Date.parse(reference.expiresAt)))) throw new Error("Invalid report-copy retention metadata.");
   }
   return value;

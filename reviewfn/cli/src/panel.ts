@@ -6,9 +6,9 @@ import { promisify } from "node:util";
 
 import { ComposioLinearContextAdapter } from "@superfunctions/reviewfn-context-composio";
 import {
-  FileArtifactStore, isPanelReport, isolatedGitEnvironment, loadPanelPolicy, panelReportCanceled, panelStructureIssues, PanelCoordinator, RepositoryMarkdownContextAdapter, renderMarkdownReport, renderPanelMarkdownReport,
-  ReviewFnError, safeDirectory, safeRead, safeWrite, validateConfig, validatePolicy,
-  type ArtifactStore, type ContextAdapter, type ExecutionAdapter, type PanelHarnessAdapter, type PanelPolicy, type PanelReport, type PanelRunResult, type ReviewFnConfig, type ReviewPolicy, type ReviewReport,
+  effectiveRetention, FileArtifactStore, isPanelReport, isolatedGitEnvironment, loadPanelPolicy, PANEL_REPORT_COPY_NAMES, panelReportCanceled, panelStructureIssues, PanelCoordinator, RepositoryMarkdownContextAdapter, renderMarkdownReport, renderPanelMarkdownReport,
+  ReviewFnError, safeDirectory, safeRead, validateConfig, validatePolicy,
+  type ArtifactStore, type ContextAdapter, type ExecutionAdapter, type PanelHarnessAdapter, type PanelPolicy, type PanelReport, type ReviewFnConfig, type ReviewPolicy, type ReviewReport,
 } from "@superfunctions/reviewfn-core";
 import { GitSourceControlAdapter, redactRepositoryRemote } from "@superfunctions/reviewfn-github";
 
@@ -235,15 +235,68 @@ async function readArtifactJson(store: ArtifactStore, id: string): Promise<unkno
   return JSON.parse(Buffer.from(bytes).toString("utf8"));
 }
 
+/** Where a finished panel run saves its outputs, and the retention of the report copies. */
+export interface PanelOutputLocations {
+  /** The run's private artifact store, imported into `artifactsDirectory`. */
+  ownedArtifacts: string;
+  artifactsDirectory: string;
+  outputDirectory: string;
+  /** Retention of `panel-report.json` and `panel-report.md`, as of the stored report: the smaller of config and policy `reportDays`. */
+  reportDays: number;
+}
+
+export interface SavedPanelRun {
+  /** Undefined when the invocation was canceled before the report copies were written: nothing was written to the output directory. */
+  reportPath?: string;
+  rendered?: string;
+  exitCode: number;
+  /** The error that sets a nonzero exit code other than incomplete coverage, if any. */
+  error?: unknown;
+}
+
+/**
+ * Save a finished panel run: import its evidence into the artifact store, expire old artifacts and report copies, then
+ * write `panel-report.json` and `panel-report.md` under report-copy retention. Cancellation is checked once, right before
+ * the copies are written: a cancellation before that point writes no copies and exits 4 unless the report itself already
+ * records the cancellation; from that point on the saved report alone decides the exit code, so an exit 4 with saved
+ * copies always means the saved report records `PANEL_CANCELED_REASON` and cannot be published.
+ */
+export async function savePanelRun(report: PanelReport, quorumMet: boolean, locations: PanelOutputLocations, signal?: AbortSignal): Promise<SavedPanelRun> {
+  const canceled = (): SavedPanelRun => ({ exitCode: PANEL_EXIT_CODES.canceled, error: new ReviewFnError("REVIEWFN_CANCELED", "The panel run was canceled before its report was saved; no panel report was written.", { runId: report.runId }) });
+  let committed = false;
+  try {
+    const store = new FileArtifactStore(locations.artifactsDirectory, locations.outputDirectory, PANEL_REPORT_COPY_NAMES);
+    // Merge retained artifacts without shortening expiration for prior references.
+    await store.importFrom(locations.ownedArtifacts);
+    const cleanup = await store.deleteExpired();
+    const rendered = renderPanelMarkdownReport(report);
+    const recordsCancellation = panelReportCanceled(report);
+    if (signal?.aborted && !recordsCancellation) return canceled();
+    committed = true;
+    await safeDirectory(locations.outputDirectory);
+    await store.writeReportCopies(`${JSON.stringify(report, null, 2)}\n`, rendered, locations.reportDays);
+    const reportPath = path.join(locations.outputDirectory, PANEL_REPORT_COPY_NAMES.json);
+    if (recordsCancellation) return { reportPath, rendered, exitCode: PANEL_EXIT_CODES.canceled, error: new ReviewFnError("REVIEWFN_CANCELED", "The panel run was canceled; the saved report records the cancellation.", { runId: report.runId }) };
+    if (cleanup.errors.length) return { reportPath, rendered, exitCode: PANEL_EXIT_CODES.error, error: new ReviewFnError("REVIEWFN_RETENTION_CLEANUP_FAILED", "Panel outputs were saved, but retention cleanup failed; inspect the artifact store and retry cleanup.", { errors: cleanup.errors }) };
+    return { reportPath, rendered, exitCode: report.coverage !== "complete" || !quorumMet ? PANEL_EXIT_CODES.incomplete : PANEL_EXIT_CODES.complete };
+  } catch (error) {
+    if (!committed && signal?.aborted) return canceled();
+    return { exitCode: PANEL_EXIT_CODES.error, error };
+  }
+}
+
 /**
  * `reviewfn panel`: run the panel over base..head and write `panel-report.json` and `panel-report.md` to the output
- * directory, with the run's evidence under `.reviewfn/artifacts`. Returns an exit code from `PANEL_EXIT_CODES`.
+ * directory, with the run's evidence under `.reviewfn/artifacts`. Returns an exit code from `PANEL_EXIT_CODES`. Any
+ * failure while the signal is aborted, before the report copies are written, exits 4.
  */
 export async function runPanelCommand(flags: Flags, dependencies: PanelCommandDependencies = {}): Promise<number> {
   const stdout = dependencies.stdout ?? (text => void process.stdout.write(text));
   const stderr = dependencies.stderr ?? (text => void process.stderr.write(text));
   const environment = dependencies.environment ?? process.env;
+  const signal = dependencies.signal;
   const fail = (code: number, error: unknown): number => { stderr(`${JSON.stringify(errorPayload(error))}\n`); return code; };
+  const canceled = (error: unknown, stage: string): number => fail(PANEL_EXIT_CODES.canceled, error instanceof ReviewFnError && error.code === "REVIEWFN_CANCELED" ? error : new ReviewFnError("REVIEWFN_CANCELED", `The panel run was canceled ${stage}.`, { cause: errorPayload(error) }));
   let invocation: PanelInvocation;
   try { invocation = panelInvocation(flags, environment); }
   catch (error) { return fail(PANEL_EXIT_CODES.error, error); }
@@ -252,12 +305,14 @@ export async function runPanelCommand(flags: Flags, dependencies: PanelCommandDe
     const ownedArtifacts = path.join(owned, "artifacts");
     let coordinator: PanelCoordinator;
     let request: Parameters<PanelCoordinator["run"]>[0];
+    let reportDays: number;
     const ownedStore = new FileArtifactStore(ownedArtifacts);
     try {
       if (environment.GITHUB_TOKEN) throw new ReviewFnError("REVIEWFN_PREFLIGHT_FAILED", "Review execution must not receive GITHUB_TOKEN; use the separate publish command in a credentialed job.");
       const { root } = invocation;
       const { config, policy } = await loadRunConfiguration(root, invocation.base, flags, environment);
-      const { policy: panelPolicy } = await loadPanelPolicy({ root, base: invocation.base, head: invocation.head, trustedFromBase: trustedFromBase(flags, environment), path: optional(flags, "panel"), signal: dependencies.signal });
+      reportDays = effectiveRetention(config, policy).reportDays;
+      const { policy: panelPolicy } = await loadPanelPolicy({ root, base: invocation.base, head: invocation.head, trustedFromBase: trustedFromBase(flags, environment), path: optional(flags, "panel"), signal });
       const { harnesses, contractVersions } = await resolvePanelHarnesses(panelPolicy, config, dependencies.importHarnessModule, environment);
       const snapshot = await createReviewSnapshot(root, owned, invocation.base, invocation.head, optional(flags, "target-branch"), environment);
       const since = invocation.since === undefined ? undefined : await resolveCommit(root, invocation.since);
@@ -271,39 +326,33 @@ export async function runPanelCommand(flags: Flags, dependencies: PanelCommandDe
         artifacts: ownedStore,
         environment,
       });
-      request = { root: snapshot.root, base: snapshot.base, head: snapshot.head, pullRequest: invocation.pullRequest, config, policy, issue: invocation.issue, panelPolicy, signal: dependencies.signal, ...(since === undefined ? {} : { since }) };
+      request = { root: snapshot.root, base: snapshot.base, head: snapshot.head, pullRequest: invocation.pullRequest, config, policy, issue: invocation.issue, panelPolicy, signal, ...(since === undefined ? {} : { since }) };
     } catch (error) {
-      if (dependencies.signal?.aborted) return fail(PANEL_EXIT_CODES.canceled, new ReviewFnError("REVIEWFN_CANCELED", "The panel run was canceled during preflight."));
+      if (signal?.aborted) return canceled(error, "during preflight");
       return fail(PANEL_EXIT_CODES.preflight, error);
     }
-    let result: PanelRunResult | undefined;
     let report: PanelReport;
+    let quorumMet: boolean;
     try {
-      result = await coordinator.run(request);
+      const result = await coordinator.run(request);
       report = result.report;
+      quorumMet = result.quorum.every(item => item.met);
     } catch (error) {
-      if (!(error instanceof ReviewFnError)) return fail(PANEL_EXIT_CODES.error, error);
-      if (error.code === "REVIEWFN_PREFLIGHT_FAILED") return fail(PANEL_EXIT_CODES.preflight, error);
-      if (error.code !== "REVIEWFN_CANCELED") return fail(PANEL_EXIT_CODES.error, error);
       // Canceled while the report was stored: the superseding report records the cancellation; keep it as the output.
-      const artifact = (error.details as { reportArtifact?: unknown } | undefined)?.reportArtifact;
-      if (typeof artifact !== "string") return fail(PANEL_EXIT_CODES.canceled, error);
-      report = await readArtifactJson(ownedStore, artifact) as PanelReport;
+      const artifact = error instanceof ReviewFnError && error.code === "REVIEWFN_CANCELED" ? (error.details as { reportArtifact?: unknown } | undefined)?.reportArtifact : undefined;
+      if (typeof artifact === "string") {
+        report = await readArtifactJson(ownedStore, artifact) as PanelReport;
+        quorumMet = false;
+      } else if (signal?.aborted) return canceled(error, "while the panel ran");
+      else if (error instanceof ReviewFnError && error.code === "REVIEWFN_PREFLIGHT_FAILED") return fail(PANEL_EXIT_CODES.preflight, error);
+      else return fail(PANEL_EXIT_CODES.error, error);
     }
-    const store = new FileArtifactStore(invocation.artifactsDirectory);
-    // Merge retained artifacts without shortening expiration for prior references.
-    await store.importFrom(ownedArtifacts);
-    const cleanup = await store.deleteExpired();
-    const rendered = renderPanelMarkdownReport(report);
-    const reportPath = path.join(invocation.outputDirectory, "panel-report.json");
-    await safeDirectory(invocation.outputDirectory);
-    await safeWrite(reportPath, `${JSON.stringify(report, null, 2)}\n`);
-    await safeWrite(path.join(invocation.outputDirectory, "panel-report.md"), rendered);
-    stdout(invocation.json ? `${JSON.stringify({ report: reportPath, runId: report.runId })}\n` : `${rendered}\n`);
-    if (dependencies.signal?.aborted || panelReportCanceled(report)) return PANEL_EXIT_CODES.canceled;
-    if (cleanup.errors.length) return fail(PANEL_EXIT_CODES.error, new ReviewFnError("REVIEWFN_RETENTION_CLEANUP_FAILED", "Panel outputs were saved, but retention cleanup failed; inspect the artifact store and retry cleanup.", { errors: cleanup.errors }));
-    return report.coverage !== "complete" || result?.quorum.some(item => !item.met) ? PANEL_EXIT_CODES.incomplete : PANEL_EXIT_CODES.complete;
+    const saved = await savePanelRun(report, quorumMet, { ownedArtifacts, artifactsDirectory: invocation.artifactsDirectory, outputDirectory: invocation.outputDirectory, reportDays }, signal);
+    if (saved.reportPath !== undefined) stdout(invocation.json ? `${JSON.stringify({ report: saved.reportPath, runId: report.runId })}\n` : `${saved.rendered}\n`);
+    return saved.error === undefined ? saved.exitCode : fail(saved.exitCode, saved.error);
   } catch (error) {
+    // Only reading a stored canceled report reaches here; nothing was written to the output directory.
+    if (signal?.aborted) return canceled(error, "while its report was read");
     return fail(PANEL_EXIT_CODES.error, error);
   } finally { await rm(owned, { recursive: true, force: true }); }
 }

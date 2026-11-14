@@ -3,7 +3,7 @@ import * as fileSystem from "node:fs/promises";
 vi.mock("node:fs/promises", async importOriginal => ({ ...await importOriginal<typeof import("node:fs/promises")>() }));
 import * as safeFiles from "../src/safe-files.js";
 
-import { DEFAULT_CONFIG, DEFAULT_POLICY, FileArtifactStore, RepositoryMarkdownContextAdapter, applyRepositoryPolicy, buildReviewPrompt, deriveVerdict, digestJson, findingFingerprint, validateConfig, validateReport, type ReviewReport } from "../src/index.js";
+import { DEFAULT_CONFIG, DEFAULT_POLICY, FileArtifactStore, PANEL_REPORT_COPY_NAMES, RepositoryMarkdownContextAdapter, applyRepositoryPolicy, buildReviewPrompt, deriveVerdict, digestJson, findingFingerprint, validateConfig, validateReport, type ReviewReport } from "../src/index.js";
 import { readFile, mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -107,6 +107,23 @@ it("expires the CLI JSON and Markdown report copies", async () => {
   expect((await store.deleteExpired(new Date(Date.now() + 2 * 86_400_000))).errors).toEqual([]);
   await expect(readFile(path.join(root, "report.json"))).rejects.toThrow();
   await expect(readFile(path.join(root, "report.md"))).rejects.toThrow();
+});
+
+it("expires panel report copies separately from the 0.1 report copies in the same directory", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-retention-"));
+  const review = new FileArtifactStore(path.join(root, "artifacts"), root);
+  const panel = new FileArtifactStore(path.join(root, "artifacts"), root, PANEL_REPORT_COPY_NAMES);
+  await review.writeReportCopies("review-json", "review-md", 30);
+  await panel.writeReportCopies("panel-json", "panel-md", 1);
+  expect(await readFile(path.join(root, "panel-report.json"), "utf8")).toBe("panel-json");
+  // The 0.1 store neither sees nor expires the panel copies.
+  expect((await review.deleteExpired(new Date(Date.now() + 2 * 86_400_000))).errors).toEqual([]);
+  expect(await readFile(path.join(root, "panel-report.md"), "utf8")).toBe("panel-md");
+  expect((await panel.deleteExpired(new Date(Date.now() + 2 * 86_400_000))).errors).toEqual([]);
+  await expect(readFile(path.join(root, "panel-report.json"))).rejects.toThrow();
+  await expect(readFile(path.join(root, "panel-report.md"))).rejects.toThrow();
+  expect(await readFile(path.join(root, "report.json"), "utf8")).toBe("review-json");
+  expect(() => new FileArtifactStore(root, root, { json: "../report.json", markdown: "report.md" })).toThrow(/Unsafe report copy name/);
 });
 
 it.each(["report.json", "report.md"])("keeps report copies expirable after failing to save %s", async failure => {
