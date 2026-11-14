@@ -1,4 +1,5 @@
 import type { AuthFnBundledPluginConfig } from 'authfn/plugin-types';
+import type { OAuthDeviceAuthorizationConfig } from './device/types.js';
 
 /** Access tokens live one hour. */
 export const OAUTH_ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
@@ -142,6 +143,8 @@ export interface OAuthProviderPluginRuntimeConfig {
   clients: OAuthProviderClient[];
   /** Client self-registration; off unless configured. */
   registration?: OAuthClientRegistrationConfig;
+  /** The device authorization grant (RFC 8628) for CLIs; off unless configured. */
+  deviceAuthorization?: OAuthDeviceAuthorizationConfig;
   resources: OAuthProviderResource[];
   /** Renders the sign-in step when the authorization request has no session. */
   loginRequired: (input: OAuthLoginRequiredInput) => Response | Promise<Response>;

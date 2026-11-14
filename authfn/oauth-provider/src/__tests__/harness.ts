@@ -10,6 +10,8 @@ import {
   authFnOAuthProviderPlugin,
   type OAuthClientRegistrationConfig,
   type OAuthConsentInput,
+  type OAuthDeviceAuthorizationConfig,
+  type OAuthDeviceVerificationInput,
   type OAuthLoginRequiredInput,
   type OAuthProviderClient,
   type OAuthProviderPluginConfig,
@@ -175,6 +177,8 @@ export async function setupProvider(
     sql?: boolean;
     clients?: OAuthProviderClient[];
     registration?: OAuthClientRegistrationConfig;
+    /** Enables the device grant; its verification page is recorded in `verifications`. */
+    device?: Omit<OAuthDeviceAuthorizationConfig, 'verification'>;
     /** Plugin config, such as a custom `schema`; the SQL tables follow the resulting app schema. */
     plugin?: OAuthProviderPluginConfig;
   } = {}
@@ -187,6 +191,7 @@ export async function setupProvider(
   let now = new Date('2026-11-14T00:00:00.000Z');
   const consents: OAuthConsentInput[] = [];
   const logins: OAuthLoginRequiredInput[] = [];
+  const verifications: OAuthDeviceVerificationInput[] = [];
   const createInstance = () => app().createServer({
     database: control.database,
     pluginRuntime: {
@@ -194,6 +199,13 @@ export async function setupProvider(
         clients: [RFC6749_CLIENT, MCP_HOST, RHOMBUS, ...(options.clients ?? [])],
         resources: RESOURCES,
         registration: options.registration,
+        deviceAuthorization: options.device && {
+          ...options.device,
+          verification: (input) => {
+            verifications.push(input);
+            return new Response('device page', { status: 200 });
+          }
+        },
         now: () => now,
         loginRequired: (input) => {
           logins.push(input);
@@ -328,6 +340,7 @@ export async function setupProvider(
     cookie,
     consents,
     logins,
+    verifications,
     handle,
     authorizeQuery,
     getAuthorize,

@@ -195,7 +195,8 @@ export async function applyDocumentRefetch(
   return findDocumentClient(store, clientId);
 }
 
-export type RegistrationEventKind = 'register' | 'document';
+/** `user_code` counts device user code lookups (see the device grant). */
+export type RegistrationEventKind = 'register' | 'document' | 'user_code';
 
 /** No resolvable client IP: such events count only toward the global limit. */
 const NO_IP = 'none';

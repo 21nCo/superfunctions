@@ -14,7 +14,11 @@ export type OAuthErrorCode =
   | 'invalid_token'
   | 'invalid_redirect_uri'
   | 'invalid_client_metadata'
-  | 'temporarily_unavailable';
+  | 'temporarily_unavailable'
+  | 'unauthorized_client'
+  | 'authorization_pending'
+  | 'slow_down'
+  | 'expired_token';
 
 /** An OAuth protocol error, rendered as RFC 6749 5.2 JSON or an error redirect. */
 export class OAuthError extends Error {

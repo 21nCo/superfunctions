@@ -9,6 +9,7 @@ OAuth 2.1 authorization server for AuthFn. It serves:
 - `POST {basePath}/oauth/revoke`: revocation (RFC 7009)
 - `POST {basePath}/oauth/introspect`: introspection (RFC 7662)
 - `POST {basePath}/oauth/register`: dynamic client registration (RFC 7591), when `registration.dynamic` is on
+- `POST {basePath}/oauth/device_authorization`, `GET`/`POST {basePath}/oauth/device`: the device authorization grant (RFC 8628) for CLIs, when `deviceAuthorization` is configured
 
 Every token is bound to one resource (RFC 8707) and carries the scopes the user granted, using the AuthFn scope registry.
 
@@ -75,6 +76,29 @@ registration: {
 - **Client ID Metadata Documents.** A `client_id` that is an `https` URL is resolved by fetching it. The URL must have a path and no query, fragment or credentials (not even an empty `?` or `#`), be written in normalized form, be at most 255 characters, and name a public DNS host of valid labels: IP literals, single-label names, empty labels such as `foo..example.com` and `localhost`, `.local`, `.internal`, `.localdomain` and `.home.arpa` names are refused without a request. The fetch does not follow redirects, must answer `200` within 5 seconds (body included) and at most 64 KB, and the document must name that exact URL as its `client_id` and pass the registration rules above. A usable document is stored and shared by every instance. A known client (one that has served a usable document) is refetched at most once per 5 minutes across all instances, so a changed document takes effect within about 10 minutes. These refetches are not rate-limited and do not use up the limit, so flooding only refuses new clients. When the host gives no usable answer (a network error, no complete answer within 5 seconds, a `5xx`, `408` or `429`), a known client keeps its last document. Any other answer that is not a usable UTF-8 JSON document makes the client unknown and drops its stored document. Only the request holding the current refetch claim stores or drops what it fetched; a refetch that stalls past its 5-minute claim, or runs on an instance whose clock is behind, changes nothing and serves the document stored by the newer claim. A public host name can still resolve to a private address, so `metadataDocuments` requires a `fetch` and the server refuses to start without one: pass one that cannot reach private or internal addresses (for example through an egress proxy that refuses them). Where the platform's own `fetch` already cannot reach them, pass that explicitly.
 - **Rate limit.** Registrations and first fetches of unknown metadata document clients are limited separately, per client IP and overall, in fixed windows stored in the database, so every instance shares them. Over the limit the answer is `429` `temporarily_unavailable` with `Retry-After`. Without `resolveClientIp` (or AuthFn's `rateLimit.resolveClientIp`) only the overall limit applies. Concurrent requests never exceed a limit; at its edge they may all be refused, and refused requests do not use it up. A registration body must arrive complete within 5 seconds and be at most 64 KB, so a slow upload cannot hold a request open before it is counted.
 - **Storage.** Registration uses the tables `oauth_provider_clients`, `oauth_provider_document_clients` and `oauth_provider_registration_events`. A custom plugin `schema` that leaves them out gets them added (one it defines itself is kept), so migrate them even while registration is off.
+
+## Device authorization (CLI login)
+
+A CLI or other device without a browser signs in with the device authorization grant (RFC 8628). It is off until `pluginRuntime.oauthProvider.deviceAuthorization` turns it on:
+
+```ts
+deviceAuthorization: {
+  verification: (input) => renderDevicePage(input),
+  rateLimit: { perUser: 10, global: 1000, windowSeconds: 600 } // the defaults
+}
+```
+
+1. The CLI POSTs `client_id`, `resource` and optionally `scope` (form-encoded) to `{basePath}/oauth/device_authorization`. It gets `device_code`, `user_code`, `verification_uri`, `verification_uri_complete`, `expires_in: 600` and `interval: 5`, and shows the user the code and the URI.
+2. The user opens `verification_uri` (`{basePath}/oauth/device`). Without a session the page answers through `loginRequired`, with the page URL as `returnTo`. `verification` renders the page. Without a `user_code` query parameter it asks for the code; its form submits `user_code` with GET to `verificationUrl`. With one, `verification` receives the `authorization` it names (client, resource, scopes), or an `error`: `invalid_user_code` (unknown, malformed or already decided), `expired_user_code` or `too_many_attempts` with `retryAfterSeconds`. The page POSTs `{ user_code, decision: 'approve' | 'deny' }` as JSON to `decisionUrl` with the session cookie and the `x-authfn-csrf` header; the response's `data.decision` is `approved` or `denied`. A code that cannot be decided answers `invalid_grant`, and over the rate limit `429` `temporarily_unavailable` with `Retry-After`.
+3. Meanwhile the CLI polls the token endpoint with `grant_type=urn:ietf:params:oauth:grant-type:device_code`, `device_code` and its client authentication. Until the user decides it gets `authorization_pending`; after a denial `access_denied`; after 10 minutes `expired_token`. After an approval it gets the same response as an authorization code exchange: an access token for the approved scopes and resource and a refresh token that rotates.
+
+- User codes are 8 letters from `BCDFGHJKLMNPQRSTVWXZ` (no vowels, nothing that looks like a digit), shown as `XXXX-XXXX`; the page accepts them in any case, with or without the dash and spaces. They and device codes are valid for 10 minutes and stored only as hashes.
+- A poll less than `interval` seconds after the previous one gets `slow_down` and adds 5 seconds to that device code's interval, and counts as the previous poll, so a client that keeps polling early keeps being slowed. Of concurrent polls of one code only one is answered; the others get `slow_down`.
+- Every user code lookup by the page or the decision endpoint counts toward the rate limit, found or not: per signed-in user and overall, in fixed windows shared by every instance through the registration event table. 20^8 codes and at most `global` guesses per window keep the chance of hitting someone's pending code small.
+- Each code is decided once; of concurrent decisions exactly one is recorded. An approval creates its own grant (so disconnecting the app or revoking the grant ends it like any other) and follows the same disconnect rule as an authorization code approval: an app disconnected while the approval runs gets no usable grant, and the decision answers `access_denied`. The user always sees the approval page, even for a `trusted` client, and the approval is not remembered as consent.
+- The device code works once. Presenting it again after the exchange revokes the grant and every token issued under it, as a replayed authorization code does. It is bound to the client it was issued to.
+- Only configured clients may use the grant; a self-registered client gets `unauthorized_client`. When the grant is off, its endpoints do not exist and the token endpoint answers `unsupported_grant_type` for it.
+- **Storage.** The grant uses the table `oauth_provider_device_codes`, which a custom plugin `schema` gets added like the registration tables, so migrate it even while the grant is off. Tokens issued for a device code stay valid only while its row exists, as for authorization code rows.
 
 ## Host responsibilities
 

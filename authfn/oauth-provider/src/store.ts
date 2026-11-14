@@ -6,6 +6,7 @@ import {
 } from 'authfn';
 import { findActiveApiKeyOwner } from 'authfn/core/api-keys';
 import { hashSecret } from 'authfn/core/sessions';
+import { createDeviceSchema, DEVICE_CODE_ID_PREFIX, DEVICE_CODE_MODEL } from './device/store.js';
 import { createRegistrationSchema } from './registration/store.js';
 import {
   OAUTH_ACCESS_TOKEN_TTL_SECONDS,
@@ -136,7 +137,8 @@ export function createOAuthProviderSchema(): AuthFnSchemaDefinition['schemas'] {
       },
       indexes: [{ name: 'idx_authfn_oauth_provider_disconnects_user_id', fields: ['userId'] }]
     },
-    ...createRegistrationSchema()
+    ...createRegistrationSchema(),
+    ...createDeviceSchema()
   ];
 }
 
@@ -156,7 +158,7 @@ function addSeconds(date: Date, seconds: number): Date {
   return new Date(date.getTime() + seconds * 1000);
 }
 
-type Model = (typeof MODELS)[keyof typeof MODELS];
+type Model = (typeof MODELS)[keyof typeof MODELS] | typeof DEVICE_CODE_MODEL;
 
 function insert(store: OAuthStore, model: Model, data: object): Promise<unknown> {
   return store.database.create({ model, data: data as Record<string, unknown>, namespace: namespace(store) });
@@ -177,36 +179,61 @@ const CODE_ID_PREFIX = 'oco';
 
 /**
  * Updates the row `id` only while every field in `unset` is still null, in one
- * conditional statement that also writes `claimId`, then reads the row back:
+ * conditional statement that also writes `claimId` to `claimField` (by
+ * default the `claimId` column), then reads the row back:
  * the caller whose claim ID is stored won. Exactly one concurrent caller wins;
  * that is the single-use guarantee for codes and refresh tokens. The adapter's
  * affected-row count is never consulted, because adapters do not all report
  * it reliably. When the write throws, the read-back still decides: it may have
  * committed before its acknowledgement was lost. A claim is never undone.
  */
-async function claimIfUnset(
+export async function claimIfUnset(
   store: OAuthStore,
   model: Model,
   id: string,
   unset: string[],
   data: Record<string, unknown>,
-  claimId = createIdentifier('ocl')
+  claimId = createIdentifier('ocl'),
+  claimField = 'claimId'
 ): Promise<boolean> {
   let writeError: { error: unknown } | undefined;
   try {
-    await store.database.updateMany({ model, where: whereId(id, unset), data: { ...data, claimId }, namespace: namespace(store) });
+    await store.database.updateMany({
+      model,
+      where: whereId(id, unset),
+      data: { ...data, [claimField]: claimId },
+      namespace: namespace(store)
+    });
   } catch (error) {
     writeError = { error };
   }
-  const row = await findBy<{ claimId?: string | null }>(store, model, 'id', id);
-  if (row?.claimId === claimId) {
+  const row = await findBy<Record<string, unknown>>(store, model, 'id', id);
+  if (row?.[claimField] === claimId) {
     return true;
   }
   // Unclaimed after a failed write: nothing happened, so report the failure.
-  if (writeError && !row?.claimId) {
+  if (writeError && !row?.[claimField]) {
     throw writeError.error;
   }
   return false;
+}
+
+/** Stores a new live grant: the user's authorization of a client, resource and scopes. */
+export async function createGrant(
+  store: OAuthStore,
+  input: { clientId: string; userId: string; resource: string; scopes: string[]; now: Date }
+): Promise<OAuthGrantRecord> {
+  const { now, ...shared } = input;
+  const grant: OAuthGrantRecord = {
+    ...shared,
+    id: createIdentifier('ogr'),
+    revokedAt: null,
+    revokedReason: null,
+    createdAt: now,
+    updatedAt: now
+  };
+  await insert(store, MODELS.grants, grant);
+  return grant;
 }
 
 export async function createGrantWithCode(
@@ -222,15 +249,7 @@ export async function createGrantWithCode(
   }
 ): Promise<{ grantId: string; code: string }> {
   const { redirectUri, codeChallenge, now, ...shared } = input;
-  const grant: OAuthGrantRecord = {
-    ...shared,
-    id: createIdentifier('ogr'),
-    revokedAt: null,
-    revokedReason: null,
-    createdAt: now,
-    updatedAt: now
-  };
-  await insert(store, MODELS.grants, grant);
+  const grant = await createGrant(store, { ...shared, now });
 
   const code = createSecret('oac');
   const record: OAuthAuthorizationCodeRecord = {
@@ -293,9 +312,9 @@ export interface IssuedTokens {
 
 /**
  * Stages a one-hour access token for `scopes` and a 30-day refresh token for
- * the full grant scope, in exchange for the code or refresh token `sourceId`.
- * Both are written before the caller claims the source with the returned
- * `claimId` (`claimCode`, `claimRefreshToken`), and neither is valid until
+ * the full grant scope, in exchange for the code, device code or refresh token
+ * `sourceId`. Both are written before the caller claims the source with the
+ * returned `claimId` (`claimCode`, `claimDeviceCode`, `claimRefreshToken`), and neither is valid until
  * that claim commits: the claim is the single commit point. A failure before
  * it leaves the source unspent and the staged rows inert; a lost race leaves
  * the loser's rows inert. If the response is lost after the claim, a retry is
@@ -366,8 +385,8 @@ export async function revokeToken(store: OAuthStore, tokenId: string, now: Date)
 
 /**
  * The one validity rule for issued tokens: the token is of the expected
- * kind, unexpired and unrevoked, the claim that issued it committed (its code
- * or parent refresh token stores `issuingClaimId`), and its grant is live
+ * kind, unexpired and unrevoked, the claim that issued it committed (its code,
+ * device code or parent refresh token stores `issuingClaimId`), and its grant is live
  * (`findLiveGrant`).
  */
 export async function loadActiveToken(
@@ -380,6 +399,14 @@ export async function loadActiveToken(
   return record ? activeTokenState(store, record, kind, now) : null;
 }
 
+/** Where the code, device code or refresh token a token was issued for is stored. */
+function sourceModelOf(sourceId: string): Model {
+  if (sourceId.startsWith(`${CODE_ID_PREFIX}_`)) {
+    return MODELS.codes;
+  }
+  return sourceId.startsWith(`${DEVICE_CODE_ID_PREFIX}_`) ? DEVICE_CODE_MODEL : MODELS.tokens;
+}
+
 /** Applies the validity rule of `loadActiveToken` to a record already loaded. */
 export async function activeTokenState(
   store: OAuthStore,
@@ -390,7 +417,7 @@ export async function activeTokenState(
   if (record.kind !== kind || record.revokedAt || record.expiresAt.getTime() <= now.getTime()) {
     return null;
   }
-  const sourceModel = record.sourceId.startsWith(`${CODE_ID_PREFIX}_`) ? MODELS.codes : MODELS.tokens;
+  const sourceModel = sourceModelOf(record.sourceId);
   const source = await findBy<{ claimId?: string | null }>(store, sourceModel, 'id', record.sourceId);
   if (!source?.claimId || source.claimId !== record.issuingClaimId) {
     return null;
