@@ -92,22 +92,28 @@ wrong after the input is consumed through a `fetch` installed before `start()`
 that defers the native call, or through a reused `init` or `Request`,
 including values an earlier wrapper changed.
 
-`fetch` returns exactly what the page's `fetch` returned, the same promise
-or thenable (SFNS-56 owner amendment of 2026-11-13). Observation watches its
-settlement only for a plain platform `Promise`, not a subclass, through the
-`Promise.prototype.then` captured at load, on a side chain that never raises.
-Any other result is recorded when the call is made, without `status` or
-`duration`, and its own `then` runs only when the application calls it.
-Observing a promise marks it handled, so while a collector runs, a fetch
-rejection that the application never handles is not reported as an
-unhandled rejection. A stopped wrapper reads nothing at all. What observation
-then records:
+When the page's `fetch` returns a plain platform `Promise` (not a subclass,
+with no own properties), `fetch` returns a promise derived from it through
+the `Promise.prototype.then` captured at load (SFNS-56 owner amendment of
+2026-11-14). It settles with the same value or reason one microtask later
+and carries the application's rejection handling: a rejection the
+application leaves unhandled is reported once, with the original reason, and
+a handled one is not reported. Observation records `status`, `statusText`,
+`duration` and response headers from it and never raises. Only that
+promise's identity changes. Any other result (a custom thenable, a `Promise`
+subclass, a promise with own properties) is returned unchanged, its `then`
+is never called by catchfn, and it is recorded when the call is made,
+without `status` or `duration`. A stopped wrapper reads nothing at all. What
+observation then records:
 
-- Request headers are captured only from a platform `Headers` object (not a
-  subclass), a plain array of `[name, value]` string pairs or a plain record of
-  string data properties. Any other form (a generator, `Map.entries()`, an
+- `init.headers` is captured only from a platform `Headers` object (not a
+  subclass, and only while neither it nor `Headers.prototype` has a replaced
+  iterator), a plain array of `[name, value]` string pairs or a plain record
+  of string data properties. Any other form (a generator, `Map.entries()`, an
   accessor, a custom iterator, a non-string value, more than 200 pairs) is
-  not read and the request is recorded without `requestHeaders`.
+  not read and the request is recorded without `requestHeaders`. The headers
+  of a `Request` input and of the response are read from the platform's own
+  header list, so a replaced `Headers` iterator does not affect them.
 - `init.method` and `init.headers` are read only from own data properties.
 - The URL is read from a string, a platform `URL` (only where the load-time
   probe found its `href` brand check trap-free) or a platform `Request`;

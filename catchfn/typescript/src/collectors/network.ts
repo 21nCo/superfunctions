@@ -166,11 +166,20 @@ function isPlainArray(value: unknown): value is unknown[] {
   );
 }
 
-/** Pairs of a platform `Headers` that is not a subclass, read through the captured `forEach`. */
-function platformHeaderPairs(value: object): Array<[string, string]> | undefined {
-  // An own or replaced iterator may make the platform send other pairs.
-  if (!HEADERS_FOR_EACH || Object.getOwnPropertyDescriptor(value, Symbol.iterator)) return undefined;
-  if (intrinsic(HEADERS_PROTOTYPE, Symbol.iterator, "value") !== HEADERS_ITERATOR) return undefined;
+/**
+ * Pairs of a platform `Headers`, read through the captured `forEach`, which
+ * walks the header list without calling any iterator. For an application
+ * `Headers` passed as `init.headers` (`fromInit`), the platform iterates it
+ * with `Symbol.iterator`, so an own or replaced iterator may make it send
+ * other pairs: then it is unread. A `Request`'s or `Response`'s own headers
+ * are the platform's header list itself, so no iterator patch changes them.
+ */
+function platformHeaderPairs(value: object, fromInit: boolean): Array<[string, string]> | undefined {
+  if (!HEADERS_FOR_EACH) return undefined;
+  if (fromInit) {
+    if (Object.getOwnPropertyDescriptor(value, Symbol.iterator)) return undefined;
+    if (intrinsic(HEADERS_PROTOTYPE, Symbol.iterator, "value") !== HEADERS_ITERATOR) return undefined;
+  }
   const pairs: Array<[string, string]> = [];
   apply(HEADERS_FOR_EACH, value, [
     (entry: string, name: string) => {
@@ -214,24 +223,31 @@ function recordHeaderPairs(value: object): Array<[string, string]> | undefined {
 }
 
 /**
- * Copies header pairs out of a `HeadersInit` without invoking any application
- * iterator, getter or conversion: a platform `Headers` object, a plain array
- * of string pairs or a plain record of strings, each capped at
- * {@link MAX_HEADER_PAIRS}. Anything else (a generator, `Map.entries()`, an
- * accessor, a non-string value, ...) is left unread and yields undefined.
+ * Copies header pairs out of a `HeadersInit` passed as `init.headers` without
+ * invoking any application iterator, getter or conversion: a platform
+ * `Headers` object, a plain array of string pairs or a plain record of
+ * strings, each capped at {@link MAX_HEADER_PAIRS}. Anything else (a
+ * generator, `Map.entries()`, an accessor, a non-string value, ...) is left
+ * unread and yields undefined.
  */
-function readHeaderPairs(value: Field): Array<[string, string]> | undefined {
+function readInitHeaderPairs(value: Field): Array<[string, string]> | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   // A subclass of Headers is neither of the other forms either, so it is unread.
-  if (HEADERS_PROTOTYPE && Object.getPrototypeOf(value) === HEADERS_PROTOTYPE) return platformHeaderPairs(value);
+  if (HEADERS_PROTOTYPE && Object.getPrototypeOf(value) === HEADERS_PROTOTYPE) return platformHeaderPairs(value, true);
   if (isPlainArray(value)) return arrayHeaderPairs(value);
   return recordHeaderPairs(value);
 }
 
-function captureHeaders(value: Field): Record<string, string> | undefined {
+/**
+ * Redacted headers of an application `init.headers` (`fromInit`), or of the
+ * platform `Headers` a captured `Request` or `Response` getter returned.
+ */
+function captureHeaders(value: Field, fromInit: boolean): Record<string, string> | undefined {
   if (!HEADERS || !HEADERS_FOR_EACH) return undefined;
   try {
-    const pairs = readHeaderPairs(value);
+    let pairs: Array<[string, string]> | undefined;
+    if (fromInit) pairs = readInitHeaderPairs(value);
+    else if (typeof value === "object" && value !== null) pairs = platformHeaderPairs(value, false);
     if (!pairs) return undefined;
     // Headers built from our own copy validates and normalizes the names.
     const result: Record<string, string> = {};
@@ -289,12 +305,16 @@ function requestDefaults(input: unknown): { method: Field; headers: Field } {
  */
 function readFetchRequest(input: unknown, init: unknown, url: string | undefined): Pick<Observation, "method" | "url" | "requestHeaders"> {
   let { method, headers } = requestDefaults(input);
+  let fromInit = false;
   if (typeof init === "object" || typeof init === "function") {
     if (init !== null) {
       const initMethod = optionField(init, "method");
       if (initMethod !== undefined) method = initMethod;
       const initHeaders = optionField(init, "headers");
-      if (initHeaders !== undefined) headers = initHeaders;
+      if (initHeaders !== undefined) {
+        headers = initHeaders;
+        fromInit = true;
+      }
     }
   } else if (init !== undefined) {
     headers = UNREADABLE; // The platform rejects it; there is nothing to read.
@@ -302,41 +322,57 @@ function readFetchRequest(input: unknown, init: unknown, url: string | undefined
   return {
     method: typeof method === "string" ? text(method) : UNREAD_METHOD,
     url: captureUrl(url ?? requestUrl(input)),
-    requestHeaders: captureHeaders(headers),
+    requestHeaders: captureHeaders(headers, fromInit),
   };
 }
 
 /**
- * Whether the captured `then` on `value` runs no application code: a
- * platform Promise that is not a subclass, with no own `constructor`, while
- * Promise's `constructor` and species are still the platform's.
+ * Whether the captured `then` on `value` runs no application code and the
+ * promise it derives is again a plain platform Promise: a platform Promise
+ * that is not a subclass and has no own properties at all (so no own
+ * `constructor`, and nothing a derived promise would lack), while Promise's
+ * `constructor` and species are still the platform's.
  */
 function isPlainPromise(value: unknown): boolean {
   if (!PROMISE || !PROMISE_THEN || typeof value !== "object" || value === null) return false;
   return (
     Object.getPrototypeOf(value) === PROMISE_PROTOTYPE &&
-    !Object.getOwnPropertyDescriptor(value, "constructor") &&
+    Reflect.ownKeys(value).length === 0 &&
     Object.getOwnPropertyDescriptor(PROMISE_PROTOTYPE, "constructor")?.value === PROMISE &&
     intrinsic(PROMISE, Symbol.species) === PROMISE_SPECIES
   );
 }
 
 /**
- * Observes how the page's `pending` settles, on a side chain that never
- * raises, and only for a plain platform Promise through the captured `then`:
- * any other value's own `then` runs only when the application calls it.
- * Returns whether it observes. The caller gets `pending` itself, unchanged
- * (SFNS-56 owner amendment 2026-11-13). Observing a promise marks it handled,
- * so a rejection the application leaves unhandled is not reported as
- * unhandled while a collector runs.
+ * Observes how the page's `pending` settles, only for a plain platform Promise
+ * (see {@link isPlainPromise}), through the captured `then`, and returns the
+ * promise that `then` derives (SFNS-56 owner amendment 2026-11-14). It settles
+ * with the same value or reason one microtask later, and it is what the
+ * application handles or leaves unhandled: an unhandled rejection is reported
+ * once, with the original reason, and a handled one is not reported. Only
+ * that promise's identity changes. (Resolving it with the page's value reads
+ * that value's `then`, as resolving any promise does; a platform Response
+ * has none.) `onSettle` must not throw.
+ *
+ * Returns undefined, without calling any `then`, for every other value (a
+ * custom thenable, a Promise subclass, a promise with own properties, a
+ * non-thenable), which the caller returns unchanged.
  */
-function observeSettlement(pending: unknown, onSettle: (response?: unknown) => void): boolean {
+function observeSettlement(pending: unknown, onSettle: (response?: unknown) => void): Promise<unknown> | undefined {
   try {
-    if (!isPlainPromise(pending)) return false;
-    apply(PROMISE_THEN as Intrinsic, pending, [(response: unknown) => onSettle(response), () => onSettle()]);
-    return true;
+    if (!isPlainPromise(pending)) return undefined;
+    return apply(PROMISE_THEN as Intrinsic, pending, [
+      (response: unknown) => {
+        onSettle(response);
+        return response;
+      },
+      (reason: unknown) => {
+        onSettle();
+        throw reason; // The derived promise rejects with the page's own reason.
+      },
+    ]) as Promise<unknown>;
   } catch {
-    return false; // A throwing Proxy trap, or not a platform Promise after all.
+    return undefined; // A throwing Proxy trap, or not a platform Promise after all.
   }
 }
 
@@ -379,7 +415,7 @@ function subscribe(listener: Listener): () => void {
         } catch {
           return pending; // Unreadable input: the application's call is already made.
         }
-        const observing = observeSettlement(pending, (response) => {
+        const derived = observeSettlement(pending, (response) => {
           try {
             const settled: Observation = { ...observed, duration: duration(timestamp) };
             // Only a platform Response is read, and only through the captured getters.
@@ -390,15 +426,17 @@ function subscribe(listener: Listener): () => void {
                 const statusText = platformRead(RESPONSE_STATUS_TEXT, response);
                 if (typeof statusText === "string") settled.statusText = text(statusText);
               }
-              settled.responseHeaders = captureHeaders(platformRead(RESPONSE_HEADERS, response));
+              settled.responseHeaders = captureHeaders(platformRead(RESPONSE_HEADERS, response), false);
             }
             emit(settled);
           } catch {
             /* Observation never raises into, or alongside, the application's promise. */
           }
         });
-        // Any other result is recorded as called, without its settlement.
-        if (!observing) emit(observed);
+        if (derived) return derived as Promise<Response>;
+        // Any other result is recorded as called, without its settlement, and
+        // returned unchanged.
+        emit(observed);
         return pending;
       };
       globalThis.fetch = wrapper as typeof fetch;

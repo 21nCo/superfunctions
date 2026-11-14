@@ -88,40 +88,127 @@ describe("NetworkCollector fetch capture", () => {
     expect(collector.collect().map((event) => event.requestHeaders)).toEqual([undefined, undefined, undefined]);
   });
 
-  it("returns the page's own promise, and observing it adds no unhandled rejection", async () => {
-    const reason = new TypeError("offline");
+  /** The reasons Node reports as unhandled rejections while `run` and a later macrotask run. */
+  async function unhandledDuring(run: () => unknown): Promise<unknown[]> {
     const seen: unknown[] = [];
-    const record = (value: unknown) => seen.push(value);
+    const record = (reason: unknown) => seen.push(reason);
     const saved = process.listeners("unhandledRejection");
     process.removeAllListeners("unhandledRejection");
     process.on("unhandledRejection", record);
     try {
-      const page = Object.assign(Promise.resolve(new Response("ok", { status: 200 })), { abort: () => "aborted" });
-      // A plain function, not a mock: a mock calls then() on what it returns.
-      const results: Array<() => unknown> = [() => page, () => Promise.reject(reason), () => Promise.reject(reason)];
-      globalThis.fetch = (() => results.shift()!()) as unknown as typeof fetch;
-      collector.start();
-      const returned = fetch("/own") as typeof page;
-      expect(returned).toBe(page);
-      expect(returned.abort()).toBe("aborted");
-      await returned;
-      await fetch("/handled").catch(() => undefined);
-      // Observing the page's promise marks it handled (owner amendment
-      // 2026-11-13: the page's promise comes back unchanged), so one the
-      // application leaves unhandled is not reported either. This pins the
-      // documented trade-off; see the README.
-      void fetch("/unhandled");
+      await run();
       await new Promise((resolve) => setTimeout(resolve, 20));
-      expect(seen).toEqual([]);
-      expect(collector.collect().map((event) => [event.url, event.status])).toEqual([
-        ["/own", 200],
-        ["/handled", undefined],
-        ["/unhandled", undefined],
-      ]);
+      return seen;
     } finally {
       process.off("unhandledRejection", record);
       for (const listener of saved) process.on("unhandledRejection", listener);
     }
+  }
+
+  it("keeps the application's handling of a rejected fetch: unhandled reported once with its reason, handled not at all", async () => {
+    const reason = new TypeError("offline");
+    // A plain function, not a mock: a mock calls then() on what it returns.
+    globalThis.fetch = (() => Promise.reject(reason)) as unknown as typeof fetch;
+    const unhandled = () => void fetch("/unhandled");
+    const handled = () => fetch("/handled").then(undefined, () => undefined);
+
+    expect(await unhandledDuring(unhandled)).toEqual([reason]);
+    expect(await unhandledDuring(handled)).toEqual([]);
+
+    collector.start();
+    expect(await unhandledDuring(unhandled)).toEqual([reason]);
+    expect(await unhandledDuring(handled)).toEqual([]);
+    const events = collector.collect();
+    expect(events.map(({ url, status }) => [url, status])).toEqual([
+      ["/unhandled", undefined],
+      ["/handled", undefined],
+    ]);
+    for (const event of events) expect(event.duration).toBeGreaterThanOrEqual(0);
+
+    // Through a stopped wrapper that a later patcher kept in its chain.
+    const ours = globalThis.fetch;
+    globalThis.fetch = ((...args: Parameters<typeof fetch>) => ours(...args)) as typeof fetch;
+    collector.stop();
+    expect(await unhandledDuring(unhandled)).toEqual([reason]);
+    expect(await unhandledDuring(handled)).toEqual([]);
+    expect(collector.size()).toBe(2); // Nothing new recorded.
+  });
+
+  it("settles with the page's own value and records its status", async () => {
+    const response = new Response("ok", { status: 202, statusText: "Accepted" });
+    const page = Promise.resolve(response);
+    globalThis.fetch = (() => page) as unknown as typeof fetch;
+    collector.start();
+    const returned = fetch("/derived");
+    expect(await returned).toBe(response);
+    expect(collector.collect()[0]).toMatchObject({ url: "/derived", status: 202, statusText: "Accepted" });
+  });
+
+  it("returns a promise with own properties and a thenable whose then returns undefined unchanged, without calling then", async () => {
+    let thenCalls = 0;
+    const withProps = Object.assign(Promise.resolve(new Response("ok", { status: 200 })), { abort: () => "aborted" });
+    const spied = withProps.then.bind(withProps);
+    Object.defineProperty(withProps, "then", {
+      value: (...args: Parameters<typeof spied>) => (thenCalls++, spied(...args)),
+      configurable: true,
+      writable: true,
+    });
+    const thenable = {
+      then(resolve: (value: unknown) => void) {
+        thenCalls += 1;
+        resolve(new Response("ok"));
+        return undefined;
+      },
+    };
+    const ownReason = new TypeError("own props");
+    let rejecting: Promise<never> | undefined;
+    const results: Array<() => unknown> = [() => withProps, () => thenable, () => (rejecting = Object.assign(Promise.reject(ownReason), { tag: 1 }))];
+    globalThis.fetch = (() => results.shift()!()) as unknown as typeof fetch;
+    collector.start();
+    const returned = fetch("/own") as unknown as typeof withProps;
+    expect(returned).toBe(withProps);
+    expect(returned.abort()).toBe("aborted");
+    expect(fetch("/thenable")).toBe(thenable);
+    expect(thenCalls).toBe(0);
+    // Not observed, so its unhandled rejection is the application's own.
+    let returnedRejecting: unknown;
+    expect(await unhandledDuring(() => void (returnedRejecting = fetch("/rejecting")))).toEqual([ownReason]);
+    expect(returnedRejecting).toBe(rejecting);
+    expect(collector.collect().map(({ url, status, duration }) => [url, status, duration])).toEqual([
+      ["/own", undefined, undefined],
+      ["/thenable", undefined, undefined],
+      ["/rejecting", undefined, undefined],
+    ]);
+  });
+
+  it("records response and Request-input headers, redacted, after the page replaced the Headers iterator", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(Headers.prototype, Symbol.iterator)!;
+    const original = descriptor.value as (this: Headers) => HeadersIterator<[string, string]>;
+    let replacementRuns = 0;
+    const request = new Request("https://example.com/r", { method: "POST", headers: { authorization: "Bearer secret", "x-trace": "visible" } });
+    Object.defineProperty(Headers.prototype, Symbol.iterator, {
+      ...descriptor,
+      value(this: Headers) {
+        replacementRuns += 1;
+        return original.call(this);
+      },
+    });
+    try {
+      collector.start();
+      await fetch(request);
+      // An application Headers passed as init.headers is iterated by the
+      // platform, so with the iterator replaced it stays unread.
+      await fetch("https://example.com/i", { headers: new Headers({ "x-init": "1" }) });
+    } finally {
+      Object.defineProperty(Headers.prototype, Symbol.iterator, descriptor);
+    }
+    expect(replacementRuns).toBe(0);
+    const [fromRequest, fromInit] = collector.collect();
+    expect(fromRequest).toMatchObject({ method: "POST", status: 201, requestHeaders: { authorization: "[REDACTED]", "x-trace": "visible" } });
+    expect(fromRequest!.responseHeaders).toMatchObject({ "x-trace": "t" });
+    expect(JSON.stringify(fromRequest)).not.toMatch(/secret|s=1/);
+    expect(fromInit).not.toHaveProperty("requestHeaders");
+    expect(fromInit!.responseHeaders).toMatchObject({ "x-trace": "t" });
   });
 
   it("raises nothing of its own when the page's fetch resolves to a non-Response", async () => {
