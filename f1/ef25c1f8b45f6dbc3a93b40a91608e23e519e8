@@ -1,0 +1,40 @@
+contentfn/server/src/storage/documentIdentityBackfill.ts
+  h_a39f9495f9ec1d 2,13-15,20,35,37,49
+contentfn/server/src/storage/docs.ts
+  h_a39f9495f9ec1d 151,282-284,400
+contentfn/client/src/realtime.ts
+  h_a39f9495f9ec1d 15-16
+contentfn/server/src/storage/publish.ts
+  h_a39f9495f9ec1d 143,159-163,178,207,217
+contentfn/server/README.md
+  h_a39f9495f9ec1d 16
+contentfn/server/src/realtime/protocol.ts
+  h_a39f9495f9ec1d 37-38
+contentfn/SPEC.md
+  h_a39f9495f9ec1d 378
+contentfn/server/src/storage/events.ts
+  h_a39f9495f9ec1d 22-23,39,55
+contentfn/server/src/__tests__/pr-review-regressions.test.ts
+  h_a39f9495f9ec1d 40,43,45,222,374-425
+contentfn/README.md
+  h_a39f9495f9ec1d 194-196
+contentfn/server/src/storage/documentIdentity.ts
+  h_a39f9495f9ec1d 20-27
+contentfn/server/src/realtime/subscribe.ts
+  h_a39f9495f9ec1d 2,70,95
+contentfn/server/src/realtime/sse.ts
+  h_a39f9495f9ec1d 6,254-255,260
+contentfn/server/src/storage/revisions.ts
+  h_a39f9495f9ec1d 249,254,257
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f1ef25c1f8b45f6dbc3a93b40a91608e23e519e8",
+  "prompts": {},
+  "humans": {
+    "h_a39f9495f9ec1d": {
+      "author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
