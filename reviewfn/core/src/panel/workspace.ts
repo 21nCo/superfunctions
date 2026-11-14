@@ -13,6 +13,10 @@ const LITERAL_ATTRIBUTES = "* -text -eol -working-tree-encoding -filter -ident -
 /** Configuration for Git commands the run trusts: no hooks, filesystem monitors, external ignores or line-ending conversion. */
 const TRUSTED_CONFIG = ["-c", `core.hooksPath=${devNull}`, "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-c", "core.autocrlf=false", "-c", "core.safecrlf=false", "-c", `core.attributesFile=${devNull}`, "-c", `core.excludesFile=${devNull}`, "-c", "core.symlinks=true", "-c", "core.fileMode=true", "-c", "core.ignoreCase=false", "-c", "core.precomposeUnicode=false", "-c", "core.protectNTFS=true", "-c", "core.longpaths=true"];
 const MAX_REPORTED_PATHS = 10;
+const DEFAULT_MAX_GIT_OUTPUT_BYTES = 64 * 1024 * 1024;
+
+/** Git printed more than the run lets it buffer: a limit of the run, not something the slot did. */
+class GitOutputLimitError extends Error {}
 
 export interface WorkspaceCheck {
   /** True only when the checkout's tree is exactly the head tree, with no extra directories. */
@@ -30,8 +34,9 @@ export interface WorkspaceCheck {
 export interface SlotWorkspace {
   readonly path: string;
   /**
-   * Compare the checkout with the head tree. A comparison stopped by `signal` reports `incomplete`; one that fails for
-   * any other reason reports the checkout as changed, because the slot left it in a state that cannot be compared.
+   * Compare the checkout with the head tree. A comparison stopped by `signal`, or by a limit of the run's own such as the
+   * Git output buffer, reports `incomplete`; one that fails for any other reason reports the checkout as changed, because
+   * the slot left it in a state that cannot be compared.
    */
   verify(signal?: AbortSignal): Promise<WorkspaceCheck>;
   /** Remove the checkout and everything the slot wrote into it. Safe to call more than once. */
@@ -53,11 +58,19 @@ export interface GitSlotWorkspaceOptions {
   referenceCommits?: string[];
   /** A run-owned directory to create checkouts in. */
   parent: string;
+  /** The most output a Git command may return; 64 MiB by default. A comparison past it is incomplete, never a change. */
+  maxGitOutputBytes?: number;
 }
 
-async function git(args: string[], options: { cwd: string; signal?: AbortSignal; env?: NodeJS.ProcessEnv }): Promise<string> {
-  const { stdout } = await execFileAsync("git", [...TRUSTED_CONFIG, ...args], { cwd: options.cwd, env: { ...isolatedGitEnvironment(), ...options.env }, maxBuffer: 64 * 1024 * 1024, signal: options.signal, encoding: "utf8" });
-  return stdout;
+async function git(args: string[], options: { cwd: string; signal?: AbortSignal; env?: NodeJS.ProcessEnv; maxBuffer?: number }): Promise<string> {
+  const maxBuffer = options.maxBuffer ?? DEFAULT_MAX_GIT_OUTPUT_BYTES;
+  try {
+    const { stdout } = await execFileAsync("git", [...TRUSTED_CONFIG, ...args], { cwd: options.cwd, env: { ...isolatedGitEnvironment(), ...options.env }, maxBuffer, signal: options.signal, encoding: "utf8" });
+    return stdout;
+  } catch (error) {
+    if ((error as { code?: unknown }).code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") throw new GitOutputLimitError(`git ${args.find(arg => !arg.startsWith("-")) ?? ""} printed more than the run's ${maxBuffer}-byte limit for Git output.`);
+    throw error;
+  }
 }
 
 /** Make every directory under `root` writable and searchable so a slot cannot block its own cleanup with permissions. */
@@ -128,7 +141,7 @@ function listed(paths: string[]): string {
 class GitSlotWorkspace implements SlotWorkspace {
   private removed = false;
 
-  public constructor(private readonly directory: string, public readonly path: string, private readonly verifyGitDir: string, private readonly expectedTree: string, private readonly headCommit: string) {}
+  public constructor(private readonly directory: string, public readonly path: string, private readonly verifyGitDir: string, private readonly expectedTree: string, private readonly headCommit: string, private readonly maxBuffer?: number) {}
 
   public async verify(signal?: AbortSignal): Promise<WorkspaceCheck> {
     try {
@@ -140,13 +153,15 @@ class GitSlotWorkspace implements SlotWorkspace {
       const index = path.join(this.directory, "verify.index");
       await rm(index, { force: true });
       const env = { GIT_INDEX_FILE: index };
-      const options = { cwd: this.directory, signal, env };
+      const options = { cwd: this.directory, signal, env, maxBuffer: this.maxBuffer };
       const gitDir = [`--git-dir=${this.verifyGitDir}`, `--work-tree=${this.path}`];
       await git([...gitDir, "read-tree", this.expectedTree], options);
       await git([...gitDir, "add", "--all", "--force", "--", "."], options);
       const tree = (await git([...gitDir, "write-tree"], options)).trim();
       if (tree !== this.expectedTree) {
-        const changed = (await git([`--git-dir=${this.verifyGitDir}`, "diff-tree", "-r", "-z", "--no-renames", "--name-only", this.expectedTree, tree], options)).split("\0").filter(Boolean);
+        // The trees differ either way; a listing past the output limit only loses the names.
+        const changed = await git([`--git-dir=${this.verifyGitDir}`, "diff-tree", "-r", "-z", "--no-renames", "--name-only", this.expectedTree, tree], options)
+          .then(listing => listing.split("\0").filter(Boolean), error => { if (error instanceof GitOutputLimitError) return []; throw error; });
         return { unchanged: false, reason: `The checkout differs from head ${this.headCommit}: ${changed.length ? listed(changed) : "tree differs"}.` };
       }
       // Git trees cannot record empty directories, and Git skips nested .git entries, submodule contents and special
@@ -169,6 +184,7 @@ class GitSlotWorkspace implements SlotWorkspace {
       return { unchanged: true };
     } catch (error) {
       if (signal?.aborted) return { unchanged: false, incomplete: true, reason: `The comparison with head ${this.headCommit} was stopped before it finished.` };
+      if (error instanceof GitOutputLimitError) return { unchanged: false, incomplete: true, reason: `The comparison with head ${this.headCommit} did not finish: ${error.message}` };
       return { unchanged: false, reason: `The checkout could not be compared with head ${this.headCommit}: ${error instanceof Error ? error.message : String(error)}` };
     }
   }
@@ -213,7 +229,7 @@ export class GitSlotWorkspaceProvider implements SlotWorkspaceProvider {
       await writeFile(path.join(verifyGitDir, "objects", "info", "alternates"), `${objects}\n`, { mode: 0o600 });
       await writeFile(path.join(verifyGitDir, "info", "attributes"), LITERAL_ATTRIBUTES, { mode: 0o600 });
       const expectedTree = (await git([`--git-dir=${verifyGitDir}`, "rev-parse", "--verify", "--end-of-options", `${this.options.headCommit}^{tree}`], { cwd: directory, signal })).trim();
-      return new GitSlotWorkspace(directory, checkout, verifyGitDir, expectedTree, this.options.headCommit);
+      return new GitSlotWorkspace(directory, checkout, verifyGitDir, expectedTree, this.options.headCommit, this.options.maxGitOutputBytes);
     } catch (error) {
       await removeTree(directory).catch(() => undefined);
       throw error;

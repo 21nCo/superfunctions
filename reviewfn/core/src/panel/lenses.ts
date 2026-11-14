@@ -2,9 +2,9 @@ import { ReviewFnError } from "../errors.js";
 
 /** A review lens: versioned instructions that focus one slot. Lens IDs are what panel slots name in `lens`. */
 export interface Lens {
-  id: string;
-  version: string;
-  instructions: string;
+  readonly id: string;
+  readonly version: string;
+  readonly instructions: string;
 }
 
 const LENS_ID = /^[a-z0-9][a-z0-9-]{0,62}$/;

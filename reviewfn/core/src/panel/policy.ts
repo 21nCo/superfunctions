@@ -79,7 +79,8 @@ export function applyRepositoryPanelPolicy(trustedInput: PanelPolicy, repository
 }
 
 function repositoryRelative(relative: string): string {
-  if (!relative || path.isAbsolute(relative) || relative.startsWith("/") || relative.split(/[\\/]/).some(part => part === ".." || part === "")) throw new ReviewFnError("REVIEWFN_CONFIG_INVALID", "The panel policy path must be repository-relative.");
+  // Absolute in either path form, or drive-qualified ("C:x" is relative to drive C's current directory, not the root).
+  if (!relative || path.posix.isAbsolute(relative) || path.win32.isAbsolute(relative) || /^[a-zA-Z]:/.test(relative) || relative.split(/[\\/]/).some(part => part === ".." || part === "")) throw new ReviewFnError("REVIEWFN_CONFIG_INVALID", "The panel policy path must be repository-relative.");
   return relative.split("\\").join("/");
 }
 

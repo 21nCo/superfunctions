@@ -68,15 +68,15 @@ export interface PanelCoordinatorDependencies extends SharedRunDependencies {
   /** Directory the run creates its checkout directory in; the system temporary directory by default. */
   workspaceRoot?: string;
   /**
-   * How long an aborted harness or comparison may take to stop before it is abandoned; 10 seconds by default, capped at a
-   * tenth of the stage budget.
+   * How long an aborted checkout creation, harness or comparison may take to stop before it is abandoned; 10 seconds by
+   * default, capped at a tenth of the stage budget.
    */
   abortGraceMs?: number;
   /**
    * How long comparing a slot's checkout with head may take once the slot has finished; 60 seconds by default, capped
-   * at a quarter of the stage budget. Each slot's harness timeout leaves this bound and two abort graces before the
-   * stage deadline, so a slot that finishes in time always gets the whole bound and the stage still ends by its
-   * deadline. A comparison that does not finish in time makes the slot `timed_out`.
+   * at a quarter of the stage budget. Each slot's harness timeout leaves this bound and three abort graces (harness,
+   * comparison, cleanup) before the stage deadline, so a slot that finishes in time always gets the whole bound and the
+   * stage still ends by its deadline. A comparison that does not finish in time makes the slot `timed_out`.
    */
   comparisonTimeoutMs?: number;
   /** Source of credential values for fingerprints and redaction; `process.env` by default. */
@@ -136,7 +136,7 @@ interface SlotRecord {
   transcriptArtifact?: string;
 }
 
-/** A stage's time bounds: the abort grace, the comparison bound, and the time reserved for both before the deadline. */
+/** A stage's time bounds: the abort grace, the comparison bound, and the time reserved before the deadline. */
 interface StageTimings {
   graceMs: number;
   comparisonMs: number;
@@ -153,6 +153,11 @@ interface RunContext {
   runSignal: AbortSignal;
   /** Checkouts or slot outputs the run could not remove or store; each makes coverage incomplete. */
   cleanupErrors: string[];
+  /** Checkout removals (and abandoned creations) still running, by what they remove; the run waits for them before its report. */
+  pendingCleanups: Map<Promise<void>, string>;
+  /** The deadline of the last stage started; outstanding cleanup is awaited until then. */
+  lastDeadline: number;
+  graceMs: number;
 }
 
 const SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
@@ -209,6 +214,16 @@ function settle<T>(promise: Promise<T>, signal: AbortSignal, graceMs: number): P
     if (signal.aborted) onAbort(); else signal.addEventListener("abort", onAbort, { once: true });
     promise.then(value => finish({ value, abandoned: false }), error => finish({ error, abandoned: false }));
   });
+}
+
+/**
+ * Own `work` (removing `label`) until it settles: the run awaits it before building its report, within its cleanup bound,
+ * and records a failure, or work still running then, as a cleanup error naming `label`.
+ */
+function trackCleanup(context: RunContext, label: string, work: () => Promise<unknown>): void {
+  const entry: Promise<void> = Promise.resolve().then(work).then(() => undefined, error => { context.cleanupErrors.push(`${label} was not removed: ${message(error)}`); })
+    .finally(() => { context.pendingCleanups.delete(entry); });
+  context.pendingCleanups.set(entry, label);
 }
 
 const PAYLOAD_FIELDS = ["requirements", "assessments", "evidence", "findings", "inspectedPaths", "uninspected"] as const;
@@ -312,20 +327,17 @@ export class PanelCoordinator {
     request.signal?.addEventListener("abort", forwardAbort, { once: true });
     if (request.signal?.aborted) runController.abort();
     try {
-      const cleanupErrors: string[] = [];
       let records: SlotRecord[];
-      let context: RunContext;
       const parent = await mkdtemp(path.join(this.dependencies.workspaceRoot ?? tmpdir(), "reviewfn-panel-"));
+      const provider = (this.dependencies.workspaces ?? (options => new GitSlotWorkspaceProvider(options)))({ objectStore: request.root, headCommit: prepared.change.headCommit, referenceCommits: [prepared.change.mergeBaseCommit, prepared.change.baseCommit, ...(request.since === undefined ? [] : [request.since])], parent });
+      const context: RunContext = { request, prepared, runId, secrets, resolved, provider, runSignal: runController.signal, cleanupErrors: [], pendingCleanups: new Map(), lastDeadline: Date.now(), graceMs: this.stageTimings(request.policy.limits.harnessTimeoutMs).graceMs };
       try {
-        const provider = (this.dependencies.workspaces ?? (options => new GitSlotWorkspaceProvider(options)))({ objectStore: request.root, headCommit: prepared.change.headCommit, referenceCommits: [prepared.change.mergeBaseCommit, prepared.change.baseCommit, ...(request.since === undefined ? [] : [request.since])], parent });
-        context = { request, prepared, runId, secrets, resolved, provider, runSignal: runController.signal, cleanupErrors };
         const stageOne = await this.runStage(1, context, undefined);
         // Stage 2 always runs, whatever stage 1 found, and is told what stage 1 reported.
         const stageTwo = await this.runStage(2, context, await this.priorFindings(stageOne, context, policyDigest));
         records = [...stageOne, ...stageTwo];
       } finally {
-        // Every slot removed its own checkout; this also removes anything an abandoned harness left, before the report is built.
-        await removeTree(parent).catch(error => { cleanupErrors.push(`The run's checkout directory was not removed: ${message(error)}`); });
+        await this.releaseCheckouts(context, parent);
       }
       const conclude = (canceled: boolean, supersedes: string[]) => this.conclude({ context, stageRecords: records, diagnostics, policyDigest, canceled, supersedes });
       // A cancellation observed before the report is stored restarts the conclusion in canceled mode, so nothing built
@@ -383,12 +395,31 @@ export class PanelCoordinator {
 
   /**
    * The abort grace and comparison bound for a stage of `budgetMs`, each capped at a share of the budget so the reserve
-   * never takes the whole stage, and the reserve each slot's harness timeout leaves before the stage deadline.
+   * never takes the whole stage, and the reserve each slot's harness timeout leaves before the stage deadline: the
+   * harness's abort grace, the comparison with its grace, and one grace for removing checkouts.
    */
   private stageTimings(budgetMs: number): StageTimings {
     const graceMs = Math.max(0, Math.min(this.dependencies.abortGraceMs ?? DEFAULT_ABORT_GRACE_MS, Math.floor(budgetMs / 10)));
     const comparisonMs = Math.max(1, Math.min(this.dependencies.comparisonTimeoutMs ?? DEFAULT_COMPARISON_TIMEOUT_MS, Math.floor(budgetMs / 4)));
-    return { graceMs, comparisonMs, reserveMs: comparisonMs + 2 * graceMs };
+    return { graceMs, comparisonMs, reserveMs: comparisonMs + 3 * graceMs };
+  }
+
+  /**
+   * Wait for every checkout removal and abandoned creation the run owns, then remove the run's checkout directory, until
+   * the last stage deadline (one abort grace after a cancellation). Whatever has not finished by then is recorded as a
+   * cleanup error naming it, so the report never claims a clean run while a checkout may remain.
+   */
+  private async releaseCheckouts(context: RunContext, parent: string): Promise<void> {
+    const bound = linkedSignal(context.runSignal, Math.max(0, context.lastDeadline - context.graceMs - Date.now()));
+    const work = Promise.allSettled([...context.pendingCleanups.keys()]).then(() => removeTree(parent));
+    const settled = await settle(work, bound.signal, context.graceMs);
+    bound.clearTimer();
+    if (settled.error !== undefined) context.cleanupErrors.push(`The run's checkout directory was not removed: ${message(settled.error)}`);
+    if (!settled.abandoned) return;
+    for (const label of context.pendingCleanups.values()) context.cleanupErrors.push(`${label} was not removed: its removal did not finish by the end of the run.`);
+    // Removal stays owned: it is still attempted, and the report records that it was not confirmed.
+    removeTree(parent).catch(() => undefined);
+    context.cleanupErrors.push(`The run's checkout directory ${parent} was not confirmed removed by the end of the run.`);
   }
 
   /**
@@ -398,6 +429,7 @@ export class PanelCoordinator {
   private async runStage(stage: 1 | 2, context: RunContext, prior: PriorStageFinding[] | undefined): Promise<SlotRecord[]> {
     const slots = context.request.panelPolicy.slots.filter((slot): slot is PanelSlot & { stage: 1 | 2 } => slot.stage === stage);
     const deadline = Date.now() + context.request.policy.limits.harnessTimeoutMs;
+    context.lastDeadline = deadline;
     const timings = this.stageTimings(context.request.policy.limits.harnessTimeoutMs);
     const queue = [...slots];
     const records = new Map<string, SlotRecord>();
@@ -459,15 +491,23 @@ export class PanelCoordinator {
     let workspace: SlotWorkspace | undefined;
     let clearHarnessTimer: (() => void) | undefined;
     try {
-      // Creating the checkout is bounded by the stage deadline; the slot's own timeout starts once its checkout exists.
+      // Creating the checkout is bounded by the stage deadline, like the harness: a provider that does not stop is
+      // abandoned after the abort grace, and a checkout it creates later is still removed by the run. The slot's own
+      // timeout starts once its checkout exists.
       let creationTimedOut = false;
       const creation = linkedSignal(context.runSignal, Math.max(1, harnessDeadline - Date.now()), () => { creationTimedOut = true; });
-      try { workspace = await context.provider.create(slot.id, creation.signal); }
-      catch (error) {
+      const creating = Promise.resolve().then(() => context.provider.create(slot.id, creation.signal));
+      const created = await settle(creating, creation.signal, timings.graceMs);
+      creation.clearTimer();
+      if (created.abandoned) trackCleanup(context, `Slot ${slot.id} checkout (its creation was abandoned)`, () => creating.then(late => late.remove(), () => undefined));
+      if (created.abandoned || created.error !== undefined) {
         const terminal = context.runSignal.aborted ? "canceled" : creationTimedOut ? "timed_out" : "failed";
-        const reason = terminal === "timed_out" ? `${stageBudget} while the slot checkout was created.` : `The slot checkout could not be created: ${message(error)}`;
+        const reason = terminal === "canceled" ? "The panel run was canceled while the slot checkout was created." : terminal === "timed_out" ? `${stageBudget} while the slot checkout was created.` : `The slot checkout could not be created: ${message(created.error)}`;
         return finish(terminal, [reason], emptyOutput(terminal, reason));
-      } finally { creation.clearTimer(); }
+      }
+      workspace = created.value!;
+      // No harness starts after the run was canceled, even when the checkout was created in the meantime.
+      if (context.runSignal.aborted) return finish("canceled", ["The panel run was canceled before the slot's harness started."], emptyOutput("canceled", "The panel run was canceled before the slot's harness started."));
       const slotLimit = Math.min(slot.budget.timeoutMs, request.policy.limits.harnessTimeoutMs);
       if (harnessDeadline - Date.now() <= 0) {
         const reason = `${stageBudget} before the slot's harness could start.`;
@@ -480,9 +520,11 @@ export class PanelCoordinator {
       const signal = harnessSignal.signal;
       const lens = this.lenses.get(slot.lens)!;
       const config = this.slotConfig(request.config, slot);
-      const scope: SlotScope = requirements || request.panelPolicy.incremental === "full" || request.since === undefined
-        ? { mode: "full", hunks: prepared.changeDetail.hunks }
-        : { mode: "delta", hunks: prepared.changeDetail.hunks, delta: prepared.changeDetail.delta, since: request.since };
+      // The requirements slot reviews the full change, but its report must account for every delta path, so it is shown the delta too.
+      const delta = request.since !== undefined && prepared.changeDetail.delta ? { delta: prepared.changeDetail.delta, since: request.since } : {};
+      const scope: SlotScope = requirements ? { mode: "full", hunks: prepared.changeDetail.hunks, ...delta }
+        : request.panelPolicy.incremental === "full" || request.since === undefined ? { mode: "full", hunks: prepared.changeDetail.hunks }
+          : { mode: "delta", hunks: prepared.changeDetail.hunks, ...delta };
       const prompt = buildSlotPrompt({ slot, lens, change: prepared.change, context: prepared.context, config, policy: request.policy, tests: prepared.tests, scope, priorFindings: prior, requirements });
       const slotPolicy = { ...request.policy, limits: { ...request.policy.limits, harnessTimeoutMs: timeoutMs, maxOutputBytes } };
       const harness = this.dependencies.harnesses.find(item => item.capabilities.id === slot.harness.adapter)!;
@@ -522,11 +564,14 @@ export class PanelCoordinator {
       const comparison = linkedSignal(context.runSignal, comparisonMs);
       const check = await this.compare(workspace, comparison.signal, timings.graceMs);
       comparison.clearTimer();
-      let uncompared: { terminal: "canceled" | "timed_out"; reason: string } | undefined;
+      let uncompared: { terminal: "canceled" | "timed_out" | "failed"; reason: string } | undefined;
       if (check.incomplete) {
+        // A comparison the run could not finish (stopped, or past a limit of the run's own) never voids the slot.
         uncompared = context.runSignal.aborted
           ? { terminal: "canceled", reason: "The panel run was canceled before the checkout was compared with head." }
-          : { terminal: "timed_out", reason: `The checkout comparison did not finish within its ${comparisonMs} ms bound, so the checkout was not shown to be unchanged.` };
+          : comparison.signal.aborted
+            ? { terminal: "timed_out", reason: `The checkout comparison did not finish within its ${comparisonMs} ms bound, so the checkout was not shown to be unchanged.` }
+            : { terminal: "failed", reason: `The checkout was not compared with head: ${check.reason ?? "the comparison did not complete"}` };
       }
       const identity: SlotIdentity = {
         ...baseIdentity,
@@ -559,7 +604,9 @@ export class PanelCoordinator {
       return finish(terminal, [reason], emptyOutput(terminal, reason));
     } finally {
       clearHarnessTimer?.();
-      if (workspace) await workspace.remove().catch(error => { context.cleanupErrors.push(`Slot ${slot.id} checkout was not removed: ${message(error)}`); });
+      // Removal is owned by the run, not awaited here: it neither holds the slot's place nor uses the stage's time.
+      const owned = workspace;
+      if (owned) trackCleanup(context, `Slot ${slot.id} checkout ${owned.path}`, () => owned.remove());
     }
   }
 
