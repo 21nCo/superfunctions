@@ -666,6 +666,7 @@ export interface BillFnImportOperator {
 export type BillFnImportSubscriptionReference =
   | { providerSubscriptionId: string; originalTransactionId?: string }
   | {
+      provider: 'apple';
       providerSubscriptionId?: string;
       /** Apple only: the subscription's original transaction id. */
       originalTransactionId: string;

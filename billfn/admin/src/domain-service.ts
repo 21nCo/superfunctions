@@ -264,11 +264,11 @@ export function createBillFnDomainAdminService(
       const originalTransactionId = optionalString(input.payload.originalTransactionId, "payload.originalTransactionId");
       const reference = providerSubscriptionId !== undefined
         ? { providerSubscriptionId, originalTransactionId }
-        : originalTransactionId !== undefined
-          ? { originalTransactionId }
+        : originalTransactionId !== undefined && provider === "apple"
+          ? { provider, originalTransactionId }
           : undefined;
       if (!reference) {
-        throw new AdminError("invalid_argument", "payload.providerSubscriptionId or payload.originalTransactionId is required.");
+        throw new AdminError("invalid_argument", "payload.providerSubscriptionId is required (payload.originalTransactionId names Apple subscriptions only).");
       }
       try {
         const data = unwrap(await options.billfn.services.subscriptions.import({

@@ -263,13 +263,18 @@ describe("@billfn/admin", () => {
         confirmation,
       });
 
-      const result = await dispatcher.dispatch({
-        operationId: "billfn.subscriptions.import-subscription",
-        input: { payload: { provider: "dodo", planKey: "nucleus" } },
-        context: { ...context, confirmationToken: "token_1" },
-      });
-
-      expect(result).toMatchObject({ ok: false, error: { code: "invalid_argument" } });
+      // No reference, or an original transaction id for a provider other than Apple.
+      for (const payload of [
+        { provider: "dodo", planKey: "nucleus" },
+        { provider: "dodo", originalTransactionId: "2000000123", planKey: "nucleus" },
+      ]) {
+        const result = await dispatcher.dispatch({
+          operationId: "billfn.subscriptions.import-subscription",
+          input: { payload },
+          context: { ...context, confirmationToken: "token_1" },
+        });
+        expect(result).toMatchObject({ ok: false, error: { code: "invalid_argument" } });
+      }
       expect(confirmation.verify).not.toHaveBeenCalled();
       expect(importSubscription).not.toHaveBeenCalled();
       // Either reference, or both when they are equal, satisfies the schema.
