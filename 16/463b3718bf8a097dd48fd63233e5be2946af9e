@@ -1,0 +1,31 @@
+filefn/client/src/__tests__/offline.test.ts
+  s_9daa2f06f5b6b9::t_48e4867f78d0c4 187
+filefn/client/src/index.ts
+  s_9daa2f06f5b6b9::t_6301974e4ebf62 277-281
+filefn/docs/content/docs/reference/routes.md
+  s_9daa2f06f5b6b9::t_13767c7f28c2ba 20
+filefn/docs/static/llms-full.txt
+  s_9daa2f06f5b6b9::t_73c656302eef31 8049
+filefn/server/src/__tests__/client-file-ids.test.ts
+  s_9daa2f06f5b6b9::t_9e39ebc2f5724a 42-43,113,120,186-187,192,1205-1206,1212-1262
+filefn/server/src/upload-sessions/file-id-reservations.ts
+  s_9daa2f06f5b6b9::t_c2a1fa48e50055 57-58,115,120,124-142,163,196,199,223-226
+filefn/server/src/upload-sessions/service.ts
+  s_9daa2f06f5b6b9::t_7c65e2331cc8da 862-863
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "16463b3718bf8a097dd48fd63233e5be2946af9e",
+  "prompts": {},
+  "sessions": {
+    "s_9daa2f06f5b6b9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_9daa2f06f5b6b9",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
