@@ -207,8 +207,9 @@ async function lookUpUserCode(
  * the request as denied, so the device gets `access_denied`. A disconnect
  * after the second read finds the grant, which already exists, and revokes
  * it; the device then also gets `access_denied` (see `exchangeDeviceCode`).
- * The code must still be unexpired when the decision is recorded; otherwise
- * the new grant is revoked, nothing is recorded and it throws `invalid_grant`. An approval
+ * Expiry is checked before the decision is recorded and again after: an
+ * approval that crosses it revokes its grant and throws `invalid_grant`
+ * (recording nothing when it crossed before the write). An approval
  * interrupted anywhere before the decision leaves the request pending.
  * Returns whether the device will receive tokens.
  */
@@ -234,6 +235,10 @@ async function approve(
   if (!(await claimDecision(store, record.id, { decision: 'approved', userId: user.id, grantId: grant.id, now }))) {
     await revokeGrant(store, grant.id, 'device_decided', runtime.now());
     return 'decided';
+  }
+  if (record.expiresAt.getTime() <= runtime.now().getTime()) {
+    await revokeGrant(store, grant.id, 'device_code_expired', runtime.now());
+    throw new OAuthError('invalid_grant', 'The user code has expired');
   }
   return 'approved';
 }
@@ -419,7 +424,7 @@ export async function exchangeDeviceCode(
     throw new OAuthError('invalid_target', 'resource does not match the device authorization request');
   }
   const poll = await admitPoll(runtime.store, record, now);
-  if (poll === 'busy') {
+  if (poll === 'busy' || poll === 'unknown') {
     throw new OAuthError('temporarily_unavailable', 'Too many concurrent polls of this device code; try again later', 429, {
       'retry-after': String(record.interval)
     });

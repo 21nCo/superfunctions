@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { AUTHFN_LEGACY_USER_REFERENCE_MAX_LENGTH, type AuthFnRuntimeConfig, type AuthFnSchemaDefinition } from 'authfn';
 import { hashSecret } from 'authfn/core/sessions';
-import { claimIfUnset } from '../store.js';
+import { claimIfUnset, findGrant } from '../store.js';
 import { OAUTH_REFRESH_TOKEN_TTL_SECONDS } from '../types.js';
 
 interface DeviceStore {
@@ -40,9 +40,9 @@ export function createDeviceSchema(): AuthFnSchemaDefinition['schemas'] {
       resource: { type: 'string', required: true, fieldName: 'resource' },
       scopes: { type: 'json', required: true, fieldName: 'scopes' },
       expiresAt: date('expires_at'),
-      // When the row stops being needed, as 16-digit milliseconds compared as a
-      // string in every adapter: the code's expiry, and once it is exchanged
-      // the expiry of the tokens issued for it. Pruned a code lifetime later.
+      // When the row may stop being needed, as 16-digit milliseconds compared as
+      // a string in every adapter: the code's expiry, and once it is exchanged
+      // the expiry of the tokens issued for it (see pruneDeviceCodes).
       pruneKey: { type: 'string', required: true, fieldName: 'prune_key', maxLength: 16 },
       // Seconds the client must wait between polls; grows with each slow_down.
       interval: { type: 'number', required: true, fieldName: 'interval' },
@@ -202,19 +202,38 @@ function findBy(store: DeviceStore, field: 'deviceCodeHash' | 'userCodeHash', ha
   return store.database.findOne<DeviceCodeRecord>({ model: DEVICE_CODE_MODEL, where: [eq(field, hash)], namespace: namespace(store) });
 }
 
+/** Exchanged rows past their `pruneKey` that one prune examines. */
+const PRUNE_BATCH = 100;
+
 /**
- * Deletes device codes no longer needed for more than one code lifetime: one
- * never exchanged expired, or every token issued for an exchanged one did
- * (`pruneKey`). Tokens issued for a device code are valid only while its row
- * exists, so an exchanged row outlives them. The extra lifetime leaves a
- * request that read a code just before it expired time to finish.
+ * Deletes device codes no longer needed for more than one code lifetime
+ * (`pruneKey`). A code never exchanged is deleted once expired. An exchanged
+ * one backs the tokens issued for it until they expire, and after that its
+ * replay still revokes the grant and the rotated tokens under it, so it is
+ * deleted only once its grant is revoked; while the grant is live its
+ * `pruneKey` moves a refresh token lifetime ahead. The extra code lifetime
+ * leaves a request that read a code just before it expired time to finish.
  */
 export async function pruneDeviceCodes(store: DeviceStore, now: Date): Promise<void> {
+  const due = { field: 'pruneKey', operator: 'lt' as const, value: timeKey(now.getTime() - OAUTH_DEVICE_CODE_TTL_SECONDS * 1000) };
   await store.database.deleteMany({
     model: DEVICE_CODE_MODEL,
-    where: [{ field: 'pruneKey', operator: 'lt', value: timeKey(now.getTime() - OAUTH_DEVICE_CODE_TTL_SECONDS * 1000) }],
+    where: [{ field: 'consumedAt', operator: 'eq', value: null }, due],
     namespace: namespace(store)
   });
+  const exchanged = await store.database.findMany<DeviceCodeRecord>({
+    model: DEVICE_CODE_MODEL, where: [due], limit: PRUNE_BATCH, namespace: namespace(store)
+  });
+  for (const row of exchanged) {
+    const grant = row.grantId ? await findGrant(store, row.grantId) : null;
+    const where = [eq('id', row.id), eq('pruneKey', row.pruneKey)];
+    if (grant && !grant.revokedAt) {
+      const pruneKey = timeKey(now.getTime() + OAUTH_REFRESH_TOKEN_TTL_SECONDS * 1000);
+      await store.database.updateMany({ model: DEVICE_CODE_MODEL, where, data: { pruneKey }, namespace: namespace(store) });
+    } else {
+      await store.database.deleteMany({ model: DEVICE_CODE_MODEL, where, namespace: namespace(store) });
+    }
+  }
 }
 
 export function findDeviceCode(store: DeviceStore, deviceCode: string): Promise<DeviceCodeRecord | null> {
@@ -243,8 +262,11 @@ export async function findByUserCode(store: DeviceStore, userCode: string): Prom
 /** A poll still losing after this many rounds (more concurrent polls of one code) writes nothing. */
 const POLL_ATTEMPTS = POLL_HISTORY;
 
-/** `busy`: the poll lost every round to concurrent polls of the code and changed nothing. */
-export type PollOutcome = 'admitted' | 'slow_down' | 'busy';
+/**
+ * `busy`: the poll lost every round to concurrent polls of the code and
+ * changed nothing. `unknown`: it cannot tell whether its write committed.
+ */
+export type PollOutcome = 'admitted' | 'slow_down' | 'busy' | 'unknown';
 
 /**
  * Judges one poll of `record` against the last poll (RFC 8628 3.5). A poll
@@ -259,9 +281,8 @@ export type PollOutcome = 'admitted' | 'slow_down' | 'busy';
  * even if later polls overwrote the state since; the state it read still in
  * the history without it means it lost to a concurrent poll, so it reads
  * again and is judged against the winner. Adapter row counts are not used.
- * Only when more than 16 polls committed between its write and its read-back
- * can it not tell; it then answers as judged, which can only leave the stored
- * interval below what the client applies, never above.
+ * Only when 16 or more polls committed between its read and its read-back
+ * can it not tell; it is then `unknown`, never admitted or slowed.
  */
 export async function admitPoll(store: DeviceStore, record: DeviceCodeRecord, now: Date): Promise<PollOutcome> {
   const id = pollId();
@@ -290,8 +311,12 @@ export async function admitPoll(store: DeviceStore, record: DeviceCodeRecord, no
       namespace: namespace(store)
     });
     const committed = stored ? readPollClaim(stored.pollClaim).ids : [];
-    if (committed.includes(id) || (stored && !committed.includes(last.ids[last.ids.length - 1]))) {
+    if (committed.includes(id)) {
       return outcome;
+    }
+    if (stored && !committed.includes(last.ids[last.ids.length - 1])) {
+      // So many polls committed since that neither its ID nor the state it read is left.
+      return 'unknown';
     }
     if (writeError) {
       throw writeError.error;

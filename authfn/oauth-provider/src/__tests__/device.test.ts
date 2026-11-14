@@ -540,8 +540,32 @@ describe('device grant storage and request bounds', () => {
     expect(await interval()).toBe(before + 5 * slowed);
   });
 
-  it.each(['before its grant is created', 'before its decision is recorded'] as const)(
-    'an approval that crosses the code\'s expiry %s records nothing and leaves no live grant',
+  it.each([['lost', 'updateMany'], ['committed', 'updateManyApplied']] as const)(
+    'a poll that cannot tell whether its %s write was stored, after 16 others were, is neither admitted nor slowed',
+    async (_write, operation) => {
+      const provider = await setupDevice();
+      const device = await provider.start();
+      const paused = provider.control.arm(DEVICE_CODES, operation, ({ data }) => data?.pollClaim !== undefined);
+      const a = provider.poll(device.device_code);
+      await paused;
+      const others: string[] = [];
+      for (let poll = 0; poll < 16; poll += 1) {
+        others.push(await errorOf(provider.poll(device.device_code)));
+      }
+      provider.control.release();
+      const response = await a;
+      expect(response.status).toBe(429);
+      expect(await response.json()).toMatchObject({ error: 'temporarily_unavailable' });
+      // A lost write leaves the first other poll admitted; a committed one admitted A.
+      // Either way every slow_down answered is exactly one stored increment.
+      const slowed = others.filter((answer) => answer === 'slow_down').length;
+      expect(slowed).toBe(operation === 'updateMany' ? 15 : 16);
+      expect((await provider.row(device.device_code))?.interval).toBe(5 + 5 * slowed);
+    }
+  );
+
+  it.each(['before its grant is created', 'before its decision is recorded', 'while its decision is written'] as const)(
+    'an approval that crosses the code\'s expiry %s is refused and leaves no live grant',
     async (boundary) => {
       const provider = await setupDevice();
       const device = await provider.start();
@@ -551,13 +575,16 @@ describe('device grant storage and request bounds', () => {
       if (boundary === 'before its decision is recorded') {
         provider.control.release();
         await provider.control.arm('oauth_provider_disconnects', 'findMany');
+      } else if (boundary === 'while its decision is written') {
+        provider.control.release();
+        await provider.control.arm(DEVICE_CODES, 'updateMany', ({ data }) => data?.decision === 'approved');
       }
       provider.advance(600);
       provider.control.release();
       const response = await decision;
       expect(response.status).toBe(400);
       expect(await response.json()).toMatchObject({ error: 'invalid_grant' });
-      expect((await provider.row(device.device_code))?.decision ?? null).toBeNull();
+      expect((await provider.row(device.device_code))?.decision ?? null).toBe(boundary === 'while its decision is written' ? 'approved' : null);
       const grants = await provider.database.findMany<{ revokedAt?: Date | null }>({
         model: 'oauth_provider_grants',
         where: [{ field: 'clientId', operator: 'eq', value: CLI.clientId }],
@@ -601,7 +628,7 @@ describe('device grant storage and request bounds', () => {
     expect(await findDeviceCode({ database }, created.deviceCode)).not.toBeNull();
   });
 
-  it('keeps an exchanged device code row while its tokens can be valid, then prunes it', async () => {
+  it('keeps an exchanged device code row while its tokens can be valid or its replay can revoke a live grant, then prunes it', async () => {
     const provider = await setupDevice();
     const device = await provider.start();
     await provider.decide(device.user_code, 'approve');
@@ -612,8 +639,18 @@ describe('device grant storage and request bounds', () => {
     expect(await provider.row(device.device_code)).not.toBeNull();
     const refreshed = await provider.token({ grant_type: 'refresh_token', refresh_token: tokens.refresh_token, client_id: CLI.clientId });
     expect(refreshed.status).toBe(200);
+    const rotated = await refreshed.json() as { access_token: string };
 
+    // Its own tokens have expired, but the grant is live: replaying it must still revoke.
     provider.advance(OAUTH_DEVICE_CODE_TTL_SECONDS + 2);
+    await provider.start();
+    expect(await provider.row(device.device_code)).not.toBeNull();
+    expect((await provider.introspect(rotated.access_token)).body).toMatchObject({ active: true });
+    expect(await provider.pollError(device.device_code)).toBe('invalid_grant');
+    expect((await provider.introspect(rotated.access_token)).body).toEqual({ active: false });
+
+    // With the grant revoked, the row goes at its next due prune.
+    provider.advance(OAUTH_REFRESH_TOKEN_TTL_SECONDS + OAUTH_DEVICE_CODE_TTL_SECONDS + 1);
     await provider.start();
     expect(await provider.row(device.device_code)).toBeNull();
   });
