@@ -232,7 +232,7 @@ jobs:
           npm test --workspace=@mcpfn/client --workspace=@mcpfn/testing --workspace=@mcpfn/cli
 
   python:
-    name: Python
+    name: Python package (${{ matrix.package.path }})
     needs: plan
     if: needs.plan.outputs.run_python == 'true' && needs.plan.outputs.mcpfn_only != 'true'
     runs-on: ubuntu-latest
@@ -264,6 +264,30 @@ jobs:
 
       - name: Check package
         run: node scripts/ci-run-python-package.mjs "${{ matrix.package.path }}"
+
+  python-result:
+    name: Python
+    needs: [plan, python]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every planned Python package check to pass
+        env:
+          PLAN_RESULT: ${{ needs.plan.result }}
+          PYTHON_RESULT: ${{ needs.python.result }}
+        run: |
+          echo "plan: ${PLAN_RESULT}, python packages: ${PYTHON_RESULT}"
+          if [ "${PLAN_RESULT}" != "success" ]; then
+            echo "The CI plan did not succeed." >&2
+            exit 1
+          fi
+          case "${PYTHON_RESULT}" in
+            success|skipped) ;;
+            *)
+              echo "A Python package check ended ${PYTHON_RESULT}." >&2
+              exit 1
+              ;;
+          esac
 
   mcpfn:
     name: McpFn release gate
