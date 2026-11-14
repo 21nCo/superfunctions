@@ -1290,6 +1290,10 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         throw error;
       }
 
+      // Each write that left the row usable recorded its state's audit first. A run that wrote nothing (a read an
+      // event superseded, or another run's accepted row) records the state it applied here, before the replay
+      // changes anything, so a replay that does not finish still leaves this operator's event.
+      await recordBillingEvent(deps, importAudit(applied.subscription));
       // A replay that does not finish fails the import; calling it again finishes the replay.
       try {
         await replayUnlinkedWebhookEventsOrThrow(deps, applied.subscription);
@@ -1300,9 +1304,8 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         throw error;
       }
       const refreshed = await refreshProjectionAfterReplay(deps, applied);
-      // Every write of this run was preceded by its audit; the event returned is the one for the state returned
-      // (after the replay), recorded here when no write recorded it. The first write wins, so a rerun returns it
-      // as recorded.
+      // The event returned is the one for the state returned (after the replay), recorded here when the replay
+      // changed it. The first write wins, so a rerun returns it as recorded.
       const recorded = importAudit(refreshed.subscription);
       await recordBillingEvent(deps, recorded);
       const billingEvent =
@@ -3203,10 +3206,11 @@ async function linkableMissingReferences(
 }
 
 /**
- * The ordered update every subscription write of `applyVerificationState` and an import's acceptance
- * (`settleImportBinding`) goes through. With an import's audit, a write that leaves the row usable (not
- * pending) records the run's audit for the state it publishes first, so no later failure or interruption leaves
- * an import's change without its operator. A row an import creates is pending until this accepts it.
+ * The ordered update of an existing row that `applyVerificationState` (state and superseded-read link updates)
+ * and an import's acceptance (`settleImportBinding`) go through. With an import's audit, a write that leaves the
+ * row usable (not pending) records the run's audit for the state it publishes first, so no later failure or
+ * interruption leaves an import's change without its operator. The row an import creates is pending, so it is
+ * audited when this accepts it.
  */
 async function updateSubscriptionAfterImportAudit(
   deps: ServiceDeps,

@@ -1376,6 +1376,47 @@ describe('billfn.services.subscriptions.import', () => {
     expect(rerun.billingEvent.payload).toMatchObject({ subscriptionId: 'sub_checkout', status: 'active' });
   });
 
+  it('keeps a re-import\'s operator event when its read is superseded without a write and its replay does not finish', async () => {
+    let status = 'active';
+    let deliverDuringRead = false;
+    const env = setup({
+      record: (reference) => legacyRecord(reference, { status }),
+      async duringRead() {
+        if (deliverDuringRead) {
+          deliverDuringRead = false;
+          // Newer than the read, on an already imported row: the read adds nothing, so the import writes no row.
+          await env.deliver([legacyEvent('evt_newer', 'sub_legacy', 'paused', '2026-11-12T00:00:05.000Z')]);
+          // Another replay run then holds a retained event, so this import's replay does not finish.
+          await env.db.updateMany({
+            model: 'unlinkedWebhookEvents',
+            where: [{ field: 'providerEventId', operator: 'eq', value: 'evt_old' }],
+            data: { status: 'replaying', replayClaimId: 'uwr_other', replayClaimedAt: env.clock.current.toISOString() },
+            namespace: 'billfn'
+          });
+        }
+      }
+    });
+    const billingAccountId = await env.account('alice');
+    await env.deliver([legacyEvent('evt_old', 'sub_legacy', 'active', '2026-11-01T00:00:00.000Z')]);
+    unwrap(await env.import({ billingAccountId }));
+    env.clock.current = new Date('2026-11-12T00:00:00.000Z');
+    status = 'paused';
+    deliverDuringRead = true;
+    const operator = { id: 'operator_2', type: 'user', requestId: 'request_2' };
+    const byOperator2 = async () =>
+      (await env.importEvents()).filter((event) => (event.payload.operator as { id: string }).id === 'operator_2');
+
+    await expect(env.import({ billingAccountId, operator })).rejects.toMatchObject({
+      details: { reason: BILLFN_IMPORT_REPLAY_UNFINISHED_REASON }
+    });
+    expect(await byOperator2()).toEqual([expect.objectContaining({ payload: expect.objectContaining({ status: 'paused', operator }) })]);
+
+    env.clock.current = new Date(env.clock.current.getTime() + REPLAY_LEASE_MS + 1000);
+    const rerun = unwrap(await env.import({ billingAccountId, operator }));
+    expect(rerun.subscription).toMatchObject({ status: 'paused' });
+    expect(await byOperator2()).toEqual([expect.objectContaining({ id: rerun.billingEvent.id })]);
+  });
+
   it('records a same-request rerun that finds a changed period or renewal once each, and dedupes a return to a recorded state', async () => {
     let record = legacyRecord('sub_legacy');
     const env = setup({ record: () => record });

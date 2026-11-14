@@ -854,8 +854,9 @@ export interface BillFnInstance {
        * state from the provider and replays its unlinked webhook events. Idempotent
        * per provider reference; a reference bound to another billing account fails
        * with `BILLFN_CONFLICT`. Every successful import records a `billfn.subscription.imported`
-       * billing event with the operator, before it accepts a new binding, so an
-       * accepted binding always has one.
+       * billing event with the operator before each write that leaves a subscription
+       * usable (accepting a new binding, a re-import's change, or adding its import
+       * marker), and before its replay, so no state an import publishes lacks one.
        */
       import(input: BillFnImportSubscriptionRequest): Promise<BillFnImportSubscriptionResponse>;
     };
