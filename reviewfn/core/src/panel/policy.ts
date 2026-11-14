@@ -62,10 +62,16 @@ export function applyRepositoryPanelPolicy(trustedInput: PanelPolicy, repository
     if (candidate.lens !== slot.lens) reasons.push(`changes slot ${slot.id} lens`);
     for (const key of ["timeoutMs", "maxOutputBytes"] as const) if (candidate.budget[key] > slot.budget[key]) reasons.push(`raises slot ${slot.id} budget.${key}`);
   });
+  const lensesByPair = new Map<string, Set<string>>();
+  for (const slot of trusted.slots) lensesByPair.set(pairKey(slot), (lensesByPair.get(pairKey(slot)) ?? new Set()).add(slot.lens));
   for (const added of repository.slots.slice(trusted.slots.length)) {
     if (trusted.slots.some(slot => slot.id === added.id)) continue;
     const pairs = trusted.slots.filter(slot => pairKey(slot) === pairKey(added));
     if (!pairs.length) { reasons.push(`adds slot ${added.id}, whose stage, harness and model pair the trusted policy does not have`); continue; }
+    // An added slot brings a new lens to its pair: repeating a lens would only add a collapsed duplicate run.
+    const lenses = lensesByPair.get(pairKey(added))!;
+    if (lenses.has(added.lens)) reasons.push(`adds slot ${added.id} with lens ${added.lens}, which its stage, harness and model pair already has`);
+    lenses.add(added.lens);
     for (const key of ["timeoutMs", "maxOutputBytes"] as const) if (added.budget[key] > Math.max(...pairs.map(slot => slot.budget[key]))) reasons.push(`adds slot ${added.id} with a larger budget.${key} than its trusted pair`);
   }
   if (reasons.length) throw new ReviewFnError("REVIEWFN_PANEL_POLICY_WEAKENED", `The repository panel policy weakens the trusted policy: it ${reasons.join("; ")}.`, { reasons });

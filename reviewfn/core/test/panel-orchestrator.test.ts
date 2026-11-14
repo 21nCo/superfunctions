@@ -42,6 +42,8 @@ describe("panel policy tightening", () => {
     ["changes incremental mode", policy => { policy.incremental = "delta"; }, /changes incremental/],
     ["skips requirement extraction", policy => { policy.requirementsSlot = null; }, /changes requirementsSlot/],
     ["adds a slot with a new model", policy => { policy.slots.push(slot("delta", { inference: { provider: "openai", model: "gpt-new", auth: "api-key" } })); }, /adds slot delta/],
+    ["adds a slot repeating a lens its pair already has", policy => { policy.slots.push(slot("delta")); }, /adds slot delta with lens general, which its stage, harness and model pair already has/],
+    ["adds two slots with the same new lens on one pair", policy => { policy.slots.push(slot("delta", { lens: "security" }), slot("epsilon", { lens: "security" })); }, /adds slot epsilon with lens security/],
     ["adds a slot with a larger budget than its pair", policy => { policy.slots.push(slot("delta", { lens: "security", budget: { timeoutMs: 120_000, maxOutputBytes: 1 } })); }, /larger budget\.timeoutMs/],
   ])("rejects a repository copy that %s", (_name, change, reason) => {
     const error = weakened(change);
@@ -214,6 +216,9 @@ describe("slot workspaces", () => {
     ["changes a file mode", root => chmod(path.join(root, "src", "value.ts"), 0o755), /src\/value\.ts/],
     ["creates an empty directory", root => mkdir(path.join(root, "src", "empty")), /src\/empty/],
     ["converts line endings", root => writeFile(path.join(root, "src", "value.ts"), "export const value = 1;\r\n"), /src\/value\.ts/],
+    // Git never hashes entries named .git below the top level, so they are checked separately.
+    ["writes a nested .git file", root => writeFile(path.join(root, "src", ".git"), "gitdir: elsewhere\n"), /\.git entries .*src\/\.git/],
+    ["creates a nested repository", root => mkdir(path.join(root, "src", "nested", ".git")), /src\/nested\/\.git/],
   ])("reports a slot that %s as mutated", async (_name, mutate, reason) => {
     const workspace = await provider().create("beta");
     await mutate(workspace.path);
@@ -246,10 +251,77 @@ describe("slot workspaces", () => {
     await expect(lstat(path.dirname(first.path))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("reports a comparison that is aborted as mutated", async () => {
+    const workspace = await provider().create("zeta");
+    const check = await workspace.verify(AbortSignal.abort());
+    expect(check.unchanged).toBe(false);
+    expect(check.reason).toMatch(/could not be compared/);
+    await workspace.remove();
+  });
+
   it("fails creation for a commit the object store does not have and leaves nothing behind", async () => {
     const missing = new GitSlotWorkspaceProvider({ objectStore: repo, headCommit: "0".repeat(40), parent });
     await expect(missing.create("epsilon")).rejects.toThrow();
     const leftovers = execFileSync("ls", [parent], { encoding: "utf8" }).split("\n").filter(name => name.startsWith("epsilon-"));
     expect(leftovers).toEqual([]);
+  });
+});
+
+describe("slot workspaces for other repository shapes", () => {
+  let parent: string;
+  const repos: string[] = [];
+  beforeAll(async () => { parent = await mkdtemp(path.join(tmpdir(), "reviewfn-workspace-shapes-")); });
+  afterAll(async () => {
+    await rm(parent, { recursive: true, force: true });
+    for (const repo of repos) await rm(repo, { recursive: true, force: true });
+  });
+
+  async function repository(...init: string[]): Promise<string> {
+    const repo = await mkdtemp(path.join(tmpdir(), "reviewfn-workspace-shape-"));
+    repos.push(repo);
+    git(repo, "init", "--quiet", ...init);
+    await mkdir(path.join(repo, "src"));
+    await writeFile(path.join(repo, "src", "value.ts"), "export const value = 1;\n");
+    return repo;
+  }
+
+  it("treats an untouched submodule path as unchanged and content written into it as mutated", async () => {
+    const repo = await repository();
+    // A gitlink checks out as an empty directory; the submodule commit need not be in the object store.
+    git(repo, "add", "--all");
+    git(repo, "update-index", "--add", "--cacheinfo", `160000,${"1".repeat(40)},vendor/lib`);
+    git(repo, "commit", "--quiet", "-m", "with submodule");
+    const head = git(repo, "rev-parse", "HEAD");
+    expect(git(repo, "ls-tree", "-r", head)).toMatch(/^160000 commit 1{40}\tvendor\/lib$/m);
+    const provider = new GitSlotWorkspaceProvider({ objectStore: repo, headCommit: head, parent });
+    // Depending on the Git version, an uninitialized submodule checks out as an empty directory or not at all: both are untouched.
+    const untouched = await provider.create("gitlink");
+    await expect(untouched.verify()).resolves.toEqual({ unchanged: true });
+    await mkdir(path.join(untouched.path, "vendor", "lib"), { recursive: true });
+    await expect(untouched.verify()).resolves.toEqual({ unchanged: true });
+    await untouched.remove();
+    const written = await provider.create("gitlink");
+    await mkdir(path.join(written.path, "vendor", "lib"), { recursive: true });
+    await writeFile(path.join(written.path, "vendor", "lib", "payload.js"), "1\n");
+    await expect(written.verify()).resolves.toMatchObject({ unchanged: false, reason: expect.stringMatching(/submodule paths: vendor\/lib/) });
+    await written.remove();
+    const replaced = await provider.create("gitlink");
+    await rm(path.join(replaced.path, "vendor"), { recursive: true, force: true });
+    await mkdir(path.join(replaced.path, "vendor"));
+    await writeFile(path.join(replaced.path, "vendor", "lib"), "not a submodule\n");
+    await expect(replaced.verify()).resolves.toMatchObject({ unchanged: false, reason: expect.stringMatching(/differs from head .*vendor\/lib/) });
+    await replaced.remove();
+  });
+
+  it("checks out and verifies a SHA-256 repository", async () => {
+    const repo = await repository("--object-format=sha256");
+    const head = await commitAll(repo, "sha256 head");
+    expect(head).toMatch(/^[0-9a-f]{64}$/);
+    const provider = new GitSlotWorkspaceProvider({ objectStore: repo, headCommit: head, parent });
+    const workspace = await provider.create("sha256");
+    await expect(workspace.verify()).resolves.toEqual({ unchanged: true });
+    await writeFile(path.join(workspace.path, "src", "value.ts"), "changed\n");
+    await expect(workspace.verify()).resolves.toMatchObject({ unchanged: false, reason: expect.stringMatching(/src\/value\.ts/) });
+    await workspace.remove();
   });
 });

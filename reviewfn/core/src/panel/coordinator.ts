@@ -8,7 +8,7 @@ import {
   preflightContexts, preflightExecution, preflightSince, prepareReview, reviewRunId, type PreparedReview, type SharedRunDependencies,
 } from "../coordinator.js";
 import { ReviewFnError } from "../errors.js";
-import { redactText } from "../redaction.js";
+import { redactJson, redactText } from "../redaction.js";
 import type { Evidence, Finding, HarnessCapabilities, HarnessInput, HarnessOutput, PreflightDiagnostic, PreflightResult, ReviewFnConfig, ReviewReport, ReviewRunRequest } from "../types.js";
 import { defaultLensRegistry, type LensRegistry } from "./lenses.js";
 import { effectiveMaxConcurrentSlots } from "./policy.js";
@@ -65,6 +65,12 @@ export interface PanelCoordinatorDependencies extends SharedRunDependencies {
   abortGraceMs?: number;
   /** Source of credential values for fingerprints and redaction; `process.env` by default. */
   environment?: NodeJS.ProcessEnv;
+  /**
+   * The 0.1 adapter contract version (`config.harness.version`) to configure each harness with, by adapter ID, for a slot
+   * whose adapter differs from the run configuration's. Defaults to each harness's `capabilities.version` when the
+   * coordinator is constructed. A slot's `harness.version` is the harness-reported version and is never sent here.
+   */
+  harnessContractVersions?: Record<string, string>;
 }
 
 export interface PanelRunRequest extends ReviewRunRequest {
@@ -103,7 +109,9 @@ interface SlotRecord {
   run: SlotRun;
   output: SlotHarnessOutput;
   reasons: string[];
+  /** Empty when the slot ended before its prompt was built. */
   promptDigest: string;
+  transcriptArtifact?: string;
 }
 
 interface RunContext {
@@ -114,6 +122,7 @@ interface RunContext {
   resolved: Map<string, PreflightResult["resolved"]>;
   provider: SlotWorkspaceProvider;
   runSignal: AbortSignal;
+  /** Checkouts or slot outputs the run could not remove or store; each makes coverage incomplete. */
   cleanupErrors: string[];
 }
 
@@ -128,10 +137,15 @@ function emptyOutput(terminal: HarnessOutput["terminal"], error: string): SlotHa
   return { terminal, requirements: [], assessments: [], evidence: [], findings: [], inspectedPaths: [], uninspected: [{ scope: "review", reason: error }], events: [], error };
 }
 
-/** The configuration a slot runs under: the run's configuration with the slot's harness and inference. */
-export function slotConfiguration(config: ReviewFnConfig, slot: PanelSlot): ReviewFnConfig {
-  const executable = config.harness.adapter === slot.harness.adapter ? config.harness.executable : undefined;
-  return { ...config, harness: { adapter: slot.harness.adapter, version: slot.harness.version, ...(executable ? { executable } : {}) }, inference: { ...slot.inference } };
+/**
+ * The configuration a slot runs under: the run's configuration with the slot's harness and inference. The harness keeps
+ * the 0.1 adapter contract version: the run configuration's for the same adapter, otherwise `contractVersion`. The
+ * slot's `harness.version` is what the harness must report, which is compared with the observed version, not configured.
+ */
+export function slotConfiguration(config: ReviewFnConfig, slot: PanelSlot, contractVersion?: string): ReviewFnConfig {
+  const same = config.harness.adapter === slot.harness.adapter;
+  const version = same ? config.harness.version : contractVersion ?? config.harness.version;
+  return { ...config, harness: { adapter: slot.harness.adapter, version, ...(same && config.harness.executable ? { executable: config.harness.executable } : {}) }, inference: { ...slot.inference } };
 }
 
 /** Settle `promise`, or give up `graceMs` after `signal` aborts; a late result or rejection is ignored. */
@@ -170,9 +184,17 @@ function nonblank(value: unknown): value is string {
  */
 export class PanelCoordinator {
   private readonly lenses: LensRegistry;
+  private readonly contractVersions: Map<string, string>;
 
   public constructor(private readonly dependencies: PanelCoordinatorDependencies) {
     this.lenses = dependencies.lenses ?? defaultLensRegistry();
+    // Captured now: some adapters overwrite capabilities.version with the reported version during preflight.
+    this.contractVersions = new Map(dependencies.harnesses.map(harness => [harness.capabilities.id, harness.capabilities.version]));
+    for (const [id, version] of Object.entries(dependencies.harnessContractVersions ?? {})) this.contractVersions.set(id, version);
+  }
+
+  private slotConfig(config: ReviewFnConfig, slot: PanelSlot): ReviewFnConfig {
+    return slotConfiguration(config, slot, this.contractVersions.get(slot.harness.adapter));
   }
 
   public async preflight(request: PanelRunRequest): Promise<PreflightDiagnostic[]> {
@@ -204,7 +226,7 @@ export class PanelCoordinator {
       context = { request, prepared, runId, secrets, resolved, provider, runSignal: runController.signal, cleanupErrors };
       const stageOne = await this.runStage(1, context, undefined);
       // Stage 2 always runs, whatever stage 1 found, and is told what stage 1 reported.
-      const stageTwo = await this.runStage(2, context, priorFindings(stageOne));
+      const stageTwo = await this.runStage(2, context, await this.priorFindings(stageOne, context, policyDigest));
       records = [...stageOne, ...stageTwo];
     } finally {
       request.signal?.removeEventListener("abort", forwardAbort);
@@ -212,6 +234,8 @@ export class PanelCoordinator {
       await removeTree(parent).catch(error => { cleanupErrors.push(`The run's checkout directory was not removed: ${message(error)}`); });
     }
     const quorum = collapseAndCount(records, policy);
+    // Every slot's outcome is stored once its final terminal (after collapse) is known, whatever ended it.
+    await this.storeSlotOutputs(records, context);
     const requirementsReport = await this.requirementsReport(records, context, diagnostics);
     return this.assemble({ context, records, quorum, requirementsReport, policyDigest });
   }
@@ -240,7 +264,7 @@ export class PanelCoordinator {
     for (const slot of reviewSlots) {
       const harness = harnesses.get(slot.harness.adapter);
       if (!harness) continue;
-      const config = slotConfiguration(request.config, slot);
+      const config = this.slotConfig(request.config, slot);
       const key = stableStringify({ adapter: slot.harness.adapter, harness: config.harness, inference: config.inference });
       let pending = results.get(key);
       const first = !pending;
@@ -289,8 +313,8 @@ export class PanelCoordinator {
     const startedAt = now().toISOString();
     const baseIdentity = this.configuredIdentity(slot, context);
     const requirements = request.panelPolicy.requirementsSlot === slot.id;
-    const finish = (terminal: SlotRunTerminal, reasons: string[], output: SlotHarnessOutput, extra: Partial<SlotRun> = {}, promptDigest = ""): SlotRecord => ({
-      slot, output, reasons, promptDigest,
+    const finish = (terminal: SlotRunTerminal, reasons: string[], output: SlotHarnessOutput, extra: Partial<SlotRun> = {}, promptDigest = "", transcriptArtifact?: string): SlotRecord => ({
+      slot, output: redactJson(output, context.secrets), reasons: reasons.map(reason => redactText(reason, context.secrets)), promptDigest, ...(transcriptArtifact ? { transcriptArtifact } : {}),
       run: { slotId: slot.id, identity: baseIdentity, terminal, voidReasons: [], startedAt, finishedAt: now().toISOString(), ...extra },
     });
     if (context.runSignal.aborted) return finish("canceled", ["The panel run was canceled before the slot started."], emptyOutput("canceled", "The panel run was canceled before the slot started."));
@@ -316,7 +340,7 @@ export class PanelCoordinator {
       timer = setTimeout(() => { timedOut = true; slotController.abort(); }, timeoutMs);
       const signal = AbortSignal.any([context.runSignal, slotController.signal]);
       const lens = this.lenses.get(slot.lens)!;
-      const config = slotConfiguration(request.config, slot);
+      const config = this.slotConfig(request.config, slot);
       const scope: SlotScope = requirements || request.panelPolicy.incremental === "full" || request.since === undefined
         ? { mode: "full", hunks: prepared.changeDetail.hunks }
         : { mode: "delta", hunks: prepared.changeDetail.hunks, delta: prepared.changeDetail.delta, since: request.since };
@@ -332,8 +356,9 @@ export class PanelCoordinator {
       else if (settled.error !== undefined) raw = emptyOutput(timedOut ? "timed_out" : context.runSignal.aborted ? "canceled" : "failed", message(settled.error));
       else raw = settled.value as SlotHarnessOutput;
       const observed: SlotObservation = raw && typeof raw === "object" && raw.observed && typeof raw.observed === "object" ? raw.observed : {};
+      // Everything the harness returned counts against its output budget, including events and the transcript.
       let outputBytes = 0;
-      try { outputBytes = Buffer.byteLength(JSON.stringify(raw && typeof raw === "object" ? { findings: raw.findings, evidence: raw.evidence, inspectedPaths: raw.inspectedPaths, uninspected: raw.uninspected, requirements: raw.requirements, assessments: raw.assessments } : null) ?? ""); }
+      try { outputBytes = Buffer.byteLength(JSON.stringify(raw ?? null) ?? ""); }
       catch { /* Unserializable output fails payload validation below. */ }
       let output: SlotHarnessOutput = normalizeHarnessOutput(raw, { secrets: context.secrets, aborted: context.runSignal.aborted, payloadErrors: requirements ? undefined : payload => validateLensPayload({ findings: payload.findings, evidence: payload.evidence, inspectedPaths: payload.inspectedPaths, uninspected: payload.uninspected }) });
       if (!requirements) output = { ...output, requirements: [], assessments: [] };
@@ -341,7 +366,18 @@ export class PanelCoordinator {
       else if (outputBytes > maxOutputBytes && output.terminal !== "canceled") { output.terminal = "timed_out"; reasons.push(`The slot output (${outputBytes} bytes) exceeded its ${maxOutputBytes}-byte limit.`); }
       if (output.terminal !== "completed" && output.error) reasons.push(redactText(output.error, context.secrets));
       if (output.terminal === "malformed") reasons.push(...output.uninspected.map(item => `${item.scope}: ${item.reason}`));
-      const check = await workspace.verify();
+      // The comparison is bounded too: by the stage deadline (at least the abort grace) and by run cancellation.
+      const graceMs = this.dependencies.abortGraceMs ?? DEFAULT_ABORT_GRACE_MS;
+      const verifyBudget = AbortSignal.timeout(Math.max(graceMs, deadline - Date.now()));
+      const verifySignal = AbortSignal.any([context.runSignal, verifyBudget]);
+      let check = await workspace.verify(verifySignal);
+      // A comparison cut short by run cancellation leaves the slot canceled (it never counts); one cut short by the
+      // budget voids it, because the checkout was not shown to be unchanged.
+      let uncompared: string | undefined;
+      if (!check.unchanged && verifySignal.aborted) {
+        if (context.runSignal.aborted) { uncompared = "The panel run was canceled before the checkout was compared with head."; check = { unchanged: true }; }
+        else check = { unchanged: false, reason: `The checkout comparison did not finish within the stage ${slot.stage} budget.` };
+      }
       const identity: SlotIdentity = {
         ...baseIdentity,
         ...(nonblank(observed.harnessVersion) ? { harnessVersion: redactText(observed.harnessVersion, context.secrets) } : {}),
@@ -355,15 +391,15 @@ export class PanelCoordinator {
       if (disallowed.length) { voidReasons.push("disallowed_tool_use"); reasons.push(`The harness used disallowed tools: ${disallowed.join(", ")}.`); }
       let terminal: SlotRunTerminal = output.terminal;
       if (voidReasons.length) terminal = "void";
+      else if (uncompared) { terminal = "canceled"; reasons.push(uncompared); }
       else if (terminal === "completed" && identity.harnessVersion !== slot.harness.version) { terminal = "failed"; reasons.push(`The harness reported version ${identity.harnessVersion}, not the pinned ${slot.harness.version}.`); }
       const usage = observedUsage(observed.usage);
-      const transcript = request.config.retainTranscript && output.transcript ? await this.dependencies.artifacts.put("redacted-transcript", redactText(output.transcript, context.secrets), prepared.retention.transcriptDays).catch(() => undefined) : undefined;
-      let stored: { id: string; digest: string } | undefined;
-      try {
-        const document = { slotId: slot.id, stage: slot.stage, lens: { id: lens.id, version: lens.version }, promptDigest: prompt.digest, terminal, voidReasons, reasons, identity, ...(transcript ? { redactedTranscriptArtifact: transcript.id } : {}), output: { findings: output.findings, evidence: output.evidence, inspectedPaths: output.inspectedPaths, uninspected: output.uninspected, requirements: output.requirements, assessments: output.assessments, events: output.events } };
-        stored = await this.dependencies.artifacts.put(PANEL_SLOT_OUTPUT_ARTIFACT_KIND, JSON.stringify(document, null, 2), prepared.retention.reportDays);
-      } catch (error) { reasons.push(`The slot output could not be stored: ${message(error)}`); }
-      return finish(terminal, reasons, output, { identity, voidReasons, ...(stored ? { outputArtifact: stored.id, outputDigest: stored.digest } : {}), ...(usage ? { usage } : {}) }, prompt.digest);
+      let transcript: string | undefined;
+      if (request.config.retainTranscript && output.transcript) {
+        try { transcript = (await this.dependencies.artifacts.put("redacted-transcript", redactText(output.transcript, context.secrets), prepared.retention.transcriptDays)).id; }
+        catch (error) { reasons.push(`The slot transcript could not be stored: ${message(error)}`); }
+      }
+      return finish(terminal, reasons, output, { identity, voidReasons, ...(usage ? { usage } : {}) }, prompt.digest, transcript);
     } catch (error) {
       const terminal = context.runSignal.aborted ? "canceled" : "failed";
       const reason = `The slot failed unexpectedly: ${message(error)}`;
@@ -371,6 +407,30 @@ export class PanelCoordinator {
     } finally {
       if (timer) clearTimeout(timer);
       if (workspace) await workspace.remove().catch(error => { context.cleanupErrors.push(`Slot ${slot.id} checkout was not removed: ${message(error)}`); });
+    }
+  }
+
+  /** Store each slot's outcome (terminal, reasons, identity and output) and bind it to its run by digest. */
+  private async storeSlotOutputs(records: SlotRecord[], context: RunContext): Promise<void> {
+    for (const record of records) {
+      const lens = this.lenses.get(record.slot.lens);
+      const { output, run } = record;
+      const document = {
+        slotId: record.slot.id, stage: record.slot.stage, lens: lens ? { id: lens.id, version: lens.version } : { id: record.slot.lens },
+        ...(record.promptDigest ? { promptDigest: record.promptDigest } : {}),
+        terminal: run.terminal, voidReasons: run.voidReasons, reasons: record.reasons, identity: run.identity, startedAt: run.startedAt, finishedAt: run.finishedAt,
+        ...(record.transcriptArtifact ? { redactedTranscriptArtifact: record.transcriptArtifact } : {}),
+        output: { findings: output.findings, evidence: output.evidence, inspectedPaths: output.inspectedPaths, uninspected: output.uninspected, requirements: output.requirements, assessments: output.assessments, events: output.events },
+      };
+      try {
+        const stored = await this.dependencies.artifacts.put(PANEL_SLOT_OUTPUT_ARTIFACT_KIND, JSON.stringify(redactJson(document, context.secrets), null, 2), context.prepared.retention.reportDays);
+        run.outputArtifact = stored.id;
+        run.outputDigest = stored.digest;
+      } catch (error) {
+        const reason = `The output of slot ${record.slot.id} could not be stored: ${redactText(message(error), context.secrets)}`;
+        record.reasons.push(reason);
+        context.cleanupErrors.push(reason);
+      }
     }
   }
 
@@ -385,7 +445,7 @@ export class PanelCoordinator {
       if (output.terminal === "completed") output.terminal = "failed";
       output.error = `Requirements slot ${record.slot.id} is ${record.run.terminal}: ${record.reasons.join(" ")}`;
     }
-    const config = slotConfiguration(context.request.config, record.slot);
+    const config = this.slotConfig(context.request.config, record.slot);
     const request = { ...context.request, config };
     try {
       const { report } = await assembleReviewReport(this.dependencies, {
@@ -397,6 +457,45 @@ export class PanelCoordinator {
     } catch (error) {
       return { reasons: [`The requirements report could not be built: ${message(error)}`] };
     }
+  }
+
+  /** A panel report with the run's slots and runs and no findings yet, for validating candidate findings against. */
+  private baseReport(context: RunContext, records: SlotRecord[], policyDigest: string, requirementsReport?: ReviewReport): PanelReport {
+    const { request, prepared } = context;
+    const now = this.dependencies.now ?? (() => new Date());
+    return {
+      schemaVersion: 1, kind: "reviewfn-panel", runId: context.runId, createdAt: now().toISOString(), change: prepared.change,
+      ...(prepared.changeDetail.detail ? { changeDetail: prepared.changeDetail.detail } : {}),
+      contextManifestDigest: prepared.context.digest, panelPolicyDigest: policyDigest, slots: structuredClone(request.panelPolicy.slots), slotRuns: records.map(record => record.run),
+      ...(requirementsReport ? { requirementsReport } : {}),
+      gateReceipts: prepared.tests, evidence: [], findings: [], clusters: [], coverage: "complete", coverageReasons: [],
+    };
+  }
+
+  private validationOptions(context: RunContext): Parameters<typeof validatePanelReport>[2] {
+    return { sourceControl: this.dependencies.sourceControl, root: context.request.root, context: context.prepared.context, artifacts: this.dependencies.artifacts, panelPolicy: context.request.panelPolicy };
+  }
+
+  /**
+   * Stage-1 findings for stage 2: the findings of completed stage-1 slots that the panel report would admit, merged by
+   * fingerprint. Requirement links are not passed on, so they are not checked here.
+   */
+  private async priorFindings(records: SlotRecord[], context: RunContext, policyDigest: string): Promise<PriorStageFinding[]> {
+    const base = this.baseReport(context, records, policyDigest);
+    const merged = new Map<string, PriorStageFinding>();
+    for (const record of records) {
+      if (record.run.terminal !== "completed") continue;
+      const candidates = slotCandidates(record);
+      candidates.findings = candidates.findings.map(finding => ({ ...finding, requirementIds: [] }));
+      const excluded = await invalidCandidates(base, candidates, context.request, this.validationOptions(context));
+      candidates.findings.forEach((finding, index) => {
+        if (excluded.has(index)) return;
+        const existing = merged.get(finding.fingerprint);
+        if (existing) { if (!existing.origins.includes(record.slot.id)) existing.origins.push(record.slot.id); return; }
+        merged.set(finding.fingerprint, { fingerprint: finding.fingerprint, severity: finding.severity, category: finding.category, title: finding.title, trigger: finding.trigger, ...(finding.anchor ? { anchor: finding.anchor } : {}), origins: [record.slot.id] });
+      });
+    }
+    return [...merged.values()];
   }
 
   private async assemble(input: { context: RunContext; records: SlotRecord[]; quorum: PanelQuorumStatus[]; requirementsReport: { report?: ReviewReport; reasons: string[] }; policyDigest: string }): Promise<PanelRunResult> {
@@ -412,14 +511,8 @@ export class PanelCoordinator {
       ...quorum.filter(item => !item.met).map(item => `${PANEL_QUORUM_UNMET}: stage ${item.stage} has ${item.completed} completed slot run(s) with distinct identities; its quorum is ${item.required}.`),
       ...input.requirementsReport.reasons,
     ];
-    const base: PanelReport = {
-      schemaVersion: 1, kind: "reviewfn-panel", runId: context.runId, createdAt: now().toISOString(), change: prepared.change,
-      ...(prepared.changeDetail.detail ? { changeDetail: prepared.changeDetail.detail } : {}),
-      contextManifestDigest: prepared.context.digest, panelPolicyDigest: input.policyDigest, slots: structuredClone(request.panelPolicy.slots), slotRuns: records.map(record => record.run),
-      ...(input.requirementsReport.report ? { requirementsReport: input.requirementsReport.report } : {}),
-      gateReceipts: prepared.tests, evidence: [], findings: [], clusters: [], coverage: "complete", coverageReasons: [],
-    };
-    const options = { sourceControl: this.dependencies.sourceControl, root: request.root, context: prepared.context, artifacts: this.dependencies.artifacts, panelPolicy: request.panelPolicy };
+    const base = this.baseReport(context, records, input.policyDigest, input.requirementsReport.report);
+    const options = this.validationOptions(context);
     const admitted = new Map<string, number>();
     const union = new Map<string, PanelFinding>();
     const evidence = new Map<string, Evidence>();
@@ -455,7 +548,9 @@ export class PanelCoordinator {
     const scopePaths = request.panelPolicy.incremental === "delta" && request.since !== undefined && prepared.changeDetail.detail?.deltaPaths ? prepared.changeDetail.detail.deltaPaths : prepared.change.changedPaths;
     const inspected = new Set(contributing.flatMap(record => record.output.inspectedPaths));
     const uninspected = scopePaths.filter(item => !inspected.has(item));
-    if (contributing.length && uninspected.length) coverageReasons.push(`No completed slot inspected ${uninspected.slice(0, MAX_LISTED_PATHS).join(", ")}${uninspected.length > MAX_LISTED_PATHS ? ` and ${uninspected.length - MAX_LISTED_PATHS} more path(s)` : ""}.`);
+    if (!contributing.length) coverageReasons.push("No slot completed, so nothing in the change was reviewed.");
+    for (const record of contributing) coverageReasons.push(...record.output.uninspected.map(item => `Slot ${record.slot.id} did not inspect ${item.scope}: ${item.reason}`));
+    if (uninspected.length) coverageReasons.push(`No completed slot inspected ${uninspected.slice(0, MAX_LISTED_PATHS).join(", ")}${uninspected.length > MAX_LISTED_PATHS ? ` and ${uninspected.length - MAX_LISTED_PATHS} more path(s)` : ""}.`);
     coverageReasons.push(...context.cleanupErrors);
     const report: PanelReport = {
       ...base,
@@ -481,19 +576,6 @@ export class PanelCoordinator {
   }
 }
 
-/** Stage-1 findings for stage 2: every finding from a stage-1 slot that completed, merged by fingerprint. */
-function priorFindings(records: SlotRecord[]): PriorStageFinding[] {
-  const merged = new Map<string, PriorStageFinding>();
-  for (const record of records) {
-    if (record.run.terminal !== "completed") continue;
-    for (const finding of record.output.findings) {
-      const existing = merged.get(finding.fingerprint);
-      if (existing) { if (!existing.origins.includes(record.slot.id)) existing.origins.push(record.slot.id); continue; }
-      merged.set(finding.fingerprint, { fingerprint: finding.fingerprint, severity: finding.severity, category: finding.category, title: finding.title, trigger: finding.trigger, ...(finding.anchor ? { anchor: finding.anchor } : {}), origins: [record.slot.id] });
-    }
-  }
-  return [...merged.values()];
-}
 
 /**
  * Collapse duplicate identities within each stage and count quorum. The first completed run of an identity in policy

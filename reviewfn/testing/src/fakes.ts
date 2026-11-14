@@ -89,7 +89,10 @@ export function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> 
 
 export interface FakePanelHarnessOptions {
   id?: string;
+  /** The adapter contract version (`capabilities.version`), which preflight requires as `config.harness.version`; "1" by default. */
   version?: string;
+  /** The version the harness reports (`resolved.harnessVersion`), as a real executable would; the contract version by default. */
+  reportedVersion?: string;
   /** Behavior by slot ID; slots without one complete with `slotOutput()`. */
   behaviors?: Record<string, SlotBehavior>;
 }
@@ -102,14 +105,21 @@ export class FakePanelHarness implements PanelHarnessAdapter {
   public readonly capabilities: HarnessCapabilities;
   public readonly calls: SlotHarnessInput[] = [];
   public readonly behaviors: Record<string, SlotBehavior>;
+  /** Every configuration preflight saw. */
+  public readonly preflights: ReviewFnConfig[] = [];
+  public readonly reportedVersion: string;
   public active = 0;
   public maxActive = 0;
   public constructor(options: FakePanelHarnessOptions = {}) {
     this.capabilities = { id: options.id ?? "fake", version: options.version ?? "1", providers: ["fake"], authModes: ["none"], structuredOutput: true, observableEvents: true, usageMetrics: true, cancellation: true, toolControls: true, sandboxModes: ["isolated"] };
     this.behaviors = { ...options.behaviors };
+    this.reportedVersion = options.reportedVersion ?? this.capabilities.version;
   }
+  /** Like a real adapter, refuses a configuration for another adapter contract version. */
   public async preflight(config: ReviewFnConfig): Promise<PreflightResult> {
-    return { ok: true, diagnostics: [], resolved: { provider: config.inference.provider, model: config.inference.model, auth: config.inference.auth, harnessVersion: this.capabilities.version } };
+    this.preflights.push(structuredClone(config));
+    if (config.harness.version !== this.capabilities.version) return { ok: false, diagnostics: [{ code: "REVIEWFN_HARNESS_VERSION", level: "error", message: `Only ${this.capabilities.id} adapter contract version ${this.capabilities.version} is supported.` }] };
+    return { ok: true, diagnostics: [], resolved: { provider: config.inference.provider, model: config.inference.model, auth: config.inference.auth, harnessVersion: this.reportedVersion } };
   }
   public async run(input: SlotHarnessInput): Promise<SlotHarnessOutput> {
     this.calls.push(input);

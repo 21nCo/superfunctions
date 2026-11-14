@@ -6,7 +6,7 @@ import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
-  DEFAULT_CONFIG, DEFAULT_POLICY, PANEL_QUORUM_UNMET, PanelCoordinator, validatePanelReport,
+  DEFAULT_CONFIG, DEFAULT_POLICY, GitSlotWorkspaceProvider, PANEL_QUORUM_UNMET, PanelCoordinator, validatePanelReport,
   type ChangeHunks, type Evidence, type Finding, type HarnessOutput, type PanelCoordinatorDependencies, type PanelPolicy, type PanelRunRequest, type PanelSlot, type SlotHarnessOutput,
 } from "@superfunctions/reviewfn-core";
 import { FakeContextAdapter, FakeExecutionAdapter, FakePanelHarness, FakeSourceControlAdapter, MemoryArtifactStore, abortableDelay, slotOutput } from "../src/index.js";
@@ -356,5 +356,141 @@ describe("PanelCoordinator shared run path", () => {
     const single = new ReviewCoordinator({ sourceControl: setup.source, contexts: [new FakeContextAdapter("fixture", manifest)], harness: new FakeHarnessAdapter(requirementsHarnessOutput()), execution: new FakeExecutionAdapter(), artifacts: setup.artifacts });
     const result = await single.run({ root: repo, base, head, config, policy, issue: "ISS-1" });
     expect(result.report.verdict).toBe("ready");
+  });
+});
+
+async function slotDocument(setup: ReturnType<typeof coordinator>, artifact: string | undefined): Promise<Record<string, unknown>> {
+  expect(artifact).toBeDefined();
+  return JSON.parse(Buffer.from((await setup.artifacts.get(artifact!))!).toString("utf8"));
+}
+
+describe("PanelCoordinator harness versions", () => {
+  it("configures the adapter contract version and checks the slot's pinned version only against the reported version", async () => {
+    // Like Codex: the adapter contract is "1" while the executable reports its own version.
+    const harness = new FakePanelHarness({ reportedVersion: "fake-cli 2.0.1" });
+    const other = new FakePanelHarness({ id: "other", version: "7", reportedVersion: "other-cli 3" });
+    const panelPolicy = panel([slot("pinned", 1, undefined, { harness: { adapter: "fake", version: "fake-cli 2.0.1" } }), slot("foreign", 1, undefined, { harness: { adapter: "other", version: "other-cli 3" } }), slot("stale", 1, undefined, { harness: { adapter: "fake", version: "fake-cli 1.9" } })]);
+    const setup = coordinator(harness, { harnesses: [harness, other] });
+    const result = await setup.coordinator.run(request(panelPolicy));
+    expect(harness.preflights.map(item => item.harness.version)).toEqual(["1", "1"]);
+    expect(other.preflights.map(item => item.harness.version)).toEqual(["7"]);
+    expect(harness.input("pinned").configuration.harness.version).toBe("1");
+    expect(result.report.slotRuns.map(run => [run.slotId, run.terminal, run.identity.harnessVersion])).toEqual([["pinned", "completed", "fake-cli 2.0.1"], ["foreign", "completed", "other-cli 3"], ["stale", "failed", "fake-cli 2.0.1"]]);
+    expect(result.slots[2].reasons.join()).toMatch(/reported version fake-cli 2\.0\.1, not the pinned fake-cli 1\.9/);
+    await expectValid(result, setup, panelPolicy);
+  });
+});
+
+describe("PanelCoordinator coverage", () => {
+  it("is incomplete when no slot completed, even with zero quorums", async () => {
+    const harness = new FakePanelHarness({ behaviors: { a: failing(), b: failing("quota_exhausted") } });
+    const panelPolicy = panel([slot("a", 1), slot("b", 2)], { quorum: { stage1: 0, stage2: 0 } });
+    const setup = coordinator(harness);
+    const result = await setup.coordinator.run(request(panelPolicy));
+    expect(result.quorum.every(item => item.met)).toBe(true);
+    expect(result.report.coverage).toBe("incomplete");
+    expect(result.report.coverageReasons).toContain("No slot completed, so nothing in the change was reviewed.");
+    expect(result.report.verdict).not.toBe("ready");
+    await expectValid(result, setup, panelPolicy);
+  });
+
+  it("is incomplete when a completed lens slot reports scope it could not inspect", async () => {
+    const harness = new FakePanelHarness({ behaviors: { a: () => slotOutput({ inspectedPaths: ["src/value.ts", "src/other.ts"], uninspected: [{ scope: "src/other.ts tests", reason: "the test tool failed" }] }) } });
+    const panelPolicy = panel([slot("a", 1)]);
+    const setup = coordinator(harness);
+    const result = await setup.coordinator.run(request(panelPolicy));
+    expect(result.report.slotRuns[0].terminal).toBe("completed");
+    expect(result.report.coverage).toBe("incomplete");
+    expect(result.report.coverageReasons).toContain("Slot a did not inspect src/other.ts tests: the test tool failed");
+    await expectValid(result, setup, panelPolicy);
+  });
+});
+
+describe("PanelCoordinator budget bounds", () => {
+  it("bounds the checkout comparison by the stage budget and voids the slot it could not clear", async () => {
+    const harness = new FakePanelHarness({ behaviors: { slow: clean, fast: clean } });
+    const panelPolicy = panel([slot("slow", 1), slot("fast", 1)]);
+    let sawSignal = false;
+    // The first checkout's comparison never finishes on its own; it stops only when its signal aborts.
+    const workspaces = (options: ConstructorParameters<typeof GitSlotWorkspaceProvider>[0]) => {
+      const real = new GitSlotWorkspaceProvider(options);
+      return {
+        create: async (slotId: string, signal?: AbortSignal) => {
+          const workspace = await real.create(slotId, signal);
+          if (slotId !== "slow") return workspace;
+          return {
+            path: workspace.path, remove: () => workspace.remove(),
+            verify: async (verifySignal?: AbortSignal) => { sawSignal = verifySignal !== undefined; await abortableDelay(60_000, verifySignal).catch(() => undefined); return { unchanged: false, reason: "aborted" }; },
+          };
+        },
+      };
+    };
+    const setup = coordinator(harness, { workspaces });
+    const started = Date.now();
+    const result = await setup.coordinator.run(request(panelPolicy, { policy: { ...policy, limits: { ...policy.limits, harnessTimeoutMs: 1_000 } } }));
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(sawSignal).toBe(true);
+    expect(result.report.slotRuns.map(run => [run.slotId, run.terminal, run.voidReasons])).toEqual([["slow", "void", ["workspace_mutated"]], ["fast", "completed", []]]);
+    expect(result.slots[0].reasons.join()).toMatch(/comparison did not finish within the stage 1 budget/);
+    await expectNoCheckouts(harness);
+  });
+
+  it("counts events and the transcript against the slot's output budget", async () => {
+    const harness = new FakePanelHarness({ behaviors: { chatty: () => slotOutput({ inspectedPaths: ["src/value.ts", "src/other.ts"], events: Array.from({ length: 50 }, (_, index) => ({ type: "progress", message: `step ${index} ${"x".repeat(40)}` })) as SlotHarnessOutput["events"] }), verbose: () => ({ ...clean(), transcript: "y".repeat(5_000) }), quiet: clean } });
+    const budget = { timeoutMs: 60_000, maxOutputBytes: 2_000 };
+    const panelPolicy = panel([slot("chatty", 1, undefined, { budget }), slot("verbose", 1, undefined, { budget }), slot("quiet", 1, undefined, { budget })]);
+    const result = await coordinator(harness).coordinator.run(request(panelPolicy));
+    expect(result.report.slotRuns.map(run => run.terminal)).toEqual(["timed_out", "timed_out", "completed"]);
+    expect(result.slots[0].reasons.join()).toMatch(/exceeded its 2000-byte limit/);
+  });
+});
+
+describe("PanelCoordinator slot outcome records", () => {
+  it("stores an output artifact with the final terminal and reasons for every slot run, however it ended", async () => {
+    const controller = new AbortController();
+    const harness = new FakePanelHarness({ behaviors: { first: clean, twin: async input => { controller.abort(); await abortableDelay(60_000, input.signal); return clean(); } } });
+    // first and duplicate share an identity; twin cancels the run, so queued never starts.
+    const panelPolicy = panel([slot("first", 1, "shared"), slot("duplicate", 1, "shared"), slot("twin", 1), slot("queued", 1), slot("late", 2)], { maxConcurrentSlots: 1 });
+    const setup = coordinator(harness);
+    const result = await setup.coordinator.run(request(panelPolicy, { signal: controller.signal }));
+    expect(result.report.slotRuns.map(run => run.terminal)).toEqual(["completed", "collapsed", "canceled", "canceled", "canceled"]);
+    for (const run of result.report.slotRuns) {
+      const document = await slotDocument(setup, run.outputArtifact);
+      expect(document).toMatchObject({ slotId: run.slotId, terminal: run.terminal, identity: run.identity });
+      const outcome = result.slots.find(item => item.slotId === run.slotId)!;
+      expect(document.reasons).toEqual(outcome.reasons);
+    }
+    const queued = await slotDocument(setup, result.report.slotRuns[3].outputArtifact);
+    expect(queued.reasons).toEqual(["The panel run was canceled before the slot started."]);
+    expect(queued).not.toHaveProperty("promptDigest");
+    await expectValid(result, setup, panelPolicy);
+  });
+
+  it("stores the outcome of a slot whose checkout could not be created", async () => {
+    const harness = new FakePanelHarness();
+    const panelPolicy = panel([slot("broken", 1), slot("fine", 1)]);
+    const workspaces = (options: ConstructorParameters<typeof GitSlotWorkspaceProvider>[0]) => {
+      const real = new GitSlotWorkspaceProvider(options);
+      return { create: async (slotId: string, signal?: AbortSignal) => { if (slotId === "broken") throw new Error("disk full"); return real.create(slotId, signal); } };
+    };
+    const setup = coordinator(harness, { workspaces });
+    const result = await setup.coordinator.run(request(panelPolicy));
+    expect(result.report.slotRuns.map(run => run.terminal)).toEqual(["failed", "completed"]);
+    const document = await slotDocument(setup, result.report.slotRuns[0].outputArtifact);
+    expect(document).toMatchObject({ terminal: "failed", reasons: ["The slot checkout could not be created: disk full"] });
+  });
+});
+
+describe("PanelCoordinator stage-2 context", () => {
+  it("gives stage 2 only the stage-1 findings the panel report would admit", async () => {
+    const unanchored = { ...finding("Unanchored"), evidenceIds: ["missing"] };
+    // The requirements slot uses the 0.1 output, which allows info findings; lens slots cannot emit them.
+    const harness = new FakePanelHarness({ behaviors: { one: () => requirementsHarnessOutput([finding("Admitted"), finding("Informational", "info"), unanchored]), two: clean } });
+    const panelPolicy = panel([slot("one", 1), slot("two", 2)], { requirementsSlot: "one" });
+    const result = await coordinator(harness).coordinator.run(request(panelPolicy));
+    expect(result.report.slotRuns[0].terminal).toBe("completed");
+    const prompt = harness.input("two").prompt;
+    const stage1Findings = JSON.parse(prompt.slice(prompt.indexOf("Frozen review input:\n") + 21)).stage1Findings;
+    expect(stage1Findings.map((item: { title: string }) => item.title)).toEqual(["Admitted"]);
   });
 });
