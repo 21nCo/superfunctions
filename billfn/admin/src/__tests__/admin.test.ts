@@ -185,4 +185,121 @@ describe("@billfn/admin", () => {
       subscriptionId: "subscription_owned",
     });
   });
+
+  describe("import-subscription", () => {
+    function importingBillFn() {
+      const importSubscription = vi.fn(async (input: { providerReference: string }) => ({
+        subscriptionStatus: "active" as const,
+        checkoutStatus: "succeeded" as const,
+        providerSubscriptionId: input.providerReference,
+        autoRenew: true,
+        raw: { subscription_id: input.providerReference, product_id: "pdt_nucleus_month", status: "active" },
+      }));
+      const db = memoryAdapter();
+      const billfn = createBillFn({
+        db,
+        catalog: {
+          plans: [{
+            productKey: "nucleus",
+            planKey: "nucleus",
+            displayName: "Nucleus",
+            features: { memotron: true },
+            limits: {},
+            prices: [{
+              priceId: "price_nucleus_month",
+              provider: "dodo",
+              providerProductId: "pdt_nucleus_month",
+              currency: "USD",
+              amount: 12,
+              kind: "subscription",
+              interval: "month",
+            }],
+          }],
+        },
+        providers: {
+          dodo: {
+            provider: "dodo",
+            capabilities: {
+              createCheckout: false, verifyCheckout: false, cancelSubscription: false, syncSubscription: false,
+              restorePurchases: false, webhookIngestion: false, importSubscription: true,
+            },
+            importSubscription,
+          },
+        },
+      });
+      return { billfn, db, importSubscription };
+    }
+
+    it("declares a confirmed, audited collection action that is not a public BillFn route", () => {
+      const operation = billFnAdminCapability.operations.find(
+        (candidate) => candidate.id === "billfn.subscriptions.import-subscription",
+      );
+      expect(operation).toMatchObject({
+        permission: "billfn.subscriptions.import-subscription",
+        route: { method: "POST", path: "/resources/subscriptions/actions/import-subscription" },
+        safety: {
+          classification: "write",
+          requiresConfirmation: true,
+          idempotent: true,
+          audit: "required",
+          confirmation: { risk: "high", method: "recent-auth" },
+        },
+        target: { resource: "subscriptions", collection: true },
+        inputSchema: {
+          required: ["payload"],
+          properties: { payload: { required: ["provider", "planKey"] } },
+        },
+      });
+    });
+
+    it("binds the provider subscription to the subject's billing account and records the operator", async () => {
+      const { billfn, db } = importingBillFn();
+      const adapter = createBillFnAdminAdapter(
+        createBillFnDomainAdminService({ billfn, subject: (admin) => ({ tenantId: admin.scope.workspaceId }) }),
+      );
+
+      const result = await adapter.execute(
+        "billfn.subscriptions.import-subscription",
+        { payload: { provider: "dodo", providerSubscriptionId: "sub_legacy", planKey: "nucleus" }, reason: "cutover" },
+        context,
+      );
+
+      expect(result).toMatchObject({
+        ok: true,
+        data: {
+          accepted: true,
+          item: { billingAccountId: "ba_organization_workspace_1", providerSubscriptionId: "sub_legacy", status: "active" },
+          operationReference: expect.any(String),
+        },
+      });
+      const [event] = await db.findMany<{ id: string; payload: Record<string, unknown> }>({
+        model: "billingEvents",
+        where: [{ field: "type", operator: "eq", value: "billfn.subscription.imported" }],
+        namespace: "billfn",
+      });
+      expect(event.id).toBe((result as { data: { operationReference: string } }).data.operationReference);
+      expect(event.payload).toMatchObject({
+        operator: { id: "operator_1", type: "user", requestId: "request_1" },
+        reason: "cutover",
+      });
+      await expect(billfn.subscriptionProvider.hasFeature({ tenantId: "workspace_1" }, "memotron")).resolves.toBe(true);
+    });
+
+    it("rejects a foreign billing account and reports a reference bound elsewhere as a conflict", async () => {
+      const { billfn, importSubscription } = importingBillFn();
+      const service = (tenantId: string) => createBillFnDomainAdminService({ billfn, subject: () => ({ tenantId }) });
+
+      await expect(service("workspace_1").importSubscription({
+        payload: { provider: "dodo", providerSubscriptionId: "sub_legacy", planKey: "nucleus", billingAccountId: "ba_organization_other" },
+      }, context)).rejects.toMatchObject({ code: "forbidden" });
+      expect(importSubscription).not.toHaveBeenCalled();
+
+      await service("workspace_1").importSubscription({
+        payload: { provider: "dodo", providerSubscriptionId: "sub_legacy", planKey: "nucleus" },
+      }, context);
+      await expect(service("workspace_2").importSubscription({
+        payload: { provider: "dodo", providerSubscriptionId: "sub_legacy", planKey: "nucleus" },
+      }, context)).rejects.toMatchObject({ code: "conflict", message: expect.stringContaining("different billing account") });
+    });
+  });
 });

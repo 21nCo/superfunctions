@@ -6,7 +6,7 @@ import type { BillFnConfig, BillFnInstance } from './types.js';
 export type * from './types.js';
 export { getSchema, getSchemaMap } from './schema.js';
 export { createBillFnError, billFnErrorRegistry } from './errors.js';
-export { createBillFnReconciliationWorker } from './service.js';
+export { BILLFN_IMPORTED_AT_METADATA_KEY, createBillFnReconciliationWorker } from './service.js';
 
 export function createBillFn(config: BillFnConfig): BillFnInstance {
   const service = createBillFnService(config);
@@ -30,6 +30,11 @@ export function createBillFn(config: BillFnConfig): BillFnInstance {
     enqueueReconciliationJob: service.enqueueReconciliationJob,
     getReconciliationJob: service.getReconciliationJob,
     runReconciliationJob: service.runReconciliationJob,
+    services: {
+      subscriptions: {
+        import: service.importSubscription
+      }
+    },
     subscriptionProvider: service.subscriptionProvider,
     quotaProvider: service.quotaProvider
   };

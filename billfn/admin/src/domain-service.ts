@@ -41,18 +41,32 @@ function optionalString(value: unknown, name: string): string | undefined {
 
 function unwrap<T>(value: { ok: true; data: T } | { ok: false; error: { code: string; message: string; status: number; retryable: boolean; details?: unknown } }): T {
   if (value.ok) return value.data;
-  const code = value.error.status === 404
-    ? "not_found"
-    : value.error.status === 403
-      ? "forbidden"
-      : value.error.status === 409
-        ? "conflict"
-        : value.error.status >= 500
-          ? "dependency_unavailable"
-          : "invalid_argument";
-  throw new AdminError(code, value.error.message, {
+  throw new AdminError(adminCodeForStatus(value.error.status), value.error.message, {
     details: value.error.details,
     retryable: value.error.retryable,
+  });
+}
+
+function adminCodeForStatus(status: number): "not_found" | "forbidden" | "conflict" | "dependency_unavailable" | "invalid_argument" {
+  return status === 404
+    ? "not_found"
+    : status === 403
+      ? "forbidden"
+      : status === 409
+        ? "conflict"
+        : status >= 500
+          ? "dependency_unavailable"
+          : "invalid_argument";
+}
+
+/** Maps an error BillFn throws to the admin error an operator sees; other errors pass through. */
+function adminErrorFromBillFn(error: unknown): unknown {
+  if (error instanceof AdminError || typeof error !== "object" || error === null) return error;
+  const { code, status, message, retryable } = error as { code?: unknown; status?: unknown; message?: unknown; retryable?: unknown };
+  if (typeof code !== "string" || !code.startsWith("BILLFN_") || typeof status !== "number") return error;
+  return new AdminError(adminCodeForStatus(status), typeof message === "string" ? message : code, {
+    details: { code },
+    retryable: retryable === true,
   });
 }
 
@@ -219,6 +233,30 @@ export function createBillFnDomainAdminService(
         prorationBehavior: input.payload.prorationBehavior,
         reason: input.reason,
       })));
+    },
+    async importSubscription(input, context) {
+      const subject = await options.subject(context);
+      const scoped = unwrap(await options.billfn.getEntitlements(subject));
+      if (input.payload.billingAccountId !== undefined && input.payload.billingAccountId !== scoped.billingAccount.id) {
+        throw new AdminError("forbidden", "The import billing account is outside the active BillFn subject.");
+      }
+      const provider = billingProvider(string(input.payload.provider, "payload.provider")) as BillingProviderName;
+      try {
+        const data = unwrap(await options.billfn.services.subscriptions.import({
+          provider,
+          providerSubscriptionId: optionalString(input.payload.providerSubscriptionId, "payload.providerSubscriptionId"),
+          originalTransactionId: optionalString(input.payload.originalTransactionId, "payload.originalTransactionId"),
+          billingAccountId: scoped.billingAccount.id,
+          // The subject's billing account is created when this is its first billing record.
+          subject,
+          planKey: string(input.payload.planKey, "payload.planKey"),
+          operator: { id: context.actor.id, type: context.actor.type, requestId: context.requestId },
+          reason: input.reason,
+        }));
+        return { ok: true, data: { accepted: true, item: asJson(data.subscription), operationReference: data.billingEvent.id } };
+      } catch (error) {
+        throw adminErrorFromBillFn(error);
+      }
     },
     async cancelSubscription(input, context) {
       return accepted(unwrap(await options.billfn.cancelSubscription({

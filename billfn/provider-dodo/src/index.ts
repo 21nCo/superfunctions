@@ -2,6 +2,7 @@ import type {
   BillFnCancelSubscriptionInput,
   BillFnChangeSubscriptionInput,
   BillFnCreateCheckoutInput,
+  BillFnImportSubscriptionInput,
   BillFnParseWebhookInput,
   BillFnParsedWebhookEvent,
   BillFnProviderAdapter,
@@ -44,7 +45,8 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
       webhookIngestion: true,
       changeSubscription: true,
       resumeSubscription: true,
-      refundCharge: true
+      refundCharge: true,
+      importSubscription: true
     },
     async createCheckout(input: BillFnCreateCheckoutInput) {
       const isSubscription = input.price.kind === 'subscription';
@@ -293,6 +295,25 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
       assertDodoRestoreOwnership(input, isSubscription, response);
 
       return [mapDodoState(isSubscription, response)];
+    },
+    async importSubscription(input: BillFnImportSubscriptionInput) {
+      // A subscription created outside BillFn carries no billfn_* metadata, so only its identity is checked.
+      const response = await requestJson(
+        fetchImpl,
+        `${baseUrl}/subscriptions/${encodeURIComponent(input.providerReference)}`,
+        {
+          method: 'GET',
+          headers: createHeaders(config.apiKey)
+        }
+      );
+      const responseId = readString(response, ['subscription_id', 'id']);
+      if (responseId !== input.providerReference) {
+        throw createBillFnError({
+          code: 'BILLFN_CONFLICT',
+          message: 'Dodo subscription does not match the imported reference'
+        });
+      }
+      return { ...mapDodoState(true, response), providerSubscriptionId: responseId };
     },
     async parseWebhook(input: BillFnParseWebhookInput): Promise<BillFnParsedWebhookEvent[]> {
       if (!config.webhookSecret) {

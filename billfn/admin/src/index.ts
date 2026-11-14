@@ -256,6 +256,16 @@ export const billFnAdminActions = [
     target: "resource",
   },
   {
+    id: "import-subscription",
+    resource: "subscriptions",
+    title: "Import Subscription",
+    description: "Bind an existing provider subscription to the active billing account.",
+    classification: "write",
+    requiresConfirmation: true,
+    idempotent: true,
+    target: "collection",
+  },
+  {
     id: "cancel-subscription",
     resource: "subscriptions",
     title: "Cancel Subscription",
@@ -475,6 +485,22 @@ const domainActionInputSchemas: Record<string, AdminObjectSchema> = {
     },
     ["id", "payload"],
   ),
+  "import-subscription": payloadSchema(
+    {
+      payload: payloadSchema(
+        {
+          provider: { type: "string", enum: ["dodo", "apple", "stripe", "polar", "google-play", "microsoft-store"] },
+          providerSubscriptionId: { type: "string", minLength: 1 },
+          originalTransactionId: { type: "string", minLength: 1 },
+          billingAccountId: { type: "string", minLength: 1 },
+          planKey: { type: "string", minLength: 1 },
+        },
+        ["provider", "planKey"],
+      ),
+      reason: { type: "string", minLength: 1, maxLength: 2000 },
+    },
+    ["payload"],
+  ),
   "cancel-subscription": payloadSchema(
     { id: { type: "string", minLength: 1 }, reason: { type: "string", minLength: 1, maxLength: 2000 } },
     ["id"],
@@ -608,6 +634,8 @@ function actionOperation(
           }
         : action.id === "change-subscription"
           ? { confirmation: { risk: "high" as const, method: "recent-auth" as const, reason: "Changing a subscription updates externally billed recurring service.", maxAgeSeconds: 300 } }
+          : action.id === "import-subscription"
+            ? { confirmation: { risk: "high" as const, method: "recent-auth" as const, reason: "Importing binds an externally billed subscription and its entitlements to a billing account.", maxAgeSeconds: 300 } }
           : action.id === "reconcile-provider"
             ? { confirmation: { risk: "high" as const, method: "explicit" as const, reason: "Provider reconciliation imports and persists external billing state.", maxAgeSeconds: 300 } }
             : action.id === "cancel-subscription"
@@ -630,7 +658,7 @@ function actionOperation(
 
 const domainReadResourceIds = new Set(["products", "plans", "prices", "subscriptions", "entitlements", "usage"]);
 const domainResourceIds = new Set([...domainReadResourceIds, "payments", "reconciliation"]);
-const domainActionIds = new Set(["change-subscription", "cancel-subscription", "refund-payment", "reconcile-provider"]);
+const domainActionIds = new Set(["change-subscription", "import-subscription", "cancel-subscription", "refund-payment", "reconcile-provider"]);
 const domainResources = billFnAdminResources.filter((resource) => domainResourceIds.has(resource.id));
 const domainReadResources = domainResources.filter((resource) => domainReadResourceIds.has(resource.id));
 const domainActions = billFnAdminActions.filter((action) => domainActionIds.has(action.id));
@@ -647,7 +675,7 @@ type FunctionAdminActionOperationId<TModule extends string, TAction> =
 type BillFnDomainReadResourceId = "products" | "plans" | "prices" | "subscriptions" | "entitlements" | "usage";
 type BillFnDomainAction = Extract<
   (typeof billFnAdminActions)[number],
-  { id: "change-subscription" | "cancel-subscription" | "refund-payment" | "reconcile-provider" }
+  { id: "change-subscription" | "import-subscription" | "cancel-subscription" | "refund-payment" | "reconcile-provider" }
 >;
 
 export type BillFnAdminOperationId =
@@ -697,6 +725,18 @@ export interface BillFnChangeSubscriptionInput {
   };
   reason?: string;
 }
+export interface BillFnImportSubscriptionInput {
+  payload: {
+    provider: "dodo" | "apple" | "stripe" | "polar" | "google-play" | "microsoft-store";
+    /** The provider subscription id; for Apple, the original transaction id may be given instead. */
+    providerSubscriptionId?: string;
+    originalTransactionId?: string;
+    /** Must be the active subject's billing account when given. */
+    billingAccountId?: string;
+    planKey: string;
+  };
+  reason?: string;
+}
 export interface BillFnCancelSubscriptionInput { id: string; reason?: string }
 export interface BillFnRefundPaymentInput {
   id: string;
@@ -732,6 +772,7 @@ export function createBillFnAdminClient(adminClient: AdminClient) {
     subscriptions: {
       ...resource("subscriptions"),
       change: (input: BillFnChangeSubscriptionInput, options?: AdminClientRequestOptions) => client.invoke("billfn.subscriptions.change-subscription", input, options),
+      import: (input: BillFnImportSubscriptionInput, options?: AdminClientRequestOptions) => client.invoke("billfn.subscriptions.import-subscription", input, options),
       cancel: (input: BillFnCancelSubscriptionInput, options?: AdminClientRequestOptions) => client.invoke("billfn.subscriptions.cancel-subscription", input, options),
     },
     entitlements: resource("entitlements"),
@@ -759,6 +800,7 @@ export interface BillFnAdminService {
   listUsage(input: BillFnAdminListInput, context: AdminOperationContext): Promise<BillFnAdminResult>;
   getUsage(input: BillFnAdminGetInput, context: AdminOperationContext): Promise<BillFnAdminResult>;
   changeSubscription(input: BillFnChangeSubscriptionInput, context: AdminOperationContext): Promise<BillFnAdminResult>;
+  importSubscription(input: BillFnImportSubscriptionInput, context: AdminOperationContext): Promise<BillFnAdminResult>;
   cancelSubscription(input: BillFnCancelSubscriptionInput, context: AdminOperationContext): Promise<BillFnAdminResult>;
   refundPayment(input: BillFnRefundPaymentInput, context: AdminOperationContext): Promise<BillFnAdminResult>;
   reconcileProvider(input: BillFnReconcileProviderInput, context: AdminOperationContext): Promise<BillFnAdminResult>;
@@ -785,6 +827,7 @@ export function createBillFnAdminAdapter(
     "billfn.usage.list": bind(service.listUsage),
     "billfn.usage.get": bind(service.getUsage),
     "billfn.subscriptions.change-subscription": bind(service.changeSubscription),
+    "billfn.subscriptions.import-subscription": bind(service.importSubscription),
     "billfn.subscriptions.cancel-subscription": bind(service.cancelSubscription),
     "billfn.payments.refund-payment": bind(service.refundPayment),
     "billfn.reconciliation.reconcile-provider": bind(service.reconcileProvider),

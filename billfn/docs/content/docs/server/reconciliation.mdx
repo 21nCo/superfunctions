@@ -60,6 +60,28 @@ Except after a provider mutation (below), the operation that triggered a replay 
 
 Cancel, change, resume and refund are different: once the provider has applied the mutation, retrying the call would repeat it (a second refund, for example). They save the provider's state, record their `*.requested` billing event and return their result even when the replay does not finish. The unfinished events stay retained, the `webhook.unlinked.replay_deferred` metric is recorded, and with a queue and a provider that supports subscription sync a `subscription-sync` job is enqueued to replay them. Otherwise the next webhook, sync or live read for the subscription replays them. If reading the subscription back after the replay fails, the call returns the state it wrote and records `webhook.unlinked.replay_refresh_failed`.
 
+## Importing existing provider subscriptions
+
+A subscription created before BillFn (for example a legacy Dodo subscription, or an Apple purchase made without BillFn's `appAccountToken`) has none of the ownership metadata checkout verification and restore require, so its events are stored unlinked with reason `billing_account_metadata_missing`. An operator binds it with `billfn.services.subscriptions.import`, which is not a public route; `@billfn/admin` exposes it as the `import-subscription` action.
+
+```ts
+await billfn.services.subscriptions.import({
+  provider: 'dodo',
+  providerSubscriptionId: 'sub_...', // or, for Apple, originalTransactionId
+  billingAccountId,
+  planKey: 'nucleus',
+  operator: { id: operatorId, type: 'user', requestId },
+  reason: 'legacy cutover'
+});
+```
+
+- The billing account must exist, unless `subject` is given: then the account is created for it and must be `billingAccountId`.
+- The provider adapter's `importSubscription` reads the subscription by its reference and checks only that the record is that subscription (Dodo `GET /subscriptions/:id`; Apple `GET /inApps/v1/subscriptions/:originalTransactionId`). The product on the record must be a subscription price of `planKey`, which selects the price.
+- The state is applied as a live provider read: the read's start becomes the provider-state time, the unlinked events stored for the reference are replayed (events that occurred before the read are marked `skipped`, later ones applied), and the call returns the subscription and entitlements after the replay. A replay that does not finish fails the call; calling it again finishes it.
+- Import is idempotent per provider reference: importing a reference already bound to the same billing account syncs it again and returns the same subscription. A reference bound to a different billing account, including by a concurrent import, fails with `BILLFN_CONFLICT` and nothing is written, as does one a subscription write replaced. Racing imports into the same account end with one subscription.
+- Every successful import records a `billfn.subscription.imported` billing event with the provider reference, plan, price, status, `operator` and `reason`, before the replay, so an import whose replay must be retried is still recorded.
+- The subscription's `billfnImportedAt` metadata keeps when it was first imported. The Apple adapter's subscription sync does not expect a BillFn `appAccountToken` on an imported subscription (it still checks the product); the binding is the operator's.
+
 ## Worker
 
 Use `createBillFnReconciliationWorker(config)` with the same BillFn config you mount in your server.

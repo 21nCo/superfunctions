@@ -341,6 +341,7 @@ export interface BillFnProviderCapabilities {
   resumeSubscription?: boolean;
   refundCharge?: boolean;
   notificationHistory?: boolean;
+  importSubscription?: boolean;
 }
 
 export interface BillFnProviderCheckoutResult {
@@ -464,6 +465,19 @@ export interface BillFnRestorePurchasesInput {
   payload?: Record<string, unknown>;
 }
 
+/**
+ * Reads an existing provider subscription an operator is importing. The
+ * adapter checks only that the record is the referenced subscription, not the
+ * BillFn ownership metadata (`billfn_*`, `appAccountToken`) a subscription
+ * created outside BillFn lacks; BillFn checks its product against `plan`.
+ */
+export interface BillFnImportSubscriptionInput {
+  /** The provider subscription id (Dodo) or original transaction id (Apple). */
+  providerReference: string;
+  billingAccount: BillFnBillingAccount;
+  plan: BillFnPlanDefinition;
+}
+
 export interface BillFnParseWebhookInput {
   headers: Headers;
   rawBody: string;
@@ -485,6 +499,8 @@ export interface BillFnProviderAdapter {
   resumeSubscription?(input: BillFnResumeSubscriptionInput): Promise<BillFnProviderOperationResult>;
   refundCharge?(input: BillFnRefundChargeInput): Promise<BillFnProviderOperationResult>;
   restorePurchases?(input: BillFnRestorePurchasesInput): Promise<BillFnVerifiedBillingState[]>;
+  /** Returns null when the provider has no such subscription. */
+  importSubscription?(input: BillFnImportSubscriptionInput): Promise<BillFnVerifiedBillingState | null>;
   parseWebhook?(input: BillFnParseWebhookInput): Promise<BillFnParsedWebhookEvent[]>;
   fetchNotificationHistory?(input: BillFnFetchNotificationHistoryInput): Promise<BillFnNotificationHistoryPage>;
 }
@@ -633,6 +649,35 @@ export interface BillFnRestorePurchasesRequest {
   payload?: Record<string, unknown>;
 }
 
+/** Who imported a subscription; recorded on the import's billing event. */
+export interface BillFnImportOperator {
+  id: string;
+  type?: string;
+  /** The operator request that ran the import, for audit correlation. */
+  requestId?: string;
+}
+
+/**
+ * Binds an existing provider subscription to a billing account. Give the
+ * provider subscription id, or for Apple the original transaction id.
+ */
+export interface BillFnImportSubscriptionRequest {
+  provider: BillingProviderName;
+  providerSubscriptionId?: string;
+  /** Apple only: the subscription's original transaction id. */
+  originalTransactionId?: string;
+  billingAccountId: string;
+  /**
+   * When set, the billing account is created for this subject if it does not
+   * exist yet; the subject must resolve to `billingAccountId`. Without it the
+   * billing account must already exist.
+   */
+  subject?: BillableSubject;
+  planKey: string;
+  operator: BillFnImportOperator;
+  reason?: string;
+}
+
 export interface BillFnSyncSubscriptionRequest {
   subject?: BillableSubject;
   subscriptionId?: string;
@@ -714,6 +759,13 @@ export interface BillFnSyncSubscriptionResponseData {
   entitlements: BillFnEntitlementSnapshot;
 }
 
+export interface BillFnImportSubscriptionResponseData {
+  subscription: BillFnSubscription;
+  entitlements: BillFnEntitlementSnapshot;
+  /** The `billfn.subscription.imported` billing event this import recorded. */
+  billingEvent: BillFnBillingEvent;
+}
+
 export interface BillFnRestorePurchasesResponseData {
   subscription: BillFnSubscription;
   entitlements: BillFnEntitlementSnapshot;
@@ -749,6 +801,7 @@ export type BillFnResumeSubscriptionResponse = BillFnEnvelope<BillFnResumeSubscr
 export type BillFnRefundChargeResponse = BillFnEnvelope<BillFnRefundChargeResponseData>;
 export type BillFnSyncSubscriptionResponse = BillFnEnvelope<BillFnSyncSubscriptionResponseData>;
 export type BillFnRestorePurchasesResponse = BillFnEnvelope<BillFnRestorePurchasesResponseData>;
+export type BillFnImportSubscriptionResponse = BillFnEnvelope<BillFnImportSubscriptionResponseData>;
 export type BillFnEntitlementsResponse = BillFnEnvelope<BillFnEntitlementsResponseData>;
 export type BillFnUsageResponse = BillFnEnvelope<BillFnUsageResponseData>;
 export type BillFnWebhookResponse = BillFnEnvelope<BillFnWebhookResponseData>;
@@ -772,6 +825,19 @@ export interface BillFnInstance {
   enqueueReconciliationJob(input: BillFnEnqueueReconciliationJobRequest): Promise<BillFnReconciliationJobResponse>;
   getReconciliationJob(input: BillFnGetReconciliationJobRequest): Promise<BillFnReconciliationJobResponse>;
   runReconciliationJob(input: BillFnRunReconciliationJobRequest): Promise<BillFnReconciliationJobResponse>;
+  /** Operator services; none of them is exposed as a public route. */
+  services: {
+    subscriptions: {
+      /**
+       * Binds an existing provider subscription to a billing account, syncs its
+       * state from the provider and replays its unlinked webhook events. Idempotent
+       * per provider reference; a reference bound to another billing account fails
+       * with `BILLFN_CONFLICT`. Every import records a `billfn.subscription.imported`
+       * billing event with the operator.
+       */
+      import(input: BillFnImportSubscriptionRequest): Promise<BillFnImportSubscriptionResponse>;
+    };
+  };
   subscriptionProvider: {
     getActiveSubscription(subject: BillableSubject): Promise<BillFnSubscription | null>;
     getEntitlementSnapshot(subject: BillableSubject): Promise<BillFnEntitlementSnapshot | null>;

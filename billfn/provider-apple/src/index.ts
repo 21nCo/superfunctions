@@ -4,6 +4,7 @@ import type {
   BillFnChangeSubscriptionInput,
   BillFnCreateCheckoutInput,
   BillFnFetchNotificationHistoryInput,
+  BillFnImportSubscriptionInput,
   BillFnNotificationHistoryPage,
   BillFnParsedWebhookEvent,
   BillFnProviderAdapter,
@@ -15,7 +16,7 @@ import type {
   BillFnVerifiedBillingState,
   BillFnVerifyCheckoutInput
 } from '@billfn/core';
-import { createBillFnError } from '@billfn/core';
+import { BILLFN_IMPORTED_AT_METADATA_KEY, createBillFnError } from '@billfn/core';
 
 export interface AppleNotificationVerifierContext {
   rawBody: string;
@@ -37,9 +38,11 @@ export interface AppleProviderConfig {
 }
 
 interface AppleTransactionExpectation {
-  productId: string;
+  /** Null when any product is accepted; BillFn checks an imported subscription's product against the plan. */
+  productId: string | null;
   reference: string;
-  appAccountToken: string;
+  /** Null for a subscription an operator imported: its binding is the operator's, not the purchase token's. */
+  appAccountToken: string | null;
 }
 
 export function createAppleProvider(config: AppleProviderConfig): BillFnProviderAdapter {
@@ -57,7 +60,8 @@ export function createAppleProvider(config: AppleProviderConfig): BillFnProvider
       changeSubscription: true,
       resumeSubscription: true,
       refundCharge: true,
-      notificationHistory: Boolean(config.notificationVerifier)
+      notificationHistory: Boolean(config.notificationVerifier),
+      importSubscription: true
     },
     async createCheckout(input: BillFnCreateCheckoutInput) {
       const appAccountToken = createAppleAppAccountToken(input.billingAccount.id);
@@ -109,10 +113,25 @@ export function createAppleProvider(config: AppleProviderConfig): BillFnProvider
         });
       }
       const response = await requestStoreKitWithFallback(fetchImpl, config, `/inApps/v1/subscriptions/${transactionId}`);
+      // An imported purchase was made outside BillFn, so its token is not derived from the billing account.
+      const imported = typeof input.subscription.metadata?.[BILLFN_IMPORTED_AT_METADATA_KEY] === 'string';
       return mapAppleSubscriptionResponse(response.payload, {
         productId: input.price.providerProductId,
         reference: transactionId,
-        appAccountToken: createAppleAppAccountToken(input.subscription.billingAccountId)
+        appAccountToken: imported ? null : createAppleAppAccountToken(input.subscription.billingAccountId)
+      });
+    },
+    async importSubscription(input: BillFnImportSubscriptionInput) {
+      const response = await requestStoreKitWithFallback(
+        fetchImpl,
+        config,
+        `/inApps/v1/subscriptions/${encodeURIComponent(input.providerReference)}`
+      );
+      // A purchase made outside BillFn carries no BillFn appAccountToken, so only the transaction is matched.
+      return mapAppleSubscriptionResponse(response.payload, {
+        productId: null,
+        reference: input.providerReference,
+        appAccountToken: null
       });
     },
     async cancelSubscription(input: BillFnCancelSubscriptionInput) {
@@ -659,8 +678,9 @@ function appleTransactionMatches(
   const productId = readString(transaction, ['productId']);
   const appAccountToken = readString(transaction, ['appAccountToken']);
   return (
-    productId === expectation.productId &&
-    appAccountToken?.toLowerCase() === expectation.appAccountToken.toLowerCase() &&
+    (expectation.productId === null || productId === expectation.productId) &&
+    (expectation.appAccountToken === null ||
+      appAccountToken?.toLowerCase() === expectation.appAccountToken.toLowerCase()) &&
     (transactionId === expectation.reference || originalTransactionId === expectation.reference)
   );
 }

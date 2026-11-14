@@ -678,4 +678,38 @@ describe('@billfn/provider-dodo', () => {
     );
     expect(response?.operationStatus).toBe('applied');
   });
+
+  it('imports a legacy Dodo subscription by its id without requiring BillFn ownership metadata', async () => {
+    // Recorded GET /subscriptions/:id for a subscription created before BillFn: no billfn_* metadata.
+    const recorded = {
+      subscription_id: 'sub_legacy/1',
+      product_id: 'pdt_nucleus_year',
+      status: 'active',
+      next_billing_date: '2027-01-01T00:00:00.000Z',
+      created_at: '2025-01-01T00:00:00.000Z',
+      metadata: { legacy_user_id: 'u_123' }
+    };
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(recorded), { status: 200 })) as typeof fetch;
+    const provider = createDodoProvider({ apiKey: 'test', baseUrl: 'https://dodo.test', fetch: fetchMock });
+    const input = {
+      providerReference: 'sub_legacy/1',
+      billingAccount: restorePurchasesInput().billingAccount,
+      plan: restorePurchasesInput().plan
+    };
+
+    expect(provider.capabilities.importSubscription).toBe(true);
+    await expect(provider.importSubscription?.(input)).resolves.toMatchObject({
+      subscriptionStatus: 'active',
+      providerSubscriptionId: 'sub_legacy/1',
+      currentPeriodEnd: '2027-01-01T00:00:00.000Z',
+      raw: recorded
+    });
+    // The operator-supplied reference stays one path segment.
+    expect(fetchMock).toHaveBeenCalledWith('https://dodo.test/subscriptions/sub_legacy%2F1', expect.objectContaining({ method: 'GET' }));
+
+    // A record for another subscription is not imported under this reference.
+    await expect(provider.importSubscription?.({ ...input, providerReference: 'sub_other' })).rejects.toMatchObject({
+      code: 'BILLFN_CONFLICT'
+    });
+  });
 });

@@ -624,4 +624,94 @@ describe('@billfn/provider-apple', () => {
     });
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  describe('importing a purchase made before BillFn', () => {
+    // Recorded GET /inApps/v1/subscriptions/:originalTransactionId: the legacy purchase has no BillFn appAccountToken.
+    const recorded = {
+      environment: 'Production',
+      data: [{
+        subscriptionGroupIdentifier: 'nucleus',
+        lastTransactions: [
+          {
+            originalTransactionId: 'orig_other',
+            status: 1,
+            signedTransactionInfo: encodePayload({
+              originalTransactionId: 'orig_other',
+              transactionId: 'txn_other',
+              productId: 'apple.other.month',
+              appAccountToken: OTHER_APP_ACCOUNT_TOKEN
+            })
+          },
+          {
+            originalTransactionId: 'orig_legacy',
+            status: 1,
+            signedTransactionInfo: encodePayload({
+              originalTransactionId: 'orig_legacy',
+              transactionId: 'txn_legacy_renewal',
+              productId: 'apple.nucleus.year',
+              purchaseDate: Date.parse('2026-06-01T00:00:00.000Z'),
+              expiresDate: Date.parse('2027-06-01T00:00:00.000Z')
+            }),
+            signedRenewalInfo: encodePayload({ autoRenewStatus: 1 })
+          }
+        ]
+      }]
+    };
+    const billingAccount = {
+      id: 'ba_user_123', ownerType: 'user' as const, ownerId: 'user_123', createdAt: '2026-04-20T00:00:00.000Z',
+      updatedAt: '2026-04-20T00:00:00.000Z'
+    };
+    const plan = { productKey: 'nucleus', planKey: 'nucleus', displayName: 'Nucleus', features: {}, limits: {}, prices: [] };
+    const price = {
+      priceId: 'price_apple_year', provider: 'apple' as const, providerProductId: 'apple.nucleus.year', amount: 120,
+      currency: 'USD', interval: 'year' as const, kind: 'subscription' as const
+    };
+
+    function provider() {
+      const fetchMock = vi.fn(async () => new Response(JSON.stringify(recorded), { status: 200 })) as typeof fetch;
+      return { fetchMock, provider: createAppleProvider({ fetch: fetchMock, tokenProvider: async () => 'token' }) };
+    }
+
+    it('reads the original transaction without matching the BillFn appAccountToken', async () => {
+      const { fetchMock, provider: apple } = provider();
+
+      expect(apple.capabilities.importSubscription).toBe(true);
+      await expect(apple.importSubscription?.({ providerReference: 'orig_legacy', billingAccount, plan })).resolves.toMatchObject({
+        subscriptionStatus: 'active',
+        providerSubscriptionId: 'orig_legacy',
+        providerChargeId: 'txn_legacy_renewal',
+        providerProductId: 'apple.nucleus.year',
+        currentPeriodEnd: '2027-06-01T00:00:00.000Z',
+        autoRenew: true
+      });
+      expect(String(vi.mocked(fetchMock).mock.calls[0]?.[0])).toBe(
+        'https://api.storekit.itunes.apple.com/inApps/v1/subscriptions/orig_legacy'
+      );
+      await expect(apple.importSubscription?.({ providerReference: 'orig_missing', billingAccount, plan })).rejects.toMatchObject({
+        code: 'BILLFN_CONFLICT'
+      });
+    });
+
+    it('syncs an imported subscription without the token check it keeps for BillFn purchases', async () => {
+      const { provider: apple } = provider();
+      const subscription = {
+        id: 'sub_local', billingAccountId: 'ba_user_123', planKey: 'nucleus', priceId: 'price_apple_year',
+        provider: 'apple' as const, providerSubscriptionId: 'orig_legacy', status: 'active' as const, autoRenew: true,
+        createdAt: '2026-11-10T00:00:00.000Z', updatedAt: '2026-11-10T00:00:00.000Z'
+      };
+
+      await expect(apple.fetchSubscription?.({ subscription, plan, price })).rejects.toMatchObject({ code: 'BILLFN_CONFLICT' });
+      await expect(apple.fetchSubscription?.({
+        subscription: { ...subscription, metadata: { billfnImportedAt: '2026-11-10T00:00:00.000Z' } },
+        plan,
+        price
+      })).resolves.toMatchObject({ providerSubscriptionId: 'orig_legacy', subscriptionStatus: 'active' });
+      // The product is still checked for an imported subscription.
+      await expect(apple.fetchSubscription?.({
+        subscription: { ...subscription, metadata: { billfnImportedAt: '2026-11-10T00:00:00.000Z' } },
+        plan,
+        price: { ...price, providerProductId: 'apple.nucleus.month' }
+      })).rejects.toMatchObject({ code: 'BILLFN_CONFLICT' });
+    });
+  });
 });

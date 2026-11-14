@@ -23,14 +23,17 @@ const adapter = createBillFnAdminAdapter(service);
 
 ## Available operations
 
-Products, plans, and prices come from `billfn.getCatalog()` and are instance-wide catalog data; the subject resolver does not scope these reads. Subscriptions, entitlements, and usage are resolved for the active billable subject. Its write actions change or cancel a subscription, refund a payment, and queue provider reconciliation. The broader exported `billFnAdminResources` inventory contains descriptive entries for other billing concepts; those entries are **not** mounted as operations by the current capability.
+Products, plans, and prices come from `billfn.getCatalog()` and are instance-wide catalog data; the subject resolver does not scope these reads. Subscriptions, entitlements, and usage are resolved for the active billable subject. Its write actions import, change or cancel a subscription, refund a payment, and queue provider reconciliation. The broader exported `billFnAdminResources` inventory contains descriptive entries for other billing concepts; those entries are **not** mounted as operations by the current capability.
 
 | Action | Required confirmation |
 | --- | --- |
 | Change subscription | Recent authentication |
+| Import subscription | Recent authentication |
 | Cancel subscription | MFA |
 | Refund payment | MFA |
 | Reconcile provider | Explicit confirmation |
+
+Import subscription binds an existing provider subscription (Dodo subscription id, or Apple original transaction id) to the active subject's billing account through `billfn.services.subscriptions.import`, creating that billing account if the subject has none yet. A `billingAccountId` in the payload must be the active subject's. The administrator's actor id and type and the request id are recorded on the `billfn.subscription.imported` billing event, whose id the action returns as `operationReference`. A reference already bound to another billing account fails with `conflict`. See [importing existing subscriptions](/docs/server/reconciliation#importing-existing-provider-subscriptions).
 
 All writes require audit evidence and an idempotency key through the admin contract. Reconciliation is restricted to an account scan or the active subject's subscription; provider-wide jobs cannot be scheduled through this subject-scoped action. Listing uses a scope-bound cursor tied to its query, so reuse the cursor only with the same search, filters, and sort.
 
