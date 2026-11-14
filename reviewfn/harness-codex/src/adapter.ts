@@ -122,8 +122,8 @@ export class CodexHarnessAdapter implements HarnessAdapter {
     if (input.outputSchema) {
       try {
         validateCallerOutput = structuredOutputValidator(input.outputSchema);
-        const keyword = presenceKeyword(input.outputSchema);
-        if (keyword) throw new Error(`${keyword} depends on which properties are present, which the provider-strict form cannot preserve.`);
+        const unsupported = presenceTest(input.outputSchema);
+        if (unsupported) throw new Error(`${unsupported}, which the provider-strict form cannot preserve: it sends every declared property, with null for an optional one.`);
         providerSchema = providerSchemaFor(input.outputSchema);
         validateProviderOutput = structuredOutputValidator(providerSchema as Record<string, unknown>);
       } catch (error) { return emptyFailure("failed", `outputSchema is not a valid JSON Schema: ${error instanceof Error ? error.message : String(error)}`); }
@@ -205,14 +205,27 @@ function providerSchemaFor(schema: Readonly<Record<string, unknown>>): unknown {
 
 /** Keywords whose meaning depends on which properties are present; the provider-strict form encodes absence as null. */
 const PRESENCE_KEYWORDS = new Set(["minProperties", "maxProperties", "dependentRequired", "dependentSchemas", "dependencies", "patternProperties", "propertyNames", "unevaluatedProperties"]);
-function presenceKeyword(schema: unknown): string | undefined {
-  if (Array.isArray(schema)) return schema.map(presenceKeyword).find(Boolean);
+const NEGATED_OR_CONDITIONAL = new Set(["not", "if", "contains"]);
+/**
+ * A part of a caller schema that tests whether a property is present, which the provider-strict form cannot preserve.
+ * Supported: `required` that lists only properties of the same `type: "object"` schema, outside `not`, `if` and `contains`.
+ */
+function presenceTest(schema: unknown, conditional = false): string | undefined {
+  if (Array.isArray(schema)) {
+    for (const item of schema) { const found = presenceTest(item, conditional); if (found) return found; }
+    return undefined;
+  }
   if (!schema || typeof schema !== "object") return undefined;
-  for (const [key, value] of Object.entries(schema)) {
+  const node = schema as Record<string, unknown>;
+  if (conditional && (node.$ref !== undefined || (Array.isArray(node.required) && node.required.length))) return "required or $ref inside not, if or contains";
+  const declared = node.type === "object" && node.properties && typeof node.properties === "object" ? node.properties : {};
+  const undeclared = Array.isArray(node.required) ? node.required.find(name => !Object.hasOwn(declared, String(name))) : undefined;
+  if (undeclared !== undefined) return `required ${String(undeclared)} is not a property of the same object schema`;
+  for (const [key, value] of Object.entries(node)) {
     if (PRESENCE_KEYWORDS.has(key)) return key;
-    if (["const", "enum", "default", "examples"].includes(key)) continue;
+    if (["const", "enum", "default", "examples", "required"].includes(key)) continue;
     // Property and definition maps are keyed by names, not keywords.
-    const found = ["properties", "$defs", "definitions"].includes(key) && value && typeof value === "object" ? presenceKeyword(Object.values(value)) : presenceKeyword(value);
+    const found = ["properties", "$defs", "definitions"].includes(key) && value && typeof value === "object" ? presenceTest(Object.values(value), conditional) : presenceTest(value, conditional || NEGATED_OR_CONDITIONAL.has(key));
     if (found) return found;
   }
   return undefined;

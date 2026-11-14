@@ -20,6 +20,12 @@ function lensPayload(severity = "high") {
   return { findings: [lensFinding(severity)], evidence: [{ id: "E1", kind: "code", description: "loop bound", source: null, code: { commit: head, path: "src/index.ts", startLine: 3, endLine: null, symbol: null }, receiptId: null, artifactDigest: null, sourceExclusionReason: null }], inspectedPaths: ["src/index.ts"], uninspected: [] };
 }
 
+/** The lens schema without its closed root, so a test can add root properties through combinators. */
+function open(): Record<string, unknown> {
+  const { additionalProperties: _closed, ...rest } = lensOutputSchema;
+  return rest;
+}
+
 /** A fake Codex that records the schema it was given and answers with `payload`. */
 function recordingAdapter(payload: unknown) {
   const seen: { schema?: unknown; invoked: boolean } = { invoked: false };
@@ -159,6 +165,12 @@ describe("CodexHarnessAdapter outputSchema", () => {
     ["a nested non-iterable required", { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, notes: { type: "object", properties: { a: { type: "string" } }, required: true } } }],
     ["minProperties, which the provider-strict form cannot preserve", { ...lensOutputSchema, minProperties: 5, properties: { ...lensOutputSchema.properties, notes: { type: "string" } } }],
     ["a nested dependentRequired", { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, notes: { type: "object", properties: { a: { type: "string" }, b: { type: "string" } }, dependentRequired: { a: ["b"] } } } }],
+    // Presence tests through required: each would read a provider null as a present property.
+    ["a required property that only an allOf branch declares", { ...open(), required: [...lensOutputSchema.required, "notes"], allOf: [{ type: "object", properties: { notes: { type: "string" } } }] }],
+    ["an anyOf of required-only branches", { ...open(), properties: { ...lensOutputSchema.properties, a: { type: "string" }, b: { type: "string" } }, anyOf: [{ required: ["a"] }, { required: ["b"] }] }],
+    ["required inside not", { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, notes: { type: "object", properties: { a: { type: "string" } }, not: { type: "object", properties: { a: true }, required: ["a"] } } } }],
+    ["required inside if", { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, notes: { type: "object", properties: { a: { type: "string" }, b: { type: "string" } }, if: { type: "object", properties: { a: true }, required: ["a"] }, then: { type: "object", properties: { b: { type: "string" } }, required: ["b"] } } } }],
+    ["a $ref inside not", { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, notes: { not: { $ref: "#/$defs/codeAnchor" } } } }],
   ])("fails before inference when outputSchema has %s", async (_name, outputSchema) => {
     const { adapter, seen } = recordingAdapter(lensPayload());
     const output = await adapter.run({ ...input, outputSchema });
@@ -167,15 +179,12 @@ describe("CodexHarnessAdapter outputSchema", () => {
     expect(seen.invoked).toBe(false);
   });
 
-  it("keeps a caller's required entry that only an allOf branch declares", async () => {
-    // notes is required at the root but declared only in the allOf branch, so the strict form must keep it required.
-    const { additionalProperties: _closed, ...open } = lensOutputSchema;
-    const custom = { ...open, required: [...lensOutputSchema.required, "notes"], allOf: [{ type: "object", properties: { notes: { type: "string" } } }] };
-    expect((strictProviderSchema(custom) as { required: string[] }).required).toContain("notes");
-    const missing = await recordingAdapter(lensPayload()).adapter.run({ ...input, outputSchema: custom });
-    expect(missing.terminal).toBe("malformed");
-    const present = await recordingAdapter({ ...lensPayload(), notes: "set" }).adapter.run({ ...input, outputSchema: custom });
-    expect(present.error).toBeUndefined();
-    expect(present.terminal).toBe("completed");
+  it("still accepts a required property that its own object schema declares under a property test", async () => {
+    // A conditional on a property's value, not its presence, is preserved: kind is required where it is declared.
+    const notes = { type: "object", additionalProperties: false, required: ["kind"], properties: { kind: { enum: ["x", "y"] }, a: { type: "string" } }, if: { properties: { kind: { const: "y" } } }, then: { properties: { a: { type: "string" } } } };
+    const custom = { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, notes } };
+    const output = await recordingAdapter({ ...lensPayload(), notes: { kind: "y", a: null } }).adapter.run({ ...input, outputSchema: custom });
+    expect(output.error).toBeUndefined();
+    expect(output.terminal).toBe("completed");
   });
 });

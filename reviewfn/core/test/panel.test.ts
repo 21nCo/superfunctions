@@ -397,6 +397,22 @@ describe("slot run collapse and model mismatch", () => {
       expect(await slotIssues(producedBy(terminal, "lens-a", "failed"))).toEqual([]);
     }
     expect(await slotIssues(producedBy("missing"))).toEqual(["REVIEWFN_PANEL_ORIGIN_UNKNOWN /requirementsReport"]);
+    // The report must record the requirements slot's harness adapter and configured inference, and for a run that
+    // succeeded the pinned harness version; a failed run may record the version it could observe.
+    const configured = (terminal: SlotRun["terminal"], change: (configuration: ReviewReport["configuration"]) => void) => mutate(producedBy(terminal, "lens-a", terminal === "collapsed" ? "completed" : "failed"), report => change(report.requirementsReport!.configuration));
+    for (const change of [
+      (item: ReviewReport["configuration"]) => { item.harness.id = "claude-code"; },
+      (item: ReviewReport["configuration"]) => { item.harness.version = "0.155.0"; },
+      (item: ReviewReport["configuration"]) => { item.inference.provider = "anthropic"; },
+      (item: ReviewReport["configuration"]) => { item.inference.model = "gpt-6-mini"; },
+      (item: ReviewReport["configuration"]) => { item.inference.auth = "api-key"; },
+    ]) expect(await slotIssues(configured("collapsed", change))).toEqual(["REVIEWFN_PANEL_ORIGIN_UNKNOWN /requirementsReport/configuration"]);
+    expect(await slotIssues(configured("failed", item => { item.harness.version = "unknown"; }))).toEqual([]);
+    expect(await slotIssues(configured("failed", item => { item.inference.model = "gpt-6-mini"; }))).toEqual(["REVIEWFN_PANEL_ORIGIN_UNKNOWN /requirementsReport/configuration"]);
+    // The configured-model sentinel is compared as configured.
+    const sentinel = mutate(panelReport(), report => { report.slots[0].inference.model = "configured"; report.requirementsReport!.configuration.inference.model = "configured"; });
+    expect(await slotIssues(sentinel)).toEqual([]);
+    expect(await slotIssues(mutate(sentinel, report => { report.requirementsReport!.configuration.inference.model = "gpt-6.1-sol"; }))).toEqual(["REVIEWFN_PANEL_ORIGIN_UNKNOWN /requirementsReport/configuration"]);
     expect(await slotIssues(producedBy("collapsed", null))).toEqual(["REVIEWFN_PANEL_ORIGIN_UNKNOWN /requirementsReport"]);
     // A succeeded requirements slot whose report is missing is reported too, so nothing disappears silently.
     const lost = mutate(panelReport(), report => { delete report.requirementsReport; report.contextManifestDigest = context.digest; for (const item of report.findings) item.requirementIds = []; report.verdict = derivePanelVerdict(report, policy); });
@@ -655,6 +671,19 @@ describe("panel policy and slot identity", () => {
       expect(validateStructuredOutput(strict, { kind: "y", a: null, note: null })).not.toEqual([]);
       expect(validateStructuredOutput(strict, { kind: "y", a: "set", note: null })).toEqual([]);
     }
+    // A null never stands in for a property that something applying to the same value requires.
+    const object = (properties: Record<string, unknown>, required: string[] = [], extra = {}) => ({ type: "object", properties, required, ...extra });
+    const accepts = (schema: Record<string, unknown>, value: unknown) => validateStructuredOutput(strictProviderSchema(schema) as Record<string, unknown>, value).length === 0;
+    // required at the root as a nullable value, refined to a string by a typed else: a null is a value there.
+    const refined = object({ kind: { enum: ["x", "y"] }, a: nullable }, ["kind", "a"], { if: object({ kind: { const: "x" } }), else: object({ a: { type: "string" } }) });
+    expect(accepts(refined, { kind: "x", a: null })).toBe(true);
+    expect(accepts(refined, { kind: "y", a: null })).toBe(false);
+    // optional everywhere, constrained by an untyped then: a null is an absent property.
+    expect(accepts(object({ kind: { const: "y" }, a: { type: "string" } }, ["kind"], { if: { properties: { kind: { const: "y" } } }, then: { properties: { a: { type: "string" } } } }), { kind: "y", a: null })).toBe(true);
+    // optional at the root but required by an allOf member, non-nullable or nullable there.
+    expect(accepts(object({ p: { type: "string" } }, [], { allOf: [object({ p: { type: "string" } }, ["p"])] }), { p: null })).toBe(false);
+    expect(accepts(object({ p: { type: "string" } }, [], { allOf: [object({ p: nullable }, ["p"])] }), { p: null })).toBe(false);
+    expect(accepts(object({ p: { type: "string" } }, [], { allOf: [object({ p: nullable }, ["p"])] }), { p: "set" })).toBe(true);
   });
 
   it("types lens findings with the panel severities the lens schema accepts", () => {

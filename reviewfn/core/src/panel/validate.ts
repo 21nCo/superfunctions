@@ -341,8 +341,15 @@ function requirementsProvenanceIssues(report: PanelReport, policy: PanelPolicy |
   } else if (!run) {
     const reason = !policy ? "cannot be attributed without the panel policy the report records" : slotId === null ? "has no requirementsSlot in the panel policy" : `has no run of requirements slot ${slotId}`;
     add(issues, "REVIEWFN_PANEL_ORIGIN_UNKNOWN", "/requirementsReport", `The requirements report ${reason}.`);
-  } else if (succeeded !== (requirements.execution === "completed")) {
-    add(issues, "REVIEWFN_PANEL_ORIGIN_UNKNOWN", "/requirementsReport/execution", `Requirements slot ${String(slotId)} is ${run.terminal}, which contradicts a requirements report whose execution is ${requirements.execution}.`);
+  } else {
+    if (succeeded !== (requirements.execution === "completed")) add(issues, "REVIEWFN_PANEL_ORIGIN_UNKNOWN", "/requirementsReport/execution", `Requirements slot ${String(slotId)} is ${run.terminal}, which contradicts a requirements report whose execution is ${requirements.execution}.`);
+    // The report records the configuration that produced it: the slot's harness adapter and configured inference, and
+    // for a run that succeeded the harness version the slot pins.
+    const slot = policy!.slots.find(item => item.id === slotId)!;
+    const { harness, inference } = requirements.configuration;
+    if (harness.id !== slot.harness.adapter || (succeeded && harness.version !== slot.harness.version) || inference.provider !== slot.inference.provider || inference.model !== slot.inference.model || inference.auth !== slot.inference.auth) {
+      add(issues, "REVIEWFN_PANEL_ORIGIN_UNKNOWN", "/requirementsReport/configuration", `The requirements report was produced by another harness or inference configuration than requirements slot ${String(slotId)}.`);
+    }
   }
 }
 

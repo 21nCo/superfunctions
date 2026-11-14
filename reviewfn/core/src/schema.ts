@@ -27,18 +27,46 @@ export function validateHarnessPayload(value: unknown): string[] {
   return validator(value) ? [] : (validator.errors ?? []).map(error => `${error.instancePath || "/"}: ${error.message}`);
 }
 
-/** OpenAI strict structured output requires every property, using null for optional values. */
-export function strictProviderSchema(schema: unknown = harnessOutputSchema): unknown {
+/** Keywords whose subschemas apply to the same value as the schema that holds them. */
+const SAME_VALUE_KEYWORDS = new Set(["allOf", "anyOf", "oneOf", "if", "then", "else", "not"]);
+/** Keywords whose values map names to subschemas. */
+const SCHEMA_MAPS = new Set(["properties", "$defs", "definitions"]);
+const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
+const subschemas = (value: unknown): unknown[] => Array.isArray(value) ? value : [value];
+
+/** Same-value keywords whose subschemas are alternatives: only one group member's requirements apply together. */
+const ALTERNATIVES: Record<string, readonly string[]> = { anyOf: ["anyOf"], oneOf: ["oneOf"], then: ["then", "else"], else: ["then", "else"] };
+
+/** Properties a schema, or any subschema applying to the same value, lists as required (except the excluded keywords). */
+function requiredForValue(schema: unknown, into = new Set<string>(), excluded: readonly string[] = []): Set<string> {
+  if (!isRecord(schema)) return into;
+  if (Array.isArray(schema.required)) for (const name of schema.required) into.add(String(name));
+  for (const key of SAME_VALUE_KEYWORDS) if (!excluded.includes(key)) for (const item of subschemas(schema[key])) requiredForValue(item, into);
+  return into;
+}
+
+/**
+ * OpenAI strict structured output requires every property, using null for optional values. An object schema requires
+ * all its properties. A property gets the null alternative only where nothing that may apply to the same value requires
+ * it: the schema itself, its enclosing schemas through allOf/anyOf/oneOf/if/then/else/not, and their subschemas there,
+ * except alternatives (other anyOf/oneOf branches, then versus else) of the branch being converted. A null therefore
+ * always means an absent property and never stands in for a required one.
+ */
+export function strictProviderSchema(schema: unknown = harnessOutputSchema, inherited: ReadonlySet<string> = new Set()): unknown {
   if (Array.isArray(schema)) return schema.map(value => strictProviderSchema(value));
-  if (!schema || typeof schema !== "object") return schema;
-  const input = schema as Record<string, unknown>;
-  const output = Object.fromEntries(Object.entries(input).map(([key, value]) => [key, strictProviderSchema(value)]));
-  if (input.type === "object" && input.properties) {
-    const required = new Set(Array.isArray(input.required) ? input.required as string[] : []);
-    // Reuse the subtrees transformed above: transforming them again here doubled the work at every nesting level.
+  if (!isRecord(schema)) return schema;
+  const required = new Set([...inherited, ...requiredForValue(schema)]);
+  const output = Object.fromEntries(Object.entries(schema).map(([key, value]) => {
+    if (SCHEMA_MAPS.has(key) && isRecord(value)) return [key, Object.fromEntries(Object.entries(value).map(([name, item]) => [name, strictProviderSchema(item)]))];
+    if (SAME_VALUE_KEYWORDS.has(key)) {
+      const context = ALTERNATIVES[key] ? requiredForValue(schema, new Set(inherited), ALTERNATIVES[key]) : required;
+      return [key, Array.isArray(value) ? value.map(item => strictProviderSchema(item, context)) : strictProviderSchema(value, context)];
+    }
+    return [key, strictProviderSchema(value)];
+  }));
+  if (isRecord(schema.properties) && (schema.type === "object" || schema.type === undefined)) {
     output.properties = Object.fromEntries(Object.entries(output.properties as Record<string, unknown>).map(([key, value]) => [key, required.has(key) ? value : { anyOf: [value, { type: "null" }] }]));
-    // Every declared property becomes required. A required entry declared elsewhere (for example in an allOf branch) stays.
-    output.required = [...new Set([...Object.keys(input.properties as object), ...required])];
+    if (schema.type === "object") output.required = Object.keys(schema.properties);
   }
   return output;
 }
