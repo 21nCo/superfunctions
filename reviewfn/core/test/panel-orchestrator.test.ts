@@ -219,6 +219,8 @@ describe("slot workspaces", () => {
     // Git never hashes entries named .git below the top level, so they are checked separately.
     ["writes a nested .git file", root => writeFile(path.join(root, "src", ".git"), "gitdir: elsewhere\n"), /\.git entries .*src\/\.git/],
     ["creates a nested repository", root => mkdir(path.join(root, "src", "nested", ".git")), /src\/nested\/\.git/],
+    // Git hashes no FIFOs, sockets or devices, so `git add` alone would leave the tree unchanged.
+    ["creates a FIFO", async root => { execFileSync("mkfifo", [path.join(root, "src", "pipe")]); }, /not files, directories or symlinks.*src\/pipe/],
   ])("reports a slot that %s as mutated", async (_name, mutate, reason) => {
     const workspace = await provider().create("beta");
     await mutate(workspace.path);

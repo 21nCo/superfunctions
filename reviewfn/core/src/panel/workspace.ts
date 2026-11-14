@@ -87,11 +87,13 @@ interface WalkResult {
   nestedGitEntries: string[];
   /** Submodule (gitlink) paths with any content: Git does not look inside them, so they must stay as checked out, empty. */
   nonEmptyGitlinks: string[];
+  /** Entries that are not regular files, directories or symlinks (FIFOs, sockets, devices): Git does not hash them. */
+  specialEntries: string[];
 }
 
 /** Walk `root` without following symlinks, checking `signal` before each directory read. */
 async function walk(root: string, gitlinks: Set<string>, signal?: AbortSignal): Promise<WalkResult> {
-  const result: WalkResult = { directories: [], nestedGitEntries: [], nonEmptyGitlinks: [] };
+  const result: WalkResult = { directories: [], nestedGitEntries: [], nonEmptyGitlinks: [], specialEntries: [] };
   const visit = async (relative: string): Promise<void> => {
     signal?.throwIfAborted();
     const entries = await readdir(path.join(root, relative), { withFileTypes: true });
@@ -107,7 +109,10 @@ async function walk(root: string, gitlinks: Set<string>, signal?: AbortSignal): 
         if (relative || entry.name !== ".git") result.nestedGitEntries.push(child);
         continue;
       }
-      if (!entry.isDirectory()) continue;
+      if (!entry.isDirectory()) {
+        if (!entry.isFile() && !entry.isSymbolicLink()) result.specialEntries.push(child);
+        continue;
+      }
       result.directories.push(child);
       await visit(child);
     }
@@ -144,8 +149,8 @@ class GitSlotWorkspace implements SlotWorkspace {
         const changed = (await git([`--git-dir=${this.verifyGitDir}`, "diff-tree", "-r", "-z", "--no-renames", "--name-only", this.expectedTree, tree], options)).split("\0").filter(Boolean);
         return { unchanged: false, reason: `The checkout differs from head ${this.headCommit}: ${changed.length ? listed(changed) : "tree differs"}.` };
       }
-      // Git trees cannot record empty directories, and Git skips nested .git entries and submodule contents, so check
-      // those separately.
+      // Git trees cannot record empty directories, and Git skips nested .git entries, submodule contents and special
+      // files (FIFOs, sockets, devices), so check those separately.
       const entries = (await git([`--git-dir=${this.verifyGitDir}`, "ls-tree", "-r", "-t", "-z", this.expectedTree], options)).split("\0").filter(Boolean);
       const expected = new Set<string>();
       const gitlinks = new Set<string>();
@@ -157,6 +162,7 @@ class GitSlotWorkspace implements SlotWorkspace {
       }
       const found = await walk(this.path, gitlinks, signal);
       if (found.nestedGitEntries.length) return { unchanged: false, reason: `The checkout has .git entries other than its own that Git does not compare: ${listed(found.nestedGitEntries)}.` };
+      if (found.specialEntries.length) return { unchanged: false, reason: `The checkout has entries that are not files, directories or symlinks, which Git does not compare: ${listed(found.specialEntries)}.` };
       if (found.nonEmptyGitlinks.length) return { unchanged: false, reason: `The checkout has content in submodule paths: ${listed(found.nonEmptyGitlinks)}.` };
       const extra = found.directories.filter(directory => !expected.has(directory));
       if (extra.length) return { unchanged: false, reason: `The checkout has directories that head ${this.headCommit} does not: ${listed(extra)}.` };

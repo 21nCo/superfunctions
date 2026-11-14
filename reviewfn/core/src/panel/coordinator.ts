@@ -179,6 +179,20 @@ export function slotConfiguration(config: ReviewFnConfig, slot: PanelSlot, contr
   return { ...config, harness: { adapter: slot.harness.adapter, version, ...(same && config.harness.executable ? { executable: config.harness.executable } : {}) }, inference: { ...slot.inference } };
 }
 
+/**
+ * A signal that aborts when `parent` aborts or, with `timeoutMs`, when the timeout elapses (calling `onTimeout` first).
+ * Unlike `AbortSignal.any`, whose result its sources hold only weakly, this signal is reachable from the parent's listener
+ * and the timer, so it still aborts when nothing else references it, as when a harness or a comparison never settles.
+ * `clearTimer` stops the timeout only; the parent listener stays, so cancellation still reaches an abandoned harness.
+ */
+function linkedSignal(parent: AbortSignal, timeoutMs?: number, onTimeout?: () => void): { signal: AbortSignal; clearTimer: () => void } {
+  const controller = new AbortController();
+  if (parent.aborted) controller.abort(parent.reason);
+  else parent.addEventListener("abort", () => controller.abort(parent.reason), { once: true });
+  const timer = timeoutMs === undefined ? undefined : setTimeout(() => { onTimeout?.(); controller.abort(new DOMException("The operation timed out.", "TimeoutError")); }, timeoutMs);
+  return { signal: controller.signal, clearTimer: () => { if (timer) clearTimeout(timer); } };
+}
+
 /** Settle `promise`, or give up `graceMs` after `signal` aborts; a late result or rejection is ignored. */
 function settle<T>(promise: Promise<T>, signal: AbortSignal, graceMs: number): Promise<{ value?: T; error?: unknown; abandoned: boolean }> {
   return new Promise(resolve => {
@@ -225,11 +239,12 @@ function boundTelemetry(output: SlotHarnessOutput, maxBytes: number): string[] {
     if (bytes > maxBytes) { output.transcript = truncateUtf8(output.transcript, maxBytes); overruns.push(`The slot transcript (${bytes} bytes) exceeded its ${maxBytes}-byte limit; only its first ${maxBytes} bytes were kept.`); }
   }
   if (Array.isArray(output.events)) {
+    // Measured as JSON.stringify(events) serializes them: brackets plus a comma between (not after) events.
     let used = 2;
     let kept = 0;
     for (const event of output.events) {
       let size: number;
-      try { size = Buffer.byteLength(JSON.stringify(event) ?? "null") + 1; } catch { break; }
+      try { size = Buffer.byteLength(JSON.stringify(event) ?? "null") + (kept > 0 ? 1 : 0); } catch { break; }
       if (used + size > maxBytes) break;
       used += size;
       kept += 1;
@@ -442,27 +457,27 @@ export class PanelCoordinator {
     if (harnessDeadline - Date.now() <= 0) return finish("timed_out", [`${stageBudget} before the slot started.`], emptyOutput("timed_out", "Stage budget exhausted."));
     const maxOutputBytes = Math.min(slot.budget.maxOutputBytes, request.policy.limits.maxOutputBytes);
     let workspace: SlotWorkspace | undefined;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let clearHarnessTimer: (() => void) | undefined;
     try {
       // Creating the checkout is bounded by the stage deadline; the slot's own timeout starts once its checkout exists.
-      const creation = new AbortController();
-      const creationTimer = setTimeout(() => creation.abort(), Math.max(1, harnessDeadline - Date.now()));
-      try { workspace = await context.provider.create(slot.id, AbortSignal.any([context.runSignal, creation.signal])); }
+      let creationTimedOut = false;
+      const creation = linkedSignal(context.runSignal, Math.max(1, harnessDeadline - Date.now()), () => { creationTimedOut = true; });
+      try { workspace = await context.provider.create(slot.id, creation.signal); }
       catch (error) {
-        const terminal = context.runSignal.aborted ? "canceled" : creation.signal.aborted ? "timed_out" : "failed";
+        const terminal = context.runSignal.aborted ? "canceled" : creationTimedOut ? "timed_out" : "failed";
         const reason = terminal === "timed_out" ? `${stageBudget} while the slot checkout was created.` : `The slot checkout could not be created: ${message(error)}`;
         return finish(terminal, [reason], emptyOutput(terminal, reason));
-      } finally { clearTimeout(creationTimer); }
+      } finally { creation.clearTimer(); }
       const slotLimit = Math.min(slot.budget.timeoutMs, request.policy.limits.harnessTimeoutMs);
       if (harnessDeadline - Date.now() <= 0) {
         const reason = `${stageBudget} before the slot's harness could start.`;
         return finish("timed_out", [reason], emptyOutput("timed_out", reason));
       }
       const timeoutMs = Math.max(1, Math.min(slotLimit, harnessDeadline - Date.now()));
-      const slotController = new AbortController();
       let timedOut = false;
-      timer = setTimeout(() => { timedOut = true; slotController.abort(); }, timeoutMs);
-      const signal = AbortSignal.any([context.runSignal, slotController.signal]);
+      const harnessSignal = linkedSignal(context.runSignal, timeoutMs, () => { timedOut = true; });
+      clearHarnessTimer = harnessSignal.clearTimer;
+      const signal = harnessSignal.signal;
       const lens = this.lenses.get(slot.lens)!;
       const config = this.slotConfig(request.config, slot);
       const scope: SlotScope = requirements || request.panelPolicy.incremental === "full" || request.since === undefined
@@ -473,7 +488,7 @@ export class PanelCoordinator {
       const harness = this.dependencies.harnesses.find(item => item.capabilities.id === slot.harness.adapter)!;
       const input: SlotHarnessInput = { runId: context.runId, workspace: workspace.path, change: prepared.change, context: prepared.context, policy: slotPolicy, configuration: config, testReceipts: prepared.tests, prompt: prompt.prompt, ...(requirements ? {} : { outputSchema: lensOutputSchema }), signal, slot };
       const settled = await settle(Promise.resolve().then(() => harness.run(input)), signal, timings.graceMs);
-      clearTimeout(timer);
+      harnessSignal.clearTimer();
       const reasons: string[] = [];
       let raw: SlotHarnessOutput;
       if (settled.abandoned) raw = emptyOutput(timedOut ? "timed_out" : "canceled", "The harness did not stop after it was aborted; the slot was abandoned.");
@@ -504,8 +519,9 @@ export class PanelCoordinator {
       // The comparison has its whole bound, reserved before the stage deadline, and stops on run cancellation. Only an
       // observed difference voids the slot; a comparison that did not finish leaves it timed out (or canceled), never counted.
       const comparisonMs = timings.comparisonMs;
-      const comparisonSignal = AbortSignal.any([context.runSignal, AbortSignal.timeout(comparisonMs)]);
-      const check = await this.compare(workspace, comparisonSignal, timings.graceMs);
+      const comparison = linkedSignal(context.runSignal, comparisonMs);
+      const check = await this.compare(workspace, comparison.signal, timings.graceMs);
+      comparison.clearTimer();
       let uncompared: { terminal: "canceled" | "timed_out"; reason: string } | undefined;
       if (check.incomplete) {
         uncompared = context.runSignal.aborted
@@ -542,20 +558,22 @@ export class PanelCoordinator {
       const reason = `The slot failed unexpectedly: ${message(error)}`;
       return finish(terminal, [reason], emptyOutput(terminal, reason));
     } finally {
-      if (timer) clearTimeout(timer);
+      clearHarnessTimer?.();
       if (workspace) await workspace.remove().catch(error => { context.cleanupErrors.push(`Slot ${slot.id} checkout was not removed: ${message(error)}`); });
     }
   }
 
   /**
-   * Compare a finished slot's checkout with head within `signal`. A comparison that stops on the signal, or does not stop
-   * within the abort grace after it, is incomplete; only a completed comparison can report a difference.
+   * Compare a finished slot's checkout with head within `signal`. A comparison that stops on the signal, that has not
+   * returned before the signal aborted, or does not stop within the abort grace after it, is incomplete; only a comparison
+   * that completed within its bound can report unchanged or a difference.
    */
   private async compare(workspace: SlotWorkspace, signal: AbortSignal, graceMs: number): Promise<WorkspaceCheck> {
     const settled = await settle(Promise.resolve().then(() => workspace.verify(signal)), signal, graceMs);
     const stopped: WorkspaceCheck = { unchanged: false, incomplete: true, reason: "The comparison was stopped before it finished." };
-    if (settled.abandoned) return stopped;
-    if (settled.error !== undefined) return signal.aborted ? stopped : { unchanged: false, reason: `The checkout could not be compared with head: ${message(settled.error)}` };
+    // A result that arrives after the signal aborted (during the grace) came from a comparison past its bound: incomplete.
+    if (settled.abandoned || signal.aborted) return stopped;
+    if (settled.error !== undefined) return { unchanged: false, reason: `The checkout could not be compared with head: ${message(settled.error)}` };
     const check = settled.value;
     if (!check || typeof check !== "object") return { unchanged: false, reason: "The checkout comparison returned no result." };
     if (check.unchanged === true) return { unchanged: true };

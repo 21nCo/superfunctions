@@ -2,6 +2,8 @@ import { execFileSync } from "node:child_process";
 import { lstat, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import v8 from "node:v8";
+import { runInNewContext } from "node:vm";
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
@@ -533,6 +535,42 @@ describe("PanelCoordinator budget bounds", { timeout: 20_000 }, () => {
     await expectValid(result, setup, panelPolicy);
   });
 
+  it("never accepts a comparison result that arrives after its bound, during the abort grace", async () => {
+    const harness = new FakePanelHarness({ behaviors: { tardy: clean } });
+    const panelPolicy = panel([slot("tardy", 1)]);
+    // Ignores its signal, and reports unchanged 50 ms after the bound aborted it, well within the 1,000 ms grace.
+    const workspaces = wrapVerify({ tardy: (_real, signal) => new Promise<WorkspaceCheck>(resolve => {
+      const late = () => setTimeout(() => resolve({ unchanged: true }), 50);
+      if (signal?.aborted) late(); else signal?.addEventListener("abort", late, { once: true });
+    }) });
+    const setup = coordinator(harness, { workspaces, comparisonTimeoutMs: 200, abortGraceMs: 1_000 });
+    const result = await setup.coordinator.run(request(panelPolicy));
+    expect(result.report.slotRuns.map(run => [run.terminal, run.voidReasons])).toEqual([["timed_out", []]]);
+    expect(result.slots[0].reasons.join()).toMatch(/comparison did not finish within its 200 ms bound/);
+    await expectNoCheckouts(harness);
+    await expectValid(result, setup, panelPolicy);
+  });
+
+  it("still enforces its bounds when garbage collection runs while a harness and a comparison never settle", async () => {
+    // Nothing references a harness or comparison that never settles, so only the bound's own timer and the run signal can
+    // keep the signal that ends the wait alive; a signal its sources hold only weakly is collected and the run hangs.
+    v8.setFlagsFromString("--expose-gc");
+    const gc = runInNewContext("gc") as () => void;
+    const harness = new FakePanelHarness({ behaviors: { deaf: () => new Promise<SlotHarnessOutput>(() => undefined), stuck: clean } });
+    const panelPolicy = panel([slot("deaf", 1, undefined, { budget: { timeoutMs: 300, maxOutputBytes: 1_000_000 } }), slot("stuck", 1)], { maxConcurrentSlots: 2 });
+    const workspaces = wrapVerify({ stuck: () => new Promise<WorkspaceCheck>(() => undefined) });
+    const setup = coordinator(harness, { workspaces, abortGraceMs: 50, comparisonTimeoutMs: 300 });
+    const collector = setInterval(gc, 5);
+    try {
+      const result = await Promise.race([
+        setup.coordinator.run(request(panelPolicy)),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("the run did not end within 8 s")), 8_000)),
+      ]);
+      expect(result.report.slotRuns.map(run => [run.slotId, run.terminal, run.voidReasons])).toEqual([["deaf", "timed_out", []], ["stuck", "timed_out", []]]);
+    } finally { clearInterval(collector); }
+    await expectNoCheckouts(harness);
+  });
+
   it("gives a slot that finished just before its harness timeout its full comparison bound", async () => {
     // The harness returns about 150 ms before its timeout; the comparison then takes 400 ms plus the real comparison of
     // its 1,000 ms bound (a quarter of the 4,000 ms stage), which the harness timeout left before the stage deadline.
@@ -601,6 +639,35 @@ describe("PanelCoordinator budget bounds", { timeout: 20_000 }, () => {
     const kept = (chatty.output as { events: unknown[] }).events;
     expect(kept.length).toBeGreaterThan(0);
     expect(Buffer.byteLength(JSON.stringify(kept))).toBeLessThanOrEqual(2_000);
+    await expectValid(result, setup, panelPolicy);
+  });
+
+  it("counts each channel exactly as it serializes: one byte under and exactly at the limit pass, one byte over times out", async () => {
+    const events = Array.from({ length: 12 }, (_, index) => ({ type: "progress", message: `step ${index} ${"x".repeat(60)}` })) as SlotHarnessOutput["events"];
+    const transcript = "t".repeat(1_000);
+    const payloadOutput = slotOutput({ inspectedPaths: ["src/value.ts", "src/other.ts", ...Array.from({ length: 40 }, (_, index) => `src/generated/${index}.ts`)] });
+    const channels = {
+      events: { output: () => ({ ...clean(), events }), bytes: Buffer.byteLength(JSON.stringify(events)) },
+      transcript: { output: () => ({ ...clean(), transcript }), bytes: Buffer.byteLength(transcript) },
+      payload: { output: () => payloadOutput, bytes: Buffer.byteLength(JSON.stringify({ requirements: [], assessments: [], evidence: [], findings: [], inspectedPaths: payloadOutput.inspectedPaths, uninspected: [] })) },
+    };
+    const slots: PanelSlot[] = [];
+    const behaviors: Record<string, () => SlotHarnessOutput> = {};
+    for (const [name, channel] of Object.entries(channels)) {
+      for (const [offset, label] of [[1, "under"], [0, "exact"], [-1, "over"]] as const) {
+        const id = `${name}-${label}`;
+        behaviors[id] = channel.output;
+        slots.push(slot(id, 1, undefined, { budget: { timeoutMs: 60_000, maxOutputBytes: channel.bytes + offset } }));
+      }
+    }
+    const harness = new FakePanelHarness({ behaviors });
+    const panelPolicy = panel(slots, { maxConcurrentSlots: 8 });
+    const setup = coordinator(harness);
+    const result = await setup.coordinator.run(request(panelPolicy, { config: { ...config, retainTranscript: true } }));
+    expect(result.report.slotRuns.map(run => [run.slotId, run.terminal])).toEqual(slots.map(item => [item.id, item.id.endsWith("-over") ? "timed_out" : "completed"]));
+    for (const [index, item] of slots.entries()) expect(result.slots[index].reasons.length > 0).toBe(item.id.endsWith("-over"));
+    const exactEvents = await slotDocument(setup, result.report.slotRuns[1].outputArtifact);
+    expect((exactEvents.output as { events: unknown[] }).events).toHaveLength(events.length);
     await expectValid(result, setup, panelPolicy);
   });
 });
