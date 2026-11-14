@@ -192,9 +192,9 @@ describe("GitHubAdvisoryPublisher with panel reports", () => {
     const second = await publisher.publish({ report: panelReport(), rendered: "# ReviewFn panel report\n\nsecond", expectedHead: "b".repeat(40), profile: "panel" });
     expect(second).toEqual({ status: "updated", reference: first.reference });
     expect(comments).toHaveLength(1);
-    expect(comments[0].body).toBe("<!-- reviewfn:panel -->\n<!-- reviewfn-run:panel-run -->\n# ReviewFn panel report\n\nsecond");
+    expect(comments[0].body).toBe("<!-- reviewfn-panel -->\n<!-- reviewfn-run:panel-run -->\n# ReviewFn panel report\n\nsecond");
     expect(checks).toHaveLength(1);
-    expect(checks[0].body).toMatchObject({ name: "ReviewFn / panel", external_id: "panel:panel-run", status: "completed", conclusion: "neutral", output: { title: "ReviewFn: needs_verification", summary: "# ReviewFn panel report\n\nsecond" } });
+    expect(checks[0].body).toMatchObject({ name: "ReviewFn / panel", external_id: "panel-report:panel-run", status: "completed", conclusion: "neutral", output: { title: "ReviewFn: needs_verification", summary: "# ReviewFn panel report\n\nsecond" } });
     expect((await publisher.publish({ report: panelReport(), rendered: "# ReviewFn panel report\n\nsecond", expectedHead: "b".repeat(40), profile: "panel" })).status).toBe("unchanged");
     expect(comments).toHaveLength(1);
     expect(checks).toHaveLength(1);
@@ -207,11 +207,13 @@ describe("GitHubAdvisoryPublisher with panel reports", () => {
     expect(writes).toEqual([]);
   });
 
-  it("refuses a 0.1 report under the reserved panel profile before any comment or check write", async () => {
-    const { writes, publisher } = github();
-    const result = await publisher.publish({ report: report(), rendered: "0.1", expectedHead: "b".repeat(40), profile: "panel" });
-    expect(result).toEqual({ status: "failed", error: expect.stringMatching(/reserved for panel reports/) });
-    expect(writes).toEqual([]);
+  it("keeps the panel summary and check apart from a 0.1 report published under a profile named panel", async () => {
+    const { comments, checks, publisher } = github();
+    expect((await publisher.publish({ report: panelReport(), rendered: "panel", expectedHead: "b".repeat(40), profile: "panel" })).status).toBe("published");
+    expect((await publisher.publish({ report: report(), rendered: "0.1", expectedHead: "b".repeat(40), profile: "panel" })).status).toBe("published");
+    expect(comments.map(comment => comment.body.split("\n")[0])).toEqual(["<!-- reviewfn-panel -->", "<!-- reviewfn:panel -->"]);
+    expect(comments[0].body.endsWith("\npanel")).toBe(true);
+    expect(checks.map(check => check.external_id)).toEqual(["panel-report:panel-run", "panel:run1"]);
   });
 
   it("refuses a panel report under another profile before any comment or check write", async () => {

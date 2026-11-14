@@ -11,8 +11,8 @@ interface CheckRun { id: number; external_id?: string }
 interface CheckRunsResponse { check_runs: CheckRun[] }
 
 /**
- * A publication request for a 0.1 review report or a panel report. Both render into the same single summary comment
- * per profile (keyed by profile, so a later run replaces it) and one neutral check per profile and run ID.
+ * A publication request for a 0.1 review report or a panel report. Both render into one summary comment (per 0.1
+ * profile, or the panel's own, so a later run replaces it) and one neutral check per profile and run ID.
  */
 export interface GitHubPublishRequest extends Omit<PublishRequest, "report"> {
   report: PublishRequest["report"] | PanelReport;
@@ -56,12 +56,12 @@ export class GitHubAdvisoryPublisher implements ReportPublisher {
     if (isPanelReport(request.report)) {
       if (request.profile !== "panel") return { status: "failed", error: `A panel report publishes only under the panel profile, not ${JSON.stringify(request.profile)}.` };
       if (panelReportCanceled(request.report)) return { status: "failed", error: "The panel run was canceled; a canceled panel report is never published." };
-    } else if (request.profile === "panel") return { status: "failed", error: "The panel profile is reserved for panel reports." };
-    else if (request.report.execution !== "completed") return { status: "failed", error: "Only completed assessments may be published." };
+    } else if (request.report.execution !== "completed") return { status: "failed", error: "Only completed assessments may be published." };
     if (!/^[a-zA-Z0-9_-]{1,80}$/.test(request.profile)) throw new Error("Unsafe profile.");
     const current = await this.currentHead();
     if (current !== request.expectedHead) return { status: "stale", error: `PR head is ${current}, not reviewed head ${request.expectedHead}.` };
-    const marker = `<!-- reviewfn:${request.profile} -->`;
+    // A panel report keeps its own summary marker, so no 0.1 profile, even one named panel, can replace it.
+    const marker = isPanelReport(request.report) ? "<!-- reviewfn-panel -->" : `<!-- reviewfn:${request.profile} -->`;
     const runMarker = `<!-- reviewfn-run:${request.report.runId} -->`;
     const body = `${marker}\n${runMarker}\n${request.rendered}`;
     if (Buffer.byteLength(body) > 60_000) throw new Error("Report exceeds GitHub comment budget; retain the full local artifact and publish a bounded report.");
@@ -99,7 +99,7 @@ export class GitHubAdvisoryPublisher implements ReportPublisher {
 
   private async publishCheck(request: GitHubPublishRequest): Promise<void> {
     const conclusion = "neutral";
-    const externalId = `${request.profile}:${request.report.runId}`;
+    const externalId = isPanelReport(request.report) ? `panel-report:${request.report.runId}` : `${request.profile}:${request.report.runId}`;
     const runs: CheckRun[] = [];
     for (let page = 1; page <= 100; page++) {
       const existing = await this.options.api.request<CheckRunsResponse>("GET", this.options.api.endpoint(`/commits/${request.expectedHead}/check-runs?check_name=${encodeURIComponent(`ReviewFn / ${request.profile}`)}&per_page=100&page=${page}`));

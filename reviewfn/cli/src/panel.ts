@@ -417,7 +417,6 @@ export function publication(value: unknown, flags: Flags): { report: ReviewRepor
   }
   const report = value as ReviewReport;
   if (report.execution !== "completed" || report.configuration.profile !== required(flags, "profile")) throw new Error("Artifact does not match trusted publication identity or is not completed.");
-  if (report.configuration.profile === "panel") throw new Error("The panel profile is reserved for panel reports.");
   return { report, rendered: renderMarkdownReport(report), profile: report.configuration.profile };
 }
 
