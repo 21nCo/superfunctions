@@ -162,8 +162,11 @@ it("expires the keyed marker of a panel output directory that was deleted", asyn
   expect(await new FileArtifactStore(artifacts, path.join(root, "kept"), PANEL_REPORT_COPY_NAMES).deleteExpired()).toEqual({ deleted: [], errors: [] });
   expect(await markers()).toHaveLength(1);
   expect(await readFile(path.join(root, "kept", "panel-report.json"), "utf8")).toBe("kept-json");
+  // Another directory's unreadable marker is skipped, never failing cleanup.
+  for (const [entry, content] of [[".panel-report-copies-0000000000000000", "not json"], [".panel-report-copies-1111111111111111", "null"]]) await writeFile(path.join(artifacts, entry), content);
   expect((await new FileArtifactStore(artifacts, path.join(root, "kept"), PANEL_REPORT_COPY_NAMES).deleteExpired(new Date(Date.now() + 31 * 86_400_000))).errors).toEqual([]);
-  expect(await markers()).toEqual([]);
+  expect(await markers()).toHaveLength(2);
+  await expect(readFile(path.join(root, "kept", "panel-report.json"))).rejects.toThrow();
 });
 
 it.each([".json", ".md"])("replaces the panel copies as a pair, keeping the previous pair when writing the %s copy fails", async failing => {
@@ -190,7 +193,7 @@ it.each([".json", ".md"])("replaces the panel copies as a pair, keeping the prev
   expect((await fileSystem.readdir(artifacts)).filter(entry => entry.startsWith(".panel-report-copies-"))).toEqual([marker]);
 });
 
-it("restores the previous panel Markdown copy when moving the new JSON copy into place fails", async () => {
+it.each([false, true])("restores the previous panel Markdown copy when moving the new JSON copy into place fails (rollback fails: %s)", async rollbackFails => {
   const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-pair-rename-"));
   const store = new FileArtifactStore(path.join(root, "artifacts"), root, PANEL_REPORT_COPY_NAMES);
   await store.writeReportCopies("old-json", "old-md", 1);
@@ -199,12 +202,18 @@ it("restores the previous panel Markdown copy when moving the new JSON copy into
     if (String(to) === path.join(root, "panel-report.json")) throw new Error("simulated rename failure");
     return original(from, to);
   });
-  try { await expect(store.writeReportCopies("new-json", "new-md", 30)).rejects.toThrow(/simulated/); }
-  finally { spy.mockRestore(); }
+  const originalWrite = safeFiles.safeWrite;
+  const rollback = vi.spyOn(safeFiles, "safeWrite").mockImplementation(async (file, content) => {
+    if (rollbackFails && file === path.join(root, "panel-report.md")) throw new Error("simulated rollback failure");
+    return originalWrite(file, content);
+  });
+  try { await expect(store.writeReportCopies("new-json", "new-md", 30)).rejects.toThrow("simulated rename failure"); }
+  finally { spy.mockRestore(); rollback.mockRestore(); }
   expect(await readFile(path.join(root, "panel-report.json"), "utf8")).toBe("old-json");
-  expect(await readFile(path.join(root, "panel-report.md"), "utf8")).toBe("old-md");
+  expect(await readFile(path.join(root, "panel-report.md"), "utf8")).toBe(rollbackFails ? "new-md" : "old-md");
   expect((await fileSystem.readdir(root)).sort()).toEqual(["artifacts", "panel-report.json", "panel-report.md"]);
-  expect((await store.deleteExpired(new Date(Date.now() + 2 * 86_400_000))).errors).toEqual([]);
+  // A failed rollback keeps the new Markdown bytes covered, so both copies still expire.
+  expect((await store.deleteExpired(new Date(Date.now() + 31 * 86_400_000))).errors).toEqual([]);
   expect((await fileSystem.readdir(root)).sort()).toEqual(["artifacts"]);
 });
 

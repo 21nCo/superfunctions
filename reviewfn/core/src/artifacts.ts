@@ -151,24 +151,26 @@ export class FileArtifactStore implements ArtifactStore {
    * Stage both copies, then move the Markdown and finally the JSON into place. On any failure the staged files are
    * removed, a replaced Markdown copy is rewritten from `previousMarkdown` (or removed when there was none), and
    * `restoreMarker` drops this write's retention entries, so the directory keeps the previous pair (or none) and never
-   * a copy of this write.
+   * a copy of this write. If that Markdown rollback itself fails, the marker keeps covering the old and new bytes so
+   * both stay expirable; the original error is rethrown either way.
    */
   private async replaceCopyPair(json: string, markdown: string, previousMarkdown: Buffer | undefined, restoreMarker: () => Promise<void>): Promise<void> {
     const directory = this.reportCopiesDirectory!;
     const [jsonFile, markdownFile] = this.copyNames.map(name => path.join(directory, name));
     const stamp = randomUUID();
     const [stagedJson, stagedMarkdown] = ["json", "md"].map(suffix => path.join(directory, `.reviewfn-copy-${stamp}.${suffix}`));
+    let markdownLeftover = false;
     try {
       await this.writeCopyFile(stagedJson, json);
       await this.writeCopyFile(stagedMarkdown, markdown);
       await rename(stagedMarkdown, markdownFile);
       try { await rename(stagedJson, jsonFile); }
       catch (error) {
-        await (previousMarkdown === undefined ? rm(markdownFile, { force: true }) : safeWrite(markdownFile, previousMarkdown));
+        await (previousMarkdown === undefined ? rm(markdownFile, { force: true }) : safeWrite(markdownFile, previousMarkdown)).catch(() => { markdownLeftover = true; });
         throw error;
       }
     } catch (error) {
-      await restoreMarker();
+      if (!markdownLeftover) await restoreMarker().catch(() => undefined);
       throw error;
     } finally {
       await Promise.all([stagedJson, stagedMarkdown].map(file => rm(file, { force: true })));
@@ -258,7 +260,7 @@ export class FileArtifactStore implements ArtifactStore {
   private async deleteOrphanedMarkers(errors: string[]): Promise<void> {
     for (const entry of await readdir(this.root)) {
       if (!entry.startsWith(`${this.copiesStem}-`) || !/-[a-f0-9]{16}$/.test(entry)) continue;
-      const directory = await safeRead(path.join(this.root, entry)).then(raw => (JSON.parse(raw.toString("utf8")) as { directory?: unknown }).directory, () => undefined);
+      const directory = await safeRead(path.join(this.root, entry)).then(raw => (JSON.parse(raw.toString("utf8")) as { directory?: unknown } | null)?.directory).catch(() => undefined);
       if (typeof directory !== "string" || !path.isAbsolute(directory) || this.keyedMarker(directory) !== entry) continue;
       if (!await realpath(directory).then(() => false, (error: NodeJS.ErrnoException) => missing(error))) continue;
       await rm(path.join(this.root, entry)).catch((error: unknown) => { errors.push(`${entry}: ${error instanceof Error ? error.message : String(error)}`); });

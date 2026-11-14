@@ -70,11 +70,13 @@ const codex = (behaviors: Record<string, SlotBehavior> = {}) => new FakePanelHar
 const finding = (title: string) => ({ fingerprint: "", severity: "high" as const, category: "correctness" as const, title, trigger: `when ${title}`, impact: "wrong value", direction: "return the right value", evidenceIds: ["E1"], basis: "inferred" as const, requirementIds: [], lifecycle: "new" as const });
 const reporting = (title: string): SlotBehavior => () => slotOutput({ evidence: [{ id: "E1", kind: "code", description: "value", code: { commit: head, path: "src/value.ts", startLine: 1 } }], findings: [finding(title)] });
 
-/** The real panel store, except that writing the Markdown copy calls `onMarkdown` and then fails. */
-class FailingMarkdownStore extends FileArtifactStore {
-  public constructor(locations: PanelOutputLocations, private readonly onMarkdown: () => void = () => undefined) { super(locations.artifactsDirectory, locations.outputDirectory, PANEL_REPORT_COPY_NAMES); }
+/** The real panel store, calling a step's hook (which may abort or throw) at retention cleanup, the Markdown copy write or the import. */
+class ScriptedStore extends FileArtifactStore {
+  public constructor(locations: PanelOutputLocations, private readonly hooks: { cleanup?: () => void; markdown?: () => void; importing?: () => void }) { super(locations.artifactsDirectory, locations.outputDirectory, PANEL_REPORT_COPY_NAMES); }
+  public override async deleteExpired(now?: Date) { this.hooks.cleanup?.(); return super.deleteExpired(now); }
+  public override async importFrom(sourceRoot: string) { this.hooks.importing?.(); return super.importFrom(sourceRoot); }
   protected override async writeCopyFile(file: string, content: string): Promise<void> {
-    if (file.endsWith(".md")) { this.onMarkdown(); throw new Error("simulated Markdown write failure"); }
+    if (file.endsWith(".md")) this.hooks.markdown?.();
     await super.writeCopyFile(file, content);
   }
 }
@@ -303,19 +305,31 @@ describe("reviewfn panel exit codes", () => {
     const locations = { ownedArtifacts: empty, artifactsDirectory: path.join(root, ".reviewfn", "artifacts"), outputDirectory: path.join(root, "blocked"), reportDays: 30 };
     const canceledReport = { ...report, coverage: "incomplete" as const, coverageReasons: [PANEL_CANCELED_REASON] };
     expect(await savePanelRun(canceledReport, true, locations)).toMatchObject({ exitCode: PANEL_EXIT_CODES.canceled, error: expect.objectContaining({ code: "REVIEWFN_CANCELED" }) });
-    // Canceled while the copies were written: the JSON copy is staged, then the Markdown write aborts and fails.
-    const output = { ...locations, outputDirectory: path.join(root, "pair") };
-    const controller = new AbortController();
-    const aborted = await savePanelRun(report, true, output, controller.signal, new FailingMarkdownStore(output, () => controller.abort()));
-    expect(controller.signal.aborted).toBe(true);
-    expect(aborted).toMatchObject({ exitCode: PANEL_EXIT_CODES.canceled, error: expect.objectContaining({ code: "REVIEWFN_CANCELED" }) });
-    expect(aborted.reportPath).toBeUndefined();
-    // Neither copy of the completed, uncanceled report survives to be published.
-    expect(await readdir(output.outputDirectory)).toEqual([]);
-    expect((await readdir(locations.artifactsDirectory)).filter(entry => entry.startsWith(".panel-report-copies-"))).toHaveLength(1);
-    // The same failure without a cancellation is any other error, and also leaves no copy.
-    expect((await savePanelRun(report, true, output, undefined, new FailingMarkdownStore(output))).exitCode).toBe(PANEL_EXIT_CODES.error);
-    expect(await readdir(output.outputDirectory)).toEqual([]);
+  });
+
+  it("saves the whole run or nothing of it, wherever a real cancellation or a failure lands while saving", async () => {
+    await repository(panel([slot("one", 1)]));
+    expect((await invoke(["--base", base, "--head", head], codex())).code).toBe(PANEL_EXIT_CODES.complete);
+    const { report } = await stored();
+    const fail = () => { throw new Error("simulated save failure"); };
+    // [case, hooks given the controller, exit code, whether the run's copies and evidence are saved]
+    const cases: [string, (controller: AbortController) => ConstructorParameters<typeof ScriptedStore>[1], number, boolean][] = [
+      ["canceled during retention cleanup", controller => ({ cleanup: () => controller.abort() }), PANEL_EXIT_CODES.canceled, false],
+      ["canceled while the Markdown copy fails", controller => ({ markdown: () => { controller.abort(); fail(); } }), PANEL_EXIT_CODES.canceled, false],
+      ["the Markdown copy fails", () => ({ markdown: fail }), PANEL_EXIT_CODES.error, false],
+      ["canceled once the copies are being written", controller => ({ markdown: () => controller.abort() }), PANEL_EXIT_CODES.complete, true],
+      ["canceled while the saved run's import fails", controller => ({ importing: () => { controller.abort(); fail(); } }), PANEL_EXIT_CODES.error, true],
+    ];
+    for (const [name, hooks, exitCode, saved] of cases) {
+      const ownedArtifacts = await mkdtemp(path.join(tmpdir(), "reviewfn-cli-owned-")); owned.push(ownedArtifacts);
+      const { id } = await new FileArtifactStore(ownedArtifacts).put("panel-report", JSON.stringify({ ...report, runId: name }), 30);
+      const locations = { ownedArtifacts, artifactsDirectory: path.join(root, ".reviewfn", "artifacts"), outputDirectory: path.join(root, name.replaceAll(" ", "-")), reportDays: 30 };
+      const controller = new AbortController();
+      const result = await savePanelRun(report, true, locations, controller.signal, new ScriptedStore(locations, hooks(controller)));
+      expect([name, result.exitCode]).toEqual([name, exitCode]);
+      expect([name, (await readdir(locations.outputDirectory).catch(() => [])).sort()]).toEqual([name, saved ? ["panel-report.json", "panel-report.md"] : []]);
+      expect([name, (await readdir(locations.artifactsDirectory)).includes(`${id}.artifact`)]).toEqual([name, saved && exitCode !== PANEL_EXIT_CODES.error]);
+    }
   });
 
   it("exits 4 when canceled before the run starts", async () => {
