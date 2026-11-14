@@ -203,7 +203,14 @@ describe("GitHubAdvisoryPublisher with panel reports", () => {
   it("refuses a canceled panel run without writing", async () => {
     const { writes, publisher } = github();
     const result = await publisher.publish({ report: panelReport([PANEL_CANCELED_REASON]), rendered: "canceled", expectedHead: "b".repeat(40), profile: "panel" });
-    expect(result.status).toBe("failed");
+    expect(result).toEqual({ status: "failed", error: expect.stringMatching(/canceled/) });
+    expect(writes).toEqual([]);
+  });
+
+  it("refuses a panel report under another profile before any comment or check write", async () => {
+    const { writes, publisher } = github();
+    const result = await publisher.publish({ report: panelReport(), rendered: "panel", expectedHead: "b".repeat(40), profile: "requirements" });
+    expect(result).toEqual({ status: "failed", error: expect.stringMatching(/only under the panel profile/) });
     expect(writes).toEqual([]);
   });
 });

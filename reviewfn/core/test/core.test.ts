@@ -150,6 +150,64 @@ it("skips panel report-copy expiry for an output directory that does not exist",
   expect(await store.deleteExpired(new Date(Date.now() + 2 * 86_400_000))).toEqual({ deleted: [], errors: [] });
 });
 
+it("expires the keyed marker of a panel output directory that was deleted", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-orphan-"));
+  const artifacts = path.join(root, "artifacts");
+  await new FileArtifactStore(artifacts, path.join(root, "gone"), PANEL_REPORT_COPY_NAMES).writeReportCopies("gone-json", "gone-md", 30);
+  await new FileArtifactStore(artifacts, path.join(root, "kept"), PANEL_REPORT_COPY_NAMES).writeReportCopies("kept-json", "kept-md", 30);
+  const markers = async () => (await fileSystem.readdir(artifacts)).filter(entry => entry.startsWith(".panel-report-copies-"));
+  expect(await markers()).toHaveLength(2);
+  await fileSystem.rm(path.join(root, "gone"), { recursive: true });
+  // Cleanup through either output directory drops only the marker whose directory no longer exists.
+  expect(await new FileArtifactStore(artifacts, path.join(root, "kept"), PANEL_REPORT_COPY_NAMES).deleteExpired()).toEqual({ deleted: [], errors: [] });
+  expect(await markers()).toHaveLength(1);
+  expect(await readFile(path.join(root, "kept", "panel-report.json"), "utf8")).toBe("kept-json");
+  expect((await new FileArtifactStore(artifacts, path.join(root, "kept"), PANEL_REPORT_COPY_NAMES).deleteExpired(new Date(Date.now() + 31 * 86_400_000))).errors).toEqual([]);
+  expect(await markers()).toEqual([]);
+});
+
+it.each([".json", ".md"])("replaces the panel copies as a pair, keeping the previous pair when writing the %s copy fails", async failing => {
+  const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-pair-"));
+  class FailingStore extends FileArtifactStore {
+    protected override async writeCopyFile(file: string, content: string): Promise<void> {
+      if (file.endsWith(failing)) throw new Error("simulated copy write failure");
+      await super.writeCopyFile(file, content);
+    }
+  }
+  const artifacts = path.join(root, "artifacts");
+  await new FileArtifactStore(artifacts, root, PANEL_REPORT_COPY_NAMES).writeReportCopies("old-json", "old-md", 1);
+  const marker = (await fileSystem.readdir(artifacts)).find(entry => entry.startsWith(".panel-report-copies-"))!;
+  const before = await readFile(path.join(artifacts, marker), "utf8");
+  await expect(new FailingStore(artifacts, root, PANEL_REPORT_COPY_NAMES).writeReportCopies("new-json", "new-md", 30)).rejects.toThrow(/simulated/);
+  expect(await readFile(path.join(root, "panel-report.json"), "utf8")).toBe("old-json");
+  expect(await readFile(path.join(root, "panel-report.md"), "utf8")).toBe("old-md");
+  expect((await fileSystem.readdir(root)).sort()).toEqual(["artifacts", "panel-report.json", "panel-report.md"]);
+  expect(await readFile(path.join(artifacts, marker), "utf8")).toBe(before);
+  // A first write that fails leaves no copy and no marker.
+  const empty = path.join(root, "empty");
+  await expect(new FailingStore(artifacts, empty, PANEL_REPORT_COPY_NAMES).writeReportCopies("new-json", "new-md", 30)).rejects.toThrow(/simulated/);
+  expect(await fileSystem.readdir(empty)).toEqual([]);
+  expect((await fileSystem.readdir(artifacts)).filter(entry => entry.startsWith(".panel-report-copies-"))).toEqual([marker]);
+});
+
+it("restores the previous panel Markdown copy when moving the new JSON copy into place fails", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-pair-rename-"));
+  const store = new FileArtifactStore(path.join(root, "artifacts"), root, PANEL_REPORT_COPY_NAMES);
+  await store.writeReportCopies("old-json", "old-md", 1);
+  const original = fileSystem.rename;
+  const spy = vi.spyOn(fileSystem, "rename").mockImplementation(async (from, to) => {
+    if (String(to) === path.join(root, "panel-report.json")) throw new Error("simulated rename failure");
+    return original(from, to);
+  });
+  try { await expect(store.writeReportCopies("new-json", "new-md", 30)).rejects.toThrow(/simulated/); }
+  finally { spy.mockRestore(); }
+  expect(await readFile(path.join(root, "panel-report.json"), "utf8")).toBe("old-json");
+  expect(await readFile(path.join(root, "panel-report.md"), "utf8")).toBe("old-md");
+  expect((await fileSystem.readdir(root)).sort()).toEqual(["artifacts", "panel-report.json", "panel-report.md"]);
+  expect((await store.deleteExpired(new Date(Date.now() + 2 * 86_400_000))).errors).toEqual([]);
+  expect((await fileSystem.readdir(root)).sort()).toEqual(["artifacts"]);
+});
+
 it.each(["report.json", "report.md"])("keeps report copies expirable after failing to save %s", async failure => {
   const root = await mkdtemp(path.join(tmpdir(), "reviewfn-copy-failure-"));
   const store = new FileArtifactStore(path.join(root, "artifacts"), root);

@@ -8,7 +8,7 @@ import { DEFAULT_CONFIG, DEFAULT_POLICY, FileArtifactStore, PANEL_CANCELED_REASO
 import { FakeExecutionAdapter, FakePanelHarness, abortableDelay, slotOutput, type SlotBehavior } from "@superfunctions/reviewfn-testing";
 
 import { initializePanelPolicy, PANEL_POLICY_TEMPLATE } from "../src/config.js";
-import { PANEL_EXIT_CODES, PANEL_HARNESS_PACKAGES, parseArguments, publication, renderStoredReport, resolvePanelHarnesses, runPanelCommand, savePanelRun, type PanelCommandDependencies } from "../src/panel.js";
+import { createReviewSnapshot, PANEL_EXIT_CODES, PANEL_HARNESS_PACKAGES, parseArguments, publication, renderStoredReport, resolvePanelHarnesses, runPanelCommand, savePanelRun, type PanelCommandDependencies, type PanelOutputLocations } from "../src/panel.js";
 
 const environment = { PATH: process.env.PATH, HOME: process.env.HOME };
 const config = { ...DEFAULT_CONFIG, context: [{ adapter: "repository-markdown", paths: ["README.md"] }], harness: { adapter: "codex", version: "1" }, execution: { ...DEFAULT_CONFIG.execution, tests: [] } };
@@ -70,6 +70,15 @@ const codex = (behaviors: Record<string, SlotBehavior> = {}) => new FakePanelHar
 const finding = (title: string) => ({ fingerprint: "", severity: "high" as const, category: "correctness" as const, title, trigger: `when ${title}`, impact: "wrong value", direction: "return the right value", evidenceIds: ["E1"], basis: "inferred" as const, requirementIds: [], lifecycle: "new" as const });
 const reporting = (title: string): SlotBehavior => () => slotOutput({ evidence: [{ id: "E1", kind: "code", description: "value", code: { commit: head, path: "src/value.ts", startLine: 1 } }], findings: [finding(title)] });
 
+/** The real panel store, except that writing the Markdown copy calls `onMarkdown` and then fails. */
+class FailingMarkdownStore extends FileArtifactStore {
+  public constructor(locations: PanelOutputLocations, private readonly onMarkdown: () => void = () => undefined) { super(locations.artifactsDirectory, locations.outputDirectory, PANEL_REPORT_COPY_NAMES); }
+  protected override async writeCopyFile(file: string, content: string): Promise<void> {
+    if (file.endsWith(".md")) { this.onMarkdown(); throw new Error("simulated Markdown write failure"); }
+    await super.writeCopyFile(file, content);
+  }
+}
+
 async function stored(): Promise<{ report: PanelReport; markdown: string }> {
   const output = path.join(root, ".reviewfn", "output");
   return { report: JSON.parse(await readFile(path.join(output, "panel-report.json"), "utf8")), markdown: await readFile(path.join(output, "panel-report.md"), "utf8") };
@@ -127,7 +136,7 @@ describe("reviewfn panel exit codes", () => {
     const result = await invoke(["--base", base, "--head", head, "--json"], codex(), { removeSnapshot });
     expect(result.code).toBe(PANEL_EXIT_CODES.error);
     expect(result.stdout).toBe("");
-    expect(JSON.parse(result.stderr).message).toContain("private snapshot");
+    expect(JSON.parse(result.stderr)).toMatchObject({ error: "REVIEWFN_SNAPSHOT_CLEANUP_FAILED", details: { snapshot: removed[0] } });
     expect(removed).toHaveLength(1);
     // The report itself was saved; only the exit code and stdout reflect the cleanup failure.
     expect((await stored()).report.coverage).toBe("complete");
@@ -201,7 +210,46 @@ describe("reviewfn panel exit codes", () => {
     expect(report.coverageReasons).toContain(PANEL_CANCELED_REASON);
     expect(report.slotRuns.map(run => run.terminal)).toEqual(["canceled", "canceled"]);
     expect(JSON.parse(result.stdout).runId).toBe(report.runId);
-    expect(() => publication(report, parseArguments(["publish"]).flags)).toThrow(/not canceled/);
+    expect(() => publication(report, parseArguments(["publish"]).flags)).toThrow(/canceled panel report is never published/);
+  });
+
+  it("names the leftover snapshot on stderr, keeps exit 3 or 4 and prints no report when the snapshot cannot be removed", async () => {
+    await repository(panel([slot("one", 1)]));
+    const removeSnapshot = async (directory: string) => { await rm(directory, { recursive: true, force: true }); throw new Error("EBUSY: fixture"); };
+    const errors = (stderr: string) => stderr.trim().split("\n").map(line => JSON.parse(line) as { error: string; details?: { snapshot?: string } });
+    // After a preflight rejection by a component (the snapshot exists by then).
+    const rejected = await invoke(["--base", base, "--head", head], new FakePanelHarness({ id: "codex", version: "2" }), { removeSnapshot });
+    expect(rejected.code).toBe(PANEL_EXIT_CODES.preflight);
+    expect(errors(rejected.stderr).map(item => item.error)).toEqual(["REVIEWFN_PREFLIGHT_FAILED", "REVIEWFN_SNAPSHOT_CLEANUP_FAILED"]);
+    expect(errors(rejected.stderr)[1].details?.snapshot).toMatch(/reviewfn-panel-cli-/);
+    // After a saved canceled run.
+    await repository(panel([slot("one", 1), slot("two", 1)], { maxConcurrentSlots: 1 }));
+    const controller = new AbortController();
+    const harness = codex({ one: async input => { controller.abort(); await abortableDelay(60_000, input.signal); return slotOutput(); } });
+    const canceledRun = await invoke(["--base", base, "--head", head, "--json"], harness, { signal: controller.signal, removeSnapshot });
+    expect(canceledRun.code).toBe(PANEL_EXIT_CODES.canceled);
+    expect(canceledRun.stdout).toBe("");
+    expect(errors(canceledRun.stderr).map(item => item.error)).toEqual(["REVIEWFN_CANCELED", "REVIEWFN_SNAPSHOT_CLEANUP_FAILED"]);
+    expect((await stored()).report.coverageReasons).toContain(PANEL_CANCELED_REASON);
+  });
+
+  it("exits 1, or 4 when canceled, when the private snapshot or the run's artifact store cannot be created", async () => {
+    await repository(panel([slot("one", 1)]));
+    const harness = codex();
+    const cloneFails: typeof createReviewSnapshot = async () => { throw Object.assign(new Error("EIO: clone failed"), { code: "EIO" }); };
+    // A file where the run's artifact store belongs makes its mkdir fail.
+    const mkdirFails: typeof createReviewSnapshot = async (...args) => { const snapshot = await createReviewSnapshot(...args); await writeFile(path.join(args[1], "artifacts"), ""); return snapshot; };
+    for (const createSnapshot of [cloneFails, mkdirFails]) {
+      const result = await invoke(["--base", base, "--head", head], harness, { createSnapshot });
+      expect(result.code).toBe(PANEL_EXIT_CODES.error);
+      expect(JSON.parse(result.stderr).error).toBe("REVIEWFN_UNEXPECTED");
+    }
+    const controller = new AbortController();
+    const abortedClone: typeof createReviewSnapshot = async () => { controller.abort(); throw new Error("clone was killed"); };
+    const canceledSetup = await invoke(["--base", base, "--head", head], harness, { createSnapshot: abortedClone, signal: controller.signal });
+    expect(canceledSetup.code).toBe(PANEL_EXIT_CODES.canceled);
+    expect(harness.calls).toHaveLength(0);
+    await expect(readFile(path.join(root, ".reviewfn", "output", "panel-report.json"))).rejects.toThrow();
   });
 
   it("exits 4, not 3, when the run is canceled while a harness preflight is running", async () => {
@@ -218,18 +266,21 @@ describe("reviewfn panel exit codes", () => {
     await expect(readFile(path.join(root, ".reviewfn", "output", "panel-report.json"))).rejects.toThrow();
   });
 
-  it("writes no report and exits 4 when canceled after the run returned but before its report was saved", async () => {
+  it("saves and imports nothing and exits 4 when canceled after the run returned but before its report was saved", async () => {
     await repository(panel([slot("one", 1)]));
     expect((await invoke(["--base", base, "--head", head], codex())).code).toBe(PANEL_EXIT_CODES.complete);
     const { report } = await stored();
-    const empty = await mkdtemp(path.join(tmpdir(), "reviewfn-cli-owned-")); owned.push(empty);
-    const locations = { ownedArtifacts: empty, artifactsDirectory: path.join(root, ".reviewfn", "artifacts"), outputDirectory: path.join(root, "late"), reportDays: 30 };
+    const ownedArtifacts = await mkdtemp(path.join(tmpdir(), "reviewfn-cli-owned-")); owned.push(ownedArtifacts);
+    // The run's private store holds its completed report artifact, as after coordinator.run returns.
+    const { id } = await new FileArtifactStore(ownedArtifacts).put("panel-report", JSON.stringify({ ...report, runId: "late-run" }), 30);
+    const locations = { ownedArtifacts, artifactsDirectory: path.join(root, ".reviewfn", "artifacts"), outputDirectory: path.join(root, "late"), reportDays: 30 };
     const controller = new AbortController();
     controller.abort();
     const late = await savePanelRun(report, true, locations, controller.signal);
     expect(late).toMatchObject({ exitCode: PANEL_EXIT_CODES.canceled, error: expect.objectContaining({ code: "REVIEWFN_CANCELED" }) });
     expect(late.reportPath).toBeUndefined();
     expect(await readdir(locations.outputDirectory).catch(() => [])).toEqual([]);
+    expect(await readdir(locations.artifactsDirectory)).not.toContain(`${id}.artifact`);
     // A report that records the cancellation is saved (it cannot be published) and still exits 4.
     const canceledReport = { ...report, coverage: "incomplete" as const, coverageReasons: [PANEL_CANCELED_REASON] };
     const recorded = await savePanelRun(canceledReport, true, locations, controller.signal);
@@ -252,12 +303,19 @@ describe("reviewfn panel exit codes", () => {
     const locations = { ownedArtifacts: empty, artifactsDirectory: path.join(root, ".reviewfn", "artifacts"), outputDirectory: path.join(root, "blocked"), reportDays: 30 };
     const canceledReport = { ...report, coverage: "incomplete" as const, coverageReasons: [PANEL_CANCELED_REASON] };
     expect(await savePanelRun(canceledReport, true, locations)).toMatchObject({ exitCode: PANEL_EXIT_CODES.canceled, error: expect.objectContaining({ code: "REVIEWFN_CANCELED" }) });
-    // Canceled after the commit point, while the copies were being written.
-    let reads = 0;
-    const abortedDuringWrite = { get aborted() { return reads++ > 0; } } as AbortSignal;
-    expect(await savePanelRun(report, true, locations, abortedDuringWrite)).toMatchObject({ exitCode: PANEL_EXIT_CODES.canceled, error: expect.objectContaining({ code: "REVIEWFN_CANCELED" }) });
-    // The same failure without a cancellation is any other error.
-    expect((await savePanelRun(report, true, locations)).exitCode).toBe(PANEL_EXIT_CODES.error);
+    // Canceled while the copies were written: the JSON copy is staged, then the Markdown write aborts and fails.
+    const output = { ...locations, outputDirectory: path.join(root, "pair") };
+    const controller = new AbortController();
+    const aborted = await savePanelRun(report, true, output, controller.signal, new FailingMarkdownStore(output, () => controller.abort()));
+    expect(controller.signal.aborted).toBe(true);
+    expect(aborted).toMatchObject({ exitCode: PANEL_EXIT_CODES.canceled, error: expect.objectContaining({ code: "REVIEWFN_CANCELED" }) });
+    expect(aborted.reportPath).toBeUndefined();
+    // Neither copy of the completed, uncanceled report survives to be published.
+    expect(await readdir(output.outputDirectory)).toEqual([]);
+    expect((await readdir(locations.artifactsDirectory)).filter(entry => entry.startsWith(".panel-report-copies-"))).toHaveLength(1);
+    // The same failure without a cancellation is any other error, and also leaves no copy.
+    expect((await savePanelRun(report, true, output, undefined, new FailingMarkdownStore(output))).exitCode).toBe(PANEL_EXIT_CODES.error);
+    expect(await readdir(output.outputDirectory)).toEqual([]);
   });
 
   it("exits 4 when canceled before the run starts", async () => {
@@ -277,11 +335,16 @@ describe("reviewfn panel exit codes", () => {
     expect(invalid.code).toBe(PANEL_EXIT_CODES.error);
     expect(JSON.parse(invalid.stderr).message).toMatch(/pull-request/);
     for (const name of ["base", "head", "since", "issue", "pull-request", "panel", "output", "root", "config", "policy", "target-branch"]) {
-      // A bare value flag, last on the command line, is rejected rather than ignored or replaced by its default.
-      const bare = await invoke(["--base", base, "--head", head, `--${name}`], codex());
-      expect(bare.code).toBe(PANEL_EXIT_CODES.error);
-      expect(JSON.parse(bare.stderr).message).toBe(`--${name} requires a value.`);
+      // A bare value flag, last on the command line, or an empty inline value is rejected rather than ignored or
+      // replaced by its default (`--output=` would otherwise write into the repository root).
+      for (const flag of [`--${name}`, `--${name}=`]) {
+        const bare = await invoke(["--base", base, "--head", head, flag], codex());
+        expect(bare.code).toBe(PANEL_EXIT_CODES.error);
+        expect(JSON.parse(bare.stderr).message).toBe(`--${name} requires a value.`);
+      }
     }
+    expect((await readdir(root)).sort()).toEqual([".git", ".gitignore", ".reviewfn", "README.md", "src"]);
+    expect((await readdir(path.join(root, ".reviewfn"))).sort()).toEqual(["config.json", "panel.json", "policy.json"]);
     await writeFile(path.join(root, "not-a-directory"), "");
     const unwritable = await invoke(["--base", base, "--head", head, "--output", "not-a-directory"], codex());
     expect(unwritable.code).toBe(PANEL_EXIT_CODES.error);
@@ -361,7 +424,8 @@ describe("reviewfn init --panel and report --panel", () => {
     await mkdir(path.join(root, ".reviewfn", "output"), { recursive: true });
     await writeFile(path.join(root, ".reviewfn", "output", "report.json"), "{}");
     await writeFile(path.join(root, "other.json"), "{}");
-    for (const argv of [["report", "--input"], ["report", "--panel", "--input"]]) await expect(renderStoredReport(parseArguments(argv).flags, root)).rejects.toThrow("--input requires a value.");
+    for (const argv of [["report", "--input"], ["report", "--panel", "--input"], ["report", "--input="], ["report", "--panel", "--input="]]) await expect(renderStoredReport(parseArguments(argv).flags, root)).rejects.toThrow("--input requires a value.");
+    await expect(renderStoredReport(parseArguments(["report", "--root="]).flags, root)).rejects.toThrow("--root requires a value.");
     await expect(renderStoredReport(parseArguments(["report", "--panel", "other.json"]).flags, root)).rejects.toThrow("--panel takes no value; use --input other.json to choose the report.");
   });
 });

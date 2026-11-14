@@ -1,6 +1,7 @@
 import { hostname } from "node:os";
 import { constants } from "node:fs";
-import { lstat, open, readdir, realpath, rm } from "node:fs/promises";
+import { lstat, open, readdir, realpath, rename, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 
 import { safeDirectory, safeRead, safeWrite } from "./safe-files.js";
@@ -26,6 +27,8 @@ export class FileArtifactStore implements ArtifactStore {
   private readonly copyNames: readonly [string, string];
   private readonly copiesStem: string;
   private readonly copiesMarkerKeyed: boolean;
+  /** Panel copies are replaced as a pair (both or neither); the 0.1 copies keep their copy-by-copy writes. */
+  private readonly copiesPaired: boolean;
 
   /**
    * `reportCopiesDirectory` holds the report copies this store writes and expires; `copyNames` selects which set
@@ -42,18 +45,25 @@ export class FileArtifactStore implements ArtifactStore {
     this.copiesStem = `.${copyNames.json.slice(0, -".json".length)}-copies`;
     const review = copyNames.json === REVIEW_REPORT_COPY_NAMES.json && copyNames.markdown === REVIEW_REPORT_COPY_NAMES.markdown;
     this.copiesMarkerKeyed = !review && Boolean(reportCopiesDirectory);
+    this.copiesPaired = !review;
   }
 
   /**
    * The retention metadata name of this store's report copies, or undefined when the copies directory does not exist
    * (cleanup then has no copies to expire). A keyed name hashes the directory's realpath, after `safeDirectory` has
    * refused symlinked components other than the root-owned macOS aliases, so every spelling of one directory agrees.
+   * A keyed marker also records that realpath, so cleanup can drop the marker of a directory that no longer exists.
    */
-  private async copiesMarker(): Promise<string | undefined> {
-    if (!this.copiesMarkerKeyed) return this.copiesStem;
-    const physical = await realpath(this.reportCopiesDirectory!).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? undefined : Promise.reject(error));
-    return physical === undefined ? undefined : `${this.copiesStem}-${sha256(physical).slice(0, 16)}`;
+  private async copiesMarker(): Promise<{ name: string; directory?: string } | undefined> {
+    if (!this.copiesMarkerKeyed) return { name: this.copiesStem };
+    const physical = await realpath(this.reportCopiesDirectory!).catch((error: NodeJS.ErrnoException) => missing(error) ? undefined : Promise.reject(error));
+    return physical === undefined ? undefined : { name: this.keyedMarker(physical), directory: physical };
   }
+
+  private keyedMarker(physical: string): string { return `${this.copiesStem}-${sha256(physical).slice(0, 16)}`; }
+
+  /** Report-copy writes; tests override this to inject a failure between the two copies. */
+  protected async writeCopyFile(file: string, content: string): Promise<void> { await safeWrite(file, content); }
 
   public put(kind: string, content: string | Uint8Array, retentionDays: number) { return this.withLease(() => this.putUnlocked(kind, content, retentionDays)); }
   public importFrom(sourceRoot: string) { return this.withLease(() => this.importUnlocked(sourceRoot)); }
@@ -112,13 +122,15 @@ export class FileArtifactStore implements ArtifactStore {
     await safeDirectory(this.reportCopiesDirectory);
     const markerName = await this.copiesMarker();
     if (!markerName) throw new Error("Report-copy directory disappeared before the copies were written.");
-    const marker = path.join(this.root, markerName);
+    const marker = path.join(this.root, markerName.name);
     const previousRaw = await safeRead(marker).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? undefined : Promise.reject(error));
     const previous = previousRaw ? parseReportCopies(previousRaw, this.copyNames) : {};
     const metadata: ReportCopies = {};
     const [jsonName, markdownName] = this.copyNames;
+    const currentCopies = new Map<string, Buffer | undefined>();
     for (const [name, content] of [[jsonName, json], [markdownName, markdown]]) {
       const current = await safeRead(path.join(this.reportCopiesDirectory, name)).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? undefined : Promise.reject(error));
+      currentCopies.set(name, current);
       const prior = (previous[name] ?? []).filter(reference => current && reference.digest === sha256(current));
       const next = { digest: sha256(content), expiresAt: new Date(Date.now() + retentionDays * 86_400_000).toISOString() };
       // Keep the current and proposed bytes covered before either copy changes.
@@ -126,9 +138,41 @@ export class FileArtifactStore implements ArtifactStore {
       if (!references.has(next.digest) || Date.parse(references.get(next.digest)!.expiresAt) < Date.parse(next.expiresAt)) references.set(next.digest, next);
       metadata[name] = [...references.values()];
     }
-    await safeWrite(marker, JSON.stringify(metadata));
-    await safeWrite(path.join(this.reportCopiesDirectory, jsonName), json);
-    await safeWrite(path.join(this.reportCopiesDirectory, markdownName), markdown);
+    await safeWrite(marker, JSON.stringify(markerName.directory === undefined ? metadata : { ...metadata, directory: markerName.directory }));
+    if (!this.copiesPaired) {
+      await safeWrite(path.join(this.reportCopiesDirectory, jsonName), json);
+      await safeWrite(path.join(this.reportCopiesDirectory, markdownName), markdown);
+      return;
+    }
+    await this.replaceCopyPair(json, markdown, currentCopies.get(markdownName), async () => { if (previousRaw) await safeWrite(marker, previousRaw); else await rm(marker, { force: true }); });
+  }
+
+  /**
+   * Stage both copies, then move the Markdown and finally the JSON into place. On any failure the staged files are
+   * removed, a replaced Markdown copy is rewritten from `previousMarkdown` (or removed when there was none), and
+   * `restoreMarker` drops this write's retention entries, so the directory keeps the previous pair (or none) and never
+   * a copy of this write.
+   */
+  private async replaceCopyPair(json: string, markdown: string, previousMarkdown: Buffer | undefined, restoreMarker: () => Promise<void>): Promise<void> {
+    const directory = this.reportCopiesDirectory!;
+    const [jsonFile, markdownFile] = this.copyNames.map(name => path.join(directory, name));
+    const stamp = randomUUID();
+    const [stagedJson, stagedMarkdown] = ["json", "md"].map(suffix => path.join(directory, `.reviewfn-copy-${stamp}.${suffix}`));
+    try {
+      await this.writeCopyFile(stagedJson, json);
+      await this.writeCopyFile(stagedMarkdown, markdown);
+      await rename(stagedMarkdown, markdownFile);
+      try { await rename(stagedJson, jsonFile); }
+      catch (error) {
+        await (previousMarkdown === undefined ? rm(markdownFile, { force: true }) : safeWrite(markdownFile, previousMarkdown));
+        throw error;
+      }
+    } catch (error) {
+      await restoreMarker();
+      throw error;
+    } finally {
+      await Promise.all([stagedJson, stagedMarkdown].map(file => rm(file, { force: true })));
+    }
   }
 
   private async mergeMetadata(file: string, metadata: ArtifactMetadata): Promise<void> {
@@ -181,7 +225,7 @@ export class FileArtifactStore implements ArtifactStore {
     }
     if (this.reportCopiesDirectory) {
       try {
-        const markerName = await this.copiesMarker();
+        const markerName = (await this.copiesMarker())?.name;
         const raw = markerName === undefined ? undefined : await safeRead(path.join(this.root, markerName)).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? undefined : Promise.reject(error));
         if (raw) {
           const metadata = parseReportCopies(raw, this.copyNames);
@@ -202,7 +246,23 @@ export class FileArtifactStore implements ArtifactStore {
         }
       } catch (error) { errors.push(`Report copies: ${error instanceof Error ? error.message : String(error)}`); }
     }
+    if (this.copiesMarkerKeyed) await this.deleteOrphanedMarkers(errors);
     return { deleted, errors };
+  }
+
+  /**
+   * Drop the keyed markers whose recorded output directory no longer exists: no copies are left to expire there. Only
+   * the marker inside the store is removed, and only when its name matches the digest of the directory it records. A
+   * marker that cannot be read, or whose directory cannot be checked, is left for that directory's own cleanup.
+   */
+  private async deleteOrphanedMarkers(errors: string[]): Promise<void> {
+    for (const entry of await readdir(this.root)) {
+      if (!entry.startsWith(`${this.copiesStem}-`) || !/-[a-f0-9]{16}$/.test(entry)) continue;
+      const directory = await safeRead(path.join(this.root, entry)).then(raw => (JSON.parse(raw.toString("utf8")) as { directory?: unknown }).directory, () => undefined);
+      if (typeof directory !== "string" || !path.isAbsolute(directory) || this.keyedMarker(directory) !== entry) continue;
+      if (!await realpath(directory).then(() => false, (error: NodeJS.ErrnoException) => missing(error))) continue;
+      await rm(path.join(this.root, entry)).catch((error: unknown) => { errors.push(`${entry}: ${error instanceof Error ? error.message : String(error)}`); });
+    }
   }
 
   private async ensureSafeRoot(): Promise<void> {
@@ -226,6 +286,8 @@ async function writeExclusiveOrVerify(file: string, bytes: Uint8Array, digest: s
 function validateMetadata(metadata: ArtifactMetadata, entry: string): void {
   if (!/^[a-z][a-z0-9-]{0,63}-[a-f0-9]{64}$/.test(metadata.id) || entry !== `${metadata.id}.json` || metadata.id !== `${metadata.kind}-${metadata.digest}` || !Number.isFinite(Date.parse(metadata.expiresAt))) throw new Error("Invalid artifact metadata identity or expiry.");
 }
+
+function missing(error: NodeJS.ErrnoException): boolean { return error.code === "ENOENT" || error.code === "ENOTDIR"; }
 
 type ReportCopies = Record<string, { digest: string; expiresAt: string }[]>;
 function parseReportCopies(raw: Buffer, names: readonly string[]): ReportCopies {

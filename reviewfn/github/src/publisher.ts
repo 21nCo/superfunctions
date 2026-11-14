@@ -51,8 +51,12 @@ export class GitHubAdvisoryPublisher implements ReportPublisher {
   }
 
   private async publishSerialized(request: GitHubPublishRequest): Promise<PublishResult> {
-    // A panel report has no execution state: a canceled run records the cancellation as a coverage reason.
-    if (isPanelReport(request.report) ? panelReportCanceled(request.report) : request.report.execution !== "completed") return { status: "failed", error: "Only completed assessments may be published." };
+    // A panel report has no execution state: a canceled run records the cancellation as a coverage reason. It owns only
+    // the panel profile's summary and check, so it can never replace another profile's.
+    if (isPanelReport(request.report)) {
+      if (request.profile !== "panel") return { status: "failed", error: `A panel report publishes only under the panel profile, not ${JSON.stringify(request.profile)}.` };
+      if (panelReportCanceled(request.report)) return { status: "failed", error: "The panel run was canceled; a canceled panel report is never published." };
+    } else if (request.report.execution !== "completed") return { status: "failed", error: "Only completed assessments may be published." };
     if (!/^[a-zA-Z0-9_-]{1,80}$/.test(request.profile)) throw new Error("Unsafe profile.");
     const current = await this.currentHead();
     if (current !== request.expectedHead) return { status: "stale", error: `PR head is ${current}, not reviewed head ${request.expectedHead}.` };
