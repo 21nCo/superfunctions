@@ -1,0 +1,27 @@
+reviewfn/docs/content/docs/reference/panel.md
+  s_48632f4c066263::t_b2988856468776 20,37
+reviewfn/docs/panel.md
+  s_48632f4c066263::t_cb1701ba93621d 17,34
+reviewfn/docs/static/llms-full.txt
+  s_48632f4c066263::t_45e8d267a1e383 332,349
+reviewfn/github/src/publisher.ts
+  s_48632f4c066263::t_067415360adda0 14-15,59,63-64,102
+reviewfn/github/test/github.test.ts
+  s_48632f4c066263::t_fa029b5f9c662c 195,197,210-216
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "80135dbe48ce86bb68366e973419627ed9bd9d5d",
+  "prompts": {},
+  "sessions": {
+    "s_48632f4c066263": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_48632f4c066263",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
