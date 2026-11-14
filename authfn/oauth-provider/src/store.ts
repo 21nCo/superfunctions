@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import {
   AUTHFN_LEGACY_USER_REFERENCE_MAX_LENGTH,
   type AuthFnRuntimeConfig,
@@ -112,16 +112,26 @@ export function createOAuthProviderSchema(): AuthFnSchemaDefinition['schemas'] {
         clientId: ref('client_id'),
         resource: text('resource'),
         scopes,
-        // The number of disconnects of the triple when the user approved.
-        generation: { type: 'number', required: true, fieldName: 'generation' },
+        // The triple's disconnect generation when the user approved.
+        generation: { type: 'string', required: true, fieldName: 'generation', maxLength: 64 },
         createdAt: date('created_at')
       },
       indexes: [{ name: 'idx_authfn_oauth_provider_consents_triple', fields: ['userId', 'clientId', 'resource'] }]
     },
     {
       modelName: MODELS.disconnects,
-      fields: { id, userId, clientId: ref('client_id'), resource: text('resource'), createdAt: date('created_at') },
-      indexes: [{ name: 'idx_authfn_oauth_provider_disconnects_triple', fields: ['userId', 'clientId', 'resource'] }]
+      // One row per triple, keyed by `disconnectRowId`; each disconnect
+      // writes a fresh `generation`.
+      fields: {
+        id,
+        userId,
+        clientId: ref('client_id'),
+        resource: text('resource'),
+        generation: { type: 'string', required: true, fieldName: 'generation', maxLength: 64 },
+        createdAt: date('created_at'),
+        updatedAt: date('updated_at')
+      },
+      indexes: [{ name: 'idx_authfn_oauth_provider_disconnects_user_id', fields: ['userId'] }]
     }
   ];
 }
@@ -435,11 +445,11 @@ function whereTriple({ userId, clientId, resource }: OAuthTriple) {
  * every code, access token and refresh token issued under them. Returns the
  * number of grants revoked.
  *
- * The disconnect first appends a marker for the triple. An authorization in
- * progress reads the markers before it reads or records consent and again
- * after it creates its grant; seeing a new marker, it revokes its grant and
- * removes the consent it recorded. A grant created before the lookup below is
- * revoked here; one created after it sees the marker.
+ * The disconnect first writes a new generation for the triple. An
+ * authorization in progress reads the generation before it reads or records
+ * consent and again after it creates its grant; seeing it change, it revokes
+ * its grant and removes the consent it recorded. A grant created before the
+ * lookup below is revoked here; one created after it sees the change.
  */
 export async function disconnectOAuthClient(
   store: OAuthStore,
@@ -448,7 +458,7 @@ export async function disconnectOAuthClient(
   const { userId, clientId, resource } = input;
   const triple = { userId, clientId, resource };
   const now = input.now?.() ?? new Date();
-  await insert(store, MODELS.disconnects, { ...triple, id: createIdentifier('odc'), createdAt: now });
+  await writeNewGeneration(store, triple, now);
   // Consent goes before the grants: if revoking a grant then fails, a retry
   // still finds the grant, while consent left behind would silently re-authorize.
   await store.database.deleteMany({ model: MODELS.consents, where: whereTriple(triple), namespace: namespace(store) });
@@ -486,12 +496,43 @@ export async function revokeOAuthGrant(
   return (await disconnectOAuthClient(store, { userId, clientId, resource, now: options?.now })) > 0;
 }
 
-/** How many times the triple was disconnected; markers are never removed. */
-export function countDisconnects(store: OAuthStore, triple: OAuthTriple): Promise<number> {
-  return store.database.count({ model: MODELS.disconnects, where: whereTriple(triple), namespace: namespace(store) });
+/** The generation before the triple's first disconnect. */
+const INITIAL_GENERATION = 'initial';
+
+function disconnectRowId({ userId, clientId, resource }: OAuthTriple): string {
+  return `odc_${createHash('sha256').update(JSON.stringify([userId, clientId, resource])).digest('hex')}`;
 }
 
-function findConsents(store: OAuthStore, triple: OAuthTriple, generation: number): Promise<OAuthConsentRecord[]> {
+/**
+ * The triple's disconnect generation: one row read by its ID, whatever the
+ * disconnect history. Every disconnect stores a value never used before, so
+ * a generation read before a disconnect never matches one read after it.
+ */
+export async function readGeneration(store: OAuthStore, triple: OAuthTriple): Promise<string> {
+  const row = await findBy<{ generation: string }>(store, MODELS.disconnects, 'id', disconnectRowId(triple));
+  return row?.generation ?? INITIAL_GENERATION;
+}
+
+async function writeNewGeneration(store: OAuthStore, triple: OAuthTriple, now: Date): Promise<void> {
+  const id = disconnectRowId(triple);
+  if (!(await findBy(store, MODELS.disconnects, 'id', id))) {
+    // A concurrent first disconnect may create the row first; then this
+    // insert fails, and the update below still writes a new generation.
+    await insert(store, MODELS.disconnects, { ...triple, id, generation: createIdentifier('ogn'), createdAt: now, updatedAt: now })
+      .catch(() => undefined);
+  }
+  await store.database.updateMany({
+    model: MODELS.disconnects,
+    where: whereId(id),
+    data: { generation: createIdentifier('ogn'), updatedAt: now },
+    namespace: namespace(store)
+  });
+  if (!(await findBy(store, MODELS.disconnects, 'id', id))) {
+    throw new Error('The OAuth disconnect generation was not stored');
+  }
+}
+
+function findConsents(store: OAuthStore, triple: OAuthTriple, generation: string): Promise<OAuthConsentRecord[]> {
   return store.database.findMany<OAuthConsentRecord>({
     model: MODELS.consents,
     where: [...whereTriple(triple), { field: 'generation', operator: 'eq', value: generation }],
@@ -505,11 +546,11 @@ function unionScopes(records: OAuthConsentRecord[], scopes: string[] = []): stri
 
 /**
  * The scopes the user has approved for the triple since its latest disconnect
- * (`generation`, from `countDisconnects`): the union of those approvals, or
+ * (`generation`, from `readGeneration`): the union of those approvals, or
  * null when there is none. An approval made before a disconnect never counts
  * after it, even if it was written late.
  */
-export async function findConsentScopes(store: OAuthStore, triple: OAuthTriple, generation: number): Promise<string[] | null> {
+export async function findConsentScopes(store: OAuthStore, triple: OAuthTriple, generation: string): Promise<string[] | null> {
   const records = await findConsents(store, triple, generation);
   return records.length === 0 ? null : unionScopes(records);
 }
@@ -523,7 +564,7 @@ export async function findConsentScopes(store: OAuthStore, triple: OAuthTriple, 
  */
 export async function recordConsent(
   store: OAuthStore,
-  input: OAuthTriple & { scopes: string[]; generation: number; now: Date }
+  input: OAuthTriple & { scopes: string[]; generation: string; now: Date }
 ): Promise<string> {
   const { now, scopes, ...consent } = input;
   const earlier = await findConsents(store, consent, consent.generation);

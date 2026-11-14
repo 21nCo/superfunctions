@@ -450,15 +450,26 @@ describe('concurrent approvals', () => {
     expect((await consentRows()).map((row) => [...row.scopes].sort())).toEqual([['memotron:read', 'memotron:write']]);
   });
 
-  it('keeps one consent row per user, client and resource across repeated approvals, without listing disconnects', async () => {
-    const provider = await setupProvider();
-    for (const scope of ['memotron:read', 'memotron:write', 'memotron:read', 'memotron:read memotron:write']) {
-      expect((await provider.authorize({ scope })).searchParams.get('code')).toEqual(expect.any(String));
+  it.each([['memory', false], ['SQL', true]])(
+    'keeps one consent row and one disconnect row per user, client and resource (%s)',
+    async (_, sql) => {
+      const provider = await setupProvider({ sql });
+      const triple = { userId: provider.user.id, clientId: RFC6749_CLIENT.clientId, resource: MEMOTRON };
+      for (const scope of ['memotron:read', 'memotron:write', 'memotron:read', 'memotron:read memotron:write']) {
+        expect((await provider.authorize({ scope })).searchParams.get('code')).toEqual(expect.any(String));
+        await disconnectOAuthClient({ database: provider.database }, triple);
+        await disconnectOAuthClient({ database: provider.database }, triple);
+      }
+      for (const scope of ['memotron:read', 'memotron:write']) {
+        expect((await provider.authorize({ scope })).searchParams.get('code')).toEqual(expect.any(String));
+      }
+      const rows = (model: string) => provider.database.findMany<{ scopes?: string[] }>({ model, namespace: 'authfn' });
+      expect((await rows('oauth_provider_consents')).map((row) => [...row.scopes!].sort())).toEqual([['memotron:read', 'memotron:write']]);
+      // The generation is one row read by its ID, whatever the history.
+      expect(await rows('oauth_provider_disconnects')).toHaveLength(1);
+      expect(provider.control.findManyModels).not.toContain('oauth_provider_disconnects');
     }
-    const rows = await provider.database.findMany<{ scopes: string[] }>({ model: 'oauth_provider_consents', namespace: 'authfn' });
-    expect(rows.map((row) => [...row.scopes].sort())).toEqual([['memotron:read', 'memotron:write']]);
-    expect(provider.control.findManyModels).not.toContain('oauth_provider_disconnects');
-  });
+  );
 });
 
 describe('token lifetimes', () => {

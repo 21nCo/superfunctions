@@ -123,7 +123,7 @@ describe('authorization endpoint', () => {
     const tenant = {
       clientId: 'tenant-app',
       name: 'Tenant App',
-      redirectUris: [registered, 'https://tenant.example.com/open?', 'https://tenant.example.com/plain']
+      redirectUris: [registered, 'https://tenant.example.com/open?', 'https://tenant.example.com/plain', 'https://tenant.example.com/next?to=?']
     };
     const provider = await setupProvider({ clients: [tenant] });
     const query = (redirectUri: string, overrides: Record<string, string> = {}) =>
@@ -151,6 +151,17 @@ describe('authorization endpoint', () => {
     expect(open.headers.get('location')!.startsWith('https://tenant.example.com/open?error=invalid_scope&')).toBe(true);
     const plain = await provider.getAuthorize(query('https://tenant.example.com/plain', { scope: 'memotron:admin' }));
     expect(plain.headers.get('location')!.startsWith('https://tenant.example.com/plain?error=invalid_scope&')).toBe(true);
+    // A query value ending in '?' is not an empty query.
+    const next = await provider.getAuthorize(query('https://tenant.example.com/next?to=?', { scope: 'memotron:admin' }));
+    const nextLocation = next.headers.get('location')!;
+    expect(nextLocation.startsWith('https://tenant.example.com/next?to=?&error=invalid_scope&')).toBe(true);
+    expect(new URL(nextLocation).searchParams.get('error')).toBe('invalid_scope');
+
+    // The URL parser drops a tab, so a loopback URI with one would match on
+    // any port; the raw value must still be header-safe.
+    const tabbed = await provider.getAuthorize(provider.authorizeQuery({ redirect_uri: 'http://127.0.0.1:8080/call\tback' }, MCP_HOST));
+    expect(tabbed.status).toBe(400);
+    expect(tabbed.headers.get('location')).toBeNull();
   });
 
   it('redirects to a native app\'s reverse-domain scheme (RFC 8252 7.1)', async () => {
@@ -409,6 +420,10 @@ describe('configuration', () => {
       'ws://a.example/cb',
       'wss://a.example/cb',
       'myapp:/cb',
+      'https://例え.example/cb',
+      'https://client.example.com/cb?tenant=日本語',
+      'https://client.example.com/c b',
+      'https://client.example.com/cb?x=1\n',
       'https://client.example.com/cb?state=fixed',
       'https://client.example.com/cb?code=1',
       'https://client.example.com/cb?iss=x',
@@ -422,6 +437,7 @@ describe('configuration', () => {
       'http://[::1]:8080/callback',
       'http://[::1]/callback',
       'http://127.0.0.1:8080/cb',
+      'https://xn--r8jz45g.example/cb?tenant=%E6%97%A5',
       'com.example.app:/oauth/callback'
     ])).not.toThrow();
   });

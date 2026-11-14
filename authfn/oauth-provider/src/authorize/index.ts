@@ -13,10 +13,10 @@ import {
   type OAuthProviderRuntime
 } from '../runtime.js';
 import {
-  countDisconnects,
   createGrantWithCode,
   deleteConsent,
   findConsentScopes,
+  readGeneration,
   recordConsent,
   revokeGrant
 } from '../store.js';
@@ -118,10 +118,12 @@ async function clientRedirectUrl(
     }
   }
   response.append('iss', (await resolveEndpoints(runtime, request)).issuer);
+  // An empty query is a '?' that is the first and last character.
+  const query = redirectUri.indexOf('?');
   let separator = '&';
-  if (!redirectUri.includes('?')) {
+  if (query < 0) {
     separator = '?';
-  } else if (redirectUri.endsWith('?') || redirectUri.endsWith('&')) {
+  } else if (query === redirectUri.length - 1 || redirectUri.endsWith('&')) {
     separator = '';
   }
   return `${redirectUri}${separator}${response.toString()}`;
@@ -147,10 +149,10 @@ function consentCovers(consented: string[] | null, scopes: string[]): boolean {
  * Creates the grant and its code: for an approval (`approved`), after
  * recording the consent; otherwise only when remembered consent covers the
  * scopes. Returns `null` when there is no such consent or the app was
- * disconnected meanwhile. The disconnect markers are counted before consent
+ * disconnected meanwhile. The disconnect generation is read before consent
  * and again after the grant exists (see `disconnectOAuthClient`); consent is
- * recorded and read for that count only, so an approval begun before a
- * disconnect never authorizes anything after it. On a new marker this
+ * recorded and read for that generation only, so an approval begun before a
+ * disconnect never authorizes anything after it. On a new generation this
  * authorization revokes its grant and removes the consent it recorded.
  */
 async function issueCode(
@@ -161,7 +163,7 @@ async function issueCode(
 ): Promise<Record<string, string | undefined> | null> {
   const { store } = runtime;
   const triple = { clientId: request.client.clientId, userId: user.id, resource: request.params.resource };
-  const generation = await countDisconnects(store, triple);
+  const generation = await readGeneration(store, triple);
   const consentId = approved
     ? await recordConsent(store, { ...triple, scopes: request.scopes, generation, now: runtime.now() })
     : undefined;
@@ -175,7 +177,7 @@ async function issueCode(
     codeChallenge: request.params.code_challenge,
     now: runtime.now()
   });
-  if (await countDisconnects(store, triple) === generation &&
+  if (await readGeneration(store, triple) === generation &&
     consentCovers(await findConsentScopes(store, triple, generation), request.scopes)) {
     return { code, state: request.params.state };
   }

@@ -119,6 +119,15 @@ const LOOPBACK_HOSTS = new Set(['127.0.0.1', '[::1]']);
 const RESPONSE_PARAMETERS = ['code', 'state', 'iss', 'error', 'error_description', 'error_uri'];
 
 /**
+ * Only visible ASCII (RFC 3986 URIs, with non-ASCII hosts in punycode and
+ * other characters percent-encoded): the redirect URI is sent as is in the
+ * `Location` header, which carries no spaces, controls or raw Unicode.
+ */
+function isVisibleAscii(value: string): boolean {
+  return /^[\x21-\x7e]+$/.test(value);
+}
+
+/**
  * A private-use URI scheme in reverse domain name form (RFC 8252 7.1), such
  * as `com.example.app:`. The dot is outside both character classes, so
  * matching is linear.
@@ -128,14 +137,14 @@ const PRIVATE_USE_SCHEME = /^[a-z][a-z0-9+-]*(?:\.[a-z0-9+-]+)+:$/;
 /**
  * A redirect URI that keeps the authorization response off plaintext
  * networks and out of the browser's own schemes (OAuth 2.1 2.3.1, RFC 8252
- * 7): `https`, `http` only to a loopback IP literal, or a native app's
+ * 7), written in visible ASCII: `https`, `http` only to a loopback IP literal, or a native app's
  * reverse-domain private-use scheme. Every other scheme (`javascript`,
  * `data`, `file`, `ws`, a dotless custom scheme, ...) is rejected. Its query
  * must not use a response parameter name, which the response would otherwise
  * duplicate.
  */
 export function isAllowedRedirectUri(value: unknown): value is string {
-  if (!isAbsoluteUriWithoutFragment(value)) {
+  if (!isAbsoluteUriWithoutFragment(value) || !isVisibleAscii(value)) {
     return false;
   }
   const url = new URL(value);
@@ -165,6 +174,10 @@ export function isAbsoluteUriWithoutFragment(value: unknown): value is string {
  * redirect URI matches on any port (RFC 8252 7.3).
  */
 export function matchesRedirectUri(client: OAuthProviderClient, redirectUri: string): boolean {
+  // The URL parser drops tabs and newlines, so check the raw value first.
+  if (!isVisibleAscii(redirectUri)) {
+    return false;
+  }
   if (client.redirectUris.includes(redirectUri)) {
     return true;
   }

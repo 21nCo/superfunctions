@@ -134,11 +134,10 @@ export function createInsertControl(database: Adapter) {
  * The shipped Kysely adapter on an in-memory SQLite database, with one column
  * per schema field. SQLite has no JSON type, so JSON fields are stored as
  * text. The adapter's `create` and `update` fail on SQLite (`selectAll` on an
- * insert, `RETURNING "*"`), and its `count` selects `count("*")`, which no
- * dialect accepts: packages/db defects outside this package (AUTH-13). So
- * inserts and counts go through Kysely directly, and `update` (used by AuthFn
- * core sessions) runs as `updateMany` and `findOne`. The OAuth store's
- * claims, reads and deletes use the adapter itself.
+ * insert, `RETURNING "*"`), a packages/db defect outside this package
+ * (AUTH-13), so inserts go through Kysely and `update` (used by AuthFn core
+ * sessions) runs as `updateMany` and `findOne`. The OAuth store's claims,
+ * generation reads and writes, other reads and deletes use the adapter itself.
  */
 function sqliteAdapter(): Adapter {
   const sqlite = new Database(':memory:');
@@ -171,17 +170,7 @@ function sqliteAdapter(): Adapter {
       await kysely.updateMany({ ...params, data: encode(params.data) });
       return decode(await kysely.findOne(params));
     },
-    updateMany: (params) => kysely.updateMany({ ...params, data: encode(params.data) }),
-    count: async (params) => {
-      let query = db.selectFrom(params.model).select((eb) => eb.fn.countAll<number>().as('count'));
-      for (const { field, operator, value } of params.where ?? []) {
-        if (operator !== 'eq') {
-          throw new Error(`count supports eq only, not ${operator}`);
-        }
-        query = query.where(field, '=', value as string);
-      }
-      return Number((await query.executeTakeFirstOrThrow()).count);
-    }
+    updateMany: (params) => kysely.updateMany({ ...params, data: encode(params.data) })
   } as Adapter;
 }
 
