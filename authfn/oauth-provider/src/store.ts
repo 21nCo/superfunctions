@@ -6,6 +6,7 @@ import {
 } from 'authfn';
 import { findActiveApiKeyOwner } from 'authfn/core/api-keys';
 import { hashSecret } from 'authfn/core/sessions';
+import { createRegistrationSchema } from './registration/store.js';
 import {
   OAUTH_ACCESS_TOKEN_TTL_SECONDS,
   OAUTH_AUTHORIZATION_CODE_TTL_SECONDS,
@@ -134,7 +135,8 @@ export function createOAuthProviderSchema(): AuthFnSchemaDefinition['schemas'] {
         updatedAt: date('updated_at')
       },
       indexes: [{ name: 'idx_authfn_oauth_provider_disconnects_user_id', fields: ['userId'] }]
-    }
+    },
+    ...createRegistrationSchema()
   ];
 }
 

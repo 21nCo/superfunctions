@@ -19,6 +19,12 @@ export interface OAuthProviderRuntime {
   store: { database: AuthFnRuntimeConfig['database']; namespace: string };
   now(): Date;
   findClient(clientId: string): OAuthProviderClient | undefined;
+  /**
+   * A configured client, or one that registered itself (see
+   * `withClientRegistration`). `request` identifies the caller for the
+   * registration rate limit; it can throw a `temporarily_unavailable` OAuthError.
+   */
+  resolveClient(clientId: string, request: Request): Promise<OAuthProviderClient | undefined>;
   findResource(resource: string): OAuthProviderResource | undefined;
 }
 
@@ -32,6 +38,7 @@ export function createOAuthProviderRuntime(ctx: AuthFnPluginRuntimeContext): OAu
     store: { database: ctx.config.database, namespace: ctx.namespace },
     now: () => config.now?.() ?? new Date(),
     findClient: (clientId) => clients.get(clientId),
+    resolveClient: async (clientId) => clients.get(clientId),
     findResource: (resource) => resources.get(resource)
   };
 }
@@ -250,6 +257,7 @@ export interface OAuthEndpoints {
   token: string;
   revocation: string;
   introspection: string;
+  registration: string;
 }
 
 /** Removes trailing slashes in linear time. */
@@ -269,6 +277,7 @@ export async function resolveEndpoints(runtime: OAuthProviderRuntime, request: R
     authorization: `${base}/authorize`,
     token: `${base}/token`,
     revocation: `${base}/revoke`,
-    introspection: `${base}/introspect`
+    introspection: `${base}/introspect`,
+    registration: `${base}/register`
   };
 }

@@ -11,7 +11,10 @@ export type OAuthErrorCode =
   | 'invalid_target'
   | 'access_denied'
   | 'unsupported_response_type'
-  | 'invalid_token';
+  | 'invalid_token'
+  | 'invalid_redirect_uri'
+  | 'invalid_client_metadata'
+  | 'temporarily_unavailable';
 
 /** An OAuth protocol error, rendered as RFC 6749 5.2 JSON or an error redirect. */
 export class OAuthError extends Error {
@@ -103,11 +106,11 @@ function clientAuthMethod(client: OAuthProviderClient): string {
  * 2.3.1). A public client sends only `client_id`; a confidential client uses
  * the method it is registered with. Failures are `invalid_client`.
  */
-export function authenticateClient(
+export async function authenticateClient(
   runtime: OAuthProviderRuntime,
   request: Request,
   params: Map<string, string>
-): OAuthProviderClient {
+): Promise<OAuthProviderClient> {
   const basic = readBasicCredentials(request);
   // Any Authorization header is an attempt to authenticate with it (RFC 6749 5.2).
   const viaHeader = request.headers.has('authorization');
@@ -117,7 +120,7 @@ export function authenticateClient(
     throw invalidClient(viaHeader);
   }
 
-  const client = runtime.findClient(clientId);
+  const client = await runtime.resolveClient(clientId, request);
   if (!client) {
     throw invalidClient(viaHeader);
   }
