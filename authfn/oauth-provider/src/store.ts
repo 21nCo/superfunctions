@@ -167,7 +167,9 @@ export interface OAuthClaim {
  * wins; that is the single-use guarantee for codes and refresh tokens. The
  * adapter's affected-row count is never consulted, because adapters do not
  * all report it reliably. Only a `releasable` claim (spending a code or
- * refresh token) is undone when its read-back fails; a revocation never is.
+ * refresh token) is undone when its write or read-back fails, for example
+ * when the write commits but its acknowledgement is lost; a revocation never
+ * is. Releasing matches this claim's ID, so it never undoes another's.
  */
 async function claimIfUnset(
   store: OAuthStore,
@@ -189,9 +191,11 @@ async function claimIfUnset(
       });
     }
   };
-  await store.database.updateMany({ model, where: whereId(id, unset), data: { ...data, claimId }, namespace: namespace(store) });
-  const readBack = () => findBy<{ claimId?: string | null }>(store, model, 'id', id);
-  const row = releasable ? await releaseOnFailure(claim, readBack) : await readBack();
+  const claimAndReadBack = async () => {
+    await store.database.updateMany({ model, where: whereId(id, unset), data: { ...data, claimId }, namespace: namespace(store) });
+    return findBy<{ claimId?: string | null }>(store, model, 'id', id);
+  };
+  const row = releasable ? await releaseOnFailure(claim, claimAndReadBack) : await claimAndReadBack();
   return row?.claimId === claimId ? claim : null;
 }
 

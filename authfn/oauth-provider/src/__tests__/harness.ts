@@ -67,13 +67,14 @@ export function createProviderApp() {
 
 type Adapter = AuthFnRuntimeConfig['database'];
 
-type Operation = 'create' | 'findOne';
+type Operation = 'create' | 'findOne' | 'updateMany';
 
 /**
  * Controls storage calls: `arm(model)` pauses the next insert into `model`
  * until `release()` and resolves once it is paused, to force an interleaving;
- * `failNext(model, match, operation)` makes the next matching insert (or
- * `findOne`) throw.
+ * `failNext(model, match, operation)` makes the next matching insert or
+ * `findOne` throw, or the next `updateMany` commit and then throw, as when
+ * its acknowledgement is lost.
  */
 export function createInsertControl(database: Adapter) {
   let paused: { model: string; reached: () => void; released: Promise<void> } | undefined;
@@ -90,6 +91,11 @@ export function createInsertControl(database: Adapter) {
     findOne: async (params) => {
       injectFailure('findOne', params);
       return database.findOne(params);
+    },
+    updateMany: async (params) => {
+      const updated = await database.updateMany(params);
+      injectFailure('updateMany', params);
+      return updated;
     },
     create: async (params) => {
       injectFailure('create', params);

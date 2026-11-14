@@ -57,14 +57,18 @@ describe.each([['memory', false], ['SQL', true]])('token issuance failure (%s)',
     expect((await provider.introspect(issued.access_token)).body).toEqual({ active: false });
   });
 
-  // An exchange reads the code, reads it back after claiming it, then reads the grant.
-  it.each([['claim read-back', 'oauth_provider_codes', 2], ['grant lookup', 'oauth_provider_grants', 1]] as const)(
-    'a failed %s after the claim leaves the code redeemable once',
-    async (_step, model, nth) => {
+  // An exchange reads the code, claims it, reads it back, then reads the grant.
+  it.each([
+    ['claim write (committed, unacknowledged)', 'oauth_provider_codes', 1, 'updateMany'],
+    ['claim read-back', 'oauth_provider_codes', 2, 'findOne'],
+    ['grant lookup', 'oauth_provider_grants', 1, 'findOne']
+  ] as const)(
+    'a failed %s leaves the code redeemable once',
+    async (_step, model, nth, operation) => {
       const provider = await setupProvider({ sql });
       const code = (await provider.authorize()).searchParams.get('code')!;
-      let reads = 0;
-      provider.control.failNext(model, () => ++reads === nth, 'findOne');
+      let calls = 0;
+      provider.control.failNext(model, () => ++calls === nth, operation);
       expect((await provider.exchange(code)).status).toBe(500);
       const retried = await provider.exchange(code);
       expect(retried.status).toBe(200);
@@ -86,6 +90,16 @@ describe.each([['memory', false], ['SQL', true]])('token issuance failure (%s)',
       namespace: 'authfn'
     });
     expect(grants).toEqual([expect.objectContaining({ revokedAt: expect.any(Date), updatedAt: expect.any(Date) })]);
+  });
+
+  it('a refresh claim that commits but loses its acknowledgement leaves the refresh token redeemable once', async () => {
+    const provider = await setupProvider({ sql });
+    const issued = await provider.obtainTokens();
+    provider.control.failNext('oauth_provider_tokens', () => true, 'updateMany');
+    expect((await provider.refresh(issued.refresh_token)).status).toBe(500);
+    const retried = await provider.refresh(issued.refresh_token);
+    expect(retried.status).toBe(200);
+    expect((await provider.introspect((await retried.json() as Tokens).access_token)).body.active).toBe(true);
   });
 
   it.each(['access', 'refresh'])('a failed %s token write leaves the refresh token redeemable once', async (kind) => {
