@@ -1,0 +1,23 @@
+cmsfn/server/README.md
+  s_e1227656b85fc7::t_272738895ba29e 78-87
+cmsfn/server/src/__tests__/scheduled-releases.test.ts
+  s_e1227656b85fc7::t_087c146f4c73bd 20,31,40-41,330-350
+cmsfn/server/src/releases/executor.ts
+  s_e1227656b85fc7::t_4672762c7e1eb4 17-27,29,31-32,184-186
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "af80df605a73253ac42528bad0ba4e33648c0258",
+  "prompts": {},
+  "sessions": {
+    "s_e1227656b85fc7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_e1227656b85fc7",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
