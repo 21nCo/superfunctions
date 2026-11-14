@@ -9,6 +9,7 @@ These pages mirror the detailed Markdown guides in `reviewfn/docs` so existing r
 - [Security model](/docs/reference/security)
 - [GitHub Action and publication](/docs/reference/github-action)
 - [Report schema](/docs/reference/report-schema)
+- [Panel report schema](/docs/reference/panel-report-schema)
 - [Evaluation contract](/docs/reference/evaluation)
 
 The [package map](/docs/packages) and [CLI quick start](/docs/getting-started) provide a shorter entry point.

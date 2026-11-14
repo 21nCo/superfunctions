@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
-import { safeRead, strictProviderSchema, omitOptionalNulls, validateHarnessPayload, redactJson, redactText, type HarnessAdapter, type HarnessCapabilities, type HarnessInput, type HarnessOutput, type JsonValue, type NormalizedRunEvent, type PreflightResult, type ReviewFnConfig } from "@superfunctions/reviewfn-core";
+import { safeRead, strictProviderSchema, structuredOutputValidator, unsupportedOutputSchema, omitOptionalNulls, validateHarnessPayload, redactJson, redactText, type HarnessAdapter, type HarnessCapabilities, type HarnessInput, type HarnessOutput, type JsonValue, type NormalizedRunEvent, type PreflightResult, type ReviewFnConfig } from "@superfunctions/reviewfn-core";
 
 export interface CommandResult { code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string; timedOut: boolean; canceled: boolean }
 export type CommandRunner = (command: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number; maxOutputBytes: number; signal?: AbortSignal; stdin?: string }) => Promise<CommandResult>;
@@ -113,10 +113,29 @@ export class CodexHarnessAdapter implements HarnessAdapter {
     }
     const forbiddenInstructionChanges = input.change.changedPaths.filter((changed) => /(^|\/)(AGENTS(?:\.override)?\.md|\.codex\/|\.agents\/|\.claude\/)/i.test(changed));
     if (forbiddenInstructionChanges.length) return emptyFailure("failed", `Review target changes auto-loaded instruction/configuration paths: ${forbiddenInstructionChanges.join(", ")}. Trusted policy refuses inference.`);
+    // A caller-supplied output schema (for example the panel lens schema) replaces the 0.1 harness schema. It must compile as
+    // given and lie inside the provider strict subset before inference. Codex receives its provider-strict form, where each
+    // property its own object schema does not require is required and nullable, and the raw output is validated against
+    // exactly that schema.
+    let providerSchema: unknown;
+    let validateProviderOutput: ((value: unknown) => string[]) | undefined;
+    let validateCallerOutput: ((value: unknown) => string[]) | undefined;
+    if (input.outputSchema) {
+      let unsupported: string | undefined;
+      try {
+        validateCallerOutput = structuredOutputValidator(input.outputSchema);
+        unsupported = unsupportedOutputSchema(input.outputSchema);
+        if (!unsupported) {
+          providerSchema = providerSchemaFor(input.outputSchema);
+          validateProviderOutput = structuredOutputValidator(providerSchema as Record<string, unknown>);
+        }
+      } catch (error) { return emptyFailure("failed", `outputSchema is not a valid JSON Schema: ${error instanceof Error ? error.message : String(error)}`); }
+      if (unsupported) return emptyFailure("failed", `outputSchema uses ${unsupported}, which the provider strict subset does not support.`);
+    } else providerSchema = strictProviderSchema();
     const directory = await mkdtemp(path.join(tmpdir(), "reviewfn-codex-"));
     const schemaPath = path.join(directory, "schema.json");
     const outputPath = path.join(directory, "result.json");
-    await writeFile(schemaPath, JSON.stringify(strictProviderSchema(), null, 2), { mode: 0o600 });
+    await writeFile(schemaPath, JSON.stringify(providerSchema, null, 2), { mode: 0o600 });
     const args = ["exec", "--ephemeral", "--json", "--sandbox", "read-only", "--ignore-user-config", "--ignore-rules", "-c", "project_doc_max_bytes=0", "-c", "project_doc_fallback_filenames=[]", "--output-schema", schemaPath, "--output-last-message", outputPath];
     if (input.configuration.inference.auth === "action-proxy") {
       const endpoint = this.environment.OPENAI_BASE_URL ?? this.environment.CODEX_API_BASE_URL!;
@@ -154,7 +173,18 @@ export class CodexHarnessAdapter implements HarnessAdapter {
       try { text = (await safeRead(outputPath, input.policy.limits.maxOutputBytes)).toString("utf8"); }
       catch { return { ...emptyFailure("malformed", "Structured output is missing, unsafe, or exceeds its byte budget."), events, transcript: `${stdout}\n${stderr}` }; }
       try {
-        const parsed = omitOptionalNulls(redactJson(JSON.parse(text), secrets)) as Omit<HarnessOutput, "terminal" | "events" | "transcript">;
+        const provided = redactJson(JSON.parse(text), secrets);
+        let parsed: Omit<HarnessOutput, "terminal" | "events" | "transcript">;
+        if (validateProviderOutput && validateCallerOutput) {
+          // No null is removed before this check: the provider-strict schema itself says which nulls are allowed. Output that
+          // already satisfies the caller schema as given (optional properties omitted rather than null) is accepted as well.
+          const errors = validateProviderOutput(provided);
+          if (errors.length && validateCallerOutput(provided).length) throw new Error(errors.join("; "));
+          // Lens output has no requirements or assessments; the normalized result must still be a 0.1 harness payload,
+          // where a null is an absent value whatever the caller schema allowed.
+          const fields = provided as Partial<typeof parsed>;
+          parsed = omitOptionalNulls({ requirements: fields.requirements ?? [], assessments: fields.assessments ?? [], evidence: fields.evidence, findings: fields.findings, inspectedPaths: fields.inspectedPaths, uninspected: fields.uninspected }) as typeof parsed;
+        } else parsed = omitOptionalNulls(provided) as typeof parsed;
         const errors = validateHarnessPayload(parsed);
         if (errors.length) throw new Error(errors.join("; "));
         return { terminal: "completed", requirements: parsed.requirements, assessments: parsed.assessments, evidence: parsed.evidence, findings: parsed.findings, inspectedPaths: parsed.inspectedPaths, uninspected: normalized.truncated ? [...parsed.uninspected, { scope: "harness-events", reason: "Normalized event retention limit reached; telemetry was truncated." }] : parsed.uninspected, events, transcript: `${stdout}\n${stderr}` };
@@ -168,6 +198,13 @@ export class CodexHarnessAdapter implements HarnessAdapter {
   }
 
   private executableFor(config: ReviewFnConfig): string { return config.harness.executable ?? this.executable; }
+}
+
+const providerSchemas = new WeakMap<object, unknown>();
+/** The provider-strict form of a caller schema, cached by object identity so its compiled validator is reused. */
+function providerSchemaFor(schema: Readonly<Record<string, unknown>>): unknown {
+  if (!providerSchemas.has(schema)) providerSchemas.set(schema, strictProviderSchema(schema));
+  return providerSchemas.get(schema);
 }
 
 function minimalEnvironment(source: NodeJS.ProcessEnv, config: ReviewFnConfig): NodeJS.ProcessEnv {
