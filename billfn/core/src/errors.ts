@@ -1,8 +1,8 @@
 import {
   createErrorRegistry,
   createTypedError,
-  type ErrorRegistry,
-  type SuperfunctionError
+  SuperfunctionError,
+  type ErrorRegistry
 } from '@superfunctions/errors';
 
 const definitions = [
@@ -74,11 +74,23 @@ export function createBillFnError(input: {
   code: (typeof definitions)[number]['code'];
   message?: string;
   details?: Record<string, unknown>;
+  /** Overrides the code's registered retryability for an error a retry recovers from. */
+  retryable?: boolean;
 }): SuperfunctionError {
-  return createTypedError({
+  const error = createTypedError({
     code: input.code,
     message: input.message,
     details: input.details,
     registry: billFnErrorRegistry
+  });
+  if (input.retryable === undefined || input.retryable === error.retryable) {
+    return error;
+  }
+  return new SuperfunctionError({
+    code: error.code,
+    message: error.message,
+    status: error.status,
+    retryable: input.retryable,
+    details: error.details
   });
 }

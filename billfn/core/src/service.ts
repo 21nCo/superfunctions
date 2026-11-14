@@ -28,6 +28,8 @@ import type {
   BillFnEntitlementsResponseData,
   BillFnFetchNotificationHistoryInput,
   BillFnGetReconciliationJobRequest,
+  BillFnImportSubscriptionRequest,
+  BillFnImportSubscriptionResponse,
   BillFnPriceDefinition,
   BillFnProviderOperationResult,
   BillFnProviderAdapter,
@@ -102,6 +104,23 @@ const UNLINKED_WEBHOOK_EVENT_REPLAY_LEASE_MS = 15 * 60 * 1000;
 const UNLINKED_WEBHOOK_EVENT_REPLAY_MAX_EVENTS = 500;
 /** Provider metadata key naming the billing account that owns a provider record. */
 const BILLING_ACCOUNT_METADATA_KEY = 'billfn_billing_account_id';
+/**
+ * Subscription metadata key set when an operator imported the subscription:
+ * when it was first imported. Its binding to the billing account is the
+ * operator's, so a provider adapter does not expect the BillFn ownership
+ * metadata a subscription created outside BillFn lacks.
+ */
+export const BILLFN_IMPORTED_AT_METADATA_KEY = 'billfnImportedAt';
+/**
+ * Subscription metadata key set on the row an import creates until its
+ * binding is accepted (`settleImportBinding`). A pending row is not usable:
+ * webhooks and replays leave events for it unlinked, other writes refuse it
+ * (retryably) and subject, account and sync lookups skip it. A refusal deletes
+ * it, on the import's first run or on any rerun, so it never becomes durable.
+ */
+export const BILLFN_IMPORT_PENDING_METADATA_KEY = 'billfnImportPending';
+/** `details.reason` of the retryable `BILLFN_CONFLICT` an import raises when its replay did not finish. */
+export const BILLFN_IMPORT_REPLAY_UNFINISHED_REASON = 'import_replay_unfinished';
 /** Deliveries of one queue message refused by lease conflicts before it is dead-lettered. */
 const RECONCILIATION_QUEUE_MAX_LEASE_CONFLICT_ATTEMPTS = 5;
 
@@ -179,6 +198,18 @@ type ApplyVerificationStateInput = {
   providerEventId?: string;
   /** Keeps an open mutation window; the caller closes it once this write's effects are recorded. */
   keepMutationWindow?: boolean;
+  /** Metadata keys written only when the subscription lacks them (the provider record's keys still win). */
+  metadataDefaults?: Record<string, unknown>;
+  /**
+   * Set by an import: the provider subscription reference it binds. The write
+   * only ever lands on a row that holds the reference (a lost ordered write
+   * looks the reference up again rather than rereading the row, so it never
+   * moves the reference back onto a row a writer took it from), and after the
+   * write the reference is checked against the ones subscription writes
+   * retired (`settleImportBinding`), before any entitlement or event. A row the
+   * import creates is pending until that check accepts it.
+   */
+  importReference?: string;
 };
 type ProjectionResult = {
   checkoutSession: BillFnCheckoutSession | undefined;
@@ -1146,6 +1177,105 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         message: 'No restored purchase could be linked to the resolved billing account'
       });
     },
+    async importSubscription(input: BillFnImportSubscriptionRequest): Promise<BillFnImportSubscriptionResponse> {
+      const { provider: providerName, reference, operator } = readImportRequest(input);
+      const plan = requirePlan(deps.catalog, input.planKey);
+      if (!plan.prices.some((price) => price.provider === providerName && price.kind === 'subscription')) {
+        throw createBillFnError({
+          code: 'BILLFN_VALIDATION_ERROR',
+          message: `Plan ${plan.planKey} has no ${providerName} subscription price`
+        });
+      }
+      const provider = requireProvider(deps, providerName, 'importSubscription');
+      // A reference replaced by a subscription write, or bound to another billing account, fails before the provider is read.
+      // A pending row (an import not yet accepted, perhaps interrupted) is checked like an unbound reference and
+      // removed when the reference is retired, so a rerun of a refused import converges to no binding.
+      const bound = await findSubscriptionByProviderRef(deps, providerName, reference);
+      if (!bound || isImportPending(bound)) {
+        await refuseRetiredImportReference(deps, providerName, reference, bound);
+      }
+      if (bound && bound.billingAccountId !== input.billingAccountId) {
+        throw importBoundElsewhere(providerName);
+      }
+      // Resolved after the checks above, so an import they refuse never creates the subject's billing account;
+      // one refused after the provider read keeps it.
+      const billingAccount = await resolveImportBillingAccount(deps, input);
+
+      // Events that occurred before this live read are already reflected in its state.
+      const importObservedAt = toIsoString(deps.now());
+      const state = await provider.importSubscription({ providerReference: reference, billingAccount, plan });
+      if (!state) {
+        throw createBillFnError({
+          code: 'BILLFN_NOT_FOUND',
+          message: 'Provider did not return the subscription to import'
+        });
+      }
+      if (state.providerSubscriptionId !== reference) {
+        throw createBillFnError({
+          code: 'BILLFN_PROVIDER_ERROR',
+          message: 'The provider record does not match the imported reference'
+        });
+      }
+      const selection = requireImportPrice(plan, providerName, state);
+      let applied: ProjectionResult;
+      try {
+        // Racing imports end with one row: the loser of the unique reference insert applies an ordered update,
+        // or fails as bound elsewhere when the winner bound another billing account.
+        applied = await applyVerificationState(deps, {
+          billingAccount,
+          plan: selection.plan,
+          price: selection.price,
+          state,
+          liveStateObservedAt: importObservedAt,
+          // A rerun or a racing import keeps the first import's time.
+          metadataDefaults: { [BILLFN_IMPORTED_AT_METADATA_KEY]: importObservedAt },
+          // A write may retire the reference while the provider is read (the check above ran before the read).
+          importReference: reference
+        });
+      } catch (error) {
+        if (hasErrorCode(error, 'BILLFN_CONFLICT') && (await isBoundElsewhere(deps, providerName, state, billingAccount.id))) {
+          throw importBoundElsewhere(providerName);
+        }
+        throw error;
+      }
+
+      const timestamp = toIsoString(deps.now());
+      const billingEvent: BillFnBillingEvent = {
+        id: deps.generateId('evt'),
+        billingAccountId: billingAccount.id,
+        type: 'billfn.subscription.imported',
+        payload: {
+          subscriptionId: applied.subscription.id,
+          provider: providerName,
+          providerReference: reference,
+          planKey: applied.subscription.planKey,
+          priceId: applied.subscription.priceId,
+          status: applied.subscription.status,
+          operator,
+          ...(input.reason ? { reason: input.reason } : {})
+        },
+        createdAt: timestamp
+      };
+      // Recorded before the replay, so an import whose replay must be retried is still recorded.
+      await recordBillingEvent(deps, billingEvent);
+      deps.metrics.track('subscription.imported', { provider: providerName });
+
+      // A replay that does not finish fails the import; calling it again finishes the replay.
+      try {
+        await replayUnlinkedWebhookEventsOrThrow(deps, applied.subscription);
+      } catch (error) {
+        if (isReconciliationLeaseConflict(error)) {
+          throw importReplayUnfinished();
+        }
+        throw error;
+      }
+      const refreshed = await refreshProjectionAfterReplay(deps, applied);
+      return ok({
+        subscription: refreshed.subscription,
+        entitlements: refreshed.entitlements,
+        billingEvent
+      });
+    },
     async getEntitlements(subject: BillableSubject): Promise<BillFnEntitlementsResponse> {
       const resolved = await resolveBillingAccountReference(deps, requireSubject(subject));
       const billingAccount = await getBillingAccountById(deps, resolved.billingAccountId);
@@ -1699,7 +1829,7 @@ async function syncSubscriptionByIdForJob(
   candidatePriceId?: string | null
 ) {
   const subscription = await getSubscriptionById(deps, subscriptionId);
-  if (!subscription) {
+  if (!subscription || isImportPending(subscription)) {
     return;
   }
   const billingAccount = await getBillingAccountById(deps, subscription.billingAccountId);
@@ -1921,6 +2051,290 @@ function requireProvider<
   return provider as BillFnProviderAdapter & Required<Pick<BillFnProviderAdapter, TCapability>>;
 }
 
+function readImportRequest(input: BillFnImportSubscriptionRequest) {
+  const invalid = (message: string) => createBillFnError({ code: 'BILLFN_VALIDATION_ERROR', message });
+  const optionalReference = (value: unknown, name: string) => {
+    if (value === undefined) {
+      return undefined;
+    }
+    if (typeof value !== 'string' || value.trim().length === 0 || value !== value.trim()) {
+      throw invalid(`${name} must be a non-empty string without surrounding whitespace`);
+    }
+    return value;
+  };
+  const providerSubscriptionId = optionalReference(input.providerSubscriptionId, 'providerSubscriptionId');
+  const originalTransactionId = optionalReference(input.originalTransactionId, 'originalTransactionId');
+  if (originalTransactionId !== undefined && input.provider !== 'apple') {
+    throw invalid('originalTransactionId identifies Apple subscriptions only');
+  }
+  if (providerSubscriptionId !== undefined && originalTransactionId !== undefined && providerSubscriptionId !== originalTransactionId) {
+    throw invalid('providerSubscriptionId and originalTransactionId name different subscriptions');
+  }
+  const reference = providerSubscriptionId ?? originalTransactionId;
+  if (reference === undefined) {
+    throw invalid('Importing a subscription requires providerSubscriptionId or originalTransactionId');
+  }
+  if (typeof input.billingAccountId !== 'string' || input.billingAccountId.length === 0) {
+    throw invalid('billingAccountId must be a non-empty string');
+  }
+  if (typeof input.planKey !== 'string' || input.planKey.length === 0) {
+    throw invalid('planKey must be a non-empty string');
+  }
+  const operator = input.operator;
+  if (!operator || typeof operator.id !== 'string' || operator.id.length === 0) {
+    throw invalid('Importing a subscription requires the operator identity');
+  }
+  if (input.reason !== undefined && typeof input.reason !== 'string') {
+    throw invalid('reason must be a string');
+  }
+  return {
+    provider: input.provider,
+    reference,
+    operator: {
+      id: operator.id,
+      ...(typeof operator.type === 'string' ? { type: operator.type } : {}),
+      ...(typeof operator.requestId === 'string' ? { requestId: operator.requestId } : {})
+    }
+  };
+}
+
+/** The billing account an import binds to: created for the subject when one is given, otherwise existing. */
+async function resolveImportBillingAccount(deps: ServiceDeps, input: BillFnImportSubscriptionRequest) {
+  if (input.subject) {
+    const subject = requireSubject(input.subject);
+    const resolved = await resolveBillingAccountReference(deps, subject);
+    if (resolved.billingAccountId !== input.billingAccountId) {
+      throw createBillFnError({
+        code: 'BILLFN_VALIDATION_ERROR',
+        message: 'The subject resolves to a different billing account'
+      });
+    }
+    return (await getOrCreateBillingAccount(deps, subject)).billingAccount;
+  }
+  const billingAccount = await getBillingAccountById(deps, input.billingAccountId);
+  if (!billingAccount) {
+    throw createBillFnError({
+      code: 'BILLFN_NOT_FOUND',
+      message: 'Billing account not found'
+    });
+  }
+  return billingAccount;
+}
+
+/** The plan's subscription price the provider record's product names. */
+function requireImportPrice(
+  plan: ReturnType<typeof requirePlan>,
+  provider: BillingProviderName,
+  state: VerifiedBillingState
+): CatalogSelection {
+  const raw = asRecord(state.raw);
+  const records = [raw, asRecord(raw?.transaction)];
+  const references = [
+    state.providerProductId,
+    ...records.flatMap((record) => (record ? ['product_id', 'productId'].map((key) => readString(record, key)) : []))
+  ];
+  const selection = findCatalogPriceReference({ plans: [plan] }, provider, references);
+  if (!selection || selection.price.kind !== 'subscription') {
+    throw createBillFnError({
+      code: 'BILLFN_VALIDATION_ERROR',
+      message: `The provider subscription's product is not a ${provider} subscription price of plan ${plan.planKey}`,
+      details: {
+        planKey: plan.planKey,
+        providerProductIds: references.filter((reference): reference is string => Boolean(reference))
+      }
+    });
+  }
+  return selection;
+}
+
+function importBoundElsewhere(provider: BillingProviderName) {
+  return createBillFnError({
+    code: 'BILLFN_CONFLICT',
+    message: `The ${provider} subscription is already bound to a different billing account`
+  });
+}
+
+/** Whether a subscription of another billing account holds a reference the provider record names. */
+async function isBoundElsewhere(
+  deps: ServiceDeps,
+  provider: BillingProviderName,
+  state: VerifiedBillingState,
+  billingAccountId: string
+) {
+  const holder = await findSubscriptionByProviderRef(deps, provider, state.providerSubscriptionId, state.providerChargeId);
+  return Boolean(holder && holder.billingAccountId !== billingAccountId);
+}
+
+/**
+ * The import is bound and recorded, but another run holds the reference's
+ * unlinked events (including a run interrupted before it released them) or the
+ * replay reached its bound. Unlike a bound-elsewhere conflict it is retryable:
+ * calling import again, after the holder's lease expires, finishes the replay.
+ */
+function importReplayUnfinished() {
+  return createBillFnError({
+    code: 'BILLFN_CONFLICT',
+    message: 'The import is recorded but replaying its unlinked webhook events did not finish; import again to finish it',
+    details: { reason: BILLFN_IMPORT_REPLAY_UNFINISHED_REASON },
+    retryable: true
+  });
+}
+
+function importReferenceReplaced() {
+  return createBillFnError({
+    code: 'BILLFN_CONFLICT',
+    message: 'The provider reference was replaced by another subscription and cannot be imported'
+  });
+}
+
+/**
+ * Refuses an import of a reference a subscription write retired: deletes
+ * `holder` when it is a pending import row holding the reference (whichever
+ * import run created it), then fails with a non-retryable `BILLFN_CONFLICT`.
+ * An accepted row is never deleted.
+ */
+async function refuseRetiredImportReference(
+  deps: ServiceDeps,
+  provider: BillingProviderName,
+  reference: string,
+  holder: BillFnSubscription | null
+) {
+  if (!(await isReplacedProviderReference(deps, provider, reference, holder?.id))) {
+    return;
+  }
+  if (holder && isImportPending(holder)) {
+    await deps.db.deleteMany({
+      model: TABLES.subscriptions,
+      where: [
+        { field: 'id', operator: 'eq', value: holder.id },
+        { field: 'providerSubscriptionId', operator: 'eq', value: reference }
+      ],
+      namespace: deps.namespace
+    });
+  }
+  deps.metrics.track('subscription.import.replaced_reference_refused', { provider });
+  throw importReferenceReplaced();
+}
+
+/**
+ * After an import's write to `subscription`, which holds `reference`: refuses
+ * the binding when a write of another subscription retired the reference, or
+ * accepts it by clearing the pending marker, and returns the accepted row:
+ * `ownState` when that row carries this write's state, and `acceptedHere` when
+ * this call cleared its pending marker. A lost acceptance write re-finds the
+ * row, which then carries another run's state (accepted by it or here), so the
+ * caller publishes that row's plan, never its own.
+ * Nothing uses a pending row, so no entitlement, lifecycle event or import
+ * event exists for it until this accepts it; a refusal deletes it, and an
+ * interrupted run leaves it pending for the rerun to settle.
+ *
+ * Why the check after the write is enough: a reference is held by at most one
+ * row (unique index), so a writer that retired it took it off its row before
+ * this write held it, and recorded it before that, or saved it pending in that
+ * same write. Read pending, then recorded, now, one of the reads sees it. Every
+ * import that holds the row therefore reaches the same answer.
+ */
+async function settleImportBinding(
+  deps: ServiceDeps,
+  subscription: BillFnSubscription,
+  reference: string
+): Promise<{ subscription: BillFnSubscription; ownState: boolean; acceptedHere: boolean }> {
+  await refuseRetiredImportReference(deps, subscription.provider, reference, subscription);
+  let current: BillFnSubscription | null = subscription;
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    // Only the first attempt holds this run's write; a reload holds whatever wrote the row after it.
+    const ownState = attempt === 0;
+    if (!current || current.providerSubscriptionId !== reference) {
+      throw createBillFnError({
+        code: 'BILLFN_CONFLICT',
+        message: 'The imported subscription changed while its import was accepted',
+        retryable: true
+      });
+    }
+    if (!isImportPending(current)) {
+      return { subscription: current, ownState, acceptedHere: false };
+    }
+    const accepted: BillFnSubscription = {
+      ...current,
+      metadata: withoutImportPending(current.metadata),
+      updatedAt: nextSubscriptionUpdatedAt(deps.now(), current.updatedAt)
+    };
+    if (await writeOrderedSubscription(deps, current, accepted)) {
+      return { subscription: accepted, ownState, acceptedHere: true };
+    }
+    current = await findSubscriptionByProviderRef(deps, subscription.provider, reference);
+    await Promise.resolve();
+  }
+  throw createBillFnError({
+    code: 'BILLFN_CONFLICT',
+    message: 'Unable to accept the imported subscription after multiple retries',
+    retryable: true
+  });
+}
+
+/** Whether the row is an import's binding not yet accepted (see `BILLFN_IMPORT_PENDING_METADATA_KEY`). */
+function isImportPending(subscription: BillFnSubscription | null | undefined) {
+  return subscription?.metadata?.[BILLFN_IMPORT_PENDING_METADATA_KEY] === true;
+}
+
+function withoutImportPending(metadata: BillFnSubscription['metadata']) {
+  if (!metadata) {
+    return metadata;
+  }
+  const { [BILLFN_IMPORT_PENDING_METADATA_KEY]: _pending, ...rest } = metadata;
+  return rest;
+}
+
+/** A write other than an import's reached a pending import row: retried once the import settles it. */
+function importPendingConflict() {
+  return createBillFnError({
+    code: 'BILLFN_CONFLICT',
+    message: 'The subscription is being imported',
+    details: { reason: 'subscription_import_pending' },
+    retryable: true
+  });
+}
+
+/**
+ * Whether a subscription write dropped this reference (still pending on the
+ * subscription, or recorded). A writer records the reference before it clears
+ * pending, so pending is read first, as `namesReplacedReference` does: a writer
+ * that clears pending between the reads has already recorded it. `holderId`,
+ * the row that holds the reference now, is not counted: a reference it dropped
+ * and holds again, or one a write that lost its race on it recorded, is held.
+ */
+async function isReplacedProviderReference(
+  deps: ServiceDeps,
+  provider: BillingProviderName,
+  reference: string,
+  holderId?: string
+) {
+  const pending = await deps.db.findMany<BillFnSubscription>({
+    model: TABLES.subscriptions,
+    where: [
+      { field: 'provider', operator: 'eq', value: provider },
+      { field: 'replacedReferencesPending', operator: 'eq', value: true }
+    ],
+    namespace: deps.namespace
+  });
+  if (
+    pending.some(
+      (subscription) => subscription.id !== holderId && pendingReplacedReferencesOf(subscription).includes(reference)
+    )
+  ) {
+    return true;
+  }
+  const replaced = await deps.db.findOne<BillFnReplacedProviderReference>({
+    model: TABLES.replacedProviderReferences,
+    where: [
+      { field: 'provider', operator: 'eq', value: provider },
+      { field: 'providerReference', operator: 'eq', value: reference }
+    ],
+    namespace: deps.namespace
+  });
+  return Boolean(replaced && replaced.subscriptionId !== holderId);
+}
+
 function requireSubject(subject: BillableSubject | undefined): BillableSubject {
   if (!subject) {
     throw createBillFnError({
@@ -1992,7 +2406,7 @@ async function getSubscriptionById(deps: ServiceDeps, id: string) {
 
 async function getSubscriptionForAccount(deps: ServiceDeps, billingAccountId: string, subscriptionId?: string) {
   if (subscriptionId) {
-    return deps.db.findOne<BillFnSubscription>({
+    const subscription = await deps.db.findOne<BillFnSubscription>({
       model: TABLES.subscriptions,
       where: [
         { field: 'id', operator: 'eq', value: subscriptionId },
@@ -2000,6 +2414,7 @@ async function getSubscriptionForAccount(deps: ServiceDeps, billingAccountId: st
       ],
       namespace: deps.namespace
     });
+    return isImportPending(subscription) ? null : subscription;
   }
   return findActiveSubscription(deps, billingAccountId);
 }
@@ -2014,7 +2429,8 @@ async function findActiveSubscription(deps: ServiceDeps, billingAccountId: strin
     orderBy: [{ field: 'updatedAt', direction: 'desc' }],
     namespace: deps.namespace
   });
-  return candidates[0] ?? null;
+  // A pending import row is not the account's until its import accepts it.
+  return candidates.find((candidate) => !isImportPending(candidate)) ?? null;
 }
 
 async function findSubscriptionByProviderRef(
@@ -2384,10 +2800,21 @@ async function applyVerificationState(
   const supersededBefore = input.committedAt ?? input.liveStateObservedAt;
 
   for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (!input.importReference && isImportPending(baseSubscription)) {
+      // Only the import settles its pending row; anything else applies once it is accepted (or deleted).
+      throw importPendingConflict();
+    }
     if (baseSubscription && baseSubscription.billingAccountId !== input.billingAccount.id) {
       throw createBillFnError({
         code: 'BILLFN_CONFLICT',
         message: 'Provider billing reference belongs to a different billing account'
+      });
+    }
+    if (input.importReference && baseSubscription && baseSubscription.providerSubscriptionId !== input.importReference) {
+      // Found by another reference the provider record names: an import never moves its reference onto such a row.
+      throw createBillFnError({
+        code: 'BILLFN_CONFLICT',
+        message: 'The provider record names a reference another subscription holds'
       });
     }
     const order = baseSubscription && input.occurredAt ? orderProviderEvent(baseSubscription, input.occurredAt) : 'apply';
@@ -2438,8 +2865,8 @@ async function applyVerificationState(
         subscription = linked;
         break;
       }
-      const current = await getSubscriptionById(deps, baseSubscription.id);
-      if (!current) {
+      const current = await reloadAfterLostWrite(deps, input, baseSubscription);
+      if (!current && !input.importReference) {
         throw createBillFnError({
           code: 'BILLFN_CONFLICT',
           message: 'Subscription changed while applying provider state'
@@ -2450,16 +2877,20 @@ async function applyVerificationState(
       continue;
     }
     // A state write closes the window of an earlier committed mutation; a committed mutation opens its own.
-    const merged = mergeJson(baseSubscription?.metadata, input.state.raw);
+    const merged = mergeJson(mergeJson(input.metadataDefaults, baseSubscription?.metadata), input.state.raw);
     const mergedMetadata = input.keepMutationWindow ? merged : withoutMutationWindow(merged);
     const providerStateAt = providerStateTimeFor(input.occurredAt, supersededBefore, baseSubscription);
-    const metadata = providerStateAt
-      ? {
-          ...mergedMetadata,
-          [PROVIDER_EVENT_OCCURRED_AT_METADATA_KEY]: providerStateAt,
-          ...(input.committedAt ? { [PROVIDER_MUTATION_STARTED_AT_METADATA_KEY]: input.liveStateObservedAt } : {})
-        }
-      : mergedMetadata;
+    const metadata = {
+      ...mergedMetadata,
+      ...(providerStateAt
+        ? {
+            [PROVIDER_EVENT_OCCURRED_AT_METADATA_KEY]: providerStateAt,
+            ...(input.committedAt ? { [PROVIDER_MUTATION_STARTED_AT_METADATA_KEY]: input.liveStateObservedAt } : {})
+          }
+        : {}),
+      // A row an import creates stays pending until `settleImportBinding` accepts it.
+      ...(input.importReference && !baseSubscription ? { [BILLFN_IMPORT_PENDING_METADATA_KEY]: true } : {})
+    };
 
     const subscriptionId = baseSubscription?.id ?? deps.generateId('sub');
     const record: BillFnSubscription = {
@@ -2506,8 +2937,8 @@ async function applyVerificationState(
         break;
       }
       // A lost race leaves its records: a reference the winner keeps is held, so its events still link to it.
-      const current = await getSubscriptionById(deps, baseSubscription.id);
-      if (!current) {
+      const current = await reloadAfterLostWrite(deps, input, baseSubscription);
+      if (!current && !input.importReference) {
         throw createBillFnError({
           code: 'BILLFN_CONFLICT',
           message: 'Subscription changed while applying provider event state'
@@ -2550,6 +2981,16 @@ async function applyVerificationState(
       message: 'Unable to apply provider event state after multiple retries'
     });
   }
+  // Whether the row carries this call's state; otherwise it publishes the row's own plan, never `input.plan`.
+  let ownState = !liveStateSuperseded;
+  // Whether this call records the row's lifecycle event (an import that accepts another run's state records it).
+  let recordLifecycle = ownState;
+  if (input.importReference) {
+    const settled = await settleImportBinding(deps, subscription, input.importReference);
+    subscription = settled.subscription;
+    ownState = ownState && settled.ownState;
+    recordLifecycle = ownState || settled.acceptedHere;
+  }
 
   const checkoutSession = input.checkoutSession
     ? await updateCheckoutSession(deps, input.checkoutSession.checkoutSessionId, {
@@ -2561,15 +3002,16 @@ async function applyVerificationState(
       })
     : input.checkoutSession;
 
-  if (liveStateSuperseded) {
-    // The subscription's state did not change, so its entitlements stand and no lifecycle event is recorded.
-    const entitlements = await upsertEntitlements(
-      deps,
-      input.billingAccount.id,
-      requirePlan(deps.catalog, subscription.planKey),
-      subscription,
-      timestamp
-    );
+  // A superseded read leaves the subscription's state, so its entitlements stand and no lifecycle event is recorded;
+  // an import that ends on another run's state publishes that state's plan.
+  const entitlements = await upsertEntitlements(
+    deps,
+    input.billingAccount.id,
+    ownState ? input.plan : requirePlan(deps.catalog, subscription.planKey),
+    subscription,
+    timestamp
+  );
+  if (!recordLifecycle) {
     return {
       checkoutSession: checkoutSession ?? input.checkoutSession,
       subscription,
@@ -2577,8 +3019,6 @@ async function applyVerificationState(
       providerStateRaced
     };
   }
-
-  const entitlements = await upsertEntitlements(deps, input.billingAccount.id, input.plan, subscription, timestamp);
 
   await recordBillingEvent(deps, {
     // A provider event keys its lifecycle entry, so applying it again (a reclaimed replay) records it once.
@@ -2609,6 +3049,18 @@ async function applyVerificationState(
 }
 
 /**
+ * The row to retry a lost ordered write against: the row again, or for an
+ * import the row that holds its reference now (null when none does, and the
+ * import creates one), so the import never writes its reference back onto a
+ * row a writer took it from.
+ */
+function reloadAfterLostWrite(deps: ServiceDeps, input: ApplyVerificationStateInput, subscription: BillFnSubscription) {
+  return input.importReference
+    ? findSubscriptionByProviderRef(deps, input.price.provider, input.importReference)
+    : getSubscriptionById(deps, subscription.id);
+}
+
+/**
  * The provider-state time a write saves: the event's time, or for live state
  * the read start (a committed mutation: its commit), never moving the stored
  * time backwards on any path. Null when the state carries no time.
@@ -2624,8 +3076,8 @@ function providerStateTimeFor(
 
 /**
  * The subscription row after a live provider read that an applied event has
- * superseded: missing provider references from the read are added and every
- * state field is kept. Returns null when the read adds no reference.
+ * superseded: missing provider references and metadata keys from the read are
+ * added and every state field is kept. Returns null when the read adds neither.
  */
 function linkLiveReadReferences(
   subscription: BillFnSubscription,
@@ -2635,14 +3087,17 @@ function linkLiveReadReferences(
   const providerSubscriptionId = subscription.providerSubscriptionId ?? input.state.providerSubscriptionId;
   const providerCheckoutId = subscription.providerCheckoutId ?? input.checkoutSession?.providerCheckoutId;
   const providerChargeId = subscription.providerChargeId ?? input.state.providerChargeId;
+  const addsMetadata = Object.keys(input.metadataDefaults ?? {}).some((key) => subscription.metadata?.[key] === undefined);
   if (
     providerSubscriptionId === subscription.providerSubscriptionId &&
     providerCheckoutId === subscription.providerCheckoutId &&
-    providerChargeId === subscription.providerChargeId
+    providerChargeId === subscription.providerChargeId &&
+    !addsMetadata
   ) {
     return null;
   }
-  return { ...subscription, providerSubscriptionId, providerCheckoutId, providerChargeId, updatedAt: timestamp };
+  const metadata = addsMetadata ? { ...input.metadataDefaults, ...subscription.metadata } : subscription.metadata;
+  return { ...subscription, providerSubscriptionId, providerCheckoutId, providerChargeId, metadata, updatedAt: timestamp };
 }
 
 /**
@@ -3042,6 +3497,10 @@ async function resolveProjectionContextForProviderState(
     input.checkoutReferenceId
   );
 
+  if (isImportPending(subscription)) {
+    // Not usable until its import accepts it: the event is stored unlinked and replayed then.
+    return null;
+  }
   if (subscription) {
     const billingAccount = await getBillingAccountById(deps, subscription.billingAccountId);
     if (!billingAccount) {
@@ -3258,7 +3717,11 @@ async function bootstrapOrStoreUnlinkedWebhookEvent(
     event.checkoutReferenceId
   );
   let reason: BillFnUnlinkedWebhookEventReason;
-  if (existing) {
+  const importPending = isImportPending(existing);
+  if (importPending) {
+    // Its import replays this event once it accepts the row; a refused import leaves it unlinked.
+    reason = 'subscription_import_pending';
+  } else if (existing) {
     // A link that committed after this event's first lookup is applied to like any linked reference.
     const projection = await resolveProjectionContextForProviderState(deps, {
       provider: providerName,
@@ -3288,10 +3751,11 @@ async function bootstrapOrStoreUnlinkedWebhookEvent(
     reason,
     metadataBillingAccountId
   });
-  if (existing) {
+  if (existing && !importPending) {
     return { handled: null };
   }
-  // A link that committed while this event was being stored would have missed it; replay it now.
+  // A link (or an import's acceptance) that committed while this event was being stored would have missed it;
+  // replay it now. The replay skips a row still pending.
   const linked = await findSubscriptionByProviderRef(
     deps,
     providerName,
@@ -3511,6 +3975,10 @@ async function replayUnlinkedWebhookEvents(
   subscription: BillFnSubscription
 ): Promise<UnlinkedReplayResult> {
   const result: UnlinkedReplayResult = { applied: 0, skipped: 0, pending: 0 };
+  if (isImportPending(subscription)) {
+    // A pending import row is not linked yet: its import replays the events once it accepts the row.
+    return result;
+  }
   const queue = createUnlinkedReplayQueue(deps, subscription.provider);
   let latest = subscription;
   await queue.discover(subscription);
