@@ -249,6 +249,54 @@ describe('client ID metadata documents', () => {
     expect(documents.calls).toHaveLength(10);
   });
 
+  it.each([false, true])('a refetch that stalls past its claim neither overwrites nor drops the document a newer claim stored (sql: %s)', async (sql) => {
+    const moved = { ...DOCUMENT_CLIENT, redirectUris: ['https://mcp.example.com/moved'] };
+    for (const staleAnswer of [() => Response.json(documentFor()), () => new Response('not found', { status: 404 })]) {
+      let current = documentFor();
+      let stall: { started: () => void; answer: Promise<Response> } | undefined;
+      const documents = documentFetch({
+        [DOCUMENT_URL]: () => {
+          const stalled = stall;
+          stall = undefined;
+          stalled?.started();
+          return stalled ? stalled.answer : Response.json(current);
+        }
+      });
+      const provider = await setupProvider({ sql, registration: { metadataDocuments: true, fetch: documents.impl } });
+      const authorize = (handle: Provider['handle'], client: OAuthProviderClient) =>
+        handle(`/auth/oauth/authorize?${provider.authorizeQuery({}, client)}`, { headers: { cookie: provider.cookie } });
+      expect((await provider.getAuthorize(provider.authorizeQuery({}, DOCUMENT_CLIENT))).status).toBe(200);
+
+      // Instance A claims the refetch and stalls in its fetch past the claim...
+      provider.advance(5 * 60 + 1);
+      let release!: (response: Response) => void;
+      const started = new Promise<void>((resolve) => {
+        stall = { started: resolve, answer: new Promise<Response>((resolveAnswer) => { release = resolveAnswer; }) };
+      });
+      const stalled = authorize(provider.instance(), DOCUMENT_CLIENT);
+      await started;
+      // ...so instance B claims the next refetch and stores the changed document.
+      provider.advance(5 * 60 + 1);
+      current = documentFor({ redirect_uris: ['https://mcp.example.com/moved'] });
+      expect((await authorize(provider.instance(), moved)).status).toBe(200);
+
+      // A's older answer (the old document, or none) changes nothing: A serves B's document.
+      release(staleAnswer());
+      const refused = await stalled;
+      expect([refused.status, refused.headers.get('location')]).toEqual([400, null]);
+      const stored = await provider.database.findOne<{ redirectUris: string[] }>({
+        model: 'oauth_provider_document_clients',
+        where: [{ field: 'id', operator: 'eq', value: DOCUMENT_URL }],
+        namespace: 'authfn'
+      });
+      expect(stored?.redirectUris).toEqual(['https://mcp.example.com/moved']);
+      const fresh = provider.instance();
+      expect((await authorize(fresh, moved)).status).toBe(200);
+      expect((await authorize(fresh, DOCUMENT_CLIENT)).status).toBe(400);
+      expect(documents.calls).toHaveLength(3);
+    }
+  });
+
   it('refuses a document that names another client, carries a secret, redirects or is not a JSON 200', async () => {
     for (const served of [
       documentFor({ client_id: 'https://other.example.com/client.json' }),

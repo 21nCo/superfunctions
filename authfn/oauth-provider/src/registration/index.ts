@@ -13,16 +13,15 @@ import {
 import { isPlainObject, readPublicClientMetadata, SUPPORTED_GRANT_TYPES } from './metadata.js';
 import {
   admitRegistrationEvent,
+  applyDocumentRefetch,
   claimDocumentRefetch,
   createDocumentClient,
-  deleteDocumentClient,
   documentClaimId,
   documentClaimTime,
   findDocumentClient,
   findRegisteredClient,
   insertRegisteredClient,
   REGISTERED_CLIENT_ID_PREFIX,
-  updateDocumentClient,
   type DocumentClientRecord,
   type RegistrationEventKind,
   type RegistrationLimits
@@ -124,6 +123,9 @@ function publicClient(clientId: string, name: string | null | undefined, redirec
  * documents. When its host gives no usable answer (network error, timeout,
  * 5xx, 408 or 429), a known client keeps its stored document; any other
  * answer that is not a usable document makes it unknown and drops the row.
+ * Only the request holding the current refetch claim stores or drops a
+ * result: one that stalled past its claim changes nothing and serves what
+ * the newer claim stored.
  */
 export function withClientRegistration(runtime: OAuthProviderRuntime): OAuthProviderRuntime {
   const documents = new Map<string, { client: OAuthProviderClient; expiresAt: number }>();
@@ -152,6 +154,18 @@ export function withClientRegistration(runtime: OAuthProviderRuntime): OAuthProv
     return client;
   };
 
+  /**
+   * Serves a stored document until the refetch claim it carries runs out
+   * (at least for a second), or nothing when the client was dropped.
+   */
+  const serveStored = (stored: DocumentClientRecord | null) => {
+    if (!stored) {
+      return undefined;
+    }
+    const expiresAt = Math.max(documentClaimTime(stored.claimId) + DOCUMENT_CACHE_MS, runtime.now().getTime() + 1000);
+    return remember(stored.id, publicClient(stored.id, stored.name, stored.redirectUris), expiresAt);
+  };
+
   const loadDocumentClient = async (clientId: string, request: Request) => {
     documents.delete(clientId);
     const stored = await findDocumentClient(runtime.store, clientId);
@@ -160,26 +174,26 @@ export function withClientRegistration(runtime: OAuthProviderRuntime): OAuthProv
 
   const loadKnownClient = async (stored: DocumentClientRecord) => {
     const clientId = stored.id;
-    const known = publicClient(clientId, stored.name, stored.redirectUris);
     const now = runtime.now();
     // Another request claimed the refetch within 5 minutes: use the stored
     // document until that claim runs out.
-    const claimedUntil = documentClaimTime(stored.claimId) + DOCUMENT_CACHE_MS;
-    if (claimedUntil > now.getTime() || !await claimDocumentRefetch(runtime.store, clientId, now, DOCUMENT_CACHE_MS)) {
-      return remember(clientId, known, Math.max(claimedUntil, now.getTime() + 1000));
+    const claimId = documentClaimTime(stored.claimId) + DOCUMENT_CACHE_MS > now.getTime()
+      ? undefined
+      : await claimDocumentRefetch(runtime.store, clientId, now, DOCUMENT_CACHE_MS);
+    if (!claimId) {
+      return serveStored(stored);
     }
-    const expiresAt = now.getTime() + DOCUMENT_CACHE_MS;
     const fetched = await fetchDocument(clientId);
     if (fetched.status === 'unavailable') {
-      return remember(clientId, known, expiresAt);
+      // Keep the stored document, as stored now: a later claim may have replaced it.
+      return serveStored(await findDocumentClient(runtime.store, clientId));
     }
     const metadata = fetched.status === 'ok' ? readDocumentMetadata(clientId, fetched.document) : undefined;
-    if (!metadata) {
-      await deleteDocumentClient(runtime.store, clientId);
-      return undefined;
-    }
-    await updateDocumentClient(runtime.store, { id: clientId, name: metadata.name ?? null, redirectUris: metadata.redirectUris, fetchedAt: now });
-    return remember(clientId, publicClient(clientId, metadata.name, metadata.redirectUris), expiresAt);
+    // Only the current claim holder stores its result; a superseded refetch
+    // serves whatever the newer claim left.
+    return serveStored(await applyDocumentRefetch(runtime.store, clientId, claimId, metadata
+      ? { name: metadata.name ?? null, redirectUris: metadata.redirectUris, fetchedAt: now }
+      : null));
   };
 
   const loadNewClient = async (clientId: string, request: Request) => {
@@ -190,15 +204,15 @@ export function withClientRegistration(runtime: OAuthProviderRuntime): OAuthProv
     if (!metadata) {
       return undefined;
     }
-    await createDocumentClient(runtime.store, {
+    // A concurrent first fetch may have stored the client already; its row is served.
+    return serveStored(await createDocumentClient(runtime.store, {
       id: clientId,
       name: metadata.name ?? null,
       redirectUris: metadata.redirectUris,
       fetchedAt: now,
       // This fetch is the client's refetch for the next 5 minutes.
       claimId: documentClaimId(now)
-    });
-    return remember(clientId, publicClient(clientId, metadata.name, metadata.redirectUris), now.getTime() + DOCUMENT_CACHE_MS);
+    }));
   };
 
   return {

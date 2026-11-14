@@ -131,41 +131,38 @@ export function documentClaimTime(claimId: string): number {
 }
 
 /**
- * Stores a newly fetched document. When another request stored the client
- * first, from its own fetch, that row is kept. Row counts are never trusted:
- * not every adapter reports them.
+ * Stores a newly fetched document and returns the stored row: this one, or
+ * the row another request stored first from its own fetch, which is kept.
+ * Row counts are never trusted: not every adapter reports them.
  */
-export async function createDocumentClient(store: RegistrationStore, record: DocumentClientRecord): Promise<void> {
+export async function createDocumentClient(
+  store: RegistrationStore,
+  record: DocumentClientRecord
+): Promise<DocumentClientRecord> {
   try {
     await store.database.create({ model: MODELS.documents, data: { ...record }, namespace: namespace(store) });
+    return record;
   } catch (error) {
-    if (!await findDocumentClient(store, record.id)) {
+    const stored = await findDocumentClient(store, record.id);
+    if (!stored) {
       throw error;
     }
+    return stored;
   }
-}
-
-/** Replaces a known client's document with the one its claimed refetch returned. */
-export async function updateDocumentClient(
-  store: RegistrationStore,
-  record: Omit<DocumentClientRecord, 'claimId'>
-): Promise<void> {
-  const { id, ...data } = record;
-  await store.database.updateMany({ model: MODELS.documents, where: [eq('id', id)], data, namespace: namespace(store) });
 }
 
 /**
  * Claims the refetch of a known client's document when no claim was made in
  * the `intervalMs` before `now`, so that across every instance the document
  * is refetched at most once per interval. The claim is a conditional update
- * read back: the caller whose claim ID is stored won.
+ * read back: the caller whose claim ID is stored won and gets that ID.
  */
 export async function claimDocumentRefetch(
   store: RegistrationStore,
   clientId: string,
   now: Date,
   intervalMs: number
-): Promise<boolean> {
+): Promise<string | undefined> {
   const claimId = documentClaimId(now);
   await store.database.updateMany({
     model: MODELS.documents,
@@ -174,11 +171,28 @@ export async function claimDocumentRefetch(
     data: { claimId },
     namespace: namespace(store)
   });
-  return (await findDocumentClient(store, clientId))?.claimId === claimId;
+  return (await findDocumentClient(store, clientId))?.claimId === claimId ? claimId : undefined;
 }
 
-export async function deleteDocumentClient(store: RegistrationStore, clientId: string): Promise<void> {
-  await store.database.deleteMany({ model: MODELS.documents, where: [eq('id', clientId)], namespace: namespace(store) });
+/**
+ * Applies the result of the refetch claimed as `claimId`: the fetched
+ * document, or `null` to drop the client. Only the current claim holder
+ * writes; a refetch whose claim was superseded (it stalled past the
+ * interval, or another instance's clock leads) changes nothing. Returns the
+ * row stored afterwards, read back since row counts are never trusted:
+ * this result when it applied, another claim's row, or `null` once dropped.
+ */
+export async function applyDocumentRefetch(
+  store: RegistrationStore,
+  clientId: string,
+  claimId: string,
+  document: Pick<DocumentClientRecord, 'name' | 'redirectUris' | 'fetchedAt'> | null
+): Promise<DocumentClientRecord | null> {
+  const where = [eq('id', clientId), eq('claimId', claimId)];
+  await (document
+    ? store.database.updateMany({ model: MODELS.documents, where, data: { ...document }, namespace: namespace(store) })
+    : store.database.deleteMany({ model: MODELS.documents, where, namespace: namespace(store) }));
+  return findDocumentClient(store, clientId);
 }
 
 export type RegistrationEventKind = 'register' | 'document';
