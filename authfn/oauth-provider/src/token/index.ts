@@ -15,7 +15,7 @@ export function createTokenRoute(runtime: OAuthProviderRuntime): Route {
     meta: createAuthFnRouteMeta('oauthToken', 'OAuth 2.1 token endpoint', { mode: 'none' }),
     handler: (request) => handleOAuth(async () => {
       const params = await readFormBody(request);
-      const client = authenticateClient(runtime, request, params);
+      const client = await authenticateClient(runtime, request, params);
       const grantType = params.get('grant_type');
       let issued: IssuedTokens;
       if (grantType === 'authorization_code') {

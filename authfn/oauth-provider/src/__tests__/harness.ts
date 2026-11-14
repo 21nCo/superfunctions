@@ -8,6 +8,7 @@ import { wrapWithSchema } from '@superfunctions/db';
 import { kyselyAdapter, memoryAdapter } from '@superfunctions/db/adapters';
 import {
   authFnOAuthProviderPlugin,
+  type OAuthClientRegistrationConfig,
   type OAuthConsentInput,
   type OAuthLoginRequiredInput,
   type OAuthProviderClient,
@@ -125,7 +126,7 @@ export function createInsertControl(database: Adapter) {
 /**
  * The shipped Kysely adapter on an in-memory SQLite database, with one column
  * per schema field. SQLite has no JSON type, so JSON fields are stored as
- * text. The adapter's `create` and `update` fail on SQLite (`selectAll` on an
+ * text, and `id` is the primary key. The adapter's `create` and `update` fail on SQLite (`selectAll` on an
  * insert, `RETURNING "*"`), a packages/db defect outside this package
  * (AUTH-13), so inserts go through Kysely and `update` (used by AuthFn core
  * sessions) runs as `updateMany` and `findOne`. The OAuth store's claims,
@@ -134,7 +135,9 @@ export function createInsertControl(database: Adapter) {
 function sqliteAdapter(): Adapter {
   const sqlite = new Database(':memory:');
   for (const table of createProviderApp().getSchema().schemas) {
-    sqlite.exec(`CREATE TABLE "${table.modelName}" (${Object.keys(table.fields).map((field) => `"${field}"`).join(', ')})`);
+    // `id` is an enforced primary key, as in a migrated database.
+    const columns = Object.keys(table.fields).map((field) => `"${field}"${field === 'id' ? ' PRIMARY KEY' : ''}`);
+    sqlite.exec(`CREATE TABLE "${table.modelName}" (${columns.join(', ')})`);
   }
   const db = new Kysely<Record<string, Record<string, unknown>>>({ dialect: new SqliteDialect({ database: sqlite }) });
   const kysely = kyselyAdapter({
@@ -166,7 +169,9 @@ function sqliteAdapter(): Adapter {
   } as Adapter;
 }
 
-export async function setupProvider(options: { sql?: boolean; clients?: OAuthProviderClient[] } = {}) {
+export async function setupProvider(
+  options: { sql?: boolean; clients?: OAuthProviderClient[]; registration?: OAuthClientRegistrationConfig } = {}
+) {
   const raw = options.sql ? sqliteAdapter() : memoryAdapter({ debug: false });
   // Tests read and write rows the way the server does: through the schema.
   const database = options.sql ? wrapWithSchema(raw, createProviderApp().getSchema()) : raw;
@@ -174,12 +179,13 @@ export async function setupProvider(options: { sql?: boolean; clients?: OAuthPro
   let now = new Date('2026-11-14T00:00:00.000Z');
   const consents: OAuthConsentInput[] = [];
   const logins: OAuthLoginRequiredInput[] = [];
-  const server = createProviderApp().createServer({
+  const createInstance = () => createProviderApp().createServer({
     database: control.database,
     pluginRuntime: {
       oauthProvider: {
         clients: [RFC6749_CLIENT, MCP_HOST, RHOMBUS, ...(options.clients ?? [])],
         resources: RESOURCES,
+        registration: options.registration,
         now: () => now,
         loginRequired: (input) => {
           logins.push(input);
@@ -192,6 +198,7 @@ export async function setupProvider(options: { sql?: boolean; clients?: OAuthPro
       }
     }
   });
+  const server = createInstance();
 
   const coreConfig: AuthFnRuntimeConfig = { database, namespace: 'authfn', plugins: [], scopes: REGISTRY };
   const user = await createUser(coreConfig, { primaryEmail: 'user@example.com' });
@@ -285,6 +292,14 @@ export async function setupProvider(options: { sql?: boolean; clients?: OAuthPro
       body: new URLSearchParams({ token: tokenValue })
     });
 
+  /** RFC 7591 registration request; `ip` is sent as `x-test-ip` for a test `resolveClientIp`. */
+  const register = (metadata: unknown, ip?: string) =>
+    handle('/auth/oauth/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(ip ? { 'x-test-ip': ip } : {}) },
+      body: typeof metadata === 'string' ? metadata : JSON.stringify(metadata)
+    });
+
   /** Authorizes and exchanges, returning the RFC 6749 5.1 token response. */
   const obtainTokens = async (overrides: Record<string, string | undefined> = {}) => {
     const callback = await authorize(overrides);
@@ -315,7 +330,13 @@ export async function setupProvider(options: { sql?: boolean; clients?: OAuthPro
     refresh,
     introspect,
     revoke,
+    register,
     obtainTokens,
+    /** Another server instance on the same storage and clock, with its own in-memory state. */
+    instance: () => {
+      const other = createInstance();
+      return (path: string, init?: RequestInit) => other.router.handle(new Request(`${ORIGIN}${path}`, init));
+    },
     advance: (seconds: number) => {
       now = new Date(now.getTime() + seconds * 1000);
     },

@@ -18,6 +18,7 @@ export function createMetadataRoute(runtime: OAuthProviderRuntime): Route {
     }),
     handler: async (request) => {
       const endpoints = await resolveEndpoints(runtime, request);
+      const registration = runtime.config.registration;
       const scopes = [...new Set(runtime.config.resources.flatMap((resource) => resource.scopes))];
       return Response.json({
         issuer: endpoints.issuer,
@@ -25,6 +26,8 @@ export function createMetadataRoute(runtime: OAuthProviderRuntime): Route {
         token_endpoint: endpoints.token,
         revocation_endpoint: endpoints.revocation,
         introspection_endpoint: endpoints.introspection,
+        ...(registration?.dynamic ? { registration_endpoint: endpoints.registration } : {}),
+        ...(registration?.metadataDocuments ? { client_id_metadata_document_supported: true } : {}),
         scopes_supported: scopes,
         response_types_supported: ['code'],
         response_modes_supported: ['query'],

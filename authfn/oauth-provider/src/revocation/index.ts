@@ -20,7 +20,7 @@ export function createRevocationRoute(runtime: OAuthProviderRuntime): Route {
     meta: createAuthFnRouteMeta('oauthRevoke', 'OAuth 2.0 token revocation', { mode: 'none' }),
     handler: (request) => handleOAuth(async () => {
       const params = await readFormBody(request);
-      const client = authenticateClient(runtime, request, params);
+      const client = await authenticateClient(runtime, request, params);
       const record = await findToken(runtime.store, requireParam(params, 'token'));
       if (record?.clientId === client.clientId) {
         const now = runtime.now();
