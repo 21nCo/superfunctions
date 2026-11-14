@@ -171,6 +171,9 @@ describe("CodexHarnessAdapter outputSchema", () => {
     ["required inside not", { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, notes: { type: "object", properties: { a: { type: "string" } }, not: { type: "object", properties: { a: true }, required: ["a"] } } } }],
     ["required inside if", { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, notes: { type: "object", properties: { a: { type: "string" }, b: { type: "string" } }, if: { type: "object", properties: { a: true }, required: ["a"] }, then: { type: "object", properties: { b: { type: "string" } }, required: ["b"] } } } }],
     ["a $ref inside not", { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, notes: { not: { $ref: "#/$defs/codeAnchor" } } } }],
+    // The conversion does not follow references, so a referenced schema cannot share a value with declared properties.
+    ["a $ref in allOf beside a required property", { ...open(), properties: { ...lensOutputSchema.properties, a: { anyOf: [{ type: "string" }, { type: "null" }] } }, required: [...lensOutputSchema.required, "a"], allOf: [{ $ref: "#/$defs/t" }], $defs: { ...lensOutputSchema.$defs, t: { type: "object", properties: { a: { type: "string" } } } } }],
+    ["a $ref in a finding's allOf that requires its anchor", { ...lensOutputSchema, $defs: { ...lensOutputSchema.$defs, finding: { ...lensOutputSchema.$defs.finding, allOf: [{ $ref: "#/$defs/mustAnchor" }] }, mustAnchor: { type: "object", properties: { anchor: { anyOf: [{ $ref: "#/$defs/codeAnchor" }, { type: "null" }] } }, required: ["anchor"] } } }],
   ])("fails before inference when outputSchema has %s", async (_name, outputSchema) => {
     const { adapter, seen } = recordingAdapter(lensPayload());
     const output = await adapter.run({ ...input, outputSchema });

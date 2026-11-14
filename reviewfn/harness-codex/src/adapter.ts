@@ -206,18 +206,23 @@ function providerSchemaFor(schema: Readonly<Record<string, unknown>>): unknown {
 /** Keywords whose meaning depends on which properties are present; the provider-strict form encodes absence as null. */
 const PRESENCE_KEYWORDS = new Set(["minProperties", "maxProperties", "dependentRequired", "dependentSchemas", "dependencies", "patternProperties", "propertyNames", "unevaluatedProperties"]);
 const NEGATED_OR_CONDITIONAL = new Set(["not", "if", "contains"]);
+const SAME_VALUE = new Set(["allOf", "anyOf", "oneOf", "if", "then", "else", "not"]);
 /**
  * A part of a caller schema that tests whether a property is present, which the provider-strict form cannot preserve.
- * Supported: `required` that lists only properties of the same `type: "object"` schema, outside `not`, `if` and `contains`.
+ * Supported: `required` that lists only properties of the same `type: "object"` schema, outside `not`, `if` and
+ * `contains`; and `$ref` only where no enclosing schema applying to the same value declares properties or required,
+ * because the conversion decides which properties may be null without following references.
  */
-function presenceTest(schema: unknown, conditional = false): string | undefined {
+function presenceTest(schema: unknown, conditional = false, scoped = false): string | undefined {
   if (Array.isArray(schema)) {
-    for (const item of schema) { const found = presenceTest(item, conditional); if (found) return found; }
+    for (const item of schema) { const found = presenceTest(item, conditional, scoped); if (found) return found; }
     return undefined;
   }
   if (!schema || typeof schema !== "object") return undefined;
   const node = schema as Record<string, unknown>;
   if (conditional && (node.$ref !== undefined || (Array.isArray(node.required) && node.required.length))) return "required or $ref inside not, if or contains";
+  if (scoped && node.$ref !== undefined) return "$ref combined with a schema that declares properties or required for the same value";
+  const scopes = scoped || node.properties !== undefined || (Array.isArray(node.required) && node.required.length > 0);
   const declared = node.type === "object" && node.properties && typeof node.properties === "object" ? node.properties : {};
   const undeclared = Array.isArray(node.required) ? node.required.find(name => !Object.hasOwn(declared, String(name))) : undefined;
   if (undeclared !== undefined) return `required ${String(undeclared)} is not a property of the same object schema`;
@@ -225,7 +230,7 @@ function presenceTest(schema: unknown, conditional = false): string | undefined 
     if (PRESENCE_KEYWORDS.has(key)) return key;
     if (["const", "enum", "default", "examples", "required"].includes(key)) continue;
     // Property and definition maps are keyed by names, not keywords.
-    const found = ["properties", "$defs", "definitions"].includes(key) && value && typeof value === "object" ? presenceTest(Object.values(value), conditional) : presenceTest(value, conditional || NEGATED_OR_CONDITIONAL.has(key));
+    const found = ["properties", "$defs", "definitions"].includes(key) && value && typeof value === "object" ? presenceTest(Object.values(value), conditional) : presenceTest(value, conditional || NEGATED_OR_CONDITIONAL.has(key), SAME_VALUE.has(key) && scopes);
     if (found) return found;
   }
   return undefined;
