@@ -162,8 +162,9 @@ export function renderPanelMarkdownReport(report: PanelReport): string {
   for (const slot of report.slots) {
     const run = runs.get(slot.id);
     const harness = run ? `${run.identity.harnessAdapter} ${run.identity.harnessVersion}` : `${slot.harness.adapter} ${slot.harness.version}`;
-    const model = run ? `${run.identity.provider}/${run.identity.model}` : `${slot.inference.provider}/${slot.inference.model}`;
-    lines.push(`| ${escape(slot.id)} | ${slot.stage} | ${escape(slot.lens)} | ${escape(harness)} | ${escape(model)} | ${run?.terminal ?? "not run"} | ${run ? escape(slotRunReason(run, report, slots)) : ""} |`);
+    const model = run ? `${run.identity.provider}/${run.identity.model}${run.identity.modelVerified === false ? " (unverified)" : ""}` : `${slot.inference.provider}/${slot.inference.model}`;
+    const reason = run ? [slotRunReason(run, report, slots), ...(run.limitations?.length ? [`limitations: ${run.limitations.join(", ")}`] : [])].filter(Boolean).join("; ") : "";
+    lines.push(`| ${escape(slot.id)} | ${slot.stage} | ${escape(slot.lens)} | ${escape(harness)} | ${escape(model)} | ${run?.terminal ?? "not run"} | ${escape(reason)} |`);
   }
   lines.push("");
   const requirements = report.requirementsReport;
