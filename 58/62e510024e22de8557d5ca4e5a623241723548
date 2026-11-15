@@ -1,0 +1,45 @@
+testfn/.conduct/STATUS.md
+  s_69bfd721a71215::t_da5ef8b90ff538 3-4
+testfn/SPEC.md
+  s_69bfd721a71215::t_37d51a6bb91330 709-710,714,728,747,761,782,796,819-820
+testfn/python/testfn/visual.py
+  s_69bfd721a71215::t_c095dea9c03357 39-42,47-61
+testfn/python/tests/test_visual.py
+  s_69bfd721a71215::t_7ec6ae2e2ab2d9 62-84
+testfn/typescript/README.md
+  s_69bfd721a71215::t_a9637f9cf43145 156,209,268
+testfn/typescript/src/integrations/json-adapter.ts
+  s_69bfd721a71215::t_281001d1368c02 60-70,96
+testfn/typescript/src/integrations/playwright-adapter.ts
+  s_69bfd721a71215::t_166a6781e691e9 61-62
+testfn/typescript/src/integrations/process.ts
+  s_69bfd721a71215::t_a170c2587d5cde 29-74,140-146,167-174,192-195
+testfn/typescript/src/storage/artifacts.ts
+  s_69bfd721a71215::t_23420bb7334b2f 10-16,23-33,44-54,57,88
+testfn/typescript/src/storage/backends.ts
+  s_69bfd721a71215::t_053346c921cf4a 26-27,132-134,238-240
+testfn/typescript/src/storage/test-storage.ts
+  s_69bfd721a71215::t_0617558a92a83a 4-5,65,74-89
+testfn/typescript/tests/framework-failure-contract.test.ts
+  s_69bfd721a71215::t_fe9da5886598bb 5-6,11,70-73,77-115
+testfn/typescript/tests/process-lifecycle.test.ts
+  s_69bfd721a71215::t_f1790bd21a43d9 3,90-178
+testfn/typescript/tests/storage.test.ts
+  s_69bfd721a71215::t_a5edbf94633a23 271-330
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5862e510024e22de8557d5ca4e5a623241723548",
+  "prompts": {},
+  "sessions": {
+    "s_69bfd721a71215": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_69bfd721a71215",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
