@@ -161,6 +161,7 @@ describe("edits during a full read", () => {
 
     const followUp = pending.shift();
     expect(followUp).toBeDefined();
+    expect(isIdProbe(followUp!.query)).toBe(false);
     followUp!.resolve({
       data: [
         { id: "notes:a", title: "A", body: "1" },

@@ -50,16 +50,25 @@ export type DatafnImportLocalHook = (
   relatedIds: Record<string, string[]>,
 ) => Promise<void> | void;
 
-/** The resources at either end of each many-many join store. */
+/**
+ * The resources at either end of each many-many join store, under the key
+ * the local stores use (`relation`, else "rel") and the canonical one
+ * (`relation`, else `inverse`, `joinTable` or `to_<target>`).
+ */
 function joinStoreEndpoints(schema: DatafnSchema): Map<string, { from: string; to: string }> {
   const endpoints = new Map<string, { from: string; to: string }>();
   for (const relation of schema.relations ?? []) {
     if (relation.type !== "many-many") continue;
     const froms = Array.isArray(relation.from) ? relation.from : [relation.from];
     const tos = Array.isArray(relation.to) ? relation.to : [relation.to];
-    const relName = relation.relation ?? "rel";
     for (const from of froms) {
-      for (const to of tos) endpoints.set(getJoinStoreKey(from, relName, to), { from, to });
+      for (const to of tos) {
+        const names = new Set([
+          relation.relation ?? "rel",
+          relation.relation ?? relation.inverse ?? relation.joinTable ?? `to_${to}`,
+        ]);
+        for (const name of names) endpoints.set(getJoinStoreKey(from, name, to), { from, to });
+      }
     }
   }
   return endpoints;

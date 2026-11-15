@@ -22,7 +22,9 @@ class MockBroadcastChannel {
     MockBroadcastChannel.channels.get(name)!.push(this);
   }
 
-  postMessage(data: unknown): void {
+  postMessage(message: unknown): void {
+    // A real channel delivers a structured clone, never the sender's objects.
+    const data = structuredClone(message);
     const channels = MockBroadcastChannel.channels.get(this.name) || [];
     // Simulate async message delivery
     setTimeout(() => {

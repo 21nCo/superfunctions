@@ -1,4 +1,5 @@
 import { DATAFN_ROUTE_WS_PROTOCOL, DATAFN_ROUTE_WS_TICKET_PREFIX } from "@datafn/core";
+import { runSearchIndexUpdate } from "../searchIndexQueue.js";
 import { DefaultHttpTransport } from "../transport/http.js";
 /**
  * Sync Engine
@@ -909,7 +910,9 @@ export class SyncEngine {
               for (const [resource, records] of Object.entries(result.data)) {
                 if (records.length > 0) {
                   try {
-                    await searchProvider.updateIndices({ resource, records, operation: "upsert" });
+                    await runSearchIndexUpdate(searchProvider, resource, () =>
+                      searchProvider.updateIndices({ resource, records, operation: "upsert" }),
+                    );
                   } catch {
                     failedSearchIndexResources.add(resource);
                     await this.clearSearchIndexComplete(resource);
@@ -1043,11 +1046,14 @@ export class SyncEngine {
           const records = cloneResult.data?.[table] ?? [];
           if (records.length > 0) {
             try {
-              await this.searchProvider.updateIndices({
-                resource: table,
-                records,
-                operation: "upsert",
-              });
+              const provider = this.searchProvider;
+              await runSearchIndexUpdate(provider, table, () =>
+                provider.updateIndices({
+                  resource: table,
+                  records,
+                  operation: "upsert",
+                }),
+              );
             } catch {
               searchIndexComplete = false;
               await this.clearSearchIndexComplete(table);
@@ -1327,7 +1333,10 @@ export class SyncEngine {
               for (const [resource, records] of Object.entries(lastResult.records as Record<string, unknown[]>)) {
                 if ((records as unknown[]).length > 0) {
                   try {
-                    await this.searchProvider.updateIndices({ resource, records: records as Record<string, unknown>[], operation: "upsert" });
+                    const provider = this.searchProvider;
+                    await runSearchIndexUpdate(provider, resource, () =>
+                      provider.updateIndices({ resource, records: records as Record<string, unknown>[], operation: "upsert" }),
+                    );
                   } catch {
                     await this.clearSearchIndexComplete(resource);
                     // fail-soft
@@ -1339,7 +1348,10 @@ export class SyncEngine {
               for (const [resource, ids] of Object.entries(lastResult.deleted as Record<string, string[]>)) {
                 for (const id of ids as string[]) {
                   try {
-                    await this.searchProvider.updateIndices({ resource, records: [{ id }], operation: "delete" });
+                    const provider = this.searchProvider;
+                    await runSearchIndexUpdate(provider, resource, () =>
+                      provider.updateIndices({ resource, records: [{ id }], operation: "delete" }),
+                    );
                   } catch {
                     await this.clearSearchIndexComplete(resource);
                     // fail-soft

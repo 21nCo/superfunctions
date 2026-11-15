@@ -1035,19 +1035,24 @@ function _buildRawClient<S extends DatafnSchema>(
               { path: "searchProvider.clearIndices", resource },
             );
           }
-          await config.searchProvider?.clearIndices?.(resource);
-          const records = await resolvedStorage.listRecords(resource);
-          if (records.length > 0) {
-            await config.searchProvider!.updateIndices({
+          // The rebuild takes its turn with the other index updates of this
+          // resource, so an update queued meanwhile lands after it.
+          const provider = config.searchProvider!;
+          await runSearchIndexUpdate(provider, resource, async () => {
+            await provider.clearIndices?.(resource);
+            const records = await resolvedStorage.listRecords(resource);
+            if (records.length > 0) {
+              await provider.updateIndices({
+                resource,
+                records,
+                operation: "upsert",
+              });
+            }
+            await markSearchIndexCurrent({
+              storage: resolvedStorage,
               resource,
-              records,
-              operation: "upsert",
+              fingerprint,
             });
-          }
-          await markSearchIndexCurrent({
-            storage: resolvedStorage,
-            resource,
-            fingerprint,
           });
           hydratedSearchResources.add(resource);
         })().finally(() => {

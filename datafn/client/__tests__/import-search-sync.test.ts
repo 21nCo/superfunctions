@@ -318,6 +318,69 @@ describe("importData with cloneUp", () => {
 });
 
 describe("importData edge cases", () => {
+  it("runs a rebuild that starts during the import's index update after it", async () => {
+    const storage = await readyStorage();
+    const provider = createPersistentProvider();
+    const releaseImport = holdFirstIndexUpdate(provider);
+    const client = localClient(storage, provider);
+
+    const importing = client.importData({
+      ...payload,
+      resources: { notes: [{ id: "notes:new", title: "Imported" }] },
+    });
+    await vi.waitFor(() => expect(provider.updateIndices).toHaveBeenCalledTimes(1));
+    // No index marker yet, so this search rebuilds the index.
+    const searching = searchIds(client, "edited");
+    const editing = client.table("notes").mutate({
+      operation: "merge",
+      id: "notes:new",
+      record: { title: "Edited" },
+    } as any);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(provider.clearIndices).not.toHaveBeenCalled();
+    releaseImport();
+    await Promise.all([importing, editing]);
+
+    expect(await searching).toEqual(["notes:new"]);
+    expect(provider.documents.get("notes")?.get("notes:new")).toBe("edited");
+  });
+
+  it("announces join rows stored under the canonical key of a relation without a name", async () => {
+    const storage = new MemoryStorageAdapter(["notes", "tags"]);
+    const client = createDatafnClient({
+      schema: {
+        resources: [
+          { name: "notes", version: 1, fields: [{ name: "title", type: "string" }] },
+          { name: "tags", version: 1, fields: [{ name: "label", type: "string" }] },
+        ],
+        relations: [{ from: "notes", to: "tags", type: "many-many", inverse: "notes" } as any],
+      },
+      clientId: "import-unnamed-join",
+      storage,
+      sync: { mode: "local-only", offlinability: true },
+    });
+    clients.push(client as any);
+    const events: any[] = [];
+    client.subscribe((event: any) => events.push(event));
+
+    for (const key of ["join_notes_notes_tags", "join_notes_rel_tags"]) {
+      events.length = 0;
+      await client.importData({
+        version: 1,
+        exportedAt: new Date(0).toISOString(),
+        schema: [],
+        resources: {},
+        joins: { [key]: [{ from: "notes:1", to: "tags:1" }] },
+      });
+      expect(
+        events.filter((e) => e.type === "mutation_applied").map((e) => [e.resource, e.action, e.ids]),
+      ).toEqual([
+        ["notes", "relate", ["notes:1"]],
+        ["tags", "relate", ["tags:1"]],
+      ]);
+    }
+  });
+
   it("reads a large import back for indexing in one storage read", async () => {
     const storage = await readyStorage();
     const provider = createPersistentProvider();
