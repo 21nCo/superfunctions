@@ -1225,9 +1225,15 @@ describe('in-process completion serialization bound', () => {
 });
 
 describe('expiry cleanup of a session whose object another file shares', () => {
-  it('keeps an object a dedup version of another file references after the session\'s own version was deleted', async () => {
+  /**
+   * A publishes a version but its session stays pending; B dedups onto A's
+   * object; deleting A's file keeps the shared object and fails before it
+   * removes A's session. Returns the app with A's session pending.
+   */
+  async function setupSharedObject() {
     const base = memoryAdapter();
     const failNext = new Set<string>();
+    const findManyModels: string[] = [];
     const database = {
       ...base,
       async update(params: Parameters<Adapter['update']>[0]) {
@@ -1237,6 +1243,7 @@ describe('expiry cleanup of a session whose object another file shares', () => {
         return base.update(params);
       },
       async findMany(params: Parameters<Adapter['findMany']>[0]) {
+        findManyModels.push(params.model);
         if (params.model === 'fileArtifacts' && params.where?.length && failNext.delete('artifact-list')) {
           throw new Error('transient list failure');
         }
@@ -1265,13 +1272,51 @@ describe('expiry cleanup of a session whose object another file shares', () => {
     expect(await rawSession(database, a.uploadSessionId)).not.toBeNull();
     expect(storageFixture.objects.has(keyA)).toBe(true);
 
-    await database.update({
-      model: 'uploadSessions',
-      where: [{ field: 'uploadSessionId', operator: 'eq', value: a.uploadSessionId }],
-      data: { expiresAt: new Date(Date.now() - 1000).toISOString() },
-      namespace: 'filefn',
-    });
+    const expire = (uploadSessionId: string) =>
+      database.update({
+        model: 'uploadSessions',
+        where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
+        data: { expiresAt: new Date(Date.now() - 1000).toISOString() },
+        namespace: 'filefn',
+      });
+    return { database, storageFixture, app, a, b, keyA, expire, findManyModels };
+  }
+
+  it('keeps an object a dedup version of another file references after the session\'s own version was deleted', async () => {
+    const { database, storageFixture, app, a, b, keyA, expire } = await setupSharedObject();
+    await expire(a.uploadSessionId);
     await app.fileFn.services.uploads.cleanupExpiredSessions();
+    expect(await rawSession(database, a.uploadSessionId)).toBeNull();
+    expect(storageFixture.objects.has(keyA)).toBe(true);
+    expect(await app.readBytes(b.fileId, 'user_b')).toBe('shared bytes');
+  });
+
+  it('runs one reference lookup per sweep, deleting unreferenced own objects and keeping a shared one', async () => {
+    const { database, storageFixture, app, a, b, keyA, expire, findManyModels } = await setupSharedObject();
+    await expire(a.uploadSessionId);
+
+    // Three more expired sessions, each with its own unpublished final object
+    // (as a refused completion whose delete failed leaves behind).
+    const orphans = [];
+    for (const user of ['user_c', 'user_d', 'user_e']) {
+      const staged = await app.stage(user, undefined, `orphan of ${user}`);
+      const key = (await rawSession(database, staged.uploadSessionId))!.storageKey;
+      storageFixture.objects.set(key, Buffer.from(`orphan of ${user}`));
+      await expire(staged.uploadSessionId);
+      orphans.push({ uploadSessionId: staged.uploadSessionId, key });
+    }
+
+    findManyModels.length = 0;
+    const result = await app.fileFn.services.uploads.cleanupExpiredSessions();
+    expect(result.deletedSessions).toBe(4);
+    expect(findManyModels.filter((model) => model === 'fileVersions')).toHaveLength(1);
+    expect(findManyModels.filter((model) => model === 'fileArtifacts')).toHaveLength(1);
+    expect(findManyModels.filter((model) => model === 'files')).toHaveLength(1);
+
+    for (const orphan of orphans) {
+      expect(storageFixture.objects.has(orphan.key)).toBe(false);
+      expect(await rawSession(database, orphan.uploadSessionId)).toBeNull();
+    }
     expect(await rawSession(database, a.uploadSessionId)).toBeNull();
     expect(storageFixture.objects.has(keyA)).toBe(true);
     expect(await app.readBytes(b.fileId, 'user_b')).toBe('shared bytes');

@@ -281,15 +281,29 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
   // pre-allocated versionId) may share a key.
   // Returns false when the delete failed, so the caller keeps the session as the
   // record of the object and a retried completion or the expiry sweep tries again.
-  async function deleteOwnUnpublishedObject(session: UploadSession): Promise<boolean> {
+  // `referenced` is a reference lookup the caller already ran over this
+  // session's own ref (the expiry sweep runs one for all its sessions);
+  // without it, this runs its own.
+  function ownObjectRef(session: UploadSession): string | undefined {
     if (!storage.deleteObject || !session.completionVersionId) {
+      return undefined;
+    }
+    return storageRef(resolveStorageTarget(policies.get(session.policy) ?? {}), session.storageKey);
+  }
+
+  async function deleteOwnUnpublishedObject(
+    session: UploadSession,
+    referenced?: ReadonlySet<string>,
+  ): Promise<boolean> {
+    const ownRef = ownObjectRef(session);
+    if (!storage.deleteObject || ownRef === undefined) {
       return true;
     }
     const policy = policies.get(session.policy);
     const storageTarget = policy ? resolveStorageTarget(policy) : undefined;
-    const ownRef = storageRef(resolveStorageTarget(policy ?? {}), session.storageKey);
-    const referenced = await findReferencedStorageRefs({ db, namespace, policies }, new Set([ownRef]));
-    if (referenced.has(ownRef)) {
+    const references =
+      referenced ?? (await findReferencedStorageRefs({ db, namespace, policies }, new Set([ownRef])));
+    if (references.has(ownRef)) {
       return true;
     }
     try {
@@ -1198,6 +1212,15 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         let deletedSessions = 0;
         let abortedMultipart = 0;
 
+        // One reference lookup for the whole sweep: the own object of every
+        // expired session is kept while any version or artifact references it.
+        const candidateRefs = new Set<string>();
+        for (const session of expiredSessions) {
+            const ownRef = ownObjectRef(session);
+            if (ownRef !== undefined) candidateRefs.add(ownRef);
+        }
+        const referencedRefs = await findReferencedStorageRefs({ db, namespace, policies }, candidateRefs);
+
         for (const session of expiredSessions) {
             const policy = policies.get(session.policy);
             const storageTarget = policy ? resolveStorageTarget(policy) : undefined;
@@ -1219,7 +1242,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             // with the session. If any cannot be deleted, keep the session and
             // its part rows for the next sweep.
             const partsDeleted = await deleteProxyTempPartObjects(session);
-            const objectDeleted = await deleteOwnUnpublishedObject(session);
+            const objectDeleted = await deleteOwnUnpublishedObject(session, referencedRefs);
             if (!partsDeleted || !objectDeleted) {
                 continue;
             }
