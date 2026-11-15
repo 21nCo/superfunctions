@@ -1,4 +1,4 @@
-import { type PreflightResult, type PublishRequest, type PublishResult, type ReportPublisher } from "@superfunctions/reviewfn-core";
+import { isPanelReport, panelReportCanceled, type PanelReport, type PreflightResult, type PublishRequest, type PublishResult, type ReportPublisher } from "@superfunctions/reviewfn-core";
 
 import { publicationLease } from "./lease.js";
 import { GitHubApi } from "./api.js";
@@ -9,6 +9,14 @@ interface Comment { id: number; body?: string; user?: { login: string } }
 interface CommentPage extends Array<Comment> {}
 interface CheckRun { id: number; external_id?: string }
 interface CheckRunsResponse { check_runs: CheckRun[] }
+
+/**
+ * A publication request for a 0.1 review report or a panel report. Both render into one summary comment (per 0.1
+ * profile, or the panel's own, so a later run replaces it) and one neutral check per profile and run ID.
+ */
+export interface GitHubPublishRequest extends Omit<PublishRequest, "report"> {
+  report: PublishRequest["report"] | PanelReport;
+}
 
 export interface GitHubPublisherOptions {
   api: GitHubApi;
@@ -29,7 +37,7 @@ export class GitHubAdvisoryPublisher implements ReportPublisher {
     return pull.head.sha;
   }
 
-  public async publish(request: PublishRequest): Promise<PublishResult> {
+  public async publish(request: GitHubPublishRequest): Promise<PublishResult> {
     if (request.report.change.headCommit !== request.expectedHead || request.report.change.pullRequest !== this.options.pullRequest || this.options.api.endpoint("").toLowerCase() !== `/repos/${githubRepositoryIdentity(request.report.change.repositoryId, this.options.api.repositoryHost())}`) return { status: "failed", error: "Report identity does not match the publication repository, pull request and expected head." };
     const key = this.options.api.endpoint(`/pulls/${this.options.pullRequest}`);
     const previous = locks.get(key) ?? Promise.resolve();
@@ -42,12 +50,18 @@ export class GitHubAdvisoryPublisher implements ReportPublisher {
     finally { release(); if (locks.get(key) === tail) locks.delete(key); }
   }
 
-  private async publishSerialized(request: PublishRequest): Promise<PublishResult> {
-    if (request.report.execution !== "completed") return { status: "failed", error: "Only completed assessments may be published." };
+  private async publishSerialized(request: GitHubPublishRequest): Promise<PublishResult> {
+    // A panel report has no execution state: a canceled run records the cancellation as a coverage reason. It owns only
+    // the panel profile's summary and check, so it can never replace another profile's.
+    if (isPanelReport(request.report)) {
+      if (request.profile !== "panel") return { status: "failed", error: `A panel report publishes only under the panel profile, not ${JSON.stringify(request.profile)}.` };
+      if (panelReportCanceled(request.report)) return { status: "failed", error: "The panel run was canceled; a canceled panel report is never published." };
+    } else if (request.report.execution !== "completed") return { status: "failed", error: "Only completed assessments may be published." };
     if (!/^[a-zA-Z0-9_-]{1,80}$/.test(request.profile)) throw new Error("Unsafe profile.");
     const current = await this.currentHead();
     if (current !== request.expectedHead) return { status: "stale", error: `PR head is ${current}, not reviewed head ${request.expectedHead}.` };
-    const marker = `<!-- reviewfn:${request.profile} -->`;
+    // A panel report keeps its own summary marker, so no 0.1 profile, even one named panel, can replace it.
+    const marker = isPanelReport(request.report) ? "<!-- reviewfn-panel -->" : `<!-- reviewfn:${request.profile} -->`;
     const runMarker = `<!-- reviewfn-run:${request.report.runId} -->`;
     const body = `${marker}\n${runMarker}\n${request.rendered}`;
     if (Buffer.byteLength(body) > 60_000) throw new Error("Report exceeds GitHub comment budget; retain the full local artifact and publish a bounded report.");
@@ -83,9 +97,9 @@ export class GitHubAdvisoryPublisher implements ReportPublisher {
     throw new Error("GitHub comment pagination exceeded 10,000 comments.");
   }
 
-  private async publishCheck(request: PublishRequest): Promise<void> {
+  private async publishCheck(request: GitHubPublishRequest): Promise<void> {
     const conclusion = "neutral";
-    const externalId = `${request.profile}:${request.report.runId}`;
+    const externalId = isPanelReport(request.report) ? `panel-report:${request.report.runId}` : `${request.profile}:${request.report.runId}`;
     const runs: CheckRun[] = [];
     for (let page = 1; page <= 100; page++) {
       const existing = await this.options.api.request<CheckRunsResponse>("GET", this.options.api.endpoint(`/commits/${request.expectedHead}/check-runs?check_name=${encodeURIComponent(`ReviewFn / ${request.profile}`)}&per_page=100&page=${page}`));

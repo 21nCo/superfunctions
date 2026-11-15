@@ -25,3 +25,4 @@ export * from "./panel/policy.js";
 export * from "./panel/prompt.js";
 export * from "./panel/workspace.js";
 export * from "./panel/coordinator.js";
+export * from "./panel/render.js";

@@ -12,6 +12,7 @@ const pages = [
   ["github-action", "GitHub Action and publication", "Set up a credential-free review job and a separate trusted publisher."],
   ["report-schema", "Report schema", "Execution, coverage, verdict, assessments, evidence, and findings."],
   ["panel-report-schema", "Panel report schema", "Panel policy, slot identity, slot runs, panel findings, and the panel report."],
+  ["panel", "Panel review CLI", "Run a review panel, its exit codes, harness adapters, outputs and report rendering."],
   ["evaluation", "Evaluation contract", "Measure frozen cases and report comparison confounds."],
 ];
 for (const [slug, title, description] of pages) {

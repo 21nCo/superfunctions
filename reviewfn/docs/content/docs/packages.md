@@ -5,7 +5,7 @@ description: Choose the ReviewFn package for each integration layer.
 
 | Package | Consumer responsibility |
 | --- | --- |
-| `@superfunctions/reviewfn-cli` | `reviewfn` binary for init, preflight, review, render, publish, and evaluate. |
+| `@superfunctions/reviewfn-cli` | `reviewfn` binary for init (and `init --panel`), preflight, review, panel, render, report (and `report --panel`), publish, and evaluate. See the [panel reference](/docs/reference/panel) for `panel`. |
 | `@superfunctions/reviewfn-core` | Versioned contracts, identity, policy, coordinator, validation, artifacts, and rendering. |
 | `@superfunctions/reviewfn-harness-codex` | Supported Codex CLI capability checks, bounded execution, and structured output normalization. |
 | `@superfunctions/reviewfn-context-composio` | Explicit-account Linear issue, comment, and document context snapshots. |

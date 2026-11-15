@@ -32,6 +32,18 @@ Reports are written to `.reviewfn/output/report.json` and `.reviewfn/output/repo
 
 For a connection-free setup, retain only the `repository-markdown` context adapter. For Linear, add `composio-linear` with an explicit `account`, `expectedWorkspace`, and `issue`. ReviewFn never embeds a personal connected-account ID.
 
+## Panel review
+
+`reviewfn panel` runs several harness slots over the same frozen change and combines their findings into one panel report. `reviewfn init --panel` writes a `.reviewfn/panel.json` template to start from.
+
+```sh
+npx reviewfn init --panel
+npx reviewfn panel --base origin/main --head HEAD --issue ENG-123
+npx reviewfn report --panel
+```
+
+The run writes `.reviewfn/output/panel-report.json` and `.reviewfn/output/panel-report.md`, with its evidence under `.reviewfn/artifacts`. Harness adapters resolve only from a fixed table (`codex`, `claude-code`, `cli`). The Codex adapter ships as a direct dependency of the CLI; the `claude-code` and `cli` packages are not published yet and will resolve once installed next to the CLI. A slot whose adapter package is missing fails preflight with `REVIEWFN_HARNESS_NOT_INSTALLED`. The exit code is 0 for complete coverage, 2 for incomplete coverage or an unmet quorum, 3 for a failed preflight, 4 for a canceled run and 1 for any other error. The verdict never changes it. See [panel review](./docs/panel.md).
+
 ## Guarantees
 
 - Run identity records base, head, merge-base, diff, context, policy, prompt, harness, model and budget provenance.

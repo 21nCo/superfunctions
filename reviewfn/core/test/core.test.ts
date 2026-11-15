@@ -3,9 +3,10 @@ import * as fileSystem from "node:fs/promises";
 vi.mock("node:fs/promises", async importOriginal => ({ ...await importOriginal<typeof import("node:fs/promises")>() }));
 import * as safeFiles from "../src/safe-files.js";
 
-import { DEFAULT_CONFIG, DEFAULT_POLICY, FileArtifactStore, RepositoryMarkdownContextAdapter, applyRepositoryPolicy, buildReviewPrompt, deriveVerdict, digestJson, findingFingerprint, validateConfig, validateReport, type ReviewReport } from "../src/index.js";
+import { DEFAULT_CONFIG, DEFAULT_POLICY, FileArtifactStore, PANEL_REPORT_COPY_NAMES, RepositoryMarkdownContextAdapter, applyRepositoryPolicy, buildReviewPrompt, deriveVerdict, digestJson, findingFingerprint, validateConfig, validateReport, type ReviewReport } from "../src/index.js";
 import { readFile, mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { realpathSync } from "node:fs";
 import path from "node:path";
 
 function report(): ReviewReport {
@@ -107,6 +108,325 @@ it("expires the CLI JSON and Markdown report copies", async () => {
   expect((await store.deleteExpired(new Date(Date.now() + 2 * 86_400_000))).errors).toEqual([]);
   await expect(readFile(path.join(root, "report.json"))).rejects.toThrow();
   await expect(readFile(path.join(root, "report.md"))).rejects.toThrow();
+});
+
+it("expires panel report copies separately from the 0.1 report copies in the same directory", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-retention-"));
+  const review = new FileArtifactStore(path.join(root, "artifacts"), root);
+  const panel = new FileArtifactStore(path.join(root, "artifacts"), root, PANEL_REPORT_COPY_NAMES);
+  await review.writeReportCopies("review-json", "review-md", 30);
+  await panel.writeReportCopies("panel-json", "panel-md", 1);
+  expect(await readFile(path.join(root, "panel-report.json"), "utf8")).toBe("panel-json");
+  // The 0.1 store neither sees nor expires the panel copies.
+  expect((await review.deleteExpired(new Date(Date.now() + 2 * 86_400_000))).errors).toEqual([]);
+  expect(await readFile(path.join(root, "panel-report.md"), "utf8")).toBe("panel-md");
+  expect((await panel.deleteExpired(new Date(Date.now() + 2 * 86_400_000))).errors).toEqual([]);
+  await expect(readFile(path.join(root, "panel-report.json"))).rejects.toThrow();
+  await expect(readFile(path.join(root, "panel-report.md"))).rejects.toThrow();
+  expect(await readFile(path.join(root, "report.json"), "utf8")).toBe("review-json");
+  expect(() => new FileArtifactStore(root, root, { json: "../report.json", markdown: "report.md" })).toThrow(/Unsafe report copy name/);
+});
+
+// macOS tmpdir() is /var/folders/..., an alias of /private/var/folders/... that safeDirectory permits.
+const temporaryAlias = realpathSync(tmpdir()) !== path.resolve(tmpdir());
+it.skipIf(!temporaryAlias)("expires panel report copies written through one spelling of the output directory and cleaned through another", async () => {
+  const lexical = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-alias-"));
+  const physical = realpathSync(lexical);
+  expect(physical).not.toBe(lexical);
+  const artifacts = path.join(physical, "artifacts");
+  await new FileArtifactStore(artifacts, path.join(lexical, "out"), PANEL_REPORT_COPY_NAMES).writeReportCopies("panel-json", "panel-md", 1);
+  const cleanup = new FileArtifactStore(artifacts, path.join(physical, "out"), PANEL_REPORT_COPY_NAMES);
+  expect((await cleanup.deleteExpired()).errors).toEqual([]);
+  expect(await readFile(path.join(physical, "out", "panel-report.md"), "utf8")).toBe("panel-md");
+  expect((await cleanup.deleteExpired(new Date(Date.now() + 2 * 86_400_000))).errors).toEqual([]);
+  await expect(readFile(path.join(physical, "out", "panel-report.json"))).rejects.toThrow();
+  await expect(readFile(path.join(physical, "out", "panel-report.md"))).rejects.toThrow();
+  expect(await fileSystem.readdir(path.join(physical, "out"))).toEqual([]);
+});
+
+const DAY = 86_400_000;
+
+/** A store whose waits for a busy output-directory lock are observable: `waiting` resolves at its first wait, which lasts until `proceed()`. */
+class WaitingStore extends FileArtifactStore {
+  public readonly waiting: Promise<void>;
+  public proceed!: () => void;
+  private signal!: () => void;
+  private readonly proceeding: Promise<void>;
+  public constructor(root: string, output: string) {
+    super(root, output, PANEL_REPORT_COPY_NAMES);
+    this.waiting = new Promise(resolve => { this.signal = resolve; });
+    this.proceeding = new Promise(resolve => { this.proceed = resolve; });
+  }
+  protected override async outputLockRetry(): Promise<void> { this.signal(); await this.proceeding; }
+}
+
+/** Pause the first call of `spied` that `matches` once armed; `reached` resolves when it pauses, `release()` lets it go on. */
+function pauseFirst<T extends (...args: never[]) => Promise<unknown>>(module: Record<string, unknown>, name: string, matches: (...args: Parameters<T>) => boolean, after = false) {
+  let reached!: () => void; let release!: () => void;
+  const paused = new Promise<void>(resolve => { reached = resolve; });
+  const released = new Promise<void>(resolve => { release = resolve; });
+  const original = module[name] as T;
+  let armed = false;
+  const spy = vi.spyOn(module as never, name as never).mockImplementation((async (...args: Parameters<T>) => {
+    const hit = armed && matches(...args);
+    if (hit) armed = false;
+    if (hit && !after) { reached(); await released; }
+    const result = await original(...args);
+    if (hit && after) { reached(); await released; }
+    return result;
+  }) as never);
+  return { arm: () => { armed = true; }, paused, release, restore: () => spy.mockRestore() };
+}
+
+it("skips panel report-copy expiry for an output directory that does not exist, without creating it", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-missing-"));
+  const store = new FileArtifactStore(path.join(root, "artifacts"), path.join(root, "missing"), PANEL_REPORT_COPY_NAMES);
+  expect(await store.deleteExpired(new Date(Date.now() + 2 * DAY))).toEqual({ deleted: [], errors: [] });
+  expect(await fileSystem.readdir(root)).toEqual(["artifacts"]);
+});
+
+it("removes staged panel copies an interrupted write left in the output directory, through any artifact store, but no other copy set's, and refuses a symlinked directory", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-staged-"));
+  await new FileArtifactStore(path.join(root, "artifacts"), root, PANEL_REPORT_COPY_NAMES).writeReportCopies("json", "md", 30);
+  const stamp = "01234567-89ab-cdef-0123-456789abcdef";
+  // Another copy set's staged copy is covered by that set's lock, not the panel lock, so panel cleanup leaves it.
+  const kept = [".reviewfn-copy-notes.txt", `.reviewfn-copy.audit.${stamp}.json`];
+  for (const entry of [`.reviewfn-copy.panel-report.${stamp}.json`, `.reviewfn-copy.panel-report.${stamp}.md`, ...kept]) await writeFile(path.join(root, entry), "interrupted report");
+  // Every copy write holds the directory's lock, so under it no staged copy is in flight, whichever store staged it.
+  expect(await new FileArtifactStore(path.join(root, "other"), root, PANEL_REPORT_COPY_NAMES).deleteExpired()).toEqual({ deleted: [], errors: [] });
+  expect((await fileSystem.readdir(root)).sort()).toEqual([".panel-report-copies", ...kept, "artifacts", "other", "panel-report.json", "panel-report.md"].sort());
+  // A symlinked copies directory is refused, not followed, by cleanup and by writes.
+  await mkdir(path.join(root, "real"));
+  await writeFile(path.join(root, "real", `.reviewfn-copy.panel-report.${stamp}.json`), "elsewhere");
+  await symlink(path.join(root, "real"), path.join(root, "link"));
+  const linked = new FileArtifactStore(path.join(root, "artifacts"), path.join(root, "link"), PANEL_REPORT_COPY_NAMES);
+  expect((await linked.deleteExpired()).errors.join()).toMatch(/symlink/);
+  await expect(linked.writeReportCopies("json", "md", 30)).rejects.toThrow(/symlink/);
+  expect(await fileSystem.readdir(path.join(root, "real"))).toEqual([`.reviewfn-copy.panel-report.${stamp}.json`]);
+});
+
+describe("one lock and one retention record per panel output directory", () => {
+  it.each([false, true])("never deletes copies a write retains while an expiring cleanup of the directory runs (directory recreated: %s)", async recreated => {
+    const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-expiry-race-"));
+    const output = path.join(root, "out");
+    const a = new FileArtifactStore(path.join(root, "a"), output, PANEL_REPORT_COPY_NAMES);
+    await a.writeReportCopies("pair-json", "pair-md", 1);
+    if (recreated) { await fileSystem.rm(output, { recursive: true }); await mkdir(output); }
+    const b = new WaitingStore(path.join(root, "b"), output);
+    // Pause A's cleanup at its first read in the output directory, before it reads either copy.
+    const pause = pauseFirst<typeof safeFiles.safeRead>(safeFiles, "safeRead", file => path.dirname(path.resolve(file)) === output);
+    try {
+      pause.arm();
+      const cleaning = a.deleteExpired(new Date(Date.now() + 2 * DAY));
+      await pause.paused;
+      // B writes the same bytes with 30-day retention; it waits for A's cleanup to release the directory.
+      const writing = b.writeReportCopies("pair-json", "pair-md", 30);
+      await Promise.race([b.waiting, writing]);
+      pause.release();
+      expect((await cleaning).errors).toEqual([]);
+      b.proceed();
+      await writing;
+    } finally { pause.restore(); }
+    expect(await readFile(path.join(output, "panel-report.json"), "utf8")).toBe("pair-json");
+    expect(await readFile(path.join(output, "panel-report.md"), "utf8")).toBe("pair-md");
+    expect(await a.deleteExpired(new Date(Date.now() + 2 * DAY))).toEqual({ deleted: [], errors: [] });
+    expect((await fileSystem.readdir(output)).sort()).toEqual([".panel-report-copies", "panel-report.json", "panel-report.md"]);
+  });
+
+  it("serializes two artifact stores' writes, so a write paused between its Markdown and JSON renames never ends in a mixed pair", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-write-race-"));
+    const output = path.join(root, "out");
+    const a = new FileArtifactStore(path.join(root, "a"), output, PANEL_REPORT_COPY_NAMES);
+    const b = new WaitingStore(path.join(root, "b"), output);
+    const pause = pauseFirst<typeof fileSystem.rename>(fileSystem, "rename", (_from, to) => String(to) === path.join(output, "panel-report.md"), true);
+    try {
+      pause.arm();
+      const writingA = a.writeReportCopies("a-json", "a-md", 30);
+      await pause.paused;
+      const writingB = b.writeReportCopies("b-json", "b-md", 30);
+      await Promise.race([b.waiting, writingB]);
+      pause.release();
+      await writingA;
+      expect(await readFile(path.join(output, "panel-report.json"), "utf8")).toBe("a-json");
+      b.proceed();
+      await writingB;
+    } finally { pause.restore(); }
+    expect(await readFile(path.join(output, "panel-report.json"), "utf8")).toBe("b-json");
+    expect(await readFile(path.join(output, "panel-report.md"), "utf8")).toBe("b-md");
+    // The record covers the pair in place: both stores' cleanups are clean, and expiry removes it once.
+    for (const store of [a, b]) expect(await store.deleteExpired()).toEqual({ deleted: [], errors: [] });
+    expect(await a.deleteExpired(new Date(Date.now() + 31 * DAY))).toEqual({ deleted: [], errors: [] });
+    expect(await fileSystem.readdir(output)).toEqual([]);
+  });
+
+  it("keeps a write's staged copies while another store's cleanup waits for the directory, and from another copy set's cleanup", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-staged-race-"));
+    const output = path.join(root, "out");
+    let paused!: () => void; let resume!: () => void;
+    const staged = new Promise<void>(resolve => { paused = resolve; });
+    const release = new Promise<void>(resolve => { resume = resolve; });
+    class PausingStore extends FileArtifactStore {
+      protected override async writeCopyFile(file: string, content: string): Promise<void> {
+        await super.writeCopyFile(file, content);
+        if (file.endsWith(".json")) { paused(); await release; }
+      }
+    }
+    const writing = new PausingStore(path.join(root, "a"), output, PANEL_REPORT_COPY_NAMES).writeReportCopies("a-json", "a-md", 30);
+    await staged;
+    // A store for another copy set takes its own lock, so it runs now, and must leave the panel write's staged copy.
+    const audit = new FileArtifactStore(path.join(root, "audit"), output, { json: "audit.json", markdown: "audit.md" });
+    expect(await audit.deleteExpired()).toEqual({ deleted: [], errors: [] });
+    expect((await fileSystem.readdir(output)).filter(entry => entry.startsWith(".reviewfn-copy.panel-report."))).toHaveLength(1);
+    const b = new WaitingStore(path.join(root, "b"), output);
+    const cleaning = b.deleteExpired();
+    await b.waiting;
+    resume();
+    await writing;
+    b.proceed();
+    expect(await cleaning).toEqual({ deleted: [], errors: [] });
+    expect(await readFile(path.join(output, "panel-report.json"), "utf8")).toBe("a-json");
+    expect((await fileSystem.readdir(output)).sort()).toEqual([".panel-report-copies", "panel-report.json", "panel-report.md"]);
+  });
+
+  it("lets a copied artifacts directory and an independent one alternate on one output directory, every cleanup clean and expiry once", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-shared-"));
+    const output = path.join(root, "out");
+    const a = new FileArtifactStore(path.join(root, "a"), output, PANEL_REPORT_COPY_NAMES);
+    await a.writeReportCopies("a-json", "a-md", 30);
+    await fileSystem.cp(path.join(root, "a"), path.join(root, "copy"), { recursive: true });
+    const copy = new FileArtifactStore(path.join(root, "copy"), output, PANEL_REPORT_COPY_NAMES);
+    const b = new FileArtifactStore(path.join(root, "b"), output, PANEL_REPORT_COPY_NAMES);
+    for (const [store, name] of [[copy, "copy"], [b, "b"], [a, "a2"], [copy, "copy2"]] as const) {
+      await store.writeReportCopies(`${name}-json`, `${name}-md`, 30);
+      for (const cleanup of [a, copy, b]) expect(await cleanup.deleteExpired()).toEqual({ deleted: [], errors: [] });
+      expect(await readFile(path.join(output, "panel-report.md"), "utf8")).toBe(`${name}-md`);
+    }
+    expect(await b.deleteExpired(new Date(Date.now() + 31 * DAY))).toEqual({ deleted: [], errors: [] });
+    expect(await fileSystem.readdir(output)).toEqual([]);
+    for (const cleanup of [a, copy]) expect(await cleanup.deleteExpired(new Date(Date.now() + 31 * DAY))).toEqual({ deleted: [], errors: [] });
+  });
+
+  it("fails with REVIEWFN_OUTPUT_DIRECTORY_BUSY on a lock held past the bounded wait, and refuses a symlinked lock", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-lock-"));
+    const output = path.join(root, "out");
+    const lock = path.join(output, ".panel-report.lock");
+    class ImpatientStore extends FileArtifactStore {
+      public waits = 0;
+      protected override async outputLockRetry(): Promise<void> { this.waits++; }
+    }
+    await mkdir(output);
+    await writeFile(lock, JSON.stringify({ pid: 1, hostname: "crashed", acquiredAt: new Date().toISOString() }));
+    const store = new ImpatientStore(path.join(root, "a"), output, PANEL_REPORT_COPY_NAMES);
+    // The preflight check waits as a write would, then refuses without taking the lock or writing anything.
+    await expect(store.checkReportCopiesLock()).rejects.toMatchObject({ code: "REVIEWFN_OUTPUT_DIRECTORY_BUSY", details: { directory: output, lock } });
+    expect(store.waits).toBe(99);
+    store.waits = 0;
+    await expect(store.writeReportCopies("json", "md", 30)).rejects.toMatchObject({ code: "REVIEWFN_OUTPUT_DIRECTORY_BUSY", details: { directory: output, lock } });
+    expect(store.waits).toBe(99);
+    expect((await store.deleteExpired()).errors.join()).toMatch(/REVIEWFN_OUTPUT_DIRECTORY_BUSY/);
+    expect(await fileSystem.readdir(output)).toEqual([".panel-report.lock"]);
+    await fileSystem.rm(lock);
+    await symlink(path.join(root, "elsewhere"), lock);
+    await expect(store.checkReportCopiesLock()).rejects.toMatchObject({ code: "REVIEWFN_ARTIFACT_UNSAFE" });
+    await expect(store.writeReportCopies("json", "md", 30)).rejects.toMatchObject({ code: "REVIEWFN_ARTIFACT_UNSAFE" });
+    expect((await store.deleteExpired()).errors.join()).toMatch(/REVIEWFN_ARTIFACT_UNSAFE/);
+    expect(await fileSystem.readdir(output)).toEqual([".panel-report.lock"]);
+    await expect(fileSystem.lstat(path.join(root, "elsewhere"))).rejects.toThrow();
+    // Without a lock the check passes and creates nothing, not even a missing directory.
+    await fileSystem.rm(lock);
+    await store.checkReportCopiesLock();
+    await new ImpatientStore(path.join(root, "a"), path.join(root, "missing"), PANEL_REPORT_COPY_NAMES).checkReportCopiesLock();
+    expect((await fileSystem.readdir(root)).sort()).toEqual(["a", "out"]);
+    expect(await fileSystem.readdir(output)).toEqual([]);
+  });
+
+  it("ends the preflight wait for a held lock when its signal aborts, without taking the lock", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-lock-abort-"));
+    const output = path.join(root, "out");
+    const lock = path.join(output, ".panel-report.lock");
+    const controller = new AbortController();
+    class AbortingStore extends FileArtifactStore {
+      public waits = 0;
+      // Cancellation arrives during the first wait for the held lock.
+      protected override async outputLockRetry(signal?: AbortSignal): Promise<void> { this.waits++; controller.abort(); await super.outputLockRetry(signal); }
+    }
+    await mkdir(output);
+    await writeFile(lock, JSON.stringify({ pid: 1, hostname: "crashed", acquiredAt: new Date().toISOString() }));
+    const store = new AbortingStore(path.join(root, "a"), output, PANEL_REPORT_COPY_NAMES);
+    await expect(store.checkReportCopiesLock(controller.signal)).rejects.toMatchObject({ code: "REVIEWFN_CANCELED", details: { lock } });
+    expect(store.waits).toBe(1);
+    expect(await fileSystem.readdir(output)).toEqual([".panel-report.lock"]);
+    expect(await fileSystem.readdir(root)).toEqual(["out"]);
+  });
+
+  it.each([["retention", { json: "retention.json", markdown: "retention.md" }], ["panel-report", PANEL_REPORT_COPY_NAMES]])("refuses %s copies whose directory is the artifact root, by path or another spelling, before writing", async (_, names) => {
+    const parent = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-coincident-"));
+    const root = path.join(parent, "store");
+    await mkdir(root);
+    await mkdir(path.join(parent, "elsewhere"));
+    class ImpatientStore extends FileArtifactStore {
+      public waits = 0;
+      protected override async outputLockRetry(): Promise<void> { this.waits++; }
+    }
+    // Every spelling safeDirectory permits: lexical variants, and on macOS the physical /private path of the temporary directory.
+    for (const output of [root, `${root}/`, `${parent}/elsewhere/../store`, ...(temporaryAlias ? [realpathSync(root)] : [])]) {
+      const store = new ImpatientStore(root, output, names);
+      await expect(store.checkReportCopiesLock()).rejects.toMatchObject({ code: "REVIEWFN_ARTIFACT_UNSAFE", details: { directory: output, artifacts: root } });
+      await expect(store.writeReportCopies("json", "md", 1)).rejects.toMatchObject({ code: "REVIEWFN_ARTIFACT_UNSAFE" });
+      const cleanup = await store.deleteExpired(new Date(Date.now() + 2 * DAY));
+      expect(cleanup.errors).toEqual([expect.stringMatching(/^Report copies: REVIEWFN_ARTIFACT_UNSAFE: /)]);
+      // Refused up front: no wait on the store's own lease, and no copy, record, lock or staged file in the root.
+      expect(store.waits).toBe(0);
+      expect(await fileSystem.readdir(root)).toEqual([]);
+    }
+  });
+});
+
+it.each([".json", ".md"])("replaces the panel copies as a pair, keeping the previous pair and record when writing the %s copy fails", async failing => {
+  const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-pair-"));
+  class FailingStore extends FileArtifactStore {
+    protected override async writeCopyFile(file: string, content: string): Promise<void> {
+      if (file.endsWith(failing)) throw new Error("simulated copy write failure");
+      await super.writeCopyFile(file, content);
+    }
+  }
+  const artifacts = path.join(root, "artifacts");
+  await new FileArtifactStore(artifacts, root, PANEL_REPORT_COPY_NAMES).writeReportCopies("old-json", "old-md", 1);
+  const record = path.join(root, ".panel-report-copies");
+  const before = await readFile(record, "utf8");
+  await expect(new FailingStore(artifacts, root, PANEL_REPORT_COPY_NAMES).writeReportCopies("new-json", "new-md", 30)).rejects.toThrow(/simulated/);
+  expect(await readFile(path.join(root, "panel-report.json"), "utf8")).toBe("old-json");
+  expect(await readFile(path.join(root, "panel-report.md"), "utf8")).toBe("old-md");
+  expect((await fileSystem.readdir(root)).sort()).toEqual([".panel-report-copies", "artifacts", "panel-report.json", "panel-report.md"]);
+  expect(await readFile(record, "utf8")).toBe(before);
+  // A first write that fails leaves no copy, record, staged file or lock.
+  const empty = path.join(root, "empty");
+  await expect(new FailingStore(artifacts, empty, PANEL_REPORT_COPY_NAMES).writeReportCopies("new-json", "new-md", 30)).rejects.toThrow(/simulated/);
+  expect(await fileSystem.readdir(empty)).toEqual([]);
+});
+
+it.each([false, true])("restores the previous panel Markdown copy when moving the new JSON copy into place fails (rollback fails: %s)", async rollbackFails => {
+  const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-pair-rename-"));
+  const store = new FileArtifactStore(path.join(root, "artifacts"), root, PANEL_REPORT_COPY_NAMES);
+  await store.writeReportCopies("old-json", "old-md", 1);
+  const original = fileSystem.rename;
+  const spy = vi.spyOn(fileSystem, "rename").mockImplementation(async (from, to) => {
+    if (String(to) === path.join(root, "panel-report.json")) throw new Error("simulated rename failure");
+    return original(from, to);
+  });
+  const originalWrite = safeFiles.safeWrite;
+  const rollback = vi.spyOn(safeFiles, "safeWrite").mockImplementation(async (file, content) => {
+    if (rollbackFails && file === path.join(root, "panel-report.md")) throw new Error("simulated rollback failure");
+    return originalWrite(file, content);
+  });
+  try { await expect(store.writeReportCopies("new-json", "new-md", 30)).rejects.toThrow("simulated rename failure"); }
+  finally { spy.mockRestore(); rollback.mockRestore(); }
+  expect(await readFile(path.join(root, "panel-report.json"), "utf8")).toBe("old-json");
+  expect(await readFile(path.join(root, "panel-report.md"), "utf8")).toBe(rollbackFails ? "new-md" : "old-md");
+  expect((await fileSystem.readdir(root)).sort()).toEqual([".panel-report-copies", "artifacts", "panel-report.json", "panel-report.md"]);
+  // A failed rollback keeps the new Markdown bytes covered, so both copies still expire.
+  expect((await store.deleteExpired(new Date(Date.now() + 31 * DAY))).errors).toEqual([]);
+  expect((await fileSystem.readdir(root)).sort()).toEqual(["artifacts"]);
 });
 
 it.each(["report.json", "report.md"])("keeps report copies expirable after failing to save %s", async failure => {

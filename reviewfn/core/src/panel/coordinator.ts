@@ -14,6 +14,7 @@ import { defaultLensRegistry, type LensRegistry } from "./lenses.js";
 import { effectiveMaxConcurrentSlots } from "./policy.js";
 import { buildSlotPrompt, PANEL_PROMPT_VERSION, type PriorStageFinding, type SlotScope } from "./prompt.js";
 import { lensOutputSchema, validateLensPayload } from "./schema.js";
+import { PANEL_CANCELED_REASON } from "./types.js";
 import type { PanelFinding, PanelFindingSeverity, PanelPolicy, PanelReport, PanelReportValidationResult, PanelSlot, SlotIdentity, SlotRun, SlotRunTerminal, SlotVoidReason } from "./types.js";
 import { credentialFingerprint, derivePanelVerdict, panelPolicyDigest, panelStructureIssues, slotIdentityKey, validatePanelPolicy, validatePanelReport } from "./validate.js";
 import { GitSlotWorkspaceProvider, removeTree, type GitSlotWorkspaceOptions, type SlotWorkspace, type SlotWorkspaceProvider, type WorkspaceCheck } from "./workspace.js";
@@ -24,7 +25,6 @@ export const PANEL_SLOT_OUTPUT_ARTIFACT_KIND = "panel-slot-output";
 export const PANEL_REPORT_ARTIFACT_KIND = "panel-report";
 const DEFAULT_ABORT_GRACE_MS = 10_000;
 const DEFAULT_COMPARISON_TIMEOUT_MS = 60_000;
-const CANCELED_REASON = "The panel run was canceled.";
 /** The terminal outcomes a harness may report; `void` and `collapsed` are decided by the panel, never by a harness. */
 const HARNESS_TERMINALS: ReadonlySet<string> = new Set<HarnessOutput["terminal"]>(["completed", "failed", "canceled", "quota_exhausted", "timed_out", "malformed"]);
 const MAX_LISTED_PATHS = 20;
@@ -771,12 +771,13 @@ export class PanelCoordinator {
     const { context, records, quorum } = input;
     const { request, prepared } = context;
     const now = this.dependencies.now ?? (() => new Date());
+    const canceled = input.canceled || context.runSignal.aborted;
     const coverageReasons = [
       ...prepared.changeDetail.coverageReasons,
       ...prepared.context.incompleteReasons,
       ...prepared.executionErrors,
       ...prepared.tests.filter(receipt => receipt.exitCode !== 0 || receipt.timedOut || receipt.canceled).map(receipt => `Test ${receipt.id} did not pass (exit ${String(receipt.exitCode)}).`),
-      ...(input.canceled || context.runSignal.aborted ? [CANCELED_REASON] : []),
+      ...(canceled ? [PANEL_CANCELED_REASON] : []),
       ...(input.supersedes.length ? [`This report supersedes artifact(s) ${input.supersedes.join(", ")}, stored before the cancellation was observed.`] : []),
       ...quorum.filter(item => !item.met).map(item => `${PANEL_QUORUM_UNMET}: stage ${item.stage} has ${item.completed} completed slot run(s) with distinct identities; its quorum is ${item.required}.`),
       ...input.requirementsReport.reasons,
@@ -829,7 +830,9 @@ export class PanelCoordinator {
     coverageReasons.push(...input.cleanupErrors);
     const report: PanelReport = { ...base, evidence: [...evidence.values()].filter(item => cited.has(item.id)), findings, coverage: "complete", coverageReasons: [] };
     // Cleanup and requirements-report errors carry raw error messages: redact every reason before it is returned or stored.
-    const validation = await settleReport(report, coverageReasons.map(reason => redactText(reason, context.secrets)), request.policy, options);
+    // The cancellation marker is fixed text that consumers match exactly (panelReportCanceled), never a secret, so it is
+    // kept verbatim: a collected secret it happens to contain must not hide the cancellation from publication.
+    const validation = await settleReport(report, coverageReasons.map(reason => canceled && reason === PANEL_CANCELED_REASON ? reason : redactText(reason, context.secrets)), request.policy, options);
     // Cancellation is observed until the report is stored: one during validation restarts in canceled mode.
     if (!input.canceled && context.runSignal.aborted) return undefined;
     const stored = await this.dependencies.artifacts.put(PANEL_REPORT_ARTIFACT_KIND, JSON.stringify(report, null, 2), prepared.retention.reportDays);
