@@ -46,6 +46,7 @@ import type {
   BillFnCreateGrantRequest,
   BillFnEnqueueReconciliationJobRequest,
   BillFnEntitlementSnapshot,
+  BillFnLifecycleEventRecord,
   BillFnEntitlementsResponse,
   BillFnEntitlementsResponseData,
   BillFnFetchNotificationHistoryInput,
@@ -296,7 +297,8 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
       generateId,
       metrics,
       onEvent: config.onEvent,
-      isDuplicateRecordError
+      isDuplicateRecordError,
+      isStagedEventApplied: (event) => isStagedEventApplied(deps, event)
     })
   };
   deps.reconcileProviderState = (subscription, event) => reconcileWindowEvent(subscription, event);
@@ -1636,10 +1638,12 @@ const LOST_WRITE = Symbol('billfn.lostWrite');
 
 /**
  * Applies a state write together with the lifecycle events it causes, so a committed write always has its
- * events. Where the adapter supports transactions both commit in one, and a write that loses its race (`write`
- * returns false) or fails records none. Without transactions the events are recorded first: a write that then
- * fails or loses its race leaves them recorded. Each reports the provider state this call verified, and its id
- * derives from that state and the row the write replaces, so a retry of the write records the same id. Returns
+ * events and a write that does not apply has none. Where the adapter supports transactions both commit in one,
+ * and a write that loses its race (`write` returns false) or fails records none. Without transactions the events
+ * are first staged, so no dispatcher delivers them yet; once the write applied they become pending, and when it
+ * failed or lost its race they are deleted. A stop between those steps leaves them staged, and a later dispatch
+ * delivers them only if the stored state shows the write applied (`isStagedEventApplied`). An event's id derives
+ * from the change it reports, so a retry of the write, also after a lost race, records the same id. Returns
  * whether `write` applied.
  */
 async function writeWithLifecycleEvents(
@@ -1651,8 +1655,18 @@ async function writeWithLifecycleEvents(
     return write(deps.db);
   }
   if (!deps.db.capabilities.transactions.supported) {
-    await deps.lifecycle.record(events);
-    return write(deps.db);
+    const stageId = deps.generateId('lcs');
+    await deps.lifecycle.stage(events, stageId);
+    let applied = false;
+    try {
+      applied = await write(deps.db);
+    } finally {
+      // The write's outcome stands; events left staged by a failure here are settled by a later dispatch.
+      await (applied ? deps.lifecycle.confirm(events) : deps.lifecycle.release(events, stageId)).catch(() => {
+        deps.metrics.track('event.stage_unsettled', {});
+      });
+    }
+    return applied;
   }
   try {
     return await deps.db.transaction(async (transaction) => {
@@ -3113,6 +3127,9 @@ async function applyVerificationState(
   let providerStateRaced: { priceId: string } | undefined;
   // A read is superseded by an event newer than its start; a committed mutation only by one after its commit.
   const supersededBefore = input.committedAt ?? input.liveStateObservedAt;
+  // The provider change this call applies, which keys its cancellation: the same across the write's retries.
+  const providerChangeKey =
+    input.providerEventId ?? input.committedAt ?? input.liveStateObservedAt ?? input.occurredAt ?? timestamp;
 
   for (let attempt = 0; attempt < 50; attempt += 1) {
     if (!input.importReference && isImportPending(baseSubscription)) {
@@ -3237,7 +3254,7 @@ async function applyVerificationState(
           baseSubscription,
           record,
           input.importAudit,
-          subscriptionLifecycleEvents(baseSubscription, record)
+          subscriptionLifecycleEvents(baseSubscription, record, providerChangeKey)
         )
       ) {
         subscription = record;
@@ -3638,8 +3655,9 @@ async function upsertEntitlements(
 
 /**
  * The `entitlement.changed` of a snapshot write that changes the paid snapshot's plan, status, features or
- * limits. Keyed by the snapshot it replaces and the entitlements it writes, so a retry of the write and a racing
- * write of the same change share its id.
+ * limits. Keyed by the subscription version it derives from and the entitlements it replaces and writes, so a
+ * retry of the write (also after a lost race that kept those entitlements) and a racing write of the same change
+ * share its id.
  */
 function entitlementChangeEvents(
   previous: BillFnEntitlementSnapshot | null,
@@ -3655,11 +3673,13 @@ function entitlementChangeEvents(
   ) {
     return [];
   }
-  const replaced = previous ? `${previous.sourceEventId ?? ''}@${previous.updatedAt}` : 'none';
-  const entitlements = JSON.stringify(canonicalJson([next.planKey, next.status, next.features, next.limits]));
+  const replaced = previous ? entitlementsFingerprint(previous) : 'none';
   return [
     {
-      id: lifecycleEventId('entitlement.changed', `subscription\n${next.billingAccountId}\n${replaced}\n${entitlements}`),
+      id: lifecycleEventId(
+        'entitlement.changed',
+        `subscription\n${next.billingAccountId}\n${next.sourceEventId ?? ''}\n${replaced}\n${entitlementsFingerprint(next)}`
+      ),
       type: 'entitlement.changed',
       billingAccountId: next.billingAccountId,
       occurredAt: next.updatedAt,
@@ -3668,11 +3688,57 @@ function entitlementChangeEvents(
         subscriptionId: subscription.id,
         planKey: next.planKey,
         status: next.status,
+        features: next.features,
+        limits: next.limits,
         previousPlanKey: previous?.planKey ?? null,
         previousStatus: previous?.status ?? null
       }
     }
   ];
+}
+
+function entitlementsFingerprint(snapshot: Pick<BillFnEntitlementSnapshot, 'planKey' | 'status' | 'features' | 'limits'>) {
+  return JSON.stringify(canonicalJson([snapshot.planKey, snapshot.status, snapshot.features, snapshot.limits]));
+}
+
+/**
+ * Whether the stored state shows the write applied that a staged lifecycle event was recorded for (the write
+ * was interrupted before it confirmed or released the event): the subscription reached the renewed period end
+ * or stopped renewing, the snapshot holds the changed entitlements, or the checkout session succeeded.
+ */
+async function isStagedEventApplied(deps: ServiceDeps, event: BillFnLifecycleEventRecord): Promise<boolean> {
+  const data = event.data as Record<string, unknown> & { subscriptionId?: string; checkoutSessionId?: string };
+  switch (event.type) {
+    case 'subscription.renewed':
+    case 'subscription.canceled': {
+      const subscription = await deps.db.findOne<BillFnSubscription>({
+        model: TABLES.subscriptions,
+        where: [{ field: 'id', operator: 'eq', value: data.subscriptionId }],
+        namespace: deps.namespace
+      });
+      if (!subscription) {
+        return false;
+      }
+      if (event.type === 'subscription.canceled') {
+        return !isRenewing(subscription);
+      }
+      const reached = subscription.currentPeriodEnd ? Date.parse(subscription.currentPeriodEnd) : Number.NaN;
+      return reached >= Date.parse(String(data.currentPeriodEnd));
+    }
+    case 'entitlement.changed': {
+      const snapshot = await findEntitlementSnapshot(deps, event.billingAccountId);
+      return Boolean(
+        snapshot &&
+          entitlementsFingerprint(snapshot) ===
+            entitlementsFingerprint(data as unknown as Parameters<typeof entitlementsFingerprint>[0])
+      );
+    }
+    case 'checkout.completed':
+      return (await getCheckoutSession(deps, data.checkoutSessionId!))?.status === 'succeeded';
+    default:
+      // Grant events are recorded after the grant's write, never staged.
+      return true;
+  }
 }
 
 /** The `checkout.completed` of a checkout session that succeeded with `subscription`; one per session. */
@@ -3698,10 +3764,14 @@ function subscriptionRef(subscription: BillFnSubscription) {
 /**
  * The lifecycle events of a write of provider state over `previous`: `subscription.renewed` when an active
  * subscription's period end moves later (once per period end), and `subscription.canceled` when a renewing
- * subscription stops renewing without expiring or failing (keyed by the row it replaces, so a retry of the
- * write and a racing write over the same row share its id).
+ * subscription stops renewing without expiring or failing, keyed by the provider change the call applies
+ * (`providerChangeKey`), so every retry of its write, also over a newer row after a lost race, shares its id.
  */
-function subscriptionLifecycleEvents(previous: BillFnSubscription, subscription: BillFnSubscription): LifecycleEventInput[] {
+function subscriptionLifecycleEvents(
+  previous: BillFnSubscription,
+  subscription: BillFnSubscription,
+  providerChangeKey: string
+): LifecycleEventInput[] {
   const events: LifecycleEventInput[] = [];
   const base = { billingAccountId: subscription.billingAccountId, occurredAt: subscription.updatedAt };
   const ref = subscriptionRef(subscription);
@@ -3723,7 +3793,7 @@ function subscriptionLifecycleEvents(previous: BillFnSubscription, subscription:
   if (isRenewing(previous) && !isRenewing(subscription) && !ENDED_STATUSES.has(subscription.status)) {
     events.push({
       ...base,
-      id: lifecycleEventId('subscription.canceled', `${subscription.id}\n${previous.updatedAt}`),
+      id: lifecycleEventId('subscription.canceled', `${subscription.id}\n${providerChangeKey}`),
       type: 'subscription.canceled',
       data: {
         ...ref,

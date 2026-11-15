@@ -159,9 +159,27 @@ function setup(options: { db?: Adapter; onEvent?: BillFnLifecycleEventHandler | 
  * transactions off, as Drizzle SQLite has none.
  */
 function faultyLifecycleDb(base: Adapter = memoryAdapter({ debug: false }), options: { transactions?: boolean } = {}) {
-  const faults = { create: false, update: false, settle: false, snapshot: false };
-  const faulty = <A extends Pick<Adapter, 'create' | 'updateMany'>>(adapter: A): A => ({
+  const faults = {
+    create: false,
+    update: false,
+    settle: false,
+    snapshot: false,
+    /** Deleting outbox rows fails (with a failed state write: the process stopped before it released them). */
+    release: false,
+    /** The next subscription update fails before it applies, or applies and then fails. */
+    subscriptionWrite: null as 'before' | 'after' | null,
+    /** Runs once before the next subscription or snapshot update, as another writer racing it. */
+    raceSubscription: null as (() => Promise<void>) | null,
+    raceSnapshot: null as (() => Promise<void>) | null,
+    /** Awaited before the next snapshot update applies. */
+    pauseSnapshot: null as Promise<void> | null
+  };
+  const faulty = <A extends Pick<Adapter, 'create' | 'updateMany' | 'deleteMany'>>(adapter: A): A => ({
     ...adapter,
+    async deleteMany(params: Parameters<Adapter['deleteMany']>[0]) {
+      if (faults.release && params.model === 'lifecycleEvents') throw new Error('process stopped');
+      return adapter.deleteMany(params);
+    },
     async create<T>(params: Parameters<Adapter['create']>[0]): Promise<T> {
       if (faults.create && params.model === 'lifecycleEvents') throw new Error('outbox write failed');
       if (faults.snapshot && params.model === 'entitlementSnapshots') throw new Error('process stopped');
@@ -174,6 +192,25 @@ function faultyLifecycleDb(base: Adapter = memoryAdapter({ debug: false }), opti
         if ((faults.update && !settling) || (faults.settle && settling)) throw new Error('dispatcher crashed');
       }
       if (faults.snapshot && params.model === 'entitlementSnapshots') throw new Error('process stopped');
+      if (params.model === 'subscriptions') {
+        const race = faults.raceSubscription;
+        faults.raceSubscription = null;
+        await race?.();
+        const write = faults.subscriptionWrite;
+        faults.subscriptionWrite = null;
+        if (write === 'before') throw new Error('subscription write failed');
+        const updated = await adapter.updateMany(params);
+        if (write === 'after') throw new Error('process stopped');
+        return updated;
+      }
+      if (params.model === 'entitlementSnapshots') {
+        const race = faults.raceSnapshot;
+        faults.raceSnapshot = null;
+        await race?.();
+        const pause = faults.pauseSnapshot;
+        faults.pauseSnapshot = null;
+        await pause;
+      }
       return adapter.updateMany(params);
     }
   });
@@ -228,6 +265,8 @@ describe('lifecycle events: one per event type', () => {
           subscriptionId,
           planKey: 'nucleus',
           status: 'active',
+          features: { memotron: true, pointron: true },
+          limits: { storage: 5000 },
           previousPlanKey: null,
           previousStatus: null
         }
@@ -399,6 +438,158 @@ describe.each([
     expect(new Set(after.map((event) => event.id)).size).toBe(after.length);
     const pending = (await env.rows()).filter((row) => row.status !== 'delivered');
     expect(pending).toEqual([]);
+  });
+});
+
+describe('lifecycle events of a write without transactions', () => {
+  const LEASE = 5 * MINUTE;
+
+  function staging() {
+    const base = memoryAdapter({ debug: false });
+    const { db, faults } = faultyLifecycleDb(base, { transactions: false });
+    return { base, db, faults };
+  }
+
+  /** Whether a call succeeded; a call that throws counts as failed. */
+  function succeeded(call: Promise<{ ok: boolean }>) {
+    return call.then(
+      (result) => result.ok,
+      () => false
+    );
+  }
+
+  it('delivers entitlement.changed only once its snapshot write committed, so the handler reads the committed state', async () => {
+    const { db, faults } = staging();
+    const read: string[] = [];
+    const env = setup({
+      db,
+      onEvent: async (event) => {
+        if (event.type === 'entitlement.changed') {
+          const snapshot = await db.findOne<{ status: string }>({
+            model: 'entitlementSnapshots',
+            where: [{ field: 'billingAccountId', operator: 'eq', value: ACCOUNT }],
+            namespace: 'billfn'
+          });
+          read.push(snapshot!.status);
+        }
+      }
+    });
+    await env.subscribe();
+    expect(read).toEqual(['active']);
+
+    let resume!: () => void;
+    faults.pauseSnapshot = new Promise<void>((resolve) => (resume = resolve));
+    env.providerState.status = 'expired';
+    env.advance(MINUTE);
+    const sync = succeeded(env.billfn.syncSubscription({ subject: env.subject }));
+    await vi.waitFor(() => expect(faults.pauseSnapshot).toBeNull());
+
+    // Other dispatchers run while the snapshot write is paused, also once its stage lapsed.
+    await env.billfn.services.events.dispatch();
+    env.advance(LEASE + MINUTE);
+    await env.billfn.services.events.dispatch();
+    expect(read).toEqual(['active']);
+
+    resume();
+    expect(await sync).toBe(true);
+    await env.billfn.services.events.dispatch();
+    expect(read).toEqual(['active', 'inactive']);
+    expect((await env.rows()).filter((row) => row.status !== 'delivered')).toEqual([]);
+  });
+
+  it.each([
+    ['subscription.canceled', 'a subscription', (env: ReturnType<typeof setup>) => void (env.providerState.autoRenew = false)],
+    ['entitlement.changed', 'a snapshot', (env: ReturnType<typeof setup>) => void (env.providerState.status = 'expired')]
+  ] as const)('delivers %s once under one id when %s write loses its race and is retried', async (type, _write, apply) => {
+    const { base, db, faults } = staging();
+    const env = setup({ db });
+    const { subscriptionId } = await env.subscribe();
+    const before = env.ofType(type).length;
+    const bump = (model: string, field: string, value: string) => async () => {
+      const row = await base.findOne<{ updatedAt: string }>({
+        model,
+        where: [{ field, operator: 'eq', value }],
+        namespace: 'billfn'
+      });
+      // Another writer rewrites the row between this call's read and its write, keeping its state.
+      await base.updateMany({
+        model,
+        where: [{ field, operator: 'eq', value }],
+        data: {
+          updatedAt: new Date(Date.parse(row!.updatedAt) + 1).toISOString(),
+          ...(model === 'entitlementSnapshots' ? { sourceEventId: `${subscriptionId}@2026-11-01T00:00:00.000Z` } : {})
+        },
+        namespace: 'billfn'
+      });
+    };
+    if (type === 'subscription.canceled') {
+      faults.raceSubscription = bump('subscriptions', 'id', subscriptionId);
+    } else {
+      faults.raceSnapshot = bump('entitlementSnapshots', 'billingAccountId', ACCOUNT);
+    }
+    apply(env);
+    env.advance(MINUTE);
+    expect(await succeeded(env.billfn.syncSubscription({ subject: env.subject }))).toBe(true);
+    expect(faults.raceSubscription ?? faults.raceSnapshot).toBeNull();
+
+    env.advance(LEASE + MINUTE);
+    await env.billfn.services.events.dispatch();
+    expect(env.ofType(type).slice(before)).toHaveLength(1);
+    const rows = (await env.rows()).filter((row) => row.type === type);
+    expect(rows).toHaveLength(before + 1);
+    expect(rows.every((row) => row.status === 'delivered')).toBe(true);
+  });
+
+  it('delivers nothing for a subscription write that failed, and the change once its retry applies', async () => {
+    const { db, faults } = staging();
+    const env = setup({ db });
+    await env.subscribe();
+    env.providerState.autoRenew = false;
+    faults.subscriptionWrite = 'before';
+    env.advance(MINUTE);
+    expect(await succeeded(env.billfn.syncSubscription({ subject: env.subject }))).toBe(false);
+    env.advance(LEASE + MINUTE);
+    await env.billfn.services.events.dispatch();
+    expect(env.ofType('subscription.canceled')).toEqual([]);
+    expect((await env.rows()).filter((row) => row.type === 'subscription.canceled')).toEqual([]);
+
+    expect(await succeeded(env.billfn.syncSubscription({ subject: env.subject }))).toBe(true);
+    expect(env.ofType('subscription.canceled')).toHaveLength(1);
+  });
+
+  it.each([
+    ['before', 'deletes the staged event of a write a stop interrupted before it applied', 0],
+    ['after', 'delivers the staged event of a write a stop interrupted after it applied, once', 1]
+  ] as const)('%s: %s', async (stop, _title, deliveries) => {
+    const { db, faults } = staging();
+    const env = setup({ db });
+    const { subscriptionId } = await env.subscribe();
+    env.providerState.autoRenew = false;
+    faults.subscriptionWrite = stop;
+    faults.release = true;
+    env.advance(MINUTE);
+    expect(await succeeded(env.billfn.syncSubscription({ subject: env.subject }))).toBe(false);
+    faults.release = false;
+    expect((await env.rows()).filter((row) => row.status === 'staged')).toEqual([
+      expect.objectContaining({ type: 'subscription.canceled' })
+    ]);
+
+    // A staged event is not delivered while its write may still apply.
+    await env.billfn.services.events.dispatch();
+    expect(env.ofType('subscription.canceled')).toEqual([]);
+
+    // Once its stage lapsed, a dispatch checks it against the stored subscription.
+    env.advance(LEASE + MINUTE);
+    await env.billfn.services.events.dispatch();
+    expect(env.ofType('subscription.canceled')).toHaveLength(deliveries);
+    expect((await env.rows()).filter((row) => row.status === 'staged')).toEqual([]);
+
+    // A later sync applies a change the stop left out, and adds nothing twice.
+    env.advance(MINUTE);
+    expect(await env.syncJob(subscriptionId)).toBe('succeeded');
+    env.advance(LEASE + MINUTE);
+    await env.billfn.services.events.dispatch();
+    expect(env.ofType('subscription.canceled')).toHaveLength(1);
   });
 });
 

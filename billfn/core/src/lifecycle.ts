@@ -53,6 +53,12 @@ export interface LifecycleDeps {
   metrics: MetricsEmitter;
   onEvent?: BillFnLifecycleEventHandler;
   isDuplicateRecordError(error: unknown): boolean;
+  /**
+   * Whether the stored state shows the write a `staged` event was recorded
+   * for applied; a staged event whose write was interrupted is delivered only
+   * when this holds, and is deleted otherwise.
+   */
+  isStagedEventApplied(event: BillFnLifecycleEventRecord): Promise<boolean>;
 }
 
 export type LifecycleEvents = ReturnType<typeof createLifecycleEvents>;
@@ -129,37 +135,120 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
     }
     for (const event of events) {
       // Checked first: inside a Postgres transaction a duplicate-key error would abort it.
-      const existing = await db.findOne<{ id: string }>({
-        model: EVENTS_TABLE,
-        where: [{ field: 'id', operator: 'eq', value: event.id }],
-        namespace: deps.namespace
-      });
-      if (!existing) {
-        const timestamp = toIsoString(deps.now());
-        const row: BillFnLifecycleEventRecord = {
-          ...event,
-          data: event.data as Record<string, unknown>,
-          status: 'pending',
-          attempts: 0,
-          nextAttemptAt: timestamp,
-          claimId: null,
-          lastError: null,
-          deliveredAt: null,
-          failedAt: null,
-          createdAt: timestamp,
-          updatedAt: timestamp
-        };
-        try {
-          await db.create({ model: EVENTS_TABLE, data: row, namespace: deps.namespace });
-          deps.metrics.track('event.recorded', { type: event.type });
-        } catch (error) {
-          if (!deps.isDuplicateRecordError(error)) {
-            throw error;
-          }
-        }
+      if (!(await findEvent(event.id, db))) {
+        await createEvent(event, 'pending', null, db);
       }
       callEvents.getStore()?.add(event.id);
     }
+  }
+
+  /**
+   * Without transactions, records the events of a write before it runs, as
+   * `staged` under `stageId`: no dispatcher delivers them until `confirm`
+   * makes them `pending` once the write applied, and `release` deletes them
+   * when it did not. An event already staged by another call is taken over;
+   * one already pending, delivered or failed is left as it is. A staged
+   * event a stop left behind is settled by `dispatch` after the claim lease.
+   */
+  async function stage(events: LifecycleEventInput[], stageId: string) {
+    if (!handler) {
+      return;
+    }
+    for (const event of events) {
+      const existing = await findEvent(event.id);
+      if (!existing && (await createEvent(event, 'staged', stageId))) {
+        continue;
+      }
+      // Its data is the latest write's (a lost race's retry reads a newer row).
+      await deps.db.updateMany({
+        model: EVENTS_TABLE,
+        where: [
+          { field: 'id', operator: 'eq', value: event.id },
+          { field: 'status', operator: 'eq', value: 'staged' }
+        ],
+        data: { claimId: stageId, data: event.data, occurredAt: event.occurredAt, nextAttemptAt: leaseEnd(), updatedAt: toIsoString(deps.now()) },
+        namespace: deps.namespace
+      });
+    }
+  }
+
+  /** Makes the staged events of an applied write `pending` (recording one that is missing) and due now. */
+  async function confirm(events: LifecycleEventInput[]) {
+    if (!handler) {
+      return;
+    }
+    for (const event of events) {
+      const timestamp = toIsoString(deps.now());
+      const promoted = await deps.db.updateMany({
+        model: EVENTS_TABLE,
+        where: [
+          { field: 'id', operator: 'eq', value: event.id },
+          { field: 'status', operator: 'eq', value: 'staged' }
+        ],
+        data: { status: 'pending', claimId: null, nextAttemptAt: timestamp, updatedAt: timestamp },
+        namespace: deps.namespace
+      });
+      if (promoted !== 1) {
+        await record([event]);
+      }
+      callEvents.getStore()?.add(event.id);
+    }
+  }
+
+  /** Deletes the events `stageId` staged for a write that did not apply, unless another call took them over. */
+  async function release(events: LifecycleEventInput[], stageId: string) {
+    for (const event of events) {
+      await deleteStaged(event.id, stageId);
+    }
+  }
+
+  function deleteStaged(id: string, stageId: string) {
+    return deps.db.deleteMany({
+      model: EVENTS_TABLE,
+      where: [
+        { field: 'id', operator: 'eq', value: id },
+        { field: 'status', operator: 'eq', value: 'staged' },
+        { field: 'claimId', operator: 'eq', value: stageId }
+      ],
+      namespace: deps.namespace
+    });
+  }
+
+  /** Creates the event's row; false when another writer created it first. */
+  async function createEvent(
+    event: LifecycleEventInput,
+    status: 'staged' | 'pending',
+    claimId: string | null,
+    db: Adapter = deps.db
+  ) {
+    const timestamp = toIsoString(deps.now());
+    const row: BillFnLifecycleEventRecord = {
+      ...event,
+      data: event.data as Record<string, unknown>,
+      status,
+      attempts: 0,
+      nextAttemptAt: status === 'staged' ? leaseEnd() : timestamp,
+      claimId,
+      lastError: null,
+      deliveredAt: null,
+      failedAt: null,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    try {
+      await db.create({ model: EVENTS_TABLE, data: row, namespace: deps.namespace });
+      deps.metrics.track('event.recorded', { type: event.type });
+      return true;
+    } catch (error) {
+      if (!deps.isDuplicateRecordError(error)) {
+        throw error;
+      }
+      return false;
+    }
+  }
+
+  function leaseEnd() {
+    return toIsoString(new Date(deps.now().getTime() + LIFECYCLE_CLAIM_LEASE_MS));
   }
 
   /**
@@ -218,6 +307,7 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
     if (!handler) {
       return result;
     }
+    await settleStaged(readLimit(input.limit), beforeEach);
     const due = await deps.db.findMany<BillFnLifecycleEventRecord>({
       model: EVENTS_TABLE,
       where: [
@@ -300,6 +390,59 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
     return 'retrying';
   }
 
+  /**
+   * Settles the staged events whose write was interrupted (their stage lapsed):
+   * each is claimed like a delivery, then made `pending` when the stored state
+   * shows its write applied, and deleted otherwise.
+   */
+  async function settleStaged(limit: number, beforeEach?: () => Promise<void>) {
+    const now = toIsoString(deps.now());
+    const lapsed = await deps.db.findMany<BillFnLifecycleEventRecord>({
+      model: EVENTS_TABLE,
+      where: [
+        { field: 'status', operator: 'eq', value: 'staged' },
+        { field: 'nextAttemptAt', operator: 'lte', value: now }
+      ],
+      orderBy: [{ field: 'nextAttemptAt', direction: 'asc' }],
+      limit,
+      namespace: deps.namespace
+    });
+    for (const row of lapsed) {
+      await beforeEach?.();
+      const claimId = deps.generateId('lcc');
+      const claimed = await deps.db.updateMany({
+        model: EVENTS_TABLE,
+        where: [
+          { field: 'id', operator: 'eq', value: row.id },
+          { field: 'status', operator: 'eq', value: 'staged' },
+          { field: 'nextAttemptAt', operator: 'eq', value: row.nextAttemptAt }
+        ],
+        data: { claimId, nextAttemptAt: leaseEnd(), updatedAt: toIsoString(deps.now()) },
+        namespace: deps.namespace
+      });
+      if (claimed !== 1) {
+        continue;
+      }
+      if (await deps.isStagedEventApplied(row)) {
+        const timestamp = toIsoString(deps.now());
+        await deps.db.updateMany({
+          model: EVENTS_TABLE,
+          where: [
+            { field: 'id', operator: 'eq', value: row.id },
+            { field: 'status', operator: 'eq', value: 'staged' },
+            { field: 'claimId', operator: 'eq', value: claimId }
+          ],
+          data: { status: 'pending', claimId: null, nextAttemptAt: timestamp, updatedAt: timestamp },
+          namespace: deps.namespace
+        });
+        deps.metrics.track('event.stage_recovered', { type: row.type });
+      } else {
+        await deleteStaged(row.id, claimId);
+        deps.metrics.track('event.stage_discarded', { type: row.type });
+      }
+    }
+  }
+
   /** Ends this dispatcher's claim; a claim that lapsed and was taken over is left to its new holder. */
   async function settle(id: string, claimId: string, data: Partial<BillFnLifecycleEventRecord>) {
     await deps.db.updateMany({
@@ -372,8 +515,8 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
     });
   }
 
-  function findEvent(id: string) {
-    return deps.db.findOne<BillFnLifecycleEventRecord>({
+  function findEvent(id: string, db: Adapter = deps.db) {
+    return db.findOne<BillFnLifecycleEventRecord>({
       model: EVENTS_TABLE,
       where: [{ field: 'id', operator: 'eq', value: id }],
       namespace: deps.namespace
@@ -384,6 +527,9 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
     /** Whether events are recorded at all: only with an `onEvent` handler. */
     enabled: Boolean(handler),
     record,
+    stage,
+    confirm,
+    release,
     deliverAfter,
     dispatch,
     recordGrantExpiry,

@@ -707,6 +707,9 @@ export interface BillFnLifecycleEventDataMap {
     status: EntitlementStatus;
     subscriptionId?: string;
     grantId?: string;
+    /** The paid snapshot's features and limits after a subscription write (cause `subscription`). */
+    features?: Record<string, boolean>;
+    limits?: Record<string, number>;
     previousPlanKey?: string | null;
     previousStatus?: EntitlementStatus | null;
   };
@@ -773,7 +776,11 @@ export type BillFnLifecycleEvent<T extends BillFnLifecycleEventType = BillFnLife
 
 export type BillFnLifecycleEventHandler = (event: BillFnLifecycleEvent) => Promise<void> | void;
 
-export type BillFnLifecycleEventStatus = 'pending' | 'delivered' | 'failed';
+/**
+ * `staged`: recorded, without transactions, before the write that causes it;
+ * it is delivered only once that write is confirmed (see `services.events.dispatch`).
+ */
+export type BillFnLifecycleEventStatus = 'staged' | 'pending' | 'delivered' | 'failed';
 
 /** A row of the `lifecycleEvents` outbox. */
 export interface BillFnLifecycleEventRecord {
@@ -785,7 +792,10 @@ export interface BillFnLifecycleEventRecord {
   status: BillFnLifecycleEventStatus;
   /** Delivery attempts started, including one an interrupted dispatcher never finished. */
   attempts: number;
-  /** When the event is next due; while a dispatcher holds it, when that claim lapses. */
+  /**
+   * When the event is next due; while a dispatcher holds it, when that claim
+   * lapses. A `staged` event is checked against the stored state then.
+   */
   nextAttemptAt: string;
   claimId?: string | null;
   lastError?: string | null;
@@ -1166,7 +1176,9 @@ export interface BillFnInstance {
        * dispatcher claims an event before calling the handler, so of two
        * racing dispatchers one delivers it. A claim lasts 5 minutes: an event
        * a dispatcher claimed and never finished, or whose handler still runs,
-       * is due again after that.
+       * is due again after that. It first settles each `staged` event whose
+       * write was interrupted 5 minutes ago or more: one the stored state
+       * shows applied becomes `pending`, any other is deleted.
        */
       dispatch(input?: BillFnDispatchEventsRequest): Promise<BillFnDispatchEventsResult>;
       /** The outbox's events, newest first; `status: 'failed'` lists the events that ran out of retries. */

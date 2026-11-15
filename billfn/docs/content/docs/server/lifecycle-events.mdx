@@ -33,10 +33,10 @@ Without `onEvent`, BillFn records no events. Configure the handler in every proc
 
 | Type | When | `data` |
 | --- | --- | --- |
-| `entitlement.changed` | A subscription write changes the account's paid plan, status, features or limits; a grant starts or is revoked; a grant expired (from the `lifecycle-events` job) | `cause` (`subscription`, `grant.started`, `grant.revoked`, `grant.expired`), `planKey`, `status`, `subscriptionId` or `grantId`; for a subscription, `previousPlanKey` and `previousStatus` |
+| `entitlement.changed` | A subscription write changes the account's paid plan, status, features or limits; a grant starts or is revoked; a grant expired (from the `lifecycle-events` job) | `cause` (`subscription`, `grant.started`, `grant.revoked`, `grant.expired`), `planKey`, `status`, `subscriptionId` or `grantId`; for a subscription, `features`, `limits`, `previousPlanKey` and `previousStatus` |
 | `checkout.completed` | A checkout session succeeded (verification or webhook); once per checkout session | `checkoutSessionId`, `subscriptionId`, `provider`, `planKey`, `priceId` |
 | `subscription.renewed` | An `active` subscription's period end moved later, including a trial converting to a paid period; once per period end | `subscriptionId`, `provider`, `planKey`, `priceId`, `currentPeriodStart`, `currentPeriodEnd`, `previousPeriodEnd` |
-| `subscription.canceled` | A renewing subscription stopped renewing: canceled now (`status: "canceled"`) or set to end at `currentPeriodEnd` (`autoRenew: false`). An expiry or failure is not a cancellation | `subscriptionId`, `provider`, `planKey`, `priceId`, `status`, `autoRenew`, `currentPeriodEnd` |
+| `subscription.canceled` | A renewing subscription stopped renewing: canceled now (`status: "canceled"`) or set to end at `currentPeriodEnd` (`autoRenew: false`, as for a Dodo cancel at the next billing date). An expiry or failure is not a cancellation | `subscriptionId`, `provider`, `planKey`, `priceId`, `status`, `autoRenew`, `currentPeriodEnd` |
 | `grant.started` | A trial or comp was granted | `grantId`, `kind`, `planKey`, `startsAt`, `expiresAt` |
 | `grant.expiring` | A grant that is not revoked expires within 3 days (from the `lifecycle-events` job); once per grant | `grantId`, `kind`, `planKey`, `expiresAt` |
 
@@ -56,7 +56,7 @@ A handler's side effects should therefore be idempotent per `event.id`; BillFn d
 
 ## Operations
 
-`billfn.services.events.list({ status, billingAccountId, limit })` lists outbox events, newest first. `status: "failed"` lists the events that ran out of retries, with `attempts`, `lastError` and `failedAt`. BillFn also tracks the metrics `billfn.event.recorded`, `billfn.event.delivered`, `billfn.event.retry_scheduled` and `billfn.event.failed` (tagged with the event type), and `billfn.event.dispatch_deferred` when the delivery after a call could not reach the outbox.
+`billfn.services.events.list({ status, billingAccountId, limit })` lists outbox events, newest first. `status: "failed"` lists the events that ran out of retries, with `attempts`, `lastError` and `failedAt`. BillFn also tracks the metrics `billfn.event.recorded`, `billfn.event.delivered`, `billfn.event.retry_scheduled` and `billfn.event.failed` (tagged with the event type), and `billfn.event.dispatch_deferred` when the delivery after a call could not reach the outbox. Without transactions, `billfn.event.stage_recovered` and `billfn.event.stage_discarded` count the staged events a dispatch settled (see Consistency), and `billfn.event.stage_unsettled` the writes that could not settle theirs.
 
 ## The `lifecycle-events` job
 
@@ -72,4 +72,10 @@ With an adapter that supports transactions, a grant and its lifecycle events com
 
 Subscription and checkout events are recorded with the write that causes them: `subscription.renewed` and `subscription.canceled` with the subscription write, `entitlement.changed` with the entitlement snapshot write, and `checkout.completed` with the checkout session write. With transactions each write and its events commit together, so a failed event write fails the write and the call, and the retry (a webhook redelivery, sync or reconciliation job) still finds the change and records its events. A process that stops after a write committed leaves its events committed with it.
 
-Without transactions the events are recorded just before their write. If that write then fails, or loses a race with another write of the same row, its events stay recorded and are delivered. Each one reports provider state the call verified. Its `id` derives from that state and the row the write replaces, so the retry of the write records the same event rather than another one.
+Without transactions the events are first recorded with status `staged`, which no dispatcher delivers, and then the write runs:
+
+- **The write applied.** Its events become `pending` and are delivered, so a handler that reads billing state (such as `getEntitlements`) reads the committed write.
+- **The write failed or lost a race** with another write of the same row. Its staged events are deleted and never delivered. The retry, whether a lost race retried within the call or a webhook redelivery, sync or reconciliation job, records the change again. The `id` derives from the change: the provider change for `subscription.canceled`, the period end for `subscription.renewed`, the subscription state and the entitlements replaced and written for `entitlement.changed`, and the session for `checkout.completed`. So a write retried over a newer row records the same event, not a second one.
+- **The process stopped** between staging an event and settling it. The event stays `staged`. Once 5 minutes have passed, a dispatch checks it against the stored state and makes it `pending` only if the write applied: the subscription reached the renewed period end or stopped renewing, the snapshot holds the changed entitlements, or the checkout session succeeded. Otherwise it is deleted. A write that stopped after it applied therefore still delivers its event, and one that never applied delivers none.
+
+Because a stopped write is judged by the stored state, a stop combined with another write of the same row before that check can still decide it either way. One example is a cancellation that applied and was resumed within those 5 minutes: its staged event is deleted.

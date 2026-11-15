@@ -72,7 +72,7 @@ Version `6` adds one table, `lifecycleEvents`, and one index on `entitlementGran
 | `billingAccountId` | string | yes |
 | `occurredAt` | string | yes |
 | `data` | json | yes |
-| `status` | string (`pending`, `delivered` or `failed`) | yes |
+| `status` | string (`staged`, `pending`, `delivered` or `failed`; `staged` only without transactions) | yes |
 | `attempts` | number | yes |
 | `nextAttemptAt` | string | yes |
 | `claimId` | string | no |
