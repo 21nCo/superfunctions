@@ -10,6 +10,7 @@ import type { EventBus } from "./events/bus.js";
 import type { DatafnPlugin, DatafnSchema, SearchProvider } from "@datafn/core";
 import { unwrapRemoteSuccess } from "./remote/unwrap.js";
 import { isTransportError } from "./errors.js";
+import { runSearchIndexUpdate } from "./searchIndexQueue.js";
 import {
   applyOptimisticMutationToStorage,
   handleOfflineMutation,
@@ -408,30 +409,34 @@ async function tryUpdateSearchIndex(
   if (typeof resource !== "string" || typeof id !== "string" || !searchOp) return;
 
   try {
-    if (searchOp === "delete") {
+    // One update at a time per resource, reading storage in its turn, so an
+    // earlier update cannot land after this one (see searchIndexQueue).
+    await runSearchIndexUpdate(searchProvider, resource, async () => {
+      if (searchOp === "delete") {
+        await searchProvider.updateIndices({
+          resource,
+          records: [{ id }],
+          operation: "delete",
+        });
+        return;
+      }
+
+      const fromStorage = storage ? await storage.getRecord(resource, id) : null;
+      const fallbackRecord =
+        typeof mutation.record === "object" &&
+        mutation.record !== null &&
+        !Array.isArray(mutation.record)
+          ? (mutation.record as Record<string, unknown>)
+          : {};
+      const finalRecord = {
+        id,
+        ...(resolvedRecord ?? (fromStorage as Record<string, unknown> | null) ?? fallbackRecord),
+      };
       await searchProvider.updateIndices({
         resource,
-        records: [{ id }],
-        operation: "delete",
+        records: [finalRecord],
+        operation: "upsert",
       });
-      return;
-    }
-
-    const fromStorage = storage ? await storage.getRecord(resource, id) : null;
-    const fallbackRecord =
-      typeof mutation.record === "object" &&
-      mutation.record !== null &&
-      !Array.isArray(mutation.record)
-        ? (mutation.record as Record<string, unknown>)
-        : {};
-    const finalRecord = {
-      id,
-      ...(resolvedRecord ?? (fromStorage as Record<string, unknown> | null) ?? fallbackRecord),
-    };
-    await searchProvider.updateIndices({
-      resource,
-      records: [finalRecord],
-      operation: "upsert",
     });
   } catch (error) {
     // Search indexing is non-fatal for mutation durability.

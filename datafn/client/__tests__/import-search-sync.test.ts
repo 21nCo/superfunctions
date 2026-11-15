@@ -313,6 +313,55 @@ describe("importData with cloneUp", () => {
 });
 
 describe("importData edge cases", () => {
+  it("reads a large import back for indexing in one storage read", async () => {
+    const storage = await readyStorage();
+    const provider = createPersistentProvider();
+    const client = localClient(storage, provider);
+    const notes = Array.from({ length: 500 }, (_, i) => ({ id: `notes:bulk${i}`, title: `Bulk ${i}` }));
+    const getSpy = vi.spyOn(storage, "getRecord");
+    const listSpy = vi.spyOn(storage, "listRecords");
+
+    expect((await client.importData({ ...payload, resources: { notes } })).ok).toBe(true);
+    expect(getSpy.mock.calls.filter(([, id]) => String(id).startsWith("notes:bulk"))).toEqual([]);
+    expect(listSpy.mock.calls.filter(([resource]) => resource === "notes")).toHaveLength(1);
+    expect(provider.documents.get("notes")?.size).toBe(500);
+  });
+
+  it("indexes an edit made while the import's index update runs after it", async () => {
+    const storage = await readyStorage();
+    const provider = createPersistentProvider();
+    let releaseImport!: () => void;
+    const importGate = new Promise<void>((resolve) => {
+      releaseImport = resolve;
+    });
+    const upsert = provider.updateIndices.getMockImplementation()!;
+    provider.updateIndices.mockImplementationOnce(async (params) => {
+      await importGate;
+      return upsert(params);
+    });
+    const client = localClient(storage, provider);
+
+    const importing = client.importData({
+      ...payload,
+      resources: { notes: [{ id: "notes:new", title: "Imported" }] },
+    });
+    await vi.waitFor(() => expect(provider.updateIndices).toHaveBeenCalledTimes(1));
+    const editing = client.table("notes").mutate({
+      operation: "merge",
+      id: "notes:new",
+      record: { title: "Edit two" },
+    } as any);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // The edit's index update waits for the import's to finish.
+    expect(provider.updateIndices).toHaveBeenCalledTimes(1);
+    releaseImport();
+    await Promise.all([importing, editing]);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(await storage.getRecord("notes", "notes:new")).toMatchObject({ title: "Edit two" });
+    expect(provider.documents.get("notes")?.get("notes:new")).toBe("edit two");
+  });
+
   it("does not overwrite an edit made while the import waited for a rebuild", async () => {
     const storage = await readyStorage();
     const provider = createPersistentProvider();

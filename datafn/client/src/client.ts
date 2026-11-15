@@ -56,6 +56,7 @@ import {
   clearSearchIndexCurrent,
 } from "./searchIndex.js";
 import { IMPORT_CONTEXT } from "./events/importMarker.js";
+import { runSearchIndexUpdate } from "./searchIndexQueue.js";
 import {
   ensureBuiltinKv,
   ensureBuiltinTemporal,
@@ -1063,46 +1064,35 @@ function _buildRawClient<S extends DatafnSchema>(
    * take them, the resource's index marker is cleared so the next search
    * rebuilds it from storage.
    */
-  /** Stored records by id, as a comparable snapshot (absent when deleted). */
-  const readStoredVersions = async (
-    storage: DatafnStorageAdapter,
-    resource: string,
-    ids: string[],
-  ): Promise<Map<string, string | undefined>> => {
-    const versions = new Map<string, string | undefined>();
-    for (const id of ids) {
-      const record = await storage.getRecord(resource, id);
-      versions.set(id, record ? JSON.stringify(record) : undefined);
-    }
-    return versions;
-  };
-
   /**
-   * Upserts the stored version of each id into the search index and removes
-   * ids no longer stored. Returns the versions it indexed.
+   * Indexes the version storage holds for each id and removes ids no longer
+   * stored. Reads in bulk when the ids are many.
    */
   const indexStoredVersions = async (
     storage: DatafnStorageAdapter,
     provider: NonNullable<typeof config.searchProvider>,
     resource: string,
     ids: string[],
-  ): Promise<Map<string, string | undefined>> => {
-    const versions = new Map<string, string | undefined>();
-    const present: Array<Record<string, unknown>> = [];
-    const removed: Array<Record<string, unknown>> = [];
-    for (const id of ids) {
-      const record = await storage.getRecord(resource, id);
-      versions.set(id, record ? JSON.stringify(record) : undefined);
-      if (record) present.push(record);
-      else removed.push({ id });
+  ): Promise<void> => {
+    const wanted = new Set(ids);
+    const stored = new Map<string, Record<string, unknown>>();
+    if (wanted.size > 64) {
+      for (const record of await storage.listRecords(resource)) {
+        if (typeof record.id === "string" && wanted.has(record.id)) stored.set(record.id, record);
+      }
+    } else {
+      const records = await Promise.all([...wanted].map((id) => storage.getRecord(resource, id)));
+      for (const record of records) {
+        if (record && typeof record.id === "string") stored.set(record.id, record);
+      }
     }
-    if (present.length > 0) {
-      await provider.updateIndices({ resource, records: present, operation: "upsert" });
+    const removed = [...wanted].filter((id) => !stored.has(id)).map((id) => ({ id }));
+    if (stored.size > 0) {
+      await provider.updateIndices({ resource, records: [...stored.values()], operation: "upsert" });
     }
     if (removed.length > 0) {
       await provider.updateIndices({ resource, records: removed, operation: "delete" });
     }
-    return versions;
   };
 
   const indexImportedRecords = async (
@@ -1119,16 +1109,16 @@ function _buildRawClient<S extends DatafnSchema>(
         // overwrite the imported documents.
         await searchProviderInitPromise;
         await searchHydrationPromises.get(resource)?.catch(() => {});
-        // Index what storage holds now, not the import payload: a write made
-        // while this waited has indexed its own newer version. A second pass
-        // catches a write that landed between the read and the update.
+        // Index what storage holds, not the import payload, in this
+        // resource's index-update turn: a write made while this waited has
+        // indexed its newer version already, and a later write's update
+        // runs after this one.
         const ids = records
           .map((record) => record.id)
           .filter((id): id is string => typeof id === "string");
-        const indexed = await indexStoredVersions(storage, provider, resource, ids);
-        const current = await readStoredVersions(storage, resource, ids);
-        const changed = ids.filter((id) => current.get(id) !== indexed.get(id));
-        if (changed.length > 0) await indexStoredVersions(storage, provider, resource, changed);
+        await runSearchIndexUpdate(provider, resource, () =>
+          indexStoredVersions(storage, provider, resource, ids),
+        );
       } catch (error) {
         console.warn("Search index update after import failed; the index will rebuild", {
           resource,
