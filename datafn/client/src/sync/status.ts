@@ -1,3 +1,4 @@
+import { isImportContext } from "../events/importMarker.js";
 import type { DatafnError, DatafnEvent, DatafnSignal } from "@datafn/core";
 import type { DatafnStorageAdapter } from "../storage.js";
 
@@ -384,12 +385,4 @@ function resolveExplicitErrorMessage(error: unknown): string | null {
     if (typeof message === "string") return message;
   }
   return null;
-}
-
-function isImportContext(context: unknown): boolean {
-  return (
-    typeof context === "object" &&
-    context !== null &&
-    (context as { source?: unknown }).source === "import"
-  );
 }

@@ -5,6 +5,7 @@
  * Opt-in via `crossTab: true` config.
  */
 
+import { IMPORT_CONTEXT, isImportContext } from "./events/importMarker.js";
 import type { EventBus } from "./events/bus.js";
 import type { DatafnEvent } from "@datafn/core";
 
@@ -30,10 +31,8 @@ interface RelayEvent {
   };
 }
 
-/** Context of the change events importData emits for the records it wrote. */
-const IMPORT_CONTEXT = { source: "import" } as const;
-
-function isImportContext(context: unknown): boolean {
+/** The import marker as it travels between tabs. */
+function isRelayedImportContext(context: unknown): boolean {
   return (
     typeof context === "object" &&
     context !== null &&
@@ -123,7 +122,7 @@ export class CrossTabRelay {
         };
         this.eventBus.emit({
           ...relayed,
-          ...(isImportContext(context) ? { context: IMPORT_CONTEXT } : {}),
+          ...(isRelayedImportContext(context) ? { context: IMPORT_CONTEXT } : {}),
           fromRemoteTab: true,
         } as DatafnEvent & { fromRemoteTab: true });
       };

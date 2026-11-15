@@ -5,6 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { CrossTabRelay } from "../src/crossTab.js";
 import { EventBus } from "../src/events/bus.js";
+import { IMPORT_CONTEXT } from "../src/events/importMarker.js";
 import type { DatafnEvent } from "@datafn/core";
 
 // Mock BroadcastChannel
@@ -409,12 +410,22 @@ describe("CrossTabRelay", () => {
         ids: ["task:1"],
         timestampMs: Date.now(),
         action: "replace",
-        context: { source: "import", extra: "dropped" },
+        context: IMPORT_CONTEXT,
+      });
+      // A caller's own context that merely looks like the marker is not relayed.
+      relayA.broadcast({
+        type: "mutation_applied",
+        resource: "task",
+        ids: ["task:2"],
+        timestampMs: Date.now(),
+        action: "merge",
+        context: { source: "import" },
       });
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      expect(receivedEvents).toHaveLength(1);
-      expect(receivedEvents[0].context).toEqual({ source: "import" });
+      expect(receivedEvents).toHaveLength(2);
+      expect(receivedEvents[0].context).toBe(IMPORT_CONTEXT);
+      expect(receivedEvents[1].context).toBeUndefined();
 
       relayA.close();
       relayB.close();

@@ -136,7 +136,7 @@ describe("importData and search", () => {
     expect(provider.clearIndices).not.toHaveBeenCalled();
   });
 
-  it("clears the index marker when indexing the import fails, so the next client rebuilds", async () => {
+  it("rebuilds in the same client when indexing the import fails", async () => {
     const storage = await readyStorage();
     const provider = createPersistentProvider();
     const first = localClient(storage, provider);
@@ -147,13 +147,62 @@ describe("importData and search", () => {
     expect((await first.importData(payload)).ok).toBe(true);
     warn.mockRestore();
 
-    // The same client rebuilds on its next search.
+    provider.clearIndices.mockClear();
     expect(await searchIds(first, "restored")).toEqual(["notes:r1", "notes:r2"]);
+    expect(provider.clearIndices).toHaveBeenCalledWith("notes");
+  });
+
+  it("clears the index marker when indexing the import fails, so the next client rebuilds", async () => {
+    const storage = await readyStorage();
+    const provider = createPersistentProvider();
+    const first = localClient(storage, provider);
+    expect(await searchIds(first, "shopping")).toEqual(["notes:old"]);
+
+    provider.updateIndices.mockRejectedValueOnce(new Error("index unavailable"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect((await first.importData(payload)).ok).toBe(true);
+    warn.mockRestore();
+    // The provider holds none of the imported documents.
+    expect(provider.documents.get("notes")?.has("notes:r1")).toBe(false);
 
     await first.destroy();
     clients.splice(clients.indexOf(first as any), 1);
+    provider.clearIndices.mockClear();
     const second = localClient(storage, provider);
     expect(await searchIds(second, "restored")).toEqual(["notes:r1", "notes:r2"]);
+    expect(provider.clearIndices).toHaveBeenCalledWith("notes");
+  });
+
+  it("indexes an import after a rebuild that read storage before it", async () => {
+    const storage = await readyStorage();
+    const provider = createPersistentProvider();
+    // The rebuild's upsert waits until the import has run.
+    let releaseRebuild!: () => void;
+    const rebuildGate = new Promise<void>((resolve) => {
+      releaseRebuild = resolve;
+    });
+    const upsert = provider.updateIndices.getMockImplementation()!;
+    provider.updateIndices.mockImplementationOnce(async (params) => {
+      await rebuildGate;
+      return upsert(params);
+    });
+    const client = localClient(storage, provider);
+
+    const searching = searchIds(client, "shopping");
+    await vi.waitFor(() => expect(provider.updateIndices).toHaveBeenCalledTimes(1));
+
+    // The import replaces the record the rebuild already read.
+    const importing = client.importData({
+      ...payload,
+      resources: { notes: [{ id: "notes:old", title: "Restored shopping list" }] },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    releaseRebuild();
+    await searching;
+    expect((await importing).ok).toBe(true);
+
+    expect(provider.documents.get("notes")?.get("notes:old")).toBe("restored shopping list");
+    expect(await searchIds(client, "restored")).toEqual(["notes:old"]);
   });
 });
 
@@ -260,5 +309,102 @@ describe("importData with cloneUp", () => {
     expect(result.errors).toEqual([
       { resource: "notes", id: "notes:old", code: "FK_VIOLATION", message: "parent missing" },
     ]);
+  });
+});
+
+describe("importData edge cases", () => {
+  it("indexes the import only after the search provider has initialised", async () => {
+    const storage = await readyStorage();
+    let releaseInit!: () => void;
+    const initGate = new Promise<void>((resolve) => {
+      releaseInit = resolve;
+    });
+    const provider = Object.assign(createPersistentProvider(), {
+      initialize: vi.fn(() => initGate),
+    });
+    const client = localClient(storage, provider);
+
+    const importing = client.importData(payload);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(provider.updateIndices).not.toHaveBeenCalled();
+    releaseInit();
+    expect((await importing).ok).toBe(true);
+    expect(provider.updateIndices).toHaveBeenCalledWith(
+      expect.objectContaining({ resource: "notes", operation: "upsert" }),
+    );
+  });
+
+  it("resolves ok: false when cloneUp throws", async () => {
+    const storage = await readyStorage();
+    vi.spyOn(DefaultHttpTransport.prototype, "push").mockRejectedValue(
+      Object.assign(new Error("server unreachable"), { code: "PUSH_FAILED" }),
+    );
+    const client = createDatafnClient({
+      schema,
+      clientId: "import-throw-client",
+      storage,
+      sync: { remote: "http://example.com", offlinability: true },
+    });
+    clients.push(client as any);
+
+    const result = await client.importData(payload, { triggerCloneUp: true });
+    expect(result.ok).toBe(false);
+    expect(result.errors).toEqual([
+      expect.objectContaining({ code: "PUSH_FAILED", message: "server unreachable" }),
+    ]);
+    expect(result.stats.resources.notes).toEqual({ imported: 2, skipped: 0 });
+    expect(await storage.getRecord("notes", "notes:r2")).toMatchObject({ title: "Restored travel plan" });
+  });
+
+  it("refreshes live queries over both ends of an import that only has join rows", async () => {
+    const joinSchema: DatafnSchema = {
+      resources: [
+        { name: "notes", version: 1, fields: [{ name: "title", type: "string", required: true }] },
+        { name: "tags", version: 1, fields: [{ name: "label", type: "string", required: true }] },
+      ],
+      relations: [{ from: "notes", to: "tags", type: "many-many", relation: "tags", inverse: "notes" }],
+    };
+    const storage = new MemoryStorageAdapter(["notes", "tags"]);
+    await storage.upsertRecord("notes", { id: "notes:1", title: "One" });
+    await storage.upsertRecord("tags", { id: "tags:1", label: "Work" });
+    for (const resource of ["notes", "tags"]) {
+      await storage.setHydrationState(resource, "hydrating");
+      await storage.setHydrationState(resource, "ready");
+    }
+    const client = createDatafnClient({
+      schema: joinSchema,
+      clientId: "import-join-client",
+      storage,
+      sync: { mode: "local-only", offlinability: true },
+    });
+    clients.push(client as any);
+    const events: any[] = [];
+    client.subscribe((event: any) => events.push(event));
+
+    const signal = client.table("notes").signal({ select: ["id", "tags.*"] });
+    const values: any[][] = [];
+    signal.subscribe((value: any) => {
+      if (value !== undefined) values.push(value);
+    });
+    await vi.waitFor(() => expect(values.length).toBeGreaterThan(0));
+    expect(values.at(-1)![0].tags ?? []).toEqual([]);
+
+    const result = await client.importData({
+      version: 1,
+      exportedAt: new Date(0).toISOString(),
+      schema: [],
+      resources: {},
+      joins: { join_notes_tags_tags: [{ from: "notes:1", to: "tags:1" }] },
+    });
+    expect(result.ok).toBe(true);
+
+    const applied = events.filter((event) => event.type === "mutation_applied");
+    expect(applied.map((event) => [event.resource, event.action, event.ids])).toEqual([
+      ["notes", "relate", ["notes:1"]],
+      ["tags", "relate", ["tags:1"]],
+    ]);
+    await vi.waitFor(() =>
+      expect((values.at(-1)![0].tags ?? []).map((tag: any) => tag.id)).toEqual(["tags:1"]),
+    );
   });
 });

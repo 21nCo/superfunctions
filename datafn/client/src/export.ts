@@ -7,6 +7,7 @@ import { getJoinStoreKey } from "@datafn/core";
 import type { DatafnStorageAdapter } from "./storage.js";
 import { createClientError } from "./errors.js";
 import type { SyncFacade } from "./sync.js";
+import type { CloneUpResult } from "./sync/cloneUp.js";
 
 /**
  * Export payload format version 1
@@ -41,11 +42,28 @@ export interface DatafnExportOptions {
 
 /**
  * Called by importData after the local writes and before any cloneUp, with
- * the records written per resource.
+ * the records written per resource and, per resource, the ids at either end
+ * of the join rows written.
  */
 export type DatafnImportLocalHook = (
   imported: Record<string, Array<Record<string, unknown>>>,
+  relatedIds: Record<string, string[]>,
 ) => Promise<void> | void;
+
+/** The resources at either end of each many-many join store. */
+function joinStoreEndpoints(schema: DatafnSchema): Map<string, { from: string; to: string }> {
+  const endpoints = new Map<string, { from: string; to: string }>();
+  for (const relation of schema.relations ?? []) {
+    if (relation.type !== "many-many") continue;
+    const froms = Array.isArray(relation.from) ? relation.from : [relation.from];
+    const tos = Array.isArray(relation.to) ? relation.to : [relation.to];
+    const relName = relation.relation ?? "rel";
+    for (const from of froms) {
+      for (const to of tos) endpoints.set(getJoinStoreKey(from, relName, to), { from, to });
+    }
+  }
+  return endpoints;
+}
 
 /**
  * Options for data import
@@ -190,13 +208,29 @@ export async function importData(
   }
   
   // Import join rows
+  const endpointsByStore = joinStoreEndpoints(schema);
+  const relatedIds = new Map<string, Set<string>>();
+  const addRelated = (resource: string, id: unknown) => {
+    if (typeof id !== "string") return;
+    let ids = relatedIds.get(resource);
+    if (!ids) {
+      ids = new Set();
+      relatedIds.set(resource, ids);
+    }
+    ids.add(id);
+  };
   for (const [storeName, rows] of Object.entries(data.joins ?? {})) {
     let imported = 0;
     let skipped = 0;
+    const endpoints = endpointsByStore.get(storeName);
     
     for (const row of rows) {
       try {
         await storage.upsertJoinRow(storeName, row);
+        if (endpoints) {
+          addRelated(endpoints.from, row.from);
+          addRelated(endpoints.to, row.to);
+        }
         imported++;
       } catch (err) {
         skipped++;
@@ -209,13 +243,30 @@ export async function importData(
   
   // Search indexing and change events for what was written locally
   if (afterLocalImport) {
-    await afterLocalImport(importedRecords);
+    await afterLocalImport(
+      importedRecords,
+      Object.fromEntries([...relatedIds].map(([resource, ids]) => [resource, [...ids]])),
+    );
   }
 
   // Trigger cloneUp if requested. Local writes stay in place when the push is
-  // rejected; the result reports the push errors.
+  // rejected or fails; the result reports why.
   if (options?.triggerCloneUp && sync.cloneUp) {
-    const pushed = await sync.cloneUp();
+    let pushed: CloneUpResult | undefined;
+    try {
+      pushed = await sync.cloneUp();
+    } catch (error) {
+      const failure = error as { code?: unknown; message?: unknown } | null;
+      result.errors.push({
+        resource: "",
+        id: "",
+        code: typeof failure?.code === "string" ? failure.code : "PUSH_FAILED",
+        message:
+          typeof failure?.message === "string" && failure.message.length > 0
+            ? failure.message
+            : "cloneUp failed",
+      });
+    }
     if (pushed && pushed.ok === false) {
       const pushErrors = Array.isArray(pushed.errors) ? pushed.errors : [];
       if (pushErrors.length === 0) {

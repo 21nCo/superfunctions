@@ -55,6 +55,7 @@ import {
   markSearchIndexCurrent,
   clearSearchIndexCurrent,
 } from "./searchIndex.js";
+import { IMPORT_CONTEXT } from "./events/importMarker.js";
 import {
   ensureBuiltinKv,
   ensureBuiltinTemporal,
@@ -1071,6 +1072,11 @@ function _buildRawClient<S extends DatafnSchema>(
     for (const [resource, records] of Object.entries(imported)) {
       if (!searchProviderResourceByName.has(resource) || records.length === 0) continue;
       try {
+        // The provider must be initialised, and a rebuild that read storage
+        // before the import must finish first, or its older snapshot would
+        // overwrite the imported documents.
+        await searchProviderInitPromise;
+        await searchHydrationPromises.get(resource)?.catch(() => {});
         await provider.updateIndices({ resource, records, operation: "upsert" });
       } catch (error) {
         console.warn("Search index update after import failed; the index will rebuild", {
@@ -1825,26 +1831,32 @@ function _buildRawClient<S extends DatafnSchema>(
       }
 
       const storage = resolvedStorage;
-      return importData(resolvedStorage, schema, sync, data, options, async (imported) => {
-        const resources = Object.keys(imported);
-        if (resources.length === 0) return;
+      return importData(resolvedStorage, schema, sync, data, options, async (imported, related) => {
         await indexImportedRecords(storage, imported);
-        // Announce the imported records as local writes so open live queries
-        // (in this tab and, through the relay, in others) refresh. An import
-        // is not a sync, so it does not touch the sync status.
+        // Announce the imported records and join rows as local writes so open
+        // live queries (in this tab and, through the relay, in others)
+        // refresh. An import is not a sync, so it does not touch the sync
+        // status.
         const timestampMs = getTimestamp();
-        for (const resource of resources) {
+        const announce = (resource: string, ids: string[], action: string) =>
           eventBus.emit({
             type: "mutation_applied",
             resource,
-            ids: imported[resource]
-              .map((record) => record.id)
-              .filter((id): id is string => typeof id === "string"),
-            action: "replace",
+            ids,
+            action,
             clientId: config.clientId,
             timestampMs,
-            context: { source: "import" },
+            context: IMPORT_CONTEXT,
           });
+        for (const [resource, records] of Object.entries(imported)) {
+          announce(
+            resource,
+            records.map((record) => record.id).filter((id): id is string => typeof id === "string"),
+            "replace",
+          );
+        }
+        for (const [resource, ids] of Object.entries(related)) {
+          if (ids.length > 0) announce(resource, ids, "relate");
         }
       });
     },
