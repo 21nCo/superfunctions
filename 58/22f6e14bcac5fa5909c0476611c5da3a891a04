@@ -1,0 +1,33 @@
+filefn/docs/content/docs/reference/errors.md
+  s_f2c1c8c7824920::t_a223f4d5008242 71
+filefn/docs/content/docs/reference/routes.md
+  s_f2c1c8c7824920::t_d9fb3b8b517321 16,24-25
+filefn/docs/static/llms-full.txt
+  s_f2c1c8c7824920::t_8883734fc0be00 7957,8085,8093-8094
+filefn/server/package.json
+  s_f2c1c8c7824920::t_bdb7499f3676e5 3
+filefn/server/src/__tests__/upload-proxy.test.ts
+  s_f2c1c8c7824920::t_3d1063e1db402b 441-695
+filefn/server/src/errors.ts
+  s_f2c1c8c7824920::t_8fe7d26e3b5c0a 55,225-233
+filefn/server/src/upload-sessions/service.ts
+  s_f2c1c8c7824920::t_70bf3605b93c8e 380-381,391-398,434-435,765-776,778-780,838,851-854,858,862,889,891-894,928-944
+package-lock.json
+  s_f2c1c8c7824920::t_fce9920ac2f9d2 13335
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5822f6e14bcac5fa5909c0476611c5da3a891a04",
+  "prompts": {},
+  "sessions": {
+    "s_f2c1c8c7824920": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_f2c1c8c7824920",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
