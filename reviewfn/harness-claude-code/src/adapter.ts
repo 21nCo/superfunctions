@@ -143,8 +143,11 @@ export class ClaudeCodeHarnessAdapter implements HarnessAdapter {
       for (let attempt = 1; attempt <= 2; attempt += 1) {
         const remaining = deadline - Date.now();
         if (remaining <= 0) return state.finish("timed_out", "Claude Code exceeded its configured bound before the repair attempt.");
+        // Both attempts share one output budget, as they share one transcript: the repair gets only what is left.
+        const outputBytes = state.remainingOutputBytes(input.policy.limits.maxOutputBytes);
+        if (outputBytes <= 0) return state.finish("timed_out", "Claude Code output used its whole byte budget before the repair attempt.");
         let result: CommandResult;
-        try { result = await this.runner(this.executableFor(config), args, { cwd: input.workspace, env: environment, timeoutMs: remaining, maxOutputBytes: input.policy.limits.maxOutputBytes, signal: input.signal, stdin: prompt }); }
+        try { result = await this.runner(this.executableFor(config), args, { cwd: input.workspace, env: environment, timeoutMs: remaining, maxOutputBytes: outputBytes, signal: input.signal, stdin: prompt }); }
         catch (error) { return state.finish(input.signal?.aborted ? "canceled" : "failed", `Claude Code could not be started: ${message(error)}`); }
         const stream = state.record(result);
         if (result.canceled) return state.finish("canceled", "Claude Code run was canceled.");
@@ -278,7 +281,10 @@ class RunState {
   private readonly transcript: string[] = [];
   /** Every model the stream named: the session's model, each assistant message's model and each usage entry. */
   private readonly models = new Set<string>();
-  /** Models that served the review: assistant messages and usage entries, not the session's requested model. */
+  /**
+   * Models that served the current attempt: assistant messages, usage entries and the result's model, not the session's
+   * requested model. Scoped per attempt, so a repair attempt cannot complete on the first attempt's evidence.
+   */
   private readonly served = new Set<string>();
   private readonly disallowed = new Set<string>();
   private harnessVersion: string | undefined;
@@ -292,6 +298,7 @@ class RunState {
 
   /** Normalize one attempt's stream; the checks see every line, even after event retention is exhausted. */
   public record(result: CommandResult): ParsedStream {
+    this.served.clear();
     this.transcript.push(redactText(`${result.stdout}\n${result.stderr}`, this.secrets));
     const parsed: ParsedStream = {};
     for (const match of result.stdout.matchAll(/[^\r\n]+/g)) {
@@ -316,9 +323,18 @@ class RunState {
     return undefined;
   }
 
-  /** A completed run must have reported the model that served it. */
+  /** A completing attempt must itself have reported the model that served it. */
   public unconfirmedModel(): string | undefined {
     return this.served.size ? undefined : `Claude Code reported no resolved model, so the configured ${this.model} was not confirmed.`;
+  }
+
+  /**
+   * Output bytes the next attempt may produce: the limit less the transcript so far and the two newlines (the attempt
+   * separator and the attempt's stdout/stderr separator) the next attempt adds to it.
+   */
+  public remainingOutputBytes(limit: number): number {
+    if (!this.transcript.length) return limit;
+    return limit - Buffer.byteLength(this.transcript.join("\n")) - 2;
   }
 
   public complete(payload: Omit<HarnessOutput, "terminal" | "events" | "transcript">): SlotHarnessOutput {
@@ -397,6 +413,8 @@ class RunState {
   }
 
   private result(raw: Record<string, unknown>): StreamResult {
+    // A result that names its model is evidence too: a contradictory one is a mismatch.
+    this.noteModel(raw.model, true);
     const usage: Record<string, JsonValue> = {};
     if (isRecord(raw.usage)) {
       for (const key of ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"]) {

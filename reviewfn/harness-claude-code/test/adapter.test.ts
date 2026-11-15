@@ -192,6 +192,42 @@ describe("ClaudeCodeHarnessAdapter results", () => {
     expect(output.error).toMatch(/no resolved model/);
   });
 
+  it("requires the repair attempt to report its own serving model", async () => {
+    const repair = fixture("completed-review").split("\n").filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>)
+      .filter(event => event.type === "result").map(({ modelUsage: _omitted, ...event }) => event);
+    const { adapter: harness, calls } = adapter([fixture("malformed-output"), repair.map(event => JSON.stringify(event)).join("\n")]);
+    const output = await harness.run(baseInput);
+    expect(calls).toHaveLength(2);
+    expect(output.terminal).toBe("failed");
+    expect(output.error).toMatch(/no resolved model/);
+    expect(output.findings).toEqual([]);
+  });
+
+  it("reports a result model that contradicts the usage models as a mismatch", async () => {
+    const stream = fixture("completed-review").split("\n").filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>)
+      .map(event => event.type === "result" ? { ...event, model: "different-model" } : event);
+    const { adapter: harness } = adapter([stream.map(event => JSON.stringify(event)).join("\n")]);
+    const output = await harness.run(baseInput);
+    expect(output.terminal).toBe("failed");
+    expect(output.error).toMatch(/^model_mismatch: Claude Code served different-model/);
+    expect(output.observed?.model).toBe("different-model");
+  });
+
+  it("gives the repair attempt only the output budget the first attempt left", async () => {
+    const malformed = fixture("malformed-output");
+    const limit = Buffer.byteLength(malformed) + 4_096;
+    const limits = (maxOutputBytes: number) => ({ ...baseInput, policy: { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, maxOutputBytes } } });
+    const shared = adapter([malformed, fixture("schema-invalid-output")]);
+    await shared.adapter.run(limits(limit));
+    expect(shared.calls.map(call => call.options.maxOutputBytes)).toEqual([limit, limit - Buffer.byteLength(`${malformed}\n`) - 2]);
+    // A first attempt that used the whole budget leaves nothing for a repair, which is not started.
+    const spent = adapter([malformed, fixture("completed-review")]);
+    const output = await spent.adapter.run(limits(Buffer.byteLength(malformed) + 1));
+    expect(output.terminal).toBe("timed_out");
+    expect(output.error).toMatch(/whole byte budget/);
+    expect(spent.calls).toHaveLength(1);
+  });
+
   it("redacts a credential echoed in output from stored events, transcript and payload", async () => {
     const { adapter: harness } = adapter([fixture("credential-echo")]);
     const output = await harness.run(baseInput);
