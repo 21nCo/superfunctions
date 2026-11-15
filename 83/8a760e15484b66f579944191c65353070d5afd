@@ -1,0 +1,33 @@
+billfn/admin/src/__tests__/admin.test.ts
+  s_1a50c2ac3ebdb2::t_4a3daf3177bd83 8-15,385-420
+billfn/core/src/__tests__/import-subscription.test.ts
+  s_1a50c2ac3ebdb2::t_b58bd79677b2fe 1538-1565
+billfn/core/src/service.ts
+  s_1a50c2ac3ebdb2::t_167cbdc0e922dc 32,1213,2148-2171
+billfn/docs/content/docs/server/reconciliation.mdx
+  s_1a50c2ac3ebdb2::t_a957e35e42ee62 86
+billfn/provider-apple/src/__tests__/provider.test.ts
+  s_1a50c2ac3ebdb2::t_f69a17abcfc876 747-762
+billfn/provider-apple/src/index.ts
+  s_1a50c2ac3ebdb2::t_0e5c30833500d1 433-434,455-468
+billfn/provider-dodo/src/__tests__/provider.test.ts
+  s_1a50c2ac3ebdb2::t_2059be20b656ab 752-781
+billfn/provider-dodo/src/index.ts
+  s_1a50c2ac3ebdb2::t_a09358d03947bd 308-316
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "838a760e15484b66f579944191c65353070d5afd",
+  "prompts": {},
+  "sessions": {
+    "s_1a50c2ac3ebdb2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_1a50c2ac3ebdb2",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
