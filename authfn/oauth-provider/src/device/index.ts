@@ -404,8 +404,9 @@ function deviceError(error: 'authorization_pending' | 'slow_down' | 'access_deni
  * `expired_token` after 10 minutes. A `resource` other than the requested
  * one is `invalid_target` and leaves the code as it was. A poll that loses to
  * 16 concurrent polls, or cannot tell whether it was stored, is a 429
- * `temporarily_unavailable` whose `Retry-After` is the stored interval from
- * the stored last poll time, plus 5 seconds when its own `slow_down` may count.
+ * `temporarily_unavailable` whose `Retry-After` is the time left until the
+ * stored last poll time plus the stored interval (none once that has passed),
+ * plus 5 seconds when its own `slow_down` may count.
  * An approval yields the same tokens as an authorization code: an
  * access token for the approved scopes and a refresh token under the grant.
  * The exchange is judged unexpired with a clock read after the row read that

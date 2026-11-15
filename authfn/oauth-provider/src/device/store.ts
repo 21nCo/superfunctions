@@ -289,11 +289,12 @@ export type PollOutcome =
 
 /**
  * Seconds after `now` until a poll is no longer too fast for the stored
- * `state`: its interval from its last poll time. When the poll's own
- * `slow_down` may have been stored (`unknown`), 5 more for it.
+ * `state`: the time left until its last poll time plus its interval, none
+ * when that has passed. When the poll's own `slow_down` may have been stored
+ * (`unknown`), 5 more for it.
  */
 function retryAfter(state: DeviceCodeRecord, now: Date, ownMayCount: boolean): number {
-  const wait = Math.max(0, readPollClaim(state.pollClaim).at - now.getTime()) + state.interval * 1000;
+  const wait = Math.max(0, readPollClaim(state.pollClaim).at + state.interval * 1000 - now.getTime());
   return Math.ceil(wait / 1000) + (ownMayCount ? OAUTH_DEVICE_POLL_INTERVAL_SECONDS : 0);
 }
 

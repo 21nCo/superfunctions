@@ -12,7 +12,17 @@ import { createDeviceSchema, OAUTH_DEVICE_CODE_TTL_SECONDS } from '../device/ind
 import { createDeviceCode, findDeviceCode } from '../device/store.js';
 import { OAUTH_REFRESH_TOKEN_TTL_SECONDS } from '../types.js';
 import { createOAuthProviderSchema } from '../store.js';
-import { MEMOTRON, ORIGIN, POINTRON, RESOURCES, RFC6749_BASIC, RFC6749_CLIENT, createProviderApp, setupProvider } from './harness.js';
+import {
+  MEMOTRON,
+  ORIGIN,
+  POINTRON,
+  RESOURCES,
+  RFC6749_BASIC,
+  RFC6749_CLIENT,
+  createInsertControl,
+  createProviderApp,
+  setupProvider
+} from './harness.js';
 
 /** A public CLI client, configured ahead of time. */
 const CLI: OAuthProviderClient = {
@@ -608,6 +618,57 @@ describe('device grant storage and request bounds', () => {
     expect(await provider.pollError(device.device_code)).toBe('authorization_pending');
   });
 
+  // The poll reads its clock at T; the concurrent polls are stored with their
+  // own clock at T + offset (another instance behind or ahead) and raise the
+  // interval to 80. Retry-After is the time left until that last poll time
+  // plus 80, crediting time already elapsed: 50, 0, 80 and 100 seconds.
+  it.each(
+    (['busy', 'unknown-outcome'] as const).flatMap((outcome) => ([
+      ['30 s before', -30, 50],
+      ['100 s before (interval elapsed)', -100, 0],
+      ['equal to', 0, 80],
+      ['20 s after', 20, 100]
+    ] as const).flatMap(([at, offset, wait]) =>
+      [false, true].map((sql) => [outcome, at, offset, wait, sql] as const)))
+  )(
+    '%s 429 poll with the stored last poll time %s its clock (%d s) gets Retry-After %d, after which it is not too fast (sql: %s)',
+    async (outcome, _at, offset, wait, sql) => {
+      const provider = await setupDevice({ sql });
+      const device = await provider.start();
+      const pollWrite = ({ data }: { data?: Record<string, unknown> }) => data?.pollClaim !== undefined;
+      provider.advance(200);
+      let paused = provider.control.arm(DEVICE_CODES, 'updateMany', pollWrite);
+      const slow = provider.poll(device.device_code);
+      await paused;
+      provider.advance(offset);
+      for (let round = 1; round <= 16; round += 1) {
+        await provider.poll(device.device_code);
+        if (outcome === 'busy') {
+          // Another poll commits between each of its 16 reads and conditional writes.
+          if (round < 16) {
+            paused = provider.control.arm(DEVICE_CODES, 'updateMany', pollWrite);
+          }
+          provider.control.release();
+          if (round < 16) {
+            await paused;
+          }
+        }
+      }
+      if (outcome === 'unknown-outcome') {
+        // 16 polls were stored while its write waited: it cannot tell whether it lost.
+        provider.control.release();
+      }
+      const response = await slow;
+      expect(response.status).toBe(429);
+      expect(await response.json()).toMatchObject({ error: 'temporarily_unavailable' });
+      expect((await provider.row(device.device_code))?.interval).toBe(80);
+      expect(Number(response.headers.get('retry-after'))).toBe(wait);
+      // A poll at the slow poll's clock plus Retry-After is not too fast.
+      provider.advance(wait - offset);
+      expect(await provider.pollError(device.device_code)).toBe('authorization_pending');
+    }
+  );
+
   it.each(['before its grant is created', 'before its decision is recorded', 'while its decision is written'] as const)(
     'an approval that crosses the code\'s expiry %s is refused and leaves no live grant',
     async (boundary) => {
@@ -809,4 +870,44 @@ describe('device grant storage and request bounds', () => {
     expect(cancelled.sort()).toEqual(['chunked', 'declared', 'stalled']);
     expect(await rows()).toHaveLength(1);
   }, 15_000);
+});
+
+describe('storage pause control (test harness)', () => {
+  const find = (database: ReturnType<typeof createInsertControl>['database'], id: string) =>
+    database.findOne({ model: 'm', where: [{ field: 'id', operator: 'eq', value: id }] });
+  const pausedOrDone = (reached: Promise<void>, call: Promise<unknown>) =>
+    Promise.race([reached.then(() => 'paused'), call.then(() => 'done')]);
+  const settled = async (call: Promise<unknown>) => {
+    let done = false;
+    void call.then(() => { done = true; });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    return done;
+  };
+
+  it('a pause released before any call reached it no longer pauses, and the next armed pause catches the next call', async () => {
+    const control = createInsertControl(memoryAdapter({ debug: false }));
+    void control.arm('m', 'findOne');
+    control.release();
+    const reached = control.arm('m', 'findOne');
+    const call = find(control.database, 'x');
+    expect(await pausedOrDone(reached, call)).toBe('paused');
+    expect(await settled(call)).toBe(false);
+    control.release();
+    expect(await call).toBeNull();
+  });
+
+  it('releases overlapping reached and unreached pauses in arm order', async () => {
+    const control = createInsertControl(memoryAdapter({ debug: false }));
+    const matches = (id: string) => ({ where }: { where?: { field: string; value?: unknown }[] }) => where?.[0]?.value === id;
+    void control.arm('m', 'findOne', matches('a'));
+    const reachedB = control.arm('m', 'findOne', matches('b'));
+    const callB = find(control.database, 'b');
+    await reachedB;
+    // The first release is A's, armed first though not reached: B stays paused, and A no longer pauses.
+    control.release();
+    expect(await settled(callB)).toBe(false);
+    expect(await find(control.database, 'a')).toBeNull();
+    control.release();
+    expect(await callB).toBeNull();
+  });
 });

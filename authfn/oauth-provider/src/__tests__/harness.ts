@@ -82,7 +82,8 @@ interface StorageParams { data?: Record<string, unknown>; where?: { field: strin
  * whose params `match`, or with `updateManyApplied` the next such `updateMany`
  * after it applied) until `release()` and resolves once it is paused, to force
  * an interleaving. Several pauses can be armed at once; each `release()`
- * releases the earliest armed one not yet released;
+ * releases the earliest armed one not yet released, and one released before
+ * a call reached it no longer pauses any call;
  * `failNext(model, match, operation)` makes the next matching insert or
  * `findOne` throw, the next insert (`createCommitted`) or `updateMany` commit
  * and then throw, as when its acknowledgement is lost, or
@@ -157,7 +158,14 @@ export function createInsertControl(database: Adapter) {
       armed.push(pause);
       unreleased.push(pause);
     }),
-    release: () => unreleased.shift()?.release(),
+    release: () => {
+      const pause = unreleased.shift();
+      if (pause) {
+        // A pause released before any call reached it must not catch a later call.
+        armed = armed.filter((candidate) => candidate !== pause);
+        pause.release();
+      }
+    },
     failNext: (model: string, match: (params: { data?: Record<string, unknown> }) => boolean, operation: Operation = 'create') => {
       failures.push({ model, operation, match });
     }
