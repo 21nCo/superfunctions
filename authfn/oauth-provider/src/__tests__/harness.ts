@@ -10,6 +10,8 @@ import {
   authFnOAuthProviderPlugin,
   type OAuthClientRegistrationConfig,
   type OAuthConsentInput,
+  type OAuthDeviceAuthorizationConfig,
+  type OAuthDeviceVerificationInput,
   type OAuthLoginRequiredInput,
   type OAuthProviderClient,
   type OAuthProviderPluginConfig,
@@ -68,19 +70,38 @@ export function createProviderApp(config?: OAuthProviderPluginConfig) {
 
 type Adapter = AuthFnRuntimeConfig['database'];
 
-type Operation = 'create' | 'findOne' | 'updateMany' | 'updateManyRejected';
+type Operation = 'create' | 'createCommitted' | 'findOne' | 'updateMany' | 'updateManyRejected';
+
+type PausedOperation = 'create' | 'findOne' | 'findMany' | 'updateMany' | 'updateManyApplied';
+
+interface StorageParams { data?: Record<string, unknown>; where?: { field: string }[] }
 
 /**
  * Controls storage calls: `arm(model)` pauses the next insert into `model`
- * until `release()` and resolves once it is paused, to force an interleaving;
+ * (or, with `operation`, the next `findOne`, `findMany` or `updateMany` on it
+ * whose params `match`, or with `updateManyApplied` the next such `updateMany`
+ * after it applied) until `release()` and resolves once it is paused, to force
+ * an interleaving. Several pauses can be armed at once; each `release()`
+ * releases the earliest armed one not yet released, and one released before
+ * a call reached it no longer pauses any call;
  * `failNext(model, match, operation)` makes the next matching insert or
- * `findOne` throw, the next `updateMany` commit and then throw, as when its
- * acknowledgement is lost, or (`updateManyRejected`) throw without applying.
+ * `findOne` throw, the next insert (`createCommitted`) or `updateMany` commit
+ * and then throw, as when its acknowledgement is lost, or
+ * (`updateManyRejected`) throw without applying.
  */
 export function createInsertControl(database: Adapter) {
-  let paused: { model: string; reached: () => void; released: Promise<void> } | undefined;
+  interface Pause {
+    model: string;
+    operation: PausedOperation;
+    match: (params: StorageParams) => boolean;
+    reached: () => void;
+    release: () => void;
+    released: Promise<void>;
+  }
+  // Armed pauses not yet reached, and armed pauses not yet released, both in arm order.
+  let armed: Pause[] = [];
+  const unreleased: Pause[] = [];
   const failures: { model: string; operation: Operation; match: (params: { data?: Record<string, unknown> }) => boolean }[] = [];
-  let release: () => void = () => {};
   const injectFailure = (operation: Operation, params: { model: string; data?: Record<string, unknown> }) => {
     const index = failures.findIndex((failure) =>
       failure.operation === operation && failure.model === params.model && failure.match(params));
@@ -89,35 +110,62 @@ export function createInsertControl(database: Adapter) {
       throw new Error(`injected ${operation} failure`);
     }
   };
+  const pauseIfArmed = async (operation: PausedOperation, params: StorageParams & { model: string }) => {
+    const pause = armed.find((candidate) => candidate.model === params.model && candidate.operation === operation && candidate.match(params));
+    if (pause) {
+      armed = armed.filter((candidate) => candidate !== pause);
+      pause.reached();
+      await pause.released;
+    }
+  };
   const wrapped: Adapter = {
     ...database,
     findOne: async (params) => {
+      await pauseIfArmed('findOne', params);
       injectFailure('findOne', params);
       return database.findOne(params);
     },
+    findMany: async (params) => {
+      await pauseIfArmed('findMany', params);
+      return database.findMany(params);
+    },
     updateMany: async (params) => {
+      await pauseIfArmed('updateMany', params);
       injectFailure('updateManyRejected', params);
       const updated = await database.updateMany(params);
+      await pauseIfArmed('updateManyApplied', params);
       injectFailure('updateMany', params);
       return updated;
     },
     create: async (params) => {
       injectFailure('create', params);
-      const pause = paused?.model === params.model ? paused : undefined;
-      if (pause) {
-        paused = undefined;
-        pause.reached();
-        await pause.released;
-      }
-      return database.create(params);
+      await pauseIfArmed('create', params);
+      const created = await database.create(params);
+      injectFailure('createCommitted', params);
+      return created;
     }
   };
   return {
     database: wrapped,
-    arm: (model: string) => new Promise<void>((reached) => {
-      paused = { model, reached, released: new Promise<void>((resolve) => { release = resolve; }) };
+    arm: (
+      model: string,
+      operation: PausedOperation = 'create',
+      match: (params: StorageParams) => boolean = () => true
+    ) => new Promise<void>((reached) => {
+      let release: () => void = () => {};
+      const released = new Promise<void>((resolve) => { release = resolve; });
+      const pause = { model, operation, match, reached, release, released };
+      armed.push(pause);
+      unreleased.push(pause);
     }),
-    release: () => release(),
+    release: () => {
+      const pause = unreleased.shift();
+      if (pause) {
+        // A pause released before any call reached it must not catch a later call.
+        armed = armed.filter((candidate) => candidate !== pause);
+        pause.release();
+      }
+    },
     failNext: (model: string, match: (params: { data?: Record<string, unknown> }) => boolean, operation: Operation = 'create') => {
       failures.push({ model, operation, match });
     }
@@ -175,6 +223,8 @@ export async function setupProvider(
     sql?: boolean;
     clients?: OAuthProviderClient[];
     registration?: OAuthClientRegistrationConfig;
+    /** Enables the device grant; its verification page is recorded in `verifications`. */
+    device?: Omit<OAuthDeviceAuthorizationConfig, 'verification'>;
     /** Plugin config, such as a custom `schema`; the SQL tables follow the resulting app schema. */
     plugin?: OAuthProviderPluginConfig;
   } = {}
@@ -187,6 +237,7 @@ export async function setupProvider(
   let now = new Date('2026-11-14T00:00:00.000Z');
   const consents: OAuthConsentInput[] = [];
   const logins: OAuthLoginRequiredInput[] = [];
+  const verifications: OAuthDeviceVerificationInput[] = [];
   const createInstance = () => app().createServer({
     database: control.database,
     pluginRuntime: {
@@ -194,6 +245,13 @@ export async function setupProvider(
         clients: [RFC6749_CLIENT, MCP_HOST, RHOMBUS, ...(options.clients ?? [])],
         resources: RESOURCES,
         registration: options.registration,
+        deviceAuthorization: options.device && {
+          ...options.device,
+          verification: (input) => {
+            verifications.push(input);
+            return new Response('device page', { status: 200 });
+          }
+        },
         now: () => now,
         loginRequired: (input) => {
           logins.push(input);
@@ -328,6 +386,7 @@ export async function setupProvider(
     cookie,
     consents,
     logins,
+    verifications,
     handle,
     authorizeQuery,
     getAuthorize,

@@ -1,5 +1,6 @@
 import type { AuthFnPlugin } from 'authfn';
 import { createAuthorizeRoutes } from './authorize/index.js';
+import { createDeviceRoutes, createDeviceSchema, validateDeviceConfig } from './device/index.js';
 import { createIntrospectionRoute } from './introspection/index.js';
 import { createMetadataRoute } from './metadata/index.js';
 import {
@@ -19,6 +20,18 @@ import { createTokenRoute } from './token/index.js';
 import type { OAuthProviderPluginConfig, OAuthProviderPluginRuntimeConfig } from './types.js';
 
 export { OAUTH_AUTHORIZE_PATH } from './authorize/index.js';
+export {
+  OAUTH_DEVICE_AUTHORIZATION_PATH,
+  OAUTH_DEVICE_CODE_GRANT_TYPE,
+  OAUTH_DEVICE_CODE_TTL_SECONDS,
+  OAUTH_DEVICE_POLL_INTERVAL_SECONDS,
+  OAUTH_DEVICE_VERIFICATION_PATH,
+  type OAuthDeviceAuthorizationConfig,
+  type OAuthDeviceAuthorizationRateLimit,
+  type OAuthDeviceUserCodeRateLimit,
+  type OAuthDeviceVerificationError,
+  type OAuthDeviceVerificationInput
+} from './device/index.js';
 export { OAUTH_INTROSPECTION_PATH } from './introspection/index.js';
 export { OAUTH_METADATA_PATH } from './metadata/index.js';
 export { OAUTH_REGISTRATION_PATH } from './registration/index.js';
@@ -35,21 +48,26 @@ export * from './types.js';
  * one resource (RFC 8707) and carries the granted AuthFn scopes. Public
  * clients such as MCP hosts can register themselves (RFC 7591) or use a
  * Client ID Metadata Document URL as their `client_id` when `registration`
- * enables it.
+ * enables it. CLIs can sign in with the device authorization grant (RFC 8628)
+ * when `deviceAuthorization` enables it.
  */
 export function authFnOAuthProviderPlugin(
   config: OAuthProviderPluginConfig = {}
 ): AuthFnPlugin<typeof OAUTH_PROVIDER_PLUGIN_NAME, OAuthProviderPluginRuntimeConfig, true> {
   return {
     name: OAUTH_PROVIDER_PLUGIN_NAME,
-    // A custom schema predating client registration still gets its tables,
-    // which `resolveClient` reads; a table it defines itself is kept.
+    // A custom schema predating client registration or the device grant
+    // still gets their tables, which `resolveClient` and token validity
+    // read; a table it defines itself is kept.
     schema: () => config.schema ? [
       ...config.schema,
-      ...createRegistrationSchema().filter((table) => !config.schema!.some((own) => own.modelName === table.modelName))
+      ...[...createRegistrationSchema(), ...createDeviceSchema()]
+        .filter((table) => !config.schema!.some((own) => own.modelName === table.modelName))
     ] : createOAuthProviderSchema(),
     validateConfig: (runtimeConfig) => {
-      validateRegistrationConfig(readOAuthProviderRuntimeConfig(runtimeConfig).registration);
+      const runtime = readOAuthProviderRuntimeConfig(runtimeConfig);
+      validateRegistrationConfig(runtime.registration);
+      validateDeviceConfig(runtime.deviceAuthorization);
     },
     routes: (ctx) => {
       const runtime = withClientRegistration(createOAuthProviderRuntime(ctx));
@@ -59,7 +77,8 @@ export function authFnOAuthProviderPlugin(
         createTokenRoute(runtime),
         createRevocationRoute(runtime),
         createIntrospectionRoute(runtime),
-        ...createRegistrationRoutes(runtime)
+        ...createRegistrationRoutes(runtime),
+        ...createDeviceRoutes(runtime)
       ];
     }
   };

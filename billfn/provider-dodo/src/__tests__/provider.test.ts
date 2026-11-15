@@ -678,4 +678,105 @@ describe('@billfn/provider-dodo', () => {
     );
     expect(response?.operationStatus).toBe('applied');
   });
+
+  it('imports a legacy Dodo subscription by its id without requiring BillFn ownership metadata', async () => {
+    // Recorded GET /subscriptions/:id for a subscription created before BillFn: no billfn_* metadata.
+    const recorded = {
+      subscription_id: 'sub_legacy/1',
+      product_id: 'pdt_nucleus_year',
+      status: 'active',
+      next_billing_date: '2027-01-01T00:00:00.000Z',
+      created_at: '2025-01-01T00:00:00.000Z',
+      metadata: { legacy_user_id: 'u_123' }
+    };
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(recorded), { status: 200 })) as typeof fetch;
+    const provider = createDodoProvider({ apiKey: 'test', baseUrl: 'https://dodo.test', fetch: fetchMock });
+    const input = {
+      providerReference: 'sub_legacy/1',
+      billingAccount: restorePurchasesInput().billingAccount,
+      plan: restorePurchasesInput().plan
+    };
+
+    expect(provider.capabilities.importSubscription).toBe(true);
+    await expect(provider.importSubscription?.(input)).resolves.toMatchObject({
+      subscriptionStatus: 'active',
+      providerSubscriptionId: 'sub_legacy/1',
+      currentPeriodEnd: '2027-01-01T00:00:00.000Z',
+      raw: recorded
+    });
+    // The operator-supplied reference stays one path segment.
+    expect(fetchMock).toHaveBeenCalledWith('https://dodo.test/subscriptions/sub_legacy%2F1', expect.objectContaining({ method: 'GET' }));
+
+    // A record for another subscription is a provider fault, not a reference bound elsewhere.
+    await expect(provider.importSubscription?.({ ...input, providerReference: 'sub_other' })).rejects.toMatchObject({
+      code: 'BILLFN_PROVIDER_ERROR'
+    });
+  });
+
+  it('reports a subscription Dodo does not have as missing and keeps other failures retryable', async () => {
+    const responses: Response[] = [
+      // Dodo's answer to GET /subscriptions/:id for an unknown id.
+      new Response(JSON.stringify({ code: 'NOT_FOUND', message: 'Subscription not found' }), { status: 404 }),
+      new Response('upstream unavailable', { status: 503 }),
+      // A success without the subscription's id, or one that is not JSON, is not Dodo's not-found answer.
+      new Response(JSON.stringify({ status: 'active' }), { status: 200 }),
+      new Response('<html>maintenance</html>', { status: 200 }),
+      // Dodo's rejections of a malformed id.
+      new Response(JSON.stringify({ code: 'INVALID_REQUEST', message: 'Invalid subscription id' }), { status: 400 }),
+      new Response(JSON.stringify({ code: 'UNPROCESSABLE_ENTITY', message: 'Invalid subscription id' }), { status: 422 })
+    ];
+    const fetchMock = vi.fn(async () => responses.shift() as Response) as typeof fetch;
+    const provider = createDodoProvider({ apiKey: 'test', baseUrl: 'https://dodo.test', fetch: fetchMock });
+    const input = {
+      providerReference: 'sub_mistyped',
+      billingAccount: restorePurchasesInput().billingAccount,
+      plan: restorePurchasesInput().plan
+    };
+
+    await expect(provider.importSubscription?.(input)).resolves.toBeNull();
+    await expect(provider.importSubscription?.(input)).rejects.toMatchObject({
+      code: 'BILLFN_PROVIDER_ERROR',
+      retryable: true,
+      details: { status: 503 }
+    });
+    await expect(provider.importSubscription?.(input)).rejects.toMatchObject({ code: 'BILLFN_PROVIDER_ERROR', retryable: true });
+    await expect(provider.importSubscription?.(input)).rejects.toMatchObject({ code: 'BILLFN_PROVIDER_ERROR', retryable: true });
+    for (const status of [400, 422]) {
+      await expect(provider.importSubscription?.(input)).rejects.toMatchObject({
+        code: 'BILLFN_VALIDATION_ERROR',
+        retryable: false,
+        details: { status }
+      });
+    }
+  });
+
+  it('reports an import read that gets no answer from Dodo as a retryable provider error without the raw error', async () => {
+    const input = {
+      providerReference: 'sub_legacy',
+      billingAccount: restorePurchasesInput().billingAccount,
+      plan: restorePurchasesInput().plan
+    };
+    // The request itself fails (DNS, connection reset, TLS), and a response whose body read fails.
+    const unreachable = vi.fn(async () => {
+      throw new TypeError('fetch failed: connect ECONNREFUSED https://dodo.test?api_key=secret');
+    }) as typeof fetch;
+    const bodyLost = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => {
+        throw new TypeError('terminated: other side closed');
+      }
+    }) as unknown as Response) as typeof fetch;
+
+    for (const fetchMock of [unreachable, bodyLost]) {
+      const provider = createDodoProvider({ apiKey: 'test', baseUrl: 'https://dodo.test', fetch: fetchMock });
+      const error = await provider.importSubscription?.(input).then(
+        () => undefined,
+        (rejection: unknown) => rejection
+      );
+      expect(error).toMatchObject({ code: 'BILLFN_PROVIDER_ERROR', retryable: true });
+      expect(String((error as Error).message)).not.toMatch(/fetch failed|terminated|secret/);
+      expect(vi.mocked(fetchMock)).toHaveBeenCalledTimes(1);
+    }
+  });
 });

@@ -3,6 +3,7 @@ import { createAuthFnRouteMeta } from 'authfn/http/router';
 import { authenticateClient, handleOAuth, OAuthError, oauthJson, readFormBody } from '../http.js';
 import type { OAuthProviderRuntime } from '../runtime.js';
 import type { IssuedTokens } from '../store.js';
+import { exchangeDeviceCode, OAUTH_DEVICE_CODE_GRANT_TYPE } from '../device/index.js';
 import { exchangeAuthorizationCode } from './code.js';
 import { refreshAccessToken } from './refresh.js';
 
@@ -22,10 +23,12 @@ export function createTokenRoute(runtime: OAuthProviderRuntime): Route {
         issued = await exchangeAuthorizationCode(runtime, client, params);
       } else if (grantType === 'refresh_token') {
         issued = await refreshAccessToken(runtime, client, params);
+      } else if (grantType === OAUTH_DEVICE_CODE_GRANT_TYPE && runtime.config.deviceAuthorization) {
+        issued = await exchangeDeviceCode(runtime, client, params);
       } else if (!grantType) {
         throw new OAuthError('invalid_request', 'Parameter grant_type is required');
       } else {
-        throw new OAuthError('unsupported_grant_type', 'Only authorization_code and refresh_token are supported');
+        throw new OAuthError('unsupported_grant_type', 'This grant type is not supported');
       }
 
       // RFC 6749 5.1: the response carries Cache-Control: no-store.

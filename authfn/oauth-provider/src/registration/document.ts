@@ -78,16 +78,15 @@ function parseJson(bytes: Uint8Array): unknown {
 export class BodyTimeoutError extends Error {}
 
 /**
- * Reads at most `maxBytes` of JSON from `reader` within `timeoutMs`; null
- * when the stream is longer, after cancelling it. When the stream has not
- * ended by the deadline, the reader is cancelled and it throws
- * {@link BodyTimeoutError}. Invalid UTF-8 or JSON throws.
+ * Reads at most `maxBytes` from `reader` within `timeoutMs`; null when the
+ * stream is longer, after cancelling it. When the stream has not ended by the
+ * deadline, the reader is cancelled and it throws {@link BodyTimeoutError}.
  */
-export async function readCappedJson(
+export async function readCappedBody(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   maxBytes: number,
   timeoutMs: number
-): Promise<{ value: unknown } | null> {
+): Promise<Uint8Array | null> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
@@ -97,12 +96,24 @@ export async function readCappedJson(
   });
   const read = readCappedBytes(reader, maxBytes);
   try {
-    const bytes = await Promise.race([read, deadline]);
-    return bytes && { value: parseJson(bytes) };
+    return await Promise.race([read, deadline]);
   } finally {
     clearTimeout(timer);
     read.catch(() => undefined);
   }
+}
+
+/**
+ * {@link readCappedBody} parsed as JSON: null when the stream is longer than
+ * `maxBytes`. Invalid UTF-8 or JSON throws.
+ */
+export async function readCappedJson(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  maxBytes: number,
+  timeoutMs: number
+): Promise<{ value: unknown } | null> {
+  const bytes = await readCappedBody(reader, maxBytes, timeoutMs);
+  return bytes && { value: parseJson(bytes) };
 }
 
 /** A declared `content-length` over `maxBytes`, or one that is not a number. */

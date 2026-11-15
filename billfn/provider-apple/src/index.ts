@@ -4,6 +4,7 @@ import type {
   BillFnChangeSubscriptionInput,
   BillFnCreateCheckoutInput,
   BillFnFetchNotificationHistoryInput,
+  BillFnImportSubscriptionInput,
   BillFnNotificationHistoryPage,
   BillFnParsedWebhookEvent,
   BillFnProviderAdapter,
@@ -15,7 +16,7 @@ import type {
   BillFnVerifiedBillingState,
   BillFnVerifyCheckoutInput
 } from '@billfn/core';
-import { createBillFnError } from '@billfn/core';
+import { BILLFN_IMPORTED_AT_METADATA_KEY, createBillFnError } from '@billfn/core';
 
 export interface AppleNotificationVerifierContext {
   rawBody: string;
@@ -37,9 +38,11 @@ export interface AppleProviderConfig {
 }
 
 interface AppleTransactionExpectation {
-  productId: string;
+  /** Null when any product is accepted; BillFn checks an imported subscription's product against the plan. */
+  productId: string | null;
   reference: string;
-  appAccountToken: string;
+  /** Null for a subscription an operator imported: its binding is the operator's, not the purchase token's. */
+  appAccountToken: string | null;
 }
 
 export function createAppleProvider(config: AppleProviderConfig): BillFnProviderAdapter {
@@ -57,7 +60,8 @@ export function createAppleProvider(config: AppleProviderConfig): BillFnProvider
       changeSubscription: true,
       resumeSubscription: true,
       refundCharge: true,
-      notificationHistory: Boolean(config.notificationVerifier)
+      notificationHistory: Boolean(config.notificationVerifier),
+      importSubscription: true
     },
     async createCheckout(input: BillFnCreateCheckoutInput) {
       const appAccountToken = createAppleAppAccountToken(input.billingAccount.id);
@@ -109,10 +113,52 @@ export function createAppleProvider(config: AppleProviderConfig): BillFnProvider
         });
       }
       const response = await requestStoreKitWithFallback(fetchImpl, config, `/inApps/v1/subscriptions/${transactionId}`);
+      // An imported purchase was made outside BillFn, so its token is not derived from the billing account.
+      const imported = typeof input.subscription.metadata?.[BILLFN_IMPORTED_AT_METADATA_KEY] === 'string';
       return mapAppleSubscriptionResponse(response.payload, {
         productId: input.price.providerProductId,
         reference: transactionId,
-        appAccountToken: createAppleAppAccountToken(input.subscription.billingAccountId)
+        appAccountToken: imported ? null : createAppleAppAccountToken(input.subscription.billingAccountId)
+      });
+    },
+    async importSubscription(input: BillFnImportSubscriptionInput) {
+      let response: Awaited<ReturnType<typeof requestStoreKitWithFallback>>;
+      try {
+        response = await requestStoreKitWithFallback(
+          fetchImpl,
+          config,
+          `/inApps/v1/subscriptions/${encodeURIComponent(input.providerReference)}`
+        );
+      } catch (error) {
+        return classifyStoreKitImportError(error);
+      }
+      const transactions = extractLastTransactionRecords(response.payload)
+        .map((record) => decodeSignedPayload(record, 'signedTransactionInfo'))
+        .filter((transaction): transaction is Record<string, unknown> => transaction !== null);
+      if (!transactions.some((transaction) => readString(transaction, ['originalTransactionId']) === input.providerReference)) {
+        if (transactions.length === 0) {
+          // A success without a readable transaction is not StoreKit's not-found answer: a retry may read it.
+          throw createBillFnError({
+            code: 'BILLFN_PROVIDER_ERROR',
+            message: 'Apple returned no readable transaction for the imported reference'
+          });
+        }
+        // StoreKit found the subscription by another of its transactions; the import binds its original transaction id.
+        throw createBillFnError({
+          code: 'BILLFN_VALIDATION_ERROR',
+          message: 'The Apple reference is not an original transaction id; import the subscription by its originalTransactionId',
+          details: {
+            originalTransactionIds: [
+              ...new Set(transactions.map((transaction) => readString(transaction, ['originalTransactionId'])).filter(Boolean))
+            ]
+          }
+        });
+      }
+      // A purchase made outside BillFn carries no BillFn appAccountToken, so only the transaction is matched.
+      return mapAppleSubscriptionResponse(response.payload, {
+        productId: null,
+        reference: input.providerReference,
+        appAccountToken: null
       });
     },
     async cancelSubscription(input: BillFnCancelSubscriptionInput) {
@@ -374,6 +420,64 @@ function buildStoreKitBaseUrl(environment: 'production' | 'sandbox') {
   return environment === 'production'
     ? 'https://api.storekit.itunes.apple.com'
     : 'https://api.storekit-sandbox.itunes.apple.com';
+}
+
+/** StoreKit's definitive answers that a transaction does not exist (TransactionIdNotFound, OriginalTransactionIdNotFound). */
+const STOREKIT_NOT_FOUND_ERROR_CODES = new Set([4040010, 4040005]);
+/** StoreKit's rejections of a malformed reference (InvalidTransactionId, InvalidOriginalTransactionId). */
+const STOREKIT_INVALID_REFERENCE_ERROR_CODES = new Set([4000006, 4000008]);
+
+/**
+ * Classifies a failed import read by StoreKit's errorCode, not its HTTP status: only a definitive not-found answer
+ * (after the sandbox fallback for 4040010) is missing, a malformed reference is invalid input, and anything else,
+ * including StoreKit's retryable 404s (4040002, 4040004, 4040006), an unparsable body and a request that got no answer,
+ * stays a retryable provider error.
+ */
+function classifyStoreKitImportError(error: unknown): null {
+  if (error instanceof SyntaxError) {
+    throw createBillFnError({
+      code: 'BILLFN_PROVIDER_ERROR',
+      message: 'Apple returned an unreadable response for the imported reference'
+    });
+  }
+  const details = (error as { details?: { status?: unknown; body?: unknown } } | null)?.details;
+  const errorCode = readStoreKitErrorCode(details?.body);
+  if (details?.status === 404 && errorCode !== undefined && STOREKIT_NOT_FOUND_ERROR_CODES.has(errorCode)) {
+    return null;
+  }
+  if (details?.status === 400 && errorCode !== undefined && STOREKIT_INVALID_REFERENCE_ERROR_CODES.has(errorCode)) {
+    throw createBillFnError({
+      code: 'BILLFN_VALIDATION_ERROR',
+      message: 'Apple rejected the imported reference as malformed',
+      details: { status: details.status, errorCode }
+    });
+  }
+  if (isBillFnError(error)) {
+    throw error;
+  }
+  // No answer from StoreKit (the request or its body read failed, or its token was not issued): a retry may read it.
+  // The raw error stays out of the message, which reaches the operator.
+  throw createBillFnError({
+    code: 'BILLFN_PROVIDER_ERROR',
+    message: 'Apple could not be reached to read the imported reference'
+  });
+}
+
+function isBillFnError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === 'string' && code.startsWith('BILLFN_');
+}
+
+function readStoreKitErrorCode(body: unknown): number | undefined {
+  if (typeof body !== 'string') {
+    return undefined;
+  }
+  try {
+    const errorCode = (JSON.parse(body) as { errorCode?: unknown } | null)?.errorCode;
+    return typeof errorCode === 'number' ? errorCode : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function shouldFallbackToSandbox(error: unknown, environment: 'production' | 'sandbox') {
@@ -659,8 +763,9 @@ function appleTransactionMatches(
   const productId = readString(transaction, ['productId']);
   const appAccountToken = readString(transaction, ['appAccountToken']);
   return (
-    productId === expectation.productId &&
-    appAccountToken?.toLowerCase() === expectation.appAccountToken.toLowerCase() &&
+    (expectation.productId === null || productId === expectation.productId) &&
+    (expectation.appAccountToken === null ||
+      appAccountToken?.toLowerCase() === expectation.appAccountToken.toLowerCase()) &&
     (transactionId === expectation.reference || originalTransactionId === expectation.reference)
   );
 }

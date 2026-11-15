@@ -258,6 +258,9 @@ export interface OAuthEndpoints {
   revocation: string;
   introspection: string;
   registration: string;
+  deviceAuthorization: string;
+  /** The device grant's `verification_uri`, where the user enters the user code. */
+  deviceVerification: string;
 }
 
 /** Removes trailing slashes in linear time. */
@@ -278,6 +281,8 @@ export async function resolveEndpoints(runtime: OAuthProviderRuntime, request: R
     token: `${base}/token`,
     revocation: `${base}/revoke`,
     introspection: `${base}/introspect`,
-    registration: `${base}/register`
+    registration: `${base}/register`,
+    deviceAuthorization: `${base}/device_authorization`,
+    deviceVerification: `${base}/device`
   };
 }
