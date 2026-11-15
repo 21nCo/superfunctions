@@ -26,7 +26,8 @@ export interface GrantDeps {
   catalog: BillFnCatalog;
   now: () => Date;
   metrics: MetricsEmitter;
-  recordBillingEvent(event: BillFnBillingEvent): Promise<void>;
+  /** Records the event through `db` when given (a transaction), otherwise through the service's adapter. */
+  recordBillingEvent(event: BillFnBillingEvent, db?: Adapter): Promise<void>;
   isDuplicateRecordError(error: unknown): boolean;
 }
 
@@ -73,9 +74,10 @@ export function readCreateGrantInput(deps: GrantDeps, input: BillFnCreateGrantRe
  * unique id refuses a second trial even when two requests race. Comps take
  * numbered ids (`grant_comp_<account>_<n>`): a comp is refused while the
  * latest one is active, and a new one claims the next number, so of two racing
- * comps the unique id stores one and refuses the other. A refused request
- * records the existing grant's creation event if an interrupted call left it
- * unrecorded.
+ * comps the unique id stores one and refuses the other. The grant and its
+ * creation event commit together (see `commitWithEvent`); without transactions
+ * a refused request records the existing grant's creation event if an
+ * interrupted call left it unrecorded.
  */
 export async function insertGrant(deps: GrantDeps, billingAccountId: string, input: GrantCreateInput) {
   for (let attempt = 0; attempt < CREATE_ATTEMPTS; attempt += 1) {
@@ -97,7 +99,10 @@ export async function insertGrant(deps: GrantDeps, billingAccountId: string, inp
       updatedAt: timestamp
     };
     try {
-      await deps.db.create({ model: GRANTS_TABLE, data: record, namespace: deps.namespace });
+      await commitWithEvent(deps, grantCreatedEvent(record), async (db) => {
+        await db.create({ model: GRANTS_TABLE, data: record, namespace: deps.namespace });
+        return true;
+      });
     } catch (error) {
       if (!deps.isDuplicateRecordError(error)) {
         throw error;
@@ -115,7 +120,6 @@ export async function insertGrant(deps: GrantDeps, billingAccountId: string, inp
       }
       continue;
     }
-    await deps.recordBillingEvent(grantCreatedEvent(record));
     deps.metrics.track('grant.created', { kind: record.kind });
     return withStatus(record, deps.now());
   }
@@ -180,27 +184,56 @@ export async function revokeGrant(deps: GrantDeps, input: BillFnRevokeGrantReque
       // Strictly later than the stored time, so a racing revoke's compare-and-set on it fails.
       updatedAt: laterThan(now, existing.updatedAt)
     };
-    const updated = await deps.db.updateMany({
-      model: GRANTS_TABLE,
-      where: [
-        { field: 'id', operator: 'eq', value: existing.id },
-        { field: 'updatedAt', operator: 'eq', value: existing.updatedAt }
-      ],
-      data: {
-        revokedAt: revoked.revokedAt,
-        revokedBy: revoked.revokedBy,
-        revokeReason: revoked.revokeReason,
-        updatedAt: revoked.updatedAt
-      },
-      namespace: deps.namespace
+    const applied = await commitWithEvent(deps, grantRevokedEvent(revoked), async (db) => {
+      const updated = await db.updateMany({
+        model: GRANTS_TABLE,
+        where: [
+          { field: 'id', operator: 'eq', value: existing.id },
+          { field: 'updatedAt', operator: 'eq', value: existing.updatedAt }
+        ],
+        data: {
+          revokedAt: revoked.revokedAt,
+          revokedBy: revoked.revokedBy,
+          revokeReason: revoked.revokeReason,
+          updatedAt: revoked.updatedAt
+        },
+        namespace: deps.namespace
+      });
+      return updated === 1;
     });
-    if (updated === 1) {
-      await deps.recordBillingEvent(grantRevokedEvent(revoked));
+    if (applied) {
       deps.metrics.track('grant.revoked', { kind: revoked.kind });
       return withStatus(revoked, now);
     }
   }
   throw createBillFnError({ code: 'BILLFN_CONFLICT', message: 'Unable to revoke the grant after multiple retries' });
+}
+
+/**
+ * Applies a grant change and records its billing event. Where the adapter
+ * supports transactions (memory, Prisma, Kysely, Drizzle Postgres) both commit
+ * in one transaction, so a failed event write leaves no grant change. Without
+ * transactions the change commits first; the event's id is derived from the
+ * grant, so a retry that finds the change already made (the trial or comp id
+ * taken, the comp revoked) records the missing event once. Returns whether
+ * `write` applied the change; an unapplied change records no event.
+ */
+async function commitWithEvent(deps: GrantDeps, event: BillFnBillingEvent, write: (db: Adapter) => Promise<boolean>) {
+  if (deps.db.capabilities.transactions.supported) {
+    return deps.db.transaction(async (transaction) => {
+      const db = transaction as unknown as Adapter;
+      if (!(await write(db))) {
+        return false;
+      }
+      await deps.recordBillingEvent(event, db);
+      return true;
+    });
+  }
+  if (!(await write(deps.db))) {
+    return false;
+  }
+  await deps.recordBillingEvent(event);
+  return true;
 }
 
 /** The account's grants, newest first, with their derived status. */

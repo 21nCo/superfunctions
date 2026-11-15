@@ -150,6 +150,20 @@ function accepted(value: object): AdminOperationResult<JsonRecord> {
   return { ok: true, data: { accepted: true, item: asJson(value) } };
 }
 
+/**
+ * The grant a revoke targets. Super Console runs revoke-grant as an entitlements row action, so the row's
+ * snapshot id names the account's active comp; any other id is taken as a grant id.
+ */
+function revokeTarget(
+  id: string,
+  scoped: { entitlements: { id: string } | null; grants: Array<{ id: string; kind: string; status: string }> },
+): string {
+  if (scoped.entitlements?.id !== id) return id;
+  const comp = scoped.grants.find((grant) => grant.kind === "comp" && grant.status === "active");
+  if (!comp) throw new AdminError("not_found", "No active comp was found for the active BillFn subject.");
+  return comp.id;
+}
+
 function notFound(label: string): never {
   throw new AdminError("not_found", `${label} was not found for the active BillFn subject.`);
 }
@@ -278,7 +292,7 @@ export function createBillFnDomainAdminService(
       try {
         const data = unwrap(await options.billfn.services.grants.revoke({
           billingAccountId: scoped.billingAccount.id,
-          grantId: string(input.id, "id"),
+          grantId: revokeTarget(string(input.id, "id"), scoped),
           operator: { id: context.actor.id, type: context.actor.type, requestId: context.requestId },
           reason: input.reason,
         }));

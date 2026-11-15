@@ -540,7 +540,7 @@ const domainActionInputSchemas: Record<string, AdminObjectSchema> = {
   ),
   "revoke-grant": payloadSchema(
     {
-      // The grant id.
+      // The grant id, or the entitlements row id (the account's active comp).
       id: { type: "string", minLength: 1 },
       payload: payloadSchema({ billingAccountId: { type: "string", minLength: 1 } }),
       reason: { type: "string", minLength: 1, maxLength: 2000 },
@@ -798,7 +798,7 @@ export interface BillFnGrantEntitlementInput {
   reason?: string;
 }
 export interface BillFnRevokeGrantInput {
-  /** The grant id. */
+  /** The grant id, or the entitlements row id to revoke the account's active comp. */
   id: string;
   payload?: {
     /** Must be the active subject's billing account when given. */

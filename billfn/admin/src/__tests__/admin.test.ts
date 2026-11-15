@@ -572,5 +572,33 @@ describe("@billfn/admin", () => {
         { ...context, requestId: "request_3", idempotencyKey: "idempotency_3" },
       )).rejects.toMatchObject({ code: "not_found" });
     });
+
+    it("revokes the active comp through the entitlements row id the console sends", async () => {
+      const { billfn, adapter, expiresAt } = grantingBillFn();
+      const granted = await adapter.execute(
+        "billfn.entitlements.grant-entitlement",
+        { payload: { kind: "comp", planKey: "nucleus", expiresAt } },
+        context,
+      );
+      const grantId = (granted as { data: { operationReference: string } }).data.operationReference;
+      const listed = await adapter.execute("billfn.entitlements.list", {}, context) as { data: { items: Array<{ id: string }> } };
+      const rowId = listed.data.items[0]!.id;
+      expect(rowId).not.toBe(grantId);
+      await expect(adapter.execute("billfn.entitlements.get", { id: rowId }, context)).resolves.toMatchObject({ ok: true });
+
+      await expect(adapter.execute(
+        "billfn.entitlements.revoke-grant",
+        { id: rowId, reason: "ended" },
+        { ...context, requestId: "request_2", idempotencyKey: "idempotency_2" },
+      )).resolves.toMatchObject({ ok: true, data: { item: { id: grantId, kind: "comp", status: "revoked" }, operationReference: grantId } });
+      await expect(billfn.subscriptionProvider.hasFeature({ tenantId: "workspace_1" }, "pointron")).resolves.toBe(false);
+
+      // The row now has no active comp behind it.
+      await expect(adapter.execute(
+        "billfn.entitlements.revoke-grant",
+        { id: rowId },
+        { ...context, requestId: "request_3", idempotencyKey: "idempotency_3" },
+      )).rejects.toMatchObject({ code: "not_found" });
+    });
   });
 });

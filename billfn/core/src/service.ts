@@ -278,7 +278,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
   deps.reconcileProviderState = (subscription, event) => reconcileWindowEvent(subscription, event);
   const grantDeps: GrantDeps = {
     ...deps,
-    recordBillingEvent: (event) => recordBillingEvent(deps, event),
+    recordBillingEvent: (event, db) => recordBillingEvent(db ? { ...deps, db } : deps, event),
     isDuplicateRecordError
   };
   /** The account's entitlements: its paid snapshot, or an active grant while that snapshot is `inactive`. */
