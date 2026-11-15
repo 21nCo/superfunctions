@@ -57,6 +57,11 @@ const definitions = [
     retryable: false
   },
   {
+    code: 'BILLFN_PRICE_NOT_ELIGIBLE',
+    httpStatus: 403,
+    retryable: false
+  },
+  {
     code: 'BILLFN_CATALOG_PRICE_NOT_FOUND',
     httpStatus: 404,
     retryable: false

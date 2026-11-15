@@ -84,6 +84,13 @@ export interface BillFnPriceDefinition {
   kind: BillingPriceKind;
   interval: BillingInterval;
   trialDays?: number;
+  /**
+   * Restricts who may buy this price, for example `first-purchase` for an
+   * introductory discount. Checkout sells a tagged price only when the host's
+   * `checkout.isPriceEligible` hook approves it for the billing account, and
+   * never picks a tagged price as the default for a plan, provider and interval.
+   */
+  eligibility?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -640,8 +647,25 @@ export interface BillFnConfig {
   operations?: {
     authorize?: (request: Request) => Promise<boolean> | boolean;
   };
+  checkout?: {
+    /**
+     * Decides whether a price with an `eligibility` tag may be sold to the
+     * billing account. Checkout calls it only for tagged prices and treats any
+     * result other than `true` as ineligible; without the hook, tagged prices
+     * are never sold.
+     */
+    isPriceEligible?: (input: BillFnPriceEligibilityInput) => Promise<boolean> | boolean;
+  };
   now?: () => Date;
   generateId?: (prefix: string) => string;
+}
+
+/** What the host `checkout.isPriceEligible` hook receives for a tagged catalog price. */
+export interface BillFnPriceEligibilityInput {
+  billingAccountId: string;
+  planKey: string;
+  /** The catalog price, including its `eligibility` tag. */
+  price: BillFnPriceDefinition;
 }
 
 export interface BillFnCheckoutCreateRequest {
@@ -649,6 +673,12 @@ export interface BillFnCheckoutCreateRequest {
   planKey: string;
   provider: BillingProviderName;
   interval?: BillingInterval;
+  /**
+   * A catalog price of the plan for the chosen provider (and interval, when
+   * given). Without it, checkout uses the plan's first untagged price for the
+   * provider and interval.
+   */
+  priceId?: string;
   metadata?: Record<string, unknown>;
   customer?: {
     email?: string;

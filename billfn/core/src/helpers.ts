@@ -58,16 +58,27 @@ export function resolvePlan(catalog: BillFnCatalog, planKey: string): BillFnPlan
   return catalog.plans.find((plan) => plan.planKey === planKey);
 }
 
+/** Whether a catalog price carries an `eligibility` tag, so only an approving host hook may sell it. */
+export function isRestrictedPrice(price: BillFnPriceDefinition): boolean {
+  return price.eligibility !== undefined && price.eligibility !== null;
+}
+
+/**
+ * The plan's default price for a provider and optional interval: its first
+ * matching price without an `eligibility` tag, so a discount listed first is
+ * never sold by default.
+ */
 export function resolvePrice(
   plan: BillFnPlanDefinition,
   provider: BillFnPriceDefinition['provider'],
   interval: BillFnPriceDefinition['interval'] | undefined
 ): BillFnPriceDefinition | undefined {
-  if (interval) {
-    return plan.prices.find((price) => price.provider === provider && price.interval === interval);
-  }
-
-  return plan.prices.find((price) => price.provider === provider);
+  return plan.prices.find(
+    (price) =>
+      price.provider === provider &&
+      (interval === undefined || price.interval === interval) &&
+      !isRestrictedPrice(price)
+  );
 }
 
 export function getSubjectFromQuery(url: URL): BillableSubject {

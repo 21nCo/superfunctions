@@ -18,6 +18,7 @@ import {
   createDefaultBillingAccountResolver,
   defaultIdFactory,
   resolvePlan,
+  isRestrictedPrice,
   resolvePrice,
   toIsoString
 } from './helpers.js';
@@ -175,6 +176,7 @@ type ServiceDeps = {
   generateId: (prefix: string) => string;
   metrics: MetricsEmitter;
   queue?: BillFnQueueAdapter<BillFnQueuedJob>;
+  isPriceEligible?: NonNullable<BillFnConfig['checkout']>['isPriceEligible'];
   /**
    * Reconciles an event inside a committed mutation's window with an inline
    * provider read. A failed read without a queue throws a window-read error.
@@ -275,7 +277,8 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
     now,
     generateId,
     metrics,
-    queue: config.queue
+    queue: config.queue,
+    isPriceEligible: config.checkout?.isPriceEligible
   };
   deps.reconcileProviderState = (subscription, event) => reconcileWindowEvent(subscription, event);
   const grantDeps: GrantDeps = {
@@ -789,8 +792,9 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
       const subject = requireSubject(input.subject);
       const { billingAccount } = await getOrCreateBillingAccount(deps, subject);
       const plan = requirePlan(deps.catalog, input.planKey);
-      const price = requirePrice(plan, input.provider, input.interval);
+      const price = requireCheckoutPrice(plan, input);
       const provider = requireProvider(deps, input.provider, 'createCheckout');
+      await requirePriceEligible(deps, billingAccount.id, plan, price);
       const checkoutSessionId = deps.generateId('chk');
       const timestamp = toIsoString(deps.now());
 
@@ -2112,6 +2116,65 @@ function requirePrice(
     });
   }
   return price;
+}
+
+/**
+ * The checkout's price: the requested `priceId`, which must be a price of the
+ * plan for the requested provider and interval, or the plan's default price.
+ */
+function requireCheckoutPrice(
+  plan: ReturnType<typeof requirePlan>,
+  input: Pick<BillFnCheckoutCreateRequest, 'provider' | 'interval' | 'priceId'>
+) {
+  if (input.priceId === undefined) {
+    return requirePrice(plan, input.provider, input.interval);
+  }
+  if (typeof input.priceId !== 'string' || input.priceId.trim() === '') {
+    throw createBillFnError({
+      code: 'BILLFN_VALIDATION_ERROR',
+      message: 'priceId must be a non-empty string'
+    });
+  }
+  const price = plan.prices.find((candidate) => candidate.priceId === input.priceId);
+  if (!price || price.provider !== input.provider || (input.interval !== undefined && price.interval !== input.interval)) {
+    throw createBillFnError({
+      code: 'BILLFN_VALIDATION_ERROR',
+      message: `Price ${input.priceId} is not a ${input.provider}${input.interval ? ` ${input.interval}` : ''} price of plan ${plan.planKey}`,
+      details: {
+        priceId: input.priceId,
+        planKey: plan.planKey,
+        provider: input.provider,
+        ...(input.interval !== undefined ? { interval: input.interval } : {})
+      }
+    });
+  }
+  return price;
+}
+
+/** Rejects a price with an `eligibility` tag unless the host hook approves it for the billing account. */
+async function requirePriceEligible(
+  deps: ServiceDeps,
+  billingAccountId: string,
+  plan: ReturnType<typeof requirePlan>,
+  price: BillFnPriceDefinition
+) {
+  if (!isRestrictedPrice(price)) {
+    return;
+  }
+  const eligible = deps.isPriceEligible
+    ? (await deps.isPriceEligible({ billingAccountId, planKey: plan.planKey, price })) === true
+    : false;
+  if (!eligible) {
+    throw createBillFnError({
+      code: 'BILLFN_PRICE_NOT_ELIGIBLE',
+      message: `Price ${price.priceId} is not available to this billing account`,
+      details: {
+        priceId: price.priceId,
+        planKey: plan.planKey,
+        eligibility: price.eligibility
+      }
+    });
+  }
 }
 
 function requirePriceById(plan: ReturnType<typeof requirePlan>, priceId: string) {
