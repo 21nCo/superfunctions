@@ -376,8 +376,17 @@ function planIndexedLookup(
     if (isIndexKey(eq)) return { kind: "field", field, value: eq };
   }
 
-  // A filter that is a single equality keeps the existing findRecords route,
-  // which scans inside the adapter when the field has no index.
+  return planSingleEquality(filters, indexedFields);
+}
+
+/**
+ * A filter that is a single equality keeps the existing findRecords route,
+ * which scans inside the adapter when the field has no index.
+ */
+function planSingleEquality(
+  filters: Record<string, unknown>,
+  indexedFields: ReadonlySet<string>,
+): LookupPlan | null {
   const single = detectSingleFieldEq(filters);
   if (!single) return null;
   if (single.field === "id") {

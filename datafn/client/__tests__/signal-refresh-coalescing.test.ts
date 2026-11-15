@@ -216,11 +216,15 @@ describe("limited and counted queries over a large table", () => {
     expect(page.data.map((r: any) => r.id)).toEqual(all.data.slice(20, 35).map((r: any) => r.id));
   });
 
-  it("counts 35,000 records without materialising them", async () => {
+  // Applying the default trash and archive filters reads each record once
+  // from storage; what a count must not do is materialise (select and
+  // expand) or sort them.
+  it("counts 35,000 records without materialising or sorting them", async () => {
     const { client, storage } = await setup(35_000);
     await storage.upsertRecord("notes", { id: "notes:trashed", title: "x", trashedAt: 1 });
     sortSpy.mockClear();
     materializeSpy.mockClear();
+    const listSpy = vi.spyOn(storage, "listRecords");
 
     const counts = await waitForMatch<Record<string, number>>(
       client.resourceCountsSignal({ resources: ["notes"] }) as any,
@@ -239,6 +243,8 @@ describe("limited and counted queries over a large table", () => {
     expect(Math.max(0, ...materialised)).toBeLessThanOrEqual(1);
     const sortedSizes = sortSpy.mock.calls.map(([records]) => records.length);
     expect(Math.max(0, ...sortedSizes)).toBeLessThanOrEqual(1);
+    // One storage read per count, none for timezone data.
+    expect(listSpy.mock.calls.map(([resource]) => resource)).toEqual(["notes", "notes"]);
   }, 60_000);
 });
 
