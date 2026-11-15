@@ -1,0 +1,59 @@
+authfn/oauth-provider/src/__tests__/storage.test.ts
+  s_84702e658d057d::t_3ba670f788c056 1-74
+authfn/oauth-provider/src/types.ts
+  s_55dcda629c9fc3::t_5ed17714964133 166-169
+authfn/oauth-provider/README.md
+  s_84702e658d057d::t_a199115163fe3e 48-49,52,60,72
+authfn/oauth-provider/package.json
+  s_84702e658d057d::t_a6d7157020be7e 34,36-37
+authfn/oauth-provider/src/__tests__/actors.test.ts
+  s_84702e658d057d::t_155c030afa0b31 10-11,52-53,61-63,131,278,280,290-292,296,299,301-303,306,309,365-414
+authfn/oauth-provider/src/__tests__/endpoints.test.ts
+  s_84702e658d057d::t_d993aef627ad57 4,6,10,14,110-133,185,187-196,204,206-209,259-300,331-364,371-372
+authfn/oauth-provider/src/__tests__/harness.ts
+  s_84702e658d057d::t_57d548c2f6c1da 5-8,29-31,38,68-69,71-73,75-77,79,82-86,97-98,100-103,107-155,160,163,283
+authfn/oauth-provider/src/authorize/index.ts
+  s_84702e658d057d::t_d06f5ac171d84d 2,15-22,101-106,116,119,135-136,140-146,151-152,154,156-163,170-176,178,208-209,240-248,272
+authfn/oauth-provider/src/http.ts
+  s_84702e658d057d::t_93ee956657d408 1,90,92-94,124-129,143-146,148-150,177-184,187,193-194
+authfn/oauth-provider/src/introspection/index.ts
+  s_84702e658d057d::t_480777e875005b 12,21-23
+authfn/oauth-provider/src/revocation/index.ts
+  s_84702e658d057d::t_c193ae7353de1d 25
+authfn/oauth-provider/src/runtime.ts
+  s_84702e658d057d::t_e3828b043c1589 6,55,60-102,104,106-114,116-135,221-229,232
+authfn/oauth-provider/src/store.ts
+  s_84702e658d057d::t_cb6e30984e1e06 31-32,41-42,56,76,95,111,114-118,149-160,163-167,169,175-192,238-240,251-253,265-268,274-275,304-313,321-323,327-332,402-416,423-428,432,435-440,443,448,475-477,480-485,488,491,494-495,497-503
+authfn/oauth-provider/src/token/code.ts
+  s_84702e658d057d::t_3c749ef9e6b34c 56-57,66
+authfn/oauth-provider/src/token/index.ts
+  s_84702e658d057d::t_a4f75aeb760a82 25
+authfn/oauth-provider/src/token/refresh.ts
+  s_84702e658d057d::t_9f43517ac75580 30,52-53,57
+package-lock.json
+  s_84702e658d057d::t_a29f6d57548b0a 4631,4633-4634
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4176a4f865b6b06ea946cca990be813a8a50f461",
+  "prompts": {},
+  "sessions": {
+    "s_55dcda629c9fc3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e8276e02-5f09-487b-92bb-19477963ee1a",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_84702e658d057d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7542f458-cf45-4aac-b8b7-2977dc6d8b32",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

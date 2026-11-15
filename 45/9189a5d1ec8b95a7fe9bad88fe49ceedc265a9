@@ -1,0 +1,35 @@
+billfn/core/src/__tests__/billfn.test.ts
+  s_d591be6a4142a7::t_6cffa9985138ea 217-220
+billfn/core/src/__tests__/unlinked-webhooks.test.ts
+  s_d591be6a4142a7::t_86d3bad2b5a556 3549-3577,3579-3600,3602-3611
+billfn/core/src/schema.ts
+  s_d591be6a4142a7::t_cff3a47811c5de 41,48-49
+billfn/core/src/service.ts
+  s_d591be6a4142a7::t_68ca5be30d2b0c 94-95,379,402,423,507-508,517,1524,1699,2488-2491,2614,3646-3651,3660-3662,3728-3744,3747-3751,3762-3763,3774-3783,3790-3794,4110,4131,4134-4135,4147
+billfn/core/src/types.ts
+  s_d591be6a4142a7::t_8549e155bf22d3 122-126
+billfn/docs/content/docs/reference/schema.mdx
+  s_d591be6a4142a7::t_2d1652216c2d3e 43,61
+billfn/docs/content/docs/server/reconciliation.mdx
+  s_d591be6a4142a7::t_dbce2b7741c37f 52,56
+billfn/python/billfn/schema.py
+  s_d591be6a4142a7::t_89b4205198cdee 44,60-63
+billfn/python/tests/test_schema.py
+  s_d591be6a4142a7::t_e9a2dddbe59096 60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "459189a5d1ec8b95a7fe9bad88fe49ceedc265a9",
+  "prompts": {},
+  "sessions": {
+    "s_d591be6a4142a7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb2ee240-d92b-49c2-b32f-d8934038790e",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

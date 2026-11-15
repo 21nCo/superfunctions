@@ -1,0 +1,59 @@
+reviewfn/README.md
+  s_2b5da259f67ad1::t_bfcd3a2adc7704 45
+reviewfn/cli/README.md
+  s_2b5da259f67ad1::t_b8040e893a03c5 3
+reviewfn/cli/src/main.ts
+  s_2b5da259f67ad1::t_246a3173f13b23 120
+reviewfn/cli/src/panel.ts
+  s_2b5da259f67ad1::t_4a0934cee5cd88 9-11,238-287,290-291,297,299,308,314-315,329,331,335,337,339,342-348,350-352,354-355
+reviewfn/cli/test/panel.test.ts
+  s_2b5da259f67ad1::t_64536f7de8e846 7,11,130-141,182-219
+reviewfn/core/src/artifacts.ts
+  s_2b5da259f67ad1::t_fc5a128fe84835 17-24,26-43,99,101,103-104,114-115,168,170,173,184,214,216
+reviewfn/core/src/panel/render.ts
+  s_2b5da259f67ad1::t_004dfb4d1fb457 65,71,111-113
+reviewfn/core/test/core.test.ts
+  s_2b5da259f67ad1::t_4f5df19bbb03b4 6,112-128
+reviewfn/core/test/panel-render.test.ts
+  s_2b5da259f67ad1::t_5af1a6cb8dee0f 80-102
+reviewfn/docs/configuration.md
+  s_2b5da259f67ad1::t_54a79c9b20c2e9 7
+reviewfn/docs/content/docs/reference/configuration.md
+  s_2b5da259f67ad1::t_59617c921abdc9 10
+reviewfn/docs/content/docs/reference/index.md
+  s_2b5da259f67ad1::t_b2fb104687cef2 13
+reviewfn/docs/content/docs/reference/meta.json
+  s_2b5da259f67ad1::t_1458354207b51e 3
+reviewfn/docs/content/docs/reference/panel.md
+  s_2b5da259f67ad1::t_918aeed3466945 1-64
+reviewfn/docs/content/docs/reference/security.md
+  s_2b5da259f67ad1::t_491f0357f89ce3 18
+reviewfn/docs/panel.md
+  s_2b5da259f67ad1::t_7064fdc9cd7358 9,21,34,39
+reviewfn/docs/scripts/sync-references.mjs
+  s_2b5da259f67ad1::t_c84ce874f2723c 15
+reviewfn/docs/security.md
+  s_2b5da259f67ad1::t_77235e9e3e8e3a 15
+reviewfn/docs/static/llms-full.txt
+  s_2b5da259f67ad1::t_6324c21a086644 113,199,312-379,424
+reviewfn/docs/static/llms.txt
+  s_2b5da259f67ad1::t_e5c6c02c019fbe 17
+reviewfn/github/src/publisher.ts
+  s_2b5da259f67ad1::t_0f4c8210c99134 15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4b9e96bcf21770c22d3f02b5e327c65e3c14f0f3",
+  "prompts": {},
+  "sessions": {
+    "s_2b5da259f67ad1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b0f62c28-0c56-4837-bf0a-d32ed1194d4b",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

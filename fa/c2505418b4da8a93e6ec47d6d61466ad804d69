@@ -1,0 +1,33 @@
+reviewfn/cli/src/panel.ts
+  s_ad38d715d190ab::t_f154d2d7049976 219-221,223,265-266,287,289,310,363-370
+reviewfn/README.md
+  s_ad38d715d190ab::t_42bb0844ed4596 45
+reviewfn/cli/README.md
+  s_ad38d715d190ab::t_7a6d8309bc72a5 3
+reviewfn/cli/test/panel.test.ts
+  s_ad38d715d190ab::t_e624f22047e060 220-237,254-259,279-289
+reviewfn/cli/vitest.config.ts
+  s_ad38d715d190ab::t_074c22f63205ea 2-3
+reviewfn/docs/content/docs/reference/panel.md
+  s_ad38d715d190ab::t_a821f23688cef9 18,36-38,42
+reviewfn/docs/panel.md
+  s_ad38d715d190ab::t_8360d820a5ec47 15,33-35,39
+reviewfn/docs/static/llms-full.txt
+  s_ad38d715d190ab::t_d0da4645f6fbb3 330,348-350,354
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fac2505418b4da8a93e6ec47d6d61466ad804d69",
+  "prompts": {},
+  "sessions": {
+    "s_ad38d715d190ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5b1cd29b-fdca-4616-b02d-2a3983eb90a2",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

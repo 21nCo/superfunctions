@@ -1,0 +1,23 @@
+authfn/oauth-provider/src/__tests__/harness.ts
+  s_0afff02b87252b::t_10f9a22c8294fb 70,75-77,95-99
+authfn/oauth-provider/src/__tests__/storage.test.ts
+  s_0afff02b87252b::t_8b8c69c3bc13ab 60-67,70-71,95-104
+authfn/oauth-provider/src/store.ts
+  s_0afff02b87252b::t_e46ac45388cfaf 170-172,194-198
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a77cc2bce592d323358eec97973f3789c7d121a4",
+  "prompts": {},
+  "sessions": {
+    "s_0afff02b87252b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "58fcb07c-1849-49f4-b3ac-38ef5db72c44",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

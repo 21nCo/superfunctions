@@ -1,0 +1,23 @@
+catchfn/typescript/README.md
+  s_147565e92df17e::t_b829379e84d6c3 69-79,88-93
+catchfn/typescript/src/collectors/network.ts
+  s_147565e92df17e::t_2bea593acbdccc 34,37,95-115,247-249,251-255,259-262,264-266,300,317-321,323,325,327,329,361-362,364,372,390,419-423,462
+catchfn/typescript/test/network.test.ts
+  s_147565e92df17e::t_8d3687dc8e35dc 87,95-96,98-102,104-107,110-114,592-610,612-621,623,822-843
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c14239eab61d0ae9c8b8d3dc000e241cf9d4545f",
+  "prompts": {},
+  "sessions": {
+    "s_147565e92df17e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_147565e92df17e",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
