@@ -1637,41 +1637,50 @@ function deliveringLifecycleEvents<T extends object>(lifecycle: LifecycleEvents,
 const LOST_WRITE = Symbol('billfn.lostWrite');
 
 /**
+ * What a write without transactions adds to its row update: the `lifecycleEventIds` marker naming the events it
+ * causes, and a condition that the marker it replaces is still the one it read.
+ */
+type LifecycleMarker = { where: WhereClause[]; data: { lifecycleEventIds?: string } };
+const NO_LIFECYCLE_MARKER: LifecycleMarker = { where: [], data: {} };
+
+/**
  * Applies a state write together with the lifecycle events it causes, so a committed write always has its
  * events and a write that does not apply has none. Where the adapter supports transactions both commit in one,
  * and a write that loses its race (`write` returns false) or fails records none. Without transactions the events
- * are first staged, so no dispatcher delivers them yet; once the write applied they become pending, and when it
- * failed or lost its race they are deleted. A stop between those steps leaves them staged, and a later dispatch
- * delivers them only if the stored state shows the write applied (`isStagedEventApplied`). An event's id derives
- * from the change it reports, so a retry of the write, also after a lost race, records the same id. Returns
- * whether `write` applied.
+ * are first staged, so no dispatcher delivers them yet, and the write stores their ids on its row in the same
+ * single-row update; once it applied they become pending. A write that failed (perhaps after it applied), lost
+ * its race or was stopped leaves them staged: a dispatch after the stage lapsed delivers each only while its row
+ * names it. Before a write replaces a marker it makes the events that marker names pending, as the row proves
+ * their write applied, and its update applies only over the marker it read. An event's id derives from the
+ * change it reports, so a retry of the write, also after a lost race, records the same id. Returns whether
+ * `write` applied.
  */
 async function writeWithLifecycleEvents(
   deps: ServiceDeps,
   events: LifecycleEventInput[],
-  write: (db: Adapter) => Promise<boolean>
+  previous: { lifecycleEventIds?: string | null } | null,
+  write: (db: Adapter, marker: LifecycleMarker) => Promise<boolean>
 ): Promise<boolean> {
   if (events.length === 0 || !deps.lifecycle.enabled) {
-    return write(deps.db);
+    return write(deps.db, NO_LIFECYCLE_MARKER);
   }
   if (!deps.db.capabilities.transactions.supported) {
-    const stageId = deps.generateId('lcs');
-    await deps.lifecycle.stage(events, stageId);
-    let applied = false;
-    try {
-      applied = await write(deps.db);
-    } finally {
-      // The write's outcome stands; events left staged by a failure here are settled by a later dispatch.
-      await (applied ? deps.lifecycle.confirm(events) : deps.lifecycle.release(events, stageId)).catch(() => {
-        deps.metrics.track('event.stage_unsettled', {});
-      });
+    await deps.lifecycle.promote(previous?.lifecycleEventIds?.split(' ') ?? []);
+    await deps.lifecycle.stage(events);
+    const applied = await write(deps.db, {
+      where: [{ field: 'lifecycleEventIds', operator: 'eq', value: previous?.lifecycleEventIds ?? null }],
+      data: { lifecycleEventIds: events.map((event) => event.id).join(' ') }
+    });
+    if (applied) {
+      // Events left staged by a failure here are settled by a later dispatch.
+      await deps.lifecycle.confirm(events).catch(() => deps.metrics.track('event.stage_unsettled', {}));
     }
     return applied;
   }
   try {
     return await deps.db.transaction(async (transaction) => {
       const db = transaction as unknown as Adapter;
-      if (!(await write(db))) {
+      if (!(await write(db, NO_LIFECYCLE_MARKER))) {
         throw LOST_WRITE;
       }
       await deps.lifecycle.record(events, db);
@@ -3330,8 +3339,10 @@ async function applyVerificationState(
     await writeWithLifecycleEvents(
       deps,
       patch.status === 'succeeded' ? [checkoutCompletedEvent(checkoutSessionId, subscription)] : [],
-      async (db) => {
-        checkoutSession = await updateCheckoutSession({ ...deps, db }, checkoutSessionId, patch);
+      input.checkoutSession,
+      // Unordered: the only marker a session carries names its own `checkout.completed`, so replacing it loses nothing.
+      async (db, marker) => {
+        checkoutSession = await updateCheckoutSession({ ...deps, db }, checkoutSessionId, { ...patch, ...marker.data });
         return true;
       }
     );
@@ -3513,14 +3524,15 @@ async function updateSubscriptionAfterImportAudit(
   if (importAudit && !isImportPending(next)) {
     await recordBillingEvent(deps, importAudit(next));
   }
-  return writeWithLifecycleEvents(deps, events, async (db) => {
+  return writeWithLifecycleEvents(deps, events, current, async (db, marker) => {
     const updated = await db.updateMany({
       model: TABLES.subscriptions,
       where: [
         { field: 'id', operator: 'eq', value: current.id },
-        { field: 'updatedAt', operator: 'eq', value: current.updatedAt }
+        { field: 'updatedAt', operator: 'eq', value: current.updatedAt },
+        ...marker.where
       ],
-      data: next,
+      data: { ...next, ...marker.data },
       namespace: deps.namespace
     });
     return updated === 1;
@@ -3607,16 +3619,17 @@ async function upsertEntitlements(
     // The `entitlement.changed` this write makes commits with it.
     const events = entitlementChangeEvents(existing, snapshot, subscription);
     if (existing) {
-      const updated = await writeWithLifecycleEvents(deps, events, async (db) => {
+      const updated = await writeWithLifecycleEvents(deps, events, existing, async (db, marker) => {
         const count = await db.updateMany({
           model: TABLES.entitlementSnapshots,
           where: [
             { field: 'billingAccountId', operator: 'eq', value: billingAccountId },
             existing.sourceEventId
               ? { field: 'sourceEventId', operator: 'eq', value: existing.sourceEventId }
-              : { field: 'updatedAt', operator: 'eq', value: existing.updatedAt }
+              : { field: 'updatedAt', operator: 'eq', value: existing.updatedAt },
+            ...marker.where
           ],
-          data: snapshot,
+          data: { ...snapshot, ...marker.data },
           namespace: deps.namespace
         });
         return count === 1;
@@ -3630,10 +3643,10 @@ async function upsertEntitlements(
 
     try {
       let created = snapshot;
-      await writeWithLifecycleEvents(deps, events, async (db) => {
+      await writeWithLifecycleEvents(deps, events, null, async (db, marker) => {
         created = await db.create<BillFnEntitlementSnapshot>({
           model: TABLES.entitlementSnapshots,
-          data: snapshot,
+          data: { ...snapshot, ...marker.data },
           namespace: deps.namespace
         });
         return true;
@@ -3702,43 +3715,18 @@ function entitlementsFingerprint(snapshot: Pick<BillFnEntitlementSnapshot, 'plan
 }
 
 /**
- * Whether the stored state shows the write applied that a staged lifecycle event was recorded for (the write
- * was interrupted before it confirmed or released the event): the subscription reached the renewed period end
- * or stopped renewing, the snapshot holds the changed entitlements, or the checkout session succeeded.
+ * Whether the row a staged lifecycle event's write targets (its subscription, snapshot or checkout session)
+ * names the event in its `lifecycleEventIds` marker, which only a write that caused it sets.
  */
 async function isStagedEventApplied(deps: ServiceDeps, event: BillFnLifecycleEventRecord): Promise<boolean> {
-  const data = event.data as Record<string, unknown> & { subscriptionId?: string; checkoutSessionId?: string };
-  switch (event.type) {
-    case 'subscription.renewed':
-    case 'subscription.canceled': {
-      const subscription = await deps.db.findOne<BillFnSubscription>({
-        model: TABLES.subscriptions,
-        where: [{ field: 'id', operator: 'eq', value: data.subscriptionId }],
-        namespace: deps.namespace
-      });
-      if (!subscription) {
-        return false;
-      }
-      if (event.type === 'subscription.canceled') {
-        return !isRenewing(subscription);
-      }
-      const reached = subscription.currentPeriodEnd ? Date.parse(subscription.currentPeriodEnd) : Number.NaN;
-      return reached >= Date.parse(String(data.currentPeriodEnd));
-    }
-    case 'entitlement.changed': {
-      const snapshot = await findEntitlementSnapshot(deps, event.billingAccountId);
-      return Boolean(
-        snapshot &&
-          entitlementsFingerprint(snapshot) ===
-            entitlementsFingerprint(data as unknown as Parameters<typeof entitlementsFingerprint>[0])
-      );
-    }
-    case 'checkout.completed':
-      return (await getCheckoutSession(deps, data.checkoutSessionId!))?.status === 'succeeded';
-    default:
-      // Grant events are recorded after the grant's write, never staged.
-      return true;
-  }
+  const data = event.data as { subscriptionId?: string; checkoutSessionId?: string };
+  const row =
+    event.type === 'checkout.completed'
+      ? await getCheckoutSession(deps, data.checkoutSessionId!)
+      : event.type === 'entitlement.changed'
+        ? await findEntitlementSnapshot(deps, event.billingAccountId)
+        : await getSubscriptionById(deps, data.subscriptionId!);
+  return Boolean(row?.lifecycleEventIds?.split(' ').includes(event.id));
 }
 
 /** The `checkout.completed` of a checkout session that succeeded with `subscription`; one per session. */

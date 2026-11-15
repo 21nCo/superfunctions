@@ -133,6 +133,12 @@ export interface BillFnSubscription {
    * recorded as replaced; they are saved in metadata and recorded by the next write.
    */
   replacedReferencesPending?: boolean | null;
+  /**
+   * Without transactions (and with `onEvent`), the ids of the lifecycle
+   * events the latest write that caused any recorded, space-separated: the
+   * proof a stopped write leaves that it applied. Internal.
+   */
+  lifecycleEventIds?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -150,6 +156,8 @@ export interface BillFnCheckoutSession {
   checkoutUrl?: string;
   clientAction?: BillFnClientAction;
   metadata?: Record<string, unknown>;
+  /** As on `BillFnSubscription`. Internal. */
+  lifecycleEventIds?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -164,6 +172,8 @@ export interface BillFnEntitlementSnapshot {
   effectiveAt: string;
   expiresAt?: string;
   sourceEventId?: string;
+  /** As on `BillFnSubscription`. Internal. */
+  lifecycleEventIds?: string | null;
   /**
    * Set when an active entitlement grant, not the account's paid subscription,
    * supplies this snapshot (`trialing` for a trial, `active` for a comp) until
@@ -794,7 +804,7 @@ export interface BillFnLifecycleEventRecord {
   attempts: number;
   /**
    * When the event is next due; while a dispatcher holds it, when that claim
-   * lapses. A `staged` event is checked against the stored state then.
+   * lapses. A `staged` event is checked against its row's marker then.
    */
   nextAttemptAt: string;
   claimId?: string | null;
@@ -1177,8 +1187,8 @@ export interface BillFnInstance {
        * racing dispatchers one delivers it. A claim lasts 5 minutes: an event
        * a dispatcher claimed and never finished, or whose handler still runs,
        * is due again after that. It first settles each `staged` event whose
-       * write was interrupted 5 minutes ago or more: one the stored state
-       * shows applied becomes `pending`, any other is deleted.
+       * write did not confirm it 5 minutes ago or more: one its row's
+       * `lifecycleEventIds` names becomes `pending`, any other is deleted.
        */
       dispatch(input?: BillFnDispatchEventsRequest): Promise<BillFnDispatchEventsResult>;
       /** The outbox's events, newest first; `status: 'failed'` lists the events that ran out of retries. */

@@ -172,7 +172,11 @@ function faultyLifecycleDb(base: Adapter = memoryAdapter({ debug: false }), opti
     raceSubscription: null as (() => Promise<void>) | null,
     raceSnapshot: null as (() => Promise<void>) | null,
     /** Awaited before the next snapshot update applies. */
-    pauseSnapshot: null as Promise<void> | null
+    pauseSnapshot: null as Promise<void> | null,
+    /** The next snapshot update applies and then fails. */
+    snapshotWrite: null as 'after' | null,
+    /** Runs once before the next outbox row is created, as another call racing this one. */
+    raceStage: null as (() => Promise<void>) | null
   };
   const faulty = <A extends Pick<Adapter, 'create' | 'updateMany' | 'deleteMany'>>(adapter: A): A => ({
     ...adapter,
@@ -181,6 +185,11 @@ function faultyLifecycleDb(base: Adapter = memoryAdapter({ debug: false }), opti
       return adapter.deleteMany(params);
     },
     async create<T>(params: Parameters<Adapter['create']>[0]): Promise<T> {
+      if (params.model === 'lifecycleEvents') {
+        const race = faults.raceStage;
+        faults.raceStage = null;
+        await race?.();
+      }
       if (faults.create && params.model === 'lifecycleEvents') throw new Error('outbox write failed');
       if (faults.snapshot && params.model === 'entitlementSnapshots') throw new Error('process stopped');
       return adapter.create<T>(params);
@@ -210,6 +219,11 @@ function faultyLifecycleDb(base: Adapter = memoryAdapter({ debug: false }), opti
         const pause = faults.pauseSnapshot;
         faults.pauseSnapshot = null;
         await pause;
+        const write = faults.snapshotWrite;
+        faults.snapshotWrite = null;
+        const updated = await adapter.updateMany(params);
+        if (write === 'after') throw new Error('process stopped');
+        return updated;
       }
       return adapter.updateMany(params);
     }
@@ -590,6 +604,135 @@ describe('lifecycle events of a write without transactions', () => {
     env.advance(LEASE + MINUTE);
     await env.billfn.services.events.dispatch();
     expect(env.ofType('subscription.canceled')).toHaveLength(1);
+  });
+
+  describe('a staged event is settled by whether a write naming it applied, not by the state a later write left', () => {
+    /** Runs a sync whose subscription write fails `stop` it applies, with the process stopped before it settles its events. */
+    async function interruptedSync(env: ReturnType<typeof setup>, faults: ReturnType<typeof staging>['faults'], stop: 'before' | 'after') {
+      faults.subscriptionWrite = stop;
+      faults.release = true;
+      env.advance(MINUTE);
+      const ok = await succeeded(env.billfn.syncSubscription({ subject: env.subject }));
+      faults.release = false;
+      expect(ok).toBe(false);
+    }
+
+    async function afterLease(env: ReturnType<typeof setup>) {
+      env.advance(LEASE + MINUTE);
+      await env.billfn.services.events.dispatch();
+      expect((await env.rows()).filter((row) => row.status !== 'delivered')).toEqual([]);
+    }
+
+    it('delivers a cancellation whose write applied and then failed, once, after its retry found nothing to change', async () => {
+      const { db, faults } = staging();
+      const env = setup({ db });
+      await env.subscribe();
+      expect(env.ofType('checkout.completed')).toHaveLength(1);
+      env.providerState.autoRenew = false;
+      faults.subscriptionWrite = 'after';
+      env.advance(MINUTE);
+      expect(await succeeded(env.billfn.syncSubscription({ subject: env.subject }))).toBe(false);
+      env.advance(MINUTE);
+      expect(await succeeded(env.billfn.syncSubscription({ subject: env.subject }))).toBe(true);
+      await afterLease(env);
+      expect(env.ofType('subscription.canceled')).toHaveLength(1);
+      expect(env.ofType('checkout.completed')).toHaveLength(1);
+    });
+
+    it('delivers a cancellation that applied before a stop, though a resume within the lease renews again', async () => {
+      const { db, faults } = staging();
+      const env = setup({ db });
+      await env.subscribe();
+      env.providerState.autoRenew = false;
+      await interruptedSync(env, faults, 'after');
+      env.providerState.autoRenew = true;
+      env.advance(MINUTE);
+      expect(await succeeded(env.billfn.syncSubscription({ subject: env.subject }))).toBe(true);
+      await afterLease(env);
+      expect(env.ofType('subscription.canceled')).toHaveLength(1);
+    });
+
+    it('delivers no cancellation a stop kept from applying, though the subscription then stops renewing by expiring', async () => {
+      const { db, faults } = staging();
+      const env = setup({ db });
+      await env.subscribe();
+      env.providerState.autoRenew = false;
+      await interruptedSync(env, faults, 'before');
+      env.providerState.status = 'expired';
+      env.advance(MINUTE);
+      expect(await succeeded(env.billfn.syncSubscription({ subject: env.subject }))).toBe(true);
+      await afterLease(env);
+      expect(env.ofType('subscription.canceled')).toEqual([]);
+      expect(env.ofType('entitlement.changed').map((event) => event.data.status)).toEqual(['active', 'inactive']);
+    });
+
+    it('delivers a cancellation once under one id when a failed write left its stage and a later call applies it', async () => {
+      const { db, faults } = staging();
+      const env = setup({ db });
+      await env.subscribe();
+      env.providerState.autoRenew = false;
+      await interruptedSync(env, faults, 'before');
+      env.advance(MINUTE);
+      expect(await succeeded(env.billfn.syncSubscription({ subject: env.subject }))).toBe(true);
+      await afterLease(env);
+      expect(env.ofType('subscription.canceled')).toHaveLength(1);
+      expect((await env.rows()).filter((row) => row.type === 'subscription.canceled')).toHaveLength(1);
+    });
+
+    it('delivers each entitlement change once when a later change replaces a snapshot whose write applied before a stop', async () => {
+      const { db, faults } = staging();
+      const env = setup({ db });
+      const { subscriptionId } = await env.subscribe();
+      env.providerState.status = 'expired';
+      faults.snapshotWrite = 'after';
+      faults.release = true;
+      env.advance(MINUTE);
+      expect(await env.syncJob(subscriptionId)).not.toBe('succeeded');
+      faults.release = false;
+      env.providerState.status = 'active';
+      env.providerState.periodEnd = '2027-01-10T00:00:00.000Z';
+      env.advance(MINUTE);
+      expect(await env.syncJob(subscriptionId)).toBe('succeeded');
+      await afterLease(env);
+      expect(env.ofType('entitlement.changed').map((event) => event.data.status)).toEqual(['active', 'inactive', 'active']);
+    });
+
+    it('delivers an entitlement change once under one id when a failed snapshot write left its stage and a later call applies it', async () => {
+      const { db, faults } = staging();
+      const env = setup({ db });
+      const { subscriptionId } = await env.subscribe();
+      env.providerState.status = 'expired';
+      faults.snapshot = true;
+      faults.release = true;
+      env.advance(MINUTE);
+      expect(await env.syncJob(subscriptionId)).not.toBe('succeeded');
+      faults.snapshot = false;
+      faults.release = false;
+      env.advance(MINUTE);
+      expect(await env.syncJob(subscriptionId)).toBe('succeeded');
+      await afterLease(env);
+      expect(env.ofType('entitlement.changed').map((event) => event.data.status)).toEqual(['active', 'inactive']);
+      expect((await env.rows()).filter((row) => row.type === 'entitlement.changed')).toHaveLength(2);
+    });
+
+    it('delivers a cancellation once when a racing call stages it again and loses to the write that applied it before a stop', async () => {
+      const { db, faults } = staging();
+      const env = setup({ db });
+      await env.subscribe();
+      env.providerState.autoRenew = false;
+      env.advance(MINUTE);
+      // Between this call's read and its stage, another call at the same instant applies the same change and stops.
+      faults.raceStage = async () => {
+        faults.subscriptionWrite = 'after';
+        faults.release = true;
+        expect(await succeeded(env.billfn.syncSubscription({ subject: env.subject }))).toBe(false);
+        faults.release = false;
+      };
+      expect(await succeeded(env.billfn.syncSubscription({ subject: env.subject }))).toBe(true);
+      expect(faults.raceStage).toBeNull();
+      await afterLease(env);
+      expect(env.ofType('subscription.canceled')).toHaveLength(1);
+    });
   });
 });
 

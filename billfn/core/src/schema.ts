@@ -39,6 +39,7 @@ export function getSchema(_options: BillFnSchemaOptions = {}): { version: number
       autoRenew: { type: 'boolean', required: true },
       metadata: { type: 'json', required: false },
       replacedReferencesPending: { type: 'boolean', required: false },
+      lifecycleEventIds: { type: 'string', required: false },
       createdAt: { type: 'string', required: true },
       updatedAt: { type: 'string', required: true }
     },
@@ -65,6 +66,7 @@ export function getSchema(_options: BillFnSchemaOptions = {}): { version: number
       checkoutUrl: { type: 'string', required: false },
       clientAction: { type: 'json', required: false },
       metadata: { type: 'json', required: false },
+      lifecycleEventIds: { type: 'string', required: false },
       createdAt: { type: 'string', required: true },
       updatedAt: { type: 'string', required: true }
     },
@@ -88,6 +90,7 @@ export function getSchema(_options: BillFnSchemaOptions = {}): { version: number
       effectiveAt: { type: 'string', required: true },
       expiresAt: { type: 'string', required: false },
       sourceEventId: { type: 'string', required: false },
+      lifecycleEventIds: { type: 'string', required: false },
       createdAt: { type: 'string', required: true },
       updatedAt: { type: 'string', required: true }
     },

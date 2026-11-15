@@ -63,7 +63,7 @@ The Python SDK mirrors schema version `6`. Both helpers expose the same sixteen 
 
 ### Schema 5 to 6 (`@billfn/core` 0.6.0)
 
-Version `6` adds one table, `lifecycleEvents`, and one index on `entitlementGrants`, `entitlement_grants_expires_idx` on `expiresAt`. Create both before deploying `@billfn/core` 0.6.0 with an `onEvent` handler: with one, subscription, checkout and grant writes write to `lifecycleEvents`, and the `lifecycle-events` reconciliation job reads `entitlementGrants` by `expiresAt`. Without a handler BillFn never reads or writes the table. No backfill is needed: events are recorded from the deploy on. The migration is additive, so rolling back to 0.5.x leaves the table and index unused (and any pending events undelivered).
+Version `6` adds one table, `lifecycleEvents`, one optional string field, `lifecycleEventIds`, to `subscriptions`, `checkoutSessions` and `entitlementSnapshots`, and one index on `entitlementGrants`, `entitlement_grants_expires_idx` on `expiresAt`. Create them before deploying `@billfn/core` 0.6.0 with an `onEvent` handler: with one, subscription, checkout and grant writes write to `lifecycleEvents`, and the `lifecycle-events` reconciliation job reads `entitlementGrants` by `expiresAt`. Without transactions, a write with lifecycle events also sets `lifecycleEventIds` on its row (see [Lifecycle events](/docs/server/lifecycle-events#consistency)). Without a handler BillFn never reads or writes the table or the field. No backfill is needed (the field is null): events are recorded from the deploy on. The migration is additive, so rolling back to 0.5.x leaves the table, field and index unused (and any pending events undelivered).
 
 | Field | Type | Required |
 | --- | --- | --- |
