@@ -1102,9 +1102,13 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       if (commitOutcome === 'refused') {
         // Keep nothing this session uploaded. When dedup pointed it at another
         // object's key, its own object is already gone and the shared one stays.
-        // If the delete fails the session stays open, so a retried completion
-        // or the expiry sweep deletes the object again.
-        if (finalStorageKey !== session.storageKey || (await deleteOwnUnpublishedObject(session))) {
+        // If a delete fails the session and its part rows stay, so a retried
+        // completion or the expiry sweep deletes the objects again.
+        // Proxy part objects whose delete failed during stitching still have
+        // their uploadParts rows; delete them again before dropping the rows.
+        const partsDeleted = await deleteProxyTempPartObjects(session);
+        const objectDeleted = finalStorageKey !== session.storageKey || (await deleteOwnUnpublishedObject(session));
+        if (partsDeleted && objectDeleted) {
           await endSessionAborted(uploadSessionId);
         }
         throw errors.forbidden({ fileId, operation: 'replace' });

@@ -872,4 +872,36 @@ describe('refused completion cleanup', () => {
     expect(storageFixture.objects.has(partKey)).toBe(false);
     expect((await rawSession(database, loser.uploadSessionId))!.status).toBe('aborted');
   });
+
+  it('a commit-time refusal whose proxy part delete failed during stitching keeps the session until a retry deletes the part', async () => {
+    const database = memoryAdapter();
+    const storageFixture = createStorage('proxy');
+    const app = createApp({ mode: 'proxy', database, storageFixture });
+    const loser = await app.stage('user_b', CLIENT_ID, 'loser part');
+    const winner = await app.stage('user_a', CLIENT_ID, 'winner');
+    const loserKey = (await rawSession(database, loser.uploadSessionId))!.storageKey;
+    const partKey = `${loserKey}.part1`;
+    // Stitching's part delete and the refusal's retry both fail once each.
+    storageFixture.deleteFailures.set(partKey, 2);
+    const release = storageFixture.gate(loserKey);
+    const losing = loser.complete();
+    expect((await winner.complete()).status).toBe(200);
+    release();
+    const refused = await losing;
+
+    expect(refused.status).toBe(403);
+    expect(storageFixture.objects.has(partKey)).toBe(true);
+    expect(storageFixture.objects.has(loserKey)).toBe(false);
+    expect((await rawSession(database, loser.uploadSessionId))!.status).not.toBe('aborted');
+
+    await database.update({
+      model: 'uploadSessions',
+      where: [{ field: 'uploadSessionId', operator: 'eq', value: loser.uploadSessionId }],
+      data: { expiresAt: new Date(Date.now() - 1000).toISOString() },
+      namespace: 'filefn',
+    });
+    await app.fileFn.services.uploads.cleanupExpiredSessions();
+    expect(storageFixture.objects.has(partKey)).toBe(false);
+    expect(await rawSession(database, loser.uploadSessionId)).toBeNull();
+  });
 });
