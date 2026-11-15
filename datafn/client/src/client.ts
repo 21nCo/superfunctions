@@ -56,7 +56,7 @@ import {
   clearSearchIndexCurrent,
 } from "./searchIndex.js";
 import { IMPORT_CONTEXT } from "./events/importMarker.js";
-import { runSearchIndexUpdate } from "./searchIndexQueue.js";
+import { indexStoredRecords, recordIds, runSearchIndexUpdate } from "./searchIndexQueue.js";
 import {
   ensureBuiltinKv,
   ensureBuiltinTemporal,
@@ -1069,37 +1069,6 @@ function _buildRawClient<S extends DatafnSchema>(
    * take them, the resource's index marker is cleared so the next search
    * rebuilds it from storage.
    */
-  /**
-   * Indexes the version storage holds for each id and removes ids no longer
-   * stored. Reads in bulk when the ids are many.
-   */
-  const indexStoredVersions = async (
-    storage: DatafnStorageAdapter,
-    provider: NonNullable<typeof config.searchProvider>,
-    resource: string,
-    ids: string[],
-  ): Promise<void> => {
-    const wanted = new Set(ids);
-    const stored = new Map<string, Record<string, unknown>>();
-    if (wanted.size > 64) {
-      for (const record of await storage.listRecords(resource)) {
-        if (typeof record.id === "string" && wanted.has(record.id)) stored.set(record.id, record);
-      }
-    } else {
-      const records = await Promise.all([...wanted].map((id) => storage.getRecord(resource, id)));
-      for (const record of records) {
-        if (record && typeof record.id === "string") stored.set(record.id, record);
-      }
-    }
-    const removed = [...wanted].filter((id) => !stored.has(id)).map((id) => ({ id }));
-    if (stored.size > 0) {
-      await provider.updateIndices({ resource, records: [...stored.values()], operation: "upsert" });
-    }
-    if (removed.length > 0) {
-      await provider.updateIndices({ resource, records: removed, operation: "delete" });
-    }
-  };
-
   const indexImportedRecords = async (
     storage: DatafnStorageAdapter,
     imported: Record<string, Array<Record<string, unknown>>>,
@@ -1118,12 +1087,7 @@ function _buildRawClient<S extends DatafnSchema>(
         // resource's index-update turn: a write made while this waited has
         // indexed its newer version already, and a later write's update
         // runs after this one.
-        const ids = records
-          .map((record) => record.id)
-          .filter((id): id is string => typeof id === "string");
-        await runSearchIndexUpdate(provider, resource, () =>
-          indexStoredVersions(storage, provider, resource, ids),
-        );
+        await indexStoredRecords(provider, storage, resource, recordIds(records));
       } catch (error) {
         console.warn("Search index update after import failed; the index will rebuild", {
           resource,

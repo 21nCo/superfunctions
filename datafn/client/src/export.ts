@@ -3,7 +3,7 @@
  */
 
 import type { DatafnSchema } from "@datafn/core";
-import { getJoinStoreKey } from "@datafn/core";
+import { getJoinStoreKey, getRelationKeyName } from "@datafn/core";
 import type { DatafnStorageAdapter } from "./storage.js";
 import { createClientError } from "./errors.js";
 import type { SyncFacade } from "./sync.js";
@@ -53,7 +53,7 @@ export type DatafnImportLocalHook = (
 /**
  * The resources at either end of each many-many join store, under the key
  * the local stores use (`relation`, else "rel") and the canonical one
- * (`relation`, else `inverse`, `joinTable` or `to_<target>`).
+ * (core's getRelationKeyName).
  */
 function joinStoreEndpoints(schema: DatafnSchema): Map<string, { from: string; to: string }> {
   const endpoints = new Map<string, { from: string; to: string }>();
@@ -63,10 +63,7 @@ function joinStoreEndpoints(schema: DatafnSchema): Map<string, { from: string; t
     const tos = Array.isArray(relation.to) ? relation.to : [relation.to];
     for (const from of froms) {
       for (const to of tos) {
-        const names = new Set([
-          relation.relation ?? "rel",
-          relation.relation ?? relation.inverse ?? relation.joinTable ?? `to_${to}`,
-        ]);
+        const names = new Set([relation.relation ?? "rel", getRelationKeyName(relation, to)]);
         for (const name of names) endpoints.set(getJoinStoreKey(from, name, to), { from, to });
       }
     }

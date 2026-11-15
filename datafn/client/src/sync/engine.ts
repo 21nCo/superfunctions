@@ -1,5 +1,5 @@
 import { DATAFN_ROUTE_WS_PROTOCOL, DATAFN_ROUTE_WS_TICKET_PREFIX } from "@datafn/core";
-import { runSearchIndexUpdate } from "../searchIndexQueue.js";
+import { indexStoredRecords, recordIds, runSearchIndexUpdate } from "../searchIndexQueue.js";
 import { DefaultHttpTransport } from "../transport/http.js";
 /**
  * Sync Engine
@@ -910,9 +910,7 @@ export class SyncEngine {
               for (const [resource, records] of Object.entries(result.data)) {
                 if (records.length > 0) {
                   try {
-                    await runSearchIndexUpdate(searchProvider, resource, () =>
-                      searchProvider.updateIndices({ resource, records, operation: "upsert" }),
-                    );
+                    await indexStoredRecords(searchProvider, this.storage, resource, recordIds(records));
                   } catch {
                     failedSearchIndexResources.add(resource);
                     await this.clearSearchIndexComplete(resource);
@@ -1046,14 +1044,7 @@ export class SyncEngine {
           const records = cloneResult.data?.[table] ?? [];
           if (records.length > 0) {
             try {
-              const provider = this.searchProvider;
-              await runSearchIndexUpdate(provider, table, () =>
-                provider.updateIndices({
-                  resource: table,
-                  records,
-                  operation: "upsert",
-                }),
-              );
+              await indexStoredRecords(this.searchProvider, this.storage, table, recordIds(records));
             } catch {
               searchIndexComplete = false;
               await this.clearSearchIndexComplete(table);
@@ -1333,10 +1324,7 @@ export class SyncEngine {
               for (const [resource, records] of Object.entries(lastResult.records as Record<string, unknown[]>)) {
                 if ((records as unknown[]).length > 0) {
                   try {
-                    const provider = this.searchProvider;
-                    await runSearchIndexUpdate(provider, resource, () =>
-                      provider.updateIndices({ resource, records: records as Record<string, unknown>[], operation: "upsert" }),
-                    );
+                    await indexStoredRecords(this.searchProvider, this.storage, resource, recordIds(records as unknown[]));
                   } catch {
                     await this.clearSearchIndexComplete(resource);
                     // fail-soft

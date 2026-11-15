@@ -152,6 +152,7 @@ export {
   getJoinTableName,
   getRelationJoinTableName,
   getRelationName,
+  getRelationKeyName,
   enumerateJoinStoreKeys,
 } from "./joins.js";
 

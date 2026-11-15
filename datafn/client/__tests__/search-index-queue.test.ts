@@ -2,8 +2,9 @@
  * DATA-15: search index updates for one provider and resource run one at a
  * time, in the order they were queued, and a failure does not block the rest.
  */
-import { describe, expect, it } from "vitest";
-import { runSearchIndexUpdate } from "../src/searchIndexQueue.js";
+import { describe, expect, it, vi } from "vitest";
+import { MemoryStorageAdapter } from "../src/adapters/memoryStorage.js";
+import { indexStoredRecords, runSearchIndexUpdate } from "../src/searchIndexQueue.js";
 
 describe("runSearchIndexUpdate", () => {
   it("runs updates for a resource in order and resources independently", async () => {
@@ -39,3 +40,36 @@ describe("runSearchIndexUpdate", () => {
     await expect(next).resolves.toBe("done");
   });
 });
+
+describe("indexStoredRecords", () => {
+  const provider = () => ({ updateIndices: vi.fn(async (_params: any) => {}) });
+
+  it("indexes what storage holds when its turn comes, and removes deleted ids", async () => {
+    const storage = new MemoryStorageAdapter(["notes"]);
+    await storage.upsertRecord("notes", { id: "notes:1", title: "Server copy" });
+    const search = provider();
+    let release!: () => void;
+    const held = runSearchIndexUpdate(search, "notes", () => new Promise<void>((resolve) => (release = resolve)));
+    const indexing = indexStoredRecords(search, storage, "notes", ["notes:1", "notes:gone"]);
+    // A newer local write lands before the queued update runs.
+    await storage.upsertRecord("notes", { id: "notes:1", title: "Local edit" });
+    release();
+    await Promise.all([held, indexing]);
+    expect(search.updateIndices.mock.calls.map(([params]) => params)).toEqual([
+      { resource: "notes", records: [{ id: "notes:1", title: "Local edit" }], operation: "upsert" },
+      { resource: "notes", records: [{ id: "notes:gone" }], operation: "delete" },
+    ]);
+  });
+
+  it("reads by id when the ids are a small part of the resource", async () => {
+    const storage = new MemoryStorageAdapter(["notes"]);
+    for (let i = 0; i < 2_000; i++) await storage.upsertRecord("notes", { id: `notes:${i}`, title: `${i}` });
+    const listSpy = vi.spyOn(storage, "listRecords");
+    const ids = Array.from({ length: 300 }, (_, i) => `notes:${i}`);
+    const search = provider();
+    await indexStoredRecords(search, storage, "notes", ids);
+    expect(listSpy).not.toHaveBeenCalled();
+    expect(search.updateIndices.mock.calls[0][0].records).toHaveLength(300);
+  });
+});
+
