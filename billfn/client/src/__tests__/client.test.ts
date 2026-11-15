@@ -67,4 +67,27 @@ describe('@billfn/client over HTTP', () => {
       });
     });
   });
+
+  it('sends the chosen catalog priceId with the checkout request', async () => {
+    let received: unknown;
+    await withServer((request, response) => {
+      let raw = '';
+      request.on('data', chunk => { raw += chunk; });
+      request.on('end', () => {
+        received = { method: request.method, url: request.url, body: JSON.parse(raw) };
+        response.writeHead(403, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ ok: false, error: { code: 'BILLFN_PRICE_NOT_ELIGIBLE', message: 'Price not available', status: 403, retryable: false }, meta: { timestamp: '2026-11-15T00:00:00.000Z' } }));
+      });
+    }, async client => {
+      await expect(client.createCheckout({ planKey: 'pro', provider: 'dodo', interval: 'month', priceId: 'price_pro_intro' })).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'BILLFN_PRICE_NOT_ELIGIBLE', status: 403 }
+      });
+    });
+    expect(received).toEqual({
+      method: 'POST',
+      url: '/billfn/checkouts',
+      body: { planKey: 'pro', provider: 'dodo', interval: 'month', priceId: 'price_pro_intro' }
+    });
+  });
 });

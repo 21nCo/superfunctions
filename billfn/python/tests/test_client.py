@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from typing import Any
+
 import httpx
 import pytest
 
@@ -97,6 +100,58 @@ def test_sync_client_parses_catalog_and_checkout() -> None:
         )
     ).unwrap()
     assert checkout.checkout_session.checkout_session_id == "chk_123"
+
+
+def test_sync_client_sends_checkout_price_id_and_reads_price_eligibility() -> None:
+    bodies: list[Any] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/checkouts"):
+            bodies.append(json.loads(request.content))
+        if request.url.path.endswith("/catalog"):
+            return httpx.Response(
+                200,
+                json={
+                    "ok": True,
+                    "data": {
+                        "plans": [
+                            {
+                                "productKey": "nucleus",
+                                "planKey": "pro",
+                                "displayName": "Pro",
+                                "features": {},
+                                "limits": {},
+                                "prices": [
+                                    {
+                                        "priceId": "price_pro_intro",
+                                        "provider": "dodo",
+                                        "providerProductId": "pdt_pro_intro",
+                                        "currency": "USD",
+                                        "amount": 6,
+                                        "kind": "subscription",
+                                        "interval": "month",
+                                        "eligibility": "first-purchase",
+                                    }
+                                ],
+                            }
+                        ]
+                    },
+                    "meta": {"timestamp": "2026-11-15T00:00:00.000Z"},
+                },
+            )
+        return _handler(request)
+
+    http_client = httpx.Client(transport=httpx.MockTransport(handler))
+    client = BillFnClient(base_url="https://billfn.example.test/billfn", client=http_client)
+
+    catalog = client.get_catalog().unwrap()
+    assert catalog.plans[0].prices[0].eligibility == "first-purchase"
+
+    client.create_checkout(
+        BillFnCheckoutCreateRequest(plan_key="pro", provider="dodo", price_id="price_pro_intro")
+    ).unwrap()
+
+    assert bodies[0]["priceId"] == "price_pro_intro"
 
 
 def test_sync_client_default_base_url_is_absolute() -> None:
