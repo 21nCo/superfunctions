@@ -1029,6 +1029,35 @@ describe('processing jobs', () => {
       await expect(service.runProcessing(inlineInput, owner)).resolves.toEqual({ artifactsCreated: 0, errors: [] });
       expect(healthy).toHaveBeenCalledTimes(1);
     });
+
+    it('reports a rejecting thenable and keeps delivering when the logger throws', async () => {
+      const events = createEventEmitter();
+      const healthy = vi.fn();
+      const logged: unknown[] = [];
+      const logger = {
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn((_message: string, context?: unknown) => {
+          logged.push(context);
+          throw new Error('logger unavailable');
+        }),
+      };
+      const rejecting = { then: (_resolve: unknown, reject: (error: Error) => void) => reject(new Error('thenable failure')) };
+      events.on('processing.completed', (() => rejecting) as never);
+      events.on('processing.completed', throwing());
+      events.on('processing.completed', healthy);
+      const service = createProcessingService({
+        db: memoryAdapter(), storage: createMemoryStorage(), events, logger, processors: [returning('noop', { success: true, artifacts: [] })], enabled: true,
+      });
+
+      await expect(service.runProcessing(inlineInput, owner)).resolves.toEqual({ artifactsCreated: 0, errors: [] });
+      expect(healthy).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => expect(logged).toEqual(expect.arrayContaining([
+        expect.objectContaining({ error: 'listener unavailable' }),
+        expect.objectContaining({ error: 'thenable failure' }),
+      ])));
+    });
   });
 
   it('removes the completion row of a job whose version is deleted while the row is written', async () => {

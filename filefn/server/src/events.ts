@@ -154,25 +154,34 @@ export class FileFnEventEmitter extends EventEmitter {
 
   /**
    * Emits like `emit`, but calls every listener even when an earlier one
-   * throws: each listener's error, or the rejection of the promise it returns,
-   * goes to `onListenerError` instead of the caller.
+   * throws: each listener's error, or the rejection of the promise or
+   * thenable it returns, goes to `onListenerError` instead of the caller. An
+   * error `onListenerError` throws is dropped.
    */
   emitToEachListener<K extends keyof FileFnEventTypes>(
     event: K,
     payload: FileFnEventTypes[K],
     onListenerError: (error: unknown) => void,
   ): boolean {
+    const report = (error: unknown) => {
+      try {
+        onListenerError(error);
+      } catch {
+        // Reporting must not stop the delivery to the other listeners.
+      }
+    };
     this.fanOut(event, payload);
     // A copy, as `emit` uses: `once` wrappers remove themselves when called.
     const listeners = this.rawListeners(event) as ((payload: FileFnEventTypes[K]) => unknown)[];
     for (const listener of listeners) {
       try {
         const result = listener.call(this, payload);
-        if (result instanceof Promise) {
-          result.catch(onListenerError);
+        // Promise.resolve adopts thenables and promises from other realms.
+        if (result !== null && (typeof result === 'object' || typeof result === 'function') && 'then' in result) {
+          Promise.resolve(result).then(undefined, report);
         }
       } catch (error) {
-        onListenerError(error);
+        report(error);
       }
     }
     return listeners.length > 0;
