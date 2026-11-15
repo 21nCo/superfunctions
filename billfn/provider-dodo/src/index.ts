@@ -2,6 +2,7 @@ import type {
   BillFnCancelSubscriptionInput,
   BillFnChangeSubscriptionInput,
   BillFnCreateCheckoutInput,
+  BillFnImportSubscriptionInput,
   BillFnParseWebhookInput,
   BillFnParsedWebhookEvent,
   BillFnProviderAdapter,
@@ -44,7 +45,8 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
       webhookIngestion: true,
       changeSubscription: true,
       resumeSubscription: true,
-      refundCharge: true
+      refundCharge: true,
+      importSubscription: true
     },
     async createCheckout(input: BillFnCreateCheckoutInput) {
       const isSubscription = input.price.kind === 'subscription';
@@ -293,6 +295,57 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
       assertDodoRestoreOwnership(input, isSubscription, response);
 
       return [mapDodoState(isSubscription, response)];
+    },
+    async importSubscription(input: BillFnImportSubscriptionInput) {
+      // A subscription created outside BillFn carries no billfn_* metadata, so only its identity is checked.
+      let result: Awaited<ReturnType<typeof tryRequestJson>>;
+      try {
+        result = await tryRequestJson(fetchImpl, `${baseUrl}/subscriptions/${encodeURIComponent(input.providerReference)}`, {
+          method: 'GET',
+          headers: createHeaders(config.apiKey)
+        });
+      } catch (error) {
+        // No answer from Dodo (the request or its body read failed) or an unreadable one: a retry may read it.
+        // The raw error stays out of the message, which reaches the operator.
+        throw createBillFnError({
+          code: 'BILLFN_PROVIDER_ERROR',
+          message:
+            error instanceof SyntaxError
+              ? 'Dodo returned an unreadable subscription response'
+              : 'Dodo could not be reached to read the imported subscription'
+        });
+      }
+      if (!result.ok) {
+        // Dodo has no such subscription: BillFn reports it as not found, which a retry does not change.
+        if (result.error.status === 404) {
+          return null;
+        }
+        // Dodo rejects the id itself (the only input of this read): invalid input, which a retry does not change.
+        if (result.error.status === 400 || result.error.status === 422) {
+          throw createBillFnError({
+            code: 'BILLFN_VALIDATION_ERROR',
+            message: `Dodo rejected the imported subscription id with status ${result.error.status}`,
+            details: result.error
+          });
+        }
+        throw createBillFnError({
+          code: 'BILLFN_PROVIDER_ERROR',
+          message: `Dodo request failed with status ${result.error.status}`,
+          details: result.error
+        });
+      }
+      const responseId = readString(result.data, ['subscription_id', 'id']);
+      if (!responseId) {
+        // A success without the subscription's id is not Dodo's not-found answer: a retry may read it.
+        throw createBillFnError({ code: 'BILLFN_PROVIDER_ERROR', message: 'Dodo returned a subscription without its id' });
+      }
+      if (responseId !== input.providerReference) {
+        throw createBillFnError({
+          code: 'BILLFN_PROVIDER_ERROR',
+          message: 'Dodo returned a different subscription than the imported reference'
+        });
+      }
+      return { ...mapDodoState(true, result.data), providerSubscriptionId: responseId };
     },
     async parseWebhook(input: BillFnParseWebhookInput): Promise<BillFnParsedWebhookEvent[]> {
       if (!config.webhookSecret) {

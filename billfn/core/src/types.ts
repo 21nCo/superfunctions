@@ -195,13 +195,15 @@ export interface BillFnWebhookReceipt {
  * - `price_not_found`: the event's product or price is not in the catalog.
  * - `billing_account_unavailable`: a subscription matches the reference but its billing account is gone.
  * - `provider_reference_replaced`: a subscription write (an event, a replay, a provider read or a mutation) dropped the reference, possibly before this event was first delivered, and no subscription holds it.
+ * - `subscription_import_pending`: an operator import holds the reference on a subscription it has not accepted yet; the import replays the event once it accepts it, and a refused import leaves it unlinked.
  */
 export type BillFnUnlinkedWebhookEventReason =
   | 'billing_account_metadata_missing'
   | 'billing_account_not_found'
   | 'price_not_found'
   | 'billing_account_unavailable'
-  | 'provider_reference_replaced';
+  | 'provider_reference_replaced'
+  | 'subscription_import_pending';
 
 /**
  * `unlinked` waits for its provider reference to be linked to a subscription;
@@ -341,6 +343,7 @@ export interface BillFnProviderCapabilities {
   resumeSubscription?: boolean;
   refundCharge?: boolean;
   notificationHistory?: boolean;
+  importSubscription?: boolean;
 }
 
 export interface BillFnProviderCheckoutResult {
@@ -361,7 +364,9 @@ export interface BillFnVerifiedBillingState {
   /**
    * The catalog price or provider product id the provider record names, set
    * by an adapter whose record carries it in a form BillFn cannot read from
-   * `raw` (Apple's signed transaction). BillFn reads it before `raw`.
+   * `raw` (Apple's signed transaction). BillFn reads it before `raw`. A
+   * subscription import reads it, like the record's product, as a provider
+   * product id only.
    */
   providerProductId?: string;
   currentPeriodStart?: string;
@@ -464,6 +469,19 @@ export interface BillFnRestorePurchasesInput {
   payload?: Record<string, unknown>;
 }
 
+/**
+ * Reads an existing provider subscription an operator is importing. The
+ * adapter checks only that the record is the referenced subscription, not the
+ * BillFn ownership metadata (`billfn_*`, `appAccountToken`) a subscription
+ * created outside BillFn lacks; BillFn checks its product against `plan`.
+ */
+export interface BillFnImportSubscriptionInput {
+  /** The provider subscription id (Dodo) or original transaction id (Apple). */
+  providerReference: string;
+  billingAccount: BillFnBillingAccount;
+  plan: BillFnPlanDefinition;
+}
+
 export interface BillFnParseWebhookInput {
   headers: Headers;
   rawBody: string;
@@ -485,6 +503,8 @@ export interface BillFnProviderAdapter {
   resumeSubscription?(input: BillFnResumeSubscriptionInput): Promise<BillFnProviderOperationResult>;
   refundCharge?(input: BillFnRefundChargeInput): Promise<BillFnProviderOperationResult>;
   restorePurchases?(input: BillFnRestorePurchasesInput): Promise<BillFnVerifiedBillingState[]>;
+  /** Returns null when the provider has no such subscription. */
+  importSubscription?(input: BillFnImportSubscriptionInput): Promise<BillFnVerifiedBillingState | null>;
   parseWebhook?(input: BillFnParseWebhookInput): Promise<BillFnParsedWebhookEvent[]>;
   fetchNotificationHistory?(input: BillFnFetchNotificationHistoryInput): Promise<BillFnNotificationHistoryPage>;
 }
@@ -633,6 +653,49 @@ export interface BillFnRestorePurchasesRequest {
   payload?: Record<string, unknown>;
 }
 
+/** Who imported a subscription; recorded on the import's billing event. */
+export interface BillFnImportOperator {
+  id: string;
+  type?: string;
+  /**
+   * The operator request that ran the import, for audit correlation. It also
+   * identifies the run: calling import again with the same request records no
+   * new `billfn.subscription.imported` event for a state it already recorded.
+   */
+  requestId?: string;
+}
+
+/**
+ * The subscription an import binds: the provider subscription id, or for Apple
+ * the original transaction id (both may be given when they are equal).
+ */
+export type BillFnImportSubscriptionReference =
+  | { provider: 'apple'; providerSubscriptionId: string; originalTransactionId?: string }
+  | { provider: Exclude<BillingProviderName, 'apple'>; providerSubscriptionId: string; originalTransactionId?: never }
+  | {
+      provider: 'apple';
+      providerSubscriptionId?: string;
+      /** Apple only: the subscription's original transaction id. */
+      originalTransactionId: string;
+    };
+
+/** Binds an existing provider subscription to a billing account. */
+export type BillFnImportSubscriptionRequest = BillFnImportSubscriptionRequestFields & BillFnImportSubscriptionReference;
+
+export interface BillFnImportSubscriptionRequestFields {
+  provider: BillingProviderName;
+  billingAccountId: string;
+  /**
+   * When set, the billing account is created for this subject if it does not
+   * exist yet; the subject must resolve to `billingAccountId`. Without it the
+   * billing account must already exist.
+   */
+  subject?: BillableSubject;
+  planKey: string;
+  operator: BillFnImportOperator;
+  reason?: string;
+}
+
 export interface BillFnSyncSubscriptionRequest {
   subject?: BillableSubject;
   subscriptionId?: string;
@@ -714,6 +777,18 @@ export interface BillFnSyncSubscriptionResponseData {
   entitlements: BillFnEntitlementSnapshot;
 }
 
+export interface BillFnImportSubscriptionResponseData {
+  subscription: BillFnSubscription;
+  entitlements: BillFnEntitlementSnapshot;
+  /**
+   * The `billfn.subscription.imported` billing event for the subscription state
+   * this import returns, after its replay. A rerun of the same request
+   * (`operator.requestId`) that finds a state the request already recorded
+   * returns the event an earlier call recorded for it.
+   */
+  billingEvent: BillFnBillingEvent;
+}
+
 export interface BillFnRestorePurchasesResponseData {
   subscription: BillFnSubscription;
   entitlements: BillFnEntitlementSnapshot;
@@ -749,6 +824,7 @@ export type BillFnResumeSubscriptionResponse = BillFnEnvelope<BillFnResumeSubscr
 export type BillFnRefundChargeResponse = BillFnEnvelope<BillFnRefundChargeResponseData>;
 export type BillFnSyncSubscriptionResponse = BillFnEnvelope<BillFnSyncSubscriptionResponseData>;
 export type BillFnRestorePurchasesResponse = BillFnEnvelope<BillFnRestorePurchasesResponseData>;
+export type BillFnImportSubscriptionResponse = BillFnEnvelope<BillFnImportSubscriptionResponseData>;
 export type BillFnEntitlementsResponse = BillFnEnvelope<BillFnEntitlementsResponseData>;
 export type BillFnUsageResponse = BillFnEnvelope<BillFnUsageResponseData>;
 export type BillFnWebhookResponse = BillFnEnvelope<BillFnWebhookResponseData>;
@@ -772,6 +848,22 @@ export interface BillFnInstance {
   enqueueReconciliationJob(input: BillFnEnqueueReconciliationJobRequest): Promise<BillFnReconciliationJobResponse>;
   getReconciliationJob(input: BillFnGetReconciliationJobRequest): Promise<BillFnReconciliationJobResponse>;
   runReconciliationJob(input: BillFnRunReconciliationJobRequest): Promise<BillFnReconciliationJobResponse>;
+  /** Operator services; none of them is exposed as a public route. */
+  services: {
+    subscriptions: {
+      /**
+       * Binds an existing provider subscription to a billing account, syncs its
+       * state from the provider and replays its unlinked webhook events. Idempotent
+       * per provider reference; a reference bound to another billing account fails
+       * with `BILLFN_CONFLICT`. Every successful import records a `billfn.subscription.imported`
+       * billing event with the operator before each write that leaves a subscription
+       * usable (accepting a new binding, a re-import's change, or adding its import
+       * marker), and before its replay. A state the replay writes is recorded after
+       * the replay, when the call gets that far.
+       */
+      import(input: BillFnImportSubscriptionRequest): Promise<BillFnImportSubscriptionResponse>;
+    };
+  };
   subscriptionProvider: {
     getActiveSubscription(subject: BillableSubject): Promise<BillFnSubscription | null>;
     getEntitlementSnapshot(subject: BillableSubject): Promise<BillFnEntitlementSnapshot | null>;
