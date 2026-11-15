@@ -556,15 +556,28 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
     this.validateTableName(resource);
     if (records.length === 0) return;
     const storageRecords = records.map((record) => cloneForStorage(record));
-    const db = await this.dbPromise;
+    // getStore repairs a missing object store, as upsertRecord does.
+    const store = await this.getStore(resource, "readwrite");
+    const tx = store.transaction;
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(resource, "readwrite");
-      const store = tx.objectStore(resource);
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error ?? new Error("Transaction aborted"));
-      for (const record of storageRecords) {
-        store.put(record);
+      try {
+        for (const record of storageRecords) {
+          store.put(record);
+        }
+      } catch (error) {
+        // A put that throws synchronously (e.g. a record without a key) must
+        // not let the records queued before it commit.
+        tx.onabort = null;
+        tx.onerror = null;
+        try {
+          tx.abort();
+        } catch {
+          // Already finished or aborting.
+        }
+        reject(error);
       }
     });
   }

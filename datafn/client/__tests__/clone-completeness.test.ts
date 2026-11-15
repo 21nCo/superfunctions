@@ -54,6 +54,7 @@ function createEngine(
   storage: MemoryStorageAdapter,
   clone: (payload: ClonePayload) => Promise<unknown>,
   config: DatafnSyncConfig = {},
+  searchProvider?: unknown,
 ) {
   const remote = {
     clone: vi.fn(clone),
@@ -75,6 +76,9 @@ function createEngine(
     "client-1",
     schema,
     config,
+    [],
+    undefined,
+    searchProvider as any,
   );
   return { engine, remote };
 }
@@ -165,6 +169,42 @@ describe("paginated clone completeness", () => {
     expect(await storage.listRecords("notes")).toHaveLength(ALL_NOTES.length);
   });
 
+  it("keeps the search index incomplete when the capped batch failed to index", async () => {
+    const storage = new MemoryStorageAdapter();
+    const searchProvider = {
+      updateIndices: vi.fn(async ({ records }: { records: Array<{ id: string }> }) => {
+        if (records.some((r) => r.id === "n1")) throw new Error("index failed");
+      }),
+    };
+    const { engine } = createEngine(
+      storage,
+      async (payload) => {
+        if (!payload.page) {
+          return {
+            ok: true,
+            result: {
+              ok: true,
+              paginated: true,
+              data: { notes: ALL_NOTES.slice(0, 2) },
+              cursors: { notes: "10" },
+              next: { notes: "n2" },
+            },
+          };
+        }
+        return pageResponse(payload.page.afterId, payload.page.limit);
+      },
+      {},
+      searchProvider,
+    );
+    const marked = vi.spyOn(engine as any, "markSearchIndexComplete");
+
+    await engine.cloneNow();
+
+    expect(searchProvider.updateIndices).toHaveBeenCalledTimes(2);
+    expect(marked.mock.calls.filter(([resource]) => resource === "notes")).toEqual([]);
+    expect(await storage.getHydrationState("notes")).toBe("ready");
+  });
+
   it("writes each page with the adapter's bulk upsert", async () => {
     const storage = new MemoryStorageAdapter();
     const bulkWrites: string[][] = [];
@@ -243,6 +283,31 @@ describe("rate-limited clone requests", () => {
     }
   });
 
+  it("waits the full Retry-After even when it exceeds maxDelayMs", async () => {
+    vi.useFakeTimers();
+    try {
+      const storage = new MemoryStorageAdapter();
+      let calls = 0;
+      const { engine, remote } = createEngine(
+        storage,
+        async () => {
+          calls += 1;
+          return calls === 1 ? rateLimited(600_000) : pageResponse(null, 10);
+        },
+        { cloneRateLimitRetry: { maxDelayMs: 60_000 } },
+      );
+
+      const done = engine.cloneNow();
+      await vi.advanceTimersByTimeAsync(599_000);
+      expect(remote.clone).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await done;
+      expect(remote.clone).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("gives up after the configured retries and leaves the table incomplete", async () => {
     const storage = new MemoryStorageAdapter();
     const { engine, remote } = createEngine(storage, async () => rateLimited(), {
@@ -298,5 +363,19 @@ describe("IndexedDbStorageAdapter.upsertRecords", () => {
     expect((await storage.listRecords("notes")).map((r) => r.id)).toEqual(
       ALL_NOTES.map((n) => n.id),
     );
+  });
+
+  it("stores none of the records when one of them cannot be written", async () => {
+    const storage = new IndexedDbStorageAdapter(
+      `clone_bulk_abort_${Math.random()}`,
+      ["notes"],
+      schema,
+    );
+
+    await expect(
+      storage.upsertRecords("notes", [{ id: "valid", title: "ok" }, { title: "no id" }]),
+    ).rejects.toThrow();
+
+    expect(await storage.listRecords("notes")).toEqual([]);
   });
 });

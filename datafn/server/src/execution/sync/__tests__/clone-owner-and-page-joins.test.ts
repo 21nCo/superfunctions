@@ -243,6 +243,59 @@ describe("paginated clone join rows", () => {
     expect(page.joins?.[joinKey]?.map((r) => r.id)).toEqual(["j_n1_t1", "j_n3_t1"]);
   });
 
+  it("a capped clone carries the join rows of the records it returned", async () => {
+    const db = await seed();
+    const capped = await executeClone(
+      { clientId: "c1", tables: ["notes", "tags"], actorId: "alice", includeJoins: true },
+      schema,
+      db,
+      NAMESPACE,
+      undefined,
+      4,
+    );
+    expect(capped.paginated).toBe(true);
+    expect(capped.data.notes.map((r) => r.id)).toEqual(["n1", "n2", "n3", "n4"]);
+    expect(capped.data.tags).toEqual([]);
+    expect(capped.joins?.[joinKey]?.map((r) => r.id)).toEqual([
+      "j_n1_t1",
+      "j_n2_t2",
+      "j_n3_t1",
+      "j_n4_t3",
+    ]);
+  });
+
+  it("covers a self relation from both sides across pages", async () => {
+    const selfSchema: DatafnSchema = {
+      resources: [schema.resources[1]],
+      relations: [{ from: "tags", to: "tags", type: "many-many", relation: "links" } as any],
+    };
+    const db = memoryAdapter();
+    for (const id of ["a", "b", "c"]) {
+      await db.create({ model: "tags", data: { id, name: id }, namespace: NAMESPACE });
+    }
+    await db.create({
+      model: "__datafn_join_tags_links",
+      data: { id: "l_c_a", from: "c", to: "a" },
+      namespace: NAMESPACE,
+    });
+    const page = (afterId: string | null) =>
+      executeClone(
+        {
+          clientId: "c1",
+          tables: ["tags"],
+          includeJoins: true,
+          page: { table: "tags", afterId, limit: 2 },
+        },
+        selfSchema,
+        db,
+        NAMESPACE,
+      );
+    const first = await page(null);
+    const second = await page("b");
+    expect(first.joins?.join_tags_links_tags?.map((r) => r.id)).toEqual(["l_c_a"]);
+    expect(second.joins?.join_tags_links_tags?.map((r) => r.id)).toEqual(["l_c_a"]);
+  });
+
   it("still returns the whole join table for an unpaginated clone", async () => {
     const db = await seed();
     const result = await executeClone(

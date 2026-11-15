@@ -42,6 +42,9 @@ export interface CloneResult {
   };
 }
 
+/** Ids per `in` lookup when loading the join rows of returned records. */
+const JOIN_LOOKUP_CHUNK = 500;
+
 /**
  * Execute clone operation - return full dataset with cursors
  */
@@ -72,6 +75,7 @@ export async function executeClone(
   const cursors: Record<string, string> = {};
   const next: Record<string, string | null> = {};
   let joins: Record<string, Array<Record<string, unknown>>> | undefined;
+  let cappedClone = false;
 
   // Determine which tables to clone
   const tablesToClone = request.tables || schema.resources.map((r) => r.name);
@@ -298,22 +302,26 @@ export async function executeClone(
       }
     }
 
-    // Set paginated flag on result if needed (handled below in return)
-    if (paginated) {
-      return {
-        ok: true,
-        data,
-        cursors,
-        joins,
-        next: Object.keys(next).length > 0 ? next : undefined,
-        paginated: true,
-      };
-    }
+    // SCA-002: the capped result still carries the join rows of the records
+    // it returned (see below), then is flagged as paginated.
+    cappedClone = paginated;
   }
 
   // Include join rows if requested (SYNC-001, SYNC-006)
   if (request.includeJoins && schema.relations) {
     joins = {};
+
+    // Paginated and capped clones scope join rows to the records they returned.
+    let scopedIds: Map<string, Set<string>> | undefined;
+    if (request.page || cappedClone) {
+      scopedIds = new Map();
+      for (const [table, rows] of Object.entries(data)) {
+        const ids = new Set(
+          rows.map((row) => row.id).filter((id): id is string => typeof id === "string"),
+        );
+        if (ids.size > 0) scopedIds.set(table, ids);
+      }
+    }
 
     for (const relation of schema.relations) {
       // Skip relations that aren't many-many (no join rows)
@@ -325,40 +333,45 @@ export async function executeClone(
       const fromCol = relation.joinColumns?.from || "from";
       const toCol = relation.joinColumns?.to || "to";
 
-      // A paginated clone returns only the join rows of the page's records:
-      // rows whose from-side record is on this page (when the page table is a
-      // from resource) or whose to-side record is (when it is a to resource).
-      // Every row then reaches the client with the pages of the records it
-      // links, instead of the whole join table on every page.
-      const pageTable = request.page?.table;
-      const pageIds = pageTable
-        ? (data[pageTable] ?? [])
-            .map((row) => row.id)
-            .filter((id): id is string => typeof id === "string")
-        : undefined;
-      const pageIsFrom = pageTable !== undefined && froms.includes(pageTable);
-      const pageIsTo = pageTable !== undefined && tos.includes(pageTable);
-      if (pageIds && (pageIds.length === 0 || (!pageIsFrom && !pageIsTo))) {
+      // A paginated or capped clone returns only the join rows of the records
+      // it returned: rows whose from-side record was returned (for a from
+      // resource) or whose to-side record was (for a to resource). Every row
+      // then reaches the client with the records it links, instead of the
+      // whole join table on every page.
+      const fromScopes = scopedIds
+        ? froms.filter((resource) => scopedIds.has(resource))
+        : [];
+      const toScopes = scopedIds ? tos.filter((resource) => scopedIds.has(resource)) : [];
+      if (scopedIds && fromScopes.length === 0 && toScopes.length === 0) {
         continue;
       }
-      const pageIdSet = pageIds ? new Set(pageIds) : undefined;
 
       try {
         let joinRecords: Array<Record<string, unknown>>;
-        if (pageIds) {
+        if (scopedIds) {
           const byId = new Map<unknown, Record<string, unknown>>();
-          const columns = [
-            ...(pageIsFrom ? [fromCol] : []),
-            ...(pageIsTo && toCol !== fromCol ? [toCol] : []),
-          ];
-          for (const column of columns) {
-            const rows = await db.findMany({
-              model: joinTableName,
-              where: [{ field: column, operator: "in", value: pageIds }],
-              orderBy: [{ field: "id", direction: "asc" }],
-              namespace,
-            });
-            for (const row of rows) byId.set(row.id, row);
+          const lookups = new Map<string, Set<string>>();
+          const addLookup = (column: string, resources: string[]) => {
+            const ids = lookups.get(column) ?? new Set<string>();
+            for (const resource of resources) {
+              for (const id of scopedIds.get(resource)!) ids.add(id);
+            }
+            if (ids.size > 0) lookups.set(column, ids);
+          };
+          addLookup(fromCol, fromScopes);
+          addLookup(toCol, toScopes);
+          for (const [column, ids] of lookups) {
+            const values = [...ids];
+            for (let i = 0; i < values.length; i += JOIN_LOOKUP_CHUNK) {
+              const rows = await db.findMany({
+                model: joinTableName,
+                where: [
+                  { field: column, operator: "in", value: values.slice(i, i + JOIN_LOOKUP_CHUNK) },
+                ],
+                namespace,
+              });
+              for (const row of rows) byId.set(row.id, row);
+            }
           }
           joinRecords = [...byId.values()].sort((a, b) => {
             const left = String(a.id ?? "");
@@ -384,9 +397,9 @@ export async function executeClone(
             const rowsForStore = normalizedRows.filter(
               (row) =>
                 shouldIncludeJoinRowForStore(row, relation, schema, from, to) &&
-                (!pageIdSet ||
-                  (from === pageTable && typeof row.from === "string" && pageIdSet.has(row.from)) ||
-                  (to === pageTable && typeof row.to === "string" && pageIdSet.has(row.to))),
+                (!scopedIds ||
+                  (typeof row.from === "string" && !!scopedIds.get(from)?.has(row.from)) ||
+                  (typeof row.to === "string" && !!scopedIds.get(to)?.has(row.to))),
             );
             if (rowsForStore.length > 0) {
               joins[joinStoreKey] = rowsForStore;
@@ -407,6 +420,7 @@ export async function executeClone(
     cursors,
     joins,
     next: Object.keys(next).length > 0 ? next : undefined,
+    ...(cappedClone ? { paginated: true } : {}),
   };
 }
 

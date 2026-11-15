@@ -936,6 +936,8 @@ export class SyncEngine {
               pageSize,
               !skipCloneIndexing,
               afterId === "" ? null : afterId,
+              // A failure indexing the first batch keeps the index incomplete.
+              !failedSearchIndexResources.has(table),
             );
             if (!indexed) failedSearchIndexResources.add(table);
           }
@@ -1035,8 +1037,8 @@ export class SyncEngine {
   /**
    * Send a clone request, waiting and retrying while the server answers that
    * the client is rate limited. Honours the server's Retry-After (surfaced by
-   * the HTTP transport as `error.details.retryAfterMs`), otherwise backs off
-   * exponentially. Returns the last response once retries are exhausted.
+   * the HTTP transport as `error.details.retryAfterMs`) in full, otherwise
+   * backs off exponentially. Returns the last response once retries are exhausted.
    */
   private async cloneWithRateLimitRetry(payload: unknown): Promise<any> {
     const policy = this.config?.cloneRateLimitRetry;
@@ -1057,9 +1059,11 @@ export class SyncEngine {
       const retryAfterMs = Number(
         response?.error?.details?.retryAfterMs ?? response?.result?.error?.details?.retryAfterMs,
       );
+      // The server's Retry-After is honoured in full; maxDelayMs caps only
+      // the computed backoff.
       const delayMs =
         Number.isFinite(retryAfterMs) && retryAfterMs >= 0
-          ? Math.min(retryAfterMs, backoff.maxDelayMs)
+          ? retryAfterMs
           : computeBackoffDelay(attempt, backoff);
       await sleep(delayMs);
     }
@@ -1073,10 +1077,11 @@ export class SyncEngine {
     pageSize: number,
     indexAfterPage: boolean,
     startAfterId: string | null = null,
+    initialSearchIndexComplete = true,
   ): Promise<boolean> {
     let afterId: string | null = startAfterId;
     let hasMore = true;
-    let searchIndexComplete = true;
+    let searchIndexComplete = initialSearchIndexComplete;
 
     while (hasMore) {
       const response: any = await this.cloneWithRateLimitRetry({

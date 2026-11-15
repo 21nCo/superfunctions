@@ -289,8 +289,9 @@ export interface DatafnSyncConfig {
   /**
    * Retry policy for clone requests the server rejects as rate limited
    * (`RATE_LIMITED` / `DATAFN_ROUTE_RATE_LIMITED`, HTTP 429). The client waits
-   * for the server's Retry-After when it sent one, otherwise for an
-   * exponential backoff, and gives up after `maxRetries` retries.
+   * for the server's Retry-After when it sent one (in full; `maxDelayMs`
+   * caps only the computed backoff), otherwise for an exponential backoff,
+   * and gives up after `maxRetries` retries.
    * Default: maxRetries=6, baseDelayMs=1000, multiplier=2, maxDelayMs=60000, jitterMs=500.
    */
   cloneRateLimitRetry?: {
