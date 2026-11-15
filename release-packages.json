@@ -161,6 +161,7 @@
   {"slug": "reviewfn-core", "path": "reviewfn/core", "name": "@superfunctions/reviewfn-core"},
   {"slug": "reviewfn-cli", "path": "reviewfn/cli", "name": "@superfunctions/reviewfn-cli"},
   {"slug": "reviewfn-harness-codex", "path": "reviewfn/harness-codex", "name": "@superfunctions/reviewfn-harness-codex"},
+  {"slug": "reviewfn-harness-claude-code", "path": "reviewfn/harness-claude-code", "name": "@superfunctions/reviewfn-harness-claude-code"},
   {"slug": "reviewfn-context-composio", "path": "reviewfn/context-composio", "name": "@superfunctions/reviewfn-context-composio"},
   {"slug": "reviewfn-github", "path": "reviewfn/github", "name": "@superfunctions/reviewfn-github"},
   {"slug": "reviewfn-testing", "path": "reviewfn/testing", "name": "@superfunctions/reviewfn-testing"},

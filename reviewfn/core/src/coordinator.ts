@@ -94,9 +94,20 @@ export function effectiveRetention(config: ReviewFnConfig, policy: ReviewPolicy)
   return { reportDays: Math.min(config.retention.reportDays, policy.retention.reportDays), transcriptDays: Math.min(config.retention.transcriptDays, policy.retention.transcriptDays), testLogDays: Math.min(config.retention.testLogDays, policy.retention.testLogDays) };
 }
 
-/** Pull-request review with Codex requires action-proxy authentication. */
+/**
+ * Auth modes each harness may use for pull-request review, where untrusted repository content could reach a credential.
+ * Codex requires action-proxy authentication. Claude Code has no credential-isolating mode, so it serves only trusted
+ * local reviews without a pull-request identity. Harnesses not listed here are not restricted by this rule.
+ */
+const PULL_REQUEST_AUTH: Readonly<Record<string, { modes: readonly string[]; message: string }>> = Object.freeze({
+  codex: { modes: ["action-proxy"], message: "Pull-request review with Codex requires action-proxy authentication." },
+  "claude-code": { modes: [], message: "Claude Code serves only trusted local reviews: no auth mode is allowed for pull-request review." },
+});
+
+/** Pull-request review with Codex requires action-proxy authentication; Claude Code refuses pull-request review. */
 export function harnessAuthDiagnostics(request: Pick<ReviewRunRequest, "pullRequest">, harnessId: string, auth: string): PreflightDiagnostic[] {
-  return request.pullRequest !== undefined && harnessId === "codex" && auth !== "action-proxy" ? [{ code: "REVIEWFN_PR_AUTH_REQUIRED", level: "error", message: "Pull-request review with Codex requires action-proxy authentication." }] : [];
+  const rule = Object.hasOwn(PULL_REQUEST_AUTH, harnessId) ? PULL_REQUEST_AUTH[harnessId] : undefined;
+  return request.pullRequest !== undefined && rule && !rule.modes.includes(auth) ? [{ code: "REVIEWFN_PR_AUTH_REQUIRED", level: "error", message: rule.message }] : [];
 }
 
 /** Prefix a component's diagnostics with its ID and add a generic error when it refused without one. */
