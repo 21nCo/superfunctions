@@ -1,0 +1,25 @@
+billfn/admin/src/__tests__/admin.test.ts
+  s_470eba4abc4b66::t_4397ca2d679ef0 605-606,611,631,640,643,649,651-652,658
+billfn/core/src/__tests__/grants.test.ts
+  s_470eba4abc4b66::t_a8e37f25591e1b 432,435,437,444-446,451,458
+billfn/core/src/grants.ts
+  s_470eba4abc4b66::t_d59e55ebdf7b4a 87-88,100-111
+billfn/docs/content/docs/server/entitlements-and-quotas.mdx
+  s_470eba4abc4b66::t_5983f8c240a88a 53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4c44b2687c727e99e998dbd79e657ab5ed516719",
+  "prompts": {},
+  "sessions": {
+    "s_470eba4abc4b66": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_470eba4abc4b66",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
