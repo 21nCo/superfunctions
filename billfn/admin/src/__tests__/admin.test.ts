@@ -600,7 +600,7 @@ describe("@billfn/admin", () => {
       )).rejects.toMatchObject({ code: "not_found" });
     });
 
-    it("records an unrecorded grant or revoke event on a later request with a new idempotency key without transactions", async () => {
+    it("reports a grant or revoke whose event fails to write without transactions as failed and unapplied, so a new request applies it", async () => {
       const base = memoryAdapter();
       // Fails writes of one event type, so the writes that repair other events succeed.
       const failEvents = { type: "" };
@@ -614,7 +614,8 @@ describe("@billfn/admin", () => {
           return base.create<T>(params);
         },
       };
-      const { adapter, dispatcher, expiresAt } = grantingBillFn(db);
+      const { billfn, adapter, dispatcher, expiresAt } = grantingBillFn(db);
+      const pointron = () => billfn.subscriptionProvider.hasFeature({ tenantId: "workspace_1" }, "pointron");
       const events = (type: string) => db.findMany<{ payload: Record<string, unknown> }>({
         model: "billingEvents",
         where: [{ field: "type", operator: "eq", value: type }],
@@ -630,16 +631,15 @@ describe("@billfn/admin", () => {
       failEvents.type = "billfn.grant.created";
       await expect(dispatch(1, "billfn.entitlements.grant-entitlement", grant)).resolves.toMatchObject({ ok: false });
       failEvents.type = "";
-      // The same idempotency key replays the stored failure without running the grant again.
+      // The failed grant left no comp, which its same-key replay reports truthfully; a new request grants it.
+      await expect(pointron()).resolves.toBe(false);
       await expect(dispatch(1, "billfn.entitlements.grant-entitlement", grant)).resolves.toMatchObject({
         ok: false,
         meta: { idempotencyReplay: true },
       });
-      expect(await events("billfn.grant.created")).toEqual([]);
-      // The comp committed without its event; the next request refuses a second comp and records the event once.
       await expect(dispatch(2, "billfn.entitlements.grant-entitlement", grant)).resolves.toMatchObject({
-        ok: false,
-        error: { code: "conflict", details: { reason: "active_comp_exists" } },
+        ok: true,
+        data: { item: { kind: "comp", status: "active" } },
       });
       expect(await events("billfn.grant.created")).toMatchObject([{ payload: { kind: "comp", reason: "vip" } }]);
 
@@ -648,12 +648,14 @@ describe("@billfn/admin", () => {
       failEvents.type = "billfn.grant.revoked";
       await expect(dispatch(3, "billfn.entitlements.revoke-grant", { id: rowId, reason: "ended" })).resolves.toMatchObject({ ok: false });
       failEvents.type = "";
-      // The comp was revoked without its event: the row has no active comp, and the request records the event first.
-      await expect(dispatch(4, "billfn.entitlements.revoke-grant", { id: rowId })).resolves.toMatchObject({
-        ok: false,
-        error: { code: "not_found" },
+      // The failed revoke left the comp active, so the row still revokes it.
+      await expect(pointron()).resolves.toBe(true);
+      await expect(dispatch(4, "billfn.entitlements.revoke-grant", { id: rowId, reason: "ended" })).resolves.toMatchObject({
+        ok: true,
+        data: { item: { kind: "comp", status: "revoked" } },
       });
-      expect(await events("billfn.grant.revoked")).toMatchObject([{ payload: { reason: "ended", operator: { id: "operator_1" } } }]);
+      await expect(pointron()).resolves.toBe(false);
+      expect(await events("billfn.grant.revoked")).toMatchObject([{ payload: { reason: "ended", operator: { requestId: "request_4" } } }]);
       expect(await events("billfn.grant.created")).toHaveLength(1);
     });
   });

@@ -83,16 +83,24 @@ function createProvider(state: { status: SubscriptionStatus }): BillFnProviderAd
 /** Fails billing event writes while `failEvents.on`, inside transactions and, when `transactions` is false, directly. */
 function failingEventDb(transactions: boolean) {
   const base = memoryAdapter({ debug: false });
-  // `only` limits the failure to one event id, so the writes that repair other events succeed.
-  const failEvents: { on: boolean; only?: string } = { on: false };
-  const failing = <A extends Pick<Adapter, 'create'>>(adapter: A): A => ({
+  // `only` limits the failure to one event id; `stored` fails a write after it stored the event; `stuck` also fails
+  // the event read after a failed write, so the change is not undone (as when the process stops in between).
+  const failEvents: { on: boolean; only?: string; stored?: boolean; stuck?: boolean } = { on: false };
+  const failing = <A extends Pick<Adapter, 'create' | 'findOne'>>(adapter: A): A => ({
     ...adapter,
     async create<T>(params: Parameters<Adapter['create']>[0]): Promise<T> {
       const eventId = (params.data as { id?: unknown }).id;
       if (failEvents.on && params.model === 'billingEvents' && (!failEvents.only || failEvents.only === eventId)) {
+        if (failEvents.stored) await adapter.create(params);
         throw new Error('event write failed');
       }
       return adapter.create<T>(params);
+    },
+    async findOne<T>(params: Parameters<Adapter['findOne']>[0]): Promise<T | null> {
+      if (failEvents.on && failEvents.stuck && params.model === 'billingEvents') {
+        throw new Error('event read failed');
+      }
+      return adapter.findOne<T>(params);
     }
   });
   const db: Adapter = transactions
@@ -425,15 +433,15 @@ describe('entitlement grants', () => {
     expect(await env.events('billfn.grant.revoked')).toHaveLength(1);
   });
 
-  it('records a missing grant or revoke event on retry without transactions', async () => {
+  it('undoes a grant or revoke whose billing event fails to write without transactions, so its retry applies it', async () => {
     const { db, failEvents } = failingEventDb(false);
     const env = setup(db);
 
     failEvents.on = true;
     await expect(env.grant()).rejects.toThrow('event write failed');
-    // The grant committed before its event; the retry records the event and still refuses a second trial.
+    expect((await env.entitlements()).grants).toEqual([]);
     failEvents.on = false;
-    await expect(env.grant()).rejects.toMatchObject({ code: 'BILLFN_CONFLICT', details: { reason: 'trial_already_granted' } });
+    await expect(env.grant()).resolves.toMatchObject({ ok: true, data: { grant: { kind: 'trial', status: 'active' } } });
     expect(await env.events('billfn.grant.created')).toMatchObject([{ payload: { kind: 'trial', operator: OPERATOR } }]);
 
     const comp = await env.grant({ kind: 'comp' });
@@ -442,15 +450,26 @@ describe('entitlement grants', () => {
       env.billfn.services.grants.revoke({ billingAccountId: ACCOUNT, grantId: comp.data.grant.id, operator: OPERATOR });
     failEvents.on = true;
     await expect(revoke()).rejects.toThrow('event write failed');
+    expect((await env.entitlements()).grants).toContainEqual(
+      expect.objectContaining({ id: comp.data.grant.id, status: 'active', revokedAt: null })
+    );
     failEvents.on = false;
     await expect(revoke()).resolves.toMatchObject({ ok: true, data: { grant: { status: 'revoked' } } });
     expect(await env.events('billfn.grant.revoked')).toMatchObject([{ payload: { grantId: comp.data.grant.id, operator: OPERATOR } }]);
+
+    // A failed write that stored the event anyway keeps the change and succeeds.
+    failEvents.on = true;
+    failEvents.stored = true;
+    await expect(env.grant({ kind: 'comp' })).resolves.toMatchObject({ ok: true, data: { grant: { status: 'active' } } });
+    expect(await env.events('billfn.grant.created')).toHaveLength(3);
   });
 
-  it('records an unrecorded grant event on the account\'s next grant operation without transactions, also after expiry', async () => {
+  it('records the event of a change left without one on the account\'s next grant operation, also after expiry', async () => {
     const { db, failEvents } = failingEventDb(false);
     const env = setup(db);
     const created = async () => (await env.events('billfn.grant.created')).map((event) => event.payload.grantId).sort();
+    // Each change below stays without its event, as when the process stops before the undo.
+    failEvents.stuck = true;
 
     // The trial commits without its event and expires; a later trial request is refused but records the event.
     failEvents.on = true;

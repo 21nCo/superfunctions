@@ -15,6 +15,7 @@ import type {
 } from './types.js';
 
 const GRANTS_TABLE = 'entitlementGrants';
+const BILLING_EVENTS_TABLE = 'billingEvents';
 const GRANT_KINDS = new Set<BillFnEntitlementGrantKind>(['trial', 'comp']);
 const REVOKE_ATTEMPTS = 3;
 const CREATE_ATTEMPTS = 3;
@@ -78,7 +79,8 @@ export function requireFutureExpiry(deps: GrantDeps, input: GrantCreateInput) {
 
 /**
  * Records the account's grant events an interrupted call left unrecorded. Without transactions a grant change
- * commits before its billing event (see `commitWithEvent`), so every grant create and revoke calls this first,
+ * commits before its billing event, and a failed event write undoes it (see `commitWithEvent`); when the process
+ * stops or the undo fails in between, the change stays without its event. Every grant create and revoke calls this first,
  * before it checks the expiry or reads the grant it acts on: whatever that request then does, the account's
  * earlier creations and revocations, also of grants that have since expired or been revoked, have their events.
  * The events' ids derive from the grant, so a recorded event is kept and none is written twice. With
@@ -126,10 +128,15 @@ export async function insertGrant(deps: GrantDeps, billingAccountId: string, inp
       updatedAt: timestamp
     };
     try {
-      await commitWithEvent(deps, grantCreatedEvent(record), async (db) => {
-        await db.create({ model: GRANTS_TABLE, data: record, namespace: deps.namespace });
-        return true;
-      });
+      await commitWithEvent(
+        deps,
+        grantCreatedEvent(record),
+        async (db) => {
+          await db.create({ model: GRANTS_TABLE, data: record, namespace: deps.namespace });
+          return true;
+        },
+        () => deps.db.deleteMany({ model: GRANTS_TABLE, where: unchanged(record), namespace: deps.namespace })
+      );
     } catch (error) {
       if (!deps.isDuplicateRecordError(error)) {
         throw error;
@@ -214,23 +221,31 @@ export async function revokeGrant(deps: GrantDeps, input: BillFnRevokeGrantReque
       // Strictly later than the stored time, so a racing revoke's compare-and-set on it fails.
       updatedAt: laterThan(now, existing.updatedAt)
     };
-    const applied = await commitWithEvent(deps, grantRevokedEvent(revoked), async (db) => {
-      const updated = await db.updateMany({
-        model: GRANTS_TABLE,
-        where: [
-          { field: 'id', operator: 'eq', value: existing.id },
-          { field: 'updatedAt', operator: 'eq', value: existing.updatedAt }
-        ],
-        data: {
-          revokedAt: revoked.revokedAt,
-          revokedBy: revoked.revokedBy,
-          revokeReason: revoked.revokeReason,
-          updatedAt: revoked.updatedAt
-        },
-        namespace: deps.namespace
-      });
-      return updated === 1;
-    });
+    const applied = await commitWithEvent(
+      deps,
+      grantRevokedEvent(revoked),
+      async (db) => {
+        const updated = await db.updateMany({
+          model: GRANTS_TABLE,
+          where: unchanged(existing),
+          data: {
+            revokedAt: revoked.revokedAt,
+            revokedBy: revoked.revokedBy,
+            revokeReason: revoked.revokeReason,
+            updatedAt: revoked.updatedAt
+          },
+          namespace: deps.namespace
+        });
+        return updated === 1;
+      },
+      () =>
+        deps.db.updateMany({
+          model: GRANTS_TABLE,
+          where: unchanged(revoked),
+          data: { revokedAt: null, revokedBy: null, revokeReason: null, updatedAt: laterThan(deps.now(), revoked.updatedAt) },
+          namespace: deps.namespace
+        })
+    );
     if (applied) {
       deps.metrics.track('grant.revoked', { kind: revoked.kind });
       return withStatus(revoked, now);
@@ -243,12 +258,21 @@ export async function revokeGrant(deps: GrantDeps, input: BillFnRevokeGrantReque
  * Applies a grant change and records its billing event. Where the adapter
  * supports transactions (memory, Prisma, Kysely, Drizzle Postgres) both commit
  * in one transaction, so a failed event write leaves no grant change. Without
- * transactions (Drizzle SQLite) the change commits first; the event's id is
- * derived from the grant, and the account's next grant create or revoke,
- * whatever its outcome, records the missing event once (`repairGrantEvents`).
- * Returns whether `write` applied the change; an unapplied change records no event.
+ * transactions (Drizzle SQLite) the change commits first, and a failed event
+ * write runs `undo` (a compare-and-set on the changed grant) and fails, so a
+ * failed request has changed nothing and its retry applies it; an event the
+ * failed write stored anyway makes the change stand and the request succeed. A
+ * change left by a stopped process or a failed undo keeps its event id, derived
+ * from the grant, and the account's next grant create or revoke records the
+ * event once (`repairGrantEvents`). Returns whether `write` applied the change;
+ * an unapplied change records no event.
  */
-async function commitWithEvent(deps: GrantDeps, event: BillFnBillingEvent, write: (db: Adapter) => Promise<boolean>) {
+async function commitWithEvent(
+  deps: GrantDeps,
+  event: BillFnBillingEvent,
+  write: (db: Adapter) => Promise<boolean>,
+  undo: () => Promise<unknown>
+) {
   if (deps.db.capabilities.transactions.supported) {
     return deps.db.transaction(async (transaction) => {
       const db = transaction as unknown as Adapter;
@@ -262,8 +286,44 @@ async function commitWithEvent(deps: GrantDeps, event: BillFnBillingEvent, write
   if (!(await write(deps.db))) {
     return false;
   }
-  await deps.recordBillingEvent(event);
+  try {
+    await deps.recordBillingEvent(event);
+  } catch (error) {
+    if (await keepRecordedChange(deps, event.id, undo)) {
+      return true;
+    }
+    throw error;
+  }
   return true;
+}
+
+/**
+ * After a failed event write without transactions: true when the write stored the event anyway, so the change
+ * stands; otherwise undoes the change and returns false.
+ */
+async function keepRecordedChange(deps: GrantDeps, eventId: string, undo: () => Promise<unknown>) {
+  try {
+    const stored = await deps.db.findOne({
+      model: BILLING_EVENTS_TABLE,
+      where: [{ field: 'id', operator: 'eq', value: eventId }],
+      namespace: deps.namespace
+    });
+    if (stored) {
+      return true;
+    }
+    await undo();
+  } catch {
+    // The change stays without its event; the account's next grant create or revoke records it (`repairGrantEvents`).
+  }
+  return false;
+}
+
+/** Matches the grant only while it is as given: its `updatedAt` changes with every write. */
+function unchanged(grant: GrantRecord) {
+  return [
+    { field: 'id', operator: 'eq' as const, value: grant.id },
+    { field: 'updatedAt', operator: 'eq' as const, value: grant.updatedAt }
+  ];
 }
 
 /** The account's grants, newest first, with their derived status. */
