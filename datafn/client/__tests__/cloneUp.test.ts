@@ -1867,3 +1867,60 @@ describe("cloneUp — resource order (DATA-15)", () => {
     expect(orderResourcesByDependency(["a", "b"], refs, (resource) => resource === "b")).toEqual(["b", "a"]);
   });
 });
+
+describe("cloneUp — polymorphic references in resource order (DATA-15)", () => {
+  it("orders resources by the targets records name, not every polymorphic candidate", async () => {
+    const storage = new MockStorageAdapter();
+    storage.cursors.set("__global_cursor__", "0");
+    await storage.upsertRecord("files", { id: "files:1", title: "F", ownerId: "nodes:1" });
+    await storage.upsertRecord("nodes", { id: "nodes:1", targetId: "nodes:1", targetResource: "nodes" });
+    const sent: Array<Record<string, any>> = [];
+    const pushSpy = vi.spyOn(DefaultHttpTransport.prototype, "push").mockImplementation(async (payload: any) => {
+      sent.push(...payload.mutations);
+      return { ok: true, result: { ok: true, applied: [], errors: [], cursor: "1" } } as any;
+    });
+    const client = createDatafnClient({
+      schema: {
+        resources: [
+          {
+            name: "files",
+            version: 1,
+            fields: [
+              { name: "title", type: "string" as const },
+              { name: "ownerId", type: "string" as const, required: true },
+            ],
+          },
+          {
+            name: "nodes",
+            version: 1,
+            fields: [
+              { name: "targetId", type: "string" as const, required: true },
+              { name: "targetResource", type: "string" as const, required: true },
+            ],
+          },
+        ],
+        relations: [
+          { from: "files", to: "nodes", type: "many-one", relation: "owner", fkField: "ownerId" } as any,
+          {
+            from: "nodes",
+            to: ["nodes", "files"],
+            type: "many-one",
+            relation: "target",
+            fkField: "targetId",
+            fkResourceField: "targetResource",
+          } as any,
+        ],
+      },
+      sync: { remote: "http://example.com" },
+      clientId: "client:poly-order",
+      storage,
+    });
+
+    const result = await client.sync.cloneUp({ includeManyMany: false, pullAfter: false });
+    pushSpy.mockRestore();
+
+    expect(result.ok).toBe(true);
+    expect(sent.map((m) => m.id)).toEqual(["nodes:1", "files:1"]);
+  });
+});
+

@@ -379,6 +379,11 @@ describe("importData edge cases", () => {
         ["tags", "relate", ["tags:1"]],
       ]);
     }
+    // Both land in the store the client reads the relation from.
+    expect(await storage.listJoinRows("join_notes_rel_tags")).toEqual([
+      expect.objectContaining({ from: "notes:1", to: "tags:1" }),
+    ]);
+    expect(await storage.listJoinRows("join_notes_notes_tags").catch(() => [])).toEqual([]);
   });
 
   it("reads a large import back for indexing in one storage read", async () => {

@@ -51,20 +51,23 @@ export type DatafnImportLocalHook = (
 ) => Promise<void> | void;
 
 /**
- * The resources at either end of each many-many join store, under the key
- * the local stores use (`relation`, else "rel") and the canonical one
- * (core's getRelationKeyName).
+ * The resources at either end of each many-many join store and the local
+ * store that holds its rows, under the key the local stores use (`relation`,
+ * else "rel") and the canonical one (core's getRelationKeyName).
  */
-function joinStoreEndpoints(schema: DatafnSchema): Map<string, { from: string; to: string }> {
-  const endpoints = new Map<string, { from: string; to: string }>();
+function joinStoreEndpoints(
+  schema: DatafnSchema,
+): Map<string, { from: string; to: string; store: string }> {
+  const endpoints = new Map<string, { from: string; to: string; store: string }>();
   for (const relation of schema.relations ?? []) {
     if (relation.type !== "many-many") continue;
     const froms = Array.isArray(relation.from) ? relation.from : [relation.from];
     const tos = Array.isArray(relation.to) ? relation.to : [relation.to];
     for (const from of froms) {
       for (const to of tos) {
-        const names = new Set([relation.relation ?? "rel", getRelationKeyName(relation, to)]);
-        for (const name of names) endpoints.set(getJoinStoreKey(from, name, to), { from, to });
+        const store = getJoinStoreKey(from, relation.relation ?? "rel", to);
+        endpoints.set(store, { from, to, store });
+        endpoints.set(getJoinStoreKey(from, getRelationKeyName(relation, to), to), { from, to, store });
       }
     }
   }
@@ -232,7 +235,8 @@ export async function importData(
     
     for (const row of rows) {
       try {
-        await storage.upsertJoinRow(storeName, row);
+        // Rows exported under the canonical key go to the local store.
+        await storage.upsertJoinRow(endpoints?.store ?? storeName, row);
         if (endpoints) {
           addRelated(endpoints.from, row.from);
           addRelated(endpoints.to, row.to);

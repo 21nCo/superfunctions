@@ -36,6 +36,34 @@ export function referenceTargetsFor(
 }
 
 /**
+ * The references of each resource narrowed to the targets its records point
+ * at: a reference no record sets is dropped, and a polymorphic one keeps only
+ * the resources its records name.
+ */
+export function referencesInUse(
+  references: Map<string, ReferenceField[]>,
+  recordsByResource: Map<string, Record<string, unknown>[]>,
+): Map<string, ReferenceField[]> {
+  const inUse = new Map<string, ReferenceField[]>();
+  for (const [resource, fields] of references) {
+    const records = recordsByResource.get(resource) ?? [];
+    const narrowed: ReferenceField[] = [];
+    for (const reference of fields) {
+      const targets = new Set<string>();
+      for (const record of records) {
+        const value = record[reference.field];
+        if (typeof value !== "string" || value.length === 0) continue;
+        for (const target of referenceTargetsFor(reference, record)) targets.add(target);
+        if (targets.size === reference.targets.length) break;
+      }
+      if (targets.size > 0) narrowed.push({ ...reference, targets: [...targets] });
+    }
+    inUse.set(resource, narrowed);
+  }
+  return inUse;
+}
+
+/**
  * Foreign-key fields per resource, from many-one (on `from`), one-many and
  * htree (on `to`) relations.
  */

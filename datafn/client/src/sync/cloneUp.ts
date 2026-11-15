@@ -8,6 +8,7 @@ import { computeMutationHash } from "./cloneUp/hash.js";
 import {
   orderRecordsParentFirst,
   referenceTargetsFor,
+  referencesInUse,
   orderResourcesByDependency,
   referenceFieldsByResource,
   sortJoinRows,
@@ -149,12 +150,6 @@ export async function cloneUp(
   // invalid write, and a server that enforces the reference reports the
   // rejected record in the result.
   const references = referenceFieldsByResource(schema);
-  const orderedResources = orderResourcesByDependency(
-    resolvedResources,
-    references,
-    (resource, field) =>
-      resourceSchemaMap.get(resource)?.fields.some((f) => f.name === field && f.nullable === true) ?? false,
-  );
   // Changelog entries written after this point (local writes made while the
   // push runs) may not be in the records read below, so finalization leaves
   // them queued for the next sync.
@@ -162,7 +157,7 @@ export async function cloneUp(
     options?.clearChangelogOnSuccess !== false ? await lastChangelogSeq(storage) : null;
   const recordsByResource = new Map<string, Record<string, unknown>[]>();
   const localIds = new Map<string, Set<string>>();
-  for (const resourceName of orderedResources) {
+  for (const resourceName of resolvedResources) {
     const rawRecords = await storage.listRecords(resourceName);
     recordsByResource.set(resourceName, rawRecords);
     localIds.set(
@@ -170,6 +165,14 @@ export async function cloneUp(
       new Set(rawRecords.map((record) => record.id).filter((id): id is string => typeof id === "string")),
     );
   }
+  // Order by the references the records actually hold, so a polymorphic
+  // reference depends only on the resources its records name.
+  const orderedResources = orderResourcesByDependency(
+    resolvedResources,
+    referencesInUse(references, recordsByResource),
+    (resource, field) =>
+      resourceSchemaMap.get(resource)?.fields.some((f) => f.name === field && f.nullable === true) ?? false,
+  );
   const pushedIds = new Map<string, Set<string>>();
   const deferredReferences: Array<{
     resourceName: string;
