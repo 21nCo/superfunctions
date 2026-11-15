@@ -4,7 +4,13 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { parseSortTerms, sortRecords } from "../src/sort.js";
+import {
+  compareIds,
+  compareRecords,
+  compareSortValues,
+  parseSortTerms,
+  sortRecords,
+} from "../src/sort.js";
 
 describe("parseSortTerms (TV-SRT-001)", () => {
   it("bare field → asc", () => expect(parseSortTerms(["name"])).toEqual([{ field: "name", direction: "asc" }]));
@@ -73,5 +79,109 @@ describe("sortRecords (TV-SRT-002)", () => {
     const original = [...records];
     sortRecords(records, parseSortTerms(["name:desc"]));
     expect(records).toEqual(original);
+  });
+});
+
+describe("compareSortValues", () => {
+  it("treats null and undefined as equal in both argument orders", () => {
+    expect(compareSortValues(null, undefined)).toBe(0);
+    expect(compareSortValues(undefined, null)).toBe(0);
+  });
+
+  it("puts null and undefined after values in both argument orders", () => {
+    expect(compareSortValues(null, 1)).toBeGreaterThan(0);
+    expect(compareSortValues(1, null)).toBeLessThan(0);
+    expect(compareSortValues(undefined, "a")).toBeGreaterThan(0);
+    expect(compareSortValues("a", undefined)).toBeLessThan(0);
+  });
+
+  it("compares numbers and numeric strings as numbers", () => {
+    expect(compareSortValues("10", "9")).toBeGreaterThan(0);
+    expect(compareSortValues("9", "10")).toBeLessThan(0);
+    expect(compareSortValues("10", 9)).toBeGreaterThan(0);
+    expect(compareSortValues(9, "10")).toBeLessThan(0);
+    expect(compareSortValues("9", 9)).toBe(0);
+    expect(compareSortValues(9, "9")).toBe(0);
+    expect(compareSortValues("-1.5", "2e1")).toBeLessThan(0);
+  });
+
+  it("keeps text order for strings that are not numbers", () => {
+    expect(compareSortValues("apple", "banana")).toBeLessThan(0);
+    expect(compareSortValues("0x10", "9")).not.toBe(compareSortValues(16, 9));
+    expect(compareSortValues("", "0")).toBeLessThan(0);
+  });
+});
+
+describe("id tie-break", () => {
+  it("uses plain code-unit order", () => {
+    expect(compareIds("B", "a")).toBeLessThan(0);
+    expect(compareIds("a", "B")).toBeGreaterThan(0);
+    expect(compareIds("task:10", "task:9")).toBeLessThan(0);
+    expect(compareIds("x", "x")).toBe(0);
+  });
+
+  it("orders ties by code unit, not locale", () => {
+    const records = [
+      { id: "b", rank: 1 },
+      { id: "B", rank: 1 },
+      { id: "a", rank: 1 },
+      { id: "A", rank: 1 },
+    ];
+    expect(sortRecords(records, [{ field: "rank", direction: "asc" }]).map((r) => r.id)).toEqual([
+      "A",
+      "B",
+      "a",
+      "b",
+    ]);
+    expect(sortRecords(records, []).map((r) => r.id)).toEqual(["A", "B", "a", "b"]);
+  });
+});
+
+describe("sortRecords with mixed values", () => {
+  it("sorts null and undefined together after values, symmetrically", () => {
+    const recs = [
+      { id: "1", score: undefined },
+      { id: "2", score: null },
+      { id: "3", score: 2 },
+      { id: "4", score: undefined },
+      { id: "5", score: null },
+    ];
+    const asc = sortRecords(recs, [{ field: "score", direction: "asc" }]).map((r) => r.id);
+    expect(asc).toEqual(["3", "1", "2", "4", "5"]);
+    const reversedInput = sortRecords([...recs].reverse(), [{ field: "score", direction: "asc" }]).map((r) => r.id);
+    expect(reversedInput).toEqual(asc);
+    const desc = sortRecords(recs, [{ field: "score", direction: "desc" }]).map((r) => r.id);
+    expect(desc).toEqual(["1", "2", "4", "5", "3"]);
+  });
+
+  it("sorts \"10\", \"9\" and 9 numerically", () => {
+    const recs = [
+      { id: "a", n: "10" },
+      { id: "b", n: "9" },
+      { id: "c", n: 9 },
+      { id: "d", n: 100 },
+    ];
+    expect(sortRecords(recs, [{ field: "n", direction: "asc" }]).map((r) => r.id)).toEqual([
+      "b",
+      "c",
+      "a",
+      "d",
+    ]);
+    expect(sortRecords(recs, [{ field: "n", direction: "desc" }]).map((r) => r.id)).toEqual([
+      "d",
+      "a",
+      "b",
+      "c",
+    ]);
+  });
+
+  it("compareRecords matches sortRecords", () => {
+    const recs = [
+      { id: "2", n: "10" },
+      { id: "1", n: null },
+      { id: "3", n: 9 },
+    ];
+    const terms = [{ field: "n", direction: "asc" as const }];
+    expect([...recs].sort((a, b) => compareRecords(a, b, terms))).toEqual(sortRecords(recs, terms));
   });
 });

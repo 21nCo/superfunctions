@@ -258,6 +258,9 @@ export {
   parseSortTerm,
   parseSortTerms,
   sortRecords,
+  compareRecords,
+  compareSortValues,
+  compareIds,
 } from "./sort.js";
 
 // Re-export select token parsing
