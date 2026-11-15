@@ -1,0 +1,21 @@
+reviewfn/harness-claude-code/src/adapter.ts
+  s_d0d34bc5152e99::t_2051ea711a3023 146-148,150,284-287,301,326,331-339,416-417
+reviewfn/harness-claude-code/test/adapter.test.ts
+  s_d0d34bc5152e99::t_5f35ad3c239f98 195-230
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b074447ee98a83c2b2d44141158cc83191dc9009",
+  "prompts": {},
+  "sessions": {
+    "s_d0d34bc5152e99": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2e94dca7-8f30-47cb-b698-a906e2e5c5e7",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
