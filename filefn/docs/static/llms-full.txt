@@ -8099,7 +8099,7 @@ For an interactive explorer, see the [API page](../../api/filefn).
 
 - The ID must match `file_[A-Za-z0-9_-]{8,64}`. Any other value, including an empty string or a non-string, is refused with 400 `FILEFN_INVALID_FILE_ID`. Server-generated IDs and the client SDK's `generateFileId()` match it.
 - An ID that names an existing file needs write permission on it; without it init returns 403 `FILEFN_FORBIDDEN`. A new ID is accepted and nothing is reserved.
-- The first `POST /upload/:id/complete` that creates the file owns it. A later completion for the same ID is checked against the file as it is then: with write permission it adds a version and becomes the current version; without it the call returns 403 `FILEFN_FORBIDDEN`, the session ends as `aborted`, and the bytes it uploaded are deleted. This covers a session whose init ran before another principal created the file.
+- The first `POST /upload/:id/complete` that creates the file owns it. A later completion for the same ID is checked against the file as it is then: with write permission it adds a version and becomes the current version; without it the call returns 403 `FILEFN_FORBIDDEN`, the session ends as `aborted`, and the bytes it uploaded are deleted. This covers a session whose init ran before another principal created the file. If deleting those bytes fails, the session stays open so a retried completion, or the expired-session cleanup, deletes them.
 - A repeated `POST /upload/:id/complete` of the session that created the file returns the same `{ fileId, versionId }`.
 - A retried `POST /upload/init` with the same `x-idempotency-key` and body returns the same session, and so the same `fileId`.
 

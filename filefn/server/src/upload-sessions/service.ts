@@ -265,19 +265,39 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     });
   }
 
+  // Deletes the session's own final object unless something may still use it:
+  // a version published under the session's versionId keeps it, and sessions
+  // from before per-session keys (no pre-allocated versionId) may share a key.
+  // Returns false when the delete failed, so the caller keeps the session as the
+  // record of the object and a retried completion or the expiry sweep tries again.
+  async function deleteOwnUnpublishedObject(session: UploadSession): Promise<boolean> {
+    if (!storage.deleteObject || !session.completionVersionId) {
+      return true;
+    }
+    const published = await db.findOne({
+      model: 'fileVersions',
+      where: [{ field: 'versionId', operator: 'eq', value: session.completionVersionId }],
+      namespace,
+    });
+    if (published) {
+      return true;
+    }
+    const policy = policies.get(session.policy);
+    const storageTarget = policy ? resolveStorageTarget(policy) : undefined;
+    try {
+      await storage.deleteObject({ key: session.storageKey, target: storageTarget });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   // Aborts the session's storage upload, deletes its proxy part objects (and,
-  // when asked, its own final object, which only an unpublished session may do)
-  // and ends it as aborted.
+  // when asked, its own unpublished final object) and ends it as aborted. If the
+  // final object could not be deleted the session is left open for a retry.
   async function discardSessionUpload(session: UploadSession, options: { deleteOwnObject?: boolean } = {}): Promise<void> {
     const policy = policies.get(session.policy);
     const storageTarget = policy ? resolveStorageTarget(policy) : undefined;
-    if (options.deleteOwnObject && storage.deleteObject) {
-      try {
-        await storage.deleteObject({ key: session.storageKey, target: storageTarget });
-      } catch {
-        // Best-effort cleanup.
-      }
-    }
     if (
       getStorageCapabilities(storage, storageTarget).multipart &&
       storage.abortMultipartUpload &&
@@ -291,6 +311,9 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     }
 
     await deleteProxyTempPartObjects(session);
+    if (options.deleteOwnObject && !(await deleteOwnUnpublishedObject(session))) {
+      return;
+    }
     await endSessionAborted(session.uploadSessionId);
   }
 
@@ -857,9 +880,16 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // whose own commit is published or in flight skips this.
       if (!publishedVersion && session.fileId) {
         const current = await findFile();
-        if (current && !isOwnRow(current) && !(await canWriteFileNow(fileId, ctx))) {
-          await discardSessionUpload(session, { deleteOwnObject: true });
-          throw errors.forbidden({ fileId, operation: 'replace' });
+        if (current && !isOwnRow(current)) {
+          // Another call of this session may have published since this call
+          // read it, and a later writer may have moved the file on since.
+          if (await findOwnVersion()) {
+            return { fileId, versionId };
+          }
+          if (!(await canWriteFileNow(fileId, ctx))) {
+            await discardSessionUpload(session, { deleteOwnObject: true });
+            throw errors.forbidden({ fileId, operation: 'replace' });
+          }
         }
       }
 
@@ -1061,14 +1091,11 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       if (commitOutcome === 'refused') {
         // Keep nothing this session uploaded. When dedup pointed it at another
         // object's key, its own object is already gone and the shared one stays.
-        if (finalStorageKey === session.storageKey && storage.deleteObject) {
-          try {
-            await storage.deleteObject({ key: session.storageKey, target: policyStorageTarget });
-          } catch {
-            // Best-effort cleanup.
-          }
+        // If the delete fails the session stays open, so a retried completion
+        // or the expiry sweep deletes the object again.
+        if (finalStorageKey !== session.storageKey || (await deleteOwnUnpublishedObject(session))) {
+          await endSessionAborted(uploadSessionId);
         }
-        await endSessionAborted(uploadSessionId);
         throw errors.forbidden({ fileId, operation: 'replace' });
       }
 
@@ -1168,6 +1195,12 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             }
 
             await deleteProxyTempPartObjects(session);
+            // An unpublished session's final object (for example one left by a
+            // refused completion whose delete failed) goes with the session. If
+            // it cannot be deleted, keep the session for the next sweep.
+            if (!(await deleteOwnUnpublishedObject(session))) {
+                continue;
+            }
             await db.deleteMany({
                 model: 'uploadParts',
                 where: [{ field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId }],

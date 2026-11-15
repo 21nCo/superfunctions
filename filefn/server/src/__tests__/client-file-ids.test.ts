@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Adapter } from '@superfunctions/db';
 import { memoryAdapter } from '@superfunctions/db/adapters/memory';
 import type { StorageAdapter } from '@superfunctions/storage';
+import type { Authorizer } from '@superfunctions/files';
 import { createDefaultAuthorizer, createFileFn, type QuotaProvider } from '../index.js';
 import { generateFileFnId } from '../ids.js';
 import { isValidClientFileId, parseRequestedFileId } from '../upload-sessions/file-id.js';
@@ -19,6 +20,10 @@ function createStorage(mode: Mode) {
   const objects = new Map<string, Uint8Array>();
   const uploads = new Map<string, { key: string; parts: Map<number, Uint8Array> }>();
   const completedUploads = new Map<string, string>();
+  /** Keys whose next deleteObject calls fail (count per key). */
+  const deleteFailures = new Map<string, number>();
+  /** Storage completion of these final keys waits for the promise. */
+  const gates = new Map<string, Promise<void>>();
   let uploadCounter = 0;
 
   const storage: StorageAdapter = {
@@ -45,6 +50,7 @@ function createStorage(mode: Mode) {
         if (completedUploads.get(input.uploadId) === input.key) return;
         throw new Error(`no such upload: ${input.uploadId}`);
       }
+      await gates.get(upload.key);
       const chunks = input.parts.map((part) => upload.parts.get(part.partNumber)!);
       objects.set(upload.key, Buffer.concat(chunks));
       uploads.delete(input.uploadId);
@@ -59,9 +65,15 @@ function createStorage(mode: Mode) {
       return { key: input.key, size: bytes.byteLength };
     },
     async deleteObject(input) {
+      const failures = deleteFailures.get(input.key) ?? 0;
+      if (failures > 0) {
+        deleteFailures.set(input.key, failures - 1);
+        throw new Error(`transient delete failure: ${input.key}`);
+      }
       objects.delete(input.key);
     },
     async openUploadStream(input) {
+      await gates.get(input.key);
       const chunks: Uint8Array[] = [];
       return new WritableStream<Uint8Array>({
         write(chunk) {
@@ -88,6 +100,16 @@ function createStorage(mode: Mode) {
     storage,
     objects,
     uploads,
+    deleteFailures,
+    /** Holds storage completion of `key` until the returned release is called. */
+    gate(key: string): () => void {
+      let release!: () => void;
+      gates.set(key, new Promise<void>((resolve) => { release = resolve; }));
+      return () => {
+        gates.delete(key);
+        release();
+      };
+    },
     putSignedPart(url: string, bytes: Uint8Array): string {
       const [uploadId, partNumber] = new URL(url).pathname.slice(1).split('/');
       const upload = uploads.get(uploadId);
@@ -106,11 +128,17 @@ function createStorage(mode: Mode) {
 function createUniqueEnforcingDb(hooks: {
   before?: (model: string) => Promise<void>;
   after?: (model: string) => void;
+  afterFindOne?: (model: string, result: unknown) => Promise<void>;
 }): Adapter {
   const base = memoryAdapter();
   const uniqueColumns: Record<string, string> = { files: 'fileId', fileVersions: 'versionId' };
   return {
     ...base,
+    async findOne(params) {
+      const result = await base.findOne(params);
+      await hooks.afterFindOne?.(params.model, result);
+      return result as any;
+    },
     async create(params) {
       await hooks.before?.(params.model);
       const column = uniqueColumns[params.model];
@@ -138,6 +166,7 @@ function createApp(options: {
   quota?: QuotaProvider;
   /** Use the grant-aware authorizer instead of the owner-only default. */
   grants?: boolean;
+  authorizer?: Authorizer;
   /** `createFileFn` of a separately loaded module graph, to model another process. */
   createFileFn?: typeof createFileFn;
 }) {
@@ -145,7 +174,7 @@ function createApp(options: {
   const database = options.database ?? memoryAdapter();
   const fileFn = (options.createFileFn ?? createFileFn)({
     database,
-    authorizer: options.grants ? createDefaultAuthorizer({ db: database }) : undefined,
+    authorizer: options.authorizer ?? (options.grants ? createDefaultAuthorizer({ db: database }) : undefined),
     storage: fixture.storage,
     policies: [{ name: 'doc', contentTypes: ['text/plain'], visibility: 'private' }],
     quota: options.quota,
@@ -646,5 +675,125 @@ describe('client-chosen file IDs across processes (unique-enforcing adapter)', (
     expect(storageFixture.objects.has(keyA)).toBe(false);
     expect((await rawSession(database, a.uploadSessionId))!.status).toBe('aborted');
     expect(await app.readBytes(CLIENT_ID, 'user_b')).toBe('created by b');
+  });
+
+  it('a stalled duplicate completion resuming after a later writer moved the file on returns the recorded result', async () => {
+    // The anonymous session's second call reads "not published", stalls, and
+    // resumes after the first call published and an editor added a later version.
+    let holdNextVersionMiss = false;
+    let stalled!: () => void;
+    const duplicateStalled = new Promise<void>((resolve) => { stalled = resolve; });
+    let resume!: () => void;
+    const resumed = new Promise<void>((resolve) => { resume = resolve; });
+    const database = createUniqueEnforcingDb({
+      async afterFindOne(model, result) {
+        if (model === 'fileVersions' && result === null && holdNextVersionMiss) {
+          holdNextVersionMiss = false;
+          stalled();
+          await resumed;
+        }
+      },
+    });
+    const editorAuthorizer: Authorizer = {
+      async canRead(file, ctx) { return file.ownerId === (ctx.principalId ?? 'anonymous') || ctx.principalId === 'editor'; },
+      async canWrite(file, ctx) { return file.ownerId === ctx.principalId || ctx.principalId === 'editor'; },
+      async canDelete(file, ctx) { return file.ownerId === ctx.principalId; },
+    };
+    const app = createApp({ mode: 'multipart', database, authorizer: editorAuthorizer });
+    const staged = await app.stage(undefined, CLIENT_ID, 'anonymous capture');
+    const key = (await rawSession(database, staged.uploadSessionId))!.storageKey;
+
+    holdNextVersionMiss = true;
+    const duplicate = staged.complete();
+    await duplicateStalled;
+    const first = await staged.complete();
+    expect(first.status).toBe(200);
+    const edit = await app.stage('editor', CLIENT_ID, 'edited later');
+    const edited = await edit.complete();
+    expect(edited.status).toBe(200);
+    resume();
+    const second = await duplicate;
+
+    expect(second.status).toBe(200);
+    expect(second.json.data).toEqual(first.json.data);
+    expect(app.fixture.objects.has(key)).toBe(true);
+    expect((await rawSession(database, staged.uploadSessionId))!.status).toBe('completed');
+    expect((await fileRows(database, CLIENT_ID))[0].currentVersionId).toBe(edited.json.data.versionId);
+  });
+
+});
+
+describe('refused completion cleanup', () => {
+  for (const stage of ['early', 'commit'] as const) {
+    it(`a refused completion whose object delete fails (${stage} refusal) stays open until a retry or the expiry sweep deletes it`, async () => {
+      const database = memoryAdapter();
+      const storageFixture = createStorage('multipart');
+      const app = createApp({ mode: 'multipart', database, storageFixture });
+      const loser = await app.stage('user_b', CLIENT_ID, 'loser bytes');
+      const winner = await app.stage('user_a', CLIENT_ID, 'winner bytes');
+      const loserKey = (await rawSession(database, loser.uploadSessionId))!.storageKey;
+      if (stage === 'early') {
+        // The loser's earlier attempt finalized its object, then failed.
+        await storageFixture.storage.completeMultipartUpload!({
+          key: loserKey,
+          uploadId: [...storageFixture.uploads.entries()].find(([, upload]) => upload.key === loserKey)![0],
+          parts: [{ partNumber: 1, etag: 'x' }],
+        });
+        expect((await winner.complete()).status).toBe(200);
+      }
+      storageFixture.deleteFailures.set(loserKey, 1);
+      let refused;
+      if (stage === 'early') {
+        refused = await loser.complete();
+      } else {
+        // The loser passes the early check, then the winner commits first.
+        const release = storageFixture.gate(loserKey);
+        const losing = loser.complete();
+        expect((await winner.complete()).status).toBe(200);
+        release();
+        refused = await losing;
+      }
+      expect(refused.status).toBe(403);
+      expect(storageFixture.objects.has(loserKey)).toBe(true);
+      expect((await rawSession(database, loser.uploadSessionId))!.status).not.toBe('aborted');
+
+      // The expiry sweep retries the delete before dropping the session.
+      await database.update({
+        model: 'uploadSessions',
+        where: [{ field: 'uploadSessionId', operator: 'eq', value: loser.uploadSessionId }],
+        data: { expiresAt: new Date(Date.now() - 1000).toISOString() },
+        namespace: 'filefn',
+      });
+      storageFixture.deleteFailures.set(loserKey, 1);
+      await app.fileFn.services.uploads.cleanupExpiredSessions();
+      expect(await rawSession(database, loser.uploadSessionId)).not.toBeNull();
+      expect(storageFixture.objects.has(loserKey)).toBe(true);
+      await app.fileFn.services.uploads.cleanupExpiredSessions();
+      expect(await rawSession(database, loser.uploadSessionId)).toBeNull();
+      expect(storageFixture.objects.has(loserKey)).toBe(false);
+      expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('winner bytes');
+    });
+  }
+
+  it('a retried completion after a failed delete deletes the object and ends the session aborted', async () => {
+    const database = memoryAdapter();
+    const storageFixture = createStorage('proxy');
+    const app = createApp({ mode: 'proxy', database, storageFixture });
+    const loser = await app.stage('user_b', CLIENT_ID, 'loser');
+    const winner = await app.stage('user_a', CLIENT_ID, 'winner');
+    const loserKey = (await rawSession(database, loser.uploadSessionId))!.storageKey;
+    storageFixture.deleteFailures.set(loserKey, 1);
+    const release = storageFixture.gate(loserKey);
+    const losing = loser.complete();
+    expect((await winner.complete()).status).toBe(200);
+    release();
+    const first = await losing;
+    expect(first.status).toBe(403);
+    expect(storageFixture.objects.has(loserKey)).toBe(true);
+
+    const retried = await loser.complete();
+    expect(retried.status).toBe(403);
+    expect(storageFixture.objects.has(loserKey)).toBe(false);
+    expect((await rawSession(database, loser.uploadSessionId))!.status).toBe('aborted');
   });
 });
