@@ -5,6 +5,7 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { MemoryStorageAdapter } from "../src/adapters/memoryStorage.js";
+import { describeChangelogLastSeqContract, describeMergeOutcomeContract } from "./mergeOutcomeContract.js";
 
 describe("MemoryStorageAdapter", () => {
   let storage: MemoryStorageAdapter;
@@ -77,6 +78,9 @@ describe("MemoryStorageAdapter", () => {
         status: "default",
       });
     });
+
+    describeMergeOutcomeContract(() => storage);
+    describeChangelogLastSeqContract(() => storage);
 
     it("rejects an empty merge id before persisting a record", async () => {
       await expect(storage.mergeRecord("task", "", { title: "invalid" }))

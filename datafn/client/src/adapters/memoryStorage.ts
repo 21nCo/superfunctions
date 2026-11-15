@@ -25,7 +25,7 @@ function isInternalCursorKey(resource: string): boolean {
 }
 
 export class MemoryStorageAdapter implements DatafnStorageAdapter {
-  readonly capabilities = { atomicMergeIfMissing: true } as const;
+  readonly capabilities = { atomicMergeIfMissing: true, reportsMergeOutcome: true } as const;
   private records = new Map<string, Map<string, Record<string, unknown>>>();
   private joinRows = new Map<string, Map<string, Record<string, unknown>>>();
   private cursors = new Map<string, string>();
@@ -106,7 +106,10 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
     resource: string,
     id: string,
     partial: Record<string, unknown>,
-    options?: { ifMissing?: Record<string, unknown> },
+    options?: {
+      ifMissing?: Record<string, unknown>;
+      onResolved?: (outcome: { created: boolean }) => void;
+    },
   ): Promise<Record<string, unknown>> {
     this.validateTableName(resource);
     if (!id) throw new Error("Record missing id");
@@ -124,6 +127,11 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
     
     merged.id = id;
     table.set(id, merged);
+    try {
+      options?.onResolved?.({ created: !existing });
+    } catch {
+      // The outcome is advisory; the write itself succeeded.
+    }
     return merged;
   }
 
@@ -332,6 +340,10 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
   ): Promise<DatafnChangelogEntry[]> {
     const limit = options.limit || 100;
     return this.changelog.slice(0, limit); // Already sorted by insertion/seq
+  }
+
+  async changelogLastSeq(): Promise<number | null> {
+    return this.changelog.length > 0 ? this.changelog[this.changelog.length - 1].seq : null;
   }
 
   async changelogAck(options: { throughSeq: number }): Promise<void> {

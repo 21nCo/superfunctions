@@ -15,6 +15,7 @@ export * from "./types.js";
 export * from "./validator.js";
 export * from "./safe-files.js";
 export * from "./executable.js";
+export * from "./process.js";
 
 export * from "./git-environment.js";
 export * from "./panel/types.js";

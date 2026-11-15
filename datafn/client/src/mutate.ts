@@ -10,9 +10,12 @@ import type { EventBus } from "./events/bus.js";
 import type { DatafnPlugin, DatafnSchema, SearchProvider } from "@datafn/core";
 import { unwrapRemoteSuccess } from "./remote/unwrap.js";
 import { isTransportError } from "./errors.js";
+import { runSearchIndexUpdate } from "./searchIndexQueue.js";
 import {
   applyOptimisticMutationToStorage,
   handleOfflineMutation,
+  rememberMergeCreated,
+  takeMergeCreated,
   validateOfflineMutation,
 } from "./offline/mutate.js";
 import { runBeforeMutation, runAfterMutation } from "./plugins/run-hooks.js";
@@ -406,30 +409,34 @@ async function tryUpdateSearchIndex(
   if (typeof resource !== "string" || typeof id !== "string" || !searchOp) return;
 
   try {
-    if (searchOp === "delete") {
+    // One update at a time per resource, reading storage in its turn, so an
+    // earlier update cannot land after this one (see searchIndexQueue).
+    await runSearchIndexUpdate(searchProvider, resource, async () => {
+      if (searchOp === "delete") {
+        await searchProvider.updateIndices({
+          resource,
+          records: [{ id }],
+          operation: "delete",
+        });
+        return;
+      }
+
+      const fromStorage = storage ? await storage.getRecord(resource, id) : null;
+      const fallbackRecord =
+        typeof mutation.record === "object" &&
+        mutation.record !== null &&
+        !Array.isArray(mutation.record)
+          ? (mutation.record as Record<string, unknown>)
+          : {};
+      const finalRecord = {
+        id,
+        ...(resolvedRecord ?? (fromStorage as Record<string, unknown> | null) ?? fallbackRecord),
+      };
       await searchProvider.updateIndices({
         resource,
-        records: [{ id }],
-        operation: "delete",
+        records: [finalRecord],
+        operation: "upsert",
       });
-      return;
-    }
-
-    const fromStorage = storage ? await storage.getRecord(resource, id) : null;
-    const fallbackRecord =
-      typeof mutation.record === "object" &&
-      mutation.record !== null &&
-      !Array.isArray(mutation.record)
-        ? (mutation.record as Record<string, unknown>)
-        : {};
-    const finalRecord = {
-      id,
-      ...(resolvedRecord ?? (fromStorage as Record<string, unknown> | null) ?? fallbackRecord),
-    };
-    await searchProvider.updateIndices({
-      resource,
-      records: [finalRecord],
-      operation: "upsert",
     });
   } catch (error) {
     // Search indexing is non-fatal for mutation durability.
@@ -547,6 +554,26 @@ export async function executeMutation(
         );
         await tryUpdateSearchIndex(searchProvider, storage, enrichedMutation);
 
+        // Coalesced merges emit one event under the pending mutation's id;
+        // it reports a creation when any of them created the record.
+        if (enrichedMutation.operation === "merge") {
+          const created = takeMergeCreated(storage, clientId, mutationId);
+          const pendingId = debouncerMap.pendingMutationId(debounceKey);
+          const earlier =
+            pendingId !== undefined && pendingId !== mutationId
+              ? takeMergeCreated(storage, clientId, pendingId)
+              : false;
+          const combined =
+            created === true || earlier === true
+              ? true
+              : created === false && earlier === false
+                ? false
+                : undefined;
+          if (combined !== undefined) {
+            rememberMergeCreated(storage, clientId, pendingId ?? mutationId, combined);
+          }
+        }
+
         debouncerMap.set(
           debounceKey,
           enrichedMutation,
@@ -568,6 +595,8 @@ export async function executeMutation(
                 getTimestamp,
                 debouncedMutation,
                 { ok: true, mutationId: debouncedMutation.mutationId },
+                storage,
+                clientId,
               );
 
               // Scheduling push is best-effort once the durable local write succeeded.
@@ -687,7 +716,7 @@ export async function executeMutation(
         );
 
         results.push(result);
-        emitMutationEvents(eventBus, getTimestamp, mut, result);
+        emitMutationEvents(eventBus, getTimestamp, mut, result, storage, clientId);
       }
 
       // Scheduling push is best-effort once the durable local write succeeded.
@@ -809,6 +838,8 @@ export async function executeMutation(
             getTimestamp,
             localMutations[i],
             { ok: true, mutationId: (localMutations[i] as any).mutationId },
+            storage,
+            clientId,
           );
         } else {
           emitRejectionForError(
@@ -854,7 +885,7 @@ export async function executeMutation(
                 mutationRecord,
               );
               // Emit mutation_applied event (unless silent)
-              emitMutationEvents(eventBus, getTimestamp, mutation, mutResult);
+              emitMutationEvents(eventBus, getTimestamp, mutation, mutResult, storage, clientId);
               results.push({ ok: true, ...mutResult });
             } catch (mutErr) {
               results.push({ ok: false, error: mutErr });
@@ -878,7 +909,7 @@ export async function executeMutation(
             mutationToUse,
           );
           // REL-012: Emit applied here so only one event fires (no double-emit with final path)
-          emitMutationEvents(eventBus, getTimestamp, mutationToUse, result);
+          emitMutationEvents(eventBus, getTimestamp, mutationToUse, result, storage, clientId);
           usedOfflinePath = true;
         }
       } catch (offlineErr) {
@@ -921,6 +952,8 @@ export async function executeMutation(
         getTimestamp,
         mutationForLocal as any,
         resolveRemoteResultForMutation(result, mutationForLocal, 0) as any,
+        storage,
+        clientId,
       );
     }
     return result;
@@ -937,6 +970,8 @@ export async function executeMutation(
         getTimestamp,
         mutations[i],
         resolveRemoteResultForMutation(result, mutations[i], i) as any,
+        storage,
+        clientId,
       );
     }
   }
@@ -955,7 +990,18 @@ function emitMutationEvents(
   getTimestamp: () => number,
   mutation: any,
   result: any,
+  /** The store a local apply wrote to, for its merge outcome. */
+  storage?: DatafnStorageAdapter,
+  /** The client that applied it. */
+  clientId?: string,
 ): void {
+  // Lets live queries skip a merge that edited an existing record (SIG-002).
+  // Read it even when no event goes out, so the outcome does not linger.
+  const created =
+    mutation.operation === "merge"
+      ? takeMergeCreated(storage, clientId, mutation.mutationId)
+      : undefined;
+
   // MUT-001: If silent: true, suppress event emission entirely
   if (mutation.silent === true) {
     return;
@@ -983,6 +1029,7 @@ function emitMutationEvents(
     ...(mutation.record && { record: mutation.record }), // SIG-003: include record for optimistic patching
     ...(mutation.context !== undefined && { context: mutation.context }), // API-002: propagate context
     ...(mutation.system === true && { system: true }), // MUT-002: propagate system flag
+    ...(created !== undefined && { created }),
   };
 
   if (result.ok) {

@@ -15,6 +15,8 @@ import {
   firstEndpoint,
   getJoinStoreKey,
   parseSortTerms,
+  compareRecords,
+  getTemporalClauses,
   relationTargetEndpoint,
   resolveEndpointResource,
   resourceNameFromId,
@@ -27,6 +29,7 @@ import {
   relationFkFieldForOneMany,
   stripNullsForNonNullableFields,
   TIMEZONE_CHANGE_RESOURCE_NAME,
+  type SortTerm,
 } from "@datafn/core";
 import type { DatafnStorageAdapter } from "../storage.js";
 import { materializeSelect } from "./relations.js";
@@ -124,10 +127,15 @@ export async function executeLocalQuery(
   query: Record<string, unknown>,
   _schemaIndex?: SchemaIndex,
   temporal?: DatafnTemporalConfig,
-): Promise<{ data?: any[]; groups?: any[]; nextCursor?: any }> {
-  const timezoneChanges = await storage.listRecords(TIMEZONE_CHANGE_RESOURCE_NAME);
-  const temporalConfig = createClientTemporalConfig(temporal, timezoneChanges);
-  query = normalizeTemporalQuery(query, temporalConfig);
+): Promise<{ data?: any[]; groups?: any[]; nextCursor?: any; count?: number }> {
+  // Only temporal clauses read the timezone registry; other queries skip the
+  // extra store read.
+  let temporalConfig: DatafnTemporalConfig | undefined;
+  if (getTemporalClauses(query).length > 0) {
+    const timezoneChanges = await storage.listRecords(TIMEZONE_CHANGE_RESOURCE_NAME);
+    temporalConfig = createClientTemporalConfig(temporal, timezoneChanges);
+    query = normalizeTemporalQuery(query, temporalConfig);
+  }
   if (typeof query.relation === "string" && typeof query.id === "string") {
     return executeLocalRelationQuery(storage, schema, query);
   }
@@ -143,68 +151,54 @@ export async function executeLocalQuery(
   }
   // Check for aggregation
   if (query.groupBy || hasTemporalGrouping(query)) {
-    return executeAggregateQuery(storage, schema, query, temporalConfig);
+    return executeAggregateQuery(
+      storage,
+      schema,
+      query,
+      temporalConfig ?? createClientTemporalConfig(temporal),
+    );
   }
 
   const resource = query.resource as string;
   let records: Record<string, unknown>[] = [];
   let usedIndexedPath = false;
-  // CLI-012: tracks whether the index fetch fully satisfied all filter conditions
-  let filterFullySatisfied = false;
+  // Records read by id come back in id order unless the query sorts them.
+  let defaultIdOrder = true;
 
-  const relationSeedIds = query.filters
-    ? await resolveRelationSeedIds(
-        storage,
-        schema,
-        resource,
-        normalizeFilterOps(query.filters as Record<string, unknown>),
-      )
+  const normalizedFilters = query.filters
+    ? normalizeFilterOps(query.filters as Record<string, unknown>)
+    : undefined;
+
+  const relationSeedIds = normalizedFilters
+    ? await resolveRelationSeedIds(storage, schema, resource, normalizedFilters)
     : null;
 
   if (relationSeedIds) {
-    records = (
-      await Promise.all(
-        relationSeedIds.map((id) => storage.getRecord(resource, id)),
-      )
-    ).filter((record): record is Record<string, unknown> => Boolean(record));
+    records = await getRecordsById(storage, resource, relationSeedIds);
     usedIndexedPath = true;
+    defaultIdOrder = false;
   }
 
-  // Planning step: detect index-aware routing opportunities (OFFQ-001)
-  if (query.filters) {
-    const filters = query.filters as Record<string, unknown>;
-    
-    // Case 1: id eq → use getRecord
-    if (!usedIndexedPath && filters.id && typeof filters.id === "object") {
-      const idFilter = filters.id as Record<string, unknown>;
-      if (idFilter.eq !== undefined) {
-        const record = await storage.getRecord(resource, idFilter.eq as string);
-        records = record ? [record] : [];
-        usedIndexedPath = true;
-        // Filter fully satisfied only when id eq is the sole filter condition
-        if (Object.keys(filters).length === 1) {
-          filterFullySatisfied = true;
-        }
-      }
-    }
-    
-    // Case 2: single-field indexed eq → use findRecords
-    if (!usedIndexedPath) {
-      const singleFieldEq = detectSingleFieldEq(filters);
-      if (singleFieldEq) {
-        const { field, value } = singleFieldEq;
-        // findRecords will use index if available, else fall back to scan
-        records = await storage.findRecords(resource, field, value);
-        usedIndexedPath = true;
-        // detectSingleFieldEq guarantees exactly one key — fully satisfied
-        filterFullySatisfied = true;
-      }
+  // Planning step: index-aware routing (OFFQ-001). Every condition of the
+  // filter still runs against the candidates below, so a lookup only has to
+  // return a superset of the matching records.
+  if (!usedIndexedPath && normalizedFilters) {
+    const plan = planIndexedLookup(normalizedFilters, indexedFieldsFor(schema, resource));
+    if (plan?.kind === "ids") {
+      // id eq / $in, at the top level or inside the injected $and
+      records = await getRecordsById(storage, resource, plan.ids);
+      usedIndexedPath = true;
+    } else if (plan?.kind === "field") {
+      // findRecords uses the index when the store has one, else scans
+      records = await storage.findRecords(resource, plan.field, plan.value);
+      usedIndexedPath = true;
     }
   }
 
   // Scan path with deterministic ordering
   if (!usedIndexedPath) {
     records = await storage.listRecords(resource);
+    defaultIdOrder = true;
   }
 
   // Filters and sorting intentionally run against the stored representation
@@ -213,32 +207,35 @@ export async function executeLocalQuery(
   // read contract at the result boundary below.
   const localResourceSchema = schema.resources.find((r) => r.name === resource);
 
-  // Apply filters only when not fully satisfied by the indexed path (CLI-012)
-  if (query.filters && !filterFullySatisfied) {
-    const normalized = normalizeFilterOps(query.filters as Record<string, unknown>);
+  if (normalizedFilters) {
     const filtered = [];
     for (const record of records) {
-      if (await applyFilter(storage, schema, resource, record, normalized)) {
+      if (await applyFilter(storage, schema, resource, record, normalizedFilters)) {
         filtered.push(record);
       }
     }
     records = filtered;
   }
 
-  // Sort using shared core utilities
-  if (query.sort) {
-    const terms = parseSortTerms(query.sort as string[]);
-    records = sortRecords(records, terms);
-  } else if (!usedIndexedPath) {
-    // Deterministic ordering: stable sort by id:asc when scan path is used
-    records = sortRecords(records, [{ field: "id", direction: "asc" }]);
-  }
+  const count = query.count === true ? records.length : undefined;
 
-  // Pagination
-  if (query.limit || query.offset) {
-    const offset = (query.offset as number) || 0;
-    const limit = (query.limit as number) || records.length;
-    records = records.slice(offset, offset + limit);
+  // Sort and paginate. A limited query keeps only the first offset + limit
+  // records instead of sorting the whole candidate set.
+  const offset = typeof query.offset === "number" && query.offset > 0 ? query.offset : 0;
+  // A limit of 0 has always meant "no limit" on the local path.
+  const limit = typeof query.limit === "number" && query.limit > 0 ? query.limit : undefined;
+  const terms: SortTerm[] | undefined = query.sort
+    ? parseSortTerms(query.sort as string[])
+    : defaultIdOrder
+      ? [{ field: "id", direction: "asc" }]
+      : undefined;
+  if (terms) {
+    records = limit !== undefined
+      ? selectFirstRecords(records, terms, offset + limit)
+      : sortRecords(records, terms);
+  }
+  if (limit !== undefined || offset > 0) {
+    records = records.slice(offset, limit !== undefined ? offset + limit : undefined);
   }
 
   // Select / Expansion
@@ -263,7 +260,181 @@ export async function executeLocalQuery(
   return {
     data: records,
     nextCursor: null,
+    ...(count !== undefined ? { count } : {}),
   };
+}
+
+async function getRecordsById(
+  storage: DatafnStorageAdapter,
+  resource: string,
+  ids: readonly string[],
+): Promise<Record<string, unknown>[]> {
+  const unique = [...new Set(ids)];
+  const records = await Promise.all(unique.map((id) => storage.getRecord(resource, id)));
+  return records.filter((record): record is Record<string, unknown> => Boolean(record));
+}
+
+/** Largest window kept by insertion before a full sort is cheaper. */
+const MAX_INSERTION_WINDOW = 512;
+
+/**
+ * The first `count` records in `terms` order, without sorting the rest.
+ * Falls back to a full sort when the window is a large part of the input.
+ */
+export function selectFirstRecords(
+  records: Record<string, unknown>[],
+  terms: SortTerm[],
+  count: number,
+): Record<string, unknown>[] {
+  if (count <= 0) return [];
+  if (count >= records.length || count > MAX_INSERTION_WINDOW) {
+    return sortRecords(records, terms).slice(0, count);
+  }
+  const window: Record<string, unknown>[] = [];
+  for (const record of records) {
+    if (window.length === count && compareRecords(record, window[count - 1], terms) >= 0) {
+      continue;
+    }
+    let low = 0;
+    let high = window.length;
+    while (low < high) {
+      const mid = (low + high) >>> 1;
+      if (compareRecords(window[mid], record, terms) <= 0) low = mid + 1;
+      else high = mid;
+    }
+    window.splice(low, 0, record);
+    if (window.length > count) window.pop();
+  }
+  return window;
+}
+
+type LookupPlan =
+  | { kind: "ids"; ids: string[] }
+  | { kind: "field"; field: string; value: unknown };
+
+const indexedFieldsCache = new WeakMap<DatafnSchema, Map<string, Set<string>>>();
+
+/**
+ * Fields that have a storage index for a resource: the schema's base indices
+ * and the foreign keys the IndexedDB adapter indexes for relations.
+ */
+function indexedFieldsFor(schema: DatafnSchema, resource: string): Set<string> {
+  let byResource = indexedFieldsCache.get(schema);
+  if (!byResource) {
+    byResource = new Map();
+    indexedFieldsCache.set(schema, byResource);
+  }
+  const cached = byResource.get(resource);
+  if (cached) return cached;
+
+  const fields = new Set<string>();
+  const resourceDef = schema.resources.find((entry) => entry.name === resource);
+  const indices = resourceDef?.indices;
+  const base = Array.isArray(indices)
+    ? indices
+    : indices && "base" in indices
+      ? indices.base ?? []
+      : [];
+  for (const field of base) {
+    if (typeof field === "string") fields.add(field);
+  }
+  for (const relation of schema.relations ?? []) {
+    if (relation.type === "many-one" && endpointList(relation.from).includes(resource)) {
+      fields.add(relation.fkField || relation.foreignKey || `${relation.relation}Id`);
+    } else if (relation.type === "one-many" && endpointList(relation.to).includes(resource)) {
+      fields.add(
+        relation.fkField || relation.foreignKey || relation.inverse || `${firstEndpoint(relation.from)}Id`,
+      );
+    }
+  }
+  byResource.set(resource, fields);
+  return fields;
+}
+
+/**
+ * Finds a condition every matching record must satisfy that storage can answer
+ * without a scan: an id equality or id $in, or an equality on an indexed
+ * field. Conditions are taken from the top level of the filter and from
+ * nested $and groups, which is where the client's default trashed, archived
+ * and inactive-ancestor filters wrap the caller's filter.
+ */
+function planIndexedLookup(
+  filters: Record<string, unknown>,
+  indexedFields: ReadonlySet<string>,
+): LookupPlan | null {
+  const conditions: Array<[string, unknown]> = [];
+  collectConjunctiveConditions(filters, conditions, 0);
+
+  for (const [field, value] of conditions) {
+    if (field !== "id") continue;
+    const ids = idsFromCondition(value);
+    if (ids) return { kind: "ids", ids };
+  }
+  for (const [field, value] of conditions) {
+    if (field === "id" || !indexedFields.has(field)) continue;
+    const eq = equalityValue(value);
+    if (isIndexKey(eq)) return { kind: "field", field, value: eq };
+  }
+
+  return planSingleEquality(filters, indexedFields);
+}
+
+/**
+ * A filter that is a single equality keeps the existing findRecords route,
+ * which scans inside the adapter when the field has no index.
+ */
+function planSingleEquality(
+  filters: Record<string, unknown>,
+  indexedFields: ReadonlySet<string>,
+): LookupPlan | null {
+  const single = detectSingleFieldEq(filters);
+  if (!single) return null;
+  if (single.field === "id") {
+    return typeof single.value === "string" ? { kind: "ids", ids: [single.value] } : null;
+  }
+  // An index lookup needs a valid key; booleans and null scan instead.
+  if (indexedFields.has(single.field) && !isIndexKey(single.value)) return null;
+  return { kind: "field", field: single.field, value: single.value };
+}
+
+function collectConjunctiveConditions(
+  filters: Record<string, unknown>,
+  out: Array<[string, unknown]>,
+  depth: number,
+): void {
+  if (depth > 10) return;
+  for (const [key, value] of Object.entries(filters)) {
+    if (key === "$and" && Array.isArray(value)) {
+      for (const sub of value) {
+        if (isPlainRecord(sub)) collectConjunctiveConditions(sub, out, depth + 1);
+      }
+      continue;
+    }
+    if (key.startsWith("$") || key.includes(".")) continue;
+    out.push([key, value]);
+  }
+}
+
+function isIndexKey(value: unknown): value is string | number {
+  return typeof value === "string" || (typeof value === "number" && Number.isFinite(value));
+}
+
+function equalityValue(value: unknown): unknown {
+  if (!isPlainRecord(value)) return value;
+  if ("$eq" in value) return value.$eq;
+  if ("eq" in value) return value.eq;
+  return undefined;
+}
+
+function idsFromCondition(value: unknown): string[] | null {
+  const eq = equalityValue(value);
+  if (typeof eq === "string") return [eq];
+  if (!isPlainRecord(value)) return null;
+  const inValue = value.$in ?? value.in;
+  if (Array.isArray(inValue) && inValue.every((item) => typeof item === "string")) {
+    return inValue as string[];
+  }
+  return null;
 }
 
 /** Wrap core evaluateFilter to add field-path context to error messages. */

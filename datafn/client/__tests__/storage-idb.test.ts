@@ -6,6 +6,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { IndexedDbStorageAdapter } from "../src/adapters/indexedDbStorage.js";
 import "fake-indexeddb/auto"; // Automatically mocks global indexedDB
+import { describeChangelogLastSeqContract, describeMergeOutcomeContract } from "./mergeOutcomeContract.js";
 
 describe("IndexedDbStorageAdapter", () => {
   let storage: IndexedDbStorageAdapter;
@@ -40,6 +41,9 @@ describe("IndexedDbStorageAdapter", () => {
       expect(records[1].id).toBe("task:2");
       expect(records[2].id).toBe("task:3");
     });
+
+    describeMergeOutcomeContract(() => storage);
+    describeChangelogLastSeqContract(() => storage);
 
     it("Persists across instances (simulated reload)", async () => {
       await storage.upsertRecord("task", { id: "p1", val: 1 });
