@@ -104,19 +104,49 @@ function ensureCommit(commitish) {
   return isRealCommit(commitish) && gitOk(["cat-file", "-e", `${commitish}^{commit}`]);
 }
 
+function mergeBaseWith(ref) {
+  try {
+    return git(["merge-base", "HEAD", ref]);
+  } catch {
+    return "";
+  }
+}
+
+// The merge base of HEAD and origin/<baseRef>, deepening a shallow history when the boundary hides it.
+function resolveLiveMergeBase(baseRef) {
+  if (!ensureRemoteBranch(baseRef)) {
+    return "";
+  }
+
+  const remoteRef = `refs/remotes/origin/${baseRef}`;
+  const mergeBase = mergeBaseWith(remoteRef);
+  if (mergeBase || git(["rev-parse", "--is-shallow-repository"]) !== "true") {
+    return mergeBase;
+  }
+
+  try {
+    git(["fetch", "--no-tags", "--unshallow", "origin", `+refs/heads/${baseRef}:${remoteRef}`]);
+  } catch {
+    return "";
+  }
+  return mergeBaseWith(remoteRef);
+}
+
 function resolveDiffBase(event) {
   const eventName = process.env.GITHUB_EVENT_NAME || "local";
   const defaultBranch = event.repository?.default_branch || "dev";
 
   if (eventName === "pull_request" || eventName === "pull_request_target") {
+    // GitHub does not refresh base.sha when the base branch moves, so diffing against it would count
+    // base-branch commits the pull request merged in as its own changes. Prefer the live merge base.
+    const mergeBase = resolveLiveMergeBase(event.pull_request?.base?.ref);
+    if (mergeBase) {
+      return mergeBase;
+    }
+
     const baseSha = event.pull_request?.base?.sha;
     if (ensureCommit(baseSha)) {
       return baseSha;
-    }
-
-    const baseRef = event.pull_request?.base?.ref;
-    if (ensureRemoteBranch(baseRef)) {
-      return git(["merge-base", "HEAD", `refs/remotes/origin/${baseRef}`]);
     }
   }
 
