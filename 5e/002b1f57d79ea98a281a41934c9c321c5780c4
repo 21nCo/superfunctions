@@ -1,0 +1,25 @@
+datafn/client/__tests__/clone-completeness.test.ts
+  s_f058f999ab46b7::t_009e70e3cac5c6 149,153-158,163,182-205
+datafn/client/src/sync/apply.ts
+  s_f058f999ab46b7::t_3e6481c935f9e2 73-80,84,108-109,343-354
+datafn/client/src/sync/engine.ts
+  s_f058f999ab46b7::t_e1699aa60eba31 917,1107-1112
+datafn/server/src/execution/sync/clone.ts
+  s_f058f999ab46b7::t_432bb309e35c21 354-358
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5e002b1f57d79ea98a281a41934c9c321c5780c4",
+  "prompts": {},
+  "sessions": {
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

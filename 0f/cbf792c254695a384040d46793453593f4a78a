@@ -1,0 +1,45 @@
+billfn/admin/src/__tests__/admin.test.ts
+  s_f058f999ab46b7::t_2f717b5e17ee25 462-522
+billfn/admin/src/domain-service.ts
+  s_f058f999ab46b7::t_27529111dee22f 309-323
+billfn/core/src/types.ts
+  s_f058f999ab46b7::t_ec94ecf7100ba3 89-92,654-655,657-658
+billfn/docs/content/docs/server/setup.mdx
+  s_f058f999ab46b7::t_ac34604f15c037 114-124
+billfn/core/src/__tests__/checkout-price.test.ts
+  s_8ddaaa962760df::t_0ffd43c0687537 6,100-110,115,119-131,133,142-144,266-345
+billfn/core/src/service.ts
+  s_6626ce7509617b::t_27f4bc913ab214 961-964
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0fcbf792c254695a384040d46793453593f4a78a",
+  "prompts": {},
+  "sessions": {
+    "s_6626ce7509617b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ed06dea6-9664-4619-8186-b7e1f8e432ad",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_8ddaaa962760df": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbdba3fa-17e2-45e3-8134-d92040e3fb16",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
