@@ -5,6 +5,7 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { MemoryStorageAdapter } from "../src/adapters/memoryStorage.js";
+import { describeMergeOutcomeContract } from "./mergeOutcomeContract.js";
 
 describe("MemoryStorageAdapter", () => {
   let storage: MemoryStorageAdapter;
@@ -78,23 +79,7 @@ describe("MemoryStorageAdapter", () => {
       });
     });
 
-    it("reports whether the merge created the record", async () => {
-      const outcomes: boolean[] = [];
-      const onResolved = ({ created }: { created: boolean }) => outcomes.push(created);
-      await storage.mergeRecord("task", "m1", { title: "a" }, { onResolved });
-      await storage.mergeRecord("task", "m1", { title: "b" }, { onResolved });
-      expect(outcomes).toEqual([true, false]);
-    });
-
-    it("completes the merge when the outcome callback throws", async () => {
-      const onResolved = () => {
-        throw new Error("listener failed");
-      };
-      await expect(
-        storage.mergeRecord("task", "m2", { title: "a" }, { onResolved }),
-      ).resolves.toMatchObject({ id: "m2", title: "a" });
-      expect(await storage.getRecord("task", "m2")).toMatchObject({ title: "a" });
-    });
+    describeMergeOutcomeContract(() => storage);
 
     it("rejects an empty merge id before persisting a record", async () => {
       await expect(storage.mergeRecord("task", "", { title: "invalid" }))

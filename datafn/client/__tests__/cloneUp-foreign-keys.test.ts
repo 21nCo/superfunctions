@@ -210,6 +210,14 @@ function connect(storage: MemoryStorageAdapter) {
   return { client, pushes };
 }
 
+const newStorage = () => new MemoryStorageAdapter(["files", "folders", "links", "nodes"]);
+
+/** Two records of `resource` whose peerId points at each other. */
+async function seedCycle(storage: MemoryStorageAdapter, resource: "links" | "nodes") {
+  await storage.upsertRecord(resource, { id: `${resource}:a`, label: "A", peerId: `${resource}:b` });
+  await storage.upsertRecord(resource, { id: `${resource}:b`, label: "B", peerId: `${resource}:a` });
+}
+
 /** Rows straight from SQLite; codegen stores camelCase fields in snake_case columns. */
 function rows(table: string): Array<Record<string, unknown>> {
   return sqlite.prepare(`SELECT * FROM ${quote(table)} ORDER BY "id"`).all() as Array<Record<string, unknown>>;
@@ -245,7 +253,7 @@ describe("DATA-15: cloneUp against SQLite with foreign keys", () => {
   });
 
   it("pushes a folder tree and files whose ids sort child-first", async () => {
-    const storage = new MemoryStorageAdapter(["files", "folders", "links", "nodes"]);
+    const storage = newStorage();
     // Ids sort child before parent: "folders:a" < "folders:m" < "folders:z".
     await storage.upsertRecord("folders", {
       id: "folders:a",
@@ -285,9 +293,8 @@ describe("DATA-15: cloneUp against SQLite with foreign keys", () => {
   });
 
   it("pushes a two-record reference cycle by setting one reference afterwards", async () => {
-    const storage = new MemoryStorageAdapter(["files", "folders", "links", "nodes"]);
-    await storage.upsertRecord("links", { id: "links:a", label: "A", peerId: "links:b" });
-    await storage.upsertRecord("links", { id: "links:b", label: "B", peerId: "links:a" });
+    const storage = newStorage();
+    await seedCycle(storage, "links");
 
     const { client, pushes } = connect(storage);
     const result = await client.sync.cloneUp({ pullAfter: false });
@@ -308,9 +315,8 @@ describe("DATA-15: cloneUp against SQLite with foreign keys", () => {
   });
 
   it("restores a cycle reference again when the record pushed without it changes", async () => {
-    const storage = new MemoryStorageAdapter(["files", "folders", "links", "nodes"]);
-    await storage.upsertRecord("links", { id: "links:a", label: "A", peerId: "links:b" });
-    await storage.upsertRecord("links", { id: "links:b", label: "B", peerId: "links:a" });
+    const storage = newStorage();
+    await seedCycle(storage, "links");
 
     const { client, pushes } = connect(storage);
     expect((await client.sync.cloneUp({ pullAfter: false })).ok).toBe(true);
@@ -333,7 +339,7 @@ describe("DATA-15: cloneUp against SQLite with foreign keys", () => {
   });
 
   it("pushes a record that references itself as it is", async () => {
-    const storage = new MemoryStorageAdapter(["files", "folders", "links", "nodes"]);
+    const storage = newStorage();
     await storage.upsertRecord("nodes", { id: "nodes:1", label: "One", peerId: "nodes:1" });
     await storage.upsertRecord("links", { id: "links:1", label: "Self", peerId: "links:1" });
 
@@ -351,7 +357,7 @@ describe("DATA-15: cloneUp against SQLite with foreign keys", () => {
   });
 
   it("never unsets a non-nullable reference in a cycle", async () => {
-    const storage = new MemoryStorageAdapter(["files", "folders", "links", "nodes"]);
+    const storage = newStorage();
     // Both records already exist on the server, each pointing at itself.
     await storage.upsertRecord("nodes", { id: "nodes:a", label: "A", peerId: "nodes:a" });
     await storage.upsertRecord("nodes", { id: "nodes:b", label: "B", peerId: "nodes:b" });
@@ -359,8 +365,7 @@ describe("DATA-15: cloneUp against SQLite with foreign keys", () => {
     expect((await client.sync.cloneUp({ pullAfter: false })).ok).toBe(true);
 
     // Locally they now point at each other.
-    await storage.upsertRecord("nodes", { id: "nodes:a", label: "A", peerId: "nodes:b" });
-    await storage.upsertRecord("nodes", { id: "nodes:b", label: "B", peerId: "nodes:a" });
+    await seedCycle(storage, "nodes");
     pushes.length = 0;
     const result = await client.sync.cloneUp({ pullAfter: false });
 
@@ -376,9 +381,8 @@ describe("DATA-15: cloneUp against SQLite with foreign keys", () => {
   });
 
   it("reports the server's rejection for a new non-nullable cycle instead of unsetting it", async () => {
-    const storage = new MemoryStorageAdapter(["files", "folders", "links", "nodes"]);
-    await storage.upsertRecord("nodes", { id: "nodes:a", label: "A", peerId: "nodes:b" });
-    await storage.upsertRecord("nodes", { id: "nodes:b", label: "B", peerId: "nodes:a" });
+    const storage = newStorage();
+    await seedCycle(storage, "nodes");
 
     const { client, pushes } = connect(storage);
     const result = await client.sync.cloneUp({ pullAfter: false });

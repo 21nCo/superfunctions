@@ -108,6 +108,31 @@ function localClient(storage: MemoryStorageAdapter, searchProvider: ReturnType<t
   return client;
 }
 
+/** Holds the provider's next index update until the returned function runs. */
+function holdFirstIndexUpdate(provider: ReturnType<typeof createPersistentProvider>): () => void {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const upsert = provider.updateIndices.getMockImplementation()!;
+  provider.updateIndices.mockImplementationOnce(async (params) => {
+    await gate;
+    return upsert(params);
+  });
+  return release;
+}
+
+function remoteClient(storage: MemoryStorageAdapter, clientId: string) {
+  const client = createDatafnClient({
+    schema,
+    clientId,
+    storage,
+    sync: { remote: "http://example.com", offlinability: true },
+  });
+  clients.push(client as any);
+  return client;
+}
+
 async function searchIds(client: ReturnType<typeof localClient>, query: string) {
   const result = (await client.search({ query, resources: ["notes"], source: "local" })) as any;
   const rows = Array.isArray(result) ? result : result.results ?? result.data ?? [];
@@ -177,15 +202,7 @@ describe("importData and search", () => {
     const storage = await readyStorage();
     const provider = createPersistentProvider();
     // The rebuild's upsert waits until the import has run.
-    let releaseRebuild!: () => void;
-    const rebuildGate = new Promise<void>((resolve) => {
-      releaseRebuild = resolve;
-    });
-    const upsert = provider.updateIndices.getMockImplementation()!;
-    provider.updateIndices.mockImplementationOnce(async (params) => {
-      await rebuildGate;
-      return upsert(params);
-    });
+    const releaseRebuild = holdFirstIndexUpdate(provider);
     const client = localClient(storage, provider);
 
     const searching = searchIds(client, "shopping");
@@ -259,13 +276,7 @@ describe("importData with cloneUp", () => {
         details: { path: "mutations[0].record.legacy" },
       },
     } as any);
-    const client = createDatafnClient({
-      schema,
-      clientId: "import-push-client",
-      storage,
-      sync: { remote: "http://example.com", offlinability: true },
-    });
-    clients.push(client as any);
+    const client = remoteClient(storage, "import-push-client");
 
     const result = await client.importData(payload, { triggerCloneUp: true });
     expect(push).toHaveBeenCalled();
@@ -296,13 +307,7 @@ describe("importData with cloneUp", () => {
         ],
       },
     })) as any);
-    const client = createDatafnClient({
-      schema,
-      clientId: "import-push-client-2",
-      storage,
-      sync: { remote: "http://example.com", offlinability: true },
-    });
-    clients.push(client as any);
+    const client = remoteClient(storage, "import-push-client-2");
 
     const result = await client.importData(payload, { triggerCloneUp: true });
     expect(result.ok).toBe(false);
@@ -330,15 +335,7 @@ describe("importData edge cases", () => {
   it("indexes an edit made while the import's index update runs after it", async () => {
     const storage = await readyStorage();
     const provider = createPersistentProvider();
-    let releaseImport!: () => void;
-    const importGate = new Promise<void>((resolve) => {
-      releaseImport = resolve;
-    });
-    const upsert = provider.updateIndices.getMockImplementation()!;
-    provider.updateIndices.mockImplementationOnce(async (params) => {
-      await importGate;
-      return upsert(params);
-    });
+    const releaseImport = holdFirstIndexUpdate(provider);
     const client = localClient(storage, provider);
 
     const importing = client.importData({
@@ -365,15 +362,7 @@ describe("importData edge cases", () => {
   it("does not overwrite an edit made while the import waited for a rebuild", async () => {
     const storage = await readyStorage();
     const provider = createPersistentProvider();
-    let releaseRebuild!: () => void;
-    const rebuildGate = new Promise<void>((resolve) => {
-      releaseRebuild = resolve;
-    });
-    const upsert = provider.updateIndices.getMockImplementation()!;
-    provider.updateIndices.mockImplementationOnce(async (params) => {
-      await rebuildGate;
-      return upsert(params);
-    });
+    const releaseRebuild = holdFirstIndexUpdate(provider);
     const client = localClient(storage, provider);
 
     const searching = searchIds(client, "shopping");
@@ -424,13 +413,7 @@ describe("importData edge cases", () => {
     vi.spyOn(DefaultHttpTransport.prototype, "push").mockRejectedValue(
       Object.assign(new Error("server unreachable"), { code: "PUSH_FAILED" }),
     );
-    const client = createDatafnClient({
-      schema,
-      clientId: "import-throw-client",
-      storage,
-      sync: { remote: "http://example.com", offlinability: true },
-    });
-    clients.push(client as any);
+    const client = remoteClient(storage, "import-throw-client");
 
     const result = await client.importData(payload, { triggerCloneUp: true });
     expect(result.ok).toBe(false);

@@ -6,6 +6,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { IndexedDbStorageAdapter } from "../src/adapters/indexedDbStorage.js";
 import "fake-indexeddb/auto"; // Automatically mocks global indexedDB
+import { describeMergeOutcomeContract } from "./mergeOutcomeContract.js";
 
 describe("IndexedDbStorageAdapter", () => {
   let storage: IndexedDbStorageAdapter;
@@ -41,23 +42,7 @@ describe("IndexedDbStorageAdapter", () => {
       expect(records[2].id).toBe("task:3");
     });
 
-    it("reports whether the merge created the record", async () => {
-      const outcomes: boolean[] = [];
-      const onResolved = ({ created }: { created: boolean }) => outcomes.push(created);
-      await storage.mergeRecord("task", "m1", { title: "a" }, { onResolved });
-      await storage.mergeRecord("task", "m1", { title: "b" }, { onResolved });
-      expect(outcomes).toEqual([true, false]);
-    });
-
-    it("completes the merge when the outcome callback throws", async () => {
-      const onResolved = () => {
-        throw new Error("listener failed");
-      };
-      await expect(
-        storage.mergeRecord("task", "m2", { title: "a" }, { onResolved }),
-      ).resolves.toMatchObject({ id: "m2", title: "a" });
-      expect(await storage.getRecord("task", "m2")).toMatchObject({ title: "a" });
-    });
+    describeMergeOutcomeContract(() => storage);
 
     it("Persists across instances (simulated reload)", async () => {
       await storage.upsertRecord("task", { id: "p1", val: 1 });
