@@ -1,0 +1,31 @@
+datafn/client/__tests__/crossTab.test.ts
+  s_f058f999ab46b7::t_97b6f15beb7e10 25-27
+datafn/client/__tests__/import-search-sync.test.ts
+  s_f058f999ab46b7::t_ab0a76197233bc 321-383
+datafn/client/__tests__/search-index-queue.test.ts
+  s_f058f999ab46b7::t_397e5e40dc4cea 1-41
+datafn/client/__tests__/signal-refresh-order.test.ts
+  s_f058f999ab46b7::t_896f3688548c96 164
+datafn/client/src/client.ts
+  s_f058f999ab46b7::t_f6ef644e3ae23d 1025-1039,1041
+datafn/client/src/export.ts
+  s_f058f999ab46b7::t_cbfa4dd72648ac 53-57,65-71
+datafn/client/src/sync/engine.ts
+  s_f058f999ab46b7::t_7b0052c1bcb11d 838-840,974-981,1254-1257,1269-1272
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6e483e578d3367df52a9855c81bd3fda340f7e01",
+  "prompts": {},
+  "sessions": {
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
