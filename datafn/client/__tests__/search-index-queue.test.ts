@@ -71,5 +71,20 @@ describe("indexStoredRecords", () => {
     expect(listSpy).not.toHaveBeenCalled();
     expect(search.updateIndices.mock.calls[0][0].records).toHaveLength(300);
   });
+
+  it("re-indexes a pulled deletion whose record a later write recreated", async () => {
+    const storage = new MemoryStorageAdapter(["notes"]);
+    const search = provider();
+    let release!: () => void;
+    const held = runSearchIndexUpdate(search, "notes", () => new Promise<void>((resolve) => (release = resolve)));
+    // The pull deleted notes:1 and queued its index update; an import then recreates it.
+    const deleting = indexStoredRecords(search, storage, "notes", ["notes:1"]);
+    await storage.upsertRecord("notes", { id: "notes:1", title: "Restored" });
+    release();
+    await Promise.all([held, deleting]);
+    expect(search.updateIndices.mock.calls.map(([params]) => params)).toEqual([
+      { resource: "notes", records: [{ id: "notes:1", title: "Restored" }], operation: "upsert" },
+    ]);
+  });
 });
 

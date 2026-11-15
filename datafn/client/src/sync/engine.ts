@@ -1,5 +1,5 @@
 import { DATAFN_ROUTE_WS_PROTOCOL, DATAFN_ROUTE_WS_TICKET_PREFIX } from "@datafn/core";
-import { indexStoredRecords, recordIds, runSearchIndexUpdate } from "../searchIndexQueue.js";
+import { indexStoredRecords, recordIds } from "../searchIndexQueue.js";
 import { DefaultHttpTransport } from "../transport/http.js";
 /**
  * Sync Engine
@@ -1334,16 +1334,15 @@ export class SyncEngine {
             }
             if (lastResult.deleted) {
               for (const [resource, ids] of Object.entries(lastResult.deleted as Record<string, string[]>)) {
-                for (const id of ids as string[]) {
-                  try {
-                    const provider = this.searchProvider;
-                    await runSearchIndexUpdate(provider, resource, () =>
-                      provider.updateIndices({ resource, records: [{ id }], operation: "delete" }),
-                    );
-                  } catch {
-                    await this.clearSearchIndexComplete(resource);
-                    // fail-soft
-                  }
+                try {
+                  // In its turn: removed if still deleted, re-indexed if a
+                  // later write recreated it.
+                  await indexStoredRecords(this.searchProvider, this.storage, resource, recordIds(
+                    (ids as unknown[]).map((id) => ({ id })),
+                  ));
+                } catch {
+                  await this.clearSearchIndexComplete(resource);
+                  // fail-soft
                 }
               }
             }
