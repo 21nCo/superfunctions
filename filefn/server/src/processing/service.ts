@@ -538,8 +538,13 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     try {
       const result = await processor.process(input, getData);
       const durationMs = Math.max(0, Date.now() - startedAt);
-      if (!result?.success) {
-        return { error: result?.error, durationMs };
+      // A non-object result, or a success without an artifacts array, is a
+      // processor failure rather than a silent skip or an empty success.
+      if (typeof result !== 'object' || result === null || (result.success && !Array.isArray(result.artifacts))) {
+        return { error: 'processor returned an invalid result', durationMs };
+      }
+      if (!result.success) {
+        return { error: result.error, durationMs };
       }
       return { result, durationMs };
     } catch (error) {

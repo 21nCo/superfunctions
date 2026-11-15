@@ -13,6 +13,8 @@ import {
   PROCESSING_RUN_KIND,
 } from '../src/index.js';
 import { createMemoryStorage } from './workers/memory-storage.js';
+import { createEventEmitter } from '../src/events.js';
+import { createProcessingService } from '../src/processing/service.js';
 
 const owner = { principalId: 'owner', tenantId: 'tenant', requestId: 'req_upload' };
 
@@ -1076,6 +1078,55 @@ describe('processing jobs', () => {
     // A body another producer wrote with over-long optional fields still runs; they are ignored.
     expect(await handler.handle({ ...job, requestId: 'r'.repeat(513), jobId: 'j'.repeat(513) })).toEqual({ status: 'duplicate' });
     expect(processor.inputs).toHaveLength(1);
+  });
+
+  it('records an invalid processor result as an error when processing inline', async () => {
+    const silent: Processor = { name: 'silent', supportedMimeTypes: ['text/plain'], process: async () => null as never };
+    const service = createProcessingService({
+      db: memoryAdapter(), storage: createMemoryStorage(), events: createEventEmitter(), processors: [silent], enabled: true,
+    });
+
+    const result = await service.runProcessing(
+      { fileId: 'file_1', versionId: 'ver_1', storageKey: 'tenant/file_1/ver_1', mimeType: 'text/plain', size: 3, fileName: 'note.txt' },
+      owner,
+    );
+
+    expect(result).toEqual({ artifactsCreated: 0, errors: ['silent: processor returned an invalid result'] });
+  });
+
+  it('retries a processor that reports success without an artifacts array and fails it once retries run out', async () => {
+    let calls = 0;
+    const partial: Processor = {
+      name: 'partial',
+      supportedMimeTypes: ['text/plain'],
+      process: async () => {
+        calls += 1;
+        return { success: true } as never;
+      },
+    };
+    const { fileFn, queue, database } = setup([partial]);
+    const failed = vi.fn();
+    const completed = vi.fn();
+    fileFn.events.on('processing.failed', failed);
+    fileFn.events.on('processing.completed', completed);
+    const { fileId } = await uploadNote(fileFn);
+    const handler = createProcessingJobHandler(fileFn, { maxRetries: 1 });
+    const first = message(queue.jobs[0], 1);
+    const last = message(queue.jobs[0], 2);
+
+    await handler.queue({ messages: [first] });
+
+    expect(first.retry).toHaveBeenCalledTimes(1);
+    expect(await database.findMany({ model: 'fileArtifacts', where: [], namespace: 'jobs_test' })).toEqual([]);
+
+    await handler.queue({ messages: [last] });
+
+    expect(last.ack).toHaveBeenCalledTimes(1);
+    expect(calls).toBe(2);
+    expect(failed).toHaveBeenCalledTimes(1);
+    expect(failed).toHaveBeenCalledWith(expect.objectContaining({ fileId, error: 'partial: processor returned an invalid result' }));
+    expect(completed).not.toHaveBeenCalled();
+    expect(await database.findMany({ model: 'fileArtifacts', where: [], namespace: 'jobs_test' })).toEqual([]);
   });
 
   it('counts the artifacts recorded before a later artifact write fails', async () => {

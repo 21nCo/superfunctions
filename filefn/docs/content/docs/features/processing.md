@@ -137,7 +137,7 @@ For Cloudflare Queues, `@filefn/processing/queues/cloudflare` provides `createCl
 | `GET /proxy/files/:fileId/artifacts/:artifactId/download` | Proxy-mode download. |
 | `POST /:fileId/process` | Manually trigger processors (re-process / lazy mode). |
 
-With a queue configured, `POST /:fileId/process` enqueues a job with the same idempotency key as the upload's job: the file version and its processor names. If every processor already finished for that key, the consumer acknowledges the job as a duplicate and emits no `processing.completed` or `processing.failed` after its `processing.started`. FileFn has no per-request option to re-run processors that already finished for a version. For the Cloudflare Queues consumer, see [Cloudflare Workers › Queued processing](../recipes/cloudflare-workers#queued-processing).
+With a queue configured, `POST /:fileId/process` enqueues a job with the same idempotency key as the upload's job: the file version and its processor names. If every processor already finished for that key and the job's completion was recorded, the consumer acknowledges the job as a duplicate and emits no `processing.completed` or `processing.failed` after its `processing.started`. If recording the completion failed (FileFn only logs a warning), the re-triggered job emits `processing.completed` again and then records it. FileFn has no per-request option to re-run processors that already finished for a version. For the Cloudflare Queues consumer, see [Cloudflare Workers › Queued processing](../recipes/cloudflare-workers#queued-processing).
 
 ## Events
 
