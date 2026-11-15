@@ -14,7 +14,7 @@ export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url
 
 export class OwnersError extends Error {
   /**
-   * @param {"malformed-manifest" | "manifest-not-found" | "duplicate-owner" | "unlisted-path" | "unlisted-release" | "unlisted-python" | "invalid-path" | "invalid-repo"} code
+   * @param {"malformed-manifest" | "manifest-not-found" | "duplicate-owner" | "unlisted-path" | "unlisted-release" | "unlisted-python" | "invalid-path" | "invalid-repo" | "unreadable-pyproject"} code
    * @param {string} message
    * @param {Record<string, unknown>} [details]
    */

@@ -1,6 +1,10 @@
 #!/usr/bin/env node
-// Fails when the ownership manifests and the tree disagree: every tracked top-level directory and root file,
-// every release slug and every Python project must be listed, and every listed entry must exist.
+// Fails when the ownership manifests and the tree disagree. Public semantics: every tracked top-level directory
+// and root file must be listed in superfunctions.owners.json, and the next manifest must not be tracked. Next
+// semantics: an unlisted path is public-owned, so only superfunctions.owners.next.json entries are checked for
+// existence. In both, every release slug and Python project must be listed (in either manifest on next), its path
+// must be ownable and owned by the repository that publishes it, and every entry of the repository's own manifest
+// (superfunctions.owners.json on public, superfunctions.owners.next.json on next) must exist.
 // Usage: node scripts/verify-owners.mjs [--repo public|next] [--root <checkout>]
 // Without --repo, OWNERS_REPO selects the semantics; without either, the checkout decides (next when
 // superfunctions.owners.next.json exists, public otherwise).
@@ -88,9 +92,11 @@ const SCALARS = [
 /**
  * Parses a TOML document into plain objects (tables are null-prototype objects, arrays are arrays, strings are
  * strings, other values are TomlScalar). It covers TOML 1.0 plus the TOML 1.1 changes: the \e and \xHH escapes,
- * newlines, trailing commas and comments inside inline tables, and times and datetimes without seconds. On input that
- * TOML 1.0 rejects it is lenient in two places: an underscore directly after a 0x, 0o or 0b prefix (0x_ff) and a
- * leading byte order mark are accepted. Redefining a key or table fails, as TOML requires. `onHeader` sees every
+ * newlines, trailing commas and comments inside inline tables, and times and datetimes without seconds. Only strings,
+ * keys and the table structure are decoded exactly; other scalars are matched loosely and kept as text, so some
+ * invalid TOML is accepted: number underscores and leading zeros are not validated (0x_ff, 1__2, 007, even a bare _),
+ * date and time fields are not range-checked, and a leading byte order mark is skipped. Redefining a key or table
+ * fails, as TOML requires. `onHeader` sees every
  * table header before it is applied. Errors come from `fail(line, reason)`. Returns the document and the line on
  * which each key path was first defined.
  */
@@ -385,12 +391,27 @@ export function readPythonProjects(root, files) {
     });
 }
 
+/** Runs an ownership lookup; an OwnersError becomes null, so every caller must report a null result. */
 function tryOwner(lookup) {
   try {
     return lookup();
   } catch (error) {
     if (error instanceof OwnersError) return null;
     throw error;
+  }
+}
+
+/**
+ * Owner of a release or Python project path under `repo`. A path that cannot be owned (absolute, leaving the
+ * repository, or under a top-level directory public does not list) is reported, naming the path and the entry.
+ */
+function ownerOfEntryPath(owners, repo, target, label, errors) {
+  try {
+    return owners.ownerOfPath(target, { repo });
+  } catch (error) {
+    if (!(error instanceof OwnersError)) throw error;
+    errors.push(`${target}: ${label} has a path that cannot be owned (${error.code}): ${error.message}`);
+    return null;
   }
 }
 
@@ -444,10 +465,10 @@ export function findOwnershipErrors({ owners, repo, files, releases, python }) {
     const owner = tryOwner(() => owners.ownerOfRelease(entry.slug, { repo }));
     if (owner === null) {
       errors.push(`${entry.path}: release ${JSON.stringify(entry.slug)} from ${entry.source} is not listed in the releases of ${repo === "next" && nextManifest ? `${PUBLIC_MANIFEST} or ${NEXT_MANIFEST}` : PUBLIC_MANIFEST}`);
-      continue;
     }
-    const pathOwner = tryOwner(() => owners.ownerOfPath(entry.path, { repo }));
-    if (pathOwner !== null && pathOwner !== owner) {
+    const label = `release ${JSON.stringify(entry.slug)} from ${entry.source}`;
+    const pathOwner = ownerOfEntryPath(owners, repo, entry.path, label, errors);
+    if (owner !== null && pathOwner !== null && pathOwner !== owner) {
       errors.push(`${entry.path}: release ${JSON.stringify(entry.slug)} is ${owner}-published but its path is ${pathOwner}-owned`);
     }
   }
@@ -467,10 +488,9 @@ export function findOwnershipErrors({ owners, repo, files, releases, python }) {
     const owner = tryOwner(() => owners.ownerOfPython(project.name, { repo }));
     if (owner === null) {
       errors.push(`${project.file}: Python project ${JSON.stringify(project.name)} is not listed in the python entries of ${repo === "next" && nextManifest ? `${PUBLIC_MANIFEST} or ${NEXT_MANIFEST}` : PUBLIC_MANIFEST}`);
-      continue;
     }
-    const pathOwner = tryOwner(() => owners.ownerOfPath(project.file, { repo }));
-    if (pathOwner !== null && pathOwner !== owner) {
+    const pathOwner = ownerOfEntryPath(owners, repo, project.file, `Python project ${JSON.stringify(project.name)}`, errors);
+    if (owner !== null && pathOwner !== null && pathOwner !== owner) {
       errors.push(`${project.file}: Python project ${JSON.stringify(project.name)} is ${owner}-published but its path is ${pathOwner}-owned`);
     }
   }
@@ -487,7 +507,11 @@ export function findOwnershipErrors({ owners, repo, files, releases, python }) {
  * undefined so that verifyOwners falls back to the checkout's default ("next" when the next manifest exists).
  */
 export function repoFromEnv(env = process.env) {
-  return env.OWNERS_REPO ? env.OWNERS_REPO : undefined;
+  if (!env.OWNERS_REPO) return undefined;
+  if (!REPOS.includes(env.OWNERS_REPO)) {
+    throw new OwnersError("invalid-repo", `OWNERS_REPO must be "public" or "next", not ${JSON.stringify(env.OWNERS_REPO)}`, { repo: env.OWNERS_REPO });
+  }
+  return env.OWNERS_REPO;
 }
 
 /** Disagreements between a checkout's manifests and its tree; `repo` defaults to the checkout's semantics. */

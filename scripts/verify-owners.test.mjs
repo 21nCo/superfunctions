@@ -111,6 +111,42 @@ test("a release whose path belongs to another owner fails", (t) => {
   assert.deepEqual(errors, ['docsfn/site: release "docs-site" is public-published but its path is next-owned']);
 });
 
+test("a release path that cannot be owned fails on public and names its path and slug", (t) => {
+  const next = { version: 1, paths: { docsfn: "next" } };
+  for (const releasePath of ["../datafn/core", "/abs/x", "nonexistentfn/core"]) {
+    const releases = [{ slug: "datafn-core", path: releasePath, name: "@datafn/core" }];
+    const result = run(fixture(t, { releases }), "--repo", "public");
+    assert.equal(result.status, 1, releasePath);
+    const escaped = releasePath.replace(/[./]/g, "\\$&");
+    assert.match(result.stderr, new RegExp(`${escaped}: release "datafn-core" from release-packages\\.json has a path that cannot be owned`));
+    // On next an invalid path still fails; an unlisted relative path is public-owned there.
+    const onNext = run(fixture(t, { releases, next, files: { "docsfn/a.md": "a\n" } }), "--repo", "next");
+    if (releasePath === "nonexistentfn/core") assert.equal(onNext.status, 0, onNext.stderr);
+    else {
+      assert.equal(onNext.status, 1, releasePath);
+      assert.match(onNext.stderr, /release "datafn-core" from release-packages\.json has a path that cannot be owned \(invalid-path\)/);
+    }
+  }
+});
+
+test("on next a release under an unlisted relative path is public-owned and passes", (t) => {
+  const owners = manifest();
+  owners.releases["watchfn-core"] = "public";
+  const next = { version: 1, paths: { docsfn: "next" } };
+  const releases = [
+    { slug: "datafn-core", path: "datafn/core", name: "@datafn/core" },
+    { slug: "watchfn-core", path: "watchfn/core", name: "@watchfn/core" },
+  ];
+  const root = fixture(t, { owners, next, releases, files: { "docsfn/a.md": "a\n", "watchfn/core/index.ts": "export {};\n" } });
+  assert.deepEqual(verifyOwners({ root, repo: "next" }), []);
+});
+
+test("an invalid OWNERS_REPO is named in the error", (t) => {
+  const result = runWith({ OWNERS_REPO: "main" }, fixture(t));
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /error \(invalid-repo\): OWNERS_REPO must be "public" or "next", not "main"/);
+});
+
 test("on next an unlisted directory is public-owned and next entries must exist", (t) => {
   const next = { version: 1, paths: { docsfn: "next", ghostfn: "next" }, rootFiles: { next: ["NEXT.md"] } };
   const root = fixture(t, { next, files: { "docsfn/a.md": "a\n", "NEXT.md": "n\n", "watchfn/core/index.ts": "export {};\n" } });
