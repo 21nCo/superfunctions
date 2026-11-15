@@ -5,7 +5,14 @@ import type { DatafnRemoteAdapter } from "../client.js";
 import type { EventBus } from "../events/bus.js";
 import { createClientError, isTransportError } from "../errors.js";
 import { computeMutationHash } from "./cloneUp/hash.js";
-import { sortRecordsById, sortJoinRows } from "./cloneUp/order.js";
+import {
+  orderRecordsParentFirst,
+  orderResourcesByDependency,
+  referenceFieldsByResource,
+  sortJoinRows,
+  sortRecordsById,
+  type ReferenceField,
+} from "./cloneUp/order.js";
 import { batchMutations } from "./cloneUp/batch.js";
 import {
   decryptPullResultForE2ee,
@@ -132,63 +139,33 @@ export async function cloneUp(
   let hasErrors = false;
 
   // --- Stage A: Upload records ---
-  for (const resourceName of resolvedResources) {
-    const resourceSchema = resourceSchemaMap.get(resourceName)!;
-    const fieldNames = writableFieldNames(schema, resourceSchema);
-
+  // Records go up parents first so a server with foreign keys (and htree path
+  // maintenance) always has the referenced record: resources in dependency
+  // order, and records of a self-referencing resource after their parents.
+  // A reference that would still point at a local record not pushed yet (a
+  // cycle) is sent unset and set by a follow-up merge after all records.
+  const references = referenceFieldsByResource(schema);
+  const orderedResources = orderResourcesByDependency(resolvedResources, references);
+  const recordsByResource = new Map<string, Record<string, unknown>[]>();
+  const localIds = new Map<string, Set<string>>();
+  for (const resourceName of orderedResources) {
     const rawRecords = await storage.listRecords(resourceName);
-    const sortedRecords = sortRecordsById(rawRecords);
+    recordsByResource.set(resourceName, rawRecords);
+    localIds.set(
+      resourceName,
+      new Set(rawRecords.map((record) => record.id).filter((id): id is string => typeof id === "string")),
+    );
+  }
+  const pushedIds = new Map<string, Set<string>>();
+  const deferredReferences: Array<{
+    resourceName: string;
+    version: number;
+    id: string;
+    patch: Record<string, unknown>;
+  }> = [];
 
-    const mutations: Record<string, unknown>[] = [];
-    let recordIndex = 0;
-
-    for (const record of sortedRecords) {
-      if (typeof record.id !== "string") {
-        throw createClientError(
-          "DFQL_INVALID",
-          "Invalid cloneUp: record id must be a string",
-          { path: `records[${recordIndex}].id` },
-        );
-      }
-
-      const filteredRecord: Record<string, unknown> = {};
-      for (const key of Object.keys(record)) {
-        if (key !== "id" && fieldNames.has(key)) {
-          filteredRecord[key] = record[key];
-        }
-      }
-
-      const hashInput = {
-        kind: "rec",
-        resource: resourceName,
-        operation: recordOperation,
-        id: record.id,
-        record: filteredRecord,
-      };
-      const hash = computeMutationHash(hashInput);
-      const mutationId = `${prefix}:rec:${resourceName}:${record.id}:${hash}`;
-
-      mutations.push({
-        resource: resourceName,
-        version: resourceSchema.version,
-        operation: recordOperation,
-        id: record.id,
-        record: filteredRecord,
-        clientId: deps.clientId,
-        mutationId,
-      });
-
-      recordIndex++;
-    }
-
-    // Only include resources in stats if they have records
-    if (sortedRecords.length > 0) {
-      result.stats.resources[resourceName] = {
-        records: sortedRecords.length,
-        mutations: mutations.length,
-      };
-    }
-
+  /** Pushes mutations in batches; returns false when cloneUp must stop. */
+  const pushMutations = async (mutations: Record<string, unknown>[]): Promise<boolean> => {
     const batches = batchMutations(mutations, batchSize);
     for (const batch of batches) {
       const payloadBatch = await encryptMutationPayloadForE2ee(
@@ -220,10 +197,128 @@ export async function cloneUp(
             timestampMs: deps.getTimestamp(),
             context: { phase: "cloneup", error: { errors: result.errors } },
           });
-          return result;
+          return false;
         }
       }
     }
+    return true;
+  };
+
+  for (const resourceName of orderedResources) {
+    const resourceSchema = resourceSchemaMap.get(resourceName)!;
+    const fieldNames = writableFieldNames(schema, resourceSchema);
+    const resourceReferences: ReferenceField[] = (references.get(resourceName) ?? []).filter(
+      (reference) => fieldNames.has(reference.field),
+    );
+    const selfReferenceFields = resourceReferences
+      .filter((reference) => reference.targets.includes(resourceName))
+      .map((reference) => reference.field);
+
+    const rawRecords = recordsByResource.get(resourceName) ?? [];
+    const sortedRecords = orderRecordsParentFirst(
+      sortRecordsById(rawRecords),
+      selfReferenceFields,
+    );
+    const pushed = pushedIds.get(resourceName) ?? new Set<string>();
+    pushedIds.set(resourceName, pushed);
+
+    const mutations: Record<string, unknown>[] = [];
+    let recordIndex = 0;
+
+    for (const record of sortedRecords) {
+      if (typeof record.id !== "string") {
+        throw createClientError(
+          "DFQL_INVALID",
+          "Invalid cloneUp: record id must be a string",
+          { path: `records[${recordIndex}].id` },
+        );
+      }
+
+      const filteredRecord: Record<string, unknown> = {};
+      for (const key of Object.keys(record)) {
+        if (key !== "id" && fieldNames.has(key)) {
+          filteredRecord[key] = record[key];
+        }
+      }
+
+      // Break reference cycles: unset a reference to a local record that has
+      // not been pushed yet and set it once every record is up.
+      const deferredPatch: Record<string, unknown> = {};
+      for (const reference of resourceReferences) {
+        const targetId = filteredRecord[reference.field];
+        if (typeof targetId !== "string" || targetId.length === 0) continue;
+        const pending = reference.targets.some(
+          (target) => localIds.get(target)?.has(targetId) && !pushedIds.get(target)?.has(targetId),
+        );
+        if (!pending) continue;
+        deferredPatch[reference.field] = targetId;
+        filteredRecord[reference.field] = null;
+        if (reference.resourceField && reference.resourceField in filteredRecord) {
+          deferredPatch[reference.resourceField] = filteredRecord[reference.resourceField];
+          filteredRecord[reference.resourceField] = null;
+        }
+      }
+      if (Object.keys(deferredPatch).length > 0) {
+        deferredReferences.push({
+          resourceName,
+          version: resourceSchema.version,
+          id: record.id,
+          patch: deferredPatch,
+        });
+      }
+
+      const hashInput = {
+        kind: "rec",
+        resource: resourceName,
+        operation: recordOperation,
+        id: record.id,
+        record: filteredRecord,
+      };
+      const hash = computeMutationHash(hashInput);
+      const mutationId = `${prefix}:rec:${resourceName}:${record.id}:${hash}`;
+
+      mutations.push({
+        resource: resourceName,
+        version: resourceSchema.version,
+        operation: recordOperation,
+        id: record.id,
+        record: filteredRecord,
+        clientId: deps.clientId,
+        mutationId,
+      });
+      pushed.add(record.id);
+
+      recordIndex++;
+    }
+
+    // Only include resources in stats if they have records
+    if (sortedRecords.length > 0) {
+      result.stats.resources[resourceName] = {
+        records: sortedRecords.length,
+        mutations: mutations.length,
+      };
+    }
+
+    if (!(await pushMutations(mutations))) return result;
+  }
+
+  // Set the references held back to break cycles.
+  if (deferredReferences.length > 0) {
+    const mutations = deferredReferences.map(({ resourceName, version, id, patch }) => {
+      const hash = computeMutationHash({ kind: "ref", resource: resourceName, id, record: patch });
+      const stats = result.stats.resources[resourceName];
+      if (stats) stats.mutations += 1;
+      return {
+        resource: resourceName,
+        version,
+        operation: "merge",
+        id,
+        record: patch,
+        clientId: deps.clientId,
+        mutationId: `${prefix}:ref:${resourceName}:${id}:${hash}`,
+      };
+    });
+    if (!(await pushMutations(mutations))) return result;
   }
 
   // --- Stage B: Many-many join rows ---

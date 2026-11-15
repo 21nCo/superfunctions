@@ -246,12 +246,15 @@ export async function importData(
   return result;
 }
 
-/** Resource and id from a cloneUp record mutation id (`<prefix>:rec:<resource>:<id>:<hash>`). */
+/**
+ * Resource and id from a cloneUp record mutation id
+ * (`<prefix>:rec:<resource>:<id>:<hash>`, or `:ref:` for a deferred reference).
+ */
 function parseCloneUpMutationId(mutationId: unknown): { resource: string; id: string } {
   if (typeof mutationId !== "string") return { resource: "", id: "" };
-  const marker = mutationId.indexOf(":rec:");
-  if (marker === -1) return { resource: "", id: mutationId };
-  const rest = mutationId.slice(marker + ":rec:".length);
+  const match = /:(rec|ref):/.exec(mutationId);
+  if (!match) return { resource: "", id: mutationId };
+  const rest = mutationId.slice(match.index + match[0].length);
   const resourceEnd = rest.indexOf(":");
   const hashStart = rest.lastIndexOf(":");
   if (resourceEnd === -1 || hashStart <= resourceEnd) return { resource: "", id: mutationId };
