@@ -52,6 +52,7 @@ export const ErrorCodes = {
   INVALID_RENDER_INTENT: 'FILEFN_INVALID_RENDER_INTENT',
   SESSION_TOKEN_REQUIRED: 'FILEFN_SESSION_TOKEN_REQUIRED',
   SESSION_TOKEN_INVALID: 'FILEFN_SESSION_TOKEN_INVALID',
+  STORAGE_PATH_NOT_PER_VERSION: 'FILEFN_STORAGE_PATH_NOT_PER_VERSION',
 } as const;
 
 export type ErrorCode = typeof ErrorCodes[keyof typeof ErrorCodes];
@@ -219,5 +220,14 @@ export function offlineUnsupported(): FileFnError {
     ErrorCodes.OFFLINE_UNSUPPORTED,
     'OPFS unavailable',
     400
+  );
+}
+
+export function storagePathNotPerVersion(policy: string): FileFnError {
+  return new FileFnError(
+    ErrorCodes.STORAGE_PATH_NOT_PER_VERSION,
+    'Policy storagePath must return a different key for each versionId',
+    500,
+    { policy }
   );
 }

@@ -377,15 +377,26 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       const now = new Date();
       const expiresAt = new Date(now.getTime() + uploadSessionTtlSeconds * 1000).toISOString();
       const fileId = input.fileId || generateFileFnId('file');
+      // The version this session will publish is fixed here, so its storage key is
+      // the one object key no other session can write.
       const versionId = generateFileFnId('ver');
-
-      const storageKey = computeStorageKey(policy, {
+      const storagePathContext = {
         fileName: input.fileName,
         principalId: ctx.principalId,
         tenantId: ctx.tenantId,
         fileId,
-        versionId,
-      });
+      };
+      const storageKey = computeStorageKey(policy, { ...storagePathContext, versionId });
+
+      // A custom storagePath that ignores versionId would let two sessions on one
+      // fileId write the same object. Probe it with a second versionId and refuse
+      // the policy before any storage upload or session row exists.
+      if (policy.storagePath) {
+        const probeKey = computeStorageKey(policy, { ...storagePathContext, versionId: generateFileFnId('ver') });
+        if (probeKey === storageKey) {
+          throw errors.storagePathNotPerVersion(input.policy);
+        }
+      }
 
       let storageUploadId: string | null = null;
       let uploadSessionToken: string | undefined;
@@ -422,6 +433,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           totalParts,
           storageKey,
           storageUploadId,
+          // Pre-allocated version ID; read as a result only once status is 'completed'.
+          completionVersionId: versionId,
           ownerId: ctx.principalId || 'anonymous',
           tenantId: ctx.tenantId || null,
           metadata: input.metadata ?? {},
@@ -824,7 +837,9 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
       const now = new Date().toISOString();
       const fileId = session.fileId || generateFileFnId('file');
-      const versionId = generateFileFnId('ver');
+      // Publish the version allocated at init, whose ID is part of the storage key.
+      // Sessions created before init allocated it have none, so mint one for them.
+      const versionId = session.completionVersionId || generateFileFnId('ver');
       const metadata = session.metadata ?? {};
 
       // Check for deduplication
