@@ -347,6 +347,59 @@ describe("paginated clone join rows", () => {
     expect(page.joins?.join_tags_links_tags?.map((r) => r.id)).toEqual(["l1", "l2"]);
   });
 
+  it("reads each join table once for a page that covers several tables", async () => {
+    const selfSchema: DatafnSchema = {
+      resources: [schema.resources[0], schema.resources[1]],
+      relations: [{ from: "tags", to: "tags", type: "many-many", relation: "links" } as any],
+    };
+    const base = memoryAdapter();
+    for (const id of ["t1", "t2", "t3"]) {
+      await base.create({ model: "tags", data: { id, name: id }, namespace: NAMESPACE });
+    }
+    await base.create({
+      model: "__datafn_join_tags_links",
+      data: { id: "l1", from: "t1", to: "t2" },
+      namespace: NAMESPACE,
+    });
+    let joinQueries = 0;
+    const db = new Proxy(base, {
+      get(target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver);
+        if (prop === "findMany") {
+          return (args: { model: string }) => {
+            if (args.model === "__datafn_join_tags_links") joinQueries += 1;
+            return value.call(target, args);
+          };
+        }
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as Adapter;
+    const pageOf = (tables: string[] | undefined) =>
+      executeClone(
+        {
+          clientId: "c1",
+          ...(tables ? { tables } : {}),
+          includeJoins: true,
+          page: { table: "tags", afterId: null, limit: 10 },
+        },
+        selfSchema,
+        db,
+        NAMESPACE,
+      );
+
+    // No `tables`: every resource is cloned, so cursor reads already spend a
+    // query per table and the join table is read once.
+    const multi = await pageOf(undefined);
+    expect(joinQueries).toBe(1);
+    expect(multi.joins?.join_tags_links_tags?.map((r) => r.id)).toEqual(["l1"]);
+
+    // A single-table page still looks its join rows up by id.
+    joinQueries = 0;
+    const single = await pageOf(["tags"]);
+    expect(joinQueries).toBeGreaterThan(1);
+    expect(single.joins?.join_tags_links_tags?.map((r) => r.id)).toEqual(["l1"]);
+  });
+
   it("hides join rows whose private endpoint another actor cannot see", async () => {
     const db = await seed();
     await db.update({

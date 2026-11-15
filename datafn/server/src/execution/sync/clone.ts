@@ -370,11 +370,13 @@ export async function executeClone(
       }
     }
 
-    // A page looks its join rows up by id while that fits the lookup budget;
-    // otherwise, and always for a capped clone (whose table counts and reads
-    // already spend many queries), each join table is read once and filtered.
+    // A single-table page looks its join rows up by id while that fits the
+    // lookup budget. Otherwise each join table is read once and filtered: for
+    // a capped clone, and for a page covering several tables, the table and
+    // cursor reads already spend a query per table, so id lookups could push
+    // the request past the per-invocation query limit.
     let useIdLookups = false;
-    if (scopedIds && request.page) {
+    if (scopedIds && request.page && tablesToClone.length === 1) {
       let lookups = 0;
       for (const relation of schema.relations) {
         if (relation.type !== "many-many") continue;
