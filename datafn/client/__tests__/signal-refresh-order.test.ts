@@ -115,3 +115,59 @@ describe("per-record re-reads", () => {
     expect(values.at(-1)!.find((r) => r.id === "notes:a")!.body).toBe("3");
   });
 });
+
+describe("edits during a full read", () => {
+  it("re-reads after an edit to a record the running full read may bring in", async () => {
+    const { client, pending } = controllableClient();
+    const bus = new EventBus();
+    const registry = new SignalRegistry(client, bus, schema);
+    const signal = registry.getSignal<any[]>({
+      resource: "notes",
+      version: 1,
+      filters: { title: "A" },
+      sort: ["title"],
+    });
+    const values: any[][] = [];
+    signal.subscribe((value) => {
+      if (value !== undefined) values.push(value);
+    });
+    pending.shift()!.resolve({ data: [{ id: "notes:a", title: "A", body: "1" }] });
+    await tick(0);
+
+    // notes:b now matches the filter; the full read it triggers captures body 1.
+    bus.emit({
+      type: "mutation_applied",
+      resource: "notes",
+      ids: ["notes:b"],
+      action: "merge",
+      record: { title: "A" },
+      created: false,
+      timestampMs: Date.now(),
+    } as any);
+    await tick();
+    const membershipRead = pending.shift()!;
+    expect(isIdProbe(membershipRead.query)).toBe(false);
+
+    // A body edit to notes:b while that read runs.
+    bodyMerge(bus, "notes:b", { body: "2" });
+    await tick();
+    membershipRead.resolve({
+      data: [
+        { id: "notes:a", title: "A", body: "1" },
+        { id: "notes:b", title: "A", body: "1" },
+      ],
+    });
+    await tick();
+
+    const followUp = pending.shift();
+    expect(followUp).toBeDefined();
+    followUp!.resolve({
+      data: [
+        { id: "notes:a", title: "A", body: "1" },
+        { id: "notes:b", title: "A", body: "2" },
+      ],
+    });
+    await tick(0);
+    expect(values.at(-1)!.find((r) => r.id === "notes:b")!.body).toBe("2");
+  });
+});

@@ -771,6 +771,10 @@ function createQuerySignal<T>(
           if (
             notShown > 0 &&
             (created === true ||
+              // A full read in flight may bring these records in from a
+              // snapshot older than this edit; cachedIds still describes
+              // the previous result.
+              inFlight ||
               (created === undefined &&
                 (!cachedIds ||
                   cachedIds.size === 0 ||
