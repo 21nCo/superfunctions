@@ -1,0 +1,21 @@
+datafn/client/__tests__/signal-refresh-order.test.ts
+  s_f058f999ab46b7::t_ca863994c09ad5 118-173
+datafn/client/src/signals/querySignal.ts
+  s_f058f999ab46b7::t_fdef25e0fd8485 774-777
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "25f2413f96a5e561ec8501363554304730f01595",
+  "prompts": {},
+  "sessions": {
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
