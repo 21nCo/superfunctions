@@ -83,24 +83,16 @@ function createProvider(state: { status: SubscriptionStatus }): BillFnProviderAd
 /** Fails billing event writes while `failEvents.on`, inside transactions and, when `transactions` is false, directly. */
 function failingEventDb(transactions: boolean) {
   const base = memoryAdapter({ debug: false });
-  // `only` limits the failure to one event id; `stored` fails a write after it stored the event; `stuck` also fails
-  // the event read after a failed write, so the change is not undone (as when the process stops in between).
-  const failEvents: { on: boolean; only?: string; stored?: boolean; stuck?: boolean } = { on: false };
-  const failing = <A extends Pick<Adapter, 'create' | 'findOne'>>(adapter: A): A => ({
+  // `only` limits the failure to one event id, so the writes that repair other events succeed.
+  const failEvents: { on: boolean; only?: string } = { on: false };
+  const failing = <A extends Pick<Adapter, 'create'>>(adapter: A): A => ({
     ...adapter,
     async create<T>(params: Parameters<Adapter['create']>[0]): Promise<T> {
       const eventId = (params.data as { id?: unknown }).id;
       if (failEvents.on && params.model === 'billingEvents' && (!failEvents.only || failEvents.only === eventId)) {
-        if (failEvents.stored) await adapter.create(params);
         throw new Error('event write failed');
       }
       return adapter.create<T>(params);
-    },
-    async findOne<T>(params: Parameters<Adapter['findOne']>[0]): Promise<T | null> {
-      if (failEvents.on && failEvents.stuck && params.model === 'billingEvents') {
-        throw new Error('event read failed');
-      }
-      return adapter.findOne<T>(params);
     }
   });
   const db: Adapter = transactions
@@ -433,47 +425,41 @@ describe('entitlement grants', () => {
     expect(await env.events('billfn.grant.revoked')).toHaveLength(1);
   });
 
-  it('undoes a grant or revoke whose billing event fails to write without transactions, so its retry applies it', async () => {
+  it('keeps a grant or revoke whose event fails to write without transactions and records the event on the next read', async () => {
     const { db, failEvents } = failingEventDb(false);
     const env = setup(db);
 
+    // The committed trial is the outcome; its event is recorded by the account's next entitlements read, once.
     failEvents.on = true;
-    await expect(env.grant()).rejects.toThrow('event write failed');
-    expect((await env.entitlements()).grants).toEqual([]);
-    failEvents.on = false;
     await expect(env.grant()).resolves.toMatchObject({ ok: true, data: { grant: { kind: 'trial', status: 'active' } } });
+    expect(await env.events('billfn.grant.created')).toEqual([]);
+    failEvents.on = false;
+    expect((await env.entitlements()).entitlements).toMatchObject({ status: 'trialing' });
+    expect((await env.entitlements()).grants).toHaveLength(1);
     expect(await env.events('billfn.grant.created')).toMatchObject([{ payload: { kind: 'trial', operator: OPERATOR } }]);
+    await expect(env.grant()).rejects.toMatchObject({ code: 'BILLFN_CONFLICT', details: { reason: 'trial_already_granted' } });
 
     const comp = await env.grant({ kind: 'comp' });
     if (!comp.ok) throw new Error('expected a comp');
     const revoke = () =>
       env.billfn.services.grants.revoke({ billingAccountId: ACCOUNT, grantId: comp.data.grant.id, operator: OPERATOR });
     failEvents.on = true;
-    await expect(revoke()).rejects.toThrow('event write failed');
-    expect((await env.entitlements()).grants).toContainEqual(
-      expect.objectContaining({ id: comp.data.grant.id, status: 'active', revokedAt: null })
-    );
+    await expect(revoke()).resolves.toMatchObject({ ok: true, data: { grant: { status: 'revoked' } } });
     failEvents.on = false;
+    expect(await env.events('billfn.grant.revoked')).toEqual([]);
+    expect((await env.entitlements()).grants).toContainEqual(expect.objectContaining({ id: comp.data.grant.id, status: 'revoked' }));
     await expect(revoke()).resolves.toMatchObject({ ok: true, data: { grant: { status: 'revoked' } } });
     expect(await env.events('billfn.grant.revoked')).toMatchObject([{ payload: { grantId: comp.data.grant.id, operator: OPERATOR } }]);
-
-    // A failed write that stored the event anyway keeps the change and succeeds.
-    failEvents.on = true;
-    failEvents.stored = true;
-    await expect(env.grant({ kind: 'comp' })).resolves.toMatchObject({ ok: true, data: { grant: { status: 'active' } } });
-    expect(await env.events('billfn.grant.created')).toHaveLength(3);
   });
 
-  it('records the event of a change left without one on the account\'s next grant operation, also after expiry', async () => {
+  it('records an unrecorded grant event on the account\'s next grant operation without transactions, also after expiry', async () => {
     const { db, failEvents } = failingEventDb(false);
     const env = setup(db);
     const created = async () => (await env.events('billfn.grant.created')).map((event) => event.payload.grantId).sort();
-    // Each change below stays without its event, as when the process stops before the undo.
-    failEvents.stuck = true;
 
     // The trial commits without its event and expires; a later trial request is refused but records the event.
     failEvents.on = true;
-    await expect(env.grant({ expiresAt: env.days(3) })).rejects.toThrow('event write failed');
+    await expect(env.grant({ expiresAt: env.days(3) })).resolves.toMatchObject({ ok: true });
     env.advance(4);
     failEvents.on = false;
     await expect(env.grant({ expiresAt: env.days(-1) })).rejects.toMatchObject({ code: 'BILLFN_VALIDATION_ERROR' });
@@ -482,7 +468,7 @@ describe('entitlement grants', () => {
     // comp 1 commits without its event and expires; creating comp 2 records both creation events once.
     failEvents.on = true;
     failEvents.only = `evt_grant_created_grant_comp_${ACCOUNT}_1`;
-    await expect(env.grant({ kind: 'comp', expiresAt: env.days(2) })).rejects.toThrow('event write failed');
+    await expect(env.grant({ kind: 'comp', expiresAt: env.days(2) })).resolves.toMatchObject({ ok: true });
     env.advance(3);
     failEvents.on = false;
     const comp = await env.grant({ kind: 'comp' });
@@ -495,7 +481,7 @@ describe('entitlement grants', () => {
     failEvents.only = `evt_grant_revoked_grant_comp_${ACCOUNT}_2`;
     await expect(
       env.billfn.services.grants.revoke({ billingAccountId: ACCOUNT, grantId: comp.data.grant.id, operator: OPERATOR })
-    ).rejects.toThrow('event write failed');
+    ).resolves.toMatchObject({ ok: true, data: { grant: { status: 'revoked' } } });
     failEvents.on = false;
     await expect(env.grant({ kind: 'comp', expiresAt: env.days(-1) })).rejects.toMatchObject({ code: 'BILLFN_VALIDATION_ERROR' });
     await expect(

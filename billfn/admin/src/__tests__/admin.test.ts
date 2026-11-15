@@ -600,7 +600,7 @@ describe("@billfn/admin", () => {
       )).rejects.toMatchObject({ code: "not_found" });
     });
 
-    it("reports a grant or revoke whose event fails to write without transactions as failed and unapplied, so a new request applies it", async () => {
+    it("reports a grant or revoke whose event fails to write without transactions as applied and records the event on the next read", async () => {
       const base = memoryAdapter();
       // Fails writes of one event type, so the writes that repair other events succeed.
       const failEvents = { type: "" };
@@ -629,33 +629,35 @@ describe("@billfn/admin", () => {
       const grant = { payload: { kind: "comp", planKey: "nucleus", expiresAt }, reason: "vip" };
 
       failEvents.type = "billfn.grant.created";
-      await expect(dispatch(1, "billfn.entitlements.grant-entitlement", grant)).resolves.toMatchObject({ ok: false });
+      const granted = { ok: true, data: { item: { kind: "comp", status: "active" } } };
+      await expect(dispatch(1, "billfn.entitlements.grant-entitlement", grant)).resolves.toMatchObject(granted);
       failEvents.type = "";
-      // The failed grant left no comp, which its same-key replay reports truthfully; a new request grants it.
-      await expect(pointron()).resolves.toBe(false);
+      // The committed comp is the outcome, and its same-key replay reports it.
+      await expect(pointron()).resolves.toBe(true);
       await expect(dispatch(1, "billfn.entitlements.grant-entitlement", grant)).resolves.toMatchObject({
-        ok: false,
+        ...granted,
         meta: { idempotencyReplay: true },
       });
-      await expect(dispatch(2, "billfn.entitlements.grant-entitlement", grant)).resolves.toMatchObject({
-        ok: true,
-        data: { item: { kind: "comp", status: "active" } },
-      });
+      expect(await events("billfn.grant.created")).toEqual([]);
+      // The next entitlements read, as the console's entitlements list makes, records the event once.
+      const listed = await adapter.execute("billfn.entitlements.list", {}, context) as { data: { items: Array<{ id: string }> } };
       expect(await events("billfn.grant.created")).toMatchObject([{ payload: { kind: "comp", reason: "vip" } }]);
 
-      const listed = await adapter.execute("billfn.entitlements.list", {}, context) as { data: { items: Array<{ id: string }> } };
       const rowId = listed.data.items[0]!.id;
       failEvents.type = "billfn.grant.revoked";
-      await expect(dispatch(3, "billfn.entitlements.revoke-grant", { id: rowId, reason: "ended" })).resolves.toMatchObject({ ok: false });
-      failEvents.type = "";
-      // The failed revoke left the comp active, so the row still revokes it.
-      await expect(pointron()).resolves.toBe(true);
-      await expect(dispatch(4, "billfn.entitlements.revoke-grant", { id: rowId, reason: "ended" })).resolves.toMatchObject({
+      await expect(dispatch(3, "billfn.entitlements.revoke-grant", { id: rowId, reason: "ended" })).resolves.toMatchObject({
         ok: true,
         data: { item: { kind: "comp", status: "revoked" } },
       });
+      failEvents.type = "";
       await expect(pointron()).resolves.toBe(false);
-      expect(await events("billfn.grant.revoked")).toMatchObject([{ payload: { reason: "ended", operator: { requestId: "request_4" } } }]);
+      expect(await events("billfn.grant.revoked")).toEqual([]);
+      // The row has no active comp now; the request reads the entitlements first, which records the revoke event.
+      await expect(dispatch(4, "billfn.entitlements.revoke-grant", { id: rowId })).resolves.toMatchObject({
+        ok: false,
+        error: { code: "not_found" },
+      });
+      expect(await events("billfn.grant.revoked")).toMatchObject([{ payload: { reason: "ended", operator: { requestId: "request_3" } } }]);
       expect(await events("billfn.grant.created")).toHaveLength(1);
     });
   });

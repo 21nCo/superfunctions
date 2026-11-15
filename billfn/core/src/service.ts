@@ -1378,6 +1378,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         });
       }
       const grants = await listGrants(grantDeps, billingAccount.id);
+      await repairGrantEvents(grantDeps, billingAccount.id, grants);
       const entitlements = await applyGrants(
         grantDeps,
         billingAccount.id,
