@@ -12,8 +12,8 @@ export function bindProcessingJobs(fileFn: object, service: ProcessingService): 
 /** Cloudflare's default consumer `max_retries`. */
 const DEFAULT_MAX_RETRIES = 3;
 
-/** The longest delay Cloudflare Queues accepts for a message: 12 hours. */
-const MAX_RETRY_DELAY_SECONDS = 43_200;
+/** The longest delay Cloudflare Queues accepts for a message: 24 hours. */
+const MAX_RETRY_DELAY_SECONDS = 86_400;
 
 export interface ProcessingJobHandlerOptions {
   /**
@@ -24,7 +24,7 @@ export interface ProcessingJobHandlerOptions {
    */
   maxRetries?: number;
   /**
-   * Delay in seconds for a redelivered message, at most 43200 (12 hours,
+   * Delay in seconds for a redelivered message, at most 86400 (24 hours,
    * Cloudflare's limit); omitted uses the queue's `retry_delay`.
    */
   retryDelaySeconds?: number;

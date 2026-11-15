@@ -36,11 +36,11 @@ export interface CloudflareFlowFnProvider {
   getQueue(name: string): CloudflareFlowFnQueue | undefined;
 }
 
-/** The longest delay Cloudflare Queues accepts for a message: 12 hours. */
-export const MAX_QUEUE_DELAY_SECONDS = 43_200;
+/** The longest delay Cloudflare Queues accepts for a message: 24 hours. */
+export const MAX_QUEUE_DELAY_SECONDS = 86_400;
 
 export interface CloudflareQueueProducerSettings {
-  /** Delays first delivery of every message by this many seconds, at most 43200 (12 hours). */
+  /** Delays first delivery of every message by this many seconds, at most 86400 (24 hours). */
   delaySeconds?: number;
   /** Generates the `jobId` added to each message; defaults to `crypto.randomUUID()`. */
   generateJobId?: () => string;

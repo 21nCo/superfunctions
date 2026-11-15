@@ -1,5 +1,6 @@
 import type { Adapter } from '@superfunctions/db';
 import { resolveArtifactStorageTarget, resolveStorageTarget, type PolicyRegistry } from './policies.js';
+import { PROCESSING_RUN_KIND } from './processing/service.js';
 
 /**
  * One stored object: the same key in two storage targets is two objects, so
@@ -22,8 +23,9 @@ export interface StorageReferenceLookup {
 
 /**
  * Returns the refs among `candidates` that a `fileVersions` or `fileArtifacts`
- * row still references. Each row's target comes from its file's policy: the
- * storage target for a version, the artifact storage target for an artifact.
+ * row still references; a processing run row stores no object and references
+ * nothing. Each row's target comes from its file's policy: the storage target
+ * for a version, the artifact storage target for an artifact.
  * Rows of the `exclude` file are ignored; with a `versionId`, only that
  * version's rows are.
  */
@@ -65,13 +67,15 @@ export async function findReferencedStorageRefs(
     }
   }
 
-  const allArtifacts = await db.findMany<{ fileId: string; versionId: string; storageKey: string }>({
+  const allArtifacts = await db.findMany<{ fileId: string; versionId: string; kind: string; storageKey: string }>({
     model: 'fileArtifacts',
     where: [],
-    select: ['fileId', 'versionId', 'storageKey'],
+    select: ['fileId', 'versionId', 'kind', 'storageKey'],
     namespace,
   });
   for (const artifact of allArtifacts) {
+    // A processing run row stores no object; its key is a placeholder.
+    if (artifact.kind === PROCESSING_RUN_KIND) continue;
     const ref = storageRef(resolveArtifactStorageTarget(policyFor(artifact.fileId)), artifact.storageKey);
     if (!isExcluded(artifact) && candidates.has(ref)) {
       referenced.add(ref);

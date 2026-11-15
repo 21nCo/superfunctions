@@ -52,17 +52,17 @@ describe('Cloudflare Queues producer', () => {
     expect(binding.send).toHaveBeenCalledWith(expect.anything(), { contentType: 'json', delaySeconds: 30 });
   });
 
-  it('accepts a delay up to the 12-hour Cloudflare limit and refuses a longer one at creation', async () => {
+  it('accepts a delay up to the 24-hour Cloudflare limit and refuses a longer one at creation', async () => {
     const binding = createBinding();
-    const producer = createCloudflareQueueProducer({ queue: binding, delaySeconds: 43_200, generateJobId: () => 'j' });
+    const producer = createCloudflareQueueProducer({ queue: binding, delaySeconds: 86_400, generateJobId: () => 'j' });
     await producer.add(job);
-    expect(binding.send).toHaveBeenCalledWith(expect.anything(), { contentType: 'json', delaySeconds: 43_200 });
-    expect(MAX_QUEUE_DELAY_SECONDS).toBe(43_200);
+    expect(binding.send).toHaveBeenCalledWith(expect.anything(), { contentType: 'json', delaySeconds: 86_400 });
+    expect(MAX_QUEUE_DELAY_SECONDS).toBe(86_400);
 
-    expect(() => createCloudflareQueueProducer({ queue: createBinding(), delaySeconds: 43_201 })).toThrow(
+    expect(() => createCloudflareQueueProducer({ queue: createBinding(), delaySeconds: 86_401 })).toThrow(
       'FILEFN_QUEUE_DELAY_INVALID',
     );
-    expect(() => createCloudflareFlowFnProvider({ [PROCESSING_QUEUE_NAME]: createBinding() }, { delaySeconds: 43_201 }))
+    expect(() => createCloudflareFlowFnProvider({ [PROCESSING_QUEUE_NAME]: createBinding() }, { delaySeconds: 86_401 }))
       .toThrow('FILEFN_QUEUE_DELAY_INVALID');
   });
 

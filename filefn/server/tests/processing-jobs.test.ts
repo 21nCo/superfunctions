@@ -144,6 +144,25 @@ async function readArtifact(fileFn: FileFn, fileId: string, artifactId: string):
   return new Response(stream).text();
 }
 
+/** A processor that returns `result`, or what `result()` returns, as is. */
+function returning(name: string, result: unknown): Processor {
+  return {
+    name,
+    supportedMimeTypes: ['text/plain'],
+    process: async () => (typeof result === 'function' ? result() : result) as never,
+  };
+}
+
+/** A storable artifact under `artifacts/bad`, with `overrides` applied. */
+function badArtifact(overrides: Record<string, unknown>) {
+  return { kind: 'bad', storageKey: 'artifacts/bad', mimeType: 'text/plain', data: new Uint8Array([1]), ...overrides };
+}
+
+/** A version for `runProcessing`; its source object is never read. */
+const inlineInput = {
+  fileId: 'file_1', versionId: 'ver_1', storageKey: 'tenant/file_1/ver_1', mimeType: 'text/plain', size: 3, fileName: 'note.txt',
+};
+
 function message(body: unknown, attempts: number): ProcessingQueueMessage & {
   ack: ReturnType<typeof vi.fn>;
   retry: ReturnType<typeof vi.fn>;
@@ -185,6 +204,65 @@ function pauseDeleteMany(database: Adapter, model: string, when: 'before' | 'aft
     },
   });
   return { adapter, reached: reachedPromise, release };
+}
+
+/**
+ * Wraps `storage` so each upload whose key ends with `suffix` (every upload
+ * without one) is recorded and first runs the hook `beforeNextUpload` set, once.
+ */
+function hookUploads(storage: StorageAdapter, suffix = '') {
+  const uploads: { key: string; target?: string }[] = [];
+  let hook: (() => Promise<void>) | undefined;
+  const hooked: StorageAdapter = {
+    ...storage,
+    async openUploadStream(input) {
+      if (input.key.endsWith(suffix)) {
+        uploads.push({ key: input.key, target: input.target });
+        const pending = hook;
+        hook = undefined;
+        await pending?.();
+      }
+      return storage.openUploadStream!(input);
+    },
+  };
+  return {
+    storage: hooked,
+    uploads,
+    beforeNextUpload(next: () => Promise<void>) {
+      hook = next;
+    },
+  };
+}
+
+/**
+ * Completes the job of a first file, then drops a second file's job by
+ * deleting that file during its upload. Both jobs write the same key.
+ */
+async function dropJobSharingKey(text: string, policy?: string) {
+  const storage = createMemoryStorage();
+  const hooked = hookUploads(storage);
+  const shared = textProcessor('stamp', { storageKeyFor: () => 'artifacts/shared-stamp' });
+  const { fileFn, queue } = setup([shared], { storage: hooked.storage });
+  const first = await uploadNote(fileFn, text, policy);
+  const removed = await uploadNote(fileFn, 'removed');
+  const handler = createProcessingJobHandler(fileFn);
+  expect(await handler.handle(queue.jobs[0])).toMatchObject({ status: 'completed' });
+  hooked.beforeNextUpload(() => fileFn.deleteFile({ fileId: removed.fileId }, owner));
+
+  expect(await handler.handle(queue.jobs[1])).toEqual({ status: 'dropped', reason: 'version-deleted' });
+  return { fileFn, storage, first };
+}
+
+/** A listener that throws. */
+function throwing() {
+  return vi.fn(() => {
+    throw new Error('listener unavailable');
+  });
+}
+
+/** `artifacts/bad` was never stored. */
+async function expectNotStored(storage: StorageAdapter) {
+  await expect(storage.statObject({ key: 'artifacts/bad', target: 'durable' })).rejects.toThrow('object not found');
 }
 
 function nextTurn() {
@@ -521,43 +599,23 @@ describe('processing jobs', () => {
 
     it('drops the job and removes the uploaded object and row when the delete lands during the upload', async () => {
       const storage = createMemoryStorage();
-      const uploads: { key: string; target?: string }[] = [];
-      let deleteDuringUpload: (() => Promise<void>) | undefined;
-      const deletingStorage: StorageAdapter = {
-        ...storage,
-        async openUploadStream(input) {
-          if (input.key.endsWith('.uppercase')) {
-            uploads.push({ key: input.key, target: input.target });
-            const pending = deleteDuringUpload;
-            deleteDuringUpload = undefined;
-            await pending?.();
-          }
-          return storage.openUploadStream!(input);
-        },
-      };
+      const hooked = hookUploads(storage, '.uppercase');
       const completed = vi.fn();
-      const { fileFn, queue, database } = setup([textProcessor('uppercase')], { storage: deletingStorage });
+      const { fileFn, queue, database } = setup([textProcessor('uppercase')], { storage: hooked.storage });
       fileFn.events.on('processing.completed', completed);
       const { fileId } = await uploadNote(fileFn);
-      deleteDuringUpload = () => fileFn.deleteFile({ fileId }, owner);
+      hooked.beforeNextUpload(() => fileFn.deleteFile({ fileId }, owner));
 
       expect(await createProcessingJobHandler(fileFn).handle(queue.jobs[0])).toEqual({
         status: 'dropped', reason: 'version-deleted',
       });
       expect(completed).not.toHaveBeenCalled();
-      await expectNothingLeft(database, storage, uploads);
+      await expectNothingLeft(database, storage, hooked.uploads);
     });
 
     it('drops the job and removes the object and row when the delete lands during the row write', async () => {
       const storage = createMemoryStorage();
-      const uploads: { key: string; target?: string }[] = [];
-      const recordingStorage: StorageAdapter = {
-        ...storage,
-        async openUploadStream(input) {
-          if (input.key.endsWith('.uppercase')) uploads.push({ key: input.key, target: input.target });
-          return storage.openUploadStream!(input);
-        },
-      };
+      const hooked = hookUploads(storage, '.uppercase');
       let deleteDuringRowWrite: (() => Promise<void>) | undefined;
       const base = withUniqueArtifactIds(memoryAdapter());
       const database = new Proxy(base, {
@@ -574,29 +632,22 @@ describe('processing jobs', () => {
           };
         },
       });
-      const { fileFn, queue } = setup([textProcessor('uppercase')], { storage: recordingStorage, database });
+      const { fileFn, queue } = setup([textProcessor('uppercase')], { storage: hooked.storage, database });
       const { fileId } = await uploadNote(fileFn);
       deleteDuringRowWrite = () => fileFn.deleteFile({ fileId }, owner);
 
       expect(await createProcessingJobHandler(fileFn).handle(queue.jobs[0])).toEqual({
         status: 'dropped', reason: 'version-deleted',
       });
-      await expectNothingLeft(database, storage, uploads);
+      await expectNothingLeft(database, storage, hooked.uploads);
     });
 
     it('removes the artifacts a job finished while the delete was in progress', async () => {
       const storage = createMemoryStorage();
-      const uploads: { key: string; target?: string }[] = [];
-      const recordingStorage: StorageAdapter = {
-        ...storage,
-        async openUploadStream(input) {
-          if (input.key.endsWith('.uppercase')) uploads.push({ key: input.key, target: input.target });
-          return storage.openUploadStream!(input);
-        },
-      };
+      const hooked = hookUploads(storage, '.uppercase');
       // The delete has read the file's rows but not yet removed its versions.
       const paused = pauseDeleteMany(withUniqueArtifactIds(memoryAdapter()), 'fileVersions', 'before');
-      const { fileFn, queue } = setup([textProcessor('uppercase')], { storage: recordingStorage, database: paused.adapter });
+      const { fileFn, queue } = setup([textProcessor('uppercase')], { storage: hooked.storage, database: paused.adapter });
       const { fileId } = await uploadNote(fileFn);
 
       const deleting = fileFn.deleteFile({ fileId }, owner);
@@ -605,36 +656,23 @@ describe('processing jobs', () => {
       paused.release();
       await deleting;
 
-      await expectNothingLeft(paused.adapter, storage, uploads);
+      await expectNothingLeft(paused.adapter, storage, hooked.uploads);
     });
 
     it('drops a job whose writes land after the delete removed the version', async () => {
       const storage = createMemoryStorage();
-      const uploads: { key: string; target?: string }[] = [];
-      let deleteDuringUpload: (() => Promise<void>) | undefined;
-      const deletingStorage: StorageAdapter = {
-        ...storage,
-        async openUploadStream(input) {
-          if (input.key.endsWith('.uppercase')) {
-            uploads.push({ key: input.key, target: input.target });
-            const pending = deleteDuringUpload;
-            deleteDuringUpload = undefined;
-            await pending?.();
-          }
-          return storage.openUploadStream!(input);
-        },
-      };
+      const hooked = hookUploads(storage, '.uppercase');
       // The delete has removed the versions but not yet listed the artifacts.
       const paused = pauseDeleteMany(withUniqueArtifactIds(memoryAdapter()), 'fileVersions', 'after');
       const completed = vi.fn();
-      const { fileFn, queue } = setup([textProcessor('uppercase')], { storage: deletingStorage, database: paused.adapter });
+      const { fileFn, queue } = setup([textProcessor('uppercase')], { storage: hooked.storage, database: paused.adapter });
       fileFn.events.on('processing.completed', completed);
       const { fileId } = await uploadNote(fileFn);
       let deleting: Promise<void> | undefined;
-      deleteDuringUpload = async () => {
+      hooked.beforeNextUpload(async () => {
         deleting = fileFn.deleteFile({ fileId }, owner);
         await paused.reached;
-      };
+      });
 
       expect(await createProcessingJobHandler(fileFn).handle(queue.jobs[0])).toEqual({
         status: 'dropped', reason: 'version-deleted',
@@ -643,31 +681,12 @@ describe('processing jobs', () => {
       await deleting;
 
       expect(completed).not.toHaveBeenCalled();
-      await expectNothingLeft(paused.adapter, storage, uploads);
+      await expectNothingLeft(paused.adapter, storage, hooked.uploads);
     });
 
     it('deletes an object whose key another file uses only in a different storage target', async () => {
-      const storage = createMemoryStorage();
-      let deleteDuringUpload: (() => Promise<void>) | undefined;
-      const deletingStorage: StorageAdapter = {
-        ...storage,
-        async openUploadStream(input) {
-          const pending = deleteDuringUpload;
-          deleteDuringUpload = undefined;
-          await pending?.();
-          return storage.openUploadStream!(input);
-        },
-      };
-      const shared = textProcessor('stamp', { storageKeyFor: () => 'artifacts/shared-stamp' });
-      const { fileFn, queue } = setup([shared], { storage: deletingStorage });
       // The archived file's artifact has the same key in the `archive` target.
-      const archived = await uploadNote(fileFn, 'archived', 'archived-note');
-      const removed = await uploadNote(fileFn, 'removed');
-      const handler = createProcessingJobHandler(fileFn);
-      expect(await handler.handle(queue.jobs[0])).toMatchObject({ status: 'completed' });
-      deleteDuringUpload = () => fileFn.deleteFile({ fileId: removed.fileId }, owner);
-
-      expect(await handler.handle(queue.jobs[1])).toEqual({ status: 'dropped', reason: 'version-deleted' });
+      const { fileFn, storage, first: archived } = await dropJobSharingKey('archived', 'archived-note');
 
       await expect(storage.statObject({ key: 'artifacts/shared-stamp', target: 'durable' }))
         .rejects.toThrow('object not found');
@@ -676,26 +695,7 @@ describe('processing jobs', () => {
     });
 
     it('keeps an object another file still references in the same storage target', async () => {
-      const storage = createMemoryStorage();
-      let deleteDuringUpload: (() => Promise<void>) | undefined;
-      const deletingStorage: StorageAdapter = {
-        ...storage,
-        async openUploadStream(input) {
-          const pending = deleteDuringUpload;
-          deleteDuringUpload = undefined;
-          await pending?.();
-          return storage.openUploadStream!(input);
-        },
-      };
-      const shared = textProcessor('stamp', { storageKeyFor: () => 'artifacts/shared-stamp' });
-      const { fileFn, queue } = setup([shared], { storage: deletingStorage });
-      const kept = await uploadNote(fileFn, 'kept');
-      const removed = await uploadNote(fileFn, 'removed');
-      const handler = createProcessingJobHandler(fileFn);
-      expect(await handler.handle(queue.jobs[0])).toMatchObject({ status: 'completed' });
-      deleteDuringUpload = () => fileFn.deleteFile({ fileId: removed.fileId }, owner);
-
-      expect(await handler.handle(queue.jobs[1])).toEqual({ status: 'dropped', reason: 'version-deleted' });
+      const { fileFn, first: kept } = await dropJobSharingKey('kept');
 
       const [artifact] = await listArtifacts(fileFn, kept.fileId);
       expect(artifact.storageKey).toBe('artifacts/shared-stamp');
@@ -896,7 +896,7 @@ describe('processing jobs', () => {
   });
 
   describe('when a delivery fails after every processor finished', () => {
-    async function expectOneCompletion(options: { failVersionRead?: boolean; failListener?: boolean }) {
+    async function expectOneCompletion(options: { failVersionRead: boolean }) {
       const processor = textProcessor('uppercase');
       let failNextVersionRead = false;
       const database = new Proxy(withUniqueArtifactIds(memoryAdapter()), {
@@ -925,14 +925,7 @@ describe('processing jobs', () => {
       const { fileFn, queue } = setup([processor], { database });
       const completed = vi.fn();
       const failed = vi.fn();
-      let listenerFailures = options.failListener ? 1 : 0;
-      fileFn.events.on('processing.completed', (event) => {
-        if (listenerFailures > 0) {
-          listenerFailures -= 1;
-          throw new Error('listener unavailable');
-        }
-        completed(event);
-      });
+      fileFn.events.on('processing.completed', completed);
       fileFn.events.on('processing.failed', failed);
       const { fileId, versionId } = await uploadNote(fileFn);
       const handler = createProcessingJobHandler(fileFn);
@@ -956,8 +949,62 @@ describe('processing jobs', () => {
       await expectOneCompletion({ failVersionRead: true });
     });
 
-    it('emits processing.completed on redelivery when a listener threw', async () => {
-      await expectOneCompletion({ failListener: true });
+  });
+
+  describe('when a processing event listener throws', () => {
+    it.each([['an ordinary', 1], ['the last', 2]])(
+      'completes the job on %s delivery and records its completion',
+      async (_delivery, attempts) => {
+        const processor = textProcessor('uppercase');
+        const { fileFn, queue } = setup([processor]);
+        const listener = throwing();
+        const failed = vi.fn();
+        fileFn.events.on('processing.completed', listener);
+        fileFn.events.on('processing.failed', failed);
+        const { fileId } = await uploadNote(fileFn);
+        const handler = createProcessingJobHandler(fileFn, { maxRetries: 1 });
+        const delivery = message(queue.jobs[0], attempts);
+
+        await handler.queue({ messages: [delivery] });
+
+        expect(delivery.ack).toHaveBeenCalledTimes(1);
+        expect(delivery.retry).not.toHaveBeenCalled();
+        expect(failed).not.toHaveBeenCalled();
+        // The completion was recorded, so the job does not run or notify again.
+        expect(await handler.handle(queue.jobs[0], { attempts: attempts + 1 })).toEqual({ status: 'duplicate' });
+        expect(listener).toHaveBeenCalledTimes(1);
+        expect(processor.inputs).toHaveLength(1);
+        expect(await listArtifacts(fileFn, fileId)).toHaveLength(1);
+      },
+    );
+
+    it('fails the job on its last delivery when a processing.failed listener throws', async () => {
+      const { fileFn, queue } = setup([textProcessor('uppercase', { fail: () => 'disk full' })]);
+      const listener = throwing();
+      fileFn.events.on('processing.failed', listener);
+      await uploadNote(fileFn);
+      const handler = createProcessingJobHandler(fileFn, { maxRetries: 1 });
+      const ordinary = message(queue.jobs[0], 1);
+      const last = message(queue.jobs[0], 2);
+
+      await handler.queue({ messages: [ordinary] });
+      await handler.queue({ messages: [last] });
+
+      expect(ordinary.retry).toHaveBeenCalledTimes(1);
+      expect(last.ack).toHaveBeenCalledTimes(1);
+      expect(last.retry).not.toHaveBeenCalled();
+      expect(listener).toHaveBeenCalledTimes(1);
+      expect(listener).toHaveBeenCalledWith(expect.objectContaining({ error: 'uppercase: disk full' }));
+    });
+
+    it('returns the inline result when a processing.completed listener throws', async () => {
+      const events = createEventEmitter();
+      events.on('processing.completed', throwing());
+      const service = createProcessingService({
+        db: memoryAdapter(), storage: createMemoryStorage(), events, processors: [returning('noop', { success: true, artifacts: [] })], enabled: true,
+      });
+
+      await expect(service.runProcessing(inlineInput, owner)).resolves.toEqual({ artifactsCreated: 0, errors: [] });
     });
   });
 
@@ -1080,53 +1127,76 @@ describe('processing jobs', () => {
     expect(processor.inputs).toHaveLength(1);
   });
 
-  it('records an invalid processor result as an error when processing inline', async () => {
-    const silent: Processor = { name: 'silent', supportedMimeTypes: ['text/plain'], process: async () => null as never };
-    const service = createProcessingService({
-      db: memoryAdapter(), storage: createMemoryStorage(), events: createEventEmitter(), processors: [silent], enabled: true,
+  describe('when a processor returns an invalid result', () => {
+    const invalidResults: [string, unknown, string][] = [
+      ['no object', null, 'processor returned an invalid result'],
+      ['a non-boolean success', { success: 1, artifacts: [] }, 'processor returned an invalid result'],
+      ['a string success', { success: 'yes', artifacts: [] }, 'processor returned an invalid result'],
+      ['a success without an artifacts array', { success: true }, 'processor returned an invalid result'],
+      ['the reserved run kind', { success: true, artifacts: [badArtifact({ kind: PROCESSING_RUN_KIND })] },
+        `processor emitted the reserved artifact kind ${PROCESSING_RUN_KIND}`],
+      ['an artifact without bytes', { success: true, artifacts: [badArtifact({ data: 'text' })] }, 'processor returned an invalid artifact'],
+      ['an artifact without a kind', { success: true, artifacts: [badArtifact({ kind: '' })] }, 'processor returned an invalid artifact'],
+      ['a missing artifact', { success: true, artifacts: [null] }, 'processor returned an invalid artifact'],
+    ];
+
+    it.each(invalidResults)('records %s as an error and stores nothing when processing inline', async (_case, result, error) => {
+      const storage = createMemoryStorage();
+      const service = createProcessingService({
+        db: memoryAdapter(), storage, events: createEventEmitter(), processors: [returning('bad', result)], enabled: true,
+      });
+
+      expect(await service.runProcessing(inlineInput, owner)).toEqual({ artifactsCreated: 0, errors: [`bad: ${error}`] });
+      await expectNotStored(storage);
     });
 
-    const result = await service.runProcessing(
-      { fileId: 'file_1', versionId: 'ver_1', storageKey: 'tenant/file_1/ver_1', mimeType: 'text/plain', size: 3, fileName: 'note.txt' },
-      owner,
-    );
+    it.each(invalidResults)('retries %s with nothing recorded and fails it once retries run out', async (_case, result, error) => {
+      const storage = createMemoryStorage();
+      const { fileFn, queue, database } = setup([returning('bad', result)], { storage });
+      const failed = vi.fn();
+      const completed = vi.fn();
+      fileFn.events.on('processing.failed', failed);
+      fileFn.events.on('processing.completed', completed);
+      const { fileId } = await uploadNote(fileFn);
+      const handler = createProcessingJobHandler(fileFn, { maxRetries: 1 });
+      const first = message(queue.jobs[0], 1);
+      const last = message(queue.jobs[0], 2);
 
-    expect(result).toEqual({ artifactsCreated: 0, errors: ['silent: processor returned an invalid result'] });
+      await handler.queue({ messages: [first] });
+      expect(first.retry).toHaveBeenCalledTimes(1);
+      await handler.queue({ messages: [last] });
+
+      expect(last.ack).toHaveBeenCalledTimes(1);
+      expect(failed).toHaveBeenCalledTimes(1);
+      expect(failed).toHaveBeenCalledWith(expect.objectContaining({ fileId, error: `bad: ${error}` }));
+      expect(completed).not.toHaveBeenCalled();
+      expect(await database.findMany({ model: 'fileArtifacts', where: [], namespace: 'jobs_test' })).toEqual([]);
+      await expectNotStored(storage);
+    });
   });
 
-  it('retries a processor that reports success without an artifacts array and fails it once retries run out', async () => {
-    let calls = 0;
-    const partial: Processor = {
-      name: 'partial',
-      supportedMimeTypes: ['text/plain'],
-      process: async () => {
-        calls += 1;
-        return { success: true } as never;
-      },
-    };
-    const { fileFn, queue, database } = setup([partial]);
-    const failed = vi.fn();
-    const completed = vi.fn();
-    fileFn.events.on('processing.failed', failed);
-    fileFn.events.on('processing.completed', completed);
-    const { fileId } = await uploadNote(fileFn);
-    const handler = createProcessingJobHandler(fileFn, { maxRetries: 1 });
-    const first = message(queue.jobs[0], 1);
-    const last = message(queue.jobs[0], 2);
+  it("deletes an artifact object whose key equals another file's run row key", async () => {
+    let runKey: string | undefined;
+    const storage = createMemoryStorage();
+    const { fileFn, queue, database } = setup([returning('stamp', () => ({
+      success: true,
+      artifacts: runKey ? [badArtifact({ kind: 'stamp', storageKey: runKey })] : [],
+    }))], { storage });
+    await uploadNote(fileFn, 'first');
+    const second = await uploadNote(fileFn, 'second');
+    const handler = createProcessingJobHandler(fileFn);
+    expect(await handler.handle(queue.jobs[0])).toMatchObject({ status: 'completed', artifactsCreated: 0 });
+    const [run] = await database.findMany<{ storageKey: string }>({
+      model: 'fileArtifacts', where: [{ field: 'kind', operator: 'eq', value: PROCESSING_RUN_KIND }], namespace: 'jobs_test',
+    });
+    runKey = run.storageKey;
+    expect(await handler.handle(queue.jobs[1])).toMatchObject({ status: 'completed', artifactsCreated: 1 });
+    await expect(storage.statObject({ key: runKey, target: 'durable' })).resolves.toBeDefined();
 
-    await handler.queue({ messages: [first] });
+    await fileFn.deleteFile({ fileId: second.fileId }, owner);
 
-    expect(first.retry).toHaveBeenCalledTimes(1);
-    expect(await database.findMany({ model: 'fileArtifacts', where: [], namespace: 'jobs_test' })).toEqual([]);
-
-    await handler.queue({ messages: [last] });
-
-    expect(last.ack).toHaveBeenCalledTimes(1);
-    expect(calls).toBe(2);
-    expect(failed).toHaveBeenCalledTimes(1);
-    expect(failed).toHaveBeenCalledWith(expect.objectContaining({ fileId, error: 'partial: processor returned an invalid result' }));
-    expect(completed).not.toHaveBeenCalled();
-    expect(await database.findMany({ model: 'fileArtifacts', where: [], namespace: 'jobs_test' })).toEqual([]);
+    // The first file's run row stores no object, so it does not keep this one.
+    await expect(storage.statObject({ key: runKey, target: 'durable' })).rejects.toThrow('object not found');
   });
 
   it('counts the artifacts recorded before a later artifact write fails', async () => {
@@ -1157,8 +1227,8 @@ describe('processing jobs', () => {
     expect(() => createProcessingJobHandler({ ...fileFn })).toThrow('FILEFN_PROCESSING_HANDLER_UNBOUND');
     expect(() => createProcessingJobHandler(disabled)).toThrow('FILEFN_PROCESSING_DISABLED');
     expect(() => createProcessingJobHandler(fileFn, { maxRetries: -1 })).toThrow('FILEFN_PROCESSING_HANDLER_CONFIG_INVALID');
-    // Cloudflare Queues accepts message delays of at most 12 hours.
-    expect(() => createProcessingJobHandler(fileFn, { retryDelaySeconds: 43_200 })).not.toThrow();
-    expect(() => createProcessingJobHandler(fileFn, { retryDelaySeconds: 43_201 })).toThrow('FILEFN_PROCESSING_HANDLER_CONFIG_INVALID');
+    // Cloudflare Queues accepts message delays of at most 24 hours.
+    expect(() => createProcessingJobHandler(fileFn, { retryDelaySeconds: 86_400 })).not.toThrow();
+    expect(() => createProcessingJobHandler(fileFn, { retryDelaySeconds: 86_401 })).toThrow('FILEFN_PROCESSING_HANDLER_CONFIG_INVALID');
   });
 });

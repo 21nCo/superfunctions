@@ -244,6 +244,78 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
+/**
+ * Why a processor's result cannot be accepted, or `undefined` when it can.
+ * `success` must be a boolean; a success needs an `artifacts` array whose
+ * every artifact can be stored, under a kind other than the reserved run
+ * kind. Nothing is uploaded or recorded for a result this rejects.
+ */
+function invalidProcessorResult(result: unknown): string | undefined {
+  if (typeof result !== 'object' || result === null) return 'processor returned an invalid result';
+  const { success, artifacts } = result as Partial<ProcessorResult>;
+  if (typeof success !== 'boolean') return 'processor returned an invalid result';
+  if (!success) return undefined;
+  if (!Array.isArray(artifacts)) return 'processor returned an invalid result';
+  for (const artifact of artifacts as unknown[]) {
+    const { kind, storageKey, mimeType, data } = (artifact ?? {}) as Partial<ProcessorOutputArtifact>;
+    if (kind === PROCESSING_RUN_KIND) return `processor emitted the reserved artifact kind ${PROCESSING_RUN_KIND}`;
+    if (!isNonEmptyString(kind) || !isNonEmptyString(storageKey) || typeof mimeType !== 'string' || !(data instanceof Uint8Array)) {
+      return 'processor returned an invalid artifact';
+    }
+  }
+  return undefined;
+}
+
+/** Runs one processor and times its `process` call. */
+async function executeProcessor(
+  processor: Processor,
+  input: ProcessorInput,
+  getData: () => Promise<Uint8Array>,
+): Promise<{ result?: ProcessorResult; error?: string; durationMs: number }> {
+  const startedAt = Date.now();
+  try {
+    const result = await processor.process(input, getData);
+    const durationMs = Math.max(0, Date.now() - startedAt);
+    // An invalid result is a processor failure, never a skip or a success.
+    const invalid = invalidProcessorResult(result);
+    if (invalid) {
+      return { error: invalid, durationMs };
+    }
+    if (!result.success) {
+      return { error: result.error, durationMs };
+    }
+    return { result, durationMs };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : 'Unknown error', durationMs: Math.max(0, Date.now() - startedAt) };
+  }
+}
+
+/**
+ * Emits a processing event without letting a listener change the job: Node's
+ * EventEmitter rethrows a listener's error, which is logged here instead.
+ */
+function emitIsolated(
+  events: FileFnEventEmitter,
+  logger: Logger | undefined,
+  event: 'processing.completed' | 'processing.failed',
+  payload: { requestId?: string; fileId: string; versionId: string } & Record<string, unknown>,
+): void {
+  try {
+    events.emit(event as any, { type: event, timestamp: new Date().toISOString(), ...payload });
+  } catch (error) {
+    logger?.error(`${event} listener failed`, {
+      requestId: payload.requestId,
+      fileId: payload.fileId,
+      versionId: payload.versionId,
+      error: errorMessage(error),
+    });
+  }
+}
+
 const MAX_JOB_FIELD_LENGTH = 512;
 
 function isJobField(value: unknown): value is string {
@@ -526,30 +598,6 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       dataCache = data;
       return data;
     };
-  }
-
-  /** Runs one processor and times its `process` call. */
-  async function executeProcessor(
-    processor: Processor,
-    input: ProcessorInput,
-    getData: () => Promise<Uint8Array>,
-  ): Promise<{ result?: ProcessorResult; error?: string; durationMs: number }> {
-    const startedAt = Date.now();
-    try {
-      const result = await processor.process(input, getData);
-      const durationMs = Math.max(0, Date.now() - startedAt);
-      // A non-object result, or a success without an artifacts array, is a
-      // processor failure rather than a silent skip or an empty success.
-      if (typeof result !== 'object' || result === null || (result.success && !Array.isArray(result.artifacts))) {
-        return { error: 'processor returned an invalid result', durationMs };
-      }
-      if (!result.success) {
-        return { error: result.error, durationMs };
-      }
-      return { result, durationMs };
-    } catch (error) {
-      return { error: error instanceof Error ? error.message : 'Unknown error', durationMs: Math.max(0, Date.now() - startedAt) };
-    }
   }
 
   /**
@@ -907,9 +955,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       (total, entry) => total + recordedArtifactCount(recordedRuns.get(runIdFor(entry))),
       writes.artifactsRecorded,
     );
-    events.emit('processing.completed' as any, {
-      type: 'processing.completed',
-      timestamp: new Date().toISOString(),
+    emitIsolated(events, logger, 'processing.completed', {
       requestId: job.requestId,
       fileId: input.fileId,
       versionId: input.versionId,
@@ -1012,9 +1058,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
             versionId: input.versionId,
             error: error instanceof Error ? error.stack ?? error.message : String(error),
           });
-          events.emit('processing.failed' as any, {
-            type: 'processing.failed',
-            timestamp: new Date().toISOString(),
+          emitIsolated(events, logger, 'processing.failed', {
             requestId: ctx.requestId,
             fileId: input.fileId,
             versionId: input.versionId,
@@ -1069,9 +1113,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         artifactsCreated += writes.artifactsRecorded;
       }
 
-      events.emit('processing.completed' as any, {
-        type: 'processing.completed',
-        timestamp: new Date().toISOString(),
+      emitIsolated(events, logger, 'processing.completed', {
         requestId: ctx.requestId,
         fileId: input.fileId,
         versionId: input.versionId,
@@ -1138,9 +1180,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       }
 
       logger?.error('processing job failed after its last attempt', { ...logContext, errors: outcome.errors });
-      events.emit('processing.failed' as any, {
-        type: 'processing.failed',
-        timestamp: new Date().toISOString(),
+      emitIsolated(events, logger, 'processing.failed', {
         requestId: job.requestId,
         fileId: job.fileId,
         versionId: job.versionId,
