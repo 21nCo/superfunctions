@@ -844,8 +844,7 @@ export async function resolveAccessLevel(
 
   const recordObject = record as Record<string, unknown>;
   const actorPrincipal = canonicalizeActorPrincipal(actorId);
-  const namespacePrincipal = normalizeNonEmptyString(namespace);
-  if (namespacePrincipal && actorPrincipal === namespacePrincipal) {
+  if (isNamespaceOwnerActor(actorId, namespace)) {
     return "owner";
   }
 

@@ -21,6 +21,7 @@ import { logRequest } from "../logging.js";
 import type { DatafnLogger } from "../logger.js";
 import { ExecutionTimer, type TimingEmitter } from "../middleware/timing.js";
 import {
+  isNamespaceOwnerActor,
   isPrivateShareableResource,
   resolveAccessLevel,
   validateQueryAuthz,
@@ -101,6 +102,13 @@ export function createQueryHandler(
     }
     if (!actorId) {
       return { shareableAccessIds: [] };
+    }
+    // The namespace owner can read every record in it (the same rule as
+    // resolveAccessLevel): no id list, so no owned-row read and no `id IN`
+    // filter, which for a large namespace exceeds bound-parameter limits and
+    // hides owned rows whose createdBy is unset.
+    if (isNamespaceOwnerActor(actorId, namespace)) {
+      return { shareableAccessIds: [], hasShareableScopeAccess: true };
     }
 
     const ids = new Set<string>();

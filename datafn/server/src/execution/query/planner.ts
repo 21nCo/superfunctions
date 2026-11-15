@@ -44,6 +44,18 @@ export interface PushdownWhereClause {
 // ---------------------------------------------------------------------------
 
 /** Maps DFQL operator strings (with and without $ prefix) to adapter operators. */
+/**
+ * Largest `$in` list pushed to the adapter as one bound-parameter list. A
+ * longer list (e.g. a shareable access list of thousands of ids) stays an
+ * in-memory filter so the SQL statement cannot exceed a driver's parameter
+ * limit (Postgres allows 65,535 per statement).
+ */
+export const MAX_PUSHDOWN_IN_VALUES = 1000;
+
+function isOversizedInList(adapterOp: PushdownOperator, value: unknown): boolean {
+  return adapterOp === "in" && Array.isArray(value) && value.length > MAX_PUSHDOWN_IN_VALUES;
+}
+
 const DFQL_TO_ADAPTER_OP: Record<string, PushdownOperator | null> = {
   // $-prefixed DFQL operators
   $eq: "eq",
@@ -161,6 +173,9 @@ export function convertDfqlFilters(
       const adapterOp = DFQL_TO_ADAPTER_OP[op];
       if (adapterOp === null) {
         // Explicitly unpushable
+        return null;
+      }
+      if (isOversizedInList(adapterOp, opVal)) {
         return null;
       }
       if (
@@ -437,6 +452,10 @@ function hasInMemoryFilterPatterns(
         if (!(op in DFQL_TO_ADAPTER_OP) || DFQL_TO_ADAPTER_OP[op] === null) {
           return true;
         }
+        // An $in list too long to bind as one parameter list
+        if (isOversizedInList(DFQL_TO_ADAPTER_OP[op]!, ops[op])) {
+          return true;
+        }
       }
     }
 
@@ -503,6 +522,7 @@ function convertSingleFilter(
     if (!(op in DFQL_TO_ADAPTER_OP)) return null;
     const adapterOp = DFQL_TO_ADAPTER_OP[op];
     if (adapterOp === null) return null;
+    if (isOversizedInList(adapterOp, opVal)) return null;
     if (op === "$is_null" || op === "is_null") {
       result.push({
         field: key,
