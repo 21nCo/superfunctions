@@ -1,0 +1,19 @@
+scripts/gate-reviewfn-release.mjs
+  s_140d77b13eece7::t_9eef40d2a1d30c 10,73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2ff1b4dd23337cc6665ecd86c2b3bf3d43048e4f",
+  "prompts": {},
+  "sessions": {
+    "s_140d77b13eece7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1af1c63a-0bbc-4589-b64c-981477502c58",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
