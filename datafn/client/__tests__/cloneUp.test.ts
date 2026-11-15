@@ -1853,3 +1853,17 @@ describe("cloneUp — cycles and the changelog (DATA-15)", () => {
     expect(listSpy).not.toHaveBeenCalled();
   });
 });
+
+describe("cloneUp — resource order (DATA-15)", () => {
+  it("keeps the given order inside a cycle and places a resource after its targets", async () => {
+    const { orderResourcesByDependency } = await import("../src/sync/cloneUp/order.js");
+    const refs = new Map([
+      ["a", [{ field: "bId", targets: ["b"] }]],
+      ["b", [{ field: "aId", targets: ["a"] }]],
+      ["c", [{ field: "aId", targets: ["a"] }]],
+    ]);
+    expect(orderResourcesByDependency(["c", "a", "b"], refs, () => true)).toEqual(["a", "b", "c"]);
+    // Only b's reference may be unset, so b goes first.
+    expect(orderResourcesByDependency(["a", "b"], refs, (resource) => resource === "b")).toEqual(["b", "a"]);
+  });
+});

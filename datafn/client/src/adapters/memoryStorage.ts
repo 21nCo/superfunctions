@@ -342,6 +342,10 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
     return this.changelog.slice(0, limit); // Already sorted by insertion/seq
   }
 
+  async changelogLastSeq(): Promise<number | null> {
+    return this.changelog.length > 0 ? this.changelog[this.changelog.length - 1].seq : null;
+  }
+
   async changelogAck(options: { throughSeq: number }): Promise<void> {
     // Remove acked entries from both array and index
     const removed = this.changelog.filter((e) => e.seq <= options.throughSeq);

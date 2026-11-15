@@ -149,7 +149,12 @@ export async function cloneUp(
   // invalid write, and a server that enforces the reference reports the
   // rejected record in the result.
   const references = referenceFieldsByResource(schema);
-  const orderedResources = orderResourcesByDependency(resolvedResources, references);
+  const orderedResources = orderResourcesByDependency(
+    resolvedResources,
+    references,
+    (resource, field) =>
+      resourceSchemaMap.get(resource)?.fields.some((f) => f.name === field && f.nullable === true) ?? false,
+  );
   // Changelog entries written after this point (local writes made while the
   // push runs) may not be in the records read below, so finalization leaves
   // them queued for the next sync.
@@ -619,8 +624,9 @@ export async function cloneUp(
 
 /** Largest changelog sequence number in storage, or null when it is empty. */
 async function lastChangelogSeq(storage: DatafnStorageAdapter): Promise<number | null> {
-  // changelogList has no offset, so read it whole (IndexedDB caps a getAll
-  // count at 2^32 - 1).
+  if (typeof storage.changelogLastSeq === "function") return storage.changelogLastSeq();
+  // An adapter without changelogLastSeq: changelogList has no offset, so read
+  // it whole (IndexedDB caps a getAll count at 2^32 - 1).
   const entries = await storage.changelogList({ limit: 0xffffffff });
   let last: number | null = null;
   for (const entry of entries) {

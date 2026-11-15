@@ -127,6 +127,11 @@ export interface DatafnStorageAdapter {
   ): Promise<DatafnChangelogEntry>;
   changelogList(options?: { limit?: number }): Promise<DatafnChangelogEntry[]>;
   changelogAck(options: { throughSeq: number }): Promise<void>;
+  /**
+   * Largest sequence number in the changelog, or null when it is empty.
+   * Optional; callers fall back to listing the changelog.
+   */
+  changelogLastSeq?(): Promise<number | null>;
 
   // Counts for reconcile (SYNC-007)
   countRecords(resource: string): Promise<number>;

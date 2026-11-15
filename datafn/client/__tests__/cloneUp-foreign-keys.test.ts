@@ -52,6 +52,23 @@ const schema: DatafnSchema = {
         { name: "peerId", type: "string", required: false, nullable: true },
       ],
     },
+    // A cycle across resources: alphas -> betas is nullable, betas -> alphas is not.
+    {
+      name: "alphas",
+      version: 1,
+      fields: [
+        { name: "label", type: "string", required: true },
+        { name: "betaId", type: "string", required: false, nullable: true },
+      ],
+    },
+    {
+      name: "betas",
+      version: 1,
+      fields: [
+        { name: "label", type: "string", required: true },
+        { name: "alphaId", type: "string", required: true, nullable: false },
+      ],
+    },
     // A reference that must always be set.
     {
       name: "nodes",
@@ -88,6 +105,8 @@ const schema: DatafnSchema = {
       inverse: "peers",
       fkField: "peerId",
     },
+    { from: "alphas", to: "betas", type: "many-one", relation: "beta", inverse: "alphas", fkField: "betaId" },
+    { from: "betas", to: "alphas", type: "many-one", relation: "alpha", inverse: "betas", fkField: "alphaId" },
     {
       from: "nodes",
       to: "nodes",
@@ -210,7 +229,7 @@ function connect(storage: MemoryStorageAdapter) {
   return { client, pushes };
 }
 
-const newStorage = () => new MemoryStorageAdapter(["files", "folders", "links", "nodes"]);
+const newStorage = () => new MemoryStorageAdapter(["files", "folders", "links", "nodes", "alphas", "betas"]);
 
 /** Two records of `resource` whose peerId points at each other. */
 async function seedCycle(storage: MemoryStorageAdapter, resource: "links" | "nodes") {
@@ -400,5 +419,23 @@ describe("DATA-15: cloneUp against SQLite with foreign keys", () => {
     const sent = pushes.flatMap((push) => push.mutations);
     expect(sent.every((mutation) => mutation.record?.peerId !== null)).toBe(true);
     expect(rows("nodes")).toEqual([]);
+  });
+
+  it("breaks a cycle across resources at its nullable reference", async () => {
+    const storage = newStorage();
+    await storage.upsertRecord("alphas", { id: "alphas:1", label: "A", betaId: "betas:1" });
+    await storage.upsertRecord("betas", { id: "betas:1", label: "B", alphaId: "alphas:1" });
+
+    const { client, pushes } = connect(storage);
+    const result = await client.sync.cloneUp({ pullAfter: false });
+
+    expect(result.errors).toEqual([]);
+    expect(result.ok).toBe(true);
+    expect(pushes.flatMap((push) => push.mutations).map((m) => [m.id, m.record])).toEqual([
+      ["alphas:1", { label: "A", betaId: null }],
+      ["betas:1", { label: "B", alphaId: "alphas:1" }],
+      ["alphas:1", { betaId: "betas:1" }],
+    ]);
+    expect(rows("alphas").map((row) => [row.id, row.beta_id])).toEqual([["alphas:1", "betas:1"]]);
   });
 });

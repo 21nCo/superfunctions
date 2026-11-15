@@ -87,30 +87,75 @@ export function referenceFieldsByResource(
 
 /**
  * Orders resources so the targets of their foreign keys come first. Resources
- * in a cycle follow a depth-first walk from the first of them in the given
- * order (for `a -> b -> a` given as `[a, b]`: `[b, a]`), so the order is
- * deterministic; cloneUp breaks the cycle's references itself.
+ * that reference each other in a cycle stay together, in the given order
+ * where the references allow: the next one placed is the first whose
+ * references, then whose non-nullable references, are all satisfied, so
+ * cloneUp can break the cycle by unsetting a nullable reference. A cycle of
+ * only non-nullable references keeps the given order.
  */
 export function orderResourcesByDependency(
   resources: string[],
   references: Map<string, ReferenceField[]>,
+  isNullable: (resource: string, field: string) => boolean = () => false,
 ): string[] {
-  const inScope = new Set(resources);
+  const inScope = [...new Set(resources)];
+  const scope = new Set(inScope);
+  const targetsOf = (resource: string, nonNullableOnly = false) =>
+    (references.get(resource) ?? [])
+      .filter((reference) => !nonNullableOnly || !isNullable(resource, reference.field))
+      .flatMap((reference) => reference.targets)
+      .filter((target) => target !== resource && scope.has(target));
+
+  const placed = new Set<string>();
   const ordered: string[] = [];
-  const state = new Map<string, "visiting" | "done">();
-  const visit = (resource: string) => {
-    const current = state.get(resource);
-    if (current) return;
-    state.set(resource, "visiting");
-    for (const reference of references.get(resource) ?? []) {
-      for (const target of reference.targets) {
-        if (target !== resource && inScope.has(target) && !state.has(target)) visit(target);
+  const placeCycle = (members: string[]) => {
+    const remaining = inScope.filter((resource) => members.includes(resource));
+    const ready = (resource: string, nonNullableOnly: boolean) =>
+      targetsOf(resource, nonNullableOnly).every((target) => placed.has(target));
+    while (remaining.length > 0) {
+      let index = remaining.findIndex((resource) => ready(resource, false));
+      if (index < 0) index = remaining.findIndex((resource) => ready(resource, true));
+      if (index < 0) index = 0;
+      const [next] = remaining.splice(index, 1);
+      placed.add(next);
+      ordered.push(next);
+    }
+  };
+
+  // Tarjan's algorithm emits each strongly connected component after every
+  // component it references, which is the order cloneUp needs.
+  let counter = 0;
+  const indexOf = new Map<string, number>();
+  const lowLink = new Map<string, number>();
+  const stack: string[] = [];
+  const onStack = new Set<string>();
+  const connect = (resource: string) => {
+    indexOf.set(resource, counter);
+    lowLink.set(resource, counter);
+    counter++;
+    stack.push(resource);
+    onStack.add(resource);
+    for (const target of targetsOf(resource)) {
+      if (!indexOf.has(target)) {
+        connect(target);
+        lowLink.set(resource, Math.min(lowLink.get(resource)!, lowLink.get(target)!));
+      } else if (onStack.has(target)) {
+        lowLink.set(resource, Math.min(lowLink.get(resource)!, indexOf.get(target)!));
       }
     }
-    state.set(resource, "done");
-    ordered.push(resource);
+    if (lowLink.get(resource) !== indexOf.get(resource)) return;
+    const members: string[] = [];
+    let member: string;
+    do {
+      member = stack.pop()!;
+      onStack.delete(member);
+      members.push(member);
+    } while (member !== resource);
+    placeCycle(members);
   };
-  for (const resource of resources) visit(resource);
+  for (const resource of inScope) {
+    if (!indexOf.has(resource)) connect(resource);
+  }
   return ordered;
 }
 

@@ -841,6 +841,19 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
     });
   }
 
+  async changelogLastSeq(): Promise<number | null> {
+    const store = await this.getStore("changelog", "readonly");
+    return new Promise((resolve, reject) => {
+      // The store is keyed by seq, so the last key is the largest.
+      const request = store.openCursor(null, "prev");
+      request.onsuccess = () => {
+        const cursor = request.result;
+        resolve(cursor && typeof cursor.key === "number" ? cursor.key : null);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }
+
   async changelogAck(options: { throughSeq: number }): Promise<void> {
     const store = await this.getStore("changelog", "readwrite");
 
