@@ -89,24 +89,23 @@ export class FileArtifactStore implements ArtifactStore {
   }
 
   /**
-   * This store's identity: a random ID kept in `<root>/.store-id` together with the device and inode of the root
-   * directory it was created for. It is the store's only while they match, so every path that reaches the directory
-   * (another spelling, a checkout moved within its filesystem, a bind mount) shares it, while a copy of the directory,
-   * which has another inode, does not inherit it and is a new store. Without `create` a missing, malformed or inherited
-   * ID is undefined and nothing is written; with `create`, which requires the lease, such an ID is replaced (atomically,
-   * so never partial), and the replaced ID's claims stay with it. Any other failure to read the file is thrown.
+   * This store's identity, a random ID kept in `<root>/.store-id`. It belongs to the directory, not to a path: every
+   * path that reaches the directory (another spelling, a moved checkout, a remount, a bind mount in a container) shares
+   * it, and two directories created apart never do, even at one path on two hosts. A copy of the directory carries the
+   * file and so the identity (a copied checkout keeps using its copied output directory); a copy that shares an output
+   * directory with its original must have its `.store-id` deleted. With `create`, which requires the lease, a missing
+   * or malformed ID is replaced (atomically, so never partial); without it such an ID is undefined and nothing is
+   * written. Any other failure to read the file is thrown.
    */
   private async storeId(create: boolean): Promise<string | undefined> {
     const file = path.join(this.root, ".store-id");
-    const stat = await lstat(this.root, { bigint: true }).catch((error: NodeJS.ErrnoException) => missing(error) ? undefined : Promise.reject(error));
-    if (!stat) return undefined;
-    const directory = `${stat.dev}:${stat.ino}`;
-    const raw = await safeRead(file, 256).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? undefined : Promise.reject(error));
-    const recorded = (() => { try { return raw && JSON.parse(raw.toString("utf8")) as { id?: unknown; directory?: unknown } | null; } catch { return undefined; } })();
-    if (typeof recorded?.id === "string" && /^[a-f0-9]{16}$/.test(recorded.id) && recorded.directory === directory) return recorded.id;
+    const exists = await lstat(this.root).then(() => true, (error: NodeJS.ErrnoException) => missing(error) ? false : Promise.reject(error));
+    const raw = exists ? await safeRead(file, 64).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? undefined : Promise.reject(error)) : undefined;
+    const id = raw?.toString("utf8");
+    if (id !== undefined && /^[a-f0-9]{16}$/.test(id)) return id;
     if (!create) return undefined;
     const fresh = randomBytes(8).toString("hex");
-    await safeWrite(file, JSON.stringify({ id: fresh, directory }));
+    await safeWrite(file, fresh);
     return fresh;
   }
 
