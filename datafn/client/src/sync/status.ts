@@ -1,3 +1,4 @@
+import { isImportContext } from "../events/importMarker.js";
 import type { DatafnError, DatafnEvent, DatafnSignal } from "@datafn/core";
 import type { DatafnStorageAdapter } from "../storage.js";
 
@@ -208,6 +209,9 @@ class DatafnSyncStatusController {
       event.type === "mutation_rejected"
     ) {
       this.schedulePendingChangesRefresh();
+      // Records written by importData reach storage directly; they say
+      // nothing about whether earlier writes reached the server.
+      if (event.type === "mutation_applied" && isImportContext(event.context)) return;
       this.update({
         lastError:
           event.type === "mutation_rejected"

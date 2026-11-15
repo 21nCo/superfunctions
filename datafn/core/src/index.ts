@@ -152,6 +152,7 @@ export {
   getJoinTableName,
   getRelationJoinTableName,
   getRelationName,
+  getRelationKeyName,
   enumerateJoinStoreKeys,
 } from "./joins.js";
 
@@ -258,6 +259,9 @@ export {
   parseSortTerm,
   parseSortTerms,
   sortRecords,
+  compareRecords,
+  compareSortValues,
+  compareIds,
 } from "./sort.js";
 
 // Re-export select token parsing

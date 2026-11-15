@@ -139,8 +139,7 @@ describe("@datafn/swift-bridge native remote adapter", () => {
 
     expect(calls.map((call) => call.method)).toEqual([
       "storage.getHydrationState",
-      // Local execution loads timezone metadata before the resource rows.
-      "storage.listRecords",
+      // Local execution reads timezone metadata only for temporal queries.
       "storage.listRecords",
     ]);
   });
@@ -168,7 +167,6 @@ describe("@datafn/swift-bridge native remote adapter", () => {
       "storage.getHydrationState",
       "remote.query",
       // Hydrating reads overlay pending local state onto the remote result.
-      "storage.listRecords",
       "storage.changelogList",
       "storage.listRecords",
     ]);

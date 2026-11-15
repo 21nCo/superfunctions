@@ -52,6 +52,90 @@ export function parseSortTerms(sort: SortInputTerm[] | undefined): SortTerm[] {
   return sort.map(parseSortTerm);
 }
 
+// Each part of the mantissa has one way to match, so a long digit run that
+// fails to match is rejected in linear time.
+const NUMERIC_STRING = /^[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?$/;
+
+function isNullish(value: unknown): value is null | undefined {
+  return value === null || value === undefined;
+}
+
+/**
+ * The number to compare for a number (any but NaN, so Infinity sorts after
+ * every finite number) or a decimal numeric string with a finite value,
+ * otherwise undefined.
+ */
+function comparableNumber(value: unknown): number | undefined {
+  if (typeof value === "number") return Number.isNaN(value) ? undefined : value;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.length > 0 && NUMERIC_STRING.test(trimmed)) {
+      const parsed = Number(trimmed);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Compare two field values in ascending order. The order is total, so a full
+ * sort and a limited (top N) selection agree on any mix of values:
+ * - null and undefined are equal to each other and sort after every other value;
+ * - numbers and numeric strings compare as numbers (`"9" < "10"`, `"9"` equals `9`)
+ *   and sort before every non-numeric value;
+ * - other values compare by their string form with `localeCompare`.
+ */
+export function compareSortValues(a: unknown, b: unknown): number {
+  if (a === b) return 0;
+  const aNullish = isNullish(a);
+  const bNullish = isNullish(b);
+  if (aNullish || bNullish) return compareNullish(aNullish, bNullish);
+  const aNumber = comparableNumber(a);
+  const bNumber = comparableNumber(b);
+  if (aNumber !== undefined && bNumber !== undefined) return compareNumbers(aNumber, bNumber);
+  if (aNumber !== undefined) return -1;
+  if (bNumber !== undefined) return 1;
+  return String(a).localeCompare(String(b));
+}
+
+/** Nullish values are equal to each other and sort last. */
+function compareNullish(aNullish: boolean, bNullish: boolean): number {
+  if (aNullish && bNullish) return 0;
+  return aNullish ? 1 : -1;
+}
+
+function compareNumbers(a: number, b: number): number {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+}
+
+/** Plain code-unit order, the order the server uses for ids. */
+export function compareIds(a: unknown, b: unknown): number {
+  const aId = String(a ?? "");
+  const bId = String(b ?? "");
+  return aId < bId ? -1 : aId > bId ? 1 : 0;
+}
+
+/**
+ * Compare two records by the given terms with a stable id tie-breaker.
+ * Null values sort after non-null in ascending order (before in descending).
+ */
+export function compareRecords(
+  a: Record<string, unknown>,
+  b: Record<string, unknown>,
+  terms: SortTerm[],
+): number {
+  for (const term of terms) {
+    // Ids keep the server's code-unit order whether they are the tie-break
+    // or an explicit sort term.
+    const cmp = term.field === "id"
+      ? compareIds(a.id, b.id)
+      : compareSortValues(a[term.field], b[term.field]);
+    if (cmp !== 0) return term.direction === "asc" ? cmp : -cmp;
+  }
+  return compareIds(a.id, b.id);
+}
+
 /**
  * Sort records by the given terms with a stable id tie-breaker.
  * Null values sort after non-null in ascending order (before in descending).
@@ -60,30 +144,5 @@ export function sortRecords(
   records: Record<string, unknown>[],
   terms: SortTerm[],
 ): Record<string, unknown>[] {
-  return [...records].sort((a, b) => {
-    for (const term of terms) {
-      const aVal = a[term.field];
-      const bVal = b[term.field];
-
-      if (aVal === bVal) continue;
-
-      let cmp: number;
-      if (aVal === null || aVal === undefined) {
-        cmp = 1; // nulls after non-null in ascending
-      } else if (bVal === null || bVal === undefined) {
-        cmp = -1;
-      } else if (typeof aVal === "string" && typeof bVal === "string") {
-        cmp = aVal.localeCompare(bVal);
-      } else if (typeof aVal === "number" && typeof bVal === "number") {
-        cmp = aVal - bVal;
-      } else {
-        cmp = String(aVal).localeCompare(String(bVal));
-      }
-
-      if (cmp !== 0) return term.direction === "asc" ? cmp : -cmp;
-    }
-
-    // Stable id tie-breaker
-    return String(a.id ?? "").localeCompare(String(b.id ?? ""));
-  });
+  return [...records].sort((a, b) => compareRecords(a, b, terms));
 }

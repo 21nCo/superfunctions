@@ -5,6 +5,7 @@
  * Opt-in via `crossTab: true` config.
  */
 
+import { IMPORT_CONTEXT, isImportContext } from "./events/importMarker.js";
 import type { EventBus } from "./events/bus.js";
 import type { DatafnEvent } from "@datafn/core";
 
@@ -25,7 +26,18 @@ interface RelayEvent {
     action?: string;
     fields?: string[];
     system?: boolean;
+    /** Only the import marker; no other context crosses tabs. */
+    context?: typeof IMPORT_CONTEXT;
   };
+}
+
+/** The import marker as it travels between tabs. */
+function isRelayedImportContext(context: unknown): boolean {
+  return (
+    typeof context === "object" &&
+    context !== null &&
+    (context as { source?: unknown }).source === "import"
+  );
 }
 
 /**
@@ -72,6 +84,7 @@ function sanitizeForRelay(event: DatafnEvent): RelayEvent["event"] {
     action: event.action,
     fields: event.fields,
     system: event.system,
+    ...(isImportContext(event.context) ? { context: IMPORT_CONTEXT } : {}),
   };
 }
 
@@ -102,9 +115,14 @@ export class CrossTabRelay {
         // Echo prevention: ignore messages from this tab
         if (relayEvent.sourceTabId === this.tabId) return;
 
-        // Emit the event on local event bus with fromRemoteTab flag
+        // Emit the event on local event bus with fromRemoteTab flag. Only
+        // the import marker is accepted as context.
+        const { context, ...relayed } = relayEvent.event as RelayEvent["event"] & {
+          context?: unknown;
+        };
         this.eventBus.emit({
-          ...relayEvent.event,
+          ...relayed,
+          ...(isRelayedImportContext(context) ? { context: IMPORT_CONTEXT } : {}),
           fromRemoteTab: true,
         } as DatafnEvent & { fromRemoteTab: true });
       };

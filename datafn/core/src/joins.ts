@@ -8,7 +8,8 @@
 import type { DatafnRelationSchema } from "./types.js";
 import { endpointList, firstEndpoint } from "./relation-endpoints.js";
 
-function getRelationKeyName(relation: DatafnRelationSchema, to: string): string {
+/** The relation name in a many-many join store key toward `to`. */
+export function getRelationKeyName(relation: DatafnRelationSchema, to: string): string {
   return relation.relation ?? relation.inverse ?? relation.joinTable ?? `to_${to}`;
 }
 

@@ -49,6 +49,11 @@ export class DebouncerMap {
     };
   }
 
+  /** Mutation id of the mutation pending under `key`, if any. */
+  pendingMutationId(key: string): string | undefined {
+    return this.pending.get(key)?.mutation.mutationId;
+  }
+
   /**
    * Set a debounced mutation.
    * If a mutation with the same key is already pending, merge the records and reset the timer.

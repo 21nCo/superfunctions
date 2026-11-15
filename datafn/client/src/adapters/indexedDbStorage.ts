@@ -72,7 +72,7 @@ function deepMergeOneLevel(
 }
 
 export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
-  readonly capabilities = { atomicMergeIfMissing: true } as const;
+  readonly capabilities = { atomicMergeIfMissing: true, reportsMergeOutcome: true } as const;
   private dbPromise: Promise<IDBDatabase>;
   private validResources?: Set<string>;
   private schema?: DatafnSchema;
@@ -563,7 +563,10 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
     resource: string,
     id: string,
     partial: Record<string, unknown>,
-    options?: { ifMissing?: Record<string, unknown> },
+    options?: {
+      ifMissing?: Record<string, unknown>;
+      onResolved?: (outcome: { created: boolean }) => void;
+    },
   ): Promise<Record<string, unknown>> {
     this.validateTableName(resource);
     const db = await this.dbPromise;
@@ -587,6 +590,11 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
         const putRequest = store.put(storageRecord);
         
         putRequest.onsuccess = () => {
+          try {
+            options?.onResolved?.({ created: !existing });
+          } catch {
+            // The outcome is advisory; the write itself succeeded.
+          }
           resolve(storageRecord);
         };
         putRequest.onerror = () => {
@@ -829,6 +837,19 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
       // getAll allows limit
       const request = store.getAll(null, limit);
       request.onsuccess = () => resolve(request.result || []);
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async changelogLastSeq(): Promise<number | null> {
+    const store = await this.getStore("changelog", "readonly");
+    return new Promise((resolve, reject) => {
+      // The store is keyed by seq, so the last key is the largest.
+      const request = store.openCursor(null, "prev");
+      request.onsuccess = () => {
+        const cursor = request.result;
+        resolve(cursor && typeof cursor.key === "number" ? cursor.key : null);
+      };
       request.onerror = () => reject(request.error);
     });
   }

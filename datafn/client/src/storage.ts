@@ -39,6 +39,12 @@ export interface DatafnStorageAdapterCapabilities {
    * payload. It must not reapply `partial` to that creation payload.
    */
   readonly atomicMergeIfMissing?: boolean;
+  /**
+   * `mergeRecord` calls `options.onResolved` inside its atomic write with
+   * whether it created the record. Callers pass the callback only to
+   * adapters that set this.
+   */
+  readonly reportsMergeOutcome?: boolean;
 }
 
 export interface DatafnStorageAdapter {
@@ -67,8 +73,16 @@ export interface DatafnStorageAdapter {
     resource: string, 
     id: string, 
     partial: Record<string, unknown>,
-    /** Complete creation payload used instead of `partial` when absent. */
-    options?: { ifMissing?: Record<string, unknown> },
+    options?: {
+      /** Complete creation payload used instead of `partial` when absent. */
+      ifMissing?: Record<string, unknown>;
+      /**
+       * Called inside the atomic read-modify-write with whether the record
+       * was missing and has been created. Passed only to adapters that set
+       * `capabilities.reportsMergeOutcome`.
+       */
+      onResolved?: (outcome: { created: boolean }) => void;
+    },
   ): Promise<Record<string, unknown>>;
 
   // Join rows (many-many)
@@ -113,6 +127,11 @@ export interface DatafnStorageAdapter {
   ): Promise<DatafnChangelogEntry>;
   changelogList(options?: { limit?: number }): Promise<DatafnChangelogEntry[]>;
   changelogAck(options: { throughSeq: number }): Promise<void>;
+  /**
+   * Largest sequence number in the changelog, or null when it is empty.
+   * Optional; callers fall back to listing the changelog.
+   */
+  changelogLastSeq?(): Promise<number | null>;
 
   // Counts for reconcile (SYNC-007)
   countRecords(resource: string): Promise<number>;

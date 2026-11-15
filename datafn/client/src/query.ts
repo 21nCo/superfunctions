@@ -422,6 +422,7 @@ export async function executeQuery<T = unknown>(
   nativeRemoteMode?: DatafnNativeRemoteMode,
   temporal?: DatafnTemporalConfig,
   e2ee?: DatafnE2eeConfig,
+  observeQuery?: (query: unknown) => void,
 ): Promise<T | T[]> {
   // Run beforeQuery hooks (fail-closed)
   const transformedQuery = schema
@@ -437,6 +438,8 @@ export async function executeQuery<T = unknown>(
       ? normalizeQueryMetadata(transformedQuery as Record<string, unknown>)
       : transformedQuery;
   const normalizedQuery = metadataNormalizedQuery;
+  // Lets a caller see the query the plugins produced without running them again.
+  observeQuery?.(normalizedQuery);
   const runRemoteQuery = async (): Promise<unknown> => {
     assertRemoteQueryAllowedForE2ee(e2ee, normalizedQuery);
     return remote.query(normalizedQuery);
