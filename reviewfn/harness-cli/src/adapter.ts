@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { access, mkdtemp, open, rm, writeFile } from "node:fs/promises";
+import { access, lstat, mkdtemp, open, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -26,6 +26,8 @@ const MAX_DETAIL_CHARS = 4_000;
 const MAX_MODEL_CHARS = 256;
 /** Bytes of the rejected answer echoed back in the repair prompt. */
 const REPAIR_ECHO_BYTES = 16_384;
+/** How often a running CLI's output file is measured against the remaining output budget. */
+const OUTPUT_FILE_POLL_MS = 100;
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const QUOTA = /quota|rate.?limit|usage.?limit|credit balance|too many requests/i;
 /** The first dotted version token, with an optional `v` prefix and pre-release or build suffix (`v1.2.3`, `2025.08.25-896bbe1`). */
@@ -170,14 +172,18 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
       if ("error" in probed) return state.finish("failed", probed.error);
     }
     state.harnessVersion = this.versions.get(versionKey);
-    const basePrompt = `${input.prompt}\n\n${outputContract(schema, profile)}`;
+    // The CLI is shown (in the prompt and {schemaFile}) a schema that also declares its json-path model report, so a CLI
+    // that enforces the schema can still emit it; its answer is validated against the slot's own schema once that
+    // report field is removed.
+    const cliSchema = withModelReportField(schema, profile.modelReport);
+    const basePrompt = `${input.prompt}\n\n${outputContract(cliSchema, profile)}`;
     let prompt = basePrompt;
     let directory: string | undefined;
     try {
       directory = await mkdtemp(path.join(tmpdir(), "reviewfn-cli-"));
       const promptFile = path.join(directory, "prompt.md");
       const schemaFile = path.join(directory, "schema.json");
-      await writeFile(schemaFile, JSON.stringify(schema), { mode: 0o600, flag: "wx" });
+      await writeFile(schemaFile, JSON.stringify(cliSchema), { mode: 0o600, flag: "wx" });
       // Every promptVia × outputVia combination allows the re-run: each attempt is a new process with a new prompt (on
       // stdin or a rewritten prompt file) and a fresh output (a new output file or its own stdout).
       for (let attempt = 1; attempt <= 2; attempt += 1) {
@@ -189,9 +195,14 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
         await writeFile(promptFile, prompt, { mode: 0o600 });
         const args = cliArguments(profile.argv, { promptFile, schemaFile, outputFile, workspace: input.workspace, model: config.inference.model });
         state.push("started", { attempt, promptVia: profile.promptVia, outputVia: profile.outputVia, sandbox: profile.capabilities.sandbox });
+        // An output file is measured while the CLI runs: one that outgrows the remaining budget aborts the run, which
+        // kills the whole process group, and the run ends timed_out like any other overrun, never canceled.
+        const watch = profile.outputVia === "file" ? watchOutputFile(outputFile, outputBytes, input.signal) : undefined;
         let result: CommandResult;
-        try { result = await this.runner(executable, args, { cwd: input.workspace, env: environment, timeoutMs: remaining, maxOutputBytes: outputBytes, signal: input.signal, stdin: profile.promptVia === "stdin" ? prompt : "" }); }
+        try { result = await this.runner(executable, args, { cwd: input.workspace, env: environment, timeoutMs: remaining, maxOutputBytes: outputBytes, signal: watch?.signal ?? input.signal, stdin: profile.promptVia === "stdin" ? prompt : "" }); }
         catch (error) { return state.finish(input.signal?.aborted ? "canceled" : "failed", `The CLI could not be started: ${message(error)}`); }
+        finally { watch?.stop(); }
+        const fileOverrun = watch?.overrun();
         state.record(result);
         // Every model report is read from what this attempt left, within the output budget, before any terminal return:
         // a run that served another model is void whether it then completed, failed, hung or overran its bounds.
@@ -203,6 +214,7 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
           state.reportJson(valueAtPath(output.value, dotted));
           stripReportField(output.value, dotted, schema);
         }
+        if (result.canceled && fileOverrun && !input.signal?.aborted) return state.finish("timed_out", fileOverrun);
         if (result.canceled) return state.finish("canceled", "The CLI run was canceled.");
         if (result.timedOut) return state.finish("timed_out", "The CLI run exceeded its configured time or output bound.");
         const mismatch = state.mismatchReason();
@@ -331,6 +343,54 @@ async function readOutputFile(file: string, maxBytes: number): Promise<OutputRea
     } catch { /* reported below */ }
     return { error: "The output file is not exactly one JSON object.", text };
   } finally { await handle.close(); }
+}
+
+/**
+ * Measure a running CLI's output file (without following a link) against the output budget, and abort the returned
+ * signal, which also follows the caller's, once the file outgrows it.
+ */
+function watchOutputFile(file: string, maxBytes: number, parent: AbortSignal | undefined): { signal: AbortSignal; stop: () => void; overrun: () => string | undefined } {
+  const controller = new AbortController();
+  let overrun: string | undefined;
+  let checking = false;
+  const onParentAbort = () => controller.abort(parent?.reason);
+  if (parent?.aborted) onParentAbort();
+  else parent?.addEventListener("abort", onParentAbort, { once: true });
+  const timer = setInterval(() => {
+    if (checking || controller.signal.aborted) return;
+    checking = true;
+    lstat(file).then(stat => {
+      if (stat.size > maxBytes && !controller.signal.aborted) {
+        overrun = `The CLI output file grew past the remaining ${Math.max(0, maxBytes)}-byte output budget (${stat.size} bytes) while it ran.`;
+        controller.abort();
+      }
+    }, () => { /* not written yet */ }).finally(() => { checking = false; });
+  }, OUTPUT_FILE_POLL_MS);
+  timer.unref();
+  return {
+    signal: controller.signal,
+    stop: () => { clearInterval(timer); parent?.removeEventListener("abort", onParentAbort); },
+    overrun: () => overrun,
+  };
+}
+
+/**
+ * The schema shown to the CLI: the slot's schema with the top-level object of a `json-path` model report declared (as
+ * a required string at the dotted path) unless the schema already declares it, so a CLI that enforces a closed schema
+ * can still report its model. A schema without top-level properties is shown unchanged.
+ */
+export function withModelReportField(schema: Readonly<Record<string, unknown>>, modelReport: string): Readonly<Record<string, unknown>> {
+  if (!modelReport.startsWith("json-path:") || !isRecord(schema.properties)) return schema;
+  const [top, ...rest] = modelReport.slice("json-path:".length).split(".");
+  if (Object.hasOwn(schema.properties, top)) return schema;
+  let field: Record<string, unknown> = { type: "string" };
+  for (const key of rest.reverse()) {
+    field = /^\d+$/.test(key)
+      ? { type: "array", minItems: Number(key) + 1, items: field }
+      : { type: "object", properties: { [key]: field }, required: [key] };
+  }
+  const required = Array.isArray(schema.required) ? schema.required : [];
+  return { ...schema, properties: { ...schema.properties, [top]: field }, required: [...required, top] };
 }
 
 /**

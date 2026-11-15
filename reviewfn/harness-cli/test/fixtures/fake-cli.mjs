@@ -1,6 +1,9 @@
 // A stand-in agent CLI. It echoes what it received, writes its answer to a file or stdout, and misbehaves on command.
 // Usage: fake-cli.mjs --state <dir> [--answer valid|invalid|invalid-once|not-json] [--prompt <file>] [--out <file>]
-//   [--model-json <model>] [--model-stderr <model>] [--exit <code>] [--stderr <text>] [--hang] [--version] [any other --flag value]
+//   [--model-json <model>] [--model-stderr <model>] [--exit <code>] [--stderr <text>] [--hang 1] [--flood 1]
+//   [--enforce-schema <file>] [--version] [any other --flag value]
+// --enforce-schema drops every top-level property the schema file does not declare, as a schema-enforcing CLI would.
+// --flood keeps appending to the output file, printing nothing on stdout.
 import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -20,7 +23,10 @@ appendFileSync(calls, `${JSON.stringify({ argv, env: process.env, cwd: process.c
 if (options["model-stderr"]) process.stderr.write(`starting\nserved model: ${options["model-stderr"]}\n`);
 if (options.stderr) process.stderr.write(`${options.stderr}\n`);
 
-if (options.hang !== undefined) {
+if (options.flood !== undefined) {
+  const chunk = `${"x".repeat(4_096)}\n`;
+  setInterval(() => appendFileSync(options.out, chunk), 5);
+} else if (options.hang !== undefined) {
   // A descendant that ignores SIGTERM proves the whole process group is killed, not only the direct child.
   const child = spawn("/bin/sh", ["-c", "trap '' TERM; exec sleep 60"], { stdio: "ignore" });
   writeFileSync(path.join(state, "descendant.pid"), String(child.pid));
@@ -29,7 +35,12 @@ if (options.hang !== undefined) {
   const valid = { findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] };
   const kind = options.answer ?? "valid";
   const invalid = kind === "invalid" || (kind === "invalid-once" && attempt === 1);
-  let answer = kind === "not-json" ? "this is not JSON" : JSON.stringify(invalid ? { findings: "none" } : { ...valid, ...(options["model-json"] ? { model: options["model-json"] } : {}) });
+  let object = invalid ? { findings: "none" } : { ...valid, ...(options["model-json"] ? { model: options["model-json"] } : {}) };
+  if (options["enforce-schema"] !== undefined) {
+    const declared = JSON.parse(readFileSync(options["enforce-schema"], "utf8")).properties ?? {};
+    object = Object.fromEntries(Object.entries(object).filter(([key]) => Object.hasOwn(declared, key)));
+  }
+  let answer = kind === "not-json" ? "this is not JSON" : JSON.stringify(object);
   if (options.out !== undefined) writeFileSync(options.out, answer);
   else process.stdout.write(`Thinking...\n{"type":"progress","step":1}\n${JSON.stringify(valid).slice(0, 5)}\n${answer}\ndone\n`);
   process.exitCode = Number(options.exit ?? 0);

@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_CONFIG, DEFAULT_POLICY, lensOutputSchema, type HarnessProfile, type ReviewFnConfig, type SlotHarnessInput } from "@superfunctions/reviewfn-core";
 
-import { CliHarnessAdapter, cliArguments, cliEnvironment, lastJsonObjectLine, parseCliVersion, valueAtPath } from "../src/index.js";
+import { CliHarnessAdapter, cliArguments, cliEnvironment, lastJsonObjectLine, parseCliVersion, valueAtPath, withModelReportField } from "../src/index.js";
 
 const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "fake-cli.mjs");
 const CREDENTIAL = "reviewfn-cli-fixture-credential-5521";
@@ -90,6 +90,14 @@ describe("CliHarnessAdapter prompt and output channels", () => {
     const output = await run(profile({ outputVia: "file" }), undefined, { policy: { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, maxOutputBytes: 60 } } });
     expect(output.terminal).toBe("timed_out");
   }, 20_000);
+
+  it("kills a CLI that keeps appending to its output file as soon as the file outgrows the budget, as a timeout", async () => {
+    const started = Date.now();
+    const output = await run(profile({ outputVia: "file", extra: ["--flood", "1"] }), undefined, { policy: { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, maxOutputBytes: 200_000, harnessTimeoutMs: 60_000 } } });
+    expect(output.terminal).toBe("timed_out");
+    expect(output.error).toContain("while it ran");
+    expect(Date.now() - started).toBeLessThan(20_000);
+  }, 30_000);
 });
 
 describe("CliHarnessAdapter process boundary", () => {
@@ -183,6 +191,28 @@ describe("CliHarnessAdapter model reporting", () => {
     expect(malformed.terminal).toBe("malformed");
     expect(await calls()).toHaveLength(2);
   }, 30_000);
+
+  it("shows a schema-enforcing CLI a schema that declares its json-path model report, and validates the answer without it", async () => {
+    const enforcing = (extra: string[]) => profile({ modelReport: "json-path:model", capabilities: { structuredOutput: true, sandbox: "tree-verified-only" }, extra: ["--enforce-schema", "{schemaFile}", ...extra] });
+    const matching = await run(enforcing(["--model-json", "fake-model-1"]), "fake-model-1");
+    expect(matching.error).toBeUndefined();
+    expect(matching.terminal).toBe("completed");
+    expect(matching.observed).toMatchObject({ model: "fake-model-1" });
+    const [call] = await calls();
+    expect(call.prompt).toContain('"model":{"type":"string"}');
+    const mismatched = await run(enforcing(["--model-json", "other-model"]), "fake-model-1");
+    expect(mismatched.error).toMatch(/^model_mismatch/);
+    expect(mismatched.observed).toMatchObject({ model: "other-model" });
+    expect(lensOutputSchema.properties).not.toHaveProperty("model");
+  }, 30_000);
+
+  it("declares a nested json-path report field without changing a schema that already declares it", () => {
+    const schema = { type: "object", additionalProperties: false, properties: { findings: { type: "array" } }, required: ["findings"] };
+    expect(withModelReportField(schema, "json-path:meta.models.0")).toEqual({ ...schema, properties: { ...schema.properties, meta: { type: "object", properties: { models: { type: "array", minItems: 1, items: { type: "string" } } }, required: ["models"] } }, required: ["findings", "meta"] });
+    expect(withModelReportField(schema, "json-path:findings")).toBe(schema);
+    expect(withModelReportField(schema, "none")).toBe(schema);
+    expect(schema.properties).not.toHaveProperty("meta");
+  });
 
   it("reads dotted json paths of own properties only", () => {
     expect(valueAtPath({ meta: { models: ["m"] } }, "meta.models.0")).toBe("m");
