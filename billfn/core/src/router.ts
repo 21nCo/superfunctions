@@ -103,6 +103,7 @@ export function createBillFnRouter(config: BillFnConfig) {
           planKey: string;
           provider: string;
           interval?: string;
+          priceId?: unknown;
           metadata?: Record<string, unknown>;
           customer?: {
             email?: string;
@@ -119,6 +120,7 @@ export function createBillFnRouter(config: BillFnConfig) {
           planKey: body.planKey,
           provider: body.provider as never,
           interval: body.interval as never,
+          priceId: body.priceId as string | undefined,
           metadata: body.metadata,
           customer: body.customer,
           returnUrl: body.returnUrl,

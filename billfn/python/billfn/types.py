@@ -94,6 +94,7 @@ class BillFnPriceDefinition(BillFnModel):
     kind: str
     interval: str
     trial_days: Optional[int] = Field(default=None, alias="trialDays")
+    eligibility: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
 
 
@@ -201,6 +202,7 @@ class BillFnCheckoutCreateRequest(BillFnModel):
     plan_key: str = Field(alias="planKey")
     provider: str
     interval: Optional[str] = None
+    price_id: Optional[str] = Field(default=None, alias="priceId")
     metadata: Optional[Dict[str, Any]] = None
     customer: Optional[Dict[str, Any]] = None
     return_url: Optional[str] = Field(default=None, alias="returnUrl")
