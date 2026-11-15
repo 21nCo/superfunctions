@@ -380,6 +380,36 @@ describe("paginated clone join rows", () => {
     expect(unpaged.joins?.[joinKey]?.map((r) => r.id)).toEqual(["j_n3_t1"]);
   });
 
+  it("fails the clone when a join endpoint's access check fails", async () => {
+    const base = await seed();
+    const db = new Proxy(base, {
+      get(target, prop, receiver) {
+        if (prop === "findOne") {
+          return async () => {
+            throw new Error("database unavailable");
+          };
+        }
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as Adapter;
+
+    await expect(
+      executeClone(
+        {
+          clientId: "c1",
+          tables: ["tags"],
+          actorId: "bob",
+          includeJoins: true,
+          page: { table: "tags", afterId: null, limit: 1 },
+        },
+        schema,
+        db,
+        NAMESPACE,
+      ),
+    ).rejects.toThrow("database unavailable");
+  });
+
   it("still returns the whole join table for an unpaginated clone", async () => {
     const db = await seed();
     const result = await executeClone(

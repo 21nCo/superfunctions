@@ -42,6 +42,13 @@ export interface CloneResult {
   };
 }
 
+/** An access check on a join row's endpoint failed; the clone must fail too. */
+class JoinVisibilityError extends Error {
+  constructor(readonly reason: unknown) {
+    super("Clone: join endpoint access check failed");
+  }
+}
+
 /**
  * Ids per `in` lookup when loading the join rows of returned records. Kept
  * under D1's 100 bound parameters per query, leaving room for the namespace.
@@ -340,7 +347,12 @@ export async function executeClone(
       const key = `${resource}\u0000${id}`;
       let visible = endpointAccess.get(key);
       if (visible === undefined) {
-        visible = !!(await resolveAccessLevel(db, schema, resource, id, actorId, namespace));
+        try {
+          visible = !!(await resolveAccessLevel(db, schema, resource, id, actorId, namespace));
+        } catch (error) {
+          // Fail the clone rather than return it without these join rows.
+          throw new JoinVisibilityError(error);
+        }
         endpointAccess.set(key, visible);
       }
       return visible;
@@ -475,6 +487,9 @@ export async function executeClone(
           }
         }
       } catch (error) {
+        if (error instanceof JoinVisibilityError) {
+          throw error.reason;
+        }
         logger?.warn("Clone: join table fetch failed", { error: String(error), operation: "clone-joins" });
         // Join table might not exist or be queryable; skip gracefully
         continue;

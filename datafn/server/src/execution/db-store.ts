@@ -77,7 +77,9 @@ export class DbDataStore implements DataStore {
         where: [{ field, operator: "in", value: ids.slice(i, i + FIND_BY_IDS_CHUNK) }],
         namespace,
       });
-      rows.push(...(chunk as Record<string, unknown>[]));
+      // Append one by one: spreading a very large chunk into push() can
+      // exceed the engine's argument limit.
+      for (const row of chunk as Record<string, unknown>[]) rows.push(row);
     }
     return rows;
   }
