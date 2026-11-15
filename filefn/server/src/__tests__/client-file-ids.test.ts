@@ -138,10 +138,12 @@ function createApp(options: {
   quota?: QuotaProvider;
   /** Use the grant-aware authorizer instead of the owner-only default. */
   grants?: boolean;
+  /** `createFileFn` of a separately loaded module graph, to model another process. */
+  createFileFn?: typeof createFileFn;
 }) {
   const fixture = options.storageFixture ?? createStorage(options.mode);
   const database = options.database ?? memoryAdapter();
-  const fileFn = createFileFn({
+  const fileFn = (options.createFileFn ?? createFileFn)({
     database,
     authorizer: options.grants ? createDefaultAuthorizer({ db: database }) : undefined,
     storage: fixture.storage,
@@ -199,6 +201,7 @@ function createApp(options: {
     return {
       uploadSessionId,
       fileId: session.fileId!,
+      token: uploadSessionToken as string | undefined,
       complete: () => call('POST', `/upload/${uploadSessionId}/complete`, auth),
     };
   }
@@ -418,6 +421,27 @@ describe('client-chosen file IDs: first completion wins', () => {
     expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('kept bytes');
   });
 
+  it('serializes per-request FileFn instances that share one memory adapter in a process', async () => {
+    // Hosts such as the Worker fixture build FileFn per request over one adapter.
+    const database = memoryAdapter();
+    const storageFixture = createStorage('proxy');
+    const first = createApp({ mode: 'proxy', database, storageFixture });
+    const second = createApp({ mode: 'proxy', database, storageFixture });
+    const a = await first.stage('user_a', CLIENT_ID, 'instance one');
+    const b = await second.stage('user_b', CLIENT_ID, 'instance two');
+    const keyA = (await rawSession(database, a.uploadSessionId))!.storageKey;
+    const keyB = (await rawSession(database, b.uploadSessionId))!.storageKey;
+
+    const [resA, resB] = await Promise.all([a.complete(), b.complete()]);
+    expect([resA.status, resB.status].sort()).toEqual([200, 403]);
+    const aWon = resA.status === 200;
+    const rows = await fileRows(database, CLIENT_ID);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].ownerId).toBe(aWon ? 'user_a' : 'user_b');
+    expect(storageFixture.objects.has(aWon ? keyA : keyB)).toBe(true);
+    expect(storageFixture.objects.has(aWon ? keyB : keyA)).toBe(false);
+  });
+
   it('a quota-refused init leaves no session row and no storage upload', async () => {
     const database = memoryAdapter();
     const quota: QuotaProvider = {
@@ -433,15 +457,21 @@ describe('client-chosen file IDs: first completion wins', () => {
   });
 });
 
+/** Loads FileFn from a fresh module graph: separate module state, as in another process. */
+async function loadProcess(): Promise<typeof createFileFn> {
+  vi.resetModules();
+  return (await import('../index.js')).createFileFn;
+}
+
 describe('client-chosen file IDs across processes (unique-enforcing adapter)', () => {
   /**
-   * Two FileFn instances (two processes, each with its own in-process lock)
-   * share one database and one storage. The first `files` insert is held until
-   * a second one arrives, so both completions have read "no file" and the
+   * Two processes (separately loaded FileFn modules, so separate in-process
+   * locks) share one database and one storage. The first `files` insert is held
+   * until a second one arrives, so both completions have read "no file" and the
    * unique constraint, not the in-process lock, decides the winner. The second
    * insert is released only once the winner's version row exists.
    */
-  function createTwoProcesses(mode: Mode) {
+  async function createTwoProcesses(mode: Mode) {
     let filesInserts = 0;
     let firstArrived!: () => void;
     const firstArrival = new Promise<void>((resolve) => { firstArrived = resolve; });
@@ -467,14 +497,14 @@ describe('client-chosen file IDs across processes (unique-enforcing adapter)', (
       },
     });
     const storageFixture = createStorage(mode);
-    const one = createApp({ mode, database, storageFixture });
-    const two = createApp({ mode, database, storageFixture });
+    const one = createApp({ mode, database, storageFixture, createFileFn: await loadProcess() });
+    const two = createApp({ mode, database, storageFixture, createFileFn: await loadProcess() });
     return { database, storageFixture, one, two, firstArrival, filesInserts: () => filesInserts };
   }
 
   for (const mode of ['multipart', 'proxy'] as const) {
     it(`${mode}: the loser of the insert gets 403 and its object is deleted`, async () => {
-      const { database, storageFixture, one, two, filesInserts } = createTwoProcesses(mode);
+      const { database, storageFixture, one, two, filesInserts } = await createTwoProcesses(mode);
       const a = await one.stage('user_a', CLIENT_ID, 'process one bytes');
       const b = await two.stage('user_b', CLIENT_ID, 'process two');
       const keyA = (await rawSession(database, a.uploadSessionId))!.storageKey;
@@ -496,7 +526,7 @@ describe('client-chosen file IDs across processes (unique-enforcing adapter)', (
 
   it('the loser of the insert with write permission on the winner\'s row adds a version', async () => {
     // The same principal on two devices: it owns the row the other session inserted.
-    const { database, storageFixture, one, two, firstArrival, filesInserts } = createTwoProcesses('proxy');
+    const { database, storageFixture, one, two, firstArrival, filesInserts } = await createTwoProcesses('proxy');
     const a = await one.stage('user_a', CLIENT_ID, 'from device one');
     const b = await two.stage('user_a', CLIENT_ID, 'from device two');
     const keyB = (await rawSession(database, b.uploadSessionId))!.storageKey;
@@ -521,23 +551,100 @@ describe('client-chosen file IDs across processes (unique-enforcing adapter)', (
     expect(await one.readBytes(CLIENT_ID, 'user_a')).toBe('from device two');
   });
 
+  for (const user of ['user_a', undefined] as const) {
+    it(`a second completion of the same ${user ? 'named' : 'anonymous'} session while the first is between its files and version inserts returns the same result and deletes nothing`, async () => {
+      // Process one inserts the files row, then is held before its version insert
+      // while process two completes the same session.
+      let versionInserts = 0;
+      let heldAtVersion!: () => void;
+      const firstHeld = new Promise<void>((resolve) => { heldAtVersion = resolve; });
+      let releaseFirst!: () => void;
+      const firstReleased = new Promise<void>((resolve) => { releaseFirst = resolve; });
+      const database = createUniqueEnforcingDb({
+        async before(model) {
+          if (model !== 'fileVersions') return;
+          versionInserts += 1;
+          if (versionInserts === 1) {
+            heldAtVersion();
+            await firstReleased;
+          }
+        },
+      });
+      const storageFixture = createStorage('multipart');
+      const one = createApp({ mode: 'multipart', database, storageFixture, createFileFn: await loadProcess() });
+      const two = createApp({ mode: 'multipart', database, storageFixture, createFileFn: await loadProcess() });
+      const staged = await one.stage(user, CLIENT_ID, 'same session bytes');
+      const key = (await rawSession(database, staged.uploadSessionId))!.storageKey;
+      const completeIn = (app: typeof one) => app.call('POST', `/upload/${staged.uploadSessionId}/complete`, { user, token: staged.token });
+
+      const first = completeIn(one);
+      await firstHeld;
+      expect(await fileRows(database, CLIENT_ID)).toHaveLength(1);
+      const second = await completeIn(two);
+      releaseFirst();
+      const firstResult = await first;
+
+      expect(second.status).toBe(200);
+      expect(firstResult.status).toBe(200);
+      expect(firstResult.json.data).toEqual(second.json.data);
+      expect(second.json.data.fileId).toBe(CLIENT_ID);
+      expect(storageFixture.objects.has(key)).toBe(true);
+      expect(await one.readBytes(CLIENT_ID, user ?? 'anonymous')).toBe('same session bytes');
+      expect((await rawSession(database, staged.uploadSessionId))!.status).toBe('completed');
+      const rows = await fileRows(database, CLIENT_ID);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].currentVersionId).toBe(second.json.data.versionId);
+    });
+  }
+
   it('a concurrent second completion call of the same session returns the recorded result and deletes nothing', async () => {
-    const { database, storageFixture, one, two, firstArrival, filesInserts } = createTwoProcesses('multipart');
+    const { database, storageFixture, one, two, firstArrival, filesInserts } = await createTwoProcesses('multipart');
     const staged = await one.stage('user_a', CLIENT_ID, 'same session');
     const key = (await rawSession(database, staged.uploadSessionId))!.storageKey;
-    const ctx = { principalId: 'user_a' };
 
-    const completingFirst = one.fileFn.services.uploads.completeSession(staged.uploadSessionId, ctx);
+    const first = staged.complete();
     await firstArrival;
-    const [first, second] = await Promise.all([
-      completingFirst,
-      two.fileFn.services.uploads.completeSession(staged.uploadSessionId, ctx),
+    const [firstResult, second] = await Promise.all([
+      first,
+      two.call('POST', `/upload/${staged.uploadSessionId}/complete`, { user: 'user_a' }),
     ]);
     expect(filesInserts()).toBe(2);
-    expect(second).toEqual(first);
-    expect(first.fileId).toBe(CLIENT_ID);
+    expect(firstResult.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(second.json.data).toEqual(firstResult.json.data);
+    expect(firstResult.json.data.fileId).toBe(CLIENT_ID);
     expect(storageFixture.objects.has(key)).toBe(true);
     expect(await one.readBytes(CLIENT_ID, 'user_a')).toBe('same session');
     expect((await rawSession(database, staged.uploadSessionId))!.status).toBe('completed');
+  });
+
+  it('a refused retry deletes the final object an interrupted attempt left', async () => {
+    // A's first completion finalizes its object, then fails on the files insert
+    // (not a unique conflict). B then creates the ID. A's retry is refused.
+    let failNextFilesInsert = true;
+    const database = createUniqueEnforcingDb({
+      async before(model) {
+        if (model === 'files' && failNextFilesInsert) {
+          failNextFilesInsert = false;
+          throw new Error('connection reset');
+        }
+      },
+    });
+    const storageFixture = createStorage('multipart');
+    const app = createApp({ mode: 'multipart', database, storageFixture });
+    const a = await app.stage('user_a', CLIENT_ID, 'interrupted');
+    const keyA = (await rawSession(database, a.uploadSessionId))!.storageKey;
+    await expect(a.complete()).rejects.toThrow('connection reset');
+    expect(storageFixture.objects.has(keyA)).toBe(true);
+
+    const b = await app.stage('user_b', CLIENT_ID, 'created by b');
+    expect((await b.complete()).status).toBe(200);
+
+    const retried = await a.complete();
+    expect(retried.status).toBe(403);
+    expect(retried.json.error.code).toBe('FILEFN_FORBIDDEN');
+    expect(storageFixture.objects.has(keyA)).toBe(false);
+    expect((await rawSession(database, a.uploadSessionId))!.status).toBe('aborted');
+    expect(await app.readBytes(CLIENT_ID, 'user_b')).toBe('created by b');
   });
 });
