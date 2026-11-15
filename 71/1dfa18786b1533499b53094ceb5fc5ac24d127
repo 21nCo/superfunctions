@@ -1,0 +1,29 @@
+billfn/admin/src/__tests__/admin.test.ts
+  s_cae238b1a06a48::t_c7afc503357119 266-277
+billfn/admin/src/domain-service.ts
+  s_cae238b1a06a48::t_81ee699df58918 267-268,271
+billfn/admin/src/index.ts
+  s_cae238b1a06a48::t_0a655824bed2f3 501-502,741
+billfn/core/src/types.ts
+  s_cae238b1a06a48::t_5901301c14889c 669
+billfn/docs/content/docs/server/administration.mdx
+  s_cae238b1a06a48::t_9bb42f919fe9e9 36
+billfn/docs/content/docs/server/reconciliation.mdx
+  s_cae238b1a06a48::t_6a1356d7b25b87 86
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "711dfa18786b1533499b53094ceb5fc5ac24d127",
+  "prompts": {},
+  "sessions": {
+    "s_cae238b1a06a48": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_cae238b1a06a48",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

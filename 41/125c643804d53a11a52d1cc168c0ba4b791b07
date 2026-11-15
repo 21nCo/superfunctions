@@ -1,0 +1,35 @@
+filefn/docs/content/docs/recipes/cloudflare-workers.md
+  s_99d481ca4805c5::t_a0a4d5b5a98053 94-121,128
+filefn/docs/static/llms-full.txt
+  s_99d481ca4805c5::t_c5beae4d8bb868 6533-6560,6567
+filefn/server/src/index.ts
+  s_99d481ca4805c5::t_5d344499a20044 523
+filefn/server/src/processing/job-handler.ts
+  s_99d481ca4805c5::t_d7da6368a159c0 72-74,76-77
+filefn/server/src/processing/service.ts
+  s_99d481ca4805c5::t_983c5ba0343a98 68,70,94-101,169-177,184-189,202-204,218-220,224-227,231-233,235-251,261-265,268-273,301,411,481-484,490,495,527,562,565-568,575-576,582-683,723-727,729-734,741-745,747-748,752,755,758,760-764,766,770-775,786,788,833,899,901,905-906,923,980-983,1015
+filefn/server/tests/processing-jobs.test.ts
+  s_99d481ca4805c5::t_1a6830a31030cd 13,44-50,72,197,392-595
+filefn/server/tests/processing.integration.test.ts
+  s_99d481ca4805c5::t_693a64d8182a1b 23
+filefn/server/tests/processing.ocr.integration.test.ts
+  s_99d481ca4805c5::t_3cb81facd78710 30,45
+filefn/server/tests/processing.video-audio.integration.test.ts
+  s_99d481ca4805c5::t_66f6d3c4d50279 31,46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "41125c643804d53a11a52d1cc168c0ba4b791b07",
+  "prompts": {},
+  "sessions": {
+    "s_99d481ca4805c5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d7a4ee6d-1a09-46d4-b77e-9e5ac2c73241",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

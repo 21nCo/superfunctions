@@ -1,0 +1,49 @@
+reviewfn/cli/src/main.ts
+  s_1fc7a4c3d2405e::t_b52db8afef568f 2,4,6-7,11,13,34,43-57,59,64-65,68,83,86-88,120
+reviewfn/cli/src/panel.ts
+  s_1fc7a4c3d2405e::t_95d1bdfd191dc7 1-345
+reviewfn/cli/test/panel.test.ts
+  s_1fc7a4c3d2405e::t_9798fbbd0e3c27 1-248
+reviewfn/docs/panel.md
+  s_1fc7a4c3d2405e::t_14a6ed477c9988 1-61
+reviewfn/github/test/github.test.ts
+  s_1fc7a4c3d2405e::t_558123166518a4 2,159-209
+reviewfn/README.md
+  s_1fc7a4c3d2405e::t_ecd6f857d5f88d 35-46
+reviewfn/cli/src/config.ts
+  s_1fc7a4c3d2405e::t_df598e7afca498 6,32,37-43,48-73
+reviewfn/cli/src/index.ts
+  s_1fc7a4c3d2405e::t_91acdd5cf3b1ec 3
+reviewfn/core/src/errors.ts
+  s_1fc7a4c3d2405e::t_4be9f9252702eb 14-18
+reviewfn/core/src/index.ts
+  s_1fc7a4c3d2405e::t_be57ac7eeb8557 28
+reviewfn/core/src/panel/coordinator.ts
+  s_1fc7a4c3d2405e::t_4e02a55a97ff9e 17,779
+reviewfn/core/src/panel/render.ts
+  s_1fc7a4c3d2405e::t_84a48ecbe76574 1-164
+reviewfn/core/src/panel/types.ts
+  s_1fc7a4c3d2405e::t_0596877b2a243b 39-41
+reviewfn/core/test/__snapshots__/panel-report.md
+  s_1fc7a4c3d2405e::t_44531b275ec541 1-95
+reviewfn/core/test/panel-render.test.ts
+  s_1fc7a4c3d2405e::t_6fddbbaf660583 1-86
+reviewfn/github/src/publisher.ts
+  s_1fc7a4c3d2405e::t_e67bf0dfdcf401 1,13-20,40,53-55,95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f0d253c0be024fd2793bc639cb3d8b2c515f2291",
+  "prompts": {},
+  "sessions": {
+    "s_1fc7a4c3d2405e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9da30e54-2afd-4c07-b87e-b6aa41db0793",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

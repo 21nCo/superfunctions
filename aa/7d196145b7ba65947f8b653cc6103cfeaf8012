@@ -1,0 +1,21 @@
+datafn/client/__tests__/import-search-sync.test.ts
+  s_f058f999ab46b7::t_77f61c6bd4789e 316-351
+datafn/client/src/client.ts
+  s_f058f999ab46b7::t_4c37a9108f5008 1053-1094,1109-1118
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "aa7d196145b7ba65947f8b653cc6103cfeaf8012",
+  "prompts": {},
+  "sessions": {
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

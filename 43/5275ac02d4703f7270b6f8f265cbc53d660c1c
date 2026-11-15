@@ -1,0 +1,61 @@
+filefn/server/src/processing/job-handler.ts
+  s_9e10af2e6b6eed::t_888edad868a3b8 15-16,27
+filefn/server/src/storage-references.ts
+  s_9e10af2e6b6eed::t_0f75c82ba3a785 3,26-28,70,73,77-78
+filefn/server/tests/processing-jobs.test.ts
+  s_9e10af2e6b6eed::t_3d6ccc74701ea9 147-165,209-242,244,246-247,251-252,254-267,602,604,607,613,618,635,642,647,650,659,664,668,672,675,684,689,698,899,928,952-1007,1130-1141,1143-1147,1149-1151,1153-1163,1165-1167,1169-1176,1178-1194,1196,1198-1199,1230-1232
+  s_7fc1e9aa78096f::t_44440727edb740 243,245,248-250,253
+  s_fc3432094dd313::t_0cc56921a4c29d 1142
+filefn/docs/content/docs/recipes/cloudflare-workers.md
+  s_9e10af2e6b6eed::t_eb97f3e3899c32 122,125-126
+filefn/processing/src/queues/cloudflare.ts
+  s_9e10af2e6b6eed::t_b189be2ea266dd 39-40,43
+filefn/docs/static/llms-full.txt
+  s_9e10af2e6b6eed::t_c450a33821b8e8 6566,6569-6570
+filefn/server/src/processing/service.ts
+  s_fc3432094dd313::t_48063b0b49d9ba 289-291
+  s_9e10af2e6b6eed::t_71718cb5da53d0 247-272,284-288,299-318,958,1061,1116,1183
+  s_a942b80e5f2ac3::t_666b504e76eb07 273-283,292-298
+filefn/processing/tests/queues-cloudflare.test.ts
+  s_9e10af2e6b6eed::t_680f850f4f6208 55,57,59-60,62,65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "435275ac02d4703f7270b6f8f265cbc53d660c1c",
+  "prompts": {},
+  "sessions": {
+    "s_7fc1e9aa78096f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9f87ee5c-2a25-4b8f-95e7-06dbdb828158",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_9e10af2e6b6eed": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_9e10af2e6b6eed",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_a942b80e5f2ac3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "27dcc4ee-6c69-4277-bdf9-dcf1bdede269",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_fc3432094dd313": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8b842cde-6b9d-4b3e-907c-4312be869c27",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

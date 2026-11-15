@@ -1,0 +1,27 @@
+datafn/client/__tests__/cloneUp.test.ts
+  s_f058f999ab46b7::t_abf586d4d30bb7 1927-1965
+datafn/client/__tests__/import-search-sync.test.ts
+  s_f058f999ab46b7::t_d98d77e19cfdb5 348-379
+datafn/client/src/export.ts
+  s_f058f999ab46b7::t_acf33dc618122a 62,71,75-78
+datafn/client/src/sync/cloneUp.ts
+  s_f058f999ab46b7::t_6fe3ed22b0aa3e 172-178
+datafn/client/src/sync/cloneUp/order.ts
+  s_f058f999ab46b7::t_03718f077e1190 40-41,46-47,57-58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d6b337844ea2cb5ee8717fcdef76a5def42b33ef",
+  "prompts": {},
+  "sessions": {
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

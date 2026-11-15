@@ -1,0 +1,29 @@
+datafn/client/__tests__/import-search-sync.test.ts
+  s_f058f999ab46b7::t_cc7dbc77cdf3f7 177-199
+datafn/client/__tests__/signal-refresh-coalescing.test.ts
+  s_f058f999ab46b7::t_999e1a65572303 244-342
+datafn/client/__tests__/signal-refresh-order.test.ts
+  s_f058f999ab46b7::t_e7bcbde20af5d8 1-117
+datafn/client/src/client.ts
+  s_f058f999ab46b7::t_a87ae6a20093d6 1808-1824,2346
+datafn/client/src/signals/querySignal.ts
+  s_f058f999ab46b7::t_4d98d7b9fc3fdc 7,16,55,57-61,65,92,357,359-366,434,441,472-474,549-577,584-587,596-600,610-619,644,647-648
+datafn/client/src/sync/status.ts
+  s_f058f999ab46b7::t_762cc6104501f7 211-213,388-395
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f8af68b854e2b30dd91d873d43e2248edce1165b",
+  "prompts": {},
+  "sessions": {
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
