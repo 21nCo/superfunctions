@@ -16,7 +16,7 @@ type Mode = 'multipart' | 'proxy';
  * PUT to a signed part URL with `putSignedPart`; completion concatenates the
  * parts into the object. In proxy mode FileFn streams the bytes itself.
  */
-function createStorage(mode: Mode) {
+function createStorage(mode: Mode, options: { lenientRecompletion?: boolean } = {}) {
   const objects = new Map<string, Uint8Array>();
   const uploads = new Map<string, { key: string; parts: Map<number, Uint8Array> }>();
   const completedUploads = new Map<string, string>();
@@ -24,6 +24,16 @@ function createStorage(mode: Mode) {
   const deleteFailures = new Map<string, number>();
   /** Storage completion of these final keys waits for the promise. */
   const gates = new Map<string, Promise<void>>();
+  /** statObject of these keys waits for the promise (after storage completion). */
+  const statHolds = new Map<string, Promise<void>>();
+  /** Storage-completion attempts per final key. */
+  const finalizeAttempts = new Map<string, number>();
+  let onFinalize: ((key: string, attempt: number) => void) | undefined;
+  const noteFinalize = (key: string) => {
+    const attempt = (finalizeAttempts.get(key) ?? 0) + 1;
+    finalizeAttempts.set(key, attempt);
+    onFinalize?.(key, attempt);
+  };
   let uploadCounter = 0;
 
   const storage: StorageAdapter = {
@@ -44,11 +54,13 @@ function createStorage(mode: Mode) {
       return { url: `https://storage.test/${input.uploadId}/${input.partNumber}`, headers: {} };
     },
     async completeMultipartUpload(input) {
+      noteFinalize(input.key);
       const upload = uploads.get(input.uploadId);
       if (!upload) {
-        // Re-completion of a finished upload is a no-op in this fixture.
-        if (completedUploads.get(input.uploadId) === input.key) return;
-        throw new Error(`no such upload: ${input.uploadId}`);
+        // S3 and R2 answer NoSuchUpload; the lenient mode models a store that
+        // treats re-completing a finished upload as a no-op.
+        if (options.lenientRecompletion && completedUploads.get(input.uploadId) === input.key) return;
+        throw new Error(`NoSuchUpload: ${input.uploadId}`);
       }
       await gates.get(upload.key);
       const chunks = input.parts.map((part) => upload.parts.get(part.partNumber)!);
@@ -60,6 +72,7 @@ function createStorage(mode: Mode) {
       uploads.delete(input.uploadId);
     },
     async statObject(input) {
+      await statHolds.get(input.key);
       const bytes = objects.get(input.key);
       if (!bytes) throw new Error(`object not found: ${input.key}`);
       return { key: input.key, size: bytes.byteLength };
@@ -73,6 +86,7 @@ function createStorage(mode: Mode) {
       objects.delete(input.key);
     },
     async openUploadStream(input) {
+      if (!input.key.includes('.part')) noteFinalize(input.key);
       await gates.get(input.key);
       const chunks: Uint8Array[] = [];
       return new WritableStream<Uint8Array>({
@@ -101,6 +115,19 @@ function createStorage(mode: Mode) {
     objects,
     uploads,
     deleteFailures,
+    /**
+     * Holds the first completion of `key` after it finalized storage until a
+     * second finalization of the same key starts, or `maxMs` passes.
+     */
+    holdAfterFirstFinalize(key: string, maxMs = 50) {
+      let release!: () => void;
+      const released = new Promise<void>((resolve) => { release = resolve; });
+      statHolds.set(key, Promise.race([released, new Promise<void>((resolve) => setTimeout(resolve, maxMs))]));
+      onFinalize = (finalized, attempt) => {
+        if (finalized === key && attempt >= 2) release();
+      };
+      return () => finalizeAttempts.get(key) ?? 0;
+    },
     /** Holds storage completion of `key` until the returned release is called. */
     gate(key: string): () => void {
       let release!: () => void;
@@ -471,6 +498,24 @@ describe('client-chosen file IDs: first completion wins', () => {
     expect(storageFixture.objects.has(aWon ? keyB : keyA)).toBe(false);
   });
 
+  for (const mode of ['multipart', 'proxy'] as const) {
+    it(`${mode}: two concurrent completion calls of one session return the same result and keep the bytes`, async () => {
+      const database = memoryAdapter();
+      const app = createApp({ mode, database });
+      const staged = await app.stage('user_a', CLIENT_ID, 'one session, two calls');
+      const key = (await rawSession(database, staged.uploadSessionId))!.storageKey;
+      // The first call stalls after finalizing storage; the second must not
+      // finalize storage again over it.
+      const finalizations = app.fixture.holdAfterFirstFinalize(key);
+      const [first, second] = await Promise.all([staged.complete(), staged.complete()]);
+      expect(finalizations()).toBe(1);
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(200);
+      expect(second.json.data).toEqual(first.json.data);
+      expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('one session, two calls');
+    });
+  }
+
   it('a quota-refused init leaves no session row and no storage upload', async () => {
     const database = memoryAdapter();
     const quota: QuotaProvider = {
@@ -500,7 +545,7 @@ describe('client-chosen file IDs across processes (unique-enforcing adapter)', (
    * unique constraint, not the in-process lock, decides the winner. The second
    * insert is released only once the winner's version row exists.
    */
-  async function createTwoProcesses(mode: Mode) {
+  async function createTwoProcesses(mode: Mode, storageOptions: { lenientRecompletion?: boolean } = {}) {
     let filesInserts = 0;
     let firstArrived!: () => void;
     const firstArrival = new Promise<void>((resolve) => { firstArrived = resolve; });
@@ -525,7 +570,7 @@ describe('client-chosen file IDs across processes (unique-enforcing adapter)', (
         if (model === 'fileVersions') winnerVersionWritten();
       },
     });
-    const storageFixture = createStorage(mode);
+    const storageFixture = createStorage(mode, storageOptions);
     const one = createApp({ mode, database, storageFixture, createFileFn: await loadProcess() });
     const two = createApp({ mode, database, storageFixture, createFileFn: await loadProcess() });
     return { database, storageFixture, one, two, firstArrival, filesInserts: () => filesInserts };
@@ -599,7 +644,8 @@ describe('client-chosen file IDs across processes (unique-enforcing adapter)', (
           }
         },
       });
-      const storageFixture = createStorage('multipart');
+      // Cross-process duplicates both finalize storage; see the lenient fixture.
+      const storageFixture = createStorage('multipart', { lenientRecompletion: true });
       const one = createApp({ mode: 'multipart', database, storageFixture, createFileFn: await loadProcess() });
       const two = createApp({ mode: 'multipart', database, storageFixture, createFileFn: await loadProcess() });
       const staged = await one.stage(user, CLIENT_ID, 'same session bytes');
@@ -627,7 +673,7 @@ describe('client-chosen file IDs across processes (unique-enforcing adapter)', (
   }
 
   it('a concurrent second completion call of the same session returns the recorded result and deletes nothing', async () => {
-    const { database, storageFixture, one, two, firstArrival, filesInserts } = await createTwoProcesses('multipart');
+    const { database, storageFixture, one, two, firstArrival, filesInserts } = await createTwoProcesses('multipart', { lenientRecompletion: true });
     const staged = await one.stage('user_a', CLIENT_ID, 'same session');
     const key = (await rawSession(database, staged.uploadSessionId))!.storageKey;
 
@@ -699,12 +745,14 @@ describe('client-chosen file IDs across processes (unique-enforcing adapter)', (
       async canWrite(file, ctx) { return file.ownerId === ctx.principalId || ctx.principalId === 'editor'; },
       async canDelete(file, ctx) { return file.ownerId === ctx.principalId; },
     };
-    const app = createApp({ mode: 'multipart', database, authorizer: editorAuthorizer });
+    const storageFixture = createStorage('multipart');
+    const app = createApp({ mode: 'multipart', database, storageFixture, authorizer: editorAuthorizer, createFileFn: await loadProcess() });
+    const other = createApp({ mode: 'multipart', database, storageFixture, authorizer: editorAuthorizer, createFileFn: await loadProcess() });
     const staged = await app.stage(undefined, CLIENT_ID, 'anonymous capture');
     const key = (await rawSession(database, staged.uploadSessionId))!.storageKey;
 
     holdNextVersionMiss = true;
-    const duplicate = staged.complete();
+    const duplicate = other.call('POST', `/upload/${staged.uploadSessionId}/complete`, { token: staged.token });
     await duplicateStalled;
     const first = await staged.complete();
     expect(first.status).toBe(200);
@@ -794,6 +842,34 @@ describe('refused completion cleanup', () => {
     const retried = await loser.complete();
     expect(retried.status).toBe(403);
     expect(storageFixture.objects.has(loserKey)).toBe(false);
+    expect((await rawSession(database, loser.uploadSessionId))!.status).toBe('aborted');
+  });
+
+  it('a refusal whose proxy part delete fails keeps the session and its parts until a retry deletes them', async () => {
+    const database = memoryAdapter();
+    const storageFixture = createStorage('proxy');
+    const app = createApp({ mode: 'proxy', database, storageFixture });
+    const loser = await app.stage('user_b', CLIENT_ID, 'loser part');
+    const winner = await app.stage('user_a', CLIENT_ID, 'winner');
+    expect((await winner.complete()).status).toBe(200);
+    const loserKey = (await rawSession(database, loser.uploadSessionId))!.storageKey;
+    const partKey = `${loserKey}.part1`;
+    expect(storageFixture.objects.has(partKey)).toBe(true);
+    storageFixture.deleteFailures.set(partKey, 1);
+
+    const refused = await loser.complete();
+    expect(refused.status).toBe(403);
+    expect(storageFixture.objects.has(partKey)).toBe(true);
+    expect((await rawSession(database, loser.uploadSessionId))!.status).not.toBe('aborted');
+    expect(await database.findMany({
+      model: 'uploadParts',
+      where: [{ field: 'uploadSessionId', operator: 'eq', value: loser.uploadSessionId }],
+      namespace: 'filefn',
+    })).toHaveLength(1);
+
+    const retried = await loser.complete();
+    expect(retried.status).toBe(403);
+    expect(storageFixture.objects.has(partKey)).toBe(false);
     expect((await rawSession(database, loser.uploadSessionId))!.status).toBe('aborted');
   });
 });

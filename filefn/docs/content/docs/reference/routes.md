@@ -33,7 +33,7 @@ For an interactive explorer, see the [API page](../../api/filefn).
 - A repeated `POST /upload/:id/complete` of the session that created the file returns the same `{ fileId, versionId }`.
 - A retried `POST /upload/init` with the same `x-idempotency-key` and body returns the same session, and so the same `fileId`.
 
-The unique `files.fileId` column decides which completion creates the file, so several FileFn processes can share one database. Within a process FileFn also serializes completions per `fileId`. On database adapters without unique constraints (`capabilities.schema.constraints` is `false`, such as the memory adapter) that in-process guard is the only one, so those adapters support a single FileFn process only.
+The unique `files.fileId` column decides which completion creates the file, so several FileFn processes can share one database. Within a process FileFn also serializes the completion calls of each upload session, and completions per `fileId`. On database adapters without unique constraints (`capabilities.schema.constraints` is `false`, such as the memory adapter) that in-process guard is the only one, so those adapters support a single FileFn process only.
 
 ## Files
 

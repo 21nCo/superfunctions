@@ -93,10 +93,12 @@ export interface UploadSession {
   uploadSessionTokenHash?: string | null;
 }
 
-// Serializes upload commit sections per namespace and fileId across every
-// FileFn instance in this process (hosts may build one per request). It is the
-// only guard on adapters without unique constraints, which are single-process.
-const runSerializedPerFileId = createKeyedSerializer();
+// Serializes, across every FileFn instance in this process (hosts may build one
+// per request), the calls completing one upload session and the commit section
+// per namespace and fileId. It is the only guard on adapters without unique
+// constraints, which are single-process. Keys: `session\0...` then `file\0...`,
+// always acquired in that order.
+const runSerialized = createKeyedSerializer();
 
 function generateDefaultId(): string {
   return generateFileFnId('upl');
@@ -222,9 +224,11 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     return `${storageKey}.part${partNumber}`;
   }
 
-  async function deleteProxyTempPartObjects(session: UploadSession): Promise<void> {
+  // Deletes the session's proxy part objects. Returns false if any delete
+  // failed; callers that must not lose track of the parts keep the session.
+  async function deleteProxyTempPartObjects(session: UploadSession): Promise<boolean> {
     if (session.uploadMode !== 'proxy' || !storage.deleteObject) {
-      return;
+      return true;
     }
     const policy = policies.get(session.policy);
     const storageTarget = policy ? resolveStorageTarget(policy) : undefined;
@@ -236,13 +240,15 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       namespace,
     });
 
+    let allDeleted = true;
     for (const part of parts) {
       try {
         await storage.deleteObject({ key: proxyPartKey(session.storageKey, part.partNumber), target: storageTarget });
       } catch {
-        // Best-effort cleanup.
+        allDeleted = false;
       }
     }
+    return allDeleted;
   }
 
   // Without a configured checker the service trusts its caller, as at init.
@@ -293,8 +299,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
   }
 
   // Aborts the session's storage upload, deletes its proxy part objects (and,
-  // when asked, its own unpublished final object) and ends it as aborted. If the
-  // final object could not be deleted the session is left open for a retry.
+  // when asked, its own unpublished final object) and ends it as aborted. When
+  // asked to delete the final object, a failed delete leaves the session open.
   async function discardSessionUpload(session: UploadSession, options: { deleteOwnObject?: boolean } = {}): Promise<void> {
     const policy = policies.get(session.policy);
     const storageTarget = policy ? resolveStorageTarget(policy) : undefined;
@@ -310,14 +316,19 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       }
     }
 
-    await deleteProxyTempPartObjects(session);
-    if (options.deleteOwnObject && !(await deleteOwnUnpublishedObject(session))) {
-      return;
+    const partsDeleted = await deleteProxyTempPartObjects(session);
+    if (options.deleteOwnObject) {
+      // A refusal keeps nothing: if any delete failed, keep the session and its
+      // part rows so a retried completion or the expiry sweep tries again.
+      const objectDeleted = await deleteOwnUnpublishedObject(session);
+      if (!partsDeleted || !objectDeleted) {
+        return;
+      }
     }
     await endSessionAborted(session.uploadSessionId);
   }
 
-  return {
+  const service = {
     assertSessionAccess(session: UploadSession, ctx: FileProviderContext, uploadSessionToken?: string): void {
       // Legacy safety: pre-binding records may not carry ownerId.
       // Current sessions always persist ownerId, so this only preserves older fixtures.
@@ -1007,7 +1018,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // Across processes the unique `files.fileId` constraint decides the winner.
       const commitOutcome = publishedVersion
         ? 'resumed'
-        : await runSerializedPerFileId(`${namespace}\u0000${fileId}`, async (): Promise<'published' | 'recorded' | 'refused'> => {
+        : await runSerialized(`file\u0000${namespace}\u0000${fileId}`, async (): Promise<'published' | 'recorded' | 'refused'> => {
             // Another completion call of this same session already published it.
             if (await findOwnVersion()) return 'recorded';
 
@@ -1194,11 +1205,13 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
                 }
             }
 
-            await deleteProxyTempPartObjects(session);
-            // An unpublished session's final object (for example one left by a
-            // refused completion whose delete failed) goes with the session. If
-            // it cannot be deleted, keep the session for the next sweep.
-            if (!(await deleteOwnUnpublishedObject(session))) {
+            // The session's part objects and unpublished final object (for
+            // example one left by a refused completion whose delete failed) go
+            // with the session. If any cannot be deleted, keep the session and
+            // its part rows for the next sweep.
+            const partsDeleted = await deleteProxyTempPartObjects(session);
+            const objectDeleted = await deleteOwnUnpublishedObject(session);
+            if (!partsDeleted || !objectDeleted) {
                 continue;
             }
             await db.deleteMany({
@@ -1218,6 +1231,16 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         return { deletedSessions, abortedMultipart };
     }
   };
+
+  // Calls completing one session run one at a time in this process, so a
+  // retried call never finalizes storage or refuses alongside another call of
+  // the same session; it reads the result the earlier call recorded.
+  const completeSessionNow = service.completeSession;
+  service.completeSession = (uploadSessionId, ctx, uploadSessionToken) =>
+    runSerialized(`session\u0000${namespace}\u0000${uploadSessionId}`, () =>
+      completeSessionNow.call(service, uploadSessionId, ctx, uploadSessionToken));
+
+  return service;
 }
 
 export type UploadSessionService = ReturnType<typeof createUploadSessionService>;
