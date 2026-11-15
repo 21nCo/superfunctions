@@ -8,6 +8,8 @@ import {
   insertGrant,
   listGrants,
   readCreateGrantInput,
+  repairGrantEvents,
+  requireFutureExpiry,
   revokeGrant,
   toGrantSummary,
   type GrantDeps
@@ -332,8 +334,10 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         tenantId: input.tenantId
       };
       const resource = input.resource ?? 'storage';
-      const entitlements = await subscriptionProvider.getEntitlementSnapshot(subject);
-      if (!entitlements || entitlements.status === 'inactive') {
+      // Status and limit come from one entitlements read, so a grant ending between reads cannot mix them.
+      const billingAccount = await findBillingAccountForSubject(deps, requireSubject(subject));
+      const entitlements = billingAccount ? await findEffectiveEntitlements(billingAccount.id) : null;
+      if (!billingAccount || !entitlements || entitlements.status === 'inactive') {
         return {
           allowed: false,
           current: 0,
@@ -341,19 +345,20 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
           reason: 'subscription_inactive'
         };
       }
-      const usage = await quotaProvider.getUsage(input.principalId, input.tenantId, resource);
-      const limit = usage.limit;
-      if (limit >= 0 && usage.current + input.requestedBytes > limit) {
+      const meter = await findUsageMeter(deps, billingAccount.id, resource);
+      const current = meter?.current ?? 0;
+      const limit = entitlements.limits[resource] ?? 0;
+      if (limit >= 0 && current + input.requestedBytes > limit) {
         return {
           allowed: false,
-          current: usage.current,
+          current,
           limit,
           reason: 'quota_exceeded'
         };
       }
       return {
         allowed: true,
-        current: usage.current,
+        current,
         limit
       };
     },
@@ -1350,6 +1355,9 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
     },
     async createGrant(input: BillFnCreateGrantRequest): Promise<BillFnGrantResponse> {
       const grantInput = readCreateGrantInput(grantDeps, input);
+      // Before the expiry check, so a refused request still records events an interrupted call left unrecorded.
+      await repairGrantEvents(grantDeps, input.billingAccountId);
+      requireFutureExpiry(grantDeps, grantInput);
       const billingAccount = await resolveOperatorBillingAccount(deps, input);
       const grant = await insertGrant(grantDeps, billingAccount.id, grantInput);
       return ok({ grant, entitlements: await findEffectiveEntitlements(billingAccount.id) });

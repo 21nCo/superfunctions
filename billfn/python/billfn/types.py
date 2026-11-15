@@ -161,6 +161,26 @@ class BillFnSubscription(BillFnModel):
     updated_at: str = Field(alias="updatedAt")
 
 
+class BillFnEntitlementSnapshotGrant(BillFnModel):
+    """The active grant (``trial`` or ``comp``) that supplies an entitlement snapshot until ``expires_at``."""
+
+    id: str
+    kind: str
+    expires_at: str = Field(alias="expiresAt")
+
+
+class BillFnEntitlementGrantSummary(BillFnModel):
+    """A grant as its billing subject sees it; ``status`` is ``active``, ``expired`` or ``revoked``."""
+
+    id: str
+    kind: str
+    plan_key: str = Field(alias="planKey")
+    status: str
+    starts_at: str = Field(alias="startsAt")
+    expires_at: str = Field(alias="expiresAt")
+    revoked_at: Optional[str] = Field(default=None, alias="revokedAt")
+
+
 class BillFnEntitlementSnapshot(BillFnModel):
     id: str
     billing_account_id: str = Field(alias="billingAccountId")
@@ -171,6 +191,7 @@ class BillFnEntitlementSnapshot(BillFnModel):
     effective_at: str = Field(alias="effectiveAt")
     expires_at: Optional[str] = Field(default=None, alias="expiresAt")
     source_event_id: Optional[str] = Field(default=None, alias="sourceEventId")
+    grant: Optional[BillFnEntitlementSnapshotGrant] = None
     created_at: str = Field(alias="createdAt")
     updated_at: str = Field(alias="updatedAt")
 
@@ -244,6 +265,7 @@ class BillFnEntitlementsResponseData(BillFnModel):
     billing_account: BillFnBillingAccount = Field(alias="billingAccount")
     entitlements: Optional[BillFnEntitlementSnapshot] = None
     subscription: Optional[BillFnSubscription] = None
+    grants: List[BillFnEntitlementGrantSummary] = Field(default_factory=list)
 
 
 class BillFnUsageItem(BillFnModel):

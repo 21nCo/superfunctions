@@ -460,8 +460,7 @@ describe("@billfn/admin", () => {
   });
 
   describe("grant-entitlement", () => {
-    function grantingBillFn() {
-      const db = memoryAdapter();
+    function grantingBillFn(db: ReturnType<typeof memoryAdapter> = memoryAdapter()) {
       const billfn = createBillFn({
         db,
         catalog: {
@@ -599,6 +598,63 @@ describe("@billfn/admin", () => {
         { id: rowId },
         { ...context, requestId: "request_3", idempotencyKey: "idempotency_3" },
       )).rejects.toMatchObject({ code: "not_found" });
+    });
+
+    it("records an unrecorded grant or revoke event on a later request with a new idempotency key without transactions", async () => {
+      const base = memoryAdapter();
+      // Fails writes of one event type, so the writes that repair other events succeed.
+      const failEvents = { type: "" };
+      const db: ReturnType<typeof memoryAdapter> = {
+        ...base,
+        capabilities: { ...base.capabilities, transactions: { ...base.capabilities.transactions, supported: false } },
+        async create<T>(params: Parameters<typeof base.create>[0]): Promise<T> {
+          if (params.model === "billingEvents" && (params.data as { type?: string }).type === failEvents.type) {
+            throw new Error("event write failed");
+          }
+          return base.create<T>(params);
+        },
+      };
+      const { adapter, dispatcher, expiresAt } = grantingBillFn(db);
+      const events = (type: string) => db.findMany<{ payload: Record<string, unknown> }>({
+        model: "billingEvents",
+        where: [{ field: "type", operator: "eq", value: type }],
+        namespace: "billfn",
+      });
+      const dispatch = (n: number, operationId: string, input: Record<string, unknown>) => dispatcher.dispatch({
+        operationId,
+        input,
+        context: { ...context, confirmationToken: "token_1", requestId: `request_${n}`, idempotencyKey: `idempotency_${n}` },
+      });
+      const grant = { payload: { kind: "comp", planKey: "nucleus", expiresAt }, reason: "vip" };
+
+      failEvents.type = "billfn.grant.created";
+      await expect(dispatch(1, "billfn.entitlements.grant-entitlement", grant)).resolves.toMatchObject({ ok: false });
+      failEvents.type = "";
+      // The same idempotency key replays the stored failure without running the grant again.
+      await expect(dispatch(1, "billfn.entitlements.grant-entitlement", grant)).resolves.toMatchObject({
+        ok: false,
+        meta: { idempotencyReplay: true },
+      });
+      expect(await events("billfn.grant.created")).toEqual([]);
+      // The comp committed without its event; the next request refuses a second comp and records the event once.
+      await expect(dispatch(2, "billfn.entitlements.grant-entitlement", grant)).resolves.toMatchObject({
+        ok: false,
+        error: { code: "conflict", details: { reason: "active_comp_exists" } },
+      });
+      expect(await events("billfn.grant.created")).toMatchObject([{ payload: { kind: "comp", reason: "vip" } }]);
+
+      const listed = await adapter.execute("billfn.entitlements.list", {}, context) as { data: { items: Array<{ id: string }> } };
+      const rowId = listed.data.items[0]!.id;
+      failEvents.type = "billfn.grant.revoked";
+      await expect(dispatch(3, "billfn.entitlements.revoke-grant", { id: rowId, reason: "ended" })).resolves.toMatchObject({ ok: false });
+      failEvents.type = "";
+      // The comp was revoked without its event: the row has no active comp, and the request records the event first.
+      await expect(dispatch(4, "billfn.entitlements.revoke-grant", { id: rowId })).resolves.toMatchObject({
+        ok: false,
+        error: { code: "not_found" },
+      });
+      expect(await events("billfn.grant.revoked")).toMatchObject([{ payload: { reason: "ended", operator: { id: "operator_1" } } }]);
+      expect(await events("billfn.grant.created")).toHaveLength(1);
     });
   });
 });

@@ -42,7 +42,10 @@ export type GrantCreateInput = {
   reason: string | null;
 };
 
-/** Validates a grant request before any write, so a refused request creates no billing account. */
+/**
+ * Validates a grant request before any write, so a refused request creates no billing account. The expiry's
+ * position against now is checked separately (`requireFutureExpiry`), after `repairGrantEvents`.
+ */
 export function readCreateGrantInput(deps: GrantDeps, input: BillFnCreateGrantRequest): GrantCreateInput {
   if (typeof input.billingAccountId !== 'string' || input.billingAccountId.length === 0) {
     throw validation('billingAccountId must be a non-empty string');
@@ -57,9 +60,6 @@ export function readCreateGrantInput(deps: GrantDeps, input: BillFnCreateGrantRe
   if (!Number.isFinite(expiresAt)) {
     throw validation('expiresAt must be an ISO 8601 time');
   }
-  if (expiresAt <= deps.now().getTime()) {
-    throw validation('expiresAt must be in the future');
-  }
   return {
     planKey: input.planKey,
     kind: input.kind,
@@ -69,6 +69,33 @@ export function readCreateGrantInput(deps: GrantDeps, input: BillFnCreateGrantRe
   };
 }
 
+/** Refuses a grant whose expiry is not after now. */
+export function requireFutureExpiry(deps: GrantDeps, input: GrantCreateInput) {
+  if (Date.parse(input.expiresAt) <= deps.now().getTime()) {
+    throw validation('expiresAt must be in the future');
+  }
+}
+
+/**
+ * Records the account's grant events an interrupted call left unrecorded. Without transactions a grant change
+ * commits before its billing event (see `commitWithEvent`), so every grant create and revoke calls this first,
+ * before it checks the expiry or reads the grant it acts on: whatever that request then does, the account's
+ * earlier creations and revocations, also of grants that have since expired or been revoked, have their events.
+ * The events' ids derive from the grant, so a recorded event is kept and none is written twice. With
+ * transactions each change commits with its event and there is nothing to repair.
+ */
+export async function repairGrantEvents(deps: GrantDeps, billingAccountId: string) {
+  if (deps.db.capabilities.transactions.supported) {
+    return;
+  }
+  for (const grant of await listGrants(deps, billingAccountId)) {
+    await deps.recordBillingEvent(grantCreatedEvent(grant));
+    if (grant.revokedAt) {
+      await deps.recordBillingEvent(grantRevokedEvent(grant));
+    }
+  }
+}
+
 /**
  * Stores a grant. A trial's id is derived from its billing account, so the
  * unique id refuses a second trial even when two requests race. Comps take
@@ -76,8 +103,8 @@ export function readCreateGrantInput(deps: GrantDeps, input: BillFnCreateGrantRe
  * latest one is active, and a new one claims the next number, so of two racing
  * comps the unique id stores one and refuses the other. The grant and its
  * creation event commit together (see `commitWithEvent`); without transactions
- * a refused request records the existing grant's creation event if an
- * interrupted call left it unrecorded.
+ * the caller runs `repairGrantEvents` first, and a request refused by a racing
+ * grant records that grant's creation event.
  */
 export async function insertGrant(deps: GrantDeps, billingAccountId: string, input: GrantCreateInput) {
   for (let attempt = 0; attempt < CREATE_ATTEMPTS; attempt += 1) {
@@ -143,13 +170,15 @@ async function nextCompId(deps: GrantDeps, billingAccountId: string) {
     }
   }
   if (latest?.status === 'active') {
-    await deps.recordBillingEvent(grantCreatedEvent(latest));
     throw activeCompExists(latest.id);
   }
   return `${prefix}${latestNumber + 1}`;
 }
 
-/** Revokes a comp. A revoked comp is returned unchanged; a racing revoke is applied once. */
+/**
+ * Revokes a comp. A revoked comp is returned unchanged; a racing revoke is applied once. Without transactions the
+ * account's unrecorded grant events are recorded first, also when the grant is then not found.
+ */
 export async function revokeGrant(deps: GrantDeps, input: BillFnRevokeGrantRequest) {
   if (typeof input.billingAccountId !== 'string' || input.billingAccountId.length === 0) {
     throw validation('billingAccountId must be a non-empty string');
@@ -159,6 +188,7 @@ export async function revokeGrant(deps: GrantDeps, input: BillFnRevokeGrantReque
   }
   const operator = readOperator(input.operator);
   const reason = readReason(input.reason);
+  await repairGrantEvents(deps, input.billingAccountId);
   for (let attempt = 0; attempt < REVOKE_ATTEMPTS; attempt += 1) {
     const existing = await findGrant(deps, input.billingAccountId, input.grantId);
     if (!existing) {
@@ -213,10 +243,10 @@ export async function revokeGrant(deps: GrantDeps, input: BillFnRevokeGrantReque
  * Applies a grant change and records its billing event. Where the adapter
  * supports transactions (memory, Prisma, Kysely, Drizzle Postgres) both commit
  * in one transaction, so a failed event write leaves no grant change. Without
- * transactions the change commits first; the event's id is derived from the
- * grant, so a retry that finds the change already made (the trial or comp id
- * taken, the comp revoked) records the missing event once. Returns whether
- * `write` applied the change; an unapplied change records no event.
+ * transactions (Drizzle SQLite) the change commits first; the event's id is
+ * derived from the grant, and the account's next grant create or revoke,
+ * whatever its outcome, records the missing event once (`repairGrantEvents`).
+ * Returns whether `write` applied the change; an unapplied change records no event.
  */
 async function commitWithEvent(deps: GrantDeps, event: BillFnBillingEvent, write: (db: Adapter) => Promise<boolean>) {
   if (deps.db.capabilities.transactions.supported) {

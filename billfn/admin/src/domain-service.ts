@@ -152,16 +152,15 @@ function accepted(value: object): AdminOperationResult<JsonRecord> {
 
 /**
  * The grant a revoke targets. Super Console runs revoke-grant as an entitlements row action, so the row's
- * snapshot id names the account's active comp; any other id is taken as a grant id.
+ * snapshot id names the account's active comp; any other id is taken as a grant id. A row without an active comp
+ * keeps its id, so the revoke still runs (and records the account's unrecorded grant events) and is not found.
  */
 function revokeTarget(
   id: string,
   scoped: { entitlements: { id: string } | null; grants: Array<{ id: string; kind: string; status: string }> },
 ): string {
   if (scoped.entitlements?.id !== id) return id;
-  const comp = scoped.grants.find((grant) => grant.kind === "comp" && grant.status === "active");
-  if (!comp) throw new AdminError("not_found", "No active comp was found for the active BillFn subject.");
-  return comp.id;
+  return scoped.grants.find((grant) => grant.kind === "comp" && grant.status === "active")?.id ?? id;
 }
 
 function notFound(label: string): never {
@@ -289,16 +288,21 @@ export function createBillFnDomainAdminService(
       if (input.payload?.billingAccountId !== undefined && input.payload.billingAccountId !== scoped.billingAccount.id) {
         throw new AdminError("forbidden", "The grant billing account is outside the active BillFn subject.");
       }
+      const grantId = revokeTarget(string(input.id, "id"), scoped);
       try {
         const data = unwrap(await options.billfn.services.grants.revoke({
           billingAccountId: scoped.billingAccount.id,
-          grantId: revokeTarget(string(input.id, "id"), scoped),
+          grantId,
           operator: { id: context.actor.id, type: context.actor.type, requestId: context.requestId },
           reason: input.reason,
         }));
         return { ok: true, data: { accepted: true, item: asJson(data.grant), operationReference: data.grant.id } };
       } catch (error) {
-        throw adminErrorFromBillFn(error);
+        const mapped = adminErrorFromBillFn(error);
+        if (grantId === scoped.entitlements?.id && mapped instanceof AdminError && mapped.code === "not_found") {
+          throw new AdminError("not_found", "No active comp was found for the active BillFn subject.");
+        }
+        throw mapped;
       }
     },
     async changeSubscription(input, context) {

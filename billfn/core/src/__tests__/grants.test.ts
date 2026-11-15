@@ -83,11 +83,13 @@ function createProvider(state: { status: SubscriptionStatus }): BillFnProviderAd
 /** Fails billing event writes while `failEvents.on`, inside transactions and, when `transactions` is false, directly. */
 function failingEventDb(transactions: boolean) {
   const base = memoryAdapter({ debug: false });
-  const failEvents = { on: false };
+  // `only` limits the failure to one event id, so the writes that repair other events succeed.
+  const failEvents: { on: boolean; only?: string } = { on: false };
   const failing = <A extends Pick<Adapter, 'create'>>(adapter: A): A => ({
     ...adapter,
     async create<T>(params: Parameters<Adapter['create']>[0]): Promise<T> {
-      if (failEvents.on && params.model === 'billingEvents') {
+      const eventId = (params.data as { id?: unknown }).id;
+      if (failEvents.on && params.model === 'billingEvents' && (!failEvents.only || failEvents.only === eventId)) {
         throw new Error('event write failed');
       }
       return adapter.create<T>(params);
@@ -443,5 +445,69 @@ describe('entitlement grants', () => {
     failEvents.on = false;
     await expect(revoke()).resolves.toMatchObject({ ok: true, data: { grant: { status: 'revoked' } } });
     expect(await env.events('billfn.grant.revoked')).toMatchObject([{ payload: { grantId: comp.data.grant.id, operator: OPERATOR } }]);
+  });
+
+  it('records an unrecorded grant event on the account\'s next grant operation without transactions, also after expiry', async () => {
+    const { db, failEvents } = failingEventDb(false);
+    const env = setup(db);
+    const created = async () => (await env.events('billfn.grant.created')).map((event) => event.payload.grantId).sort();
+
+    // The trial commits without its event and expires; a later trial request is refused but records the event.
+    failEvents.on = true;
+    await expect(env.grant({ expiresAt: env.days(3) })).rejects.toThrow('event write failed');
+    env.advance(4);
+    failEvents.on = false;
+    await expect(env.grant({ expiresAt: env.days(-1) })).rejects.toMatchObject({ code: 'BILLFN_VALIDATION_ERROR' });
+    expect(await created()).toEqual([`grant_trial_${ACCOUNT}`]);
+
+    // comp 1 commits without its event and expires; creating comp 2 records both creation events once.
+    failEvents.on = true;
+    failEvents.only = `evt_grant_created_grant_comp_${ACCOUNT}_1`;
+    await expect(env.grant({ kind: 'comp', expiresAt: env.days(2) })).rejects.toThrow('event write failed');
+    env.advance(3);
+    failEvents.on = false;
+    const comp = await env.grant({ kind: 'comp' });
+    if (!comp.ok) throw new Error('expected a comp');
+    expect(comp.data.grant.id).toBe(`grant_comp_${ACCOUNT}_2`);
+    expect(await created()).toEqual([`grant_comp_${ACCOUNT}_1`, `grant_comp_${ACCOUNT}_2`, `grant_trial_${ACCOUNT}`]);
+
+    // A revoke commits without its event; a later grant request on the account records it once.
+    failEvents.on = true;
+    failEvents.only = `evt_grant_revoked_grant_comp_${ACCOUNT}_2`;
+    await expect(
+      env.billfn.services.grants.revoke({ billingAccountId: ACCOUNT, grantId: comp.data.grant.id, operator: OPERATOR })
+    ).rejects.toThrow('event write failed');
+    failEvents.on = false;
+    await expect(env.grant({ kind: 'comp', expiresAt: env.days(-1) })).rejects.toMatchObject({ code: 'BILLFN_VALIDATION_ERROR' });
+    await expect(
+      env.billfn.services.grants.revoke({ billingAccountId: ACCOUNT, grantId: 'grant_unknown', operator: OPERATOR })
+    ).rejects.toMatchObject({ code: 'BILLFN_NOT_FOUND' });
+    expect(await env.events('billfn.grant.revoked')).toMatchObject([{ payload: { grantId: comp.data.grant.id, operator: OPERATOR } }]);
+    expect(await created()).toHaveLength(3);
+  });
+
+  it('checks a quota against the status and limit of one entitlements read', async () => {
+    const base = memoryAdapter({ debug: false });
+    const grantReads = { count: 0, armed: false };
+    let env: ReturnType<typeof setup> | undefined;
+    const db: Adapter = {
+      ...base,
+      async findMany<T>(params: Parameters<Adapter['findMany']>[0]): Promise<T[]> {
+        // The comp expires between a first and a second read of the account's grants.
+        if (grantReads.armed && params.model === 'entitlementGrants' && ++grantReads.count === 2) {
+          env!.advance(8);
+        }
+        return base.findMany<T>(params);
+      }
+    };
+    env = setup(db);
+    await env.subscribe('expired');
+    await env.grant({ kind: 'comp', planKey: 'memotron', expiresAt: env.days(7) });
+
+    grantReads.armed = true;
+    // The comp's memotron limit (1000) decides, not the inactive paid nucleus limit (5000).
+    await expect(
+      env.billfn.quotaProvider.checkQuota({ principalId: PRINCIPAL, requestedBytes: 3000 })
+    ).resolves.toEqual({ allowed: false, current: 0, limit: 1000, reason: 'quota_exceeded' });
   });
 });
