@@ -3,7 +3,7 @@ title: Schema
 description: The normalized BillFn persistence model in the current TypeScript core.
 ---
 
-`getSchema()` in `@billfn/core` currently returns version `4` with fourteen table definitions.
+`getSchema()` in `@billfn/core` currently returns version `5` with fifteen table definitions.
 
 ## Tables
 
@@ -23,6 +23,7 @@ description: The normalized BillFn persistence model in the current TypeScript c
 | `reconciliationCursors` | Provider backfill cursors |
 | `unlinkedWebhookEvents` | Verified webhook events waiting for their provider reference to be linked, kept 90 days |
 | `replacedProviderReferences` | Provider references a subscription write dropped, so no event naming them bootstraps another subscription |
+| `entitlementGrants` | Trials and comps that grant a plan's entitlements without payment until an expiry |
 
 ## Important Indexes
 
@@ -41,6 +42,7 @@ Phase 1 relies on a few critical indexes:
 - `unlinkedWebhookEvents.expiresAt` for the 90-day retention purge
 - `replacedProviderReferences.provider + providerReference` as a unique key
 - `subscriptions.provider + replacedReferencesPending` for the subscriptions holding references not yet recorded as replaced
+- `entitlementGrants.billingAccountId + createdAt` for an account's grants
 
 ## Example
 
@@ -52,9 +54,31 @@ console.log(schema.version);
 console.log(schema.schemas.map((table) => table.modelName));
 ```
 
-The Python SDK mirrors schema version `4`. Both helpers expose the same fourteen logical model names and mark record identifiers as unique.
+The Python SDK mirrors schema version `5`. Both helpers expose the same fifteen logical model names and mark record identifiers as unique.
 
 ## Migrations
+
+### Schema 4 to 5 (`@billfn/core` 0.4.0)
+
+Version `5` adds one table, `entitlementGrants`. Create it before deploying `@billfn/core` 0.4.0: every entitlement read (`getEntitlements`, `subscriptionProvider`, `quotaProvider`, `getUsage`) of an account whose paid entitlements are missing or `inactive` reads it (`getEntitlements` always does, and without transactions every read does, to record missing grant events), and `billfn.services.grants` writes it. A trial's id is `grant_trial_<billingAccountId>`, so the unique `id` allows one trial per billing account; comps are numbered `grant_comp_<billingAccountId>_<n>`, and the next number is taken only while the latest comp is not active, so the unique `id` also allows one active comp at a time. No backfill is needed. The migration is additive, so rolling back to 0.3.x leaves the table unused (and its grants without effect).
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `id` | string, unique | yes |
+| `billingAccountId` | string | yes |
+| `planKey` | string | yes |
+| `kind` | string (`trial` or `comp`) | yes |
+| `startsAt` | string | yes |
+| `expiresAt` | string | yes |
+| `revokedAt` | string | no |
+| `operator` | json | no |
+| `reason` | string | no |
+| `revokedBy` | json | no |
+| `revokeReason` | string | no |
+| `createdAt` | string | yes |
+| `updatedAt` | string | yes |
+
+Index: `entitlement_grants_billing_account_idx` on `billingAccountId, createdAt`.
 
 ### Schema 3 to 4 (`@billfn/core` 0.2.0)
 

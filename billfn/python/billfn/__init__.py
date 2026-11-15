@@ -1,6 +1,6 @@
 """Python SDK for the billfn billing and entitlements surface."""
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __author__ = "21n"
 __license__ = "MIT"
 
@@ -18,7 +18,9 @@ from .types import (
     BillFnCheckoutVerifyRequest,
     BillFnClientAction,
     BillFnCreateCheckoutResponseData,
+    BillFnEntitlementGrantSummary,
     BillFnEntitlementSnapshot,
+    BillFnEntitlementSnapshotGrant,
     BillFnEntitlementsResponseData,
     BillFnEnvelope,
     BillFnEnvelopeMeta,
@@ -54,7 +56,9 @@ __all__ = [
     "BillFnClient",
     "BillFnClientAction",
     "BillFnCreateCheckoutResponseData",
+    "BillFnEntitlementGrantSummary",
     "BillFnEntitlementSnapshot",
+    "BillFnEntitlementSnapshotGrant",
     "BillFnEntitlementsResponseData",
     "BillFnEnvelope",
     "BillFnEnvelopeMeta",

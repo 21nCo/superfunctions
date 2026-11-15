@@ -4,6 +4,17 @@ import { ok } from '@superfunctions/envelope';
 import { createNamespacedEmitter, createMetricsEmitter, type MetricsEmitter } from '@superfunctions/metrics';
 import { createBillFnError } from './errors.js';
 import {
+  applyGrants,
+  insertGrant,
+  listRepairedGrants,
+  readCreateGrantInput,
+  repairGrantEvents,
+  requireFutureExpiry,
+  revokeGrant,
+  toGrantSummary,
+  type GrantDeps
+} from './grants.js';
+import {
   createDefaultBillingAccountResolver,
   defaultIdFactory,
   resolvePlan,
@@ -23,12 +34,14 @@ import type {
   BillFnConfig,
   BillFnCreateCheckoutResponse,
   BillFnCreateCheckoutResponseData,
+  BillFnCreateGrantRequest,
   BillFnEnqueueReconciliationJobRequest,
   BillFnEntitlementSnapshot,
   BillFnEntitlementsResponse,
   BillFnEntitlementsResponseData,
   BillFnFetchNotificationHistoryInput,
   BillFnGetReconciliationJobRequest,
+  BillFnGrantResponse,
   BillFnImportSubscriptionInput,
   BillFnImportSubscriptionRequest,
   BillFnImportSubscriptionResponse,
@@ -49,6 +62,7 @@ import type {
   BillFnRestorePurchasesResponseData,
   BillFnResumeSubscriptionRequest,
   BillFnResumeSubscriptionResponse,
+  BillFnRevokeGrantRequest,
   BillFnRunReconciliationJobRequest,
   BillFnSubscription,
   BillFnSubscriptionChangeRequest,
@@ -264,6 +278,34 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
     queue: config.queue
   };
   deps.reconcileProviderState = (subscription, event) => reconcileWindowEvent(subscription, event);
+  const grantDeps: GrantDeps = {
+    ...deps,
+    recordBillingEvent: (event, db) => recordBillingEvent(db ? { ...deps, db } : deps, event),
+    isDuplicateRecordError
+  };
+  /**
+   * The account's entitlements: its paid snapshot, or an active grant while that snapshot is `inactive`, and the
+   * grants they were derived from. The grants' missing events are repaired on every read (see
+   * `repairGrantEvents`). While the paid snapshot decides and the grants are not asked for, that repair is all
+   * that reads them, and it never fails the read; otherwise their status is derived after the paid snapshot read
+   * and the repair (see `listRepairedGrants`).
+   */
+  async function readEntitlements(billingAccountId: string, withGrantList = false) {
+    const paid = await findEntitlementSnapshot(deps, billingAccountId);
+    if (!withGrantList && paid && paid.status !== 'inactive') {
+      await repairGrantEvents(grantDeps, billingAccountId);
+      return { entitlements: paid, grants: [] };
+    }
+    const grants = await listRepairedGrants(grantDeps, billingAccountId);
+    return { entitlements: await applyGrants(grantDeps, billingAccountId, paid, grants), grants };
+  }
+  async function findEffectiveEntitlements(billingAccountId: string) {
+    return (await readEntitlements(billingAccountId)).entitlements;
+  }
+  /** A write's paid snapshot as the account's entitlements (see `applyGrants`). */
+  async function withGrants(billingAccountId: string, paid: BillFnEntitlementSnapshot) {
+    return (await applyGrants(grantDeps, billingAccountId, paid)) ?? paid;
+  }
 
   const subscriptionProvider = {
     getActiveSubscription: async (subject: BillableSubject) => {
@@ -278,7 +320,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
       if (!billingAccount) {
         return null;
       }
-      return findEntitlementSnapshot(deps, billingAccount.id);
+      return findEffectiveEntitlements(billingAccount.id);
     },
     isActive: async (subject: BillableSubject) => {
       const snapshot = await subscriptionProvider.getEntitlementSnapshot(subject);
@@ -307,8 +349,10 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         tenantId: input.tenantId
       };
       const resource = input.resource ?? 'storage';
-      const entitlements = await subscriptionProvider.getEntitlementSnapshot(subject);
-      if (!entitlements || entitlements.status === 'inactive') {
+      // Status and limit come from one entitlements read, so a grant ending between reads cannot mix them.
+      const billingAccount = await findBillingAccountForSubject(deps, requireSubject(subject));
+      const entitlements = billingAccount ? await findEffectiveEntitlements(billingAccount.id) : null;
+      if (!billingAccount || !entitlements || entitlements.status === 'inactive') {
         return {
           allowed: false,
           current: 0,
@@ -316,19 +360,20 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
           reason: 'subscription_inactive'
         };
       }
-      const usage = await quotaProvider.getUsage(input.principalId, input.tenantId, resource);
-      const limit = usage.limit;
-      if (limit >= 0 && usage.current + input.requestedBytes > limit) {
+      const meter = await findUsageMeter(deps, billingAccount.id, resource);
+      const current = meter?.current ?? 0;
+      const limit = entitlements.limits[resource] ?? 0;
+      if (limit >= 0 && current + input.requestedBytes > limit) {
         return {
           allowed: false,
-          current: usage.current,
+          current,
           limit,
           reason: 'quota_exceeded'
         };
       }
       return {
         allowed: true,
-        current: usage.current,
+        current,
         limit
       };
     },
@@ -352,7 +397,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
       };
       const billingAccount = await findBillingAccountForSubject(deps, requireSubject(subject));
       const meter = billingAccount ? await findUsageMeter(deps, billingAccount.id, resource) : null;
-      const entitlements = billingAccount ? await findEntitlementSnapshot(deps, billingAccount.id) : null;
+      const entitlements = billingAccount ? await findEffectiveEntitlements(billingAccount.id) : null;
       return {
         current: meter?.current ?? 0,
         limit: entitlements?.limits[resource] ?? 0
@@ -536,7 +581,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
     });
     return {
       subscription: projection.subscription,
-      entitlements: projection.entitlements,
+      entitlements: await withGrants(billingAccount.id, projection.entitlements),
       operationStatus: operation.operationStatus,
       clientAction: operation.clientAction
     };
@@ -851,7 +896,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
       return ok({
         checkoutSession: result.checkoutSession,
         subscription: result.subscription,
-        entitlements: result.entitlements
+        entitlements: await withGrants(billingAccount.id, result.entitlements)
       });
     },
     async cancelSubscription(input: BillFnCancelSubscriptionRequest): Promise<BillFnCancelSubscriptionResponse> {
@@ -1064,7 +1109,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
       return ok({
         refund,
         subscription: projectedSubscription,
-        entitlements: projectedEntitlements,
+        entitlements: await applyGrants(grantDeps, billingAccount.id, projectedEntitlements),
         operationStatus: operation.operationStatus,
         clientAction: operation.clientAction
       });
@@ -1084,7 +1129,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
 
       const response: BillFnSyncSubscriptionResponseData = {
         subscription: applied.subscription,
-        entitlements: applied.entitlements
+        entitlements: await withGrants(billingAccount.id, applied.entitlements)
       };
       return ok(response);
     },
@@ -1153,7 +1198,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
           });
           const response: BillFnRestorePurchasesResponseData = {
             subscription: applied.subscription,
-            entitlements: applied.entitlements
+            entitlements: await withGrants(billingAccount.id, applied.entitlements)
           };
           return ok(response);
         }
@@ -1174,7 +1219,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
 
         const response: BillFnRestorePurchasesResponseData = {
           subscription: applied.subscription,
-          entitlements: applied.entitlements
+          entitlements: await withGrants(billingAccount.id, applied.entitlements)
         };
         return ok(response);
       }
@@ -1206,7 +1251,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
       }
       // Resolved after the checks above, so an import they refuse never creates the subject's billing account;
       // one refused after the provider read keeps it.
-      const billingAccount = await resolveImportBillingAccount(deps, input);
+      const billingAccount = await resolveOperatorBillingAccount(deps, input);
 
       // Events that occurred before this live read are already reflected in its state.
       const importObservedAt = toIsoString(deps.now());
@@ -1319,9 +1364,22 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
       deps.metrics.track('subscription.imported', { provider: providerName });
       return ok({
         subscription: refreshed.subscription,
-        entitlements: refreshed.entitlements,
+        entitlements: await withGrants(refreshed.subscription.billingAccountId, refreshed.entitlements),
         billingEvent
       });
+    },
+    async createGrant(input: BillFnCreateGrantRequest): Promise<BillFnGrantResponse> {
+      const grantInput = readCreateGrantInput(grantDeps, input);
+      // Before the expiry check, so a refused request still records events an interrupted call left unrecorded.
+      await repairGrantEvents(grantDeps, input.billingAccountId);
+      requireFutureExpiry(grantDeps, grantInput);
+      const billingAccount = await resolveOperatorBillingAccount(deps, input);
+      const grant = await insertGrant(grantDeps, billingAccount.id, grantInput);
+      return ok({ grant, entitlements: await findEffectiveEntitlements(billingAccount.id) });
+    },
+    async revokeGrant(input: BillFnRevokeGrantRequest): Promise<BillFnGrantResponse> {
+      const grant = await revokeGrant(grantDeps, input);
+      return ok({ grant, entitlements: await findEffectiveEntitlements(grant.billingAccountId) });
     },
     async getEntitlements(subject: BillableSubject): Promise<BillFnEntitlementsResponse> {
       const resolved = await resolveBillingAccountReference(deps, requireSubject(subject));
@@ -1330,22 +1388,24 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         return ok({
           billingAccount: buildVirtualBillingAccount(resolved, deps),
           entitlements: null,
-          subscription: null
+          subscription: null,
+          grants: []
         });
       }
-      const entitlements = await findEntitlementSnapshot(deps, billingAccount.id);
+      const { entitlements, grants } = await readEntitlements(billingAccount.id, true);
       const subscription = await findActiveSubscription(deps, billingAccount.id);
       const response: BillFnEntitlementsResponseData = {
         billingAccount,
         entitlements,
-        subscription
+        subscription,
+        grants: grants.map(toGrantSummary)
       };
       return ok(response);
     },
     async getUsage(subject: BillableSubject, resource?: string): Promise<BillFnUsageResponse> {
       const resolved = await resolveBillingAccountReference(deps, requireSubject(subject));
       const billingAccount = await getBillingAccountById(deps, resolved.billingAccountId);
-      const entitlements = billingAccount ? await findEntitlementSnapshot(deps, billingAccount.id) : null;
+      const entitlements = billingAccount ? await findEffectiveEntitlements(billingAccount.id) : null;
       const meters = billingAccount
         ? resource
           ? await findUsageMeters(deps, billingAccount.id, resource)
@@ -2169,8 +2229,11 @@ async function readImportState(
   }
 }
 
-/** The billing account an import binds to: created for the subject when one is given, otherwise existing. */
-async function resolveImportBillingAccount(deps: ServiceDeps, input: BillFnImportSubscriptionRequest) {
+/** The billing account an import or grant binds to: created for the subject when one is given, otherwise existing. */
+async function resolveOperatorBillingAccount(
+  deps: ServiceDeps,
+  input: { billingAccountId: string; subject?: BillableSubject }
+) {
   if (input.subject) {
     const subject = requireSubject(input.subject);
     const resolved = await resolveBillingAccountReference(deps, subject);

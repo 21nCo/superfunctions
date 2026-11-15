@@ -239,9 +239,19 @@ export const billFnAdminActions = [
     id: "grant-entitlement",
     resource: "entitlements",
     title: "Grant Entitlement",
-    description: "Grant Entitlement for entitlements.",
+    description: "Grant a trial or comp of a plan to the active billing account until an expiry.",
     classification: "write",
-    requiresConfirmation: false,
+    requiresConfirmation: true,
+    idempotent: true,
+    target: "collection",
+  },
+  {
+    id: "revoke-grant",
+    resource: "entitlements",
+    title: "Revoke Grant",
+    description: "Revoke a comp granted to the active billing account.",
+    classification: "destructive",
+    requiresConfirmation: true,
     idempotent: true,
     target: "resource",
   },
@@ -513,6 +523,30 @@ const domainActionInputSchemas: Record<string, AdminObjectSchema> = {
     { id: { type: "string", minLength: 1 }, reason: { type: "string", minLength: 1, maxLength: 2000 } },
     ["id"],
   ),
+  "grant-entitlement": payloadSchema(
+    {
+      payload: payloadSchema(
+        {
+          kind: { type: "string", enum: ["trial", "comp"] },
+          planKey: { type: "string", minLength: 1 },
+          expiresAt: { type: "string", minLength: 1 },
+          billingAccountId: { type: "string", minLength: 1 },
+        },
+        ["kind", "planKey", "expiresAt"],
+      ),
+      reason: { type: "string", minLength: 1, maxLength: 2000 },
+    },
+    ["payload"],
+  ),
+  "revoke-grant": payloadSchema(
+    {
+      // The grant id, or the entitlements row id (the account's active comp).
+      id: { type: "string", minLength: 1 },
+      payload: payloadSchema({ billingAccountId: { type: "string", minLength: 1 } }),
+      reason: { type: "string", minLength: 1, maxLength: 2000 },
+    },
+    ["id"],
+  ),
   "refund-payment": payloadSchema(
     {
       id: { type: "string", minLength: 1 },
@@ -644,6 +678,10 @@ function actionOperation(
           ? { confirmation: { risk: "high" as const, method: "recent-auth" as const, reason: "Changing a subscription updates externally billed recurring service.", maxAgeSeconds: 300 } }
           : action.id === "import-subscription"
             ? { confirmation: { risk: "high" as const, method: "recent-auth" as const, reason: "Importing binds an externally billed subscription and its entitlements to a billing account.", maxAgeSeconds: 300 } }
+          : action.id === "grant-entitlement"
+            ? { confirmation: { risk: "high" as const, method: "recent-auth" as const, reason: "Granting gives a billing account a plan's entitlements without payment.", maxAgeSeconds: 300 } }
+          : action.id === "revoke-grant"
+            ? { confirmation: { risk: "high" as const, method: "recent-auth" as const, reason: "Revoking a comp removes the entitlements it granted.", maxAgeSeconds: 300 } }
           : action.id === "reconcile-provider"
             ? { confirmation: { risk: "high" as const, method: "explicit" as const, reason: "Provider reconciliation imports and persists external billing state.", maxAgeSeconds: 300 } }
             : action.id === "cancel-subscription"
@@ -666,7 +704,7 @@ function actionOperation(
 
 const domainReadResourceIds = new Set(["products", "plans", "prices", "subscriptions", "entitlements", "usage"]);
 const domainResourceIds = new Set([...domainReadResourceIds, "payments", "reconciliation"]);
-const domainActionIds = new Set(["change-subscription", "import-subscription", "cancel-subscription", "refund-payment", "reconcile-provider"]);
+const domainActionIds = new Set(["grant-entitlement", "revoke-grant", "change-subscription", "import-subscription", "cancel-subscription", "refund-payment", "reconcile-provider"]);
 const domainResources = billFnAdminResources.filter((resource) => domainResourceIds.has(resource.id));
 const domainReadResources = domainResources.filter((resource) => domainReadResourceIds.has(resource.id));
 const domainActions = billFnAdminActions.filter((action) => domainActionIds.has(action.id));
@@ -683,7 +721,7 @@ type FunctionAdminActionOperationId<TModule extends string, TAction> =
 type BillFnDomainReadResourceId = "products" | "plans" | "prices" | "subscriptions" | "entitlements" | "usage";
 type BillFnDomainAction = Extract<
   (typeof billFnAdminActions)[number],
-  { id: "change-subscription" | "import-subscription" | "cancel-subscription" | "refund-payment" | "reconcile-provider" }
+  { id: "grant-entitlement" | "revoke-grant" | "change-subscription" | "import-subscription" | "cancel-subscription" | "refund-payment" | "reconcile-provider" }
 >;
 
 export type BillFnAdminOperationId =
@@ -748,6 +786,26 @@ export interface BillFnImportSubscriptionInput {
   reason?: string;
 }
 export interface BillFnCancelSubscriptionInput { id: string; reason?: string }
+export interface BillFnGrantEntitlementInput {
+  payload: {
+    kind: "trial" | "comp";
+    planKey: string;
+    /** An ISO 8601 time after now. */
+    expiresAt: string;
+    /** Must be the active subject's billing account when given. */
+    billingAccountId?: string;
+  };
+  reason?: string;
+}
+export interface BillFnRevokeGrantInput {
+  /** The grant id, or the entitlements row id to revoke the account's active comp. */
+  id: string;
+  payload?: {
+    /** Must be the active subject's billing account when given. */
+    billingAccountId?: string;
+  };
+  reason?: string;
+}
 export interface BillFnRefundPaymentInput {
   id: string;
   payload: {
@@ -785,7 +843,11 @@ export function createBillFnAdminClient(adminClient: AdminClient) {
       import: (input: BillFnImportSubscriptionInput, options?: AdminClientRequestOptions) => client.invoke("billfn.subscriptions.import-subscription", input, options),
       cancel: (input: BillFnCancelSubscriptionInput, options?: AdminClientRequestOptions) => client.invoke("billfn.subscriptions.cancel-subscription", input, options),
     },
-    entitlements: resource("entitlements"),
+    entitlements: {
+      ...resource("entitlements"),
+      grant: (input: BillFnGrantEntitlementInput, options?: AdminClientRequestOptions) => client.invoke("billfn.entitlements.grant-entitlement", input, options),
+      revokeGrant: (input: BillFnRevokeGrantInput, options?: AdminClientRequestOptions) => client.invoke("billfn.entitlements.revoke-grant", input, options),
+    },
     usage: resource("usage"),
     payments: {
       refund: (input: BillFnRefundPaymentInput, options?: AdminClientRequestOptions) => client.invoke("billfn.payments.refund-payment", input, options),
@@ -809,6 +871,8 @@ export interface BillFnAdminService {
   getEntitlement(input: BillFnAdminGetInput, context: AdminOperationContext): Promise<BillFnAdminResult>;
   listUsage(input: BillFnAdminListInput, context: AdminOperationContext): Promise<BillFnAdminResult>;
   getUsage(input: BillFnAdminGetInput, context: AdminOperationContext): Promise<BillFnAdminResult>;
+  grantEntitlement(input: BillFnGrantEntitlementInput, context: AdminOperationContext): Promise<BillFnAdminResult>;
+  revokeGrant(input: BillFnRevokeGrantInput, context: AdminOperationContext): Promise<BillFnAdminResult>;
   changeSubscription(input: BillFnChangeSubscriptionInput, context: AdminOperationContext): Promise<BillFnAdminResult>;
   importSubscription(input: BillFnImportSubscriptionInput, context: AdminOperationContext): Promise<BillFnAdminResult>;
   cancelSubscription(input: BillFnCancelSubscriptionInput, context: AdminOperationContext): Promise<BillFnAdminResult>;
@@ -836,6 +900,8 @@ export function createBillFnAdminAdapter(
     "billfn.entitlements.get": bind(service.getEntitlement),
     "billfn.usage.list": bind(service.listUsage),
     "billfn.usage.get": bind(service.getUsage),
+    "billfn.entitlements.grant-entitlement": bind(service.grantEntitlement),
+    "billfn.entitlements.revoke-grant": bind(service.revokeGrant),
     "billfn.subscriptions.change-subscription": bind(service.changeSubscription),
     "billfn.subscriptions.import-subscription": bind(service.importSubscription),
     "billfn.subscriptions.cancel-subscription": bind(service.cancelSubscription),

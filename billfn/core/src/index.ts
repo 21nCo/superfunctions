@@ -38,6 +38,10 @@ export function createBillFn(config: BillFnConfig): BillFnInstance {
     services: {
       subscriptions: {
         import: service.importSubscription
+      },
+      grants: {
+        create: service.createGrant,
+        revoke: service.revokeGrant
       }
     },
     subscriptionProvider: service.subscriptionProvider,

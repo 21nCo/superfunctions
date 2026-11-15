@@ -458,4 +458,204 @@ describe("@billfn/admin", () => {
       });
     });
   });
+
+  describe("grant-entitlement", () => {
+    function grantingBillFn(db: ReturnType<typeof memoryAdapter> = memoryAdapter()) {
+      const billfn = createBillFn({
+        db,
+        catalog: {
+          plans: [{
+            productKey: "nucleus",
+            planKey: "nucleus",
+            displayName: "Nucleus",
+            features: { memotron: true, pointron: true },
+            limits: {},
+            prices: [],
+          }],
+        },
+      });
+      const adapter = createBillFnAdminAdapter(
+        createBillFnDomainAdminService({ billfn, subject: (admin) => ({ tenantId: admin.scope.workspaceId }) }),
+      );
+      const dispatcher = createAdminDispatcher({
+        registry: createAdminRegistry({ adapters: [adapter], enabledModules: ["billfn"] }),
+        confirmation: { verify: vi.fn(async () => true) },
+        audit: new MemoryAdminAuditSink(),
+        idempotency: new MemoryAdminIdempotencyStore(),
+      });
+      const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+      return { billfn, db, adapter, dispatcher, expiresAt };
+    }
+
+    it("declares confirmed, audited collection actions for granting and revoking", () => {
+      const grant = billFnAdminCapability.operations.find((candidate) => candidate.id === "billfn.entitlements.grant-entitlement");
+      expect(grant).toMatchObject({
+        permission: "billfn.entitlements.grant-entitlement",
+        route: { method: "POST", path: "/resources/entitlements/actions/grant-entitlement" },
+        safety: { classification: "write", requiresConfirmation: true, idempotent: true, audit: "required", confirmation: { method: "recent-auth" } },
+        target: { resource: "entitlements", collection: true },
+        inputSchema: { required: ["payload"], properties: { payload: { required: ["kind", "planKey", "expiresAt"] } } },
+      });
+      expect(billFnAdminCapability.operations.find((candidate) => candidate.id === "billfn.entitlements.revoke-grant")).toMatchObject({
+        safety: { classification: "destructive", requiresConfirmation: true, confirmation: { method: "recent-auth" } },
+        target: { resource: "entitlements", idInput: "id" },
+        inputSchema: { required: ["id"] },
+      });
+      expect(validateAdminValue(grant!.inputSchema!, { payload: { kind: "gift", planKey: "nucleus", expiresAt: "2027-01-01T00:00:00.000Z" } })).not.toEqual([]);
+    });
+
+    it("grants a trial to the subject's billing account, records the operator and refuses a second trial", async () => {
+      const { billfn, db, dispatcher, expiresAt } = grantingBillFn();
+      const request = {
+        operationId: "billfn.entitlements.grant-entitlement",
+        input: { payload: { kind: "trial", planKey: "nucleus", expiresAt }, reason: "signup" },
+        context: { ...context, confirmationToken: "token_1" },
+      };
+
+      const result = await dispatcher.dispatch(request);
+      expect(result).toMatchObject({
+        ok: true,
+        data: {
+          accepted: true,
+          item: { billingAccountId: "ba_organization_workspace_1", kind: "trial", status: "active", expiresAt },
+          operationReference: expect.any(String),
+        },
+      });
+      const entitlements = await billfn.getEntitlements({ tenantId: "workspace_1" });
+      expect(entitlements).toMatchObject({
+        ok: true,
+        data: { entitlements: { status: "trialing", planKey: "nucleus" }, grants: [{ kind: "trial", expiresAt }] },
+      });
+      const [event] = await db.findMany<{ payload: Record<string, unknown> }>({
+        model: "billingEvents",
+        where: [{ field: "type", operator: "eq", value: "billfn.grant.created" }],
+        namespace: "billfn",
+      });
+      expect(event.payload).toMatchObject({ operator: { id: "operator_1", type: "user", requestId: "request_1" }, reason: "signup" });
+
+      const second = await dispatcher.dispatch({
+        ...request,
+        context: { ...request.context, requestId: "request_2", idempotencyKey: "idempotency_2" },
+      });
+      expect(second).toMatchObject({
+        ok: false,
+        error: { code: "conflict", details: { reason: "trial_already_granted" } },
+      });
+    });
+
+    it("rejects a foreign billing account and revokes a comp so the entitlements fall back", async () => {
+      const { billfn, adapter, expiresAt } = grantingBillFn();
+      await expect(adapter.execute(
+        "billfn.entitlements.grant-entitlement",
+        { payload: { kind: "comp", planKey: "nucleus", expiresAt, billingAccountId: "ba_organization_other" } },
+        context,
+      )).rejects.toMatchObject({ code: "forbidden" });
+
+      const granted = await adapter.execute(
+        "billfn.entitlements.grant-entitlement",
+        { payload: { kind: "comp", planKey: "nucleus", expiresAt } },
+        context,
+      );
+      const grantId = (granted as { data: { operationReference: string } }).data.operationReference;
+      await expect(billfn.subscriptionProvider.hasFeature({ tenantId: "workspace_1" }, "pointron")).resolves.toBe(true);
+
+      await expect(adapter.execute(
+        "billfn.entitlements.revoke-grant",
+        { id: grantId, reason: "ended" },
+        { ...context, requestId: "request_2", idempotencyKey: "idempotency_2" },
+      )).resolves.toMatchObject({ ok: true, data: { accepted: true, item: { id: grantId, status: "revoked", revokeReason: "ended" } } });
+      await expect(billfn.subscriptionProvider.hasFeature({ tenantId: "workspace_1" }, "pointron")).resolves.toBe(false);
+      await expect(adapter.execute(
+        "billfn.entitlements.revoke-grant",
+        { id: "grant_unknown" },
+        { ...context, requestId: "request_3", idempotencyKey: "idempotency_3" },
+      )).rejects.toMatchObject({ code: "not_found" });
+    });
+
+    it("revokes the active comp through the entitlements row id the console sends", async () => {
+      const { billfn, adapter, expiresAt } = grantingBillFn();
+      const granted = await adapter.execute(
+        "billfn.entitlements.grant-entitlement",
+        { payload: { kind: "comp", planKey: "nucleus", expiresAt } },
+        context,
+      );
+      const grantId = (granted as { data: { operationReference: string } }).data.operationReference;
+      const listed = await adapter.execute("billfn.entitlements.list", {}, context) as { data: { items: Array<{ id: string }> } };
+      const rowId = listed.data.items[0]!.id;
+      expect(rowId).not.toBe(grantId);
+      await expect(adapter.execute("billfn.entitlements.get", { id: rowId }, context)).resolves.toMatchObject({ ok: true });
+
+      await expect(adapter.execute(
+        "billfn.entitlements.revoke-grant",
+        { id: rowId, reason: "ended" },
+        { ...context, requestId: "request_2", idempotencyKey: "idempotency_2" },
+      )).resolves.toMatchObject({ ok: true, data: { item: { id: grantId, kind: "comp", status: "revoked" }, operationReference: grantId } });
+      await expect(billfn.subscriptionProvider.hasFeature({ tenantId: "workspace_1" }, "pointron")).resolves.toBe(false);
+
+      // The row now has no active comp behind it.
+      await expect(adapter.execute(
+        "billfn.entitlements.revoke-grant",
+        { id: rowId },
+        { ...context, requestId: "request_3", idempotencyKey: "idempotency_3" },
+      )).rejects.toMatchObject({ code: "not_found" });
+    });
+
+    it("reports a grant or revoke whose event fails to write without transactions as applied and records the event on the next read", async () => {
+      const base = memoryAdapter();
+      // Fails writes of the listed event types.
+      const failEvents = { types: [] as string[] };
+      const db: ReturnType<typeof memoryAdapter> = {
+        ...base,
+        capabilities: { ...base.capabilities, transactions: { ...base.capabilities.transactions, supported: false } },
+        async create<T>(params: Parameters<typeof base.create>[0]): Promise<T> {
+          if (params.model === "billingEvents" && failEvents.types.includes(String((params.data as { type?: unknown }).type))) {
+            throw new Error("event write failed");
+          }
+          return base.create<T>(params);
+        },
+      };
+      const { billfn, adapter, dispatcher, expiresAt } = grantingBillFn(db);
+      const pointron = () => billfn.subscriptionProvider.hasFeature({ tenantId: "workspace_1" }, "pointron");
+      const events = (type: string) => db.findMany<{ payload: Record<string, unknown> }>({
+        model: "billingEvents",
+        where: [{ field: "type", operator: "eq", value: type }],
+        namespace: "billfn",
+      });
+      const dispatch = (n: number, operationId: string, input: Record<string, unknown>) => dispatcher.dispatch({
+        operationId,
+        input,
+        context: { ...context, confirmationToken: "token_1", requestId: `request_${n}`, idempotencyKey: `idempotency_${n}` },
+      });
+      const grant = { payload: { kind: "comp", planKey: "nucleus", expiresAt }, reason: "vip" };
+
+      failEvents.types = ["billfn.grant.created"];
+      const granted = { ok: true, data: { item: { kind: "comp", status: "active" } } };
+      await expect(dispatch(1, "billfn.entitlements.grant-entitlement", grant)).resolves.toMatchObject(granted);
+      // The committed comp is the outcome, and its same-key replay reports it.
+      await expect(pointron()).resolves.toBe(true);
+      await expect(dispatch(1, "billfn.entitlements.grant-entitlement", grant)).resolves.toMatchObject({
+        ...granted,
+        meta: { idempotencyReplay: true },
+      });
+      // While the event still cannot be written, the console's entitlements list and the row revoke work.
+      const listed = await adapter.execute("billfn.entitlements.list", {}, context) as { data: { items: Array<{ id: string }> } };
+      const rowId = listed.data.items[0]!.id;
+      failEvents.types = ["billfn.grant.created", "billfn.grant.revoked"];
+      await expect(dispatch(3, "billfn.entitlements.revoke-grant", { id: rowId, reason: "ended" })).resolves.toMatchObject({
+        ok: true,
+        data: { item: { kind: "comp", status: "revoked" } },
+      });
+      await expect(pointron()).resolves.toBe(false);
+      expect(await events("billfn.grant.created")).toEqual([]);
+      expect(await events("billfn.grant.revoked")).toEqual([]);
+      failEvents.types = [];
+      // The row has no active comp now; the request reads the entitlements first, which records both events.
+      await expect(dispatch(4, "billfn.entitlements.revoke-grant", { id: rowId })).resolves.toMatchObject({
+        ok: false,
+        error: { code: "not_found" },
+      });
+      expect(await events("billfn.grant.revoked")).toMatchObject([{ payload: { reason: "ended", operator: { requestId: "request_3" } } }]);
+      expect(await events("billfn.grant.created")).toMatchObject([{ payload: { kind: "comp", reason: "vip" } }]);
+    });
+  });
 });

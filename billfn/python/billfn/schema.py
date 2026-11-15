@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-BILLFN_SCHEMA_VERSION = 4
+BILLFN_SCHEMA_VERSION = 5
 
 
 def get_schema() -> Dict[str, Any]:
@@ -339,6 +339,31 @@ def get_schema() -> Dict[str, Any]:
         ],
     }
 
+    entitlement_grants = {
+        "modelName": "entitlementGrants",
+        "fields": {
+            "id": {"type": "string", "required": True, "unique": True},
+            "billingAccountId": {"type": "string", "required": True},
+            "planKey": {"type": "string", "required": True},
+            "kind": {"type": "string", "required": True},
+            "startsAt": {"type": "string", "required": True},
+            "expiresAt": {"type": "string", "required": True},
+            "revokedAt": {"type": "string", "required": False},
+            "operator": {"type": "json", "required": False},
+            "reason": {"type": "string", "required": False},
+            "revokedBy": {"type": "json", "required": False},
+            "revokeReason": {"type": "string", "required": False},
+            "createdAt": {"type": "string", "required": True},
+            "updatedAt": {"type": "string", "required": True},
+        },
+        "indexes": [
+            {
+                "name": "entitlement_grants_billing_account_idx",
+                "fields": ["billingAccountId", "createdAt"],
+            },
+        ],
+    }
+
     schemas: List[Dict[str, Any]] = [
         billing_accounts,
         subscriptions,
@@ -354,6 +379,7 @@ def get_schema() -> Dict[str, Any]:
         reconciliation_cursors,
         unlinked_webhook_events,
         replaced_provider_references,
+        entitlement_grants,
     ]
 
     return {"version": BILLFN_SCHEMA_VERSION, "schemas": schemas}

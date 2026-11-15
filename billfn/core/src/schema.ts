@@ -191,6 +191,28 @@ export function getSchema(_options: BillFnSchemaOptions = {}): { version: number
     ]
   };
 
+  const entitlementGrants: TableSchema = {
+    modelName: 'entitlementGrants',
+    fields: {
+      id: { type: 'string', required: true, unique: true },
+      billingAccountId: { type: 'string', required: true },
+      planKey: { type: 'string', required: true },
+      kind: { type: 'string', required: true },
+      startsAt: { type: 'string', required: true },
+      expiresAt: { type: 'string', required: true },
+      revokedAt: { type: 'string', required: false },
+      operator: { type: 'json', required: false },
+      reason: { type: 'string', required: false },
+      revokedBy: { type: 'json', required: false },
+      revokeReason: { type: 'string', required: false },
+      createdAt: { type: 'string', required: true },
+      updatedAt: { type: 'string', required: true }
+    },
+    indexes: [
+      { name: 'entitlement_grants_billing_account_idx', fields: ['billingAccountId', 'createdAt'] }
+    ]
+  };
+
   const billingEvents: TableSchema = {
     modelName: 'billingEvents',
     fields: {
@@ -305,11 +327,12 @@ export function getSchema(_options: BillFnSchemaOptions = {}): { version: number
     reconciliationJobs,
     reconciliationCursors,
     unlinkedWebhookEvents,
-    replacedProviderReferences
+    replacedProviderReferences,
+    entitlementGrants
   ];
 
   return {
-    version: 4,
+    version: 5,
     schemas
   };
 }
