@@ -23,6 +23,11 @@ const DAY_MS = 24 * HOUR_MS;
 export const LIFECYCLE_DELIVERY_WINDOW_MS = DAY_MS;
 /** How long a dispatcher holds a claimed event; an unfinished claim (a crashed dispatcher) lapses after it. */
 export const LIFECYCLE_CLAIM_LEASE_MS = 5 * 60 * 1000;
+/**
+ * How long after its stage a staged event whose write no row names yet is kept and checked again, because
+ * the write may still apply (it stalled); only then is it deleted.
+ */
+export const LIFECYCLE_STAGE_WINDOW_MS = DAY_MS;
 const RETRY_BASE_MS = 30 * 1000;
 const RETRY_MAX_MS = HOUR_MS;
 /** `grant.expiring` is recorded once a grant expires within this long. */
@@ -57,7 +62,7 @@ export interface LifecycleDeps {
    * Whether the row the write of a `staged` event targets names the event in
    * its `lifecycleEventIds` marker, the proof that a write causing it applied;
    * a staged event whose write was interrupted is delivered only then, and is
-   * deleted otherwise.
+   * deleted once no write naming it applied within `LIFECYCLE_STAGE_WINDOW_MS`.
    */
   isStagedEventApplied(event: BillFnLifecycleEventRecord): Promise<boolean>;
 }
@@ -150,7 +155,9 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
    * is already staged renews its stage, which ends a recovery claim on it; one
    * already pending, delivered or failed is left as it is. A staged event
    * whose write was interrupted, or failed or lost its race, is settled by
-   * `dispatch` after the claim lease against the marker on its row.
+   * `dispatch` after the claim lease against the marker on its row; it is
+   * kept staged, and checked again, until `LIFECYCLE_STAGE_WINDOW_MS` after
+   * its latest stage.
    */
   async function stage(events: LifecycleEventInput[]) {
     if (!handler) {
@@ -168,7 +175,15 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
           { field: 'id', operator: 'eq', value: event.id },
           { field: 'status', operator: 'eq', value: 'staged' }
         ],
-        data: { claimId: stageId, data: event.data, occurredAt: event.occurredAt, nextAttemptAt: leaseEnd(), updatedAt: toIsoString(deps.now()) },
+        data: {
+          claimId: stageId,
+          data: event.data,
+          occurredAt: event.occurredAt,
+          attempts: 0,
+          nextAttemptAt: leaseEnd(),
+          createdAt: toIsoString(deps.now()),
+          updatedAt: toIsoString(deps.now())
+        },
         namespace: deps.namespace
       });
     }
@@ -185,7 +200,7 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
           { field: 'id', operator: 'eq', value: id },
           { field: 'status', operator: 'eq', value: 'staged' }
         ],
-        data: { status: 'pending', claimId: null, nextAttemptAt: timestamp, updatedAt: timestamp },
+        data: { status: 'pending', claimId: null, attempts: 0, nextAttemptAt: timestamp, updatedAt: timestamp },
         namespace: deps.namespace
       });
       if (count === 1) {
@@ -393,9 +408,11 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
   /**
    * Settles the staged events whose stage lapsed: each is claimed like a
    * delivery, then made `pending` when its row names it (a write that caused
-   * it applied), and deleted otherwise. A later write that replaces a marker
-   * first promotes the events it names, so a marker that is gone proves
-   * nothing was lost.
+   * it applied). Otherwise its write may still apply (it stalled past the
+   * lease), so it stays staged and is checked again with backoff, and is
+   * deleted only once `LIFECYCLE_STAGE_WINDOW_MS` passed since its stage. A
+   * later write that replaces a marker first promotes the events it names, so
+   * a marker that is gone proves nothing was lost.
    */
   async function settleStaged(limit: number, beforeEach?: () => Promise<void>) {
     const now = toIsoString(deps.now());
@@ -427,22 +444,35 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
       }
       if (await deps.isStagedEventApplied(row)) {
         const timestamp = toIsoString(deps.now());
-        await deps.db.updateMany({
-          model: EVENTS_TABLE,
-          where: [
-            { field: 'id', operator: 'eq', value: row.id },
-            { field: 'status', operator: 'eq', value: 'staged' },
-            { field: 'claimId', operator: 'eq', value: claimId }
-          ],
-          data: { status: 'pending', claimId: null, nextAttemptAt: timestamp, updatedAt: timestamp },
-          namespace: deps.namespace
-        });
+        await updateStaged(row.id, claimId, { status: 'pending', attempts: 0, nextAttemptAt: timestamp, updatedAt: timestamp });
         deps.metrics.track('event.stage_recovered', { type: row.type });
-      } else {
+        continue;
+      }
+      const now = deps.now().getTime();
+      const deadline = Date.parse(row.createdAt) + LIFECYCLE_STAGE_WINDOW_MS;
+      if (!Number.isFinite(deadline) || now >= deadline) {
         await deleteStaged(row.id, claimId);
         deps.metrics.track('event.stage_discarded', { type: row.type });
+        continue;
       }
+      const attempts = row.attempts + 1;
+      const recheckAt = Math.min(now + Math.max(retryDelay(attempts), LIFECYCLE_CLAIM_LEASE_MS), deadline);
+      await updateStaged(row.id, claimId, { attempts, nextAttemptAt: toIsoString(new Date(recheckAt)), updatedAt: toIsoString(deps.now()) });
     }
+  }
+
+  /** Ends a recovery claim on a staged event; one a stage renewed or a write promoted is left as it is. */
+  function updateStaged(id: string, claimId: string, data: Partial<BillFnLifecycleEventRecord>) {
+    return deps.db.updateMany({
+      model: EVENTS_TABLE,
+      where: [
+        { field: 'id', operator: 'eq', value: id },
+        { field: 'status', operator: 'eq', value: 'staged' },
+        { field: 'claimId', operator: 'eq', value: claimId }
+      ],
+      data: { ...data, claimId: null },
+      namespace: deps.namespace
+    });
   }
 
   /** Ends this dispatcher's claim; a claim that lapsed and was taken over is left to its new holder. */

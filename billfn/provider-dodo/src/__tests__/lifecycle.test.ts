@@ -29,48 +29,60 @@ function createDodoApi() {
     }
     return Response.json({ message: 'not found' }, { status: 404 });
   }) as typeof fetch;
-  return { fetchMock };
+  return {
+    fetchMock,
+    /** Changes the subscription as Dodo would on its side, such as a payment hold. */
+    update(patch: Record<string, unknown>) {
+      subscription = { ...subscription!, ...patch };
+    }
+  };
+}
+
+async function subscribed() {
+  const api = createDodoApi();
+  const { fetchMock } = api;
+  const delivered: BillFnLifecycleEvent[] = [];
+  const billfn = createBillFn({
+    db: memoryAdapter({ debug: false }),
+    catalog: {
+      plans: [
+        {
+          productKey: 'nucleus',
+          planKey: 'nucleus',
+          displayName: 'Nucleus',
+          features: { memotron: true },
+          limits: {},
+          prices: [
+            {
+              priceId: 'price_nucleus_month',
+              provider: 'dodo',
+              providerProductId: 'pdt_nucleus_month',
+              currency: 'USD',
+              amount: 12,
+              kind: 'subscription',
+              interval: 'month'
+            }
+          ]
+        }
+      ]
+    },
+    providers: { dodo: createDodoProvider({ apiKey: 'test-key', fetch: fetchMock }) },
+    now: () => new Date('2026-11-10T00:00:00.000Z'),
+    onEvent: (event) => {
+      delivered.push(event);
+    }
+  });
+  const subject = { principalId: 'user_1' };
+  const created = await billfn.createCheckout({ subject, planKey: 'nucleus', provider: 'dodo', interval: 'month' });
+  if (!created.ok) throw new Error('expected checkout');
+  const verified = await billfn.verifyCheckout({ subject, checkoutSessionId: created.data.checkoutSession.checkoutSessionId });
+  expect(verified.ok).toBe(true);
+  return { api, billfn, subject, delivered };
 }
 
 describe('@billfn/provider-dodo lifecycle events', () => {
   it('a cancel at the next billing date records and delivers subscription.canceled', async () => {
-    const { fetchMock } = createDodoApi();
-    const delivered: BillFnLifecycleEvent[] = [];
-    const billfn = createBillFn({
-      db: memoryAdapter({ debug: false }),
-      catalog: {
-        plans: [
-          {
-            productKey: 'nucleus',
-            planKey: 'nucleus',
-            displayName: 'Nucleus',
-            features: { memotron: true },
-            limits: {},
-            prices: [
-              {
-                priceId: 'price_nucleus_month',
-                provider: 'dodo',
-                providerProductId: 'pdt_nucleus_month',
-                currency: 'USD',
-                amount: 12,
-                kind: 'subscription',
-                interval: 'month'
-              }
-            ]
-          }
-        ]
-      },
-      providers: { dodo: createDodoProvider({ apiKey: 'test-key', fetch: fetchMock }) },
-      now: () => new Date('2026-11-10T00:00:00.000Z'),
-      onEvent: (event) => {
-        delivered.push(event);
-      }
-    });
-    const subject = { principalId: 'user_1' };
-    const created = await billfn.createCheckout({ subject, planKey: 'nucleus', provider: 'dodo', interval: 'month' });
-    if (!created.ok) throw new Error('expected checkout');
-    const verified = await billfn.verifyCheckout({ subject, checkoutSessionId: created.data.checkoutSession.checkoutSessionId });
-    expect(verified.ok).toBe(true);
+    const { billfn, subject, delivered } = await subscribed();
     expect(delivered.filter((event) => event.type === 'subscription.canceled')).toEqual([]);
 
     const canceled = await billfn.cancelSubscription({ subject });
@@ -86,5 +98,15 @@ describe('@billfn/provider-dodo lifecycle events', () => {
     // A later sync of the same scheduled cancel records no other one.
     await billfn.cancelSubscription({ subject });
     expect(delivered.filter((event) => event.type === 'subscription.canceled')).toHaveLength(1);
+  });
+
+  it('a payment hold (on_hold) and its recovery record no subscription.canceled', async () => {
+    const { api, billfn, subject, delivered } = await subscribed();
+    api.update({ status: 'on_hold' });
+    expect((await billfn.syncSubscription({ subject })).ok).toBe(true);
+    api.update({ status: 'active' });
+    expect((await billfn.syncSubscription({ subject })).ok).toBe(true);
+    await billfn.services.events.dispatch();
+    expect(delivered.filter((event) => event.type === 'subscription.canceled')).toEqual([]);
   });
 });

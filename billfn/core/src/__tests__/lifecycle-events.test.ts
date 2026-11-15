@@ -360,6 +360,43 @@ describe('lifecycle events: one per event type', () => {
     ]);
   });
 
+  it.each(['paused', 'past_due', 'pending'] as const)(
+    'no subscription.canceled when a renewing subscription goes to %s and back, and one when it is canceled while held',
+    async (held) => {
+      const env = setup();
+      await env.subscribe();
+      const sync = async (status: SubscriptionStatus, autoRenew: boolean) => {
+        Object.assign(env.providerState, { status, autoRenew });
+        env.advance(MINUTE);
+        await env.billfn.syncSubscription({ subject: env.subject });
+        await env.billfn.services.events.dispatch();
+      };
+      // Dodo maps a payment hold (on_hold) to paused with autoRenew off.
+      await sync(held, false);
+      await sync('active', true);
+      expect(env.ofType('subscription.canceled')).toEqual([]);
+      await sync(held, false);
+      await sync('canceled', false);
+      expect(env.ofType('subscription.canceled')).toEqual(
+        held === 'pending' ? [] : [expect.objectContaining({ data: expect.objectContaining({ status: 'canceled', autoRenew: false }) })]
+      );
+    }
+  );
+
+  it.each(['trialing', 'grace'] as const)('subscription.canceled when a %s subscription stops renewing', async (status) => {
+    const env = setup();
+    await env.subscribe();
+    Object.assign(env.providerState, { status, autoRenew: true });
+    env.advance(MINUTE);
+    await env.billfn.syncSubscription({ subject: env.subject });
+    env.providerState.autoRenew = false;
+    env.advance(MINUTE);
+    await env.billfn.syncSubscription({ subject: env.subject });
+    expect(env.ofType('subscription.canceled')).toEqual([
+      expect.objectContaining({ data: expect.objectContaining({ status, autoRenew: false }) })
+    ]);
+  });
+
   it('grant.started and its entitlement.changed when a grant is created', async () => {
     const env = setup();
     const created = await env.trial(14 * DAY);
@@ -444,7 +481,8 @@ describe.each([
       env.advance(MINUTE);
       expect(await env.syncJob(subscriptionId)).toBe('succeeded');
     }
-    env.advance(HOUR_MS);
+    // Past the stage window, so a stage no applied write names (the stopped snapshot write) is gone too.
+    env.advance(DAY + HOUR_MS);
     await env.billfn.services.events.dispatch();
 
     const after = env.delivered.slice(before);
@@ -565,14 +603,14 @@ describe('lifecycle events of a write without transactions', () => {
     env.advance(LEASE + MINUTE);
     await env.billfn.services.events.dispatch();
     expect(env.ofType('subscription.canceled')).toEqual([]);
-    expect((await env.rows()).filter((row) => row.type === 'subscription.canceled')).toEqual([]);
+    expect((await env.rows()).filter((row) => row.type === 'subscription.canceled').map((row) => row.status)).toEqual(['staged']);
 
     expect(await succeeded(env.billfn.syncSubscription({ subject: env.subject }))).toBe(true);
     expect(env.ofType('subscription.canceled')).toHaveLength(1);
   });
 
   it.each([
-    ['before', 'deletes the staged event of a write a stop interrupted before it applied', 0],
+    ['before', 'never delivers the staged event of a write a stop interrupted before it applied, and deletes it a day later', 0],
     ['after', 'delivers the staged event of a write a stop interrupted after it applied, once', 1]
   ] as const)('%s: %s', async (stop, _title, deliveries) => {
     const { db, faults } = staging();
@@ -596,6 +634,11 @@ describe('lifecycle events of a write without transactions', () => {
     env.advance(LEASE + MINUTE);
     await env.billfn.services.events.dispatch();
     expect(env.ofType('subscription.canceled')).toHaveLength(deliveries);
+    // One no write names stays staged, undelivered, while its write may still apply, then is deleted.
+    expect((await env.rows()).filter((row) => row.status === 'staged')).toHaveLength(1 - deliveries);
+    env.advance(DAY);
+    await env.billfn.services.events.dispatch();
+    expect(env.ofType('subscription.canceled')).toHaveLength(deliveries);
     expect((await env.rows()).filter((row) => row.status === 'staged')).toEqual([]);
 
     // A later sync applies a change the stop left out, and adds nothing twice.
@@ -617,11 +660,46 @@ describe('lifecycle events of a write without transactions', () => {
       expect(ok).toBe(false);
     }
 
+    /** Dispatches once the stages lapsed, then once those no write names were dropped, a day later. */
     async function afterLease(env: ReturnType<typeof setup>) {
       env.advance(LEASE + MINUTE);
       await env.billfn.services.events.dispatch();
+      expect((await env.rows()).filter((row) => row.status === 'pending' || row.status === 'failed')).toEqual([]);
+      env.advance(DAY);
+      await env.billfn.services.events.dispatch();
       expect((await env.rows()).filter((row) => row.status !== 'delivered')).toEqual([]);
     }
+
+    it('delivers an entitlement change once under its id when its write stalls past the lease, then applies and fails', async () => {
+      const { db, faults } = staging();
+      const env = setup({ db });
+      const { subscriptionId } = await env.subscribe();
+      let resume!: () => void;
+      faults.pauseSnapshot = new Promise<void>((resolve) => (resume = resolve));
+      faults.snapshotWrite = 'after';
+      env.providerState.status = 'expired';
+      env.advance(MINUTE);
+      const sync = env.syncJob(subscriptionId);
+      await vi.waitFor(() => expect(faults.pauseSnapshot).toBeNull());
+
+      // A dispatch checks the lapsed stage while the write stalls: no row names it yet, so it is kept, not delivered.
+      env.advance(LEASE + MINUTE);
+      await env.billfn.services.events.dispatch();
+      const [staged] = (await env.rows()).filter((row) => row.status === 'staged');
+      expect(staged).toMatchObject({ type: 'entitlement.changed' });
+      expect(env.ofType('entitlement.changed').map((event) => event.data.status)).toEqual(['active']);
+
+      // The write applies and then fails, so nothing confirms its event; a later dispatch finds the marker.
+      resume();
+      expect(await sync).not.toBe('succeeded');
+      env.advance(LEASE + MINUTE);
+      await env.billfn.services.events.dispatch();
+      expect(env.ofType('entitlement.changed').slice(1)).toEqual([
+        expect.objectContaining({ id: staged!.id, data: expect.objectContaining({ status: 'inactive' }) })
+      ]);
+      await afterLease(env);
+      expect(env.ofType('entitlement.changed')).toHaveLength(2);
+    });
 
     it('delivers a cancellation whose write applied and then failed, once, after its retry found nothing to change', async () => {
       const { db, faults } = staging();

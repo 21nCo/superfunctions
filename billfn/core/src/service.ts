@@ -3752,7 +3752,7 @@ function subscriptionRef(subscription: BillFnSubscription) {
 /**
  * The lifecycle events of a write of provider state over `previous`: `subscription.renewed` when an active
  * subscription's period end moves later (once per period end), and `subscription.canceled` when a renewing
- * subscription stops renewing without expiring or failing, keyed by the provider change the call applies
+ * subscription is canceled (`isCanceledFrom`), keyed by the provider change the call applies
  * (`providerChangeKey`), so every retry of its write, also over a newer row after a lost race, shares its id.
  */
 function subscriptionLifecycleEvents(
@@ -3778,7 +3778,7 @@ function subscriptionLifecycleEvents(
       }
     });
   }
-  if (isRenewing(previous) && !isRenewing(subscription) && !ENDED_STATUSES.has(subscription.status)) {
+  if (isCanceledFrom(previous, subscription)) {
     events.push({
       ...base,
       id: lifecycleEventId('subscription.canceled', `${subscription.id}\n${providerChangeKey}`),
@@ -3794,11 +3794,22 @@ function subscriptionLifecycleEvents(
   return events;
 }
 
-/** Statuses a subscription ends in without being canceled. */
-const ENDED_STATUSES = new Set<SubscriptionStatus>(['expired', 'failed']);
+/** Statuses in which a subscription grants its plan and renews unless `autoRenew` is off. */
+const LIVE_STATUSES = new Set<SubscriptionStatus>(['active', 'trialing', 'grace']);
+/** Statuses of a renewal held by a payment problem or a pause, which resumes (Dodo maps these with `autoRenew` off). */
+const HELD_STATUSES = new Set<SubscriptionStatus>(['past_due', 'paused']);
 
-function isRenewing(subscription: BillFnSubscription) {
-  return subscription.autoRenew && subscription.status !== 'canceled' && !ENDED_STATUSES.has(subscription.status);
+/**
+ * Whether `next` cancels a subscription that was renewing in `previous`: it became `canceled`, or stays live
+ * with `autoRenew` turned off (a cancel at period end). A hold (`past_due`, `paused`), `pending`, an expiry or
+ * a failure is not a cancellation, and a subscription canceled while held was renewing before the hold.
+ */
+function isCanceledFrom(previous: BillFnSubscription, next: BillFnSubscription) {
+  const wasLive = LIVE_STATUSES.has(previous.status) && previous.autoRenew;
+  if (next.status === 'canceled') {
+    return wasLive || HELD_STATUSES.has(previous.status);
+  }
+  return wasLive && LIVE_STATUSES.has(next.status) && !next.autoRenew;
 }
 
 /** Compares JSON values regardless of key order (a jsonb column reorders keys). */

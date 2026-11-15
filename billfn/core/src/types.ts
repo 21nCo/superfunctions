@@ -800,7 +800,10 @@ export interface BillFnLifecycleEventRecord {
   occurredAt: string;
   data: Record<string, unknown>;
   status: BillFnLifecycleEventStatus;
-  /** Delivery attempts started, including one an interrupted dispatcher never finished. */
+  /**
+   * Delivery attempts started, including one an interrupted dispatcher never
+   * finished; for a `staged` event, the checks of its row's marker so far.
+   */
   attempts: number;
   /**
    * When the event is next due; while a dispatcher holds it, when that claim
@@ -1188,7 +1191,9 @@ export interface BillFnInstance {
        * a dispatcher claimed and never finished, or whose handler still runs,
        * is due again after that. It first settles each `staged` event whose
        * write did not confirm it 5 minutes ago or more: one its row's
-       * `lifecycleEventIds` names becomes `pending`, any other is deleted.
+       * `lifecycleEventIds` names becomes `pending`; any other is checked
+       * again later, since its write may still apply, and is deleted once 24
+       * hours passed since its stage.
        */
       dispatch(input?: BillFnDispatchEventsRequest): Promise<BillFnDispatchEventsResult>;
       /** The outbox's events, newest first; `status: 'failed'` lists the events that ran out of retries. */
