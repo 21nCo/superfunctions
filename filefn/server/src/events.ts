@@ -148,11 +148,41 @@ export class FileFnEventEmitter extends EventEmitter {
   }
 
   emit<K extends keyof FileFnEventTypes>(event: K, payload: FileFnEventTypes[K]): boolean {
+    this.fanOut(event, payload);
+    return super.emit(event, payload);
+  }
+
+  /**
+   * Emits like `emit`, but calls every listener even when an earlier one
+   * throws: each listener's error, or the rejection of the promise it returns,
+   * goes to `onListenerError` instead of the caller.
+   */
+  emitToEachListener<K extends keyof FileFnEventTypes>(
+    event: K,
+    payload: FileFnEventTypes[K],
+    onListenerError: (error: unknown) => void,
+  ): boolean {
+    this.fanOut(event, payload);
+    // A copy, as `emit` uses: `once` wrappers remove themselves when called.
+    const listeners = this.rawListeners(event) as ((payload: FileFnEventTypes[K]) => unknown)[];
+    for (const listener of listeners) {
+      try {
+        const result = listener.call(this, payload);
+        if (result instanceof Promise) {
+          result.catch(onListenerError);
+        }
+      } catch (error) {
+        onListenerError(error);
+      }
+    }
+    return listeners.length > 0;
+  }
+
+  private fanOut<K extends keyof FileFnEventTypes>(event: K, payload: FileFnEventTypes[K]): void {
     const fanOut = this.observability?.events.emit(fileObservationEvent(event, payload));
     if (fanOut && this.background) {
       this.background.track(fanOut);
     }
-    return super.emit(event, payload);
   }
 
   on<K extends keyof FileFnEventTypes>(event: K, listener: (payload: FileFnEventTypes[K]) => void): this {

@@ -958,8 +958,10 @@ describe('processing jobs', () => {
         const processor = textProcessor('uppercase');
         const { fileFn, queue } = setup([processor]);
         const listener = throwing();
+        const healthy = vi.fn();
         const failed = vi.fn();
-        fileFn.events.on('processing.completed', listener);
+        fileFn.events.once('processing.completed', listener);
+        fileFn.events.on('processing.completed', healthy);
         fileFn.events.on('processing.failed', failed);
         const { fileId } = await uploadNote(fileFn);
         const handler = createProcessingJobHandler(fileFn, { maxRetries: 1 });
@@ -973,6 +975,9 @@ describe('processing jobs', () => {
         // The completion was recorded, so the job does not run or notify again.
         expect(await handler.handle(queue.jobs[0], { attempts: attempts + 1 })).toEqual({ status: 'duplicate' });
         expect(listener).toHaveBeenCalledTimes(1);
+        // A listener after the one that threw still gets the event, once.
+        expect(healthy).toHaveBeenCalledTimes(1);
+        expect(healthy).toHaveBeenCalledWith(expect.objectContaining({ fileId, artifactsCreated: 1 }));
         expect(processor.inputs).toHaveLength(1);
         expect(await listArtifacts(fileFn, fileId)).toHaveLength(1);
       },
@@ -981,7 +986,9 @@ describe('processing jobs', () => {
     it('fails the job on its last delivery when a processing.failed listener throws', async () => {
       const { fileFn, queue } = setup([textProcessor('uppercase', { fail: () => 'disk full' })]);
       const listener = throwing();
+      const healthy = vi.fn();
       fileFn.events.on('processing.failed', listener);
+      fileFn.events.on('processing.failed', healthy);
       await uploadNote(fileFn);
       const handler = createProcessingJobHandler(fileFn, { maxRetries: 1 });
       const ordinary = message(queue.jobs[0], 1);
@@ -995,16 +1002,32 @@ describe('processing jobs', () => {
       expect(last.retry).not.toHaveBeenCalled();
       expect(listener).toHaveBeenCalledTimes(1);
       expect(listener).toHaveBeenCalledWith(expect.objectContaining({ error: 'uppercase: disk full' }));
+      expect(healthy).toHaveBeenCalledTimes(1);
+    });
+
+    it('enqueues the job when a processing.started listener throws', async () => {
+      const { fileFn, queue } = setup([textProcessor('uppercase')]);
+      const healthy = vi.fn();
+      fileFn.events.on('processing.started', throwing());
+      fileFn.events.on('processing.started', healthy);
+
+      const { fileId } = await uploadNote(fileFn);
+
+      expect(queue.jobs).toEqual([expect.objectContaining({ fileId })]);
+      expect(healthy).toHaveBeenCalledTimes(1);
     });
 
     it('returns the inline result when a processing.completed listener throws', async () => {
       const events = createEventEmitter();
+      const healthy = vi.fn();
       events.on('processing.completed', throwing());
+      events.on('processing.completed', healthy);
       const service = createProcessingService({
         db: memoryAdapter(), storage: createMemoryStorage(), events, processors: [returning('noop', { success: true, artifacts: [] })], enabled: true,
       });
 
       await expect(service.runProcessing(inlineInput, owner)).resolves.toEqual({ artifactsCreated: 0, errors: [] });
+      expect(healthy).toHaveBeenCalledTimes(1);
     });
   });
 

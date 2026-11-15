@@ -295,25 +295,23 @@ async function executeProcessor(
 }
 
 /**
- * Emits a processing event without letting a listener change the job: Node's
- * EventEmitter rethrows a listener's error, which is logged here instead.
+ * Emits a processing event to every listener without letting one change the
+ * job or keep the event from the others: a listener's error is logged.
  */
 function emitIsolated(
   events: FileFnEventEmitter,
   logger: Logger | undefined,
-  event: 'processing.completed' | 'processing.failed',
+  event: 'processing.started' | 'processing.completed' | 'processing.failed',
   payload: { requestId?: string; fileId: string; versionId: string } & Record<string, unknown>,
 ): void {
-  try {
-    events.emit(event as any, { type: event, timestamp: new Date().toISOString(), ...payload });
-  } catch (error) {
+  events.emitToEachListener(event, { type: event, timestamp: new Date().toISOString(), ...payload } as any, (error) => {
     logger?.error(`${event} listener failed`, {
       requestId: payload.requestId,
       fileId: payload.fileId,
       versionId: payload.versionId,
       error: errorMessage(error),
     });
-  }
+  });
 }
 
 const MAX_JOB_FIELD_LENGTH = 512;
@@ -1018,9 +1016,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         return { enqueued: false };
       }
 
-      events.emit('processing.started' as any, {
-        type: 'processing.started',
-        timestamp: new Date().toISOString(),
+      emitIsolated(events, logger, 'processing.started', {
         requestId: ctx.requestId,
         fileId: input.fileId,
         versionId: input.versionId,
