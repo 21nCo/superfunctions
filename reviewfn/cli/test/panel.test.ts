@@ -495,7 +495,13 @@ describe("harness resolution through installed packages", () => {
     const installed = await resolvePanelHarnesses(panel([slot("one", 1)]), config);
     expect(installed.harnesses.map(harness => harness.capabilities.id)).toEqual(["codex"]);
     expect(installed.contractVersions).toEqual({});
-    await expect(resolvePanelHarnesses(panel([slot("one", 1), slot("claude", 2, "model-claude", "claude-code")]), config)).rejects.toMatchObject({ code: "REVIEWFN_HARNESS_NOT_INSTALLED", details: { packageName: "@superfunctions/reviewfn-harness-claude-code" } });
+    await expect(resolvePanelHarnesses(panel([slot("one", 1), slot("generic", 2, "model-generic", "cli")]), config)).rejects.toMatchObject({ code: "REVIEWFN_HARNESS_NOT_INSTALLED", details: { packageName: "@superfunctions/reviewfn-harness-cli" } });
+  });
+
+  it("loads the installed Claude Code adapter with its contract version", async () => {
+    const resolved = await resolvePanelHarnesses(panel([slot("one", 1), slot("claude", 2, "model-claude", "claude-code")]), config);
+    expect(resolved.harnesses.map(harness => [harness.capabilities.id, harness.constructor.name])).toEqual([["codex", "CodexHarnessAdapter"], ["claude-code", "ClaudeCodeHarnessAdapter"]]);
+    expect(resolved.contractVersions).toEqual({ "claude-code": "1" });
   });
 
   it("records the contract version of an adapter other than the configured one before any preflight", async () => {
