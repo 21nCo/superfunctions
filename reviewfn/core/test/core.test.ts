@@ -6,7 +6,7 @@ import * as safeFiles from "../src/safe-files.js";
 import { DEFAULT_CONFIG, DEFAULT_POLICY, FileArtifactStore, PANEL_REPORT_COPY_NAMES, RepositoryMarkdownContextAdapter, applyRepositoryPolicy, buildReviewPrompt, deriveVerdict, digestJson, findingFingerprint, validateConfig, validateReport, type ReviewReport } from "../src/index.js";
 import { readFile, mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { readFileSync, realpathSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import path from "node:path";
 
 function report(): ReviewReport {
@@ -141,233 +141,190 @@ it.skipIf(!temporaryAlias)("expires panel report copies written through one spel
   expect((await cleanup.deleteExpired(new Date(Date.now() + 2 * 86_400_000))).errors).toEqual([]);
   await expect(readFile(path.join(physical, "out", "panel-report.json"))).rejects.toThrow();
   await expect(readFile(path.join(physical, "out", "panel-report.md"))).rejects.toThrow();
-  expect((await fileSystem.readdir(artifacts)).filter(entry => entry.startsWith(".panel-report-copies"))).toEqual([]);
+  expect(await fileSystem.readdir(path.join(physical, "out"))).toEqual([]);
 });
 
-it("skips panel report-copy expiry for an output directory that does not exist", async () => {
+const DAY = 86_400_000;
+
+/** A store whose waits for a busy output-directory lock are observable: `waiting` resolves at its first wait, which lasts until `proceed()`. */
+class WaitingStore extends FileArtifactStore {
+  public readonly waiting: Promise<void>;
+  public proceed!: () => void;
+  private signal!: () => void;
+  private readonly proceeding: Promise<void>;
+  public constructor(root: string, output: string) {
+    super(root, output, PANEL_REPORT_COPY_NAMES);
+    this.waiting = new Promise(resolve => { this.signal = resolve; });
+    this.proceeding = new Promise(resolve => { this.proceed = resolve; });
+  }
+  protected override async outputLockRetry(): Promise<void> { this.signal(); await this.proceeding; }
+}
+
+/** Pause the first call of `spied` that `matches` once armed; `reached` resolves when it pauses, `release()` lets it go on. */
+function pauseFirst<T extends (...args: never[]) => Promise<unknown>>(module: Record<string, unknown>, name: string, matches: (...args: Parameters<T>) => boolean, after = false) {
+  let reached!: () => void; let release!: () => void;
+  const paused = new Promise<void>(resolve => { reached = resolve; });
+  const released = new Promise<void>(resolve => { release = resolve; });
+  const original = module[name] as T;
+  let armed = false;
+  const spy = vi.spyOn(module as never, name as never).mockImplementation((async (...args: Parameters<T>) => {
+    const hit = armed && matches(...args);
+    if (hit) armed = false;
+    if (hit && !after) { reached(); await released; }
+    const result = await original(...args);
+    if (hit && after) { reached(); await released; }
+    return result;
+  }) as never);
+  return { arm: () => { armed = true; }, paused, release, restore: () => spy.mockRestore() };
+}
+
+it("skips panel report-copy expiry for an output directory that does not exist, without creating it", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-missing-"));
   const store = new FileArtifactStore(path.join(root, "artifacts"), path.join(root, "missing"), PANEL_REPORT_COPY_NAMES);
-  expect(await store.deleteExpired(new Date(Date.now() + 2 * 86_400_000))).toEqual({ deleted: [], errors: [] });
+  expect(await store.deleteExpired(new Date(Date.now() + 2 * DAY))).toEqual({ deleted: [], errors: [] });
+  expect(await fileSystem.readdir(root)).toEqual(["artifacts"]);
 });
 
-it("expires the keyed marker of a deleted panel output directory once its copies' retention has ended", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-orphan-"));
-  const artifacts = path.join(root, "artifacts");
-  const kept = () => new FileArtifactStore(artifacts, path.join(root, "kept"), PANEL_REPORT_COPY_NAMES);
-  for (const name of ["gone", "elsewhere"]) await new FileArtifactStore(artifacts, path.join(root, name), PANEL_REPORT_COPY_NAMES).writeReportCopies(`${name}-json`, `${name}-md`, 30);
-  await kept().writeReportCopies("kept-json", "kept-md", 30);
-  const markers = async () => (await fileSystem.readdir(artifacts)).filter(entry => entry.startsWith(".panel-report-copies-"));
-  // A marker written on another host (such as a container) is never treated as orphaned here.
-  for (const entry of await markers()) {
-    const value = JSON.parse(await readFile(path.join(artifacts, entry), "utf8"));
-    if (value.directory.endsWith("elsewhere")) await writeFile(path.join(artifacts, entry), JSON.stringify({ ...value, host: "another-host" }));
-  }
-  for (const name of ["gone", "elsewhere"]) await fileSystem.rm(path.join(root, name), { recursive: true });
-  // Within retention the markers stay: a missing directory may only be unmounted.
-  expect(await kept().deleteExpired()).toEqual({ deleted: [], errors: [] });
-  expect(await markers()).toHaveLength(3);
-  // Another directory's unreadable marker is skipped, never failing cleanup.
-  for (const [entry, content] of [[".panel-report-copies-0000000000000000", "not json"], [".panel-report-copies-1111111111111111", "null"]]) await writeFile(path.join(artifacts, entry), content);
-  expect((await kept().deleteExpired(new Date(Date.now() + 31 * 86_400_000))).errors).toEqual([]);
-  const remaining = await markers();
-  // The third marker's name is a digest of a temporary path, so its sort position varies: match by content, not order.
-  const unreadable = [".panel-report-copies-0000000000000000", ".panel-report-copies-1111111111111111"];
-  expect(remaining).toHaveLength(3);
-  expect(remaining).toEqual(expect.arrayContaining(unreadable));
-  const third = remaining.find(entry => !unreadable.includes(entry))!;
-  expect(JSON.parse(await readFile(path.join(artifacts, third), "utf8"))).toMatchObject({ host: "another-host", directory: path.join(realpathSync(root), "elsewhere") });
-  await expect(readFile(path.join(root, "kept", "panel-report.json"))).rejects.toThrow();
-});
-
-/** The staged copy prefix of a store whose artifact root is `artifacts`: the store ID it keeps there. */
-const stagedPrefix = (artifacts: string) => `.reviewfn-copy-${readFileSync(path.join(artifacts, ".store-id"), "utf8")}-`;
-
-it("removes staged panel copies that an interrupted write of the same store left behind, and no other store's", async () => {
+it("removes staged panel copies an interrupted write left in the output directory, through any artifact store, and refuses a symlinked directory", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-staged-"));
-  const store = new FileArtifactStore(path.join(root, "artifacts"), root, PANEL_REPORT_COPY_NAMES);
-  await store.writeReportCopies("json", "md", 30);
+  await new FileArtifactStore(path.join(root, "artifacts"), root, PANEL_REPORT_COPY_NAMES).writeReportCopies("json", "md", 30);
   const stamp = "01234567-89ab-cdef-0123-456789abcdef";
-  const staged = [`${stagedPrefix(path.join(root, "artifacts"))}${stamp}.json`, `${stagedPrefix(path.join(root, "artifacts"))}${stamp}.md`];
-  // Staged files of a store with another artifact root (another key, or the unkeyed form) are not this store's to sweep.
-  const foreign = [`.reviewfn-copy-0123456789abcdef-${stamp}.json`, `.reviewfn-copy-${stamp}.md`];
-  for (const entry of [...staged, ...foreign]) await writeFile(path.join(root, entry), "interrupted report");
-  expect(await store.deleteExpired()).toEqual({ deleted: [], errors: [] });
-  expect((await fileSystem.readdir(root)).sort()).toEqual([...foreign, ".panel-report-owner", "artifacts", "panel-report.json", "panel-report.md"].sort());
-  for (const entry of foreign) await fileSystem.rm(path.join(root, entry));
-  // A symlinked copies directory is refused, not followed.
+  for (const entry of [`.reviewfn-copy-${stamp}.json`, `.reviewfn-copy-${stamp}.md`, ".reviewfn-copy-notes.txt"]) await writeFile(path.join(root, entry), "interrupted report");
+  // Every copy write holds the directory's lock, so under it no staged copy is in flight, whichever store staged it.
+  expect(await new FileArtifactStore(path.join(root, "other"), root, PANEL_REPORT_COPY_NAMES).deleteExpired()).toEqual({ deleted: [], errors: [] });
+  expect((await fileSystem.readdir(root)).sort()).toEqual([".panel-report-copies", ".reviewfn-copy-notes.txt", "artifacts", "other", "panel-report.json", "panel-report.md"]);
+  // A symlinked copies directory is refused, not followed, by cleanup and by writes.
   await mkdir(path.join(root, "real"));
-  await writeFile(path.join(root, "real", staged[0]), "elsewhere");
+  await writeFile(path.join(root, "real", `.reviewfn-copy-${stamp}.json`), "elsewhere");
   await symlink(path.join(root, "real"), path.join(root, "link"));
-  expect((await new FileArtifactStore(path.join(root, "artifacts"), path.join(root, "link"), PANEL_REPORT_COPY_NAMES).deleteExpired()).errors.join()).toMatch(/symlink/);
-  expect(await fileSystem.readdir(path.join(root, "real"))).toEqual([staged[0]]);
+  const linked = new FileArtifactStore(path.join(root, "artifacts"), path.join(root, "link"), PANEL_REPORT_COPY_NAMES);
+  expect((await linked.deleteExpired()).errors.join()).toMatch(/symlink/);
+  await expect(linked.writeReportCopies("json", "md", 30)).rejects.toThrow(/symlink/);
+  expect(await fileSystem.readdir(path.join(root, "real"))).toEqual([`.reviewfn-copy-${stamp}.json`]);
 });
 
-it("keeps another store's in-flight staged copies when a store with a different artifact root cleans the same output directory", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-cross-store-"));
-  const output = path.join(root, "out");
-  await mkdir(output);
-  let paused!: () => void;
-  let resume!: () => void;
-  const stagedWritten = new Promise<void>(resolve => { paused = resolve; });
-  const release = new Promise<void>(resolve => { resume = resolve; });
-  class PausingStore extends FileArtifactStore {
-    protected override async writeCopyFile(file: string, content: string): Promise<void> {
-      await super.writeCopyFile(file, content);
-      // Pause once the staged JSON exists and before either rename.
-      if (file.endsWith(".json")) { paused(); await release; }
-    }
-  }
-  const writing = new PausingStore(path.join(root, "a"), output, PANEL_REPORT_COPY_NAMES).writeReportCopies("a-json", "a-md", 30);
-  await stagedWritten;
-  expect((await fileSystem.readdir(output)).filter(entry => entry.startsWith(".reviewfn-copy-"))).toHaveLength(1);
-  // The directory belongs to A's store: B's cleanup reports it and touches nothing there.
-  const cleanup = await new FileArtifactStore(path.join(root, "b"), output, PANEL_REPORT_COPY_NAMES).deleteExpired();
-  expect(cleanup.errors.join()).toMatch(/REVIEWFN_OUTPUT_DIRECTORY_IN_USE/);
-  resume();
-  await writing;
-  expect(await readFile(path.join(output, "panel-report.json"), "utf8")).toBe("a-json");
-  expect(await readFile(path.join(output, "panel-report.md"), "utf8")).toBe("a-md");
-  expect((await fileSystem.readdir(output)).sort()).toEqual([".panel-report-owner", "panel-report.json", "panel-report.md"]);
-});
-
-describe("one artifact store per panel output directory", () => {
-  const directoryListing = async (directory: string) => Object.fromEntries(await Promise.all((await fileSystem.readdir(directory)).sort().map(async entry => [entry, await readFile(path.join(directory, entry), "utf8")])));
-
-  it("refuses a store with another artifact root while the owner is between its Markdown and JSON renames", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-owner-race-"));
+describe("one lock and one retention record per panel output directory", () => {
+  it.each([false, true])("never deletes copies a write retains while an expiring cleanup of the directory runs (directory recreated: %s)", async recreated => {
+    const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-expiry-race-"));
     const output = path.join(root, "out");
-    let paused!: () => void;
-    let resume!: () => void;
-    const renamedMarkdown = new Promise<void>(resolve => { paused = resolve; });
-    const release = new Promise<void>(resolve => { resume = resolve; });
-    const original = fileSystem.rename;
-    const spy = vi.spyOn(fileSystem, "rename").mockImplementation(async (from, to) => {
-      await original(from, to);
-      // Pause A once its Markdown copy is in place and before its JSON copy is.
-      if (String(to) === path.join(output, "panel-report.md") && String(from).includes(stagedPrefix(path.join(root, "a")))) { paused(); await release; }
-    });
-    await mkdir(path.join(root, "a")); await mkdir(path.join(root, "b"));
     const a = new FileArtifactStore(path.join(root, "a"), output, PANEL_REPORT_COPY_NAMES);
-    const b = new FileArtifactStore(path.join(root, "b"), output, PANEL_REPORT_COPY_NAMES);
+    await a.writeReportCopies("pair-json", "pair-md", 1);
+    if (recreated) { await fileSystem.rm(output, { recursive: true }); await mkdir(output); }
+    const b = new WaitingStore(path.join(root, "b"), output);
+    // Pause A's cleanup at its first read in the output directory, before it reads either copy.
+    const pause = pauseFirst<typeof safeFiles.safeRead>(safeFiles, "safeRead", file => path.dirname(path.resolve(file)) === output);
     try {
-      const writing = a.writeReportCopies("a-json", "a-md", 30);
-      await renamedMarkdown;
-      const before = await directoryListing(output);
-      await expect(b.writeReportCopies("b-json", "b-md", 30)).rejects.toMatchObject({ code: "REVIEWFN_OUTPUT_DIRECTORY_IN_USE" });
-      expect(await directoryListing(output)).toEqual(before);
-      resume();
+      pause.arm();
+      const cleaning = a.deleteExpired(new Date(Date.now() + 2 * DAY));
+      await pause.paused;
+      // B writes the same bytes with 30-day retention; it waits for A's cleanup to release the directory.
+      const writing = b.writeReportCopies("pair-json", "pair-md", 30);
+      await Promise.race([b.waiting, writing]);
+      pause.release();
+      expect((await cleaning).errors).toEqual([]);
+      b.proceed();
       await writing;
-    } finally { spy.mockRestore(); }
-    expect(await readFile(path.join(output, "panel-report.json"), "utf8")).toBe("a-json");
-    expect(await readFile(path.join(output, "panel-report.md"), "utf8")).toBe("a-md");
-    expect(await a.deleteExpired()).toEqual({ deleted: [], errors: [] });
-    expect((await fileSystem.readdir(path.join(root, "b"))).filter(entry => entry.startsWith(".panel-report-copies-"))).toEqual([]);
+    } finally { pause.restore(); }
+    expect(await readFile(path.join(output, "panel-report.json"), "utf8")).toBe("pair-json");
+    expect(await readFile(path.join(output, "panel-report.md"), "utf8")).toBe("pair-md");
+    expect(await a.deleteExpired(new Date(Date.now() + 2 * DAY))).toEqual({ deleted: [], errors: [] });
+    expect((await fileSystem.readdir(output)).sort()).toEqual([".panel-report-copies", "panel-report.json", "panel-report.md"]);
   });
 
-  it("refuses a later store with another artifact root, keeps the owner's cleanup clean, and hands the directory over once the owner's copies expire", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-owner-sequential-"));
+  it("serializes two artifact stores' writes, so a write paused between its Markdown and JSON renames never ends in a mixed pair", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-write-race-"));
     const output = path.join(root, "out");
-    await mkdir(path.join(root, "a")); await mkdir(path.join(root, "b"));
     const a = new FileArtifactStore(path.join(root, "a"), output, PANEL_REPORT_COPY_NAMES);
-    const b = new FileArtifactStore(path.join(root, "b"), output, PANEL_REPORT_COPY_NAMES);
-    await a.writeReportCopies("a-json", "a-md", 1);
-    const before = await directoryListing(output);
-    await expect(b.checkReportCopiesOwner()).rejects.toMatchObject({ code: "REVIEWFN_OUTPUT_DIRECTORY_IN_USE" });
-    await expect(b.writeReportCopies("b-json", "b-md", 30)).rejects.toMatchObject({ code: "REVIEWFN_OUTPUT_DIRECTORY_IN_USE" });
-    expect((await b.deleteExpired(new Date(Date.now() + 2 * 86_400_000))).errors.join()).toMatch(/REVIEWFN_OUTPUT_DIRECTORY_IN_USE/);
-    expect(await directoryListing(output)).toEqual(before);
-    expect(await a.deleteExpired()).toEqual({ deleted: [], errors: [] });
-    expect(await readFile(path.join(output, "panel-report.md"), "utf8")).toBe("a-md");
-    // Expiring A's last copy also drops its retention metadata and its claim on the directory.
-    expect(await a.deleteExpired(new Date(Date.now() + 2 * 86_400_000))).toEqual({ deleted: [], errors: [] });
-    expect(await fileSystem.readdir(output)).toEqual([]);
-    expect((await fileSystem.readdir(path.join(root, "a"))).filter(entry => entry.startsWith(".panel-report-copies-"))).toEqual([]);
-    await b.checkReportCopiesOwner();
-    await b.writeReportCopies("b-json", "b-md", 30);
-    expect(await readFile(path.join(output, "panel-report.json"), "utf8")).toBe("b-json");
-    await expect(a.writeReportCopies("a-json", "a-md", 30)).rejects.toMatchObject({ code: "REVIEWFN_OUTPUT_DIRECTORY_IN_USE" });
-    expect(JSON.parse(await readFile(path.join(output, ".panel-report-owner"), "utf8"))).toMatchObject({ store: readFileSync(path.join(root, "b", ".store-id"), "utf8"), root: path.join(root, "b") });
-  });
-
-  it("keeps ownership for the same artifact root reached through another spelling", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-owner-spelling-"));
-    const output = path.join(root, "out");
-    await mkdir(path.join(root, "artifacts"));
-    await new FileArtifactStore(path.join(root, "artifacts"), output, PANEL_REPORT_COPY_NAMES).writeReportCopies("one-json", "one-md", 30);
-    const spellings = [[root, ".", "artifacts"].join(path.sep), `${path.join(root, "artifacts")}${path.sep}`];
-    if (temporaryAlias) spellings.push(path.join(realpathSync(root), "artifacts"));
-    for (const [index, spelling] of spellings.entries()) {
-      const store = new FileArtifactStore(spelling, output, PANEL_REPORT_COPY_NAMES);
-      await store.checkReportCopiesOwner();
-      await store.writeReportCopies(`json-${index}`, `md-${index}`, 30);
-      expect(await readFile(path.join(output, "panel-report.json"), "utf8")).toBe(`json-${index}`);
-      expect((await store.deleteExpired()).errors).toEqual([]);
-    }
-  });
-
-  it("keeps ownership for a moved artifact root, and refuses a different store later created at the owner's old path", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-owner-moved-"));
-    const output = path.join(root, "out");
-    await new FileArtifactStore(path.join(root, "artifacts"), output, PANEL_REPORT_COPY_NAMES).writeReportCopies("one-json", "one-md", 30);
-    await fileSystem.rename(path.join(root, "artifacts"), path.join(root, "moved"));
-    // Another store at the same path (as on another host or in another container): the path alone grants nothing.
-    await mkdir(path.join(root, "artifacts"));
-    const impostor = new FileArtifactStore(path.join(root, "artifacts"), output, PANEL_REPORT_COPY_NAMES);
-    await expect(impostor.checkReportCopiesOwner()).rejects.toMatchObject({ code: "REVIEWFN_OUTPUT_DIRECTORY_IN_USE" });
-    await expect(impostor.writeReportCopies("two-json", "two-md", 30)).rejects.toMatchObject({ code: "REVIEWFN_OUTPUT_DIRECTORY_IN_USE" });
-    // The moved store keeps its claim, writes and cleans up.
-    const moved = new FileArtifactStore(path.join(root, "moved"), output, PANEL_REPORT_COPY_NAMES);
-    await moved.checkReportCopiesOwner();
-    await moved.writeReportCopies("three-json", "three-md", 30);
-    expect(await readFile(path.join(output, "panel-report.json"), "utf8")).toBe("three-json");
-    expect(await moved.deleteExpired()).toEqual({ deleted: [], errors: [] });
-  });
-
-  it("claims the directory on a filesystem without hard links, and still refuses another store", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-owner-nolink-"));
-    const output = path.join(root, "out");
-    const spy = vi.spyOn(fileSystem, "link").mockRejectedValue(Object.assign(new Error("operation not supported"), { code: "ENOTSUP" }));
+    const b = new WaitingStore(path.join(root, "b"), output);
+    const pause = pauseFirst<typeof fileSystem.rename>(fileSystem, "rename", (_from, to) => String(to) === path.join(output, "panel-report.md"), true);
     try {
-      const a = new FileArtifactStore(path.join(root, "a"), output, PANEL_REPORT_COPY_NAMES);
-      await a.writeReportCopies("a-json", "a-md", 30);
+      pause.arm();
+      const writingA = a.writeReportCopies("a-json", "a-md", 30);
+      await pause.paused;
+      const writingB = b.writeReportCopies("b-json", "b-md", 30);
+      await Promise.race([b.waiting, writingB]);
+      pause.release();
+      await writingA;
       expect(await readFile(path.join(output, "panel-report.json"), "utf8")).toBe("a-json");
-      expect(JSON.parse(await readFile(path.join(output, ".panel-report-owner"), "utf8"))).toMatchObject({ store: readFileSync(path.join(root, "a", ".store-id"), "utf8") });
-      await expect(new FileArtifactStore(path.join(root, "b"), output, PANEL_REPORT_COPY_NAMES).writeReportCopies("b-json", "b-md", 30)).rejects.toMatchObject({ code: "REVIEWFN_OUTPUT_DIRECTORY_IN_USE" });
-      expect(await a.deleteExpired()).toEqual({ deleted: [], errors: [] });
-      expect((await fileSystem.readdir(output)).sort()).toEqual([".panel-report-owner", "panel-report.json", "panel-report.md"]);
-    } finally { spy.mockRestore(); }
+      b.proceed();
+      await writingB;
+    } finally { pause.restore(); }
+    expect(await readFile(path.join(output, "panel-report.json"), "utf8")).toBe("b-json");
+    expect(await readFile(path.join(output, "panel-report.md"), "utf8")).toBe("b-md");
+    // The record covers the pair in place: both stores' cleanups are clean, and expiry removes it once.
+    for (const store of [a, b]) expect(await store.deleteExpired()).toEqual({ deleted: [], errors: [] });
+    expect(await a.deleteExpired(new Date(Date.now() + 31 * DAY))).toEqual({ deleted: [], errors: [] });
+    expect(await fileSystem.readdir(output)).toEqual([]);
   });
 
-  it("claims the directory after the owner record it raced with disappears, instead of writing unowned", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-owner-vanished-"));
+  it("keeps a write's staged copies while another store's cleanup waits for the directory", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-staged-race-"));
     const output = path.join(root, "out");
-    const original = fileSystem.link;
-    let raced = false;
-    // The first claim loses to an incumbent whose failed first write then removes its record again.
-    const spy = vi.spyOn(fileSystem, "link").mockImplementation(async (from, to) => {
-      if (!raced) { raced = true; throw Object.assign(new Error("file exists"), { code: "EEXIST" }); }
-      return original(from, to);
-    });
-    try { await new FileArtifactStore(path.join(root, "a"), output, PANEL_REPORT_COPY_NAMES).writeReportCopies("a-json", "a-md", 30); }
-    finally { spy.mockRestore(); }
-    expect(raced).toBe(true);
-    expect(JSON.parse(await readFile(path.join(output, ".panel-report-owner"), "utf8"))).toMatchObject({ store: readFileSync(path.join(root, "a", ".store-id"), "utf8") });
-    await expect(new FileArtifactStore(path.join(root, "b"), output, PANEL_REPORT_COPY_NAMES).checkReportCopiesOwner()).rejects.toMatchObject({ code: "REVIEWFN_OUTPUT_DIRECTORY_IN_USE" });
+    let paused!: () => void; let resume!: () => void;
+    const staged = new Promise<void>(resolve => { paused = resolve; });
+    const release = new Promise<void>(resolve => { resume = resolve; });
+    class PausingStore extends FileArtifactStore {
+      protected override async writeCopyFile(file: string, content: string): Promise<void> {
+        await super.writeCopyFile(file, content);
+        if (file.endsWith(".json")) { paused(); await release; }
+      }
+    }
+    const writing = new PausingStore(path.join(root, "a"), output, PANEL_REPORT_COPY_NAMES).writeReportCopies("a-json", "a-md", 30);
+    await staged;
+    const b = new WaitingStore(path.join(root, "b"), output);
+    const cleaning = b.deleteExpired();
+    await b.waiting;
+    resume();
+    await writing;
+    b.proceed();
+    expect(await cleaning).toEqual({ deleted: [], errors: [] });
+    expect(await readFile(path.join(output, "panel-report.json"), "utf8")).toBe("a-json");
+    expect((await fileSystem.readdir(output)).sort()).toEqual([".panel-report-copies", "panel-report.json", "panel-report.md"]);
   });
 
-  it("checks ownership in preflight without writing, and leaves no claim behind when the first write fails", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-owner-preflight-"));
-    const store = new FileArtifactStore(path.join(root, "artifacts"), path.join(root, "out"), PANEL_REPORT_COPY_NAMES);
-    await store.checkReportCopiesOwner();
-    expect(await fileSystem.readdir(root)).toEqual([]);
-    // A partial or unreadable owner record is never taken over.
-    await mkdir(path.join(root, "out"));
-    await writeFile(path.join(root, "out", ".panel-report-owner"), "");
-    await expect(store.checkReportCopiesOwner()).rejects.toMatchObject({ code: "REVIEWFN_OUTPUT_DIRECTORY_IN_USE" });
+  it("lets a copied artifacts directory and an independent one alternate on one output directory, every cleanup clean and expiry once", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-shared-"));
+    const output = path.join(root, "out");
+    const a = new FileArtifactStore(path.join(root, "a"), output, PANEL_REPORT_COPY_NAMES);
+    await a.writeReportCopies("a-json", "a-md", 30);
+    await fileSystem.cp(path.join(root, "a"), path.join(root, "copy"), { recursive: true });
+    const copy = new FileArtifactStore(path.join(root, "copy"), output, PANEL_REPORT_COPY_NAMES);
+    const b = new FileArtifactStore(path.join(root, "b"), output, PANEL_REPORT_COPY_NAMES);
+    for (const [store, name] of [[copy, "copy"], [b, "b"], [a, "a2"], [copy, "copy2"]] as const) {
+      await store.writeReportCopies(`${name}-json`, `${name}-md`, 30);
+      for (const cleanup of [a, copy, b]) expect(await cleanup.deleteExpired()).toEqual({ deleted: [], errors: [] });
+      expect(await readFile(path.join(output, "panel-report.md"), "utf8")).toBe(`${name}-md`);
+    }
+    expect(await b.deleteExpired(new Date(Date.now() + 31 * DAY))).toEqual({ deleted: [], errors: [] });
+    expect(await fileSystem.readdir(output)).toEqual([]);
+    for (const cleanup of [a, copy]) expect(await cleanup.deleteExpired(new Date(Date.now() + 31 * DAY))).toEqual({ deleted: [], errors: [] });
+  });
+
+  it("fails with REVIEWFN_OUTPUT_DIRECTORY_BUSY on a lock held past the bounded wait, and refuses a symlinked lock", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-lock-"));
+    const output = path.join(root, "out");
+    const lock = path.join(output, ".panel-report.lock");
+    class ImpatientStore extends FileArtifactStore {
+      public waits = 0;
+      protected override async outputLockRetry(): Promise<void> { this.waits++; }
+    }
+    await mkdir(output);
+    await writeFile(lock, JSON.stringify({ pid: 1, hostname: "crashed", acquiredAt: new Date().toISOString() }));
+    const store = new ImpatientStore(path.join(root, "a"), output, PANEL_REPORT_COPY_NAMES);
+    await expect(store.writeReportCopies("json", "md", 30)).rejects.toMatchObject({ code: "REVIEWFN_OUTPUT_DIRECTORY_BUSY", details: { directory: output, lock } });
+    expect(store.waits).toBe(99);
+    expect((await store.deleteExpired()).errors.join()).toMatch(/REVIEWFN_OUTPUT_DIRECTORY_BUSY/);
+    expect(await fileSystem.readdir(output)).toEqual([".panel-report.lock"]);
+    await fileSystem.rm(lock);
+    await symlink(path.join(root, "elsewhere"), lock);
+    await expect(store.writeReportCopies("json", "md", 30)).rejects.toMatchObject({ code: "REVIEWFN_ARTIFACT_UNSAFE" });
+    expect((await store.deleteExpired()).errors.join()).toMatch(/REVIEWFN_ARTIFACT_UNSAFE/);
+    expect(await fileSystem.readdir(output)).toEqual([".panel-report.lock"]);
+    await expect(fileSystem.lstat(path.join(root, "elsewhere"))).rejects.toThrow();
   });
 });
 
-it.each([".json", ".md"])("replaces the panel copies as a pair, keeping the previous pair when writing the %s copy fails", async failing => {
+it.each([".json", ".md"])("replaces the panel copies as a pair, keeping the previous pair and record when writing the %s copy fails", async failing => {
   const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-pair-"));
   class FailingStore extends FileArtifactStore {
     protected override async writeCopyFile(file: string, content: string): Promise<void> {
@@ -377,18 +334,17 @@ it.each([".json", ".md"])("replaces the panel copies as a pair, keeping the prev
   }
   const artifacts = path.join(root, "artifacts");
   await new FileArtifactStore(artifacts, root, PANEL_REPORT_COPY_NAMES).writeReportCopies("old-json", "old-md", 1);
-  const marker = (await fileSystem.readdir(artifacts)).find(entry => entry.startsWith(".panel-report-copies-"))!;
-  const before = await readFile(path.join(artifacts, marker), "utf8");
+  const record = path.join(root, ".panel-report-copies");
+  const before = await readFile(record, "utf8");
   await expect(new FailingStore(artifacts, root, PANEL_REPORT_COPY_NAMES).writeReportCopies("new-json", "new-md", 30)).rejects.toThrow(/simulated/);
   expect(await readFile(path.join(root, "panel-report.json"), "utf8")).toBe("old-json");
   expect(await readFile(path.join(root, "panel-report.md"), "utf8")).toBe("old-md");
-  expect((await fileSystem.readdir(root)).sort()).toEqual([".panel-report-owner", "artifacts", "panel-report.json", "panel-report.md"]);
-  expect(await readFile(path.join(artifacts, marker), "utf8")).toBe(before);
-  // A first write that fails leaves no copy and no marker.
+  expect((await fileSystem.readdir(root)).sort()).toEqual([".panel-report-copies", "artifacts", "panel-report.json", "panel-report.md"]);
+  expect(await readFile(record, "utf8")).toBe(before);
+  // A first write that fails leaves no copy, record, staged file or lock.
   const empty = path.join(root, "empty");
   await expect(new FailingStore(artifacts, empty, PANEL_REPORT_COPY_NAMES).writeReportCopies("new-json", "new-md", 30)).rejects.toThrow(/simulated/);
   expect(await fileSystem.readdir(empty)).toEqual([]);
-  expect((await fileSystem.readdir(artifacts)).filter(entry => entry.startsWith(".panel-report-copies-"))).toEqual([marker]);
 });
 
 it.each([false, true])("restores the previous panel Markdown copy when moving the new JSON copy into place fails (rollback fails: %s)", async rollbackFails => {
@@ -409,9 +365,9 @@ it.each([false, true])("restores the previous panel Markdown copy when moving th
   finally { spy.mockRestore(); rollback.mockRestore(); }
   expect(await readFile(path.join(root, "panel-report.json"), "utf8")).toBe("old-json");
   expect(await readFile(path.join(root, "panel-report.md"), "utf8")).toBe(rollbackFails ? "new-md" : "old-md");
-  expect((await fileSystem.readdir(root)).sort()).toEqual([".panel-report-owner", "artifacts", "panel-report.json", "panel-report.md"]);
+  expect((await fileSystem.readdir(root)).sort()).toEqual([".panel-report-copies", "artifacts", "panel-report.json", "panel-report.md"]);
   // A failed rollback keeps the new Markdown bytes covered, so both copies still expire.
-  expect((await store.deleteExpired(new Date(Date.now() + 31 * 86_400_000))).errors).toEqual([]);
+  expect((await store.deleteExpired(new Date(Date.now() + 31 * DAY))).errors).toEqual([]);
   expect((await fileSystem.readdir(root)).sort()).toEqual(["artifacts"]);
 });
 

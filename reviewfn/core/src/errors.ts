@@ -17,7 +17,7 @@ export type ReviewFnErrorCode =
   | "REVIEWFN_HARNESS_LOAD_FAILED"
   | "REVIEWFN_RETENTION_CLEANUP_FAILED"
   | "REVIEWFN_SNAPSHOT_CLEANUP_FAILED"
-  | "REVIEWFN_OUTPUT_DIRECTORY_IN_USE";
+  | "REVIEWFN_OUTPUT_DIRECTORY_BUSY";
 
 export class ReviewFnError extends Error {
   public constructor(
