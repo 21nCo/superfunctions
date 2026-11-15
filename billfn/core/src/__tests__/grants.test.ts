@@ -523,4 +523,106 @@ describe('entitlement grants', () => {
       env.billfn.quotaProvider.checkQuota({ principalId: PRINCIPAL, requestedBytes: 3000 })
     ).resolves.toEqual({ allowed: false, current: 0, limit: 1000, reason: 'quota_exceeded' });
   });
+
+  it('records each missing grant event on its own without transactions, so one failing write skips no other', async () => {
+    const { db, failEvents } = failingEventDb(false);
+    const env = setup(db);
+    const created = async () => (await env.events('billfn.grant.created')).map((event) => event.payload.grantId).sort();
+    failEvents.on = true;
+    await env.grant();
+    env.advance(1);
+    await env.grant({ kind: 'comp' });
+    // The comp is newest, so its event is first in repair order; only that write fails.
+    failEvents.only = `evt_grant_created_grant_comp_${ACCOUNT}_1`;
+    await env.entitlements();
+    expect(await created()).toEqual([`grant_trial_${ACCOUNT}`]);
+    failEvents.on = false;
+    await env.entitlements();
+    await env.entitlements();
+    expect(await created()).toEqual([`grant_comp_${ACCOUNT}_1`, `grant_trial_${ACCOUNT}`]);
+  });
+
+  it('records a deferred grant event once through every entitlements read without transactions', async () => {
+    const reads: Array<[string, (env: ReturnType<typeof setup>) => Promise<unknown>]> = [
+      ['subscriptionProvider', (env) => env.billfn.subscriptionProvider.getEntitlementSnapshot(env.subject)],
+      ['checkQuota', (env) => env.billfn.quotaProvider.checkQuota({ principalId: PRINCIPAL, requestedBytes: 1 })],
+      ['quotaProvider.getUsage', (env) => env.billfn.quotaProvider.getUsage(PRINCIPAL)],
+      ['getUsage', (env) => env.billfn.getUsage(env.subject)],
+      ['getEntitlements', (env) => env.entitlements()]
+    ];
+    for (const [name, read] of reads) {
+      const { db, failEvents } = failingEventDb(false);
+      const env = setup(db);
+      failEvents.on = true;
+      await env.grant();
+      failEvents.on = false;
+      expect(await env.events('billfn.grant.created'), name).toEqual([]);
+      await read(env);
+      await read(env);
+      expect(await env.events('billfn.grant.created'), name).toHaveLength(1);
+    }
+  });
+
+  it('returns the grant outcome when only the event repair cannot read the account\'s grants without transactions', async () => {
+    const { db: failing, failEvents } = failingEventDb(false);
+    // The next read of the account's grants after arming rejects: on create and revoke, that is the repair's.
+    const rejectNext = { armed: false };
+    const db: Adapter = {
+      ...failing,
+      async findMany<T>(params: Parameters<Adapter['findMany']>[0]): Promise<T[]> {
+        if (rejectNext.armed && params.model === 'entitlementGrants') {
+          rejectNext.armed = false;
+          throw new Error('discovery failed');
+        }
+        return failing.findMany<T>(params);
+      }
+    };
+    const env = setup(db);
+    failEvents.on = true;
+    rejectNext.armed = true;
+    await expect(env.grant()).resolves.toMatchObject({ ok: true, data: { grant: { kind: 'trial', status: 'active' } } });
+    expect(rejectNext.armed).toBe(false);
+    failEvents.on = false;
+    const comp = await env.grant({ kind: 'comp' });
+    if (!comp.ok) throw new Error('expected a comp');
+    failEvents.on = true;
+    rejectNext.armed = true;
+    await expect(
+      env.billfn.services.grants.revoke({ billingAccountId: ACCOUNT, grantId: comp.data.grant.id, operator: OPERATOR })
+    ).resolves.toMatchObject({ ok: true, data: { grant: { status: 'revoked' } } });
+    expect(rejectNext.armed).toBe(false);
+    failEvents.on = false;
+    await env.entitlements();
+    expect(await env.events('billfn.grant.created')).toHaveLength(2);
+    expect(await env.events('billfn.grant.revoked')).toMatchObject([{ payload: { grantId: comp.data.grant.id } }]);
+  });
+
+  it('derives grant status after the event repair, for the entitlements and the grant summaries alike', async () => {
+    const { db: failing, failEvents } = failingEventDb(false);
+    let env: ReturnType<typeof setup> | undefined;
+    const passExpiry = { armed: false };
+    const db: Adapter = {
+      ...failing,
+      async findMany<T>(params: Parameters<Adapter['findMany']>[0]): Promise<T[]> {
+        // The trial expires while the repair reads the recorded events.
+        if (passExpiry.armed && params.model === 'billingEvents') {
+          passExpiry.armed = false;
+          env!.advance(2);
+        }
+        return failing.findMany<T>(params);
+      }
+    };
+    env = setup(db);
+    failEvents.on = true;
+    await env.grant({ expiresAt: env.days(3) });
+    failEvents.on = false;
+    env.advance(2);
+    passExpiry.armed = true;
+    const response = await env.entitlements();
+    expect(passExpiry.armed).toBe(false);
+    expect(response.entitlements).toMatchObject({ status: 'inactive', features: {}, limits: {} });
+    expect(response.entitlements?.grant).toBeUndefined();
+    expect(response.grants).toMatchObject([{ kind: 'trial', status: 'expired' }]);
+    expect(await env.events('billfn.grant.created')).toHaveLength(1);
+  });
 });

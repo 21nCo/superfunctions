@@ -6,7 +6,7 @@ import { createBillFnError } from './errors.js';
 import {
   applyGrants,
   insertGrant,
-  listGrants,
+  listRepairedGrants,
   readCreateGrantInput,
   repairGrantEvents,
   requireFutureExpiry,
@@ -283,9 +283,27 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
     recordBillingEvent: (event, db) => recordBillingEvent(db ? { ...deps, db } : deps, event),
     isDuplicateRecordError
   };
-  /** The account's entitlements: its paid snapshot, or an active grant while that snapshot is `inactive`. */
+  /**
+   * The account's entitlements: its paid snapshot, or an active grant while that snapshot is `inactive`, and the
+   * grants they were derived from. Without transactions the grants are read on every call, so their missing
+   * events are repaired first (see `listRepairedGrants`); with transactions they are read when the paid snapshot
+   * does not decide or `withGrantList` asks for them.
+   */
+  async function readEntitlements(billingAccountId: string, withGrantList = false) {
+    const grants =
+      withGrantList || !deps.db.capabilities.transactions.supported
+        ? await listRepairedGrants(grantDeps, billingAccountId)
+        : undefined;
+    const entitlements = await applyGrants(
+      grantDeps,
+      billingAccountId,
+      await findEntitlementSnapshot(deps, billingAccountId),
+      grants
+    );
+    return { entitlements, grants: grants ?? [] };
+  }
   async function findEffectiveEntitlements(billingAccountId: string) {
-    return applyGrants(grantDeps, billingAccountId, await findEntitlementSnapshot(deps, billingAccountId));
+    return (await readEntitlements(billingAccountId)).entitlements;
   }
   /** A write's paid snapshot as the account's entitlements (see `applyGrants`). */
   async function withGrants(billingAccountId: string, paid: BillFnEntitlementSnapshot) {
@@ -1377,14 +1395,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
           grants: []
         });
       }
-      const grants = await listGrants(grantDeps, billingAccount.id);
-      await repairGrantEvents(grantDeps, billingAccount.id, grants);
-      const entitlements = await applyGrants(
-        grantDeps,
-        billingAccount.id,
-        await findEntitlementSnapshot(deps, billingAccount.id),
-        grants
-      );
+      const { entitlements, grants } = await readEntitlements(billingAccount.id, true);
       const subscription = await findActiveSubscription(deps, billingAccount.id);
       const response: BillFnEntitlementsResponseData = {
         billingAccount,

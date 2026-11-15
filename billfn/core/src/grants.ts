@@ -80,36 +80,57 @@ export function requireFutureExpiry(deps: GrantDeps, input: GrantCreateInput) {
 /**
  * Records the account's grant events that are missing. Without transactions a grant change commits before its
  * billing event, and a change whose event write fails stands (see `commitWithEvent`). Every grant create and
- * revoke runs this first, before it checks the expiry or reads the grant it acts on, and so does every
- * entitlements read: whatever that request then does, the account's earlier creations and revocations, also of
- * grants that have since expired or been revoked, have their events. The events' ids and payloads derive from
- * the stored grant, so a recorded event is kept and none is written twice. With transactions each change
- * commits with its event and there is nothing to repair. A repair that cannot write leaves the events to a
- * later one and never fails the request. Pass the account's grants when already read.
+ * revoke runs this first, before it checks the expiry or reads the grant it acts on, and every entitlements read
+ * runs it through `listRepairedGrants`: whatever that request then does, the account's earlier creations and
+ * revocations, also of grants that have since expired or been revoked, have their events. The events' ids and
+ * payloads derive from the stored grant, so a recorded event is kept and none is written twice. With
+ * transactions each change commits with its event and there is nothing to repair. Best effort: finding the
+ * missing events and writing each one fail on their own, a failed write skips no other event, and a repair that
+ * cannot write leaves the events to a later one and never fails the request. Pass the account's grants when
+ * already read.
  */
 export async function repairGrantEvents(deps: GrantDeps, billingAccountId: string, grants?: BillFnEntitlementGrant[]) {
   if (deps.db.capabilities.transactions.supported) {
     return;
   }
-  const events = (grants ?? (await listGrants(deps, billingAccountId))).flatMap((grant) =>
-    grant.revokedAt ? [grantCreatedEvent(grant), grantRevokedEvent(grant)] : [grantCreatedEvent(grant)]
-  );
-  if (events.length === 0) {
-    return;
-  }
+  let missing: BillFnBillingEvent[];
   try {
+    const events = (grants ?? (await listGrants(deps, billingAccountId))).flatMap((grant) =>
+      grant.revokedAt ? [grantCreatedEvent(grant), grantRevokedEvent(grant)] : [grantCreatedEvent(grant)]
+    );
+    if (events.length === 0) {
+      return;
+    }
     const recorded = await deps.db.findMany<{ id: string }>({
       model: BILLING_EVENTS_TABLE,
       where: [{ field: 'id', operator: 'in', value: events.map((event) => event.id) }],
       namespace: deps.namespace
     });
     const recordedIds = new Set(recorded.map((event) => event.id));
-    for (const event of events.filter((candidate) => !recordedIds.has(candidate.id))) {
-      await deps.recordBillingEvent(event);
-    }
+    missing = events.filter((candidate) => !recordedIds.has(candidate.id));
   } catch {
     deps.metrics.track('grant.event_deferred', { type: 'repair' });
+    return;
   }
+  for (const event of missing) {
+    try {
+      await deps.recordBillingEvent(event);
+    } catch {
+      deps.metrics.track('grant.event_deferred', { type: event.type });
+    }
+  }
+}
+
+/**
+ * The account's grants for an entitlements read: their missing events are repaired first (see
+ * `repairGrantEvents`), and their status is derived after that, so a grant that ends during the repair reads
+ * as ended.
+ */
+export async function listRepairedGrants(deps: GrantDeps, billingAccountId: string) {
+  const grants = await listGrants(deps, billingAccountId);
+  await repairGrantEvents(deps, billingAccountId, grants);
+  const now = deps.now();
+  return grants.map((grant) => withStatus(grant, now));
 }
 
 /**
