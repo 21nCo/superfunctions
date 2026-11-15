@@ -73,9 +73,10 @@ function adminErrorFromBillFn(error: unknown): unknown {
 /**
  * The BillFn error details an operator needs to recover, passed on by allow-list: `reason` separates conflicts
  * (an unfinished import replay from a reference bound elsewhere), `originalTransactionIds` names the Apple
- * reference to import instead of a renewal transaction, and `planKey`/`providerProductIds` explain a product mismatch.
+ * reference to import instead of a renewal transaction, `planKey`/`providerProductIds` explain a product mismatch, and
+ * `grantId` names the grant a refused grant request conflicts with.
  */
-const IMPORT_ERROR_DETAIL_KEYS = ["reason", "planKey", "providerProductIds", "originalTransactionIds"] as const;
+const IMPORT_ERROR_DETAIL_KEYS = ["reason", "planKey", "providerProductIds", "originalTransactionIds", "grantId"] as const;
 
 function importErrorDetails(details: unknown): Record<string, string | string[]> {
   if (typeof details !== "object" || details === null) return {};
@@ -242,6 +243,49 @@ export function createBillFnDomainAdminService(
       const data = unwrap(await options.billfn.getUsage(await options.subject(context), input.id));
       const value = data.usage.find((entry) => entry.resource === input.id);
       return value ? item({ ...value, id: value.resource }) : notFound("Usage meter");
+    },
+    async grantEntitlement(input, context) {
+      const subject = await options.subject(context);
+      const scoped = unwrap(await options.billfn.getEntitlements(subject));
+      if (input.payload.billingAccountId !== undefined && input.payload.billingAccountId !== scoped.billingAccount.id) {
+        throw new AdminError("forbidden", "The grant billing account is outside the active BillFn subject.");
+      }
+      const kind = string(input.payload.kind, "payload.kind");
+      if (kind !== "trial" && kind !== "comp") {
+        throw new AdminError("invalid_argument", "payload.kind must be trial or comp.");
+      }
+      try {
+        const data = unwrap(await options.billfn.services.grants.create({
+          billingAccountId: scoped.billingAccount.id,
+          // The subject's billing account is created when this is its first billing record.
+          subject,
+          planKey: string(input.payload.planKey, "payload.planKey"),
+          kind,
+          expiresAt: string(input.payload.expiresAt, "payload.expiresAt"),
+          operator: { id: context.actor.id, type: context.actor.type, requestId: context.requestId },
+          reason: input.reason,
+        }));
+        return { ok: true, data: { accepted: true, item: asJson(data.grant), operationReference: data.grant.id } };
+      } catch (error) {
+        throw adminErrorFromBillFn(error);
+      }
+    },
+    async revokeGrant(input, context) {
+      const scoped = unwrap(await options.billfn.getEntitlements(await options.subject(context)));
+      if (input.payload?.billingAccountId !== undefined && input.payload.billingAccountId !== scoped.billingAccount.id) {
+        throw new AdminError("forbidden", "The grant billing account is outside the active BillFn subject.");
+      }
+      try {
+        const data = unwrap(await options.billfn.services.grants.revoke({
+          billingAccountId: scoped.billingAccount.id,
+          grantId: string(input.id, "id"),
+          operator: { id: context.actor.id, type: context.actor.type, requestId: context.requestId },
+          reason: input.reason,
+        }));
+        return { ok: true, data: { accepted: true, item: asJson(data.grant), operationReference: data.grant.id } };
+      } catch (error) {
+        throw adminErrorFromBillFn(error);
+      }
     },
     async changeSubscription(input, context) {
       return accepted(unwrap(await options.billfn.changeSubscription({

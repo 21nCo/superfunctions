@@ -155,6 +155,48 @@ export interface BillFnEntitlementSnapshot {
   effectiveAt: string;
   expiresAt?: string;
   sourceEventId?: string;
+  /**
+   * Set when an active entitlement grant, not the account's paid subscription,
+   * supplies this snapshot (`trialing` for a trial, `active` for a comp) until
+   * `expiresAt`. Never stored: every read derives it from the grant.
+   */
+  grant?: BillFnEntitlementSnapshotGrant;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BillFnEntitlementSnapshotGrant {
+  id: string;
+  kind: BillFnEntitlementGrantKind;
+  expiresAt: string;
+}
+
+/** A trial (`trialing` entitlements, once per billing account) or a comp (`active`, revocable). */
+export type BillFnEntitlementGrantKind = 'trial' | 'comp';
+
+/** Derived when a grant is read: `revoked` once revoked, otherwise `expired` from `expiresAt` on. */
+export type BillFnEntitlementGrantStatus = 'active' | 'expired' | 'revoked';
+
+/**
+ * Entitlements granted without payment until `expiresAt`. A paid subscription
+ * whose entitlements are not `inactive` supersedes a grant; once the grant
+ * expires or is revoked, the account falls back to its paid state, or to
+ * `inactive` without one.
+ */
+export interface BillFnEntitlementGrant {
+  id: string;
+  billingAccountId: string;
+  planKey: string;
+  kind: BillFnEntitlementGrantKind;
+  /** Derived from `revokedAt` and `expiresAt` when read; not stored. */
+  status: BillFnEntitlementGrantStatus;
+  startsAt: string;
+  expiresAt: string;
+  revokedAt?: string | null;
+  operator?: BillFnOperator | null;
+  reason?: string | null;
+  revokedBy?: BillFnOperator | null;
+  revokeReason?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -653,6 +695,14 @@ export interface BillFnRestorePurchasesRequest {
   payload?: Record<string, unknown>;
 }
 
+/** The operator or service that granted or revoked entitlements; recorded on the grant and its billing event. */
+export interface BillFnOperator {
+  id: string;
+  type?: string;
+  /** The operator request, for audit correlation. */
+  requestId?: string;
+}
+
 /** Who imported a subscription; recorded on the import's billing event. */
 export interface BillFnImportOperator {
   id: string;
@@ -693,6 +743,30 @@ export interface BillFnImportSubscriptionRequestFields {
   subject?: BillableSubject;
   planKey: string;
   operator: BillFnImportOperator;
+  reason?: string;
+}
+
+export interface BillFnCreateGrantRequest {
+  billingAccountId: string;
+  /**
+   * When set, the billing account is created for this subject if it does not
+   * exist yet; the subject must resolve to `billingAccountId`. Without it the
+   * billing account must already exist.
+   */
+  subject?: BillableSubject;
+  planKey: string;
+  kind: BillFnEntitlementGrantKind;
+  /** An ISO 8601 time after now. */
+  expiresAt: string;
+  operator?: BillFnOperator;
+  reason?: string;
+}
+
+export interface BillFnRevokeGrantRequest {
+  /** The billing account the grant belongs to; a grant of another account is not found. */
+  billingAccountId: string;
+  grantId: string;
+  operator?: BillFnOperator;
   reason?: string;
 }
 
@@ -798,6 +872,14 @@ export interface BillFnEntitlementsResponseData {
   billingAccount: BillFnBillingAccount;
   entitlements: BillFnEntitlementSnapshot | null;
   subscription: BillFnSubscription | null;
+  /** The account's entitlement grants, newest first, with their kind, expiry and derived status. */
+  grants: BillFnEntitlementGrant[];
+}
+
+export interface BillFnGrantResponseData {
+  grant: BillFnEntitlementGrant;
+  /** The account's entitlements after the write. */
+  entitlements: BillFnEntitlementSnapshot | null;
 }
 
 export interface BillFnUsageResponseData {
@@ -826,6 +908,7 @@ export type BillFnSyncSubscriptionResponse = BillFnEnvelope<BillFnSyncSubscripti
 export type BillFnRestorePurchasesResponse = BillFnEnvelope<BillFnRestorePurchasesResponseData>;
 export type BillFnImportSubscriptionResponse = BillFnEnvelope<BillFnImportSubscriptionResponseData>;
 export type BillFnEntitlementsResponse = BillFnEnvelope<BillFnEntitlementsResponseData>;
+export type BillFnGrantResponse = BillFnEnvelope<BillFnGrantResponseData>;
 export type BillFnUsageResponse = BillFnEnvelope<BillFnUsageResponseData>;
 export type BillFnWebhookResponse = BillFnEnvelope<BillFnWebhookResponseData>;
 export type BillFnReconciliationJobResponse = BillFnEnvelope<BillFnReconciliationJobResponseData>;
@@ -862,6 +945,20 @@ export interface BillFnInstance {
        * the replay, when the call gets that far.
        */
       import(input: BillFnImportSubscriptionRequest): Promise<BillFnImportSubscriptionResponse>;
+    };
+    grants: {
+      /**
+       * Grants a plan's entitlements until `expiresAt`: `trialing` for a trial,
+       * `active` for a comp. A billing account gets one trial ever (a second fails
+       * with `BILLFN_CONFLICT`, reason `trial_already_granted`) and one active comp
+       * at a time (`active_comp_exists`). Records a `billfn.grant.created` billing event.
+       */
+      create(input: BillFnCreateGrantRequest): Promise<BillFnGrantResponse>;
+      /**
+       * Revokes a comp (a trial cannot be revoked); revoking a revoked comp
+       * returns it unchanged. Records a `billfn.grant.revoked` billing event.
+       */
+      revoke(input: BillFnRevokeGrantRequest): Promise<BillFnGrantResponse>;
     };
   };
   subscriptionProvider: {

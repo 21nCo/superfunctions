@@ -204,7 +204,7 @@ function createMockProvider(provider: 'dodo' | 'apple'): BillFnProviderAdapter {
 describe('@billfn/core', () => {
   it('keeps schema model names logical for custom namespaces and enforces provider reference uniqueness', () => {
     const schema = getSchema({ namespace: 'custom_billfn' });
-    expect(schema.version).toBe(4);
+    expect(schema.version).toBe(5);
     expect(schema.schemas.map((table) => table.modelName)).toContain('subscriptions');
     expect(schema.schemas.some((table) => table.modelName.startsWith('custom_billfn_'))).toBe(false);
     const subscriptions = schema.schemas.find((table) => table.modelName === 'subscriptions');
@@ -231,6 +231,10 @@ describe('@billfn/core', () => {
     expect(replaced?.indexes?.find(
       (index) => index.fields.join(',') === 'provider,providerReference'
     )?.unique).toBe(true);
+    const grants = schema.schemas.find((table) => table.modelName === 'entitlementGrants');
+    expect(grants?.fields.id).toEqual({ type: 'string', required: true, unique: true });
+    expect(grants?.fields.revokedAt).toEqual({ type: 'string', required: false });
+    expect(grants?.indexes?.some((index) => index.fields.join(',') === 'billingAccountId,createdAt')).toBe(true);
   });
 
   it('creates, verifies, and reads entitlements for a Dodo checkout', async () => {
