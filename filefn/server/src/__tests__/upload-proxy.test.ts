@@ -533,38 +533,141 @@ describe('FILE-16 per-session storage keys', () => {
     );
   });
 
+  const PROXY_CAPS = { signedUploadUrls: false, multipart: false, proxyStreamingUpload: true };
+  const MULTIPART_CAPS = { signedUploadUrls: true, multipart: true, proxyStreamingUpload: false };
+  type PathCtx = { fileId: string; fileName: string; versionId: string };
+
   it.each([
-    ['proxy', { signedUploadUrls: false, multipart: false, proxyStreamingUpload: true }],
-    ['multipart', { signedUploadUrls: true, multipart: true, proxyStreamingUpload: false }],
-  ])('refuses a %s init whose storagePath ignores versionId, creating no session or upload', async (_mode, caps) => {
+    ['proxy', 'ignores versionId', PROXY_CAPS, ({ fileId, fileName }: PathCtx) => `fixed/${fileId}/${fileName}`],
+    ['multipart', 'ignores versionId', MULTIPART_CAPS, ({ fileId, fileName }: PathCtx) => `fixed/${fileId}/${fileName}`],
+    ['proxy', 'truncates versionId', PROXY_CAPS, ({ fileId, versionId }: PathCtx) => `${fileId}/${versionId.slice(-1)}`],
+    ['multipart', 'truncates versionId', MULTIPART_CAPS, ({ fileId, versionId }: PathCtx) => `${fileId}/${versionId.slice(-1)}`],
+  ])('refuses a %s init whose storagePath %s, creating no session or upload', async (_mode, _kind, caps, storagePath) => {
     const db = createMemoryDb();
     const storage = createMemoryStorage(caps);
     const service = createUploadSessionService({
       db: db.db,
       storage: storage.adapter as any,
-      policies: {
-        get: vi.fn(() => ({
-          name: 'fixed',
-          contentTypes: ['text/plain'],
-          storagePath: ({ fileId, fileName }: { fileId: string; fileName: string }) => `fixed/${fileId}/${fileName}`,
-        })),
-      } as any,
+      policies: { get: vi.fn(() => ({ name: 'fixed', contentTypes: ['text/plain'], storagePath })) } as any,
       events: { emit: vi.fn() } as any,
     });
     const routes = createUploadSessionRoutes({ service, auth: { required: false } });
 
-    const res = await routes.initSession(new Request('http://localhost/upload/init', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: jsonBody({ policy: 'fixed', fileName: 'a.txt', size: 3, mimeType: 'text/plain', fileId: 'file_shared' }),
-    }));
-    const body = await res.json();
-
-    expect(res.status).toBe(500);
-    expect(body.error.code).toBe('FILEFN_STORAGE_PATH_NOT_PER_VERSION');
+    // Every attempt is refused, not just most of them.
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const res = await routes.initSession(new Request('http://localhost/upload/init', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: jsonBody({ policy: 'fixed', fileName: 'a.txt', size: 3, mimeType: 'text/plain', fileId: 'file_shared' }),
+      }));
+      const body = await res.json();
+      expect(res.status).toBe(500);
+      expect(body.error.code).toBe('FILEFN_STORAGE_PATH_NOT_PER_VERSION');
+    }
     expect(db.all('uploadSessions')).toHaveLength(0);
     expect(storage.adapter.createMultipartUpload).not.toHaveBeenCalled();
+    expect(storage.adapter.signMultipartUploadPartUrl).not.toHaveBeenCalled();
     expect(storage.adapter.openUploadStream).not.toHaveBeenCalled();
+    expect(storage.objects.size).toBe(0);
+  });
+
+  it('accepts a storagePath that embeds the full versionId and keeps sessions of different principals apart', async () => {
+    const storagePath = ({ fileId, versionId }: PathCtx) => `shared/${fileId}/${versionId}`;
+    const { db, storage, service } = proxyService({ storagePath });
+    const other = { principalId: 'u2', tenantId: 't1', requestId: 'req_other' };
+    const first = await initSession(service, 'file_shared');
+    const second = await service.createSession(
+      { policy: 'p1', fileName: 'b.txt', size: 3, mimeType: 'text/plain', fileId: 'file_shared' },
+      other,
+    );
+    const keyA = sessionRow(db, first.uploadSessionId).storageKey as string;
+    const keyB = sessionRow(db, second.uploadSessionId).storageKey as string;
+    expect(keyA).not.toBe(keyB);
+
+    const published = await uploadAndComplete(service, first.uploadSessionId, 'AAA');
+    const partB = await service.uploadPartBytes(second.uploadSessionId, 1, Buffer.from('BBB'), 3, other);
+    expect(`${keyB}.part1`).not.toBe(`${keyA}.part1`);
+    await service.completePart(second.uploadSessionId, 1, partB.etag, partB.size, other);
+    await service.completeSession(second.uploadSessionId, other);
+
+    const publishedVersion = db.all('fileVersions').find((v) => v.versionId === published.versionId)!;
+    expect(publishedVersion.storageKey).toBe(keyA);
+    expect(storage.objects.get(keyA)).toEqual(new TextEncoder().encode('AAA'));
+    expect(storage.objects.get(keyB)).toEqual(new TextEncoder().encode('BBB'));
+  });
+
+  function failOnceOnSessionCompleted(db: MemoryDb) {
+    const create = db.db.create.bind(db.db);
+    const update = db.db.update.bind(db.db);
+    let failed = false;
+    // fileVersions.versionId is unique in the schema; enforce it like a real database.
+    db.db.create = (async (params: any) => {
+      if (params.model === 'fileVersions' && db.all('fileVersions').some((v) => v.versionId === params.data.versionId)) {
+        throw new Error('duplicate key value violates unique constraint "fileVersions_versionId"');
+      }
+      return create(params);
+    }) as Adapter['create'];
+    db.db.update = (async (params: any) => {
+      if (!failed && params.model === 'uploadSessions' && params.data.status === 'completed') {
+        failed = true;
+        throw new Error('connection reset');
+      }
+      return update(params);
+    }) as Adapter['update'];
+  }
+
+  it.each([['new file'], ['existing file']])(
+    'resumes a proxy completion whose version was written before the session update failed (%s)',
+    async (kind) => {
+      const { db, storage, service } = proxyService();
+      const fileId = kind === 'existing file'
+        ? (await uploadAndComplete(service, (await initSession(service)).uploadSessionId, 'old')).fileId
+        : undefined;
+      const created = await initSession(service, fileId);
+      const row = sessionRow(db, created.uploadSessionId);
+      failOnceOnSessionCompleted(db);
+
+      const part = await service.uploadPartBytes(created.uploadSessionId, 1, Buffer.from('abc'), 3, ctx);
+      await service.completePart(created.uploadSessionId, 1, part.etag, part.size, ctx);
+      await expect(service.completeSession(created.uploadSessionId, ctx)).rejects.toThrow('connection reset');
+
+      const result = await service.completeSession(created.uploadSessionId, ctx);
+      expect(result).toEqual({ fileId: row.fileId, versionId: row.completionVersionId });
+      await expect(service.completeSession(created.uploadSessionId, ctx)).resolves.toEqual(result);
+
+      expect(db.all('files').filter((f) => f.fileId === result.fileId)).toHaveLength(1);
+      expect(db.all('files')).toHaveLength(1);
+      expect(db.all('files')[0].currentVersionId).toBe(result.versionId);
+      expect(db.all('fileVersions').filter((v) => v.versionId === result.versionId)).toHaveLength(1);
+      expect(sessionRow(db, created.uploadSessionId).status).toBe('completed');
+      // The retry must not re-stitch the (already deleted) parts over the published object.
+      expect(storage.objects.get(row.storageKey)).toEqual(new TextEncoder().encode('abc'));
+    },
+  );
+
+  it('resumes a multipart completion with repeatable storage completion after the session update failed', async () => {
+    const db = createMemoryDb();
+    const storage = createMemoryStorage(MULTIPART_CAPS);
+    const service = createUploadSessionService({
+      db: db.db,
+      storage: storage.adapter as any,
+      policies: { get: vi.fn(() => ({ name: 'p1', contentTypes: ['text/plain'] })) } as any,
+      events: { emit: vi.fn() } as any,
+    });
+    const created = await initSession(service);
+    const row = sessionRow(db, created.uploadSessionId);
+    storage.objects.set(row.storageKey, new TextEncoder().encode('abc'));
+    await service.completePart(created.uploadSessionId, 1, 'etag-1', 3, ctx);
+    failOnceOnSessionCompleted(db);
+
+    await expect(service.completeSession(created.uploadSessionId, ctx)).rejects.toThrow('connection reset');
+    const result = await service.completeSession(created.uploadSessionId, ctx);
+
+    expect(result).toEqual({ fileId: row.fileId, versionId: row.completionVersionId });
+    expect(db.all('files')).toHaveLength(1);
+    expect(db.all('fileVersions')).toHaveLength(1);
+    expect(sessionRow(db, created.uploadSessionId).status).toBe('completed');
+    await expect(service.completeSession(created.uploadSessionId, ctx)).resolves.toEqual(result);
   });
 
   it('completes a session created before version IDs were pre-allocated', async () => {

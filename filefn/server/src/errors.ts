@@ -226,7 +226,7 @@ export function offlineUnsupported(): FileFnError {
 export function storagePathNotPerVersion(policy: string): FileFnError {
   return new FileFnError(
     ErrorCodes.STORAGE_PATH_NOT_PER_VERSION,
-    'Policy storagePath must return a different key for each versionId',
+    'Policy storagePath must return a key that contains the full versionId',
     500,
     { policy }
   );

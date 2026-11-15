@@ -380,22 +380,20 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // The version this session will publish is fixed here, so its storage key is
       // the one object key no other session can write.
       const versionId = generateFileFnId('ver');
-      const storagePathContext = {
+      const storageKey = computeStorageKey(policy, {
         fileName: input.fileName,
         principalId: ctx.principalId,
         tenantId: ctx.tenantId,
         fileId,
-      };
-      const storageKey = computeStorageKey(policy, { ...storagePathContext, versionId });
+        versionId,
+      });
 
-      // A custom storagePath that ignores versionId would let two sessions on one
-      // fileId write the same object. Probe it with a second versionId and refuse
-      // the policy before any storage upload or session row exists.
-      if (policy.storagePath) {
-        const probeKey = computeStorageKey(policy, { ...storagePathContext, versionId: generateFileFnId('ver') });
-        if (probeKey === storageKey) {
-          throw errors.storagePathNotPerVersion(input.policy);
-        }
+      // The key must contain this session's whole versionId. Every session gets a
+      // fresh random versionId, so two sessions can then never share a key (or the
+      // `<key>.partN` proxy part keys derived from it). A storagePath that drops or
+      // shortens versionId is refused before any storage upload or session row.
+      if (!storageKey.includes(versionId)) {
+        throw errors.storagePathNotPerVersion(input.policy);
       }
 
       let storageUploadId: string | null = null;
@@ -764,8 +762,22 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       const policy = policies.get(session.policy);
       const policyStorageTarget = policy ? resolveStorageTarget(policy) : undefined;
 
+      // An earlier attempt may have written this session's version and then failed
+      // before marking the session completed. Its object and rows are already
+      // published, so resume from that version instead of re-running storage
+      // completion or inserting the same unique versionId again.
+      const publishedVersion = session.completionVersionId
+        ? await db.findOne<{ fileId: string; versionId: string; storageKey: string }>({
+            model: 'fileVersions',
+            where: [{ field: 'versionId', operator: 'eq', value: session.completionVersionId }],
+            namespace,
+          })
+        : null;
+
       // Complete multipart upload
-      if (
+      if (publishedVersion) {
+        // Storage completion already succeeded for this version.
+      } else if (
         session.uploadMode === 'multipart-signed-url' &&
         getStorageCapabilities(storage, policyStorageTarget).multipart &&
         storage.completeMultipartUpload &&
@@ -823,7 +835,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       }
 
       // Validate size if supported
-      if (storage.statObject) {
+      if (!publishedVersion && storage.statObject) {
         try {
           const stat = await storage.statObject({ key: session.storageKey, target: policyStorageTarget });
           if (stat.size !== session.size) {
@@ -836,18 +848,18 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       }
 
       const now = new Date().toISOString();
-      const fileId = session.fileId || generateFileFnId('file');
+      const fileId = publishedVersion?.fileId || session.fileId || generateFileFnId('file');
       // Publish the version allocated at init, whose ID is part of the storage key.
       // Sessions created before init allocated it have none, so mint one for them.
       const versionId = session.completionVersionId || generateFileFnId('ver');
       const metadata = session.metadata ?? {};
 
       // Check for deduplication
-      let finalStorageKey = session.storageKey;
+      let finalStorageKey = publishedVersion?.storageKey || session.storageKey;
       let checksumSha256Base64: string | null = null;
       let isDeduplicated = false;
 
-      if (dedup && dedup.isEnabled()) {
+      if (!publishedVersion && dedup && dedup.isEnabled()) {
         const dedupResult = await dedup.computeAndCheckDuplicate(
           session.storageKey,
           session.tenantId,
@@ -874,9 +886,12 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       }
 
       // Create or update file
-      const existingFile = session.fileId ? await db.findOne({ model: 'files', where: [{ field: 'fileId', operator: 'eq', value: session.fileId }], namespace }) : null;
+      const existingFile = !publishedVersion && session.fileId ? await db.findOne({ model: 'files', where: [{ field: 'fileId', operator: 'eq', value: session.fileId }], namespace }) : null;
 
-      if (existingFile) {
+      if (publishedVersion) {
+        // The interrupted attempt already pointed the file at this version. Leave the
+        // file row alone so a later version published on it is not rolled back.
+      } else if (existingFile) {
         await db.update({
           model: 'files',
           where: [{ field: 'fileId', operator: 'eq', value: fileId }],
@@ -910,21 +925,23 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         });
       }
 
-      // Create version
-      await db.create({
-        model: 'fileVersions',
-        data: {
-          versionId,
-          fileId,
-          storageKey: finalStorageKey,
-          mimeType: session.mimeType,
-          size: session.size,
-          checksumSha256Base64,
-          tenantId: session.tenantId,
-          createdAt: now,
-        },
-        namespace,
-      });
+      // Create version (the interrupted attempt already created it when resuming)
+      if (!publishedVersion) {
+        await db.create({
+          model: 'fileVersions',
+          data: {
+            versionId,
+            fileId,
+            storageKey: finalStorageKey,
+            mimeType: session.mimeType,
+            size: session.size,
+            checksumSha256Base64,
+            tenantId: session.tenantId,
+            createdAt: now,
+          },
+          namespace,
+        });
+      }
 
       // Update session
       await db.update({

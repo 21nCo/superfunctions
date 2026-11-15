@@ -21,7 +21,7 @@ For an interactive explorer, see the [API page](../../api/filefn).
 | POST | `/upload/:id/complete` | Finalise the session. | `FILEFN_UPLOAD_INCOMPLETE`, `FILEFN_UPLOAD_SIZE_MISMATCH`, `FILEFN_UPLOAD_EXPIRED`, `FILEFN_UPLOAD_ABORTED`, `FILEFN_UPLOAD_ALREADY_COMPLETED`, `FILEFN_PROCESSING_ENQUEUE_FAILED`. |
 | POST | `/upload/:id/abort` | Abort. Cleans up storage and DB rows. | (idempotent) |
 
-`POST /upload/init` allocates the `versionId` the session will publish and computes the session's storage key from it, so every session writes its own object key and proxy part keys (`<storageKey>.partN`). `POST /upload/:id/complete` creates the file version with that same `versionId`. A session that loses a race or is refused cannot change the bytes another session published. A policy whose `storagePath` returns the same key for two different `versionId`s is refused at init with `FILEFN_STORAGE_PATH_NOT_PER_VERSION`.
+`POST /upload/init` allocates the `versionId` the session will publish and computes the session's storage key from it, so every session writes its own object key and proxy part keys (`<storageKey>.partN`). `POST /upload/:id/complete` creates the file version with that same `versionId`. A session that loses a race or is refused cannot change the bytes another session published. A policy `storagePath` must return a key that contains the session's full `versionId`; any other key is refused at init with `FILEFN_STORAGE_PATH_NOT_PER_VERSION`.
 
 ## Files
 
