@@ -97,7 +97,8 @@ export interface UploadSession {
 // per request), the calls completing one upload session and the commit section
 // per namespace and fileId. It is the only guard on adapters without unique
 // constraints, which are single-process. Keys: `session\0...` then `file\0...`,
-// always acquired in that order.
+// always acquired in that order. A call that has not settled within
+// SERIALIZED_HOLD_TIMEOUT_MS stops holding back later calls of its keys.
 const runSerialized = createKeyedSerializer();
 
 function generateDefaultId(): string {
@@ -1100,14 +1101,16 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       }
 
       if (commitOutcome === 'refused') {
-        // Keep nothing this session uploaded. When dedup pointed it at another
-        // object's key, its own object is already gone and the shared one stays.
+        // Keep nothing this session uploaded. Only the session's own key is
+        // deleted: when dedup pointed it at another object's key, that shared
+        // object stays. Dedup's own delete of the session's object ignores
+        // failures, so delete it again here and check the result.
         // If a delete fails the session and its part rows stay, so a retried
         // completion or the expiry sweep deletes the objects again.
         // Proxy part objects whose delete failed during stitching still have
         // their uploadParts rows; delete them again before dropping the rows.
         const partsDeleted = await deleteProxyTempPartObjects(session);
-        const objectDeleted = finalStorageKey !== session.storageKey || (await deleteOwnUnpublishedObject(session));
+        const objectDeleted = await deleteOwnUnpublishedObject(session);
         if (partsDeleted && objectDeleted) {
           await endSessionAborted(uploadSessionId);
         }

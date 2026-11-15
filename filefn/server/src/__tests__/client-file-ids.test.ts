@@ -6,7 +6,12 @@ import type { StorageAdapter } from '@superfunctions/storage';
 import type { Authorizer } from '@superfunctions/files';
 import { createDefaultAuthorizer, createFileFn, type QuotaProvider } from '../index.js';
 import { generateFileFnId } from '../ids.js';
-import { isValidClientFileId, parseRequestedFileId } from '../upload-sessions/file-id.js';
+import {
+  createKeyedSerializer,
+  isValidClientFileId,
+  parseRequestedFileId,
+  SERIALIZED_HOLD_TIMEOUT_MS,
+} from '../upload-sessions/file-id.js';
 import { generateFileId } from '../../../client/src/upload-manager.js';
 
 type Mode = 'multipart' | 'proxy';
@@ -196,6 +201,7 @@ function createApp(options: {
   authorizer?: Authorizer;
   /** `createFileFn` of a separately loaded module graph, to model another process. */
   createFileFn?: typeof createFileFn;
+  dedup?: boolean;
 }) {
   const fixture = options.storageFixture ?? createStorage(options.mode);
   const database = options.database ?? memoryAdapter();
@@ -205,6 +211,7 @@ function createApp(options: {
     storage: fixture.storage,
     policies: [{ name: 'doc', contentTypes: ['text/plain'], visibility: 'private' }],
     quota: options.quota,
+    dedup: options.dedup ? { enabled: true } : undefined,
     auth: {
       required: false,
       resolveSession: async (request) => {
@@ -290,6 +297,7 @@ const CLIENT_ID = 'file_offlineCapture01';
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe('client-chosen file ID grammar', () => {
@@ -845,6 +853,34 @@ describe('refused completion cleanup', () => {
     expect((await rawSession(database, loser.uploadSessionId))!.status).toBe('aborted');
   });
 
+  it('a dedup-reused refusal whose own-object delete fails stays open until a retry deletes it, keeping the shared object', async () => {
+    const database = memoryAdapter();
+    const storageFixture = createStorage('multipart');
+    const app = createApp({ mode: 'multipart', database, storageFixture, dedup: true });
+    const loser = await app.stage('user_b', CLIENT_ID, 'same bytes');
+    const winner = await app.stage('user_a', CLIENT_ID, 'same bytes');
+    const loserKey = (await rawSession(database, loser.uploadSessionId))!.storageKey;
+    const winnerKey = (await rawSession(database, winner.uploadSessionId))!.storageKey;
+    // Dedup's delete of the loser's object and the refusal's delete both fail.
+    storageFixture.deleteFailures.set(loserKey, 2);
+    const release = storageFixture.gate(loserKey);
+    const losing = loser.complete();
+    expect((await winner.complete()).status).toBe(200);
+    release();
+    const refused = await losing;
+
+    expect(refused.status).toBe(403);
+    expect(storageFixture.objects.has(loserKey)).toBe(true);
+    expect((await rawSession(database, loser.uploadSessionId))!.status).not.toBe('aborted');
+
+    const retried = await loser.complete();
+    expect(retried.status).toBe(403);
+    expect(storageFixture.objects.has(loserKey)).toBe(false);
+    expect((await rawSession(database, loser.uploadSessionId))!.status).toBe('aborted');
+    expect(storageFixture.objects.has(winnerKey)).toBe(true);
+    expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('same bytes');
+  });
+
   it('a refusal whose proxy part delete fails keeps the session and its parts until a retry deletes them', async () => {
     const database = memoryAdapter();
     const storageFixture = createStorage('proxy');
@@ -903,5 +939,67 @@ describe('refused completion cleanup', () => {
     await app.fileFn.services.uploads.cleanupExpiredSessions();
     expect(storageFixture.objects.has(partKey)).toBe(false);
     expect(await rawSession(database, loser.uploadSessionId)).toBeNull();
+  });
+});
+
+
+describe('in-process completion serialization bound', () => {
+  it('a call that never settles holds its key only until the hold timeout, and the key is released', async () => {
+    const run = createKeyedSerializer({ holdTimeoutMs: 20 });
+    const order: string[] = [];
+    void run('k', () => new Promise<never>(() => {}));
+    const started = Date.now();
+    const waited = await run('k', async () => {
+      order.push('second');
+      return Date.now() - started;
+    });
+    expect(order).toEqual(['second']);
+    expect(waited).toBeGreaterThanOrEqual(15);
+    expect(waited).toBeLessThan(1000);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(run.activeKeys()).toBe(0);
+  });
+
+  it('calls that settle in time still run one at a time and leave no key behind', async () => {
+    const run = createKeyedSerializer({ holdTimeoutMs: 1000 });
+    let running = 0;
+    let maxRunning = 0;
+    const task = async () => {
+      running++;
+      maxRunning = Math.max(maxRunning, running);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      running--;
+    };
+    await Promise.all([run('k', task), run('k', task), run('k', task)]);
+    await Promise.resolve();
+    expect(maxRunning).toBe(1);
+    expect(run.activeKeys()).toBe(0);
+  });
+
+  it('a retried completion behind a call that never settles returns the result within the hold timeout', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const database = memoryAdapter();
+    const app = createApp({ mode: 'multipart', database });
+    const staged = await app.stage('user_a', CLIENT_ID, 'stalled then retried');
+    const complete = app.fixture.storage.completeMultipartUpload!.bind(app.fixture.storage);
+    let stalls = 1;
+    // The first call's storage completion never resolves (a cancelled request).
+    app.fixture.storage.completeMultipartUpload = async (input) => {
+      if (stalls-- > 0) return new Promise<never>(() => {});
+      return complete(input);
+    };
+    void staged.complete();
+    let settled = false;
+    const retried = staged.complete().finally(() => {
+      settled = true;
+    });
+    for (let i = 0; i < 50; i++) await new Promise((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(SERIALIZED_HOLD_TIMEOUT_MS);
+    const result = await retried;
+    expect(result.status).toBe(200);
+    expect(result.json.data.fileId).toBe(CLIENT_ID);
+    expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('stalled then retried');
   });
 });
