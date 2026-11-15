@@ -1,0 +1,27 @@
+datafn/client/__tests__/cloneUp-foreign-keys.test.ts
+  s_f058f999ab46b7::t_0df617d0d0d087 213-220,256,296-297,318-319,342,360,368,384-385
+datafn/client/__tests__/import-search-sync.test.ts
+  s_f058f999ab46b7::t_0ba13ca6bffa64 111-135,205,279,310,338,365,416
+datafn/client/__tests__/mergeOutcomeContract.ts
+  s_f058f999ab46b7::t_94f15f5c75f3bb 1-29
+datafn/client/__tests__/storage-idb.test.ts
+  s_f058f999ab46b7::t_fd3fd20f5ce4a3 9,45
+datafn/client/__tests__/storage-mem.test.ts
+  s_f058f999ab46b7::t_f9409209ef8e93 8,82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "beeb7676ef76bd434918b88b44e42cd057eb5603",
+  "prompts": {},
+  "sessions": {
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
