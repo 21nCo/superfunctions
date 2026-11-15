@@ -15,6 +15,7 @@ import * as errors from '../errors.js';
 import { createHash, randomBytes } from 'crypto';
 import { generateFileFnId } from '../ids.js';
 import { createKeyedSerializer, parseRequestedFileId } from './file-id.js';
+import { findReferencedStorageRefs, storageRef } from '../storage-references.js';
 import {
   createUploadStartedEvent,
   createPartRecordedEvent,
@@ -94,11 +95,12 @@ export interface UploadSession {
 }
 
 // Serializes, across every FileFn instance in this process (hosts may build one
-// per request), the calls completing one upload session and the commit section
-// per namespace and fileId. It is the only guard on adapters without unique
+// per request), the calls completing one upload session and the completions per
+// namespace and fileId. It is the only guard on adapters without unique
 // constraints, which are single-process. Keys: `session\0...` then `file\0...`,
-// always acquired in that order. A call that has not settled within
-// SERIALIZED_HOLD_TIMEOUT_MS stops holding back later calls of its keys.
+// always acquired in that order. A call that waits longer than
+// SERIALIZED_WAIT_TIMEOUT_MS fails with the retryable 409
+// FILEFN_UPLOAD_COMPLETION_IN_PROGRESS before changing anything.
 const runSerialized = createKeyedSerializer();
 
 function generateDefaultId(): string {
@@ -273,24 +275,23 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
   }
 
   // Deletes the session's own final object unless something may still use it:
-  // a version published under the session's versionId keeps it, and sessions
-  // from before per-session keys (no pre-allocated versionId) may share a key.
+  // any file version or artifact referencing the same storage target and key
+  // keeps it (the session's own published version, or another file's version
+  // that dedup pointed at it), and sessions from before per-session keys (no
+  // pre-allocated versionId) may share a key.
   // Returns false when the delete failed, so the caller keeps the session as the
   // record of the object and a retried completion or the expiry sweep tries again.
   async function deleteOwnUnpublishedObject(session: UploadSession): Promise<boolean> {
     if (!storage.deleteObject || !session.completionVersionId) {
       return true;
     }
-    const published = await db.findOne({
-      model: 'fileVersions',
-      where: [{ field: 'versionId', operator: 'eq', value: session.completionVersionId }],
-      namespace,
-    });
-    if (published) {
-      return true;
-    }
     const policy = policies.get(session.policy);
     const storageTarget = policy ? resolveStorageTarget(policy) : undefined;
+    const ownRef = storageRef(resolveStorageTarget(policy ?? {}), session.storageKey);
+    const referenced = await findReferencedStorageRefs({ db, namespace, policies }, new Set([ownRef]));
+    if (referenced.has(ownRef)) {
+      return true;
+    }
     try {
       await storage.deleteObject({ key: session.storageKey, target: storageTarget });
       return true;
@@ -1014,12 +1015,13 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
       // Commit section: create the file or add a version to it. The first
       // completion to insert the `files` row owns the file; init reserves nothing.
-      // Within this process the section is serialized per fileId, which is the
-      // only guard on adapters without unique constraints (single-process only).
-      // Across processes the unique `files.fileId` constraint decides the winner.
+      // Within this process completions are serialized per fileId (see the
+      // completeSession wrapper below), which is the only guard on adapters
+      // without unique constraints (single-process only). Across processes the
+      // unique `files.fileId` constraint decides the winner.
       const commitOutcome = publishedVersion
         ? 'resumed'
-        : await runSerialized(`file\u0000${namespace}\u0000${fileId}`, async (): Promise<'published' | 'recorded' | 'refused'> => {
+        : await (async (): Promise<'published' | 'recorded' | 'refused'> => {
             // Another completion call of this same session already published it.
             if (await findOwnVersion()) return 'recorded';
 
@@ -1092,7 +1094,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
               throw err;
             }
             return 'published';
-          });
+          })();
 
       if (commitOutcome === 'recorded') {
         // The recorded result belongs to the call that published it; this call
@@ -1241,11 +1243,54 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
   // Calls completing one session run one at a time in this process, so a
   // retried call never finalizes storage or refuses alongside another call of
-  // the same session; it reads the result the earlier call recorded.
+  // the same session; it reads the result the earlier call recorded. Open
+  // sessions of one fileId also complete one at a time, from their first storage
+  // step to their commit, so a waiting call that gives up (409
+  // FILEFN_UPLOAD_COMPLETION_IN_PROGRESS) has changed nothing and a retry starts
+  // cleanly.
+  //
+  // A holder never overlaps a later call except where that is harmless, which
+  // lets a call stuck forever (for example a Workers request cancelled when its
+  // client disconnected) stop blocking its keys:
+  // - After the holder's session has expired, its session key may be taken: the
+  //   later call only reads the session and reports it expired.
+  // - On adapters with unique constraints, a fileId key may be taken by a call
+  //   that has waited out SERIALIZED_WAIT_TIMEOUT_MS. The two calls belong to
+  //   different sessions with their own storage keys, and the unique
+  //   `files.fileId` constraint arbitrates them as it does calls in two
+  //   processes. Without unique constraints a fileId key is taken only after the
+  //   holder's session has expired; a completion still running then is a session
+  //   expiring during its completion, which FileFn does not guard (FILE-14).
   const completeSessionNow = service.completeSession;
-  service.completeSession = (uploadSessionId, ctx, uploadSessionToken) =>
-    runSerialized(`session\u0000${namespace}\u0000${uploadSessionId}`, () =>
-      completeSessionNow.call(service, uploadSessionId, ctx, uploadSessionToken));
+  const uniqueConstraints = db.capabilities?.schema?.constraints === true;
+  service.completeSession = async (uploadSessionId, ctx, uploadSessionToken) => {
+    const complete = () => completeSessionNow.call(service, uploadSessionId, ctx, uploadSessionToken);
+    // expiresAt and fileId never change after init; status is read again inside.
+    const session = await db.findOne<UploadSession>({
+      model: 'uploadSessions',
+      where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
+      namespace,
+    });
+    if (!session) {
+      return complete();
+    }
+    const expiresAtMs = Date.parse(session.expiresAt);
+    const sessionEvictableAt = Number.isNaN(expiresAtMs) ? undefined : expiresAtMs;
+    // A settled or expired session only reports its result or error.
+    const commits = Boolean(session.fileId) &&
+      session.status !== 'completed' &&
+      session.status !== 'aborted' &&
+      !isExpiredAt(session.expiresAt);
+    return runSerialized(
+      `session\u0000${namespace}\u0000${uploadSessionId}`,
+      () => commits
+        ? runSerialized(`file\u0000${namespace}\u0000${session.fileId}`, complete, {
+            evictableAt: uniqueConstraints ? 0 : sessionEvictableAt,
+          })
+        : complete(),
+      { evictableAt: sessionEvictableAt },
+    );
+  };
 
   return service;
 }

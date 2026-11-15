@@ -10,7 +10,7 @@ import {
   createKeyedSerializer,
   isValidClientFileId,
   parseRequestedFileId,
-  SERIALIZED_HOLD_TIMEOUT_MS,
+  SERIALIZED_WAIT_TIMEOUT_MS,
 } from '../upload-sessions/file-id.js';
 import { generateFileId } from '../../../client/src/upload-manager.js';
 
@@ -132,6 +132,18 @@ function createStorage(mode: Mode, options: { lenientRecompletion?: boolean } = 
         if (finalized === key && attempt >= 2) release();
       };
       return () => finalizeAttempts.get(key) ?? 0;
+    },
+    /** Holds statObject of `key` (after storage completion) until the returned release is called. */
+    holdStat(key: string): () => void {
+      let release!: () => void;
+      statHolds.set(key, new Promise<void>((resolve) => { release = resolve; }));
+      return () => {
+        statHolds.delete(key);
+        release();
+      };
+    },
+    finalizeCount(key: string): number {
+      return finalizeAttempts.get(key) ?? 0;
     },
     /** Holds storage completion of `key` until the returned release is called. */
     gate(key: string): () => void {
@@ -785,7 +797,12 @@ describe('refused completion cleanup', () => {
       const database = memoryAdapter();
       const storageFixture = createStorage('multipart');
       const app = createApp({ mode: 'multipart', database, storageFixture });
-      const loser = await app.stage('user_b', CLIENT_ID, 'loser bytes');
+      // Completions of one fileId in one process run one at a time, so a
+      // commit-time refusal needs the loser in another process.
+      const loserApp = stage === 'commit'
+        ? createApp({ mode: 'multipart', database, storageFixture, createFileFn: await loadProcess() })
+        : app;
+      const loser = await loserApp.stage('user_b', CLIENT_ID, 'loser bytes');
       const winner = await app.stage('user_a', CLIENT_ID, 'winner bytes');
       const loserKey = (await rawSession(database, loser.uploadSessionId))!.storageKey;
       if (stage === 'early') {
@@ -835,7 +852,8 @@ describe('refused completion cleanup', () => {
     const database = memoryAdapter();
     const storageFixture = createStorage('proxy');
     const app = createApp({ mode: 'proxy', database, storageFixture });
-    const loser = await app.stage('user_b', CLIENT_ID, 'loser');
+    const loserApp = createApp({ mode: 'proxy', database, storageFixture, createFileFn: await loadProcess() });
+    const loser = await loserApp.stage('user_b', CLIENT_ID, 'loser');
     const winner = await app.stage('user_a', CLIENT_ID, 'winner');
     const loserKey = (await rawSession(database, loser.uploadSessionId))!.storageKey;
     storageFixture.deleteFailures.set(loserKey, 1);
@@ -857,7 +875,8 @@ describe('refused completion cleanup', () => {
     const database = memoryAdapter();
     const storageFixture = createStorage('multipart');
     const app = createApp({ mode: 'multipart', database, storageFixture, dedup: true });
-    const loser = await app.stage('user_b', CLIENT_ID, 'same bytes');
+    const loserApp = createApp({ mode: 'multipart', database, storageFixture, dedup: true, createFileFn: await loadProcess() });
+    const loser = await loserApp.stage('user_b', CLIENT_ID, 'same bytes');
     const winner = await app.stage('user_a', CLIENT_ID, 'same bytes');
     const loserKey = (await rawSession(database, loser.uploadSessionId))!.storageKey;
     const winnerKey = (await rawSession(database, winner.uploadSessionId))!.storageKey;
@@ -913,7 +932,8 @@ describe('refused completion cleanup', () => {
     const database = memoryAdapter();
     const storageFixture = createStorage('proxy');
     const app = createApp({ mode: 'proxy', database, storageFixture });
-    const loser = await app.stage('user_b', CLIENT_ID, 'loser part');
+    const loserApp = createApp({ mode: 'proxy', database, storageFixture, createFileFn: await loadProcess() });
+    const loser = await loserApp.stage('user_b', CLIENT_ID, 'loser part');
     const winner = await app.stage('user_a', CLIENT_ID, 'winner');
     const loserKey = (await rawSession(database, loser.uploadSessionId))!.storageKey;
     const partKey = `${loserKey}.part1`;
@@ -943,25 +963,71 @@ describe('refused completion cleanup', () => {
 });
 
 
+/** Lets pending promise continuations (not timers) run. */
+async function flushPromises(rounds = 50) {
+  for (let i = 0; i < rounds; i++) await new Promise((resolve) => setImmediate(resolve));
+}
+
+/** Rejects if `promise` has not settled within `ms` of real time. */
+function within<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`not settled within ${ms}ms`)), ms)),
+  ]);
+}
+
 describe('in-process completion serialization bound', () => {
-  it('a call that never settles holds its key only until the hold timeout, and the key is released', async () => {
-    const run = createKeyedSerializer({ holdTimeoutMs: 20 });
-    const order: string[] = [];
+  it('a waiter fails fast with the retryable error by its own timer when the holder never settles and armed no timer', async () => {
+    const run = createKeyedSerializer({ waitTimeoutMs: 20 });
+    // Timers armed while the holder starts never fire (as in a cancelled
+    // Workers request), so only a timer the waiter arms can bound its wait.
+    vi.stubGlobal('setTimeout', () => 0);
     void run('k', () => new Promise<never>(() => {}));
-    const started = Date.now();
-    const waited = await run('k', async () => {
-      order.push('second');
-      return Date.now() - started;
+    await Promise.resolve();
+    await Promise.resolve();
+    vi.unstubAllGlobals();
+
+    let ran = false;
+    const waited = run('k', async () => {
+      ran = true;
     });
-    expect(order).toEqual(['second']);
-    expect(waited).toBeGreaterThanOrEqual(15);
-    expect(waited).toBeLessThan(1000);
-    await new Promise((resolve) => setTimeout(resolve, 40));
+    const error = await within(waited.then(() => null, (err: unknown) => err), 2000);
+    expect(error).toMatchObject({ code: 'FILEFN_UPLOAD_COMPLETION_IN_PROGRESS', status: 409, details: { retryable: true } });
+    expect(ran).toBe(false);
+    // Timed-out waiters leave nothing behind: only the holder's entry remains.
+    await Promise.all([1, 2, 3].map(() => run('k', async () => {}).catch(() => {})));
+    expect(run.activeKeys()).toBe(1);
+  });
+
+  it('a waiter never runs while a slow holder is still running, and the key is released when it settles', async () => {
+    const run = createKeyedSerializer({ waitTimeoutMs: 20 });
+    let finishHolder!: () => void;
+    let holderRunning = true;
+    const holder = run('k', () => new Promise<void>((resolve) => {
+      finishHolder = () => {
+        holderRunning = false;
+        resolve();
+      };
+    }));
+    const overlapped: boolean[] = [];
+    const timedOut = run('k', async () => {
+      overlapped.push(holderRunning);
+    });
+    await expect(timedOut).rejects.toMatchObject({ code: 'FILEFN_UPLOAD_COMPLETION_IN_PROGRESS' });
+    // A call that arrives before the holder settles waits for it, then runs.
+    const queued = run('k', async () => {
+      overlapped.push(holderRunning);
+    });
+    await flushPromises(5);
+    finishHolder();
+    await holder;
+    await queued;
+    expect(overlapped).toEqual([false]);
     expect(run.activeKeys()).toBe(0);
   });
 
-  it('calls that settle in time still run one at a time and leave no key behind', async () => {
-    const run = createKeyedSerializer({ holdTimeoutMs: 1000 });
+  it('calls that settle in time run one at a time and leave no key behind', async () => {
+    const run = createKeyedSerializer({ waitTimeoutMs: 1000 });
     let running = 0;
     let maxRunning = 0;
     const task = async () => {
@@ -971,35 +1037,243 @@ describe('in-process completion serialization bound', () => {
       running--;
     };
     await Promise.all([run('k', task), run('k', task), run('k', task)]);
-    await Promise.resolve();
     expect(maxRunning).toBe(1);
     expect(run.activeKeys()).toBe(0);
   });
 
-  it('a retried completion behind a call that never settles returns the result within the hold timeout', async () => {
+  it('a waiter takes the key from a holder past its evictableAt, and the evicted holder no longer releases it', async () => {
+    const run = createKeyedSerializer({ waitTimeoutMs: 20 });
+    let finishEvicted!: () => void;
+    const evicted = run('k', () => new Promise<void>((resolve) => { finishEvicted = resolve; }), { evictableAt: Date.now() });
+    let finishTaker!: () => void;
+    let takerRunning = false;
+    const taker = run('k', () => new Promise<void>((resolve) => {
+      takerRunning = true;
+      finishTaker = () => {
+        takerRunning = false;
+        resolve();
+      };
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(takerRunning).toBe(true);
+
+    finishEvicted();
+    await evicted;
+    const overlapped: boolean[] = [];
+    const next = run('k', async () => {
+      overlapped.push(takerRunning);
+    });
+    await flushPromises(5);
+    expect(overlapped).toEqual([]);
+    finishTaker();
+    await taker;
+    await next;
+    expect(overlapped).toEqual([false]);
+    expect(run.activeKeys()).toBe(0);
+  });
+
+  it('a holder whose evictableAt has not passed keeps its key', async () => {
+    const run = createKeyedSerializer({ waitTimeoutMs: 20 });
+    void run('k', () => new Promise<never>(() => {}), { evictableAt: Date.now() + 60_000 });
+    await expect(run('k', async () => {})).rejects.toMatchObject({ code: 'FILEFN_UPLOAD_COMPLETION_IN_PROGRESS' });
+  });
+
+  for (const mode of ['multipart', 'proxy'] as const) {
+    it(`${mode}: a retried completion while the first call is still running past the wait bound gets 409 and storage is finalized once`, async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const database = memoryAdapter();
+      const app = createApp({ mode, database });
+      const staged = await app.stage('user_a', CLIENT_ID, 'slow but alive');
+      const key = (await rawSession(database, staged.uploadSessionId))!.storageKey;
+      // The first call stalls after finalizing storage and resumes later.
+      const resume = app.fixture.holdStat(key);
+      const first = staged.complete();
+      await flushPromises();
+      expect(app.fixture.finalizeCount(key)).toBe(1);
+
+      const retried = staged.complete();
+      await flushPromises();
+      await vi.advanceTimersByTimeAsync(SERIALIZED_WAIT_TIMEOUT_MS);
+      const busy = await retried;
+      expect(busy.status).toBe(409);
+      expect(busy.json.error.code).toBe('FILEFN_UPLOAD_COMPLETION_IN_PROGRESS');
+
+      resume();
+      const done = await first;
+      expect(done.status).toBe(200);
+      expect(app.fixture.finalizeCount(key)).toBe(1);
+      const again = await staged.complete();
+      expect(again.status).toBe(200);
+      expect(again.json.data).toEqual(done.json.data);
+      expect(app.fixture.finalizeCount(key)).toBe(1);
+      expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('slow but alive');
+    });
+  }
+
+  for (const granted of [false, true]) {
+    it(`memory adapter: a completion of the same new ID behind a commit held past the wait bound gets 409, never a second files row, then ${granted ? 'adds a version' : '403'}`, async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const base = memoryAdapter();
+      let holdFilesInsert: Promise<void> | undefined;
+      const database = {
+        ...base,
+        async create(params: Parameters<Adapter['create']>[0]) {
+          // Holds only the first files insert, the holder's.
+          if (params.model === 'files' && holdFilesInsert) {
+            const hold = holdFilesInsert;
+            holdFilesInsert = undefined;
+            await hold;
+          }
+          return base.create(params);
+        },
+      } as Adapter;
+      expect(database.capabilities.schema.constraints).toBe(false);
+      const app = createApp({ mode: 'multipart', database, grants: true });
+      const a = await app.stage('user_a', CLIENT_ID, 'holder bytes');
+      const b = await app.stage('user_b', CLIENT_ID, 'waiter bytes');
+      let releaseInsert!: () => void;
+      holdFilesInsert = new Promise<void>((resolve) => { releaseInsert = resolve; });
+      const first = a.complete();
+      await flushPromises();
+
+      const waiting = b.complete();
+      await flushPromises();
+      await vi.advanceTimersByTimeAsync(SERIALIZED_WAIT_TIMEOUT_MS);
+      const busy = await waiting;
+      expect(busy.status).toBe(409);
+      expect(busy.json.error.code).toBe('FILEFN_UPLOAD_COMPLETION_IN_PROGRESS');
+      expect(await fileRows(database, CLIENT_ID)).toHaveLength(0);
+
+      releaseInsert();
+      expect((await first).status).toBe(200);
+      if (granted) {
+        await app.fileFn.services.grants.createGrant({ fileId: CLIENT_ID, userId: 'user_b', canWrite: true }, { principalId: 'user_a' });
+      }
+      const retried = await b.complete();
+      const rows = await fileRows(database, CLIENT_ID);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].ownerId).toBe('user_a');
+      if (granted) {
+        expect(retried.status).toBe(200);
+        expect(rows[0].currentVersionId).toBe(retried.json.data.versionId);
+        expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('waiter bytes');
+      } else {
+        expect(retried.status).toBe(403);
+        expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('holder bytes');
+      }
+    });
+  }
+
+  it('unique-enforcing adapter: a completion that waited out a stalled one on the same ID proceeds, and the unique insert arbitrates them', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const uniqueDb = createUniqueEnforcingDb({});
+    const database = {
+      ...uniqueDb,
+      capabilities: { ...uniqueDb.capabilities, schema: { ...uniqueDb.capabilities.schema, constraints: true } },
+    } as Adapter;
+    const storageFixture = createStorage('multipart');
+    const app = createApp({ mode: 'multipart', database, storageFixture });
+    const a = await app.stage('user_a', CLIENT_ID, 'stalled bytes');
+    const b = await app.stage('user_b', CLIENT_ID, 'prompt bytes');
+    const keyA = (await rawSession(database, a.uploadSessionId))!.storageKey;
+    const keyB = (await rawSession(database, b.uploadSessionId))!.storageKey;
+    const resume = storageFixture.holdStat(keyA);
+    const stalled = a.complete();
+    await flushPromises();
+
+    const prompt = b.complete();
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(SERIALIZED_WAIT_TIMEOUT_MS);
+    const won = await prompt;
+    expect(won.status).toBe(200);
+
+    resume();
+    const lost = await stalled;
+    expect(lost.status).toBe(403);
+    const rows = await fileRows(database, CLIENT_ID);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].ownerId).toBe('user_b');
+    expect(storageFixture.objects.has(keyA)).toBe(false);
+    expect(storageFixture.objects.has(keyB)).toBe(true);
+    expect(await app.readBytes(CLIENT_ID, 'user_b')).toBe('prompt bytes');
+  });
+
+  it('a completion behind a call that never settles reports the session expired once it has expired', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
     const database = memoryAdapter();
     const app = createApp({ mode: 'multipart', database });
-    const staged = await app.stage('user_a', CLIENT_ID, 'stalled then retried');
-    const complete = app.fixture.storage.completeMultipartUpload!.bind(app.fixture.storage);
-    let stalls = 1;
+    // Its own ID: the stuck call keeps holding this process's key for it.
+    const staged = await app.stage('user_a', 'file_neverSettles01', 'never finishes');
     // The first call's storage completion never resolves (a cancelled request).
-    app.fixture.storage.completeMultipartUpload = async (input) => {
-      if (stalls-- > 0) return new Promise<never>(() => {});
-      return complete(input);
-    };
+    app.fixture.storage.completeMultipartUpload = () => new Promise<never>(() => {});
     void staged.complete();
-    let settled = false;
-    const retried = staged.complete().finally(() => {
-      settled = true;
-    });
-    for (let i = 0; i < 50; i++) await new Promise((resolve) => setImmediate(resolve));
-    expect(settled).toBe(false);
+    await flushPromises();
 
-    await vi.advanceTimersByTimeAsync(SERIALIZED_HOLD_TIMEOUT_MS);
-    const result = await retried;
-    expect(result.status).toBe(200);
-    expect(result.json.data.fileId).toBe(CLIENT_ID);
-    expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('stalled then retried');
+    const early = staged.complete();
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(SERIALIZED_WAIT_TIMEOUT_MS);
+    expect((await early).status).toBe(409);
+
+    vi.setSystemTime(Date.now() + 2 * 86_400_000);
+    const late = staged.complete();
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(2 * SERIALIZED_WAIT_TIMEOUT_MS);
+    const expired = await late;
+    expect(expired.status).toBe(410);
+    expect(expired.json.error.code).toBe('FILEFN_UPLOAD_EXPIRED');
+  });
+});
+
+describe('expiry cleanup of a session whose object another file shares', () => {
+  it('keeps an object a dedup version of another file references after the session\'s own version was deleted', async () => {
+    const base = memoryAdapter();
+    const failNext = new Set<string>();
+    const database = {
+      ...base,
+      async update(params: Parameters<Adapter['update']>[0]) {
+        if (params.model === 'uploadSessions' && (params.data as { status?: string }).status === 'completed' && failNext.delete('session-completed')) {
+          throw new Error('transient update failure');
+        }
+        return base.update(params);
+      },
+      async findMany(params: Parameters<Adapter['findMany']>[0]) {
+        if (params.model === 'fileArtifacts' && params.where?.length && failNext.delete('artifact-list')) {
+          throw new Error('transient list failure');
+        }
+        return base.findMany(params);
+      },
+    } as Adapter;
+    const storageFixture = createStorage('multipart');
+    const app = createApp({ mode: 'multipart', database, storageFixture, dedup: true });
+
+    // A publishes its version, but marking its session completed fails.
+    const a = await app.stage('user_a', CLIENT_ID, 'shared bytes');
+    const keyA = (await rawSession(database, a.uploadSessionId))!.storageKey;
+    failNext.add('session-completed');
+    await expect(app.fileFn.services.uploads.completeSession(a.uploadSessionId, { principalId: 'user_a' }, a.token)).rejects.toThrow('transient update failure');
+    expect((await rawSession(database, a.uploadSessionId))!.status).not.toBe('completed');
+
+    // B uploads the same bytes under another ID; dedup points it at A's object.
+    const b = await app.stage('user_b', undefined, 'shared bytes');
+    expect((await b.complete()).status).toBe(200);
+    expect(await app.readBytes(b.fileId, 'user_b')).toBe('shared bytes');
+
+    // Deleting A removes A's version, keeps the shared object, then fails
+    // before it removes A's pending session.
+    failNext.add('artifact-list');
+    await expect(app.fileFn.services.files.deleteFile(CLIENT_ID, { principalId: 'user_a' })).rejects.toThrow();
+    expect(await rawSession(database, a.uploadSessionId)).not.toBeNull();
+    expect(storageFixture.objects.has(keyA)).toBe(true);
+
+    await database.update({
+      model: 'uploadSessions',
+      where: [{ field: 'uploadSessionId', operator: 'eq', value: a.uploadSessionId }],
+      data: { expiresAt: new Date(Date.now() - 1000).toISOString() },
+      namespace: 'filefn',
+    });
+    await app.fileFn.services.uploads.cleanupExpiredSessions();
+    expect(await rawSession(database, a.uploadSessionId)).toBeNull();
+    expect(storageFixture.objects.has(keyA)).toBe(true);
+    expect(await app.readBytes(b.fileId, 'user_b')).toBe('shared bytes');
   });
 });

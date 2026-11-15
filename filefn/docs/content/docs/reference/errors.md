@@ -63,6 +63,7 @@ Wire-format envelope:
 | `FILEFN_UPLOAD_INCOMPLETE` | 409 | `complete` called before all parts recorded. | Record every part before `complete`. |
 | `FILEFN_UPLOAD_EXPIRED` | 410 | Session past TTL. | Call `init` again with a new idempotency key. |
 | `FILEFN_UPLOAD_ABORTED` | 410 | Session was aborted. | Same — start a new session. |
+| `FILEFN_UPLOAD_COMPLETION_IN_PROGRESS` | 409 | Another completion of the same upload session, or of the same `fileId`, is still running in this FileFn process and did not finish within 30 seconds. Nothing was changed; `details.retryable` is `true`. | Retry `POST /upload/:id/complete` after a short delay. |
 | `FILEFN_UPLOAD_ALREADY_COMPLETED` | 409 | `complete` called twice. | Treat as success; the file id is in the previous response. |
 | `FILEFN_IDEMPOTENCY_CONFLICT` | 409 | Same idempotency key + different request body. | Use a new idempotency key, or replay with the same body. |
 | `FILEFN_PART_CONFLICT` | 409 | Same part recorded with a different etag. | Check for concurrent retries; pick a single canonical etag. |
