@@ -82,3 +82,146 @@ test("a change to a product's shared test support runs that product's package te
     assert.match(outputs, /^js_test_filters<<__CI_EOF__\n--filter=\.\.\.\.\/devfn\/core --filter=\.\.\.\.\/devfn\/proxy\n__CI_EOF__$/m);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+// Pull request plans diff against the live merge base: GitHub never refreshes base.sha after the base moves.
+function pullRequestFixture(prefix) {
+  const dir = mkdtempSync(path.join(tmpdir(), prefix));
+  const env = {
+    ...process.env,
+    GIT_AUTHOR_NAME: "Planner Test", GIT_AUTHOR_EMAIL: "planner@example.invalid",
+    GIT_COMMITTER_NAME: "Planner Test", GIT_COMMITTER_EMAIL: "planner@example.invalid",
+  };
+  const gitIn = (cwd, ...args) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", ...args], { cwd, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  const origin = path.join(dir, "origin");
+  const work = path.join(dir, "work");
+  const append = (root, file, line) => writeFileSync(path.join(root, file), readFileSync(path.join(root, file), "utf8") + `\n${line}\n`);
+  const commitIn = (root, file, line) => { append(root, file, line); gitIn(root, "add", file); gitIn(root, "commit", "--quiet", "-m", `change ${file}`); return gitIn(root, "rev-parse", "HEAD"); };
+  mkdirSync(path.join(origin, "scripts"), { recursive: true });
+  mkdirSync(path.join(origin, "example/python"), { recursive: true });
+  for (const file of ["ci-plan.mjs", "ci-utils.mjs"]) writeFileSync(path.join(origin, "scripts", file), readFileSync(new URL(file, import.meta.url), "utf8"));
+  writeFileSync(path.join(origin, "example/python/pyproject.toml"), '[project]\nname = "example-python"\n');
+  writeFileSync(path.join(origin, "README.md"), "# Fixture\n");
+  gitIn(origin, "init", "--quiet", "--initial-branch=dev");
+  gitIn(origin, "add", "."); gitIn(origin, "commit", "--quiet", "-m", "base");
+  const oldBase = gitIn(origin, "rev-parse", "HEAD");
+  gitIn(dir, "clone", "--quiet", origin, work);
+  gitIn(work, "checkout", "--quiet", "-b", "feature");
+  const plan = (pullRequest) => {
+    const eventFile = path.join(dir, "event.json");
+    const outputFile = path.join(dir, "outputs");
+    writeFileSync(eventFile, JSON.stringify({ pull_request: pullRequest, repository: { default_branch: "dev" } }));
+    writeFileSync(outputFile, "");
+    execFileSync(process.execPath, ["scripts/ci-plan.mjs"], { cwd: work, env: { ...env, GITHUB_EVENT_NAME: "pull_request", GITHUB_EVENT_PATH: eventFile, GITHUB_OUTPUT: outputFile }, stdio: ["ignore", "pipe", "pipe"] });
+    const outputs = readFileSync(outputFile, "utf8");
+    return Object.fromEntries([...outputs.matchAll(/^(\w+)<<__CI_EOF__\n([\s\S]*?)\n__CI_EOF__$/gm)].map(([, name, value]) => [name, value]));
+  };
+  return { dir, origin, work, oldBase, gitIn, commitIn, plan };
+}
+
+for (const shallowRefresh of [false, true]) {
+  test(`base-branch changes a pull request merged in do not select Python${shallowRefresh ? " after a shallow base refresh" : ""}`, () => {
+    const { dir, origin, work, oldBase, gitIn, commitIn, plan } = pullRequestFixture("ci-plan-merge-base-");
+    try {
+      commitIn(work, "README.md", "# pull request change");
+      // dev gains a full-Python trigger change, and the pull request merges it in; base.sha stays the old base.
+      const newBase = commitIn(origin, "scripts/ci-plan.mjs", "// base change");
+      gitIn(work, "fetch", "--quiet", "origin");
+      gitIn(work, "merge", "--quiet", "--no-edit", "origin/dev");
+      if (shallowRefresh) {
+        // CI's "Refresh common target branches" step fetches dev with --depth=1 after it moved again.
+        commitIn(origin, "README.md", "# later base change");
+        gitIn(work, "fetch", "--quiet", "--no-tags", "--depth=1", "origin", "dev");
+        assert.equal(gitIn(work, "rev-parse", "--is-shallow-repository"), "true");
+      }
+      const outputs = plan({ base: { ref: "dev", sha: oldBase } });
+      assert.equal(outputs.base_ref, newBase);
+      assert.equal(outputs.changed_files_count, "1");
+      assert.equal(outputs.full_python, "false");
+      assert.equal(outputs.run_python, "false");
+      assert.equal(outputs.python_matrix, "[]");
+    } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 5 }); }
+  });
+}
+
+test("a pull request that changes a full-Python trigger still selects the full Python matrix", () => {
+  const { dir, origin, work, oldBase, gitIn, commitIn, plan } = pullRequestFixture("ci-plan-merge-base-own-");
+  try {
+    commitIn(origin, "README.md", "# base change");
+    gitIn(work, "fetch", "--quiet", "origin");
+    gitIn(work, "merge", "--quiet", "--no-edit", "origin/dev");
+    commitIn(work, "scripts/ci-plan.mjs", "// pull request change");
+    const outputs = plan({ base: { ref: "dev", sha: oldBase } });
+    assert.equal(outputs.full_python, "true");
+    assert.equal(outputs.run_python, "true");
+    assert.match(outputs.python_matrix, /"example\/python"/);
+  } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 5 }); }
+});
+
+test("a stale cached base tracking ref is refreshed before computing the merge base", () => {
+  const { dir, origin, work, oldBase, gitIn, commitIn, plan } = pullRequestFixture("ci-plan-merge-base-stale-");
+  try {
+    commitIn(work, "README.md", "# pull request change");
+    const newBase = commitIn(origin, "scripts/ci-plan.mjs", "// base change");
+    gitIn(work, "fetch", "--quiet", "origin");
+    gitIn(work, "merge", "--quiet", "--no-edit", newBase);
+    // The checkout's cached origin/dev still points at the old base the pull request was opened against.
+    gitIn(work, "update-ref", "refs/remotes/origin/dev", oldBase);
+    const outputs = plan({ base: { ref: "dev", sha: oldBase } });
+    assert.equal(outputs.base_ref, newBase);
+    assert.equal(outputs.full_python, "false");
+    assert.equal(outputs.python_matrix, "[]");
+  } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 5 }); }
+});
+
+for (const cachedRef of [false, true]) {
+  test(`a pull request whose base branch cannot be fetched falls back to base.sha${cachedRef ? " despite a cached tracking ref" : ""}`, () => {
+    const { dir, origin, work, oldBase, gitIn, commitIn, plan } = pullRequestFixture("ci-plan-merge-base-fallback-");
+    try {
+      commitIn(work, "README.md", "# pull request change");
+      commitIn(origin, "scripts/ci-plan.mjs", "// base change");
+      gitIn(work, "fetch", "--quiet", "origin");
+      gitIn(work, "merge", "--quiet", "--no-edit", "origin/dev");
+      gitIn(work, "remote", "set-url", "origin", path.join(dir, "missing"));
+      if (!cachedRef) gitIn(work, "update-ref", "-d", "refs/remotes/origin/dev");
+      const outputs = plan({ base: { ref: "dev", sha: oldBase } });
+      assert.equal(outputs.base_ref, oldBase);
+      assert.equal(outputs.full_python, "true");
+    } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 5 }); }
+  });
+}
+
+test("a base branch with no merge base falls back to base.sha", () => {
+  const { dir, origin, work, oldBase, gitIn, commitIn, plan } = pullRequestFixture("ci-plan-merge-base-unrelated-");
+  try {
+    commitIn(work, "README.md", "# pull request change");
+    // dev is replaced by unrelated history, so HEAD and origin/dev share no commit.
+    gitIn(origin, "checkout", "--quiet", "--orphan", "rewritten");
+    gitIn(origin, "commit", "--quiet", "-m", "unrelated");
+    gitIn(origin, "branch", "--quiet", "-M", "rewritten", "dev");
+    const outputs = plan({ base: { ref: "dev", sha: oldBase } });
+    assert.equal(outputs.base_ref, oldBase);
+    assert.equal(outputs.changed_files_count, "1");
+    assert.equal(outputs.full_python, "false");
+  } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 5 }); }
+});
+
+test("a non-default target with no fetch and no base.sha uses its cached tracking ref, not the default branch", () => {
+  const { dir, origin, work, oldBase, gitIn, commitIn, plan } = pullRequestFixture("ci-plan-merge-base-cached-target-");
+  try {
+    // main gains a full-Python trigger change that dev lacks; the pull request branches from main.
+    gitIn(origin, "checkout", "--quiet", "-b", "main");
+    const mainBase = commitIn(origin, "scripts/ci-plan.mjs", "// main change");
+    gitIn(origin, "checkout", "--quiet", "dev");
+    gitIn(work, "fetch", "--quiet", "origin");
+    gitIn(work, "checkout", "--quiet", "-B", "feature", "origin/main");
+    commitIn(work, "README.md", "# pull request change");
+    gitIn(work, "remote", "set-url", "origin", path.join(dir, "missing"));
+    assert.equal(gitIn(work, "merge-base", "HEAD", "origin/dev"), oldBase);
+    const outputs = plan({ base: { ref: "main", sha: "f".repeat(40) } });
+    assert.equal(outputs.base_ref, mainBase);
+    assert.equal(outputs.changed_files_count, "1");
+    assert.equal(outputs.full_python, "false");
+    assert.equal(outputs.run_python, "false");
+    assert.equal(outputs.python_matrix, "[]");
+  } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 5 }); }
+});
