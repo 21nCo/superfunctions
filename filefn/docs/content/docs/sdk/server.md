@@ -238,8 +238,15 @@ export {
   createGrantsService,
   createSharesService,
   createProcessingService,
+
+  // Queued processing
+  createProcessingJobHandler,
+  PROCESSING_QUEUE_NAME, // "filefn.processing"
+  PROCESSING_RUN_KIND,   // "filefn.processing-run"
 } from "@filefn/server";
 ```
+
+`createProcessingJobHandler(fileFn, { maxRetries?, retryDelaySeconds? })` consumes the `filefn.processing` jobs FileFn enqueues through `processing.flowFn`. Its `queue(batch)` method is a Cloudflare Queues consumer and `handle(body, { attempts })` runs one job. The Cloudflare Queues producer is `createCloudflareFlowFnProvider` from `@filefn/processing/queues/cloudflare`. See [Cloudflare Workers › Queued processing](../recipes/cloudflare-workers#queued-processing).
 
 ## See also
 

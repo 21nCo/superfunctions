@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { Adapter } from '@superfunctions/db';
 import { getStorageCapabilities, type StorageAdapter } from '@superfunctions/storage';
 import type { FileProviderContext } from '@superfunctions/files';
@@ -5,8 +6,8 @@ import type { FileFnEventEmitter } from '../events.js';
 import { resolveArtifactStorageTarget, resolveStorageTarget, type PolicyRegistry } from '../policies.js';
 import type { Logger } from '../observability/logger.js';
 import * as errors from '../errors.js';
-import { generateFileFnId } from '../ids.js';
 import { createBackgroundScheduler, type BackgroundScheduler } from '../runtime.js';
+import { findReferencedStorageRefs, parseStorageRef, storageRef } from '../storage-references.js';
 
 export interface Processor {
   name: string;
@@ -41,6 +42,86 @@ export interface ProcessorResult {
   artifacts: ProcessorOutputArtifact[];
   error?: string;
 }
+
+/** Queue name FileFn enqueues processing jobs on through `flowFn.getQueue`. */
+export const PROCESSING_QUEUE_NAME = 'filefn.processing';
+
+/**
+ * Body FileFn enqueues for each processing job. A producer may add fields
+ * (the Cloudflare producer adds `jobId`). The job handler reads the version
+ * from the database and ignores the file details carried here.
+ */
+export interface ProcessingJob {
+  fileId: string;
+  versionId: string;
+  idempotencyKey: string;
+  storageKey?: string;
+  mimeType?: string;
+  size?: number;
+  fileName?: string;
+  tenantId?: string;
+  requestId?: string;
+  jobId?: string;
+}
+
+/** Result of running one queued processing job. */
+export type ProcessingJobOutcome =
+  /**
+   * Every applicable processor succeeded and `processing.completed` was
+   * emitted; processors with a run recorded for this key were skipped.
+   * `artifactsCreated` counts the job's artifacts across its deliveries.
+   */
+  | { status: 'completed'; artifactsCreated: number; skippedProcessors: ProcessorInstance[] }
+  /** Every applicable processor has a run recorded for this key and the job's completion was recorded. */
+  | { status: 'duplicate' }
+  /** Nothing to process: the body is not a job, or the file version no longer exists. */
+  | { status: 'dropped'; reason: 'invalid-job' | 'version-deleted' }
+  /**
+   * A processor failed, or cleanup of a deleted version's output failed, and
+   * the delivery is not the last; the queue should redeliver.
+   */
+  | { status: 'retry'; errors: string[] }
+  /** A processor failed on the last delivery; `processing.failed` was emitted. */
+  | { status: 'failed'; errors: string[] };
+
+/**
+ * One configured processor: its name and its 1-based position among the
+ * configured processors with that name (the bundled gzip and deflate
+ * compression processors are both named `compression`).
+ */
+export interface ProcessorInstance {
+  processor: string;
+  instance: number;
+}
+
+export interface ProcessingJobDelivery {
+  /** 1-based delivery attempt, e.g. a Cloudflare message's `attempts`. */
+  attempts: number;
+  /** True when the queue will not redeliver after this attempt. */
+  finalAttempt: boolean;
+}
+
+/** FileFn's record of how an artifact was produced, stored under `metadata.processing`. */
+export interface ArtifactProcessingMetadata {
+  processor: string;
+  /** Wall-clock time the processor's `process` call took, in milliseconds. */
+  durationMs: number;
+  idempotencyKey: string;
+  /**
+   * Storage target the artifact object was written to. Cleanup of a deleted
+   * version uses it once the file row, and so its policy, is gone.
+   */
+  storageTarget: string;
+}
+
+/**
+ * Kind of the `fileArtifacts` rows a processing job writes to record that one
+ * processor finished for one idempotency key, including a run that produced
+ * no artifacts, and that the job's `processing.completed` was emitted. They
+ * have no stored object, and the artifact list, lookup and download
+ * operations never return them.
+ */
+export const PROCESSING_RUN_KIND = 'filefn.processing-run';
 
 export interface FlowFnQueue {
   name: string;
@@ -106,8 +187,208 @@ interface FileVersionRecord {
   size: number;
 }
 
-function generateId(): string {
-  return generateFileFnId('art');
+/** Crockford base32, lowercase, matching the alphabet of generated FileFn IDs. */
+const ID_ALPHABET = '0123456789abcdefghjkmnpqrstvwxyz';
+
+function derivedId(prefix: string, parts: (string | number)[]): string {
+  // JSON keeps the parts apart whatever characters they contain.
+  const digest = createHash('sha256').update(JSON.stringify(parts)).digest();
+  let suffix = '';
+  for (let index = 0; index < 20; index += 1) {
+    suffix += ID_ALPHABET[digest[index] & 31];
+  }
+  return `${prefix}_${suffix}`;
+}
+
+/**
+ * Derives the artifact ID for one (file, version, kind). Concurrent deliveries
+ * of the same job then create the same row, so the unique `artifactId` makes
+ * the second insert fail instead of adding a duplicate artifact.
+ */
+function artifactIdFor(fileId: string, versionId: string, kind: string): string {
+  return derivedId('art', [fileId, versionId, kind]);
+}
+
+/** Derives the ID of the run row for one processor instance and idempotency key. */
+function processingRunIdFor(
+  fileId: string,
+  versionId: string,
+  idempotencyKey: string,
+  instance: ProcessorInstance,
+): string {
+  return derivedId('run', [PROCESSING_RUN_KIND, fileId, versionId, idempotencyKey, instance.processor, instance.instance]);
+}
+
+/**
+ * Derives the ID of the row that records that a job's `processing.completed`
+ * was emitted. Its parts have a different length from a processor run's, so
+ * no processor instance can derive it.
+ */
+function processingCompletionIdFor(fileId: string, versionId: string, idempotencyKey: string): string {
+  return derivedId('run', [PROCESSING_RUN_KIND, fileId, versionId, idempotencyKey]);
+}
+
+/** Artifacts a run row says its processor recorded. */
+function recordedArtifactCount(run: FileArtifactRecord | undefined): number {
+  const count = (run?.metadata?.processingRun as { artifactCount?: unknown } | undefined)?.artifactCount;
+  return typeof count === 'number' && Number.isFinite(count) ? count : 0;
+}
+
+/** Storage target a processing-written artifact row recorded for its object. */
+function recordedStorageTarget(row: FileArtifactRecord): string | undefined {
+  const target = (row.metadata?.processing as { storageTarget?: unknown } | undefined)?.storageTarget;
+  return typeof target === 'string' && target.length > 0 ? target : undefined;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
+/**
+ * Why a processor's result cannot be accepted, or `undefined` when it can.
+ * `success` must be a boolean; a success needs an `artifacts` array whose
+ * every artifact can be stored, under a kind other than the reserved run
+ * kind. Nothing is uploaded or recorded for a result this rejects.
+ */
+function invalidProcessorResult(result: unknown): string | undefined {
+  if (typeof result !== 'object' || result === null) return 'processor returned an invalid result';
+  const { success, artifacts } = result as Partial<ProcessorResult>;
+  if (typeof success !== 'boolean') return 'processor returned an invalid result';
+  if (!success) return undefined;
+  if (!Array.isArray(artifacts)) return 'processor returned an invalid result';
+  for (const artifact of artifacts as unknown[]) {
+    const { kind, storageKey, mimeType, data } = (artifact ?? {}) as Partial<ProcessorOutputArtifact>;
+    if (kind === PROCESSING_RUN_KIND) return `processor emitted the reserved artifact kind ${PROCESSING_RUN_KIND}`;
+    if (!isNonEmptyString(kind) || !isNonEmptyString(storageKey) || typeof mimeType !== 'string' || !(data instanceof Uint8Array)) {
+      return 'processor returned an invalid artifact';
+    }
+  }
+  return undefined;
+}
+
+/** Runs one processor and times its `process` call. */
+async function executeProcessor(
+  processor: Processor,
+  input: ProcessorInput,
+  getData: () => Promise<Uint8Array>,
+): Promise<{ result?: ProcessorResult; error?: string; durationMs: number }> {
+  const startedAt = Date.now();
+  try {
+    const result = await processor.process(input, getData);
+    const durationMs = Math.max(0, Date.now() - startedAt);
+    // An invalid result is a processor failure, never a skip or a success.
+    const invalid = invalidProcessorResult(result);
+    if (invalid) {
+      return { error: invalid, durationMs };
+    }
+    if (!result.success) {
+      return { error: result.error, durationMs };
+    }
+    return { result, durationMs };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : 'Unknown error', durationMs: Math.max(0, Date.now() - startedAt) };
+  }
+}
+
+/**
+ * Emits a processing event to every listener without letting one change the
+ * job or keep the event from the others: a listener's error is logged.
+ */
+function emitIsolated(
+  events: FileFnEventEmitter,
+  logger: Logger | undefined,
+  event: 'processing.started' | 'processing.completed' | 'processing.failed',
+  payload: { requestId?: string; fileId: string; versionId: string } & Record<string, unknown>,
+): void {
+  events.emitToEachListener(event, { type: event, timestamp: new Date().toISOString(), ...payload } as any, (error) => {
+    logger?.error(`${event} listener failed`, {
+      requestId: payload.requestId,
+      fileId: payload.fileId,
+      versionId: payload.versionId,
+      error: errorMessage(error),
+    });
+  });
+}
+
+const MAX_JOB_FIELD_LENGTH = 512;
+
+function isJobField(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= MAX_JOB_FIELD_LENGTH;
+}
+
+/** An optional job field that fails the bound is left out instead of invalidating the job. */
+function optionalJobField(value: unknown): string | undefined {
+  return isJobField(value) ? value : undefined;
+}
+
+function parseProcessingJob(body: unknown): Omit<ProcessingJob, 'idempotencyKey'> & { idempotencyKey?: string } | null {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return null;
+  }
+  const job = body as Record<string, unknown>;
+  if (!isJobField(job.fileId) || !isJobField(job.versionId)) {
+    return null;
+  }
+  return {
+    fileId: job.fileId,
+    versionId: job.versionId,
+    idempotencyKey: optionalJobField(job.idempotencyKey),
+    jobId: optionalJobField(job.jobId),
+    requestId: optionalJobField(job.requestId),
+  };
+}
+
+/**
+ * Cleanup of a deleted version's processing output failed. The job is about
+ * a version that no longer exists, so it is never a processing failure: the
+ * cleanup is retried while the queue redelivers, and the rows it kept are
+ * logged after the last delivery.
+ */
+class DeletedVersionCleanupError extends Error {
+  constructor(readonly keptArtifactIds: string[], cause: unknown) {
+    super(`cleanup of deleted version output failed: ${errorMessage(cause)}`);
+    this.name = 'DeletedVersionCleanupError';
+  }
+}
+
+/** A configured processor and the instance that identifies it in run records. */
+interface ProcessorEntry {
+  processor: Processor;
+  instance: ProcessorInstance;
+  /** Names the processor in error messages; never used as an identity. */
+  label: string;
+}
+
+/**
+ * Identifies each configured processor by its name and its position among
+ * the processors with that name, kept as separate values so no name can
+ * stand for another processor's instance.
+ */
+function processorEntriesFor(processors: Processor[]): ProcessorEntry[] {
+  const seen = new Map<string, number>();
+  return processors.map((processor) => {
+    const instance = (seen.get(processor.name) ?? 0) + 1;
+    seen.set(processor.name, instance);
+    return {
+      processor,
+      instance: { processor: processor.name, instance },
+      label: instance === 1 ? processor.name : `${processor.name} (instance ${instance})`,
+    };
+  });
+}
+
+/** What one processing run wrote, kept even when a later write fails. */
+interface ProcessingWrites {
+  artifactsRecorded: number;
+  uploadedKeys: Set<string>;
+}
+
+function emptyWrites(): ProcessingWrites {
+  return { artifactsRecorded: 0, uploadedKeys: new Set<string>() };
 }
 
 function supportsProcessor(processor: Processor, mimeType: string): boolean {
@@ -117,9 +398,19 @@ function supportsProcessor(processor: Processor, mimeType: string): boolean {
   return processor.supportedMimeTypes.includes(mimeType);
 }
 
+/**
+ * The job's idempotency key: the file version and its sorted processor names.
+ * A processor list too long for the job field bound is replaced by its hash,
+ * so the consumer never rejects a key FileFn enqueued.
+ */
 function buildProcessingIdempotencyKey(fileId: string, versionId: string, processors: Processor[]): string {
   const processorKey = processors.map((processor) => processor.name).sort().join(',');
-  return `processing:${fileId}:${versionId}:${processorKey}`;
+  const key = `processing:${fileId}:${versionId}:${processorKey}`;
+  if (key.length <= MAX_JOB_FIELD_LENGTH) {
+    return key;
+  }
+  const digest = createHash('sha256').update(processorKey).digest('hex');
+  return `processing:${fileId}:${versionId}:sha256:${digest}`;
 }
 
 function isGrantExpired(expiresAt: string | null | undefined): boolean {
@@ -148,7 +439,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
   } = config;
   const background = config.background ?? createBackgroundScheduler(undefined, logger);
 
-  const QUEUE_NAME = 'filefn.processing';
+  const QUEUE_NAME = PROCESSING_QUEUE_NAME;
 
   async function getReadableGrantFileIds(ctx: FileProviderContext): Promise<Set<string>> {
     if (!ctx.principalId) {
@@ -256,7 +547,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       namespace,
     });
 
-    if (!artifact) {
+    if (!artifact || artifact.kind === PROCESSING_RUN_KIND) {
       throw errors.notFound('Artifact');
     }
 
@@ -265,6 +556,443 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     }
 
     return artifact;
+  }
+
+  /**
+   * Returns a reader that loads the source object once per run. Processing
+   * reads the source into memory, so overly large inputs are rejected early.
+   */
+  function createSourceReader(storageKey: string, target: string): () => Promise<Uint8Array> {
+    let dataCache: Uint8Array | null = null;
+    return async (): Promise<Uint8Array> => {
+      if (dataCache) return dataCache;
+
+      if (!storage.openDownloadStream) {
+        throw new Error('Storage adapter does not support streaming downloads');
+      }
+      const stream = await storage.openDownloadStream({ key: storageKey, target });
+      const reader = stream.getReader();
+      const chunks: Uint8Array[] = [];
+      let totalLength = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          totalLength += value.length;
+          if (totalLength > maxFileBytes) {
+            throw new Error(
+              `Processing source exceeds ${maxFileBytes} bytes; increase maxFileBytes or use a streaming-friendly processor.`,
+            );
+          }
+          chunks.push(value);
+        }
+      }
+      const data = new Uint8Array(totalLength);
+      let offset = 0;
+      for (const chunk of chunks) {
+        data.set(chunk, offset);
+        offset += chunk.length;
+      }
+      dataCache = data;
+      return data;
+    };
+  }
+
+  /**
+   * Uploads one artifact and creates or updates its row for (file, version,
+   * kind), noting each write in `writes` as it lands.
+   */
+  async function recordArtifact(
+    input: Pick<ProcessorInput, 'fileId' | 'versionId'>,
+    artifact: ProcessorOutputArtifact,
+    target: string,
+    processing: ArtifactProcessingMetadata,
+    writes: ProcessingWrites,
+  ): Promise<void> {
+    if (!storage.openUploadStream) {
+      throw new Error('Storage adapter does not support streaming uploads');
+    }
+    writes.uploadedKeys.add(artifact.storageKey);
+    const stream = await storage.openUploadStream({
+      key: artifact.storageKey,
+      target,
+      contentType: artifact.mimeType,
+    });
+    const writer = stream.getWriter();
+    await writer.write(artifact.data);
+    await writer.close();
+
+    const fields = {
+      storageKey: artifact.storageKey,
+      mimeType: artifact.mimeType,
+      size: artifact.data.length,
+      metadata: { ...(artifact.metadata ?? {}), processing },
+    };
+    const existingArtifact = await db.findOne<FileArtifactRecord>({
+      model: 'fileArtifacts',
+      where: [
+        { field: 'fileId', operator: 'eq', value: input.fileId },
+        { field: 'versionId', operator: 'eq', value: input.versionId },
+        { field: 'kind', operator: 'eq', value: artifact.kind },
+      ],
+      namespace,
+    });
+    if (existingArtifact) {
+      await db.update({
+        model: 'fileArtifacts',
+        where: [{ field: 'artifactId', operator: 'eq', value: existingArtifact.artifactId }],
+        data: fields,
+        namespace,
+      });
+      writes.artifactsRecorded += 1;
+      return;
+    }
+
+    const artifactId = artifactIdFor(input.fileId, input.versionId, artifact.kind);
+    try {
+      await db.create({
+        model: 'fileArtifacts',
+        data: {
+          artifactId,
+          fileId: input.fileId,
+          versionId: input.versionId,
+          kind: artifact.kind,
+          ...fields,
+          createdAt: new Date().toISOString(),
+        },
+        namespace,
+      });
+    } catch (error) {
+      // A concurrent delivery created the same row first; record over it.
+      const raced = await db.findOne<FileArtifactRecord>({
+        model: 'fileArtifacts',
+        where: [{ field: 'artifactId', operator: 'eq', value: artifactId }],
+        namespace,
+      });
+      if (!raced) {
+        throw error;
+      }
+      await db.update({
+        model: 'fileArtifacts',
+        where: [{ field: 'artifactId', operator: 'eq', value: artifactId }],
+        data: fields,
+        namespace,
+      });
+    }
+    writes.artifactsRecorded += 1;
+  }
+
+  /**
+   * Records every artifact of one successful processor run. A failed write
+   * throws; `writes` still counts the artifacts recorded before it.
+   */
+  async function recordArtifacts(
+    input: Pick<ProcessorInput, 'fileId' | 'versionId'>,
+    processor: Processor,
+    run: { result?: ProcessorResult; durationMs: number },
+    target: string,
+    idempotencyKey: string,
+    writes: ProcessingWrites,
+  ): Promise<void> {
+    const processing: ArtifactProcessingMetadata = {
+      processor: processor.name,
+      durationMs: run.durationMs,
+      idempotencyKey,
+      storageTarget: target,
+    };
+    for (const artifact of run.result?.artifacts ?? []) {
+      await recordArtifact(input, artifact, target, processing, writes);
+    }
+  }
+
+  /** The run rows recorded for one file version, by ID. */
+  async function findProcessingRuns(fileId: string, versionId: string): Promise<Map<string, FileArtifactRecord>> {
+    const runs = await db.findMany<FileArtifactRecord>({
+      model: 'fileArtifacts',
+      where: [
+        { field: 'fileId', operator: 'eq', value: fileId },
+        { field: 'versionId', operator: 'eq', value: versionId },
+        { field: 'kind', operator: 'eq', value: PROCESSING_RUN_KIND },
+      ],
+      namespace,
+    });
+    return new Map(runs.map((run) => [run.artifactId, run]));
+  }
+
+  /**
+   * Creates one run-kind row. A concurrent delivery may have created the same
+   * row first, which counts as recorded.
+   */
+  async function recordRunRow(
+    input: Pick<ProcessorInput, 'fileId' | 'versionId'>,
+    artifactId: string,
+    metadata: Record<string, unknown>,
+  ): Promise<void> {
+    try {
+      await db.create({
+        model: 'fileArtifacts',
+        data: {
+          artifactId,
+          fileId: input.fileId,
+          versionId: input.versionId,
+          kind: PROCESSING_RUN_KIND,
+          // No object is stored under this key.
+          storageKey: `filefn/processing-runs/${artifactId}`,
+          mimeType: 'application/json',
+          size: 0,
+          metadata,
+          createdAt: new Date().toISOString(),
+        },
+        namespace,
+      });
+    } catch (error) {
+      const existing = await db.findOne<FileArtifactRecord>({
+        model: 'fileArtifacts',
+        where: [{ field: 'artifactId', operator: 'eq', value: artifactId }],
+        namespace,
+      });
+      if (!existing) {
+        throw error;
+      }
+    }
+  }
+
+  /**
+   * Removes what processing left for a deleted version. Its `fileArtifacts`
+   * rows are the cleanup journal: the objects they name go first, unless
+   * another row still references the same object (deduplicated files can share
+   * storage keys), and the rows go last. A failed reference scan or object
+   * delete throws with the rows kept, so the job is retried and its next
+   * delivery, which finds the version gone, resumes the cleanup. Objects this
+   * delivery uploaded without a row yet are removed best effort.
+   */
+  async function discardDeletedVersionOutput(
+    input: Pick<ProcessorInput, 'fileId' | 'versionId'>,
+    writes: ProcessingWrites,
+    runTarget?: string,
+  ): Promise<void> {
+    let rows: FileArtifactRecord[] = [];
+    try {
+      rows = await db.findMany<FileArtifactRecord>({
+        model: 'fileArtifacts',
+        where: [
+          { field: 'fileId', operator: 'eq', value: input.fileId },
+          { field: 'versionId', operator: 'eq', value: input.versionId },
+        ],
+        namespace,
+      });
+      await discardRows(input, rows, writes, runTarget);
+    } catch (error) {
+      throw new DeletedVersionCleanupError(rows.map((row) => row.artifactId), error);
+    }
+  }
+
+  async function discardRows(
+    input: Pick<ProcessorInput, 'fileId' | 'versionId'>,
+    rows: FileArtifactRecord[],
+    writes: ProcessingWrites,
+    runTarget?: string,
+  ): Promise<void> {
+    if (rows.length === 0 && writes.uploadedKeys.size === 0) {
+      return;
+    }
+    const file = runTarget === undefined
+      ? await db.findOne<FileRecord>({
+        model: 'files',
+        where: [{ field: 'fileId', operator: 'eq', value: input.fileId }],
+        namespace,
+      })
+      : null;
+    const fallbackTarget = runTarget ?? getArtifactStorageTarget(file ?? { policy: '' });
+    const journaled = new Set<string>();
+    for (const row of rows) {
+      if (row.kind !== PROCESSING_RUN_KIND) {
+        journaled.add(storageRef(recordedStorageTarget(row) ?? fallbackTarget, row.storageKey));
+      }
+    }
+    const unjournaled = new Set(
+      [...writes.uploadedKeys].map((key) => storageRef(fallbackTarget, key)).filter((ref) => !journaled.has(ref)),
+    );
+    // Only this version's rows are excluded: another version may share a key.
+    const referenced = await findReferencedStorageRefs(
+      { db, namespace, policies },
+      new Set([...journaled, ...unjournaled]),
+      input,
+    );
+    for (const ref of journaled) {
+      if (!referenced.has(ref)) {
+        await storage.deleteObject(parseStorageRef(ref));
+      }
+    }
+    for (const ref of unjournaled) {
+      if (!referenced.has(ref)) {
+        try {
+          await storage.deleteObject(parseStorageRef(ref));
+        } catch {
+          // Best effort: the upload may never have completed.
+        }
+      }
+    }
+    // Only the rows listed above: a row written since then names an object
+    // this cleanup has not considered, so it stays for the next cleanup.
+    for (const row of rows) {
+      await db.delete({
+        model: 'fileArtifacts',
+        where: [{ field: 'artifactId', operator: 'eq', value: row.artifactId }],
+        namespace,
+      });
+    }
+  }
+
+  async function findVersion(fileId: string, versionId: string): Promise<{ file: FileRecord; version: FileVersionRecord } | null> {
+    const version = await db.findOne<FileVersionRecord>({
+      model: 'fileVersions',
+      where: [{ field: 'versionId', operator: 'eq', value: versionId }],
+      namespace,
+    });
+    if (!version || version.fileId !== fileId) {
+      return null;
+    }
+    const file = await db.findOne<FileRecord>({
+      model: 'files',
+      where: [{ field: 'fileId', operator: 'eq', value: fileId }],
+      namespace,
+    });
+    return file ? { file, version } : null;
+  }
+
+  async function processValidJob(
+    job: NonNullable<ReturnType<typeof parseProcessingJob>>,
+    delivery: ProcessingJobDelivery,
+  ): Promise<ProcessingJobOutcome> {
+    const found = await findVersion(job.fileId, job.versionId);
+    if (!found) {
+      // An earlier delivery may have written rows before it saw the delete.
+      await discardDeletedVersionOutput(job, emptyWrites());
+      return { status: 'dropped', reason: 'version-deleted' };
+    }
+    const { file, version } = found;
+    // The database, not the queued body, is the source of the file details.
+    const input: ProcessorInput = {
+      fileId: file.fileId,
+      versionId: version.versionId,
+      storageKey: version.storageKey,
+      mimeType: version.mimeType,
+      size: version.size,
+      fileName: file.name,
+      tenantId: file.tenantId ?? undefined,
+    };
+    const idempotencyKey = job.idempotencyKey ?? buildProcessingIdempotencyKey(input.fileId, input.versionId, processors);
+    // Read the configured list per job, as the producer and runProcessing do:
+    // processors may be added to it after the FileFn instance is created.
+    const applicable = processorEntriesFor(processors).filter((entry) => supportsProcessor(entry.processor, input.mimeType));
+    if (applicable.length === 0) {
+      // As runProcessing does, a version no processor applies to completes without an event.
+      return { status: 'completed', artifactsCreated: 0, skippedProcessors: [] };
+    }
+
+    const recordedRuns = await findProcessingRuns(input.fileId, input.versionId);
+    const runIdFor = (entry: ProcessorEntry) =>
+      processingRunIdFor(input.fileId, input.versionId, idempotencyKey, entry.instance);
+    const completionId = processingCompletionIdFor(input.fileId, input.versionId, idempotencyKey);
+    const pending = applicable.filter((entry) => !recordedRuns.has(runIdFor(entry)));
+    const skipped = applicable.filter((entry) => recordedRuns.has(runIdFor(entry)));
+    if (pending.length === 0 && recordedRuns.has(completionId)) {
+      return { status: 'duplicate' };
+    }
+
+    const getData = createSourceReader(input.storageKey, getFileStorageTarget(file));
+    const artifactStorageTarget = getArtifactStorageTarget(file);
+    const processingErrors: string[] = [];
+    const writes = emptyWrites();
+    const dropDeletedVersion = async (): Promise<ProcessingJobOutcome> => {
+      await discardDeletedVersionOutput(input, writes, artifactStorageTarget);
+      return { status: 'dropped', reason: 'version-deleted' };
+    };
+
+    for (const entry of pending) {
+      const run = await executeProcessor(entry.processor, input, getData);
+      // The version may have been deleted while the processor ran; its source
+      // read then fails too, which is not a failure worth retrying.
+      if (!(await findVersion(input.fileId, input.versionId))) {
+        return dropDeletedVersion();
+      }
+      if (!run.result) {
+        processingErrors.push(`${entry.label}: ${run.error ?? 'processor reported failure'}`);
+        continue;
+      }
+      const recordedBefore = writes.artifactsRecorded;
+      try {
+        await recordArtifacts(input, entry.processor, run, artifactStorageTarget, idempotencyKey, writes);
+        await recordRunRow(input, runIdFor(entry), {
+          processingRun: {
+            ...entry.instance,
+            idempotencyKey,
+            durationMs: run.durationMs,
+            artifactCount: writes.artifactsRecorded - recordedBefore,
+          },
+        });
+      } catch (error) {
+        processingErrors.push(`${entry.label}: ${errorMessage(error)}`);
+      }
+    }
+
+    // A delete that ran during an upload or row write would leave this run's
+    // rows and objects behind for a version that no longer exists.
+    if (!(await findVersion(input.fileId, input.versionId))) {
+      return dropDeletedVersion();
+    }
+
+    if (processingErrors.length > 0) {
+      return { status: 'retry', errors: processingErrors };
+    }
+
+    // Every processor has its run recorded; report the job's whole output,
+    // including the processors earlier deliveries ran.
+    const artifactsCreated = skipped.reduce(
+      (total, entry) => total + recordedArtifactCount(recordedRuns.get(runIdFor(entry))),
+      writes.artifactsRecorded,
+    );
+    emitIsolated(events, logger, 'processing.completed', {
+      requestId: job.requestId,
+      fileId: input.fileId,
+      versionId: input.versionId,
+      artifactsCreated,
+    });
+    // Recorded only after the event, so a delivery that fails before this
+    // point leaves the job to notify on its next delivery.
+    try {
+      await recordRunRow(input, completionId, { processingCompleted: { idempotencyKey, artifactsCreated } });
+    } catch (error) {
+      // The event went out; a later delivery of this job may emit it again.
+      logger?.warn('processing job completion not recorded', {
+        requestId: job.requestId,
+        fileId: input.fileId,
+        versionId: input.versionId,
+        error: errorMessage(error),
+      });
+    }
+    // A delete whose artifact listing ran before the completion row was
+    // written would leave that row behind.
+    let versionAfterCompletion: Awaited<ReturnType<typeof findVersion>>;
+    try {
+      versionAfterCompletion = await findVersion(input.fileId, input.versionId);
+    } catch (error) {
+      // A redelivery checks again (and finds the job a duplicate otherwise);
+      // the last delivery must not report a failure after processing.completed.
+      if (!delivery.finalAttempt) throw error;
+      logger?.warn('processing job version check after completion failed', {
+        requestId: job.requestId,
+        fileId: input.fileId,
+        versionId: input.versionId,
+        error: errorMessage(error),
+      });
+      versionAfterCompletion = found;
+    }
+    if (!versionAfterCompletion) {
+      return dropDeletedVersion();
+    }
+    return { status: 'completed', artifactsCreated, skippedProcessors: skipped.map((entry) => entry.instance) };
   }
 
   return {
@@ -288,9 +1016,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         return { enqueued: false };
       }
 
-      events.emit('processing.started' as any, {
-        type: 'processing.started',
-        timestamp: new Date().toISOString(),
+      emitIsolated(events, logger, 'processing.started', {
         requestId: ctx.requestId,
         fileId: input.fileId,
         versionId: input.versionId,
@@ -309,7 +1035,8 @@ export function createProcessingService(config: ProcessingServiceConfig) {
               fileName: input.fileName,
               tenantId: input.tenantId,
               idempotencyKey: buildProcessingIdempotencyKey(input.fileId, input.versionId, processors),
-            });
+              requestId: optionalJobField(ctx.requestId),
+            } satisfies ProcessingJob);
             return { enqueued: true, jobId: result.jobId };
           } catch {
             throw errors.processingEnqueueFailed();
@@ -327,9 +1054,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
             versionId: input.versionId,
             error: error instanceof Error ? error.stack ?? error.message : String(error),
           });
-          events.emit('processing.failed' as any, {
-            type: 'processing.failed',
-            timestamp: new Date().toISOString(),
+          emitIsolated(events, logger, 'processing.failed', {
             requestId: ctx.requestId,
             fileId: input.fileId,
             versionId: input.versionId,
@@ -358,126 +1083,33 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         where: [{ field: 'fileId', operator: 'eq', value: input.fileId }],
         namespace,
       });
-      const fileStorageTarget = getFileStorageTarget(file ?? { policy: '' });
-      const artifactStorageTarget = getArtifactStorageTarget(file ?? { policy: '' });
-
-      let dataCache: Uint8Array | null = null;
-      // Processing currently reads the source into memory once per run; reject overly large inputs early.
-      const getData = async (): Promise<Uint8Array> => {
-        if (dataCache) return dataCache;
-
-        if (storage.openDownloadStream) {
-          const stream = await storage.openDownloadStream({ key: input.storageKey, target: fileStorageTarget });
-          const reader = stream.getReader();
-          const chunks: Uint8Array[] = [];
-          let totalLength = 0;
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            if (value) {
-              totalLength += value.length;
-              if (totalLength > maxFileBytes) {
-                throw new Error(
-                  `Processing source exceeds ${maxFileBytes} bytes; increase maxFileBytes or use a streaming-friendly processor.`,
-                );
-              }
-              chunks.push(value);
-            }
-          }
-          dataCache = new Uint8Array(totalLength);
-          let offset = 0;
-          for (const chunk of chunks) {
-            dataCache.set(chunk, offset);
-            offset += chunk.length;
-          }
-        } else {
-          throw new Error('Storage adapter does not support streaming downloads');
-        }
-
-        return dataCache;
-      };
+      const policyRef = file ?? { policy: '' };
+      const getData = createSourceReader(input.storageKey, getFileStorageTarget(policyRef));
+      const artifactStorageTarget = getArtifactStorageTarget(policyRef);
+      const idempotencyKey = buildProcessingIdempotencyKey(input.fileId, input.versionId, processors);
 
       const processingErrors: string[] = [];
       let artifactsCreated = 0;
 
       for (const processor of applicableProcessors) {
-        try {
-          const result = await processor.process(input, getData);
-
-          if (!result.success) {
-            if (result.error) {
-              processingErrors.push(`${processor.name}: ${result.error}`);
-            }
-            continue;
+        const run = await executeProcessor(processor, input, getData);
+        if (!run.result) {
+          if (run.error) {
+            processingErrors.push(`${processor.name}: ${run.error}`);
           }
-
-          for (const artifact of result.artifacts) {
-            if (storage.openUploadStream) {
-              const stream = await storage.openUploadStream({
-                key: artifact.storageKey,
-                target: artifactStorageTarget,
-                contentType: artifact.mimeType,
-              });
-              const writer = stream.getWriter();
-              await writer.write(artifact.data);
-              await writer.close();
-            } else {
-              throw new Error('Storage adapter does not support streaming uploads');
-            }
-
-            const existingArtifact = await db.findOne<FileArtifactRecord>({
-              model: 'fileArtifacts',
-              where: [
-                { field: 'fileId', operator: 'eq', value: input.fileId },
-                { field: 'versionId', operator: 'eq', value: input.versionId },
-                { field: 'kind', operator: 'eq', value: artifact.kind },
-              ],
-              namespace,
-            });
-
-            if (existingArtifact) {
-              await db.update({
-                model: 'fileArtifacts',
-                where: [{ field: 'artifactId', operator: 'eq', value: existingArtifact.artifactId }],
-                data: {
-                  storageKey: artifact.storageKey,
-                  mimeType: artifact.mimeType,
-                  size: artifact.data.length,
-                  metadata: artifact.metadata || {},
-                },
-                namespace,
-              });
-            } else {
-              const artifactId = generateId();
-              await db.create({
-                model: 'fileArtifacts',
-                data: {
-                  artifactId,
-                  fileId: input.fileId,
-                  versionId: input.versionId,
-                  kind: artifact.kind,
-                  storageKey: artifact.storageKey,
-                  mimeType: artifact.mimeType,
-                  size: artifact.data.length,
-                  metadata: artifact.metadata || {},
-                  createdAt: new Date().toISOString(),
-                },
-                namespace,
-              });
-            }
-
-            artifactsCreated++;
-          }
-        } catch (error) {
-          processingErrors.push(
-            `${processor.name}: ${error instanceof Error ? error.message : 'Unknown error'}`
-          );
+          continue;
         }
+        const writes = emptyWrites();
+        try {
+          await recordArtifacts(input, processor, run, artifactStorageTarget, idempotencyKey, writes);
+        } catch (error) {
+          processingErrors.push(`${processor.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+        // Artifacts written before a failed write still count, as they did before.
+        artifactsCreated += writes.artifactsRecorded;
       }
 
-      events.emit('processing.completed' as any, {
-        type: 'processing.completed',
-        timestamp: new Date().toISOString(),
+      emitIsolated(events, logger, 'processing.completed', {
         requestId: ctx.requestId,
         fileId: input.fileId,
         versionId: input.versionId,
@@ -485,6 +1117,72 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       });
 
       return { artifactsCreated, errors: processingErrors };
+    },
+
+    /**
+     * Runs one queued processing job: the processors that apply to the job's
+     * file version and have no run recorded for the job's idempotency key.
+     * Never throws; the outcome tells the queue consumer whether to
+     * acknowledge or redeliver the message.
+     */
+    async processJob(body: unknown, delivery: ProcessingJobDelivery): Promise<ProcessingJobOutcome> {
+      const job = parseProcessingJob(body);
+      if (!job) {
+        logger?.warn('processing job dropped: invalid job body', { attempts: delivery.attempts });
+        return { status: 'dropped', reason: 'invalid-job' };
+      }
+      const logContext = {
+        requestId: job.requestId,
+        jobId: job.jobId,
+        fileId: job.fileId,
+        versionId: job.versionId,
+        attempts: delivery.attempts,
+      };
+
+      let outcome: ProcessingJobOutcome;
+      try {
+        outcome = await processValidJob(job, delivery);
+      } catch (error) {
+        if (!(error instanceof DeletedVersionCleanupError)) {
+          outcome = { status: 'retry', errors: [errorMessage(error)] };
+        } else if (!delivery.finalAttempt) {
+          logger?.warn('processing job will be retried to finish cleanup of a deleted version', {
+            ...logContext,
+            error: error.message,
+          });
+          return { status: 'retry', errors: [error.message] };
+        } else {
+          // Never `processing.failed`: the version is gone, so the job is
+          // dropped. No further delivery resumes the cleanup.
+          logger?.error('processing job dropped: deleted version cleanup not finished; rows kept', {
+            ...logContext,
+            keptArtifactIds: error.keptArtifactIds,
+            error: error.message,
+          });
+          return { status: 'dropped', reason: 'version-deleted' };
+        }
+      }
+
+      if (outcome.status === 'dropped') {
+        logger?.info('processing job dropped: file version deleted', logContext);
+        return outcome;
+      }
+      if (outcome.status !== 'retry') {
+        return outcome;
+      }
+      if (!delivery.finalAttempt) {
+        logger?.warn('processing job will be retried', { ...logContext, errors: outcome.errors });
+        return outcome;
+      }
+
+      logger?.error('processing job failed after its last attempt', { ...logContext, errors: outcome.errors });
+      emitIsolated(events, logger, 'processing.failed', {
+        requestId: job.requestId,
+        fileId: job.fileId,
+        versionId: job.versionId,
+        error: outcome.errors.join('; '),
+      });
+      return { status: 'failed', errors: outcome.errors };
     },
 
     async listArtifacts(
@@ -496,7 +1194,10 @@ export function createProcessingService(config: ProcessingServiceConfig) {
 
       const artifacts = await db.findMany<FileArtifactRecord>({
         model: 'fileArtifacts',
-        where: [{ field: 'fileId', operator: 'eq', value: fileId }],
+        where: [
+          { field: 'fileId', operator: 'eq', value: fileId },
+          { field: 'kind', operator: 'ne', value: PROCESSING_RUN_KIND },
+        ],
         orderBy: [
           { field: 'createdAt', direction: 'desc' },
           { field: 'artifactId', direction: 'asc' },
@@ -528,7 +1229,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         namespace,
       });
 
-      if (!artifact) {
+      if (!artifact || artifact.kind === PROCESSING_RUN_KIND) {
         throw errors.notFound('Artifact');
       }
 

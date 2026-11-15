@@ -115,15 +115,18 @@ const fileFn = createFileFn({
 });
 ```
 
-When configured, `complete` enqueues a job instead of running processors inline. A worker picks it up, runs the processors, and calls `processingService.recordArtifact(...)` per artifact.
+When configured, `complete` enqueues a job on the `filefn.processing` queue (`PROCESSING_QUEUE_NAME`) instead of running processors inline. The consumer passes each job to `createProcessingJobHandler(fileFn)`, which runs the configured processors and records their artifacts through that FileFn instance, once per job idempotency key.
 
-You can swap `@flowfn/server` for any queue that implements:
+You can swap `@flowfn/server` for any provider whose `getQueue(name)` returns a queue that implements:
 
 ```ts
 interface FlowFnQueue {
-  enqueue(job: { fileId: string; versionId: string; storageKey: string; mimeType: string; size: number; fileName: string; tenantId?: string }): Promise<{ jobId: string }>;
+  name: string;
+  add(job: unknown): Promise<{ jobId: string }>;
 }
 ```
+
+For Cloudflare Queues, `@filefn/processing/queues/cloudflare` provides `createCloudflareFlowFnProvider`.
 
 ## Routes
 
@@ -133,6 +136,8 @@ interface FlowFnQueue {
 | `GET /:fileId/artifacts/:artifactId/download` | Resolve a download URL. |
 | `GET /proxy/files/:fileId/artifacts/:artifactId/download` | Proxy-mode download. |
 | `POST /:fileId/process` | Manually trigger processors (re-process / lazy mode). |
+
+With a queue configured, `POST /:fileId/process` enqueues a job with the same idempotency key as the upload's job: the file version and its processor names. If every processor already finished for that key and the job's completion was recorded, the consumer acknowledges the job as a duplicate and emits no `processing.completed` or `processing.failed` after its `processing.started`. If recording the completion failed (FileFn only logs a warning), the re-triggered job emits `processing.completed` again and then records it. FileFn has no per-request option to re-run processors that already finished for a version. For the Cloudflare Queues consumer, see [Cloudflare Workers › Queued processing](../recipes/cloudflare-workers#queued-processing).
 
 ## Events
 

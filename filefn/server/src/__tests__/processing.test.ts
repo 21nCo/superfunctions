@@ -363,6 +363,14 @@ describe('ProcessingService', () => {
 
     expect(artifacts).toHaveLength(1);
     expect(artifacts[0].kind).toBe('thumbnail-small');
+    expect(artifacts[0].metadata).toEqual({
+      processing: {
+        processor: 'thumbnail',
+        durationMs: expect.any(Number),
+        idempotencyKey: `processing:${uploadResult.fileId}:${uploadResult.versionId}:thumbnail`,
+        storageTarget: 'durable',
+      },
+    });
     expect(processingCompleted).toHaveBeenCalledWith(expect.objectContaining({
       requestId: 'req_upload',
       fileId: uploadResult.fileId,

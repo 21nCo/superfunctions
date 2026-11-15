@@ -7,6 +7,8 @@ import type { QuotaProvider } from '../upload-sessions/service.js';
 import { resolveArtifactStorageTarget, resolveStorageTarget, type PolicyRegistry } from '../policies.js';
 import * as errors from '../errors.js';
 import { createFileDeletedEvent } from '../events.js';
+import { PROCESSING_RUN_KIND } from '../processing/service.js';
+import { findReferencedStorageRefs, parseStorageRef, storageRef } from '../storage-references.js';
 
 export interface FileRecord {
   fileId: string;
@@ -285,6 +287,16 @@ export function createFileService(config: FileServiceConfig) {
     }
 
     return false;
+  }
+
+  /** Deletes one stored object; a storage error (the object may already be gone) reports false. */
+  async function deleteObjectBestEffort(ref: string): Promise<boolean> {
+    try {
+      await storage.deleteObject(parseStorageRef(ref));
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async function getVersionChecked(fileId: string, versionId: string): Promise<FileVersionRecord> {
@@ -648,12 +660,6 @@ export function createFileService(config: FileServiceConfig) {
         namespace,
       });
 
-      const artifacts = await db.findMany<FileArtifactRecord>({
-        model: 'fileArtifacts',
-        where: [{ field: 'fileId', operator: 'eq', value: fileId }],
-        namespace,
-      });
-
       const pendingSessions = await db.findMany<UploadSessionRecord>({
         model: 'uploadSessions',
         where: [
@@ -702,65 +708,6 @@ export function createFileService(config: FileServiceConfig) {
         });
       }
 
-      const versionBytesByStorageKey = new Map<string, number>();
-      const targetKeyFor = (target: string, key: string) => `${target}\u0000${key}`;
-      const fileStorageTarget = resolveStorageTarget(policies?.get(file.policy) ?? {});
-      const artifactStorageTarget = resolveArtifactStorageTarget(policies?.get(file.policy) ?? {});
-      for (const version of versions) {
-        const ref = targetKeyFor(fileStorageTarget, version.storageKey);
-        const existing = versionBytesByStorageKey.get(ref) ?? 0;
-        versionBytesByStorageKey.set(ref, Math.max(existing, version.size));
-      }
-
-      const candidateStorageKeys = new Set<string>();
-      for (const version of versions) {
-        candidateStorageKeys.add(targetKeyFor(fileStorageTarget, version.storageKey));
-      }
-      for (const artifact of artifacts) {
-        candidateStorageKeys.add(targetKeyFor(artifactStorageTarget, artifact.storageKey));
-      }
-
-      const storageKeysReferencedElsewhere = new Set<string>();
-      if (candidateStorageKeys.size > 0) {
-        const allVersions = await db.findMany<Pick<FileVersionRecord, 'fileId' | 'storageKey'>>({
-          model: 'fileVersions',
-          where: [],
-          select: ['fileId', 'storageKey'],
-          namespace,
-        });
-
-        const allFiles = await db.findMany<Pick<FileRecord, 'fileId' | 'policy'>>({
-          model: 'files',
-          where: [],
-          select: ['fileId', 'policy'],
-          namespace,
-        });
-        const policyByFileId = new Map(allFiles.map((entry) => [entry.fileId, entry.policy]));
-
-        for (const version of allVersions) {
-          const versionTarget = resolveStorageTarget(policies?.get(policyByFileId.get(version.fileId) ?? '') ?? {});
-          const ref = targetKeyFor(versionTarget, version.storageKey);
-          if (version.fileId !== fileId && candidateStorageKeys.has(ref)) {
-            storageKeysReferencedElsewhere.add(ref);
-          }
-        }
-
-        const allArtifacts = await db.findMany<Pick<FileArtifactRecord, 'fileId' | 'storageKey'>>({
-          model: 'fileArtifacts',
-          where: [],
-          select: ['fileId', 'storageKey'],
-          namespace,
-        });
-
-        for (const artifact of allArtifacts) {
-          const artifactTarget = resolveArtifactStorageTarget(policies?.get(policyByFileId.get(artifact.fileId) ?? '') ?? {});
-          const ref = targetKeyFor(artifactTarget, artifact.storageKey);
-          if (artifact.fileId !== fileId && candidateStorageKeys.has(ref)) {
-            storageKeysReferencedElsewhere.add(ref);
-          }
-        }
-      }
-
       await db.deleteMany({
         model: 'filePermissions',
         where: [{ field: 'fileId', operator: 'eq', value: fileId }],
@@ -773,14 +720,75 @@ export function createFileService(config: FileServiceConfig) {
         namespace,
       });
 
+      // Retry-safe order. Everything the version objects need (their refs, the
+      // bytes they free and the refs other files hold) is read before the version
+      // rows go, and the objects are removed and their quota released right after.
+      // A failure in any later step leaves the artifact rows and the file row in
+      // place, so a retry still finds and removes them.
+      //
+      // Versions go before artifacts are listed. A queued processing job checks
+      // its version after writing, so an artifact it writes before the version
+      // removal is in the list below, and one it writes later is removed by the job.
+      const filePolicy = policies?.get(file.policy) ?? {};
+      const fileStorageTarget = resolveStorageTarget(filePolicy);
+      const artifactStorageTarget = resolveArtifactStorageTarget(filePolicy);
+      const versionBytesByStorageRef = new Map<string, number>();
+      for (const version of versions) {
+        const ref = storageRef(fileStorageTarget, version.storageKey);
+        const existing = versionBytesByStorageRef.get(ref) ?? 0;
+        versionBytesByStorageRef.set(ref, Math.max(existing, version.size));
+      }
+      const versionRefsReferencedElsewhere = await findReferencedStorageRefs(
+        { db, namespace, policies },
+        new Set(versionBytesByStorageRef.keys()),
+        { fileId },
+      );
+
       await db.deleteMany({
+        model: 'fileVersions',
+        where: [{ field: 'fileId', operator: 'eq', value: fileId }],
+        namespace,
+      });
+
+      let totalBytesFreed = 0;
+      for (const [ref, bytes] of versionBytesByStorageRef) {
+        if (versionRefsReferencedElsewhere.has(ref)) {
+          continue;
+        }
+        if (await deleteObjectBestEffort(ref)) {
+          totalBytesFreed += bytes;
+        }
+      }
+
+      if (quota && totalBytesFreed > 0) {
+        await quota.recordUsage({
+          principalId: file.ownerId,
+          tenantId: file.tenantId ?? undefined,
+          bytes: -totalBytesFreed,
+        });
+      }
+
+      const artifacts = await db.findMany<FileArtifactRecord>({
         model: 'fileArtifacts',
         where: [{ field: 'fileId', operator: 'eq', value: fileId }],
         namespace,
       });
 
+      const artifactStorageRefs = new Set<string>();
+      for (const artifact of artifacts) {
+        if (artifact.kind !== PROCESSING_RUN_KIND) {
+          artifactStorageRefs.add(storageRef(artifactStorageTarget, artifact.storageKey));
+        }
+      }
+
+      const artifactRefsReferencedElsewhere = await findReferencedStorageRefs(
+        { db, namespace, policies },
+        artifactStorageRefs,
+        { fileId },
+      );
+
       await db.deleteMany({
-        model: 'fileVersions',
+        model: 'fileArtifacts',
         where: [{ field: 'fileId', operator: 'eq', value: fileId }],
         namespace,
       });
@@ -800,28 +808,10 @@ export function createFileService(config: FileServiceConfig) {
         namespace,
       });
 
-      let totalBytesFreed = 0;
-      for (const ref of candidateStorageKeys) {
-        if (storageKeysReferencedElsewhere.has(ref)) {
-          continue;
+      for (const ref of artifactStorageRefs) {
+        if (!artifactRefsReferencedElsewhere.has(ref)) {
+          await deleteObjectBestEffort(ref);
         }
-        try {
-          const split = ref.indexOf('\u0000');
-          const target = ref.slice(0, split);
-          const key = ref.slice(split + 1);
-          await storage.deleteObject({ key, target });
-          totalBytesFreed += versionBytesByStorageKey.get(ref) ?? 0;
-        } catch {
-          // Continue on storage errors (object may already be deleted)
-        }
-      }
-
-      if (quota && totalBytesFreed > 0) {
-        await quota.recordUsage({
-          principalId: file.ownerId,
-          tenantId: file.tenantId ?? undefined,
-          bytes: -totalBytesFreed,
-        });
       }
 
       events.emit('file:deleted', createFileDeletedEvent({

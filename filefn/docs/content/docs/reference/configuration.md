@@ -73,7 +73,7 @@ Default authorizer reads `filefn_file_permissions` and respects ownership.
 | `dedup.enabled` | `boolean` | `false` | Content-addressable storage. |
 | `processing.enabled` | `boolean` | `false` | Run processors after upload. |
 | `processing.processors` | `Processor[]` | `[]` | Processors to register. |
-| `processing.flowFn` | `FlowFnQueue` | undefined | Queue for async processing. |
+| `processing.flowFn` | `FlowFnProvider` | undefined | Queue provider for async processing; FileFn enqueues on `getQueue("filefn.processing")`. |
 
 ## Misc
 

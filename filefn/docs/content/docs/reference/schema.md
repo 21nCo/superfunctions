@@ -93,10 +93,15 @@ Indexes: `(fileId)`, `(checksumSha256Base64, tenantId)` for dedup lookups.
 | `storageKey` | string | |
 | `mimeType` | string | |
 | `size` | number? | |
-| `metadata` | json? | |
+| `metadata` | json? | `metadata.processing` is reserved; see below. |
 | `createdAt` | string | |
 
 Indexes: `(fileId)`, `(versionId)`.
+
+Processing writes two things here:
+
+- Each artifact's `metadata.processing` holds `{ processor, durationMs, idempotencyKey, storageTarget }`, for inline and queued processing alike. `storageTarget` is the target the object was written to; cleanup of a deleted version uses it once the file row is gone. FileFn overwrites a processor's own `processing` metadata key.
+- Queued processing (`createProcessingJobHandler`) also writes one row of kind `filefn.processing-run` (`PROCESSING_RUN_KIND`) per processor instance and job idempotency key, written after that processor's artifacts, records that the processor finished, including runs with no artifacts. Its `artifactId` starts with `run_`, its `storageKey` names no stored object, and `metadata.processingRun` holds `{ processor, instance, idempotencyKey, durationMs, artifactCount }`. One more row of this kind per job idempotency key, with `metadata.processingCompleted` holding `{ idempotencyKey, artifactsCreated }`, records that the job emitted `processing.completed`. The artifact list, lookup and download operations never return these rows, and deleting the file removes them.
 
 ## `filefn_file_permissions`
 

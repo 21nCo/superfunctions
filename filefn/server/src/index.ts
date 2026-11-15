@@ -22,6 +22,7 @@ import { createSharesService, type SharesService } from './shares/service.js';
 import { createSharesRoutes } from './shares/routes.js';
 import { createProcessingService, type Processor, type FlowFnProvider, type ProcessingService } from './processing/service.js';
 import { createProcessingRoutes } from './processing/routes.js';
+import { bindProcessingJobs } from './processing/job-handler.js';
 import { createPolicyRoutes } from './policies.routes.js';
 import { createQuotaRoutes } from './quota.routes.js';
 import { createRouter, normalizeBasePath, stripBasePath, type FileFnRouter } from './router.js';
@@ -369,7 +370,7 @@ export function createFileFn(config: FileFnConfig): FileFn {
       }
     : baseRouter;
 
-  return {
+  const fileFn: FileFn = {
     router,
     events,
     services: {
@@ -454,6 +455,8 @@ export function createFileFn(config: FileFnConfig): FileFn {
       await fileService.deleteFile(input.fileId, ctx);
     },
   };
+  bindProcessingJobs(fileFn, processingService);
+  return fileFn;
 }
 
 // Re-exports
@@ -517,8 +520,13 @@ export { createLogger, redactSecrets } from './observability/logger.js';
 export type { Logger, LogContext, LoggerOptions } from './observability/logger.js';
 
 // Processing exports
-export { createProcessingService } from './processing/service.js';
+export { createProcessingService, PROCESSING_QUEUE_NAME, PROCESSING_RUN_KIND } from './processing/service.js';
 export type {
+  ArtifactProcessingMetadata,
+  ProcessingJob,
+  ProcessingJobDelivery,
+  ProcessingJobOutcome,
+  ProcessorInstance,
   ProcessingService,
   Processor,
   ProcessorInput,
@@ -529,6 +537,14 @@ export type {
   FlowFnQueue,
 } from './processing/service.js';
 export { createProcessingRoutes } from './processing/routes.js';
+export { createProcessingJobHandler } from './processing/job-handler.js';
+export type {
+  ProcessingJobDeliveryInfo,
+  ProcessingJobHandler,
+  ProcessingJobHandlerOptions,
+  ProcessingQueueBatch,
+  ProcessingQueueMessage,
+} from './processing/job-handler.js';
 export type { ProcessingRoutes, ProcessingRoutesConfig } from './processing/routes.js';
 
 function fileFnLoggerFromObservability(logger: ObservationLogger | undefined): Logger | undefined {

@@ -98,7 +98,7 @@ If you want processing in a separate worker (recommended for heavy CPU work):
 
 1. Configure `processing.flowFn` with a queue provider.
 2. The kernel enqueues a job per upload instead of running processors inline.
-3. The worker runs processors, calls back into filefn's `processingService.recordArtifact(...)`, and emits `processing.completed`.
+3. The queue consumer passes each job to `createProcessingJobHandler(fileFn)`, which runs the processors, records their artifacts and emits `processing.completed`.
 
 See [Features › Processing](../features/processing) for the pattern.
 
