@@ -4,7 +4,7 @@
  * Reactive query signals with caching, lazy fetch, and auto-refresh on mutations.
  */
 
-import type { DatafnSignal, DatafnError, DatafnSchema } from "@datafn/core";
+import type { DatafnSignal, DatafnError, DatafnPlugin, DatafnSchema } from "@datafn/core";
 import {
   dfqlKey,
   endpointList,
@@ -13,6 +13,7 @@ import {
 } from "@datafn/core";
 import type { EventBus } from "../events/bus.js";
 import type { DatafnSignalOptions } from "./options.js";
+import { runBeforeQuery } from "../plugins/run-hooks.js";
 
 /** Options the client uses for signals it builds itself. */
 export type QuerySignalInternalOptions = {
@@ -51,11 +52,17 @@ export class SignalRegistry {
   private client: any;
   private eventBus: EventBus;
   private schema: DatafnSchema;
+  private plugins: DatafnPlugin[];
 
-  constructor(client: any, eventBus: EventBus, schema: DatafnSchema) {
+  /**
+   * @param plugins The client's plugins. Signals read the query these
+   *   plugins produce to tell which fields a merge must touch to matter.
+   */
+  constructor(client: any, eventBus: EventBus, schema: DatafnSchema, plugins: DatafnPlugin[] = []) {
     this.client = client;
     this.eventBus = eventBus;
     this.schema = schema;
+    this.plugins = plugins;
   }
 
   getSignal<T>(
@@ -82,6 +89,7 @@ export class SignalRegistry {
       () => this.removeSignal(key),
       options,
       internal,
+      this.plugins,
     );
     this.signals.set(key, signal);
     return signal;
@@ -346,9 +354,16 @@ function deriveMembershipFields(query: any, schema: DatafnSchema): Set<string> |
     if (query[key] !== undefined && query[key] !== null) return null;
   }
   // Relation expansion reads other records, which a merge here may change.
+  // A bare relation name ("children", "tags") expands too.
   if (
-    Array.isArray(query.select) &&
-    query.select.some((token: unknown) => typeof token !== "string" || token.includes("."))
+    query.select !== undefined &&
+    (!Array.isArray(query.select) ||
+      query.select.some(
+        (token: unknown) =>
+          typeof token !== "string" ||
+          token.includes(".") ||
+          Boolean(findRelationMatch(schema, query.resource as string, token)),
+      ))
   ) {
     return null;
   }
@@ -416,12 +431,14 @@ function createQuerySignal<T>(
   removeFromRegistry: () => void,
   options?: DatafnSignalOptions,
   internal?: QuerySignalInternalOptions,
+  plugins: DatafnPlugin[] = [],
 ): DatafnSignal<T> {
   const countValue = internal?.value === "count";
   let currentValue: T | undefined;
   let currentCursor: string | null = null;
   const subscribers = new Set<(value: T) => void>();
   let inFlight = false;
+  let fullFetchSeq = 0;
   let isRefresh = false;
   let queuedRefresh = false;
   let currentError: DatafnError | null = null;
@@ -452,6 +469,9 @@ function createQuerySignal<T>(
     inFlight = true;
     isRefresh = refresh;
     queuedRefresh = false;
+    // A full read supersedes any per-record re-read still running.
+    fullFetchSeq++;
+    updateMembershipFields();
     // Clear error when starting a new fetch
     if (!refresh) {
       currentError = null;
@@ -526,20 +546,56 @@ function createQuerySignal<T>(
   const footprint = deriveQueryFootprint(fullQuery, schema);
 
   // Merges that leave every field in this set unchanged cannot change which
-  // records match or their order (SIG-002).
-  const membershipFields = deriveMembershipFields(fullQuery, schema);
+  // records match or their order (SIG-002). Client plugins can rewrite the
+  // query (beforeQuery) or the result (afterQuery), so the set also covers
+  // the query the plugins produce; until that is known, every merge counts.
+  const clientPlugins = plugins.filter(
+    (plugin) => Array.isArray(plugin?.runsOn) && plugin.runsOn.includes("client"),
+  );
+  const queryHooks = clientPlugins.filter((plugin) => typeof plugin.beforeQuery === "function");
+  const baseMembershipFields = clientPlugins.some(
+    (plugin) => typeof plugin.afterQuery === "function",
+  )
+    ? null
+    : deriveMembershipFields(fullQuery, schema);
+  let membershipFields: Set<string> | null =
+    queryHooks.length > 0 ? null : baseMembershipFields;
+  let membershipRun = 0;
+  const updateMembershipFields = () => {
+    if (!baseMembershipFields || queryHooks.length === 0) return;
+    const run = ++membershipRun;
+    runBeforeQuery(queryHooks, schema, { ...fullQuery }).then(
+      (effectiveQuery) => {
+        if (run !== membershipRun) return;
+        const fields = deriveMembershipFields(effectiveQuery, schema);
+        membershipFields = fields ? new Set([...baseMembershipFields, ...fields]) : null;
+      },
+      () => {
+        if (run === membershipRun) membershipFields = null;
+      },
+    );
+  };
 
   // Coalescing state for refreshes (SIG-002): a full re-run, and records to
   // re-read by id.
   let refreshTimerPending = false;
   let pendingFullRefresh = false;
   const pendingRecordIds = new Set<string>();
+  // Per-record re-reads run one at a time and never alongside a full read;
+  // a full read that starts while one runs makes its result stale.
+  let recordsInFlight = false;
+  let flushAfterRecords = false;
 
   const flushScheduled = () => {
     refreshTimerPending = false;
     if (disposed) {
       pendingFullRefresh = false;
       pendingRecordIds.clear();
+      return;
+    }
+    if (recordsInFlight) {
+      // Keep what is pending and flush once the re-read settles.
+      flushAfterRecords = true;
       return;
     }
     if (pendingFullRefresh || inFlight) {
@@ -551,7 +607,16 @@ function createQuerySignal<T>(
     if (pendingRecordIds.size > 0) {
       const ids = [...pendingRecordIds];
       pendingRecordIds.clear();
-      refreshRecords(ids).catch(() => scheduleRefresh());
+      recordsInFlight = true;
+      refreshRecords(ids)
+        .catch(() => scheduleRefresh())
+        .finally(() => {
+          recordsInFlight = false;
+          if (flushAfterRecords) {
+            flushAfterRecords = false;
+            scheduleFlush();
+          }
+        });
     }
   };
 
@@ -576,8 +641,11 @@ function createQuerySignal<T>(
    * in place. Falls back to a full refresh when one no longer matches.
    */
   const refreshRecords = async (ids: string[]): Promise<void> => {
+    const startedAt = fullFetchSeq;
     const result = await client.query(withIdFilter(fullQuery, ids));
     if (disposed) return;
+    // A full read started since this one did, so its result is newer.
+    if (fullFetchSeq !== startedAt) return;
     const data: any[] | null = Array.isArray(result?.data)
       ? result.data
       : Array.isArray(result)
@@ -629,11 +697,6 @@ function createQuerySignal<T>(
         // Only refresh when specific resources that overlap with this signal's footprint
         // changed.  Removing the "length === 0" broadcast avoids refreshing all signals
         // (including KV) on every pull that returns no records (RC-3 / issue 2026-03-02-k7m4x9r8).
-        if (affectedResources.some(r => footprint.has(r))) {
-          scheduleRefresh();
-        }
-      } else if (phase === "import") {
-        const affectedResources: string[] = ctx?.resources ?? [];
         if (affectedResources.some(r => footprint.has(r))) {
           scheduleRefresh();
         }

@@ -1820,12 +1820,23 @@ function _buildRawClient<S extends DatafnSchema>(
         const resources = Object.keys(imported);
         if (resources.length === 0) return;
         await indexImportedRecords(storage, imported);
-        // Open live queries over the imported resources refresh.
-        eventBus.emit({
-          type: "sync_applied",
-          timestampMs: getTimestamp(),
-          context: { phase: "import", resources },
-        } as any);
+        // Announce the imported records as local writes so open live queries
+        // (in this tab and, through the relay, in others) refresh. An import
+        // is not a sync, so it does not touch the sync status.
+        const timestampMs = getTimestamp();
+        for (const resource of resources) {
+          eventBus.emit({
+            type: "mutation_applied",
+            resource,
+            ids: imported[resource]
+              .map((record) => record.id)
+              .filter((id): id is string => typeof id === "string"),
+            action: "replace",
+            clientId: config.clientId,
+            timestampMs,
+            context: { source: "import" },
+          });
+        }
       });
     },
 
@@ -2347,7 +2358,7 @@ function _buildRawClient<S extends DatafnSchema>(
   };
 
   // Create signal registry (CLIENT-SIGNAL-001, SIG-002)
-  const signalRegistry = new SignalRegistry(client, eventBus, schema);
+  const signalRegistry = new SignalRegistry(client, eventBus, schema, config.plugins || []);
 
   // Create table registry with client and signal registry (CLIENT-REG-001)
   const registry = new TableRegistry<S>(

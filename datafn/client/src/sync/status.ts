@@ -208,6 +208,9 @@ class DatafnSyncStatusController {
       event.type === "mutation_rejected"
     ) {
       this.schedulePendingChangesRefresh();
+      // Records written by importData reach storage directly; they say
+      // nothing about whether earlier writes reached the server.
+      if (event.type === "mutation_applied" && isImportContext(event.context)) return;
       this.update({
         lastError:
           event.type === "mutation_rejected"
@@ -381,4 +384,12 @@ function resolveExplicitErrorMessage(error: unknown): string | null {
     if (typeof message === "string") return message;
   }
   return null;
+}
+
+function isImportContext(context: unknown): boolean {
+  return (
+    typeof context === "object" &&
+    context !== null &&
+    (context as { source?: unknown }).source === "import"
+  );
 }

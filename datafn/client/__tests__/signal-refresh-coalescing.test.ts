@@ -241,3 +241,102 @@ describe("limited and counted queries over a large table", () => {
     expect(Math.max(0, ...sortedSizes)).toBeLessThanOrEqual(1);
   }, 60_000);
 });
+
+describe("merge skipping with query plugins and relation selects", () => {
+  it("re-runs when a merge touches a filter that a plugin adds", async () => {
+    const storage = new MemoryStorageAdapter(["notes"]);
+    for (const [id, status] of [["notes:a", "open"], ["notes:b", "done"], ["notes:c", "open"]]) {
+      await storage.upsertRecord("notes", { id, title: id, status, body: "" });
+    }
+    await storage.setHydrationState("notes", "hydrating");
+    await storage.setHydrationState("notes", "ready");
+    const client = createDatafnClient({
+      schema,
+      clientId: "plugin-client",
+      storage,
+      sync: { mode: "local-only", offlinability: true },
+      plugins: [
+        {
+          name: "open-only",
+          runsOn: ["client"],
+          beforeQuery(_ctx: unknown, q: any) {
+            if (Array.isArray(q) || q.resource !== "notes") return q;
+            const filters = q.filters
+              ? { $and: [q.filters, { status: "open" }] }
+              : { status: "open" };
+            return { ...q, filters };
+          },
+        },
+      ],
+    });
+    clients.push(client as any);
+    const notes = client.table("notes");
+    const signal = notes.signal({ sort: ["title"], limit: 10 });
+    const values: any[][] = [];
+    signal.subscribe((value: any) => {
+      if (value !== undefined) values.push(value);
+    });
+    await waitForValue(signal as any);
+    expect(values.at(-1)!.map((r) => r.id)).toEqual(["notes:a", "notes:c"]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // A field neither the query nor the plugin reads still skips the re-run.
+    executeSpy.mockClear();
+    await notes.mutate({ operation: "merge", id: "notes:b", record: { body: "x" } } as any);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(executeSpy).not.toHaveBeenCalled();
+
+    await notes.mutate({ operation: "merge", id: "notes:b", record: { status: "open" } } as any);
+    await vi.waitFor(() =>
+      expect(values.at(-1)!.map((r) => r.id)).toEqual(["notes:a", "notes:b", "notes:c"]),
+    );
+  });
+
+  it("re-runs a query that selects a bare relation when another record of the resource changes", async () => {
+    const treeSchema: DatafnSchema = {
+      resources: [
+        {
+          name: "folders",
+          version: 1,
+          fields: [
+            { name: "name", type: "string", required: false },
+            { name: "sortOrder", type: "number", required: false },
+            { name: "parentId", type: "string", required: false },
+          ],
+        },
+      ],
+      relations: [
+        {
+          from: "folders",
+          to: "folders",
+          type: "htree",
+          relation: "children",
+          inverse: "parent",
+          fkField: "parentId",
+        } as any,
+      ],
+    };
+    const storage = new MemoryStorageAdapter(["folders"]);
+    await storage.upsertRecord("folders", { id: "folders:root", name: "root", sortOrder: 0 });
+    await storage.upsertRecord("folders", { id: "folders:a", name: "a", sortOrder: 1, parentId: "folders:root" });
+    await storage.upsertRecord("folders", { id: "folders:b", name: "b", sortOrder: 2, parentId: "folders:root" });
+    await storage.setHydrationState("folders", "hydrating");
+    await storage.setHydrationState("folders", "ready");
+    const client = createDatafnClient({
+      schema: treeSchema,
+      clientId: "tree-client",
+      storage,
+      sync: { mode: "local-only", offlinability: true },
+    });
+    clients.push(client as any);
+    const folders = client.table("folders");
+    const signal = folders.signal({ filters: { id: "folders:root" }, select: ["id", "children"] });
+    await waitForValue(signal as any);
+    executeSpy.mockClear();
+
+    await folders.mutate({ operation: "merge", id: "folders:a", record: { sortOrder: 5 } } as any);
+    await vi.waitFor(() =>
+      expect(executeSpy.mock.calls.some(([, , query]) => !hasIdProbe(query))).toBe(true),
+    );
+  });
+});

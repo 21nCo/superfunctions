@@ -174,6 +174,29 @@ describe("importData and live queries", () => {
       expect(values.at(-1)!.map((r) => r.id)).toEqual(["notes:old", "notes:r1", "notes:r2"]),
     );
   });
+
+  it("announces the imported records as local writes, not as a sync", async () => {
+    const storage = await readyStorage();
+    const client = localClient(storage, createPersistentProvider());
+    const events: any[] = [];
+    client.subscribe((event: any) => events.push(event));
+    const before = client.sync.statusSignal().get();
+
+    await client.importData(payload);
+
+    expect(events.filter((event) => event.type === "sync_applied")).toEqual([]);
+    const applied = events.filter((event) => event.type === "mutation_applied");
+    expect(applied).toHaveLength(1);
+    expect(applied[0]).toMatchObject({
+      resource: "notes",
+      action: "replace",
+      ids: ["notes:r1", "notes:r2"],
+      context: { source: "import" },
+    });
+    const after = client.sync.statusSignal().get();
+    expect(after.lastSyncAt).toBe(before.lastSyncAt);
+    expect(after.lastError).toBe(before.lastError);
+  });
 });
 
 describe("importData with cloneUp", () => {
