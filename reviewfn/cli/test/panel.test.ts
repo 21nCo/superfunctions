@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DEFAULT_CONFIG, DEFAULT_POLICY, FileArtifactStore, PANEL_CANCELED_REASON, PANEL_QUORUM_UNMET, PANEL_REPORT_COPY_NAMES, parsePanelPolicy, type PanelPolicy, type PanelReport, type PanelSlot, type ReviewFnConfig } from "@superfunctions/reviewfn-core";
+import { DEFAULT_CONFIG, DEFAULT_POLICY, FileArtifactStore, PANEL_CANCELED_REASON, PANEL_QUORUM_UNMET, PANEL_REPORT_COPY_NAMES, panelReportCanceled, parsePanelPolicy, type PanelPolicy, type PanelReport, type PanelSlot, type ReviewFnConfig } from "@superfunctions/reviewfn-core";
+import { GitHubAdvisoryPublisher, GitHubApi } from "@superfunctions/reviewfn-github";
 import { FakeExecutionAdapter, FakePanelHarness, abortableDelay, slotOutput, type SlotBehavior } from "@superfunctions/reviewfn-testing";
 
 import { initializePanelPolicy, PANEL_POLICY_TEMPLATE } from "../src/config.js";
@@ -221,6 +222,39 @@ describe("reviewfn panel exit codes", () => {
     expect((await readdir(path.join(root, ".reviewfn"))).sort()).toEqual(["config.json", "output", "panel.json", "policy.json"]);
   });
 
+  it("exits 4 promptly, before any harness runs and saving nothing, when canceled while waiting for a held output lock", async () => {
+    await repository(panel([slot("one", 1)]));
+    const output = path.join(root, ".reviewfn", "output");
+    await mkdir(output, { recursive: true });
+    await writeFile(path.join(output, ".panel-report.lock"), JSON.stringify({ pid: 1, hostname: "crashed", acquiredAt: new Date().toISOString() }));
+    const controller = new AbortController();
+    let waits = 0;
+    class CancelingStore extends FileArtifactStore {
+      // SIGINT arrives during the first wait for the held lock.
+      protected override async outputLockRetry(signal?: AbortSignal): Promise<void> { waits++; controller.abort(); await super.outputLockRetry(signal); }
+    }
+    const harness = codex();
+    const result = await invoke(["--base", base, "--head", head, "--json"], harness, { signal: controller.signal, reportCopiesStore: locations => new CancelingStore(locations.artifactsDirectory, locations.outputDirectory, PANEL_REPORT_COPY_NAMES) });
+    expect(result.code).toBe(PANEL_EXIT_CODES.canceled);
+    expect(JSON.parse(result.stderr)).toMatchObject({ error: "REVIEWFN_CANCELED", details: { lock: path.join(output, ".panel-report.lock") } });
+    expect(waits).toBe(1);
+    expect(harness.calls).toHaveLength(0);
+    expect(result.stdout).toBe("");
+    expect(await readdir(output)).toEqual([".panel-report.lock"]);
+    expect((await readdir(path.join(root, ".reviewfn"))).sort()).toEqual(["config.json", "output", "panel.json", "policy.json"]);
+  });
+
+  it("exits 3 before any harness runs, writing nothing, when the output directory is the artifacts directory", async () => {
+    await repository(panel([slot("one", 1)]));
+    const harness = codex();
+    const result = await invoke(["--base", base, "--head", head, "--output", ".reviewfn/artifacts", "--json"], harness);
+    expect(result.code).toBe(PANEL_EXIT_CODES.preflight);
+    expect(JSON.parse(result.stderr)).toMatchObject({ error: "REVIEWFN_ARTIFACT_UNSAFE", details: { directory: path.join(root, ".reviewfn", "artifacts") } });
+    expect(harness.calls).toHaveLength(0);
+    expect(result.stdout).toBe("");
+    expect((await readdir(path.join(root, ".reviewfn"))).sort()).toEqual(["config.json", "panel.json", "policy.json"]);
+  });
+
   it("exits 3 for an adapter outside the fixed table without loading any module for it", async () => {
     await repository(panel([slot("one", 1, "model-one", "./evil.js")]));
     const result = await invoke(["--base", base, "--head", head], codex());
@@ -249,6 +283,25 @@ describe("reviewfn panel exit codes", () => {
     expect(report.slotRuns.map(run => run.terminal)).toEqual(["canceled", "canceled"]);
     expect(JSON.parse(result.stdout).runId).toBe(report.runId);
     expect(() => publication(report, parseArguments(["publish"]).flags)).toThrow(/canceled panel report is never published/);
+  });
+
+  it("keeps the saved report of a canceled run recognizably canceled when a collected secret appears in the cancellation marker", async () => {
+    await repository(panel([slot("one", 1), slot("two", 1)], { maxConcurrentSlots: 1 }));
+    const controller = new AbortController();
+    const harness = codex({ one: async input => { controller.abort(); await abortableDelay(60_000, input.signal); return slotOutput(); } });
+    // "panel" is a substring of PANEL_CANCELED_REASON; the coordinator redacts collected secrets from every other reason.
+    const result = await invoke(["--base", base, "--head", head, "--json"], harness, { signal: controller.signal, environment: { ...environment, DB_PASSWORD: "panel" } });
+    expect(result.code).toBe(PANEL_EXIT_CODES.canceled);
+    const { report } = await stored();
+    expect(report.coverageReasons).toContain(PANEL_CANCELED_REASON);
+    expect(panelReportCanceled(report)).toBe(true);
+    expect(() => publication(report, parseArguments(["publish"]).flags)).toThrow(/canceled panel report is never published/);
+    const requests: string[] = [];
+    const api = new GitHubApi({ owner: "acme", repository: "repo", token: "secret", fetch: async (url: string | URL | Request) => { requests.push(String(url)); throw new Error("no request is expected"); } });
+    // The publisher checks the publication identity first; the coverage reasons stay exactly as the coordinator stored them.
+    const published = { ...report, change: { ...report.change, repositoryId: "https://github.com/acme/repo", pullRequest: 1 } };
+    expect(await new GitHubAdvisoryPublisher({ api, pullRequest: 1 }).publish({ report: published, rendered: "canceled", expectedHead: head, profile: "panel" })).toEqual({ status: "failed", error: expect.stringMatching(/canceled/) });
+    expect(requests).toEqual([]);
   });
 
   it("names the leftover snapshot on stderr, keeps exit 3 or 4 and prints no report when the snapshot cannot be removed", async () => {

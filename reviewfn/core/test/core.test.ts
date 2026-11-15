@@ -339,6 +339,47 @@ describe("one lock and one retention record per panel output directory", () => {
     expect((await fileSystem.readdir(root)).sort()).toEqual(["a", "out"]);
     expect(await fileSystem.readdir(output)).toEqual([]);
   });
+
+  it("ends the preflight wait for a held lock when its signal aborts, without taking the lock", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-lock-abort-"));
+    const output = path.join(root, "out");
+    const lock = path.join(output, ".panel-report.lock");
+    const controller = new AbortController();
+    class AbortingStore extends FileArtifactStore {
+      public waits = 0;
+      // Cancellation arrives during the first wait for the held lock.
+      protected override async outputLockRetry(signal?: AbortSignal): Promise<void> { this.waits++; controller.abort(); await super.outputLockRetry(signal); }
+    }
+    await mkdir(output);
+    await writeFile(lock, JSON.stringify({ pid: 1, hostname: "crashed", acquiredAt: new Date().toISOString() }));
+    const store = new AbortingStore(path.join(root, "a"), output, PANEL_REPORT_COPY_NAMES);
+    await expect(store.checkReportCopiesLock(controller.signal)).rejects.toMatchObject({ code: "REVIEWFN_CANCELED", details: { lock } });
+    expect(store.waits).toBe(1);
+    expect(await fileSystem.readdir(output)).toEqual([".panel-report.lock"]);
+    expect(await fileSystem.readdir(root)).toEqual(["out"]);
+  });
+
+  it.each([["retention", { json: "retention.json", markdown: "retention.md" }], ["panel-report", PANEL_REPORT_COPY_NAMES]])("refuses %s copies whose directory is the artifact root, by path or another spelling, before writing", async (_, names) => {
+    const parent = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-coincident-"));
+    const root = path.join(parent, "store");
+    await mkdir(root);
+    await mkdir(path.join(parent, "elsewhere"));
+    class ImpatientStore extends FileArtifactStore {
+      public waits = 0;
+      protected override async outputLockRetry(): Promise<void> { this.waits++; }
+    }
+    // Every spelling safeDirectory permits: lexical variants, and on macOS the physical /private path of the temporary directory.
+    for (const output of [root, `${root}/`, `${parent}/elsewhere/../store`, ...(temporaryAlias ? [realpathSync(root)] : [])]) {
+      const store = new ImpatientStore(root, output, names);
+      await expect(store.checkReportCopiesLock()).rejects.toMatchObject({ code: "REVIEWFN_ARTIFACT_UNSAFE", details: { directory: output, artifacts: root } });
+      await expect(store.writeReportCopies("json", "md", 1)).rejects.toMatchObject({ code: "REVIEWFN_ARTIFACT_UNSAFE" });
+      const cleanup = await store.deleteExpired(new Date(Date.now() + 2 * DAY));
+      expect(cleanup.errors).toEqual([expect.stringMatching(/^Report copies: REVIEWFN_ARTIFACT_UNSAFE: /)]);
+      // Refused up front: no wait on the store's own lease, and no copy, record, lock or staged file in the root.
+      expect(store.waits).toBe(0);
+      expect(await fileSystem.readdir(root)).toEqual([]);
+    }
+  });
 });
 
 it.each([".json", ".md"])("replaces the panel copies as a pair, keeping the previous pair and record when writing the %s copy fails", async failing => {

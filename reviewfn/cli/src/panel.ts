@@ -201,6 +201,8 @@ export interface PanelCommandDependencies {
   removeSnapshot?: (directory: string) => Promise<void>;
   /** Clones the private snapshot; `createReviewSnapshot` by default. */
   createSnapshot?: typeof createReviewSnapshot;
+  /** The store that checks, writes and expires the panel report copies; the panel `FileArtifactStore` by default. */
+  reportCopiesStore?: (locations: Pick<PanelOutputLocations, "artifactsDirectory" | "outputDirectory">) => FileArtifactStore;
 }
 
 /** The single JSON error line every command writes to stderr. */
@@ -317,6 +319,7 @@ export async function runPanelCommand(flags: Flags, dependencies: PanelCommandDe
   let owned: string | undefined;
   // The saved report's stdout line, printed only after the private snapshot is removed and the exit code is final.
   let output: string | undefined;
+  const reportCopiesStore = () => dependencies.reportCopiesStore?.(invocation) ?? new FileArtifactStore(invocation.artifactsDirectory, invocation.outputDirectory, PANEL_REPORT_COPY_NAMES);
   const code = await (async (): Promise<number> => { try {
     let coordinator: PanelCoordinator;
     let request: Parameters<PanelCoordinator["run"]>[0];
@@ -333,7 +336,7 @@ export async function runPanelCommand(flags: Flags, dependencies: PanelCommandDe
       const { harnesses, contractVersions } = await resolvePanelHarnesses(panelPolicy, config, dependencies.importHarnessModule, environment);
       for (const ref of [invocation.base, invocation.head]) await resolveCommit(root, ref);
       const since = invocation.since === undefined ? undefined : await resolveCommit(root, invocation.since);
-      await new FileArtifactStore(invocation.artifactsDirectory, invocation.outputDirectory, PANEL_REPORT_COPY_NAMES).checkReportCopiesLock();
+      await reportCopiesStore().checkReportCopiesLock(signal);
       setup = { config, policy, panelPolicy, harnesses, contractVersions, since };
     } catch (error) {
       if (signal?.aborted) return canceled(error, "during preflight");
@@ -379,7 +382,7 @@ export async function runPanelCommand(flags: Flags, dependencies: PanelCommandDe
       else if (error instanceof ReviewFnError && error.code === "REVIEWFN_PREFLIGHT_FAILED") return fail(PANEL_EXIT_CODES.preflight, error);
       else return fail(PANEL_EXIT_CODES.error, error);
     }
-    const saved = await savePanelRun(report, quorumMet, { ownedArtifacts, artifactsDirectory: invocation.artifactsDirectory, outputDirectory: invocation.outputDirectory, reportDays }, signal);
+    const saved = await savePanelRun(report, quorumMet, { ownedArtifacts, artifactsDirectory: invocation.artifactsDirectory, outputDirectory: invocation.outputDirectory, reportDays }, signal, reportCopiesStore());
     // Exit 1 prints nothing on stdout, even when the report was saved (a retention cleanup failure).
     if (saved.reportPath !== undefined && saved.exitCode !== PANEL_EXIT_CODES.error) output = invocation.json ? `${JSON.stringify({ report: saved.reportPath, runId: report.runId })}\n` : `${saved.rendered}\n`;
     return saved.error === undefined ? saved.exitCode : fail(saved.exitCode, saved.error);

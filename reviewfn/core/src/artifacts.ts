@@ -1,6 +1,6 @@
 import { hostname } from "node:os";
 import { constants } from "node:fs";
-import { lstat, open, readdir, rename, rm } from "node:fs/promises";
+import { lstat, open, readdir, rename, rm, stat as statPath } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 
@@ -59,24 +59,47 @@ export class FileArtifactStore implements ArtifactStore {
   /** The retention record of this store's report copies. */
   private copiesRecord(): string { return path.join(this.copiesPaired ? this.reportCopiesDirectory! : this.root, this.copiesStem); }
 
-  /** The wait between attempts to take a copies directory's lock; tests override it to observe or skip the wait. */
-  protected async outputLockRetry(): Promise<void> { await new Promise(resolve => setTimeout(resolve, 50)); }
+  /**
+   * The wait between attempts to take a copies directory's lock, ended early when `signal` aborts; tests override it to
+   * observe or skip the wait.
+   */
+  protected async outputLockRetry(signal?: AbortSignal): Promise<void> {
+    await new Promise<void>(resolve => {
+      const done = () => { clearTimeout(timer); signal?.removeEventListener("abort", done); resolve(); };
+      const timer = setTimeout(done, 50);
+      signal?.addEventListener("abort", done, { once: true });
+    });
+  }
 
   /**
    * Wait, as long as a write would, while the copies directory's lock is held, without taking it or writing anything,
    * so a command can refuse a directory whose lock a killed run left behind before it does any work: a lock still held
-   * fails with REVIEWFN_OUTPUT_DIRECTORY_BUSY, and a symlinked or non-regular one with REVIEWFN_ARTIFACT_UNSAFE.
-   * Writes and cleanup still take the lock themselves.
+   * fails with REVIEWFN_OUTPUT_DIRECTORY_BUSY, a symlinked or non-regular one, or a copies directory that is the artifact
+   * root, with REVIEWFN_ARTIFACT_UNSAFE. Aborting `signal` ends the wait with REVIEWFN_CANCELED. Writes and cleanup still
+   * take the lock themselves.
    */
-  public async checkReportCopiesLock(): Promise<void> {
+  public async checkReportCopiesLock(signal?: AbortSignal): Promise<void> {
     if (!this.copiesPaired || !this.reportCopiesDirectory) return;
+    await this.refuseCopiesInRoot();
     const file = path.join(this.reportCopiesDirectory, this.lockName);
     for (let attempt = 1; ; attempt++) {
+      if (signal?.aborted) throw new ReviewFnError("REVIEWFN_CANCELED", `Canceled while waiting for the report-copy lock ${file}.`, { lock: file });
       const stat = await lstat(file).catch((error: NodeJS.ErrnoException) => missing(error) ? undefined : Promise.reject(error));
       if (!stat) return;
       this.refuseLock(file, stat, attempt);
-      await this.outputLockRetry();
+      await this.outputLockRetry(signal);
     }
+  }
+
+  /**
+   * Refuse a panel copies directory that is the artifact root itself, by path or through another spelling of it: the
+   * root holds the store's lease and artifact metadata, so the copies, their lock and their record must live elsewhere.
+   */
+  private async refuseCopiesInRoot(): Promise<void> {
+    const directory = this.reportCopiesDirectory!;
+    const [root, copies] = await Promise.all([this.root, directory].map(item => statPath(item).catch((error: NodeJS.ErrnoException) => missing(error) ? undefined : Promise.reject(error))));
+    const same = path.resolve(directory) === path.resolve(this.root) || (root !== undefined && copies !== undefined && root.dev === copies.dev && root.ino === copies.ino);
+    if (same) throw new ReviewFnError("REVIEWFN_ARTIFACT_UNSAFE", `The report copies directory ${directory} is the artifacts directory; write the copies to another directory.`, { directory, artifacts: this.root });
   }
 
   /** Refuse a symlinked or non-regular lock, and a lock still held at the last of the bounded attempts. */
@@ -90,12 +113,14 @@ export class FileArtifactStore implements ArtifactStore {
    * Run `action` holding `<output>/.panel-report.lock`, the one lock that serializes every write, rollback and cleanup
    * of a panel copies directory, whichever artifact store makes it. It is taken inside the store's lease (root, then
    * output, so two stores never wait on each other in opposite orders), created exclusively and never followed. A
-   * symlinked or non-regular lock is refused; a lock still held after the bounded wait fails with
-   * REVIEWFN_OUTPUT_DIRECTORY_BUSY, naming the file to remove once no ReviewFn run writes to the directory.
+   * symlinked or non-regular lock, and a copies directory that is the artifact root (whose lease would share the lock's
+   * namespace), are refused; a lock still held after the bounded wait fails with REVIEWFN_OUTPUT_DIRECTORY_BUSY, naming
+   * the file to remove once no ReviewFn run writes to the directory.
    */
   private async withOutputLock<T>(action: () => Promise<T>): Promise<T> {
     const directory = this.reportCopiesDirectory!;
     await safeDirectory(directory);
+    await this.refuseCopiesInRoot();
     const file = path.join(directory, this.lockName);
     let handle;
     for (let attempt = 1; !handle; attempt++) {

@@ -771,12 +771,13 @@ export class PanelCoordinator {
     const { context, records, quorum } = input;
     const { request, prepared } = context;
     const now = this.dependencies.now ?? (() => new Date());
+    const canceled = input.canceled || context.runSignal.aborted;
     const coverageReasons = [
       ...prepared.changeDetail.coverageReasons,
       ...prepared.context.incompleteReasons,
       ...prepared.executionErrors,
       ...prepared.tests.filter(receipt => receipt.exitCode !== 0 || receipt.timedOut || receipt.canceled).map(receipt => `Test ${receipt.id} did not pass (exit ${String(receipt.exitCode)}).`),
-      ...(input.canceled || context.runSignal.aborted ? [PANEL_CANCELED_REASON] : []),
+      ...(canceled ? [PANEL_CANCELED_REASON] : []),
       ...(input.supersedes.length ? [`This report supersedes artifact(s) ${input.supersedes.join(", ")}, stored before the cancellation was observed.`] : []),
       ...quorum.filter(item => !item.met).map(item => `${PANEL_QUORUM_UNMET}: stage ${item.stage} has ${item.completed} completed slot run(s) with distinct identities; its quorum is ${item.required}.`),
       ...input.requirementsReport.reasons,
@@ -829,7 +830,9 @@ export class PanelCoordinator {
     coverageReasons.push(...input.cleanupErrors);
     const report: PanelReport = { ...base, evidence: [...evidence.values()].filter(item => cited.has(item.id)), findings, coverage: "complete", coverageReasons: [] };
     // Cleanup and requirements-report errors carry raw error messages: redact every reason before it is returned or stored.
-    const validation = await settleReport(report, coverageReasons.map(reason => redactText(reason, context.secrets)), request.policy, options);
+    // The cancellation marker is fixed text that consumers match exactly (panelReportCanceled), never a secret, so it is
+    // kept verbatim: a collected secret it happens to contain must not hide the cancellation from publication.
+    const validation = await settleReport(report, coverageReasons.map(reason => canceled && reason === PANEL_CANCELED_REASON ? reason : redactText(reason, context.secrets)), request.policy, options);
     // Cancellation is observed until the report is stored: one during validation restarts in canceled mode.
     if (!input.canceled && context.runSignal.aborted) return undefined;
     const stored = await this.dependencies.artifacts.put(PANEL_REPORT_ARTIFACT_KIND, JSON.stringify(report, null, 2), prepared.retention.reportDays);
