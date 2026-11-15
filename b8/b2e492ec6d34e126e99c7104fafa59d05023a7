@@ -1,0 +1,21 @@
+datafn/client/__tests__/cloneUp.test.ts
+  s_f058f999ab46b7::t_ec11c8a2662ec0 1966-2007
+datafn/client/src/sync/cloneUp.ts
+  s_f058f999ab46b7::t_7cb8d3e1e1dc07 227-229,253-255,391-395
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b8b2e492ec6d34e126e99c7104fafa59d05023a7",
+  "prompts": {},
+  "sessions": {
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
