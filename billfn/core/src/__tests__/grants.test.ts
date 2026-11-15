@@ -625,4 +625,62 @@ describe('entitlement grants', () => {
     expect(response.grants).toMatchObject([{ kind: 'trial', status: 'expired' }]);
     expect(await env.events('billfn.grant.created')).toHaveLength(1);
   });
+
+  it('serves a deciding paid snapshot without transactions when the grants cannot be read for the event repair', async () => {
+    const { db: failing } = failingEventDb(false);
+    const grantReads = { reject: false };
+    const db: Adapter = {
+      ...failing,
+      async findMany<T>(params: Parameters<Adapter['findMany']>[0]): Promise<T[]> {
+        if (grantReads.reject && params.model === 'entitlementGrants') {
+          throw new Error('grants unavailable');
+        }
+        return failing.findMany<T>(params);
+      }
+    };
+    const env = setup(db);
+    await env.subscribe('active');
+    grantReads.reject = true;
+    await expect(env.billfn.subscriptionProvider.getEntitlementSnapshot(env.subject)).resolves.toMatchObject({ status: 'active' });
+    await expect(env.billfn.subscriptionProvider.hasFeature(env.subject, 'memotron')).resolves.toBe(true);
+    await expect(
+      env.billfn.quotaProvider.checkQuota({ principalId: PRINCIPAL, requestedBytes: 3000 })
+    ).resolves.toMatchObject({ allowed: true, limit: 5000 });
+    await expect(env.billfn.quotaProvider.getUsage(PRINCIPAL)).resolves.toMatchObject({ limit: 5000 });
+  });
+
+  it('derives grant status after the paid snapshot read, so a grant ending during it entitles nothing', async () => {
+    const consumers: Array<[string, (env: ReturnType<typeof setup>) => Promise<unknown>, unknown]> = [
+      ['hasFeature', (env) => env.billfn.subscriptionProvider.hasFeature(env.subject, 'memotron'), false],
+      [
+        'checkQuota',
+        (env) => env.billfn.quotaProvider.checkQuota({ principalId: PRINCIPAL, requestedBytes: 1 }),
+        { allowed: false, current: 0, limit: 0, reason: 'subscription_inactive' }
+      ]
+    ];
+    for (const kind of ['trial', 'comp'] as const) {
+      for (const [name, consume, expected] of consumers) {
+        const { db: failing } = failingEventDb(false);
+        let env: ReturnType<typeof setup> | undefined;
+        const passExpiry = { armed: false };
+        const db: Adapter = {
+          ...failing,
+          async findOne<T>(params: Parameters<Adapter['findOne']>[0]): Promise<T | null> {
+            // The grant expires while the paid snapshot is read.
+            if (passExpiry.armed && params.model === 'entitlementSnapshots') {
+              passExpiry.armed = false;
+              env!.advance(2);
+            }
+            return failing.findOne<T>(params);
+          }
+        };
+        env = setup(db);
+        await env.grant({ kind, planKey: 'memotron', expiresAt: env.days(3) });
+        env.advance(2);
+        passExpiry.armed = true;
+        expect(await consume(env), `${kind} ${name}`).toEqual(expected);
+        expect(passExpiry.armed, `${kind} ${name}`).toBe(false);
+      }
+    }
+  });
 });

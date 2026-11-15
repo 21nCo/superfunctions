@@ -285,22 +285,19 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
   };
   /**
    * The account's entitlements: its paid snapshot, or an active grant while that snapshot is `inactive`, and the
-   * grants they were derived from. Without transactions the grants are read on every call, so their missing
-   * events are repaired first (see `listRepairedGrants`); with transactions they are read when the paid snapshot
-   * does not decide or `withGrantList` asks for them.
+   * grants they were derived from. The grants' missing events are repaired on every read (see
+   * `repairGrantEvents`). While the paid snapshot decides and the grants are not asked for, that repair is all
+   * that reads them, and it never fails the read; otherwise their status is derived after the paid snapshot read
+   * and the repair (see `listRepairedGrants`).
    */
   async function readEntitlements(billingAccountId: string, withGrantList = false) {
-    const grants =
-      withGrantList || !deps.db.capabilities.transactions.supported
-        ? await listRepairedGrants(grantDeps, billingAccountId)
-        : undefined;
-    const entitlements = await applyGrants(
-      grantDeps,
-      billingAccountId,
-      await findEntitlementSnapshot(deps, billingAccountId),
-      grants
-    );
-    return { entitlements, grants: grants ?? [] };
+    const paid = await findEntitlementSnapshot(deps, billingAccountId);
+    if (!withGrantList && paid && paid.status !== 'inactive') {
+      await repairGrantEvents(grantDeps, billingAccountId);
+      return { entitlements: paid, grants: [] };
+    }
+    const grants = await listRepairedGrants(grantDeps, billingAccountId);
+    return { entitlements: await applyGrants(grantDeps, billingAccountId, paid, grants), grants };
   }
   async function findEffectiveEntitlements(billingAccountId: string) {
     return (await readEntitlements(billingAccountId)).entitlements;

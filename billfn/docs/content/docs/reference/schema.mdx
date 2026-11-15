@@ -60,7 +60,7 @@ The Python SDK mirrors schema version `5`. Both helpers expose the same fifteen 
 
 ### Schema 4 to 5 (`@billfn/core` 0.4.0)
 
-Version `5` adds one table, `entitlementGrants`. Create it before deploying `@billfn/core` 0.4.0: every entitlement read (`getEntitlements`, `subscriptionProvider`, `quotaProvider`, `getUsage`) of an account whose paid entitlements are missing or `inactive` reads it, and `billfn.services.grants` writes it. A trial's id is `grant_trial_<billingAccountId>`, so the unique `id` allows one trial per billing account; comps are numbered `grant_comp_<billingAccountId>_<n>`, and the next number is taken only while the latest comp is not active, so the unique `id` also allows one active comp at a time. No backfill is needed. The migration is additive, so rolling back to 0.3.x leaves the table unused (and its grants without effect).
+Version `5` adds one table, `entitlementGrants`. Create it before deploying `@billfn/core` 0.4.0: every entitlement read (`getEntitlements`, `subscriptionProvider`, `quotaProvider`, `getUsage`) of an account whose paid entitlements are missing or `inactive` reads it (`getEntitlements` always does, and without transactions every read does, to record missing grant events), and `billfn.services.grants` writes it. A trial's id is `grant_trial_<billingAccountId>`, so the unique `id` allows one trial per billing account; comps are numbered `grant_comp_<billingAccountId>_<n>`, and the next number is taken only while the latest comp is not active, so the unique `id` also allows one active comp at a time. No backfill is needed. The migration is additive, so rolling back to 0.3.x leaves the table unused (and its grants without effect).
 
 | Field | Type | Required |
 | --- | --- | --- |
