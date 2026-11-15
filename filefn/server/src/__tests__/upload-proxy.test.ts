@@ -558,7 +558,7 @@ describe('FILE-16 per-session storage keys', () => {
       const res = await routes.initSession(new Request('http://localhost/upload/init', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: jsonBody({ policy: 'fixed', fileName: 'a.txt', size: 3, mimeType: 'text/plain', fileId: 'file_shared' }),
+        body: jsonBody({ policy: 'fixed', fileName: 'a.txt', size: 3, mimeType: 'text/plain', fileId: 'file_shared01' }),
       }));
       const body = await res.json();
       expect(res.status).toBe(500);
@@ -575,9 +575,9 @@ describe('FILE-16 per-session storage keys', () => {
     const storagePath = ({ fileId, versionId }: PathCtx) => `shared/${fileId}/${versionId}`;
     const { db, storage, service } = proxyService({ storagePath });
     const other = { principalId: 'u2', tenantId: 't1', requestId: 'req_other' };
-    const first = await initSession(service, 'file_shared');
+    const first = await initSession(service, 'file_shared01');
     const second = await service.createSession(
-      { policy: 'p1', fileName: 'b.txt', size: 3, mimeType: 'text/plain', fileId: 'file_shared' },
+      { policy: 'p1', fileName: 'b.txt', size: 3, mimeType: 'text/plain', fileId: 'file_shared01' },
       other,
     );
     const keyA = sessionRow(db, first.uploadSessionId).storageKey as string;
