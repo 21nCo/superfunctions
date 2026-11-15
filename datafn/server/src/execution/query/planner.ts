@@ -46,11 +46,11 @@ export interface PushdownWhereClause {
 /** Maps DFQL operator strings (with and without $ prefix) to adapter operators. */
 /**
  * Largest `$in` list pushed to the adapter as one bound-parameter list. A
- * longer list (e.g. a shareable access list of thousands of ids) stays an
- * in-memory filter so the SQL statement cannot exceed a driver's parameter
- * limit (Postgres allows 65,535 per statement).
+ * longer list stays an in-memory filter so the SQL statement cannot exceed
+ * Postgres' 65,535 parameters per statement; the shareable access filter can
+ * appear twice in one statement, leaving room for the query's own filters.
  */
-export const MAX_PUSHDOWN_IN_VALUES = 1000;
+export const MAX_PUSHDOWN_IN_VALUES = 30_000;
 
 function isOversizedInList(adapterOp: PushdownOperator, value: unknown): boolean {
   return adapterOp === "in" && Array.isArray(value) && value.length > MAX_PUSHDOWN_IN_VALUES;

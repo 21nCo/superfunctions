@@ -140,20 +140,18 @@ describe("query access for the namespace owner", () => {
   });
 });
 
-describe("non-owner with a long access list", () => {
+describe("non-owner access lists", () => {
   let server: any;
   afterEach(async () => {
     await server?.close?.();
   });
 
-  it("filters in memory instead of binding the whole id list", async () => {
+  it("pushes an access list of 1,500 ids down as one filter", async () => {
     const harness = await createHarness("bob");
     server = harness.server;
-    // Seed more of bob's rows than one bound-parameter list may hold.
-    const extra = MAX_PUSHDOWN_IN_VALUES + 5;
-    const db = harness.base;
+    const extra = 1500;
     for (let i = 0; i < extra; i++) {
-      await db.create({
+      await harness.base.create({
         model: "notes",
         data: { __ns: NAMESPACE, id: `n_bob_${String(i).padStart(5, "0")}`, title: "b", createdBy: "bob" },
         namespace: NAMESPACE,
@@ -175,11 +173,24 @@ describe("non-owner with a long access list", () => {
       `n_bob_${String(extra - 2).padStart(5, "0")}`,
       `n_bob_${String(extra - 3).padStart(5, "0")}`,
     ]);
-    expect(
-      idInFilters(harness.calls).filter(
-        (clause) => Array.isArray(clause.value) && clause.value.length > MAX_PUSHDOWN_IN_VALUES,
-      ),
-    ).toEqual([]);
+    // One owned-row read plus the pushed-down query; no full-table load.
+    const noteReads = harness.calls.filter((call) => call.model === "notes");
+    expect(noteReads.every((call) => (call.where ?? []).some((c) => c.field !== "__ns"))).toBe(true);
+    expect(idInFilters(harness.calls).length).toBeGreaterThan(0);
+  });
+
+  it("ignores access fields a client puts in query metadata", async () => {
+    const harness = await createHarness("bob");
+    server = harness.server;
+
+    const { status, body } = await query(server, {
+      resource: "notes",
+      version: 1,
+      metadata: { hasShareableScopeAccess: true, shareableAccessIds: ["n_owned"] },
+    });
+
+    expect(status).toBe(200);
+    expect((body.result.data as Array<{ id: string }>).map((r) => r.id)).toEqual(["n_bob"]);
   });
 });
 

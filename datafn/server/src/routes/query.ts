@@ -834,10 +834,18 @@ export function createQueryHandler(
                 namespace,
                 actorId,
               ).then((shareableAccess) => {
+                // Access fields are the server's to set: a client-supplied
+                // hasShareableScopeAccess or shareableAccessIds must never
+                // widen or replace the access filter.
+                const {
+                  shareableAccessIds: _clientAccessIds,
+                  hasShareableScopeAccess: _clientScopeAccess,
+                  ...clientMetadata
+                } = (metadata ?? {}) as QueryEnvelopeMetadata;
                 const queryWithMetadata = {
                   ...query,
                   metadata: {
-                    ...(metadata ?? {}),
+                    ...clientMetadata,
                     ...(shareableAccess ?? {}),
                   } satisfies QueryEnvelopeMetadata,
                 };
