@@ -1827,4 +1827,29 @@ describe("cloneUp — cycles and the changelog (DATA-15)", () => {
     expect(storage.changelog.map((entry) => entry.mutationId)).toEqual(["m-during"]);
     expect(storage.changelog.every((entry) => entry.seq > before.seq)).toBe(true);
   });
+
+  it("does not read the changelog when it will not be cleared", async () => {
+    const storage = new MockStorageAdapter();
+    storage.cursors.set("__global_cursor__", "0");
+    await storage.upsertRecord("tasks", { id: "t1", title: "One" });
+    const listSpy = vi.spyOn(storage, "changelogList");
+    const sent: Array<Record<string, any>> = [];
+    const pushSpy = okPush(sent);
+    const client = createDatafnClient({
+      schema: {
+        resources: [{ name: "tasks", version: 1, fields: [{ name: "title", type: "string" as const }] }],
+      },
+      sync: { remote: "http://example.com" },
+      clientId: "client:no-clear",
+      storage,
+    });
+    const result = await client.sync.cloneUp({
+      includeManyMany: false,
+      pullAfter: false,
+      clearChangelogOnSuccess: false,
+    });
+    pushSpy.mockRestore();
+    expect(result.ok).toBe(true);
+    expect(listSpy).not.toHaveBeenCalled();
+  });
 });

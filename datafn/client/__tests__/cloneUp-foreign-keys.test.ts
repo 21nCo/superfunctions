@@ -391,6 +391,8 @@ describe("DATA-15: cloneUp against SQLite with foreign keys", () => {
         message: expect.stringContaining("nodes nodes:b was sent with peerId = nodes:a"),
       }),
     );
+    // The server named the rejected record, so the cycle is not offered as a guess.
+    expect(result.errors.some((error) => /may be why/.test(error.message))).toBe(false);
     const sent = pushes.flatMap((push) => push.mutations);
     expect(sent.every((mutation) => mutation.record?.peerId !== null)).toBe(true);
     expect(rows("nodes")).toEqual([]);

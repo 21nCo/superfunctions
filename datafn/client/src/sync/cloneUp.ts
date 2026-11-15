@@ -153,7 +153,8 @@ export async function cloneUp(
   // Changelog entries written after this point (local writes made while the
   // push runs) may not be in the records read below, so finalization leaves
   // them queued for the next sync.
-  const changelogMark = await lastChangelogSeq(storage);
+  const changelogMark =
+    options?.clearChangelogOnSuccess !== false ? await lastChangelogSeq(storage) : null;
   const recordsByResource = new Map<string, Record<string, unknown>[]>();
   const localIds = new Map<string, Set<string>>();
   for (const resourceName of orderedResources) {
@@ -189,6 +190,9 @@ export async function cloneUp(
     for (const mutation of batch) {
       const mutationId = mutation.mutationId as string;
       if (!wholeBatch && !rejected.has(mutationId)) continue;
+      // A rejection of the whole batch may have another cause, so it is
+      // offered as a possible one.
+      const named = rejected.has(mutationId);
       for (const reference of unbrokenCycleReferences.get(mutationId) ?? []) {
         explained.push({
           mutationId,
@@ -196,7 +200,8 @@ export async function cloneUp(
           message:
             `${reference.resource} ${reference.id} was sent with ${reference.field} = ` +
             `${reference.targetId}, which was not pushed yet: the reference is part of a ` +
-            `cycle and cannot be unset because the field is not nullable`,
+            `cycle and cannot be unset because the field is not nullable` +
+            (named ? "" : "; this may be why the batch was rejected"),
           path: `record.${reference.field}`,
         });
       }
