@@ -52,13 +52,19 @@ export function parseSortTerms(sort: SortInputTerm[] | undefined): SortTerm[] {
   return sort.map(parseSortTerm);
 }
 
-const NUMERIC_STRING = /^[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?$/;
+// Each part of the mantissa has one way to match, so a long digit run that
+// fails to match is rejected in linear time.
+const NUMERIC_STRING = /^[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?$/;
 
 function isNullish(value: unknown): value is null | undefined {
   return value === null || value === undefined;
 }
 
-/** A finite number for numbers and decimal numeric strings, otherwise undefined. */
+/**
+ * The number to compare for a number (any but NaN, so Infinity sorts after
+ * every finite number) or a decimal numeric string with a finite value,
+ * otherwise undefined.
+ */
 function comparableNumber(value: unknown): number | undefined {
   if (typeof value === "number") return Number.isNaN(value) ? undefined : value;
   if (typeof value === "string") {
@@ -83,18 +89,24 @@ export function compareSortValues(a: unknown, b: unknown): number {
   if (a === b) return 0;
   const aNullish = isNullish(a);
   const bNullish = isNullish(b);
-  if (aNullish || bNullish) {
-    if (aNullish && bNullish) return 0;
-    return aNullish ? 1 : -1;
-  }
+  if (aNullish || bNullish) return compareNullish(aNullish, bNullish);
   const aNumber = comparableNumber(a);
   const bNumber = comparableNumber(b);
-  if (aNumber !== undefined && bNumber !== undefined) {
-    return aNumber < bNumber ? -1 : aNumber > bNumber ? 1 : 0;
-  }
+  if (aNumber !== undefined && bNumber !== undefined) return compareNumbers(aNumber, bNumber);
   if (aNumber !== undefined) return -1;
   if (bNumber !== undefined) return 1;
   return String(a).localeCompare(String(b));
+}
+
+/** Nullish values are equal to each other and sort last. */
+function compareNullish(aNullish: boolean, bNullish: boolean): number {
+  if (aNullish && bNullish) return 0;
+  return aNullish ? 1 : -1;
+}
+
+function compareNumbers(a: number, b: number): number {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
 }
 
 /** Plain code-unit order, the order the server uses for ids. */

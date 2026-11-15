@@ -238,3 +238,26 @@ describe("sortRecords with mixed values", () => {
     expect([...recs].sort((a, b) => compareRecords(a, b, terms))).toEqual(sortRecords(recs, terms));
   });
 });
+
+describe("compareSortValues numeric edge cases (DATA-15)", () => {
+  it("parses every decimal form as a number", () => {
+    for (const [text, value] of [["1.", 1], [".5", 0.5], ["1e3", 1000], ["-1.5e-2", -0.015], ["+7", 7]] as const) {
+      expect(compareSortValues(text, value)).toBe(0);
+    }
+    for (const text of ["1.2.3", "e5", ".", "1e", "--1", "0x10"]) {
+      expect(compareSortValues(text, 1)).toBe(1);
+    }
+  });
+
+  it("sorts infinite numbers at the ends of the numbers", () => {
+    const values = [Infinity, "abc", 5, -Infinity, "10", null];
+    expect([...values].sort(compareSortValues)).toEqual([-Infinity, 5, "10", Infinity, "abc", null]);
+  });
+
+  it("rejects a long malformed digit run in linear time", () => {
+    const malformed = `0${"00".repeat(50_000)}x`;
+    const start = performance.now();
+    expect(compareSortValues(malformed, 1)).toBe(1);
+    expect(performance.now() - start).toBeLessThan(200);
+  });
+});
