@@ -54,134 +54,318 @@ function unreadable(file, line, reason) {
 
 const BASIC_ESCAPES = { b: "\b", t: "\t", n: "\n", f: "\f", r: "\r", e: "\x1b", '"': '"', "\\": "\\" };
 
-function unescapeBasic(raw, fail) {
-  return raw.replace(/\\(u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|[\s\S])/g, (_, escape) => {
-    if (escape.length > 1) {
+/** Decodes the escapes of a basic string; in a multi-line basic string a line-ending backslash trims whitespace. */
+function unescapeBasic(raw, multiline, fail) {
+  return raw.replace(/\\([ \t]*\n[ \t\n]*|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|[\s\S])/g, (_, escape) => {
+    if (multiline && escape.includes("\n")) return "";
+    if (/^[uU][0-9A-Fa-f]+$/.test(escape) && escape.length > 1) {
       const codePoint = Number.parseInt(escape.slice(1), 16);
       if (codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff)) throw fail(`invalid escape \\${escape}`);
       return String.fromCodePoint(codePoint);
     }
     if (Object.hasOwn(BASIC_ESCAPES, escape)) return BASIC_ESCAPES[escape];
-    throw fail(`invalid escape \\${escape}`);
+    throw fail(`invalid escape \\${escape.trimEnd()}`);
   });
 }
 
-/** Reads a TOML dotted key (bare, "basic" or 'literal' segments) at the start of `text`. */
-function readKey(text, fail) {
-  const segments = [];
-  let rest = text;
-  for (;;) {
-    rest = rest.trimStart();
-    let match;
-    if ((match = /^"((?:[^"\\\n]|\\.)*)"/.exec(rest))) segments.push(unescapeBasic(match[1], fail));
-    else if ((match = /^'([^'\n]*)'/.exec(rest))) segments.push(match[1]);
-    else if ((match = /^[A-Za-z0-9_-]+/.exec(rest))) segments.push(match[0]);
-    else return null;
-    rest = rest.slice(match[0].length).trimStart();
-    if (!rest.startsWith(".")) return { segments, rest };
-    rest = rest.slice(1);
+/** An integer, float, boolean, date or time value; only strings and tables matter to the ownership check. */
+class TomlScalar {
+  constructor(text) {
+    this.text = text;
   }
 }
 
-/** A single-line TOML string value followed only by an optional comment, or undefined. */
-function readStringValue(value, fail) {
-  let match = /^"((?:[^"\\\n]|\\.)*)"\s*(?:#.*)?$/.exec(value);
-  if (match) return unescapeBasic(match[1], fail);
-  match = /^'([^'\n]*)'\s*(?:#.*)?$/.exec(value);
-  return match ? match[1] : undefined;
-}
+const SCALARS = [
+  /\d{4}-\d{2}-\d{2}(?:[Tt ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:[Zz]|[+-]\d{2}:\d{2})?)?/y,
+  /\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?/y,
+  /true|false|[+-]?(?:inf|nan|0x[0-9A-Fa-f_]+|0o[0-7_]+|0b[01_]+|[0-9_]+(?:\.[0-9_]+)?(?:[eE][+-]?[0-9_]+)?)/y,
+];
 
 /**
- * Advances over a TOML value so that lines inside multi-line strings, arrays and inline tables are not read
- * as keys or table headers. Returns the open state to carry to the next line, or null when the value ended.
+ * Parses a TOML document into plain objects (tables are null-prototype objects, arrays are arrays, strings are
+ * strings, other values are TomlScalar). Redefining a key or table fails, as TOML requires. `onHeader` sees every
+ * table header before it is applied. Errors come from `fail(line, reason)`. Returns the document and the line on
+ * which each key path was first defined.
  */
-function scanValue(text, state = { depth: 0, string: null }) {
-  let { depth, string } = state;
-  for (let index = 0; index < text.length; index += 1) {
-    if (string) {
-      if (string === '"""' && text[index] === "\\") index += 1;
-      else if (text.startsWith(string, index)) {
-        // A closing delimiter may be followed by up to two quotes that belong to the string.
-        while (text[index + 3] === string[0]) index += 1;
-        index += 2;
-        string = null;
+export function parseToml(source, { fail, onHeader = () => {} }) {
+  const text = source.replace(/^﻿/, "").replace(/\r\n/g, "\n");
+  const newlines = [];
+  for (let index = text.indexOf("\n"); index !== -1; index = text.indexOf("\n", index + 1)) newlines.push(index);
+  const lineAt = (at) => {
+    let low = 0;
+    let high = newlines.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if (newlines[middle] < at) low = middle + 1;
+      else high = middle;
+    }
+    return low + 1;
+  };
+  let pos = 0;
+  const error = (reason, at = pos) => fail(lineAt(at), reason);
+  const lineText = (at) => text.slice(text.lastIndexOf("\n", at - 1) + 1, (text.indexOf("\n", at) + 1 || text.length + 1) - 1).trim();
+
+  // Table kinds: "implicit" (only named by a longer header), "header", "dotted" (made by a dotted key) and
+  // "inline" (an inline table and the dotted tables inside it, which are closed once written).
+  const kinds = new WeakMap();
+  const arraysOfTables = new WeakSet();
+  const lines = new Map();
+  const newTable = (kind) => {
+    const table = Object.create(null);
+    kinds.set(table, kind);
+    return table;
+  };
+  const isTable = (value) => typeof value === "object" && value !== null && kinds.has(value);
+  const display = (segments) => segments.map((segment) => (/^[A-Za-z0-9_-]+$/.test(segment) ? segment : JSON.stringify(segment))).join(".");
+  const record = (segments, at) => {
+    const key = JSON.stringify(segments);
+    if (!lines.has(key)) lines.set(key, lineAt(at));
+  };
+  const redefined = (segments, at) => error(`${display(segments)} is defined more than once`, at);
+
+  const skipSpace = () => {
+    while (text[pos] === " " || text[pos] === "\t") pos += 1;
+  };
+  const skipComment = () => {
+    if (text[pos] === "#") {
+      const end = text.indexOf("\n", pos);
+      pos = end === -1 ? text.length : end;
+    }
+  };
+  const skipBlank = () => {
+    for (;;) {
+      skipSpace();
+      skipComment();
+      if (text[pos] !== "\n") return;
+      pos += 1;
+    }
+  };
+  const endOfLine = (what) => {
+    skipSpace();
+    skipComment();
+    if (pos < text.length && text[pos] !== "\n") throw error(`unexpected text after ${what}`);
+    pos += 1;
+  };
+
+  const matchAt = (pattern) => {
+    pattern.lastIndex = pos;
+    const match = pattern.exec(text);
+    if (match) pos += match[0].length;
+    return match;
+  };
+
+  const readMultiline = (delimiter) => {
+    const start = pos;
+    pos += 3;
+    if (text[pos] === "\n") pos += 1;
+    const bodyStart = pos;
+    for (let index = pos; index < text.length; index += 1) {
+      if (delimiter === '"""' && text[index] === "\\") {
+        index += 1;
+      } else if (text.startsWith(delimiter, index)) {
+        // Up to two quotes directly before the closing delimiter belong to the string.
+        let end = index;
+        while (end < index + 2 && text[end + 3] === delimiter[0]) end += 1;
+        pos = end + 3;
+        const raw = text.slice(bodyStart, end);
+        return delimiter === "'''" ? raw : unescapeBasic(raw, true, (reason) => error(reason, start));
       }
+    }
+    throw error("unterminated multi-line string", start);
+  };
+
+  const readString = () => {
+    const start = pos;
+    if (text.startsWith('"""', pos)) return readMultiline('"""');
+    if (text.startsWith("'''", pos)) return readMultiline("'''");
+    let match = matchAt(/"((?:[^"\\\n]|\\.)*)"/y);
+    if (match) return unescapeBasic(match[1], false, (reason) => error(reason, start));
+    match = matchAt(/'([^'\n]*)'/y);
+    if (match) return match[1];
+    throw error("unterminated string", start);
+  };
+
+  const readKey = () => {
+    const segments = [];
+    for (;;) {
+      skipSpace();
+      if (text[pos] === '"' || text[pos] === "'") {
+        if (text.startsWith('"""', pos) || text.startsWith("'''", pos)) throw error("a key cannot be a multi-line string");
+        segments.push(readString());
+      } else {
+        const match = matchAt(/[A-Za-z0-9_-]+/y);
+        if (!match) throw error(`cannot read key in ${lineText(pos)}`);
+        segments.push(match[0]);
+      }
+      skipSpace();
+      if (text[pos] !== ".") return segments;
+      pos += 1;
+    }
+  };
+
+  // Writes `value` at the dotted key `segments` below `table` (whose path is `base`).
+  const assign = (table, base, segments, value, at, dottedKind) => {
+    let target = table;
+    for (const [index, segment] of segments.slice(0, -1).entries()) {
+      const pathSoFar = [...base, ...segments.slice(0, index + 1)];
+      if (!Object.hasOwn(target, segment)) {
+        target[segment] = newTable(dottedKind);
+        record(pathSoFar, at);
+      } else if (isTable(target[segment]) && kinds.get(target[segment]) === "implicit") {
+        // A table only named by a longer header may be extended by dotted keys, and is then closed to headers.
+        kinds.set(target[segment], dottedKind);
+      } else if (!isTable(target[segment]) || kinds.get(target[segment]) !== dottedKind) {
+        throw redefined(pathSoFar, at);
+      }
+      target = target[segment];
+    }
+    const last = segments.at(-1);
+    if (Object.hasOwn(target, last)) throw redefined([...base, ...segments], at);
+    target[last] = value;
+    record([...base, ...segments], at);
+  };
+
+  const readValue = (valuePath) => {
+    const start = pos;
+    const char = text[pos];
+    if (char === '"' || char === "'") return readString();
+    if (char === "[") {
+      pos += 1;
+      const array = [];
+      for (;;) {
+        skipBlank();
+        if (text[pos] === "]") break;
+        array.push(readValue([...valuePath, String(array.length)]));
+        skipBlank();
+        if (text[pos] === ",") pos += 1;
+        else if (text[pos] !== "]") throw error("expected , or ] in array", pos < text.length ? pos : start);
+      }
+      pos += 1;
+      return array;
+    }
+    if (char === "{") {
+      // Newlines and a trailing comma are accepted (TOML 1.1).
+      pos += 1;
+      const table = newTable("inline");
+      for (;;) {
+        skipBlank();
+        if (text[pos] === "}") break;
+        const at = pos;
+        const segments = readKey();
+        if (text[pos] !== "=") throw error(`expected = after key in inline table`);
+        pos += 1;
+        skipSpace();
+        assign(table, valuePath, segments, readValue([...valuePath, ...segments]), at, "inline");
+        skipBlank();
+        if (text[pos] === ",") pos += 1;
+        else if (text[pos] !== "}") throw error("expected , or } in inline table", pos < text.length ? pos : start);
+      }
+      pos += 1;
+      return table;
+    }
+    for (const pattern of SCALARS) {
+      const match = matchAt(pattern);
+      if (match && match[0] !== "") return new TomlScalar(match[0]);
+    }
+    throw error(`cannot read value in ${lineText(start)}`, start);
+  };
+
+  const root = newTable("header");
+  let current = root;
+  let currentPath = [];
+  for (;;) {
+    skipBlank();
+    if (pos >= text.length) break;
+    const at = pos;
+    if (text[pos] === "[") {
+      const isArray = text.startsWith("[[", pos);
+      pos += isArray ? 2 : 1;
+      const headerFail = () => error(`cannot read table header ${lineText(at)}`, at);
+      let segments;
+      try {
+        segments = readKey();
+      } catch {
+        throw headerFail();
+      }
+      const close = isArray ? "]]" : "]";
+      if (!text.startsWith(close, pos)) throw headerFail();
+      pos += close.length;
+      endOfLine("table header");
+      onHeader(segments, isArray, lineAt(at));
+      let table = root;
+      for (const [index, segment] of segments.slice(0, -1).entries()) {
+        const pathSoFar = segments.slice(0, index + 1);
+        if (!Object.hasOwn(table, segment)) {
+          table[segment] = newTable("implicit");
+          record(pathSoFar, at);
+        }
+        const next = table[segment];
+        if (arraysOfTables.has(next)) table = next.at(-1);
+        else if (isTable(next) && kinds.get(next) !== "inline") table = next;
+        else throw redefined(pathSoFar, at);
+      }
+      const last = segments.at(-1);
+      if (isArray) {
+        if (!Object.hasOwn(table, last)) {
+          table[last] = [];
+          arraysOfTables.add(table[last]);
+          record(segments, at);
+        } else if (!arraysOfTables.has(table[last])) {
+          throw redefined(segments, at);
+        }
+        current = newTable("header");
+        table[last].push(current);
+      } else {
+        if (!Object.hasOwn(table, last)) {
+          table[last] = newTable("header");
+          record(segments, at);
+        } else if (!isTable(table[last]) || kinds.get(table[last]) !== "implicit") {
+          throw redefined(segments, at);
+        }
+        current = table[last];
+        kinds.set(current, "header");
+      }
+      currentPath = segments;
       continue;
     }
-    const char = text[index];
-    if (char === "#") break;
-    if (text.startsWith('"""', index) || text.startsWith("'''", index)) {
-      string = text.slice(index, index + 3);
-      index += 2;
-    } else if (char === '"') {
-      const match = /^"(?:[^"\\\n]|\\.)*"/.exec(text.slice(index));
-      index += match ? match[0].length - 1 : text.length;
-    } else if (char === "'") {
-      const end = text.indexOf("'", index + 1);
-      index = end === -1 ? text.length : end;
-    } else if (char === "[" || char === "{") depth += 1;
-    else if (char === "]" || char === "}") depth -= 1;
+    const segments = readKey();
+    if (text[pos] !== "=") throw error(`cannot read key/value line ${lineText(at)}`, at);
+    pos += 1;
+    skipSpace();
+    const value = readValue([...currentPath, ...segments]);
+    assign(current, currentPath, segments, value, at, "dotted");
+    endOfLine("value");
   }
-  return string || depth > 0 ? { depth, string } : null;
+  return { document: root, lineOf: (segments) => lines.get(JSON.stringify(segments)) ?? 0 };
 }
 
 /**
- * Name of the project a pyproject.toml declares (`[project] name`, in any valid TOML spelling of the table or
- * key, or the top-level dotted key `project.name`), or null when it declares no project. Fails closed with an
- * `unreadable-pyproject` OwnersError naming the file when it declares project metadata whose name cannot be read.
+ * Name of the project a pyproject.toml declares (`project.name`, in any valid TOML spelling: a [project] table,
+ * dotted keys, an inline table, any string kind), or null when it declares no project. Fails closed with an
+ * `unreadable-pyproject` OwnersError naming the file when the file is not valid TOML or declares project
+ * metadata whose name cannot be read.
  */
 export function pyprojectName(source, file = "pyproject.toml") {
-  let table = [];
-  let open = null;
-  let sawProject = false;
-  const names = [];
-  for (const [index, raw] of source.split(/\r?\n/).entries()) {
-    const line = index + 1;
-    const fail = (reason) => unreadable(file, line, reason);
-    if (open) {
-      open = scanValue(raw, open);
-      continue;
-    }
-    const text = raw.trim();
-    if (text === "" || text.startsWith("#")) continue;
-    if (text.startsWith("[")) {
-      const isArray = text.startsWith("[[");
-      const close = isArray ? "]]" : "]";
-      const key = readKey(text.slice(isArray ? 2 : 1), fail);
-      if (!key || !key.rest.startsWith(close) || !/^\s*(?:#.*)?$/.test(key.rest.slice(close.length))) {
-        throw fail(`cannot read table header ${text}`);
+  const { document, lineOf } = parseToml(source, {
+    fail: (line, reason) => unreadable(file, line, reason),
+    onHeader: (segments, isArray, line) => {
+      if (isArray && segments.length === 1 && segments[0] === "project") {
+        throw unreadable(file, line, "project metadata must not be an array of tables");
       }
-      table = key.segments;
-      if (table[0] === "project") {
-        // Subtables and arrays of tables under project ([project.urls], [[project.authors]]) are project
-        // metadata; their keys sit below project.<sub> and are never read as the name. Only the project
-        // table itself must not be an array of tables.
-        sawProject = true;
-        if (isArray && table.length === 1) throw fail("project metadata must not be an array of tables");
-      }
-      continue;
-    }
-    const key = readKey(text, fail);
-    if (!key || !key.rest.startsWith("=")) throw fail(`cannot read key/value line ${text}`);
-    const full = [...table, ...key.segments];
-    const value = key.rest.slice(1).trim();
-    if (full[0] === "project") {
-      sawProject = true;
-      if (full.length === 1) throw fail("project metadata defined as an inline table cannot be read; use a [project] table");
-      if (full.length === 2 && full[1] === "name") {
-        const name = readStringValue(value, fail);
-        if (name === undefined) throw fail("project name must be a single-line string");
-        if (name === "") throw fail("project name is empty");
-        names.push(name);
-      }
-    }
-    open = scanValue(value);
+    },
+  });
+  if (!Object.hasOwn(document, "project")) return null;
+  const project = document.project;
+  if (typeof project !== "object" || project === null || Array.isArray(project) || project instanceof TomlScalar) {
+    throw unreadable(file, lineOf(["project"]), "project metadata must be a table");
   }
-  if (open) throw unreadable(file, 0, "unterminated multi-line value");
-  if (names.length > 1) throw unreadable(file, 0, "project name is defined more than once");
-  if (names.length === 1) return names[0];
-  if (sawProject) throw unreadable(file, 0, "project metadata has no name");
-  return null;
+  if (!Object.hasOwn(project, "name")) throw unreadable(file, 0, "project metadata has no name");
+  const name = project.name;
+  const line = lineOf(["project", "name"]);
+  if (typeof name !== "string") throw unreadable(file, line, "project name must be a string");
+  if (name === "") throw unreadable(file, line, "project name is empty");
+  if (/[\r\n]/.test(name)) throw unreadable(file, line, "project name must not contain a line break");
+  return name;
 }
 
 export function readPythonProjects(root, files) {

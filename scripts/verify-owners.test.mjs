@@ -178,21 +178,73 @@ test("pyprojectName skips multi-line values and fails closed on unreadable proje
   ].join("\n");
   assert.equal(pyprojectName(multiline), "real");
   throwsUnreadable('[project.urls]\nhome = "h"\n', /no name/);
-  throwsUnreadable('project = { name = "a" }\n', /inline table/);
-  throwsUnreadable('[project]\nname = """a"""\n', /single-line string/);
   throwsUnreadable('[[project]]\nname = "a"\n', /array of tables/);
   throwsUnreadable('[project]\nname = "a"\n[project]\nname = "b"\n', /more than once/);
   throwsUnreadable('[project\nname = "a"\n', /x\/pyproject\.toml:1: cannot read table header/);
   throwsUnreadable('[tool.x]\ny = """\n', /unterminated/);
 });
 
+test("pyprojectName reads an inline-table project and only its top-level name", () => {
+  assert.equal(pyprojectName('project = { name = "datafn", version = "0.1.0" }\n'), "datafn");
+  assert.equal(pyprojectName('project = { authors = [{ name = "a" }], urls = { name = "u" }, "name" = "datafn" }\n'), "datafn");
+  assert.equal(pyprojectName("project = { 'name' = \"datafn\", optional-dependencies.name = [\"x\"] }\n"), "datafn");
+  // TOML 1.1 allows newlines and a trailing comma inside an inline table.
+  assert.equal(pyprojectName('project = {\n  version = "1",\n  name = "datafn",\n}\n'), "datafn");
+  throwsUnreadable('project = { version = "1", authors = [{ name = "a" }], urls = { name = "u" } }\n', /x\/pyproject\.toml: project metadata has no name/);
+  throwsUnreadable('project = { name = "a" }\n[project]\nname = "b"\n', /x\/pyproject\.toml:2: project is defined more than once/);
+  throwsUnreadable('project = { name = "a" }\nproject.version = "1"\n', /x\/pyproject\.toml:2: project is defined more than once/);
+  throwsUnreadable('project = { name = "a", "name" = "b" }\n', /project\.name is defined more than once/);
+  throwsUnreadable('project = "datafn"\n', /x\/pyproject\.toml:1: project metadata must be a table/);
+});
+
+test("pyprojectName reads every TOML string kind as the name", () => {
+  for (const source of [
+    '[project]\nname = """datafn"""\n',
+    "[project]\nname = '''datafn'''\n",
+    '[project]\nname = """\ndatafn"""\n',
+    "[project]\nname = '''\ndatafn'''\n",
+    '[project]\nname = """\\\n   data\\\n   fn"""\n',
+    '[project]\nname = """data\\u0066n"""\n',
+    '[project]\r\nname = """\r\ndatafn"""\r\n',
+  ]) {
+    assert.equal(pyprojectName(source), "datafn", source);
+  }
+  assert.equal(pyprojectName('[project]\nname = """"datafn""""\n'), '"datafn"');
+  throwsUnreadable('[project]\nname = """data\nfn"""\n', /x\/pyproject\.toml:2: project name must not contain a line break/);
+  throwsUnreadable("[project]\nname = '''\n'''\n", /x\/pyproject\.toml:2: project name is empty/);
+  throwsUnreadable("[project]\nname = 1\n", /x\/pyproject\.toml:2: project name must be a string/);
+  throwsUnreadable('[project]\nname = """datafn\n', /x\/pyproject\.toml:2: unterminated multi-line string/);
+});
+
+test("pyprojectName follows the TOML rules for dotted keys and table headers", () => {
+  // Dotted keys may extend a table that only a longer header named; headers may add subtables to dotted tables.
+  assert.equal(pyprojectName('[a.b.c]\n[a]\nb.d = 1\n[project]\nname = "x"\n'), "x");
+  assert.equal(pyprojectName('[fruit]\napple.color = "red"\n[fruit.apple.texture]\n[project]\nname = "x"\n'), "x");
+  assert.equal(pyprojectName('a = 1979-05-27 07:32:00Z\nb = [1, 2, # c\n 3,]\nc = +inf\n[project]\nname = "x"\n'), "x");
+  throwsUnreadable('[project]\nname = "x"\nurls.home = "h"\n[project.urls]\n', /:4: project\.urls is defined more than once/);
+  throwsUnreadable('project.name = "x"\n[project]\n', /:2: project is defined more than once/);
+  throwsUnreadable('[project]\nname = "x" y\n', /:2: unexpected text after value/);
+  throwsUnreadable('[project]\nname = "a\\qb"\n', /:2: invalid escape \\q/);
+});
+
 test("an unreadable pyproject.toml fails the check and names the file", (t) => {
-  const result = run(fixture(t, { files: { "datafn/extra/pyproject.toml": '["project"]\nname = """x"""\n' } }));
+  const result = run(fixture(t, { files: { "datafn/extra/pyproject.toml": '["project"]\nname = 1\n' } }));
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /error \(unreadable-pyproject\): datafn\/extra\/pyproject\.toml:2: project name must be a single-line string/);
+  assert.match(result.stderr, /error \(unreadable-pyproject\): datafn\/extra\/pyproject\.toml:2: project name must be a string/);
   const quoted = run(fixture(t, { files: { "datafn/extra/pyproject.toml": '[ "project" ]\n"name" = "datafn-extra"\n' } }));
   assert.equal(quoted.status, 1);
   assert.match(quoted.stderr, /datafn\/extra\/pyproject\.toml: Python project "datafn-extra" is not listed/);
+});
+
+test("an inline-table pyproject.toml passes when listed and fails naming its file when unlisted", (t) => {
+  const files = { "datafn/extra/pyproject.toml": 'project = { version = "0.1.0", name = """datafn-extra""" }\n' };
+  const unlisted = run(fixture(t, { files }));
+  assert.equal(unlisted.status, 1);
+  assert.match(unlisted.stderr, /datafn\/extra\/pyproject\.toml: Python project "datafn-extra" is not listed/);
+  const owners = manifest();
+  owners.python["datafn-extra"] = "public";
+  const listed = run(fixture(t, { owners, files }));
+  assert.equal(listed.status, 0, listed.stderr);
 });
 
 test("the self-check uses the checkout's semantics, so a next-shaped tree passes", (t) => {
