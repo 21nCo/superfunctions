@@ -1,0 +1,89 @@
+import { execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { DEFAULT_CONFIG, DEFAULT_POLICY, PanelCoordinator, applyRepositoryPanelPolicy, type HarnessProfile, type PanelPolicy, type PanelRunRequest, type PanelSlot } from "@superfunctions/reviewfn-core";
+import { FakeContextAdapter, FakeExecutionAdapter, FakeSourceControlAdapter, MemoryArtifactStore } from "@superfunctions/reviewfn-testing";
+
+import { CliHarnessAdapter } from "../src/index.js";
+
+const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "fake-cli.mjs");
+const environment = { PATH: process.env.PATH, FIXTURE_KEY: "panel-fixture-credential" };
+const manifest = { version: 1 as const, sources: [], selection: { candidates: [], selected: [], rule: "none" }, limits: { maxSources: 10, maxBytes: 1000, maxDepth: 2 }, incompleteReasons: [] };
+const config = { ...DEFAULT_CONFIG, harness: { adapter: "codex", version: "1" }, context: [{ adapter: "fixture" }], execution: { ...DEFAULT_CONFIG.execution, adapter: "fake-execution" } };
+
+function git(cwd: string, ...args: string[]): string {
+  return execFileSync("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main", ...args], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], env: { PATH: process.env.PATH, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" } }).trim();
+}
+
+let repo: string, base: string, head: string, workspaceRoot: string, states: string;
+beforeAll(async () => {
+  repo = await mkdtemp(path.join(tmpdir(), "reviewfn-cli-panel-repo-"));
+  workspaceRoot = await mkdtemp(path.join(tmpdir(), "reviewfn-cli-panel-run-"));
+  states = await mkdtemp(path.join(tmpdir(), "reviewfn-cli-panel-state-"));
+  git(repo, "init", "--quiet");
+  await mkdir(path.join(repo, "src"));
+  await writeFile(path.join(repo, "src", "index.ts"), "export const value = 0;\n");
+  git(repo, "add", "--all"); git(repo, "commit", "--quiet", "-m", "base");
+  base = git(repo, "rev-parse", "HEAD");
+  await writeFile(path.join(repo, "src", "index.ts"), "export function parse(body) {\n  return body.length;\n}\n");
+  git(repo, "commit", "--quiet", "-am", "head");
+  head = git(repo, "rev-parse", "HEAD");
+});
+afterAll(async () => { for (const directory of [repo, workspaceRoot, states]) await rm(directory, { recursive: true, force: true }); });
+
+async function profile(name: string, modelReport: string, extra: string[] = []): Promise<HarnessProfile> {
+  const state = path.join(states, name);
+  await mkdir(state, { recursive: true });
+  return { argv: [FIXTURE, "--state", state, ...extra], promptVia: "stdin", outputVia: "stdout-last-json", envAllowlist: [], modelReport, capabilities: { structuredOutput: false, sandbox: "tree-verified-only" }, versionArgv: [FIXTURE, "--version"] };
+}
+
+function slot(id: string, profileName: string, model: string, provider = "fixture"): PanelSlot {
+  return { id, stage: 1, harness: { adapter: "cli", version: "1.2.3", executable: process.execPath, profile: profileName }, inference: { provider, model, auth: "api-key", credentialEnv: "FIXTURE_KEY" }, lens: "general", budget: { timeoutMs: 60_000, maxOutputBytes: 1_000_000 } };
+}
+
+function coordinator(): PanelCoordinator {
+  return new PanelCoordinator({
+    sourceControl: new FakeSourceControlAdapter({ baseCommit: base, headCommit: head, changedPaths: ["src/index.ts"] }), contexts: [new FakeContextAdapter("fixture", manifest)],
+    execution: new FakeExecutionAdapter(), artifacts: new MemoryArtifactStore(), harnesses: [new CliHarnessAdapter({ environment })], harnessContractVersions: { cli: "1" }, workspaceRoot, abortGraceMs: 100, environment,
+  });
+}
+
+describe("generic CLI slots in the panel", () => {
+  it("collapses unverified-model slots of one executable and profile, and voids a reporter mismatch", async () => {
+    const panelPolicy: PanelPolicy = {
+      version: 1,
+      slots: [slot("quiet-a", "quiet", "model-a"), slot("quiet-b", "quiet", "model-b", "other-provider"), slot("reported", "reported", "model-r"), slot("wrong", "wrong", "model-r")],
+      quorum: { stage1: 2, stage2: 0 }, requirementsSlot: null, incremental: "full",
+      profiles: { quiet: await profile("quiet", "none"), reported: await profile("reported", "json-path:model", ["--model-json", "model-r"]), wrong: await profile("wrong", "json-path:model", ["--model-json", "model-x"]) },
+    };
+    const request: PanelRunRequest = { root: repo, base, head, config, policy: DEFAULT_POLICY, panelPolicy };
+    expect((await coordinator().preflight(request)).filter(item => item.level === "error")).toEqual([]);
+    const result = await coordinator().run(request);
+    expect(result.validation).toMatchObject({ valid: true });
+    const runs = Object.fromEntries(result.report.slotRuns.map(run => [run.slotId, run]));
+    expect(runs["quiet-a"]).toMatchObject({ terminal: "completed", limitations: ["model_unverified", "sandbox_tree_verified_only"], identity: { harnessExecutable: process.execPath, harnessProfile: "quiet", modelVerified: false, model: "model-a", harnessVersion: "1.2.3" } });
+    // Another model and provider, but the same executable and profile with no model report: never a distinct identity.
+    expect(runs["quiet-b"]).toMatchObject({ terminal: "collapsed", limitations: ["model_unverified", "sandbox_tree_verified_only"], identity: { modelVerified: false, model: "model-b" } });
+    expect(runs.reported).toMatchObject({ terminal: "completed", limitations: ["sandbox_tree_verified_only"], identity: { model: "model-r", harnessProfile: "reported" } });
+    expect(runs.reported.identity.modelVerified).toBeUndefined();
+    expect(runs.wrong).toMatchObject({ terminal: "void", voidReasons: ["model_mismatch"], identity: { model: "model-x" } });
+    expect(result.quorum[0]).toMatchObject({ required: 2, completed: 2, met: true });
+  }, 120_000);
+
+  it("refuses a pull-request review in preflight", async () => {
+    const panelPolicy: PanelPolicy = { version: 1, slots: [slot("quiet-a", "quiet", "model-a")], quorum: { stage1: 1, stage2: 0 }, requirementsSlot: null, incremental: "full", profiles: { quiet: await profile("quiet", "none") } };
+    const diagnostics = await coordinator().preflight({ root: repo, base, head, config, policy: DEFAULT_POLICY, panelPolicy, pullRequest: 9 });
+    expect(diagnostics.filter(item => item.level === "error").map(item => item.code)).toContain("REVIEWFN_PR_AUTH_REQUIRED");
+  }, 60_000);
+
+  it("rejects a repository panel copy that adds or changes a profile", async () => {
+    const quiet = await profile("quiet", "none");
+    const trusted: PanelPolicy = { version: 1, slots: [slot("quiet-a", "quiet", "model-a")], quorum: { stage1: 1, stage2: 0 }, requirementsSlot: null, incremental: "full", profiles: { quiet } };
+    expect(() => applyRepositoryPanelPolicy(trusted, { ...trusted, profiles: { quiet, extra: quiet } })).toThrow(expect.objectContaining({ code: "REVIEWFN_PANEL_POLICY_WEAKENED", message: expect.stringContaining("adds harness profile extra") }));
+    expect(() => applyRepositoryPanelPolicy(trusted, { ...trusted, profiles: { quiet: { ...quiet, envAllowlist: ["AWS_SECRET_ACCESS_KEY"] } } })).toThrow(expect.objectContaining({ code: "REVIEWFN_PANEL_POLICY_WEAKENED", message: expect.stringContaining("changes harness profile quiet") }));
+  });
+});

@@ -53,6 +53,21 @@ describe("panel policy tightening", () => {
     expect((error as ReviewFnError).message).toMatch(reason);
   });
 
+  it("takes harness profiles only from the trusted policy: a repository copy may drop an unused one but never add or change one", () => {
+    const profile = { argv: ["--model", "{model}"], promptVia: "stdin" as const, outputVia: "stdout-last-json" as const, envAllowlist: ["PATH"], modelReport: "none", capabilities: { structuredOutput: false, sandbox: "tree-verified-only" as const } };
+    const generic = slot("generic", { harness: { adapter: "cli", version: "1.0.0", executable: "agent", profile: "agent" } });
+    const withProfiles: PanelPolicy = { ...structuredClone(trusted), slots: [...structuredClone(trusted).slots, generic], profiles: { agent: profile, unused: profile } };
+    const attempt = (change: (policy: PanelPolicy) => void) => { const repository = structuredClone(withProfiles); change(repository); try { applyRepositoryPanelPolicy(withProfiles, repository); return undefined; } catch (error) { return error as ReviewFnError; } };
+    expect(attempt(policy => { policy.profiles!.extra = profile; })).toMatchObject({ code: "REVIEWFN_PANEL_POLICY_WEAKENED", message: expect.stringMatching(/adds harness profile extra/) });
+    expect(attempt(policy => { policy.profiles!.agent.envAllowlist.push("AWS_SECRET_ACCESS_KEY"); })).toMatchObject({ code: "REVIEWFN_PANEL_POLICY_WEAKENED", message: expect.stringMatching(/changes harness profile agent/) });
+    expect(attempt(policy => { policy.profiles!.agent.argv = ["--yolo", "--model", "{model}"]; })).toMatchObject({ code: "REVIEWFN_PANEL_POLICY_WEAKENED" });
+    expect(attempt(policy => { policy.slots[3].harness.executable = "/tmp/agent"; })).toMatchObject({ code: "REVIEWFN_PANEL_POLICY_WEAKENED", message: expect.stringMatching(/changes slot generic harness/) });
+    expect(attempt(policy => { delete policy.profiles!.unused; })).toBeUndefined();
+    // A trusted policy with no profiles gains none from the repository.
+    expect(attempt.call(undefined, () => undefined)).toBeUndefined();
+    expect(() => applyRepositoryPanelPolicy(trusted, { ...structuredClone(trusted), profiles: { agent: profile } })).toThrow(/adds harness profile agent/);
+  });
+
   it("treats an absent maxConcurrentSlots as the default of 2", () => {
     const base = { ...structuredClone(trusted), maxConcurrentSlots: undefined };
     expect(() => applyRepositoryPanelPolicy(base, { ...structuredClone(trusted), maxConcurrentSlots: 3 })).toThrow(/raises maxConcurrentSlots from 2 to 3/);

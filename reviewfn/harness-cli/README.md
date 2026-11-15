@@ -1,0 +1,131 @@
+# @superfunctions/reviewfn-harness-cli
+
+Generic agent-CLI harness adapter for ReviewFn panel slots. It runs any agent CLI that can read a prompt and write one JSON object, as declared by a profile in the trusted panel policy. Adding a CLI takes configuration only, with no adapter code.
+
+```ts
+import { CliHarnessAdapter } from "@superfunctions/reviewfn-harness-cli";
+
+const harness = new CliHarnessAdapter(); // capabilities.id "cli", adapter contract version "1"
+```
+
+The `reviewfn panel` command loads this package for every slot whose `harness.adapter` is `cli`.
+
+## Configuration
+
+A slot names its executable and a profile. The profile itself lives in the panel policy's `profiles`:
+
+```json
+{
+  "version": 1,
+  "slots": [
+    { "id": "gemini", "stage": 1, "lens": "general",
+      "harness": { "adapter": "cli", "version": "0.9.0", "executable": "gemini", "profile": "gemini" },
+      "inference": { "provider": "google", "model": "gemini-2.5-pro", "auth": "api-key", "credentialEnv": "GEMINI_API_KEY" },
+      "budget": { "timeoutMs": 900000, "maxOutputBytes": 4000000 } }
+  ],
+  "profiles": {
+    "gemini": {
+      "argv": ["--model", "{model}"],
+      "promptVia": "stdin",
+      "outputVia": "stdout-last-json",
+      "envAllowlist": ["PATH", "HOME"],
+      "modelReport": "none",
+      "capabilities": { "structuredOutput": false, "sandbox": "tree-verified-only" }
+    }
+  },
+  "quorum": { "stage1": 1, "stage2": 0 },
+  "requirementsSlot": null,
+  "incremental": "full"
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `argv` | Arguments after the executable. An element that is exactly one of `{promptFile}`, `{schemaFile}`, `{outputFile}`, `{workspace}` or `{model}` is replaced by its value as one argument. Nothing else is substituted, and an element that contains a placeholder inside other text is rejected. No shell is ever used. |
+| `promptVia` | `stdin`, or `file`, which requires `{promptFile}` in `argv`. |
+| `outputVia` | `file`, which requires `{outputFile}` in `argv`, or `stdout-last-json`: the last stdout line that parses as a JSON object. Progress lines before it are ignored. |
+| `envAllowlist` | Environment variable names only. The CLI gets exactly these variables, when set, plus the slot's `credentialEnv`. Nothing else is inherited, not even `PATH` or `HOME` unless they are listed. |
+| `modelReport` | `none`, `json-path:<dotted path>` in the output object, or `stderr-regex:<regex with exactly one capture group>`. |
+| `capabilities` | `structuredOutput` (the CLI enforces the schema itself, so `argv` must include `{schemaFile}`) and `sandbox`: `enforced-read-only` or `tree-verified-only`. |
+| `versionArgv` | Optional arguments that print the CLI's version, `["--version"]` by default. Placeholders are not allowed. The first dotted version token, such as `0.9.0` or `2025.08.25-896bbe1`, must equal the slot's `harness.version`. |
+
+`harness.executable` is an absolute path or a bare command name. A bare name is found on the adapter's `PATH`, in a trusted directory and never inside the repository. A relative path is refused, because it would resolve inside the repository under review.
+
+## Trust and limits
+
+- **Trusted profiles only.** Profiles come from the trusted panel policy. A repository copy that adds or changes a profile fails with `REVIEWFN_PANEL_POLICY_WEAKENED`. It may drop an unused one.
+- **No shell.** The executable is spawned directly through the shared process-group runner, with the review checkout as its working directory. A placeholder value, even one with spaces or `;`, is always one argument. A model that starts with `-` is refused, so it can never be read as an option.
+- **Bounds.** The slot's timeout and output budget cover both attempts. That includes stdout, stderr and the output file, which is read without following links. A timeout or an output overrun kills the whole process group.
+- **Credential redaction.** The credential, and every allowlisted value whose name marks it as a secret (such as `*_TOKEN` or `*_API_KEY`), is redacted from the transcript, events and errors.
+- **Local reviews only.** Pull-request reviews are refused, because the adapter enforces no tool restriction of its own (`toolControls: false`).
+- **Sandbox.** With `sandbox: "tree-verified-only"`, every run records the `sandbox_tree_verified_only` limitation. Only the panel's comparison of the checkout with head is verified. The adapter claims no tool restriction it cannot enforce. Host-level sandboxing of generic CLI harnesses is deferred to REV-9 and is not claimed here.
+
+## Model reporting
+
+- **`none`.** The run records the `model_unverified` limitation and is not voided. Its identity is only (adapter, version, executable, profile). Two such slots of one executable and profile therefore never count as distinct identities: the second completed run in a stage is `collapsed`, even when the two configure different models.
+- **A reporter.** Every model the reporter names must equal the configured model. Any other model voids the slot with `model_mismatch`. An attempt that completes must report its own model; if it does not, the run fails as unconfirmed. A `json-path` property that the output schema does not declare is removed before validation. A reported model is only as trustworthy as whatever writes that field.
+
+## Output validation
+
+The output is validated against the slot's output schema. One bounded repair attempt follows, in a new process with the validation errors and the rejected answer. Every `promptVia` × `outputVia` combination allows this re-run, because each attempt gets a fresh prompt and a fresh output file or stdout. A second invalid answer ends the slot `malformed`.
+
+## Example profiles
+
+These are **unverified examples**: no live run of these CLIs is recorded yet (REV-20). Flags change between CLI releases, so check each one against the CLI's own help before you use it. No profile ships as a default, so every profile must be declared in your trusted panel policy.
+
+### Cursor agent CLI (unverified example)
+
+```json
+"cursor-agent": {
+  "argv": ["--print", "--output-format", "text", "--model", "{model}"],
+  "promptVia": "stdin", "outputVia": "stdout-last-json",
+  "envAllowlist": ["PATH", "HOME", "CURSOR_API_KEY"], "modelReport": "none",
+  "capabilities": { "structuredOutput": false, "sandbox": "tree-verified-only" }
+}
+```
+
+### Factory Droid (unverified example)
+
+```json
+"droid": {
+  "argv": ["exec", "--model", "{model}", "--file", "{promptFile}"],
+  "promptVia": "file", "outputVia": "stdout-last-json",
+  "envAllowlist": ["PATH", "HOME", "FACTORY_API_KEY"], "modelReport": "none",
+  "capabilities": { "structuredOutput": false, "sandbox": "tree-verified-only" }
+}
+```
+
+### omp (unverified example)
+
+```json
+"omp": {
+  "argv": ["--print", "--model", "{model}"],
+  "promptVia": "stdin", "outputVia": "stdout-last-json",
+  "envAllowlist": ["PATH", "HOME"], "modelReport": "none",
+  "capabilities": { "structuredOutput": false, "sandbox": "tree-verified-only" }
+}
+```
+
+### Gemini CLI (unverified example)
+
+```json
+"gemini": {
+  "argv": ["--model", "{model}"],
+  "promptVia": "stdin", "outputVia": "stdout-last-json",
+  "envAllowlist": ["PATH", "HOME", "GEMINI_API_KEY"], "modelReport": "none",
+  "capabilities": { "structuredOutput": false, "sandbox": "tree-verified-only" }
+}
+```
+
+### Kimi CLI (unverified example)
+
+```json
+"kimi": {
+  "argv": ["--print", "--model", "{model}"],
+  "promptVia": "stdin", "outputVia": "stdout-last-json",
+  "envAllowlist": ["PATH", "HOME", "MOONSHOT_API_KEY"], "modelReport": "none",
+  "capabilities": { "structuredOutput": false, "sandbox": "tree-verified-only" }
+}
+```
+
+A CLI that prints its served model on stderr can use a reporter instead of `none`, for example `"modelReport": "stderr-regex:model: (\\S+)"`.

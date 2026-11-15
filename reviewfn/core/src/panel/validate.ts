@@ -4,9 +4,9 @@ import { ReviewFnError } from "../errors.js";
 import { harnessOutputSchema } from "../schema.js";
 import type { ArtifactStore, CodeAnchor, ContextManifest, Evidence, ReviewPolicy, ReviewReport, SourceControlAdapter, SourceReference, Verdict } from "../types.js";
 import { anchorCommitChecker, deriveVerdict, reproductionVerified, sinceAncestryError, sourceReferenceChecker, validateReport, verifiedDeltaOf, waiverReferenceValid } from "../validator.js";
-import { PANEL_CREDENTIAL_FINGERPRINT_PATTERN, PANEL_DIGEST_PATTERN, PANEL_NONBLANK_PATTERN, PANEL_SLOT_ID_PATTERN, PANEL_TIMESTAMP_PATTERN, panelSchemaDefs } from "./schema.js";
-import { PANEL_DEFAULT_MAX_CONCURRENT_SLOTS } from "./types.js";
-import type { PanelFinding, PanelFindingOrigin, PanelPolicy, PanelReport, PanelReportIssueCode, PanelReportValidationResult, PanelSlot, PanelValidationCode, PanelValidationIssue, PanelValidationResult, SlotIdentity, SlotRun } from "./types.js";
+import { PANEL_CREDENTIAL_FINGERPRINT_PATTERN, PANEL_DIGEST_PATTERN, PANEL_ENV_NAME_PATTERN, PANEL_MODEL_REPORT_PATTERN, PANEL_NONBLANK_PATTERN, PANEL_PROFILE_NAME_PATTERN, PANEL_SLOT_ID_PATTERN, PANEL_TIMESTAMP_PATTERN, panelSchemaDefs } from "./schema.js";
+import { HARNESS_PROFILE_PLACEHOLDERS, PANEL_DEFAULT_MAX_CONCURRENT_SLOTS } from "./types.js";
+import type { HarnessProfile, PanelFinding, PanelFindingOrigin, PanelPolicy, PanelReport, PanelReportIssueCode, PanelReportValidationResult, PanelSlot, PanelValidationCode, PanelValidationIssue, PanelValidationResult, SlotIdentity, SlotRun } from "./types.js";
 
 /** The closed set of panel validation codes. */
 export const PANEL_VALIDATION_CODES: readonly PanelValidationCode[] = Object.freeze([
@@ -48,6 +48,21 @@ function numeric(integer: boolean, minimum?: number, maximum?: number): Check {
 const boolean: Check = (value, path, issues) => { if (typeof value !== "boolean") add(issues, "REVIEWFN_PANEL_SCHEMA", path, "must be a boolean."); };
 function oneOf(values: readonly (string | number)[]): Check {
   return (value, path, issues) => { if (!values.includes(value as string | number)) add(issues, "REVIEWFN_PANEL_SCHEMA", path, `must be one of ${values.map(item => JSON.stringify(item)).join(", ")}.`); };
+}
+function constant(expected: boolean): Check {
+  return (value, path, issues) => { if (value !== expected) add(issues, "REVIEWFN_PANEL_SCHEMA", path, `must be ${String(expected)}.`); };
+}
+/** An object of any keys matching `keyPattern`, each value checked by `item` (JSON Schema `propertyNames` and `additionalProperties`). */
+function record(keyPattern: string, item: Check): Check {
+  const expression = new RegExp(keyPattern, "u");
+  return (value, path, issues) => {
+    if (!isRecord(value)) return add(issues, "REVIEWFN_PANEL_SCHEMA", path, "must be an object.");
+    for (const [key, entry] of Object.entries(value)) {
+      if (entry === undefined) continue;
+      if (!expression.test(key)) add(issues, "REVIEWFN_PANEL_SCHEMA", pointer(path, key), `property name must match ${keyPattern}.`);
+      item(entry, pointer(path, key), issues);
+    }
+  };
 }
 function nullable(check: Check): Check {
   return (value, path, issues) => { if (value !== null) check(value, path, issues); };
@@ -127,24 +142,34 @@ const reviewReport = object({
   tests: array(testReceipt), inspectedPaths: texts, uninspected: reasons, normalizedEventArtifact: text, redactedTranscriptArtifact: text, limitations: texts, changeDetail,
 }, defs.reviewReport.required);
 
+const profileName = string(PANEL_PROFILE_NAME_PATTERN);
+const harnessProfile = object({
+  argv: texts, promptVia: oneOf(defs.harnessProfile.properties.promptVia.enum), outputVia: oneOf(defs.harnessProfile.properties.outputVia.enum),
+  envAllowlist: array(string(PANEL_ENV_NAME_PATTERN), { unique: true }), modelReport: string(PANEL_MODEL_REPORT_PATTERN),
+  capabilities: object({ structuredOutput: boolean, sandbox: oneOf(defs.harnessProfile.properties.capabilities.properties.sandbox.enum) }, ["structuredOutput", "sandbox"]),
+  versionArgv: texts,
+}, defs.harnessProfile.required);
 const panelSlot = object({
   id: slotId, stage: oneOf(defs.panelSlot.properties.stage.enum),
-  harness: object({ adapter: nonblank, version: nonblank }, ["adapter", "version"]),
+  harness: object({ adapter: nonblank, version: nonblank, executable: nonblank, profile: profileName }, ["adapter", "version"]),
   inference: object({ provider: nonblank, model: nonblank, auth: nonblank, credentialEnv: nonblank }, ["provider", "model", "auth"]),
   lens: nonblank, budget: object({ timeoutMs: positive, maxOutputBytes: positive }, ["timeoutMs", "maxOutputBytes"]),
 }, defs.panelSlot.required);
 const panelPolicy = object({
   version: oneOf([1]), slots: array(panelSlot, { min: 1 }), quorum: object({ stage1: count, stage2: count }, ["stage1", "stage2"]),
   requirementsSlot: nullable(slotId), maxConcurrentSlots: numeric(true, 1, 8), incremental: oneOf(defs.panelPolicy.properties.incremental.enum),
+  profiles: record(PANEL_PROFILE_NAME_PATTERN, harnessProfile),
 }, defs.panelPolicy.required);
 const slotIdentity = object({
   harnessAdapter: nonblank, harnessVersion: nonblank, provider: nonblank, model: nonblank, auth: nonblank, credentialFingerprint: string(PANEL_CREDENTIAL_FINGERPRINT_PATTERN),
+  harnessExecutable: nonblank, harnessProfile: profileName, modelVerified: constant(false),
 }, defs.slotIdentity.required);
 const slotRun = object({
   slotId, identity: slotIdentity, terminal: oneOf(defs.slotRun.properties.terminal.enum),
   voidReasons: array(oneOf(defs.slotRun.properties.voidReasons.items.enum), { unique: true }),
   startedAt: timestamp, finishedAt: timestamp, outputArtifact: nonblank, outputDigest: string(PANEL_DIGEST_PATTERN),
   usage: object({ inputTokens: count, outputTokens: count, costUsd: numeric(false, 0) }, []),
+  limitations: array(oneOf(defs.slotRun.properties.limitations.items.enum), { unique: true }),
 }, defs.slotRun.required, (value, path, issues) => {
   // Mirrors the schema's if/then/else: an absent terminal satisfies the `if`, as in JSON Schema.
   if (!Array.isArray(value.voidReasons)) return;
@@ -213,16 +238,69 @@ export function credentialFingerprint(value: string): string {
 
 /** Canonical key of the identity tuple; equal keys mean the same slot identity. */
 export function slotIdentityKey(identity: SlotIdentity): string {
-  return digestJson([identity.harnessAdapter, identity.harnessVersion, identity.provider, identity.model, identity.auth, identity.credentialFingerprint ?? null]);
+  // An unverified model identifies nothing: such runs of one executable and profile are one identity, whatever their
+  // configured provider, model, auth or credential.
+  if (identity.modelVerified === false) return digestJson(["model_unverified", identity.harnessAdapter, identity.harnessVersion, identity.harnessExecutable ?? null, identity.harnessProfile ?? null]);
+  const profiled = identity.harnessExecutable !== undefined || identity.harnessProfile !== undefined ? [identity.harnessExecutable ?? null, identity.harnessProfile ?? null] : [];
+  return digestJson([identity.harnessAdapter, identity.harnessVersion, identity.provider, identity.model, identity.auth, identity.credentialFingerprint ?? null, ...profiled]);
 }
 
-/** Structure of a panel policy, unique slot IDs, and a `requirementsSlot` naming a stage-1 or stage-2 slot. */
+const PLACEHOLDER_TOKEN = /\{[A-Za-z][A-Za-z0-9]*\}/u;
+
+/** Number of capture groups of a regular expression source, or undefined when it does not compile. */
+function captureGroups(source: string): number | undefined {
+  try { return new RegExp(`${source}|`, "u").exec("")!.length - 1; } catch { return undefined; }
+}
+
+/**
+ * Semantic issues of one structurally valid harness profile: placeholders are the closed set and only ever whole
+ * arguments, the prompt and output channels it declares appear in `argv`, a CLI that enforces the output schema is given
+ * `{schemaFile}`, and a `stderr-regex` model report compiles with exactly one capture group.
+ */
+export function harnessProfileIssues(profile: HarnessProfile, path: string): PanelValidationIssue<PanelValidationCode>[] {
+  const issues: Issues = [];
+  const placeholders: readonly string[] = HARNESS_PROFILE_PLACEHOLDERS;
+  profile.argv.forEach((argument, index) => {
+    if (placeholders.includes(argument)) return;
+    if (PLACEHOLDER_TOKEN.test(argument)) add(issues, "REVIEWFN_PANEL_SCHEMA", pointer(pointer(path, "argv"), index), `${JSON.stringify(argument)} is not a whole-argument placeholder; placeholders are ${placeholders.join(", ")}, each as a whole argument.`);
+  });
+  (profile.versionArgv ?? []).forEach((argument, index) => {
+    if (placeholders.includes(argument) || PLACEHOLDER_TOKEN.test(argument)) add(issues, "REVIEWFN_PANEL_SCHEMA", pointer(pointer(path, "versionArgv"), index), "versionArgv takes no placeholders.");
+  });
+  const requires = (placeholder: string, why: string) => { if (!profile.argv.includes(placeholder)) add(issues, "REVIEWFN_PANEL_SCHEMA", pointer(path, "argv"), `must include ${placeholder} ${why}.`); };
+  if (profile.promptVia === "file") requires("{promptFile}", "when promptVia is file");
+  if (profile.outputVia === "file") requires("{outputFile}", "when outputVia is file");
+  if (profile.capabilities.structuredOutput) requires("{schemaFile}", "when the CLI enforces the output schema (capabilities.structuredOutput)");
+  if (profile.modelReport.startsWith("stderr-regex:")) {
+    const groups = captureGroups(profile.modelReport.slice("stderr-regex:".length));
+    if (groups === undefined) add(issues, "REVIEWFN_PANEL_SCHEMA", pointer(path, "modelReport"), "stderr-regex is not a valid regular expression.");
+    else if (groups !== 1) add(issues, "REVIEWFN_PANEL_SCHEMA", pointer(path, "modelReport"), `stderr-regex must have exactly one capture group, not ${groups}.`);
+  }
+  return issues as PanelValidationIssue<PanelValidationCode>[];
+}
+
+/** Structure and semantics of one harness profile, as `validatePanelPolicy` checks each entry of `profiles`. */
+export function validateHarnessProfile(value: unknown): PanelValidationResult<PanelValidationCode> {
+  const issues = structural(harnessProfile, value) as PanelValidationIssue<PanelValidationCode>[];
+  if (!issues.length) issues.push(...harnessProfileIssues(value as HarnessProfile, ""));
+  return result(issues);
+}
+
+/** Structure of a panel policy, unique slot IDs, a `requirementsSlot` naming a stage-1 or stage-2 slot, valid harness profiles, and slot profiles the policy declares, each with an executable. */
 export function validatePanelPolicy(value: unknown): PanelValidationResult<PanelValidationCode> {
   const issues = structural(panelPolicy, value);
   if (issues.length) return result(issues as PanelValidationIssue<PanelValidationCode>[]);
   const policy = value as PanelPolicy;
   for (const { index, key } of duplicates(policy.slots, slot => slot.id)) add(issues, "REVIEWFN_PANEL_SLOT_DUPLICATE", `/slots/${index}/id`, `Slot ${key} is declared more than once.`);
   if (policy.requirementsSlot !== null && !policy.slots.some(slot => slot.id === policy.requirementsSlot && slot.stage !== "verifier")) add(issues, "REVIEWFN_PANEL_SLOT_UNKNOWN", "/requirementsSlot", `requirementsSlot ${policy.requirementsSlot} names no stage-1 or stage-2 slot.`);
+  const profiles = policy.profiles ?? {};
+  for (const [name, profile] of Object.entries(profiles)) issues.push(...harnessProfileIssues(profile, pointer("/profiles", name)));
+  policy.slots.forEach((slot, index) => {
+    const { executable, profile } = slot.harness;
+    if (profile !== undefined && !Object.hasOwn(profiles, profile)) add(issues, "REVIEWFN_PANEL_SCHEMA", `/slots/${index}/harness/profile`, `Slot ${slot.id} names profile ${profile}, which the policy's profiles do not declare.`);
+    if (profile !== undefined && executable === undefined) add(issues, "REVIEWFN_PANEL_SCHEMA", `/slots/${index}/harness`, `Slot ${slot.id} names a profile without an executable.`);
+    if (profile === undefined && executable !== undefined) add(issues, "REVIEWFN_PANEL_SCHEMA", `/slots/${index}/harness/executable`, `Slot ${slot.id} names an executable without a profile; only a profile-driven harness takes one from the slot.`);
+  });
   return result(issues as PanelValidationIssue<PanelValidationCode>[]);
 }
 
@@ -365,6 +443,10 @@ function slotRunIssues(report: PanelReport, slots: Map<string, PanelSlot>, issue
     if (!slot) return add(issues, "REVIEWFN_PANEL_SLOT_UNKNOWN", `${path}/slotId`, `Run references unknown slot ${run.slotId}.`);
     const { identity } = run;
     if (identity.harnessAdapter !== slot.harness.adapter || identity.provider !== slot.inference.provider || identity.auth !== slot.inference.auth) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/identity`, `Run identity does not match slot ${slot.id}'s harness adapter, provider or auth mode.`);
+    if (identity.harnessExecutable !== slot.harness.executable || identity.harnessProfile !== slot.harness.profile) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/identity`, `Run identity does not match slot ${slot.id}'s harness executable or profile.`);
+    // An unverified model is always recorded as a limitation, and the model it stands for is the configured one.
+    if (identity.modelVerified === false && !(run.limitations ?? []).includes("model_unverified")) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/limitations`, "A run whose model is unverified must record the model_unverified limitation.");
+    if (identity.modelVerified === false && identity.model !== slot.inference.model) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/identity/model`, "A run whose model is unverified records the configured model.");
     // A harness reporting another version than the slot pins is recorded truthfully, but its run never counts or collapses.
     if (identity.harnessVersion !== slot.harness.version && COUNTING.has(run.terminal)) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/identity/harnessVersion`, `Harness version ${identity.harnessVersion} differs from slot ${slot.id}'s ${slot.harness.version}; such a run cannot be ${run.terminal}.`);
     // One precedence: an observed model mismatch voids the run whatever else happened.

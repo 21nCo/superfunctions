@@ -102,9 +102,10 @@ export function effectiveRetention(config: ReviewFnConfig, policy: ReviewPolicy)
 const PULL_REQUEST_AUTH: Readonly<Record<string, { modes: readonly string[]; message: string }>> = Object.freeze({
   codex: { modes: ["action-proxy"], message: "Pull-request review with Codex requires action-proxy authentication." },
   "claude-code": { modes: [], message: "Claude Code serves only trusted local reviews: no auth mode is allowed for pull-request review." },
+  cli: { modes: [], message: "The generic CLI harness serves only trusted local reviews: it enforces no tool restriction, so no auth mode is allowed for pull-request review." },
 });
 
-/** Pull-request review with Codex requires action-proxy authentication; Claude Code refuses pull-request review. */
+/** Pull-request review with Codex requires action-proxy authentication; Claude Code and the generic CLI harness refuse pull-request review. */
 export function harnessAuthDiagnostics(request: Pick<ReviewRunRequest, "pullRequest">, harnessId: string, auth: string): PreflightDiagnostic[] {
   const rule = Object.hasOwn(PULL_REQUEST_AUTH, harnessId) ? PULL_REQUEST_AUTH[harnessId] : undefined;
   return request.pullRequest !== undefined && rule && !rule.modes.includes(auth) ? [{ code: "REVIEWFN_PR_AUTH_REQUIRED", level: "error", message: rule.message }] : [];
