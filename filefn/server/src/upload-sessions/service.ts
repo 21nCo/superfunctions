@@ -14,6 +14,7 @@ import type { ProcessingService } from '../processing/service.js';
 import * as errors from '../errors.js';
 import { createHash, randomBytes } from 'crypto';
 import { generateFileFnId } from '../ids.js';
+import { createKeyedSerializer, parseRequestedFileId } from './file-id.js';
 import {
   createUploadStartedEvent,
   createPartRecordedEvent,
@@ -57,7 +58,12 @@ export interface CreateSessionInput {
   fileName: string;
   size: number;
   mimeType: string;
-  fileId?: string;
+  /**
+   * File ID the client chose, matching `file_[A-Za-z0-9_-]{8,64}`. `null` or
+   * omitted lets the server generate one. Validated at runtime: the route
+   * passes the JSON body through unchanged.
+   */
+  fileId?: string | null;
   metadata?: Record<string, unknown>;
   idempotencyKey?: string;
 }
@@ -234,6 +240,49 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     }
   }
 
+  const runSerializedPerFileId = createKeyedSerializer();
+
+  // Without a configured checker the service trusts its caller, as at init.
+  async function canWriteFileNow(fileId: string, ctx: FileProviderContext): Promise<boolean> {
+    return fileWriteChecker ? fileWriteChecker.canWriteFile(fileId, ctx) : true;
+  }
+
+  async function endSessionAborted(uploadSessionId: string): Promise<void> {
+    await db.deleteMany({
+      model: 'uploadParts',
+      where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
+      namespace,
+    });
+
+    await db.update({
+      model: 'uploadSessions',
+      where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
+      data: { status: 'aborted' },
+      namespace,
+    });
+  }
+
+  // Aborts the session's storage upload, deletes its proxy part objects and
+  // ends it as aborted.
+  async function discardSessionUpload(session: UploadSession): Promise<void> {
+    const policy = policies.get(session.policy);
+    const storageTarget = policy ? resolveStorageTarget(policy) : undefined;
+    if (
+      getStorageCapabilities(storage, storageTarget).multipart &&
+      storage.abortMultipartUpload &&
+      session.storageUploadId
+    ) {
+      try {
+        await storage.abortMultipartUpload({ key: session.storageKey, target: storageTarget, uploadId: session.storageUploadId });
+      } catch {
+        // Ignore abort errors (may already be aborted)
+      }
+    }
+
+    await deleteProxyTempPartObjects(session);
+    await endSessionAborted(session.uploadSessionId);
+  }
+
   return {
     assertSessionAccess(session: UploadSession, ctx: FileProviderContext, uploadSessionToken?: string): void {
       // Legacy safety: pre-binding records may not carry ownerId.
@@ -279,6 +328,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       uploadSessionToken?: string;
     }> {
       const warnings: string[] = [];
+      const requestedFileId = parseRequestedFileId(input.fileId as unknown);
 
       // Check idempotency
       if (input.idempotencyKey) {
@@ -344,11 +394,13 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         throw errors.policyMaxSizeExceeded(input.policy, policy.maxSizeBytes, input.size);
       }
 
-      // Check authorization for replace-by-fileId
-      if (input.fileId && fileWriteChecker) {
-        const canWrite = await fileWriteChecker.canWriteFile(input.fileId, ctx);
+      // A client-chosen ID that names an existing file needs write permission on
+      // it. A new ID is accepted without reserving anything: the first completion
+      // that inserts the `files` row owns the file (see completeSession).
+      if (requestedFileId && fileWriteChecker) {
+        const canWrite = await fileWriteChecker.canWriteFile(requestedFileId, ctx);
         if (!canWrite) {
-          throw errors.forbidden({ fileId: input.fileId, operation: 'replace' });
+          throw errors.forbidden({ fileId: requestedFileId, operation: 'replace' });
         }
       }
 
@@ -376,7 +428,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       const uploadSessionId = generateId();
       const now = new Date();
       const expiresAt = new Date(now.getTime() + uploadSessionTtlSeconds * 1000).toISOString();
-      const fileId = input.fileId || generateFileFnId('file');
+      const fileId = requestedFileId ?? generateFileFnId('file');
       // The version this session will publish is fixed here, so its storage key is
       // the one object key no other session can write.
       const versionId = generateFileFnId('ver');
@@ -753,12 +805,6 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         }
       }
 
-      if (session.fileId && fileWriteChecker) {
-        const canWrite = await fileWriteChecker.canWriteFile(session.fileId, ctx);
-        if (!canWrite) {
-          throw errors.forbidden({ fileId: session.fileId, operation: 'replace' });
-        }
-      }
       const policy = policies.get(session.policy);
       const policyStorageTarget = policy ? resolveStorageTarget(policy) : undefined;
 
@@ -773,6 +819,16 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             namespace,
           })
         : null;
+
+      // Refuse early, before any storage completion, when the file already exists
+      // and the caller cannot write it (for example a session whose init ran
+      // before another principal created the file). Nothing the session uploaded
+      // is kept. A session whose version is already published skips this: its
+      // commit already happened.
+      if (!publishedVersion && session.fileId && !(await canWriteFileNow(session.fileId, ctx))) {
+        await discardSessionUpload(session);
+        throw errors.forbidden({ fileId: session.fileId, operation: 'replace' });
+      }
 
       // Complete multipart upload
       if (publishedVersion) {
@@ -885,62 +941,109 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         }
       }
 
-      // Create or update file
-      const existingFile = !publishedVersion && session.fileId ? await db.findOne({ model: 'files', where: [{ field: 'fileId', operator: 'eq', value: session.fileId }], namespace }) : null;
+      // Commit section: create the file or add a version to it. The first
+      // completion to insert the `files` row owns the file; init reserves nothing.
+      // Within this process the section is serialized per fileId, which is the
+      // only guard on adapters without unique constraints (single-process only).
+      // Across processes the unique `files.fileId` constraint decides the winner.
+      const commitOutcome = publishedVersion
+        ? 'resumed'
+        : await runSerializedPerFileId(fileId, async (): Promise<'published' | 'recorded' | 'refused'> => {
+            const findOwnVersion = () => db.findOne({
+              model: 'fileVersions',
+              where: [{ field: 'versionId', operator: 'eq', value: versionId }],
+              namespace,
+            });
+            const findFile = () => db.findOne({
+              model: 'files',
+              where: [{ field: 'fileId', operator: 'eq', value: fileId }],
+              namespace,
+            });
+            const pointFileAtVersion = () => db.update({
+              model: 'files',
+              where: [{ field: 'fileId', operator: 'eq', value: fileId }],
+              data: {
+                currentVersionId: versionId,
+                size: session.size,
+                mimeType: session.mimeType,
+                metadata,
+                updatedAt: now,
+              },
+              namespace,
+            });
 
-      if (publishedVersion) {
-        // The interrupted attempt already pointed the file at this version. Leave the
-        // file row alone so a later version published on it is not rolled back.
-      } else if (existingFile) {
-        await db.update({
-          model: 'files',
-          where: [{ field: 'fileId', operator: 'eq', value: fileId }],
-          data: {
-            currentVersionId: versionId,
-            size: session.size,
-            mimeType: session.mimeType,
-            metadata,
-            updatedAt: now,
-          },
-          namespace,
-        });
-      } else {
-        await db.create({
-          model: 'files',
-          data: {
-            fileId,
-            currentVersionId: versionId,
-            ownerId: session.ownerId,
-            tenantId: session.tenantId,
-            visibility: policy?.visibility || 'private',
-            policy: session.policy,
-            mimeType: session.mimeType,
-            size: session.size,
-            name: session.fileName,
-            metadata,
-            createdAt: now,
-            updatedAt: now,
-          },
-          namespace,
-        });
+            // Another completion call of this same session already published it.
+            if (await findOwnVersion()) return 'recorded';
+
+            // Permission is decided from the row as it is now, not from the
+            // check at init or the early check above.
+            if (await findFile()) {
+              if (!(await canWriteFileNow(fileId, ctx))) return 'refused';
+              await pointFileAtVersion();
+            } else {
+              try {
+                await db.create({
+                  model: 'files',
+                  data: {
+                    fileId,
+                    currentVersionId: versionId,
+                    ownerId: session.ownerId,
+                    tenantId: session.tenantId,
+                    visibility: policy?.visibility || 'private',
+                    policy: session.policy,
+                    mimeType: session.mimeType,
+                    size: session.size,
+                    name: session.fileName,
+                    metadata,
+                    createdAt: now,
+                    updatedAt: now,
+                  },
+                  namespace,
+                });
+              } catch (err) {
+                // Lost the insert to another process. Re-read the winner's row.
+                if (!(await findFile())) throw err;
+                if (await findOwnVersion()) return 'recorded';
+                if (!(await canWriteFileNow(fileId, ctx))) return 'refused';
+                await pointFileAtVersion();
+              }
+            }
+
+            await db.create({
+              model: 'fileVersions',
+              data: {
+                versionId,
+                fileId,
+                storageKey: finalStorageKey,
+                mimeType: session.mimeType,
+                size: session.size,
+                checksumSha256Base64,
+                tenantId: session.tenantId,
+                createdAt: now,
+              },
+              namespace,
+            });
+            return 'published';
+          });
+
+      if (commitOutcome === 'recorded') {
+        // The recorded result belongs to the call that published it; this call
+        // deletes nothing and emits nothing.
+        return { fileId, versionId };
       }
 
-      // Create version (the interrupted attempt already created it when resuming)
-      if (!publishedVersion) {
-        await db.create({
-          model: 'fileVersions',
-          data: {
-            versionId,
-            fileId,
-            storageKey: finalStorageKey,
-            mimeType: session.mimeType,
-            size: session.size,
-            checksumSha256Base64,
-            tenantId: session.tenantId,
-            createdAt: now,
-          },
-          namespace,
-        });
+      if (commitOutcome === 'refused') {
+        // Keep nothing this session uploaded. When dedup pointed it at another
+        // object's key, its own object is already gone and the shared one stays.
+        if (finalStorageKey === session.storageKey && storage.deleteObject) {
+          try {
+            await storage.deleteObject({ key: session.storageKey, target: policyStorageTarget });
+          } catch {
+            // Best-effort cleanup.
+          }
+        }
+        await endSessionAborted(uploadSessionId);
+        throw errors.forbidden({ fileId, operation: 'replace' });
       }
 
       // Update session
@@ -1005,34 +1108,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       this.assertSessionAccess(session, ctx, uploadSessionToken);
       if (session.status === 'completed') throw errors.uploadAlreadyCompleted();
 
-      // Abort multipart upload
-      const policy = policies.get(session.policy);
-      const storageTarget = policy ? resolveStorageTarget(policy) : undefined;
-      if (
-        getStorageCapabilities(storage, storageTarget).multipart &&
-        storage.abortMultipartUpload &&
-        session.storageUploadId
-      ) {
-        try {
-          await storage.abortMultipartUpload({ key: session.storageKey, target: storageTarget, uploadId: session.storageUploadId });
-        } catch {
-          // Ignore abort errors (may already be aborted)
-        }
-      }
-
-      await deleteProxyTempPartObjects(session);
-      await db.deleteMany({
-        model: 'uploadParts',
-        where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
-        namespace,
-      });
-
-      await db.update({
-        model: 'uploadSessions',
-        where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
-        data: { status: 'aborted' },
-        namespace,
-      });
+      await discardSessionUpload(session);
     },
 
     async cleanupExpiredSessions(): Promise<{ deletedSessions: number; abortedMultipart: number }> {

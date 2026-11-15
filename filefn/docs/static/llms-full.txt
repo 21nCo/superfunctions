@@ -7920,7 +7920,7 @@ Wire-format envelope:
 | Code | HTTP | Cause | Fix |
 | --- | --- | --- | --- |
 | `FILEFN_AUTH_REQUIRED` | 401 | `auth.required: true` and no session resolved. | Sign in; ensure auth wiring forwards cookies / `Authorization`. |
-| `FILEFN_FORBIDDEN` | 403 | Authorizer denied. | Check ownership / grants; check the principal is in the right tenant. |
+| `FILEFN_FORBIDDEN` | 403 | Authorizer denied. On upload, the `fileId` names a file the caller cannot write: at init when the file exists, or at completion when another principal created it first (the session is then aborted and its bytes deleted). | Check ownership / grants; check the principal is in the right tenant. |
 | `FILEFN_NOT_FOUND` | 404 | File / artifact / share / permission not found. | Confirm the id exists; remember anti-enumeration: 404 may mask a permission denial. |
 | `FILEFN_SESSION_TOKEN_REQUIRED` | 401 | Anonymous upload missing `x-upload-session-token`. | Pass the token returned from `POST /upload/init`. |
 | `FILEFN_SESSION_TOKEN_INVALID` | 403 | Wrong token for the session. | Re-init the upload, or check storage in the client. |
@@ -7955,6 +7955,7 @@ Wire-format envelope:
 | `FILEFN_UPLOAD_SIZE_MISMATCH` | 409 | Sum of part sizes ≠ `size` declared at init. | Re-check declared size before init. |
 | `FILEFN_NO_SUPPORTED_UPLOAD_MODE` | 500 | Adapter doesn't support multipart and proxy is disabled. | Use a multipart-capable adapter (S3, GCS, R2, MinIO, Azure). |
 | `FILEFN_STORAGE_PATH_NOT_PER_VERSION` | 500 | The key the policy's `storagePath` returned does not contain the session's full `versionId`, so two upload sessions could write one object. Refused at init before any session row or storage upload is created. | Include the whole `versionId`, unshortened, in the key your `storagePath` returns. |
+| `FILEFN_INVALID_FILE_ID` | 400 | The `fileId` sent to `POST /upload/init` does not match `file_[A-Za-z0-9_-]{8,64}` (or is not a string). Refused before any session row or storage upload is created. | Send an ID in that grammar, such as `generateFileId()` output, or omit `fileId` to let the server generate one. |
 | `FILEFN_OFFLINE_UNSUPPORTED` | 400 | Client requested OPFS but the runtime doesn't support it. | Skip OPFS, upload directly. |
 | `FILEFN_SESSION_NOT_FOUND` | 404 | The `uploadSessionId` doesn't exist. | Use the id returned from init; sessions expire after TTL. |
 
@@ -8082,15 +8083,27 @@ For an interactive explorer, see the [API page](../../api/filefn).
 
 | Method | Path | Description | Errors |
 | --- | --- | --- | --- |
-| POST | `/upload/init` | Create a new upload session. | `FILEFN_POLICY_NOT_FOUND`, `FILEFN_POLICY_CONTENT_TYPE_NOT_ALLOWED`, `FILEFN_POLICY_MAX_SIZE_EXCEEDED`, `FILEFN_QUOTA_EXCEEDED`, `FILEFN_NO_SUPPORTED_UPLOAD_MODE`, `FILEFN_STORAGE_PATH_NOT_PER_VERSION`, `FILEFN_IDEMPOTENCY_CONFLICT`, `FILEFN_AUTH_REQUIRED`, `FILEFN_RATE_LIMITED`. |
+| POST | `/upload/init` | Create a new upload session. | `FILEFN_INVALID_FILE_ID`, `FILEFN_FORBIDDEN`, `FILEFN_POLICY_NOT_FOUND`, `FILEFN_POLICY_CONTENT_TYPE_NOT_ALLOWED`, `FILEFN_POLICY_MAX_SIZE_EXCEEDED`, `FILEFN_QUOTA_EXCEEDED`, `FILEFN_NO_SUPPORTED_UPLOAD_MODE`, `FILEFN_STORAGE_PATH_NOT_PER_VERSION`, `FILEFN_IDEMPOTENCY_CONFLICT`, `FILEFN_AUTH_REQUIRED`, `FILEFN_RATE_LIMITED`. |
 | GET | `/upload/:id/status` | Get session status (open, complete, aborted, expired). | `FILEFN_SESSION_NOT_FOUND`, `FILEFN_SESSION_TOKEN_REQUIRED`, `FILEFN_SESSION_TOKEN_INVALID`. |
 | POST | `/upload/:id/parts/:n/sign` | Sign a single part for direct PUT to storage. | `FILEFN_INVALID_PART_NUMBER`, `FILEFN_UPLOAD_EXPIRED`, `FILEFN_UPLOAD_ABORTED`, `FILEFN_UPLOAD_ALREADY_COMPLETED`, `FILEFN_RATE_LIMITED`. |
 | PUT | `/upload/:id/parts/:n` | Upload part bytes through filefn (proxy mode). | `FILEFN_INVALID_PART_NUMBER`, `FILEFN_UPLOAD_EXPIRED`, `FILEFN_UPLOAD_ABORTED`, `FILEFN_UPLOAD_ALREADY_COMPLETED`. |
 | POST | `/upload/:id/parts/:n/complete` | Record a finished part's etag. | `FILEFN_INVALID_PART_NUMBER`, `FILEFN_INVALID_ETAG`, `FILEFN_PART_CONFLICT`. |
-| POST | `/upload/:id/complete` | Finalise the session. | `FILEFN_UPLOAD_INCOMPLETE`, `FILEFN_UPLOAD_SIZE_MISMATCH`, `FILEFN_UPLOAD_EXPIRED`, `FILEFN_UPLOAD_ABORTED`, `FILEFN_UPLOAD_ALREADY_COMPLETED`, `FILEFN_PROCESSING_ENQUEUE_FAILED`. |
+| POST | `/upload/:id/complete` | Finalise the session. | `FILEFN_FORBIDDEN`, `FILEFN_UPLOAD_INCOMPLETE`, `FILEFN_UPLOAD_SIZE_MISMATCH`, `FILEFN_UPLOAD_EXPIRED`, `FILEFN_UPLOAD_ABORTED`, `FILEFN_UPLOAD_ALREADY_COMPLETED`, `FILEFN_PROCESSING_ENQUEUE_FAILED`. |
 | POST | `/upload/:id/abort` | Abort. Cleans up storage and DB rows. | (idempotent) |
 
 `POST /upload/init` allocates the `versionId` the session will publish and computes the session's storage key from it, so every session writes its own object key and proxy part keys (`<storageKey>.partN`). `POST /upload/:id/complete` creates the file version with that same `versionId`. A session that loses a race or is refused cannot change the bytes another session published. A policy `storagePath` must return a key that contains the session's full `versionId`; any other key is refused at init with `FILEFN_STORAGE_PATH_NOT_PER_VERSION`.
+
+### Client-chosen file IDs
+
+`POST /upload/init` accepts an optional `fileId`, so a client can keep one ID for a file before and after it syncs (for example an offline capture). A `null` or omitted `fileId` makes the server generate one.
+
+- The ID must match `file_[A-Za-z0-9_-]{8,64}`. Any other value, including an empty string or a non-string, is refused with 400 `FILEFN_INVALID_FILE_ID`. Server-generated IDs and the client SDK's `generateFileId()` match it.
+- An ID that names an existing file needs write permission on it; without it init returns 403 `FILEFN_FORBIDDEN`. A new ID is accepted and nothing is reserved.
+- The first `POST /upload/:id/complete` that creates the file owns it. A later completion for the same ID is checked against the file as it is then: with write permission it adds a version and becomes the current version; without it the call returns 403 `FILEFN_FORBIDDEN`, the session ends as `aborted`, and the bytes it uploaded are deleted. This covers a session whose init ran before another principal created the file.
+- A repeated `POST /upload/:id/complete` of the session that created the file returns the same `{ fileId, versionId }`.
+- A retried `POST /upload/init` with the same `x-idempotency-key` and body returns the same session, and so the same `fileId`.
+
+The unique `files.fileId` column decides which completion creates the file, so several FileFn processes can share one database. Within a process FileFn also serializes completions per `fileId`. On database adapters without unique constraints (`capabilities.schema.constraints` is `false`, such as the memory adapter) that in-process guard is the only one, so those adapters support a single FileFn process only.
 
 ## Files
 

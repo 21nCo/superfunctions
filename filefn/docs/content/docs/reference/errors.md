@@ -34,7 +34,7 @@ Wire-format envelope:
 | Code | HTTP | Cause | Fix |
 | --- | --- | --- | --- |
 | `FILEFN_AUTH_REQUIRED` | 401 | `auth.required: true` and no session resolved. | Sign in; ensure auth wiring forwards cookies / `Authorization`. |
-| `FILEFN_FORBIDDEN` | 403 | Authorizer denied. | Check ownership / grants; check the principal is in the right tenant. |
+| `FILEFN_FORBIDDEN` | 403 | Authorizer denied. On upload, the `fileId` names a file the caller cannot write: at init when the file exists, or at completion when another principal created it first (the session is then aborted and its bytes deleted). | Check ownership / grants; check the principal is in the right tenant. |
 | `FILEFN_NOT_FOUND` | 404 | File / artifact / share / permission not found. | Confirm the id exists; remember anti-enumeration: 404 may mask a permission denial. |
 | `FILEFN_SESSION_TOKEN_REQUIRED` | 401 | Anonymous upload missing `x-upload-session-token`. | Pass the token returned from `POST /upload/init`. |
 | `FILEFN_SESSION_TOKEN_INVALID` | 403 | Wrong token for the session. | Re-init the upload, or check storage in the client. |
@@ -69,6 +69,7 @@ Wire-format envelope:
 | `FILEFN_UPLOAD_SIZE_MISMATCH` | 409 | Sum of part sizes ≠ `size` declared at init. | Re-check declared size before init. |
 | `FILEFN_NO_SUPPORTED_UPLOAD_MODE` | 500 | Adapter doesn't support multipart and proxy is disabled. | Use a multipart-capable adapter (S3, GCS, R2, MinIO, Azure). |
 | `FILEFN_STORAGE_PATH_NOT_PER_VERSION` | 500 | The key the policy's `storagePath` returned does not contain the session's full `versionId`, so two upload sessions could write one object. Refused at init before any session row or storage upload is created. | Include the whole `versionId`, unshortened, in the key your `storagePath` returns. |
+| `FILEFN_INVALID_FILE_ID` | 400 | The `fileId` sent to `POST /upload/init` does not match `file_[A-Za-z0-9_-]{8,64}` (or is not a string). Refused before any session row or storage upload is created. | Send an ID in that grammar, such as `generateFileId()` output, or omit `fileId` to let the server generate one. |
 | `FILEFN_OFFLINE_UNSUPPORTED` | 400 | Client requested OPFS but the runtime doesn't support it. | Skip OPFS, upload directly. |
 | `FILEFN_SESSION_NOT_FOUND` | 404 | The `uploadSessionId` doesn't exist. | Use the id returned from init; sessions expire after TTL. |
 
