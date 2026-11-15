@@ -958,6 +958,10 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
           }
         });
       }
+      // A plan change sells the target price just as checkout does, so a tagged target needs the host's approval
+      // before the provider is asked or a change request is written. The admin operator path calls this same method
+      // and is gated the same way; there is no operator override.
+      await requirePriceEligible(deps, billingAccount.id, target.plan, target.price);
       const provider = requireProvider(deps, subscription.provider, 'changeSubscription');
       const effectiveAt = input.effectiveAt ?? 'immediate';
       const prorationBehavior = input.prorationBehavior ?? 'provider_default';

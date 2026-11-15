@@ -3,6 +3,7 @@ import { memoryAdapter } from '@superfunctions/db/testing';
 import { createBillFn } from '../index.js';
 import type {
   BillFnCatalog,
+  BillFnChangeSubscriptionInput,
   BillFnConfig,
   BillFnCreateCheckoutInput,
   BillFnPriceEligibilityInput,
@@ -96,17 +97,40 @@ function setup(checkout?: BillFnConfig['checkout']) {
     checkoutUrl: `https://billing.example.test/checkout/${input.price.providerProductId}`,
     providerCheckoutId: `checkout_${input.checkoutSessionId}`
   }));
+  const changeSubscription = vi.fn(async (input: BillFnChangeSubscriptionInput) => ({
+    operationStatus: 'applied' as const,
+    billingState: {
+      subscriptionStatus: 'active' as const,
+      checkoutStatus: 'succeeded' as const,
+      providerSubscriptionId: input.subscription.providerSubscriptionId,
+      currentPeriodStart: input.subscription.currentPeriodStart,
+      currentPeriodEnd: input.subscription.currentPeriodEnd,
+      autoRenew: true
+    }
+  }));
   const provider = (name: 'dodo' | 'apple'): BillFnProviderAdapter => ({
     provider: name,
     capabilities: {
       createCheckout: true,
-      verifyCheckout: false,
+      verifyCheckout: true,
       cancelSubscription: false,
       syncSubscription: false,
       restorePurchases: false,
-      webhookIngestion: false
+      webhookIngestion: false,
+      changeSubscription: true
     },
-    createCheckout
+    createCheckout,
+    async verifyCheckout(input) {
+      return {
+        subscriptionStatus: 'active',
+        checkoutStatus: 'succeeded',
+        providerSubscriptionId: `sub_${input.checkoutSession.checkoutSessionId}`,
+        currentPeriodStart: '2026-11-01T00:00:00.000Z',
+        currentPeriodEnd: '2026-12-01T00:00:00.000Z',
+        autoRenew: true
+      };
+    },
+    changeSubscription
   });
   const billfn = createBillFn({
     db,
@@ -115,7 +139,9 @@ function setup(checkout?: BillFnConfig['checkout']) {
     checkout
   });
   const storedSessions = () => db.findMany<{ priceId: string }>({ model: 'checkoutSessions', where: [], namespace: 'billfn' });
-  return { billfn, createCheckout, storedSessions };
+  const storedChangeRequests = () =>
+    db.findMany<{ targetPriceId: string }>({ model: 'subscriptionChangeRequests', where: [], namespace: 'billfn' });
+  return { billfn, createCheckout, changeSubscription, storedSessions, storedChangeRequests };
 }
 
 function postCheckout(billfn: ReturnType<typeof setup>['billfn'], body: Record<string, unknown>) {
@@ -235,5 +261,85 @@ describe('checkout price selection', () => {
       provider: 'apple'
     })).rejects.toMatchObject({ code: 'BILLFN_CATALOG_PRICE_NOT_FOUND' });
     expect(createCheckout).not.toHaveBeenCalled();
+  });
+});
+
+describe('plan change to a tagged price', () => {
+  const subject = { principalId: 'user_change' };
+
+  /** Subscribes the subject to the untagged monthly Dodo price. */
+  async function subscribed(checkout?: BillFnConfig['checkout']) {
+    const context = setup(checkout);
+    const created = await context.billfn.createCheckout({ subject, planKey: 'pro', provider: 'dodo', interval: 'month' });
+    if (!created.ok) throw new Error('expected success');
+    await context.billfn.verifyCheckout({ subject, checkoutSessionId: created.data.checkoutSession.checkoutSessionId });
+    return context;
+  }
+
+  function postChange(billfn: ReturnType<typeof setup>['billfn'], targetPriceId: string) {
+    return billfn.router.handle(
+      new Request('https://billfn.example.test/billfn/subscriptions/change', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ subject, targetPriceId })
+      })
+    );
+  }
+
+  it.each([
+    ['the hook refuses', { isPriceEligible: () => false }],
+    ['no hook is configured', undefined]
+  ])('rejects the change with 403 when %s, before any provider call or change request', async (_label, checkout) => {
+    const { billfn, changeSubscription, storedChangeRequests } = await subscribed(checkout);
+
+    const response = await postChange(billfn, 'price_pro_dodo_month_intro');
+    const payload = (await response.json()) as { error: { code: string } };
+
+    expect(response.status).toBe(403);
+    expect(payload.error.code).toBe('BILLFN_PRICE_NOT_ELIGIBLE');
+    expect(changeSubscription).not.toHaveBeenCalled();
+    expect(await storedChangeRequests()).toEqual([]);
+  });
+
+  it('fails closed when the hook throws', async () => {
+    const { billfn, changeSubscription, storedChangeRequests } = await subscribed({
+      isPriceEligible: () => {
+        throw new Error('eligibility store unavailable');
+      }
+    });
+
+    await expect(billfn.changeSubscription({ subject, targetPriceId: 'price_pro_dodo_month_intro' })).rejects.toThrow(
+      'eligibility store unavailable'
+    );
+    expect(changeSubscription).not.toHaveBeenCalled();
+    expect(await storedChangeRequests()).toEqual([]);
+  });
+
+  it('changes to a tagged price the hook approves and passes the account, plan and target price', async () => {
+    const isPriceEligible = vi.fn(async (_input: BillFnPriceEligibilityInput) => true);
+    const { billfn, changeSubscription, storedChangeRequests } = await subscribed({ isPriceEligible });
+
+    const changed = await billfn.changeSubscription({ subject, targetPriceId: 'price_pro_dodo_month_intro' });
+
+    if (!changed.ok) throw new Error('expected success');
+    expect(isPriceEligible).toHaveBeenCalledTimes(1);
+    expect(isPriceEligible.mock.calls[0]?.[0]).toMatchObject({
+      billingAccountId: changed.data.subscription.billingAccountId,
+      planKey: 'pro',
+      price: { priceId: 'price_pro_dodo_month_intro', eligibility: 'first-purchase' }
+    });
+    expect(changeSubscription.mock.calls[0]?.[0].targetPrice.priceId).toBe('price_pro_dodo_month_intro');
+    expect(await storedChangeRequests()).toMatchObject([{ targetPriceId: 'price_pro_dodo_month_intro' }]);
+  });
+
+  it('changes to an untagged price without asking the hook', async () => {
+    const isPriceEligible = vi.fn(() => false);
+    const { billfn, changeSubscription } = await subscribed({ isPriceEligible });
+
+    const response = await postChange(billfn, 'price_pro_dodo_year');
+
+    expect(response.status).toBe(200);
+    expect(isPriceEligible).not.toHaveBeenCalled();
+    expect(changeSubscription.mock.calls[0]?.[0].targetPrice.priceId).toBe('price_pro_dodo_year');
   });
 });

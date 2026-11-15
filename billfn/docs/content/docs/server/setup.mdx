@@ -111,6 +111,17 @@ planKey, price })` before it creates a session or calls the provider. Only a
 not configured. Untagged prices never reach the hook. Checkout charges the
 catalog price, never an amount from the request.
 
+`changeSubscription` applies the same gate to its target price: moving a
+subscription to a tagged price calls the hook first, and anything but `true`
+fails with `403 BILLFN_PRICE_NOT_ELIGIBLE` before the provider is asked or a
+change request is recorded. The admin plan change goes through the same method
+and is gated the same way; there is no operator override.
+
+The hook runs once, when the session or change is requested. Two checkouts for a
+`first-purchase` price started before either completes can both pass, so a hook
+that allows one discounted purchase should also count the account's pending
+discounted checkouts.
+
 ```ts
 const billfn = createBillFn({
   db,

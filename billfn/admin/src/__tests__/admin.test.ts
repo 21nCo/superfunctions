@@ -459,6 +459,67 @@ describe("@billfn/admin", () => {
     });
   });
 
+  it("gates an operator plan change to a tagged price with the host eligibility hook", async () => {
+    const changeSubscription = vi.fn(async () => ({ operationStatus: "applied" as const }));
+    const isPriceEligible = vi.fn(() => false);
+    const price = { provider: "dodo" as const, currency: "USD", kind: "subscription" as const, interval: "month" as const };
+    const billfn = createBillFn({
+      db: memoryAdapter(),
+      catalog: {
+        plans: [{
+          productKey: "nucleus",
+          planKey: "pro",
+          displayName: "Pro",
+          features: {},
+          limits: {},
+          prices: [
+            { ...price, priceId: "price_month", providerProductId: "pdt_month", amount: 12 },
+            { ...price, priceId: "price_month_intro", providerProductId: "pdt_month_intro", amount: 6, eligibility: "first-purchase" },
+          ],
+        }],
+      },
+      providers: {
+        dodo: {
+          provider: "dodo",
+          capabilities: {
+            createCheckout: true,
+            verifyCheckout: true,
+            cancelSubscription: false,
+            syncSubscription: false,
+            restorePurchases: false,
+            webhookIngestion: false,
+            changeSubscription: true,
+          },
+          createCheckout: async (input) => ({ status: "requires_action", providerCheckoutId: `checkout_${input.checkoutSessionId}` }),
+          verifyCheckout: async (input) => ({
+            subscriptionStatus: "active",
+            checkoutStatus: "succeeded",
+            providerSubscriptionId: `sub_${input.checkoutSession.checkoutSessionId}`,
+            currentPeriodStart: "2026-11-01T00:00:00.000Z",
+            currentPeriodEnd: "2026-12-01T00:00:00.000Z",
+            autoRenew: true,
+          }),
+          changeSubscription,
+        },
+      },
+      checkout: { isPriceEligible },
+    });
+    const subject = { tenantId: "workspace_1" };
+    const created = await billfn.createCheckout({ subject, planKey: "pro", provider: "dodo", interval: "month" });
+    if (!created.ok) throw new Error("expected success");
+    const verified = await billfn.verifyCheckout({ subject, checkoutSessionId: created.data.checkoutSession.checkoutSessionId });
+    if (!verified.ok || !verified.data.subscription) throw new Error("expected a subscription");
+    const adapter = createBillFnAdminAdapter(createBillFnDomainAdminService({ billfn, subject: () => subject }));
+
+    await expect(adapter.execute(
+      "billfn.subscriptions.change-subscription",
+      { id: verified.data.subscription.id, payload: { targetPriceId: "price_month_intro" }, reason: "operator move" },
+      context,
+    )).rejects.toMatchObject({ code: "forbidden", details: { code: "BILLFN_PRICE_NOT_ELIGIBLE" } });
+    expect(isPriceEligible).toHaveBeenCalledWith(expect.objectContaining({ planKey: "pro", price: expect.objectContaining({ priceId: "price_month_intro" }) }));
+    expect(changeSubscription).not.toHaveBeenCalled();
+  });
+
   describe("grant-entitlement", () => {
     function grantingBillFn(db: ReturnType<typeof memoryAdapter> = memoryAdapter()) {
       const billfn = createBillFn({

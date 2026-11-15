@@ -86,9 +86,10 @@ export interface BillFnPriceDefinition {
   trialDays?: number;
   /**
    * Restricts who may buy this price, for example `first-purchase` for an
-   * introductory discount. Checkout sells a tagged price only when the host's
-   * `checkout.isPriceEligible` hook approves it for the billing account, and
-   * never picks a tagged price as the default for a plan, provider and interval.
+   * introductory discount. Checkout and plan changes sell a tagged price only
+   * when the host's `checkout.isPriceEligible` hook approves it for the billing
+   * account, and checkout never picks a tagged price as the default for a plan,
+   * provider and interval.
    */
   eligibility?: string;
   metadata?: Record<string, unknown>;
@@ -650,9 +651,11 @@ export interface BillFnConfig {
   checkout?: {
     /**
      * Decides whether a price with an `eligibility` tag may be sold to the
-     * billing account. Checkout calls it only for tagged prices and treats any
+     * billing account. Checkout and `changeSubscription` (including the admin
+     * operator path) call it only for a tagged target price and treat any
      * result other than `true` as ineligible; without the hook, tagged prices
-     * are never sold.
+     * are never sold. It runs once per request, so a hook that limits a price
+     * to one purchase should also count the account's pending checkouts.
      */
     isPriceEligible?: (input: BillFnPriceEligibilityInput) => Promise<boolean> | boolean;
   };
