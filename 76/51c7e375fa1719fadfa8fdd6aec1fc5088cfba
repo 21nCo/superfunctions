@@ -1,0 +1,55 @@
+filefn/docs/content/docs/features/processing.md
+  s_a212f61445d4b4::t_8b811d1db7e3d8 137-138
+filefn/docs/content/docs/recipes/cloudflare-workers.md
+  s_a212f61445d4b4::t_12dc0482b6517b 115,117,119
+filefn/docs/content/docs/reference/events.md
+  s_a212f61445d4b4::t_7e73b8bd0ea778 24-25
+filefn/docs/content/docs/reference/schema.md
+  s_a212f61445d4b4::t_378d1c3e2ba8b3 96,101-105
+filefn/docs/content/docs/sdk/server.md
+  s_a212f61445d4b4::t_9f02b027228c2d 241-245,249-250
+filefn/docs/static/llms-full.txt
+  s_7fc1e9aa78096f::t_300c0f9fae0306 4089-4090,6556,6558,6560,8006-8007,8264,8269-8273,8989-8993,8997-8998
+filefn/processing/src/index.ts
+  s_7fc1e9aa78096f::t_657514c429ad63 83
+filefn/processing/src/queues/cloudflare.ts
+  s_7fc1e9aa78096f::t_b00a807ce8b052 39-41,43,74-80
+filefn/processing/tests/queues-cloudflare.test.ts
+  s_7fc1e9aa78096f::t_5d3e50700f936a 5,55-68
+filefn/server/src/files/service.ts
+  s_7fc1e9aa78096f::t_911bfe6901212f 10-11,713-715,717-722,728-752,754,780
+filefn/server/src/index.ts
+  s_7fc1e9aa78096f::t_3c3b84ab520ca5 529
+filefn/server/src/processing/job-handler.ts
+  s_7fc1e9aa78096f::t_07c86e08470616 15-17,26-29,65-67,99
+filefn/server/src/processing/service.ts
+  s_7fc1e9aa78096f::t_907a05a71c805e 10,70,80-89,180-182,199-206,241,244-246,250-252,257-263,632,635,648,669-671,683,686,690-692,696,747,749,771,777,782,939-941
+filefn/server/src/storage-references.ts
+  s_7fc1e9aa78096f::t_d445b851eb3c0e 1-76
+filefn/server/tests/processing-jobs.test.ts
+  s_7fc1e9aa78096f::t_44440727edb740 110-113,124,127,152-187,443,446,456-480,583-674,758-760
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7651c7e375fa1719fadfa8fdd6aec1fc5088cfba",
+  "prompts": {},
+  "sessions": {
+    "s_7fc1e9aa78096f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9f87ee5c-2a25-4b8f-95e7-06dbdb828158",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_a212f61445d4b4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2d2e1cbd-307d-4fdd-bc30-08b9c063123c",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

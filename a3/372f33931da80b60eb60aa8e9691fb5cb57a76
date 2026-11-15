@@ -1,0 +1,39 @@
+filefn/processing/src/queues/cloudflare.ts
+  s_a942b80e5f2ac3::t_3b6579689b6ca9 1-138
+filefn/processing/tests/queues-cloudflare.test.ts
+  s_a942b80e5f2ac3::t_819fce81666fb4 1-106
+filefn/processing/package.json
+  s_a942b80e5f2ac3::t_b6943a7f13f26f 3,12-15
+filefn/processing/src/index.ts
+  s_a942b80e5f2ac3::t_92569c2748828b 78-94
+filefn/server/package.json
+  s_a942b80e5f2ac3::t_5499d32b626b9b 3
+filefn/server/src/__tests__/processing.test.ts
+  s_a942b80e5f2ac3::t_19595bd361392e 366-373
+filefn/server/src/index.ts
+  s_a942b80e5f2ac3::t_877baf75177882 25,373,458-459,523,525-528,539-546
+filefn/server/src/processing/job-handler.ts
+  s_a942b80e5f2ac3::t_3fa0cbe911f9a2 1-122
+filefn/server/src/processing/service.ts
+  s_a942b80e5f2ac3::t_666b504e76eb07 1,45-95,160-241,282,401-650,693-694,743-746,752-755,757-760,762,778-828
+filefn/server/tests/processing-jobs.test.ts
+  s_a942b80e5f2ac3::t_d5be9a92228686 1-394
+package-lock.json
+  s_a942b80e5f2ac3::t_c3c79c857e3291 12427,12452,12475-12486
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a3372f33931da80b60eb60aa8e9691fb5cb57a76",
+  "prompts": {},
+  "sessions": {
+    "s_a942b80e5f2ac3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "27dcc4ee-6c69-4277-bdf9-dcf1bdede269",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
