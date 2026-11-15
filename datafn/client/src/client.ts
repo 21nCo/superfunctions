@@ -53,7 +53,10 @@ import {
   deriveSearchProviderResources,
   getSearchIndexMarkerState,
   markSearchIndexCurrent,
+  clearSearchIndexCurrent,
 } from "./searchIndex.js";
+import { IMPORT_CONTEXT } from "./events/importMarker.js";
+import { indexStoredRecords, recordIds, runSearchIndexUpdate } from "./searchIndexQueue.js";
 import {
   ensureBuiltinKv,
   ensureBuiltinTemporal,
@@ -1032,19 +1035,24 @@ function _buildRawClient<S extends DatafnSchema>(
               { path: "searchProvider.clearIndices", resource },
             );
           }
-          await config.searchProvider?.clearIndices?.(resource);
-          const records = await resolvedStorage.listRecords(resource);
-          if (records.length > 0) {
-            await config.searchProvider!.updateIndices({
+          // The rebuild takes its turn with the other index updates of this
+          // resource, so an update queued meanwhile lands after it.
+          const provider = config.searchProvider!;
+          await runSearchIndexUpdate(provider, resource, async () => {
+            await provider.clearIndices?.(resource);
+            const records = await resolvedStorage.listRecords(resource);
+            if (records.length > 0) {
+              await provider.updateIndices({
+                resource,
+                records,
+                operation: "upsert",
+              });
+            }
+            await markSearchIndexCurrent({
+              storage: resolvedStorage,
               resource,
-              records,
-              operation: "upsert",
+              fingerprint,
             });
-          }
-          await markSearchIndexCurrent({
-            storage: resolvedStorage,
-            resource,
-            fingerprint,
           });
           hydratedSearchResources.add(resource);
         })().finally(() => {
@@ -1054,6 +1062,41 @@ function _buildRawClient<S extends DatafnSchema>(
         return promise;
       }),
     );
+  };
+
+  /**
+   * Indexes imported records for search right away. When the provider cannot
+   * take them, the resource's index marker is cleared so the next search
+   * rebuilds it from storage.
+   */
+  const indexImportedRecords = async (
+    storage: DatafnStorageAdapter,
+    imported: Record<string, Array<Record<string, unknown>>>,
+  ) => {
+    const provider = config.searchProvider;
+    if (!provider || isNativeBackedBridgeValue(provider)) return;
+    for (const [resource, records] of Object.entries(imported)) {
+      if (!searchProviderResourceByName.has(resource) || records.length === 0) continue;
+      try {
+        // The provider must be initialised, and a rebuild that read storage
+        // before the import must finish first, or its older snapshot would
+        // overwrite the imported documents.
+        await searchProviderInitPromise;
+        await searchHydrationPromises.get(resource)?.catch(() => {});
+        // Index what storage holds, not the import payload, in this
+        // resource's index-update turn: a write made while this waited has
+        // indexed its newer version already, and a later write's update
+        // runs after this one.
+        await indexStoredRecords(provider, storage, resource, recordIds(records));
+      } catch (error) {
+        console.warn("Search index update after import failed; the index will rebuild", {
+          resource,
+          error: String(error),
+        });
+        hydratedSearchResources.delete(resource);
+        await clearSearchIndexCurrent({ storage, resource });
+      }
+    }
   };
 
   // Resolve remote adapter (CFG-001)
@@ -1522,6 +1565,30 @@ function _buildRawClient<S extends DatafnSchema>(
     });
   }
 
+  /**
+   * Runs a query; `observeQuery` receives the query after the client's
+   * plugins transformed it.
+   */
+  const runQuery = async (q: unknown | unknown[], observeQuery?: (query: unknown) => void) => {
+    guardDestroyed();
+    await awaitNativeBridgeReady();
+    await searchProviderInitPromise;
+    await storageValidationPromise; // STORAGE-INIT-001: fail fast if stores are missing
+    await localOnlyInitPromise; // Ensure hydration state is ready in local-only mode
+    return executeQuery(
+      remote,
+      q,
+      resolvedStorage,
+      config.plugins || [],
+      schema,
+      schemaIndex,
+      nativeSyncConfig?.remoteMode,
+      config.temporal,
+      config.e2ee,
+      observeQuery,
+    );
+  };
+
   // Create the client object first (will add table() method after registry is created)
   // We cast to any initially because the mapped types are handled by Proxy
   const client: any = {
@@ -1531,22 +1598,7 @@ function _buildRawClient<S extends DatafnSchema>(
      * Execute a query (CLIENT-QUERY-001, CLIENT-OFFLINE-QUERY-001)
      */
     async query(q: unknown | unknown[]) {
-      guardDestroyed();
-      await awaitNativeBridgeReady();
-      await searchProviderInitPromise;
-      await storageValidationPromise; // STORAGE-INIT-001: fail fast if stores are missing
-      await localOnlyInitPromise; // Ensure hydration state is ready in local-only mode
-      return executeQuery(
-        remote,
-        q,
-        resolvedStorage,
-        config.plugins || [],
-        schema,
-        schemaIndex,
-        nativeSyncConfig?.remoteMode,
-        config.temporal,
-        config.e2ee,
-      );
+      return runQuery(q);
     },
 
     /**
@@ -1788,7 +1840,35 @@ function _buildRawClient<S extends DatafnSchema>(
         );
       }
 
-      return importData(resolvedStorage, schema, sync, data, options);
+      const storage = resolvedStorage;
+      return importData(resolvedStorage, schema, sync, data, options, async (imported, related) => {
+        await indexImportedRecords(storage, imported);
+        // Announce the imported records and join rows as local writes so open
+        // live queries (in this tab and, through the relay, in others)
+        // refresh. An import is not a sync, so it does not touch the sync
+        // status.
+        const timestampMs = getTimestamp();
+        const announce = (resource: string, ids: string[], action: string) =>
+          eventBus.emit({
+            type: "mutation_applied",
+            resource,
+            ids,
+            action,
+            clientId: config.clientId,
+            timestampMs,
+            context: IMPORT_CONTEXT,
+          });
+        for (const [resource, records] of Object.entries(imported)) {
+          announce(
+            resource,
+            records.map((record) => record.id).filter((id): id is string => typeof id === "string"),
+            "replace",
+          );
+        }
+        for (const [resource, ids] of Object.entries(related)) {
+          if (ids.length > 0) announce(resource, ids, "relate");
+        }
+      });
     },
 
     async search(params: unknown): Promise<DatafnSearchResult> {
@@ -2127,29 +2207,35 @@ function _buildRawClient<S extends DatafnSchema>(
       ];
       const signals = resources.map((resource) => {
         const query = input.queriesByResource?.[resource] ?? {};
-        return client.table(resource).signal(
+        // Validates the resource name like table() does.
+        const table = client.table(resource);
+        const {
+          resource: _resource,
+          version: _version,
+          offset: _offset,
+          cursor: _cursor,
+          ...rest
+        } = query as Record<string, unknown>;
+        // The count comes from `count: true`; a one-record page keeps the
+        // query from materialising and sorting every row just to count them.
+        return signalRegistry.getSignal<number>(
           {
-            ...query,
+            resource,
+            version: (table as { version?: number }).version,
+            ...rest,
             count: true,
-            select: query.select ?? ["id"],
+            select: (rest.select as string[] | undefined) ?? ["id"],
+            limit: 1,
           },
           options,
+          { value: "count" },
         );
       });
       return combineSignals(signals, () => {
         const counts: Record<string, number> = {};
         resources.forEach((resource, index) => {
-          const result = signals[index]?.get() as
-            | { count?: number; data?: unknown[] }
-            | unknown[]
-            | undefined;
-          counts[resource] = Array.isArray(result)
-            ? result.length
-            : typeof result?.count === "number"
-              ? result.count
-              : Array.isArray(result?.data)
-                ? result.data.length
-                : 0;
+          const result = signals[index]?.get() as unknown;
+          counts[resource] = typeof result === "number" ? result : 0;
         });
         return counts;
       });
@@ -2303,7 +2389,13 @@ function _buildRawClient<S extends DatafnSchema>(
   };
 
   // Create signal registry (CLIENT-SIGNAL-001, SIG-002)
-  const signalRegistry = new SignalRegistry(client, eventBus, schema);
+  const signalRegistry = new SignalRegistry(
+    client,
+    eventBus,
+    schema,
+    config.plugins || [],
+    runQuery,
+  );
 
   // Create table registry with client and signal registry (CLIENT-REG-001)
   const registry = new TableRegistry<S>(

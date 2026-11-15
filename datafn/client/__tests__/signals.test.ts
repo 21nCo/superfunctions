@@ -3,7 +3,7 @@
  * Tests TV-SIGNAL-001, TV-SIGNAL-002 from TEST_VECTORS.md
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createDatafnClient } from "../src/client.js";
 import { DefaultHttpTransport } from "../src/transport/http.js";
 import type { DatafnEvent } from "@datafn/core";
@@ -23,6 +23,12 @@ const defaultSchema = {
 describe("@datafn/client signals", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+  });
+
+  // Let refreshes a test scheduled (coalesced over ~16 ms) finish against that
+  // test's mocks before the next test installs its own.
+  afterEach(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 40));
   });
 
   it("TV-SIGNAL-001: Caching by dfqlKey, lazy fetch, auto-refresh on mutation", async () => {
@@ -75,7 +81,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for initial fetch
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     // Verify initial value (filter out undefined from loading states)
     const definedValues = observedValues.filter((v) => v !== undefined);
@@ -97,7 +103,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for refresh
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     // Verify refresh happened (filter out undefined)
     const definedValues2 = observedValues.filter((v) => v !== undefined);
@@ -153,7 +159,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for initial fetch
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     // Verify initial value (filter out undefined)
     const definedValues = observedValues.filter((v) => v !== undefined);
@@ -170,7 +176,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for potential refresh
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     // Verify NO new value notification (refresh failed silently, filter undefined)
     const definedValues2 = observedValues.filter((v) => v !== undefined);
@@ -240,7 +246,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for initial fetch
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     // Verify initial value
     const definedValues = observedValues.filter((v) => v !== undefined);
@@ -263,7 +269,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for potential refresh
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     // Verify signal1 did NOT refresh (still has only initial value)
     const definedValues2 = observedValues.filter((v) => v !== undefined);
@@ -290,7 +296,7 @@ describe("@datafn/client signals", () => {
     signal.subscribe((value: unknown) => {});
 
     // Wait for initial fetch
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     // First dispose
     signal.dispose();
@@ -319,7 +325,7 @@ describe("@datafn/client signals", () => {
     signal.subscribe((value: unknown) => {});
 
     // Wait for initial fetch
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     // Get value before dispose
     const valueBeforeDispose = signal.get();
@@ -359,7 +365,7 @@ describe("@datafn/client signals", () => {
     signal3.subscribe((value: unknown) => {});
 
     // Wait for initial fetches
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     // Verify signals are in registry (creating same query returns same instance)
     expect(table.signal({ select: ["id"] })).toBe(signal1);
@@ -416,7 +422,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for initial fetch
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     // Verify initial value (queryCallCount should be 1)
     expect(queryCallCount).toBe(1);
@@ -436,7 +442,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for potential refresh
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     // Verify NO additional query was made (queryCallCount still 1)
     expect(queryCallCount).toBe(1);
@@ -480,7 +486,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for initial fetch
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     const definedValues = observedValues.filter((v) => v !== undefined);
     expect(definedValues).toHaveLength(1);
@@ -496,7 +502,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for potential refresh
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     // Verify NO refresh occurred (still only 1 value)
     const definedValues2 = observedValues.filter((v) => v !== undefined);
@@ -539,7 +545,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for initial fetch
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     const definedValues = observedValues.filter((v) => v !== undefined);
     expect(definedValues).toHaveLength(1);
@@ -554,7 +560,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for refresh (now includes optimistic patch + background re-fetch from Phase 10)
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     // Verify refresh occurred (now 3 values due to optimistic patching: initial + optimistic + background re-fetch)
     const definedValues2 = observedValues.filter((v) => v !== undefined);
@@ -604,7 +610,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for initial fetch
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     const definedValues = observedValues.filter((v) => v !== undefined);
     expect(definedValues).toHaveLength(1);
@@ -619,7 +625,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for refresh
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     // Verify refresh occurred
     const definedValues2 = observedValues.filter((v) => v !== undefined);
@@ -662,7 +668,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for initial fetch
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     const definedValues = observedValues.filter((v) => v !== undefined);
     expect(definedValues).toHaveLength(1);
@@ -676,7 +682,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for refresh
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     // Verify refresh occurred
     const definedValues2 = observedValues.filter((v) => v !== undefined);
@@ -717,7 +723,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for initial fetch
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     expect(queryCallCount).toBe(1);
     const definedValues = observedValues.filter((v) => v !== undefined);
@@ -733,7 +739,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for refresh
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     // Verify refresh occurred (conservative fallback)
     expect(queryCallCount).toBe(2);
@@ -777,7 +783,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for initial fetch
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     const definedValues = observedValues.filter((v) => v !== undefined);
     expect(definedValues).toHaveLength(1);
@@ -808,7 +814,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for background re-fetch
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     // Verify background re-fetch occurred (should have at least 2 values)
     const definedValues3 = observedValues.filter((v) => v !== undefined);
@@ -846,7 +852,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for initial fetch
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     expect(observedValues.filter((v) => v !== undefined)).toHaveLength(1);
 
@@ -902,7 +908,7 @@ describe("@datafn/client signals", () => {
     signal.subscribe((value: unknown) => {});
 
     // Wait for initial fetch
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     expect(queryCallCount).toBe(1);
 
@@ -916,7 +922,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for background re-fetch
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     // Verify background re-fetch occurred
     expect(queryCallCount).toBe(2);
@@ -958,7 +964,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for initial fetch
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     expect(queryCallCount).toBe(1);
 
@@ -971,7 +977,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for re-fetch
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     // Verify full re-fetch occurred (not optimistic patch)
     expect(queryCallCount).toBe(2);
@@ -1021,7 +1027,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for initial fetch
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     // Trigger merge mutation
     await table.mutate({
@@ -1033,7 +1039,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait a bit
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     // With optimistic enabled (default), we should see the patched value quickly
     const definedValues = observedValues.filter((v) => v !== undefined);
@@ -1073,7 +1079,7 @@ describe("@datafn/client signals", () => {
     signal.subscribe((value: unknown) => {});
 
     // Wait for initial fetch
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     expect(queryCallCount).toBe(1);
 
@@ -1087,7 +1093,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for potential re-fetch
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     // Since task:99 is not in cache, optimistic patch should skip and no re-fetch occurs
     // (based on SIG-002 logic: merge on non-cached record doesn't trigger refresh)
@@ -1156,7 +1162,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for initial fetch
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     const definedValues = observedValues.filter((v) => v !== undefined);
     expect(definedValues).toHaveLength(1);
@@ -1171,7 +1177,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for refresh
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     // Verify refresh occurred (relation footprint detected user resource)
     const definedValues2 = observedValues.filter((v) => v !== undefined);
@@ -1203,7 +1209,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for initial fetch
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     // When data arrives, loading should be false at notification time
     expect(loadingStates.length).toBeGreaterThanOrEqual(1);
@@ -1242,7 +1248,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for initial fetch
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     // Trigger refresh via insert mutation
     await table.mutate({
@@ -1254,7 +1260,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for refresh
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     // After refresh, refreshing should be false at notification time
     expect(refreshingStates[refreshingStates.length - 1]).toBe(false);
@@ -1282,7 +1288,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for fetch to fail
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     // On error notification, loading should be false
     if (loadingStates.length > 0) {
@@ -1314,7 +1320,7 @@ describe("@datafn/client signals", () => {
     });
 
     // Wait for initial fetch
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     // Should have data and loading:false in the same notification
     const dataSnapshots = snapshots.filter(s => s.data !== undefined);

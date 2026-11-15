@@ -1635,3 +1635,210 @@ describe("cloneUp — pushBatchWithRetry exponential backoff (CLI-010)", () => {
     pushSpy.mockRestore();
   });
 });
+
+/**
+ * Runs cloneUp against a mocked push. `reject` names mutations the server
+ * rejects; `duringPush` runs while each push is in flight.
+ */
+async function cloneUpWith(
+  storage: MockStorageAdapter,
+  schema: Record<string, unknown>,
+  options: CloneUpOptions = {},
+  hooks: { reject?: (mutation: any) => boolean; duringPush?: () => Promise<void> } = {},
+) {
+  storage.cursors.set("__global_cursor__", "0");
+  const sent: Array<Record<string, any>> = [];
+  const pushSpy = vi.spyOn(DefaultHttpTransport.prototype, "push").mockImplementation(async (payload: any) => {
+    sent.push(...payload.mutations);
+    await hooks.duringPush?.();
+    const rejected = payload.mutations.filter((m: any) => hooks.reject?.(m) ?? false);
+    return {
+      ok: true,
+      result: {
+        ok: rejected.length === 0,
+        applied: [],
+        errors: rejected.map((m: any) => ({ mutationId: m.mutationId, code: "DFQL_INVALID", message: "no", path: "$" })),
+        cursor: "1",
+      },
+    } as any;
+  });
+  try {
+    const client = createDatafnClient({
+      schema: schema as any,
+      sync: { remote: "http://example.com" },
+      clientId: "client:data-15",
+      storage,
+    });
+    const result = await client.sync.cloneUp({ includeManyMany: false, pullAfter: false, ...options });
+    return { result, sent };
+  } finally {
+    pushSpy.mockRestore();
+  }
+}
+
+const str = (name: string, extra: Record<string, unknown> = {}) => ({ name, type: "string" as const, ...extra });
+const resource = (name: string, fields: Array<Record<string, unknown>>) => ({ name, version: 1, fields });
+const manyOne = (from: string, to: string | string[], fkField: string, extra: Record<string, unknown> = {}) => ({
+  from,
+  to,
+  type: "many-one",
+  relation: fkField.replace(/Id$/, ""),
+  fkField,
+  ...extra,
+});
+const polymorphicNodes = () =>
+  manyOne("nodes", ["nodes", "files"], "targetId", { fkResourceField: "targetResource" });
+
+describe("cloneUp — references and cycles (DATA-15)", () => {
+  it("does not treat a reference to another resource with the same id as a cycle", async () => {
+    const storage = new MockStorageAdapter();
+    await storage.upsertRecord("files", { id: "x", title: "File x" });
+    await storage.upsertRecord("nodes", { id: "x", label: "Node x", targetId: "x", targetResource: "files" });
+    await storage.upsertRecord("nodes", { id: "a", label: "Node a", targetId: "x", targetResource: "nodes" });
+    const { result, sent } = await cloneUpWith(storage, {
+      resources: [
+        resource("files", [str("title")]),
+        resource("nodes", [str("label"), str("targetId"), str("targetResource")]),
+      ],
+      relations: [polymorphicNodes()],
+    });
+    expect(result.ok).toBe(true);
+    expect(sent.map((m) => [m.resource, m.id, m.record])).toEqual([
+      ["files", "x", { title: "File x" }],
+      ["nodes", "x", { label: "Node x", targetId: "x", targetResource: "files" }],
+      ["nodes", "a", { label: "Node a", targetId: "x", targetResource: "nodes" }],
+    ]);
+    expect(sent.some((m) => /:ref:/.test(m.mutationId))).toBe(false);
+  });
+
+  it("keeps the resource field when two deferred references share it", async () => {
+    const storage = new MockStorageAdapter();
+    for (const [id, peer] of [["a", "b"], ["b", "a"]]) {
+      await storage.upsertRecord("nodes", { id, targetId: peer, otherId: peer, targetResource: "nodes" });
+    }
+    const nullable = { nullable: true };
+    const { result, sent } = await cloneUpWith(storage, {
+      resources: [
+        resource("files", [str("title")]),
+        resource("nodes", [str("targetId", nullable), str("otherId", nullable), str("targetResource", nullable)]),
+      ],
+      relations: [
+        polymorphicNodes(),
+        manyOne("nodes", ["nodes", "files"], "otherId", { fkResourceField: "targetResource" }),
+      ],
+    });
+    expect(result.ok).toBe(true);
+    const restore = sent.find((m) => /:ref:/.test(m.mutationId));
+    expect(sent[0].record).toEqual({ targetId: null, otherId: null, targetResource: null });
+    expect(restore?.record).toEqual({ targetId: "a", otherId: "a", targetResource: "nodes" });
+  });
+
+  it("orders resources by the targets records name, not every polymorphic candidate", async () => {
+    const storage = new MockStorageAdapter();
+    await storage.upsertRecord("files", { id: "files:1", title: "F", ownerId: "nodes:1" });
+    await storage.upsertRecord("nodes", { id: "nodes:1", targetId: "nodes:1", targetResource: "nodes" });
+    const required = { required: true };
+    const { result, sent } = await cloneUpWith(storage, {
+      resources: [
+        resource("files", [str("title"), str("ownerId", required)]),
+        resource("nodes", [str("targetId", required), str("targetResource", required)]),
+      ],
+      relations: [manyOne("files", "nodes", "ownerId"), polymorphicNodes()],
+    });
+    expect(result.ok).toBe(true);
+    expect(sent.map((m) => m.id)).toEqual(["nodes:1", "files:1"]);
+  });
+
+  it("orders a resource after the target its reference defaults to", async () => {
+    const storage = new MockStorageAdapter();
+    await storage.upsertRecord("children", { id: "children:1", label: "C" });
+    await storage.upsertRecord("parents", { id: "parents:1", label: "P" });
+    const { result, sent } = await cloneUpWith(storage, {
+      resources: [
+        resource("children", [str("label"), str("parentId", { required: true, default: "parents:1" })]),
+        resource("parents", [str("label")]),
+      ],
+      relations: [manyOne("children", "parents", "parentId")],
+    });
+    expect(result.ok).toBe(true);
+    expect(sent.map((m) => m.id)).toEqual(["parents:1", "children:1"]);
+  });
+
+  it("keeps the given order inside a cycle and places a resource after its targets", async () => {
+    const { orderResourcesByDependency } = await import("../src/sync/cloneUp/order.js");
+    const refs = new Map([
+      ["a", [{ field: "bId", targets: ["b"] }]],
+      ["b", [{ field: "aId", targets: ["a"] }]],
+      ["c", [{ field: "aId", targets: ["a"] }]],
+    ]);
+    expect(orderResourcesByDependency(["c", "a", "b"], refs, () => true)).toEqual(["a", "b", "c"]);
+    // Only b's reference may be unset, so b goes first.
+    expect(orderResourcesByDependency(["a", "b"], refs, (name) => name === "b")).toEqual(["b", "a"]);
+  });
+});
+
+describe("cloneUp — rejected records with failFast off (DATA-15)", () => {
+  const linksSchema = {
+    resources: [resource("links", [str("peerId", { nullable: true })])],
+    relations: [manyOne("links", "links", "peerId")],
+  };
+  const seedLinks = async (storage: MockStorageAdapter) => {
+    await storage.upsertRecord("links", { id: "a", peerId: "b" });
+    await storage.upsertRecord("links", { id: "b", peerId: "a" });
+  };
+
+  it("does not restore a reference on a record the server rejected", async () => {
+    const storage = new MockStorageAdapter();
+    await seedLinks(storage);
+    const { result, sent } = await cloneUpWith(storage, linksSchema, { failFast: false }, {
+      reject: (m) => m.record?.peerId === null,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.errors).toHaveLength(1);
+    expect(sent.some((m) => /:ref:/.test(m.mutationId))).toBe(false);
+  });
+
+  it("does not restore a reference that points at a rejected record", async () => {
+    const storage = new MockStorageAdapter();
+    await seedLinks(storage);
+    // b goes up first with its reference unset; a (the record b points at) is rejected.
+    const { result, sent } = await cloneUpWith(storage, linksSchema, { failFast: false }, {
+      reject: (m) => m.id === "a" && !/:ref:/.test(m.mutationId),
+    });
+    expect(result.ok).toBe(false);
+    expect(result.errors).toHaveLength(1);
+    expect(sent.some((m) => /:ref:/.test(m.mutationId))).toBe(false);
+  });
+});
+
+describe("cloneUp — the changelog (DATA-15)", () => {
+  const tasksSchema = { resources: [resource("tasks", [str("title")])] };
+  const entry = (mutationId: string) =>
+    ({ clientId: "client:data-15", mutationId, mutation: { resource: "tasks" }, timestampMs: 0, timestamp: "" }) as any;
+
+  it("leaves changelog entries written during the push queued", async () => {
+    const storage = new MockStorageAdapter();
+    await storage.upsertRecord("tasks", { id: "t1", title: "Before" });
+    const before = await storage.changelogAppend(entry("m-before"));
+    let wrote = false;
+    const { result } = await cloneUpWith(storage, tasksSchema, {}, {
+      duringPush: async () => {
+        if (wrote) return;
+        wrote = true;
+        await storage.changelogAppend(entry("m-during"));
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(storage.changelog.map((e) => e.mutationId)).toEqual(["m-during"]);
+    expect(storage.changelog.every((e) => e.seq > before.seq)).toBe(true);
+  });
+
+  it("does not read the changelog when it will not be cleared", async () => {
+    const storage = new MockStorageAdapter();
+    await storage.upsertRecord("tasks", { id: "t1", title: "One" });
+    const listSpy = vi.spyOn(storage, "changelogList");
+    const { result } = await cloneUpWith(storage, tasksSchema, { clearChangelogOnSuccess: false });
+    expect(result.ok).toBe(true);
+    expect(listSpy).not.toHaveBeenCalled();
+  });
+});
