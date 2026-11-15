@@ -1,0 +1,69 @@
+billfn/client/src/types.ts
+  s_6a65cdac9b91e7::t_1b202317cc631c 33-34
+billfn/docs/content/docs/server/setup.mdx
+  s_6a65cdac9b91e7::t_12f754b260aa71 23-29,83-125
+billfn/core/src/types.ts
+  s_6a65cdac9b91e7::t_faee96a13ebe38 87-93,650-658,663-670,676-681
+billfn/core/package.json
+  s_6a65cdac9b91e7::t_79bace32954d7d 3
+billfn/docs/content/docs/clients/typescript.mdx
+  s_6a65cdac9b91e7::t_b07449f78e0f77 45-64
+package-lock.json
+  s_f058f999ab46b7::t_f2f07716ed1b0b 4958,4961,4975,4978,4999,6033,6036,6056,6059,6080,6083-6084,6091-6092
+billfn/admin/package.json
+  s_6a65cdac9b91e7::t_921c22751f9adc 3,41
+billfn/client/src/__tests__/client.test.ts
+  s_6a65cdac9b91e7::t_3c64aa1d9ae747 70-92
+billfn/core/src/router.ts
+  s_6a65cdac9b91e7::t_b34181f42e205f 106,123
+billfn/provider-apple/package.json
+  s_6a65cdac9b91e7::t_9ac8423221e1d9 3,34
+billfn/docs/content/docs/reference/errors-and-defaults.mdx
+  s_6a65cdac9b91e7::t_7ff65018795efc 48
+billfn/client/package.json
+  s_6a65cdac9b91e7::t_37c34b2ca4f930 3,34
+billfn/provider-dodo/package.json
+  s_6a65cdac9b91e7::t_f0852ba4e3b7b1 3,34
+billfn/python/billfn/types.py
+  s_6a65cdac9b91e7::t_23b4722eb8c099 97,205
+billfn/svelte/package.json
+  s_6a65cdac9b91e7::t_429861165ef740 3,32-33,37-38
+billfn/core/src/__tests__/checkout-price.test.ts
+  s_6a65cdac9b91e7::t_ca00c206263b5c 1-239
+billfn/python/billfn/__init__.py
+  s_6a65cdac9b91e7::t_6155fc817b6aa2 3
+billfn/python/pyproject.toml
+  s_6a65cdac9b91e7::t_3e6ff925095e7f 7
+billfn/core/src/errors.ts
+  s_6a65cdac9b91e7::t_f24756cab9c89c 57-61
+billfn/python/tests/test_client.py
+  s_6a65cdac9b91e7::t_4f12b3d55d136d 3-5,105-156
+billfn/core/src/helpers.ts
+  s_6a65cdac9b91e7::t_da4040656fcaa5 61-70,76-81
+billfn/core/src/service.ts
+  s_6a65cdac9b91e7::t_c36d41d48d89d5 21,179,280-281,795,797,2121-2179
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "804b72b59f6834cb9800ed682ed59bd4b4836c78",
+  "prompts": {},
+  "sessions": {
+    "s_6a65cdac9b91e7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c569943d-3b65-4fa4-8b2e-7ee3a80064c2",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
