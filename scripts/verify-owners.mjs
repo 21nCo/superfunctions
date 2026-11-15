@@ -153,8 +153,11 @@ export function pyprojectName(source, file = "pyproject.toml") {
       }
       table = key.segments;
       if (table[0] === "project") {
+        // Subtables and arrays of tables under project ([project.urls], [[project.authors]]) are project
+        // metadata; their keys sit below project.<sub> and are never read as the name. Only the project
+        // table itself must not be an array of tables.
         sawProject = true;
-        if (isArray) throw fail("project metadata must not be an array of tables");
+        if (isArray && table.length === 1) throw fail("project metadata must not be an array of tables");
       }
       continue;
     }

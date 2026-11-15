@@ -152,6 +152,17 @@ test("pyprojectName reads every TOML spelling of the project name", () => {
   }
 });
 
+test("pyprojectName accepts subtables and arrays of tables under project in either order", () => {
+  const authors = '[[project.authors]]\nname = "21n"\nemail = "a@b"\n';
+  assert.equal(pyprojectName(`[project]\nname = "datafn"\nversion = "0.1.0"\n${authors}`), "datafn");
+  assert.equal(pyprojectName(`[[project.maintainers]]\nname = "m"\n[project]\nname = "datafn"\n`), "datafn");
+  assert.equal(pyprojectName(`project.name = "datafn"\n${authors}[project.urls]\nname = "u"\n`), "datafn");
+  assert.equal(pyprojectName(`[project]\nname = "datafn"\n[[project.authors]]\n[project.optional-dependencies]\nname = ["x"]\n`), "datafn");
+  throwsUnreadable(authors, /x\/pyproject\.toml: project metadata has no name/);
+  throwsUnreadable('[[project]]\nname = "a"\n', /array of tables/);
+  throwsUnreadable('[project]\nname = "a"\n[[ "project" ]]\n', /x\/pyproject\.toml:3: project metadata must not be an array of tables/);
+});
+
 test("pyprojectName skips multi-line values and fails closed on unreadable project metadata", () => {
   const multiline = [
     'description = """',
