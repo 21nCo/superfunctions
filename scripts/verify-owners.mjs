@@ -54,10 +54,14 @@ function unreadable(file, line, reason) {
 
 const BASIC_ESCAPES = { b: "\b", t: "\t", n: "\n", f: "\f", r: "\r", e: "\x1b", '"': '"', "\\": "\\" };
 
-/** Decodes the escapes of a basic string; in a multi-line basic string a line-ending backslash trims whitespace. */
+/**
+ * Decodes the escapes of a basic string (TOML 1.0 plus the 1.1 \e and \xHH escapes); in a multi-line basic
+ * string a line-ending backslash trims whitespace.
+ */
 function unescapeBasic(raw, multiline, fail) {
-  return raw.replace(/\\([ \t]*\n[ \t\n]*|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|[\s\S])/g, (_, escape) => {
+  return raw.replace(/\\([ \t]*\n[ \t\n]*|x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|[\s\S])/g, (_, escape) => {
     if (multiline && escape.includes("\n")) return "";
+    if (/^x[0-9A-Fa-f]{2}$/.test(escape)) return String.fromCodePoint(Number.parseInt(escape.slice(1), 16));
     if (/^[uU][0-9A-Fa-f]+$/.test(escape) && escape.length > 1) {
       const codePoint = Number.parseInt(escape.slice(1), 16);
       if (codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff)) throw fail(`invalid escape \\${escape}`);
@@ -83,7 +87,10 @@ const SCALARS = [
 
 /**
  * Parses a TOML document into plain objects (tables are null-prototype objects, arrays are arrays, strings are
- * strings, other values are TomlScalar). Redefining a key or table fails, as TOML requires. `onHeader` sees every
+ * strings, other values are TomlScalar). It covers TOML 1.0 plus the TOML 1.1 changes: the \e and \xHH escapes,
+ * newlines, trailing commas and comments inside inline tables, and times and datetimes without seconds. On input that
+ * TOML 1.0 rejects it is lenient in two places: an underscore directly after a 0x, 0o or 0b prefix (0x_ff) and a
+ * leading byte order mark are accepted. Redefining a key or table fails, as TOML requires. `onHeader` sees every
  * table header before it is applied. Errors come from `fail(line, reason)`. Returns the document and the line on
  * which each key path was first defined.
  */

@@ -227,6 +227,23 @@ test("pyprojectName follows the TOML rules for dotted keys and table headers", (
   throwsUnreadable('[project]\nname = "a\\qb"\n', /:2: invalid escape \\q/);
 });
 
+test("pyprojectName accepts every TOML 1.1 change", () => {
+  // \xHH escapes in a basic name, a multi-line basic name and a quoted key.
+  assert.equal(pyprojectName('[project]\nname = "\\x64atafn"\n'), "datafn");
+  assert.equal(pyprojectName('[project]\nname = """\\x64ata\\x66n"""\n'), "datafn");
+  assert.equal(pyprojectName('[project]\n"n\\x61me" = "datafn"\n'), "datafn");
+  // An escape in an unrelated string must not break discovery, since the whole document is parsed.
+  assert.equal(pyprojectName('[tool.x]\ny = "\\x41\\xff"\nz = "\\e"\n[project]\nname = "datafn"\n'), "datafn");
+  assert.equal(pyprojectName('[project]\nname = "datafn"\ncolor = "\\e[1m"\n'), "datafn");
+  // Newlines, comments and a trailing comma inside an inline table.
+  assert.equal(pyprojectName('project = {\n  # metadata\n  name = "datafn", # the name\n  version = "1",\n}\n'), "datafn");
+  // Datetimes and times without seconds.
+  assert.equal(pyprojectName('[tool.x]\nat = 1979-05-27T07:32Z\nlocal = 1979-05-27 07:32\nt = 07:32\n[project]\nname = "datafn"\n'), "datafn");
+  throwsUnreadable('[project]\nname = "\\x6"\n', /x\/pyproject\.toml:2: invalid escape \\x/);
+  throwsUnreadable('[project]\nname = "\\xG1"\n', /x\/pyproject\.toml:2: invalid escape \\x/);
+  throwsUnreadable('[project]\nname = "datafn\\x"\n', /x\/pyproject\.toml:2: invalid escape \\x/);
+});
+
 test("an unreadable pyproject.toml fails the check and names the file", (t) => {
   const result = run(fixture(t, { files: { "datafn/extra/pyproject.toml": '["project"]\nname = 1\n' } }));
   assert.equal(result.status, 1);
