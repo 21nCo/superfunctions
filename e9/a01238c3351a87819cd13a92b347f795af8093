@@ -1,0 +1,37 @@
+testfn/admin/src/__tests__/admin.test.ts
+  s_b50a334ce5cc0b::t_f516bbc439673f 29,596-602
+testfn/admin/src/capability.ts
+  s_b50a334ce5cc0b::t_5ae48fffeda634 48-55
+testfn/python/README.md
+  s_b50a334ce5cc0b::t_c38dfdce50ff18 125-134
+testfn/python/testfn/adapters/pytest.py
+  s_b50a334ce5cc0b::t_139405ae03e9e5 21-28,35-36,38-41,61-64,73-74,76-79,88,90-91,98-168,196-200,202,204-278,282-287,291,300
+testfn/python/tests/test_execution_contract.py
+  s_b50a334ce5cc0b::t_5c0a219b2d9c93 345-456
+testfn/typescript/README.md
+  s_b50a334ce5cc0b::t_2bfe03cc993b46 267
+testfn/typescript/src/storage/artifacts.ts
+  s_b50a334ce5cc0b::t_bde042046d8075 8-9,20-24,55,71-77,82-86,112,149
+testfn/typescript/src/storage/test-storage.ts
+  s_b50a334ce5cc0b::t_c15ef2c63ed526 1-2,17-48,50,68-76,79,81,131-147,162-167,196-202,222-223
+testfn/typescript/tests/storage-concurrency.test.ts
+  s_b50a334ce5cc0b::t_9e5718cc4bc979 1-111
+testfn/typescript/tests/storage.test.ts
+  s_b50a334ce5cc0b::t_57612f9af72919 225
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e9a01238c3351a87819cd13a92b347f795af8093",
+  "prompts": {},
+  "sessions": {
+    "s_b50a334ce5cc0b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_b50a334ce5cc0b",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
