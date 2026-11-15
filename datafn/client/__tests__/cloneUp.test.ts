@@ -1635,3 +1635,80 @@ describe("cloneUp — pushBatchWithRetry exponential backoff (CLI-010)", () => {
     pushSpy.mockRestore();
   });
 });
+
+describe("cloneUp — polymorphic references (DATA-15)", () => {
+  it("does not treat a reference to another resource with the same id as a cycle", async () => {
+    const storage = new MockStorageAdapter();
+    storage.cursors.set("__global_cursor__", "0");
+    await storage.upsertRecord("files", { id: "x", title: "File x" });
+    await storage.upsertRecord("nodes", {
+      id: "x",
+      label: "Node x",
+      targetId: "x",
+      targetResource: "files",
+    });
+    await storage.upsertRecord("nodes", {
+      id: "a",
+      label: "Node a",
+      targetId: "x",
+      targetResource: "nodes",
+    });
+
+    const sent: Array<Record<string, any>> = [];
+    const pushSpy = vi
+      .spyOn(DefaultHttpTransport.prototype, "push")
+      .mockImplementation(async (payload: any) => {
+        sent.push(...payload.mutations);
+        return {
+          ok: true,
+          result: {
+            ok: true,
+            applied: payload.mutations.map((m: any) => m.mutationId),
+            errors: [],
+            cursor: "1",
+          },
+        } as any;
+      });
+
+    const client = createDatafnClient({
+      schema: {
+        resources: [
+          { name: "files", version: 1, fields: [{ name: "title", type: "string" as const }] },
+          {
+            name: "nodes",
+            version: 1,
+            fields: [
+              { name: "label", type: "string" as const },
+              { name: "targetId", type: "string" as const },
+              { name: "targetResource", type: "string" as const },
+            ],
+          },
+        ],
+        relations: [
+          {
+            from: "nodes",
+            to: ["nodes", "files"],
+            type: "many-one",
+            relation: "target",
+            fkField: "targetId",
+            fkResourceField: "targetResource",
+          } as any,
+        ],
+      },
+      sync: { remote: "http://example.com" },
+      clientId: "client:poly",
+      storage,
+    });
+
+    const result = await client.sync.cloneUp({ includeManyMany: false, pullAfter: false });
+    pushSpy.mockRestore();
+
+    expect(result.ok).toBe(true);
+    expect(sent.map((m) => [m.resource, m.id, m.record])).toEqual([
+      ["files", "x", { title: "File x" }],
+      ["nodes", "x", { label: "Node x", targetId: "x", targetResource: "files" }],
+      ["nodes", "a", { label: "Node a", targetId: "x", targetResource: "nodes" }],
+    ]);
+    expect(sent.some((m) => /:ref:/.test(m.mutationId))).toBe(false);
+  });
+});

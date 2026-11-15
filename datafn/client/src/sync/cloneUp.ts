@@ -7,6 +7,7 @@ import { createClientError, isTransportError } from "../errors.js";
 import { computeMutationHash } from "./cloneUp/hash.js";
 import {
   orderRecordsParentFirst,
+  referenceTargetsFor,
   orderResourcesByDependency,
   referenceFieldsByResource,
   sortJoinRows,
@@ -211,14 +212,12 @@ export async function cloneUp(
     const resourceReferences: ReferenceField[] = (references.get(resourceName) ?? []).filter(
       (reference) => fieldNames.has(reference.field),
     );
-    const selfReferenceFields = resourceReferences
-      .filter((reference) => reference.targets.includes(resourceName))
-      .map((reference) => reference.field);
 
     const rawRecords = recordsByResource.get(resourceName) ?? [];
     const sortedRecords = orderRecordsParentFirst(
       sortRecordsById(rawRecords),
-      selfReferenceFields,
+      resourceName,
+      resourceReferences,
     );
     const pushed = pushedIds.get(resourceName) ?? new Set<string>();
     pushedIds.set(resourceName, pushed);
@@ -248,7 +247,7 @@ export async function cloneUp(
       for (const reference of resourceReferences) {
         const targetId = filteredRecord[reference.field];
         if (typeof targetId !== "string" || targetId.length === 0) continue;
-        const pending = reference.targets.some(
+        const pending = referenceTargetsFor(reference, record).some(
           (target) => localIds.get(target)?.has(targetId) && !pushedIds.get(target)?.has(targetId),
         );
         if (!pending) continue;

@@ -20,6 +20,22 @@ export type ReferenceField = {
 };
 
 /**
+ * The resources a record's reference can point to. On a polymorphic relation
+ * the companion resource field, when it names one of the targets, narrows
+ * them to that resource.
+ */
+export function referenceTargetsFor(
+  reference: ReferenceField,
+  record: Record<string, unknown>,
+): string[] {
+  if (reference.resourceField) {
+    const named = record[reference.resourceField];
+    if (typeof named === "string" && reference.targets.includes(named)) return [named];
+  }
+  return reference.targets;
+}
+
+/**
  * Foreign-key fields per resource, from many-one (on `from`), one-many and
  * htree (on `to`) relations.
  */
@@ -97,15 +113,18 @@ export function orderResourcesByDependency(
 }
 
 /**
- * Orders records (already sorted by id) so a record comes after the records
- * of the same resource it references through `fields`. A reference cycle is
- * left for the caller to break.
+ * Orders records of `resource` (already sorted by id) so a record comes after
+ * the records of the same resource it references. A reference counts only
+ * when it can point to `resource` (see referenceTargetsFor). A reference
+ * cycle is left for the caller to break.
  */
 export function orderRecordsParentFirst(
   records: Record<string, unknown>[],
-  fields: string[],
+  resource: string,
+  references: ReferenceField[],
 ): Record<string, unknown>[] {
-  if (fields.length === 0 || records.length < 2) return records;
+  const selfReferences = references.filter((reference) => reference.targets.includes(resource));
+  if (selfReferences.length === 0 || records.length < 2) return records;
   const byId = new Map<string, Record<string, unknown>>();
   for (const record of records) byId.set(String(record.id), record);
   const state = new Map<string, "visiting" | "done">();
@@ -120,8 +139,10 @@ export function orderRecordsParentFirst(
     while (stack.length > 0) {
       const frame = stack[stack.length - 1];
       const record = byId.get(frame.id)!;
-      if (frame.next < fields.length) {
-        const parentId = record[fields[frame.next++]];
+      if (frame.next < selfReferences.length) {
+        const reference = selfReferences[frame.next++];
+        if (!referenceTargetsFor(reference, record).includes(resource)) continue;
+        const parentId = record[reference.field];
         if (typeof parentId === "string" && byId.has(parentId) && !state.has(parentId)) {
           state.set(parentId, "visiting");
           stack.push({ id: parentId, next: 0 });
