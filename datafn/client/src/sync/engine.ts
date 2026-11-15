@@ -896,7 +896,7 @@ export class SyncEngine {
         result = { ok: true, data: {}, cursors: {}, next: {} };
       } else {
         // Clone all at once
-        const response: any = await this.remote.clone(transformedPayload);
+        const response: any = await this.cloneWithRateLimitRetry(transformedPayload);
 
         if (response.ok && response.result?.ok) {
           result = await decryptCloneResultForE2ee(
@@ -904,7 +904,17 @@ export class SyncEngine {
             this.e2ee,
             response.result as CloneResult,
           );
-          await applyCloneResult(this.storage, result);
+          // When the server capped the response (SCA-002 auto-pagination), a
+          // table with a next marker is incomplete: it stays "hydrating" and
+          // is continued page by page below.
+          const continuations = (result as { paginated?: boolean }).paginated
+            ? Object.entries(result.next ?? {}).filter(
+                (entry): entry is [string, string] => typeof entry[1] === "string",
+              )
+            : [];
+          await applyCloneResult(this.storage, result, {
+            markReady: continuations.length === 0,
+          });
           if (shouldManageSearchIndices) {
             if (!skipCloneIndexing) {
               for (const [resource, records] of Object.entries(result.data)) {
@@ -919,6 +929,15 @@ export class SyncEngine {
                 }
               }
             }
+          }
+          for (const [table, afterId] of continuations) {
+            const indexed = await this.cloneTablePaginated(
+              table,
+              pageSize,
+              !skipCloneIndexing,
+              afterId === "" ? null : afterId,
+            );
+            if (!indexed) failedSearchIndexResources.add(table);
           }
         } else {
           throw new Error(response.error?.message || "Clone rejected by server");
@@ -1014,15 +1033,53 @@ export class SyncEngine {
   }
 
   /**
+   * Send a clone request, waiting and retrying while the server answers that
+   * the client is rate limited. Honours the server's Retry-After (surfaced by
+   * the HTTP transport as `error.details.retryAfterMs`), otherwise backs off
+   * exponentially. Returns the last response once retries are exhausted.
+   */
+  private async cloneWithRateLimitRetry(payload: unknown): Promise<any> {
+    const policy = this.config?.cloneRateLimitRetry;
+    const maxRetries = Math.max(0, policy?.maxRetries ?? 6);
+    const backoff = {
+      baseDelayMs: policy?.baseDelayMs ?? 1000,
+      multiplier: policy?.multiplier ?? 2,
+      maxDelayMs: policy?.maxDelayMs ?? 60000,
+      jitterMs: policy?.jitterMs ?? 500,
+    };
+    for (let attempt = 0; ; attempt++) {
+      const response: any = await this.remote.clone(payload);
+      const code = response?.error?.code ?? response?.result?.error?.code;
+      const rateLimited = code === "RATE_LIMITED" || code === "DATAFN_ROUTE_RATE_LIMITED";
+      if (!rateLimited || attempt >= maxRetries) {
+        return response;
+      }
+      const retryAfterMs = Number(
+        response?.error?.details?.retryAfterMs ?? response?.result?.error?.details?.retryAfterMs,
+      );
+      const delayMs =
+        Number.isFinite(retryAfterMs) && retryAfterMs >= 0
+          ? Math.min(retryAfterMs, backoff.maxDelayMs)
+          : computeBackoffDelay(attempt, backoff);
+      await sleep(delayMs);
+    }
+  }
+
+  /**
    * Clone a single table with pagination
    */
-  private async cloneTablePaginated(table: string, pageSize: number, indexAfterPage: boolean) {
-    let afterId: string | null = null;
+  private async cloneTablePaginated(
+    table: string,
+    pageSize: number,
+    indexAfterPage: boolean,
+    startAfterId: string | null = null,
+  ): Promise<boolean> {
+    let afterId: string | null = startAfterId;
     let hasMore = true;
     let searchIndexComplete = true;
 
     while (hasMore) {
-      const response: any = await this.remote.clone({
+      const response: any = await this.cloneWithRateLimitRetry({
         clientId: this.clientId,
         tables: [table],
         page: {
@@ -1039,7 +1096,9 @@ export class SyncEngine {
           this.e2ee,
           response.result as CloneResult,
         );
-        await applyCloneResult(this.storage, cloneResult);
+        // A page never marks the table ready: until the last page lands the
+        // table is incomplete, and an interrupted clone must start it again.
+        await applyCloneResult(this.storage, cloneResult, { markReady: false });
         if (indexAfterPage && this.searchProvider && !isNativeBackedSearchProvider(this.searchProvider)) {
           const records = cloneResult.data?.[table] ?? [];
           if (records.length > 0) {
@@ -1065,6 +1124,9 @@ export class SyncEngine {
       }
     }
 
+    // Every page has been applied: the table is complete.
+    await this.storage.setHydrationState(table, "ready");
+
     if (
       indexAfterPage &&
       this.searchProvider &&
@@ -1073,6 +1135,7 @@ export class SyncEngine {
     ) {
       await this.markSearchIndexComplete(table);
     }
+    return searchIndexComplete;
   }
 
   /**

@@ -591,6 +591,21 @@ function getShareableCapability(resource: DatafnResourceSchema, schema: DatafnSc
   return resolved.find(isShareableCapability);
 }
 
+/**
+ * True when the actor is the namespace's own principal. Such an actor owns
+ * every record in the namespace (see `resolveAccessLevel`), so callers that
+ * filter rows they have just loaded from that namespace can keep them all
+ * without resolving access row by row.
+ */
+export function isNamespaceOwnerActor(
+  actorId: string | undefined,
+  namespace: string,
+): boolean {
+  if (!actorId) return false;
+  const namespacePrincipal = normalizeNonEmptyString(namespace);
+  return !!namespacePrincipal && canonicalizeActorPrincipal(actorId) === namespacePrincipal;
+}
+
 export function isPrivateShareableResource(
   schema: DatafnSchema,
   resourceName: string,

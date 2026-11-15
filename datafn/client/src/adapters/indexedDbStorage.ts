@@ -545,6 +545,30 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
     });
   }
 
+  /**
+   * Write many records in one readwrite transaction. Either every record is
+   * stored or, if any put fails, the transaction aborts and none are.
+   */
+  async upsertRecords(
+    resource: string,
+    records: Array<Record<string, unknown>>,
+  ): Promise<void> {
+    this.validateTableName(resource);
+    if (records.length === 0) return;
+    const storageRecords = records.map((record) => cloneForStorage(record));
+    const db = await this.dbPromise;
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(resource, "readwrite");
+      const store = tx.objectStore(resource);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error ?? new Error("Transaction aborted"));
+      for (const record of storageRecords) {
+        store.put(record);
+      }
+    });
+  }
+
   async deleteRecord(resource: string, id: string): Promise<void> {
     this.validateTableName(resource);
     const store = await this.getStore(resource, "readwrite");

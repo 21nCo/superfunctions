@@ -20,7 +20,11 @@ import {
 } from "@datafn/core";
 import type { DatafnLogger } from "../logger.js";
 import type { DatafnSchema } from "../core-types.js";
-import { isPrivateShareableResource, resolveAccessLevel } from "../validation/authz.js";
+import {
+  isNamespaceOwnerActor,
+  isPrivateShareableResource,
+  resolveAccessLevel,
+} from "../validation/authz.js";
 
 function relationNameFor(relation: { relation?: string; inverse?: string; to: string | readonly string[] }): string {
   if (relation.relation) return relation.relation;
@@ -60,6 +64,10 @@ export class DbDataStore implements DataStore {
     actorId: string | undefined,
     logger?: DatafnLogger,
   ): Promise<void> {
+    // The namespace owner sees every row; skip the per-row access lookups.
+    if (isNamespaceOwnerActor(actorId, namespace)) {
+      return;
+    }
     for (const [resourceName, rows] of store.recordsCache.entries()) {
       if (!isPrivateShareableResource(schema, resourceName)) {
         continue;

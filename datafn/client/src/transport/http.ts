@@ -22,6 +22,32 @@ export interface DatafnHttpTransportOptions {
 }
 
 /**
+ * Copy a 429 response's Retry-After header (delta seconds or an HTTP date)
+ * into the error body as `error.details.retryAfterMs`, so callers that only
+ * see the parsed body can wait as long as the server asked.
+ */
+function attachRetryAfter(result: unknown, header: string | null): void {
+  if (!header || !result || typeof result !== "object") return;
+  const error = (result as { error?: unknown }).error;
+  if (!error || typeof error !== "object") return;
+  const trimmed = header.trim();
+  let retryAfterMs: number | undefined;
+  if (/^\d+$/.test(trimmed)) {
+    retryAfterMs = Number(trimmed) * 1000;
+  } else {
+    const at = Date.parse(trimmed);
+    if (!Number.isNaN(at)) retryAfterMs = Math.max(0, at - Date.now());
+  }
+  if (retryAfterMs === undefined) return;
+  const target = error as { details?: unknown };
+  const details =
+    target.details && typeof target.details === "object"
+      ? (target.details as Record<string, unknown>)
+      : {};
+  target.details = { ...details, retryAfterMs };
+}
+
+/**
  * Default HTTP Transport for DataFn
  * Uses global fetch() to communicate with a remote DataFn server.
  */
@@ -123,6 +149,9 @@ export class DefaultHttpTransport implements DatafnRemoteAdapter {
       const result = await response.json().catch(() => null);
 
       if (!response.ok) {
+        if (response.status === 429) {
+          attachRetryAfter(result, response.headers.get("Retry-After"));
+        }
         const event = { endpoint, url, status: response.status, result };
         const routingCode = result?.error?.code;
         if (route && ["DATAFN_ROUTE_TICKET_EXPIRED", "DATAFN_REGION_MISMATCH", "DATAFN_NAMESPACE_MOVING"].includes(routingCode)) {

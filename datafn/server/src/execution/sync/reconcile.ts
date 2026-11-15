@@ -11,7 +11,11 @@ import type { Adapter } from "@superfunctions/db";
 import { ChangeTrackingService } from "./change-tracking.js";
 import type { SequenceStore } from "./sequence-store.js";
 import type { DatafnLogger } from "../../logger.js";
-import { isPrivateShareableResource, resolveAccessLevel } from "../../validation/authz.js";
+import {
+  isNamespaceOwnerActor,
+  isPrivateShareableResource,
+  resolveAccessLevel,
+} from "../../validation/authz.js";
 import { resourceIdMatches } from "./resource-id.js";
 
 function shouldIncludeJoinRowForStore(
@@ -128,7 +132,12 @@ export async function executeReconcile(
     }
 
     try {
-      if (isPrivateShareableResource(schema, resourceName)) {
+      // The namespace owner sees every row, so it takes the plain count below
+      // instead of loading every row and resolving access one by one.
+      if (
+        isPrivateShareableResource(schema, resourceName) &&
+        !isNamespaceOwnerActor(actorId, namespace)
+      ) {
         if (!actorId) {
           counts[resourceName] = 0;
           continue;

@@ -62,7 +62,17 @@ export type PullResult = PullResultGlobalCursor | PullResultCanonical;
 export async function applyCloneResult(
   storage: DatafnStorageAdapter,
   result: CloneResult,
+  options: {
+    /**
+     * Mark each resource "ready" once its records are written (default true).
+     * A paginated clone passes false for every page, so a resource stays
+     * "hydrating" (and is cloned again after an interruption) until the
+     * caller has applied its last page.
+     */
+    markReady?: boolean;
+  } = {},
 ): Promise<void> {
+  const markReady = options.markReady ?? true;
   if (!result.ok) {
     return; // Don't apply failed results
   }
@@ -74,9 +84,13 @@ export async function applyCloneResult(
     // Transition to hydrating state before applying
     await storage.setHydrationState(resource, "hydrating");
 
-    // Upsert all records by id
-    for (const record of records) {
-      await storage.upsertRecord(resource, record);
+    // Upsert all records by id, in one transaction when the adapter can
+    if (storage.upsertRecords) {
+      await storage.upsertRecords(resource, records);
+    } else {
+      for (const record of records) {
+        await storage.upsertRecord(resource, record);
+      }
     }
 
     // Set cursor per resource
@@ -86,7 +100,9 @@ export async function applyCloneResult(
     }
 
     // Transition to ready after applying
-    await storage.setHydrationState(resource, "ready");
+    if (markReady) {
+      await storage.setHydrationState(resource, "ready");
+    }
   }
 
   // Apply join rows if present (TV-SYNC-006, TV-REL-002)

@@ -8,7 +8,11 @@ import type { Adapter, WhereClause } from "@superfunctions/db";
 import type { SequenceStore } from "./sequence-store.js";
 import { ChangeTrackingService } from "./change-tracking.js";
 import type { DatafnLogger } from "../../logger.js";
-import { isPrivateShareableResource, resolveAccessLevel } from "../../validation/authz.js";
+import {
+  isNamespaceOwnerActor,
+  isPrivateShareableResource,
+  resolveAccessLevel,
+} from "../../validation/authz.js";
 import { resourceIdMatches } from "./resource-id.js";
 
 export interface CloneRequest {
@@ -82,6 +86,10 @@ export async function executeClone(
     }
     if (!actorId) {
       return [];
+    }
+    // The namespace owner sees every row; skip the per-row access lookup.
+    if (isNamespaceOwnerActor(actorId, namespace)) {
+      return rows;
     }
     const visible: Array<Record<string, unknown>> = [];
     for (const row of rows) {
@@ -317,13 +325,54 @@ export async function executeClone(
       const fromCol = relation.joinColumns?.from || "from";
       const toCol = relation.joinColumns?.to || "to";
 
+      // A paginated clone returns only the join rows of the page's records:
+      // rows whose from-side record is on this page (when the page table is a
+      // from resource) or whose to-side record is (when it is a to resource).
+      // Every row then reaches the client with the pages of the records it
+      // links, instead of the whole join table on every page.
+      const pageTable = request.page?.table;
+      const pageIds = pageTable
+        ? (data[pageTable] ?? [])
+            .map((row) => row.id)
+            .filter((id): id is string => typeof id === "string")
+        : undefined;
+      const pageIsFrom = pageTable !== undefined && froms.includes(pageTable);
+      const pageIsTo = pageTable !== undefined && tos.includes(pageTable);
+      if (pageIds && (pageIds.length === 0 || (!pageIsFrom && !pageIsTo))) {
+        continue;
+      }
+      const pageIdSet = pageIds ? new Set(pageIds) : undefined;
+
       try {
-        const joinRecords = await db.findMany({
-          model: joinTableName,
-          where: [],
-          orderBy: [{ field: "id", direction: "asc" }],
-          namespace,
-        });
+        let joinRecords: Array<Record<string, unknown>>;
+        if (pageIds) {
+          const byId = new Map<unknown, Record<string, unknown>>();
+          const columns = [
+            ...(pageIsFrom ? [fromCol] : []),
+            ...(pageIsTo && toCol !== fromCol ? [toCol] : []),
+          ];
+          for (const column of columns) {
+            const rows = await db.findMany({
+              model: joinTableName,
+              where: [{ field: column, operator: "in", value: pageIds }],
+              orderBy: [{ field: "id", direction: "asc" }],
+              namespace,
+            });
+            for (const row of rows) byId.set(row.id, row);
+          }
+          joinRecords = [...byId.values()].sort((a, b) => {
+            const left = String(a.id ?? "");
+            const right = String(b.id ?? "");
+            return left < right ? -1 : left > right ? 1 : 0;
+          });
+        } else {
+          joinRecords = await db.findMany({
+            model: joinTableName,
+            where: [],
+            orderBy: [{ field: "id", direction: "asc" }],
+            namespace,
+          });
+        }
 
         const normalizedRows = joinRecords.map((row) =>
           normalizeJoinCloneRow(row, fromCol, toCol),
@@ -332,8 +381,12 @@ export async function executeClone(
         for (const from of froms) {
           for (const to of tos) {
             const joinStoreKey = getJoinStoreKey(from, relation.relation!, to);
-            const rowsForStore = normalizedRows.filter((row) =>
-              shouldIncludeJoinRowForStore(row, relation, schema, from, to),
+            const rowsForStore = normalizedRows.filter(
+              (row) =>
+                shouldIncludeJoinRowForStore(row, relation, schema, from, to) &&
+                (!pageIdSet ||
+                  (from === pageTable && typeof row.from === "string" && pageIdSet.has(row.from)) ||
+                  (to === pageTable && typeof row.to === "string" && pageIdSet.has(row.to))),
             );
             if (rowsForStore.length > 0) {
               joins[joinStoreKey] = rowsForStore;
