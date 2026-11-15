@@ -30,6 +30,8 @@ export interface BillFnClient {
     planKey: string;
     provider: import('@billfn/core').BillingProviderName;
     interval?: import('@billfn/core').BillingInterval;
+    /** A catalog price of the plan for the provider; the server decides whether the account may buy it. */
+    priceId?: string;
     metadata?: Record<string, unknown>;
     customer?: {
       email?: string;

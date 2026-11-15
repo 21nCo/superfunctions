@@ -20,6 +20,13 @@ type BillFnConfig = {
   auth?: {
     resolveSubject?: (request: Request) => Promise<BillableSubject | null> | BillableSubject | null;
   };
+  checkout?: {
+    isPriceEligible?: (input: {
+      billingAccountId: string;
+      planKey: string;
+      price: BillFnPriceDefinition;
+    }) => Promise<boolean> | boolean;
+  };
   now?: () => Date;
   generateId?: (prefix: string) => string;
 };
@@ -69,6 +76,60 @@ const billfn = createBillFn({
       apiKey: process.env.DODO_API_KEY!,
       webhookSecret: process.env.DODO_WEBHOOK_SECRET!,
     }),
+  },
+});
+```
+
+## Discounted Prices
+
+A catalog price can carry an `eligibility` tag, such as `first-purchase`, to
+mark it as restricted:
+
+```ts
+{
+  priceId: "price_pro_dodo_month_intro",
+  provider: "dodo",
+  providerProductId: "pdt_pro_month_intro",
+  currency: "USD",
+  amount: 6,
+  kind: "subscription",
+  interval: "month",
+  eligibility: "first-purchase",
+}
+```
+
+`createCheckout` accepts an optional `priceId`. It must be a price of the
+requested plan for the requested provider, and for the interval when one is
+given; otherwise checkout fails with `400 BILLFN_VALIDATION_ERROR`. Without
+`priceId`, checkout uses the first matching price that has no `eligibility`
+tag, so a tagged price is never sold by default.
+
+For a tagged price, checkout calls `checkout.isPriceEligible({ billingAccountId,
+planKey, price })` before it creates a session or calls the provider. Only a
+`true` result sells the price. Any other result fails with
+`403 BILLFN_PRICE_NOT_ELIGIBLE`, and so does every tagged price when the hook is
+not configured. Untagged prices never reach the hook. Checkout charges the
+catalog price, never an amount from the request.
+
+`changeSubscription` applies the same gate to its target price: moving a
+subscription to a tagged price calls the hook first, and anything but `true`
+fails with `403 BILLFN_PRICE_NOT_ELIGIBLE` before the provider is asked or a
+change request is recorded. The admin plan change goes through the same method
+and is gated the same way; there is no operator override.
+
+The hook runs once, when the session or change is requested. Two checkouts for a
+`first-purchase` price started before either completes can both pass, so a hook
+that allows one discounted purchase should also count the account's pending
+discounted checkouts.
+
+```ts
+const billfn = createBillFn({
+  db,
+  catalog,
+  checkout: {
+    isPriceEligible: async ({ billingAccountId, price }) =>
+      price.eligibility === "first-purchase" &&
+      !(await hasPaidBefore(billingAccountId)),
   },
 });
 ```

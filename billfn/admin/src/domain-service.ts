@@ -306,14 +306,21 @@ export function createBillFnDomainAdminService(
       }
     },
     async changeSubscription(input, context) {
-      return accepted(unwrap(await options.billfn.changeSubscription({
-        subject: await options.subject(context),
-        subscriptionId: input.id,
-        targetPriceId: input.payload.targetPriceId,
-        effectiveAt: input.payload.effectiveAt,
-        prorationBehavior: input.payload.prorationBehavior,
-        reason: input.reason,
-      })));
+      const subject = await options.subject(context);
+      // The operator path is gated by the host eligibility hook like any plan change: a refused tagged target price
+      // surfaces as `forbidden` with `details.code` `BILLFN_PRICE_NOT_ELIGIBLE`. There is no operator override.
+      try {
+        return accepted(unwrap(await options.billfn.changeSubscription({
+          subject,
+          subscriptionId: input.id,
+          targetPriceId: input.payload.targetPriceId,
+          effectiveAt: input.payload.effectiveAt,
+          prorationBehavior: input.payload.prorationBehavior,
+          reason: input.reason,
+        })));
+      } catch (error) {
+        throw adminErrorFromBillFn(error);
+      }
     },
     async importSubscription(input, context) {
       const subject = await options.subject(context);

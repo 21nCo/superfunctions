@@ -42,6 +42,26 @@ if (response.ok) {
 }
 ```
 
+Without `priceId`, checkout uses the plan's first price for the provider and
+interval that has no `eligibility` tag. To sell another catalog price of the
+plan, such as an introductory discount, pass its `priceId`:
+
+```ts
+await client.createCheckout({
+  planKey: "pro",
+  provider: "dodo",
+  interval: "month",
+  priceId: "price_pro_dodo_month_intro",
+});
+```
+
+The server sells only catalog prices and never reads an amount from the
+request. A `priceId` that is not a price of the plan for that provider (and
+interval, when given) fails with `400 BILLFN_VALIDATION_ERROR`. A price with an
+`eligibility` tag that the host does not approve for the account fails with
+`403 BILLFN_PRICE_NOT_ELIGIBLE`; see
+[Server setup](/docs/server/setup#discounted-prices).
+
 ## Available Methods
 
 - `getCatalog()`
