@@ -112,13 +112,20 @@ function mergeBaseWith(ref) {
   }
 }
 
-// The merge base of HEAD and origin/<baseRef>, deepening a shallow history when the boundary hides it.
+// The merge base of HEAD and the live origin/<baseRef>, deepening a shallow history when the boundary hides it.
+// The tracking ref is always refreshed, because a cached one can predate base commits the pull request merged.
 function resolveLiveMergeBase(baseRef) {
-  if (!ensureRemoteBranch(baseRef)) {
+  if (!baseRef) {
     return "";
   }
 
   const remoteRef = `refs/remotes/origin/${baseRef}`;
+  try {
+    git(["fetch", "--no-tags", "origin", `+refs/heads/${baseRef}:${remoteRef}`]);
+  } catch {
+    return "";
+  }
+
   const mergeBase = mergeBaseWith(remoteRef);
   if (mergeBase || git(["rev-parse", "--is-shallow-repository"]) !== "true") {
     return mergeBase;

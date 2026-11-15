@@ -157,17 +157,50 @@ test("a pull request that changes a full-Python trigger still selects the full P
   } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 5 }); }
 });
 
-test("a pull request whose base branch cannot be fetched falls back to base.sha", () => {
-  const { dir, origin, work, oldBase, gitIn, commitIn, plan } = pullRequestFixture("ci-plan-merge-base-fallback-");
+test("a stale cached base tracking ref is refreshed before computing the merge base", () => {
+  const { dir, origin, work, oldBase, gitIn, commitIn, plan } = pullRequestFixture("ci-plan-merge-base-stale-");
   try {
     commitIn(work, "README.md", "# pull request change");
-    commitIn(origin, "scripts/ci-plan.mjs", "// base change");
+    const newBase = commitIn(origin, "scripts/ci-plan.mjs", "// base change");
     gitIn(work, "fetch", "--quiet", "origin");
-    gitIn(work, "merge", "--quiet", "--no-edit", "origin/dev");
-    gitIn(work, "remote", "set-url", "origin", path.join(dir, "missing"));
-    gitIn(work, "update-ref", "-d", "refs/remotes/origin/dev");
+    gitIn(work, "merge", "--quiet", "--no-edit", newBase);
+    // The checkout's cached origin/dev still points at the old base the pull request was opened against.
+    gitIn(work, "update-ref", "refs/remotes/origin/dev", oldBase);
+    const outputs = plan({ base: { ref: "dev", sha: oldBase } });
+    assert.equal(outputs.base_ref, newBase);
+    assert.equal(outputs.full_python, "false");
+    assert.equal(outputs.python_matrix, "[]");
+  } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 5 }); }
+});
+
+for (const cachedRef of [false, true]) {
+  test(`a pull request whose base branch cannot be fetched falls back to base.sha${cachedRef ? " despite a cached tracking ref" : ""}`, () => {
+    const { dir, origin, work, oldBase, gitIn, commitIn, plan } = pullRequestFixture("ci-plan-merge-base-fallback-");
+    try {
+      commitIn(work, "README.md", "# pull request change");
+      commitIn(origin, "scripts/ci-plan.mjs", "// base change");
+      gitIn(work, "fetch", "--quiet", "origin");
+      gitIn(work, "merge", "--quiet", "--no-edit", "origin/dev");
+      gitIn(work, "remote", "set-url", "origin", path.join(dir, "missing"));
+      if (!cachedRef) gitIn(work, "update-ref", "-d", "refs/remotes/origin/dev");
+      const outputs = plan({ base: { ref: "dev", sha: oldBase } });
+      assert.equal(outputs.base_ref, oldBase);
+      assert.equal(outputs.full_python, "true");
+    } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 5 }); }
+  });
+}
+
+test("a base branch with no merge base falls back to base.sha", () => {
+  const { dir, origin, work, oldBase, gitIn, commitIn, plan } = pullRequestFixture("ci-plan-merge-base-unrelated-");
+  try {
+    commitIn(work, "README.md", "# pull request change");
+    // dev is replaced by unrelated history, so HEAD and origin/dev share no commit.
+    gitIn(origin, "checkout", "--quiet", "--orphan", "rewritten");
+    gitIn(origin, "commit", "--quiet", "-m", "unrelated");
+    gitIn(origin, "branch", "--quiet", "-M", "rewritten", "dev");
     const outputs = plan({ base: { ref: "dev", sha: oldBase } });
     assert.equal(outputs.base_ref, oldBase);
-    assert.equal(outputs.full_python, "true");
+    assert.equal(outputs.changed_files_count, "1");
+    assert.equal(outputs.full_python, "false");
   } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 5 }); }
 });
