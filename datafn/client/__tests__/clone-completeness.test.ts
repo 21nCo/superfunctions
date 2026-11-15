@@ -35,7 +35,7 @@ type ClonePayload = {
   page?: { table: string; afterId: string | null; limit: number };
 };
 
-function pageResponse(afterId: string | null, limit: number) {
+function pageResponse(afterId: string | null, limit: number, cursor = "10") {
   const start = afterId === null ? 0 : ALL_NOTES.findIndex((n) => n.id === afterId) + 1;
   const records = ALL_NOTES.slice(start, start + limit);
   const last = start + limit >= ALL_NOTES.length;
@@ -44,7 +44,7 @@ function pageResponse(afterId: string | null, limit: number) {
     result: {
       ok: true,
       data: { notes: records },
-      cursors: { notes: "10" },
+      cursors: { notes: cursor },
       next: { notes: last ? null : records[records.length - 1].id },
     },
   };
@@ -139,6 +139,53 @@ describe("paginated clone completeness", () => {
     expect(second.remote.pull).not.toHaveBeenCalled();
     expect(await storage.getHydrationState("notes")).toBe("ready");
     expect(await storage.listRecords("notes")).toHaveLength(ALL_NOTES.length);
+  });
+
+  it("keeps the earliest cursor across an interrupted and a resumed pass", async () => {
+    const storage = new MemoryStorageAdapter();
+    const config: DatafnSyncConfig = {
+      hydration: { bootResources: ["notes"], clonePageSize: 2 },
+    };
+    const first = createEngine(
+      storage,
+      async (payload) => {
+        if (payload.page?.afterId === "n2") throw new Error("network down");
+        return pageResponse(payload.page!.afterId, payload.page!.limit, "5");
+      },
+      config,
+    );
+    await expect(first.engine.initializeSync()).rejects.toThrow("network down");
+
+    let seq = 8;
+    const second = createEngine(
+      storage,
+      async (payload) => {
+        seq += 1;
+        return pageResponse(payload.page!.afterId, payload.page!.limit, String(seq));
+      },
+      config,
+    );
+    await second.engine.initializeSync();
+
+    // A pull from 5 replays changes (e.g. deletions) made to the records the
+    // interrupted pass stored, which a cursor of 9 or later would skip.
+    expect(await storage.getCursor("notes")).toBe("5");
+    expect(await storage.getHydrationState("notes")).toBe("ready");
+  });
+
+  it("sets a fresh table's cursor to its first page's sequence", async () => {
+    const storage = new MemoryStorageAdapter();
+    let seq = 20;
+    const { engine } = createEngine(
+      storage,
+      async (payload) => {
+        seq += 1;
+        return pageResponse(payload.page!.afterId, payload.page!.limit, String(seq));
+      },
+      { hydration: { bootResources: ["notes"], clonePageSize: 2 } },
+    );
+    await engine.cloneNow();
+    expect(await storage.getCursor("notes")).toBe("21");
   });
 
   it("continues a clone the server capped instead of treating it as complete", async () => {

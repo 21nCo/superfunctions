@@ -42,8 +42,11 @@ export interface CloneResult {
   };
 }
 
-/** Ids per `in` lookup when loading the join rows of returned records. */
-const JOIN_LOOKUP_CHUNK = 500;
+/**
+ * Ids per `in` lookup when loading the join rows of returned records. Kept
+ * under D1's 100 bound parameters per query, leaving room for the namespace.
+ */
+const JOIN_LOOKUP_CHUNK = 90;
 
 /**
  * Execute clone operation - return full dataset with cursors
