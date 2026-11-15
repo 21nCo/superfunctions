@@ -1,0 +1,243 @@
+/**
+ * DATA-15: live queries re-run at most once per frame, skip merges that
+ * cannot change their result set, and limited or counted queries do not sort
+ * or materialise the whole table.
+ */
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { DatafnSchema } from "@datafn/core";
+
+vi.mock("../src/offline/query.js", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../src/offline/query.js")>();
+  return { ...original, executeLocalQuery: vi.fn(original.executeLocalQuery) };
+});
+vi.mock("../src/offline/relations.js", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../src/offline/relations.js")>();
+  return { ...original, materializeSelect: vi.fn(original.materializeSelect) };
+});
+vi.mock("@datafn/core", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@datafn/core")>();
+  return { ...original, sortRecords: vi.fn(original.sortRecords) };
+});
+
+import { sortRecords } from "@datafn/core";
+import { createDatafnClient } from "../src/client.js";
+import { MemoryStorageAdapter } from "../src/adapters/memoryStorage.js";
+import { executeLocalQuery } from "../src/offline/query.js";
+import { materializeSelect } from "../src/offline/relations.js";
+
+const executeSpy = vi.mocked(executeLocalQuery);
+const sortSpy = vi.mocked(sortRecords);
+const materializeSpy = vi.mocked(materializeSelect);
+
+const schema: DatafnSchema = {
+  resources: [
+    {
+      name: "notes",
+      version: 1,
+      capabilities: ["trash", "archivable"],
+      fields: [
+        { name: "title", type: "string", required: false },
+        { name: "status", type: "string", required: false },
+        { name: "body", type: "string", required: false },
+      ],
+    },
+  ],
+  relations: [],
+};
+
+const clients: Array<{ destroy?: () => Promise<void> | void }> = [];
+
+afterEach(async () => {
+  vi.useRealTimers();
+  executeSpy.mockClear();
+  sortSpy.mockClear();
+  materializeSpy.mockClear();
+  for (const client of clients.splice(0)) await client.destroy?.();
+});
+
+async function setup(count = 4) {
+  const storage = new MemoryStorageAdapter(["notes"]);
+  for (let i = 0; i < count; i++) {
+    await storage.upsertRecord("notes", {
+      id: `notes:${String(i).padStart(5, "0")}`,
+      title: `Note ${String(i).padStart(5, "0")}`,
+      status: i % 2 === 0 ? "open" : "done",
+      body: "",
+    });
+  }
+  await storage.setHydrationState("notes", "hydrating");
+  await storage.setHydrationState("notes", "ready");
+  const client = createDatafnClient({
+    schema,
+    clientId: "coalesce-client",
+    storage,
+    sync: { mode: "local-only", offlinability: true },
+  });
+  clients.push(client as any);
+  return { client, storage };
+}
+
+function waitForValue<T>(signal: { subscribe(fn: (value: T) => void): () => void }): Promise<T> {
+  return new Promise((resolve) => {
+    const unsubscribe = signal.subscribe((value) => {
+      if (value === undefined) return;
+      queueMicrotask(() => unsubscribe());
+      resolve(value);
+    });
+  });
+}
+
+function waitForMatch<T>(
+  signal: { subscribe(fn: (value: T) => void): () => void },
+  matches: (value: T) => boolean,
+): Promise<T> {
+  return new Promise((resolve) => {
+    const unsubscribe = signal.subscribe((value) => {
+      if (value === undefined || !matches(value)) return;
+      queueMicrotask(() => unsubscribe());
+      resolve(value);
+    });
+  });
+}
+
+function hasIdProbe(query: Record<string, unknown>): boolean {
+  return JSON.stringify(query.filters ?? {}).includes('"id":{"$in"');
+}
+
+describe("refresh coalescing", () => {
+  it("runs each open query at most once for many mutations in one frame", async () => {
+    const { client } = await setup();
+    const notes = client.table("notes");
+    const signals = [
+      notes.signal({}),
+      notes.signal({ filters: { status: "open" } }),
+      notes.signal({ sort: ["-title"], limit: 2 }),
+    ];
+    const latest: unknown[][] = signals.map(() => []);
+    signals.forEach((signal, index) =>
+      signal.subscribe((value: any) => {
+        if (value !== undefined) latest[index] = value;
+      }),
+    );
+    await Promise.all(signals.map((signal) => waitForValue(signal as any)));
+    executeSpy.mockClear();
+
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    for (let i = 0; i < 25; i++) {
+      await notes.mutate({
+        operation: "insert",
+        id: `notes:new${i}`,
+        record: { title: `Zed ${i}`, status: "open" },
+      } as any);
+    }
+    expect(executeSpy).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(20);
+    vi.useRealTimers();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(executeSpy.mock.calls.length).toBeLessThanOrEqual(signals.length);
+    expect(executeSpy.mock.calls.length).toBe(3);
+    expect(latest[0]).toHaveLength(29);
+    expect(latest[1]).toHaveLength(27);
+    expect((latest[2] as any[]).map((r) => r.id)).toEqual(["notes:new9", "notes:new8"]);
+  });
+});
+
+describe("merge that cannot change the result set", () => {
+  it("does not re-run the query; shown records are re-read by id", async () => {
+    const { client } = await setup();
+    const notes = client.table("notes");
+    const signal = notes.signal({ filters: { status: "open" }, sort: ["title"] });
+    const values: any[][] = [];
+    signal.subscribe((value: any) => {
+      if (value !== undefined) values.push(value);
+    });
+    await waitForValue(signal as any);
+    expect(values.at(-1)!.map((r) => r.id)).toEqual(["notes:00000", "notes:00002"]);
+    executeSpy.mockClear();
+
+    // An edit to a shown record, on a field the query neither filters nor sorts by.
+    await notes.mutate({ operation: "merge", id: "notes:00002", record: { body: "edited" } } as any);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(executeSpy.mock.calls.every(([, , query]) => hasIdProbe(query))).toBe(true);
+    expect(executeSpy).toHaveBeenCalledTimes(1);
+    expect(values.at(-1)!.find((r) => r.id === "notes:00002")?.body).toBe("edited");
+
+    // An edit to a record outside the result does nothing.
+    executeSpy.mockClear();
+    await notes.mutate({ operation: "merge", id: "notes:00001", record: { body: "edited" } } as any);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(executeSpy).not.toHaveBeenCalled();
+
+    // A merge on a filtered field re-runs the query.
+    await notes.mutate({ operation: "merge", id: "notes:00001", record: { status: "open" } } as any);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(executeSpy.mock.calls.some(([, , query]) => !hasIdProbe(query))).toBe(true);
+    expect(values.at(-1)!.map((r) => r.id)).toEqual(["notes:00000", "notes:00001", "notes:00002"]);
+
+    // A merge that creates a record re-runs the query.
+    executeSpy.mockClear();
+    await notes.mutate({ operation: "merge", id: "notes:created", record: { title: "A", status: "open" } } as any);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(executeSpy.mock.calls.some(([, , query]) => !hasIdProbe(query))).toBe(true);
+    expect(values.at(-1)!.map((r) => r.id)[0]).toBe("notes:created");
+  });
+
+  it("re-runs when the merge trashes a shown record", async () => {
+    const { client } = await setup();
+    const notes = client.table("notes");
+    const signal = notes.signal({});
+    const values: any[][] = [];
+    signal.subscribe((value: any) => {
+      if (value !== undefined) values.push(value);
+    });
+    await waitForValue(signal as any);
+    await notes.mutate({ operation: "trash", id: "notes:00001" } as any);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(values.at(-1)!.map((r) => r.id)).not.toContain("notes:00001");
+  });
+});
+
+describe("limited and counted queries over a large table", () => {
+  it("a limit: 1 sorted query does not sort the whole table", async () => {
+    const { client } = await setup(2_000);
+    sortSpy.mockClear();
+    const result = await client.table("notes").query({ sort: ["-title"], limit: 1 });
+    expect(result.data.map((r: any) => r.id)).toEqual(["notes:01999"]);
+    const sortedSizes = sortSpy.mock.calls.map(([records]) => records.length);
+    expect(sortedSizes.every((size) => size <= 1)).toBe(true);
+  });
+
+  it("matches a full sort for offset and limit windows", async () => {
+    const { client } = await setup(300);
+    const notes = client.table("notes");
+    const page = await notes.query({ sort: ["status", "-title"], offset: 20, limit: 15 });
+    const all = await notes.query({ sort: ["status", "-title"] });
+    expect(page.data.map((r: any) => r.id)).toEqual(all.data.slice(20, 35).map((r: any) => r.id));
+  });
+
+  it("counts 35,000 records without materialising them", async () => {
+    const { client, storage } = await setup(35_000);
+    await storage.upsertRecord("notes", { id: "notes:trashed", title: "x", trashedAt: 1 });
+    sortSpy.mockClear();
+    materializeSpy.mockClear();
+
+    const counts = await waitForMatch<Record<string, number>>(
+      client.resourceCountsSignal({ resources: ["notes"] }) as any,
+      (value) => value.notes > 0,
+    );
+    expect(counts).toEqual({ notes: 35_000 });
+
+    const counted = await client.table("notes").query({
+      count: true,
+      filters: { status: "open" },
+      limit: 1,
+    } as any);
+    expect((counted as any).count).toBe(17_500);
+
+    const materialised = materializeSpy.mock.calls.map(([, , , records]) => records.length);
+    expect(Math.max(0, ...materialised)).toBeLessThanOrEqual(1);
+    const sortedSizes = sortSpy.mock.calls.map(([records]) => records.length);
+    expect(Math.max(0, ...sortedSizes)).toBeLessThanOrEqual(1);
+  }, 60_000);
+});

@@ -2127,29 +2127,35 @@ function _buildRawClient<S extends DatafnSchema>(
       ];
       const signals = resources.map((resource) => {
         const query = input.queriesByResource?.[resource] ?? {};
-        return client.table(resource).signal(
+        // Validates the resource name like table() does.
+        const table = client.table(resource);
+        const {
+          resource: _resource,
+          version: _version,
+          offset: _offset,
+          cursor: _cursor,
+          ...rest
+        } = query as Record<string, unknown>;
+        // The count comes from `count: true`; a one-record page keeps the
+        // query from materialising and sorting every row just to count them.
+        return signalRegistry.getSignal<number>(
           {
-            ...query,
+            resource,
+            version: (table as { version?: number }).version,
+            ...rest,
             count: true,
-            select: query.select ?? ["id"],
+            select: (rest.select as string[] | undefined) ?? ["id"],
+            limit: 1,
           },
           options,
+          { value: "count" },
         );
       });
       return combineSignals(signals, () => {
         const counts: Record<string, number> = {};
         resources.forEach((resource, index) => {
-          const result = signals[index]?.get() as
-            | { count?: number; data?: unknown[] }
-            | unknown[]
-            | undefined;
-          counts[resource] = Array.isArray(result)
-            ? result.length
-            : typeof result?.count === "number"
-              ? result.count
-              : Array.isArray(result?.data)
-                ? result.data.length
-                : 0;
+          const result = signals[index]?.get() as unknown;
+          counts[resource] = typeof result === "number" ? result : 0;
         });
         return counts;
       });

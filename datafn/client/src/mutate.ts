@@ -13,6 +13,7 @@ import { isTransportError } from "./errors.js";
 import {
   applyOptimisticMutationToStorage,
   handleOfflineMutation,
+  takeMergeCreated,
   validateOfflineMutation,
 } from "./offline/mutate.js";
 import { runBeforeMutation, runAfterMutation } from "./plugins/run-hooks.js";
@@ -972,6 +973,9 @@ function emitMutationEvents(
       .sort(); // deterministic order
   }
 
+  // Lets live queries skip a merge that edited an existing record (SIG-002).
+  const created = action === "merge" ? takeMergeCreated(mutation.mutationId) : undefined;
+
   const baseEvent = {
     resource: mutation.resource,
     ids: Array.isArray(mutation.id) ? mutation.id : [mutation.id],
@@ -983,6 +987,7 @@ function emitMutationEvents(
     ...(mutation.record && { record: mutation.record }), // SIG-003: include record for optimistic patching
     ...(mutation.context !== undefined && { context: mutation.context }), // API-002: propagate context
     ...(mutation.system === true && { system: true }), // MUT-002: propagate system flag
+    ...(created !== undefined && { created }),
   };
 
   if (result.ok) {

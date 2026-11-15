@@ -64,7 +64,7 @@ describe("Phase 01 - Signal Invalidation", () => {
     const unsub = nodeSignal.subscribe(() => {});
 
     // Wait for initial query
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
     const initialCallCount = queryCallCount;
 
     // Mutate goal (unrelated resource) - should NOT refresh node signal
@@ -75,7 +75,7 @@ describe("Phase 01 - Signal Invalidation", () => {
     });
 
     // Wait for potential refresh
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
     expect(queryCallCount).toBe(initialCallCount); // No refresh
 
     // Mutate node (matching resource) - SHOULD refresh node signal
@@ -86,7 +86,7 @@ describe("Phase 01 - Signal Invalidation", () => {
     });
 
     // Wait for refresh
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
     expect(queryCallCount).toBe(initialCallCount + 1); // One refresh
 
     unsub();
@@ -125,7 +125,7 @@ describe("Phase 01 - Signal Invalidation", () => {
     const nodeSignal = client.node.signal({ select: ["id"] });
     const unsub = nodeSignal.subscribe(() => {});
 
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
     const initialCallCount = queryCallCount;
 
     // Mutate goal (unrelated) - should NOT refresh
@@ -135,7 +135,7 @@ describe("Phase 01 - Signal Invalidation", () => {
       record: { title: "Test" },
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
     expect(queryCallCount).toBe(initialCallCount); // No refresh
 
     unsub();
@@ -174,7 +174,7 @@ describe("Phase 01 - Signal Invalidation", () => {
     const nodeSignal = client.node.signal({ select: ["id"] });
     const unsub = nodeSignal.subscribe(() => {});
 
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 40));
     const initialCallCount = queryCallCount;
 
     // Trigger multiple mutations quickly (same microtask)
@@ -190,7 +190,7 @@ describe("Phase 01 - Signal Invalidation", () => {
     });
 
     // Wait for debounced refresh (should be batched into one)
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     // Should only refresh once due to debouncing
     expect(queryCallCount).toBe(initialCallCount + 1);
@@ -228,7 +228,7 @@ describe("Phase 01 - Signal Invalidation", () => {
     const unsub = nodeSignal.subscribe(() => {});
 
     // Wait for initial query
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 40));
     const countAfterInit = queryCallCount;
     expect(countAfterInit).toBeGreaterThanOrEqual(1);
 
@@ -236,7 +236,7 @@ describe("Phase 01 - Signal Invalidation", () => {
     await (client.sync as any).pull({ clientId: "test-client", cursors: {} });
 
     // Wait to allow any potential debounced refresh
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     // With the RC-3 fix, empty resources must NOT trigger a refresh
     expect(queryCallCount).toBe(countAfterInit);
@@ -272,14 +272,14 @@ describe("Phase 01 - Signal Invalidation", () => {
     const nodeSignal = client.node.signal({ select: ["id"] });
     const unsub = nodeSignal.subscribe(() => {});
 
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 40));
     const countAfterInit = queryCallCount;
     expect(countAfterInit).toBeGreaterThanOrEqual(1);
 
     // Pull returns node records → should refresh the node signal
     await (client.sync as any).pull({ clientId: "test-client", cursors: {} });
 
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     // Signal must have refreshed because "node" is in its footprint
     expect(queryCallCount).toBeGreaterThan(countAfterInit);
@@ -342,7 +342,7 @@ describe("Phase 01 - Signal Invalidation", () => {
     resolveFirstQuery();
 
     // Wait for queued refresh to execute
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     // Should have: 1 initial + 1 queued refresh = 2 total
     expect(queryCallCount).toBe(2);

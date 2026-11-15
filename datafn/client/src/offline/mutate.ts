@@ -745,6 +745,31 @@ export async function handleOfflineMutation(
   };
 }
 
+/**
+ * Whether a recent local merge created its record, by mutation id. The event
+ * emitter reads it once so live queries can tell an edit from a creation.
+ */
+const mergeCreatedByMutationId = new Map<string, boolean>();
+const MAX_TRACKED_MERGES = 1000;
+
+function rememberMergeCreated(mutationId: unknown, created: boolean): void {
+  if (typeof mutationId !== "string" || mutationId.length === 0) return;
+  mergeCreatedByMutationId.delete(mutationId);
+  mergeCreatedByMutationId.set(mutationId, created);
+  if (mergeCreatedByMutationId.size > MAX_TRACKED_MERGES) {
+    const oldest = mergeCreatedByMutationId.keys().next().value;
+    if (oldest !== undefined) mergeCreatedByMutationId.delete(oldest);
+  }
+}
+
+/** Returns and forgets whether the local merge with this mutation id created its record. */
+export function takeMergeCreated(mutationId: unknown): boolean | undefined {
+  if (typeof mutationId !== "string") return undefined;
+  const created = mergeCreatedByMutationId.get(mutationId);
+  mergeCreatedByMutationId.delete(mutationId);
+  return created;
+}
+
 export async function applyOptimisticMutationToStorage(
   storage: DatafnStorageAdapter,
   schema: DatafnSchema,
@@ -782,6 +807,10 @@ export async function applyOptimisticMutationToStorage(
     });
     await applyInactivePropagation(storage, schema, [{ resource, id }]);
   } else if (operation === "merge") {
+    rememberMergeCreated(
+      mutation.mutationId,
+      (await storage.getRecord(resource, id)) === null,
+    );
     // Keep the existence decision and default application inside the adapter's
     // atomic read-modify-write. Concurrent creates must not receive defaults
     // computed from an earlier missing-record read.
