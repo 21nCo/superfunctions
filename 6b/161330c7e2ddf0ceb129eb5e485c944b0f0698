@@ -1,0 +1,31 @@
+reviewfn/core/test/process.test.ts
+  s_1b589988088ae2::t_5bd38d3f7f2e33 1-37
+reviewfn/core/src/process.ts
+  s_e9f6fa0dd36c2f::t_da7af1cffba289 2,32-33,51,66-67
+scripts/gate-reviewfn-release.mjs
+  s_e9f6fa0dd36c2f::t_2ee1904833fbc4 10,72
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6b161330c7e2ddf0ceb129eb5e485c944b0f0698",
+  "prompts": {},
+  "sessions": {
+    "s_1b589988088ae2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "20843590-4fa9-4b83-bdfa-b3aedb8641ae",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e9f6fa0dd36c2f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "86bbfc75-fe37-45c1-b631-a4cf31584f87",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
