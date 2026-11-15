@@ -430,7 +430,8 @@ const STOREKIT_INVALID_REFERENCE_ERROR_CODES = new Set([4000006, 4000008]);
 /**
  * Classifies a failed import read by StoreKit's errorCode, not its HTTP status: only a definitive not-found answer
  * (after the sandbox fallback for 4040010) is missing, a malformed reference is invalid input, and anything else,
- * including StoreKit's retryable 404s (4040002, 4040004, 4040006) and an unparsable body, stays a retryable provider error.
+ * including StoreKit's retryable 404s (4040002, 4040004, 4040006), an unparsable body and a request that got no answer,
+ * stays a retryable provider error.
  */
 function classifyStoreKitImportError(error: unknown): null {
   if (error instanceof SyntaxError) {
@@ -451,7 +452,20 @@ function classifyStoreKitImportError(error: unknown): null {
       details: { status: details.status, errorCode }
     });
   }
-  throw error;
+  if (isBillFnError(error)) {
+    throw error;
+  }
+  // No answer from StoreKit (the request or its body read failed, or its token was not issued): a retry may read it.
+  // The raw error stays out of the message, which reaches the operator.
+  throw createBillFnError({
+    code: 'BILLFN_PROVIDER_ERROR',
+    message: 'Apple could not be reached to read the imported reference'
+  });
+}
+
+function isBillFnError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === 'string' && code.startsWith('BILLFN_');
 }
 
 function readStoreKitErrorCode(body: unknown): number | undefined {

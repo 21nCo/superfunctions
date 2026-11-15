@@ -29,6 +29,7 @@ import type {
   BillFnEntitlementsResponseData,
   BillFnFetchNotificationHistoryInput,
   BillFnGetReconciliationJobRequest,
+  BillFnImportSubscriptionInput,
   BillFnImportSubscriptionRequest,
   BillFnImportSubscriptionResponse,
   BillFnPriceDefinition,
@@ -1209,7 +1210,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
 
       // Events that occurred before this live read are already reflected in its state.
       const importObservedAt = toIsoString(deps.now());
-      const state = await provider.importSubscription({ providerReference: reference, billingAccount, plan });
+      const state = await readImportState(provider, providerName, { providerReference: reference, billingAccount, plan });
       if (!state) {
         throw createBillFnError({
           code: 'BILLFN_NOT_FOUND',
@@ -2142,6 +2143,30 @@ function readImportRequest(input: BillFnImportSubscriptionRequest) {
       ...(typeof operator.requestId === 'string' ? { requestId: operator.requestId } : {})
     }
   };
+}
+
+/**
+ * Reads the provider record to import. A BillFn error from the adapter keeps its classification; any other failure
+ * (the provider was not reached, or the adapter failed without classifying it) is a retryable provider error whose
+ * message names only the provider, so no raw error text reaches the operator.
+ */
+async function readImportState(
+  provider: Required<Pick<BillFnProviderAdapter, 'importSubscription'>>,
+  providerName: BillingProviderName,
+  input: BillFnImportSubscriptionInput
+) {
+  try {
+    return await provider.importSubscription(input);
+  } catch (error) {
+    const code = (error as { code?: unknown } | null)?.code;
+    if (typeof code === 'string' && code.startsWith('BILLFN_')) {
+      throw error;
+    }
+    throw createBillFnError({
+      code: 'BILLFN_PROVIDER_ERROR',
+      message: `Provider ${providerName} could not be read for the imported subscription`
+    });
+  }
 }
 
 /** The billing account an import binds to: created for the subject when one is given, otherwise existing. */

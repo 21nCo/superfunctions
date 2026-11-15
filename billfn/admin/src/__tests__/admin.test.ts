@@ -5,7 +5,14 @@ import {
   createBillFnDomainAdminService,
 } from "../index.js";
 import { createBillFn, createBillFnError, type BillFnInstance } from "@billfn/core";
-import { createAdminDispatcher, createAdminRegistry, encodeAdminCursor, validateAdminValue } from "@superfunctions/admin";
+import {
+  createAdminDispatcher,
+  createAdminRegistry,
+  encodeAdminCursor,
+  MemoryAdminAuditSink,
+  MemoryAdminIdempotencyStore,
+  validateAdminValue,
+} from "@superfunctions/admin";
 import { memoryAdapter } from "@superfunctions/db/adapters";
 
 const context = {
@@ -373,6 +380,42 @@ describe("@billfn/admin", () => {
         code: "invalid_argument",
         details: { code: "BILLFN_VALIDATION_ERROR", planKey: "nucleus", providerProductIds: ["pdt_team_month"] },
       });
+    });
+
+    it("reports a provider read that gets no answer as a retryable dependency_unavailable error, and a retry imports", async () => {
+      const { billfn, importSubscription } = importingBillFn();
+      const adapter = createBillFnAdminAdapter(createBillFnDomainAdminService({ billfn, subject: () => ({ tenantId: "workspace_1" }) }));
+      const dispatcher = createAdminDispatcher({
+        registry: createAdminRegistry({ adapters: [adapter], enabledModules: ["billfn"] }),
+        confirmation: { verify: vi.fn(async () => true) },
+        audit: new MemoryAdminAuditSink(),
+        idempotency: new MemoryAdminIdempotencyStore(),
+      });
+      const request = {
+        operationId: "billfn.subscriptions.import-subscription",
+        input: { payload: { provider: "dodo", providerSubscriptionId: "sub_legacy", planKey: "nucleus" }, reason: "cutover" },
+        context: { ...context, confirmationToken: "token_1" },
+      };
+
+      // A transport failure an adapter lets through (fetch rejects on DNS, connection reset or TLS).
+      importSubscription.mockRejectedValueOnce(new TypeError("fetch failed: connect ECONNREFUSED https://dodo.test?api_key=secret"));
+      const failed = await dispatcher.dispatch(request);
+      expect(failed).toMatchObject({
+        ok: false,
+        error: {
+          code: "dependency_unavailable",
+          retryable: true,
+          message: "Provider dodo could not be read for the imported subscription",
+        },
+      });
+      expect(JSON.stringify(failed)).not.toMatch(/fetch failed|ECONNREFUSED|secret/);
+
+      // The operator's retry, a new request once the provider answers again, imports.
+      await expect(adapter.execute(
+        "billfn.subscriptions.import-subscription",
+        request.input,
+        { ...context, requestId: "request_2", idempotencyKey: "idempotency_2" },
+      )).resolves.toMatchObject({ ok: true, data: { accepted: true, item: { providerSubscriptionId: "sub_legacy" } } });
     });
 
     it("reports a reference the provider does not have as not found and an unfinished replay as a retryable conflict", async () => {

@@ -1538,6 +1538,34 @@ describe('billfn.services.subscriptions.import', () => {
     expect(await env.importEvents()).toHaveLength(1);
   });
 
+  it('surfaces an adapter read failure that is not a BillFn error as a retryable provider error without writing, and a retry imports', async () => {
+    // A transport failure an adapter lets through (fetch rejects), or any other unclassified failure of its read.
+    let available = false;
+    const env = setup({
+      record: (reference) => {
+        if (!available) {
+          throw new TypeError('fetch failed: connect ECONNREFUSED https://dodo.test?api_key=secret');
+        }
+        return legacyRecord(reference);
+      }
+    });
+    const billingAccountId = await env.account('alice');
+
+    const error = await env.import({ billingAccountId }).then(
+      () => undefined,
+      (rejection: unknown) => rejection
+    );
+    expect(error).toMatchObject({ code: 'BILLFN_PROVIDER_ERROR', retryable: true });
+    expect(String((error as Error).message)).not.toMatch(/fetch failed|ECONNREFUSED|secret/);
+    expect(await env.subscriptions()).toEqual([]);
+    expect(await billingEventsOf(env.db, billingAccountId)).toEqual([]);
+    expect(await entitlementsOf(env.db, billingAccountId)).toEqual([]);
+
+    available = true;
+    expect(unwrap(await env.import({ billingAccountId })).subscription.providerSubscriptionId).toBe('sub_legacy');
+    expect(await env.importEvents()).toHaveLength(1);
+  });
+
   it('validates the request before reading the provider', async () => {
     const env = setup();
     const billingAccountId = await env.account('alice');

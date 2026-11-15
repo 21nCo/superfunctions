@@ -744,6 +744,22 @@ describe('@billfn/provider-apple', () => {
       }
     });
 
+    it('reports an import read that gets no answer from StoreKit as a retryable provider error after one fetch', async () => {
+      // The request itself fails (DNS, connection reset, TLS): no StoreKit answer, so no sandbox fallback either.
+      const fetchMock = vi.fn(async () => {
+        throw new TypeError('fetch failed: getaddrinfo ENOTFOUND api.storekit.itunes.apple.com');
+      }) as typeof fetch;
+      const apple = createAppleProvider({ fetch: fetchMock, tokenProvider: async () => 'token' });
+
+      const error = await apple.importSubscription?.({ providerReference: 'orig_legacy', billingAccount, plan }).then(
+        () => undefined,
+        (rejection: unknown) => rejection
+      );
+      expect(error).toMatchObject({ code: 'BILLFN_PROVIDER_ERROR', retryable: true });
+      expect(String((error as Error).message)).not.toMatch(/fetch failed|ENOTFOUND/);
+      expect(vi.mocked(fetchMock)).toHaveBeenCalledTimes(1);
+    });
+
     it('rejects a reference StoreKit calls malformed as invalid input', async () => {
       for (const errorCode of [4000006, 4000008]) {
         const fetchMock = vi.fn(async () => new Response(

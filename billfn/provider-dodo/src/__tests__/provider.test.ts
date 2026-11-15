@@ -749,4 +749,34 @@ describe('@billfn/provider-dodo', () => {
       });
     }
   });
+
+  it('reports an import read that gets no answer from Dodo as a retryable provider error without the raw error', async () => {
+    const input = {
+      providerReference: 'sub_legacy',
+      billingAccount: restorePurchasesInput().billingAccount,
+      plan: restorePurchasesInput().plan
+    };
+    // The request itself fails (DNS, connection reset, TLS), and a response whose body read fails.
+    const unreachable = vi.fn(async () => {
+      throw new TypeError('fetch failed: connect ECONNREFUSED https://dodo.test?api_key=secret');
+    }) as typeof fetch;
+    const bodyLost = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => {
+        throw new TypeError('terminated: other side closed');
+      }
+    }) as unknown as Response) as typeof fetch;
+
+    for (const fetchMock of [unreachable, bodyLost]) {
+      const provider = createDodoProvider({ apiKey: 'test', baseUrl: 'https://dodo.test', fetch: fetchMock });
+      const error = await provider.importSubscription?.(input).then(
+        () => undefined,
+        (rejection: unknown) => rejection
+      );
+      expect(error).toMatchObject({ code: 'BILLFN_PROVIDER_ERROR', retryable: true });
+      expect(String((error as Error).message)).not.toMatch(/fetch failed|terminated|secret/);
+      expect(vi.mocked(fetchMock)).toHaveBeenCalledTimes(1);
+    }
+  });
 });

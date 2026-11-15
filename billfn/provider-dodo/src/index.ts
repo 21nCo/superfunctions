@@ -305,10 +305,15 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
           headers: createHeaders(config.apiKey)
         });
       } catch (error) {
-        if (error instanceof SyntaxError) {
-          throw createBillFnError({ code: 'BILLFN_PROVIDER_ERROR', message: 'Dodo returned an unreadable subscription response' });
-        }
-        throw error;
+        // No answer from Dodo (the request or its body read failed) or an unreadable one: a retry may read it.
+        // The raw error stays out of the message, which reaches the operator.
+        throw createBillFnError({
+          code: 'BILLFN_PROVIDER_ERROR',
+          message:
+            error instanceof SyntaxError
+              ? 'Dodo returned an unreadable subscription response'
+              : 'Dodo could not be reached to read the imported subscription'
+        });
       }
       if (!result.ok) {
         // Dodo has no such subscription: BillFn reports it as not found, which a retry does not change.
