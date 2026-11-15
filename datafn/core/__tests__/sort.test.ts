@@ -107,8 +107,45 @@ describe("compareSortValues", () => {
 
   it("keeps text order for strings that are not numbers", () => {
     expect(compareSortValues("apple", "banana")).toBeLessThan(0);
-    expect(compareSortValues("0x10", "9")).not.toBe(compareSortValues(16, 9));
-    expect(compareSortValues("", "0")).toBeLessThan(0);
+    // "0x10" is text, not 16, so it sorts after the number 20.
+    expect(compareSortValues("0x10", "20")).toBeGreaterThan(0);
+    expect(compareSortValues("apple", "Banana")).toBeLessThan(0);
+  });
+
+  it("sorts numeric values before every non-numeric value", () => {
+    expect(compareSortValues("10", "1a")).toBeLessThan(0);
+    expect(compareSortValues("1a", "10")).toBeGreaterThan(0);
+    expect(compareSortValues(2, "apple")).toBeLessThan(0);
+    expect(compareSortValues("", "0")).toBeGreaterThan(0);
+    expect(compareSortValues("0", "")).toBeLessThan(0);
+  });
+
+  it("is transitive on a mix of numeric and non-numeric strings", () => {
+    const values = ["2", "10", "1a", "15a", "9", 9, "apple", true, "", "-1"];
+    for (const a of values) {
+      for (const b of values) {
+        expect(Math.sign(compareSortValues(a, b)) + Math.sign(compareSortValues(b, a))).toBe(0);
+        for (const c of values) {
+          if (compareSortValues(a, b) <= 0 && compareSortValues(b, c) <= 0) {
+            expect(compareSortValues(a, c)).toBeLessThanOrEqual(0);
+          }
+        }
+      }
+    }
+  });
+
+  it("gives the same order whatever the input order", () => {
+    const orders = [
+      ["2", "10", "1a"],
+      ["10", "1a", "2"],
+      ["1a", "2", "10"],
+    ];
+    for (const order of orders) {
+      const records = order.map((title) => ({ id: title, title }));
+      expect(
+        sortRecords(records, [{ field: "title", direction: "asc" }]).map((r) => r.title),
+      ).toEqual(["2", "10", "1a"]);
+    }
   });
 });
 
@@ -134,6 +171,22 @@ describe("id tie-break", () => {
       "b",
     ]);
     expect(sortRecords(records, []).map((r) => r.id)).toEqual(["A", "B", "a", "b"]);
+  });
+
+  it("uses code-unit order for an explicit id sort term", () => {
+    const records = [{ id: "9" }, { id: "10" }, { id: "a" }, { id: "B" }];
+    expect(sortRecords(records, [{ field: "id", direction: "asc" }]).map((r) => r.id)).toEqual([
+      "10",
+      "9",
+      "B",
+      "a",
+    ]);
+    expect(sortRecords(records, [{ field: "id", direction: "desc" }]).map((r) => r.id)).toEqual([
+      "a",
+      "B",
+      "9",
+      "10",
+    ]);
   });
 });
 

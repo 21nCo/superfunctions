@@ -72,11 +72,12 @@ function comparableNumber(value: unknown): number | undefined {
 }
 
 /**
- * Compare two field values in ascending order.
+ * Compare two field values in ascending order. The order is total, so a full
+ * sort and a limited (top N) selection agree on any mix of values:
  * - null and undefined are equal to each other and sort after every other value;
- * - numbers and numeric strings compare as numbers (`"9" < "10"`, `"9"` equals `9`);
- * - other strings compare with `localeCompare`;
- * - mixed types compare by their string form.
+ * - numbers and numeric strings compare as numbers (`"9" < "10"`, `"9"` equals `9`)
+ *   and sort before every non-numeric value;
+ * - other values compare by their string form with `localeCompare`.
  */
 export function compareSortValues(a: unknown, b: unknown): number {
   if (a === b) return 0;
@@ -91,9 +92,8 @@ export function compareSortValues(a: unknown, b: unknown): number {
   if (aNumber !== undefined && bNumber !== undefined) {
     return aNumber < bNumber ? -1 : aNumber > bNumber ? 1 : 0;
   }
-  if (typeof a === "string" && typeof b === "string") {
-    return a.localeCompare(b);
-  }
+  if (aNumber !== undefined) return -1;
+  if (bNumber !== undefined) return 1;
   return String(a).localeCompare(String(b));
 }
 
@@ -114,7 +114,11 @@ export function compareRecords(
   terms: SortTerm[],
 ): number {
   for (const term of terms) {
-    const cmp = compareSortValues(a[term.field], b[term.field]);
+    // Ids keep the server's code-unit order whether they are the tie-break
+    // or an explicit sort term.
+    const cmp = term.field === "id"
+      ? compareIds(a.id, b.id)
+      : compareSortValues(a[term.field], b[term.field]);
     if (cmp !== 0) return term.direction === "asc" ? cmp : -cmp;
   }
   return compareIds(a.id, b.id);
