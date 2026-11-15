@@ -351,7 +351,11 @@ export async function executeClone(
 
       try {
         let joinRecords: Array<Record<string, unknown>>;
-        if (scopedIds) {
+        // A page (at most 1,000 records) looks its join rows up by id. A capped
+        // clone can return up to maxCloneRecords records, so it reads the join
+        // table once and filters below, keeping the query count bounded (D1
+        // limits queries per invocation).
+        if (scopedIds && request.page) {
           const byId = new Map<unknown, Record<string, unknown>>();
           const lookups = new Map<string, Set<string>>();
           const addLookup = (column: string, resources: string[]) => {

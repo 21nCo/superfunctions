@@ -146,15 +146,21 @@ describe("paginated clone completeness", () => {
     const config: DatafnSyncConfig = {
       hydration: { bootResources: ["notes"], clonePageSize: 2 },
     };
+    // Pass 1 stores page 1 at seq 5 and page 2 at seq 6, then fails.
     const first = createEngine(
       storage,
       async (payload) => {
-        if (payload.page?.afterId === "n2") throw new Error("network down");
-        return pageResponse(payload.page!.afterId, payload.page!.limit, "5");
+        if (payload.page?.afterId === "n4") throw new Error("network down");
+        return pageResponse(
+          payload.page!.afterId,
+          payload.page!.limit,
+          payload.page!.afterId === null ? "5" : "6",
+        );
       },
       config,
     );
     await expect(first.engine.initializeSync()).rejects.toThrow("network down");
+    expect(await storage.getCursor("notes")).toBe("5");
 
     let seq = 8;
     const second = createEngine(
@@ -171,6 +177,30 @@ describe("paginated clone completeness", () => {
     // interrupted pass stored, which a cursor of 9 or later would skip.
     expect(await storage.getCursor("notes")).toBe("5");
     expect(await storage.getHydrationState("notes")).toBe("ready");
+  });
+
+  it("keeps an older stored cursor when a capped clone restarts the table", async () => {
+    const storage = new MemoryStorageAdapter();
+    await storage.setCursor("notes", "3");
+    const { engine } = createEngine(storage, async (payload) => {
+      if (!payload.page) {
+        return {
+          ok: true,
+          result: {
+            ok: true,
+            paginated: true,
+            data: { notes: ALL_NOTES.slice(0, 2) },
+            cursors: { notes: "10" },
+            next: { notes: "n2" },
+          },
+        };
+      }
+      return pageResponse(payload.page.afterId, payload.page.limit, "11");
+    });
+
+    await engine.cloneNow();
+
+    expect(await storage.getCursor("notes")).toBe("3");
   });
 
   it("sets a fresh table's cursor to its first page's sequence", async () => {

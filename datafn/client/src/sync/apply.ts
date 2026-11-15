@@ -70,9 +70,18 @@ export async function applyCloneResult(
      * caller has applied its last page.
      */
     markReady?: boolean;
+    /**
+     * Keep a resource's stored cursor when it is older than the result's
+     * (default false). A paginated or capped clone reads its batches at
+     * different server sequences, and may resume an interrupted pass; keeping
+     * the earliest cursor durably lets the next pull replay every change,
+     * including deletions, to records an earlier batch or pass stored.
+     */
+    keepEarliestCursor?: boolean;
   } = {},
 ): Promise<void> {
   const markReady = options.markReady ?? true;
+  const keepEarliestCursor = options.keepEarliestCursor ?? false;
   if (!result.ok) {
     return; // Don't apply failed results
   }
@@ -96,7 +105,8 @@ export async function applyCloneResult(
     // Set cursor per resource
     const cursor = cursors[resource];
     if (cursor !== undefined) {
-      await storage.setCursor(resource, cursor);
+      const stored = keepEarliestCursor ? await storage.getCursor(resource) : null;
+      await storage.setCursor(resource, earlierCursor(stored, cursor));
     }
 
     // Transition to ready after applying
@@ -329,4 +339,16 @@ async function assertCursorNonRegressing(
     error.details = { path };
     throw error;
   }
+}
+
+/**
+ * The older of two per-resource sequence cursors. A missing or non-numeric
+ * stored cursor yields the candidate.
+ */
+export function earlierCursor(stored: string | null, candidate: string): string {
+  if (stored === null) return candidate;
+  const a = Number(stored);
+  const b = Number(candidate);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return candidate;
+  return a < b ? stored : candidate;
 }

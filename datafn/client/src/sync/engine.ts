@@ -55,20 +55,6 @@ function isNativeBackedSearchProvider(
 }
 
 /**
- * The older of two per-table sequence cursors (null and non-numeric values
- * lose to a numeric one).
- */
-function earlierCursor(current: string | null, candidate: string | undefined): string | null {
-  if (candidate === undefined) return current;
-  if (current === null) return candidate;
-  const a = Number(current);
-  const b = Number(candidate);
-  if (!Number.isFinite(a)) return candidate;
-  if (!Number.isFinite(b)) return current;
-  return b < a ? candidate : current;
-}
-
-/**
  * Helper: Sleep for a given number of milliseconds (PHASE_08)
  */
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -928,6 +914,7 @@ export class SyncEngine {
             : [];
           await applyCloneResult(this.storage, result, {
             markReady: continuations.length === 0,
+            keepEarliestCursor: continuations.length > 0,
           });
           if (shouldManageSearchIndices) {
             if (!skipCloneIndexing) {
@@ -1096,12 +1083,6 @@ export class SyncEngine {
     let afterId: string | null = startAfterId;
     let hasMore = true;
     let searchIndexComplete = initialSearchIndexComplete;
-    // Pages are read at different server sequences, so the table's cursor
-    // after this pass is the earliest one: its first page's, or the cursor a
-    // previous (interrupted or capped) pass left, whichever is older. Pulling
-    // from there replays any change, including a deletion, made to records
-    // that pass already stored.
-    let earliestCursor = await this.storage.getCursor(table);
 
     while (hasMore) {
       const response: any = await this.cloneWithRateLimitRetry({
@@ -1123,8 +1104,12 @@ export class SyncEngine {
         );
         // A page never marks the table ready: until the last page lands the
         // table is incomplete, and an interrupted clone must start it again.
-        await applyCloneResult(this.storage, cloneResult, { markReady: false });
-        earliestCursor = earlierCursor(earliestCursor, cloneResult.cursors?.[table]);
+        // Pages are read at different server sequences and a pass may resume
+        // an interrupted one, so the stored cursor stays at the earliest.
+        await applyCloneResult(this.storage, cloneResult, {
+          markReady: false,
+          keepEarliestCursor: true,
+        });
         if (indexAfterPage && this.searchProvider && !isNativeBackedSearchProvider(this.searchProvider)) {
           const records = cloneResult.data?.[table] ?? [];
           if (records.length > 0) {
@@ -1151,9 +1136,6 @@ export class SyncEngine {
     }
 
     // Every page has been applied: the table is complete.
-    if (earliestCursor !== null) {
-      await this.storage.setCursor(table, earliestCursor);
-    }
     await this.storage.setHydrationState(table, "ready");
 
     if (
