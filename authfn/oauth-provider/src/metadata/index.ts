@@ -1,5 +1,6 @@
 import type { Route } from '@superfunctions/http';
 import { createAuthFnRouteMeta } from 'authfn/http/router';
+import { OAUTH_DEVICE_CODE_GRANT_TYPE } from '../device/types.js';
 import { resolveEndpoints, type OAuthProviderRuntime } from '../runtime.js';
 
 export const OAUTH_METADATA_PATH = '/.well-known/oauth-authorization-server';
@@ -19,6 +20,7 @@ export function createMetadataRoute(runtime: OAuthProviderRuntime): Route {
     handler: async (request) => {
       const endpoints = await resolveEndpoints(runtime, request);
       const registration = runtime.config.registration;
+      const device = runtime.config.deviceAuthorization !== undefined;
       const scopes = [...new Set(runtime.config.resources.flatMap((resource) => resource.scopes))];
       return Response.json({
         issuer: endpoints.issuer,
@@ -28,10 +30,11 @@ export function createMetadataRoute(runtime: OAuthProviderRuntime): Route {
         introspection_endpoint: endpoints.introspection,
         ...(registration?.dynamic ? { registration_endpoint: endpoints.registration } : {}),
         ...(registration?.metadataDocuments ? { client_id_metadata_document_supported: true } : {}),
+        ...(device ? { device_authorization_endpoint: endpoints.deviceAuthorization } : {}),
         scopes_supported: scopes,
         response_types_supported: ['code'],
         response_modes_supported: ['query'],
-        grant_types_supported: ['authorization_code', 'refresh_token'],
+        grant_types_supported: ['authorization_code', 'refresh_token', ...(device ? [OAUTH_DEVICE_CODE_GRANT_TYPE] : [])],
         code_challenge_methods_supported: ['S256'],
         token_endpoint_auth_methods_supported: ['none', 'client_secret_basic', 'client_secret_post'],
         revocation_endpoint_auth_methods_supported: ['none', 'client_secret_basic', 'client_secret_post'],
