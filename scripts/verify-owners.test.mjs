@@ -1,0 +1,133 @@
+import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+import { NEXT_MANIFEST, OwnersError, PUBLIC_MANIFEST } from "./owners.mjs";
+import { gitBinary } from "./verify-package-lockfiles.mjs";
+import { pyprojectName, verifyOwners } from "./verify-owners.mjs";
+
+const script = fileURLToPath(new URL("./verify-owners.mjs", import.meta.url));
+
+const manifest = () => ({
+  version: 1,
+  paths: { datafn: "public", ".github": "public" },
+  rootFiles: { public: ["package.json", "release-packages.json", PUBLIC_MANIFEST], generated: ["package-lock.json", "Package.resolved"] },
+  releases: { "datafn-core": "public" },
+  python: { datafn: "public" },
+});
+
+function fixture(t, { owners = manifest(), next, releases = [{ slug: "datafn-core", path: "datafn/core", name: "@datafn/core" }], files = {} } = {}) {
+  const root = mkdtempSync(path.join(tmpdir(), "verify-owners-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const all = {
+    "package.json": "{}\n",
+    "package-lock.json": "{}\n",
+    "release-packages.json": JSON.stringify(releases),
+    [PUBLIC_MANIFEST]: JSON.stringify(owners),
+    ".github/workflows/ci.yml": "name: CI\n",
+    "datafn/core/package.json": "{}\n",
+    "datafn/python/pyproject.toml": '[build-system]\nrequires = ["hatchling"]\n\n[project]\nname = "datafn"\nversion = "0.1.0"\n',
+    ...(next ? { [NEXT_MANIFEST]: JSON.stringify(next) } : {}),
+    ...files,
+  };
+  for (const [file, content] of Object.entries(all)) {
+    if (content === null) continue;
+    mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    writeFileSync(path.join(root, file), content);
+  }
+  execFileSync(gitBinary(), ["init", "-q"], { cwd: root });
+  execFileSync(gitBinary(), ["add", "-A"], { cwd: root });
+  return root;
+}
+
+const run = (root, ...args) => spawnSync(process.execPath, [script, "--root", root, ...args], { encoding: "utf8" });
+
+test("a manifest that matches the tree passes", (t) => {
+  const result = run(fixture(t));
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /match the tree/);
+});
+
+test("an unlisted top-level directory fails and names the directory", (t) => {
+  const result = run(fixture(t, { files: { "newfn/core/index.ts": "export {};\n" } }));
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /newfn\/: top-level directory is not listed in superfunctions\.owners\.json paths/);
+});
+
+test("a release entry missing from the manifest fails and names its slug and path", (t) => {
+  const releases = [
+    { slug: "datafn-core", path: "datafn/core", name: "@datafn/core" },
+    { slug: "datafn-cli", path: "datafn/cli", name: "@datafn/cli" },
+  ];
+  const result = run(fixture(t, { releases }));
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /datafn\/cli: release "datafn-cli" from release-packages\.json is not listed/);
+});
+
+test("a Python project missing from the manifest fails and names its pyproject.toml", (t) => {
+  const result = run(fixture(t, { files: { "datafn/extra/pyproject.toml": '[project]\nname = "datafn-extra"\n' } }));
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /datafn\/extra\/pyproject\.toml: Python project "datafn-extra" is not listed/);
+});
+
+test("unlisted root files, stale entries and a next manifest on public fail", (t) => {
+  const owners = manifest();
+  owners.paths.gonefn = "public";
+  owners.releases["gone-core"] = "public";
+  owners.python.gone = "public";
+  owners.rootFiles.public.push("turbo.json");
+  const next = { version: 1, paths: { docsfn: "next" } };
+  const result = run(fixture(t, { owners, next, files: { "notes.txt": "x\n" } }), "--repo", "public");
+  assert.equal(result.status, 1);
+  for (const expected of [
+    /notes\.txt: root file is not listed/,
+    /gonefn\/: listed in superfunctions\.owners\.json paths but is not a tracked top-level directory/,
+    /turbo\.json: listed in superfunctions\.owners\.json rootFiles\.public but is not a tracked root file/,
+    /release "gone-core" has no entry in the release files/,
+    /Python project "gone" has no tracked pyproject\.toml/,
+    /superfunctions\.owners\.next\.json: exists only on next/,
+  ]) {
+    assert.match(result.stderr, expected);
+  }
+  // Generated root files may be absent (Package.resolved is listed but not in the tree).
+  assert.doesNotMatch(result.stderr, /Package\.resolved/);
+});
+
+test("a release whose path belongs to another owner fails", (t) => {
+  const owners = manifest();
+  owners.releases["docs-site"] = "public";
+  const next = { version: 1, paths: { docsfn: "next" } };
+  const files = {
+    "docsfn/site/a.md": "a\n",
+    "release-packages.next.json": JSON.stringify([{ slug: "docs-site", path: "docsfn/site" }]),
+  };
+  const errors = verifyOwners({ root: fixture(t, { owners, next, files }), repo: "next" });
+  assert.deepEqual(errors, ['docsfn/site: release "docs-site" is public-published but its path is next-owned']);
+});
+
+test("on next an unlisted directory is public-owned and next entries must exist", (t) => {
+  const next = { version: 1, paths: { docsfn: "next", ghostfn: "next" }, rootFiles: { next: ["NEXT.md"] } };
+  const root = fixture(t, { next, files: { "docsfn/a.md": "a\n", "NEXT.md": "n\n", "watchfn/core/index.ts": "export {};\n" } });
+  const errors = verifyOwners({ root });
+  assert.deepEqual(errors, ["ghostfn/: listed in superfunctions.owners.next.json paths but is not a tracked top-level directory"]);
+});
+
+test("a malformed manifest fails with its typed error", (t) => {
+  const result = run(fixture(t, { owners: { ...manifest(), version: "1" } }));
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /error \(malformed-manifest\): superfunctions\.owners\.json: version must be 1/);
+  assert.equal(run(fixture(t), "--repo", "main").status, 1);
+});
+
+test("pyprojectName reads only the [project] table", () => {
+  assert.equal(pyprojectName('[tool.x]\nname = "tool"\n[project]\n# c\nname = \'lib\'  # n\n'), "lib");
+  assert.equal(pyprojectName('[tool.ruff]\nline-length = 100\n'), null);
+  assert.throws(() => pyprojectName('[project]\nversion = "1"\n'), (error) => error instanceof OwnersError && error.code === "malformed-manifest");
+});
+
+test("the checked-out repository matches its manifest", () => {
+  assert.deepEqual(verifyOwners({ repo: "public" }), []);
+});
