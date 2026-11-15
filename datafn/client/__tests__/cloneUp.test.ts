@@ -1636,73 +1636,72 @@ describe("cloneUp — pushBatchWithRetry exponential backoff (CLI-010)", () => {
   });
 });
 
-describe("cloneUp — polymorphic references (DATA-15)", () => {
-  it("does not treat a reference to another resource with the same id as a cycle", async () => {
-    const storage = new MockStorageAdapter();
-    storage.cursors.set("__global_cursor__", "0");
-    await storage.upsertRecord("files", { id: "x", title: "File x" });
-    await storage.upsertRecord("nodes", {
-      id: "x",
-      label: "Node x",
-      targetId: "x",
-      targetResource: "files",
-    });
-    await storage.upsertRecord("nodes", {
-      id: "a",
-      label: "Node a",
-      targetId: "x",
-      targetResource: "nodes",
-    });
-
-    const sent: Array<Record<string, any>> = [];
-    const pushSpy = vi
-      .spyOn(DefaultHttpTransport.prototype, "push")
-      .mockImplementation(async (payload: any) => {
-        sent.push(...payload.mutations);
-        return {
-          ok: true,
-          result: {
-            ok: true,
-            applied: payload.mutations.map((m: any) => m.mutationId),
-            errors: [],
-            cursor: "1",
-          },
-        } as any;
-      });
-
-    const client = createDatafnClient({
-      schema: {
-        resources: [
-          { name: "files", version: 1, fields: [{ name: "title", type: "string" as const }] },
-          {
-            name: "nodes",
-            version: 1,
-            fields: [
-              { name: "label", type: "string" as const },
-              { name: "targetId", type: "string" as const },
-              { name: "targetResource", type: "string" as const },
-            ],
-          },
-        ],
-        relations: [
-          {
-            from: "nodes",
-            to: ["nodes", "files"],
-            type: "many-one",
-            relation: "target",
-            fkField: "targetId",
-            fkResourceField: "targetResource",
-          } as any,
-        ],
+/**
+ * Runs cloneUp against a mocked push. `reject` names mutations the server
+ * rejects; `duringPush` runs while each push is in flight.
+ */
+async function cloneUpWith(
+  storage: MockStorageAdapter,
+  schema: Record<string, unknown>,
+  options: CloneUpOptions = {},
+  hooks: { reject?: (mutation: any) => boolean; duringPush?: () => Promise<void> } = {},
+) {
+  storage.cursors.set("__global_cursor__", "0");
+  const sent: Array<Record<string, any>> = [];
+  const pushSpy = vi.spyOn(DefaultHttpTransport.prototype, "push").mockImplementation(async (payload: any) => {
+    sent.push(...payload.mutations);
+    await hooks.duringPush?.();
+    const rejected = payload.mutations.filter((m: any) => hooks.reject?.(m) ?? false);
+    return {
+      ok: true,
+      result: {
+        ok: rejected.length === 0,
+        applied: [],
+        errors: rejected.map((m: any) => ({ mutationId: m.mutationId, code: "DFQL_INVALID", message: "no", path: "$" })),
+        cursor: "1",
       },
+    } as any;
+  });
+  try {
+    const client = createDatafnClient({
+      schema: schema as any,
       sync: { remote: "http://example.com" },
-      clientId: "client:poly",
+      clientId: "client:data-15",
       storage,
     });
-
-    const result = await client.sync.cloneUp({ includeManyMany: false, pullAfter: false });
+    const result = await client.sync.cloneUp({ includeManyMany: false, pullAfter: false, ...options });
+    return { result, sent };
+  } finally {
     pushSpy.mockRestore();
+  }
+}
 
+const str = (name: string, extra: Record<string, unknown> = {}) => ({ name, type: "string" as const, ...extra });
+const resource = (name: string, fields: Array<Record<string, unknown>>) => ({ name, version: 1, fields });
+const manyOne = (from: string, to: string | string[], fkField: string, extra: Record<string, unknown> = {}) => ({
+  from,
+  to,
+  type: "many-one",
+  relation: fkField.replace(/Id$/, ""),
+  fkField,
+  ...extra,
+});
+const polymorphicNodes = () =>
+  manyOne("nodes", ["nodes", "files"], "targetId", { fkResourceField: "targetResource" });
+
+describe("cloneUp — references and cycles (DATA-15)", () => {
+  it("does not treat a reference to another resource with the same id as a cycle", async () => {
+    const storage = new MockStorageAdapter();
+    await storage.upsertRecord("files", { id: "x", title: "File x" });
+    await storage.upsertRecord("nodes", { id: "x", label: "Node x", targetId: "x", targetResource: "files" });
+    await storage.upsertRecord("nodes", { id: "a", label: "Node a", targetId: "x", targetResource: "nodes" });
+    const { result, sent } = await cloneUpWith(storage, {
+      resources: [
+        resource("files", [str("title")]),
+        resource("nodes", [str("label"), str("targetId"), str("targetResource")]),
+      ],
+      relations: [polymorphicNodes()],
+    });
     expect(result.ok).toBe(true);
     expect(sent.map((m) => [m.resource, m.id, m.record])).toEqual([
       ["files", "x", { title: "File x" }],
@@ -1711,150 +1710,60 @@ describe("cloneUp — polymorphic references (DATA-15)", () => {
     ]);
     expect(sent.some((m) => /:ref:/.test(m.mutationId))).toBe(false);
   });
-});
-
-describe("cloneUp — cycles and the changelog (DATA-15)", () => {
-  const okPush = (sent: Array<Record<string, any>>, during?: () => Promise<void>) =>
-    vi.spyOn(DefaultHttpTransport.prototype, "push").mockImplementation(async (payload: any) => {
-      sent.push(...payload.mutations);
-      await during?.();
-      return {
-        ok: true,
-        result: {
-          ok: true,
-          applied: payload.mutations.map((m: any) => m.mutationId),
-          errors: [],
-          cursor: "1",
-        },
-      } as any;
-    });
 
   it("keeps the resource field when two deferred references share it", async () => {
     const storage = new MockStorageAdapter();
-    storage.cursors.set("__global_cursor__", "0");
     for (const [id, peer] of [["a", "b"], ["b", "a"]]) {
-      await storage.upsertRecord("nodes", {
-        id,
-        targetId: peer,
-        otherId: peer,
-        targetResource: "nodes",
-      });
+      await storage.upsertRecord("nodes", { id, targetId: peer, otherId: peer, targetResource: "nodes" });
     }
-    const sent: Array<Record<string, any>> = [];
-    const pushSpy = okPush(sent);
-    const nullable = (name: string) => ({ name, type: "string" as const, nullable: true });
-    const client = createDatafnClient({
-      schema: {
-        resources: [
-          { name: "files", version: 1, fields: [{ name: "title", type: "string" as const }] },
-          {
-            name: "nodes",
-            version: 1,
-            fields: [nullable("targetId"), nullable("otherId"), nullable("targetResource")],
-          },
-        ],
-        relations: [
-          {
-            from: "nodes",
-            to: ["nodes", "files"],
-            type: "many-one",
-            relation: "target",
-            fkField: "targetId",
-            fkResourceField: "targetResource",
-          } as any,
-          {
-            from: "nodes",
-            to: ["nodes", "files"],
-            type: "many-one",
-            relation: "other",
-            fkField: "otherId",
-            fkResourceField: "targetResource",
-          } as any,
-        ],
-      },
-      sync: { remote: "http://example.com" },
-      clientId: "client:shared-resource-field",
-      storage,
+    const nullable = { nullable: true };
+    const { result, sent } = await cloneUpWith(storage, {
+      resources: [
+        resource("files", [str("title")]),
+        resource("nodes", [str("targetId", nullable), str("otherId", nullable), str("targetResource", nullable)]),
+      ],
+      relations: [
+        polymorphicNodes(),
+        manyOne("nodes", ["nodes", "files"], "otherId", { fkResourceField: "targetResource" }),
+      ],
     });
-
-    const result = await client.sync.cloneUp({ includeManyMany: false, pullAfter: false });
-    pushSpy.mockRestore();
-
     expect(result.ok).toBe(true);
     const restore = sent.find((m) => /:ref:/.test(m.mutationId));
     expect(sent[0].record).toEqual({ targetId: null, otherId: null, targetResource: null });
     expect(restore?.record).toEqual({ targetId: "a", otherId: "a", targetResource: "nodes" });
   });
 
-  it("leaves changelog entries written during the push queued", async () => {
+  it("orders resources by the targets records name, not every polymorphic candidate", async () => {
     const storage = new MockStorageAdapter();
-    storage.cursors.set("__global_cursor__", "0");
-    await storage.upsertRecord("tasks", { id: "t1", title: "Before" });
-    const before = await storage.changelogAppend({
-      clientId: "client:changelog",
-      mutationId: "m-before",
-      mutation: { resource: "tasks", id: "t1" },
-      timestampMs: 0,
-      timestamp: "",
-    } as any);
-
-    let wroteDuringPush = false;
-    const sent: Array<Record<string, any>> = [];
-    const pushSpy = okPush(sent, async () => {
-      if (wroteDuringPush) return;
-      wroteDuringPush = true;
-      await storage.changelogAppend({
-        clientId: "client:changelog",
-        mutationId: "m-during",
-        mutation: { resource: "tasks", id: "t2" },
-        timestampMs: 0,
-        timestamp: "",
-      } as any);
+    await storage.upsertRecord("files", { id: "files:1", title: "F", ownerId: "nodes:1" });
+    await storage.upsertRecord("nodes", { id: "nodes:1", targetId: "nodes:1", targetResource: "nodes" });
+    const required = { required: true };
+    const { result, sent } = await cloneUpWith(storage, {
+      resources: [
+        resource("files", [str("title"), str("ownerId", required)]),
+        resource("nodes", [str("targetId", required), str("targetResource", required)]),
+      ],
+      relations: [manyOne("files", "nodes", "ownerId"), polymorphicNodes()],
     });
-    const client = createDatafnClient({
-      schema: {
-        resources: [{ name: "tasks", version: 1, fields: [{ name: "title", type: "string" as const }] }],
-      },
-      sync: { remote: "http://example.com" },
-      clientId: "client:changelog",
-      storage,
-    });
-
-    const result = await client.sync.cloneUp({ includeManyMany: false, pullAfter: false });
-    pushSpy.mockRestore();
-
     expect(result.ok).toBe(true);
-    expect(storage.changelog.map((entry) => entry.mutationId)).toEqual(["m-during"]);
-    expect(storage.changelog.every((entry) => entry.seq > before.seq)).toBe(true);
+    expect(sent.map((m) => m.id)).toEqual(["nodes:1", "files:1"]);
   });
 
-  it("does not read the changelog when it will not be cleared", async () => {
+  it("orders a resource after the target its reference defaults to", async () => {
     const storage = new MockStorageAdapter();
-    storage.cursors.set("__global_cursor__", "0");
-    await storage.upsertRecord("tasks", { id: "t1", title: "One" });
-    const listSpy = vi.spyOn(storage, "changelogList");
-    const sent: Array<Record<string, any>> = [];
-    const pushSpy = okPush(sent);
-    const client = createDatafnClient({
-      schema: {
-        resources: [{ name: "tasks", version: 1, fields: [{ name: "title", type: "string" as const }] }],
-      },
-      sync: { remote: "http://example.com" },
-      clientId: "client:no-clear",
-      storage,
+    await storage.upsertRecord("children", { id: "children:1", label: "C" });
+    await storage.upsertRecord("parents", { id: "parents:1", label: "P" });
+    const { result, sent } = await cloneUpWith(storage, {
+      resources: [
+        resource("children", [str("label"), str("parentId", { required: true, default: "parents:1" })]),
+        resource("parents", [str("label")]),
+      ],
+      relations: [manyOne("children", "parents", "parentId")],
     });
-    const result = await client.sync.cloneUp({
-      includeManyMany: false,
-      pullAfter: false,
-      clearChangelogOnSuccess: false,
-    });
-    pushSpy.mockRestore();
     expect(result.ok).toBe(true);
-    expect(listSpy).not.toHaveBeenCalled();
+    expect(sent.map((m) => m.id)).toEqual(["parents:1", "children:1"]);
   });
-});
 
-describe("cloneUp — resource order (DATA-15)", () => {
   it("keeps the given order inside a cycle and places a resource after its targets", async () => {
     const { orderResourcesByDependency } = await import("../src/sync/cloneUp/order.js");
     const refs = new Map([
@@ -1864,144 +1773,72 @@ describe("cloneUp — resource order (DATA-15)", () => {
     ]);
     expect(orderResourcesByDependency(["c", "a", "b"], refs, () => true)).toEqual(["a", "b", "c"]);
     // Only b's reference may be unset, so b goes first.
-    expect(orderResourcesByDependency(["a", "b"], refs, (resource) => resource === "b")).toEqual(["b", "a"]);
+    expect(orderResourcesByDependency(["a", "b"], refs, (name) => name === "b")).toEqual(["b", "a"]);
   });
 });
 
-describe("cloneUp — polymorphic references in resource order (DATA-15)", () => {
-  it("orders resources by the targets records name, not every polymorphic candidate", async () => {
-    const storage = new MockStorageAdapter();
-    storage.cursors.set("__global_cursor__", "0");
-    await storage.upsertRecord("files", { id: "files:1", title: "F", ownerId: "nodes:1" });
-    await storage.upsertRecord("nodes", { id: "nodes:1", targetId: "nodes:1", targetResource: "nodes" });
-    const sent: Array<Record<string, any>> = [];
-    const pushSpy = vi.spyOn(DefaultHttpTransport.prototype, "push").mockImplementation(async (payload: any) => {
-      sent.push(...payload.mutations);
-      return { ok: true, result: { ok: true, applied: [], errors: [], cursor: "1" } } as any;
-    });
-    const client = createDatafnClient({
-      schema: {
-        resources: [
-          {
-            name: "files",
-            version: 1,
-            fields: [
-              { name: "title", type: "string" as const },
-              { name: "ownerId", type: "string" as const, required: true },
-            ],
-          },
-          {
-            name: "nodes",
-            version: 1,
-            fields: [
-              { name: "targetId", type: "string" as const, required: true },
-              { name: "targetResource", type: "string" as const, required: true },
-            ],
-          },
-        ],
-        relations: [
-          { from: "files", to: "nodes", type: "many-one", relation: "owner", fkField: "ownerId" } as any,
-          {
-            from: "nodes",
-            to: ["nodes", "files"],
-            type: "many-one",
-            relation: "target",
-            fkField: "targetId",
-            fkResourceField: "targetResource",
-          } as any,
-        ],
-      },
-      sync: { remote: "http://example.com" },
-      clientId: "client:poly-order",
-      storage,
-    });
-
-    const result = await client.sync.cloneUp({ includeManyMany: false, pullAfter: false });
-    pushSpy.mockRestore();
-
-    expect(result.ok).toBe(true);
-    expect(sent.map((m) => m.id)).toEqual(["nodes:1", "files:1"]);
-  });
-});
-
-describe("cloneUp — defaulted references in resource order (DATA-15)", () => {
-  it("orders a resource after the target its reference defaults to", async () => {
-    const storage = new MockStorageAdapter();
-    storage.cursors.set("__global_cursor__", "0");
-    await storage.upsertRecord("children", { id: "children:1", label: "C" });
-    await storage.upsertRecord("parents", { id: "parents:1", label: "P" });
-    const sent: Array<Record<string, any>> = [];
-    const pushSpy = vi.spyOn(DefaultHttpTransport.prototype, "push").mockImplementation(async (payload: any) => {
-      sent.push(...payload.mutations);
-      return { ok: true, result: { ok: true, applied: [], errors: [], cursor: "1" } } as any;
-    });
-    const client = createDatafnClient({
-      schema: {
-        resources: [
-          {
-            name: "children",
-            version: 1,
-            fields: [
-              { name: "label", type: "string" as const },
-              { name: "parentId", type: "string" as const, required: true, default: "parents:1" },
-            ],
-          },
-          { name: "parents", version: 1, fields: [{ name: "label", type: "string" as const }] },
-        ],
-        relations: [{ from: "children", to: "parents", type: "many-one", relation: "parent", fkField: "parentId" } as any],
-      },
-      sync: { remote: "http://example.com" },
-      clientId: "client:default-order",
-      storage,
-    });
-
-    const result = await client.sync.cloneUp({ includeManyMany: false, pullAfter: false });
-    pushSpy.mockRestore();
-
-    expect(result.ok).toBe(true);
-    expect(sent.map((m) => m.id)).toEqual(["parents:1", "children:1"]);
-  });
-});
-
-describe("cloneUp — deferred references of rejected records (DATA-15)", () => {
-  it("does not restore a reference on a record the server rejected", async () => {
-    const storage = new MockStorageAdapter();
-    storage.cursors.set("__global_cursor__", "0");
+describe("cloneUp — rejected records with failFast off (DATA-15)", () => {
+  const linksSchema = {
+    resources: [resource("links", [str("peerId", { nullable: true })])],
+    relations: [manyOne("links", "links", "peerId")],
+  };
+  const seedLinks = async (storage: MockStorageAdapter) => {
     await storage.upsertRecord("links", { id: "a", peerId: "b" });
     await storage.upsertRecord("links", { id: "b", peerId: "a" });
-    const sent: Array<Record<string, any>> = [];
-    const pushSpy = vi.spyOn(DefaultHttpTransport.prototype, "push").mockImplementation(async (payload: any) => {
-      sent.push(...payload.mutations);
-      // The first record (sent with its reference unset) is rejected.
-      const rejected = payload.mutations.filter((m: any) => m.record?.peerId === null);
-      return {
-        ok: true,
-        result: {
-          ok: rejected.length === 0,
-          applied: [],
-          errors: rejected.map((m: any) => ({ mutationId: m.mutationId, code: "DFQL_INVALID", message: "no", path: "$" })),
-          cursor: "1",
-        },
-      } as any;
-    });
-    const client = createDatafnClient({
-      schema: {
-        resources: [
-          { name: "links", version: 1, fields: [{ name: "peerId", type: "string" as const, nullable: true }] },
-        ],
-        relations: [{ from: "links", to: "links", type: "many-one", relation: "peer", fkField: "peerId" } as any],
-      },
-      sync: { remote: "http://example.com" },
-      clientId: "client:rejected-restore",
-      storage,
-    });
+  };
 
-    const result = await client.sync.cloneUp({ includeManyMany: false, pullAfter: false, failFast: false });
-    pushSpy.mockRestore();
+  it("does not restore a reference on a record the server rejected", async () => {
+    const storage = new MockStorageAdapter();
+    await seedLinks(storage);
+    const { result, sent } = await cloneUpWith(storage, linksSchema, { failFast: false }, {
+      reject: (m) => m.record?.peerId === null,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.errors).toHaveLength(1);
+    expect(sent.some((m) => /:ref:/.test(m.mutationId))).toBe(false);
+  });
 
+  it("does not restore a reference that points at a rejected record", async () => {
+    const storage = new MockStorageAdapter();
+    await seedLinks(storage);
+    // b goes up first with its reference unset; a (the record b points at) is rejected.
+    const { result, sent } = await cloneUpWith(storage, linksSchema, { failFast: false }, {
+      reject: (m) => m.id === "a" && !/:ref:/.test(m.mutationId),
+    });
     expect(result.ok).toBe(false);
     expect(result.errors).toHaveLength(1);
     expect(sent.some((m) => /:ref:/.test(m.mutationId))).toBe(false);
   });
 });
 
+describe("cloneUp — the changelog (DATA-15)", () => {
+  const tasksSchema = { resources: [resource("tasks", [str("title")])] };
+  const entry = (mutationId: string) =>
+    ({ clientId: "client:data-15", mutationId, mutation: { resource: "tasks" }, timestampMs: 0, timestamp: "" }) as any;
+
+  it("leaves changelog entries written during the push queued", async () => {
+    const storage = new MockStorageAdapter();
+    await storage.upsertRecord("tasks", { id: "t1", title: "Before" });
+    const before = await storage.changelogAppend(entry("m-before"));
+    let wrote = false;
+    const { result } = await cloneUpWith(storage, tasksSchema, {}, {
+      duringPush: async () => {
+        if (wrote) return;
+        wrote = true;
+        await storage.changelogAppend(entry("m-during"));
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(storage.changelog.map((e) => e.mutationId)).toEqual(["m-during"]);
+    expect(storage.changelog.every((e) => e.seq > before.seq)).toBe(true);
+  });
+
+  it("does not read the changelog when it will not be cleared", async () => {
+    const storage = new MockStorageAdapter();
+    await storage.upsertRecord("tasks", { id: "t1", title: "One" });
+    const listSpy = vi.spyOn(storage, "changelogList");
+    const { result } = await cloneUpWith(storage, tasksSchema, { clearChangelogOnSuccess: false });
+    expect(result.ok).toBe(true);
+    expect(listSpy).not.toHaveBeenCalled();
+  });
+});

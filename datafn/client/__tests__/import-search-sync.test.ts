@@ -133,6 +133,27 @@ function remoteClient(storage: MemoryStorageAdapter, clientId: string) {
   return client;
 }
 
+function joinPayload(joins: Record<string, Array<Record<string, unknown>>>): DatafnExportPayload {
+  return { version: 1, exportedAt: new Date(0).toISOString(), schema: [], resources: {}, joins };
+}
+
+function notesTagsClient(storage: MemoryStorageAdapter, relations: unknown[], clientId: string) {
+  const client = createDatafnClient({
+    schema: {
+      resources: [
+        { name: "notes", version: 1, fields: [{ name: "title", type: "string" }] },
+        { name: "tags", version: 1, fields: [{ name: "label", type: "string" }] },
+      ],
+      relations: relations as any,
+    },
+    clientId,
+    storage,
+    sync: { mode: "local-only", offlinability: true },
+  });
+  clients.push(client as any);
+  return client;
+}
+
 async function searchIds(client: ReturnType<typeof localClient>, query: string) {
   const result = (await client.search({ query, resources: ["notes"], source: "local" })) as any;
   const rows = Array.isArray(result) ? result : result.results ?? result.data ?? [];
@@ -347,30 +368,12 @@ describe("importData edge cases", () => {
 
   it("keeps a named relation's rows when another relation's canonical key matches its store", async () => {
     const storage = new MemoryStorageAdapter(["notes", "tags"]);
-    const client = createDatafnClient({
-      schema: {
-        resources: [
-          { name: "notes", version: 1, fields: [{ name: "title", type: "string" }] },
-          { name: "tags", version: 1, fields: [{ name: "label", type: "string" }] },
-        ],
-        relations: [
+    const client = notesTagsClient(storage, [
           { from: "notes", to: "tags", type: "many-many", relation: "owners" } as any,
           { from: "notes", to: "tags", type: "many-many", inverse: "owners" } as any,
-        ],
-      },
-      clientId: "import-alias-collision",
-      storage,
-      sync: { mode: "local-only", offlinability: true },
-    });
-    clients.push(client as any);
+        ], "import-alias-collision");
 
-    await client.importData({
-      version: 1,
-      exportedAt: new Date(0).toISOString(),
-      schema: [],
-      resources: {},
-      joins: { join_notes_owners_tags: [{ from: "notes:1", to: "tags:1" }] },
-    });
+    await client.importData(joinPayload({ join_notes_owners_tags: [{ from: "notes:1", to: "tags:1" }] }));
     expect(await storage.listJoinRows("join_notes_owners_tags")).toEqual([
       expect.objectContaining({ from: "notes:1", to: "tags:1" }),
     ]);
@@ -379,31 +382,13 @@ describe("importData edge cases", () => {
 
   it("announces join rows stored under the canonical key of a relation without a name", async () => {
     const storage = new MemoryStorageAdapter(["notes", "tags"]);
-    const client = createDatafnClient({
-      schema: {
-        resources: [
-          { name: "notes", version: 1, fields: [{ name: "title", type: "string" }] },
-          { name: "tags", version: 1, fields: [{ name: "label", type: "string" }] },
-        ],
-        relations: [{ from: "notes", to: "tags", type: "many-many", inverse: "notes" } as any],
-      },
-      clientId: "import-unnamed-join",
-      storage,
-      sync: { mode: "local-only", offlinability: true },
-    });
-    clients.push(client as any);
+    const client = notesTagsClient(storage, [{ from: "notes", to: "tags", type: "many-many", inverse: "notes" } as any], "import-unnamed-join");
     const events: any[] = [];
     client.subscribe((event: any) => events.push(event));
 
     for (const key of ["join_notes_notes_tags", "join_notes_rel_tags"]) {
       events.length = 0;
-      await client.importData({
-        version: 1,
-        exportedAt: new Date(0).toISOString(),
-        schema: [],
-        resources: {},
-        joins: { [key]: [{ from: "notes:1", to: "tags:1" }] },
-      });
+      await client.importData(joinPayload({ [key]: [{ from: "notes:1", to: "tags:1" }] }));
       expect(
         events.filter((e) => e.type === "mutation_applied").map((e) => [e.resource, e.action, e.ids]),
       ).toEqual([
@@ -558,13 +543,7 @@ describe("importData edge cases", () => {
     await vi.waitFor(() => expect(values.length).toBeGreaterThan(0));
     expect(values.at(-1)![0].tags ?? []).toEqual([]);
 
-    const result = await client.importData({
-      version: 1,
-      exportedAt: new Date(0).toISOString(),
-      schema: [],
-      resources: {},
-      joins: { join_notes_tags_tags: [{ from: "notes:1", to: "tags:1" }] },
-    });
+    const result = await client.importData(joinPayload({ join_notes_tags_tags: [{ from: "notes:1", to: "tags:1" }] }));
     expect(result.ok).toBe(true);
 
     const applied = events.filter((event) => event.type === "mutation_applied");
