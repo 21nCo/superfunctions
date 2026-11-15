@@ -7,6 +7,7 @@ import {
   NEXT_MANIFEST,
   OwnersError,
   PUBLIC_MANIFEST,
+  canonicalPythonName,
   createOwners,
   loadOwners,
   ownerOfPath,
@@ -94,6 +95,38 @@ test("releases and Python projects have exactly one publishing repository", () =
   // Unlike paths, an unlisted slug is not implicitly public on next: every publisher is assigned (D8).
   throwsCode(() => oracle.ownerOfRelease("mystery", { repo: "next" }), "unlisted-release");
   throwsCode(() => oracle.ownerOfPython("mystery", { repo: "next" }), "unlisted-python");
+});
+
+test("Python projects are one distribution per PEP 503 canonical name", () => {
+  assert.equal(canonicalPythonName("Foo.Bar"), "foo-bar");
+  assert.equal(canonicalPythonName("foo__-._bar"), "foo-bar");
+  assert.equal(canonicalPythonName("datafn"), "datafn");
+  // Alias lookups resolve to the listed project in both repos.
+  const pub = publicData();
+  pub.python = { "foo-bar": "public" };
+  const oracle = owners(pub);
+  for (const alias of ["foo-bar", "foo_bar", "Foo.Bar", "FOO__BAR"]) {
+    assert.equal(oracle.ownerOfPython(alias, { repo: "public" }), "public", alias);
+    assert.equal(oracle.ownerOfPython(alias, { repo: "next" }), "public", alias);
+  }
+  assert.equal(oracle.ownerOfPython("DocsFn", { repo: "next" }), "next");
+  // A public/next alias is a duplicate owner, and the error keeps both spellings.
+  const next = nextData();
+  next.python = { "Foo.Bar": "next" };
+  assert.throws(
+    () => owners(pub, next),
+    (error) => error.code === "duplicate-owner" && error.message.includes('"Foo.Bar"') && error.message.includes('"foo-bar"'),
+  );
+  // Two aliases in one manifest are malformed.
+  throwsCode(() => parseManifest({ ...publicData(), python: { foo_bar: "public", "Foo-Bar": "public" } }, { kind: "public" }), "malformed-manifest");
+  throwsCode(() => parseManifest({ ...nextData(), python: { "a.b": "next", A_B: "next" } }, { kind: "next" }), "malformed-manifest");
+});
+
+test("parseManifest rejects an unsupported kind with a typed error", () => {
+  for (const kind of ["typo", "generated", "", null, 1]) {
+    throwsCode(() => parseManifest({ version: 1, paths: { datafn: "typo" } }, { kind }), "malformed-manifest");
+    throwsCode(() => parseManifest(publicData(), { kind }), "malformed-manifest");
+  }
 });
 
 test("paths outside the repository are rejected", () => {

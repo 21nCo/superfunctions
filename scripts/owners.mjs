@@ -45,7 +45,20 @@ function checkKeys(file, where, object, allowed) {
   }
 }
 
-function ownerMap(file, where, value, owner, { nameCheck = true } = {}) {
+/**
+ * PEP 503 canonical form of a Python project name: lowercase, each run of "-", "_" and "." collapsed to "-".
+ * Two spellings with the same canonical form name one distribution.
+ * @param {string} name
+ */
+export function canonicalPythonName(name) {
+  return name.toLowerCase().replaceAll(/[-_.]+/g, "-");
+}
+
+/**
+ * Validated entries of one manifest section, keyed by `canonical(name)`; `names` keeps each entry's spelling.
+ * Two entries with the same key are malformed.
+ */
+function ownerMap(file, where, value, owner, { nameCheck = true, canonical = (name) => name, names = new Map() } = {}) {
   if (value === undefined) return new Map();
   if (!isPlainObject(value)) throw malformed(file, `${where} must be an object`);
   const map = new Map();
@@ -55,7 +68,12 @@ function ownerMap(file, where, value, owner, { nameCheck = true } = {}) {
     if (entry !== owner) {
       throw malformed(file, `${where}.${key} must be ${JSON.stringify(owner)}, not ${JSON.stringify(entry)}`);
     }
-    map.set(key, owner);
+    const id = canonical(key);
+    if (map.has(id)) {
+      throw malformed(file, `${where} entries ${JSON.stringify(names.get(id))} and ${JSON.stringify(key)} name the same project`);
+    }
+    map.set(id, owner);
+    names.set(id, key);
   }
   return map;
 }
@@ -74,11 +92,13 @@ function nameList(file, where, value) {
 
 /**
  * Validates a parsed manifest. The public manifest assigns "public" and classifies root files as public or
- * generated; the next manifest assigns "next" and lists next-owned root files.
+ * generated; the next manifest assigns "next" and lists next-owned root files. `python` is keyed by the PEP 503
+ * canonical name (see canonicalPythonName); `pythonNames` maps each canonical name to its manifest spelling.
  * @param {unknown} data
  * @param {{ kind?: "public" | "next", file?: string }} [options]
  */
 export function parseManifest(data, { kind = "public", file = kind === "next" ? NEXT_MANIFEST : PUBLIC_MANIFEST } = {}) {
+  if (!REPOS.includes(kind)) throw malformed(file, `manifest kind must be "public" or "next", not ${JSON.stringify(kind)}`);
   if (!isPlainObject(data)) throw malformed(file, "manifest must be a JSON object");
   checkKeys(file, "the manifest", data, ["version", "paths", "rootFiles", "releases", "python"]);
   if (data.version !== 1) throw malformed(file, `version must be 1, not ${JSON.stringify(data.version)}`);
@@ -86,7 +106,8 @@ export function parseManifest(data, { kind = "public", file = kind === "next" ? 
   if (kind === "public" && data.paths === undefined) throw malformed(file, "paths is required");
   const paths = ownerMap(file, "paths", data.paths, owner);
   const releases = ownerMap(file, "releases", data.releases, owner, { nameCheck: false });
-  const python = ownerMap(file, "python", data.python, owner, { nameCheck: false });
+  const pythonNames = new Map();
+  const python = ownerMap(file, "python", data.python, owner, { nameCheck: false, canonical: canonicalPythonName, names: pythonNames });
 
   const rootFiles = new Map();
   if (data.rootFiles !== undefined) {
@@ -105,7 +126,7 @@ export function parseManifest(data, { kind = "public", file = kind === "next" ? 
   for (const name of rootFiles.keys()) {
     if (paths.has(name)) throw malformed(file, `${JSON.stringify(name)} is listed both as a path and as a root file`);
   }
-  return { kind, file, paths, rootFiles, releases, python };
+  return { kind, file, paths, rootFiles, releases, python, pythonNames };
 }
 
 /** Reads and validates a manifest file; a missing optional file returns null. */
@@ -137,10 +158,13 @@ function assertDisjoint(publicManifest, nextManifest) {
         (field === "paths" && publicManifest.rootFiles.has(name)) ||
         (field === "rootFiles" && publicManifest.paths.has(name));
       if (publicHas) {
+        const spelling = field === "python" ? nextManifest.pythonNames.get(name) : name;
+        const publicSpelling = field === "python" ? publicManifest.pythonNames.get(name) : name;
+        const alias = publicSpelling === spelling ? "" : ` (as ${JSON.stringify(publicSpelling)})`;
         throw new OwnersError(
           "duplicate-owner",
-          `${label} ${JSON.stringify(name)} is listed in both ${publicManifest.file} and ${nextManifest.file}`,
-          { field, name },
+          `${label} ${JSON.stringify(spelling)} is listed in both ${publicManifest.file}${alias} and ${nextManifest.file}`,
+          { field, name: spelling },
         );
       }
     }
@@ -188,11 +212,12 @@ export function createOwners(publicManifest, nextManifest = null) {
     );
   }
 
-  const ownerOf = (field, code, label) => (name, { repo } = {}) => {
+  const ownerOf = (field, code, label, canonical = (name) => name) => (name, { repo } = {}) => {
     repo = resolveRepo(repo);
     if (typeof name !== "string" || name === "") throw new OwnersError(code, `${label} must be a non-empty string`, { name });
-    if (publicManifest[field].has(name)) return "public";
-    if (repo === "next" && nextManifest?.[field].has(name)) return "next";
+    const id = canonical(name);
+    if (publicManifest[field].has(id)) return "public";
+    if (repo === "next" && nextManifest?.[field].has(id)) return "next";
     const files = repo === "next" && nextManifest ? `${publicManifest.file} or ${nextManifest.file}` : publicManifest.file;
     throw new OwnersError(code, `${label} ${JSON.stringify(name)} is not listed in ${files}`, { name });
   };
@@ -204,8 +229,11 @@ export function createOwners(publicManifest, nextManifest = null) {
     ownerOfPath,
     /** Publishing repository of a release slug; an unlisted slug is an error in both repos (D8). */
     ownerOfRelease: ownerOf("releases", "unlisted-release", "release"),
-    /** Publishing repository of a Python project; an unlisted project is an error in both repos (D8). */
-    ownerOfPython: ownerOf("python", "unlisted-python", "Python project"),
+    /**
+     * Publishing repository of a Python project, matched by its PEP 503 canonical name; an unlisted project is an
+     * error in both repos (D8).
+     */
+    ownerOfPython: ownerOf("python", "unlisted-python", "Python project", canonicalPythonName),
   };
 }
 
@@ -218,11 +246,17 @@ export function normalizePath(target) {
   if (slashed.startsWith("/") || /^[A-Za-z]:\//.test(slashed)) {
     throw new OwnersError("invalid-path", `path ${JSON.stringify(target)} must be relative to the repository root`, { path: target });
   }
-  const normalized = path.posix.normalize(slashed).replace(/\/+$/, "");
+  const normalized = trimTrailingSlashes(path.posix.normalize(slashed));
   if (normalized === "." || normalized === ".." || normalized.startsWith("../")) {
     throw new OwnersError("invalid-path", `path ${JSON.stringify(target)} does not name an entry inside the repository`, { path: target });
   }
   return normalized;
+}
+
+function trimTrailingSlashes(value) {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") end -= 1;
+  return value.slice(0, end);
 }
 
 export function topLevelName(target) {

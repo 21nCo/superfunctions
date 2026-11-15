@@ -13,7 +13,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { NEXT_MANIFEST, OwnersError, PUBLIC_MANIFEST, REPO_ROOT, REPOS, loadOwners } from "./owners.mjs";
+import { NEXT_MANIFEST, OwnersError, PUBLIC_MANIFEST, REPO_ROOT, REPOS, canonicalPythonName, loadOwners } from "./owners.mjs";
 import { gitBinary } from "./verify-package-lockfiles.mjs";
 
 export const RELEASE_FILES = Object.freeze({ public: "release-packages.json", next: "release-packages.next.json" });
@@ -391,6 +391,12 @@ export function readPythonProjects(root, files) {
     });
 }
 
+/** Code-unit order, the same order as Array.prototype.sort without a comparator. */
+function compareStrings(a, b) {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+}
+
 /** Runs an ownership lookup; an OwnersError becomes null, so every caller must report a null result. */
 function tryOwner(lookup) {
   try {
@@ -434,12 +440,12 @@ export function findOwnershipErrors({ owners, repo, files, releases, python }) {
     errors.push(`${NEXT_MANIFEST}: exists only on next and must not be tracked in the public repository`);
   }
 
-  for (const dir of [...dirs].sort()) {
+  for (const dir of [...dirs].sort(compareStrings)) {
     if (repo === "public" && !publicManifest.paths.has(dir)) {
       errors.push(`${dir}/: top-level directory is not listed in ${PUBLIC_MANIFEST} paths`);
     }
   }
-  for (const file of [...rootFiles].sort()) {
+  for (const file of [...rootFiles].sort(compareStrings)) {
     if (repo === "public" && !publicManifest.rootFiles.has(file)) {
       errors.push(`${file}: root file is not listed in ${PUBLIC_MANIFEST} rootFiles`);
     }
@@ -478,13 +484,16 @@ export function findOwnershipErrors({ owners, repo, files, releases, python }) {
     }
   }
 
-  const projects = new Set();
+  // Python projects are matched by their PEP 503 canonical name, so two spellings of one distribution collide.
+  const projects = new Map();
   for (const project of python) {
-    if (projects.has(project.name)) {
-      errors.push(`${project.file}: Python project ${JSON.stringify(project.name)} is defined by more than one pyproject.toml`);
+    const id = canonicalPythonName(project.name);
+    const first = projects.get(id);
+    if (first) {
+      errors.push(`${project.file}: Python project ${JSON.stringify(project.name)} is also defined by ${first.file} (as ${JSON.stringify(first.name)}); a project needs exactly one pyproject.toml`);
       continue;
     }
-    projects.add(project.name);
+    projects.set(id, project);
     const owner = tryOwner(() => owners.ownerOfPython(project.name, { repo }));
     if (owner === null) {
       errors.push(`${project.file}: Python project ${JSON.stringify(project.name)} is not listed in the python entries of ${repo === "next" && nextManifest ? `${PUBLIC_MANIFEST} or ${NEXT_MANIFEST}` : PUBLIC_MANIFEST}`);
@@ -495,8 +504,8 @@ export function findOwnershipErrors({ owners, repo, files, releases, python }) {
     }
   }
   if (listed) {
-    for (const name of listed.python.keys()) {
-      if (!projects.has(name)) errors.push(`${listed.file}: Python project ${JSON.stringify(name)} has no tracked pyproject.toml`);
+    for (const [id, name] of listed.pythonNames) {
+      if (!projects.has(id)) errors.push(`${listed.file}: Python project ${JSON.stringify(name)} has no tracked pyproject.toml`);
     }
   }
   return errors;

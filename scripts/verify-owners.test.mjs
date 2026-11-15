@@ -117,8 +117,8 @@ test("a release path that cannot be owned fails on public and names its path and
     const releases = [{ slug: "datafn-core", path: releasePath, name: "@datafn/core" }];
     const result = run(fixture(t, { releases }), "--repo", "public");
     assert.equal(result.status, 1, releasePath);
-    const escaped = releasePath.replace(/[./]/g, "\\$&");
-    assert.match(result.stderr, new RegExp(`${escaped}: release "datafn-core" from release-packages\\.json has a path that cannot be owned`));
+    const expected = `${releasePath}: release "datafn-core" from release-packages.json has a path that cannot be owned`;
+    assert.ok(result.stderr.includes(expected), result.stderr);
     // On next an invalid path still fails; an unlisted relative path is public-owned there.
     const onNext = run(fixture(t, { releases, next, files: { "docsfn/a.md": "a\n" } }), "--repo", "next");
     if (releasePath === "nonexistentfn/core") assert.equal(onNext.status, 0, onNext.stderr);
@@ -298,6 +298,26 @@ test("an inline-table pyproject.toml passes when listed and fails naming its fil
   owners.python["datafn-extra"] = "public";
   const listed = run(fixture(t, { owners, files }));
   assert.equal(listed.status, 0, listed.stderr);
+});
+
+test("Python projects are matched by their PEP 503 canonical name", (t) => {
+  // A pyproject spelling of a listed project passes, and the manifest entry is not reported stale.
+  const aliased = run(fixture(t, { files: { "datafn/python/pyproject.toml": '[project]\nname = "DataFn"\n' } }));
+  assert.equal(aliased.status, 0, aliased.stderr);
+  const owners = manifest();
+  owners.python = { "foo-bar": "public" };
+  const files = { "datafn/python/pyproject.toml": null, "datafn/foo/pyproject.toml": '[project]\nname = "Foo_Bar"\n' };
+  const listed = run(fixture(t, { owners, files }));
+  assert.equal(listed.status, 0, listed.stderr);
+  // Two pyproject.toml files that spell one distribution differently fail and name both files.
+  files["datafn/foo2/pyproject.toml"] = '[project]\nname = "foo.bar"\n';
+  const twice = run(fixture(t, { owners, files }));
+  assert.equal(twice.status, 1);
+  assert.ok(
+    twice.stderr.includes('datafn/foo2/pyproject.toml: Python project "foo.bar" is also defined by datafn/foo/pyproject.toml (as "Foo_Bar")'),
+    twice.stderr,
+  );
+  assert.ok(!twice.stderr.includes("has no tracked pyproject.toml"), twice.stderr);
 });
 
 test("the self-check uses the checkout's semantics, so a next-shaped tree passes", (t) => {
