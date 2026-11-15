@@ -289,4 +289,29 @@ describe("DATA-15: cloneUp against SQLite with foreign keys", () => {
       ["links:b", "links:a"],
     ]);
   });
+
+  it("restores a cycle reference again when the record pushed without it changes", async () => {
+    const storage = new MemoryStorageAdapter(["files", "folders", "links"]);
+    await storage.upsertRecord("links", { id: "links:a", label: "A", peerId: "links:b" });
+    await storage.upsertRecord("links", { id: "links:b", label: "B", peerId: "links:a" });
+
+    const { client, pushes } = connect(storage);
+    expect((await client.sync.cloneUp({ pullAfter: false })).ok).toBe(true);
+    const firstRestore = pushes.flatMap((push) => push.mutations)[2];
+
+    // links:b went up with its reference unset; edit it and clone up again.
+    await storage.upsertRecord("links", { id: "links:b", label: "B2", peerId: "links:a" });
+    pushes.length = 0;
+    const second = await client.sync.cloneUp({ pullAfter: false });
+    expect(second.errors).toEqual([]);
+    expect(second.ok).toBe(true);
+
+    const restore = pushes.flatMap((push) => push.mutations).find((m) => /:ref:/.test(m.mutationId));
+    expect(restore?.record).toEqual({ peerId: "links:a" });
+    expect(restore?.mutationId).not.toBe(firstRestore.mutationId);
+    expect(rows("links").map((row) => [row.id, row.label, row.peer_id])).toEqual([
+      ["links:a", "A", "links:b"],
+      ["links:b", "B2", "links:a"],
+    ]);
+  });
 });

@@ -162,6 +162,7 @@ export async function cloneUp(
     version: number;
     id: string;
     patch: Record<string, unknown>;
+    recordMutationId: string;
   }> = [];
 
   /** Pushes mutations in batches; returns false when cloneUp must stop. */
@@ -258,15 +259,6 @@ export async function cloneUp(
           filteredRecord[reference.resourceField] = null;
         }
       }
-      if (Object.keys(deferredPatch).length > 0) {
-        deferredReferences.push({
-          resourceName,
-          version: resourceSchema.version,
-          id: record.id,
-          patch: deferredPatch,
-        });
-      }
-
       const hashInput = {
         kind: "rec",
         resource: resourceName,
@@ -276,6 +268,16 @@ export async function cloneUp(
       };
       const hash = computeMutationHash(hashInput);
       const mutationId = `${prefix}:rec:${resourceName}:${record.id}:${hash}`;
+
+      if (Object.keys(deferredPatch).length > 0) {
+        deferredReferences.push({
+          resourceName,
+          version: resourceSchema.version,
+          id: record.id,
+          patch: deferredPatch,
+          recordMutationId: mutationId,
+        });
+      }
 
       mutations.push({
         resource: resourceName,
@@ -304,8 +306,18 @@ export async function cloneUp(
 
   // Set the references held back to break cycles.
   if (deferredReferences.length > 0) {
-    const mutations = deferredReferences.map(({ resourceName, version, id, patch }) => {
-      const hash = computeMutationHash({ kind: "ref", resource: resourceName, id, record: patch });
+    const mutations = deferredReferences.map(({ resourceName, version, id, patch, recordMutationId }) => {
+      // The record mutation that unset the reference is part of the identity:
+      // when that record changes and is pushed again (unsetting the reference
+      // again), the restore must be a new mutation too, or the server would
+      // skip it as already applied.
+      const hash = computeMutationHash({
+        kind: "ref",
+        resource: resourceName,
+        id,
+        record: patch,
+        after: recordMutationId,
+      });
       const stats = result.stats.resources[resourceName];
       if (stats) stats.mutations += 1;
       return {
