@@ -169,7 +169,13 @@ export async function cloneUp(
   // reference depends only on the resources its records name.
   const orderedResources = orderResourcesByDependency(
     resolvedResources,
-    referencesInUse(references, recordsByResource),
+    referencesInUse(
+      references,
+      recordsByResource,
+      (resource, field) =>
+        resourceSchemaMap.get(resource)?.fields.some((f) => f.name === field && f.default !== undefined) ??
+        false,
+    ),
     (resource, field) =>
       resourceSchemaMap.get(resource)?.fields.some((f) => f.name === field && f.nullable === true) ?? false,
   );

@@ -345,6 +345,38 @@ describe("importData edge cases", () => {
     expect(provider.documents.get("notes")?.get("notes:new")).toBe("edited");
   });
 
+  it("keeps a named relation's rows when another relation's canonical key matches its store", async () => {
+    const storage = new MemoryStorageAdapter(["notes", "tags"]);
+    const client = createDatafnClient({
+      schema: {
+        resources: [
+          { name: "notes", version: 1, fields: [{ name: "title", type: "string" }] },
+          { name: "tags", version: 1, fields: [{ name: "label", type: "string" }] },
+        ],
+        relations: [
+          { from: "notes", to: "tags", type: "many-many", relation: "owners" } as any,
+          { from: "notes", to: "tags", type: "many-many", inverse: "owners" } as any,
+        ],
+      },
+      clientId: "import-alias-collision",
+      storage,
+      sync: { mode: "local-only", offlinability: true },
+    });
+    clients.push(client as any);
+
+    await client.importData({
+      version: 1,
+      exportedAt: new Date(0).toISOString(),
+      schema: [],
+      resources: {},
+      joins: { join_notes_owners_tags: [{ from: "notes:1", to: "tags:1" }] },
+    });
+    expect(await storage.listJoinRows("join_notes_owners_tags")).toEqual([
+      expect.objectContaining({ from: "notes:1", to: "tags:1" }),
+    ]);
+    expect(await storage.listJoinRows("join_notes_rel_tags").catch(() => [])).toEqual([]);
+  });
+
   it("announces join rows stored under the canonical key of a relation without a name", async () => {
     const storage = new MemoryStorageAdapter(["notes", "tags"]);
     const client = createDatafnClient({

@@ -1924,3 +1924,42 @@ describe("cloneUp — polymorphic references in resource order (DATA-15)", () =>
   });
 });
 
+describe("cloneUp — defaulted references in resource order (DATA-15)", () => {
+  it("orders a resource after the target its reference defaults to", async () => {
+    const storage = new MockStorageAdapter();
+    storage.cursors.set("__global_cursor__", "0");
+    await storage.upsertRecord("children", { id: "children:1", label: "C" });
+    await storage.upsertRecord("parents", { id: "parents:1", label: "P" });
+    const sent: Array<Record<string, any>> = [];
+    const pushSpy = vi.spyOn(DefaultHttpTransport.prototype, "push").mockImplementation(async (payload: any) => {
+      sent.push(...payload.mutations);
+      return { ok: true, result: { ok: true, applied: [], errors: [], cursor: "1" } } as any;
+    });
+    const client = createDatafnClient({
+      schema: {
+        resources: [
+          {
+            name: "children",
+            version: 1,
+            fields: [
+              { name: "label", type: "string" as const },
+              { name: "parentId", type: "string" as const, required: true, default: "parents:1" },
+            ],
+          },
+          { name: "parents", version: 1, fields: [{ name: "label", type: "string" as const }] },
+        ],
+        relations: [{ from: "children", to: "parents", type: "many-one", relation: "parent", fkField: "parentId" } as any],
+      },
+      sync: { remote: "http://example.com" },
+      clientId: "client:default-order",
+      storage,
+    });
+
+    const result = await client.sync.cloneUp({ includeManyMany: false, pullAfter: false });
+    pushSpy.mockRestore();
+
+    expect(result.ok).toBe(true);
+    expect(sent.map((m) => m.id)).toEqual(["parents:1", "children:1"]);
+  });
+});
+

@@ -59,6 +59,7 @@ function joinStoreEndpoints(
   schema: DatafnSchema,
 ): Map<string, { from: string; to: string; store: string }> {
   const endpoints = new Map<string, { from: string; to: string; store: string }>();
+  const aliases: Array<[string, { from: string; to: string; store: string }]> = [];
   for (const relation of schema.relations ?? []) {
     if (relation.type !== "many-many") continue;
     const froms = Array.isArray(relation.from) ? relation.from : [relation.from];
@@ -67,9 +68,13 @@ function joinStoreEndpoints(
       for (const to of tos) {
         const store = getJoinStoreKey(from, relation.relation ?? "rel", to);
         endpoints.set(store, { from, to, store });
-        endpoints.set(getJoinStoreKey(from, getRelationKeyName(relation, to), to), { from, to, store });
+        aliases.push([getJoinStoreKey(from, getRelationKeyName(relation, to), to), { from, to, store }]);
       }
     }
+  }
+  // A canonical alias never replaces another relation's local store key.
+  for (const [key, entry] of aliases) {
+    if (!endpoints.has(key)) endpoints.set(key, entry);
   }
   return endpoints;
 }

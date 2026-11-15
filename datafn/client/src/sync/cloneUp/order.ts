@@ -37,12 +37,14 @@ export function referenceTargetsFor(
 
 /**
  * The references of each resource narrowed to the targets its records point
- * at: a reference no record sets is dropped, and a polymorphic one keeps only
- * the resources its records name.
+ * at: a reference no record sets (and no schema default fills) is dropped, and
+ * a polymorphic one keeps only the resources its records name.
  */
 export function referencesInUse(
   references: Map<string, ReferenceField[]>,
   recordsByResource: Map<string, Record<string, unknown>[]>,
+  /** Whether the server fills a missing value of this field from a default. */
+  hasDefault: (resource: string, field: string) => boolean = () => false,
 ): Map<string, ReferenceField[]> {
   const inUse = new Map<string, ReferenceField[]>();
   for (const [resource, fields] of references) {
@@ -52,7 +54,8 @@ export function referencesInUse(
       const targets = new Set<string>();
       for (const record of records) {
         const value = record[reference.field];
-        if (typeof value !== "string" || value.length === 0) continue;
+        const defaulted = value === undefined && hasDefault(resource, reference.field);
+        if (!defaulted && (typeof value !== "string" || value.length === 0)) continue;
         for (const target of referenceTargetsFor(reference, record)) targets.add(target);
         if (targets.size === reference.targets.length) break;
       }
