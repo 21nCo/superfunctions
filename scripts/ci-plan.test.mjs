@@ -204,3 +204,24 @@ test("a base branch with no merge base falls back to base.sha", () => {
     assert.equal(outputs.full_python, "false");
   } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 5 }); }
 });
+
+test("a non-default target with no fetch and no base.sha uses its cached tracking ref, not the default branch", () => {
+  const { dir, origin, work, oldBase, gitIn, commitIn, plan } = pullRequestFixture("ci-plan-merge-base-cached-target-");
+  try {
+    // main gains a full-Python trigger change that dev lacks; the pull request branches from main.
+    gitIn(origin, "checkout", "--quiet", "-b", "main");
+    const mainBase = commitIn(origin, "scripts/ci-plan.mjs", "// main change");
+    gitIn(origin, "checkout", "--quiet", "dev");
+    gitIn(work, "fetch", "--quiet", "origin");
+    gitIn(work, "checkout", "--quiet", "-B", "feature", "origin/main");
+    commitIn(work, "README.md", "# pull request change");
+    gitIn(work, "remote", "set-url", "origin", path.join(dir, "missing"));
+    assert.equal(gitIn(work, "merge-base", "HEAD", "origin/dev"), oldBase);
+    const outputs = plan({ base: { ref: "main", sha: "f".repeat(40) } });
+    assert.equal(outputs.base_ref, mainBase);
+    assert.equal(outputs.changed_files_count, "1");
+    assert.equal(outputs.full_python, "false");
+    assert.equal(outputs.run_python, "false");
+    assert.equal(outputs.python_matrix, "[]");
+  } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 5 }); }
+});

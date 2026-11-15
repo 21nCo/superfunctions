@@ -155,6 +155,13 @@ function resolveDiffBase(event) {
     if (ensureCommit(baseSha)) {
       return baseSha;
     }
+
+    // Without a live ref or base.sha, a cached tracking ref for the target still beats the default branch.
+    const baseRef = event.pull_request?.base?.ref;
+    const cachedMergeBase = baseRef ? mergeBaseWith(`refs/remotes/origin/${baseRef}`) : "";
+    if (cachedMergeBase) {
+      return cachedMergeBase;
+    }
   }
 
   if (eventName === "push") {
