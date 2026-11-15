@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
 import type { Adapter, WhereClause } from '@superfunctions/db';
 import type { MetricsEmitter } from '@superfunctions/metrics';
@@ -28,6 +29,8 @@ const RETRY_MAX_MS = HOUR_MS;
 export const GRANT_EXPIRING_LEAD_MS = 3 * DAY_MS;
 /** How far back the sweep looks for grants that expired, to record their `entitlement.changed`. */
 export const GRANT_EXPIRED_LOOKBACK_MS = 7 * DAY_MS;
+/** How long a call waits for the inline delivery of its events; a slower handler finishes in the background. */
+export const LIFECYCLE_INLINE_DELIVERY_MS = 10 * 1000;
 const DEFAULT_LIMIT = 100;
 const SWEEP_PAGE_SIZE = 200;
 
@@ -113,8 +116,8 @@ function grantEntitlementChange(
  */
 export function createLifecycleEvents(deps: LifecycleDeps) {
   const handler = deps.onEvent;
-  /** Events recorded since the last `flush`, delivered by it. */
-  const recorded = new Set<string>();
+  /** The ids of the events the current call recorded, which `deliverAfter` delivers once the call settles. */
+  const callEvents = new AsyncLocalStorage<Set<string>>();
 
   /**
    * Stores the events through `db` (a transaction, when given) unless already
@@ -155,20 +158,41 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
           }
         }
       }
-      recorded.add(event.id);
+      callEvents.getStore()?.add(event.id);
     }
   }
 
   /**
-   * Delivers the events recorded since the last flush that are due. Never
-   * throws: an event it cannot deliver stays pending for a later dispatch.
+   * Runs `call` and, once it settles, delivers the events it recorded. Each
+   * call keeps its own ids, and they are read only after the call's
+   * transactions committed or rolled back: an event a rollback discarded is
+   * not found and skipped. Delivery never fails the call, and the call waits
+   * for it at most `LIFECYCLE_INLINE_DELIVERY_MS`: a slower handler finishes
+   * in the background, and an event not delivered stays pending for a later
+   * dispatch. A call inside another one leaves delivery to the outer call.
    */
-  async function flush() {
-    if (recorded.size === 0) {
-      return;
+  async function deliverAfter<R>(call: () => Promise<R>): Promise<R> {
+    if (!handler || callEvents.getStore()) {
+      return call();
     }
-    const ids = [...recorded];
-    recorded.clear();
+    const ids = new Set<string>();
+    try {
+      return await callEvents.run(ids, call);
+    } finally {
+      if (ids.size > 0) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([
+          deliverRecorded([...ids]),
+          new Promise<void>((resolve) => {
+            timer = setTimeout(resolve, LIFECYCLE_INLINE_DELIVERY_MS);
+          })
+        ]);
+        clearTimeout(timer);
+      }
+    }
+  }
+
+  async function deliverRecorded(ids: string[]) {
     for (const id of ids) {
       try {
         const row = await findEvent(id);
@@ -181,8 +205,15 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
     }
   }
 
-  /** Delivers the due events, oldest due first. */
-  async function dispatch(input: BillFnDispatchEventsRequest = {}): Promise<BillFnDispatchEventsResult> {
+  /**
+   * Delivers the due events, oldest due first. `beforeEach` runs before each
+   * delivery (the lifecycle job renews its lease there) and stops the dispatch
+   * when it throws.
+   */
+  async function dispatch(
+    input: BillFnDispatchEventsRequest = {},
+    beforeEach?: () => Promise<void>
+  ): Promise<BillFnDispatchEventsResult> {
     const result: BillFnDispatchEventsResult = { delivered: 0, retrying: 0, failed: 0 };
     if (!handler) {
       return result;
@@ -198,6 +229,7 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
       namespace: deps.namespace
     });
     for (const row of due) {
+      await beforeEach?.();
       const outcome = await deliver(row);
       if (outcome) {
         result[outcome] += 1;
@@ -348,7 +380,15 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
     });
   }
 
-  return { record, flush, dispatch, recordGrantExpiry, list };
+  return {
+    /** Whether events are recorded at all: only with an `onEvent` handler. */
+    enabled: Boolean(handler),
+    record,
+    deliverAfter,
+    dispatch,
+    recordGrantExpiry,
+    list
+  };
 }
 
 function grantExpiryEvent(grant: BillFnEntitlementGrant, now: number): LifecycleEventInput {

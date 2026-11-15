@@ -670,7 +670,8 @@ export interface BillFnConfig {
   /**
    * Receives BillFn's lifecycle events. With a handler, every lifecycle event
    * is first stored in the `lifecycleEvents` outbox, then delivered at least
-   * once: right after the call that recorded it, and otherwise by
+   * once: right after the call that recorded it (which waits for that
+   * delivery at most 10 seconds), and otherwise by
    * `services.events.dispatch` or the `lifecycle-events` reconciliation job. A
    * handler that throws is retried with backoff for 24 hours after the event
    * was recorded; then the event is `failed`. Deduplicate by `event.id`.
@@ -1161,9 +1162,11 @@ export interface BillFnInstance {
     };
     events: {
       /**
-       * Delivers the due lifecycle events to `onEvent`, oldest due first. Two
-       * dispatchers never deliver one event at the same time; an event a
-       * dispatcher claimed and never finished is due again after 5 minutes.
+       * Delivers the due lifecycle events to `onEvent`, oldest due first. A
+       * dispatcher claims an event before calling the handler, so of two
+       * racing dispatchers one delivers it. A claim lasts 5 minutes: an event
+       * a dispatcher claimed and never finished, or whose handler still runs,
+       * is due again after that.
        */
       dispatch(input?: BillFnDispatchEventsRequest): Promise<BillFnDispatchEventsResult>;
       /** The outbox's events, newest first; `status: 'failed'` lists the events that ran out of retries. */

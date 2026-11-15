@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Adapter, TransactionAdapter } from '@superfunctions/db';
 import { memoryAdapter } from '@superfunctions/db/testing';
 import { createBillFn } from '../index.js';
+import { LIFECYCLE_INLINE_DELIVERY_MS } from '../lifecycle.js';
 import type {
   BillFnCatalog,
   BillFnLifecycleEvent,
@@ -125,6 +126,17 @@ function setup(options: { db?: Adapter; onEvent?: BillFnLifecycleEventHandler | 
         expiresAt: new Date(clock.current.getTime() + expiresInMs).toISOString()
       });
     },
+    /** Syncs the subscription through a reconciliation job, which also reaches one that ended; its final status. */
+    async syncJob(subscriptionId: string) {
+      const enqueued = await billfn.enqueueReconciliationJob({ kind: 'subscription-sync', provider: 'dodo', subscriptionId });
+      if (!enqueued.ok) throw new Error('expected job');
+      try {
+        const ran = await billfn.runReconciliationJob({ jobId: enqueued.data.job.id });
+        return ran.ok ? ran.data.job.status : 'error';
+      } catch {
+        return 'error';
+      }
+    },
     async runLifecycleJob() {
       const enqueued = await billfn.enqueueReconciliationJob({ kind: 'lifecycle-events' });
       if (!enqueued.ok) throw new Error('expected job');
@@ -141,14 +153,19 @@ function setup(options: { db?: Adapter; onEvent?: BillFnLifecycleEventHandler | 
   };
 }
 
-/** Throws on lifecycle event writes or claims while the matching flag is on. */
-function faultyLifecycleDb(base: Adapter = memoryAdapter({ debug: false })) {
-  const faults = { create: false, update: false, settle: false };
-  const db: Adapter = {
-    ...base,
+/**
+ * Throws on lifecycle event writes or claims, or on entitlement snapshot writes (a crash after the subscription
+ * write committed), while the matching flag is on, also inside a transaction. `transactions: false` turns
+ * transactions off, as Drizzle SQLite has none.
+ */
+function faultyLifecycleDb(base: Adapter = memoryAdapter({ debug: false }), options: { transactions?: boolean } = {}) {
+  const faults = { create: false, update: false, settle: false, snapshot: false };
+  const faulty = <A extends Pick<Adapter, 'create' | 'updateMany'>>(adapter: A): A => ({
+    ...adapter,
     async create<T>(params: Parameters<Adapter['create']>[0]): Promise<T> {
       if (faults.create && params.model === 'lifecycleEvents') throw new Error('outbox write failed');
-      return base.create<T>(params);
+      if (faults.snapshot && params.model === 'entitlementSnapshots') throw new Error('process stopped');
+      return adapter.create<T>(params);
     },
     async updateMany(params: Parameters<Adapter['updateMany']>[0]) {
       if (params.model === 'lifecycleEvents') {
@@ -156,11 +173,28 @@ function faultyLifecycleDb(base: Adapter = memoryAdapter({ debug: false })) {
         const settling = params.where?.some((clause) => clause.field === 'claimId');
         if ((faults.update && !settling) || (faults.settle && settling)) throw new Error('dispatcher crashed');
       }
-      return base.updateMany(params);
+      if (faults.snapshot && params.model === 'entitlementSnapshots') throw new Error('process stopped');
+      return adapter.updateMany(params);
     }
-  };
+  });
+  const db: Adapter =
+    options.transactions === false
+      ? {
+          ...faulty(base),
+          capabilities: { ...base.capabilities, transactions: { ...base.capabilities.transactions, supported: false } },
+          async transaction(): Promise<never> {
+            throw new Error('transaction should not be called');
+          }
+        }
+      : {
+          ...faulty(base),
+          transaction<R>(callback: (transaction: TransactionAdapter) => Promise<R>): Promise<R> {
+            return base.transaction((transaction) => callback(faulty(transaction)));
+          }
+        };
   return { db, faults };
 }
+
 
 describe('lifecycle events: one per event type', () => {
   it('checkout.completed once per succeeded checkout session, delivered after the call', async () => {
@@ -318,6 +352,56 @@ describe('lifecycle events: one per event type', () => {
   });
 });
 
+describe.each([
+  ['with transactions', true],
+  ['without transactions', false]
+])('lifecycle events of a subscription write that fails or stops (%s)', (_mode, transactions) => {
+  const changes: Array<[string, (state: ProviderState) => void, BillFnLifecycleEvent['type'][]]> = [
+    ['a renewal', (state) => void (state.periodEnd = '2027-01-10T00:00:00.000Z'), ['subscription.renewed']],
+    ['a cancellation that stops renewal', (state) => void (state.autoRenew = false), ['subscription.canceled']],
+    [
+      'a cancellation to status canceled',
+      (state) => void (state.status = 'canceled'),
+      ['entitlement.changed', 'subscription.canceled']
+    ],
+    ['an expiry that changes entitlements', (state) => void (state.status = 'expired'), ['entitlement.changed']]
+  ];
+
+  it.each(changes)('delivers the events of %s once after a failed outbox write and a stop after the write', async (_change, apply, expected) => {
+    const { db, faults } = faultyLifecycleDb(memoryAdapter({ debug: false }), { transactions });
+    const env = setup({ db });
+    const { subscriptionId } = await env.subscribe();
+    const before = env.delivered.length;
+    apply(env.providerState);
+
+    // The outbox write fails: the sync fails, and no state write that would hide the change from a retry stands.
+    faults.create = true;
+    env.advance(MINUTE);
+    expect(await env.syncJob(subscriptionId)).not.toBe('succeeded');
+    faults.create = false;
+
+    // The process stops after the subscription write committed, before its entitlements are written.
+    faults.snapshot = true;
+    env.advance(MINUTE);
+    expect(await env.syncJob(subscriptionId)).not.toBe('succeeded');
+    faults.snapshot = false;
+
+    // A retry and later syncs and dispatches add nothing twice.
+    for (let call = 0; call < 2; call += 1) {
+      env.advance(MINUTE);
+      expect(await env.syncJob(subscriptionId)).toBe('succeeded');
+    }
+    env.advance(HOUR_MS);
+    await env.billfn.services.events.dispatch();
+
+    const after = env.delivered.slice(before);
+    expect(after.map((event) => event.type).sort()).toEqual(expected);
+    expect(new Set(after.map((event) => event.id)).size).toBe(after.length);
+    const pending = (await env.rows()).filter((row) => row.status !== 'delivered');
+    expect(pending).toEqual([]);
+  });
+});
+
 describe('lifecycle events: delivery', () => {
   it('records nothing without an onEvent handler', async () => {
     const env = setup({ onEvent: null });
@@ -456,16 +540,14 @@ describe('lifecycle events: delivery', () => {
     expect(restarted.delivered.map((event) => [event.id, event.attempt])).toEqual(firstIds.map((id) => [id, 2]));
   });
 
-  it('records a grant event a failed outbox write left out once a later grant call repairs it (no transactions)', async () => {
-    const base = memoryAdapter({ debug: false });
-    const { db: faulty, faults } = faultyLifecycleDb(base);
-    const db: Adapter = {
-      ...faulty,
-      capabilities: { ...base.capabilities, transactions: { ...base.capabilities.transactions, supported: false } },
-      async transaction(): Promise<never> {
-        throw new Error('transaction should not be called');
-      }
-    };
+  it.each([
+    ['an entitlements read', (env: ReturnType<typeof setup>) => env.billfn.getEntitlements(env.subject)],
+    [
+      'a subscription provider read',
+      (env: ReturnType<typeof setup>) => env.billfn.subscriptionProvider.getEntitlementSnapshot(env.subject)
+    ]
+  ])('records and delivers a grant event a failed outbox write left out once %s repairs it (no transactions)', async (_read, read) => {
+    const { db, faults } = faultyLifecycleDb(memoryAdapter({ debug: false }), { transactions: false });
     const env = setup({ db });
     faults.create = true;
     const created = await env.trial(14 * DAY);
@@ -473,8 +555,28 @@ describe('lifecycle events: delivery', () => {
     expect(await env.rows()).toEqual([]);
 
     faults.create = false;
-    await env.billfn.getEntitlements(env.subject);
+    await read(env);
     expect(env.delivered.map((event) => event.type)).toEqual(['grant.started', 'entitlement.changed']);
+  });
+
+  it('returns a call whose handler hangs once the inline delivery time is up, leaving the event pending', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const env = setup({ onEvent: () => new Promise<void>(() => undefined) });
+      let settled = false;
+      const created = env.trial(14 * DAY).then((result) => {
+        settled = true;
+        return result;
+      });
+      await vi.advanceTimersByTimeAsync(LIFECYCLE_INLINE_DELIVERY_MS - 1);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect((await created).ok).toBe(true);
+      // The claimed events stay pending, due again once the claim lapses.
+      expect((await env.rows()).map((row) => row.status)).toEqual(['pending', 'pending']);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('rolls a grant back with its lifecycle events when the outbox write fails in its transaction', async () => {

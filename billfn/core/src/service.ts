@@ -39,6 +39,7 @@ import type {
   BillFnChangeSubscriptionResponse,
   BillFnCheckoutCreateRequest,
   BillFnCheckoutSession,
+  BillFnDispatchEventsRequest,
   BillFnConfig,
   BillFnCreateCheckoutResponse,
   BillFnCreateCheckoutResponseData,
@@ -1599,43 +1600,75 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
       const job = await runReconciliationJobInternal(input.jobId);
       return ok({ job });
     },
-    dispatchEvents: deps.lifecycle.dispatch,
+    dispatchEvents: (input?: BillFnDispatchEventsRequest) => deps.lifecycle.dispatch(input),
     listEvents: deps.lifecycle.list,
     subscriptionProvider,
     quotaProvider
   };
   return {
-    service: flushingLifecycleEvents(deps.lifecycle, service),
+    service: deliveringLifecycleEvents(deps.lifecycle, service),
     now,
-    runReconciliationJob: async (jobId: string, onLeaseRenewed?: ReconciliationLeaseGuard) => {
-      try {
-        return await runReconciliationJobInternal(jobId, onLeaseRenewed);
-      } finally {
-        await deps.lifecycle.flush();
-      }
-    }
+    runReconciliationJob: (jobId: string, onLeaseRenewed?: ReconciliationLeaseGuard) =>
+      deps.lifecycle.deliverAfter(() => runReconciliationJobInternal(jobId, onLeaseRenewed))
   };
 }
 
 /**
- * Wraps each of the service's methods so that, once it settles, the lifecycle events recorded meanwhile are
- * delivered. A delivery failure never fails the call: the event stays in the outbox for a later dispatch.
+ * Wraps each of the service's methods, and those of the provider objects it holds, so that once a call settles
+ * the lifecycle events it recorded are delivered (see `deliverAfter`). A delivery failure never fails the call:
+ * the event stays in the outbox for a later dispatch.
  */
-function flushingLifecycleEvents<T extends Record<string, unknown>>(lifecycle: LifecycleEvents, service: T): T {
+function deliveringLifecycleEvents<T extends object>(lifecycle: LifecycleEvents, target: T): T {
   return Object.fromEntries(
-    Object.entries(service).map(([key, value]) => [
+    Object.entries(target).map(([key, value]) => [
       key,
       typeof value === 'function'
-        ? async (...args: unknown[]) => {
-            try {
-              return await (value as (...args: unknown[]) => unknown)(...args);
-            } finally {
-              await lifecycle.flush();
-            }
-          }
-        : value
+        ? (...args: unknown[]) => lifecycle.deliverAfter(async () => (value as (...args: unknown[]) => unknown)(...args))
+        : value && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype
+          ? deliveringLifecycleEvents(lifecycle, value)
+          : value
     ])
   ) as T;
+}
+
+/** Thrown inside a transaction to roll back a write that lost its ordering race. */
+const LOST_WRITE = Symbol('billfn.lostWrite');
+
+/**
+ * Applies a state write together with the lifecycle events it causes, so a committed write always has its
+ * events. Where the adapter supports transactions both commit in one, and a write that loses its race (`write`
+ * returns false) or fails records none. Without transactions the events are recorded first: a write that then
+ * fails or loses its race leaves them recorded. Each reports the provider state this call verified, and its id
+ * derives from that state and the row the write replaces, so a retry of the write records the same id. Returns
+ * whether `write` applied.
+ */
+async function writeWithLifecycleEvents(
+  deps: ServiceDeps,
+  events: LifecycleEventInput[],
+  write: (db: Adapter) => Promise<boolean>
+): Promise<boolean> {
+  if (events.length === 0 || !deps.lifecycle.enabled) {
+    return write(deps.db);
+  }
+  if (!deps.db.capabilities.transactions.supported) {
+    await deps.lifecycle.record(events);
+    return write(deps.db);
+  }
+  try {
+    return await deps.db.transaction(async (transaction) => {
+      const db = transaction as unknown as Adapter;
+      if (!(await write(db))) {
+        throw LOST_WRITE;
+      }
+      await deps.lifecycle.record(events, db);
+      return true;
+    });
+  } catch (error) {
+    if (error === LOST_WRITE) {
+      return false;
+    }
+    throw error;
+  }
 }
 
 const RECONCILIATION_QUEUE = 'billfn-reconciliation';
@@ -1849,8 +1882,8 @@ async function processReconciliationJob(
     }
     case 'lifecycle-events': {
       await deps.lifecycle.recordGrantExpiry();
-      await assertLease();
-      await deps.lifecycle.dispatch();
+      // The lease is renewed before each delivery, so a job whose lease lapsed stops delivering.
+      await deps.lifecycle.dispatch({}, assertLease);
       return;
     }
     case 'notification-history-backfill': {
@@ -3197,8 +3230,16 @@ async function applyVerificationState(
       Object.assign(record, withPendingReplacements(record.metadata, pending));
       // Every update is ordered against the row it was computed from, so a provider-state time and the
       // pending references it clears always come from the row it replaces. A re-import of an accepted row
-      // records its audit first.
-      if (await updateSubscriptionAfterImportAudit(deps, baseSubscription, record, input.importAudit)) {
+      // records its audit first. The renewal or cancellation this write makes commits with it.
+      if (
+        await updateSubscriptionAfterImportAudit(
+          deps,
+          baseSubscription,
+          record,
+          input.importAudit,
+          subscriptionLifecycleEvents(baseSubscription, record)
+        )
+      ) {
         subscription = record;
         break;
       }
@@ -3258,15 +3299,26 @@ async function applyVerificationState(
     recordLifecycle = ownState || settled.acceptedHere;
   }
 
-  const checkoutSession = input.checkoutSession
-    ? await updateCheckoutSession(deps, input.checkoutSession.checkoutSessionId, {
-        status: input.state.checkoutStatus,
-        providerSubscriptionId: input.state.providerSubscriptionId ?? input.checkoutSession.providerSubscriptionId,
-        providerChargeId: input.state.providerChargeId ?? input.checkoutSession.providerChargeId,
-        updatedAt: timestamp,
-        metadata: mergeJson(input.checkoutSession.metadata, input.state.raw)
-      })
-    : input.checkoutSession;
+  let checkoutSession = input.checkoutSession;
+  if (input.checkoutSession) {
+    const { checkoutSessionId } = input.checkoutSession;
+    const patch: Partial<BillFnCheckoutSession> = {
+      status: input.state.checkoutStatus,
+      providerSubscriptionId: input.state.providerSubscriptionId ?? input.checkoutSession.providerSubscriptionId,
+      providerChargeId: input.state.providerChargeId ?? input.checkoutSession.providerChargeId,
+      updatedAt: timestamp,
+      metadata: mergeJson(input.checkoutSession.metadata, input.state.raw)
+    };
+    // A succeeded session's `checkout.completed` commits with it, once per session.
+    await writeWithLifecycleEvents(
+      deps,
+      patch.status === 'succeeded' ? [checkoutCompletedEvent(checkoutSessionId, subscription)] : [],
+      async (db) => {
+        checkoutSession = await updateCheckoutSession({ ...deps, db }, checkoutSessionId, patch);
+        return true;
+      }
+    );
+  }
 
   // A superseded read leaves the subscription's state, so its entitlements stand and no lifecycle event is recorded;
   // an import that ends on another run's state publishes that state's plan.
@@ -3276,11 +3328,6 @@ async function applyVerificationState(
     ownState ? input.plan : requirePlan(deps.catalog, subscription.planKey),
     subscription,
     timestamp
-  );
-  // `baseSubscription` is the row this write replaced (null for a new row). Only a write of this call's own state
-  // renews or cancels; a succeeded checkout session is recorded whatever the row carries.
-  await deps.lifecycle.record(
-    subscriptionLifecycleEvents(ownState ? baseSubscription : null, subscription, checkoutSession)
   );
   if (!recordLifecycle) {
     return {
@@ -3443,21 +3490,24 @@ async function updateSubscriptionAfterImportAudit(
   deps: ServiceDeps,
   current: BillFnSubscription,
   next: BillFnSubscription,
-  importAudit: ApplyVerificationStateInput['importAudit']
+  importAudit: ApplyVerificationStateInput['importAudit'],
+  events: LifecycleEventInput[] = []
 ) {
   if (importAudit && !isImportPending(next)) {
     await recordBillingEvent(deps, importAudit(next));
   }
-  const updated = await deps.db.updateMany({
-    model: TABLES.subscriptions,
-    where: [
-      { field: 'id', operator: 'eq', value: current.id },
-      { field: 'updatedAt', operator: 'eq', value: current.updatedAt }
-    ],
-    data: next,
-    namespace: deps.namespace
+  return writeWithLifecycleEvents(deps, events, async (db) => {
+    const updated = await db.updateMany({
+      model: TABLES.subscriptions,
+      where: [
+        { field: 'id', operator: 'eq', value: current.id },
+        { field: 'updatedAt', operator: 'eq', value: current.updatedAt }
+      ],
+      data: next,
+      namespace: deps.namespace
+    });
+    return updated === 1;
   });
-  return updated === 1;
 }
 
 /** Writes a subscription row ordered against the row it was computed from; false when that row changed. */
@@ -3537,20 +3587,24 @@ async function upsertEntitlements(
       updatedAt: timestamp
     };
 
+    // The `entitlement.changed` this write makes commits with it.
+    const events = entitlementChangeEvents(existing, snapshot, subscription);
     if (existing) {
-      const updated = await deps.db.updateMany({
-        model: TABLES.entitlementSnapshots,
-        where: [
-          { field: 'billingAccountId', operator: 'eq', value: billingAccountId },
-          existing.sourceEventId
-            ? { field: 'sourceEventId', operator: 'eq', value: existing.sourceEventId }
-            : { field: 'updatedAt', operator: 'eq', value: existing.updatedAt }
-        ],
-        data: snapshot,
-        namespace: deps.namespace
+      const updated = await writeWithLifecycleEvents(deps, events, async (db) => {
+        const count = await db.updateMany({
+          model: TABLES.entitlementSnapshots,
+          where: [
+            { field: 'billingAccountId', operator: 'eq', value: billingAccountId },
+            existing.sourceEventId
+              ? { field: 'sourceEventId', operator: 'eq', value: existing.sourceEventId }
+              : { field: 'updatedAt', operator: 'eq', value: existing.updatedAt }
+          ],
+          data: snapshot,
+          namespace: deps.namespace
+        });
+        return count === 1;
       });
-      if (updated === 1) {
-        await recordEntitlementChange(deps, existing, snapshot, subscription);
+      if (updated) {
         return snapshot;
       }
       await Promise.resolve();
@@ -3558,12 +3612,15 @@ async function upsertEntitlements(
     }
 
     try {
-      const created = await deps.db.create<BillFnEntitlementSnapshot>({
-        model: TABLES.entitlementSnapshots,
-        data: snapshot,
-        namespace: deps.namespace
+      let created = snapshot;
+      await writeWithLifecycleEvents(deps, events, async (db) => {
+        created = await db.create<BillFnEntitlementSnapshot>({
+          model: TABLES.entitlementSnapshots,
+          data: snapshot,
+          namespace: deps.namespace
+        });
+        return true;
       });
-      await recordEntitlementChange(deps, null, snapshot, subscription);
       return created;
     } catch (error) {
       if (!isDuplicateRecordError(error)) {
@@ -3580,15 +3637,15 @@ async function upsertEntitlements(
 }
 
 /**
- * Records `entitlement.changed` when a subscription write changes the paid snapshot's plan, status, features or
- * limits. Keyed by the write's source event, so it is recorded once per write.
+ * The `entitlement.changed` of a snapshot write that changes the paid snapshot's plan, status, features or
+ * limits. Keyed by the snapshot it replaces and the entitlements it writes, so a retry of the write and a racing
+ * write of the same change share its id.
  */
-async function recordEntitlementChange(
-  deps: ServiceDeps,
+function entitlementChangeEvents(
   previous: BillFnEntitlementSnapshot | null,
   next: BillFnEntitlementSnapshot,
   subscription: BillFnSubscription
-) {
+): LifecycleEventInput[] {
   if (
     previous &&
     previous.planKey === next.planKey &&
@@ -3596,11 +3653,13 @@ async function recordEntitlementChange(
     sameJson(previous.features, next.features) &&
     sameJson(previous.limits, next.limits)
   ) {
-    return;
+    return [];
   }
-  await deps.lifecycle.record([
+  const replaced = previous ? `${previous.sourceEventId ?? ''}@${previous.updatedAt}` : 'none';
+  const entitlements = JSON.stringify(canonicalJson([next.planKey, next.status, next.features, next.limits]));
+  return [
     {
-      id: lifecycleEventId('entitlement.changed', `subscription\n${next.billingAccountId}\n${next.sourceEventId}`),
+      id: lifecycleEventId('entitlement.changed', `subscription\n${next.billingAccountId}\n${replaced}\n${entitlements}`),
       type: 'entitlement.changed',
       billingAccountId: next.billingAccountId,
       occurredAt: next.updatedAt,
@@ -3613,39 +3672,39 @@ async function recordEntitlementChange(
         previousStatus: previous?.status ?? null
       }
     }
-  ]);
+  ];
 }
 
-/**
- * The lifecycle events of a subscription write that carries its own state: `checkout.completed` for a
- * succeeded checkout session (once per session), `subscription.renewed` when an active subscription's period
- * end moves later (once per period end), and `subscription.canceled` when a renewing subscription stops
- * renewing without expiring or failing (once per write).
- */
-function subscriptionLifecycleEvents(
-  previous: BillFnSubscription | null,
-  subscription: BillFnSubscription,
-  checkoutSession: BillFnCheckoutSession | undefined
-): LifecycleEventInput[] {
-  const events: LifecycleEventInput[] = [];
-  const base = { billingAccountId: subscription.billingAccountId, occurredAt: subscription.updatedAt };
-  const ref = {
+/** The `checkout.completed` of a checkout session that succeeded with `subscription`; one per session. */
+function checkoutCompletedEvent(checkoutSessionId: string, subscription: BillFnSubscription): LifecycleEventInput {
+  return {
+    billingAccountId: subscription.billingAccountId,
+    occurredAt: subscription.updatedAt,
+    id: lifecycleEventId('checkout.completed', checkoutSessionId),
+    type: 'checkout.completed',
+    data: { ...subscriptionRef(subscription), checkoutSessionId }
+  };
+}
+
+function subscriptionRef(subscription: BillFnSubscription) {
+  return {
     subscriptionId: subscription.id,
     provider: subscription.provider,
     planKey: subscription.planKey,
     priceId: subscription.priceId
   };
-  if (checkoutSession?.status === 'succeeded') {
-    events.push({
-      ...base,
-      id: lifecycleEventId('checkout.completed', checkoutSession.checkoutSessionId),
-      type: 'checkout.completed',
-      data: { ...ref, checkoutSessionId: checkoutSession.checkoutSessionId }
-    });
-  }
-  if (!previous) {
-    return events;
-  }
+}
+
+/**
+ * The lifecycle events of a write of provider state over `previous`: `subscription.renewed` when an active
+ * subscription's period end moves later (once per period end), and `subscription.canceled` when a renewing
+ * subscription stops renewing without expiring or failing (keyed by the row it replaces, so a retry of the
+ * write and a racing write over the same row share its id).
+ */
+function subscriptionLifecycleEvents(previous: BillFnSubscription, subscription: BillFnSubscription): LifecycleEventInput[] {
+  const events: LifecycleEventInput[] = [];
+  const base = { billingAccountId: subscription.billingAccountId, occurredAt: subscription.updatedAt };
+  const ref = subscriptionRef(subscription);
   const previousEnd = previous.currentPeriodEnd ? Date.parse(previous.currentPeriodEnd) : Number.NaN;
   const nextEnd = subscription.currentPeriodEnd ? Date.parse(subscription.currentPeriodEnd) : Number.NaN;
   if (subscription.status === 'active' && Number.isFinite(previousEnd) && Number.isFinite(nextEnd) && nextEnd > previousEnd) {
@@ -3664,7 +3723,7 @@ function subscriptionLifecycleEvents(
   if (isRenewing(previous) && !isRenewing(subscription) && !ENDED_STATUSES.has(subscription.status)) {
     events.push({
       ...base,
-      id: lifecycleEventId('subscription.canceled', `${subscription.id}\n${subscription.updatedAt}`),
+      id: lifecycleEventId('subscription.canceled', `${subscription.id}\n${previous.updatedAt}`),
       type: 'subscription.canceled',
       data: {
         ...ref,
