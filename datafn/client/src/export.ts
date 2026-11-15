@@ -51,24 +51,22 @@ export type DatafnImportLocalHook = (
 ) => Promise<void> | void;
 
 /**
- * The resources at either end of each many-many join store and the local
- * store that holds its rows, under the key the local stores use (`relation`,
- * else "rel") and the canonical one (core's getRelationKeyName).
+ * The resources at either end of each many-many join store, under the key the
+ * local stores use (`relation`, else "rel") and the canonical one (core's
+ * getRelationKeyName), for announcing imported rows. Rows are written under
+ * the key the payload names.
  */
-function joinStoreEndpoints(
-  schema: DatafnSchema,
-): Map<string, { from: string; to: string; store: string }> {
-  const endpoints = new Map<string, { from: string; to: string; store: string }>();
-  const aliases: Array<[string, { from: string; to: string; store: string }]> = [];
+function joinStoreEndpoints(schema: DatafnSchema): Map<string, { from: string; to: string }> {
+  const endpoints = new Map<string, { from: string; to: string }>();
+  const aliases: Array<[string, { from: string; to: string }]> = [];
   for (const relation of schema.relations ?? []) {
     if (relation.type !== "many-many") continue;
     const froms = Array.isArray(relation.from) ? relation.from : [relation.from];
     const tos = Array.isArray(relation.to) ? relation.to : [relation.to];
     for (const from of froms) {
       for (const to of tos) {
-        const store = getJoinStoreKey(from, relation.relation ?? "rel", to);
-        endpoints.set(store, { from, to, store });
-        aliases.push([getJoinStoreKey(from, getRelationKeyName(relation, to), to), { from, to, store }]);
+        endpoints.set(getJoinStoreKey(from, relation.relation ?? "rel", to), { from, to });
+        aliases.push([getJoinStoreKey(from, getRelationKeyName(relation, to), to), { from, to }]);
       }
     }
   }
@@ -240,8 +238,7 @@ export async function importData(
     
     for (const row of rows) {
       try {
-        // Rows exported under the canonical key go to the local store.
-        await storage.upsertJoinRow(endpoints?.store ?? storeName, row);
+        await storage.upsertJoinRow(storeName, row);
         if (endpoints) {
           addRelated(endpoints.from, row.from);
           addRelated(endpoints.to, row.to);
