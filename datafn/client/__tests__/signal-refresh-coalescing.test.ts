@@ -244,6 +244,7 @@ describe("limited and counted queries over a large table", () => {
 
 describe("merge skipping with query plugins and relation selects", () => {
   it("re-runs when a merge touches a filter that a plugin adds", async () => {
+    const hookCalls: any[] = [];
     const storage = new MemoryStorageAdapter(["notes"]);
     for (const [id, status] of [["notes:a", "open"], ["notes:b", "done"], ["notes:c", "open"]]) {
       await storage.upsertRecord("notes", { id, title: id, status, body: "" });
@@ -260,6 +261,7 @@ describe("merge skipping with query plugins and relation selects", () => {
           name: "open-only",
           runsOn: ["client"],
           beforeQuery(_ctx: unknown, q: any) {
+            hookCalls.push(q);
             if (Array.isArray(q) || q.resource !== "notes") return q;
             const filters = q.filters
               ? { $and: [q.filters, { status: "open" }] }
@@ -278,6 +280,8 @@ describe("merge skipping with query plugins and relation selects", () => {
     });
     await waitForValue(signal as any);
     expect(values.at(-1)!.map((r) => r.id)).toEqual(["notes:a", "notes:c"]);
+    // The plugin runs once per read; the signal reuses the query it produced.
+    expect(hookCalls).toHaveLength(1);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     // A field neither the query nor the plugin reads still skips the re-run.

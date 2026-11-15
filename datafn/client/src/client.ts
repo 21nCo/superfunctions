@@ -1549,6 +1549,30 @@ function _buildRawClient<S extends DatafnSchema>(
     });
   }
 
+  /**
+   * Runs a query; `observeQuery` receives the query after the client's
+   * plugins transformed it.
+   */
+  const runQuery = async (q: unknown | unknown[], observeQuery?: (query: unknown) => void) => {
+    guardDestroyed();
+    await awaitNativeBridgeReady();
+    await searchProviderInitPromise;
+    await storageValidationPromise; // STORAGE-INIT-001: fail fast if stores are missing
+    await localOnlyInitPromise; // Ensure hydration state is ready in local-only mode
+    return executeQuery(
+      remote,
+      q,
+      resolvedStorage,
+      config.plugins || [],
+      schema,
+      schemaIndex,
+      nativeSyncConfig?.remoteMode,
+      config.temporal,
+      config.e2ee,
+      observeQuery,
+    );
+  };
+
   // Create the client object first (will add table() method after registry is created)
   // We cast to any initially because the mapped types are handled by Proxy
   const client: any = {
@@ -1558,22 +1582,7 @@ function _buildRawClient<S extends DatafnSchema>(
      * Execute a query (CLIENT-QUERY-001, CLIENT-OFFLINE-QUERY-001)
      */
     async query(q: unknown | unknown[]) {
-      guardDestroyed();
-      await awaitNativeBridgeReady();
-      await searchProviderInitPromise;
-      await storageValidationPromise; // STORAGE-INIT-001: fail fast if stores are missing
-      await localOnlyInitPromise; // Ensure hydration state is ready in local-only mode
-      return executeQuery(
-        remote,
-        q,
-        resolvedStorage,
-        config.plugins || [],
-        schema,
-        schemaIndex,
-        nativeSyncConfig?.remoteMode,
-        config.temporal,
-        config.e2ee,
-      );
+      return runQuery(q);
     },
 
     /**
@@ -2358,7 +2367,13 @@ function _buildRawClient<S extends DatafnSchema>(
   };
 
   // Create signal registry (CLIENT-SIGNAL-001, SIG-002)
-  const signalRegistry = new SignalRegistry(client, eventBus, schema, config.plugins || []);
+  const signalRegistry = new SignalRegistry(
+    client,
+    eventBus,
+    schema,
+    config.plugins || [],
+    runQuery,
+  );
 
   // Create table registry with client and signal registry (CLIENT-REG-001)
   const registry = new TableRegistry<S>(

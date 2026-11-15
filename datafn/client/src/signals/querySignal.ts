@@ -13,7 +13,6 @@ import {
 } from "@datafn/core";
 import type { EventBus } from "../events/bus.js";
 import type { DatafnSignalOptions } from "./options.js";
-import { runBeforeQuery } from "../plugins/run-hooks.js";
 
 /** Options the client uses for signals it builds itself. */
 export type QuerySignalInternalOptions = {
@@ -45,6 +44,14 @@ function scheduleAfterFrame(run: () => void): void {
 }
 
 /**
+ * Runs a query and reports the query the client's plugins produced from it.
+ */
+export type ObservedQueryRunner = (
+  query: unknown,
+  observeQuery: (effectiveQuery: unknown) => void,
+) => Promise<unknown>;
+
+/**
  * Signal registry for caching signals by dfqlKey
  */
 export class SignalRegistry {
@@ -53,16 +60,27 @@ export class SignalRegistry {
   private eventBus: EventBus;
   private schema: DatafnSchema;
   private plugins: DatafnPlugin[];
+  private observedQuery?: ObservedQueryRunner;
 
   /**
    * @param plugins The client's plugins. Signals read the query these
    *   plugins produce to tell which fields a merge must touch to matter.
+   * @param observedQuery Runs a signal's query and reports the query the
+   *   plugins produced. Without it, a signal whose query plugins can rewrite
+   *   refreshes on every merge.
    */
-  constructor(client: any, eventBus: EventBus, schema: DatafnSchema, plugins: DatafnPlugin[] = []) {
+  constructor(
+    client: any,
+    eventBus: EventBus,
+    schema: DatafnSchema,
+    plugins: DatafnPlugin[] = [],
+    observedQuery?: ObservedQueryRunner,
+  ) {
     this.client = client;
     this.eventBus = eventBus;
     this.schema = schema;
     this.plugins = plugins;
+    this.observedQuery = observedQuery;
   }
 
   getSignal<T>(
@@ -90,6 +108,7 @@ export class SignalRegistry {
       options,
       internal,
       this.plugins,
+      this.observedQuery,
     );
     this.signals.set(key, signal);
     return signal;
@@ -432,6 +451,7 @@ function createQuerySignal<T>(
   options?: DatafnSignalOptions,
   internal?: QuerySignalInternalOptions,
   plugins: DatafnPlugin[] = [],
+  observedQuery?: ObservedQueryRunner,
 ): DatafnSignal<T> {
   const countValue = internal?.value === "count";
   let currentValue: T | undefined;
@@ -471,14 +491,13 @@ function createQuerySignal<T>(
     queuedRefresh = false;
     // A full read supersedes any per-record re-read still running.
     fullFetchSeq++;
-    updateMembershipFields();
     // Clear error when starting a new fetch
     if (!refresh) {
       currentError = null;
     }
 
     try {
-      const result = await client.query(fullQuery);
+      const result = await runFullQuery();
       // Unwrap pagination envelope: emit the record array directly
       const queryResult = result as {
         data?: any[];
@@ -561,19 +580,23 @@ function createQuerySignal<T>(
   let membershipFields: Set<string> | null =
     queryHooks.length > 0 ? null : baseMembershipFields;
   let membershipRun = 0;
-  const updateMembershipFields = () => {
-    if (!baseMembershipFields || queryHooks.length === 0) return;
+  /**
+   * Runs the signal's query. When plugins can rewrite it, the membership set
+   * is rebuilt from the query they produced for this read, without running
+   * their hooks a second time.
+   */
+  const runFullQuery = (): Promise<unknown> => {
+    if (!baseMembershipFields || queryHooks.length === 0 || !observedQuery) {
+      return client.query(fullQuery);
+    }
     const run = ++membershipRun;
-    runBeforeQuery(queryHooks, schema, { ...fullQuery }).then(
-      (effectiveQuery) => {
-        if (run !== membershipRun) return;
-        const fields = deriveMembershipFields(effectiveQuery, schema);
-        membershipFields = fields ? new Set([...baseMembershipFields, ...fields]) : null;
-      },
-      () => {
-        if (run === membershipRun) membershipFields = null;
-      },
-    );
+    // Until this read reports its query, every merge counts.
+    membershipFields = null;
+    return observedQuery(fullQuery, (effectiveQuery) => {
+      if (run !== membershipRun) return;
+      const fields = deriveMembershipFields(effectiveQuery, schema);
+      membershipFields = fields ? new Set([...baseMembershipFields, ...fields]) : null;
+    });
   };
 
   // Coalescing state for refreshes (SIG-002): a full re-run, and records to
