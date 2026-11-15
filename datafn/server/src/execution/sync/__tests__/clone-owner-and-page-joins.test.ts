@@ -347,6 +347,39 @@ describe("paginated clone join rows", () => {
     expect(page.joins?.join_tags_links_tags?.map((r) => r.id)).toEqual(["l1", "l2"]);
   });
 
+  it("hides join rows whose private endpoint another actor cannot see", async () => {
+    const db = await seed();
+    await db.update({
+      model: "notes",
+      where: [{ field: "id", operator: "eq", value: "n3" }],
+      data: { createdBy: "bob" },
+      namespace: NAMESPACE,
+    });
+    const page = await executeClone(
+      {
+        clientId: "c1",
+        tables: ["tags"],
+        actorId: "bob",
+        includeJoins: true,
+        page: { table: "tags", afterId: null, limit: 1 },
+      },
+      schema,
+      db,
+      NAMESPACE,
+    );
+    expect(page.data.tags.map((r) => r.id)).toEqual(["t1"]);
+    // t1 links n1 (alice's, hidden from bob) and n3 (bob's).
+    expect(page.joins?.[joinKey]?.map((r) => r.id)).toEqual(["j_n3_t1"]);
+
+    const unpaged = await executeClone(
+      { clientId: "c1", tables: ["tags"], actorId: "bob", includeJoins: true },
+      schema,
+      db,
+      NAMESPACE,
+    );
+    expect(unpaged.joins?.[joinKey]?.map((r) => r.id)).toEqual(["j_n3_t1"]);
+  });
+
   it("still returns the whole join table for an unpaginated clone", async () => {
     const db = await seed();
     const result = await executeClone(
