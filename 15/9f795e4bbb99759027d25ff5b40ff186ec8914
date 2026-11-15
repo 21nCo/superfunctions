@@ -1,0 +1,37 @@
+billfn/core/src/__tests__/lifecycle-events.test.ts
+  s_2e5c6d5e9fbe39::t_1a6b511198377d 162-177,179-182,195-213,268-269,444-595
+billfn/core/src/lifecycle.ts
+  s_2e5c6d5e9fbe39::t_966c67efbb0212 56-61,138-163,165-169,172-192,198-253,310,393-445,518-519,530-532
+billfn/core/src/service.ts
+  s_2e5c6d5e9fbe39::t_d8d80be38668e8 49,300-301,1641-1646,1658-1669,3130-3132,3257,3658-3660,3676,3679-3682,3691-3692,3700-3743,3767-3768,3770-3774,3796
+billfn/core/src/types.ts
+  s_2e5c6d5e9fbe39::t_b3bd28eeb56cd4 710-712,779-783,795-798,1179-1181
+billfn/docs/content/docs/reference/schema.mdx
+  s_2e5c6d5e9fbe39::t_76b2f5ab6edcf3 75
+billfn/docs/content/docs/server/lifecycle-events.mdx
+  s_2e5c6d5e9fbe39::t_13252f168298d3 36,39,59,75-81
+billfn/provider-dodo/package.json
+  s_2e5c6d5e9fbe39::t_36945e34a969d4 38
+billfn/provider-dodo/src/__tests__/lifecycle.test.ts
+  s_2e5c6d5e9fbe39::t_f4d4949dcc50cf 1-90
+billfn/provider-dodo/src/index.ts
+  s_2e5c6d5e9fbe39::t_bf64921cf4c4fc 531-535
+package-lock.json
+  s_2e5c6d5e9fbe39::t_4d5cc41280ae8f 6064
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "159f795e4bbb99759027d25ff5b40ff186ec8914",
+  "prompts": {},
+  "sessions": {
+    "s_2e5c6d5e9fbe39": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_2e5c6d5e9fbe39",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
