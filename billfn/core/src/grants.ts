@@ -152,7 +152,7 @@ export async function insertGrant(deps: GrantDeps, billingAccountId: string, inp
       }
       const existing = await findGrant(deps, billingAccountId, record.id);
       if (existing) {
-        await deps.recordBillingEvent(grantCreatedEvent(existing));
+        await recordCommittedEvent(deps, grantCreatedEvent(existing));
       }
       if (input.kind === 'trial') {
         throw conflict('A trial was already granted to this billing account', 'trial_already_granted', record.id);
@@ -218,7 +218,7 @@ export async function revokeGrant(deps: GrantDeps, input: BillFnRevokeGrantReque
       });
     }
     if (existing.revokedAt) {
-      await deps.recordBillingEvent(grantRevokedEvent(existing));
+      await recordCommittedEvent(deps, grantRevokedEvent(existing));
       return withStatus(existing, deps.now());
     }
     const now = deps.now();
@@ -281,16 +281,24 @@ async function commitWithEvent(deps: GrantDeps, event: BillFnBillingEvent, write
   if (!(await write(deps.db))) {
     return false;
   }
-  try {
-    await deps.recordBillingEvent(event);
-  } catch {
+  await recordCommittedEvent(deps, event);
+  return true;
+}
+
+/**
+ * Records the event of a committed grant change: retried once, then left to `repairGrantEvents`. Never fails
+ * the request, whose outcome is the committed change.
+ */
+async function recordCommittedEvent(deps: GrantDeps, event: BillFnBillingEvent) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       await deps.recordBillingEvent(event);
+      return;
     } catch {
-      deps.metrics.track('grant.event_deferred', { type: event.type });
+      // Retried once, then deferred.
     }
   }
-  return true;
+  deps.metrics.track('grant.event_deferred', { type: event.type });
 }
 
 /** The account's grants, newest first, with their derived status. */

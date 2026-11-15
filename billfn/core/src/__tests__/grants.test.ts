@@ -433,6 +433,7 @@ describe('entitlement grants', () => {
     failEvents.on = true;
     await expect(env.grant()).resolves.toMatchObject({ ok: true, data: { grant: { kind: 'trial', status: 'active' } } });
     expect((await env.entitlements()).entitlements).toMatchObject({ status: 'trialing' });
+    await expect(env.grant()).rejects.toMatchObject({ code: 'BILLFN_CONFLICT', details: { reason: 'trial_already_granted' } });
     expect(await env.events('billfn.grant.created')).toEqual([]);
     // Once events can be written, the account's next entitlements read records the event, once.
     failEvents.on = false;
@@ -449,6 +450,7 @@ describe('entitlement grants', () => {
     const revoke = () =>
       env.billfn.services.grants.revoke({ billingAccountId: ACCOUNT, grantId: comp.data.grant.id, operator: OPERATOR });
     failEvents.only = undefined;
+    await expect(revoke()).resolves.toMatchObject({ ok: true, data: { grant: { status: 'revoked' } } });
     await expect(revoke()).resolves.toMatchObject({ ok: true, data: { grant: { status: 'revoked' } } });
     failEvents.on = false;
     expect(await env.events('billfn.grant.revoked')).toEqual([]);
