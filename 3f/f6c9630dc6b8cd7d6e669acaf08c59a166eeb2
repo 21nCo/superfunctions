@@ -1,0 +1,21 @@
+scripts/ci-plan.mjs
+  s_6858e2722e48a2::t_bdae3c7851c421 115-116,118,123-128
+scripts/ci-plan.test.mjs
+  s_6858e2722e48a2::t_17fc82501ed5f5 160-161,164,166-200,203-204
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3ff6c9630dc6b8cd7d6e669acaf08c59a166eeb2",
+  "prompts": {},
+  "sessions": {
+    "s_6858e2722e48a2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5f22c4ce-a650-4fe9-8303-dedaca1a3bfc",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
