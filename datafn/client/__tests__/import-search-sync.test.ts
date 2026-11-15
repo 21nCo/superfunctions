@@ -313,6 +313,42 @@ describe("importData with cloneUp", () => {
 });
 
 describe("importData edge cases", () => {
+  it("does not overwrite an edit made while the import waited for a rebuild", async () => {
+    const storage = await readyStorage();
+    const provider = createPersistentProvider();
+    let releaseRebuild!: () => void;
+    const rebuildGate = new Promise<void>((resolve) => {
+      releaseRebuild = resolve;
+    });
+    const upsert = provider.updateIndices.getMockImplementation()!;
+    provider.updateIndices.mockImplementationOnce(async (params) => {
+      await rebuildGate;
+      return upsert(params);
+    });
+    const client = localClient(storage, provider);
+
+    const searching = searchIds(client, "shopping");
+    await vi.waitFor(() => expect(provider.updateIndices).toHaveBeenCalledTimes(1));
+    const importing = client.importData({
+      ...payload,
+      resources: { notes: [{ id: "notes:new", title: "Imported" }] },
+    });
+    await vi.waitFor(async () => expect(await storage.getRecord("notes", "notes:new")).toBeTruthy());
+    // The edit indexes itself once the rebuild has settled.
+    const editing = client.table("notes").mutate({
+      operation: "merge",
+      id: "notes:new",
+      record: { title: "Newest" },
+    } as any);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    releaseRebuild();
+    await Promise.all([searching, importing, editing]);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(await storage.getRecord("notes", "notes:new")).toMatchObject({ title: "Newest" });
+    expect(provider.documents.get("notes")?.get("notes:new")).toBe("newest");
+  });
+
   it("indexes the import only after the search provider has initialised", async () => {
     const storage = await readyStorage();
     let releaseInit!: () => void;
