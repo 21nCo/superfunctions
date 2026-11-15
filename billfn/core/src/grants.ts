@@ -84,7 +84,8 @@ export function requireFutureExpiry(deps: GrantDeps, input: GrantCreateInput) {
  * entitlements read: whatever that request then does, the account's earlier creations and revocations, also of
  * grants that have since expired or been revoked, have their events. The events' ids and payloads derive from
  * the stored grant, so a recorded event is kept and none is written twice. With transactions each change
- * commits with its event and there is nothing to repair. Pass the account's grants when already read.
+ * commits with its event and there is nothing to repair. A repair that cannot write leaves the events to a
+ * later one and never fails the request. Pass the account's grants when already read.
  */
 export async function repairGrantEvents(deps: GrantDeps, billingAccountId: string, grants?: BillFnEntitlementGrant[]) {
   if (deps.db.capabilities.transactions.supported) {
@@ -96,14 +97,18 @@ export async function repairGrantEvents(deps: GrantDeps, billingAccountId: strin
   if (events.length === 0) {
     return;
   }
-  const recorded = await deps.db.findMany<{ id: string }>({
-    model: BILLING_EVENTS_TABLE,
-    where: [{ field: 'id', operator: 'in', value: events.map((event) => event.id) }],
-    namespace: deps.namespace
-  });
-  const recordedIds = new Set(recorded.map((event) => event.id));
-  for (const event of events.filter((candidate) => !recordedIds.has(candidate.id))) {
-    await deps.recordBillingEvent(event);
+  try {
+    const recorded = await deps.db.findMany<{ id: string }>({
+      model: BILLING_EVENTS_TABLE,
+      where: [{ field: 'id', operator: 'in', value: events.map((event) => event.id) }],
+      namespace: deps.namespace
+    });
+    const recordedIds = new Set(recorded.map((event) => event.id));
+    for (const event of events.filter((candidate) => !recordedIds.has(candidate.id))) {
+      await deps.recordBillingEvent(event);
+    }
+  } catch {
+    deps.metrics.track('grant.event_deferred', { type: 'repair' });
   }
 }
 

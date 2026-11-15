@@ -429,27 +429,33 @@ describe('entitlement grants', () => {
     const { db, failEvents } = failingEventDb(false);
     const env = setup(db);
 
-    // The committed trial is the outcome; its event is recorded by the account's next entitlements read, once.
+    // The committed trial is the outcome; while events cannot be written, reads still return it.
     failEvents.on = true;
     await expect(env.grant()).resolves.toMatchObject({ ok: true, data: { grant: { kind: 'trial', status: 'active' } } });
+    expect((await env.entitlements()).entitlements).toMatchObject({ status: 'trialing' });
     expect(await env.events('billfn.grant.created')).toEqual([]);
+    // Once events can be written, the account's next entitlements read records the event, once.
     failEvents.on = false;
     expect((await env.entitlements()).entitlements).toMatchObject({ status: 'trialing' });
     expect((await env.entitlements()).grants).toHaveLength(1);
     expect(await env.events('billfn.grant.created')).toMatchObject([{ payload: { kind: 'trial', operator: OPERATOR } }]);
     await expect(env.grant()).rejects.toMatchObject({ code: 'BILLFN_CONFLICT', details: { reason: 'trial_already_granted' } });
 
+    // A comp whose creation event still cannot be written can be revoked.
+    failEvents.on = true;
+    failEvents.only = `evt_grant_created_grant_comp_${ACCOUNT}_1`;
     const comp = await env.grant({ kind: 'comp' });
     if (!comp.ok) throw new Error('expected a comp');
     const revoke = () =>
       env.billfn.services.grants.revoke({ billingAccountId: ACCOUNT, grantId: comp.data.grant.id, operator: OPERATOR });
-    failEvents.on = true;
+    failEvents.only = undefined;
     await expect(revoke()).resolves.toMatchObject({ ok: true, data: { grant: { status: 'revoked' } } });
     failEvents.on = false;
     expect(await env.events('billfn.grant.revoked')).toEqual([]);
     expect((await env.entitlements()).grants).toContainEqual(expect.objectContaining({ id: comp.data.grant.id, status: 'revoked' }));
     await expect(revoke()).resolves.toMatchObject({ ok: true, data: { grant: { status: 'revoked' } } });
     expect(await env.events('billfn.grant.revoked')).toMatchObject([{ payload: { grantId: comp.data.grant.id, operator: OPERATOR } }]);
+    expect(await env.events('billfn.grant.created')).toHaveLength(2);
   });
 
   it('records an unrecorded grant event on the account\'s next grant operation without transactions, also after expiry', async () => {

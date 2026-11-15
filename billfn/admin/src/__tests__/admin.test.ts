@@ -602,13 +602,13 @@ describe("@billfn/admin", () => {
 
     it("reports a grant or revoke whose event fails to write without transactions as applied and records the event on the next read", async () => {
       const base = memoryAdapter();
-      // Fails writes of one event type, so the writes that repair other events succeed.
-      const failEvents = { type: "" };
+      // Fails writes of the listed event types.
+      const failEvents = { types: [] as string[] };
       const db: ReturnType<typeof memoryAdapter> = {
         ...base,
         capabilities: { ...base.capabilities, transactions: { ...base.capabilities.transactions, supported: false } },
         async create<T>(params: Parameters<typeof base.create>[0]): Promise<T> {
-          if (params.model === "billingEvents" && (params.data as { type?: string }).type === failEvents.type) {
+          if (params.model === "billingEvents" && failEvents.types.includes(String((params.data as { type?: unknown }).type))) {
             throw new Error("event write failed");
           }
           return base.create<T>(params);
@@ -628,37 +628,34 @@ describe("@billfn/admin", () => {
       });
       const grant = { payload: { kind: "comp", planKey: "nucleus", expiresAt }, reason: "vip" };
 
-      failEvents.type = "billfn.grant.created";
+      failEvents.types = ["billfn.grant.created"];
       const granted = { ok: true, data: { item: { kind: "comp", status: "active" } } };
       await expect(dispatch(1, "billfn.entitlements.grant-entitlement", grant)).resolves.toMatchObject(granted);
-      failEvents.type = "";
       // The committed comp is the outcome, and its same-key replay reports it.
       await expect(pointron()).resolves.toBe(true);
       await expect(dispatch(1, "billfn.entitlements.grant-entitlement", grant)).resolves.toMatchObject({
         ...granted,
         meta: { idempotencyReplay: true },
       });
-      expect(await events("billfn.grant.created")).toEqual([]);
-      // The next entitlements read, as the console's entitlements list makes, records the event once.
+      // While the event still cannot be written, the console's entitlements list and the row revoke work.
       const listed = await adapter.execute("billfn.entitlements.list", {}, context) as { data: { items: Array<{ id: string }> } };
-      expect(await events("billfn.grant.created")).toMatchObject([{ payload: { kind: "comp", reason: "vip" } }]);
-
       const rowId = listed.data.items[0]!.id;
-      failEvents.type = "billfn.grant.revoked";
+      failEvents.types = ["billfn.grant.created", "billfn.grant.revoked"];
       await expect(dispatch(3, "billfn.entitlements.revoke-grant", { id: rowId, reason: "ended" })).resolves.toMatchObject({
         ok: true,
         data: { item: { kind: "comp", status: "revoked" } },
       });
-      failEvents.type = "";
       await expect(pointron()).resolves.toBe(false);
+      expect(await events("billfn.grant.created")).toEqual([]);
       expect(await events("billfn.grant.revoked")).toEqual([]);
-      // The row has no active comp now; the request reads the entitlements first, which records the revoke event.
+      failEvents.types = [];
+      // The row has no active comp now; the request reads the entitlements first, which records both events.
       await expect(dispatch(4, "billfn.entitlements.revoke-grant", { id: rowId })).resolves.toMatchObject({
         ok: false,
         error: { code: "not_found" },
       });
       expect(await events("billfn.grant.revoked")).toMatchObject([{ payload: { reason: "ended", operator: { requestId: "request_3" } } }]);
-      expect(await events("billfn.grant.created")).toHaveLength(1);
+      expect(await events("billfn.grant.created")).toMatchObject([{ payload: { kind: "comp", reason: "vip" } }]);
     });
   });
 });
