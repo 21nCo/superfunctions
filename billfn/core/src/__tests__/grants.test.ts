@@ -87,7 +87,8 @@ function setup() {
     db,
     catalog,
     providers: { dodo: createProvider(providerState) },
-    now: () => clock.current
+    now: () => clock.current,
+    auth: { resolveSubject: async () => ({ principalId: PRINCIPAL }) }
   });
   const subject = { principalId: PRINCIPAL };
   const days = (count: number) => new Date(clock.current.getTime() + count * 24 * 60 * 60 * 1000).toISOString();
@@ -301,6 +302,53 @@ describe('entitlement grants', () => {
     expect(first.data.grant.revokeReason).toBe('first');
     expect(await env.events('billfn.grant.revoked')).toHaveLength(1);
     expect((await env.entitlements()).entitlements).toMatchObject({ status: 'inactive' });
+  });
+
+  it('stores one of two racing comps, and the account falls back once the stored comp is revoked', async () => {
+    const env = setup();
+    const outcomes = await Promise.allSettled([
+      env.grant({ kind: 'comp', planKey: 'nucleus', expiresAt: env.days(365) }),
+      env.grant({ kind: 'comp', planKey: 'memotron', expiresAt: env.days(30) })
+    ]);
+    const accepted = outcomes.filter((outcome) => outcome.status === 'fulfilled');
+    const refused = outcomes.filter((outcome) => outcome.status === 'rejected') as PromiseRejectedResult[];
+    expect(accepted).toHaveLength(1);
+    expect(refused).toHaveLength(1);
+    expect(refused[0]!.reason).toMatchObject({ code: 'BILLFN_CONFLICT', details: { reason: 'active_comp_exists' } });
+    const stored = await env.db.findMany<{ id: string }>({ model: 'entitlementGrants', where: [], namespace: 'billfn' });
+    expect(stored).toHaveLength(1);
+    expect(await env.events('billfn.grant.created')).toHaveLength(1);
+
+    await env.billfn.services.grants.revoke({ billingAccountId: ACCOUNT, grantId: stored[0]!.id });
+    expect((await env.entitlements()).entitlements).toMatchObject({ status: 'inactive', features: {}, limits: {} });
+    await expect(env.billfn.subscriptionProvider.hasFeature(env.subject, 'memotron')).resolves.toBe(false);
+  });
+
+  it('returns grants on GET /entitlements without the operator or reasons', async () => {
+    const env = setup();
+    const comp = await env.grant({ kind: 'comp', reason: 'internal note: VIP escalation' });
+    if (!comp.ok) throw new Error('expected grant');
+    await env.billfn.services.grants.revoke({
+      billingAccountId: ACCOUNT,
+      grantId: comp.data.grant.id,
+      operator: OPERATOR,
+      reason: 'internal note: revoked'
+    });
+    const response = await env.billfn.router.handle(new Request('https://billfn.example.test/billfn/entitlements'));
+    const payload = (await response.json()) as { ok: boolean; data: { grants: Record<string, unknown>[] } };
+    expect(payload.ok).toBe(true);
+    expect(payload.data.grants).toEqual([
+      {
+        id: comp.data.grant.id,
+        kind: 'comp',
+        planKey: 'nucleus',
+        status: 'revoked',
+        startsAt: '2026-11-10T00:00:00.000Z',
+        expiresAt: '2026-11-24T00:00:00.000Z',
+        revokedAt: '2026-11-10T00:00:00.000Z'
+      }
+    ]);
+    expect(JSON.stringify(payload)).not.toMatch(/operator_1|request_1|internal note/);
   });
 
   it('validates a grant before writing anything', async () => {

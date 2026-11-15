@@ -45,11 +45,11 @@ await billfn.services.grants.create({
 ```
 
 - A trial makes the entitlements `trialing`, a comp `active`, for the grant's plan until `expiresAt`. The snapshot carries `grant: { id, kind, expiresAt }`.
-- A billing account gets one trial ever: a second fails with `BILLFN_CONFLICT` and `details.reason` `trial_already_granted`, also after the first expired. A comp is refused (`active_comp_exists`) while another comp of the account is active; a comp applies before a trial.
+- A billing account gets one trial ever: a second fails with `BILLFN_CONFLICT` and `details.reason` `trial_already_granted`, also after the first expired. A comp is refused (`active_comp_exists`) while another comp of the account is active, also when two comps are created at once; a comp applies before a trial.
 - A paid subscription supersedes a grant while its entitlements are not `inactive`. Once it stops entitling the account, an unexpired grant applies again.
 - An expired or revoked grant falls back to the account's paid state, or to `inactive` (no features or limits) without one. Expiry is evaluated on every read; nothing needs to run at expiry.
 - `billfn.services.grants.revoke({ billingAccountId, grantId })` revokes a comp; a trial cannot be revoked (`BILLFN_VALIDATION_ERROR`, `grant_not_revocable`).
-- `GET /entitlements` and `getEntitlements` return the account's `grants`, newest first, with their `kind`, `expiresAt` and derived `status` (`active`, `expired` or `revoked`).
+- `GET /entitlements` and `getEntitlements` return the account's `grants`, newest first, as `{ id, kind, planKey, status, startsAt, expiresAt, revokedAt }` with the derived `status` (`active`, `expired` or `revoked`). The operator and reasons are not part of this subject-facing view; they stay on the `billfn.services.grants` results and the billing events.
 - Creating and revoking record `billfn.grant.created` and `billfn.grant.revoked` billing events with the operator and reason.
 
 ## Quota Provider

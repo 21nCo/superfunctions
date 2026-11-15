@@ -201,6 +201,17 @@ export interface BillFnEntitlementGrant {
   updatedAt: string;
 }
 
+/** The subject-facing view of a grant, as `getEntitlements` and `GET /entitlements` return it. */
+export interface BillFnEntitlementGrantSummary {
+  id: string;
+  kind: BillFnEntitlementGrantKind;
+  planKey: string;
+  status: BillFnEntitlementGrantStatus;
+  startsAt: string;
+  expiresAt: string;
+  revokedAt: string | null;
+}
+
 export interface BillFnUsageMeter {
   id: string;
   billingAccountId: string;
@@ -872,8 +883,12 @@ export interface BillFnEntitlementsResponseData {
   billingAccount: BillFnBillingAccount;
   entitlements: BillFnEntitlementSnapshot | null;
   subscription: BillFnSubscription | null;
-  /** The account's entitlement grants, newest first, with their kind, expiry and derived status. */
-  grants: BillFnEntitlementGrant[];
+  /**
+   * The account's entitlement grants, newest first, with their kind, expiry and
+   * derived status. The operator and reasons stay on the operator grant
+   * results and the billing events.
+   */
+  grants: BillFnEntitlementGrantSummary[];
 }
 
 export interface BillFnGrantResponseData {

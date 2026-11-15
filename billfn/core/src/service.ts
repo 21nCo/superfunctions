@@ -3,7 +3,15 @@ import { DuplicateKeyError, type Adapter, type WhereClause } from '@superfunctio
 import { ok } from '@superfunctions/envelope';
 import { createNamespacedEmitter, createMetricsEmitter, type MetricsEmitter } from '@superfunctions/metrics';
 import { createBillFnError } from './errors.js';
-import { applyGrants, insertGrant, listGrants, readCreateGrantInput, revokeGrant, type GrantDeps } from './grants.js';
+import {
+  applyGrants,
+  insertGrant,
+  listGrants,
+  readCreateGrantInput,
+  revokeGrant,
+  toGrantSummary,
+  type GrantDeps
+} from './grants.js';
 import {
   createDefaultBillingAccountResolver,
   defaultIdFactory,
@@ -1373,7 +1381,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         billingAccount,
         entitlements,
         subscription,
-        grants
+        grants: grants.map(toGrantSummary)
       };
       return ok(response);
     },

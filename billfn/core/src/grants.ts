@@ -7,6 +7,7 @@ import type {
   BillFnCatalog,
   BillFnCreateGrantRequest,
   BillFnEntitlementGrant,
+  BillFnEntitlementGrantSummary,
   BillFnEntitlementGrantKind,
   BillFnEntitlementSnapshot,
   BillFnOperator,
@@ -16,6 +17,7 @@ import type {
 const GRANTS_TABLE = 'entitlementGrants';
 const GRANT_KINDS = new Set<BillFnEntitlementGrantKind>(['trial', 'comp']);
 const REVOKE_ATTEMPTS = 3;
+const CREATE_ATTEMPTS = 3;
 
 /** The service dependencies grants use; the billing event and duplicate-key helpers are the service's own. */
 export interface GrantDeps {
@@ -23,7 +25,6 @@ export interface GrantDeps {
   namespace: string;
   catalog: BillFnCatalog;
   now: () => Date;
-  generateId: (prefix: string) => string;
   metrics: MetricsEmitter;
   recordBillingEvent(event: BillFnBillingEvent): Promise<void>;
   isDuplicateRecordError(error: unknown): boolean;
@@ -69,52 +70,79 @@ export function readCreateGrantInput(deps: GrantDeps, input: BillFnCreateGrantRe
 
 /**
  * Stores a grant. A trial's id is derived from its billing account, so the
- * unique id refuses a second trial even when two requests race; a comp is
- * refused while another comp of the account is active. A refused request
+ * unique id refuses a second trial even when two requests race. Comps take
+ * numbered ids (`grant_comp_<account>_<n>`): a comp is refused while the
+ * latest one is active, and a new one claims the next number, so of two racing
+ * comps the unique id stores one and refuses the other. A refused request
  * records the existing grant's creation event if an interrupted call left it
  * unrecorded.
  */
 export async function insertGrant(deps: GrantDeps, billingAccountId: string, input: GrantCreateInput) {
-  const timestamp = toIsoString(deps.now());
-  if (input.kind === 'comp') {
-    const activeComp = (await listGrants(deps, billingAccountId)).find(
-      (grant) => grant.kind === 'comp' && grant.status === 'active'
-    );
-    if (activeComp) {
-      await deps.recordBillingEvent(grantCreatedEvent(activeComp));
-      throw conflict('An active comp already exists for this billing account', 'active_comp_exists', activeComp.id);
+  for (let attempt = 0; attempt < CREATE_ATTEMPTS; attempt += 1) {
+    const id = input.kind === 'trial' ? trialGrantId(billingAccountId) : await nextCompId(deps, billingAccountId);
+    const timestamp = toIsoString(deps.now());
+    const record: GrantRecord = {
+      id,
+      billingAccountId,
+      planKey: input.planKey,
+      kind: input.kind,
+      startsAt: timestamp,
+      expiresAt: input.expiresAt,
+      revokedAt: null,
+      operator: input.operator,
+      reason: input.reason,
+      revokedBy: null,
+      revokeReason: null,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    try {
+      await deps.db.create({ model: GRANTS_TABLE, data: record, namespace: deps.namespace });
+    } catch (error) {
+      if (!deps.isDuplicateRecordError(error)) {
+        throw error;
+      }
+      const existing = await findGrant(deps, billingAccountId, record.id);
+      if (existing) {
+        await deps.recordBillingEvent(grantCreatedEvent(existing));
+      }
+      if (input.kind === 'trial') {
+        throw conflict('A trial was already granted to this billing account', 'trial_already_granted', record.id);
+      }
+      // The comp that took this number is active, or (read stale) it ended and the next number is free.
+      if (!existing || withStatus(existing, deps.now()).status === 'active') {
+        throw activeCompExists(record.id);
+      }
+      continue;
+    }
+    await deps.recordBillingEvent(grantCreatedEvent(record));
+    deps.metrics.track('grant.created', { kind: record.kind });
+    return withStatus(record, deps.now());
+  }
+  throw createBillFnError({ code: 'BILLFN_CONFLICT', message: 'Unable to create the grant after multiple retries' });
+}
+
+/**
+ * The id of the account's next comp. Comp n is created only while comp n-1 is
+ * not active, so the latest comp is the only one that can be active; while it
+ * is, the account's active comp is refused.
+ */
+async function nextCompId(deps: GrantDeps, billingAccountId: string) {
+  const prefix = compGrantIdPrefix(billingAccountId);
+  let latest: BillFnEntitlementGrant | undefined;
+  let latestNumber = 0;
+  for (const grant of await listGrants(deps, billingAccountId)) {
+    const number = grant.kind === 'comp' && grant.id.startsWith(prefix) ? Number(grant.id.slice(prefix.length)) : 0;
+    if (Number.isSafeInteger(number) && number > latestNumber) {
+      latest = grant;
+      latestNumber = number;
     }
   }
-  const record: GrantRecord = {
-    id: input.kind === 'trial' ? trialGrantId(billingAccountId) : deps.generateId('grant'),
-    billingAccountId,
-    planKey: input.planKey,
-    kind: input.kind,
-    startsAt: timestamp,
-    expiresAt: input.expiresAt,
-    revokedAt: null,
-    operator: input.operator,
-    reason: input.reason,
-    revokedBy: null,
-    revokeReason: null,
-    createdAt: timestamp,
-    updatedAt: timestamp
-  };
-  try {
-    await deps.db.create({ model: GRANTS_TABLE, data: record, namespace: deps.namespace });
-  } catch (error) {
-    if (!deps.isDuplicateRecordError(error) || input.kind !== 'trial') {
-      throw error;
-    }
-    const existing = await findGrant(deps, billingAccountId, record.id);
-    if (existing) {
-      await deps.recordBillingEvent(grantCreatedEvent(existing));
-    }
-    throw conflict('A trial was already granted to this billing account', 'trial_already_granted', record.id);
+  if (latest?.status === 'active') {
+    await deps.recordBillingEvent(grantCreatedEvent(latest));
+    throw activeCompExists(latest.id);
   }
-  await deps.recordBillingEvent(grantCreatedEvent(record));
-  deps.metrics.track('grant.created', { kind: record.kind });
-  return withStatus(record, deps.now());
+  return `${prefix}${latestNumber + 1}`;
 }
 
 /** Revokes a comp. A revoked comp is returned unchanged; a racing revoke is applied once. */
@@ -187,6 +215,19 @@ export async function listGrants(deps: GrantDeps, billingAccountId: string): Pro
   return records
     .map((record) => withStatus(record, now))
     .sort((left, right) => compareTimes(right.createdAt, left.createdAt) || right.id.localeCompare(left.id));
+}
+
+/** A grant as its billing subject sees it: without the operator, reasons or revoking operator. */
+export function toGrantSummary(grant: BillFnEntitlementGrant): BillFnEntitlementGrantSummary {
+  return {
+    id: grant.id,
+    kind: grant.kind,
+    planKey: grant.planKey,
+    status: grant.status,
+    startsAt: grant.startsAt,
+    expiresAt: grant.expiresAt,
+    revokedAt: grant.revokedAt ?? null
+  };
 }
 
 /**
@@ -280,6 +321,14 @@ async function findGrant(deps: GrantDeps, billingAccountId: string, grantId: str
 
 function trialGrantId(billingAccountId: string) {
   return `grant_trial_${billingAccountId}`;
+}
+
+function compGrantIdPrefix(billingAccountId: string) {
+  return `grant_comp_${billingAccountId}_`;
+}
+
+function activeCompExists(grantId: string) {
+  return conflict('An active comp already exists for this billing account', 'active_comp_exists', grantId);
 }
 
 function grantCreatedEvent(grant: GrantRecord): BillFnBillingEvent {
