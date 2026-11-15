@@ -1,0 +1,31 @@
+cachefn/typescript/README.md
+  s_aa5859f8f8a4ec::t_931050d9a0398a 298-303,306-308,323-332,354-355
+cachefn/typescript/__tests__/db-storage-adapters.test.ts
+  s_aa5859f8f8a4ec::t_a0308c443d32e5 3-5,7,44,161-166,168-175,177-218,220
+cachefn/typescript/__tests__/db-storage.test.ts
+  s_aa5859f8f8a4ec::t_98fbd8a52f81bc 18-31,42-43,61-69,114-177,403
+cachefn/typescript/__tests__/helpers/db-backends.ts
+  s_aa5859f8f8a4ec::t_d675baf8a9384c 26-28,31,49
+cachefn/typescript/src/storage/db/adapter.ts
+  s_aa5859f8f8a4ec::t_c254295a9cee30 38-39,50
+cachefn/typescript/src/storage/db/db-storage.ts
+  s_aa5859f8f8a4ec::t_fa3a9b1eb507a6 14-20,74-79,147-166,188-190,199,287-292,294-302,304-340,344-345,357,448-449,452-457,461-463,468,486,488-490,540
+cachefn/typescript/src/storage/db/schema.ts
+  s_aa5859f8f8a4ec::t_382b3f35fc4874 53-55,71-72,87-89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f8017f3d509d8a33ebd75833aa15f00b32fcfb08",
+  "prompts": {},
+  "sessions": {
+    "s_aa5859f8f8a4ec": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a5a6a9e1-7cfe-47bb-9558-2b4daeb62b6e",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
