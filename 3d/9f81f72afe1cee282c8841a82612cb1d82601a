@@ -1,0 +1,49 @@
+watchfn/python/README.md
+  s_81817c9a67a800::t_eb45e28e66ebd6 175-178,649-650,654-656,686
+watchfn/python/tests/test_bounded_scan.py
+  s_81817c9a67a800::t_58b5b46a14827e 1-118
+watchfn/python/tests/test_log_integration.py
+  s_81817c9a67a800::t_1084c2dcb7431a 262,278-280,282
+watchfn/python/tests/test_stored_alerts.py
+  s_81817c9a67a800::t_1c88460f55c6c4 78
+watchfn/python/tests/test_stored_funnels.py
+  s_81817c9a67a800::t_da1a2c49f1e1ee 120
+watchfn/python/watchfn/alerts/observations.py
+  s_81817c9a67a800::t_29dc4288059605 194-211
+watchfn/python/watchfn/business/goals.py
+  s_81817c9a67a800::t_8e542c00c2b469 11,72-85,88-91
+watchfn/python/watchfn/business/stored_funnels.py
+  s_81817c9a67a800::t_333a1be7d1b092 15,127,130-131,182-187,189-190
+watchfn/python/watchfn/client.py
+  s_81817c9a67a800::t_c886b77ca7b269 14-15,83-84,100,208,215
+watchfn/python/watchfn/integrations/logfn.py
+  s_81817c9a67a800::t_5db83bbc36014c 216,220,224,233-234,246
+watchfn/python/watchfn/log_patterns.py
+  s_81817c9a67a800::t_07a4c174d1f885 8,50-61,63-66
+watchfn/python/watchfn/query.py
+  s_81817c9a67a800::t_e62ab9f9d79b07 284-309,315-317,403-414
+watchfn/python/watchfn/storage/database.py
+  s_81817c9a67a800::t_3c812ae2e0749a 197,200,203-226,233,235-236,239-246,248,259-260,267-272
+watchfn/python/watchfn/storage/memory_storage.py
+  s_81817c9a67a800::t_6995b8837140c3 20-23,25-26,59,62,67-68
+watchfn/python/watchfn/storage/scan.py
+  s_81817c9a67a800::t_e12e246ec55852 1-68
+watchfn/python/watchfn/synthetics/reports.py
+  s_81817c9a67a800::t_928bc303e04bcd 6,31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3d9f81f72afe1cee282c8841a82612cb1d82601a",
+  "prompts": {},
+  "sessions": {
+    "s_81817c9a67a800": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec6355bb-254a-4f3f-aad7-d4aace1204dd",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

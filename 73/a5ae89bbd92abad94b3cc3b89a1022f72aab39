@@ -1,0 +1,2529 @@
+logfn/typescript/src/http/watch-router.ts
+  s_b66d0e9dd4fae0::t_d725cf844e1dc3 1-25
+logfn/typescript/src/validation.test.ts
+  s_b66d0e9dd4fae0::t_3cf1193a74f33d 212-218
+mailfn/admin/package.json
+  s_b66d0e9dd4fae0::t_f5ef1a0b09828b 37
+mailfn/cloudflare/package.json
+  s_b66d0e9dd4fae0::t_603b9e516bd8ed 17
+mcpfn/.conduct/fast-uri-security-readiness.md
+  s_b66d0e9dd4fae0::t_bd148cf7126b44 17
+mcpfn/cli/package.json
+  s_b66d0e9dd4fae0::t_0ba9491dac3a2d 26
+mcpfn/core/README.md
+  s_b66d0e9dd4fae0::t_349d5f947ef998 170,211-216
+mcpfn/core/scripts/packed-runtime-acceptance.mjs
+  s_b66d0e9dd4fae0::t_ad8e379fd2c267 10,13-21
+mcpfn/core/src/client-profiles.ts
+  s_b66d0e9dd4fae0::t_04599d76dc85fc 591-596,598,601-606,613,616-618,620-633,635,639,645,650,652-670,680,690
+mcpfn/core/src/declaration.ts
+  s_b66d0e9dd4fae0::t_7bb4afd63ad7d0 46-49
+mcpfn/core/src/manifest.ts
+  s_b66d0e9dd4fae0::t_cd234af72eb65a 150,230-234,350,380-387,404-427
+mcpfn/core/src/registry.ts
+  s_b66d0e9dd4fae0::t_5f295b2438f253 123-135
+mcpfn/core/src/server.ts
+  s_b66d0e9dd4fae0::t_43d011d2d08bf7 436-437,442,463,721,729,877-878,901-902,919-920,924-935,947-967,970-977,980-981,984-985,988-989,992-993
+mcpfn/core/src/types.ts
+  s_b66d0e9dd4fae0::t_cc86b16833442f 52-56,60-63,65,69,71,73-74
+mcpfn/core/src/validation.ts
+  s_b66d0e9dd4fae0::t_c3c7a94eebd95b 667,669-674,677-682,686,688-692,695,698-701,705-710
+mcpfn/core/tests/client-profiles.test.ts
+  s_b66d0e9dd4fae0::t_97fe5d533a316f 693,1008-1011,1081-1108,1195-1254
+mcpfn/core/tests/declaration.test.ts
+  s_b66d0e9dd4fae0::t_9b038b00a3d0dd 78-96
+mcpfn/core/tests/manifest-diff.test.ts
+  s_b66d0e9dd4fae0::t_9a9fc13c55424f 115-117
+mcpfn/core/tests/server.test.ts
+  s_b66d0e9dd4fae0::t_54b02b9268706f 2,4,148-166,769-893
+mcpfn/datafn/package.json
+  s_b66d0e9dd4fae0::t_b959abcc5a9347 27,30
+mcpfn/examples/conformance-http-server.ts
+  s_b66d0e9dd4fae0::t_97ac89053bc4f5 1,388-390
+mcpfn/testing/package.json
+  s_b66d0e9dd4fae0::t_00b280d55a7a1d 36,49
+mdfn/components-react/package.json
+  s_b66d0e9dd4fae0::t_8ba33a0d27f4ce 4
+mdfn/components-react/vitest.config.ts
+  s_b66d0e9dd4fae0::t_87f2ab84a532a9 1-8
+mdfn/components-solid/src/components-solid.test.tsx
+  s_b66d0e9dd4fae0::t_94e748154d1b29 38-48
+mdfn/contentfn/src/contentfn.test.ts
+  s_b66d0e9dd4fae0::t_d13ab7504e5585 107-115
+mdfn/contentfn/src/index.ts
+  s_b66d0e9dd4fae0::t_4e4953fea2e4d4 209
+mdfn/core/src/core.test.ts
+  s_b66d0e9dd4fae0::t_fa7e80e7213cad 199-204,484-489
+mdfn/core/src/selection.ts
+  s_b66d0e9dd4fae0::t_b629854317d0c7 21-23,32,34
+mdfn/core/src/sidecar.ts
+  s_b66d0e9dd4fae0::t_b14acbbce39b1e 8-11,61
+mdfn/dom/src/dom.test.ts
+  s_b66d0e9dd4fae0::t_922858a11bda7d 92-113
+mdfn/server/package.json
+  s_b66d0e9dd4fae0::t_e058267bfdf248 5
+mdfn/testing/src/testing.test.ts
+  s_b66d0e9dd4fae0::t_4fc6fdf71dd7de 68-80,82-83
+memoryfn/admin/package.json
+  s_b66d0e9dd4fae0::t_46c794a26c9a0b 37
+memoryfn/python/memoryfn/__init__.py
+  s_b66d0e9dd4fae0::t_099167d28184c7 2,5
+memoryfn/python/memoryfn/core/config.py
+  s_b66d0e9dd4fae0::t_bfa6532606abf1 2,6
+memoryfn/python/memoryfn/core/pipeline.py
+  s_b66d0e9dd4fae0::t_c33604b0ae48ab 2-7,9-11,28
+memoryfn/python/memoryfn/core/types.py
+  s_b66d0e9dd4fae0::t_cf047bf0351b84 2-4,18,20,23-24,33,38,46,48,53-54,59
+memoryfn/python/memoryfn/extraction/facts.py
+  s_b66d0e9dd4fae0::t_60db61ed67fb25 2,8,23
+memoryfn/python/memoryfn/providers/openai.py
+  s_b66d0e9dd4fae0::t_727ce1f4c4951b 3,10,17
+memoryfn/python/memoryfn/storage/postgres.py
+  s_b66d0e9dd4fae0::t_d5e9f4d0f11164 1-3,6,8,23,57,86-87,90
+memoryfn/python/tests/test_pipeline.py
+  s_b66d0e9dd4fae0::t_930e86c43e8418 1-2,4,6-8
+memoryfn/typescript/package.json
+  s_b66d0e9dd4fae0::t_4d82098f741aad 33,35-36,45
+package.json
+  s_b66d0e9dd4fae0::t_dc99ae18e0b2ae 66-74,174,192
+packages/README.md
+  s_b66d0e9dd4fae0::t_699dadbaeaa539 60
+packages/admin/README.md
+  s_b66d0e9dd4fae0::t_febe1fcd8a16ad 123-128
+packages/admin/src/dispatcher.test.ts
+  s_b66d0e9dd4fae0::t_892ecab8b9c331 100,102
+packages/admin/src/errors.test.ts
+  s_b66d0e9dd4fae0::t_11f6f4058c7543 28-43
+packages/admin/src/errors.ts
+  s_b66d0e9dd4fae0::t_5e445268ba7518 57-58
+packages/cli/package.json
+  s_b66d0e9dd4fae0::t_5b202ab11af3a4 30,38
+packages/db/src/adapter/__tests__/schema-codecs.test.ts
+  s_b66d0e9dd4fae0::t_ba0b112aaf1470 197-212
+packages/db/src/adapter/schema-codecs.ts
+  s_b66d0e9dd4fae0::t_30d61b0dd467a0 23,162
+packages/db/src/adapters/kysely/index.ts
+  s_b66d0e9dd4fae0::t_07daa49baaf854 236,282-284,286-303
+packages/db/src/adapters/kysely/returning.test.ts
+  s_b66d0e9dd4fae0::t_b81ac769be1d37 17-20,38,41
+packages/db/src/adapters/kysely/upsert-target.test.ts
+  s_b66d0e9dd4fae0::t_85b4a0de42aefd 28-106
+packages/docs-theme/package.json
+  s_b66d0e9dd4fae0::t_27c5e1502a76e1 19
+packages/http-openapi/package.json
+  s_b66d0e9dd4fae0::t_06f67b8828b686 41
+packages/oauth-router/package.json
+  s_b66d0e9dd4fae0::t_28adaee84258c6 41
+packages/oauth-storage/package.json
+  s_b66d0e9dd4fae0::t_19a0f97cdd4619 41
+packages/observability/src/index.ts
+  s_b66d0e9dd4fae0::t_ca8620fc55945c 638
+packages/python-core/README.md
+  s_b66d0e9dd4fae0::t_630ae108581650 17-32
+packages/python-sqlalchemy/README.md
+  s_b66d0e9dd4fae0::t_63e72fd3025f17 107-109
+packages/storage-azure/package.json
+  s_b66d0e9dd4fae0::t_89df62a39b244a 33
+packages/storage-gcs/package.json
+  s_b66d0e9dd4fae0::t_88695a8b270272 33
+packages/storage-minio/package.json
+  s_b66d0e9dd4fae0::t_0d355d11dbc40a 34
+packages/storage-r2/package.json
+  s_b66d0e9dd4fae0::t_9909faa6d3b683 34
+packages/storage-s3/package.json
+  s_b66d0e9dd4fae0::t_428819da0816e4 34
+plugfn/admin/package.json
+  s_b66d0e9dd4fae0::t_3ee403d6b2e602 36
+plugfn/core/package.json
+  s_b66d0e9dd4fae0::t_0fa631b0ff58ba 44,46,49,53
+plugfn/python/pyproject.toml
+  s_b66d0e9dd4fae0::t_1db8c455aecafd 31
+probefn/.conduct/accounting-database-budget.md
+  s_b66d0e9dd4fae0::t_b0f732711ba42e 1-71
+probefn/.conduct/artifact-identifier-readiness.md
+  s_b66d0e9dd4fae0::t_fad85c77b8c12c 1-15
+probefn/.conduct/browser-action-readiness.md
+  s_b66d0e9dd4fae0::t_bf4e1fab5615e6 1-13
+probefn/.conduct/browser-engine-acceptance.md
+  s_b66d0e9dd4fae0::t_b9662ca6102262 1-9
+probefn/.conduct/checkpoint-video-readiness.md
+  s_b66d0e9dd4fae0::t_236a925d2b0413 1-26
+probefn/.conduct/configured-cap-readiness.md
+  s_b66d0e9dd4fae0::t_daf123b0ee1877 1-89
+probefn/.conduct/db-codec-integration-20261028.md
+  s_b66d0e9dd4fae0::t_f2e83ab4faa06f 1-7
+probefn/.conduct/devserver-http-readiness.md
+  s_b66d0e9dd4fae0::t_5f865b349efc5e 1-56
+probefn/.conduct/durable-quota-readiness.md
+  s_b66d0e9dd4fae0::t_bee98074fad877 1-77
+probefn/.conduct/event-journal-readiness.md
+  s_b66d0e9dd4fae0::t_9e0f68209ee4c6 1-95
+probefn/.conduct/event-streaming-readiness.md
+  s_b66d0e9dd4fae0::t_5de98d40886b04 1-11
+probefn/.conduct/installed-browser-readiness.md
+  s_b66d0e9dd4fae0::t_749551240fb6c7 1-45
+probefn/.conduct/lifecycle-integration-20261027.md
+  s_b66d0e9dd4fae0::t_b0f3073a5f5af0 1-15
+probefn/.conduct/live-flow-trace-readiness.md
+  s_b66d0e9dd4fae0::t_59b57993d96197 1-31
+probefn/.conduct/managed-writer-ownership.md
+  s_b66d0e9dd4fae0::t_7661d77615553b 1-41
+probefn/.conduct/mcp-event-pagination-readiness.md
+  s_b66d0e9dd4fae0::t_de6ba18ce1a078 1-50
+probefn/.conduct/mcp-pointer-integration-20261028.md
+  s_b66d0e9dd4fae0::t_67bca0109726e9 1-7
+probefn/.conduct/physical-scratch-next-steps.md
+  s_b66d0e9dd4fae0::t_7a00bc9f00e461 1-123
+probefn/.conduct/private-distribution-readiness.md
+  s_b66d0e9dd4fae0::t_021005775ad9b9 1-97
+probefn/.conduct/process-group-probe-native-20261020.json
+  s_b66d0e9dd4fae0::t_b2c0648e89e67a 2-29,32-53,56-77,80-101,104-125,128-149,152-173,176-197,200-221,224-245,248-260,263-284,287-308,311-332,335-356,359-380,383-394,396-403,405,407-418,420,422-442,444,446-466,468,470-481,484,487-490,492,494-505,508,510-529,531-532,534-538,540,542-553,555-556,558-562,564,566-579,581-594,596-607,609-610,612-616,618,620-633,635-646,648,650-663,665
+probefn/.conduct/process-group-probe-readiness.md
+  s_b66d0e9dd4fae0::t_19b92ebabace06 1-14
+probefn/.conduct/process-lifecycle-readiness.md
+  s_b66d0e9dd4fae0::t_4286f90eaaa9b5 1-13
+probefn/.conduct/report-streaming-readiness.md
+  s_b66d0e9dd4fae0::t_3e2852e8c6e0b1 1-26
+probefn/.conduct/resident-session-readiness.md
+  s_b66d0e9dd4fae0::t_6b97eb0cc5d415 1-52
+probefn/.conduct/session-ownership-readiness.md
+  s_b66d0e9dd4fae0::t_35e6510bc6afd5 1-26
+probefn/.conduct/shared-integration-20261027.md
+  s_b66d0e9dd4fae0::t_95af4dc0d837ca 1-13
+probefn/.conduct/shared-mcp-runtime-integration.md
+  s_b66d0e9dd4fae0::t_ffc34405b72f97 1-7
+probefn/.conduct/storage-concurrency-readiness.md
+  s_b66d0e9dd4fae0::t_61c1f0a3f58e0f 1-15
+probefn/.conduct/test-isolation-acceptance-20261028.md
+  s_b66d0e9dd4fae0::t_f1a26471f1b809 1-28
+probefn/.conduct/trace-cleanup-readiness.md
+  s_b66d0e9dd4fae0::t_af9771f1ccc042 1-95
+probefn/.conduct/trace-scratch-registry-readiness.md
+  s_b66d0e9dd4fae0::t_b433b2438af7d3 1-160
+probefn/.conduct/turbo-dependency-readiness.md
+  s_b66d0e9dd4fae0::t_71b897c1d030be 1-93
+probefn/.conduct/video-stream-cleanup-readiness.md
+  s_b66d0e9dd4fae0::t_c6ba121f2289d9 1-93
+probefn/.conduct/workspace-readiness.md
+  s_b66d0e9dd4fae0::t_7f42444274c563 1-21
+probefn/.conduct/zod4-distribution-readiness.md
+  s_b66d0e9dd4fae0::t_a833f946462ada 1-21
+probefn/.gitignore
+  s_b66d0e9dd4fae0::t_4ba93ad3cf30bc 10
+probefn/README.md
+  s_b66d0e9dd4fae0::t_c0ed59969da640 13-21,45-58,62-66,79-165,167-266
+probefn/admin/README.md
+  s_b66d0e9dd4fae0::t_20e2011ddcca6e 7-9
+probefn/admin/package.json
+  s_b66d0e9dd4fae0::t_11add9ae067065 34-37,43-46
+probefn/admin/src/domain-service.ts
+  s_b66d0e9dd4fae0::t_ae5e116152fbac 37
+probefn/apps/cli/package.json
+  s_b66d0e9dd4fae0::t_8d4c50914ab75d 7-10,13-15,19-36
+probefn/apps/cli/src/bin.ts
+  s_b66d0e9dd4fae0::t_07e78c59305650 1-9
+probefn/apps/cli/src/commands/checkpoint.ts
+  s_b66d0e9dd4fae0::t_5dc95f64d4d5e5 24-28,33-34,43
+probefn/apps/cli/src/commands/report.ts
+  s_b66d0e9dd4fae0::t_466d0ce32d9a8f 26
+probefn/apps/cli/src/commands/session.ts
+  s_b66d0e9dd4fae0::t_832cc4b65d2b4c 91-106,108-122,124-131
+probefn/apps/cli/src/index.ts
+  s_b66d0e9dd4fae0::t_63c19e3571efa1 47,57
+probefn/apps/cli/test/cli.test.ts
+  s_b66d0e9dd4fae0::t_472a42e6a483b7 1-2,14,45-56
+probefn/apps/cli/test/video.test.ts
+  s_b66d0e9dd4fae0::t_d7f67081db72f5 1-30
+probefn/apps/cli/tsconfig.build.json
+  s_b66d0e9dd4fae0::t_0bbd39ec4a5399 1-16
+probefn/docs/agent-consumption.md
+  s_b66d0e9dd4fae0::t_ded90263a55531 21,42,73,100
+probefn/docs/artifacts.md
+  s_b66d0e9dd4fae0::t_a3c1b997d5860d 77-268
+probefn/docs/baselines.md
+  s_b66d0e9dd4fae0::t_ac8ac56804c5a8 10,16,26
+probefn/docs/getting-started.md
+  s_b66d0e9dd4fae0::t_bb484ef5bf9c02 8,16,24,30-31,39,54-57,63-64,85-86
+probefn/package.json
+  s_b66d0e9dd4fae0::t_72186425c253c6 2,5,9,11-15,21-34
+probefn/packages/analyzers/package.json
+  s_b66d0e9dd4fae0::t_433b43c0ae1e64 7-21,24-25,27-29
+probefn/packages/analyzers/src/correlation/root-cause.ts
+  s_b66d0e9dd4fae0::t_413a1729a5fc15 42-63,72-75,96,98
+probefn/packages/analyzers/src/index.ts
+  s_b66d0e9dd4fae0::t_bbd60118504cd8 196-197
+probefn/packages/analyzers/test/correlation-streaming.test.ts
+  s_b66d0e9dd4fae0::t_61701e0617f145 1-22
+probefn/packages/analyzers/test/design.test.ts
+  s_b66d0e9dd4fae0::t_47ba5e14625198 1-3,8,11,27-31,76-78,132-139,280-287,304,388,409-417
+probefn/packages/analyzers/tsconfig.build.json
+  s_b66d0e9dd4fae0::t_df803b29420355 1-16
+probefn/packages/browser-runner/package.json
+  s_b66d0e9dd4fae0::t_c1ca08be6d4653 7-24,27-28,30-32
+probefn/packages/browser-runner/src/action-settlement.ts
+  s_b66d0e9dd4fae0::t_bcd85bfc360265 1-57
+probefn/packages/browser-runner/src/actions.ts
+  s_b66d0e9dd4fae0::t_33d23cd889b9c2 7,32,75-76,79-80,85,171-172,174-175,183
+probefn/packages/browser-runner/src/browser-runner.ts
+  s_b66d0e9dd4fae0::t_6948bd6151e663 2-3,9-10,13,22,25,56-74,79,87-89,91-92,94-101,106-109,111,122-123,155,164-165,167,174,181,191,203-204,211-212,214,216-255,257-259,262,275-311,313-320,322
+probefn/packages/browser-runner/src/event-capture.ts
+  s_b66d0e9dd4fae0::t_2e2a759b6b7be6 83-97,103,108,112,117,133-137
+probefn/packages/browser-runner/src/index.ts
+  s_b66d0e9dd4fae0::t_6fa198b257e0fa 11-12
+probefn/packages/browser-runner/src/trace.ts
+  s_b66d0e9dd4fae0::t_4ffe70fb11b767 5,8-19,25-26,53-85
+probefn/packages/browser-runner/src/video.ts
+  s_b66d0e9dd4fae0::t_b8cb80c1f873a6 1-39
+probefn/packages/browser-runner/test/action-settlement.test.ts
+  s_b66d0e9dd4fae0::t_658830b7c651bf 1-86
+probefn/packages/browser-runner/test/actions.test.ts
+  s_b66d0e9dd4fae0::t_c5d7affc714669 1,17,81,83,221,249,277-278,302,304
+probefn/packages/browser-runner/test/artifact-quota.test.ts
+  s_b66d0e9dd4fae0::t_fa3788718cf4dd 1-46
+probefn/packages/browser-runner/test/browser-engine-matrix.acceptance.ts
+  s_b66d0e9dd4fae0::t_b6a271eaad4f1b 1-65
+probefn/packages/browser-runner/test/browser-runner.test.ts
+  s_b66d0e9dd4fae0::t_08857a75ccf5b9 1,17,91,93,164,234,292
+probefn/packages/browser-runner/test/lifecycle.test.ts
+  s_b66d0e9dd4fae0::t_8d26b19332c6a2 1-152
+probefn/packages/browser-runner/test/scratch-cleanup.test.ts
+  s_b66d0e9dd4fae0::t_1d00877e5445e9 1-221
+probefn/packages/browser-runner/test/semantic-find.test.ts
+  s_b66d0e9dd4fae0::t_f89e4c91fbd9f6 1,17,57,60-61,128,130,199,202-203,229,271-273
+probefn/packages/browser-runner/test/video.test.ts
+  s_b66d0e9dd4fae0::t_c7c883bbf52ac0 1-70
+probefn/packages/browser-runner/test/vision-ranker.test.ts
+  s_b66d0e9dd4fae0::t_9b706bbeab2137 1,18,82,84,178,181-182,219,261-263
+probefn/packages/browser-runner/tsconfig.build.json
+  s_b66d0e9dd4fae0::t_f0868281a3f7ca 1-16
+probefn/packages/contracts/package.json
+  s_b66d0e9dd4fae0::t_11a60ea21e4872 7-26,30-46
+probefn/packages/contracts/src/config.ts
+  s_b66d0e9dd4fae0::t_4131b27b3afe02 33,45,47-55,66-67,96,100-111
+probefn/packages/contracts/src/errors.ts
+  s_b66d0e9dd4fae0::t_a560cbdf2cc354 6,15
+probefn/packages/contracts/test/config.test.ts
+  s_b66d0e9dd4fae0::t_0e947bc223b825 1-2,8,31-42,81-103
+probefn/packages/contracts/tsconfig.build.json
+  s_b66d0e9dd4fae0::t_ad9a5932c67a82 1-16
+probefn/packages/core/package.json
+  s_b66d0e9dd4fae0::t_aab7241589003a 7-23,26-27,29-31
+probefn/packages/core/src/auth-profiles.ts
+  s_b66d0e9dd4fae0::t_81e4fe85351740 5,73,115-116,130,166-167,179,211
+probefn/packages/core/src/checkpoints.ts
+  s_b66d0e9dd4fae0::t_da0f5465aa6b24 2,5,8,25-27,39-40,42,62-64,69-77,80-81,91,93,98,103,110,117-161,173-174,186-187,192,209-210,237-239,243,247-248
+probefn/packages/core/src/deltas.ts
+  s_b66d0e9dd4fae0::t_ce4020d041aff6 1,43-44,47-48,51,54-57,59-60,62,64-65
+probefn/packages/core/src/report-service.ts
+  s_b66d0e9dd4fae0::t_393350059f72e6 3,12,38-93
+probefn/packages/core/src/session-manager.ts
+  s_b66d0e9dd4fae0::t_c0fe2c181d40a7 7,52-53,66,176-185,187,223,257-259
+probefn/packages/core/src/session-state.ts
+  s_b66d0e9dd4fae0::t_e3a67b3f7296de 9
+probefn/packages/core/test/artifact-identifiers.test.ts
+  s_b66d0e9dd4fae0::t_730185a8847b0a 1-68
+probefn/packages/core/test/auth-identifier-preflight.test.ts
+  s_b66d0e9dd4fae0::t_eefb975fec7dd7 1-20
+probefn/packages/core/test/auth-profiles.test.ts
+  s_b66d0e9dd4fae0::t_bd86ee534a8e85 1,19
+probefn/packages/core/test/auth-storage-ownership.test.ts
+  s_b66d0e9dd4fae0::t_8703cee4b2f5c5 1-37
+probefn/packages/core/test/checkpoints.test.ts
+  s_b66d0e9dd4fae0::t_07fe538b0ffd54 1,13,90-103,199
+probefn/packages/core/test/video-stream.test.ts
+  s_b66d0e9dd4fae0::t_ed6c1480da42cc 1-86
+probefn/packages/core/tsconfig.build.json
+  s_b66d0e9dd4fae0::t_22bd586bd12982 1-16
+probefn/packages/dev-server/package.json
+  s_b66d0e9dd4fae0::t_f207607000ddb6 7-26,29-30,32-34
+probefn/packages/dev-server/src/cli.ts
+  s_b66d0e9dd4fae0::t_34f8887c21ea9c 11,91,164,241,277
+probefn/packages/dev-server/src/dev-server-manager.ts
+  s_b66d0e9dd4fae0::t_7cd2027b7a6b23 3,13,15,32,51-55,68-69,76,80-81,88-89,91,123-124,126-127,138-140,146,148-150,163-175,177-178,182-187,200-209,211-214,218-244,257,260-269,288-289,315-317,332,346-354,388-389,401,404,407-441,459,463-464,466-467,474,479-483,487-491,493-501,525-549,551-552,554-598
+probefn/packages/dev-server/src/process-events.ts
+  s_b66d0e9dd4fae0::t_186d915ac54d05 1-2,34-45,47-51
+probefn/packages/dev-server/test/dev-server-manager.test.ts
+  s_b66d0e9dd4fae0::t_475e76c154a83c 1,14,31,44-45,48-50,183-189,204,210,222
+probefn/packages/dev-server/test/process-events.test.ts
+  s_b66d0e9dd4fae0::t_910fc5fc7ec8c7 1-29
+probefn/packages/dev-server/test/process-group-probe.test.ts
+  s_b66d0e9dd4fae0::t_d1a9dd26c29446 1-45
+probefn/packages/dev-server/test/process-lifecycle.test.ts
+  s_b66d0e9dd4fae0::t_e3c4f4ff1d7864 1-296
+probefn/packages/dev-server/tsconfig.build.json
+  s_b66d0e9dd4fae0::t_3e7cdba6dadc85 1-16
+probefn/packages/mcp-server/package.json
+  s_b66d0e9dd4fae0::t_6e5b9089fa478d 7-10,13-20,22-39
+probefn/packages/mcp-server/src/index.ts
+  s_b66d0e9dd4fae0::t_7ba5ecc7f02922 12,18-19,31
+probefn/packages/mcp-server/src/schema.ts
+  s_b66d0e9dd4fae0::t_c437b023ee631c 1-10
+probefn/packages/mcp-server/src/server.ts
+  s_b66d0e9dd4fae0::t_de46b87f29d834 1-2,7-8,10,42,45,63,66,158-185,187-479,485-488,505-506,545,550,561,610-621,628,655,657-675,697-710,716-721,728,730-731,735-747,749-751,754,756-758,767-769,771-783,816-822,855-859,861,867-870,875,886,889,895,922,956-957,964-965,978,999-1000,1008-1029,1066-1068,1075,1077-1088,1109,1122-1146,1148-1149,1161-1198,1203-1215,1217,1219,1221-1244,1246,1249-1250,1252-1279,1294,1332,1364,1366,1368-1370,1406,1409,1412,1415-1417,1426-1428,1430,1436,1451,1463,1465,1468,1470,1473,1475,1542,1574,1603,1637,1640-1641,1643-1646,1686-1689,1706-1712,1729,1740-1741,1759,1766-1798,1800-1801,1803-1815,1817-1822,1824-1829,1832,1838-1860
+probefn/packages/mcp-server/src/tools/auth.ts
+  s_b66d0e9dd4fae0::t_63bd5be2aad4f8 1
+probefn/packages/mcp-server/src/tools/baseline.ts
+  s_b66d0e9dd4fae0::t_79701e3f31daed 1
+probefn/packages/mcp-server/src/tools/checkpoint.ts
+  s_b66d0e9dd4fae0::t_914331558bcf00 1,16,19,32,35,43-44
+probefn/packages/mcp-server/src/tools/design.ts
+  s_b66d0e9dd4fae0::t_8959778ce87ba9 1
+probefn/packages/mcp-server/src/tools/page.ts
+  s_b66d0e9dd4fae0::t_581a8f64eb7166 1,41-42,120,125-126,131,136,141-142,147,152,157-158,163
+probefn/packages/mcp-server/src/tools/report.ts
+  s_b66d0e9dd4fae0::t_7110798354d6f8 1,17,35,43
+probefn/packages/mcp-server/src/tools/session.ts
+  s_b66d0e9dd4fae0::t_ff8b0aed0dffa5 1,3,22-23,27
+probefn/packages/mcp-server/test/event-integrity.test.ts
+  s_b66d0e9dd4fae0::t_9ddeaf49a5a464 1-41
+probefn/packages/mcp-server/test/flow-continuity.test.ts
+  s_b66d0e9dd4fae0::t_07ddc228175fe7 1-141
+probefn/packages/mcp-server/test/mcp-server.test.ts
+  s_b66d0e9dd4fae0::t_ef3cbeb3f57b0d 1,13,74-102,127-128,146-147,316,365,367
+probefn/packages/mcp-server/test/resident-session.test.ts
+  s_b66d0e9dd4fae0::t_20b79b32730e0a 1-219
+probefn/packages/mcp-server/test/schema-compatibility.test.ts
+  s_b66d0e9dd4fae0::t_27c324ef317acb 1-27
+probefn/packages/mcp-server/test/sdk-writer-ownership.test.ts
+  s_b66d0e9dd4fae0::t_7799dcc2fdc43e 1-51
+probefn/packages/mcp-server/test/session-lifecycle.test.ts
+  s_b66d0e9dd4fae0::t_9ff156691358b0 1-304
+probefn/packages/mcp-server/test/start-identifiers.test.ts
+  s_b66d0e9dd4fae0::t_5bff5c79cdc11c 1-14
+probefn/packages/mcp-server/tsconfig.build.json
+  s_b66d0e9dd4fae0::t_68fc2329a7508b 1-16
+probefn/packages/session-reporter/package.json
+  s_b66d0e9dd4fae0::t_7ae79c9f3335eb 7-23,26-27,29-31
+probefn/packages/session-reporter/src/report-json.ts
+  s_b66d0e9dd4fae0::t_e8087b6e13549f 1,14,36,77,111,130-135,139,154-169,172,174,177,179,182,184,187,189,192,199-201,203,236,240,242,369,374,376,380-382,384-385,387-388,392,395
+probefn/packages/session-reporter/src/report-markdown.ts
+  s_b66d0e9dd4fae0::t_a04667daa2d5f9 62
+probefn/packages/session-reporter/test/report-streaming.test.ts
+  s_b66d0e9dd4fae0::t_2bc76cce078c91 1-91
+probefn/packages/session-reporter/test/reporter.test.ts
+  s_b66d0e9dd4fae0::t_dd9636e1b75d67 1-2,8,11,187-203
+probefn/packages/session-reporter/tsconfig.build.json
+  s_b66d0e9dd4fae0::t_6c219e506f4ad7 1-16
+probefn/packages/storage/package.json
+  s_b66d0e9dd4fae0::t_8fef045359aba4 6-8,10-17,19-23,25-26,28-30
+probefn/packages/storage/src/artifact-store.ts
+  s_b66d0e9dd4fae0::t_b6531b2e423140 2-6,12,41,48-50,55-57,63-72,107,113-114,146-151,155-192,209,215-275,279-354,356-357,360-382,404,409
+probefn/packages/storage/src/caps.ts
+  s_b66d0e9dd4fae0::t_5326266c7d4ded 6-9,17-18,21,26,28,30-32,39,42,51,59,65-85
+probefn/packages/storage/src/capture-scratch.ts
+  s_b66d0e9dd4fae0::t_d20c82bcb83d7c 1-282
+probefn/packages/storage/src/event-journal.ts
+  s_b66d0e9dd4fae0::t_8d194b8c35f6e1 1-72
+probefn/packages/storage/src/event-page.ts
+  s_b66d0e9dd4fae0::t_9316c723cb10f9 1-47
+probefn/packages/storage/src/event-reader.ts
+  s_b66d0e9dd4fae0::t_9b70292322fb2f 1-174
+probefn/packages/storage/src/event-sink.ts
+  s_b66d0e9dd4fae0::t_5cf325964b277d 7,23,35-37,40,45,48,56-61,63-68,70-80,82-83,86,88-90,93,98,102,105-111
+probefn/packages/storage/src/index.ts
+  s_b66d0e9dd4fae0::t_62fe2251523987 7-11
+probefn/packages/storage/src/manifest-writer.ts
+  s_b66d0e9dd4fae0::t_6975b4c07d7df7 1,8-41
+probefn/packages/storage/src/redaction.ts
+  s_b66d0e9dd4fae0::t_358db512442e83 6,8
+probefn/packages/storage/src/run-quota.ts
+  s_b66d0e9dd4fae0::t_2a446cbb69ca10 1-343
+probefn/packages/storage/src/session-ownership.ts
+  s_b66d0e9dd4fae0::t_3bbc48c2081ea1 1-154
+probefn/packages/storage/test/__snapshots__/artifact-store.test.ts.snap
+  s_b66d0e9dd4fae0::t_abd6a5ce4ac3ae 13
+probefn/packages/storage/test/accounting-database-cap.test.ts
+  s_b66d0e9dd4fae0::t_b606f2526529d7 1-93
+probefn/packages/storage/test/capture-scratch.test.ts
+  s_b66d0e9dd4fae0::t_8661c0883309c2 1-186
+probefn/packages/storage/test/concurrent-caps.test.ts
+  s_b66d0e9dd4fae0::t_220a3b54e717a4 1-112
+probefn/packages/storage/test/durable-quota.test.ts
+  s_b66d0e9dd4fae0::t_f20d9139147726 1-166
+probefn/packages/storage/test/event-journal.test.ts
+  s_b66d0e9dd4fae0::t_06752bd0a52077 1-144
+probefn/packages/storage/test/event-page.test.ts
+  s_b66d0e9dd4fae0::t_020b5a824af330 1-88
+probefn/packages/storage/test/event-reader.test.ts
+  s_b66d0e9dd4fae0::t_3416dd117d1215 1-47
+probefn/packages/storage/test/event-streaming.test.ts
+  s_b66d0e9dd4fae0::t_c1e07ed713e5e1 1-113
+probefn/packages/storage/test/fixtures/event-crash-child.mjs
+  s_b66d0e9dd4fae0::t_91781833bbe928 1-47
+probefn/packages/storage/test/fixtures/quota-child.ts
+  s_b66d0e9dd4fae0::t_38a09db977c2dd 1-16
+probefn/packages/storage/test/fixtures/scratch-crash-child.mjs
+  s_b66d0e9dd4fae0::t_2f009450499243 1-65
+probefn/packages/storage/test/redaction.test.ts
+  s_b66d0e9dd4fae0::t_013d161745bb0e 23-55
+probefn/packages/storage/test/run-policy.test.ts
+  s_b66d0e9dd4fae0::t_8cb221a664be8d 1-24
+probefn/packages/storage/test/session-ownership.test.ts
+  s_b66d0e9dd4fae0::t_35683e358fd12d 1-73
+probefn/packages/storage/test/sink-identifiers.test.ts
+  s_b66d0e9dd4fae0::t_6459ae02cf14f8 1-35
+probefn/packages/storage/test/writer-ownership.test.ts
+  s_b66d0e9dd4fae0::t_2c83d98180e204 1-76
+probefn/packages/storage/tsconfig.build.json
+  s_b66d0e9dd4fae0::t_b87a66118da72b 1-16
+probefn/packages/visual-baselines/package.json
+  s_b66d0e9dd4fae0::t_4922d1bf0a136e 7-10,13-16,19-33
+probefn/packages/visual-baselines/src/index.ts
+  s_b66d0e9dd4fae0::t_3da78d617d15a4 1,3,180,189-199
+probefn/packages/visual-baselines/test/compare.test.ts
+  s_b66d0e9dd4fae0::t_a93f6a7f8b19b4 1-2,4,17,38,44,46-47,55-56,75-76,89,150-168,306
+probefn/packages/visual-baselines/tsconfig.build.json
+  s_b66d0e9dd4fae0::t_4b929586da65c5 1-16
+probefn/scripts/installed-browser-consumer.mjs
+  s_b66d0e9dd4fae0::t_f2cb4cac8bb81d 1-147
+probefn/scripts/installed-event-journal-consumer.mjs
+  s_b66d0e9dd4fae0::t_d9f68b0a4863dd 1-63
+probefn/scripts/installed-scratch-consumer.mjs
+  s_b66d0e9dd4fae0::t_188b7e884d2a2d 1-60
+probefn/scripts/test-event-streaming.ts
+  s_b66d0e9dd4fae0::t_ada2e877e697f0 1-43
+probefn/scripts/test-report-streaming.ts
+  s_b66d0e9dd4fae0::t_b7968317b0edcf 1-72
+probefn/scripts/test-vectors.ts
+  s_b66d0e9dd4fae0::t_27af6568a94b12 58,116-118,151,157,169,179,185,191,197,203,209,215,243,283,308,321,377,390,440,453,489-490,508,512-514,517
+probefn/scripts/verify-distribution.mjs
+  s_b66d0e9dd4fae0::t_ef96512fdd9867 1-117
+probefn/test/fixtures/vite-ambiguous/server.mjs
+  s_b66d0e9dd4fae0::t_e38676461dffde 64
+probefn/test/fixtures/vite-healthy/server.mjs
+  s_b66d0e9dd4fae0::t_ad0793f6bd7dce 126
+probefn/test/fixtures/vite-overlay/server.mjs
+  s_b66d0e9dd4fae0::t_82e03d11e65870 79
+probefn/test/fixtures/vite-regression/server.mjs
+  s_b66d0e9dd4fae0::t_be62ec3c463db8 144
+probefn/test/repository.ts
+  s_b66d0e9dd4fae0::t_936bf171c28bf5 1-24
+probefn/tsconfig.json
+  s_b66d0e9dd4fae0::t_09ae355f6dcd4b 1-51
+probefn/vitest.browsers.config.ts
+  s_b66d0e9dd4fae0::t_173ac15c2ad8eb 1-4
+probefn/vitest.config.ts
+  s_b66d0e9dd4fae0::t_5c09f561812747 1,4-11,13-22
+recfn/adapters/assemblyai/package.json
+  s_b66d0e9dd4fae0::t_1f83903bf976a7 3,45
+recfn/adapters/deepgram/package.json
+  s_b66d0e9dd4fae0::t_7fcdaf2c382586 3,45
+recfn/adapters/google-stt/package.json
+  s_b66d0e9dd4fae0::t_5f741bcb9a9b6d 3,45
+recfn/adapters/shared-cloud/package.json
+  s_b66d0e9dd4fae0::t_e44ccc23f5c17d 3
+recfn/adapters/whisper/package.json
+  s_b66d0e9dd4fae0::t_46afacfb8bcffa 3
+recfn/admin/package.json
+  s_b66d0e9dd4fae0::t_a7099f244994b8 36-38
+recfn/cli/package.json
+  s_b66d0e9dd4fae0::t_8c5f541a339411 3,40
+recfn/client/package.json
+  s_b66d0e9dd4fae0::t_33db9b793c6bb1 3
+recfn/core/package.json
+  s_b66d0e9dd4fae0::t_1c484c14738dd1 3
+recfn/desktop/package.json
+  s_b66d0e9dd4fae0::t_704995df2a1cd7 3,40-42
+recfn/platforms/browser-core/package.json
+  s_b66d0e9dd4fae0::t_6c5d1bbeb792c6 3,32
+recfn/platforms/meet/package.json
+  s_b66d0e9dd4fae0::t_2df5b35e38faff 3,45-46
+recfn/platforms/teams/package.json
+  s_b66d0e9dd4fae0::t_060422990ca4df 3
+recfn/platforms/zoom/package.json
+  s_b66d0e9dd4fae0::t_ee5da0dcc3234d 3
+recfn/python/recfn/resources/analytics.py
+  s_b66d0e9dd4fae0::t_22ef9c34821512 5-6,10
+recfn/python/recfn/resources/bots.py
+  s_b66d0e9dd4fae0::t_003a3533ae4634 8,11
+recfn/python/recfn/resources/calendars.py
+  s_b66d0e9dd4fae0::t_f04d50d5758066 5,10
+recfn/python/recfn/resources/chat.py
+  s_b66d0e9dd4fae0::t_23bbabfb39a83e 5-6,10
+recfn/python/recfn/resources/metadata.py
+  s_b66d0e9dd4fae0::t_d2fc89c187570b 5-6,10
+recfn/python/recfn/resources/participants.py
+  s_b66d0e9dd4fae0::t_6fc357d965c678 5-6,11
+recfn/python/recfn/resources/recordings.py
+  s_b66d0e9dd4fae0::t_a8e4d30e2071d0 11
+recfn/python/recfn/resources/transcripts.py
+  s_b66d0e9dd4fae0::t_99999c2c091a07 5,8,11,111
+recfn/python/recfn/resources/webhooks.py
+  s_b66d0e9dd4fae0::t_9b447a23f1cae0 5,10
+recfn/python/recfn/types.py
+  s_b66d0e9dd4fae0::t_1c2585550cda9a 5,55-56,58,139,208
+recfn/python/recfn/ws.py
+  s_b66d0e9dd4fae0::t_96d363df5bd59b 7,19,22,27
+recfn/python/tests/test_client.py
+  s_b66d0e9dd4fae0::t_601c8ca8793b86 5-6,8
+recfn/python/tests/test_ws.py
+  s_b66d0e9dd4fae0::t_4a6c9e26be2365 6,132,136-140
+recfn/server/__tests__/participant-tracking.test.ts
+  s_b66d0e9dd4fae0::t_6918c05accaf57 1-2,16-21,156-158,213,228,240-241
+recfn/server/__tests__/webhook-delivery.test.ts
+  s_b66d0e9dd4fae0::t_687ddfff08a686 1,14-19,65-67,100,117,128-131,163,180,212,225-226,245,285,320,328-361
+recfn/server/package.json
+  s_b66d0e9dd4fae0::t_497f115aaa939e 3,45-47,52,60-64,71
+recfn/server/src/integrations/plugfn.ts
+  s_b66d0e9dd4fae0::t_465485f40612f8 10,30
+recfn/server/src/webhooks/deliver.ts
+  s_b66d0e9dd4fae0::t_47d3bb3839bc42 1,8-9,35,37
+recfn/server/vitest.config.ts
+  s_b66d0e9dd4fae0::t_e81fc1fefb9416 2-3,6-10
+scripts/QUICKSTART.md
+  s_b66d0e9dd4fae0::t_b8bf1c6ddd770a 114
+scripts/ci-plan.mjs
+  s_b66d0e9dd4fae0::t_a6092850fc55fc 22,28,323-348,352-354
+scripts/ci-stacked-pr.test.mjs
+  s_b66d0e9dd4fae0::t_18219fc5174cd5 9-19,50-81
+scripts/ci-utils.mjs
+  s_b66d0e9dd4fae0::t_234429b1579aab 64-77,82
+scripts/ci-utils.test.mjs
+  s_b66d0e9dd4fae0::t_473cc98467da1b 1-33
+scripts/cloudflare-docs/select-products.mjs
+  s_b66d0e9dd4fae0::t_1cc66973013a45 49
+scripts/gate-mailfn-release.mjs
+  s_b66d0e9dd4fae0::t_ab907b24989d4c 83-110,114,164
+scripts/run-vitest-ui.mjs
+  s_b66d0e9dd4fae0::t_5853aeec72c99f 64-65,68,90
+scripts/vitest-package-react.mjs
+  s_b66d0e9dd4fae0::t_d9bdc29872da88 1-27
+searchfn/.conduct/canonical-source-policy.md
+  s_b66d0e9dd4fae0::t_1e1eba80141a22 34
+searchfn/adapter-contracts/__tests__/redaction.test.ts
+  s_b66d0e9dd4fae0::t_625499dfb62186 2-5,74-129
+searchfn/adapter-contracts/src/redaction.ts
+  s_b66d0e9dd4fae0::t_09191d98910d03 5-16,68-85,113-129
+testfn/python/testfn/__init__.py
+  s_a942b80e5f2ac3::t_9d1d3c0a11c376 1-7,10-11,13,16,42-43
+testfn/python/testfn/adapters/pytest.py
+  s_a942b80e5f2ac3::t_41fcc5eecd6f73 5-6,8
+testfn/python/testfn/analytics.py
+  s_a942b80e5f2ac3::t_00620d7950cdc9 2-3,5-6,14,29-30,32,35,60,63,66,71
+testfn/python/testfn/core.py
+  s_a942b80e5f2ac3::t_46b04475e13d10 2-3,5
+testfn/python/testfn/reporters.py
+  s_a942b80e5f2ac3::t_8dac960866def4 2-4
+testfn/python/testfn/runner.py
+  s_a942b80e5f2ac3::t_bf895c29838bf4 1,4-5,7-8,10,16-17,25,43,49,51-52,55-56,105
+testfn/python/testfn/storage.py
+  s_a942b80e5f2ac3::t_584f845459b27f 1,3-4,6-21,24-33,37-46,50-59,100,109,113,133-134,154,158
+testfn/python/testfn/types.py
+  s_a942b80e5f2ac3::t_1300f8efbc7f47 3
+testfn/python/testfn/visual.py
+  s_a942b80e5f2ac3::t_0a96a8dde24efa 3,5,18,28
+testfn/python/tests/fixtures/dummy.py
+  s_a942b80e5f2ac3::t_c372048389c049 1,5,9
+testfn/python/tests/test_runner.py
+  s_a942b80e5f2ac3::t_99e3c007305d8a 2-5,8,12,17,57,61,64,69-70,72,83,90
+testfn/python/tests/test_visual.py
+  s_a942b80e5f2ac3::t_b8be8f35430b2f 2,4,7-8,10,15,19,25,32
+testfn/typescript/package.json
+  s_a942b80e5f2ac3::t_31f9fceab9f69c 3
+uifn/components-react/vitest.config.ts
+  s_a942b80e5f2ac3::t_37ce4f1b07a604 1,3,5-8
+uifn/core/scripts/vite-source-aliases.mjs
+  s_a942b80e5f2ac3::t_7b43d7aeab4099 1-21
+uifn/examples/react-playground/src/App.tsx
+  s_a942b80e5f2ac3::t_b38f6b48f86fc6 17,22,28-35,40,48,50,258-270,273-318,320-321,323-325,327,329,332-333,335-338,340-354,378-383,425-426,428-444,453-459,509-517,519,521-531,569,572-573,578-593
+uifn/examples/react-playground/src/styles.css
+  s_a942b80e5f2ac3::t_eea18f9c0e218f 182-184,188-217
+uifn/examples/react-playground/vite.config.ts
+  s_a942b80e5f2ac3::t_48d7efaec3b0f6 4,10
+uifn/examples/svelte-playground/src/app.css
+  s_a942b80e5f2ac3::t_61c317c62d1c5c 226-228,232-251,532,537-549
+uifn/examples/svelte-playground/src/scenarios/CommandCenterScenario.svelte
+  s_a942b80e5f2ac3::t_e27b587440f1db 22,24,39,53-58,112-116,122-124,126-127,134-135
+uifn/examples/svelte-playground/src/scenarios/SettingsConsoleScenario.svelte
+  s_a942b80e5f2ac3::t_8ddf4b7e300bcd 6,9,11-12,68-78,81-88,90-96,98,100-101,103-107,109-134,136-143
+uifn/examples/svelte-playground/src/scenarios/TeamDirectoryScenario.svelte
+  s_a942b80e5f2ac3::t_53f9d9dd740179 10-17,31-36,102-103,105-117
+uifn/examples/svelte-playground/src/scenarios/VirtualizedResultsScenario.svelte
+  s_a942b80e5f2ac3::t_514b3b8d754925 24-25,28-29,55-73
+uifn/examples/svelte-playground/vite.config.ts
+  s_a942b80e5f2ac3::t_f6219c50df92c8 2,14
+uifn/react/vitest.config.mts
+  s_a942b80e5f2ac3::t_76f1c8431b519e 1,3,13
+userfn/admin/package.json
+  s_a942b80e5f2ac3::t_aa7f62bed62b50 36-37
+userfn/typescript/eslint.config.mjs
+  s_a942b80e5f2ac3::t_d2703f1b8871c0 1-31
+userfn/typescript/package.json
+  s_a942b80e5f2ac3::t_15c1f4168779fe 3
+userfn/typescript/src/core/segments.ts
+  s_a942b80e5f2ac3::t_dcc9718851709a 1
+userfn/typescript/src/ui/renderer.ts
+  s_a942b80e5f2ac3::t_5e1f5e57d8dc80 1
+vitest.config.ts
+  s_a942b80e5f2ac3::t_f745477c6b1172 1-2,5-22
+watchfn/admin/package.json
+  s_a942b80e5f2ac3::t_7d1118ebd1799d 36-37
+watchfn/agents/browser/package.json
+  s_a942b80e5f2ac3::t_bf71be0f44f475 3
+watchfn/cli/package.json
+  s_a942b80e5f2ac3::t_8589917ebe640c 3
+.depot/workflows/audit-fix-o4u9k2m7-guardrails.yml
+  s_b66d0e9dd4fae0::t_274e811325d0e9 1-31
+.depot/workflows/ci.yml
+  s_b66d0e9dd4fae0::t_03d8c87c9bfa65 1-243
+.depot/workflows/mailfn-release.yml
+  s_b66d0e9dd4fae0::t_26b1b1edd3b8ef 1-48
+.depot/workflows/pullfrog.yml
+  s_b66d0e9dd4fae0::t_d9c530df7f2282 1-73
+.depot/workflows/searchfn-client-tests.yml
+  s_b66d0e9dd4fae0::t_f5f2900812a4d6 1-48
+.depot/workflows/searchfn-client-tusk-vitest.yml
+  s_b66d0e9dd4fae0::t_ba0d2848e3e135 1-66
+.depot/workflows/superfunctions-docs-cloudflare-deploy.yml
+  s_b66d0e9dd4fae0::t_47972515dadf6f 1-121
+.depot/workflows/superfunctions-docs-cloudflare-routes.yml
+  s_b66d0e9dd4fae0::t_46553abc501228 1-56
+.depot/workflows/uifn-phase-14-compat.yml
+  s_b66d0e9dd4fae0::t_d0392c02806d1f 1-632
+.github/workflows/ci.yml
+  s_b66d0e9dd4fae0::t_6779ca3cb9ba4d 61
+.github/workflows/publish-tag.yml
+  s_b66d0e9dd4fae0::t_373939dfc5e029 22,26-27,57-60,63-97,100-112,114
+.gitignore
+  s_b66d0e9dd4fae0::t_127e7cbb734ca4 60-61
+NPM_PUBLISHING.md
+  s_b66d0e9dd4fae0::t_8d71cc5b88e8f4 1-18
+PYTHON_PUBLISHING.md
+  s_b66d0e9dd4fae0::t_9d8af39be10954 177,192
+_conduct/db-codec-namespace-ownership-20261028.md
+  s_b66d0e9dd4fae0::t_81e1189279a37a 24
+_conduct/json-text-consumer-audit-20261028.md
+  s_b66d0e9dd4fae0::t_e70fcba4aeaa4a 1-16
+_conduct/shared-ci-docs-readiness.md
+  s_b66d0e9dd4fae0::t_07bc38519fe9b6 26
+_conduct/shared-mcp-security-integration.md
+  s_b66d0e9dd4fae0::t_7599b2e3050ab5 19
+_conduct/shared-python-readiness-sf-next.md
+  s_b66d0e9dd4fae0::t_8b6e5cf4440713 9-14
+_conduct/shared-readiness-sf-next.md
+  s_b66d0e9dd4fae0::t_e854bd1c0c9cfa 7-8,13,15,21,23-25,30,32,34,44,52,60,66,68,70
+_conduct/shared-sqlalchemy-reflection.md
+  s_b66d0e9dd4fae0::t_1deac1067a2236 9
+_conduct/verify-vitest-ui.mjs
+  s_b66d0e9dd4fae0::t_8694fb7c24ced0 11-17,95
+_conduct/vitest-root-security-patch.md
+  s_b66d0e9dd4fae0::t_f6259e4091ec4a 3-7
+_conduct/vitest4-worker-migration.md
+  s_b66d0e9dd4fae0::t_75461918153c2f 76-78
+apifn/admin/package.json
+  s_b66d0e9dd4fae0::t_4092317dd0cdda 37
+apifn/core/package.json
+  s_b66d0e9dd4fae0::t_ad069e743c4dba 36,48
+authfn/adapters/lookup-cloudflare-do/package.json
+  s_b66d0e9dd4fae0::t_c646f7a976bea9 28
+authfn/adapters/lookup-dynamodb/package.json
+  s_b66d0e9dd4fae0::t_140d0b1ab54cb3 30
+authfn/admin/package.json
+  s_b66d0e9dd4fae0::t_e945037bc6aa40 35,37-38
+authfn/api-keys/package.json
+  s_b66d0e9dd4fae0::t_5e43b49c4df731 25
+authfn/client/package.json
+  s_b66d0e9dd4fae0::t_a14bb050c4c0b0 29
+authfn/core/package.json
+  s_b66d0e9dd4fae0::t_8ac668374ef545 69-70
+authfn/docs/package.json
+  s_b66d0e9dd4fae0::t_70382764fbb01d 31-35,41-43
+authfn/docs/static/llms-full.txt
+  s_b66d0e9dd4fae0::t_32c58aadc1cbf9 887-894,901,939-940,972,975,979,1019-1033,8056-8060,8105,8107-8109,8124-8128
+authfn/docs/vite.config.ts
+  s_b66d0e9dd4fae0::t_c2491129d7b0c2 6,33
+authfn/email-otp/package.json
+  s_b66d0e9dd4fae0::t_7d5da92a7b02f8 25
+authfn/multi-region/package.json
+  s_b66d0e9dd4fae0::t_1c0e04a82e8662 25
+authfn/native-handoff/package.json
+  s_b66d0e9dd4fae0::t_56ecac262477ee 25-26
+authfn/password/package.json
+  s_b66d0e9dd4fae0::t_7c8087bdee2761 25
+authfn/python/pyproject.toml
+  s_b66d0e9dd4fae0::t_9543aeb4355f0d 29
+authfn/schema-plugin/package.json
+  s_b66d0e9dd4fae0::t_b79a09f76f5155 25
+authfn/social-oauth/package.json
+  s_b66d0e9dd4fae0::t_32a70134a56332 29-30
+authfn/two-factor/package.json
+  s_b66d0e9dd4fae0::t_0172fa31099990 25
+billfn/admin/package.json
+  s_b66d0e9dd4fae0::t_91d514c4e1c2eb 37,40
+billfn/python/README.md
+  s_b66d0e9dd4fae0::t_9a62e3ea7a9610 25-29
+billfn/python/billfn/schema.py
+  s_b66d0e9dd4fae0::t_553eb2638a7e8a 7-9,15,29,66,92,112,126,137,156,167,197,223,257,276
+billfn/python/pyproject.toml
+  s_b66d0e9dd4fae0::t_d125355f707b7e 29
+botfn/admin/package.json
+  s_b66d0e9dd4fae0::t_e6fe537056fd27 36
+botfn/bot-slack/package.json
+  s_b66d0e9dd4fae0::t_05b55a07cf4517 17-18
+botfn/persistence/package.json
+  s_b66d0e9dd4fae0::t_478f81afa0b345 18
+browsefn/.conduct/batch-admission-readiness.md
+  s_b66d0e9dd4fae0::t_f1a8440baeca67 1-19
+browsefn/.conduct/browser-isolation-readiness.md
+  s_b66d0e9dd4fae0::t_4e83f2c1d26640 1-124
+browsefn/.conduct/configurable-limits-readiness.md
+  s_b66d0e9dd4fae0::t_1a0f54a559da5e 1-75
+browsefn/.conduct/db-codec-integration-20261028.md
+  s_b66d0e9dd4fae0::t_06de5fad20122b 1-7
+browsefn/.conduct/destination-policy-readiness.md
+  s_b66d0e9dd4fae0::t_c5d0dd14d429c3 1-87
+browsefn/.conduct/hostname-policy-readiness.md
+  s_b66d0e9dd4fae0::t_0460b215a493df 1-112
+browsefn/.conduct/mcp-pointer-integration-20261028.md
+  s_b66d0e9dd4fae0::t_4a895284871b82 1-7
+browsefn/.conduct/payload-cap-readiness.md
+  s_b66d0e9dd4fae0::t_2731d68d872eeb 1-20
+browsefn/.conduct/pr-destination.md
+  s_b66d0e9dd4fae0::t_c28e0e4ac333f0 1-31
+browsefn/.conduct/provider-validation-order-20261027.md
+  s_b66d0e9dd4fae0::t_d70d5fd35a99a9 1-7
+browsefn/.conduct/shared-integration-20261027.md
+  s_b66d0e9dd4fae0::t_f96c4f2a07dad9 1-14
+browsefn/.conduct/shared-integration-readiness.md
+  s_b66d0e9dd4fae0::t_ecc4a0c6d63f7a 1-16
+browsefn/README.md
+  s_b66d0e9dd4fae0::t_b538bf8125281a 131-585
+browsefn/SPEC.md
+  s_b66d0e9dd4fae0::t_a1cca8da96a0e1 9-10,216,219,222,224,715,722,733,909
+browsefn/admin/package.json
+  s_b66d0e9dd4fae0::t_6212a5d583c61e 3,22-23,37-38
+browsefn/admin/src/__tests__/dispatcher.test.ts
+  s_b66d0e9dd4fae0::t_349ef674643f93 1-132
+browsefn/docker/browser-worker.Dockerfile
+  s_b66d0e9dd4fae0::t_c5a9dfce43987e 1-5
+browsefn/python/README.md
+  s_b66d0e9dd4fae0::t_2ec37fdae6e10a 5-6,94-128
+browsefn/python/browsefn/__init__.py
+  s_b66d0e9dd4fae0::t_ebfddc31e404e2 6,15-16
+browsefn/python/browsefn/adapters/fastapi.py
+  s_b66d0e9dd4fae0::t_611790cdd6126a 34,37,40
+browsefn/python/browsefn/core/browse_fn.py
+  s_b66d0e9dd4fae0::t_2644fe79331430 8-9,22,87,96,98,126,132,135-139,141,149,185,198,225,249-251,275,289,346,349-377,379-392,396-404,406-424
+browsefn/python/browsefn/core/cache_manager.py
+  s_b66d0e9dd4fae0::t_2b8c0cf6814d94 3-4,6-8,29,54-68,101,103-106,108-112,114-115,117-125,129,132,135-159,162-167,169-170,173-176,178,183-186,188-189,191-199
+browsefn/python/browsefn/core/cache_storage.py
+  s_b66d0e9dd4fae0::t_c9d3a4a53ec3e1 1-208
+browsefn/python/browsefn/core/errors.py
+  s_b66d0e9dd4fae0::t_943260b21669dc 75-105
+browsefn/python/browsefn/core/provider_manager.py
+  s_b66d0e9dd4fae0::t_1e587de13e801e 4,46,51,128,145-146,153,162-163,170-176,188-189
+browsefn/python/browsefn/core/types.py
+  s_b66d0e9dd4fae0::t_83e1e855d2cbb7 53-57,90-91,94,141,163-164,171-187,189,248,251,253,359-362,375,401,404,407,507,510,519-520,522
+browsefn/python/browsefn/geo/providers/google_maps.py
+  s_b66d0e9dd4fae0::t_1697616504dee1 23,25,30,35,40,48,51,54,59,68,75,80,85,95,99,107,110,118,130,137,139,144,149,155,168,176,179,187,191,202,204,209,212,218,226,229,236,240,248,263
+browsefn/python/browsefn/geo/providers/mapbox.py
+  s_b66d0e9dd4fae0::t_250d8c22e5162c 22,24,29,34,36,44,47,49,55,64,71,76,81,86,90,98,106,112,121,128,130,135,140,144,157,165,173,179,186,197,199,204,208,216,219,226,232,239,249
+browsefn/python/browsefn/geo/providers/nominatim.py
+  s_b66d0e9dd4fae0::t_099309817a48f6 5,21-38,41,43,48,57,59,68,70-72,76,79,88-89,91-95,97-110,117,119-120,124,127,129,138-143,150,152-153,163,165-194,202
+browsefn/python/browsefn/http/router.py
+  s_b66d0e9dd4fae0::t_622ebf971620aa 6,9,17-39,49-50,72,76-82,111-112,124,145,182-185
+browsefn/python/browsefn/images/_download_utils.py
+  s_b66d0e9dd4fae0::t_5813e6bdbe8ebc 2-4,6,10,14-43,49-53,65-161
+browsefn/python/browsefn/images/_selection.py
+  s_b66d0e9dd4fae0::t_e17ff516eaa319 1-31
+browsefn/python/browsefn/images/_transform.py
+  s_b66d0e9dd4fae0::t_669f19ec41eaa7 1-125
+browsefn/python/browsefn/images/browser.py
+  s_b66d0e9dd4fae0::t_fbbed3e7fad840 13,15-20,25-27,53-55,57,59-63,78-80,86-89,98-109,120-123
+browsefn/python/browsefn/images/providers/_shared.py
+  s_b66d0e9dd4fae0::t_e0f5824412319c 15-17,59,61-65,73-76
+browsefn/python/browsefn/images/providers/pexels.py
+  s_b66d0e9dd4fae0::t_5b63836a4d91d4 20,22,27,32,39,42,45,48,57,66,69,96,105,108
+browsefn/python/browsefn/images/providers/pixabay.py
+  s_b66d0e9dd4fae0::t_2fc8eaf17898d2 20,22,27,32,42,45,48,52,58,67,69,92,96,105,108
+browsefn/python/browsefn/images/providers/unsplash.py
+  s_b66d0e9dd4fae0::t_a6453f04923f2d 20,22,27,32,39,42,45,49,52,61,70,73,100,109,112
+browsefn/python/browsefn/middleware/logging.py
+  s_b66d0e9dd4fae0::t_b32098bd14dc4f 5-6,22-60,64-67,76-78,80-81,85-86,88-152,154-163,166-167,170-171,177-178,180-183,191-196,198-201,222,226,230,234,242,244,252,260,262
+browsefn/python/browsefn/middleware/metrics.py
+  s_b66d0e9dd4fae0::t_8974605613412c 40,61,81,103,133,135
+browsefn/python/browsefn/middleware/retry.py
+  s_b66d0e9dd4fae0::t_3f82d64305a45c 6,42-47,53-54,65-68,85-86
+browsefn/python/browsefn/utils/destination_policy.py
+  s_b66d0e9dd4fae0::t_406833379deaf8 1-208
+browsefn/python/browsefn/utils/html_utils.py
+  s_b66d0e9dd4fae0::t_d35c4a0ad7224a 115-118,125-135
+browsefn/python/browsefn/utils/security_limits.py
+  s_b66d0e9dd4fae0::t_33aa0f6ec9a1ae 1-35
+browsefn/python/browsefn/utils/url_utils.py
+  s_b66d0e9dd4fae0::t_d9c415b6054cb8 24,26,36,50,52,56,59,68
+browsefn/python/browsefn/utils/validation.py
+  s_b66d0e9dd4fae0::t_85cdda2964a136 80-91
+browsefn/python/browsefn/web/providers/bs4.py
+  s_b66d0e9dd4fae0::t_b2f9ffc2043992 6,8,18,31,39-41,46,52-60,62,65,75-77,90-91,99,101,104-105
+browsefn/python/browsefn/web/public_page.py
+  s_b66d0e9dd4fae0::t_055b6b67b9df20 1-95
+browsefn/python/browsefn/web/scraper.py
+  s_b66d0e9dd4fae0::t_71eb9f615879ff 7-9,19,27-28,35,37-38,40-42,48,94-102,105,109-112,116,120-124,131-133,135-140,160
+browsefn/python/pyproject.toml
+  s_b66d0e9dd4fae0::t_5e94d04d2da55b 7,10,27,32,42-51
+browsefn/python/tests/test_cache_manager.py
+  s_b66d0e9dd4fae0::t_cbf0ce29c4942b 7-8,82-83,110-375
+browsefn/python/tests/test_cache_request_identity.py
+  s_b66d0e9dd4fae0::t_ba786e39dd70d0 1-68
+browsefn/python/tests/test_credentials_useragent.py
+  s_b66d0e9dd4fae0::t_0de49f45e8c015 1-114
+browsefn/python/tests/test_destination_policy.py
+  s_b66d0e9dd4fae0::t_8ac583a8127d53 1-230
+browsefn/python/tests/test_hostname_policy.py
+  s_b66d0e9dd4fae0::t_617ed9b3b9da60 1-401
+browsefn/python/tests/test_html_markdown.py
+  s_b66d0e9dd4fae0::t_3a581fe56ab06b 1-9
+browsefn/python/tests/test_image_security.py
+  s_b66d0e9dd4fae0::t_087ba758a7396e 1-174
+browsefn/python/tests/test_image_transform.py
+  s_b66d0e9dd4fae0::t_c6ec6ee999b4f7 1-125
+browsefn/python/tests/test_images.py
+  s_b66d0e9dd4fae0::t_a1a2d628eda62f 4,14-18,76,126,144-163,168,177-225
+browsefn/python/tests/test_log_redaction.py
+  s_b66d0e9dd4fae0::t_431155ce97c92c 1-152
+browsefn/python/tests/test_metadata_bounds.py
+  s_b66d0e9dd4fae0::t_870d45ab550280 1-160
+browsefn/python/tests/test_middleware.py
+  s_b66d0e9dd4fae0::t_f13fd541149f34 131,140,161-163
+browsefn/python/tests/test_nominatim_bounds.py
+  s_b66d0e9dd4fae0::t_ae4da823de5df7 1-82
+browsefn/python/tests/test_payload_limits.py
+  s_b66d0e9dd4fae0::t_1e45794db80bc3 1-62
+browsefn/python/tests/test_pinned_transport_cookies.py
+  s_b66d0e9dd4fae0::t_402004dbd4b4df 1-71
+browsefn/python/tests/test_provider_manager.py
+  s_b66d0e9dd4fae0::t_0e1b3a7d55ba1f 93-110
+browsefn/python/tests/test_public_page_timeout.py
+  s_b66d0e9dd4fae0::t_3a8735887a63e2 1-130
+browsefn/python/tests/test_redirect_resolution.py
+  s_b66d0e9dd4fae0::t_dd671b4e36a4e4 1-41
+browsefn/python/tests/test_release_gate.py
+  s_b66d0e9dd4fae0::t_262e1a4b8f44bf 24,36,43
+browsefn/python/tests/test_retry_http.py
+  s_b66d0e9dd4fae0::t_5f402a77bb9883 1-71
+browsefn/python/tests/test_router_watermark.py
+  s_b66d0e9dd4fae0::t_2a40ceb90eba4b 1-87
+browsefn/python/tests/test_security_limits.py
+  s_b66d0e9dd4fae0::t_80d2d6055a5f00 1-107
+browsefn/scripts/check-duplication.mjs
+  s_b66d0e9dd4fae0::t_c785e477a492b1 20-21
+browsefn/scripts/packed-batch-acceptance.mjs
+  s_b66d0e9dd4fae0::t_dab1443450aef4 1-38
+browsefn/scripts/packed-python-acceptance.py
+  s_b66d0e9dd4fae0::t_3d8e086efc4805 1-45
+browsefn/scripts/packed-runtime-acceptance.mjs
+  s_b66d0e9dd4fae0::t_512f3a2652dab3 1-57
+browsefn/scripts/verify-release.mjs
+  s_b66d0e9dd4fae0::t_268258d11c4d36 51,82
+browsefn/typescript/README.md
+  s_b66d0e9dd4fae0::t_595a0de7941dd6 5-6
+browsefn/typescript/package.json
+  s_b66d0e9dd4fae0::t_38731a8c4f69dc 3,11-18,28,63-71,74-75,86,88-91,95-97
+browsefn/typescript/src/core/browse-fn.ts
+  s_b66d0e9dd4fae0::t_8592199c86b6f2 1-3,82,96,114-116,150-153,183-184,238-244,303,313-327,355,408,424-428,489
+browsefn/typescript/src/core/cache-manager.ts
+  s_b66d0e9dd4fae0::t_8219a87b81f519 5-7,9,41,45,51,65,72-73,95,135-138,140-143,145-155,159-172,183-184,193-194,198,202,204,207,209-213,215-217
+browsefn/typescript/src/core/cache-storage.ts
+  s_b66d0e9dd4fae0::t_96afe1e7aa5a0b 1-311
+browsefn/typescript/src/core/errors.ts
+  s_b66d0e9dd4fae0::t_11597da66d38be 76-92,116-139
+browsefn/typescript/src/core/rate-limiter.ts
+  s_b66d0e9dd4fae0::t_772b1965619f49 1-2,7-8,11-12,14,16-18,20-22,24-25,27-28,30-33,35-40,42-61,65-66,70-74,78,81-84,87
+browsefn/typescript/src/core/types.ts
+  s_b66d0e9dd4fae0::t_c9d20c72110ac2 38-42,62,127-128,137-151,153,226,329,490-491,493
+browsefn/typescript/src/geo/providers/nominatim.ts
+  s_b66d0e9dd4fae0::t_43a04f7b26eeba 27-39,80-94,107-117,152-154,164-173
+browsefn/typescript/src/images/browser.ts
+  s_b66d0e9dd4fae0::t_57982bd20d2fd0 1-3,8-12,38,46-47,49,67,97,102,105-107,109-112,118-120,123,145-155,232-233,246,258-259
+browsefn/typescript/src/images/download.ts
+  s_b66d0e9dd4fae0::t_4c42665007afbc 1-96
+browsefn/typescript/src/images/providers/pixabay.ts
+  s_b66d0e9dd4fae0::t_94848090329010 67-68,70
+browsefn/typescript/src/images/selection.ts
+  s_b66d0e9dd4fae0::t_abb4b787c8107d 1-21
+browsefn/typescript/src/images/transform.ts
+  s_b66d0e9dd4fae0::t_922466ce0704c0 1-96
+browsefn/typescript/src/index.ts
+  s_b66d0e9dd4fae0::t_4a628ca0659ef9 29-30,114-115
+browsefn/typescript/src/middleware/logging.ts
+  s_b66d0e9dd4fae0::t_09b85b4798a013 6,32-100,103-151,154,158,160-161,166,204-207,211-212,215,218-219
+browsefn/typescript/src/middleware/retry.ts
+  s_b66d0e9dd4fae0::t_15fde6a132d45b 5,21-23,66,76-77,90
+browsefn/typescript/src/router/http-router.ts
+  s_b66d0e9dd4fae0::t_cc3dbed892a910 7-8,119-126,166-186,212,235,271-272,275
+browsefn/typescript/src/utils/destination-policy.ts
+  s_b66d0e9dd4fae0::t_88e9f52d32f5f6 1-127
+browsefn/typescript/src/utils/html-utils.ts
+  s_b66d0e9dd4fae0::t_06aabf9c182a3d 6,14,17,22,24-28,36,38,49,55,62,72,79,89,104,114,126,136,148,160,162,169,173,178
+browsefn/typescript/src/utils/proxy-url.ts
+  s_b66d0e9dd4fae0::t_6a65e33c44c032 1-7
+browsefn/typescript/src/utils/public-page.ts
+  s_b66d0e9dd4fae0::t_a151fc91a3c971 1-79
+browsefn/typescript/src/utils/security-limits.ts
+  s_b66d0e9dd4fae0::t_5c536b596b9db8 1-28
+browsefn/typescript/src/utils/validation.ts
+  s_b66d0e9dd4fae0::t_635ead147ede47 17-20,24,28,32,53,60,67,74,137-139,141-143,194
+browsefn/typescript/src/web/isolation/docker-browser.ts
+  s_b66d0e9dd4fae0::t_7314b09b0663a0 1-100
+browsefn/typescript/src/web/isolation/egress-proxy.ts
+  s_b66d0e9dd4fae0::t_e1bf8b2da2aabe 1-162
+browsefn/typescript/src/web/isolation/lifecycle.ts
+  s_b66d0e9dd4fae0::t_c48ab0660297f6 1-42
+browsefn/typescript/src/web/isolation/worker.ts
+  s_b66d0e9dd4fae0::t_96548fdf8e7950 1-65
+browsefn/typescript/src/web/providers/browser-provider-utils.ts
+  s_b66d0e9dd4fae0::t_935a0660338b18 1-2,62-68,87,135-182
+browsefn/typescript/src/web/providers/cheerio.ts
+  s_b66d0e9dd4fae0::t_2ab259699bfde2 1,6,8,15,23,33-35,37-50,52-53,58,60-61,65,75-76,80-81,83-85,87
+browsefn/typescript/src/web/providers/firecrawl.ts
+  s_b66d0e9dd4fae0::t_83058c37e23a88 1-4,6,10,14-32,34-43,45
+browsefn/typescript/src/web/providers/jina.ts
+  s_b66d0e9dd4fae0::t_346362859cd46f 1-4,6,10,14-29,31-40,42-43,45
+browsefn/typescript/src/web/providers/playwright.ts
+  s_b66d0e9dd4fae0::t_c395c8f715ead0 1-5,16,18-19,25,42,50-51,56,66,68,74,81-82,85-94,96-132,134-135,137-138
+browsefn/typescript/src/web/providers/puppeteer.ts
+  s_b66d0e9dd4fae0::t_dfc5f25cf3467f 1-5,16,18-19,23,30,45,53,64,66,72,79-80,82-91,93-133,135-136,138-139
+browsefn/typescript/src/web/providers/remote-utils.ts
+  s_b66d0e9dd4fae0::t_567dee76c3a767 1-37
+browsefn/typescript/src/web/scraper.ts
+  s_b66d0e9dd4fae0::t_df4fc11728e65d 1-5,10-12,21,31,34,42-45,47-48,56-67,69,77,82,88-92,104-114,143,178,207-208,232,270-271,298,313-314,473-474,477,486-487,505-513
+browsefn/typescript/tests/browser-egress-proxy.test.ts
+  s_b66d0e9dd4fae0::t_8c00238dff394c 1-113
+browsefn/typescript/tests/browser-isolation-broker.test.ts
+  s_b66d0e9dd4fae0::t_d2649e3285928e 1-29
+browsefn/typescript/tests/browser-isolation-lifecycle.test.ts
+  s_b66d0e9dd4fae0::t_0d66db23bbffb7 1-33
+browsefn/typescript/tests/browser-isolation.acceptance.test.ts
+  s_b66d0e9dd4fae0::t_60994739cff8ad 1-189
+browsefn/typescript/tests/browser-lifecycle.test.ts
+  s_b66d0e9dd4fae0::t_1a181bb27ceffa 1-61
+browsefn/typescript/tests/browser-worker-limit.test.ts
+  s_b66d0e9dd4fae0::t_30c4fc0d21e484 1-59
+browsefn/typescript/tests/cache-browser-acceptance.mjs
+  s_b66d0e9dd4fae0::t_ddd891ff5e4680 1-45
+browsefn/typescript/tests/cache-file-lock.test.ts
+  s_b66d0e9dd4fae0::t_3cd5138ab7b52c 1-356
+browsefn/typescript/tests/cache-persistence.test.ts
+  s_b66d0e9dd4fae0::t_f9b582b6ec1f77 1-176
+browsefn/typescript/tests/cheerio-proxy.test.ts
+  s_b66d0e9dd4fae0::t_51849fe5651d9b 1-27
+browsefn/typescript/tests/credentials-useragent.test.ts
+  s_b66d0e9dd4fae0::t_bf3a4206ce9ecd 1-75
+browsefn/typescript/tests/destination-policy.test.ts
+  s_b66d0e9dd4fae0::t_64fe782f6e36c5 1-173
+browsefn/typescript/tests/hostname-policy.test.ts
+  s_b66d0e9dd4fae0::t_9a6cf05c30e486 1-150
+browsefn/typescript/tests/image-browser.test.ts
+  s_b66d0e9dd4fae0::t_b691ef5b68b842 1,3,8-20,22,25,29-31,34-46,49-50,53-54,56-69,71-76,78-86,88,90-91,93,95-97,99-107,109-111,113-149
+browsefn/typescript/tests/image-providers.test.ts
+  s_b66d0e9dd4fae0::t_58a562dac8f1e6 7,99-101
+browsefn/typescript/tests/image-transform.test.ts
+  s_b66d0e9dd4fae0::t_6300a810235ec9 1-90
+browsefn/typescript/tests/log-redaction.test.ts
+  s_b66d0e9dd4fae0::t_c625bbe96b3067 1-143
+browsefn/typescript/tests/metadata-bounds.test.ts
+  s_b66d0e9dd4fae0::t_e6bd571d552e3e 1-66
+browsefn/typescript/tests/nominatim-bounds.test.ts
+  s_b66d0e9dd4fae0::t_b9ba79980f56b5 1-52
+browsefn/typescript/tests/payload-limits.test.ts
+  s_b66d0e9dd4fae0::t_f09a7f65a153ea 1-47
+browsefn/typescript/tests/rate-limiter.test.ts
+  s_b66d0e9dd4fae0::t_ed2c25c7780317 110-136
+browsefn/typescript/tests/redirect-resolution.test.ts
+  s_b66d0e9dd4fae0::t_a88b3d67b0ddfa 1-18
+browsefn/typescript/tests/remote-contracts.test.ts
+  s_b66d0e9dd4fae0::t_9f064c2ee6beee 1-70
+browsefn/typescript/tests/remote-timeout.test.ts
+  s_b66d0e9dd4fae0::t_5fec7c567e34c5 1-16
+browsefn/typescript/tests/retry-http.test.ts
+  s_b66d0e9dd4fae0::t_571c5780e1ed18 1-67
+browsefn/typescript/tests/router-watermark.test.ts
+  s_b66d0e9dd4fae0::t_3e0ee093f1550f 1-70
+browsefn/typescript/tests/security-limits.test.ts
+  s_b66d0e9dd4fae0::t_8dbb1a6df55624 1-101
+browsefn/typescript/tests/web-providers.test.ts
+  s_b66d0e9dd4fae0::t_b466bf6d4c320a 67,73,89,108,119-120,127,146,159
+browsefn/typescript/tests/web-scraper.test.ts
+  s_b66d0e9dd4fae0::t_a5f713283f4ef4 324-336
+cachefn/.conduct/auto-pattern-performance-20261026.json
+  s_b66d0e9dd4fae0::t_6bff3f185e06b0 1-447
+cachefn/.conduct/auto-pattern-performance-readiness.md
+  s_b66d0e9dd4fae0::t_7fa7cc195a818f 1-78
+cachefn/.conduct/browser-matrix-20261023.md
+  s_b66d0e9dd4fae0::t_93df2312af5406 1-87
+cachefn/.conduct/db-codec-integration-20261028.md
+  s_b66d0e9dd4fae0::t_f04451afbddb5a 1-7
+cachefn/.conduct/fetcher-registry-readiness.md
+  s_b66d0e9dd4fae0::t_4b9769143267ad 1-20
+cachefn/.conduct/firefox-runtime-check-20261028.md
+  s_b66d0e9dd4fae0::t_3d25e2e6cbaaf2 1-24
+cachefn/.conduct/indexeddb-pattern-performance-20261023.json
+  s_b66d0e9dd4fae0::t_69739f672653d0 1-3591
+cachefn/.conduct/indexeddb-pattern-performance-readiness.md
+  s_b66d0e9dd4fae0::t_de7a1d107fe609 1-143
+cachefn/.conduct/mcp-pointer-integration-20261028.md
+  s_b66d0e9dd4fae0::t_2d522feb229aa1 1-7
+cachefn/.conduct/memoize-replacement-20261023.json
+  s_b66d0e9dd4fae0::t_0550b8d5b3f1af 1-674
+cachefn/.conduct/memoize-replacement-readiness.md
+  s_b66d0e9dd4fae0::t_c3a553c06b189c 1-22
+cachefn/.conduct/memoize-sync-after.json
+  s_b66d0e9dd4fae0::t_7b4e7b8fa3049f 1-335
+cachefn/.conduct/memoize-sync-before.json
+  s_b66d0e9dd4fae0::t_a5ac6d767b3bfd 1-335
+cachefn/.conduct/memoize-sync-readiness.md
+  s_b66d0e9dd4fae0::t_c9df01e8355b32 1-97
+cachefn/.conduct/native-safari-availability.md
+  s_b66d0e9dd4fae0::t_cb6dae2185ee30 1-57
+cachefn/.conduct/pr-destination.md
+  s_b66d0e9dd4fae0::t_727d15d18a976b 1-11
+cachefn/.conduct/priority-clear-race-20261028.md
+  s_b66d0e9dd4fae0::t_8cbff10d86d04e 1-42
+cachefn/.conduct/priority-clear-readiness.md
+  s_b66d0e9dd4fae0::t_8f185ecf4fead8 1-11
+cachefn/.conduct/python-ci-readiness-20261023.md
+  s_b66d0e9dd4fae0::t_68a09153674d79 1-70
+cachefn/.conduct/python-memoize-readiness.md
+  s_b66d0e9dd4fae0::t_11995e891d7878 1-42
+cachefn/.conduct/shared-integration-20261027.md
+  s_b66d0e9dd4fae0::t_2268aa200c8c0d 1-7
+cachefn/.conduct/shared-integration-readiness.md
+  s_b66d0e9dd4fae0::t_db680316206ab4 1-15
+cachefn/.conduct/testfn-fixture-readiness.md
+  s_b66d0e9dd4fae0::t_e208086bbf228d 1-54
+cachefn/README.md
+  s_b66d0e9dd4fae0::t_425747b06b8f38 9-11,15-21,29,36,53,63,65,79,81,85,96,98,100,110,139,144-183
+cachefn/SPEC.md
+  s_b66d0e9dd4fae0::t_33eb7523a4d2ff 9-10,50-52,62-64,74-76,86-88,153-154,324,346-348,392,973,1016,1020,1056,1061,1094,1100,1124,1129
+cachefn/V0_SPEC.md
+  s_b66d0e9dd4fae0::t_8c859fe0e9457e 9-10,26-35,39-47,123,129,133,136,138,165,202,204,210,249,251,411,416-418,420,425,431,435,617,622,624-627,642-644,703,737,741,785,791,805,810
+cachefn/admin/LICENSE
+  s_b66d0e9dd4fae0::t_c3f93370b0b89a 1-21
+cachefn/admin/README.md
+  s_b66d0e9dd4fae0::t_9fe01169f479ac 1-67
+cachefn/admin/package.json
+  s_b66d0e9dd4fae0::t_9f2ce61f0d46de 36-37,40,42
+cachefn/admin/src/__tests__/dispatcher.test.ts
+  s_b66d0e9dd4fae0::t_f0026ea34053fb 1-60
+cachefn/python/README.md
+  s_b66d0e9dd4fae0::t_ba774be16d25ab 5,9-11,15-20,95,98,135,221,227-262
+cachefn/python/cachefn/__init__.py
+  s_b66d0e9dd4fae0::t_bcbd1b1a1b84eb 6,9,13,20,26,29
+cachefn/python/cachefn/core/cache.py
+  s_b66d0e9dd4fae0::t_3d47bebb31f4fc 5-6,45-46,108-111,115,118,125,139-140,180-181,193-194,287-288,291-317,338-341,346,369-371,408-410,415-416,459-460
+cachefn/python/cachefn/core/events.py
+  s_b66d0e9dd4fae0::t_afd2ef47142026 6,32,43
+cachefn/python/cachefn/core/types.py
+  s_b66d0e9dd4fae0::t_e403cbf5ba5daa 5,7,27,36,48,62,79,143,153-160
+cachefn/python/cachefn/memoization/memoize.py
+  s_b66d0e9dd4fae0::t_bdaaf67970542d 6-9,16-17,58-60,118,123-125,133,138,141,153-158,160-163,166,179,181-183,185,187-192,194-195,198-211,215-216,218,236-245,251-252,271,273-275,278
+cachefn/python/cachefn/storage/memory_storage.py
+  s_b66d0e9dd4fae0::t_9844a81a20e3af 5-6,9,26-29,33-42,56-67,69,76,85,96-100,111,119-122,176-177,184-185,197,208,221,226-240,250
+cachefn/python/cachefn/utils/hash.py
+  s_b66d0e9dd4fae0::t_0bd431c0fd1ead 20-49
+cachefn/python/cachefn/utils/pattern.py
+  s_b66d0e9dd4fae0::t_fdf89b6ebbc5c5 45-47
+cachefn/python/examples/basic_usage.py
+  s_b66d0e9dd4fae0::t_01354d940ce232 6
+cachefn/python/examples/memoization.py
+  s_b66d0e9dd4fae0::t_d4c18e362939cd 7,92-93
+cachefn/python/examples/patterns.py
+  s_b66d0e9dd4fae0::t_6d5a3ddceacbf4 7,17,24,30,37,60,85,91,113,119,141,188,194
+cachefn/python/scripts/memoize_benchmark.py
+  s_b66d0e9dd4fae0::t_f2efaeaa533323 1-45
+cachefn/python/tests/test_cache.py
+  s_b66d0e9dd4fae0::t_c11075c7743be5 6,8-9,158
+cachefn/python/tests/test_eager_tasks.py
+  s_b66d0e9dd4fae0::t_aec838b7f826ef 1-65
+cachefn/python/tests/test_memoize.py
+  s_b66d0e9dd4fae0::t_49541b8640e3ea 6,8,101,108
+cachefn/python/tests/test_memoize_sync_expiry.py
+  s_b66d0e9dd4fae0::t_3f78b4b3208378 1-175
+cachefn/python/tests/test_memory_storage_expiry.py
+  s_b66d0e9dd4fae0::t_dac8d826f03892 1-155
+cachefn/python/tests/test_readiness.py
+  s_b66d0e9dd4fae0::t_1881e7ea2df83e 1-273
+cachefn/python/tests/test_utils.py
+  s_b66d0e9dd4fae0::t_0913e245d6f400 8-12
+cachefn/typescript/HTTP_CACHING.md
+  s_b66d0e9dd4fae0::t_8aec11bbd354df 1-19
+cachefn/typescript/LICENSE
+  s_b66d0e9dd4fae0::t_69eb3e7c10f1f1 1-21
+cachefn/typescript/README.md
+  s_b66d0e9dd4fae0::t_677715d1d00738 9-15,20-23,25,28-32,38,55,67,70,88-95,100,130,151,158-190,237-238,241,245,249-251,341,343-379,382-390,392,394-403,405-654,663-785
+cachefn/typescript/SERIALIZATION.md
+  s_b66d0e9dd4fae0::t_eee0d4e1b741a1 1-31
+cachefn/typescript/__tests__/adaptive-memory.test.ts
+  s_b66d0e9dd4fae0::t_529d592279f0fe 1-83
+cachefn/typescript/__tests__/auto-local-storage.test.ts
+  s_b66d0e9dd4fae0::t_85b3e8b97f9d5f 1-206
+cachefn/typescript/__tests__/backend-conformance.test.ts
+  s_b66d0e9dd4fae0::t_b1fd47f05f39dc 1-111
+cachefn/typescript/__tests__/boundary-contracts.test.ts
+  s_b66d0e9dd4fae0::t_ec4636632d4827 1-91
+cachefn/typescript/__tests__/cache-access.test.ts
+  s_b66d0e9dd4fae0::t_c937fd172ab77c 1-80
+cachefn/typescript/__tests__/cache-fetch.test.ts
+  s_b66d0e9dd4fae0::t_26916c983d5d9f 1-159
+cachefn/typescript/__tests__/factory-convenience.test.ts
+  s_b66d0e9dd4fae0::t_b1e731ad38d2d5 1-125
+cachefn/typescript/__tests__/fence-rollback.test.ts
+  s_b66d0e9dd4fae0::t_d75f1894e4020b 1-467
+cachefn/typescript/__tests__/fetcher-registry.test.ts
+  s_b66d0e9dd4fae0::t_8ca49269b2e4e1 1-136
+cachefn/typescript/__tests__/http-middleware.test.ts
+  s_b66d0e9dd4fae0::t_5a3f0bc9b28b54 1-153
+cachefn/typescript/__tests__/indexeddb-pattern-delete.test.ts
+  s_b66d0e9dd4fae0::t_ea6b0c44ca081f 1-275
+cachefn/typescript/__tests__/indexeddb-storage.test.ts
+  s_b66d0e9dd4fae0::t_01d28cc9d2cc12 1-141
+cachefn/typescript/__tests__/key-contract.test.ts
+  s_b66d0e9dd4fae0::t_1f895ca4f39d36 1-26
+cachefn/typescript/__tests__/memoize-sync-expiry.test.ts
+  s_b66d0e9dd4fae0::t_a7f633ef8f5ce1 1-98
+cachefn/typescript/__tests__/memoize.test.ts
+  s_b66d0e9dd4fae0::t_dbd8162e2a40f1 1-176
+cachefn/typescript/__tests__/memory-concurrency.test.ts
+  s_b66d0e9dd4fae0::t_a2f08724db01bc 1-48
+cachefn/typescript/__tests__/memory-storage-consistency.test.ts
+  s_b66d0e9dd4fae0::t_1cde0d9be5810d 1-83
+cachefn/typescript/__tests__/namespace.test.ts
+  s_b66d0e9dd4fae0::t_b7fbfe16c82c69 1-70
+cachefn/typescript/__tests__/offline-cache.test.ts
+  s_b66d0e9dd4fae0::t_0ee5826a11a852 1-216
+cachefn/typescript/__tests__/priority-clear-race.test.ts
+  s_b66d0e9dd4fae0::t_c14ec50cec177b 1-51
+cachefn/typescript/__tests__/priority-storage.test.ts
+  s_b66d0e9dd4fae0::t_a51b4451d852e4 1-72
+cachefn/typescript/__tests__/serialization.test.ts
+  s_b66d0e9dd4fae0::t_5d8e03a08ed174 1-78
+cachefn/typescript/__tests__/storage-injection.test.ts
+  s_b66d0e9dd4fae0::t_004d75cbbe0afb 1-154
+cachefn/typescript/examples/browser-app.html
+  s_b66d0e9dd4fae0::t_a043a167510417 86
+cachefn/typescript/examples/ecosystem.ts
+  s_b66d0e9dd4fae0::t_711657413d9c9a 1-62
+cachefn/typescript/examples/express-api.ts
+  s_b66d0e9dd4fae0::t_8c901ead2ce3c2 10-12,156
+cachefn/typescript/package.json
+  s_b66d0e9dd4fae0::t_30ee137861d1d6 3,11-28,38,41-44,62,74-77,79-80,83
+cachefn/typescript/scripts/auto-pattern-benchmark.mjs
+  s_b66d0e9dd4fae0::t_e8c47d8bd51d06 1-21
+cachefn/typescript/scripts/benchmark.mjs
+  s_b66d0e9dd4fae0::t_eb7922979941ff 1-157
+cachefn/typescript/scripts/browser-acceptance.mjs
+  s_b66d0e9dd4fae0::t_10277c322e33df 1-85
+cachefn/typescript/scripts/browser-storage-contract.mjs
+  s_b66d0e9dd4fae0::t_0c806f447057c9 1-228
+cachefn/typescript/scripts/delivery-acceptance.mjs
+  s_b66d0e9dd4fae0::t_506f6dab964682 1-45
+cachefn/typescript/scripts/ecosystem-acceptance.mjs
+  s_b66d0e9dd4fae0::t_d32461fc398b6e 1-37
+cachefn/typescript/scripts/ecosystem-scenarios.ts
+  s_b66d0e9dd4fae0::t_d42cde338c336b 1-49
+cachefn/typescript/scripts/firefox-native-acceptance.mjs
+  s_b66d0e9dd4fae0::t_e8ec2c8eb69d3b 1-55
+cachefn/typescript/scripts/memoize-sync-benchmark.mjs
+  s_b66d0e9dd4fae0::t_5f9085f035474f 1-69
+cachefn/typescript/scripts/packed-consumer.mjs
+  s_b66d0e9dd4fae0::t_b2f131de2facd9 1-102
+cachefn/typescript/scripts/safari-acceptance.mjs
+  s_b66d0e9dd4fae0::t_94f4139412d8c2 1-59
+cachefn/typescript/scripts/testfn-acceptance.mjs
+  s_b66d0e9dd4fae0::t_4490644ef775e6 1-58
+cachefn/typescript/scripts/testfn-packed-acceptance.mjs
+  s_b66d0e9dd4fae0::t_1231a15c5dd9d1 1-34
+cachefn/typescript/src/core/cache.ts
+  s_b66d0e9dd4fae0::t_41f890309d7299 7-10,18-19,21,25-48,54-56,59-84,87-88,97-161,168-176,180,183,185,188,191,198,200,207,215,231,236,245-261,296-297,306,312-401,403-435,437-456,458-489,503-511,519-590,602-629,632,642-644,654-658,660,665-666,704,708-720,722,725,728-731,737,739,748-764
+cachefn/typescript/src/core/events.ts
+  s_b66d0e9dd4fae0::t_f1a9639a144d5b 39,53
+cachefn/typescript/src/core/types.ts
+  s_b66d0e9dd4fae0::t_c21fd30353f2ab 5-6,10,15-24,26-41,44-55,68,75-96,101,144-145,171-175,200-236
+cachefn/typescript/src/index.ts
+  s_b66d0e9dd4fae0::t_a6aba44e1b0d98 11-17,27-28,32-35,46-47,75,82-83,88-103
+cachefn/typescript/src/memoization/compatible.ts
+  s_b66d0e9dd4fae0::t_ab962fbdc02578 1-74
+cachefn/typescript/src/memoization/memoize.ts
+  s_b66d0e9dd4fae0::t_600a800b2353a8 1-18,20-23,25-34,36-51,54-56,58-142,146-152,155-168,170,172-189,192,194,198,200-201,204,209-226,228-237,239-257,259,261-263,265-266
+cachefn/typescript/src/middleware/express.ts
+  s_b66d0e9dd4fae0::t_b8183bccf1005f 1-3,5-6,10,12-22,25-46,48
+cachefn/typescript/src/middleware/fastify.ts
+  s_b66d0e9dd4fae0::t_03cc074f2e4ef7 1-4,6-7,9,11-20,22-38
+cachefn/typescript/src/middleware/hono.ts
+  s_b66d0e9dd4fae0::t_4a1758236eebef 1-3,5-6,10,12-21,23-48
+cachefn/typescript/src/middleware/http-cache.ts
+  s_b66d0e9dd4fae0::t_6c65604d252274 1-36
+cachefn/typescript/src/storage/auto-storage.ts
+  s_b66d0e9dd4fae0::t_2326964e8fc9c1 1-134
+cachefn/typescript/src/storage/backend-validation.ts
+  s_b66d0e9dd4fae0::t_6554882343ae22 1-33
+cachefn/typescript/src/storage/indexeddb-storage.ts
+  s_b66d0e9dd4fae0::t_96a1b6fb138dd5 1,6-7,20-21,23-49,51-52,54-69,72-76,80-82,84-86,88-95,97-107,109-117,119-125,127-137,142-143,148-149,151-152,154-156,160-166,168-204,206-213,218-219,221-223,225-236,241,244,247-248,252-255,260-263,268-269,273-274
+cachefn/typescript/src/storage/local-storage.ts
+  s_b66d0e9dd4fae0::t_18427d7dc9d517 1-110
+cachefn/typescript/src/storage/memory-storage.ts
+  s_b66d0e9dd4fae0::t_0c2d1d7db89a95 26,31-33,37-43,52,61,64-74,76-79,83,89,92,97,104,107,110-112,119,134,139-149,152,206-209,224-226,247,264,267,273-283,299,301-302,308-315,317
+cachefn/typescript/src/storage/storage-interface.ts
+  s_b66d0e9dd4fae0::t_4944e54bfd678b 11,28-35,51-63
+cachefn/typescript/src/strategies/ttl-manager.ts
+  s_b66d0e9dd4fae0::t_a377323ca88bd5 11,31
+cachefn/typescript/src/testing/backend-conformance.ts
+  s_b66d0e9dd4fae0::t_8fe220bff49659 1-212
+cachefn/typescript/src/utils/hash.ts
+  s_b66d0e9dd4fae0::t_79bf0b97a08a78 22-54
+cachefn/typescript/src/utils/pattern.ts
+  s_b66d0e9dd4fae0::t_e2f363cc6dd020 23-29,34-42,50
+cachefn/typescript/src/utils/serialize.ts
+  s_b66d0e9dd4fae0::t_d409c7ad029d73 1-4,7-17,19-45,47-48,52-77,79-86,88-104,107-109,112,114-132
+cachefn/typescript/tsconfig.type-tests.json
+  s_b66d0e9dd4fae0::t_02e016220f26a4 1-6
+cachefn/typescript/tsup.config.ts
+  s_b66d0e9dd4fae0::t_cdf0b516270e25 4
+cachefn/typescript/type-tests/memoize.ts
+  s_b66d0e9dd4fae0::t_7384490687027f 1-22
+cachefn/typescript/type-tests/schema.ts
+  s_b66d0e9dd4fae0::t_5b4d5c30b2b72f 1-53
+cachefn/typescript/type-tests/storage-backend.ts
+  s_b66d0e9dd4fae0::t_5a02d139441b51 1-24
+catchfn/admin/package.json
+  s_b66d0e9dd4fae0::t_53c26920801caf 36-38
+catchfn/server/typescript/package.json
+  s_b66d0e9dd4fae0::t_c6175785df0703 3,43-44,46
+catchfn/typescript/package.json
+  s_b66d0e9dd4fae0::t_a81d30b092aba1 3
+chartfn/.conduct/pr-destination.md
+  s_b66d0e9dd4fae0::t_a2686e87276f42 1-16
+chartfn/.conduct/requirement-readiness.md
+  s_b66d0e9dd4fae0::t_5a903da3c7510c 1-87
+chartfn/LICENSE
+  s_b66d0e9dd4fae0::t_8dd0ad73ae3211 1-21
+chartfn/README.md
+  s_b66d0e9dd4fae0::t_334fbfabbc1e24 3-88,94,101,116,123,139,144-166
+chartfn/__tests__/adapter-error.test.ts
+  s_b66d0e9dd4fae0::t_376630da09496f 1,29-54
+chartfn/__tests__/bounds-and-logging.test.ts
+  s_b66d0e9dd4fae0::t_55edfaad6cebd3 1-22
+chartfn/__tests__/carbon-adapter.test.tsx
+  s_b66d0e9dd4fae0::t_4bae5314a809d3 2-15,17-27,29-34,36-80,82-87
+chartfn/__tests__/chartjs-adapter.test.ts
+  s_b66d0e9dd4fae0::t_9b93b762ae84c2 11,38,42,93-116
+chartfn/__tests__/core-readiness.test.ts
+  s_b66d0e9dd4fae0::t_17869320022d7b 1-35
+chartfn/__tests__/echarts-readiness.test.ts
+  s_b66d0e9dd4fae0::t_446456e7b17ed1 1-278
+chartfn/__tests__/handle-lifecycle.test.ts
+  s_b66d0e9dd4fae0::t_c44dd969c326e6 50
+chartfn/__tests__/observability.test.ts
+  s_b66d0e9dd4fae0::t_bda00d3a5d0e67 33-51,69
+chartfn/__tests__/validate.test.ts
+  s_b66d0e9dd4fae0::t_9bc12625214b00 110-144
+chartfn/package.json
+  s_b66d0e9dd4fae0::t_55f461894dceb8 3,11-18,28,31-32,59-60,68
+chartfn/react/LICENSE
+  s_b66d0e9dd4fae0::t_63c64d1ffe8fb7 1-21
+chartfn/react/README.md
+  s_b66d0e9dd4fae0::t_b2f5a5763d77c1 3,9,16,22,30,34,36
+chartfn/react/__tests__/chart-react.test.tsx
+  s_b66d0e9dd4fae0::t_d590027a3a15c3 6,32-85
+chartfn/react/package.json
+  s_b66d0e9dd4fae0::t_59ff43ef49051c 3,10-17,24-25,28,45
+chartfn/react/src/Chart.tsx
+  s_b66d0e9dd4fae0::t_c6bc5792abfd9f 35-36
+chartfn/react/src/useChart.tsx
+  s_b66d0e9dd4fae0::t_f163350ef5b1e7 3,37-39,42-45,47-58,62,69-73
+chartfn/react/vitest.config.ts
+  s_b66d0e9dd4fae0::t_408613befd7965 8-13,20,34-38
+chartfn/scripts/browser-acceptance.mjs
+  s_b66d0e9dd4fae0::t_1f1a1a75f740cb 1-102
+chartfn/scripts/determinism-acceptance.mjs
+  s_b66d0e9dd4fae0::t_b77ad7bad00625 1-57
+chartfn/scripts/framework-browser-acceptance.mjs
+  s_b66d0e9dd4fae0::t_c0e2e2df6a242b 1-98
+chartfn/scripts/packed-consumer.mjs
+  s_b66d0e9dd4fae0::t_8e8f952ac80d10 1-47
+chartfn/src/adapters/carbon.ts
+  s_b66d0e9dd4fae0::t_6c6a773373492b 2-20,23-24,26-37,39-42,44-48,50-55,57-68,70,73-112,118,120-132,134-139,142,144-151
+chartfn/src/adapters/chartjs.ts
+  s_b66d0e9dd4fae0::t_859a6fac04f557 17,20,38,85,91,94-96,122,124,146-150,152,156-163,171-175,183
+chartfn/src/adapters/echarts.ts
+  s_b66d0e9dd4fae0::t_d39063dc28079c 3-4,19,22,31,40-43,55,109,118,168-171,196-252,259-268,277-293,306-327
+chartfn/src/chart-fn.ts
+  s_b66d0e9dd4fae0::t_d22fc973a7d10b 23,27,66,93-117,122
+chartfn/src/logger.ts
+  s_b66d0e9dd4fae0::t_8074eb53e901e8 23-24
+chartfn/src/resolve-container.ts
+  s_b66d0e9dd4fae0::t_491bb87417bc18 8
+chartfn/src/types.ts
+  s_b66d0e9dd4fae0::t_39bcd7958acb80 12-13
+chartfn/src/validate.ts
+  s_b66d0e9dd4fae0::t_ef366abd9ff31b 37-44,62-100,129-140,142-148,178-183
+chartfn/svelte/LICENSE
+  s_b66d0e9dd4fae0::t_6c1ce0ce9e85d6 1-21
+chartfn/svelte/README.md
+  s_b66d0e9dd4fae0::t_b281b26ed0db6e 3,10,17,23
+chartfn/svelte/__tests__/ErrorProbe.svelte
+  s_b66d0e9dd4fae0::t_7ffd652ebeb2b3 1-12
+chartfn/svelte/__tests__/chart-svelte.test.ts
+  s_b66d0e9dd4fae0::t_045edcbf94885d 5,31-122
+chartfn/svelte/__tests__/package-exports.test.ts
+  s_b66d0e9dd4fae0::t_d90e929fbd3ab0 1-33
+chartfn/svelte/package.json
+  s_b66d0e9dd4fae0::t_11a1845da5a71a 3,5-6,8,12-16,20-24,27,30,36,39-41,64-68
+chartfn/svelte/scripts/fix-declarations.mjs
+  s_b66d0e9dd4fae0::t_434f858042aea1 1-7
+chartfn/svelte/src/Chart.svelte
+  s_b66d0e9dd4fae0::t_f45231ec2021b8 3,12-13,16-18,21-29,31-46,49,51-54,58-59,61-62,64
+chartfn/svelte/vite.ssr.config.ts
+  s_b66d0e9dd4fae0::t_969ecb8923fa2f 1-12
+cifn/admin/package.json
+  s_b66d0e9dd4fae0::t_49caf02a4d9869 36,39
+cifn/python/pyproject.toml
+  s_b66d0e9dd4fae0::t_460f5ae60fef65 61
+cifn/python/tests/test_client.py
+  s_b66d0e9dd4fae0::t_98a16085dc6dfd 75,193
+cifn/python/tests/test_errors.py
+  s_b66d0e9dd4fae0::t_ef5771a3db2c47 77
+cifn/python/tests/test_types.py
+  s_b66d0e9dd4fae0::t_bd2545b02b29d2 228-229,339
+cifn/typescript/cli/package.json
+  s_b66d0e9dd4fae0::t_ae138e452bebda 3,30
+cifn/typescript/control-plane/package.json
+  s_b66d0e9dd4fae0::t_eae3e7bfb96a23 3-4
+cifn/typescript/runner/package.json
+  s_b66d0e9dd4fae0::t_dad02b942e9f0c 3-4,32-33
+clifn/admin/package.json
+  s_b66d0e9dd4fae0::t_58dbf702a1cbdc 21
+cmsfn/admin/package.json
+  s_b66d0e9dd4fae0::t_1db47d0885949e 36-38
+cmsfn/core/package.json
+  s_b66d0e9dd4fae0::t_4f8ad7a52c1cf2 3
+cmsfn/server/package.json
+  s_b66d0e9dd4fae0::t_9c2ca9c896d732 3
+cmsfn/studio/package.json
+  s_b66d0e9dd4fae0::t_116576d1f09235 53
+compfn/.conduct/configured-producer-acceptance.mts
+  s_b66d0e9dd4fae0::t_faff6a6f9ba075 1-65,67-136,138-146
+compfn/.conduct/configured-producer-readiness.md
+  s_b66d0e9dd4fae0::t_c0907c4ca4ea2d 1-104
+compfn/.conduct/configured-producer-tsconfig.json
+  s_b66d0e9dd4fae0::t_5e51a30b1ee0b3 1-15
+compfn/.conduct/db-codec-integration-20261028.md
+  s_b66d0e9dd4fae0::t_78e43cbfdecbbe 1-7
+compfn/.conduct/evidence-immutability-readiness.md
+  s_b66d0e9dd4fae0::t_ad6ffa81c2c7cd 1-14
+compfn/.conduct/mcp-pointer-integration-20261028.md
+  s_b66d0e9dd4fae0::t_2acb6440bea968 1-7
+compfn/.conduct/pr-destination.md
+  s_b66d0e9dd4fae0::t_cc68ce70782176 1-13
+compfn/.conduct/scan-completion-readiness.md
+  s_b66d0e9dd4fae0::t_84dd1593085b7d 1-9
+compfn/.conduct/shared-integration-20261027.md
+  s_b66d0e9dd4fae0::t_2708d3a8cc3823 1-14
+compfn/.conduct/shared-integration-readiness.md
+  s_b66d0e9dd4fae0::t_81bd95af102633 1-35
+compfn/COMPFN_APPROACH.md
+  s_b66d0e9dd4fae0::t_204ccc45fab5f9 3,40-47,50-53,56,77-83,90-91,96-99,131-136,145-148,155-156,159,162,165,168
+compfn/LICENSE
+  s_b66d0e9dd4fae0::t_c8a3f187571b9d 1-21
+compfn/README.md
+  s_b66d0e9dd4fae0::t_28f707e91f786d 1,14-15,19,25,63,69-70,74-75,79,84,87-90,92-94,446-448,525-527,530,535-536,543,546,548-553,556-557,567,724-749
+compfn/admin/LICENSE
+  s_b66d0e9dd4fae0::t_cf97de8136b87e 1-21
+compfn/admin/README.md
+  s_b66d0e9dd4fae0::t_5687c37ab7b8c2 1-11
+compfn/admin/package.json
+  s_b66d0e9dd4fae0::t_0ec370a9b76e50 22-23,37-38,42-45
+compfn/admin/src/__tests__/dispatcher.test.ts
+  s_b66d0e9dd4fae0::t_73d53ae42c06c1 1-50
+compfn/admin/src/domain-service.ts
+  s_b66d0e9dd4fae0::t_a37b3469817712 3,8-11,23,45,49,72,74-75,81,86-87,93
+compfn/admin/src/index.ts
+  s_b66d0e9dd4fae0::t_8bdcd84f0961eb 47-50,60-63,73-76,86-89,196,198-202,585-586
+compfn/admin/src/pagination.ts
+  s_b66d0e9dd4fae0::t_14388aaf5546c9 1-91
+compfn/bundles/README.md
+  s_b66d0e9dd4fae0::t_2703a279eae92f 27-28,35,49-50,60,86-87,124,135,141
+compfn/bundles/soc2-type2.json
+  s_b66d0e9dd4fae0::t_dedc8f379c68bc 10-14,19-22,27-30,35-38,43-47,52-56,61-65,70-74,79-83,88-92,97-101,106-110,115-119,124-128,133-137,142-146,151-155,164-169,175-180,186-190,196-200,206-210,216-220,226-230,236-240,246-250,256-260,266-270,276-280,286-290,296-300,306-310,316-320,326-330,336-340,346-350,356-360,366-370,376-380,386-390,396-400,406-410,416-420,426-430,436-440,446-450,456-460,466-470,476-480,486-490,496-500,506-510,516-520,526-530,536-540,546-550,556-560,566-570,576-580,586-590
+compfn/cli/src/commands/attest.ts
+  s_b66d0e9dd4fae0::t_5970f6cace4944 1,10,24-25,29-30
+compfn/cli/src/commands/export.ts
+  s_b66d0e9dd4fae0::t_3dcbe53ecab716 2,10,19-20,32-33
+compfn/cli/src/commands/init.ts
+  s_b66d0e9dd4fae0::t_5d561790d118cd 1,5-6,14-15,19-20
+compfn/cli/src/commands/run-checks.ts
+  s_b66d0e9dd4fae0::t_bba42bf05570f0 1,5,16-17,24,51-52
+compfn/cli/src/config.ts
+  s_b66d0e9dd4fae0::t_244eb11364e0f0 1-5,11-16,18-41,43-55,57-63,65,67-85
+compfn/cli/src/index.ts
+  s_b66d0e9dd4fae0::t_0c2fb0c7f8e261 3,10-12,18,50
+compfn/package.json
+  s_b66d0e9dd4fae0::t_8a70e7c2ae46c3 3,12-13,20-21,29-30,45,48,50,55-57,61-63
+compfn/scripts/packed-consumer.mjs
+  s_b66d0e9dd4fae0::t_06cf1e0df60738 1-52
+compfn/src/__tests__/adapters.test.ts
+  s_b66d0e9dd4fae0::t_32a2ba537146c9 7,181-271
+compfn/src/__tests__/bundle.test.ts
+  s_b66d0e9dd4fae0::t_f30e223785516c 1,238-267
+compfn/src/__tests__/cli-persistent.test.ts
+  s_b66d0e9dd4fae0::t_237950a9d7f753 1-76
+compfn/src/__tests__/cli.test.ts
+  s_b66d0e9dd4fae0::t_868f0a883bc9c4 1-11,13-18,20-23,25-31,33-39,41-62
+compfn/src/__tests__/evidence-immutability.test.ts
+  s_b66d0e9dd4fae0::t_b3889670cf2525 1-105
+compfn/src/__tests__/failure-envelopes.test.ts
+  s_b66d0e9dd4fae0::t_814110f3facfa3 1-428
+compfn/src/__tests__/http.test.ts
+  s_b66d0e9dd4fae0::t_5a60ac0d7ddb42 9,17-18,259-270,367-409
+compfn/src/__tests__/observability.test.ts
+  s_b66d0e9dd4fae0::t_b11d407298c58f 1-24
+compfn/src/__tests__/readiness.test.ts
+  s_b66d0e9dd4fae0::t_6817065f85a32a 196-250
+compfn/src/__tests__/schema.test.ts
+  s_b66d0e9dd4fae0::t_b4303fab024607 55-61
+compfn/src/adapters/authfn.ts
+  s_b66d0e9dd4fae0::t_debbca67ebf71b 39-41,46,48-61,64,66,69-74
+compfn/src/adapters/secfn.ts
+  s_b66d0e9dd4fae0::t_5f6a40d1e9bcf7 14,40-56,61,63-67,70,72,75-80
+compfn/src/api.ts
+  s_b66d0e9dd4fae0::t_383f9bc6562c87 48,69
+compfn/src/bundles/loader.ts
+  s_b66d0e9dd4fae0::t_bb8492e97bee2d 6,14,25,35-36,40-54,61-63,67-68,83
+compfn/src/checks/service.ts
+  s_b66d0e9dd4fae0::t_dd7320126b8fc4 1,13-17,19,27,34-35,39-44,50,57-88,111,128-129,210-211,297-299,301,303-361,363-388,393-394,396-401,407,410-476,478-479,481,484-499,506
+compfn/src/compfn.ts
+  s_b66d0e9dd4fae0::t_5b965f04a60ff3 32,39,42,51,55,62
+compfn/src/controls/service.ts
+  s_b66d0e9dd4fae0::t_2cb20906f0cfb9 1,13-14,26,132,136-140,142-148,150-195,197,222-241
+compfn/src/errors.ts
+  s_b66d0e9dd4fae0::t_1067efd502aa40 16-18
+compfn/src/evidence/service.ts
+  s_b66d0e9dd4fae0::t_27608877e68ac4 1,23,29-34,40,64-65,91-98,109-130,206-261,316-317
+compfn/src/export/service.ts
+  s_b66d0e9dd4fae0::t_7e1a80ee8206c7 85
+compfn/src/frameworks/service.ts
+  s_b66d0e9dd4fae0::t_7e8a31c13abc54 1,26,34,62,68-69,180-181
+compfn/src/http/routes.ts
+  s_b66d0e9dd4fae0::t_f6a6b01a800c0f 1,4,6-8,10-11,13-14,16-18,22,24-25,27-28,30-31,33-35,37-38,40-41,43-44,46-47,49-50,52,54-55,57-58,60-61,63-65,67-68,70-71,73-74,76-77,79-86,97-102,105-110,112-113,115-116,118-119,121,123-124,126-127,129-130,132-133,135-136,138-139,141-142,144-146,148-149,151-152,154-155,157-158,160-173,175-190,192-193,203,205-206
+compfn/src/readiness/service.ts
+  s_b66d0e9dd4fae0::t_22b5f884ec9676 18,26-30,65-68,70-72,81-82,86-87,92,102-103
+compfn/src/storage/adapter.ts
+  s_b66d0e9dd4fae0::t_90737b2668e42d 21,35-36
+compfn/turbo.json
+  s_b66d0e9dd4fae0::t_642db78684b3c9 3,6,8-9,12-13
+compfn/vitest.config.ts
+  s_b66d0e9dd4fae0::t_5f7908e1350b94 1,7,9
+contentfn/.conduct/audit-order-readiness.md
+  s_b66d0e9dd4fae0::t_d630dc2db24c0f 1-29
+contentfn/.conduct/audit-readiness.md
+  s_b66d0e9dd4fae0::t_f848bd1873fb47 1-16
+contentfn/.conduct/browser-acceptance.mjs
+  s_b66d0e9dd4fae0::t_af25815e76140d 1-52
+contentfn/.conduct/db-codec-integration-20261028.md
+  s_b66d0e9dd4fae0::t_e27f0d80c6ded0 1-7
+contentfn/.conduct/draft-perspective-http.mjs
+  s_b66d0e9dd4fae0::t_d9c20bf12b5ee5 1-47
+contentfn/.conduct/history-index-readiness.md
+  s_b66d0e9dd4fae0::t_03b799d1b57db7 1-37
+contentfn/.conduct/history-packed.mjs
+  s_b66d0e9dd4fae0::t_57ee178fa1879e 1-38
+contentfn/.conduct/history-pagination-readiness.md
+  s_b66d0e9dd4fae0::t_39be703d92c8b9 1-40
+contentfn/.conduct/literal-patch-readiness.md
+  s_b66d0e9dd4fae0::t_2167e712962dd2 1-21
+contentfn/.conduct/literal-paths-packed.py
+  s_b66d0e9dd4fae0::t_c62868f2a11f33 1-25
+contentfn/.conduct/mcp-pointer-integration-20261028.md
+  s_b66d0e9dd4fae0::t_f3e5431408b7a2 1-7
+contentfn/.conduct/packed-acceptance.py
+  s_b66d0e9dd4fae0::t_2ef8f5a0229d5e 1-33
+contentfn/.conduct/packed-runtime.mjs
+  s_b66d0e9dd4fae0::t_19304b410cb8a1 1-60
+contentfn/.conduct/packed-schema4-readiness.md
+  s_b66d0e9dd4fae0::t_c4b2c180b6444f 1-26
+contentfn/.conduct/publish-idempotency-packed.mjs
+  s_b66d0e9dd4fae0::t_1b822450fe4b7e 1-28
+contentfn/.conduct/publish-idempotency-packed.py
+  s_b66d0e9dd4fae0::t_cfd909a1dea27e 1-17
+contentfn/.conduct/publish-idempotency-readiness.md
+  s_b66d0e9dd4fae0::t_5a8306966cb855 1-27
+contentfn/.conduct/richtext-limits-packed.mjs
+  s_b66d0e9dd4fae0::t_fdee9a57bde6f4 1-29
+contentfn/.conduct/richtext-limits-readiness.md
+  s_b66d0e9dd4fae0::t_94976aa4118596 1-42
+contentfn/.conduct/shared-integration-20261027.md
+  s_b66d0e9dd4fae0::t_999ddb7fbd25cd 1-17
+contentfn/.conduct/shared-integration-readiness.md
+  s_b66d0e9dd4fae0::t_fcd6b55b5b6dd9 1-11
+contentfn/.conduct/sql-service-acceptance.md
+  s_b66d0e9dd4fae0::t_835f434c117cc8 1-15
+contentfn/.conduct/studio-perspective-prerequisite.md
+  s_b66d0e9dd4fae0::t_d38ebc52d1595c 1-19
+contentfn/.conduct/target-readiness.md
+  s_b66d0e9dd4fae0::t_40490c2f8b2f34 1-24
+contentfn/.conduct/webhook-audit-readiness.md
+  s_b66d0e9dd4fae0::t_ad3727e649211f 1-106
+contentfn/.conduct/webhook-durability-readiness.md
+  s_b66d0e9dd4fae0::t_e7f31645907d0e 1-88
+contentfn/.conduct/webhook-process-crash-acceptance.mjs
+  s_b66d0e9dd4fae0::t_9909e6b4a03d13 1-177
+contentfn/.conduct/webhook-process-crash-receipt-20261022.json
+  s_b66d0e9dd4fae0::t_6351c340ab8559 1-151
+contentfn/README.md
+  s_b66d0e9dd4fae0::t_d32757c9e7af85 1-243
+contentfn/SPEC.md
+  s_b66d0e9dd4fae0::t_23ff17190ecc9f 1-588
+contentfn/admin/README.md
+  s_b66d0e9dd4fae0::t_bf8ee3a989d2f1 1-5
+contentfn/admin/package.json
+  s_b66d0e9dd4fae0::t_a18d639730c163 3,36
+contentfn/cli/README.md
+  s_b66d0e9dd4fae0::t_0e4ee3951bf983 1-5
+contentfn/cli/package.json
+  s_b66d0e9dd4fae0::t_d2470642e3b440 3,28,41-42
+contentfn/cli/src/__tests__/cli.test.ts
+  s_b66d0e9dd4fae0::t_11e911812a581a 9,41,75,80-94,220-231
+contentfn/cli/src/commands/dataset.ts
+  s_b66d0e9dd4fae0::t_2b634288f7674e 26-27,45,68-76
+contentfn/cli/src/index.ts
+  s_b66d0e9dd4fae0::t_2069ca32efd092 13
+contentfn/client/README.md
+  s_b66d0e9dd4fae0::t_d438b6d9bfee2e 1-14
+contentfn/client/package.json
+  s_b66d0e9dd4fae0::t_74ba28eabf117b 3-4,11-18,38,49,54-55
+contentfn/client/src/client.test.ts
+  s_b66d0e9dd4fae0::t_e247e2c8e8154e 1-31
+contentfn/client/src/index.ts
+  s_b66d0e9dd4fae0::t_bb42b4e55555f3 1-4,26,30-107
+contentfn/client/src/realtime-frames.test.ts
+  s_b66d0e9dd4fae0::t_50fbf059a2f40e 1-44
+contentfn/client/src/realtime-query.test.ts
+  s_b66d0e9dd4fae0::t_77032b982c84cb 1-59
+contentfn/client/src/realtime.ts
+  s_b66d0e9dd4fae0::t_9fef57631cc5dd 1-158
+contentfn/client/tsconfig.json
+  s_b66d0e9dd4fae0::t_8229d31b7f6a78 4-8,22-28
+contentfn/client/vitest.config.ts
+  s_b66d0e9dd4fae0::t_14b4ff0e979096 1,4
+contentfn/core/README.md
+  s_b66d0e9dd4fae0::t_c8230ce5597b74 1-10
+contentfn/core/eslint.config.mjs
+  s_b66d0e9dd4fae0::t_ccb3478b0f8259 1-31
+contentfn/core/package.json
+  s_b66d0e9dd4fae0::t_7f3ecd414f723a 3,11-18,38
+contentfn/core/src/audit.ts
+  s_b66d0e9dd4fae0::t_d761f26dc19ba4 1-33
+contentfn/core/src/cursor/types.ts
+  s_b66d0e9dd4fae0::t_9215d2127c6bed 17-18
+contentfn/core/src/index.ts
+  s_b66d0e9dd4fae0::t_b2431c601aa34d 31,33,46-47
+contentfn/core/src/patch/types.ts
+  s_b66d0e9dd4fae0::t_d9eacf74a67854 5-7,9-12,15,22
+contentfn/core/src/patch/validatePatch.ts
+  s_b66d0e9dd4fae0::t_62d17291d2be9e 2-3,6,14-22,24,26-37,60,96,101
+contentfn/core/src/query/types.ts
+  s_b66d0e9dd4fae0::t_9c07f102bdcf86 46-47
+contentfn/core/src/query/validateCfql.ts
+  s_b66d0e9dd4fae0::t_400c0fb016becd 6,14,88-89,127,149-151,174,177
+contentfn/core/src/schema/validateSchema.ts
+  s_b66d0e9dd4fae0::t_eec0f1f93c5114 28,40,68,98-100,125,136-145,185-186,188-189,195,211-215
+contentfn/core/src/schema/validation-contract.test.ts
+  s_b66d0e9dd4fae0::t_39f392ffd9343f 1-27
+contentfn/server/README.md
+  s_b66d0e9dd4fae0::t_7d2c4dd43b2684 1-163
+contentfn/server/package.json
+  s_b66d0e9dd4fae0::t_6a957c56e571e1 3,11-18,35-36,48,57,61-63,69-73
+contentfn/server/src/__tests__/artifact-validation.test.ts
+  s_b66d0e9dd4fae0::t_52a8c5b083e908 1-61
+contentfn/server/src/__tests__/assets.integration.test.ts
+  s_b66d0e9dd4fae0::t_2b28f7852e10c5 178-196
+contentfn/server/src/__tests__/audit.integration.test.ts
+  s_b66d0e9dd4fae0::t_69548258fda38f 1-114
+contentfn/server/src/__tests__/datasets-schema.integration.test.ts
+  s_b66d0e9dd4fae0::t_2ac42bdb12a817 181-194
+contentfn/server/src/__tests__/draft-fork.test.ts
+  s_b66d0e9dd4fae0::t_f9baaa93cea5f7 1-67
+contentfn/server/src/__tests__/history-index.test.ts
+  s_b66d0e9dd4fae0::t_a62c4d0747aa3d 1-89
+contentfn/server/src/__tests__/history-keyset.test.ts
+  s_b66d0e9dd4fae0::t_d214dc1051bb34 1-120
+contentfn/server/src/__tests__/history.integration.test.ts
+  s_b66d0e9dd4fae0::t_92a007fe74905f 69,229-246
+contentfn/server/src/__tests__/http-readiness.test.ts
+  s_b66d0e9dd4fae0::t_204d30cb6acc0f 1-75
+contentfn/server/src/__tests__/importExport.integration.test.ts
+  s_b66d0e9dd4fae0::t_b89099defbc6c7 379-395
+contentfn/server/src/__tests__/literal-patch-paths.test.ts
+  s_b66d0e9dd4fae0::t_2746205416f453 1-99
+contentfn/server/src/__tests__/mutation-readiness.test.ts
+  s_b66d0e9dd4fae0::t_b6d2d00fe12382 1-61
+contentfn/server/src/__tests__/patch.integration.test.ts
+  s_b66d0e9dd4fae0::t_577b1a04e432b7 455-456
+contentfn/server/src/__tests__/pr-review-regressions.test.ts
+  s_b66d0e9dd4fae0::t_c2f03ef29ff587 1-456
+contentfn/server/src/__tests__/publish-idempotency.test.ts
+  s_b66d0e9dd4fae0::t_92a80f07ff297e 1-73
+contentfn/server/src/__tests__/query-perspective.test.ts
+  s_b66d0e9dd4fae0::t_7f10a77c1d9f33 1-78
+contentfn/server/src/__tests__/query-subscription-bounds.test.ts
+  s_b66d0e9dd4fae0::t_0cc8ed36ee9923 1-81
+contentfn/server/src/__tests__/query-subscription.test.ts
+  s_b66d0e9dd4fae0::t_fd12ff34f90d41 1-194
+contentfn/server/src/__tests__/realtime.integration.test.ts
+  s_b66d0e9dd4fae0::t_e5639086fc4802 108-109,290-291
+contentfn/server/src/__tests__/references.integration.test.ts
+  s_b66d0e9dd4fae0::t_01852f3cc847c4 78,119,135-136
+contentfn/server/src/__tests__/review-regressions.test.ts
+  s_b66d0e9dd4fae0::t_6c822d5c21e626 1-1044
+contentfn/server/src/__tests__/richtext-limits.test.ts
+  s_b66d0e9dd4fae0::t_0366dba6f043a1 1-72
+contentfn/server/src/__tests__/schedules-readiness.test.ts
+  s_b66d0e9dd4fae0::t_ab65c4d24c7742 1-27
+contentfn/server/src/__tests__/schema-concurrency.test.ts
+  s_b66d0e9dd4fae0::t_6419697f2d4253 1-41
+contentfn/server/src/__tests__/schema-discovery.test.ts
+  s_b66d0e9dd4fae0::t_463f00017eec8d 1-37
+contentfn/server/src/__tests__/schema-validation.test.ts
+  s_b66d0e9dd4fae0::t_5ea39a3b29e3f2 1-133
+contentfn/server/src/__tests__/search-readiness.test.ts
+  s_b66d0e9dd4fae0::t_783ce63fb02f45 1-43
+contentfn/server/src/__tests__/shared-storage.test.ts
+  s_b66d0e9dd4fae0::t_360a82c326688a 1-22
+contentfn/server/src/__tests__/sql-services.integration.test.ts
+  s_b66d0e9dd4fae0::t_4ffefd3ecb61b6 1-80
+contentfn/server/src/__tests__/sqlite-readiness.test.ts
+  s_b66d0e9dd4fae0::t_7b2251ffdd8682 1-56
+contentfn/server/src/__tests__/webhook-audit.test.ts
+  s_b66d0e9dd4fae0::t_219fe692770747 1-130
+contentfn/server/src/__tests__/webhooks.integration.test.ts
+  s_b66d0e9dd4fae0::t_0d75c91bdf10c5 175,287,298-300,302-343
+contentfn/server/src/__tests__/webhooks.sqlite.test.ts
+  s_b66d0e9dd4fae0::t_1359675786ef8e 1-86
+contentfn/server/src/auth/authorize.ts
+  s_b66d0e9dd4fae0::t_9bf8f56ef5bd73 14-15,30,39-41,43,50,53-54
+contentfn/server/src/http/endpoints/docs.ts
+  s_b66d0e9dd4fae0::t_e634e8faf3f53a 7,37-43
+contentfn/server/src/http/endpoints/query.ts
+  s_b66d0e9dd4fae0::t_9106fd21cd4b76 1,8-10
+contentfn/server/src/http/endpoints/schema.ts
+  s_b66d0e9dd4fae0::t_55af3a8a33ad89 25,49
+contentfn/server/src/http/endpoints/status.ts
+  s_b66d0e9dd4fae0::t_51af06cdab920f 9-10,27,30-31
+contentfn/server/src/http/node-handler.ts
+  s_b66d0e9dd4fae0::t_3d4abcb971ce4c 1-53
+contentfn/server/src/http/router.ts
+  s_b66d0e9dd4fae0::t_d382210dabf18c 1-8,11,33,39-69,71-92,96
+contentfn/server/src/http/validateInput.ts
+  s_b66d0e9dd4fae0::t_dc2162d2d78718 1-30
+contentfn/server/src/importExport/exportDataset.ts
+  s_b66d0e9dd4fae0::t_a74414f72cdd4b 1,15-16,24,51,59,85,106,108,122
+contentfn/server/src/importExport/format.ts
+  s_b66d0e9dd4fae0::t_1ba7cdc788399f 2-4,42-96,99-102
+contentfn/server/src/importExport/importDataset.ts
+  s_b66d0e9dd4fae0::t_30a1ec0a721dfd 1-3,12,15,23,29-34,54-55,91,99,132,140,167-168,174,176,181,197-199,204,207,209,214
+contentfn/server/src/index.ts
+  s_b66d0e9dd4fae0::t_7fe1d13c2df092 41-55
+contentfn/server/src/limits/limits.ts
+  s_b66d0e9dd4fae0::t_89212d05ea9609 9-10,12,21-22,29-32
+contentfn/server/src/logging/logger.ts
+  s_b66d0e9dd4fae0::t_3c6f7abce8a16c 72
+contentfn/server/src/patch/applyPatch.ts
+  s_b66d0e9dd4fae0::t_8ae10a4875e016 9,97-100,104,116,120,127,142,155,161
+contentfn/server/src/query/cursor.ts
+  s_b66d0e9dd4fae0::t_0a57a1037846fa 12-14,17
+contentfn/server/src/query/executeCfql.ts
+  s_b66d0e9dd4fae0::t_a374206e0096b0 1-2,24-25,69-72,92,96,98,106,109,134,141,148,153-167,175-180,182,199-200,210,215,221,225,230
+contentfn/server/src/query/expand.ts
+  s_b66d0e9dd4fae0::t_bb3ed7f273cccb 1-2,15,33-34,36-42,47,63,139-140,149,175,178-179,182,192,196
+contentfn/server/src/realtime/protocol.ts
+  s_b66d0e9dd4fae0::t_6e7d9dd90a48c8 35,37-38
+contentfn/server/src/realtime/server.ts
+  s_b66d0e9dd4fae0::t_c287b6d85d7ae6 18-23,63-64,80-95,98,108-118,120-122,131-133,138,151,161-162
+contentfn/server/src/realtime/sse.ts
+  s_b66d0e9dd4fae0::t_f8bca5af494a1a 1-359
+contentfn/server/src/realtime/subscribe.ts
+  s_b66d0e9dd4fae0::t_61db72fa03ed2f 2,17-18,45-55,63-64,70,72,76,94-95,97-98
+contentfn/server/src/server.ts
+  s_b66d0e9dd4fae0::t_97e715ab223972 1-10,15-17,20,29-32,41-44,48,51-52,58,67,71-73,75,130,144-146,156,160,166,170-172,175-178,181-186,188-206,208-244,247-251,253-254,256-261,263-273,275
+contentfn/server/src/storage/assets.ts
+  s_b66d0e9dd4fae0::t_3a72dc19c44871 1,7,15-16,23,44,54-57,60-64,88-89,110,123,144-145,151
+contentfn/server/src/storage/audit.ts
+  s_b66d0e9dd4fae0::t_13722402df84ab 1-38
+contentfn/server/src/storage/database.ts
+  s_b66d0e9dd4fae0::t_a94e739cf4a97c 1-31
+contentfn/server/src/storage/datasets.ts
+  s_b66d0e9dd4fae0::t_858a46026ba495 1,7,16-17,42,93,100-107
+contentfn/server/src/storage/docs.ts
+  s_b66d0e9dd4fae0::t_e531ed5dff580c 1,7,13,20-23,26,28-29,66-67,82,91-93,99,111,119,151,155-178,192-193,211,223-227,234,244,252-258,260-284,307-314,316-318,329,370,372-373,376-377,380-382,384,386,400
+contentfn/server/src/storage/document-validation.ts
+  s_b66d0e9dd4fae0::t_94856c7faabf1f 1-311
+contentfn/server/src/storage/documentIdentity.ts
+  s_b66d0e9dd4fae0::t_ccc49783142961 1-3,5-29
+contentfn/server/src/storage/documentIdentityBackfill.ts
+  s_b66d0e9dd4fae0::t_711cf7b38f3e88 1-51
+contentfn/server/src/storage/events.ts
+  s_b66d0e9dd4fae0::t_d3f8163b226619 1-2,8-10,22-23,39,42,51,55,61,66-67,73-79
+contentfn/server/src/storage/idempotency.ts
+  s_b66d0e9dd4fae0::t_d5dc0a789fd513 1-39
+contentfn/server/src/storage/migrate.ts
+  s_b66d0e9dd4fae0::t_dfcffb892280eb 6,22-61
+contentfn/server/src/storage/publish.ts
+  s_b66d0e9dd4fae0::t_4fb914c03ec4d4 1-4,11-13,16,18-19,30-32,38,44,61-78,84,95,104,136,143,158-164,167-168,175,179,190-208,211,215,218
+contentfn/server/src/storage/revisions.ts
+  s_b66d0e9dd4fae0::t_c33c3bdfe3b031 1-5,12-13,19,22,24-25,31,50,63,65,83-87,89-132,135-139,146,157,182-189,196,206,215,218-219,249,252-259
+contentfn/server/src/storage/schedules.ts
+  s_b66d0e9dd4fae0::t_fc1a10bdeee4ab 1-70
+contentfn/server/src/storage/schema.ts
+  s_b66d0e9dd4fae0::t_341c6a1e1dd97d 38,48,89-93,102-104,118-119,131-133,138-142,149-150,164-165,171-190,192-194,208-209,221,232-246
+contentfn/server/src/storage/schemaStorage.ts
+  s_b66d0e9dd4fae0::t_13b964065ce3f3 1-2,8,17,51,53,102-113,115,123
+contentfn/server/src/storage/storageBackend.ts
+  s_b66d0e9dd4fae0::t_b1c4b8a77c950e 34-59
+contentfn/server/src/storage/webhookAudit.ts
+  s_b66d0e9dd4fae0::t_6bdab718f75258 1-95
+contentfn/server/src/storage/webhookQueue.ts
+  s_b66d0e9dd4fae0::t_6f5dc49b5d03d2 1-3,9-10,18,30-32,36,43-44,56,60,67-69,72-74,76,78,83-95,106,108,112,115-117,119,121-148
+contentfn/server/src/storage/webhooks.ts
+  s_b66d0e9dd4fae0::t_dbfe952651c67c 1,7-13,22,32-33,55-58,66,133-151
+contentfn/server/src/webhooks/deliver.ts
+  s_b66d0e9dd4fae0::t_0cb3233410232c 1,6-8,13,18-20,43-44,89-95,102,114,120-123,133,139-140,143,145-146,149-151,156,159-162,167,173-197
+datafn/admin/package.json
+  s_b66d0e9dd4fae0::t_1fa8db6098041f 37,40
+datafn/client/__tests__/performance.test.ts
+  s_b66d0e9dd4fae0::t_f8894ff27d231d 30-41,43-45
+docs/content/docs/authentication/oauth-router.mdx
+  s_b66d0e9dd4fae0::t_5965c2c5cd809e 123-127
+docs/content/docs/middleware-runtime/observability.mdx
+  s_b66d0e9dd4fae0::t_6a8e45ab0f9989 19-23,84,87-96
+docs/content/docs/tooling/index.mdx
+  s_b66d0e9dd4fae0::t_7761c2075a395e 8
+docsfn/admin/package.json
+  s_b66d0e9dd4fae0::t_ae3915e4cc5678 36-37
+docsfn/cli/package.json
+  s_b66d0e9dd4fae0::t_8aca3aeef49dca 3,10-11
+docsfn/core/package.json
+  s_b66d0e9dd4fae0::t_abc158ce99a6d6 3
+docsfn/docs/vite.config.ts
+  s_b66d0e9dd4fae0::t_4ca976255895b2 6,24
+docsfn/examples/sveltekit-docs-site/package.json
+  s_b66d0e9dd4fae0::t_60453b17975ec3 13-16,19,22
+docsfn/examples/sveltekit-docs-site/vitest.config.ts
+  s_b66d0e9dd4fae0::t_3b6fc26df11300 15
+docsfn/next/package.json
+  s_b66d0e9dd4fae0::t_256eb1c77fee45 3,26
+docsfn/provider-fs/package.json
+  s_b66d0e9dd4fae0::t_6d2f7ed9dcf81b 3,21
+docsfn/react/package.json
+  s_b66d0e9dd4fae0::t_5d7d2c07469c0d 3,20,30-31,34-35
+docsfn/react/src/DocsSearch.tsx
+  s_b66d0e9dd4fae0::t_b4b6dc2a47e1c5 16,18-20,212-213,222,225-250,252-264,266-302
+docsfn/react/src/PageActions.tsx
+  s_b66d0e9dd4fae0::t_764a76a6fcc162 23
+docsfn/react/src/TopBar.tsx
+  s_b66d0e9dd4fae0::t_30c5bfc568580f 5-10,12,65,70,123-130,133-153
+docsfn/react/src/VersionSwitcher.tsx
+  s_b66d0e9dd4fae0::t_dfb7a83936bca5 4-9,11,77-80,91-106,108-134
+docsfn/react/src/menuItemKeys.ts
+  s_b66d0e9dd4fae0::t_729db4f63efe52 1-16
+docsfn/react/src/test-utils/uifn-react-stub.tsx
+  s_b66d0e9dd4fae0::t_d26641e398676f 11-18,169,174,177-199,207,212,216-279
+docsfn/react/src/theme-base.css
+  s_b66d0e9dd4fae0::t_3eeae2e3a26062 387-423
+docsfn/react/src/theme.css
+  s_b66d0e9dd4fae0::t_bf1c630d3b8a3b 1677-1726
+docsfn/svelte/package.json
+  s_b66d0e9dd4fae0::t_a5ce5f97f59fe8 3,150
+docsfn/svelte/src/DocsSearch.svelte
+  s_b66d0e9dd4fae0::t_af6dcd120a9a77 11-17,221,238-262,264-275,277-313
+docsfn/svelte/src/TopBar.svelte
+  s_b66d0e9dd4fae0::t_2e53e204667b5d 5-9,74-86,110-116,119-143
+docsfn/svelte/src/VersionSwitcher.svelte
+  s_b66d0e9dd4fae0::t_df45bb30d9b53c 4-8,36-48,81-84,101-139
+docsfn/svelte/src/test-utils/UifnMenuItem.svelte
+  s_b66d0e9dd4fae0::t_ea7152faee37a0 1-24
+docsfn/svelte/src/test-utils/uifn-svelte-stub.ts
+  s_b66d0e9dd4fae0::t_c53d279fb42982 2,13-14,17-21
+docsfn/svelte/src/theme-base.css
+  s_b66d0e9dd4fae0::t_7bc87564ca9e4b 1281-1330
+docsfn/sveltekit/package.json
+  s_b66d0e9dd4fae0::t_f988ac207fd56b 3,25
+drawfn/.conduct/pr-destination.md
+  s_b66d0e9dd4fae0::t_69e1e20506bfda 1-16
+drawfn/.conduct/requirement-readiness.md
+  s_b66d0e9dd4fae0::t_af847a75c96b9c 1-119
+drawfn/core/LICENSE
+  s_b66d0e9dd4fae0::t_74ce309d26a0f1 1-21
+drawfn/core/README.md
+  s_b66d0e9dd4fae0::t_8a6ad8e32de877 73-74,99,120,141-184
+drawfn/core/__tests__/camera-input.test.ts
+  s_b66d0e9dd4fae0::t_e405262a7f9942 5
+drawfn/core/__tests__/clear-history.test.ts
+  s_b66d0e9dd4fae0::t_ebb732cc6ad154 1-36
+drawfn/core/__tests__/drawfn.test.ts
+  s_b66d0e9dd4fae0::t_64a0b55f55d3f9 84,93
+drawfn/core/__tests__/export-image.test.ts
+  s_b66d0e9dd4fae0::t_2e4c154853a914 132-164
+drawfn/core/__tests__/freedraw-normalization.test.ts
+  s_b66d0e9dd4fae0::t_9c18ddfa515c46 5
+drawfn/core/__tests__/image-capacity.test.ts
+  s_b66d0e9dd4fae0::t_cbbf7c1b736a76 1-81
+drawfn/core/__tests__/interaction-teardown.test.ts
+  s_b66d0e9dd4fae0::t_8d8af56cbc7707 1-229
+drawfn/core/__tests__/pen-capacity.test.ts
+  s_b66d0e9dd4fae0::t_ede023b97ac8f6 1-29
+drawfn/core/__tests__/preview-batching.test.ts
+  s_b66d0e9dd4fae0::t_d80a182fbaf055 1-298
+drawfn/core/__tests__/preview-history.test.ts
+  s_b66d0e9dd4fae0::t_b7e88629dce3dc 1-120
+drawfn/core/__tests__/readiness.test.ts
+  s_b66d0e9dd4fae0::t_9e84c938b744ba 1-159
+drawfn/core/__tests__/reorder-gesture.test.ts
+  s_b66d0e9dd4fae0::t_4b29ba36fcb464 1-158
+drawfn/core/__tests__/scene-change-payload.test.ts
+  s_b66d0e9dd4fae0::t_d25deb5b9a637b 1-160
+drawfn/core/__tests__/scene-load.test.ts
+  s_b66d0e9dd4fae0::t_7a64d4574cbc22 216-244
+drawfn/core/__tests__/selection-events.test.ts
+  s_b66d0e9dd4fae0::t_f868dd8d60c1fc 5
+drawfn/core/__tests__/setup.ts
+  s_b66d0e9dd4fae0::t_f958bb9434a00b 1,3,6
+drawfn/core/__tests__/shape-tools.test.ts
+  s_b66d0e9dd4fae0::t_dd6a1af101c6f8 1-41
+drawfn/core/__tests__/svg-images.test.ts
+  s_b66d0e9dd4fae0::t_fefbc71281aa75 1-63
+drawfn/core/__tests__/text-editing.test.ts
+  s_b66d0e9dd4fae0::t_b224ce7e2f32a2 61,74,129-138
+drawfn/core/example.html
+  s_b66d0e9dd4fae0::t_3b018cef60fa18 125,131-133,156,159
+drawfn/core/package.json
+  s_b66d0e9dd4fae0::t_df4593ec526829 3,12-19,31-32,70
+drawfn/core/src/drawfn.ts
+  s_b66d0e9dd4fae0::t_d67bed62194e0f 10-11,15-16,38,54-55,162-166,255,844-846,851-864,879-880,906-908,926-928,935,943-968,975,989,996-1045,1054,1092-1098,1100-1101,1104,1108-1120,1123-1126,1133,1135,1149-1294,1319,1344,1373,1376-1384,1401,1404-1412,1417,1426-1431,1446,1449,1459,1462,1475-1479,1481-1484,1493-1494,1497-1500,1502,1507,1511,1557-1559,1570-1571,1583,1585-1586,1601-1603,1609,1625-1626,1629-1639,1641-1644,1686-1688,1695-1697,1707-1741,1743-1745,1747-1749,1753,1761,1774,1790-1792,1801,1813,1831,1839,1846,1886-1887,1891-1895,1902-1907,1909,1913,1940,1947,1949-1951,1962-1967,1972,1984-1985,1991-2001,2049-2050,2065-2066,2082-2084,2120,2125,2141-2149,2157
+drawfn/core/src/history.ts
+  s_b66d0e9dd4fae0::t_f59e0650482f60 52-57
+drawfn/core/src/renderer.ts
+  s_b66d0e9dd4fae0::t_6438b187f7a60a 34-40,70,72,191-193,290,306-308,439-473,475-478,480-512,533,540-557,573-577,583-584,588-598,600
+drawfn/core/src/tools/arrow-tool.ts
+  s_b66d0e9dd4fae0::t_aa64026883ea62 39-46,98-101
+drawfn/core/src/tools/base-tool.ts
+  s_b66d0e9dd4fae0::t_c26c1cc6e669bc 25-29
+drawfn/core/src/tools/ellipse-tool.ts
+  s_b66d0e9dd4fae0::t_fcf8e944eafbb5 1,3-4
+drawfn/core/src/tools/pan-tool.ts
+  s_b66d0e9dd4fae0::t_95bfda120e8b00 20-23,37-40
+drawfn/core/src/tools/pen-tool.ts
+  s_b66d0e9dd4fae0::t_09f1bc2f28c4c8 3,9,23-24,38,47-54,68-79,99-102,106
+drawfn/core/src/tools/rectangle-tool.ts
+  s_b66d0e9dd4fae0::t_e558fd449c8274 1,3-4
+drawfn/core/src/tools/select-tool.ts
+  s_b66d0e9dd4fae0::t_d53dcd22f94710 87-89,186-195
+drawfn/core/src/tools/shape-tool.ts
+  s_b66d0e9dd4fae0::t_ec6d0c57e9369b 1-104
+drawfn/core/src/tools/text-tool.ts
+  s_b66d0e9dd4fae0::t_8645d4f8146216 26,55-56,82-83,88-92,126,129,145,170,177,182-183,185-188
+drawfn/core/src/tools/tool-manager.ts
+  s_b66d0e9dd4fae0::t_e6fecd09e63cde 65-67
+drawfn/core/src/types.ts
+  s_b66d0e9dd4fae0::t_b4ccb004b3de22 120-121
+drawfn/core/src/utils.ts
+  s_b66d0e9dd4fae0::t_1cdba46714521d 16-25,59-62
+drawfn/drawfn-react/LICENSE
+  s_b66d0e9dd4fae0::t_bc8ff2f679b9e1 1-21
+drawfn/drawfn-react/README.md
+  s_b66d0e9dd4fae0::t_5b8726b8bab3bc 28,57,158-161
+drawfn/drawfn-react/package.json
+  s_b66d0e9dd4fae0::t_9952e2860c8b65 3,12-19,30-31,57,63,71
+drawfn/drawfn-react/src/DrawfnCanvas.tsx
+  s_b66d0e9dd4fae0::t_712d3f33cb6237 18-19,28-29
+drawfn/drawfn-react/src/__tests__/setup.ts
+  s_b66d0e9dd4fae0::t_efb8e1ed0445d1 3,5-6
+drawfn/drawfn-react/src/__tests__/use-drawfn.test.tsx
+  s_b66d0e9dd4fae0::t_bee510a1902b93 5,7,9,14,96-203
+drawfn/drawfn-react/src/use-drawfn.ts
+  s_b66d0e9dd4fae0::t_58919afa8911d8 26,51-58,72-73,78,82-84,86,89,93-94,96,99,101,111,142-143,161-162,168
+drawfn/drawfn-react/tsconfig.json
+  s_b66d0e9dd4fae0::t_798d929d027f3d 4-7,22-29
+drawfn/drawfn-react/vitest.config.ts
+  s_b66d0e9dd4fae0::t_8961facca3fe45 1,3,5-6,9
+drawfn/drawfn-svelte/LICENSE
+  s_b66d0e9dd4fae0::t_46de4396f2de88 1-21
+drawfn/drawfn-svelte/README.md
+  s_b66d0e9dd4fae0::t_ff3e224a96f4a0 3-7,12,22,47,74,113,135,141,153,175,204,206,347,352,356,381,390-393
+drawfn/drawfn-svelte/__tests__/drawfn-action.test.ts
+  s_b66d0e9dd4fae0::t_0a3da5794cd27b 4-7,70-194
+drawfn/drawfn-svelte/__tests__/drawfn-canvas.test.ts
+  s_b66d0e9dd4fae0::t_616f55d73010ea 4-5
+drawfn/drawfn-svelte/__tests__/setup.ts
+  s_b66d0e9dd4fae0::t_46c0ab847d3d85 3,5-6
+drawfn/drawfn-svelte/package.json
+  s_b66d0e9dd4fae0::t_c84ce4fab5aa15 3,7,14,17-19,22-24,28,31,34-36,60-62,64,67,70-71,76-77,81
+drawfn/drawfn-svelte/src/Canvas.svelte
+  s_b66d0e9dd4fae0::t_364a01016d983d 15
+drawfn/drawfn-svelte/src/DrawfnCanvas.svelte
+  s_b66d0e9dd4fae0::t_1e9118072cf6eb 2-3,17-18,28,31-34,53-56,72,78
+drawfn/drawfn-svelte/src/drawfn-action.ts
+  s_b66d0e9dd4fae0::t_5a4f1ac1b45a9b 24-31,33-47,49,52-56,58-67,71-72
+drawfn/drawfn-svelte/src/stores.ts
+  s_b66d0e9dd4fae0::t_91bf2d33e0aeea 1,15,26,45-46,69-73,76-79,82,84-85,90-97
+drawfn/drawfn-svelte/svelte.config.js
+  s_b66d0e9dd4fae0::t_d114e08b7dba3e 1-2
+drawfn/drawfn-svelte/tsup.config.ts
+  s_b66d0e9dd4fae0::t_2f368e9b50d02a 5
+drawfn/drawfn-svelte/vitest.config.ts
+  s_b66d0e9dd4fae0::t_d4f13f62e66c2a 8,14,16
+drawfn/scripts/browser-acceptance.mjs
+  s_b66d0e9dd4fae0::t_a65f241e0616e7 1-111
+drawfn/scripts/framework-browser-acceptance.mjs
+  s_b66d0e9dd4fae0::t_82a8b408bbbd17 1-62
+drawfn/scripts/npm-cli.mjs
+  s_b66d0e9dd4fae0::t_9166a99d375e3c 1-8
+drawfn/scripts/packed-consumer.mjs
+  s_b66d0e9dd4fae0::t_9b5b4b309af558 1-39
+drawfn/scripts/performance-acceptance.mjs
+  s_b66d0e9dd4fae0::t_812c2457cb48a7 1-41
+drawfn/testing/canvas.ts
+  s_b66d0e9dd4fae0::t_415e8b809547fc 1-58
+drawfn/testing/create-canvas.ts
+  s_b66d0e9dd4fae0::t_2bf560671e5d35 1-14
+drawfn/testing/scene.ts
+  s_b66d0e9dd4fae0::t_84bb03d4b85d66 1-27
+extfn/admin/package.json
+  s_b66d0e9dd4fae0::t_e536ce191e564e 21
+filefn/admin/package.json
+  s_b66d0e9dd4fae0::t_0b6cca7b3683b0 37
+filefn/docs/package.json
+  s_b66d0e9dd4fae0::t_529d061fb3650a 24-27,33-35
+filefn/docs/src/app.css
+  s_b66d0e9dd4fae0::t_434ea45b6b3e84 3
+filefn/docs/static/llms-full.txt
+  s_b66d0e9dd4fae0::t_3c5fcd9bbdcde3 3056-3061
+filefn/docs/vite.config.ts
+  s_b66d0e9dd4fae0::t_caa2d2f64f6332 6,9-15,24-31
+filefn/examples/full-demo/client/.svelte-kit/generated/root.svelte
+  s_b66d0e9dd4fae0::t_59c7623f942596 5
+filefn/examples/full-demo/client/.svelte-kit/output/client/.vite/manifest.json
+  s_b66d0e9dd4fae0::t_b5359cea984ba2 3,8,12,23-24,39,47,51,64-69,74-76,81-83
+filefn/examples/full-demo/client/.svelte-kit/output/client/_app/version.json
+  s_b66d0e9dd4fae0::t_59e8fc8e1021f7 1
+filefn/examples/full-demo/client/.svelte-kit/output/server/.vite/manifest.json
+  s_b66d0e9dd4fae0::t_77454fe59d6714 8-9,20,41-43,55,72,75-77,89-95,110-115
+filefn/examples/full-demo/client/.svelte-kit/tsconfig.json
+  s_b66d0e9dd4fae0::t_bacdb4e80e26c7 26,34-36
+filefn/python/pyproject.toml
+  s_b66d0e9dd4fae0::t_2c2bc1fc09e5f1 28
+filefn/server/package.json
+  s_b66d0e9dd4fae0::t_752a533dc1eabb 40,42-44
+flowfn/admin/package.json
+  s_b66d0e9dd4fae0::t_f6e9b6d071ba29 36-37
+flowfn/python/README.md
+  s_b66d0e9dd4fae0::t_03733bf2890fec 72-73
+flowfn/python/flowfn.egg-info/PKG-INFO
+  s_b66d0e9dd4fae0::t_1682f041df06ab 35
+flowfn/python/flowfn.egg-info/requires.txt
+  s_b66d0e9dd4fae0::t_fac6d5262fdf92 14
+flowfn/python/flowfn/__init__.py
+  s_b66d0e9dd4fae0::t_8b8401a4ea643f 5
+flowfn/python/flowfn/adapters/base.py
+  s_b66d0e9dd4fae0::t_546495bd8492f6 3-4
+flowfn/python/flowfn/adapters/memory.py
+  s_b66d0e9dd4fae0::t_a95550ebcd2978 5-8,101,107-108,111-113
+flowfn/python/flowfn/core/flow.py
+  s_b66d0e9dd4fae0::t_f874bd7e170602 3-13,34-40,59,65,79,114
+flowfn/python/flowfn/core/metrics.py
+  s_b66d0e9dd4fae0::t_6f9a5b29b3bf61 3
+flowfn/python/flowfn/monitoring/health.py
+  s_b66d0e9dd4fae0::t_6b770124c0e880 4-7
+flowfn/python/flowfn/patterns/batching.py
+  s_b66d0e9dd4fae0::t_c62d7b95ef2957 5-6
+flowfn/python/flowfn/patterns/priority.py
+  s_b66d0e9dd4fae0::t_ae0e05978378ca 4,30-31,33,36
+flowfn/python/flowfn/patterns/rate_limit.py
+  s_b66d0e9dd4fae0::t_2a34c178e9ad31 6
+flowfn/python/flowfn/queue/dlq.py
+  s_b66d0e9dd4fae0::t_1f993b575102c2 4-8
+flowfn/python/flowfn/queue/queue.py
+  s_b66d0e9dd4fae0::t_2ca5240ddecd8f 5-9
+flowfn/python/flowfn/queue/types.py
+  s_b66d0e9dd4fae0::t_4510dcc5de13b4 3,5-7
+flowfn/python/flowfn/storage/event_log.py
+  s_b66d0e9dd4fae0::t_7779a70c060402 3,5-9,96,137
+flowfn/python/flowfn/storage/job_storage.py
+  s_b66d0e9dd4fae0::t_e4cc5989fee35d 3,5,90-94
+flowfn/python/flowfn/storage/workflow_storage.py
+  s_b66d0e9dd4fae0::t_cc0bfe57af609b 4-5
+flowfn/python/flowfn/stream/stream.py
+  s_b66d0e9dd4fae0::t_1af3bb207cbf55 3-9,11,14,16-17,34-42,51,88-102,107-112,114-118,122-140
+flowfn/python/flowfn/stream/types.py
+  s_b66d0e9dd4fae0::t_1084cb6684dbc6 3-6
+flowfn/python/flowfn/utils/ids.py
+  s_b66d0e9dd4fae0::t_a28ac5eb72384b 4-5
+flowfn/python/flowfn/utils/time.py
+  s_b66d0e9dd4fae0::t_a90ee90a16dea9 6
+flowfn/python/flowfn/workflow/builder.py
+  s_b66d0e9dd4fae0::t_3dc86c0931b2f6 3-5
+flowfn/python/flowfn/workflow/types.py
+  s_b66d0e9dd4fae0::t_9156cc8629f8a0 3,5-7
+flowfn/python/flowfn/workflow/workflow.py
+  s_b66d0e9dd4fae0::t_375b5679914c33 3-5,7-8,11,13-14,228-230
+flowfn/python/pyproject.toml
+  s_b66d0e9dd4fae0::t_d938961dea6e5f 48,83
+flowfn/python/tests/test_basic.py
+  s_b66d0e9dd4fae0::t_b134ee5534caa8 4-7,12,23,43,51,68,76,93,107
+flowfn/python/tests/test_integration.py
+  s_b66d0e9dd4fae0::t_3f47f2c7c05c6f 4-7,12,22,27,43,50,53,64,77,87,91,94,97,109,124,134,138,157
+flowfn/python/tests/test_stream_subscribe.py
+  s_b66d0e9dd4fae0::t_ea8a63e02f8671 1-88
+flowfn/python/tests/test_workflow.py
+  s_b66d0e9dd4fae0::t_6a89cfa5c8b1d5 4-7,12,18,22,50,56,59,62,82,86,108,114,144,148
+flowfn/typescript/package.json
+  s_b66d0e9dd4fae0::t_38cda34e8cf795 3-4,47
+hostfn/admin/package.json
+  s_b66d0e9dd4fae0::t_1d0f6150360da9 36
+iconfn/package.json
+  s_b66d0e9dd4fae0::t_c1d611dd6f1ea6 3
+langfn/admin/package.json
+  s_b66d0e9dd4fae0::t_35d904b1a1a4d3 36
+langfn/python/langfn/__init__.py
+  s_b66d0e9dd4fae0::t_a5e69f2da73319 4,13,22,26
+langfn/python/langfn/agents/tool_agent.py
+  s_b66d0e9dd4fae0::t_53445c26c7059d 9,31-32,68
+langfn/python/langfn/client.py
+  s_b66d0e9dd4fae0::t_1cd2ad3237a565 6-19,24-31,41,46,63,65,78,81-83,85-87,122,244,452,457,470,481,485-486,489,591-593,718,725,829,835-837,892
+langfn/python/langfn/core/__init__.py
+  s_b66d0e9dd4fae0::t_90547c04a124cf 3,12,21
+langfn/python/langfn/core/types.py
+  s_b66d0e9dd4fae0::t_cd1bbbf0e8f3ac 14
+langfn/python/langfn/evaluation/evaluator.py
+  s_b66d0e9dd4fae0::t_fed4ed8d8199e7 10
+langfn/python/langfn/graph/__init__.py
+  s_b66d0e9dd4fae0::t_062da50c4b925a 2
+langfn/python/langfn/graph/checkpoint.py
+  s_b66d0e9dd4fae0::t_469c96556a9cc4 26
+langfn/python/langfn/graph/state_graph.py
+  s_b66d0e9dd4fae0::t_b36d39ae84f5bb 4,19,82,141,165-167,170,172-174
+langfn/python/langfn/http/__init__.py
+  s_b66d0e9dd4fae0::t_488e9c85c90e3a 3-8
+langfn/python/langfn/http/auth.py
+  s_b66d0e9dd4fae0::t_523e7d43567735 4-11,14-18,24,28,30,35,58,67-68
+langfn/python/langfn/http/handlers.py
+  s_b66d0e9dd4fae0::t_c1e2021c2fa6b0 5,26,33,56,86,111,123,136
+langfn/python/langfn/http/rate_limit.py
+  s_b66d0e9dd4fae0::t_6856cd54d9f789 4,9-16,42,44,50,52,63
+langfn/python/langfn/http/routes.py
+  s_b66d0e9dd4fae0::t_910d6035764291 7,11,15,22
+langfn/python/langfn/http/validation.py
+  s_b66d0e9dd4fae0::t_f5307a9f03b43a 3,5-6,8,13-14,129-133,161-165,169,172,182,242
+langfn/python/langfn/mcp/server.py
+  s_b66d0e9dd4fae0::t_38f1d36ed2a294 59
+langfn/python/langfn/mcp/stdio.py
+  s_b66d0e9dd4fae0::t_6c3da8ee957b87 20,110-111,114,121
+langfn/python/langfn/memory/summary.py
+  s_b66d0e9dd4fae0::t_6f9543e82d504b 63-64
+langfn/python/langfn/models/anthropic.py
+  s_b66d0e9dd4fae0::t_6d3e72c7020092 5-7,40,117,139
+langfn/python/langfn/models/base.py
+  s_b66d0e9dd4fae0::t_ce12b4aebe6140 4-5,7-15,29-30,73-74
+langfn/python/langfn/models/google.py
+  s_b66d0e9dd4fae0::t_71aff8dcf8262c 4-6,32,60
+langfn/python/langfn/models/mistral.py
+  s_b66d0e9dd4fae0::t_be9aef65126b40 7-8,35,83
+langfn/python/langfn/models/mock.py
+  s_b66d0e9dd4fae0::t_04629e6ff3b4ef 48-49,59-60
+langfn/python/langfn/models/ollama.py
+  s_b66d0e9dd4fae0::t_58c8dc3888a346 33,84
+langfn/python/langfn/models/openai.py
+  s_b66d0e9dd4fae0::t_2757ab060aca39 7-8,19,23,42,106
+langfn/python/langfn/observability/__init__.py
+  s_b66d0e9dd4fae0::t_f721bee161679a 11
+langfn/python/langfn/observability/storage.py
+  s_b66d0e9dd4fae0::t_cb063c83e4ee45 6-13
+langfn/python/langfn/observability/tracer.py
+  s_b66d0e9dd4fae0::t_7d5946d63682b8 42
+langfn/python/langfn/orchestration/chain.py
+  s_b66d0e9dd4fae0::t_9eb9c4756dddaf 4,36,50
+langfn/python/langfn/prompts/__init__.py
+  s_b66d0e9dd4fae0::t_90a2c8c15c544e 10
+langfn/python/langfn/prompts/registry.py
+  s_b66d0e9dd4fae0::t_f2295b4dfdef31 11
+langfn/python/langfn/rag/__init__.py
+  s_b66d0e9dd4fae0::t_272fc24a71ccb9 1-9
+langfn/python/langfn/rag/base.py
+  s_b66d0e9dd4fae0::t_244ecc3c697dad 28-30
+langfn/python/langfn/rag/db_vector_store.py
+  s_b66d0e9dd4fae0::t_e2aa27cd81b3a3 6,131-132,139-140
+langfn/python/langfn/rag/memoryfn.py
+  s_b66d0e9dd4fae0::t_711120d0b28500 19
+langfn/python/langfn/storage/cache.py
+  s_b66d0e9dd4fae0::t_4967230280bdff 47,50,55-57,88-89,97-98,106-107
+langfn/python/langfn/structured/output.py
+  s_b66d0e9dd4fae0::t_c75fa637ff9a00 5
+langfn/python/langfn/tools/base.py
+  s_b66d0e9dd4fae0::t_6bb4a2624a925c 47-48
+langfn/python/langfn/tools/calculator.py
+  s_b66d0e9dd4fae0::t_1c03323ff5a31a 5,12,21
+langfn/python/langfn/tools/policy.py
+  s_b66d0e9dd4fae0::t_e91353ecef4f5f 96-97
+langfn/python/langfn/utils/__init__.py
+  s_b66d0e9dd4fae0::t_9d308b983dca70 7
+langfn/python/langfn/utils/cancel.py
+  s_b66d0e9dd4fae0::t_5b2fb3f3a760de 7
+langfn/python/langfn/utils/concurrency.py
+  s_b66d0e9dd4fae0::t_98cbaadf5fbec2 17,24-25
+langfn/python/langfn/utils/token_counter.py
+  s_b66d0e9dd4fae0::t_62a12db77861da 3,6,20,35
+langfn/python/pyproject.toml
+  s_b66d0e9dd4fae0::t_59cf4172ed4ccc 27,65
+langfn/python/tests/mcp_stdio_server.py
+  s_b66d0e9dd4fae0::t_aeda0affac932c 8
+langfn/python/tests/test_budgets_retry_http.py
+  s_b66d0e9dd4fae0::t_282ae5bab6c0eb 3,6,34-35,41,45,47,51,55,65,79,81,84-85,87,91-92,94,98-99,101,104,133,135,139,153,215,224
+langfn/python/tests/test_chain.py
+  s_b66d0e9dd4fae0::t_18cca4a4f1d066 1-2,10,16,22,34,44,54
+langfn/python/tests/test_graph_and_eval_and_tracer.py
+  s_b66d0e9dd4fae0::t_c0d16cfcff6fa6 1-2,5-13,15,19,25-26,32,36,38,42,46,56,59,72,75,78,88,116,119,142,161,172,183,214,229,256,264,272,274-275,277,292,294,305,319
+langfn/python/tests/test_http_routes.py
+  s_b66d0e9dd4fae0::t_d41798e2c072d6 7,56,66,73,83,97,117,137-138,159,185,194,246,278,284-286
+langfn/python/tests/test_langfn_basic.py
+  s_b66d0e9dd4fae0::t_96203215696606 5,23,36,46,50,58,79,87,102-103,124,140,143
+langfn/python/tests/test_mcp_stdio.py
+  s_b66d0e9dd4fae0::t_d24f0e474bedde 3,14,34,49,53,56,59,62,79,83,86,89,92,111,113,116
+langfn/python/tests/test_memory_and_rag.py
+  s_b66d0e9dd4fae0::t_488f5b86ad85ec 1-2,4,10,13-14,17,22,44-45,70,82,99,101,104,115,118,124
+langfn/python/tests/test_openai_provider.py
+  s_b66d0e9dd4fae0::t_45c06d28eef212 7,12,31,37,70,89-90,94,117
+langfn/python/tests/test_performance_and_scaling.py
+  s_b66d0e9dd4fae0::t_8afdd581682153 1-2,4,8,18-19,22,27,42,74,93,108,111,121,128
+langfn/python/tests/test_prompt_and_structured.py
+  s_b66d0e9dd4fae0::t_866390de7d3509 3,7,50,67,69
+langfn/python/tests/test_prompts.py
+  s_b66d0e9dd4fae0::t_5f41ffacc19865 7,13,21,32
+langfn/python/tests/test_release_gate.py
+  s_b66d0e9dd4fae0::t_2118b1a960ebf9 7,132,146,175,196
+langfn/python/tests/test_tool_agent.py
+  s_b66d0e9dd4fae0::t_e96a1d07052405 2,10-18,37,39,41,44,62,75,93,108-109
+langfn/typescript/eslint.config.mjs
+  s_b66d0e9dd4fae0::t_5ef344aaeaf3bc 1-31
+langfn/typescript/package.json
+  s_b66d0e9dd4fae0::t_90019c52b5c975 109,112-113
+langfn/typescript/src/types/superfunctions.ts
+  s_b66d0e9dd4fae0::t_cda3a15f4d17c5 131
+langfn/typescript/src/utils/token-counter.ts
+  s_b66d0e9dd4fae0::t_105b2bf87673a9 1
+logfn/.conduct/db-codec-integration-20261028.md
+  s_b66d0e9dd4fae0::t_66184ecb3dcbf8 1-7
+logfn/.conduct/default-redaction-readiness.md
+  s_b66d0e9dd4fae0::t_ac96dce523f6e1 69-71
+logfn/.conduct/diagnostic-privacy-readiness.md
+  s_b66d0e9dd4fae0::t_54bd9077970b78 3,5
+logfn/.conduct/mcp-pointer-integration-20261028.md
+  s_b66d0e9dd4fae0::t_a00b1a28cb250e 1-7
+logfn/.conduct/python-typing-readiness.md
+  s_b66d0e9dd4fae0::t_d5685a13a6f882 23-24
+logfn/.conduct/readiness.md
+  s_b66d0e9dd4fae0::t_de24edd43693d3 13-20,26,32,121,180
+logfn/.conduct/response-correlation-readiness.md
+  s_b66d0e9dd4fae0::t_61df6f53169a0e 5,15,19
+logfn/.conduct/shared-integration-20261027.md
+  s_b66d0e9dd4fae0::t_edd16e06765279 1-14
+logfn/admin/README.md
+  s_b66d0e9dd4fae0::t_5190994b95f587 5
+logfn/admin/package.json
+  s_b66d0e9dd4fae0::t_925f2c40194fcc 37
+logfn/python/README.md
+  s_b66d0e9dd4fae0::t_835d842e9cf5b3 55-59,61-86,106,110,114,129-133,148-192,218-220,231-236,239,320-321
+logfn/python/src/logfn/__init__.py
+  s_b66d0e9dd4fae0::t_ccec07caa990e2 4
+logfn/python/src/logfn/core.py
+  s_b66d0e9dd4fae0::t_0d1b1d3a4de4eb 5-8,33-63,68-78,83-84,97-98,102-111,115-118,120-150,153-155,158-159,162-172,178-182,228-232,240-242,247-248,268-272,274,320,334,340-341,344,393-408,411-424,437
+logfn/python/src/logfn/default_redaction.py
+  s_b66d0e9dd4fae0::t_65251709c10909 2-4,11-379,383-398,412,415
+logfn/python/src/logfn/pipeline.py
+  s_b66d0e9dd4fae0::t_dcf6ece9221654 40-48
+logfn/python/src/logfn/serialization.py
+  s_b66d0e9dd4fae0::t_f34e5d3c4a4e79 4,6-10,12-41,48-50,56,59,61-63,73-76,78,80-89,101-138,142-154,156-162,164-218,220,225-229,235,240-255
+logfn/python/src/logfn/sinks.py
+  s_b66d0e9dd4fae0::t_82b7b588eb51d5 61-91,96-98,139-146,153,160-164,179,182,212-213,221,239-245,250-251,253-296,298-320
+logfn/python/tests/test_async_sinks.py
+  s_b66d0e9dd4fae0::t_586a861280a719 96-182
+logfn/python/tests/test_core.py
+  s_b66d0e9dd4fae0::t_0716953908c394 14-16
+logfn/python/tests/test_default_redaction.py
+  s_b66d0e9dd4fae0::t_d430c663d3dfde 2,4-7,12-19,40-70,157-542
+logfn/python/tests/test_dynamic_sinks.py
+  s_b66d0e9dd4fae0::t_e64b23f49cdff6 85-106
+logfn/python/tests/test_error_reporting.py
+  s_b66d0e9dd4fae0::t_67f9b1ed16ed8f 88-153
+logfn/python/tests/test_http_delivery.py
+  s_b66d0e9dd4fae0::t_65cadb804c81d2 7,48-49,51,57,60,64-79,276-313,350-434
+logfn/python/tests/test_pipeline.py
+  s_b66d0e9dd4fae0::t_e0f3d94833876f 2,28-42
+logfn/python/tests/test_serialization.py
+  s_b66d0e9dd4fae0::t_feea86a3c27d39 1,4,109-265
+logfn/scripts/diagnostic-privacy-acceptance.mjs
+  s_b66d0e9dd4fae0::t_6f07d42a178773 5,32,44-51,61
+logfn/scripts/packed-http-acceptance.mjs
+  s_b66d0e9dd4fae0::t_ac71703d621810 9,18,24,34-46,50
+logfn/scripts/watchfn-integration-acceptance.mjs
+  s_b66d0e9dd4fae0::t_776191df72ae1b 52-54,57-61
+logfn/typescript/README.md
+  s_b66d0e9dd4fae0::t_bdbba6f09d6fe8 62-80,373,375,377,415,419-422,427-438,447-449,452-455,460-462,472-491,498-504,511-513,549-552,555,559,562,604-649,710,732-739
+logfn/typescript/package.json
+  s_b66d0e9dd4fae0::t_fefb405ac60bd7 3,29-32,96
+logfn/typescript/src/core/async-delivery.test.ts
+  s_b66d0e9dd4fae0::t_9ad2950d36cbe0 55-88
+logfn/typescript/src/core/default-redaction.test.ts
+  s_b66d0e9dd4fae0::t_8cbbb7585706c2 2,9-12,26-51,72-390,437-536
+logfn/typescript/src/core/error-hook.test.ts
+  s_b66d0e9dd4fae0::t_93f639bc5f017f 30-41,50-221
+logfn/typescript/src/core/logger.ts
+  s_b66d0e9dd4fae0::t_cc27bda548fa71 17-101,114-115,118-120,160-193,195,199,201-236,276,278-280,283,285,309,318,320,330-332,341-342,348-349,419,428-446
+logfn/typescript/src/http/fastify.ts
+  s_b66d0e9dd4fae0::t_c60ba6d3c3eba6 44,73-80,107-109,115
+logfn/typescript/src/http/framework-contracts.test.ts
+  s_b66d0e9dd4fae0::t_5bedf8e8dda45a 49-64
+logfn/typescript/src/http/hono.ts
+  s_b66d0e9dd4fae0::t_88d1fdf41d027c 95-98
+logfn/typescript/src/http/middleware.ts
+  s_b66d0e9dd4fae0::t_52660f57d2a3ec 9,21-24,110-121,124,199-200,216-220,222,244-259,287
+logfn/typescript/src/http/response-correlation.test.ts
+  s_b66d0e9dd4fae0::t_490c9efe546dc0 89-126
+logfn/typescript/src/http/shared.test.ts
+  s_b66d0e9dd4fae0::t_a41657fd5211e2 39-52
+logfn/typescript/src/http/shared.ts
+  s_b66d0e9dd4fae0::t_d22d06cf93b93d 25-26,28-33
+logfn/typescript/src/http/watch-delivery.test.ts
+  s_b66d0e9dd4fae0::t_649d108ed7aa68 63-73,88-126
+logfn/typescript/src/http/watch-router.test.ts
+  s_b66d0e9dd4fae0::t_92888756c15cae 2
+logfn/typescript/src/http/watch.test.ts
+  s_b66d0e9dd4fae0::t_db998201a1051f 5,413-457
+logfn/typescript/src/http/watch.ts
+  s_b66d0e9dd4fae0::t_135cb80320c893 28-48,105-107,179-188
+logfn/typescript/src/pipeline/default-redaction.ts
+  s_b66d0e9dd4fae0::t_689431538b0846 4-19,21-315,330-337
+logfn/typescript/src/serialization-bounds.test.ts
+  s_b66d0e9dd4fae0::t_29967a298b1509 44-53
+logfn/typescript/src/sinks/http-delivery.test.ts
+  s_b66d0e9dd4fae0::t_965c26838486c2 3-4,45-57,67-68,70,72-83,85-88,125-188
+logfn/typescript/src/sinks/http-lifecycle.test.ts
+  s_b66d0e9dd4fae0::t_a3c23fee121e77 56-59,71-124
+logfn/typescript/src/sinks/http.ts
+  s_b66d0e9dd4fae0::t_b27e8ce99f42d3 49,53-57,62-88,116,122-125,134,147-153,155,162,166,170-173,180,188-232,235,244-246,251-253,256,259,265,271-272,277,299-320,323-331,334-343,345,349-352,354-355,364-370,393,396,401-406,415-416
+logfn/typescript/src/sinks/indexeddb-queue.test.ts
+  s_b66d0e9dd4fae0::t_0c4c4811c0187a 36-70,111-221
+logfn/typescript/src/sinks/indexeddb-queue.ts
+  s_b66d0e9dd4fae0::t_893db977710775 8,12,33-34,36,38,40,49,78,80-81,83
+logfn/typescript/src/types.ts
+  s_b66d0e9dd4fae0::t_456f34bb2c4986 96,104-106,180-183,187
+logfn/typescript/src/validation.ts
+  s_b66d0e9dd4fae0::t_8ecb4ad3717060 6,32-34,47-68,91-153,155,158-159,162-165,167-175,202,205,208-211
+package-lock.json
+  s_b66d0e9dd4fae0::t_470acfc84c8208 71-79,88,106,126,1242,1250,2752,3093,3432-3434,3772,4111,4457,4459,4814-4818,4824-4825,5122,6694,7033-7034,7372,7710,8048-8049,8734,9074,9077,12290,13489-13490,15441,16582,16585-16586,16910,16913-16921,16924,16926-16929,16934-16936,16950-16970,16972-16985,16987-17384,17559-17562,17564-17772,17798-17806,17908-17909,17912,17914,17917-17921,17924-17999,18001-18057,18059,18062-18368,18371-18378,18381-18439,18442-18445,18449-18609,18611-18827,18830-18831,18834-18840,18842-18848,18851-18852,18855-18861,18863-18869,18872-18873,18876-18882,18884-18890,18893-18894,18897-18903,18905-18911,18914-18915,18918-18924,18926-18932,18935-18936,18939-18945,18947-18953,18956-18957,18960-18974,18977-18978,18981-18987,18989-18993,18995-18999,19002-19008,19010-19014,19016-19020,19023-19029,19031-19035,19037-19041,19044-19047,19050-19053,19056,19063-19066,19068,19070-19073,19077,19080-19083,19090-19093,19097-19101,19104,19107,19110-19165,19168-19171,19175-19185,19187-19188,19190-19193,19200,19207-19214,19216-19217,19223,19229-19241,19252-19254,19258-19260,19262-19266,19272,19289,19316,19329,19344,19359,19372,19387,19397,19414,19424,19434,19441,19448,19458,19471,19481,19491,19514,19587-19589,19592-19596,19599,19604-19608,19611,19614,19631,19658,19671,19686,19701,19714,19729,19739,19756,19766,19776,19783,19790,19800,19813,19823,19833,19856,19929-19930,19935,19940,19950,19967,19994,20007,20022,20037,20050,20065,20075,20092,20102,20112,20119,20126,20136,20149,20159,20169,20192,20227-20345,20348-20350,20353-20357,20359-20360,20363-20366,20370-20371,20374-20387,20391,20393-20396,20402-20405,20409,20411,20418,20429-20432,20436,20442-20445,20449-20450,20456-20459,20463-20465,20472-20475,20482-20485,20489-20491,20497-20500,20502,20504,20507-20510,20517-20527,20529,20531-20533,20535-20563,20566-20576,20579-20581,20583,20586-20589,20591-20598,20600-20603,20607-20610,20613-20629,20631,20634-20637,20641-20646,20648-20656,20659-20662,20666,20669-20672,20679-20682,20686-20691,20694,20700-20751,20754-20757,20761-20771,20773-20774,20776-20779,20786,20793-20800,20802-20803,20809,20815-20827,20838-20840,20844-20846,20849,20852-20866,20869-20871,20874,20876-20888,20891-20892,20896,20898-20901,21221,21224,21405,22245,22248-22249,22580,22678-23007,23010-23012,23015,23018,23028,23045,23055-23065,23075-23080,23082,23089,23096,23106,23119,23129,23139,23162-23165,23170-23176,23206-23207,23235-23236,23240-23242,23249-23252,23255-23259,23262-23331,23348,23375,23388,23403,23418,23431,23446,23456,23473,23483,23493,23500,23507,23517,23530,23540,23550,23573,23646-23647,23650-23655,23658-23660,23662,23665,23668-23669,23673-23678,23684-23697,23701,23703-23706,23712-23715,23719,23721,23728,23739-23742,23746,23752-23755,23759-23760,23766-23769,23773-23775,23782-23795,23799-23801,23807-23810,23813-23829,23831-23994,23997-23998,24001-24015,24018-24019,24022-24028,24030-24034,24036,24038-24040,24043-24049,24051-24055,24057-24061,24064-24070,24072-24076,24078-24082,24085,24092-24095,24097,24099-24102,24106,24109-24112,24119-24122,24126-24130,24133,24136,24139-24194,24197-24200,24204-24214,24216-24217,24219-24222,24229,24236-24243,24245-24246,24252,24258-24270,24281-24283,24287-24289,24292,24299,24316,24343,24356,24371,24386,24399,24414,24424,24441,24451,24461,24468,24475,24485,24498,24508,24518,24541,24614-24616,24619-24624,24627-24630,24637-24641,24644,24647,24664,24691,24704,24719,24734,24747,24762,24772,24789,24799-24808,24818,24825,24832,24842,24855,24865,24875-24882,24905,24978-24980,24983,24995,25005,25022,25035,25050,25065,25078,25093,25103,25120,25130,25140,25147,25154,25164,25177,25187,25197,25204,25227,25300-25304,25307-25309,25311-25312,25314-25324,25329,25675,25678,25682-25684,25687-25688,25690-25691,25697,26038,26041,30557-30899,30903-30904,30915,30925,30942,30969,30982,30997,31012,31025,31040,31050,31067,31077,31087,31094,31101,31111,31124,31134,31144,31167,31240-31241,31245,31256,31266,31283,31310,31323,31338,31353,31366,31381,31391,31408,31418,31428,31435,31442,31452,31465,31475,31485,31508,31558-31798,31801,31804,31807,31812-31824,31827,31830-31834,31837-31850,31852-31874,31877-31882,31885,31902,31929,31942,31957,31972,31985,32000,32010,32027,32037,32047,32054,32061,32071,32084,32094,32104,32127,32200-32456,32460-32463,32466-32474,32477,32484,32494,32498,32536-32547,32550-32555,32557-32580,32583,32586,32589,32592,32595,32598,32601,32604,32607,32610,32613,32618-32620,32622-32628,32631-32634,32638,32655,32668,32683,32698,32711,32726,32736,32753,32763,32773,32780,32787,32797,32810,32820,32830,32853,32926-32930,32933-32935,32937-32958,32963-32967,32970-32972,32975-32977,32979-32995,32998-33010,33012-33013,33016-33064,33066-33068,33070,33073,33076-33080,33083-33105,33108-33139,33142-33144,33147-33151,33155-33162,33168-33170,33178-33192,33207,33222,33237,33250,33266-33355,33371-33410,33476-33479,33481,33483,33486-33489,33492-33494,33500-33502,33505-33509,33512,33514,33516-33518,33522-33523,33525-33528,33531,33548-33575,33588,33603,33618,33631,33646,33656,33673,33683,33693,33700,33707,33717,33720-33724,33726-33727,33730,33740,33750,33773,33846-33848,33851,33858-33859,33862-33863,33867,33871-33874,33876-33877,33880-33883,33887-33891,33894-33897,33901-33902,33904-33905,33908-33911,33913,33915-33918,33922-33923,33925-33926,33929-33932,33936,33942-33945,33949-33969,33972,33975,33978,33983-33988,33990-33993,33995-33996,33999-34002,34006-34009,34012-34015,34018-34019,34022-34025,34027-34029,34032-34035,34039-34040,34042-34043,34046-34048,34051,34053-34062,34064-34068,34071-34074,34078-34082,34085-34088,34092-34093,34096,34110,34117,34131,34144,34185,34198,34212,34225-34235,34237-34238,34241-34251,34261,34275-34276,34280,34283,34286,34288-34294,34296-34297,34299-34300,34303-34306,34310-34314,34317-34327,34331-34332,34335-34338,34341-34342,34345-34348,34350-34352,34355-34358,34362-34363,34365-34366,34369-34379,34383-34384,34386-34387,34390-34400,34404,34406-34412,34415-34418,34421-34423,34425,34428-34431,34435-34455,34459-34466,34469-34472,34475-34491,34493,34496-34499,34502-34512,34514-34518,34521-34524,34526-34532,34534,34537-34540,34544,34547,34550-34553,34557,34560-34563,34565,34567,34570-34573,34577-34578,34581,34589,35937,35964-35966,35969-35970,35973,35975,35977-35979,35982-35986,35989-36074,36076-36085,36087,36090-36094,36097-36101,36104-36317,36982-36985,36991,36993,38006,38008-38009,38011,39007-39008,39332,39335,39768,41470,41798,41801-41802,42143,42471,42474,42836,43779,45649,46778,46782,47112,47117,54299-54300,56444,56770,56772-56773,56791,56984,56996,58945-58999,59014-59021,60988-60995,62697-62705,63752-63757,64141-64146,65711-65713,65717,65723,65813-65816,67163-67165,67176-67178,67188-67201,67203-67205,67216-67218,67229-67231,67242-67244,67255-67257,67268-67270,67281-67283,67294-67296,67307-67309,67320-67322,67333-67335,67346-67348,67359-67361,67372-67374,67385-67387,67398-67400,67411-67413,67424-67426,67437-67439,67450-67452,67463-67465,67476-67478,67489-67491,70298-70349,70359-70365,72329-72331,72342,72354-72355,72363-72364,72976-72991,73276,73380-73381,73459-73522,73952-73966,74335-74344,74899-74902,74973-74975,74984,75027-75029,75140-75155,76287-76289,76294,76311,76313,76364-76366,76444-76445,76558-76559,76620-76622,76636,76642-76643,76645-76646,76653-76718,76867-76869,78172-78173,80857-80858,83941-83950,84492-84497,84500,84683-84685,84688,84694,84707-84714,84716,85053-85055,85418-85420,85423-85424,85506-85507,86171-86173,86344-86346,86360-86384,86815-86817,86832-86834,89175-89194,90469-90481,90514-90515,94387-94401,95051,95063,98959,101981,102318,103676,104013,104687,105025,105363,106367,107064,107067,107069,107089,108087-108092,108095-108097,108099,108101-108104,108107,108110-108111,108115-108124,108127,108130-108132,108134-108137,108139-108148,108151-108154,108157-108173,108175-108176,108179-108180,108183,108186-108187,108191-108194,108198,108201-108204,108207-108208,108210-108211,108214,108230-108233,108236-108244,108248-108251,108254-108257,108260-108264,108267,108269-108270,108273,108276-108277,108280-108283,108286,108289-108292,108295,108298-108301,108304-108334,108337-108338,108341-108344,108347-108351,108354,108357,108360-108363,108365-108366,108369-108370,108373-108376,108379-108387,108390-108391,108394-108397,108399-108400,108403-108406,108409-108412,108415-108416,108419-108422,108425,108428-108437,108440-108444,108447-108450,108454-108456,108459-108462,108465,108468-108471,108473-108475,108477-108481,108484-108487,108489-108491,108493-108497,108500-108503,108505-108517,108519-108523,108526,108529-108532,108534-108539,108541,108544-108547,108549-108561,108563-108567,108570-108573,108576-108579,108582,108585-108586,108589-108592,108595-108597,108600,108603-108613,108615-108626,108633-108640,108647-108657,108665-108672,108679-108688,108695-108707,108714-108722,108724-108731,108738-108747,108754-108762,108769-108771,108775-108780,108785,108789,109130,109134,109475,109479,109820,110164,110511-110513,110837,110840,111191,111535,111870,111873-111875,112380,112383,112719,112722-112723,113059,113415,113759,113762-113766,113770,113773,113775,113780,113786,114232,115845,116417,116420,116742,117091,117102,119005-119006,119009,119016,119349,119353,119679,120791-120792,121127,123854-123869,124005-124019,124044-124062,129794-129795,130119,130317-130318,130642,130938-130964,130967,130970,131045-131401,131561-131606
+searchfn/admin/package.json
+  s_b66d0e9dd4fae0::t_e3a0f1921d7b7c 37
+searchfn/python/src/searchfn/__init__.py
+  s_b66d0e9dd4fae0::t_54d06088637b82 3
+searchfn/python/src/searchfn/indexing.py
+  s_b66d0e9dd4fae0::t_deefd4981f8530 1-3,63,65
+searchfn/python/src/searchfn/search.py
+  s_b66d0e9dd4fae0::t_0601b17f51a9e5 1-2,4,11,22,25,34,43
+searchfn/python/src/searchfn/server.py
+  s_b66d0e9dd4fae0::t_c9d2181ac9bd68 1-2,9,12,21,35,49
+searchfn/python/src/searchfn/utils.py
+  s_b66d0e9dd4fae0::t_5b2d99c4af3f61 2,7,14,22,33
+searchfn/server/package.json
+  s_b66d0e9dd4fae0::t_a3f0ff00f963d9 15
+secfn/admin/package.json
+  s_b66d0e9dd4fae0::t_2783a6d29ae2a2 37,40
+secfn/cli/README.md
+  s_b66d0e9dd4fae0::t_c6282c46500372 19-20
+secfn/cli/package.json
+  s_b66d0e9dd4fae0::t_805a3a42e25806 3
+secfn/cli/src/run.test.ts
+  s_b66d0e9dd4fae0::t_a778f36b7f0736 1,66-95
+secfn/cli/src/run.ts
+  s_b66d0e9dd4fae0::t_6cab3108e9930b 135-142,196-199,212-214
+secfn/core/eslint.config.mjs
+  s_b66d0e9dd4fae0::t_9c22fcac22185b 1-31
+secfn/core/package.json
+  s_b66d0e9dd4fae0::t_5128c585a8a0e0 48,59
+secfn/core/src/__tests__/scanner.test.ts
+  s_b66d0e9dd4fae0::t_8772d89bd74ee6 1,4,26-135
+secfn/core/src/encryption.ts
+  s_b66d0e9dd4fae0::t_c22ffceb8bcc61 4,9,18-19,49,78,108,112-114
+secfn/core/src/scanner/reporters.ts
+  s_b66d0e9dd4fae0::t_cfd55d3ed39a22 2,33-42
+secfn/core/src/scanner/scanner.ts
+  s_b66d0e9dd4fae0::t_ff969a56217fbf 2,7,45,48-61,65-68,71
+secfn/core/src/scanner/utils.ts
+  s_b66d0e9dd4fae0::t_8700e733c9f46a 49-125
+secfn/docs/content/docs/rate-limiting.mdx
+  s_b66d0e9dd4fae0::t_23c54b47ee351f 20
+secfn/docs/content/docs/reference/server.mdx
+  s_b66d0e9dd4fae0::t_4a3e772bb3dc42 13-14,36-37,41
+secfn/docs/content/docs/security-monitoring-with-logfn.mdx
+  s_b66d0e9dd4fae0::t_9e36d325e5803c 19
+secfn/docs/content/docs/server-setup.mdx
+  s_b66d0e9dd4fae0::t_6be2f852da7eb5 47-49,70-71
+secfn/python/examples/basic_usage.py
+  s_b66d0e9dd4fae0::t_a4cd73afe18ad0 8,13,39,52,77,167-170
+secfn/python/pyproject.toml
+  s_b66d0e9dd4fae0::t_a5ec5baabc7239 30
+secfn/python/secfn/__init__.py
+  s_b66d0e9dd4fae0::t_d47510b1f36623 6,13,17,50
+secfn/python/secfn/access_control/rbac.py
+  s_b66d0e9dd4fae0::t_0a5fc5a4922e6e 7,21,37,54,60,87,108,111,153,156,175,178,197,201,232,248
+secfn/python/secfn/monitoring/security_monitor.py
+  s_b66d0e9dd4fae0::t_626189253b6c53 5,23,41,62,72,95,98,103,152,156,177,181,198
+secfn/python/secfn/rate_limiting/__init__.py
+  s_b66d0e9dd4fae0::t_27ca49d2f82756 3,5
+secfn/python/secfn/rate_limiting/rate_limiter.py
+  s_b66d0e9dd4fae0::t_4108645efdf8c6 4,16-19,27,31,47,55-75,83,88,91,98-100,108-109,111,119-120,122,130-133,136-137,155,160,236
+secfn/python/secfn/scanning/scanner.py
+  s_b66d0e9dd4fae0::t_40f8f0d1a2eb87 26,46,63,66,70,129,133,137,165,170,183,186
+secfn/python/secfn/schema.py
+  s_b66d0e9dd4fae0::t_f40064c4d58549 3,5,8,10,13
+secfn/python/secfn/secfn.py
+  s_b66d0e9dd4fae0::t_32e01bc9ed2723 3,7,11,23,37,51,56,59,82,86,100-101,104,108,127,132,153,159,176,179
+secfn/python/secfn/secrets/encryption.py
+  s_b66d0e9dd4fae0::t_057691eefac3e7 28,32,35,64,68,71,96,99
+secfn/python/secfn/secrets/vault.py
+  s_b66d0e9dd4fae0::t_0b0fed79542f00 7,23,41,55,60,96,100,103,131,134,162,167,189,193,207,211,214,229,232,251,262
+secfn/python/secfn/storage/file_storage.py
+  s_b66d0e9dd4fae0::t_c1d6aa9b24c22f 7,15,24,27,35,38,47-48,52,66,78,82,93,97,120
+secfn/python/secfn/types.py
+  s_b66d0e9dd4fae0::t_c2ec80ba79eadd 4,62-65,84,95-97,142-143,155,171,185,197,211,230,232,237-238,254,281,283-284,332,334
+secfn/python/secfn/utils/helpers.py
+  s_b66d0e9dd4fae0::t_3861e4033520a8 11,14,25,28,52,56,68,71,84,87,93
+secfn/python/tests/conftest.py
+  s_b66d0e9dd4fae0::t_f891e9daa6b00f 5,9,14,23,29,37
+secfn/python/tests/test_access_control.py
+  s_b66d0e9dd4fae0::t_eefabcbd3cf8a6 6,11,24,47,64,88
+secfn/python/tests/test_encryption.py
+  s_b66d0e9dd4fae0::t_e7901c73094674 10,27,39,51
+secfn/python/tests/test_rate_limiter.py
+  s_b66d0e9dd4fae0::t_012a5d8918c31d 1-43
+secfn/python/tests/test_secrets_vault.py
+  s_b66d0e9dd4fae0::t_d0c3f155abaa45 6-7,11,26,32,44,60,77,94,104
+secfn/server/README.md
+  s_b66d0e9dd4fae0::t_d17dfe44d05cab 38-71
+secfn/server/package.json
+  s_b66d0e9dd4fae0::t_b6fb2bf1789595 42-43,46,49
+secfn/server/src/__tests__/access.test.ts
+  s_b66d0e9dd4fae0::t_c6c2628dddb960 1,51-155
+secfn/server/src/__tests__/server.test.ts
+  s_b66d0e9dd4fae0::t_87f382d5f36fa1 1,32-656
+secfn/server/src/access.ts
+  s_b66d0e9dd4fae0::t_4b1bf72feb4b8f 74-84,86,95,97-98,103-134,169-177
+secfn/server/src/router.ts
+  s_b66d0e9dd4fae0::t_9df8c3be442e6b 4,22-26,35,48-68,216,288,293,306,335-362,370
+secfn/server/src/types.ts
+  s_b66d0e9dd4fae0::t_51e67251df4636 36,70-76
+secfn/server/src/vault.ts
+  s_b66d0e9dd4fae0::t_24a3e9e2a1fd1a 134-149,352-359,736-752,774-778,780,782-784,788-803,822-828,844,857-892,899-930,1032-1041,1043-1052,1293-1296,1318-1322
+sendfn/admin/package.json
+  s_b66d0e9dd4fae0::t_0352caba4b40f2 36,40
+sendfn/python/examples/basic_email.py
+  s_b66d0e9dd4fae0::t_0ce61f30e3ba6b 15,55
+sendfn/python/examples/suppression.py
+  s_b66d0e9dd4fae0::t_2d87d35d7a03dc 16
+sendfn/python/examples/templates.py
+  s_b66d0e9dd4fae0::t_93b808bfd08b0f 15,54,56,58
+sendfn/python/pyproject.toml
+  s_b66d0e9dd4fae0::t_1b3170254a3464 96
+sendfn/python/sendfn/__init__.py
+  s_b66d0e9dd4fae0::t_c02e1fd70cf8cb 35,57-61,66,71
+sendfn/python/sendfn/client.py
+  s_b66d0e9dd4fae0::t_8d3d1be4411e76 47,87,90,96,106,111,114,119,124,156,159,180,198
+sendfn/python/sendfn/database/helpers.py
+  s_b66d0e9dd4fae0::t_30e89b294f235f 328,342
+sendfn/python/sendfn/database/memory.py
+  s_b66d0e9dd4fae0::t_be470bac06a3dc 7,10,34-48,52,71,76,78,92,94,96,100,103,105,108,113,120,126,129,131,133,139-141,143,145,151-153,155,177,179,182,187,190,192,195,200,203,205,209,223,225,228,233,271,273,288,290,315
+sendfn/python/sendfn/email/service.py
+  s_b66d0e9dd4fae0::t_a898375da704cb 51,60,81-82,88,152-154,224-226,233
+sendfn/python/sendfn/email/templates.py
+  s_b66d0e9dd4fae0::t_4f94f9c9aad4ac 55,83,111-112,195,200,229,231,233,235,237,239,265,267,269
+sendfn/python/sendfn/events/aws_sns_verifier.py
+  s_b66d0e9dd4fae0::t_c044f1d22e161c 134
+sendfn/python/sendfn/events/webhook_handler.py
+  s_b66d0e9dd4fae0::t_c2015cbdd795aa 121,155-156
+sendfn/python/sendfn/http/__init__.py
+  s_b66d0e9dd4fae0::t_91ab2406b4cc56 7-8,14
+sendfn/python/sendfn/http/fastapi.py
+  s_b66d0e9dd4fae0::t_726ebc03b43add 6,9,13,28,51,56,59
+sendfn/python/sendfn/push/__init__.py
+  s_b66d0e9dd4fae0::t_1bce9a6a2261d0 3-4,26
+sendfn/python/sendfn/push/apns.py
+  s_b66d0e9dd4fae0::t_834fa0cb92884b 7,54,81-83,128,136
+sendfn/python/sendfn/push/device_manager.py
+  s_b66d0e9dd4fae0::t_510f3f9aab9fa4 10,130
+sendfn/python/sendfn/push/fcm.py
+  s_b66d0e9dd4fae0::t_34f5e7ab2a734c 53-54
+sendfn/python/sendfn/sms/console.py
+  s_b66d0e9dd4fae0::t_21f9da76fad6cf 6
+sendfn/python/tests/conftest.py
+  s_b66d0e9dd4fae0::t_6de698740d077f 9,47-53
+sendfn/python/tests/test_email_service.py
+  s_b66d0e9dd4fae0::t_0255377c2e066d 11,41,51,74,94,113,115,125,141,153,193,215,250,266-267
+sendfn/python/tests/test_http_routes.py
+  s_b66d0e9dd4fae0::t_79b5512a3db63e 17,20,68,72,290
+sendfn/python/tests/test_imports.py
+  s_b66d0e9dd4fae0::t_5da93763a6b8db 5-6,28,51
+sendfn/python/tests/test_memory_adapter.py
+  s_b66d0e9dd4fae0::t_670f6917b94224 7-13
+sendfn/python/tests/test_models.py
+  s_b66d0e9dd4fae0::t_a1df3d460560c5 11,33,45,69,74,84,86-87,89
+sendfn/python/tests/test_public_api.py
+  s_b66d0e9dd4fae0::t_8dd0c1e3af8757 4,18,69,106,127,135-138
+sendfn/python/tests/test_push.py
+  s_b66d0e9dd4fae0::t_80db3a3934c8eb 7,12,14,128,166,209-211,226,254,257-258,263,266,298,304,326,330,346,361
+sendfn/python/tests/test_templates.py
+  s_b66d0e9dd4fae0::t_b93229a985550f 6
+sendfn/python/tests/test_webhook_handler.py
+  s_b66d0e9dd4fae0::t_086648a0511619 33,37,140-152
+sendfn/typescript/package.json
+  s_b66d0e9dd4fae0::t_ba48adab3cc3f6 94
+superconsole/src/lib/components/resource-pages.ts
+  s_b66d0e9dd4fae0::t_4378fe5213536d 284
+superconsole/tests/ui/resource-pages.test.ts
+  s_b66d0e9dd4fae0::t_b70f67954ea1ea 190
+testfn/admin/package.json
+  s_b66d0e9dd4fae0::t_376fac619641d2 36-37
+watchfn/python/tests/test_batching.py
+  s_b66d0e9dd4fae0::t_da709debee9c7f 2-3,149-234
+watchfn/python/watchfn/core/context_manager.py
+  s_b66d0e9dd4fae0::t_51374c74b2fb60 3
+watchfn/python/watchfn/core/metric_aggregator.py
+  s_b66d0e9dd4fae0::t_4a53f7619918e0 3,42-43,80,83-84,96-98
+watchfn/python/watchfn/utils/batching.py
+  s_b66d0e9dd4fae0::t_d62ed196a7848a 20-21,40-44,48,57-60,65,70,73,78,81-93,105-109
+watchfn/typescript/package.json
+  s_b66d0e9dd4fae0::t_de9e304224bfc8 3,94
+watchfn/typescript/tests/core/metric-aggregator.test.ts
+  s_b66d0e9dd4fae0::t_bed15fc20eee91 4-10,40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "73a5ae89bbd92abad94b3cc3b89a1022f72aab39",
+  "prompts": {},
+  "sessions": {
+    "s_a942b80e5f2ac3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "27dcc4ee-6c69-4277-bdf9-dcf1bdede269",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_b66d0e9dd4fae0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9c393cf-f180-42b3-b545-a1dbf02818e0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,19 @@
+watchfn/python/README.md
+  s_8ce0f82b0bdced::t_bb8f9abb7cb45f 248-251,298-300
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0713debc89ba3a5572376cc241e12c833df79889",
+  "prompts": {},
+  "sessions": {
+    "s_8ce0f82b0bdced": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_8ce0f82b0bdced",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
