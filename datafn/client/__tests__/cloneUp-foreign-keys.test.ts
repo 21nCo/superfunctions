@@ -52,6 +52,15 @@ const schema: DatafnSchema = {
         { name: "peerId", type: "string", required: false, nullable: true },
       ],
     },
+    // A reference that must always be set.
+    {
+      name: "nodes",
+      version: 1,
+      fields: [
+        { name: "label", type: "string", required: true },
+        { name: "peerId", type: "string", required: true, nullable: false },
+      ],
+    },
   ],
   relations: [
     {
@@ -74,6 +83,14 @@ const schema: DatafnSchema = {
     {
       from: "links",
       to: "links",
+      type: "many-one",
+      relation: "peer",
+      inverse: "peers",
+      fkField: "peerId",
+    },
+    {
+      from: "nodes",
+      to: "nodes",
       type: "many-one",
       relation: "peer",
       inverse: "peers",
@@ -228,7 +245,7 @@ describe("DATA-15: cloneUp against SQLite with foreign keys", () => {
   });
 
   it("pushes a folder tree and files whose ids sort child-first", async () => {
-    const storage = new MemoryStorageAdapter(["files", "folders", "links"]);
+    const storage = new MemoryStorageAdapter(["files", "folders", "links", "nodes"]);
     // Ids sort child before parent: "folders:a" < "folders:m" < "folders:z".
     await storage.upsertRecord("folders", {
       id: "folders:a",
@@ -268,7 +285,7 @@ describe("DATA-15: cloneUp against SQLite with foreign keys", () => {
   });
 
   it("pushes a two-record reference cycle by setting one reference afterwards", async () => {
-    const storage = new MemoryStorageAdapter(["files", "folders", "links"]);
+    const storage = new MemoryStorageAdapter(["files", "folders", "links", "nodes"]);
     await storage.upsertRecord("links", { id: "links:a", label: "A", peerId: "links:b" });
     await storage.upsertRecord("links", { id: "links:b", label: "B", peerId: "links:a" });
 
@@ -291,7 +308,7 @@ describe("DATA-15: cloneUp against SQLite with foreign keys", () => {
   });
 
   it("restores a cycle reference again when the record pushed without it changes", async () => {
-    const storage = new MemoryStorageAdapter(["files", "folders", "links"]);
+    const storage = new MemoryStorageAdapter(["files", "folders", "links", "nodes"]);
     await storage.upsertRecord("links", { id: "links:a", label: "A", peerId: "links:b" });
     await storage.upsertRecord("links", { id: "links:b", label: "B", peerId: "links:a" });
 
@@ -313,5 +330,69 @@ describe("DATA-15: cloneUp against SQLite with foreign keys", () => {
       ["links:a", "A", "links:b"],
       ["links:b", "B2", "links:a"],
     ]);
+  });
+
+  it("pushes a record that references itself as it is", async () => {
+    const storage = new MemoryStorageAdapter(["files", "folders", "links", "nodes"]);
+    await storage.upsertRecord("nodes", { id: "nodes:1", label: "One", peerId: "nodes:1" });
+    await storage.upsertRecord("links", { id: "links:1", label: "Self", peerId: "links:1" });
+
+    const { client, pushes } = connect(storage);
+    const result = await client.sync.cloneUp({ pullAfter: false });
+
+    expect(result.errors).toEqual([]);
+    expect(result.ok).toBe(true);
+    const sent = pushes.flatMap((push) => push.mutations);
+    expect(sent.map((mutation) => [mutation.id, mutation.record])).toEqual([
+      ["links:1", { label: "Self", peerId: "links:1" }],
+      ["nodes:1", { label: "One", peerId: "nodes:1" }],
+    ]);
+    expect(rows("nodes").map((row) => [row.id, row.peer_id])).toEqual([["nodes:1", "nodes:1"]]);
+  });
+
+  it("never unsets a non-nullable reference in a cycle", async () => {
+    const storage = new MemoryStorageAdapter(["files", "folders", "links", "nodes"]);
+    // Both records already exist on the server, each pointing at itself.
+    await storage.upsertRecord("nodes", { id: "nodes:a", label: "A", peerId: "nodes:a" });
+    await storage.upsertRecord("nodes", { id: "nodes:b", label: "B", peerId: "nodes:b" });
+    const { client, pushes } = connect(storage);
+    expect((await client.sync.cloneUp({ pullAfter: false })).ok).toBe(true);
+
+    // Locally they now point at each other.
+    await storage.upsertRecord("nodes", { id: "nodes:a", label: "A", peerId: "nodes:b" });
+    await storage.upsertRecord("nodes", { id: "nodes:b", label: "B", peerId: "nodes:a" });
+    pushes.length = 0;
+    const result = await client.sync.cloneUp({ pullAfter: false });
+
+    expect(result.errors).toEqual([]);
+    expect(result.ok).toBe(true);
+    const sent = pushes.flatMap((push) => push.mutations);
+    expect(sent.every((mutation) => !/:ref:/.test(mutation.mutationId))).toBe(true);
+    expect(sent.every((mutation) => typeof mutation.record.peerId === "string")).toBe(true);
+    expect(rows("nodes").map((row) => [row.id, row.peer_id])).toEqual([
+      ["nodes:a", "nodes:b"],
+      ["nodes:b", "nodes:a"],
+    ]);
+  });
+
+  it("reports the server's rejection for a new non-nullable cycle instead of unsetting it", async () => {
+    const storage = new MemoryStorageAdapter(["files", "folders", "links", "nodes"]);
+    await storage.upsertRecord("nodes", { id: "nodes:a", label: "A", peerId: "nodes:b" });
+    await storage.upsertRecord("nodes", { id: "nodes:b", label: "B", peerId: "nodes:a" });
+
+    const { client, pushes } = connect(storage);
+    const result = await client.sync.cloneUp({ pullAfter: false });
+
+    expect(result.ok).toBe(false);
+    expect(result.errors).toContainEqual(
+      expect.objectContaining({
+        code: "REFERENCE_CYCLE",
+        path: "record.peerId",
+        message: expect.stringContaining("nodes nodes:b was sent with peerId = nodes:a"),
+      }),
+    );
+    const sent = pushes.flatMap((push) => push.mutations);
+    expect(sent.every((mutation) => mutation.record?.peerId !== null)).toBe(true);
+    expect(rows("nodes")).toEqual([]);
   });
 });

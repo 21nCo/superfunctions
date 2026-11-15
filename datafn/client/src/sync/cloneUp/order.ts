@@ -86,8 +86,10 @@ export function referenceFieldsByResource(
 }
 
 /**
- * Orders resources so the targets of their foreign keys come first. A cycle
- * between resources keeps the given order for the resources in it.
+ * Orders resources so the targets of their foreign keys come first. Resources
+ * in a cycle follow a depth-first walk from the first of them in the given
+ * order (for `a -> b -> a` given as `[a, b]`: `[b, a]`), so the order is
+ * deterministic; cloneUp breaks the cycle's references itself.
  */
 export function orderResourcesByDependency(
   resources: string[],

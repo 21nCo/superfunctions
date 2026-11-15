@@ -1712,3 +1712,119 @@ describe("cloneUp — polymorphic references (DATA-15)", () => {
     expect(sent.some((m) => /:ref:/.test(m.mutationId))).toBe(false);
   });
 });
+
+describe("cloneUp — cycles and the changelog (DATA-15)", () => {
+  const okPush = (sent: Array<Record<string, any>>, during?: () => Promise<void>) =>
+    vi.spyOn(DefaultHttpTransport.prototype, "push").mockImplementation(async (payload: any) => {
+      sent.push(...payload.mutations);
+      await during?.();
+      return {
+        ok: true,
+        result: {
+          ok: true,
+          applied: payload.mutations.map((m: any) => m.mutationId),
+          errors: [],
+          cursor: "1",
+        },
+      } as any;
+    });
+
+  it("keeps the resource field when two deferred references share it", async () => {
+    const storage = new MockStorageAdapter();
+    storage.cursors.set("__global_cursor__", "0");
+    for (const [id, peer] of [["a", "b"], ["b", "a"]]) {
+      await storage.upsertRecord("nodes", {
+        id,
+        targetId: peer,
+        otherId: peer,
+        targetResource: "nodes",
+      });
+    }
+    const sent: Array<Record<string, any>> = [];
+    const pushSpy = okPush(sent);
+    const nullable = (name: string) => ({ name, type: "string" as const, nullable: true });
+    const client = createDatafnClient({
+      schema: {
+        resources: [
+          { name: "files", version: 1, fields: [{ name: "title", type: "string" as const }] },
+          {
+            name: "nodes",
+            version: 1,
+            fields: [nullable("targetId"), nullable("otherId"), nullable("targetResource")],
+          },
+        ],
+        relations: [
+          {
+            from: "nodes",
+            to: ["nodes", "files"],
+            type: "many-one",
+            relation: "target",
+            fkField: "targetId",
+            fkResourceField: "targetResource",
+          } as any,
+          {
+            from: "nodes",
+            to: ["nodes", "files"],
+            type: "many-one",
+            relation: "other",
+            fkField: "otherId",
+            fkResourceField: "targetResource",
+          } as any,
+        ],
+      },
+      sync: { remote: "http://example.com" },
+      clientId: "client:shared-resource-field",
+      storage,
+    });
+
+    const result = await client.sync.cloneUp({ includeManyMany: false, pullAfter: false });
+    pushSpy.mockRestore();
+
+    expect(result.ok).toBe(true);
+    const restore = sent.find((m) => /:ref:/.test(m.mutationId));
+    expect(sent[0].record).toEqual({ targetId: null, otherId: null, targetResource: null });
+    expect(restore?.record).toEqual({ targetId: "a", otherId: "a", targetResource: "nodes" });
+  });
+
+  it("leaves changelog entries written during the push queued", async () => {
+    const storage = new MockStorageAdapter();
+    storage.cursors.set("__global_cursor__", "0");
+    await storage.upsertRecord("tasks", { id: "t1", title: "Before" });
+    const before = await storage.changelogAppend({
+      clientId: "client:changelog",
+      mutationId: "m-before",
+      mutation: { resource: "tasks", id: "t1" },
+      timestampMs: 0,
+      timestamp: "",
+    } as any);
+
+    let wroteDuringPush = false;
+    const sent: Array<Record<string, any>> = [];
+    const pushSpy = okPush(sent, async () => {
+      if (wroteDuringPush) return;
+      wroteDuringPush = true;
+      await storage.changelogAppend({
+        clientId: "client:changelog",
+        mutationId: "m-during",
+        mutation: { resource: "tasks", id: "t2" },
+        timestampMs: 0,
+        timestamp: "",
+      } as any);
+    });
+    const client = createDatafnClient({
+      schema: {
+        resources: [{ name: "tasks", version: 1, fields: [{ name: "title", type: "string" as const }] }],
+      },
+      sync: { remote: "http://example.com" },
+      clientId: "client:changelog",
+      storage,
+    });
+
+    const result = await client.sync.cloneUp({ includeManyMany: false, pullAfter: false });
+    pushSpy.mockRestore();
+
+    expect(result.ok).toBe(true);
+    expect(storage.changelog.map((entry) => entry.mutationId)).toEqual(["m-during"]);
+    expect(storage.changelog.every((entry) => entry.seq > before.seq)).toBe(true);
+  });
+});
