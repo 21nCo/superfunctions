@@ -39,6 +39,12 @@ export interface DatafnStorageAdapterCapabilities {
    * payload. It must not reapply `partial` to that creation payload.
    */
   readonly atomicMergeIfMissing?: boolean;
+  /**
+   * `mergeRecord` calls `options.onResolved` inside its atomic write with
+   * whether it created the record. Callers pass the callback only to
+   * adapters that set this.
+   */
+  readonly reportsMergeOutcome?: boolean;
 }
 
 export interface DatafnStorageAdapter {
@@ -71,9 +77,9 @@ export interface DatafnStorageAdapter {
       /** Complete creation payload used instead of `partial` when absent. */
       ifMissing?: Record<string, unknown>;
       /**
-       * Optional: called inside the atomic read-modify-write with whether
-       * the record was missing and has been created. Adapters that do not
-       * call it leave the outcome unknown, which callers treat conservatively.
+       * Called inside the atomic read-modify-write with whether the record
+       * was missing and has been created. Passed only to adapters that set
+       * `capabilities.reportsMergeOutcome`.
        */
       onResolved?: (outcome: { created: boolean }) => void;
     },

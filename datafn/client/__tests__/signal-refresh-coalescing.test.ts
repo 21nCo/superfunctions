@@ -388,3 +388,53 @@ describe("merge creation reported by the storage write", () => {
     );
   });
 });
+
+describe("merge outcome scoping", () => {
+  it("keeps outcomes of clients with their own stores apart when they reuse a mutation id", async () => {
+    const a = await setup(1);
+    const b = await setup(2);
+    const created: Record<string, unknown> = {};
+    a.client.subscribe((event: any) => {
+      if (event.type === "mutation_applied" && event.action === "merge") created.a = event.created;
+    });
+    b.client.subscribe((event: any) => {
+      if (event.type === "mutation_applied" && event.action === "merge") created.b = event.created;
+    });
+    // notes:00001 is missing in A's store and present in B's.
+    await Promise.all([
+      a.client.table("notes").mutate({
+        operation: "merge",
+        id: "notes:00001",
+        mutationId: "m1",
+        record: { body: "a" },
+      } as any),
+      b.client.table("notes").mutate({
+        operation: "merge",
+        id: "notes:00001",
+        mutationId: "m1",
+        record: { body: "b" },
+      } as any),
+    ]);
+    expect(created).toEqual({ a: true, b: false });
+  });
+
+  it("passes no callback to an adapter that does not report merge outcomes", async () => {
+    const { client, storage } = await setup(1);
+    (storage as any).capabilities = { atomicMergeIfMissing: true };
+    const seen: unknown[] = [];
+    const merge = storage.mergeRecord.bind(storage);
+    storage.mergeRecord = (async (resource: string, id: string, partial: any, options: any) => {
+      seen.push(options);
+      return merge(resource, id, partial, options);
+    }) as typeof storage.mergeRecord;
+
+    await client.table("notes").mutate({
+      operation: "merge",
+      id: "notes:00000",
+      record: { body: "x" },
+    } as any);
+    const options = seen.find((entry: any) => entry && "ifMissing" in entry) as Record<string, unknown>;
+    expect(options).toBeDefined();
+    expect(Object.values(options).some((value) => typeof value === "function")).toBe(false);
+  });
+});

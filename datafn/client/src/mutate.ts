@@ -569,6 +569,7 @@ export async function executeMutation(
                 getTimestamp,
                 debouncedMutation,
                 { ok: true, mutationId: debouncedMutation.mutationId },
+                storage,
               );
 
               // Scheduling push is best-effort once the durable local write succeeded.
@@ -688,7 +689,7 @@ export async function executeMutation(
         );
 
         results.push(result);
-        emitMutationEvents(eventBus, getTimestamp, mut, result);
+        emitMutationEvents(eventBus, getTimestamp, mut, result, storage);
       }
 
       // Scheduling push is best-effort once the durable local write succeeded.
@@ -810,6 +811,7 @@ export async function executeMutation(
             getTimestamp,
             localMutations[i],
             { ok: true, mutationId: (localMutations[i] as any).mutationId },
+            storage,
           );
         } else {
           emitRejectionForError(
@@ -855,7 +857,7 @@ export async function executeMutation(
                 mutationRecord,
               );
               // Emit mutation_applied event (unless silent)
-              emitMutationEvents(eventBus, getTimestamp, mutation, mutResult);
+              emitMutationEvents(eventBus, getTimestamp, mutation, mutResult, storage);
               results.push({ ok: true, ...mutResult });
             } catch (mutErr) {
               results.push({ ok: false, error: mutErr });
@@ -879,7 +881,7 @@ export async function executeMutation(
             mutationToUse,
           );
           // REL-012: Emit applied here so only one event fires (no double-emit with final path)
-          emitMutationEvents(eventBus, getTimestamp, mutationToUse, result);
+          emitMutationEvents(eventBus, getTimestamp, mutationToUse, result, storage);
           usedOfflinePath = true;
         }
       } catch (offlineErr) {
@@ -922,6 +924,7 @@ export async function executeMutation(
         getTimestamp,
         mutationForLocal as any,
         resolveRemoteResultForMutation(result, mutationForLocal, 0) as any,
+        storage,
       );
     }
     return result;
@@ -938,6 +941,7 @@ export async function executeMutation(
         getTimestamp,
         mutations[i],
         resolveRemoteResultForMutation(result, mutations[i], i) as any,
+        storage,
       );
     }
   }
@@ -956,6 +960,8 @@ function emitMutationEvents(
   getTimestamp: () => number,
   mutation: any,
   result: any,
+  /** The store a local apply wrote to, for its merge outcome. */
+  storage?: DatafnStorageAdapter,
 ): void {
   // MUT-001: If silent: true, suppress event emission entirely
   if (mutation.silent === true) {
@@ -974,7 +980,7 @@ function emitMutationEvents(
   }
 
   // Lets live queries skip a merge that edited an existing record (SIG-002).
-  const created = action === "merge" ? takeMergeCreated(mutation.mutationId) : undefined;
+  const created = action === "merge" ? takeMergeCreated(storage, mutation.mutationId) : undefined;
 
   const baseEvent = {
     resource: mutation.resource,

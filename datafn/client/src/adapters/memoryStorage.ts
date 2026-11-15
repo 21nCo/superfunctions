@@ -25,7 +25,7 @@ function isInternalCursorKey(resource: string): boolean {
 }
 
 export class MemoryStorageAdapter implements DatafnStorageAdapter {
-  readonly capabilities = { atomicMergeIfMissing: true } as const;
+  readonly capabilities = { atomicMergeIfMissing: true, reportsMergeOutcome: true } as const;
   private records = new Map<string, Map<string, Record<string, unknown>>>();
   private joinRows = new Map<string, Map<string, Record<string, unknown>>>();
   private cursors = new Map<string, string>();

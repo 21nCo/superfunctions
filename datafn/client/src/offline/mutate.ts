@@ -746,27 +746,45 @@ export async function handleOfflineMutation(
 }
 
 /**
- * Whether a recent local merge created its record, by mutation id. The event
- * emitter reads it once so live queries can tell an edit from a creation.
+ * Whether a recent local merge created its record, per storage and mutation
+ * id. The event emitter reads it once so live queries can tell an edit from
+ * a creation. Scoping by storage keeps clients with their own stores apart
+ * even when they reuse a mutation id.
  */
-const mergeCreatedByMutationId = new Map<string, boolean>();
+const mergeCreatedByStorage = new WeakMap<object, Map<string, boolean>>();
 const MAX_TRACKED_MERGES = 1000;
 
-function rememberMergeCreated(mutationId: unknown, created: boolean): void {
+function rememberMergeCreated(
+  storage: DatafnStorageAdapter,
+  mutationId: unknown,
+  created: boolean,
+): void {
   if (typeof mutationId !== "string" || mutationId.length === 0) return;
-  mergeCreatedByMutationId.delete(mutationId);
-  mergeCreatedByMutationId.set(mutationId, created);
-  if (mergeCreatedByMutationId.size > MAX_TRACKED_MERGES) {
-    const oldest = mergeCreatedByMutationId.keys().next().value;
-    if (oldest !== undefined) mergeCreatedByMutationId.delete(oldest);
+  let tracked = mergeCreatedByStorage.get(storage);
+  if (!tracked) {
+    tracked = new Map();
+    mergeCreatedByStorage.set(storage, tracked);
+  }
+  tracked.delete(mutationId);
+  tracked.set(mutationId, created);
+  if (tracked.size > MAX_TRACKED_MERGES) {
+    const oldest = tracked.keys().next().value;
+    if (oldest !== undefined) tracked.delete(oldest);
   }
 }
 
-/** Returns and forgets whether the local merge with this mutation id created its record. */
-export function takeMergeCreated(mutationId: unknown): boolean | undefined {
-  if (typeof mutationId !== "string") return undefined;
-  const created = mergeCreatedByMutationId.get(mutationId);
-  mergeCreatedByMutationId.delete(mutationId);
+/**
+ * Returns and forgets whether the local merge with this mutation id created
+ * its record in `storage`.
+ */
+export function takeMergeCreated(
+  storage: DatafnStorageAdapter | undefined,
+  mutationId: unknown,
+): boolean | undefined {
+  if (!storage || typeof mutationId !== "string") return undefined;
+  const tracked = mergeCreatedByStorage.get(storage);
+  const created = tracked?.get(mutationId);
+  tracked?.delete(mutationId);
   return created;
 }
 
@@ -832,9 +850,16 @@ export async function applyOptimisticMutationToStorage(
       // Whether the merge created the record comes from inside the atomic
       // write; a separate read could race a concurrent delete. When the
       // adapter does not report it, it stays unknown.
+      // Only adapters that say they report the outcome get the callback; it
+      // is not data and must not reach adapters that serialise options.
       await storage.mergeRecord(resource, id, optimisticPatch, {
         ifMissing: optimisticCreate,
-        onResolved: ({ created }) => rememberMergeCreated(mutation.mutationId, created),
+        ...(storage.capabilities?.reportsMergeOutcome === true
+          ? {
+              onResolved: ({ created }: { created: boolean }) =>
+                rememberMergeCreated(storage, mutation.mutationId, created),
+            }
+          : {}),
       });
     } else {
       // DatafnStorageAdapter implementations written before the optional
