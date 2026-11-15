@@ -185,22 +185,24 @@ it("skips panel report-copy expiry for an output directory that does not exist, 
   expect(await fileSystem.readdir(root)).toEqual(["artifacts"]);
 });
 
-it("removes staged panel copies an interrupted write left in the output directory, through any artifact store, and refuses a symlinked directory", async () => {
+it("removes staged panel copies an interrupted write left in the output directory, through any artifact store, but no other copy set's, and refuses a symlinked directory", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-staged-"));
   await new FileArtifactStore(path.join(root, "artifacts"), root, PANEL_REPORT_COPY_NAMES).writeReportCopies("json", "md", 30);
   const stamp = "01234567-89ab-cdef-0123-456789abcdef";
-  for (const entry of [`.reviewfn-copy-${stamp}.json`, `.reviewfn-copy-${stamp}.md`, ".reviewfn-copy-notes.txt"]) await writeFile(path.join(root, entry), "interrupted report");
+  // Another copy set's staged copy is covered by that set's lock, not the panel lock, so panel cleanup leaves it.
+  const kept = [".reviewfn-copy-notes.txt", `.reviewfn-copy.audit.${stamp}.json`];
+  for (const entry of [`.reviewfn-copy.panel-report.${stamp}.json`, `.reviewfn-copy.panel-report.${stamp}.md`, ...kept]) await writeFile(path.join(root, entry), "interrupted report");
   // Every copy write holds the directory's lock, so under it no staged copy is in flight, whichever store staged it.
   expect(await new FileArtifactStore(path.join(root, "other"), root, PANEL_REPORT_COPY_NAMES).deleteExpired()).toEqual({ deleted: [], errors: [] });
-  expect((await fileSystem.readdir(root)).sort()).toEqual([".panel-report-copies", ".reviewfn-copy-notes.txt", "artifacts", "other", "panel-report.json", "panel-report.md"]);
+  expect((await fileSystem.readdir(root)).sort()).toEqual([".panel-report-copies", ...kept, "artifacts", "other", "panel-report.json", "panel-report.md"].sort());
   // A symlinked copies directory is refused, not followed, by cleanup and by writes.
   await mkdir(path.join(root, "real"));
-  await writeFile(path.join(root, "real", `.reviewfn-copy-${stamp}.json`), "elsewhere");
+  await writeFile(path.join(root, "real", `.reviewfn-copy.panel-report.${stamp}.json`), "elsewhere");
   await symlink(path.join(root, "real"), path.join(root, "link"));
   const linked = new FileArtifactStore(path.join(root, "artifacts"), path.join(root, "link"), PANEL_REPORT_COPY_NAMES);
   expect((await linked.deleteExpired()).errors.join()).toMatch(/symlink/);
   await expect(linked.writeReportCopies("json", "md", 30)).rejects.toThrow(/symlink/);
-  expect(await fileSystem.readdir(path.join(root, "real"))).toEqual([`.reviewfn-copy-${stamp}.json`]);
+  expect(await fileSystem.readdir(path.join(root, "real"))).toEqual([`.reviewfn-copy.panel-report.${stamp}.json`]);
 });
 
 describe("one lock and one retention record per panel output directory", () => {
@@ -257,7 +259,7 @@ describe("one lock and one retention record per panel output directory", () => {
     expect(await fileSystem.readdir(output)).toEqual([]);
   });
 
-  it("keeps a write's staged copies while another store's cleanup waits for the directory", async () => {
+  it("keeps a write's staged copies while another store's cleanup waits for the directory, and from another copy set's cleanup", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "reviewfn-panel-staged-race-"));
     const output = path.join(root, "out");
     let paused!: () => void; let resume!: () => void;
@@ -271,6 +273,10 @@ describe("one lock and one retention record per panel output directory", () => {
     }
     const writing = new PausingStore(path.join(root, "a"), output, PANEL_REPORT_COPY_NAMES).writeReportCopies("a-json", "a-md", 30);
     await staged;
+    // A store for another copy set takes its own lock, so it runs now, and must leave the panel write's staged copy.
+    const audit = new FileArtifactStore(path.join(root, "audit"), output, { json: "audit.json", markdown: "audit.md" });
+    expect(await audit.deleteExpired()).toEqual({ deleted: [], errors: [] });
+    expect((await fileSystem.readdir(output)).filter(entry => entry.startsWith(".reviewfn-copy.panel-report."))).toHaveLength(1);
     const b = new WaitingStore(path.join(root, "b"), output);
     const cleaning = b.deleteExpired();
     await b.waiting;
@@ -311,16 +317,27 @@ describe("one lock and one retention record per panel output directory", () => {
     await mkdir(output);
     await writeFile(lock, JSON.stringify({ pid: 1, hostname: "crashed", acquiredAt: new Date().toISOString() }));
     const store = new ImpatientStore(path.join(root, "a"), output, PANEL_REPORT_COPY_NAMES);
+    // The preflight check waits as a write would, then refuses without taking the lock or writing anything.
+    await expect(store.checkReportCopiesLock()).rejects.toMatchObject({ code: "REVIEWFN_OUTPUT_DIRECTORY_BUSY", details: { directory: output, lock } });
+    expect(store.waits).toBe(99);
+    store.waits = 0;
     await expect(store.writeReportCopies("json", "md", 30)).rejects.toMatchObject({ code: "REVIEWFN_OUTPUT_DIRECTORY_BUSY", details: { directory: output, lock } });
     expect(store.waits).toBe(99);
     expect((await store.deleteExpired()).errors.join()).toMatch(/REVIEWFN_OUTPUT_DIRECTORY_BUSY/);
     expect(await fileSystem.readdir(output)).toEqual([".panel-report.lock"]);
     await fileSystem.rm(lock);
     await symlink(path.join(root, "elsewhere"), lock);
+    await expect(store.checkReportCopiesLock()).rejects.toMatchObject({ code: "REVIEWFN_ARTIFACT_UNSAFE" });
     await expect(store.writeReportCopies("json", "md", 30)).rejects.toMatchObject({ code: "REVIEWFN_ARTIFACT_UNSAFE" });
     expect((await store.deleteExpired()).errors.join()).toMatch(/REVIEWFN_ARTIFACT_UNSAFE/);
     expect(await fileSystem.readdir(output)).toEqual([".panel-report.lock"]);
     await expect(fileSystem.lstat(path.join(root, "elsewhere"))).rejects.toThrow();
+    // Without a lock the check passes and creates nothing, not even a missing directory.
+    await fileSystem.rm(lock);
+    await store.checkReportCopiesLock();
+    await new ImpatientStore(path.join(root, "a"), path.join(root, "missing"), PANEL_REPORT_COPY_NAMES).checkReportCopiesLock();
+    expect((await fileSystem.readdir(root)).sort()).toEqual(["a", "out"]);
+    expect(await fileSystem.readdir(output)).toEqual([]);
   });
 });
 

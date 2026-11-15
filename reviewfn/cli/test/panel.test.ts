@@ -205,6 +205,22 @@ describe("reviewfn panel exit codes", () => {
     expect((await readdir(output)).sort()).toEqual([".panel-report-copies", "panel-report.json", "panel-report.md"]);
   });
 
+  it("exits 3 before any harness runs, writing nothing, when the output directory's lock is still held", async () => {
+    await repository(panel([slot("one", 1)]));
+    const output = path.join(root, ".reviewfn", "output");
+    await mkdir(output, { recursive: true });
+    // A lock a killed run left behind: it is never reclaimed automatically.
+    await writeFile(path.join(output, ".panel-report.lock"), JSON.stringify({ pid: 1, hostname: "crashed", acquiredAt: new Date().toISOString() }));
+    const harness = codex();
+    const result = await invoke(["--base", base, "--head", head, "--json"], harness);
+    expect(result.code).toBe(PANEL_EXIT_CODES.preflight);
+    expect(JSON.parse(result.stderr)).toMatchObject({ error: "REVIEWFN_OUTPUT_DIRECTORY_BUSY", details: { directory: output, lock: path.join(output, ".panel-report.lock") } });
+    expect(harness.calls).toHaveLength(0);
+    expect(result.stdout).toBe("");
+    expect(await readdir(output)).toEqual([".panel-report.lock"]);
+    expect((await readdir(path.join(root, ".reviewfn"))).sort()).toEqual(["config.json", "output", "panel.json", "policy.json"]);
+  });
+
   it("exits 3 for an adapter outside the fixed table without loading any module for it", async () => {
     await repository(panel([slot("one", 1, "model-one", "./evil.js")]));
     const result = await invoke(["--base", base, "--head", head], codex());

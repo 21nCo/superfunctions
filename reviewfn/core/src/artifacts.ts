@@ -35,6 +35,8 @@ export class FileArtifactStore implements ArtifactStore {
    */
   private readonly copiesPaired: boolean;
   private readonly lockName: string;
+  /** The staged-copy prefix of this copy set, `.reviewfn-copy.<stem>.`: a set's lock covers only its own staged copies. */
+  private readonly stagedPrefix: string;
 
   /**
    * `reportCopiesDirectory` holds the report copies this store writes and expires; `copyNames` selects which set
@@ -50,6 +52,7 @@ export class FileArtifactStore implements ArtifactStore {
     const stem = copyNames.json.slice(0, -".json".length);
     this.copiesStem = `.${stem}-copies`;
     this.lockName = `.${stem}.lock`;
+    this.stagedPrefix = `.reviewfn-copy.${stem}.`;
     this.copiesPaired = !(copyNames.json === REVIEW_REPORT_COPY_NAMES.json && copyNames.markdown === REVIEW_REPORT_COPY_NAMES.markdown);
   }
 
@@ -58,6 +61,30 @@ export class FileArtifactStore implements ArtifactStore {
 
   /** The wait between attempts to take a copies directory's lock; tests override it to observe or skip the wait. */
   protected async outputLockRetry(): Promise<void> { await new Promise(resolve => setTimeout(resolve, 50)); }
+
+  /**
+   * Wait, as long as a write would, while the copies directory's lock is held, without taking it or writing anything,
+   * so a command can refuse a directory whose lock a killed run left behind before it does any work: a lock still held
+   * fails with REVIEWFN_OUTPUT_DIRECTORY_BUSY, and a symlinked or non-regular one with REVIEWFN_ARTIFACT_UNSAFE.
+   * Writes and cleanup still take the lock themselves.
+   */
+  public async checkReportCopiesLock(): Promise<void> {
+    if (!this.copiesPaired || !this.reportCopiesDirectory) return;
+    const file = path.join(this.reportCopiesDirectory, this.lockName);
+    for (let attempt = 1; ; attempt++) {
+      const stat = await lstat(file).catch((error: NodeJS.ErrnoException) => missing(error) ? undefined : Promise.reject(error));
+      if (!stat) return;
+      this.refuseLock(file, stat, attempt);
+      await this.outputLockRetry();
+    }
+  }
+
+  /** Refuse a symlinked or non-regular lock, and a lock still held at the last of the bounded attempts. */
+  private refuseLock(file: string, stat: { isFile(): boolean }, attempt: number): void {
+    if (!stat.isFile()) throw new ReviewFnError("REVIEWFN_ARTIFACT_UNSAFE", `Refusing a symlinked or non-regular report-copy lock ${file}.`);
+    const directory = path.dirname(file);
+    if (attempt >= 100) throw new ReviewFnError("REVIEWFN_OUTPUT_DIRECTORY_BUSY", `${directory} is locked by another ReviewFn run; retry, or delete ${file} once no ReviewFn run writes to the directory.`, { directory, lock: file });
+  }
 
   /**
    * Run `action` holding `<output>/.panel-report.lock`, the one lock that serializes every write, rollback and cleanup
@@ -76,8 +103,7 @@ export class FileArtifactStore implements ArtifactStore {
       catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
         const stat = await lstat(file).catch((failure: NodeJS.ErrnoException) => missing(failure) ? undefined : Promise.reject(failure));
-        if (stat && !stat.isFile()) throw new ReviewFnError("REVIEWFN_ARTIFACT_UNSAFE", `Refusing a symlinked or non-regular report-copy lock ${file}.`);
-        if (attempt >= 100) throw new ReviewFnError("REVIEWFN_OUTPUT_DIRECTORY_BUSY", `${directory} is locked by another ReviewFn run; retry, or delete ${file} once no ReviewFn run writes to the directory.`, { directory, lock: file });
+        if (stat) this.refuseLock(file, stat, attempt);
         await this.outputLockRetry();
       }
     }
@@ -187,7 +213,7 @@ export class FileArtifactStore implements ArtifactStore {
   private async replaceCopyPair(json: string, markdown: string, previousMarkdown: Buffer | undefined, restoreRecord: () => Promise<void>): Promise<void> {
     const directory = this.reportCopiesDirectory!;
     const [jsonFile, markdownFile] = this.copyNames.map(name => path.join(directory, name));
-    const stamp = `.reviewfn-copy-${randomUUID()}`;
+    const stamp = `${this.stagedPrefix}${randomUUID()}`;
     const [stagedJson, stagedMarkdown] = ["json", "md"].map(suffix => path.join(directory, `${stamp}.${suffix}`));
     let markdownLeftover = false;
     try {
@@ -291,12 +317,13 @@ export class FileArtifactStore implements ArtifactStore {
   }
 
   /**
-   * Remove staged copies (`.reviewfn-copy-<uuid>.json|md`) that an interrupted write left in the copies directory. The
-   * caller holds the directory's lock, which every copy write holds too, so none of them belongs to a write in progress.
+   * Remove staged copies of this copy set (`.reviewfn-copy.<stem>.<uuid>.json|md`) that an interrupted write left in the
+   * copies directory. The caller holds the set's lock, which every write of the set holds too, so none of them belongs
+   * to a write in progress; another copy set's staged copies are left to that set's cleanup.
    */
   private async deleteStagedCopies(errors: string[]): Promise<void> {
     for (const entry of await readdir(this.reportCopiesDirectory!)) {
-      if (!/^\.reviewfn-copy-[0-9a-f-]{36}\.(json|md)$/.test(entry)) continue;
+      if (!entry.startsWith(this.stagedPrefix) || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(json|md)$/.test(entry.slice(this.stagedPrefix.length))) continue;
       const file = path.join(this.reportCopiesDirectory!, entry);
       try {
         if (!(await lstat(file)).isFile()) throw new Error("refusing non-regular staged copy");
