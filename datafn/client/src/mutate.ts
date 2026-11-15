@@ -13,6 +13,7 @@ import { isTransportError } from "./errors.js";
 import {
   applyOptimisticMutationToStorage,
   handleOfflineMutation,
+  rememberMergeCreated,
   takeMergeCreated,
   validateOfflineMutation,
 } from "./offline/mutate.js";
@@ -548,6 +549,26 @@ export async function executeMutation(
         );
         await tryUpdateSearchIndex(searchProvider, storage, enrichedMutation);
 
+        // Coalesced merges emit one event under the pending mutation's id;
+        // it reports a creation when any of them created the record.
+        if (enrichedMutation.operation === "merge") {
+          const created = takeMergeCreated(storage, clientId, mutationId);
+          const pendingId = debouncerMap.pendingMutationId(debounceKey);
+          const earlier =
+            pendingId !== undefined && pendingId !== mutationId
+              ? takeMergeCreated(storage, clientId, pendingId)
+              : false;
+          const combined =
+            created === true || earlier === true
+              ? true
+              : created === false && earlier === false
+                ? false
+                : undefined;
+          if (combined !== undefined) {
+            rememberMergeCreated(storage, clientId, pendingId ?? mutationId, combined);
+          }
+        }
+
         debouncerMap.set(
           debounceKey,
           enrichedMutation,
@@ -570,6 +591,7 @@ export async function executeMutation(
                 debouncedMutation,
                 { ok: true, mutationId: debouncedMutation.mutationId },
                 storage,
+                clientId,
               );
 
               // Scheduling push is best-effort once the durable local write succeeded.
@@ -689,7 +711,7 @@ export async function executeMutation(
         );
 
         results.push(result);
-        emitMutationEvents(eventBus, getTimestamp, mut, result, storage);
+        emitMutationEvents(eventBus, getTimestamp, mut, result, storage, clientId);
       }
 
       // Scheduling push is best-effort once the durable local write succeeded.
@@ -812,6 +834,7 @@ export async function executeMutation(
             localMutations[i],
             { ok: true, mutationId: (localMutations[i] as any).mutationId },
             storage,
+            clientId,
           );
         } else {
           emitRejectionForError(
@@ -857,7 +880,7 @@ export async function executeMutation(
                 mutationRecord,
               );
               // Emit mutation_applied event (unless silent)
-              emitMutationEvents(eventBus, getTimestamp, mutation, mutResult, storage);
+              emitMutationEvents(eventBus, getTimestamp, mutation, mutResult, storage, clientId);
               results.push({ ok: true, ...mutResult });
             } catch (mutErr) {
               results.push({ ok: false, error: mutErr });
@@ -881,7 +904,7 @@ export async function executeMutation(
             mutationToUse,
           );
           // REL-012: Emit applied here so only one event fires (no double-emit with final path)
-          emitMutationEvents(eventBus, getTimestamp, mutationToUse, result, storage);
+          emitMutationEvents(eventBus, getTimestamp, mutationToUse, result, storage, clientId);
           usedOfflinePath = true;
         }
       } catch (offlineErr) {
@@ -925,6 +948,7 @@ export async function executeMutation(
         mutationForLocal as any,
         resolveRemoteResultForMutation(result, mutationForLocal, 0) as any,
         storage,
+        clientId,
       );
     }
     return result;
@@ -942,6 +966,7 @@ export async function executeMutation(
         mutations[i],
         resolveRemoteResultForMutation(result, mutations[i], i) as any,
         storage,
+        clientId,
       );
     }
   }
@@ -962,7 +987,16 @@ function emitMutationEvents(
   result: any,
   /** The store a local apply wrote to, for its merge outcome. */
   storage?: DatafnStorageAdapter,
+  /** The client that applied it. */
+  clientId?: string,
 ): void {
+  // Lets live queries skip a merge that edited an existing record (SIG-002).
+  // Read it even when no event goes out, so the outcome does not linger.
+  const created =
+    mutation.operation === "merge"
+      ? takeMergeCreated(storage, clientId, mutation.mutationId)
+      : undefined;
+
   // MUT-001: If silent: true, suppress event emission entirely
   if (mutation.silent === true) {
     return;
@@ -978,9 +1012,6 @@ function emitMutationEvents(
       .filter((k) => k !== "id")
       .sort(); // deterministic order
   }
-
-  // Lets live queries skip a merge that edited an existing record (SIG-002).
-  const created = action === "merge" ? takeMergeCreated(storage, mutation.mutationId) : undefined;
 
   const baseEvent = {
     resource: mutation.resource,

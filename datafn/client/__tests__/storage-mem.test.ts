@@ -86,6 +86,16 @@ describe("MemoryStorageAdapter", () => {
       expect(outcomes).toEqual([true, false]);
     });
 
+    it("completes the merge when the outcome callback throws", async () => {
+      const onResolved = () => {
+        throw new Error("listener failed");
+      };
+      await expect(
+        storage.mergeRecord("task", "m2", { title: "a" }, { onResolved }),
+      ).resolves.toMatchObject({ id: "m2", title: "a" });
+      expect(await storage.getRecord("task", "m2")).toMatchObject({ title: "a" });
+    });
+
     it("rejects an empty merge id before persisting a record", async () => {
       await expect(storage.mergeRecord("task", "", { title: "invalid" }))
         .rejects.toThrow("Record missing id");

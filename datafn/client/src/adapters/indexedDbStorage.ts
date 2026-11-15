@@ -590,7 +590,11 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
         const putRequest = store.put(storageRecord);
         
         putRequest.onsuccess = () => {
-          options?.onResolved?.({ created: !existing });
+          try {
+            options?.onResolved?.({ created: !existing });
+          } catch {
+            // The outcome is advisory; the write itself succeeded.
+          }
           resolve(storageRecord);
         };
         putRequest.onerror = () => {

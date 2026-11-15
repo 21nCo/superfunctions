@@ -49,6 +49,16 @@ describe("IndexedDbStorageAdapter", () => {
       expect(outcomes).toEqual([true, false]);
     });
 
+    it("completes the merge when the outcome callback throws", async () => {
+      const onResolved = () => {
+        throw new Error("listener failed");
+      };
+      await expect(
+        storage.mergeRecord("task", "m2", { title: "a" }, { onResolved }),
+      ).resolves.toMatchObject({ id: "m2", title: "a" });
+      expect(await storage.getRecord("task", "m2")).toMatchObject({ title: "a" });
+    });
+
     it("Persists across instances (simulated reload)", async () => {
       await storage.upsertRecord("task", { id: "p1", val: 1 });
 

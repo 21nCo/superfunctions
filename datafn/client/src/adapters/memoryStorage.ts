@@ -127,7 +127,11 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
     
     merged.id = id;
     table.set(id, merged);
-    options?.onResolved?.({ created: !existing });
+    try {
+      options?.onResolved?.({ created: !existing });
+    } catch {
+      // The outcome is advisory; the write itself succeeded.
+    }
     return merged;
   }
 

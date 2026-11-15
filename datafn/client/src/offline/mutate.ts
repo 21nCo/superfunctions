@@ -746,27 +746,35 @@ export async function handleOfflineMutation(
 }
 
 /**
- * Whether a recent local merge created its record, per storage and mutation
- * id. The event emitter reads it once so live queries can tell an edit from
- * a creation. Scoping by storage keeps clients with their own stores apart
- * even when they reuse a mutation id.
+ * Whether a recent local merge created its record, per storage, client and
+ * mutation id. The event emitter reads it once so live queries can tell an
+ * edit from a creation. Scoping by storage and client keeps clients apart,
+ * including clients that share a store and reuse a mutation id. Entries
+ * nobody reads (a merge that failed after its write) age out past the cap.
  */
 const mergeCreatedByStorage = new WeakMap<object, Map<string, boolean>>();
 const MAX_TRACKED_MERGES = 1000;
 
-function rememberMergeCreated(
+function mergeOutcomeKey(clientId: unknown, mutationId: unknown): string | undefined {
+  if (typeof mutationId !== "string" || mutationId.length === 0) return undefined;
+  return `${typeof clientId === "string" ? clientId : ""}\u0000${mutationId}`;
+}
+
+export function rememberMergeCreated(
   storage: DatafnStorageAdapter,
+  clientId: unknown,
   mutationId: unknown,
   created: boolean,
 ): void {
-  if (typeof mutationId !== "string" || mutationId.length === 0) return;
+  const key = mergeOutcomeKey(clientId, mutationId);
+  if (!key) return;
   let tracked = mergeCreatedByStorage.get(storage);
   if (!tracked) {
     tracked = new Map();
     mergeCreatedByStorage.set(storage, tracked);
   }
-  tracked.delete(mutationId);
-  tracked.set(mutationId, created);
+  tracked.delete(key);
+  tracked.set(key, created);
   if (tracked.size > MAX_TRACKED_MERGES) {
     const oldest = tracked.keys().next().value;
     if (oldest !== undefined) tracked.delete(oldest);
@@ -774,17 +782,19 @@ function rememberMergeCreated(
 }
 
 /**
- * Returns and forgets whether the local merge with this mutation id created
- * its record in `storage`.
+ * Returns and forgets whether the local merge with this client and mutation
+ * id created its record in `storage`.
  */
 export function takeMergeCreated(
   storage: DatafnStorageAdapter | undefined,
+  clientId: unknown,
   mutationId: unknown,
 ): boolean | undefined {
-  if (!storage || typeof mutationId !== "string") return undefined;
+  const key = mergeOutcomeKey(clientId, mutationId);
+  if (!storage || !key) return undefined;
   const tracked = mergeCreatedByStorage.get(storage);
-  const created = tracked?.get(mutationId);
-  tracked?.delete(mutationId);
+  const created = tracked?.get(key);
+  tracked?.delete(key);
   return created;
 }
 
@@ -857,7 +867,12 @@ export async function applyOptimisticMutationToStorage(
         ...(storage.capabilities?.reportsMergeOutcome === true
           ? {
               onResolved: ({ created }: { created: boolean }) =>
-                rememberMergeCreated(storage, mutation.mutationId, created),
+                rememberMergeCreated(
+                  storage,
+                  actorId ?? mutation.clientId,
+                  mutation.mutationId,
+                  created,
+                ),
             }
           : {}),
       });
