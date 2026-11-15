@@ -224,6 +224,9 @@ export async function cloneUp(
   };
 
   /** Pushes mutations in batches; returns false when cloneUp must stop. */
+  // Record mutations the server rejected, so their deferred references are
+  // not restored onto a record that is not there.
+  const rejectedMutationIds = new Set<string>();
   const pushMutations = async (mutations: Record<string, unknown>[]): Promise<boolean> => {
     const batches = batchMutations(mutations, batchSize);
     for (const batch of batches) {
@@ -247,6 +250,9 @@ export async function cloneUp(
 
       if (pushResult.errors.length > 0) {
         result.errors.push(...pushResult.errors, ...explainRejectedCycles(batch, pushResult.errors));
+        const wholeBatch = pushResult.errors.some((error) => !error.mutationId);
+        for (const mutation of wholeBatch ? batch : []) rejectedMutationIds.add(mutation.mutationId as string);
+        for (const error of pushResult.errors) if (error.mutationId) rejectedMutationIds.add(error.mutationId);
         hasErrors = true;
         if (failFast) {
           result.ok = false;
@@ -382,8 +388,11 @@ export async function cloneUp(
   }
 
   // Set the references held back to break cycles.
-  if (deferredReferences.length > 0) {
-    const mutations = deferredReferences.map(({ resourceName, version, id, patch, recordMutationId }) => {
+  const restorable = deferredReferences.filter(
+    ({ recordMutationId }) => !rejectedMutationIds.has(recordMutationId),
+  );
+  if (restorable.length > 0) {
+    const mutations = restorable.map(({ resourceName, version, id, patch, recordMutationId }) => {
       // The record mutation that unset the reference is part of the identity:
       // when that record changes and is pushed again (unsetting the reference
       // again), the restore must be a new mutation too, or the server would

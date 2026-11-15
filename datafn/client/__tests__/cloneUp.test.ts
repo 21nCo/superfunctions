@@ -1963,3 +1963,45 @@ describe("cloneUp — defaulted references in resource order (DATA-15)", () => {
   });
 });
 
+describe("cloneUp — deferred references of rejected records (DATA-15)", () => {
+  it("does not restore a reference on a record the server rejected", async () => {
+    const storage = new MockStorageAdapter();
+    storage.cursors.set("__global_cursor__", "0");
+    await storage.upsertRecord("links", { id: "a", peerId: "b" });
+    await storage.upsertRecord("links", { id: "b", peerId: "a" });
+    const sent: Array<Record<string, any>> = [];
+    const pushSpy = vi.spyOn(DefaultHttpTransport.prototype, "push").mockImplementation(async (payload: any) => {
+      sent.push(...payload.mutations);
+      // The first record (sent with its reference unset) is rejected.
+      const rejected = payload.mutations.filter((m: any) => m.record?.peerId === null);
+      return {
+        ok: true,
+        result: {
+          ok: rejected.length === 0,
+          applied: [],
+          errors: rejected.map((m: any) => ({ mutationId: m.mutationId, code: "DFQL_INVALID", message: "no", path: "$" })),
+          cursor: "1",
+        },
+      } as any;
+    });
+    const client = createDatafnClient({
+      schema: {
+        resources: [
+          { name: "links", version: 1, fields: [{ name: "peerId", type: "string" as const, nullable: true }] },
+        ],
+        relations: [{ from: "links", to: "links", type: "many-one", relation: "peer", fkField: "peerId" } as any],
+      },
+      sync: { remote: "http://example.com" },
+      clientId: "client:rejected-restore",
+      storage,
+    });
+
+    const result = await client.sync.cloneUp({ includeManyMany: false, pullAfter: false, failFast: false });
+    pushSpy.mockRestore();
+
+    expect(result.ok).toBe(false);
+    expect(result.errors).toHaveLength(1);
+    expect(sent.some((m) => /:ref:/.test(m.mutationId))).toBe(false);
+  });
+});
+
