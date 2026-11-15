@@ -15,6 +15,7 @@ import { createDatafnServer } from "../../server.js";
 import type { DatafnSchema } from "../../core-types.js";
 import {
   MAX_PUSHDOWN_IN_VALUES,
+  classifyQuery,
   convertDfqlFilters,
   extractPushableFilters,
 } from "../../execution/query/planner.js";
@@ -37,6 +38,7 @@ const schema: DatafnSchema = {
         { name: "title", type: "string", required: true },
         { name: "score", type: "number", required: false },
         { name: "dueOn", type: "string", required: false },
+        { name: "remindAt", type: "date", required: false },
       ],
     },
   ],
@@ -176,7 +178,13 @@ describe("non-owner access lists", () => {
     // One owned-row read plus the pushed-down query; no full-table load.
     const noteReads = harness.calls.filter((call) => call.model === "notes");
     expect(noteReads.every((call) => (call.where ?? []).some((c) => c.field !== "__ns"))).toBe(true);
-    expect(idInFilters(harness.calls).length).toBeGreaterThan(0);
+    // The pushed-down statement carries the complete access list (every
+    // clause holds all of bob's ids; none is split or truncated).
+    const accessFilters = idInFilters(harness.calls);
+    expect(accessFilters.length).toBeGreaterThan(0);
+    for (const clause of accessFilters) {
+      expect(clause.value).toHaveLength(extra + 1);
+    }
   });
 
   it("ignores access fields a client puts in query metadata", async () => {
@@ -203,6 +211,15 @@ describe("oversized $in lists", () => {
     ]);
   });
 
+  it("keeps $in lists that together exceed the budget in memory", () => {
+    const half = Math.floor(MAX_PUSHDOWN_IN_VALUES / 2) + 1;
+    const filters = { $and: [{ id: { $in: ids(half) } }, { title: { $in: ids(half) } }] };
+    expect(classifyQuery({ resource: "notes", filters })).toBe("IN_MEMORY");
+    const split = extractPushableFilters(filters);
+    expect(split.pushable).toEqual([{ field: "id", operator: "in", value: ids(half) }]);
+    expect(split.remaining).toEqual({ $and: [{ title: { $in: ids(half) } }] });
+  });
+
   it("keeps a longer $in list in memory", () => {
     const long = ids(MAX_PUSHDOWN_IN_VALUES + 1);
     expect(convertDfqlFilters({ id: { $in: long } })).toBeNull();
@@ -219,7 +236,7 @@ describe("temporal storage hints", () => {
     return validateQuery({ resource: "notes", version: 1, temporal }, buildSchemaIndex(schema));
   }
 
-  it("rejects a date or iso hint on an epoch date field", async () => {
+  it("rejects a date or iso hint on a capability date field", async () => {
     for (const storage of ["date", "iso"]) {
       const result: any = validate({
         field: "createdAt",
@@ -229,6 +246,18 @@ describe("temporal storage hints", () => {
       expect(result.ok).toBe(false);
       expect(result.error.code).toBe("DFQL_INVALID");
       expect(result.error.path).toBe("temporal.storage");
+    }
+  });
+
+  it("rejects unix-s on a capability date field", () => {
+    const result: any = validate({ field: "createdAt", storage: "unix-s", period: { scale: "day" } });
+    expect(result.ok).toBe(false);
+  });
+
+  it("accepts any storage hint on a user-declared date field", () => {
+    for (const storage of ["date", "iso", "unix-s", "unix-ms"]) {
+      const result: any = validate({ field: "remindAt", storage, period: { scale: "day" } });
+      expect(result.ok).toBe(true);
     }
   });
 
