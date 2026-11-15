@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_CONFIG, DEFAULT_POLICY, harnessAuthDiagnostics, lensOutputSchema, type CommandResult, type CommandRunnerOptions, type ReviewFnConfig, type SlotHarnessInput } from "@superfunctions/reviewfn-core";
 
-import { CLAUDE_CODE_ALLOWED_TOOLS, CLAUDE_CODE_DISALLOWED_TOOLS, ClaudeCodeHarnessAdapter, claudeCodeArguments, parseClaudeCodeVersion, resolvedModelMatches, type CommandRunner } from "../src/index.js";
+import { CLAUDE_CODE_ALLOWED_TOOLS, CLAUDE_CODE_MIN_VERSION, CLAUDE_CODE_DISALLOWED_TOOLS, ClaudeCodeHarnessAdapter, claudeCodeArguments, parseClaudeCodeVersion, resolvedModelMatches, type CommandRunner } from "../src/index.js";
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
 const fixture = (name: string) => readFileSync(path.join(fixtures, `${name}.jsonl`), "utf8");
@@ -130,8 +130,9 @@ describe("ClaudeCodeHarnessAdapter results", () => {
     expect(resolvedModelMatches(MODEL, MODEL)).toBe(true);
     expect(resolvedModelMatches(MODEL, "claude-opus-5-5-20261101")).toBe(true);
     for (const resolved of ["claude-opus-5-5-2026110", "claude-opus-5-5-202611011", "claude-opus-5-5-latest", "claude-opus-5-5x", "xclaude-opus-5-5", "claude-opus-5-5-20261101-v2", "claude-opus-5"]) expect(resolvedModelMatches(MODEL, resolved)).toBe(false);
-    expect(resolvedModelMatches("claude.opus[1m]", "claudeXopus1")).toBe(false);
-    expect(resolvedModelMatches("claude.opus[1m]", "claude.opus[1m]-20261101")).toBe(true);
+    // A configured model is matched literally: '.' is not a wildcard.
+    expect(resolvedModelMatches("claude-opus-5.5", "claude-opus-5x5")).toBe(false);
+    expect(resolvedModelMatches("claude-opus-5.5", "claude-opus-5.5-20261101")).toBe(true);
   });
 
   it("re-prompts once with the validation errors, then ends malformed", async () => {
@@ -241,7 +242,8 @@ describe("ClaudeCodeHarnessAdapter results", () => {
     const limits = (maxOutputBytes: number) => ({ ...baseInput, policy: { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, maxOutputBytes } } });
     const shared = adapter([malformed, fixture("schema-invalid-output")]);
     await shared.adapter.run(limits(limit));
-    expect(shared.calls.map(call => call.options.maxOutputBytes)).toEqual([limit, limit - Buffer.byteLength(`${malformed}\n`) - 2]);
+    // The first attempt's stdout/stderr separator is reserved too.
+    expect(shared.calls.map(call => call.options.maxOutputBytes)).toEqual([limit - 1, limit - Buffer.byteLength(`${malformed}\n`) - 2]);
     // A first attempt that used the whole budget leaves nothing for a repair, which is not started.
     const spent = adapter([malformed, fixture("completed-review")]);
     const output = await spent.adapter.run(limits(Buffer.byteLength(malformed) + 1));
@@ -256,7 +258,98 @@ describe("ClaudeCodeHarnessAdapter results", () => {
     const limit = Buffer.byteLength(malformed) + 4_096;
     const echoed = adapter([{ ...ok(malformed), stderr }, fixture("schema-invalid-output")]);
     await echoed.adapter.run({ ...baseInput, policy: { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, maxOutputBytes: limit } } });
-    expect(echoed.calls.map(call => call.options.maxOutputBytes)).toEqual([limit, limit - Buffer.byteLength(`${malformed}\n${stderr}`) - 2]);
+    expect(echoed.calls.map(call => call.options.maxOutputBytes)).toEqual([limit - 1, limit - Buffer.byteLength(`${malformed}\n${stderr}`) - 2]);
+  });
+
+  it("ends timed_out itself when the stored output would exceed the budget the panel bounds", async () => {
+    const completed = fixture("completed-review");
+    const limits = (maxOutputBytes: number) => ({ ...baseInput, policy: { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, maxOutputBytes } } });
+    const stored = (output: { transcript?: string; events: unknown[] }) => Math.max(Buffer.byteLength(output.transcript ?? ""), Buffer.byteLength(JSON.stringify(output.events)));
+    // Just under the limit: completed, with every channel within it.
+    const fits = await adapter([completed]).adapter.run(limits(1_000_000));
+    const needed = stored(fits);
+    const under = await adapter([completed]).adapter.run(limits(needed));
+    expect(under.terminal).toBe("completed");
+    expect(stored(under)).toBeLessThanOrEqual(needed);
+    // A first attempt at exactly its cap plus the separator: one byte over once stored, so timed_out, never completed.
+    const exact = adapter([completed]);
+    const over = await exact.adapter.run(limits(Buffer.byteLength(completed)));
+    expect(exact.calls[0].options.maxOutputBytes).toBe(Buffer.byteLength(completed) - 1);
+    expect(over.terminal).toBe("timed_out");
+    expect(over.error).toMatch(/byte budget once stored/);
+    expect(over.findings).toEqual([]);
+    // A credential shorter than [REDACTED] grows the redacted transcript past the limit.
+    const short = "k9x";
+    const env = { ...environment, REVIEW_AUTH: short };
+    const echoed = `${completed}\n${short.repeat(40)}`;
+    const shortRun = new ClaudeCodeHarnessAdapter({ runner: replay([{ ...ok(completed), stderr: short.repeat(40) }]).runner, environment: env });
+    const grown = await shortRun.run(limits(Buffer.byteLength(echoed) + 1));
+    expect(grown.terminal).toBe("timed_out");
+    expect(JSON.stringify(grown)).not.toContain(short);
+    // A repair whose stored transcript would exceed the budget ends timed_out too.
+    const malformed = fixture("malformed-output");
+    const repair = adapter([malformed, completed]);
+    const repaired = await repair.adapter.run(limits(Buffer.byteLength(malformed) + Buffer.byteLength(completed) + 2));
+    expect(repair.calls).toHaveLength(2);
+    expect(repaired.terminal).toBe("timed_out");
+    expect(repaired.findings).toEqual([]);
+  });
+
+  it("redacts every stored value in full before cutting it to its retention limit", async () => {
+    const secret = `${CREDENTIAL}-0123456789abcdef`;
+    const env = { ...environment, REVIEW_AUTH: secret };
+    const fragment = secret.slice(0, 8);
+    const across = (limit: number) => `${"x".repeat(limit - 6)}${secret}`;
+    const run = async (result: CommandResult) => new ClaudeCodeHarnessAdapter({ runner: replay([result]).runner, environment: env }).run(baseInput);
+    const line = (event: Record<string, unknown>) => JSON.stringify(event);
+    const model = { type: "assistant", message: { model: MODEL, content: [] } };
+    // Failure detail: stderr, and an is_error result text, crossing the 4,000-character cutoff.
+    const failed = await run({ ...ok(""), code: 1, stderr: across(4_000) });
+    const errored = await run(ok([line(model), line({ type: "result", subtype: "error_during_execution", is_error: true, model: MODEL, result: across(4_000) })].join("\n")));
+    // A served model crossing 256, a tool name crossing 128, and event labels crossing 64.
+    const longModel = await run(ok(line({ type: "assistant", message: { model: across(256), content: [] } })));
+    const longTool = await run(ok(line({ type: "assistant", message: { model: MODEL, content: [{ type: "tool_use", name: across(128) }] } })));
+    const labels = await run(ok([
+      line({ type: "system", subtype: "init", model: MODEL, permissionMode: across(64), tools: [across(128)] }),
+      line({ type: "system", subtype: across(64) }),
+      line({ type: across(64) }),
+      line(model),
+      line({ type: "result", subtype: across(64), model: MODEL, result: "{}" }),
+    ].join("\n")));
+    for (const output of [failed, errored, longModel, longTool, labels]) {
+      expect(JSON.stringify(output)).not.toContain(fragment);
+      expect(JSON.stringify(output)).toContain("[REDA");
+    }
+    // Redacted first, so the cut falls inside the redaction marker, never inside the credential.
+    expect(failed.error).toMatch(/^x{3994}\[REDAC…$/);
+    expect(errored.error).toMatch(/^x{3994}\[REDAC…$/);
+    expect(errored.uninspected[0].reason).toBe(errored.error);
+    // The checks still see the full values, so the slot is voided.
+    expect(longModel.error).toMatch(/^model_mismatch: /);
+    expect(longModel.observed?.model).toMatch(/^x+\[REDA[^\]]*…$/);
+    expect(longTool.error).toMatch(/^disallowed_tool: /);
+    expect(longTool.observed?.disallowedTools?.[0]).toMatch(/^x+\[REDA[^\]]*…$/);
+  });
+
+  it("converts caller-schema output as the Codex adapter does: missing sections are rejected, nulls are absent", async () => {
+    const permissive = { type: "object" };
+    const withResult = (text: string) => fixture("completed-review").split("\n").filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>)
+      .map(event => event.type === "result" ? { ...event, result: text } : event).map(event => JSON.stringify(event)).join("\n");
+    // An empty object accepted by a permissive caller schema is not an empty review.
+    const empty = adapter([withResult("{}"), withResult("{}")]);
+    const incomplete = await empty.adapter.run({ ...baseInput, outputSchema: permissive });
+    expect(empty.calls).toHaveLength(2);
+    expect(incomplete.terminal).toBe("malformed");
+    expect(incomplete.findings).toEqual([]);
+    // A null the caller schema allows is treated as absent.
+    const review = JSON.parse(String(fixture("completed-review").split("\n").filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>).find(event => event.type === "result")!.result)) as { evidence: Array<{ code: Record<string, unknown> }> };
+    review.evidence[0].code.endLine = null;
+    const nullable = adapter([withResult(JSON.stringify(review))]);
+    const output = await nullable.adapter.run({ ...baseInput, outputSchema: permissive });
+    expect(output.terminal).toBe("completed");
+    expect(nullable.calls).toHaveLength(1);
+    expect(output.findings).toHaveLength(1);
+    expect(output.evidence[0].code).not.toHaveProperty("endLine");
   });
 
   it("redacts a credential echoed in output from stored events, transcript and payload", async () => {
@@ -291,7 +384,8 @@ describe("ClaudeCodeHarnessAdapter trust and preflight", () => {
   });
 
   it("resolves the reported version at or above the floor", async () => {
-    for (const [reported, version] of [["2.1.325 (Claude Code)", "2.1.325"], ["2.1.0 (Claude Code)", "2.1.0"], ["10.0.1", "10.0.1"]]) {
+    expect(CLAUDE_CODE_MIN_VERSION).toBe("2.1.314");
+    for (const [reported, version] of [["2.1.325 (Claude Code)", "2.1.325"], ["2.1.314 (Claude Code)", "2.1.314"], ["10.0.1", "10.0.1"]]) {
       const { adapter: harness, calls } = adapter([], { version: reported });
       const result = await harness.preflight(configuration);
       expect(result.ok).toBe(true);
@@ -303,7 +397,8 @@ describe("ClaudeCodeHarnessAdapter trust and preflight", () => {
   });
 
   it("fails preflight with REVIEWFN_HARNESS_VERSION below the floor or without a version", async () => {
-    for (const reported of ["2.0.99 (Claude Code)", "1.9.400 (Claude Code)", "Claude Code"]) {
+    // 2.1.313 is the floor less one; 2.1.211 isolates project rules but not excluded settings files; 2.1.0 neither.
+    for (const reported of ["2.1.313 (Claude Code)", "2.1.211 (Claude Code)", "2.1.0 (Claude Code)", "2.0.99 (Claude Code)", "1.9.400 (Claude Code)", "Claude Code"]) {
       const { adapter: harness } = adapter([], { version: reported });
       const result = await harness.preflight(configuration);
       expect(result.ok).toBe(false);
@@ -320,6 +415,8 @@ describe("ClaudeCodeHarnessAdapter trust and preflight", () => {
       [{ provider: "anthropic", model: MODEL, auth: "action-proxy" }, "REVIEWFN_AUTH_UNSUPPORTED"],
       [{ provider: "anthropic", model: "configured", auth: "api-key", credentialEnv: "REVIEW_AUTH" }, "REVIEWFN_MODEL_REQUIRED"],
       [{ provider: "anthropic", model: "--dangerously-skip-permissions", auth: "api-key", credentialEnv: "REVIEW_AUTH" }, "REVIEWFN_MODEL_INVALID"],
+      // A bracketed context suffix is never part of a serving model ID, so the closed rule could never confirm it.
+      [{ provider: "anthropic", model: "claude-opus-5-5[1m]", auth: "api-key", credentialEnv: "REVIEW_AUTH" }, "REVIEWFN_MODEL_INVALID"],
       [{ provider: "anthropic", model: MODEL, auth: "api-key" }, "REVIEWFN_CREDENTIAL_MISSING"],
       [{ provider: "anthropic", model: MODEL, auth: "api-key", credentialEnv: "UNSET_CREDENTIAL" }, "REVIEWFN_CREDENTIAL_MISSING"],
       [{ provider: "anthropic", model: MODEL, auth: "api-key", credentialEnv: "HOME" }, "REVIEWFN_CREDENTIAL_INVALID"],

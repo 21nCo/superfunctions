@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import {
-  harnessOutputSchema, redactJson, redactText, runProcessGroup, structuredOutputValidator, validateHarnessPayload,
+  harnessOutputSchema, omitOptionalNulls, redactJson, redactText, runProcessGroup, structuredOutputValidator, validateHarnessPayload,
   type CommandResult, type CommandRunner, type HarnessAdapter, type HarnessCapabilities, type HarnessOutput, type JsonValue,
   type NormalizedRunEvent, type PreflightDiagnostic, type PreflightResult, type ReviewFnConfig, type SlotHarnessInput,
   type SlotHarnessOutput, type SlotObservation,
@@ -11,8 +11,13 @@ import {
 
 export type { CommandResult, CommandRunner } from "@superfunctions/reviewfn-core";
 
-/** The oldest Claude Code release whose print mode supports every flag in `claudeCodeArguments`. */
-export const CLAUDE_CODE_MIN_VERSION = "2.1.0";
+/**
+ * The oldest supported Claude Code release: print mode supports every flag in `claudeCodeArguments`, and excluding
+ * every settings source isolates the run. 2.1.211 stopped nested and path-scoped `.claude/rules` loading when project
+ * settings are excluded, and 2.1.314 stopped an excluded settings file supplying settings such as auto mode rules and
+ * saved permission consents.
+ */
+export const CLAUDE_CODE_MIN_VERSION = "2.1.314";
 /** The only tools a review may use. Any other tool-use event voids the slot (`disallowed_tool_use`). */
 export const CLAUDE_CODE_ALLOWED_TOOLS: readonly string[] = Object.freeze(["Read", "Grep", "Glob"]);
 /** Tools that are denied explicitly, in addition to being absent from the allowlist. */
@@ -20,15 +25,22 @@ export const CLAUDE_CODE_DISALLOWED_TOOLS: readonly string[] = Object.freeze(["B
 const EMPTY_MCP_CONFIG = JSON.stringify({ mcpServers: {} });
 /** Normalized events retained per run, across both attempts; the last slot records the truncation. */
 const MAX_EVENTS = 10_000;
-/** Retention limits on a reported model identity and on the usage entries kept in one usage event; never check limits. */
+/**
+ * Retention limits on stored strings (failure detail, model identity, tool name, event labels) and on the usage entries
+ * kept in one usage event. They bound only what is stored, after redaction, and never what is checked.
+ */
+const MAX_DETAIL_CHARS = 4_000;
 const MAX_MODEL_CHARS = 256;
+const MAX_TOOL_CHARS = 128;
+const MAX_LABEL_CHARS = 64;
 const MAX_USAGE_MODELS = 32;
 /** Bytes of the rejected answer echoed back in the repair prompt. */
 const REPAIR_ECHO_BYTES = 16_384;
 /** Environment names the harness environment owns; a credential may not reuse them. */
 const RESERVED_ENVIRONMENT = new Set(["PATH", "HOME", "LANG", "TMPDIR"]);
 const QUOTA = /quota|rate.?limit|usage.?limit|credit balance/i;
-const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._[\]-]{0,127}$/;
+/** A model the closed rule can confirm: no bracketed context suffix such as `[1m]`, which serving model IDs omit. */
+const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 /**
  * The exact argv of a review: print mode with the prompt on stdin, stream-json events (which print mode emits only with
@@ -135,7 +147,7 @@ export class ClaudeCodeHarnessAdapter implements HarnessAdapter {
     const secrets = this.secrets(config);
     const model = config.inference.model;
     const deadline = Date.now() + input.policy.limits.harnessTimeoutMs;
-    const state = new RunState(model, secrets, this.observedVersion);
+    const state = new RunState(model, secrets, this.observedVersion, input.policy.limits.maxOutputBytes);
     const basePrompt = `${input.prompt}\n\n${outputContract(schema)}`;
     let prompt = basePrompt;
     let home: string | undefined;
@@ -147,7 +159,7 @@ export class ClaudeCodeHarnessAdapter implements HarnessAdapter {
         const remaining = deadline - Date.now();
         if (remaining <= 0) return state.finish("timed_out", "Claude Code exceeded its configured bound before the repair attempt.");
         // Both attempts share one output budget, as they share one transcript: the repair gets only what is left.
-        const outputBytes = state.remainingOutputBytes(input.policy.limits.maxOutputBytes);
+        const outputBytes = state.remainingOutputBytes();
         if (outputBytes <= 0) return state.finish("timed_out", "Claude Code output used its whole byte budget before the repair attempt.");
         let result: CommandResult;
         try { result = await this.runner(this.executableFor(config), args, { cwd: input.workspace, env: environment, timeoutMs: remaining, maxOutputBytes: outputBytes, signal: input.signal, stdin: prompt }); }
@@ -159,14 +171,14 @@ export class ClaudeCodeHarnessAdapter implements HarnessAdapter {
         if (voided) return state.finish("failed", voided);
         if (result.code !== 0 || stream.result?.isError) {
           const detail = [result.stderr.trim(), stream.result?.isError ? stream.result.text : ""].filter(Boolean).join("\n");
-          return state.finish(QUOTA.test(detail) ? "quota_exhausted" : "failed", detail.slice(0, 4_000) || `Claude Code exited with ${String(result.code)}.`);
+          return state.finish(QUOTA.test(detail) ? "quota_exhausted" : "failed", state.retain(detail, MAX_DETAIL_CHARS) || `Claude Code exited with ${String(result.code)}.`);
         }
         const unconfirmed = state.unconfirmedModel();
         if (unconfirmed) return state.finish("failed", unconfirmed);
         const parsed = extractObject(stream.result?.text);
         const errors = "error" in parsed ? [parsed.error] : validate(parsed.value);
         if (!errors.length && "value" in parsed) {
-          const payload = normalizePayload(parsed.value);
+          const payload = normalizePayload(parsed.value) as Omit<HarnessOutput, "terminal" | "events" | "transcript">;
           const payloadErrors = validateHarnessPayload(payload);
           if (!payloadErrors.length) return state.complete(redactJson(payload, secrets));
           errors.push(...payloadErrors);
@@ -188,7 +200,7 @@ export class ClaudeCodeHarnessAdapter implements HarnessAdapter {
     if (!this.capabilities.providers.includes(config.inference.provider)) diagnostics.push({ code: "REVIEWFN_PROVIDER_UNSUPPORTED", level: "error", message: `Provider ${config.inference.provider} is unsupported by this adapter.` });
     if (!this.capabilities.authModes.includes(config.inference.auth)) diagnostics.push({ code: "REVIEWFN_AUTH_UNSUPPORTED", level: "error", message: `Auth mode ${config.inference.auth} is unsupported by this adapter.` });
     if (config.inference.model === "configured") diagnostics.push({ code: "REVIEWFN_MODEL_REQUIRED", level: "error", message: "Select an explicit model so provenance is reproducible and the resolved model can be checked." });
-    else if (!MODEL_PATTERN.test(config.inference.model)) diagnostics.push({ code: "REVIEWFN_MODEL_INVALID", level: "error", message: "The model must be a Claude model name of letters, digits, '.', '-', '_' and brackets." });
+    else if (!MODEL_PATTERN.test(config.inference.model)) diagnostics.push({ code: "REVIEWFN_MODEL_INVALID", level: "error", message: "The model must be a Claude model name of letters, digits, '.', '-' and '_', without a bracketed suffix such as [1m], so the served model can be confirmed." });
     const credential = config.inference.credentialEnv;
     if (credential !== undefined && (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(credential) || RESERVED_ENVIRONMENT.has(credential))) diagnostics.push({ code: "REVIEWFN_CREDENTIAL_INVALID", level: "error", message: "credentialEnv must name an environment variable other than PATH, HOME, LANG and TMPDIR." });
     else if (config.inference.auth === "api-key" && (!credential || !this.environment[credential])) diagnostics.push({ code: "REVIEWFN_CREDENTIAL_MISSING", level: "error", message: "API-key auth requires a populated credentialEnv available only to the harness process." });
@@ -254,10 +266,14 @@ function extractObject(text: string | undefined): { value: unknown } | { error: 
   return { error: "The final result message is not exactly one JSON object." };
 }
 
-/** A schema-valid output as a 0.1 harness payload: lens output has no requirements or assessments. */
-function normalizePayload(value: unknown): Omit<HarnessOutput, "terminal" | "events" | "transcript"> {
+/**
+ * A caller-schema-valid output as a 0.1 harness payload, as the Codex adapter converts it: lens output has no
+ * requirements or assessments, so only those default to empty; a missing required section stays missing for
+ * `validateHarnessPayload` to reject; and a null the caller schema allowed is an absent value.
+ */
+function normalizePayload(value: unknown): unknown {
   const fields = value as Partial<HarnessOutput>;
-  return { requirements: fields.requirements ?? [], assessments: fields.assessments ?? [], evidence: fields.evidence ?? [], findings: fields.findings ?? [], inspectedPaths: fields.inspectedPaths ?? [], uninspected: fields.uninspected ?? [] };
+  return omitOptionalNulls({ requirements: fields.requirements ?? [], assessments: fields.assessments ?? [], evidence: fields.evidence, findings: fields.findings, inspectedPaths: fields.inspectedPaths, uninspected: fields.uninspected });
 }
 
 function failure(terminal: HarnessOutput["terminal"], error: string): SlotHarnessOutput {
@@ -302,7 +318,7 @@ class RunState {
   private outputTokens: number | undefined;
   private costUsd: number | undefined;
 
-  public constructor(private readonly model: string, private readonly secrets: readonly string[], preflightVersion: string | undefined) {
+  public constructor(private readonly model: string, private readonly secrets: readonly string[], preflightVersion: string | undefined, private readonly maxOutputBytes: number) {
     this.harnessVersion = preflightVersion;
   }
 
@@ -321,7 +337,7 @@ class RunState {
       else if (type === "assistant") this.assistant(raw);
       else if (type === "user") this.user(raw);
       else if (type === "result") parsed.result = this.result(raw);
-      else this.push("warning", { message: "Unrecognized Claude Code event.", eventType: type.slice(0, 64) });
+      else this.push("warning", { message: "Unrecognized Claude Code event.", eventType: this.retain(type, MAX_LABEL_CHARS) });
     }
     return parsed;
   }
@@ -339,24 +355,45 @@ class RunState {
   }
 
   /**
-   * Output bytes the next attempt may produce: the limit less the output so far and the two newlines (the attempt
-   * separator and the attempt's stdout/stderr separator) the next attempt adds to the transcript. The output so far is
-   * the larger of the raw bytes the runner capped and the redacted transcript the panel bounds, so redaction, which
-   * shrinks a long credential and grows a short one, can widen neither budget.
+   * The one output budget of a run, shared by both attempts: the bytes the next attempt may produce are the limit less
+   * the output stored so far and the newlines the next attempt adds to the transcript (its stdout/stderr separator, and
+   * the attempt separator after a first attempt). The output so far is the larger of the raw bytes the runner capped
+   * and the redacted transcript the panel bounds, so redaction, which shrinks a long credential and grows a short one,
+   * can widen neither budget. `stored` applies the same limit to what a terminal returns.
    */
-  public remainingOutputBytes(limit: number): number {
-    if (!this.transcript.length) return limit;
+  public remainingOutputBytes(): number {
+    if (!this.transcript.length) return this.maxOutputBytes - 1;
     const separators = this.transcript.length * 2 - 1;
-    return limit - Math.max(this.rawBytes + separators, Buffer.byteLength(this.transcript.join("\n"))) - 2;
+    return this.maxOutputBytes - Math.max(this.rawBytes + separators, Buffer.byteLength(this.transcript.join("\n"))) - 2;
+  }
+
+  /** A value as stored: redacted in full first, then cut to its retention limit, so no cut can split a credential. */
+  public retain(value: string, max: number): string {
+    const redacted = redactText(value, this.secrets);
+    return redacted.length > max ? `${redacted.slice(0, max)}…` : redacted;
   }
 
   public complete(payload: Omit<HarnessOutput, "terminal" | "events" | "transcript">): SlotHarnessOutput {
     const uninspected = this.truncated ? [...payload.uninspected, { scope: "harness-events", reason: "Normalized event retention limit reached; telemetry was truncated." }] : payload.uninspected;
-    return { terminal: "completed", ...payload, uninspected, ...this.outputs() };
+    return this.stored({ terminal: "completed", ...payload, uninspected, ...this.outputs() });
   }
 
   public finish(terminal: HarnessOutput["terminal"], reason: string): SlotHarnessOutput {
-    return { ...failure(terminal, redactText(reason, this.secrets)), ...this.outputs() };
+    return this.stored({ ...failure(terminal, redactText(reason, this.secrets)), ...this.outputs() });
+  }
+
+  /**
+   * The output as returned, held to the limit the panel applies to each channel: a transcript or serialized events over
+   * it end the run timed_out here, so the adapter's terminal agrees with the panel's bound. Cancellation keeps its
+   * terminal, as it does in the panel.
+   */
+  private stored(output: SlotHarnessOutput): SlotHarnessOutput {
+    if (output.terminal === "canceled") return output;
+    const transcriptBytes = Buffer.byteLength(output.transcript ?? "");
+    const eventBytes = Buffer.byteLength(JSON.stringify(output.events));
+    if (transcriptBytes <= this.maxOutputBytes && eventBytes <= this.maxOutputBytes) return output;
+    const reason = `Claude Code output exceeded its ${this.maxOutputBytes}-byte budget once stored (transcript ${transcriptBytes} bytes, events ${eventBytes} bytes).`;
+    return { ...failure("timed_out", reason), events: output.events, transcript: output.transcript, observed: output.observed };
   }
 
   private outputs(): Pick<SlotHarnessOutput, "events" | "transcript" | "observed"> {
@@ -384,20 +421,20 @@ class RunState {
     this.sawModel = true;
     if (served) this.served = true;
     // A truncated identity is marked, so its stored form can never read as the configured model.
-    const stored = value.length > MAX_MODEL_CHARS ? `${value.slice(0, MAX_MODEL_CHARS)}…` : value;
+    const stored = this.retain(value, MAX_MODEL_CHARS);
     if (this.mismatch === undefined && !resolvedModelMatches(this.model, value)) this.mismatch = stored;
     return stored;
   }
 
   private system(raw: Record<string, unknown>): void {
-    if (raw.subtype !== "init") { this.push("message", { subtype: typeof raw.subtype === "string" ? raw.subtype.slice(0, 64) : "unknown" }); return; }
+    if (raw.subtype !== "init") { this.push("message", { subtype: typeof raw.subtype === "string" ? this.retain(raw.subtype, MAX_LABEL_CHARS) : "unknown" }); return; }
     const data: Record<string, JsonValue> = {};
     const model = this.noteModel(raw.model, false);
     if (model) data.model = model;
     const version = typeof raw.claude_code_version === "string" ? parseClaudeCodeVersion(raw.claude_code_version) : undefined;
     if (version) { this.harnessVersion = version; data.harnessVersion = version; }
-    if (typeof raw.permissionMode === "string") data.permissionMode = raw.permissionMode.slice(0, 64);
-    if (Array.isArray(raw.tools)) data.tools = raw.tools.filter((tool): tool is string => typeof tool === "string").map(tool => tool.slice(0, 128)).slice(0, 256);
+    if (typeof raw.permissionMode === "string") data.permissionMode = this.retain(raw.permissionMode, MAX_LABEL_CHARS);
+    if (Array.isArray(raw.tools)) data.tools = raw.tools.filter((tool): tool is string => typeof tool === "string").slice(0, 256).map(tool => this.retain(tool, MAX_TOOL_CHARS));
     this.push("started", data);
   }
 
@@ -411,7 +448,7 @@ class RunState {
       if (!isRecord(item) || typeof item.type !== "string" || !item.type.endsWith("tool_use")) continue;
       // The allowlist check sees the full name; only the stored name is truncated.
       const named = typeof item.name === "string" && item.name.length > 0;
-      const tool = named ? (item.name as string).slice(0, 128) : `(unnamed ${item.type.slice(0, 64)})`;
+      const tool = named ? this.retain(item.name as string, MAX_TOOL_CHARS) : `(unnamed ${this.retain(item.type, MAX_LABEL_CHARS)})`;
       const allowed = item.type === "tool_use" && named && CLAUDE_CODE_ALLOWED_TOOLS.includes(item.name as string);
       if (!allowed) this.disallowed.add(tool);
       this.push("tool_started", { tool, allowed });
@@ -454,7 +491,7 @@ class RunState {
     }
     this.push("usage", { usage, models, ...(cost === undefined ? {} : { costUsd: cost }) });
     const isError = raw.is_error === true || (typeof raw.subtype === "string" && raw.subtype !== "success");
-    const data: Record<string, JsonValue> = { subtype: typeof raw.subtype === "string" ? raw.subtype.slice(0, 64) : "unknown", isError };
+    const data: Record<string, JsonValue> = { subtype: typeof raw.subtype === "string" ? this.retain(raw.subtype, MAX_LABEL_CHARS) : "unknown", isError };
     const turns = count(raw.num_turns);
     if (turns !== undefined) data.turns = turns;
     const duration = count(raw.duration_ms);
