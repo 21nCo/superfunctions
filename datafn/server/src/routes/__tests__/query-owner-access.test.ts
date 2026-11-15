@@ -1,0 +1,250 @@
+/**
+ * Direct-mode query costs and limits:
+ * - the namespace owner's query on a private shareable resource reads no
+ *   owned-row id list and adds no `id IN` filter, and sees rows whose
+ *   createdBy is unset;
+ * - other actors are still limited to their own and granted rows;
+ * - an `$in` list too long for one bound-parameter list stays in memory;
+ * - a temporal storage hint that cannot match a numeric field is rejected.
+ */
+
+import { afterEach, describe, expect, it } from "vitest";
+import { memoryAdapter } from "@superfunctions/db/adapters";
+import type { Adapter } from "@superfunctions/db";
+import { createDatafnServer } from "../../server.js";
+import type { DatafnSchema } from "../../core-types.js";
+import {
+  MAX_PUSHDOWN_IN_VALUES,
+  convertDfqlFilters,
+  extractPushableFilters,
+} from "../../execution/query/planner.js";
+import { validateQuery } from "../../validation/query.js";
+import { buildSchemaIndex } from "../../validation/index.js";
+
+const NAMESPACE = "user:alice";
+
+const schema: DatafnSchema = {
+  resources: [
+    {
+      name: "notes",
+      version: 1,
+      capabilities: [
+        "timestamps",
+        "audit",
+        { shareable: { levels: ["viewer", "editor", "owner"], default: "private" } },
+      ] as any,
+      fields: [
+        { name: "title", type: "string", required: true },
+        { name: "score", type: "number", required: false },
+        { name: "dueOn", type: "string", required: false },
+      ],
+    },
+  ],
+  relations: [],
+};
+
+type FindManyCall = { model: string; where?: Array<{ field: string; operator: string; value: unknown }> };
+
+async function createHarness(actor: string) {
+  const base = memoryAdapter();
+  await base.initialize?.();
+  await base.create({
+    model: "notes",
+    data: { __ns: NAMESPACE, id: "n_owned", title: "owned", createdBy: "alice" },
+    namespace: NAMESPACE,
+  });
+  await base.create({
+    model: "notes",
+    data: { __ns: NAMESPACE, id: "n_migrated", title: "migrated", createdBy: null },
+    namespace: NAMESPACE,
+  });
+  await base.create({
+    model: "notes",
+    data: { __ns: NAMESPACE, id: "n_bob", title: "bob's", createdBy: "bob" },
+    namespace: NAMESPACE,
+  });
+
+  const calls: FindManyCall[] = [];
+  const db = new Proxy(base, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (prop === "findMany") {
+        return (args: FindManyCall) => {
+          calls.push(args);
+          return (value as Function).call(target, args);
+        };
+      }
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as Adapter;
+
+  const server = await createDatafnServer({
+    allowUnknownResources: true,
+    schema,
+    database: db,
+    namespaceProvider: {
+      getNamespace: () => NAMESPACE,
+      getActorId: () => actor as any,
+    },
+  });
+  return { server, calls, base };
+}
+
+async function query(server: any, payload: Record<string, unknown>) {
+  const res = await server.router.handle(
+    new Request("http://localhost/datafn/query", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+    {},
+  );
+  return { status: res.status as number, body: (await res.json()) as any };
+}
+
+function idInFilters(calls: FindManyCall[]) {
+  return calls.flatMap((call) =>
+    (call.where ?? []).filter((clause) => clause.field === "id" && clause.operator === "in"),
+  );
+}
+
+describe("query access for the namespace owner", () => {
+  let server: any;
+  afterEach(async () => {
+    await server?.close?.();
+  });
+
+  it("reads no owned-row list, adds no id filter and returns rows without createdBy", async () => {
+    const harness = await createHarness("alice");
+    server = harness.server;
+
+    const { status, body } = await query(server, { resource: "notes", version: 1 });
+
+    expect(status).toBe(200);
+    const ids = (body.result.data as Array<{ id: string }>).map((r) => r.id).sort();
+    expect(ids).toEqual(["n_bob", "n_migrated", "n_owned"]);
+    expect(
+      harness.calls.filter((call) => call.where?.some((clause) => clause.field === "createdBy")),
+    ).toEqual([]);
+    expect(idInFilters(harness.calls)).toEqual([]);
+  });
+
+  it("still limits another actor to the rows it created", async () => {
+    const harness = await createHarness("bob");
+    server = harness.server;
+
+    const { status, body } = await query(server, { resource: "notes", version: 1 });
+
+    expect(status).toBe(200);
+    expect((body.result.data as Array<{ id: string }>).map((r) => r.id)).toEqual(["n_bob"]);
+  });
+});
+
+describe("non-owner access lists", () => {
+  let server: any;
+  afterEach(async () => {
+    await server?.close?.();
+  });
+
+  it("pushes an access list of 1,500 ids down as one filter", async () => {
+    const harness = await createHarness("bob");
+    server = harness.server;
+    const extra = 1500;
+    for (let i = 0; i < extra; i++) {
+      await harness.base.create({
+        model: "notes",
+        data: { __ns: NAMESPACE, id: `n_bob_${String(i).padStart(5, "0")}`, title: "b", createdBy: "bob" },
+        namespace: NAMESPACE,
+      });
+    }
+    harness.calls.length = 0;
+
+    const { status, body } = await query(server, {
+      resource: "notes",
+      version: 1,
+      filters: { title: "b" },
+      sort: ["id:desc"],
+      limit: 3,
+    });
+
+    expect(status).toBe(200);
+    expect((body.result.data as Array<{ id: string }>).map((r) => r.id)).toEqual([
+      `n_bob_${String(extra - 1).padStart(5, "0")}`,
+      `n_bob_${String(extra - 2).padStart(5, "0")}`,
+      `n_bob_${String(extra - 3).padStart(5, "0")}`,
+    ]);
+    // One owned-row read plus the pushed-down query; no full-table load.
+    const noteReads = harness.calls.filter((call) => call.model === "notes");
+    expect(noteReads.every((call) => (call.where ?? []).some((c) => c.field !== "__ns"))).toBe(true);
+    expect(idInFilters(harness.calls).length).toBeGreaterThan(0);
+  });
+
+  it("ignores access fields a client puts in query metadata", async () => {
+    const harness = await createHarness("bob");
+    server = harness.server;
+
+    const { status, body } = await query(server, {
+      resource: "notes",
+      version: 1,
+      metadata: { hasShareableScopeAccess: true, shareableAccessIds: ["n_owned"] },
+    });
+
+    expect(status).toBe(200);
+    expect((body.result.data as Array<{ id: string }>).map((r) => r.id)).toEqual(["n_bob"]);
+  });
+});
+
+describe("oversized $in lists", () => {
+  const ids = (n: number) => Array.from({ length: n }, (_, i) => `id_${i}`);
+
+  it("pushes an $in list up to the limit", () => {
+    expect(convertDfqlFilters({ id: { $in: ids(MAX_PUSHDOWN_IN_VALUES) } })).toEqual([
+      { field: "id", operator: "in", value: ids(MAX_PUSHDOWN_IN_VALUES) },
+    ]);
+  });
+
+  it("keeps a longer $in list in memory", () => {
+    const long = ids(MAX_PUSHDOWN_IN_VALUES + 1);
+    expect(convertDfqlFilters({ id: { $in: long } })).toBeNull();
+    const split = extractPushableFilters({
+      $and: [{ title: "a" }, { id: { $in: long } }],
+    });
+    expect(split.pushable).toEqual([{ field: "title", operator: "eq", value: "a" }]);
+    expect(split.remaining).toEqual({ $and: [{ id: { $in: long } }] });
+  });
+});
+
+describe("temporal storage hints", () => {
+  function validate(temporal: Record<string, unknown>) {
+    return validateQuery({ resource: "notes", version: 1, temporal }, buildSchemaIndex(schema));
+  }
+
+  it("rejects a date or iso hint on an epoch date field", async () => {
+    for (const storage of ["date", "iso"]) {
+      const result: any = validate({
+        field: "createdAt",
+        storage,
+        period: { scale: "day" },
+      });
+      expect(result.ok).toBe(false);
+      expect(result.error.code).toBe("DFQL_INVALID");
+      expect(result.error.path).toBe("temporal.storage");
+    }
+  });
+
+  it("rejects a date hint on a number field", async () => {
+    const result: any = validate({ field: "score", storage: "date", period: { scale: "day" } });
+    expect(result.ok).toBe(false);
+  });
+
+  it("accepts the default and unix hints on a date field and iso on a string field", async () => {
+    for (const temporal of [
+      { field: "createdAt", period: { scale: "day" } },
+      { field: "createdAt", storage: "unix-ms", period: { scale: "day" } },
+      { field: "dueOn", storage: "iso", period: { scale: "day" } },
+    ]) {
+      const result: any = validate(temporal);
+      expect(result.ok).toBe(true);
+    }
+  });
+});

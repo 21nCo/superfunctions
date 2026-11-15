@@ -8,7 +8,11 @@ import type { Adapter, WhereClause } from "@superfunctions/db";
 import type { SequenceStore } from "./sequence-store.js";
 import { ChangeTrackingService } from "./change-tracking.js";
 import type { DatafnLogger } from "../../logger.js";
-import { isPrivateShareableResource, resolveAccessLevel } from "../../validation/authz.js";
+import {
+  isNamespaceOwnerActor,
+  isPrivateShareableResource,
+  resolveAccessLevel,
+} from "../../validation/authz.js";
 import { resourceIdMatches } from "./resource-id.js";
 
 export interface CloneRequest {
@@ -37,6 +41,19 @@ export interface CloneResult {
     details?: Record<string, unknown>;
   };
 }
+
+/**
+ * Ids per `in` lookup when loading the join rows of returned records. Kept
+ * under D1's 100 bound parameters per query, leaving room for the namespace.
+ */
+const JOIN_LOOKUP_CHUNK = 90;
+
+/**
+ * Most id lookup queries one page may spend on join rows. A page needing more
+ * (large pages, many relations) reads each join table once and filters it,
+ * so the queries per request stay bounded (D1 limits queries per invocation).
+ */
+const JOIN_LOOKUP_BUDGET = 16;
 
 /**
  * Execute clone operation - return full dataset with cursors
@@ -68,6 +85,7 @@ export async function executeClone(
   const cursors: Record<string, string> = {};
   const next: Record<string, string | null> = {};
   let joins: Record<string, Array<Record<string, unknown>>> | undefined;
+  let cappedClone = false;
 
   // Determine which tables to clone
   const tablesToClone = request.tables || schema.resources.map((r) => r.name);
@@ -82,6 +100,10 @@ export async function executeClone(
     }
     if (!actorId) {
       return [];
+    }
+    // The namespace owner sees every row; skip the per-row access lookup.
+    if (isNamespaceOwnerActor(actorId, namespace)) {
+      return rows;
     }
     const visible: Array<Record<string, unknown>> = [];
     for (const row of rows) {
@@ -290,22 +312,43 @@ export async function executeClone(
       }
     }
 
-    // Set paginated flag on result if needed (handled below in return)
-    if (paginated) {
-      return {
-        ok: true,
-        data,
-        cursors,
-        joins,
-        next: Object.keys(next).length > 0 ? next : undefined,
-        paginated: true,
-      };
-    }
+    // SCA-002: the capped result still carries the join rows of the records
+    // it returned (see below), then is flagged as paginated.
+    cappedClone = paginated;
   }
 
   // Include join rows if requested (SYNC-001, SYNC-006)
   if (request.includeJoins && schema.relations) {
     joins = {};
+
+    // Paginated and capped clones scope join rows to the records they returned.
+    let scopedIds: Map<string, Set<string>> | undefined;
+    if (request.page || cappedClone) {
+      scopedIds = new Map();
+      for (const [table, rows] of Object.entries(data)) {
+        const ids = new Set(
+          rows.map((row) => row.id).filter((id): id is string => typeof id === "string"),
+        );
+        if (ids.size > 0) scopedIds.set(table, ids);
+      }
+    }
+
+    // A page looks its join rows up by id while that fits the lookup budget.
+    let useIdLookups = false;
+    if (scopedIds && request.page) {
+      let lookups = 0;
+      for (const relation of schema.relations) {
+        if (relation.type !== "many-many") continue;
+        const froms = Array.isArray(relation.from) ? relation.from : [relation.from];
+        const tos = Array.isArray(relation.to) ? relation.to : [relation.to];
+        for (const side of [froms, tos]) {
+          let ids = 0;
+          for (const resource of side) ids += scopedIds.get(resource)?.size ?? 0;
+          lookups += Math.ceil(ids / JOIN_LOOKUP_CHUNK);
+        }
+      }
+      useIdLookups = lookups <= JOIN_LOOKUP_BUDGET;
+    }
 
     for (const relation of schema.relations) {
       // Skip relations that aren't many-many (no join rows)
@@ -317,13 +360,63 @@ export async function executeClone(
       const fromCol = relation.joinColumns?.from || "from";
       const toCol = relation.joinColumns?.to || "to";
 
+      // A paginated or capped clone returns only the join rows of the records
+      // it returned: rows whose from-side record was returned (for a from
+      // resource) or whose to-side record was (for a to resource). Every row
+      // then reaches the client with the records it links, instead of the
+      // whole join table on every page.
+      const fromScopes = scopedIds
+        ? froms.filter((resource) => scopedIds.has(resource))
+        : [];
+      const toScopes = scopedIds ? tos.filter((resource) => scopedIds.has(resource)) : [];
+      if (scopedIds && fromScopes.length === 0 && toScopes.length === 0) {
+        continue;
+      }
+
       try {
-        const joinRecords = await db.findMany({
-          model: joinTableName,
-          where: [],
-          orderBy: [{ field: "id", direction: "asc" }],
-          namespace,
-        });
+        let joinRecords: Array<Record<string, unknown>>;
+        // A page within the lookup budget looks its join rows up by id. A
+        // capped clone (up to maxCloneRecords records) or a page over budget
+        // reads the join table once and filters below, keeping the query
+        // count bounded (D1 limits queries per invocation).
+        if (scopedIds && useIdLookups) {
+          const byId = new Map<unknown, Record<string, unknown>>();
+          const lookups = new Map<string, Set<string>>();
+          const addLookup = (column: string, resources: string[]) => {
+            const ids = lookups.get(column) ?? new Set<string>();
+            for (const resource of resources) {
+              for (const id of scopedIds.get(resource)!) ids.add(id);
+            }
+            if (ids.size > 0) lookups.set(column, ids);
+          };
+          addLookup(fromCol, fromScopes);
+          addLookup(toCol, toScopes);
+          for (const [column, ids] of lookups) {
+            const values = [...ids];
+            for (let i = 0; i < values.length; i += JOIN_LOOKUP_CHUNK) {
+              const rows = await db.findMany({
+                model: joinTableName,
+                where: [
+                  { field: column, operator: "in", value: values.slice(i, i + JOIN_LOOKUP_CHUNK) },
+                ],
+                namespace,
+              });
+              for (const row of rows) byId.set(row.id, row);
+            }
+          }
+          joinRecords = [...byId.values()].sort((a, b) => {
+            const left = String(a.id ?? "");
+            const right = String(b.id ?? "");
+            return left < right ? -1 : left > right ? 1 : 0;
+          });
+        } else {
+          joinRecords = await db.findMany({
+            model: joinTableName,
+            where: [],
+            orderBy: [{ field: "id", direction: "asc" }],
+            namespace,
+          });
+        }
 
         const normalizedRows = joinRecords.map((row) =>
           normalizeJoinCloneRow(row, fromCol, toCol),
@@ -332,8 +425,12 @@ export async function executeClone(
         for (const from of froms) {
           for (const to of tos) {
             const joinStoreKey = getJoinStoreKey(from, relation.relation!, to);
-            const rowsForStore = normalizedRows.filter((row) =>
-              shouldIncludeJoinRowForStore(row, relation, schema, from, to),
+            const rowsForStore = normalizedRows.filter(
+              (row) =>
+                shouldIncludeJoinRowForStore(row, relation, schema, from, to) &&
+                (!scopedIds ||
+                  (typeof row.from === "string" && !!scopedIds.get(from)?.has(row.from)) ||
+                  (typeof row.to === "string" && !!scopedIds.get(to)?.has(row.to))),
             );
             if (rowsForStore.length > 0) {
               joins[joinStoreKey] = rowsForStore;
@@ -354,6 +451,7 @@ export async function executeClone(
     cursors,
     joins,
     next: Object.keys(next).length > 0 ? next : undefined,
+    ...(cappedClone ? { paginated: true } : {}),
   };
 }
 

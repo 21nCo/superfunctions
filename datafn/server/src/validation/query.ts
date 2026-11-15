@@ -17,6 +17,8 @@ import {
   checkPrototypePollution,
   getTemporalGroupAliases,
   parseSortTerm,
+  resolveCapabilities,
+  getCapabilityFields,
 } from "@datafn/core";
 import { validateFilterDepth, validateRelationDepth } from "./depth.js";
 
@@ -283,7 +285,9 @@ export function validateQuery(
   }
 
   if (q.temporal !== undefined) {
-    const temporalResult = validateTemporal(q, fieldNames);
+    const temporalResult = validateTemporal(q, fieldNames, (field) =>
+      resolveFieldType(index, resourceName, field),
+    );
     if (!temporalResult.ok) {
       return temporalResult;
     }
@@ -608,9 +612,33 @@ function validateGroupBy(
   return vOk(undefined);
 }
 
+/** Declared type of a resource field, including capability-injected fields. */
+function resolveFieldType(
+  index: SchemaIndex,
+  resourceName: string,
+  field: string,
+): string | undefined {
+  const resource = index.schema.resources.find((r) => r.name === resourceName);
+  if (!resource) return undefined;
+  const declared = resource.fields.find((f) => f.name === field);
+  if (declared) return declared.type;
+  const capabilityFields = getCapabilityFields(
+    resolveCapabilities(index.schema.capabilities as any, resource.capabilities as any) as any,
+  ) as Array<{ name: string; type: string }>;
+  return capabilityFields.find((f) => f.name === field)?.type;
+}
+
+/**
+ * Temporal storage hints that compile to non-numeric bounds. DataFn stores
+ * `date` and `number` fields as numbers (epoch milliseconds for `date`), so
+ * these hints can never match them.
+ */
+const NON_NUMERIC_TEMPORAL_STORAGE = new Set(["date", "iso"]);
+
 function validateTemporal(
   q: Record<string, unknown>,
   fieldNames: Set<string>,
+  fieldType: (field: string) => string | undefined = () => undefined,
 ): ValidationResult<void> {
   const clauses = Array.isArray(q.temporal) ? q.temporal : [q.temporal];
   const validScales = new Set(["hour", "day", "week", "month", "quarter", "year"]);
@@ -631,6 +659,17 @@ function validateTemporal(
     }
     if (temporal.storage !== undefined && !validStorage.has(String(temporal.storage))) {
       return vErr("DFQL_INVALID", "Invalid temporal storage", `${path}.storage`);
+    }
+    const targetType = fieldType(temporal.field);
+    if (
+      (targetType === "date" || targetType === "number") &&
+      NON_NUMERIC_TEMPORAL_STORAGE.has(String(temporal.storage))
+    ) {
+      return vErr(
+        "DFQL_INVALID",
+        `Invalid DFQL: temporal storage "${String(temporal.storage)}" does not match ${targetType} field ${temporal.field}, which is stored as a number (epoch milliseconds for date fields); use "unix-ms" (the default)`,
+        `${path}.storage`,
+      );
     }
     if (temporal.period !== undefined) {
       if (typeof temporal.period !== "object" || temporal.period === null || Array.isArray(temporal.period)) {
