@@ -136,7 +136,7 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
       const secrets = this.secrets(config, environment);
       try {
         const executable = await this.resolveExecutable(config);
-        const probed = await this.probeVersion(executable, profile, environment, VERSION_TIMEOUT_MS, signal);
+        const probed = await this.probeVersion(executable, profile, environment, secrets, VERSION_TIMEOUT_MS, signal);
         if ("error" in probed) diagnostics.push({ code: "REVIEWFN_HARNESS_VERSION", level: "error", message: redactText(probed.error, secrets) });
         else version = probed.version;
       } catch (error) {
@@ -167,7 +167,7 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     catch (error) { return state.finish("failed", `The CLI executable is unavailable: ${message(error)}`); }
     const versionKey = this.versionKey(executable, profile);
     if (!this.versions.has(versionKey)) {
-      const probed = await this.probeVersion(executable, profile, environment, Math.max(1, Math.min(VERSION_TIMEOUT_MS, deadline - Date.now())), input.signal);
+      const probed = await this.probeVersion(executable, profile, environment, secrets, Math.max(1, Math.min(VERSION_TIMEOUT_MS, deadline - Date.now())), input.signal);
       if (input.signal?.aborted) return state.finish("canceled", "The CLI run was canceled while its version was read.");
       if ("error" in probed) return state.finish("failed", probed.error);
     }
@@ -295,13 +295,16 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     return JSON.stringify([executable, profile.versionArgv ?? CLI_DEFAULT_VERSION_ARGV]);
   }
 
-  /** Run the version arguments outside the workspace with the profile's environment and record the reported version. */
-  private async probeVersion(executable: string, profile: HarnessProfile, environment: NodeJS.ProcessEnv, timeoutMs: number, signal?: AbortSignal): Promise<{ version: string } | { error: string }> {
+  /**
+   * Run the version arguments outside the workspace with the profile's environment and record the reported version. A
+   * failure's detail is redacted before it is cut to length, so a secret that crosses the cut cannot leak its prefix.
+   */
+  private async probeVersion(executable: string, profile: HarnessProfile, environment: NodeJS.ProcessEnv, secrets: string[], timeoutMs: number, signal?: AbortSignal): Promise<{ version: string } | { error: string }> {
     const args = [...(profile.versionArgv ?? CLI_DEFAULT_VERSION_ARGV)];
     let result: CommandResult;
     try { result = await this.runner(executable, args, { cwd: tmpdir(), env: environment, timeoutMs, maxOutputBytes: VERSION_OUTPUT_BYTES, signal }); }
-    catch (error) { return { error: `The CLI version could not be read: ${message(error)}` }; }
-    if (result.code !== 0) return { error: `The CLI version command exited with ${String(result.code ?? result.signal)}${result.timedOut ? " (timed out)" : ""}: ${result.stderr.trim().slice(0, 500)}` };
+    catch (error) { return { error: redactText(`The CLI version could not be read: ${message(error)}`, secrets) }; }
+    if (result.code !== 0) return { error: `The CLI version command exited with ${String(result.code ?? result.signal)}${result.timedOut ? " (timed out)" : ""}: ${redactText(result.stderr, secrets).trim().slice(0, 500)}` };
     const version = parseCliVersion(result.stdout, result.stderr);
     if (!version) return { error: "The CLI reported no recognizable version, so the slot's pinned version cannot be confirmed." };
     this.versions.set(this.versionKey(executable, profile), version);

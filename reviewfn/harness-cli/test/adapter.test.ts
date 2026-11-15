@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DEFAULT_CONFIG, DEFAULT_POLICY, lensOutputSchema, type HarnessProfile, type ReviewFnConfig, type SlotHarnessInput } from "@superfunctions/reviewfn-core";
+import { DEFAULT_CONFIG, DEFAULT_POLICY, lensOutputSchema, type CommandRunner, type HarnessProfile, type ReviewFnConfig, type SlotHarnessInput } from "@superfunctions/reviewfn-core";
 
 import { CliHarnessAdapter, cliArguments, cliEnvironment, lastJsonObjectLine, parseCliVersion, valueAtPath, withModelReportField } from "../src/index.js";
 
@@ -252,6 +252,19 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     expect(parseCliVersion("cursor-agent 2025.08.25-896bbe1\n")).toBe("2025.08.25-896bbe1");
     expect(parseCliVersion("v0.9.0")).toBe("0.9.0");
   }, 20_000);
+
+  it.each([["the credential", CREDENTIAL], ["a secret-named allowlisted value", ALLOWED_SECRET]])("redacts %s from a failed version read before cutting its stderr", async (_name, secret) => {
+    // The secret crosses the 500-character cut, so truncating before redaction would leave its prefix unmatched.
+    const runner: CommandRunner = async () => ({ code: 2, signal: null, stdout: "", stderr: `${"x".repeat(490)}${secret}`, timedOut: false, canceled: false });
+    const config = configuration(profile({ envAllowlist: ["ALLOWED_ONE", "FIXTURE_API_KEY"] }));
+    const preflight = await new CliHarnessAdapter({ environment: environment(), runner }).preflight(config);
+    const diagnostic = preflight.diagnostics.find(item => item.code === "REVIEWFN_HARNESS_VERSION");
+    expect(diagnostic?.message).toContain("exited with 2");
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(config));
+    expect(output.terminal).toBe("failed");
+    expect(output.error).toContain("exited with 2");
+    for (const text of [diagnostic!.message, output.error!, JSON.stringify(output)]) { expect(text).not.toContain(`x${secret.slice(0, 6)}`); expect(text).not.toContain(secret.slice(0, 10)); }
+  });
 
   it.each([
     ["a relative executable", (config: ReviewFnConfig) => ({ ...config, harness: { ...config.harness, executable: "bin/agent" } }), "REVIEWFN_CLI_UNAVAILABLE"],
