@@ -1,0 +1,23 @@
+.github/workflows/ci.yml
+  s_63156fd0506e72::t_80f231c18f26da 79
+scripts/verify-owners.mjs
+  s_63156fd0506e72::t_8c0a03852dda2f 5-6,50-132,134-135,137-158,161-175,177-180,291-299,330-332
+scripts/verify-owners.test.mjs
+  s_63156fd0506e72::t_b440d0a8b82428 10,46-49,128-133,137-202,206-207
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b904ad13d242c486611203855ef0c79e5e5ac4b5",
+  "prompts": {},
+  "sessions": {
+    "s_63156fd0506e72": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d3d15058-82d5-4cfd-af2d-d37487a8a140",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
