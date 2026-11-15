@@ -370,10 +370,11 @@ export async function executeClone(
       }
     }
 
-    // A page or capped batch looks its join rows up by id while that fits
-    // the lookup budget; otherwise it reads each join table once and filters.
+    // A page looks its join rows up by id while that fits the lookup budget;
+    // otherwise, and always for a capped clone (whose table counts and reads
+    // already spend many queries), each join table is read once and filtered.
     let useIdLookups = false;
-    if (scopedIds) {
+    if (scopedIds && request.page) {
       let lookups = 0;
       for (const relation of schema.relations) {
         if (relation.type !== "many-many") continue;
