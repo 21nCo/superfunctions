@@ -1,0 +1,25 @@
+logfn/python/src/logfn/default_redaction.py
+  s_f058f999ab46b7::t_97ceab40495d1a 442,444-451,457,475,478
+logfn/python/tests/test_default_redaction.py
+  s_f058f999ab46b7::t_6ceb16300a304a 510-511
+logfn/typescript/src/core/default-redaction.test.ts
+  s_f058f999ab46b7::t_266c5667c7464a 509-510
+logfn/typescript/src/pipeline/default-redaction.ts
+  s_f058f999ab46b7::t_b543c2a956c4c4 342-350,353,370-372
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e78fd7d9bd05c3bb41a6828db30ac6c8a0a43491",
+  "prompts": {},
+  "sessions": {
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

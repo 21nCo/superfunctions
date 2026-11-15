@@ -1,0 +1,27 @@
+watchfn/typescript/src/storage/json-snapshot.ts
+  s_f058f999ab46b7::t_6508ee09b9e4a7 1-28
+watchfn/typescript/tests/collectors/exception-lifecycle.test.ts
+  s_f058f999ab46b7::t_42ba96ef705c85 167-169
+watchfn/typescript/tests/storage/database.test.ts
+  s_f058f999ab46b7::t_eccaaf58317172 53-85,91-94
+watchfn/typescript/tests/trace/tracer.test.ts
+  s_f058f999ab46b7::t_744a29aa4c8aeb 88-101
+watchfn/typescript/src/storage/database.ts
+  s_f058f999ab46b7::t_1c96f47794ccf4 6,57-59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8d777b2fcee17155bb35b7f37434b9ee0d7abbe9",
+  "prompts": {},
+  "sessions": {
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,41 @@
+watchfn/.conduct/python-synthetic-lifecycle-reports.md
+  s_59718a9b1011e5::t_90bc0ee0f966a8 19
+watchfn/.conduct/typescript-synthetic-lifecycle-reports.md
+  s_59718a9b1011e5::t_f4dc4e1c935d3d 24
+watchfn/python/tests/test_synthetics.py
+  s_59718a9b1011e5::t_96dfa6c76c8d51 186-207
+watchfn/python/watchfn/synthetics/reports.py
+  s_59718a9b1011e5::t_dc20add8cd669a 9-15,21,24,58
+watchfn/typescript/src/storage/database.ts
+  s_d9a7b60a361fe2::t_277282dfa270fe 156,163-189,191-199,214
+watchfn/typescript/src/synthetics/reports.ts
+  s_59718a9b1011e5::t_694924bde7af4d 9-14,23,25-28,31-33,48,79
+watchfn/typescript/tests/storage/indexed-log-volume.test.ts
+  s_d9a7b60a361fe2::t_0fe6d972ac9928 1-42
+watchfn/typescript/tests/synthetics-native.test.ts
+  s_59718a9b1011e5::t_888d5e274abcce 93-109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5bec2c48a9a83c2ce922cb6b8cf678a79eea0564",
+  "prompts": {},
+  "sessions": {
+    "s_59718a9b1011e5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bb479e62-8864-49f5-a298-31758c4d3d6a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_d9a7b60a361fe2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3fcb200c-23ae-4eea-bd8e-d45e8884b1cc",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

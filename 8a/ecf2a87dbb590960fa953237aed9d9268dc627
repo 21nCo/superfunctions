@@ -1,0 +1,23 @@
+watchfn/python/tests/test_log_pattern_alerts.py
+  s_19ec80930b1367::t_5c923dc424d220 128-130
+watchfn/python/tests/test_stored_alerts.py
+  s_19ec80930b1367::t_46680952b0c4c4 108,190-211
+watchfn/python/watchfn/alerts/durable.py
+  s_19ec80930b1367::t_71ea6ad6c31f55 419-434
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8aecf2a87dbb590960fa953237aed9d9268dc627",
+  "prompts": {},
+  "sessions": {
+    "s_19ec80930b1367": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_19ec80930b1367",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,39 @@
+logfn/python/README.md
+  s_5007d44f96fbed::t_944c2e25214323 186-187,189-195,199-200
+logfn/python/src/logfn/default_redaction.py
+  s_5007d44f96fbed::t_27b49e5e43dec8 5-6,396-401,403-465
+logfn/python/tests/test_default_redaction.py
+  s_5007d44f96fbed::t_9dc0d88e5e890a 479-484,489-511
+logfn/typescript/README.md
+  s_5007d44f96fbed::t_12a31cf114b282 644-652,686-687
+logfn/typescript/src/core/default-redaction.test.ts
+  s_5007d44f96fbed::t_6e6e6ec77220fd 233,484-489,494-512
+logfn/typescript/src/pipeline/default-redaction.ts
+  s_5007d44f96fbed::t_24eb0b0791f273 311-316,319-358
+watchfn/python/tests/test_log_integration.py
+  s_5007d44f96fbed::t_10418b899d49a1 2,65-66,75-76,150-169
+watchfn/typescript/README.md
+  s_5007d44f96fbed::t_e693c36dd24282 46
+watchfn/typescript/src/collectors/errors/exception-handler.ts
+  s_5007d44f96fbed::t_2eb5fb81e17e9b 11-37,43,75-77,86-92
+watchfn/typescript/tests/collectors/exception-lifecycle.test.ts
+  s_5007d44f96fbed::t_4e78a6f6e3c779 109-197
+watchfn/typescript/tests/logfn-integration.test.ts
+  s_5007d44f96fbed::t_44fa8ef12f58a7 25-43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1925e32374a9a205006f4ac0b10173d4f6183ca6",
+  "prompts": {},
+  "sessions": {
+    "s_5007d44f96fbed": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_5007d44f96fbed",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

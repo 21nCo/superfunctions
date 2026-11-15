@@ -1,0 +1,25 @@
+watchfn/python/tests/test_synthetics.py
+  s_287b99a682ef13::t_3fced1075b88ac 208-246
+watchfn/python/tests/test_traces.py
+  s_287b99a682ef13::t_b76fbe45d3489a 183-202
+watchfn/python/watchfn/synthetics/scheduler.py
+  s_287b99a682ef13::t_ede4e0a7a474a9 22,31,73-80,86-94,99-101
+watchfn/python/watchfn/trace/tracer.py
+  s_287b99a682ef13::t_7d391781d9160d 139-141,147-152
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "377b18f96b910608e03c8841618dbef89ac095c1",
+  "prompts": {},
+  "sessions": {
+    "s_287b99a682ef13": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_287b99a682ef13",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
