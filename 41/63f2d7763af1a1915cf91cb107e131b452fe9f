@@ -1,0 +1,25 @@
+billfn/admin/src/domain-service.ts
+  s_f058f999ab46b7::t_173fb5eb464867 265-270
+billfn/admin/src/__tests__/admin.test.ts
+  s_f058f999ab46b7::t_f6c63c209da505 270,292
+billfn/admin/src/index.ts
+  s_f058f999ab46b7::t_12f7200ff40ac9 501-506,744,746
+billfn/core/src/types.ts
+  s_f058f999ab46b7::t_2e799ee3791b18 667-668
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4163f2d7763af1a1915cf91cb107e131b452fe9f",
+  "prompts": {},
+  "sessions": {
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

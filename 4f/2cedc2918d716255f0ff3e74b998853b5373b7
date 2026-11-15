@@ -1,0 +1,21 @@
+reviewfn/core/src/panel/render.ts
+  s_36e4381914b67d::t_f82988db001b2c 88-89
+reviewfn/core/test/panel-render.test.ts
+  s_36e4381914b67d::t_82da98851315bd 86-88
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4f2cedc2918d716255f0ff3e74b998853b5373b7",
+  "prompts": {},
+  "sessions": {
+    "s_36e4381914b67d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_36e4381914b67d",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
