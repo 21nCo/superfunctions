@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 
 /** The outcome of one bounded child process run. */
 export interface CommandResult { code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string; timedOut: boolean; canceled: boolean }
@@ -28,6 +29,8 @@ export const runProcessGroup: CommandRunner = async (command, args, options) => 
   const child = spawn(command, args, { cwd: options.cwd, env: options.env, detached: process.platform !== "win32", windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
   child.stdin.on("error", () => { /* child may reject before consuming input */ });
   child.stdin.end(options.stdin ?? "");
+  // One decoder per stream keeps a multi-byte UTF-8 character that is split across pipe chunks intact.
+  const decoders = { stdout: new StringDecoder("utf8"), stderr: new StringDecoder("utf8") };
   let stdout = "";
   let stderr = "";
   let total = 0;
@@ -45,7 +48,7 @@ export const runProcessGroup: CommandRunner = async (command, args, options) => 
   const append = (target: "stdout" | "stderr", chunk: Buffer) => {
     total += chunk.length;
     if (total > options.maxOutputBytes) { terminate("timeout"); return; }
-    if (target === "stdout") stdout += chunk.toString("utf8"); else stderr += chunk.toString("utf8");
+    if (target === "stdout") stdout += decoders.stdout.write(chunk); else stderr += decoders.stderr.write(chunk);
   };
   child.stdout.on("data", (chunk: Buffer) => append("stdout", chunk));
   child.stderr.on("data", (chunk: Buffer) => append("stderr", chunk));
@@ -60,6 +63,8 @@ export const runProcessGroup: CommandRunner = async (command, args, options) => 
   child.once("close", (code, signal) => {
     clearTimeout(timer);
     options.signal?.removeEventListener("abort", onAbort);
+    stdout += decoders.stdout.end();
+    stderr += decoders.stderr.end();
     resolve({ code, signal, stdout, stderr, timedOut, canceled });
   });
 });
