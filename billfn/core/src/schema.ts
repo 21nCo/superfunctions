@@ -213,7 +213,8 @@ export function getSchema(_options: BillFnSchemaOptions = {}): { version: number
     },
     indexes: [
       { name: 'entitlement_grants_billing_account_idx', fields: ['billingAccountId', 'createdAt'] },
-      { name: 'entitlement_grants_expires_idx', fields: ['expiresAt'] }
+      { name: 'entitlement_grants_expires_idx', fields: ['expiresAt'] },
+      { name: 'entitlement_grants_updated_idx', fields: ['updatedAt'] }
     ]
   };
 

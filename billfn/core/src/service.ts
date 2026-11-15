@@ -9,6 +9,7 @@ import {
   listRepairedGrants,
   readCreateGrantInput,
   repairGrantEvents,
+  repairRecentGrantEvents,
   requireFutureExpiry,
   revokeGrant,
   toGrantSummary,
@@ -193,6 +194,8 @@ type ServiceDeps = {
    * provider read. A failed read without a queue throws a window-read error.
    */
   reconcileProviderState?: (subscription: BillFnSubscription, event: WindowEvent) => Promise<void>;
+  /** Records the missing events of recent grant changes (`repairRecentGrantEvents`), for the `lifecycle-events` job. */
+  repairRecentGrantEvents?: (beforeEach?: () => Promise<void>) => Promise<void>;
 };
 type CatalogSelection = { plan: ReturnType<typeof requirePlan>; price: BillFnPriceDefinition };
 /** An event inside a committed mutation's window: its lifecycle key and the catalog price it names. */
@@ -312,6 +315,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
     },
     isDuplicateRecordError
   };
+  deps.repairRecentGrantEvents = (beforeEach) => repairRecentGrantEvents(grantDeps, beforeEach);
   /**
    * The account's entitlements: its paid snapshot, or an active grant while that snapshot is `inactive`, and the
    * grants they were derived from. The grants' missing events are repaired on every read (see
@@ -1904,6 +1908,8 @@ async function processReconciliationJob(
       return;
     }
     case 'lifecycle-events': {
+      // Grant changes whose events a failed write or a stop left unrecorded, without waiting for account traffic.
+      await deps.repairRecentGrantEvents?.(assertLease);
       await deps.lifecycle.recordGrantExpiry();
       // The lease is renewed before each delivery, so a job whose lease lapsed stops delivering.
       await deps.lifecycle.dispatch({}, assertLease);
@@ -3794,22 +3800,24 @@ function subscriptionLifecycleEvents(
   return events;
 }
 
-/** Statuses in which a subscription grants its plan and renews unless `autoRenew` is off. */
-const LIVE_STATUSES = new Set<SubscriptionStatus>(['active', 'trialing', 'grace']);
-/** Statuses of a renewal held by a payment problem or a pause, which resumes (Dodo maps these with `autoRenew` off). */
-const HELD_STATUSES = new Set<SubscriptionStatus>(['past_due', 'paused']);
+/**
+ * Statuses of a subscription that renews unless `autoRenew` is off: live (`active`, `trialing`, `grace`) or
+ * held by a payment problem or a pause (`past_due`, `paused`), which resumes. `autoRenew` is the renewal
+ * intent in all of them, independent of a hold.
+ */
+const RENEWABLE_STATUSES = new Set<SubscriptionStatus>(['active', 'trialing', 'grace', 'past_due', 'paused']);
 
 /**
- * Whether `next` cancels a subscription that was renewing in `previous`: it became `canceled`, or stays live
- * with `autoRenew` turned off (a cancel at period end). A hold (`past_due`, `paused`), `pending`, an expiry or
- * a failure is not a cancellation, and a subscription canceled while held was renewing before the hold.
+ * Whether `next` cancels a subscription that intended to renew in `previous` (renewable with `autoRenew` on):
+ * it became `canceled`, or stays renewable with `autoRenew` turned off (a cancel at period end, also one made
+ * during a hold). Once reported, the row no longer intends to renew, so a later hold, resume, expiry or final
+ * cancellation reports nothing more. A hold alone, `pending`, an expiry or a failure is not a cancellation.
  */
 function isCanceledFrom(previous: BillFnSubscription, next: BillFnSubscription) {
-  const wasLive = LIVE_STATUSES.has(previous.status) && previous.autoRenew;
-  if (next.status === 'canceled') {
-    return wasLive || HELD_STATUSES.has(previous.status);
+  if (!RENEWABLE_STATUSES.has(previous.status) || !previous.autoRenew) {
+    return false;
   }
-  return wasLive && LIVE_STATUSES.has(next.status) && !next.autoRenew;
+  return next.status === 'canceled' || (RENEWABLE_STATUSES.has(next.status) && !next.autoRenew);
 }
 
 /** Compares JSON values regardless of key order (a jsonb column reorders keys). */

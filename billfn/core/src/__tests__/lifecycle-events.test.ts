@@ -173,6 +173,8 @@ function faultyLifecycleDb(base: Adapter = memoryAdapter({ debug: false }), opti
     raceSnapshot: null as (() => Promise<void>) | null,
     /** Awaited before the next snapshot update applies. */
     pauseSnapshot: null as Promise<void> | null,
+    /** Writing a billing event fails (the process stopped after a grant change and its lifecycle events). */
+    billingEvent: false,
     /** The next snapshot update applies and then fails. */
     snapshotWrite: null as 'after' | null,
     /** Runs once before the next outbox row is created, as another call racing this one. */
@@ -192,6 +194,7 @@ function faultyLifecycleDb(base: Adapter = memoryAdapter({ debug: false }), opti
       }
       if (faults.create && params.model === 'lifecycleEvents') throw new Error('outbox write failed');
       if (faults.snapshot && params.model === 'entitlementSnapshots') throw new Error('process stopped');
+      if (faults.billingEvent && params.model === 'billingEvents') throw new Error('process stopped');
       return adapter.create<T>(params);
     },
     async updateMany(params: Parameters<Adapter['updateMany']>[0]) {
@@ -371,17 +374,42 @@ describe('lifecycle events: one per event type', () => {
         await env.billfn.syncSubscription({ subject: env.subject });
         await env.billfn.services.events.dispatch();
       };
-      // Dodo maps a payment hold (on_hold) to paused with autoRenew off.
-      await sync(held, false);
+      // A hold keeps the renewal intent (autoRenew), as Dodo maps on_hold.
+      await sync(held, true);
       await sync('active', true);
       expect(env.ofType('subscription.canceled')).toEqual([]);
-      await sync(held, false);
+      await sync(held, true);
       await sync('canceled', false);
       expect(env.ofType('subscription.canceled')).toEqual(
         held === 'pending' ? [] : [expect.objectContaining({ data: expect.objectContaining({ status: 'canceled', autoRenew: false }) })]
       );
     }
   );
+
+  it.each([
+    // Apple: a failed renewal, then AUTO_RENEW_DISABLED (active, autoRenew off), then EXPIRED.
+    ['past_due', 'active', 'expired'],
+    // Dodo: a cancel at the next billing date during on_hold, then the hold clears, then the period ends.
+    ['paused', 'paused', 'canceled'],
+    ['paused', 'active', 'canceled']
+  ] as const)('subscription.canceled once when renewal is turned off during a %s hold (then %s, then %s)', async (held, off, end) => {
+    const env = setup();
+    await env.subscribe();
+    const sync = async (status: SubscriptionStatus, autoRenew: boolean) => {
+      Object.assign(env.providerState, { status, autoRenew });
+      env.advance(MINUTE);
+      await env.billfn.syncSubscription({ subject: env.subject });
+      await env.billfn.services.events.dispatch();
+    };
+    await sync(held, true);
+    await sync(off, false);
+    expect(env.ofType('subscription.canceled')).toEqual([
+      expect.objectContaining({ data: expect.objectContaining({ status: off, autoRenew: false }) })
+    ]);
+    await sync('active', false);
+    await sync(end, false);
+    expect(env.ofType('subscription.canceled')).toHaveLength(1);
+  });
 
   it.each(['trialing', 'grace'] as const)('subscription.canceled when a %s subscription stops renewing', async (status) => {
     const env = setup();
@@ -647,6 +675,106 @@ describe('lifecycle events of a write without transactions', () => {
     env.advance(LEASE + MINUTE);
     await env.billfn.services.events.dispatch();
     expect(env.ofType('subscription.canceled')).toHaveLength(1);
+  });
+
+  describe('the lifecycle-events job records the missing events of a committed grant change without account traffic', () => {
+    const grantEvents = (env: ReturnType<typeof setup>) =>
+      env.delivered.filter((event) => event.type === 'grant.started' || event.data.cause !== 'subscription');
+
+    it.each([
+      ['its lifecycle event writes fail', ['create']],
+      ['process stops right after the grant write', ['create', 'billingEvent']]
+    ] as const)('a trial whose %s: grant.started and entitlement.changed once each', async (_name, faulted) => {
+      const { db, faults } = staging();
+      const env = setup({ db });
+      for (const fault of faulted) faults[fault] = true;
+      const created = await env.trial(14 * DAY);
+      for (const fault of faulted) faults[fault] = false;
+      if (!created.ok) throw new Error('expected the grant to commit');
+      const grantId = created.data.grant.id;
+      expect(grantEvents(env)).toEqual([]);
+
+      env.advance(HOUR_MS);
+      await env.runLifecycleJob();
+      expect(grantEvents(env).map((event) => [event.type, event.data.grantId])).toEqual([
+        ['grant.started', grantId],
+        ['entitlement.changed', grantId]
+      ]);
+      const billing = await db.findMany<{ type: string }>({ model: 'billingEvents', namespace: 'billfn' });
+      expect(billing.filter((event) => event.type === 'billfn.grant.created')).toHaveLength(1);
+
+      // A second run adds nothing.
+      const rows = (await env.rows()).length;
+      env.advance(HOUR_MS);
+      await env.runLifecycleJob();
+      expect(grantEvents(env)).toHaveLength(2);
+      expect(await env.rows()).toHaveLength(rows);
+    });
+
+    it("a comp revocation whose lifecycle event write fails: its entitlement.changed once", async () => {
+      const { db, faults } = staging();
+      const env = setup({ db });
+      const comp = await env.billfn.services.grants.create({
+        billingAccountId: ACCOUNT,
+        subject: env.subject,
+        planKey: 'nucleus',
+        kind: 'comp',
+        expiresAt: new Date(env.clock.current.getTime() + 30 * DAY).toISOString()
+      });
+      if (!comp.ok) throw new Error('expected grant');
+      env.advance(MINUTE);
+      faults.create = true;
+      const revoked = await env.billfn.services.grants.revoke({ billingAccountId: ACCOUNT, grantId: comp.data.grant.id });
+      faults.create = false;
+      expect(revoked.ok).toBe(true);
+      const revocations = () => env.ofType('entitlement.changed').filter((event) => event.data.cause === 'grant.revoked');
+      expect(revocations()).toEqual([]);
+
+      env.advance(HOUR_MS);
+      await env.runLifecycleJob();
+      expect(revocations()).toEqual([
+        expect.objectContaining({ data: expect.objectContaining({ grantId: comp.data.grant.id, status: 'inactive' }) })
+      ]);
+      env.advance(HOUR_MS);
+      await env.runLifecycleJob();
+      expect(revocations()).toHaveLength(1);
+    });
+  });
+
+  it('gives an event promoted late in its stage window the full 24-hour delivery window', async () => {
+    const { db, faults } = staging();
+    const delivered: BillFnLifecycleEvent[] = [];
+    let failing = false;
+    const env = setup({
+      db,
+      onEvent: (event) => {
+        if (failing) throw new Error('handler down');
+        delivered.push(event);
+      }
+    });
+    const { subscriptionId } = await env.subscribe();
+    let resume!: () => void;
+    faults.pauseSnapshot = new Promise<void>((resolve) => (resume = resolve));
+    faults.snapshotWrite = 'after';
+    env.providerState.status = 'expired';
+    env.advance(MINUTE);
+    const sync = env.syncJob(subscriptionId);
+    await vi.waitFor(() => expect(faults.pauseSnapshot).toBeNull());
+
+    // The write applies 23 hours into its stage window, and is promoted by a dispatch while the handler is down.
+    env.advance(23 * HOUR_MS);
+    resume();
+    expect(await sync).not.toBe('succeeded');
+    failing = true;
+    env.advance(2 * HOUR_MS);
+    await env.billfn.services.events.dispatch();
+    const [promoted] = (await env.rows()).filter((row) => row.type === 'entitlement.changed' && row.status !== 'delivered');
+    expect(promoted).toMatchObject({ status: 'pending', attempts: 1 });
+
+    failing = false;
+    env.advance(HOUR_MS);
+    await env.billfn.services.events.dispatch();
+    expect(delivered.filter((event) => event.id === promoted!.id)).toHaveLength(1);
   });
 
   describe('a staged event is settled by whether a write naming it applied, not by the state a later write left', () => {

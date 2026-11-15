@@ -109,4 +109,25 @@ describe('@billfn/provider-dodo lifecycle events', () => {
     await billfn.services.events.dispatch();
     expect(delivered.filter((event) => event.type === 'subscription.canceled')).toEqual([]);
   });
+
+  it('a cancel made during a payment hold records subscription.canceled once, through to the end', async () => {
+    const { api, billfn, subject, delivered } = await subscribed();
+    const cancellations = () => delivered.filter((event) => event.type === 'subscription.canceled');
+    api.update({ status: 'on_hold' });
+    expect((await billfn.syncSubscription({ subject })).ok).toBe(true);
+    expect(cancellations()).toEqual([]);
+
+    // The cancel sets cancel_at_next_billing_date; Dodo keeps the subscription on hold.
+    expect((await billfn.cancelSubscription({ subject })).ok).toBe(true);
+    expect(cancellations()).toHaveLength(1);
+    expect(cancellations()[0]!.data).toMatchObject({ status: 'paused', autoRenew: false });
+
+    // The hold clears, then the subscription ends: neither is another cancellation.
+    api.update({ status: 'active' });
+    expect((await billfn.syncSubscription({ subject })).ok).toBe(true);
+    api.update({ status: 'cancelled' });
+    expect((await billfn.syncSubscription({ subject })).ok).toBe(true);
+    await billfn.services.events.dispatch();
+    expect(cancellations()).toHaveLength(1);
+  });
 });

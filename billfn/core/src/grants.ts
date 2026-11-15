@@ -19,6 +19,9 @@ const BILLING_EVENTS_TABLE = 'billingEvents';
 const GRANT_KINDS = new Set<BillFnEntitlementGrantKind>(['trial', 'comp']);
 const REVOKE_ATTEMPTS = 3;
 const CREATE_ATTEMPTS = 3;
+const REPAIR_PAGE_SIZE = 200;
+/** How far back the `lifecycle-events` job looks for grant changes whose events it repairs. */
+export const GRANT_EVENT_REPAIR_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** The service dependencies grants use; the billing event and duplicate-key helpers are the service's own. */
 export interface GrantDeps {
@@ -118,6 +121,44 @@ export async function repairGrantEvents(deps: GrantDeps, billingAccountId: strin
     } catch {
       deps.metrics.track('grant.event_deferred', { type: event.type });
     }
+  }
+}
+
+/**
+ * Runs `repairGrantEvents` for every account with a grant created or revoked (its `updatedAt`) within
+ * `GRANT_EVENT_REPAIR_LOOKBACK_MS`, so the events of a committed grant change whose event write failed or was
+ * interrupted are recorded without any later traffic of that account. The `lifecycle-events` job runs it before
+ * it dispatches. It records only what stored grants derive, under the same ids, so a change that never applied
+ * records nothing and a second run adds nothing. `beforeEach` runs before each account (the job's lease check).
+ */
+export async function repairRecentGrantEvents(deps: GrantDeps, beforeEach?: () => Promise<void>) {
+  if (deps.db.capabilities.transactions.supported) {
+    return;
+  }
+  const since = toIsoString(new Date(deps.now().getTime() - GRANT_EVENT_REPAIR_LOOKBACK_MS));
+  const accounts = new Set<string>();
+  for (let offset = 0; ; offset += REPAIR_PAGE_SIZE) {
+    const grants = await deps.db.findMany<GrantRecord>({
+      model: GRANTS_TABLE,
+      where: [{ field: 'updatedAt', operator: 'gt', value: since }],
+      orderBy: [
+        { field: 'updatedAt', direction: 'asc' },
+        { field: 'id', direction: 'asc' }
+      ],
+      limit: REPAIR_PAGE_SIZE,
+      offset,
+      namespace: deps.namespace
+    });
+    for (const grant of grants) {
+      accounts.add(grant.billingAccountId);
+    }
+    if (grants.length < REPAIR_PAGE_SIZE) {
+      break;
+    }
+  }
+  for (const billingAccountId of accounts) {
+    await beforeEach?.();
+    await repairGrantEvents(deps, billingAccountId);
   }
 }
 

@@ -814,6 +814,10 @@ export interface BillFnLifecycleEventRecord {
   lastError?: string | null;
   deliveredAt?: string | null;
   failedAt?: string | null;
+  /**
+   * When the event was recorded, or its latest stage or promotion to `pending`;
+   * the 24-hour delivery window counts from it.
+   */
   createdAt: string;
   updatedAt: string;
 }

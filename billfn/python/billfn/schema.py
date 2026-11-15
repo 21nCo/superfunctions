@@ -368,6 +368,10 @@ def get_schema() -> Dict[str, Any]:
                 "name": "entitlement_grants_expires_idx",
                 "fields": ["expiresAt"],
             },
+            {
+                "name": "entitlement_grants_updated_idx",
+                "fields": ["updatedAt"],
+            },
         ],
     }
 

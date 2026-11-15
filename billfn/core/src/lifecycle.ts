@@ -189,7 +189,10 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
     }
   }
 
-  /** Makes the staged events with these ids `pending` and due now: a stored write names them. */
+  /**
+   * Makes the staged events with these ids `pending` and due now: a stored write names them. Their 24-hour
+   * delivery window starts at the promotion (`createdAt`), however late in their stage window it comes.
+   */
   async function promote(ids: string[]) {
     const promoted = new Set<string>();
     for (const id of handler ? ids : []) {
@@ -200,7 +203,7 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
           { field: 'id', operator: 'eq', value: id },
           { field: 'status', operator: 'eq', value: 'staged' }
         ],
-        data: { status: 'pending', claimId: null, attempts: 0, nextAttemptAt: timestamp, updatedAt: timestamp },
+        data: { status: 'pending', claimId: null, attempts: 0, nextAttemptAt: timestamp, createdAt: timestamp, updatedAt: timestamp },
         namespace: deps.namespace
       });
       if (count === 1) {
@@ -444,7 +447,13 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
       }
       if (await deps.isStagedEventApplied(row)) {
         const timestamp = toIsoString(deps.now());
-        await updateStaged(row.id, claimId, { status: 'pending', attempts: 0, nextAttemptAt: timestamp, updatedAt: timestamp });
+        await updateStaged(row.id, claimId, {
+          status: 'pending',
+          attempts: 0,
+          nextAttemptAt: timestamp,
+          createdAt: timestamp,
+          updatedAt: timestamp
+        });
         deps.metrics.track('event.stage_recovered', { type: row.type });
         continue;
       }
