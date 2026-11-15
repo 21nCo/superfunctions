@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { NEXT_MANIFEST, OwnersError, PUBLIC_MANIFEST } from "./owners.mjs";
 import { gitBinary } from "./verify-package-lockfiles.mjs";
-import { pyprojectName, verifyOwners } from "./verify-owners.mjs";
+import { pyprojectName, repoFromEnv, verifyOwners } from "./verify-owners.mjs";
 
 const script = fileURLToPath(new URL("./verify-owners.mjs", import.meta.url));
 
@@ -43,7 +43,10 @@ function fixture(t, { owners = manifest(), next, releases = [{ slug: "datafn-cor
   return root;
 }
 
-const run = (root, ...args) => spawnSync(process.execPath, [script, "--root", root, ...args], { encoding: "utf8" });
+// CI sets OWNERS_REPO for the checkout; fixtures choose their semantics explicitly, so it is cleared here.
+const run = (root, ...args) => runWith({}, root, ...args);
+const runWith = (env, root, ...args) =>
+  spawnSync(process.execPath, [script, "--root", root, ...args], { encoding: "utf8", env: { ...process.env, OWNERS_REPO: "", ...env } });
 
 test("a manifest that matches the tree passes", (t) => {
   const result = run(fixture(t));
@@ -122,12 +125,84 @@ test("a malformed manifest fails with its typed error", (t) => {
   assert.equal(run(fixture(t), "--repo", "main").status, 1);
 });
 
+const throwsUnreadable = (source, pattern) =>
+  assert.throws(
+    () => pyprojectName(source, "x/pyproject.toml"),
+    (error) => error instanceof OwnersError && error.code === "unreadable-pyproject" && pattern.test(error.message),
+  );
+
 test("pyprojectName reads only the [project] table", () => {
   assert.equal(pyprojectName('[tool.x]\nname = "tool"\n[project]\n# c\nname = \'lib\'  # n\n'), "lib");
   assert.equal(pyprojectName('[tool.ruff]\nline-length = 100\n'), null);
-  assert.throws(() => pyprojectName('[project]\nversion = "1"\n'), (error) => error instanceof OwnersError && error.code === "malformed-manifest");
+  assert.equal(pyprojectName('[tool.x]\nproject.name = "nested"\n'), null);
+  throwsUnreadable('[project]\nversion = "1"\n', /x\/pyproject\.toml: project metadata has no name/);
+});
+
+test("pyprojectName reads every TOML spelling of the project name", () => {
+  for (const source of [
+    '["project"]\nname = "a"\n',
+    "[ 'project' ] # c\nname = \"a\"\n",
+    '[ "project" ]\n"name" = "a"\n',
+    "[project]\n'name'='a'\n",
+    'project.name = "a"\nproject.version = "1"\n[tool.x]\nname = "tool"\n',
+    '"project" . \'name\' = "a"\n',
+    '[project]\nname = "\\u0061"\n',
+  ]) {
+    assert.equal(pyprojectName(source), "a", source);
+  }
+});
+
+test("pyprojectName skips multi-line values and fails closed on unreadable project metadata", () => {
+  const multiline = [
+    'description = """',
+    "[project]",
+    'name = "fake"',
+    '"""',
+    "deps = [",
+    '  "a[x]",',
+    '  ["b"],',
+    "]",
+    "[project]",
+    'name = "real"',
+  ].join("\n");
+  assert.equal(pyprojectName(multiline), "real");
+  throwsUnreadable('[project.urls]\nhome = "h"\n', /no name/);
+  throwsUnreadable('project = { name = "a" }\n', /inline table/);
+  throwsUnreadable('[project]\nname = """a"""\n', /single-line string/);
+  throwsUnreadable('[[project]]\nname = "a"\n', /array of tables/);
+  throwsUnreadable('[project]\nname = "a"\n[project]\nname = "b"\n', /more than once/);
+  throwsUnreadable('[project\nname = "a"\n', /x\/pyproject\.toml:1: cannot read table header/);
+  throwsUnreadable('[tool.x]\ny = """\n', /unterminated/);
+});
+
+test("an unreadable pyproject.toml fails the check and names the file", (t) => {
+  const result = run(fixture(t, { files: { "datafn/extra/pyproject.toml": '["project"]\nname = """x"""\n' } }));
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /error \(unreadable-pyproject\): datafn\/extra\/pyproject\.toml:2: project name must be a single-line string/);
+  const quoted = run(fixture(t, { files: { "datafn/extra/pyproject.toml": '[ "project" ]\n"name" = "datafn-extra"\n' } }));
+  assert.equal(quoted.status, 1);
+  assert.match(quoted.stderr, /datafn\/extra\/pyproject\.toml: Python project "datafn-extra" is not listed/);
+});
+
+test("the self-check uses the checkout's semantics, so a next-shaped tree passes", (t) => {
+  const next = { version: 1, paths: { docsfn: "next" }, rootFiles: { next: ["NEXT.md"] } };
+  const root = fixture(t, { next, files: { "docsfn/a.md": "a\n", "NEXT.md": "n\n", "watchfn/core/index.ts": "export {};\n" } });
+  assert.equal(repoFromEnv({}), undefined);
+  assert.equal(repoFromEnv({ OWNERS_REPO: "" }), undefined);
+  assert.equal(repoFromEnv({ OWNERS_REPO: "next" }), "next");
+  assert.deepEqual(verifyOwners({ root, repo: repoFromEnv({ OWNERS_REPO: "next" }) }), []);
+  assert.deepEqual(verifyOwners({ root, repo: repoFromEnv({}) }), []);
+  // The same tree under public semantics is the old, wrong self-check.
+  assert.notDeepEqual(verifyOwners({ root, repo: "public" }), []);
+  assert.equal(runWith({ OWNERS_REPO: "next" }, root).status, 0);
+  assert.equal(runWith({}, root).status, 0);
+  const forcedPublic = runWith({ OWNERS_REPO: "public" }, root);
+  assert.equal(forcedPublic.status, 1);
+  assert.match(forcedPublic.stderr, /docsfn\/: top-level directory is not listed/);
+  assert.equal(runWith({ OWNERS_REPO: "public" }, root, "--repo", "next").status, 0);
 });
 
 test("the checked-out repository matches its manifest", () => {
-  assert.deepEqual(verifyOwners({ repo: "public" }), []);
+  // OWNERS_REPO is set by CI on both repositories; locally the presence of the next manifest decides.
+  assert.deepEqual(verifyOwners({ repo: repoFromEnv() }), []);
 });

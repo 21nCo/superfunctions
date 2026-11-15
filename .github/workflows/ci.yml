@@ -76,7 +76,7 @@ jobs:
       # superfunctions.owners.json must list every top-level path, release slug and Python project (SFNS-122).
       - name: Ownership manifest matches the tree
         env:
-          OWNERS_REPO: ${{ github.repository == '21nCo/superfunctions' && 'public' || 'next' }}
+          OWNERS_REPO: ${{ github.repository == '21nCo/super-functions.next' && 'next' || 'public' }}
         run: |
           node --test scripts/owners.test.mjs scripts/verify-owners.test.mjs
           node scripts/verify-owners.mjs --repo "$OWNERS_REPO"
