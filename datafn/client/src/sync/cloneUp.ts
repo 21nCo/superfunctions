@@ -1,5 +1,5 @@
 import type { DatafnSchema, DatafnResourceSchema, DatafnRelationSchema } from "@datafn/core";
-import { getJoinStoreKey } from "@datafn/core";
+import { ANCESTOR_INACTIVE_FIELD, getJoinStoreKey, resourceRequiresAncestorInactive } from "@datafn/core";
 import type { DatafnStorageAdapter } from "../storage.js";
 import type { DatafnRemoteAdapter } from "../client.js";
 import type { EventBus } from "../events/bus.js";
@@ -134,7 +134,7 @@ export async function cloneUp(
   // --- Stage A: Upload records ---
   for (const resourceName of resolvedResources) {
     const resourceSchema = resourceSchemaMap.get(resourceName)!;
-    const fieldNames = new Set(resourceSchema.fields.map((f) => f.name));
+    const fieldNames = writableFieldNames(schema, resourceSchema);
 
     const rawRecords = await storage.listRecords(resourceName);
     const sortedRecords = sortRecordsById(rawRecords);
@@ -466,6 +466,29 @@ async function setCursorMonotonically(
   }
 }
 
+/**
+ * Names of the record fields the server accepts on a client write to
+ * `resource`. The server rejects the whole push batch when a record carries a
+ * read-only field (a field marked `readonly`, such as a capability field or
+ * the DataFn system field `isAncestorInactive`) or a field the schema does not
+ * declare, so cloneUp uploads only the declared fields that are writable.
+ */
+function writableFieldNames(
+  schema: DatafnSchema,
+  resource: DatafnResourceSchema,
+): Set<string> {
+  const names = new Set<string>();
+  for (const field of resource.fields) {
+    if (field.readonly !== true) names.add(field.name);
+  }
+  // The server rejects this system field on dependents of an inheritsInactive
+  // relation even when the schema it was given does not list it.
+  if (resourceRequiresAncestorInactive(schema.relations, resource.name)) {
+    names.delete(ANCESTOR_INACTIVE_FIELD);
+  }
+  return names;
+}
+
 function resolveResourceScope(
   schema: DatafnSchema,
   requestedResources?: string[],
@@ -541,11 +564,55 @@ function enumerateJoinStores(
   return entries;
 }
 
+type PushError = CloneUpResult["errors"][number];
+
 type PushBatchResult = {
   cursor: string | null;
-  errors: Array<{ mutationId: string; code: string; message: string; path: string }>;
+  errors: PushError[];
   attempts: number;
 };
+
+/**
+ * Reads the cursor and errors of a push response. The server rejects a batch
+ * in two shapes, and both must count as a failure:
+ * - per-mutation errors: `{ ok: false, error, result: { errors: [...] } }`
+ *   (or `{ errors: [...] }` from a remote adapter that returns the result);
+ * - a whole-batch rejection with no per-mutation result, such as a schema
+ *   validation error: `{ ok: false, error: { code, message, details } }`.
+ */
+function readPushResponse(response: unknown): Omit<PushBatchResult, "attempts"> {
+  const envelope = isObject(response) ? response : {};
+  const pushResult = isObject(envelope.result) ? envelope.result : envelope;
+  const cursor = (pushResult.cursor ?? null) as string | null;
+
+  const mutationErrors = pushResult.errors;
+  if (Array.isArray(mutationErrors) && mutationErrors.length > 0) {
+    return { cursor, errors: mutationErrors as PushError[] };
+  }
+
+  const rejected =
+    envelope.ok === false || pushResult.ok === false || isObject(envelope.error);
+  if (!rejected) return { cursor, errors: [] };
+
+  const error = isObject(envelope.error) ? envelope.error : {};
+  const details = isObject(error.details) ? error.details : {};
+  return {
+    cursor,
+    errors: [
+      {
+        mutationId: "",
+        code: typeof error.code === "string" ? error.code : "PUSH_REJECTED",
+        message:
+          typeof error.message === "string" ? error.message : "Push rejected by server",
+        path: typeof details.path === "string" ? details.path : "$",
+      },
+    ],
+  };
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 async function pushBatchWithRetry(
   remote: DatafnRemoteAdapter,
@@ -563,13 +630,7 @@ async function pushBatchWithRetry(
         mutations,
       })) as any;
 
-      const pushResult = response?.result ?? response;
-
-      return {
-        cursor: pushResult?.cursor ?? null,
-        errors: pushResult?.errors ?? [],
-        attempts,
-      };
+      return { ...readPushResponse(response), attempts };
     } catch (err) {
       if (isTransportError(err) && attempts <= maxRetries) {
         // CLI-010: Exponential backoff between retries
