@@ -1,0 +1,29 @@
+scripts/verify-owners.test.mjs
+  s_375257b62a4088::t_75221d7f373850 155-165
+scripts/verify-owners.mjs
+  s_d8fa591358247b::t_66aa5714c30774 156-158,160
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "92cb2dcfd0fe30ef1686d02ed9a327c9c1dc462e",
+  "prompts": {},
+  "sessions": {
+    "s_375257b62a4088": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "47e4494d-b69b-4290-afde-e7f68b51f894",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_d8fa591358247b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "098eba48-52d2-48ee-97b2-9fed7e48528a",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
