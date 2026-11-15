@@ -1,0 +1,21 @@
+billfn/core/src/__tests__/grants.test.ts
+  s_f058f999ab46b7::t_98ad9843745e68 436,454
+billfn/core/src/grants.ts
+  s_f058f999ab46b7::t_19c7dfb81b72bd 155,221,284-293,296,298,301
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8788c28971ecc9579eb208f3be83341c1cd37f75",
+  "prompts": {},
+  "sessions": {
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
