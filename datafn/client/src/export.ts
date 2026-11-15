@@ -40,6 +40,14 @@ export interface DatafnExportOptions {
 }
 
 /**
+ * Called by importData after the local writes and before any cloneUp, with
+ * the records written per resource.
+ */
+export type DatafnImportLocalHook = (
+  imported: Record<string, Array<Record<string, unknown>>>,
+) => Promise<void> | void;
+
+/**
  * Options for data import
  */
 export interface DatafnImportOptions {
@@ -127,6 +135,7 @@ export async function importData(
   sync: SyncFacade,
   data: DatafnExportPayload,
   options?: DatafnImportOptions,
+  afterLocalImport?: DatafnImportLocalHook,
 ): Promise<DatafnImportResult> {
   // Validate version
   if (data.version !== 1) {
@@ -146,6 +155,8 @@ export async function importData(
     errors: [],
   };
   
+  const importedRecords: Record<string, Array<Record<string, unknown>>> = {};
+
   // Import records
   for (const [resourceName, records] of Object.entries(data.resources)) {
     const resourceSchema = schema.resources.find(r => r.name === resourceName);
@@ -156,10 +167,12 @@ export async function importData(
     
     let imported = 0;
     let skipped = 0;
+    const written: Array<Record<string, unknown>> = [];
     
     for (const record of records) {
       try {
         await storage.upsertRecord(resourceName, record);
+        written.push(record);
         imported++;
       } catch (err) {
         skipped++;
@@ -173,6 +186,7 @@ export async function importData(
     }
     
     result.stats.resources[resourceName] = { imported, skipped };
+    if (written.length > 0) importedRecords[resourceName] = written;
   }
   
   // Import join rows
@@ -193,9 +207,35 @@ export async function importData(
     result.stats.joins[storeName] = { imported, skipped };
   }
   
-  // Trigger cloneUp if requested
+  // Search indexing and change events for what was written locally
+  if (afterLocalImport) {
+    await afterLocalImport(importedRecords);
+  }
+
+  // Trigger cloneUp if requested. Local writes stay in place when the push is
+  // rejected; the result reports the push errors.
   if (options?.triggerCloneUp && sync.cloneUp) {
-    await sync.cloneUp();
+    const pushed = await sync.cloneUp();
+    if (pushed && pushed.ok === false) {
+      const pushErrors = Array.isArray(pushed.errors) ? pushed.errors : [];
+      if (pushErrors.length === 0) {
+        result.errors.push({
+          resource: "",
+          id: "",
+          code: "PUSH_REJECTED",
+          message: "cloneUp did not complete",
+        });
+      }
+      for (const error of pushErrors) {
+        const target = parseCloneUpMutationId(error.mutationId);
+        result.errors.push({
+          resource: target.resource,
+          id: target.id,
+          code: error.code || "PUSH_REJECTED",
+          message: error.message || "Push rejected by server",
+        });
+      }
+    }
   }
   
   // Mark result as not ok if there were any errors
@@ -204,4 +244,19 @@ export async function importData(
   }
   
   return result;
+}
+
+/** Resource and id from a cloneUp record mutation id (`<prefix>:rec:<resource>:<id>:<hash>`). */
+function parseCloneUpMutationId(mutationId: unknown): { resource: string; id: string } {
+  if (typeof mutationId !== "string") return { resource: "", id: "" };
+  const marker = mutationId.indexOf(":rec:");
+  if (marker === -1) return { resource: "", id: mutationId };
+  const rest = mutationId.slice(marker + ":rec:".length);
+  const resourceEnd = rest.indexOf(":");
+  const hashStart = rest.lastIndexOf(":");
+  if (resourceEnd === -1 || hashStart <= resourceEnd) return { resource: "", id: mutationId };
+  return {
+    resource: rest.slice(0, resourceEnd),
+    id: rest.slice(resourceEnd + 1, hashStart),
+  };
 }

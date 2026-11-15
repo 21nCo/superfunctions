@@ -53,6 +53,7 @@ import {
   deriveSearchProviderResources,
   getSearchIndexMarkerState,
   markSearchIndexCurrent,
+  clearSearchIndexCurrent,
 } from "./searchIndex.js";
 import {
   ensureBuiltinKv,
@@ -1056,6 +1057,32 @@ function _buildRawClient<S extends DatafnSchema>(
     );
   };
 
+  /**
+   * Indexes imported records for search right away. When the provider cannot
+   * take them, the resource's index marker is cleared so the next search
+   * rebuilds it from storage.
+   */
+  const indexImportedRecords = async (
+    storage: DatafnStorageAdapter,
+    imported: Record<string, Array<Record<string, unknown>>>,
+  ) => {
+    const provider = config.searchProvider;
+    if (!provider || isNativeBackedBridgeValue(provider)) return;
+    for (const [resource, records] of Object.entries(imported)) {
+      if (!searchProviderResourceByName.has(resource) || records.length === 0) continue;
+      try {
+        await provider.updateIndices({ resource, records, operation: "upsert" });
+      } catch (error) {
+        console.warn("Search index update after import failed; the index will rebuild", {
+          resource,
+          error: String(error),
+        });
+        hydratedSearchResources.delete(resource);
+        await clearSearchIndexCurrent({ storage, resource });
+      }
+    }
+  };
+
   // Resolve remote adapter (CFG-001)
   let remote: DatafnRemoteAdapter & {
     publicLinks?(endpoint: string, payload: unknown): Promise<unknown>;
@@ -1788,7 +1815,18 @@ function _buildRawClient<S extends DatafnSchema>(
         );
       }
 
-      return importData(resolvedStorage, schema, sync, data, options);
+      const storage = resolvedStorage;
+      return importData(resolvedStorage, schema, sync, data, options, async (imported) => {
+        const resources = Object.keys(imported);
+        if (resources.length === 0) return;
+        await indexImportedRecords(storage, imported);
+        // Open live queries over the imported resources refresh.
+        eventBus.emit({
+          type: "sync_applied",
+          timestampMs: getTimestamp(),
+          context: { phase: "import", resources },
+        } as any);
+      });
     },
 
     async search(params: unknown): Promise<DatafnSearchResult> {
