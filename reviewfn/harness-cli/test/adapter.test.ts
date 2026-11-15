@@ -163,6 +163,27 @@ describe("CliHarnessAdapter model reporting", () => {
     expect(silent.error).toContain("not confirmed");
   }, 30_000);
 
+  it.each([
+    ["a stderr report, then a hang", "stderr-regex:served model: (\\S+)", ["--model-stderr", "other-model", "--hang", "1"], "timed_out"],
+    ["a json report, then a nonzero exit", "json-path:model", ["--model-json", "other-model", "--exit", "3"], "failed"],
+    ["a json report in the output file, then a nonzero exit", "json-path:model", ["--model-json", "other-model", "--exit", "3"], "failed", "file"],
+  ] as const)("reports the served model of %s, so the panel voids it", async (_name, modelReport, extra, terminal, outputVia = "stdout-last-json") => {
+    const output = await run(profile({ modelReport, outputVia, extra: [...extra] }), "fake-model-1", { policy: { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, harnessTimeoutMs: 1_500 } } });
+    expect(output.terminal).toBe(terminal);
+    expect(output.observed).toMatchObject({ model: "other-model" });
+  }, 30_000);
+
+  it("repairs an invalid answer that lacks its model report, and confirms the model only on the answer it accepts", async () => {
+    const repaired = await run(profile({ modelReport: "json-path:model", extra: ["--answer", "invalid-once", "--model-json", "fake-model-1"] }), "fake-model-1");
+    expect(repaired.terminal).toBe("completed");
+    expect(repaired.observed).toMatchObject({ model: "fake-model-1" });
+    expect(await calls()).toHaveLength(2);
+    await rm(path.join(state, "calls.jsonl"));
+    const malformed = await run(profile({ modelReport: "json-path:model", extra: ["--answer", "invalid", "--model-json", "fake-model-1"] }), "fake-model-1");
+    expect(malformed.terminal).toBe("malformed");
+    expect(await calls()).toHaveLength(2);
+  }, 30_000);
+
   it("reads dotted json paths of own properties only", () => {
     expect(valueAtPath({ meta: { models: ["m"] } }, "meta.models.0")).toBe("m");
     expect(valueAtPath({}, "constructor")).toBeUndefined();

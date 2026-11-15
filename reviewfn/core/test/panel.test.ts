@@ -649,6 +649,7 @@ describe("panel policy and slot identity", () => {
     expect(slotIssues({ ...generic, harness: { adapter: "cli", version: "1.0.0", profile: "agent" } })).toEqual([expect.stringMatching(/profile without an executable/)]);
     expect(slotIssues({ ...generic, harness: { adapter: "cli", version: "1.0.0", executable: "agent" } })).toEqual([expect.stringMatching(/executable without a profile/)]);
     expect(slotIssues(generic, { agent: { ...profile, argv: ["--model={model}"] } })).toEqual([expect.stringMatching(/not a whole-argument placeholder/)]);
+    expect(slotIssues({ ...panelPolicy.slots[0], id: "profiled-codex", harness: { ...panelPolicy.slots[0].harness, executable: "agent", profile: "agent" } })).toEqual([expect.stringMatching(/harness codex, which takes no profile or executable/)]);
     expect(validatePanelPolicy({ ...withProfile, profiles: { Agent: profile } }).valid).toBe(false);
   });
 
@@ -680,11 +681,42 @@ describe("panel policy and slot identity", () => {
     const issues = async (value: PanelReport) => (await validatePanelReport(value, policy, options)).issues.filter(issue => issue.path.startsWith("/slotRuns/2"));
     expect(await issues(report)).toEqual([]);
     const missing = structuredClone(report); missing.slotRuns[2].limitations = ["sandbox_tree_verified_only"];
-    expect((await issues(missing)).map(issue => issue.message)).toEqual([expect.stringMatching(/must record the model_unverified limitation/)]);
+    expect((await issues(missing)).map(issue => issue.message)).toEqual(expect.arrayContaining([expect.stringMatching(/must record the model_unverified limitation/)]));
     const otherModel = structuredClone(report); otherModel.slotRuns[2].identity.model = "claude-other";
     expect((await issues(otherModel)).map(issue => issue.message)).toEqual(expect.arrayContaining([expect.stringMatching(/records the configured model/)]));
     const otherProfile = structuredClone(report); otherProfile.slotRuns[2].identity.harnessProfile = "other";
     expect((await issues(otherProfile)).map(issue => issue.message)).toEqual([expect.stringMatching(/harness executable or profile/)]);
+  });
+
+  it("binds each run's model verification and limitations to its slot's profile in the bound panel policy", async () => {
+    const quiet = { argv: [], promptVia: "stdin" as const, outputVia: "stdout-last-json" as const, envAllowlist: [], modelReport: "none", capabilities: { structuredOutput: false, sandbox: "tree-verified-only" as const } };
+    const reported = { ...quiet, modelReport: "json-path:model", capabilities: { structuredOutput: false, sandbox: "enforced-read-only" as const } };
+    const cli = (slot: PanelPolicy["slots"][number], profile: string, model: string) => ({ ...slot, harness: { adapter: "cli", version: "1.0.0", executable: "agent", profile }, inference: { ...slot.inference, model } });
+    const genericPolicy: PanelPolicy = { ...panelPolicy, slots: [cli(panelPolicy.slots[0], "quiet", "model-a"), cli(panelPolicy.slots[1], "quiet", "model-b"), panelPolicy.slots[2], panelPolicy.slots[3]], profiles: { quiet, reported } };
+    const unverified = (model: string) => ({ harnessAdapter: "cli", harnessVersion: "1.0.0", provider: "openai", model, auth: "chatgpt", harnessExecutable: "agent", harnessProfile: "quiet", modelVerified: false as const });
+    const report = panelReport();
+    report.slots = structuredClone(genericPolicy.slots);
+    report.slotRuns[0] = { ...report.slotRuns[0], identity: unverified("model-a"), limitations: ["model_unverified", "sandbox_tree_verified_only"] };
+    // Another configured model, but no model report: the same identity, so the second run is collapsed.
+    report.slotRuns[1] = { ...report.slotRuns[1], identity: unverified("model-b"), limitations: ["model_unverified", "sandbox_tree_verified_only"] };
+    sign(report, genericPolicy);
+    const messages = async (value: PanelReport, extra: PanelReportValidationOptions = {}) => (await validatePanelReport(value, policy, { ...options, ...extra })).issues.filter(issue => issue.path.startsWith("/slotRuns/")).map(issue => `${issue.path} ${issue.message}`);
+    expect(await messages(report)).toEqual([]);
+    // Omitting modelVerified and model_unverified would make the second run a distinct identity that counts on its own.
+    const distinct = structuredClone(report);
+    const { modelVerified: _dropped, ...claimed } = distinct.slotRuns[1].identity;
+    distinct.slotRuns[1] = { ...distinct.slotRuns[1], terminal: "completed", identity: claimed, limitations: ["sandbox_tree_verified_only"] };
+    expect(await messages(distinct)).toEqual([expect.stringMatching(/^\/slotRuns\/1\/identity\/modelVerified .*reports no model, so its run must record modelVerified false/)]);
+    const unlimited = structuredClone(report); delete unlimited.slotRuns[0].limitations;
+    expect(await messages(unlimited)).toEqual(expect.arrayContaining([expect.stringMatching(/^\/slotRuns\/0\/limitations .*must record sandbox_tree_verified_only/)]));
+    // A profile with a model reporter verifies the model, so its run never claims an unverified one.
+    const reporting: PanelPolicy = { ...genericPolicy, slots: [cli(panelPolicy.slots[0], "reported", "model-a"), cli(panelPolicy.slots[1], "quiet", "model-b"), panelPolicy.slots[2], panelPolicy.slots[3]] };
+    const misreported = structuredClone(report); misreported.slots = structuredClone(reporting.slots); misreported.slotRuns[0].identity.harnessProfile = "reported";
+    sign(misreported, reporting);
+    expect(await messages(misreported)).toEqual(expect.arrayContaining([expect.stringMatching(/^\/slotRuns\/0\/identity\/modelVerified .*reports its model/)]));
+    // A slot that runs no profile never records an unverified model.
+    const verifier = structuredClone(report); verifier.slotRuns[3].identity.modelVerified = false; verifier.slotRuns[3].limitations = ["model_unverified"];
+    expect(await messages(verifier)).toEqual([expect.stringMatching(/^\/slotRuns\/3\/identity\/modelVerified .*runs no harness profile/)]);
   });
 
   it("fingerprints credentials without exposing them", () => {

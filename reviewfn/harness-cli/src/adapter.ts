@@ -193,10 +193,18 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
         try { result = await this.runner(executable, args, { cwd: input.workspace, env: environment, timeoutMs: remaining, maxOutputBytes: outputBytes, signal: input.signal, stdin: profile.promptVia === "stdin" ? prompt : "" }); }
         catch (error) { return state.finish(input.signal?.aborted ? "canceled" : "failed", `The CLI could not be started: ${message(error)}`); }
         state.record(result);
+        // Every model report is read from what this attempt left, within the output budget, before any terminal return:
+        // a run that served another model is void whether it then completed, failed, hung or overran its bounds.
+        if (profile.modelReport.startsWith("stderr-regex:")) state.reportStderr(result.stderr, profile.modelReport.slice("stderr-regex:".length));
+        const output = profile.outputVia === "file" ? await readOutputFile(outputFile, state.remainingOutputBytes()) : stdoutObject(result.stdout);
+        if ("text" in output && output.text !== undefined) state.recordOutputFile(output.text);
+        if ("value" in output && profile.modelReport.startsWith("json-path:")) {
+          const dotted = profile.modelReport.slice("json-path:".length);
+          state.reportJson(valueAtPath(output.value, dotted));
+          stripReportField(output.value, dotted, schema);
+        }
         if (result.canceled) return state.finish("canceled", "The CLI run was canceled.");
         if (result.timedOut) return state.finish("timed_out", "The CLI run exceeded its configured time or output bound.");
-        // The stderr reporter sees every attempt's stderr, whatever its exit: a run that served another model is void.
-        if (profile.modelReport.startsWith("stderr-regex:")) state.reportStderr(result.stderr, profile.modelReport.slice("stderr-regex:".length));
         const mismatch = state.mismatchReason();
         if (mismatch) return state.finish("failed", mismatch);
         if (result.code !== 0) {
@@ -204,29 +212,24 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
           state.push("error", { attempt, exitCode: result.code, signal: result.signal });
           return state.finish(QUOTA.test(detail) ? "quota_exhausted" : "failed", state.retain(detail, MAX_DETAIL_CHARS) || `The CLI exited with ${String(result.code ?? result.signal)}.`);
         }
-        const output = profile.outputVia === "file" ? await readOutputFile(outputFile, state.remainingOutputBytes()) : stdoutObject(result.stdout);
         if ("overrun" in output) return state.finish("timed_out", output.overrun);
-        if ("text" in output && output.text !== undefined) state.recordOutputFile(output.text);
         let errors: string[];
         let rejected: string | undefined = "text" in output ? output.text : undefined;
         if ("error" in output) errors = [output.error];
         else {
           const value = output.value;
           rejected = JSON.stringify(value);
-          if (profile.modelReport.startsWith("json-path:")) {
-            const dotted = profile.modelReport.slice("json-path:".length);
-            state.reportJson(valueAtPath(value, dotted));
-            stripReportField(value, dotted, schema);
-          }
-          const reported = state.mismatchReason();
-          if (reported) return state.finish("failed", reported);
-          const unconfirmed = state.unconfirmedModel();
-          if (unconfirmed) return state.finish("failed", unconfirmed);
           errors = validate(value);
           if (!errors.length) {
             const payload = normalizePayload(value) as Omit<HarnessOutput, "terminal" | "events" | "transcript">;
             const payloadErrors = validateHarnessPayload(payload);
-            if (!payloadErrors.length) { state.push("completed", { attempt }); return state.complete(redactJson(payload, secrets)); }
+            if (!payloadErrors.length) {
+              // Only an answer that would be accepted must confirm its model; an invalid one still gets its repair attempt.
+              const unconfirmed = state.unconfirmedModel();
+              if (unconfirmed) return state.finish("failed", unconfirmed);
+              state.push("completed", { attempt });
+              return state.complete(redactJson(payload, secrets));
+            }
             errors.push(...payloadErrors);
           }
         }

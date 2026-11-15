@@ -16,6 +16,10 @@ const calls = path.join(state, "calls.jsonl");
 const attempt = existsSync(calls) ? readFileSync(calls, "utf8").split("\n").filter(Boolean).length + 1 : 1;
 appendFileSync(calls, `${JSON.stringify({ argv, env: process.env, cwd: process.cwd(), prompt, stdin })}\n`);
 
+// A model report on stderr comes first, so a CLI that then hangs or fails has still reported the model it served.
+if (options["model-stderr"]) process.stderr.write(`starting\nserved model: ${options["model-stderr"]}\n`);
+if (options.stderr) process.stderr.write(`${options.stderr}\n`);
+
 if (options.hang !== undefined) {
   // A descendant that ignores SIGTERM proves the whole process group is killed, not only the direct child.
   const child = spawn("/bin/sh", ["-c", "trap '' TERM; exec sleep 60"], { stdio: "ignore" });
@@ -26,8 +30,6 @@ if (options.hang !== undefined) {
   const kind = options.answer ?? "valid";
   const invalid = kind === "invalid" || (kind === "invalid-once" && attempt === 1);
   let answer = kind === "not-json" ? "this is not JSON" : JSON.stringify(invalid ? { findings: "none" } : { ...valid, ...(options["model-json"] ? { model: options["model-json"] } : {}) });
-  if (options["model-stderr"]) process.stderr.write(`starting\nserved model: ${options["model-stderr"]}\n`);
-  if (options.stderr) process.stderr.write(`${options.stderr}\n`);
   if (options.out !== undefined) writeFileSync(options.out, answer);
   else process.stdout.write(`Thinking...\n{"type":"progress","step":1}\n${JSON.stringify(valid).slice(0, 5)}\n${answer}\ndone\n`);
   process.exitCode = Number(options.exit ?? 0);

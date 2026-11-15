@@ -15,7 +15,7 @@ export interface PanelSlot {
   stage: PanelSlotStage;
   /**
    * `version` is the exact harness-reported version a run must report to complete or collapse. `executable` and
-   * `profile` select a profile-driven harness such as `cli`: `profile` names an entry of the policy's `profiles`, and
+   * `profile` are only for the profile-driven `cli` harness: `profile` names an entry of the policy's `profiles`, and
    * `executable` is required with it.
    */
   harness: { adapter: string; version: string; executable?: string; profile?: string };

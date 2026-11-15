@@ -63,7 +63,7 @@ A slot names its executable and a profile. The profile itself lives in the panel
 ## Model reporting
 
 - **`none`.** The run records the `model_unverified` limitation and is not voided. Its identity is only (adapter, version, executable, profile). Two such slots of one executable and profile therefore never count as distinct identities: the second completed run in a stage is `collapsed`, even when the two configure different models.
-- **A reporter.** Every model the reporter names must equal the configured model. Any other model voids the slot with `model_mismatch`. An attempt that completes must report its own model; if it does not, the run fails as unconfirmed. A `json-path` property that the output schema does not declare is removed before validation. A reported model is only as trustworthy as whatever writes that field.
+- **A reporter.** Every model the reporter names must equal the configured model. Any other model voids the slot with `model_mismatch`. Models are read from everything an attempt left within its output bounds (stderr, and the output object even after a nonzero exit) before any other outcome, so a CLI that reports another model and then hangs, overruns or fails is still void. An answer that would be accepted must report its own model; if it does not, the run fails as unconfirmed. An invalid answer gets its repair attempt whether or not it reported a model. A `json-path` property that the output schema does not declare is removed before validation. A reported model is only as trustworthy as whatever writes that field.
 
 ## Output validation
 

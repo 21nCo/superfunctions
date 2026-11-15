@@ -74,6 +74,22 @@ describe("generic CLI slots in the panel", () => {
     expect(result.quorum[0]).toMatchObject({ required: 2, completed: 2, met: true });
   }, 120_000);
 
+  it("voids a slot whose CLI reported another model and then hung or exited nonzero", async () => {
+    const panelPolicy: PanelPolicy = {
+      version: 1,
+      slots: [slot("hung", "hung", "model-r"), slot("exited", "exited", "model-r")],
+      quorum: { stage1: 1, stage2: 0 }, requirementsSlot: null, incremental: "full",
+      profiles: {
+        hung: await profile("hung", "stderr-regex:served model: (\\S+)", ["--model-stderr", "model-x", "--hang", "1"]),
+        exited: await profile("exited", "json-path:model", ["--model-json", "model-x", "--exit", "3"]),
+      },
+    };
+    const policy = { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, harnessTimeoutMs: 3_000 } };
+    const result = await coordinator().run({ root: repo, base, head, config, policy, panelPolicy });
+    expect(result.validation).toMatchObject({ valid: true });
+    for (const run of result.report.slotRuns) expect(run).toMatchObject({ terminal: "void", voidReasons: ["model_mismatch"], identity: { model: "model-x" } });
+  }, 120_000);
+
   it("refuses a pull-request review in preflight", async () => {
     const panelPolicy: PanelPolicy = { version: 1, slots: [slot("quiet-a", "quiet", "model-a")], quorum: { stage1: 1, stage2: 0 }, requirementsSlot: null, incremental: "full", profiles: { quiet: await profile("quiet", "none") } };
     const diagnostics = await coordinator().preflight({ root: repo, base, head, config, policy: DEFAULT_POLICY, panelPolicy, pullRequest: 9 });

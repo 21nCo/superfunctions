@@ -245,6 +245,9 @@ export function slotIdentityKey(identity: SlotIdentity): string {
   return digestJson([identity.harnessAdapter, identity.harnessVersion, identity.provider, identity.model, identity.auth, identity.credentialFingerprint ?? null, ...profiled]);
 }
 
+/** The one profile-driven harness: only its slots name a profile and an executable. */
+const PROFILE_HARNESS_ADAPTER = "cli";
+
 const PLACEHOLDER_TOKEN = /\{[A-Za-z][A-Za-z0-9]*\}/u;
 
 /** Number of capture groups of a regular expression source, or undefined when it does not compile. */
@@ -299,6 +302,7 @@ export function validatePanelPolicy(value: unknown): PanelValidationResult<Panel
     const { executable, profile } = slot.harness;
     if (profile !== undefined && !Object.hasOwn(profiles, profile)) add(issues, "REVIEWFN_PANEL_SCHEMA", `/slots/${index}/harness/profile`, `Slot ${slot.id} names profile ${profile}, which the policy's profiles do not declare.`);
     if (profile !== undefined && executable === undefined) add(issues, "REVIEWFN_PANEL_SCHEMA", `/slots/${index}/harness`, `Slot ${slot.id} names a profile without an executable.`);
+    if ((profile !== undefined || executable !== undefined) && slot.harness.adapter !== PROFILE_HARNESS_ADAPTER) add(issues, "REVIEWFN_PANEL_SCHEMA", `/slots/${index}/harness`, `Slot ${slot.id} uses harness ${slot.harness.adapter}, which takes no profile or executable; only the ${PROFILE_HARNESS_ADAPTER} harness is profile-driven.`);
     if (profile === undefined && executable !== undefined) add(issues, "REVIEWFN_PANEL_SCHEMA", `/slots/${index}/harness/executable`, `Slot ${slot.id} names an executable without a profile; only a profile-driven harness takes one from the slot.`);
   });
   return result(issues as PanelValidationIssue<PanelValidationCode>[]);
@@ -431,7 +435,7 @@ function requirementsProvenanceIssues(report: PanelReport, policy: PanelPolicy |
   }
 }
 
-function slotRunIssues(report: PanelReport, slots: Map<string, PanelSlot>, issues: Issues): void {
+function slotRunIssues(report: PanelReport, slots: Map<string, PanelSlot>, issues: Issues, profiles?: PanelPolicy["profiles"]): void {
   const order = new Map([...slots.keys()].map((id, index) => [id, index]));
   for (const { index, key } of duplicates(report.slotRuns, run => run.slotId)) add(issues, "REVIEWFN_PANEL_SLOT_DUPLICATE", `/slotRuns/${index}/slotId`, `Slot ${key} has more than one run.`);
   const groups = new Map<string, Array<{ run: SlotRun; index: number }>>();
@@ -447,6 +451,16 @@ function slotRunIssues(report: PanelReport, slots: Map<string, PanelSlot>, issue
     // An unverified model is always recorded as a limitation, and the model it stands for is the configured one.
     if (identity.modelVerified === false && !(run.limitations ?? []).includes("model_unverified")) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/limitations`, "A run whose model is unverified must record the model_unverified limitation.");
     if (identity.modelVerified === false && identity.model !== slot.inference.model) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/identity/model`, "A run whose model is unverified records the configured model.");
+    if (identity.modelVerified === false && slot.harness.profile === undefined) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/identity/modelVerified`, `Slot ${slot.id} runs no harness profile, so its model is never recorded as unverified.`);
+    // With the bound panel policy, the slot's profile fixes what its runs record, so a report cannot drop a limitation, or
+    // claim a verified model and count as a distinct identity, where the profile reports no model.
+    const profile = slot.harness.profile !== undefined && profiles && Object.hasOwn(profiles, slot.harness.profile) ? profiles[slot.harness.profile] : undefined;
+    if (profile) {
+      const limitations = run.limitations ?? [];
+      if (profile.modelReport === "none" && (identity.modelVerified !== false || !limitations.includes("model_unverified"))) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/identity/modelVerified`, `Slot ${slot.id}'s profile ${slot.harness.profile} reports no model, so its run must record modelVerified false and the model_unverified limitation.`);
+      if (profile.modelReport !== "none" && identity.modelVerified !== undefined) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/identity/modelVerified`, `Slot ${slot.id}'s profile ${slot.harness.profile} reports its model, so its run's model is verified.`);
+      if (profile.capabilities.sandbox === "tree-verified-only" && !limitations.includes("sandbox_tree_verified_only")) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/limitations`, `Slot ${slot.id}'s profile ${slot.harness.profile} enforces no tool restriction, so its run must record sandbox_tree_verified_only.`);
+    }
     // A harness reporting another version than the slot pins is recorded truthfully, but its run never counts or collapses.
     if (identity.harnessVersion !== slot.harness.version && COUNTING.has(run.terminal)) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/identity/harnessVersion`, `Harness version ${identity.harnessVersion} differs from slot ${slot.id}'s ${slot.harness.version}; such a run cannot be ${run.terminal}.`);
     // One precedence: an observed model mismatch voids the run whatever else happened.
@@ -612,8 +626,9 @@ export async function validatePanelReport(value: unknown, policy: ReviewPolicy, 
   const context = options.context && contextDigest !== undefined && options.context.digest === contextDigest ? options.context : undefined;
   const evidenceContext: EvidenceContext = { report, options, referenceValid: sourceReferenceChecker(context, policy), detail: await verifyChangeDetail(report as unknown as ReviewReport, options.artifacts) };
 
-  slotRunIssues(report, slots, issues);
-  requirementsProvenanceIssues(report, boundPanelPolicy(report, options.panelPolicy, issues), issues);
+  const bound = boundPanelPolicy(report, options.panelPolicy, issues);
+  slotRunIssues(report, slots, issues, bound?.profiles);
+  requirementsProvenanceIssues(report, bound, issues);
   const evidence = await evidenceIssues(evidenceContext, issues);
   await findingIssues(evidenceContext, policy, slots, evidence, issues);
   await anchorIssues(evidenceContext, issues);
