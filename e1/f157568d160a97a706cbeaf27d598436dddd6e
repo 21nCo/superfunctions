@@ -1,0 +1,27 @@
+watchfn/agents/browser/README.md
+  s_95b974b2aeb631::t_b171b1f85c2ab1 29
+watchfn/typescript/README.md
+  s_95b974b2aeb631::t_d422fce24bdf74 80
+watchfn/typescript/src/core/watch-fn.ts
+  s_95b974b2aeb631::t_b49dae09723810 172-173,175-176,179-185
+watchfn/typescript/src/integrations/botfn/store.ts
+  s_95b974b2aeb631::t_ba4f374fdc53a8 62-73
+watchfn/typescript/tests/integrations/botfn.test.ts
+  s_95b974b2aeb631::t_0ea28e2f00205b 53,55-63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e1f157568d160a97a706cbeaf27d598436dddd6e",
+  "prompts": {},
+  "sessions": {
+    "s_95b974b2aeb631": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_95b974b2aeb631",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
