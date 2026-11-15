@@ -8,7 +8,11 @@
         "@superfunctions/http#build",
         "@superfunctions/observability#build"
       ],
-      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/datafn/server/src/**"]
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/datafn/server/src/**",
+        "$TURBO_ROOT$/datafn/cli/src/**"
+      ]
     }
   }
 }

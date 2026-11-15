@@ -5,7 +5,16 @@ import type { DatafnRemoteAdapter } from "../client.js";
 import type { EventBus } from "../events/bus.js";
 import { createClientError, isTransportError } from "../errors.js";
 import { computeMutationHash } from "./cloneUp/hash.js";
-import { sortRecordsById, sortJoinRows } from "./cloneUp/order.js";
+import {
+  orderRecordsParentFirst,
+  referenceTargetsFor,
+  referencesInUse,
+  orderResourcesByDependency,
+  referenceFieldsByResource,
+  sortJoinRows,
+  sortRecordsById,
+  type ReferenceField,
+} from "./cloneUp/order.js";
 import { batchMutations } from "./cloneUp/batch.js";
 import {
   decryptPullResultForE2ee,
@@ -132,63 +141,97 @@ export async function cloneUp(
   let hasErrors = false;
 
   // --- Stage A: Upload records ---
+  // Records go up parents first so a server with foreign keys (and htree path
+  // maintenance) always has the referenced record: resources in dependency
+  // order, and records of a self-referencing resource after their parents.
+  // A nullable reference that would still point at a local record not pushed
+  // yet (a cycle) is sent unset and set by a follow-up merge after all
+  // records. A non-nullable one is sent as it is: unsetting it would be an
+  // invalid write, and a server that enforces the reference reports the
+  // rejected record in the result.
+  const references = referenceFieldsByResource(schema);
+  // Changelog entries written after this point (local writes made while the
+  // push runs) may not be in the records read below, so finalization leaves
+  // them queued for the next sync.
+  const changelogMark =
+    options?.clearChangelogOnSuccess !== false ? await lastChangelogSeq(storage) : null;
+  const recordsByResource = new Map<string, Record<string, unknown>[]>();
+  const localIds = new Map<string, Set<string>>();
   for (const resourceName of resolvedResources) {
-    const resourceSchema = resourceSchemaMap.get(resourceName)!;
-    const fieldNames = writableFieldNames(schema, resourceSchema);
-
     const rawRecords = await storage.listRecords(resourceName);
-    const sortedRecords = sortRecordsById(rawRecords);
+    recordsByResource.set(resourceName, rawRecords);
+    localIds.set(
+      resourceName,
+      new Set(rawRecords.map((record) => record.id).filter((id): id is string => typeof id === "string")),
+    );
+  }
+  // Order by the references the records actually hold, so a polymorphic
+  // reference depends only on the resources its records name.
+  const orderedResources = orderResourcesByDependency(
+    resolvedResources,
+    referencesInUse(
+      references,
+      recordsByResource,
+      (resource, field) =>
+        resourceSchemaMap.get(resource)?.fields.some((f) => f.name === field && f.default !== undefined) ??
+        false,
+    ),
+    (resource, field) =>
+      resourceSchemaMap.get(resource)?.fields.some((f) => f.name === field && f.nullable === true) ?? false,
+  );
+  const pushedIds = new Map<string, Set<string>>();
+  const deferredReferences: Array<{
+    resourceName: string;
+    version: number;
+    id: string;
+    patch: Record<string, unknown>;
+    recordMutationId: string;
+    /** The not-yet-pushed records the patch points at. */
+    targets: string[];
+  }> = [];
 
-    const mutations: Record<string, unknown>[] = [];
-    let recordIndex = 0;
-
-    for (const record of sortedRecords) {
-      if (typeof record.id !== "string") {
-        throw createClientError(
-          "DFQL_INVALID",
-          "Invalid cloneUp: record id must be a string",
-          { path: `records[${recordIndex}].id` },
-        );
+  // Non-nullable references sent while their target was not pushed yet, by
+  // record mutation id, to explain a rejection of that record.
+  const unbrokenCycleReferences = new Map<
+    string,
+    Array<{ resource: string; id: string; field: string; targetId: string }>
+  >();
+  const explainRejectedCycles = (
+    batch: Record<string, unknown>[],
+    errors: PushError[],
+  ): PushError[] => {
+    const rejected = new Set(errors.map((error) => error.mutationId));
+    const wholeBatch = errors.some((error) => !error.mutationId);
+    const explained: PushError[] = [];
+    for (const mutation of batch) {
+      const mutationId = mutation.mutationId as string;
+      if (!wholeBatch && !rejected.has(mutationId)) continue;
+      // A rejection of the whole batch may have another cause, so it is
+      // offered as a possible one.
+      const named = rejected.has(mutationId);
+      for (const reference of unbrokenCycleReferences.get(mutationId) ?? []) {
+        explained.push({
+          mutationId,
+          code: "REFERENCE_CYCLE",
+          message:
+            `${reference.resource} ${reference.id} was sent with ${reference.field} = ` +
+            `${reference.targetId}, which was not pushed yet: the reference is part of a ` +
+            `cycle and cannot be unset because the field is not nullable` +
+            (named ? "" : "; this may be why the batch was rejected"),
+          path: `record.${reference.field}`,
+        });
       }
-
-      const filteredRecord: Record<string, unknown> = {};
-      for (const key of Object.keys(record)) {
-        if (key !== "id" && fieldNames.has(key)) {
-          filteredRecord[key] = record[key];
-        }
-      }
-
-      const hashInput = {
-        kind: "rec",
-        resource: resourceName,
-        operation: recordOperation,
-        id: record.id,
-        record: filteredRecord,
-      };
-      const hash = computeMutationHash(hashInput);
-      const mutationId = `${prefix}:rec:${resourceName}:${record.id}:${hash}`;
-
-      mutations.push({
-        resource: resourceName,
-        version: resourceSchema.version,
-        operation: recordOperation,
-        id: record.id,
-        record: filteredRecord,
-        clientId: deps.clientId,
-        mutationId,
-      });
-
-      recordIndex++;
     }
+    return explained;
+  };
 
-    // Only include resources in stats if they have records
-    if (sortedRecords.length > 0) {
-      result.stats.resources[resourceName] = {
-        records: sortedRecords.length,
-        mutations: mutations.length,
-      };
-    }
-
+  /** Pushes mutations in batches; returns false when cloneUp must stop. */
+  // Record mutations the server rejected, so their deferred references are
+  // not restored onto a record that is not there.
+  const rejectedMutationIds = new Set<string>();
+  const rejectedRecords = new Set<string>();
+  const recordKey = (resource: unknown, id: unknown) => `${String(resource)}\u0000${String(id)}`;
+  const pushMutations = async (mutations: Record<string, unknown>[]): Promise<boolean> => {
     const batches = batchMutations(mutations, batchSize);
     for (const batch of batches) {
       const payloadBatch = await encryptMutationPayloadForE2ee(
@@ -210,7 +253,14 @@ export async function cloneUp(
       }
 
       if (pushResult.errors.length > 0) {
-        result.errors.push(...pushResult.errors);
+        result.errors.push(...pushResult.errors, ...explainRejectedCycles(batch, pushResult.errors));
+        const wholeBatch = pushResult.errors.some((error) => !error.mutationId);
+        const rejectedHere = new Set(pushResult.errors.map((error) => error.mutationId));
+        for (const mutation of batch) {
+          if (!wholeBatch && !rejectedHere.has(mutation.mutationId as string)) continue;
+          rejectedMutationIds.add(mutation.mutationId as string);
+          rejectedRecords.add(recordKey(mutation.resource, mutation.id));
+        }
         hasErrors = true;
         if (failFast) {
           result.ok = false;
@@ -220,10 +270,167 @@ export async function cloneUp(
             timestampMs: deps.getTimestamp(),
             context: { phase: "cloneup", error: { errors: result.errors } },
           });
-          return result;
+          return false;
         }
       }
     }
+    return true;
+  };
+
+  for (const resourceName of orderedResources) {
+    const resourceSchema = resourceSchemaMap.get(resourceName)!;
+    const fieldNames = writableFieldNames(schema, resourceSchema);
+    const nullableFields = new Set(
+      resourceSchema.fields.filter((field) => field.nullable === true).map((field) => field.name),
+    );
+    const resourceReferences: ReferenceField[] = (references.get(resourceName) ?? []).filter(
+      (reference) => fieldNames.has(reference.field),
+    );
+
+    const rawRecords = recordsByResource.get(resourceName) ?? [];
+    const sortedRecords = orderRecordsParentFirst(
+      sortRecordsById(rawRecords),
+      resourceName,
+      resourceReferences,
+    );
+    const pushed = pushedIds.get(resourceName) ?? new Set<string>();
+    pushedIds.set(resourceName, pushed);
+
+    const mutations: Record<string, unknown>[] = [];
+    let recordIndex = 0;
+
+    for (const record of sortedRecords) {
+      if (typeof record.id !== "string") {
+        throw createClientError(
+          "DFQL_INVALID",
+          "Invalid cloneUp: record id must be a string",
+          { path: `records[${recordIndex}].id` },
+        );
+      }
+
+      const filteredRecord: Record<string, unknown> = {};
+      for (const key of Object.keys(record)) {
+        if (key !== "id" && fieldNames.has(key)) {
+          filteredRecord[key] = record[key];
+        }
+      }
+
+      // Break reference cycles: unset a nullable reference to a local record
+      // that has not been pushed yet and set it once every record is up. A
+      // record that references itself needs no break.
+      const deferredPatch: Record<string, unknown> = {};
+      const deferredTargets: string[] = [];
+      const unbroken: Array<{ resource: string; id: string; field: string; targetId: string }> = [];
+      for (const reference of resourceReferences) {
+        const targetId = filteredRecord[reference.field];
+        if (typeof targetId !== "string" || targetId.length === 0) continue;
+        const pendingTargets = referenceTargetsFor(reference, record).filter(
+          (target) =>
+            !(target === resourceName && targetId === record.id) &&
+            localIds.get(target)?.has(targetId) &&
+            !pushedIds.get(target)?.has(targetId),
+        );
+        if (pendingTargets.length === 0) continue;
+        if (!nullableFields.has(reference.field)) {
+          // Sent as it is; fine when the target already exists on the server.
+          unbroken.push({ resource: resourceName, id: record.id, field: reference.field, targetId });
+          continue;
+        }
+        deferredPatch[reference.field] = targetId;
+        filteredRecord[reference.field] = null;
+        for (const target of pendingTargets) deferredTargets.push(recordKey(target, targetId));
+        const resourceField = reference.resourceField;
+        // References that share a resource field keep the first saved value.
+        if (
+          resourceField &&
+          nullableFields.has(resourceField) &&
+          resourceField in filteredRecord &&
+          !(resourceField in deferredPatch)
+        ) {
+          deferredPatch[resourceField] = filteredRecord[resourceField];
+          filteredRecord[resourceField] = null;
+        }
+      }
+      const hashInput = {
+        kind: "rec",
+        resource: resourceName,
+        operation: recordOperation,
+        id: record.id,
+        record: filteredRecord,
+      };
+      const hash = computeMutationHash(hashInput);
+      const mutationId = `${prefix}:rec:${resourceName}:${record.id}:${hash}`;
+      if (unbroken.length > 0) unbrokenCycleReferences.set(mutationId, unbroken);
+
+      if (Object.keys(deferredPatch).length > 0) {
+        deferredReferences.push({
+          resourceName,
+          version: resourceSchema.version,
+          id: record.id,
+          patch: deferredPatch,
+          recordMutationId: mutationId,
+          targets: deferredTargets,
+        });
+      }
+
+      mutations.push({
+        resource: resourceName,
+        version: resourceSchema.version,
+        operation: recordOperation,
+        id: record.id,
+        record: filteredRecord,
+        clientId: deps.clientId,
+        mutationId,
+      });
+      pushed.add(record.id);
+
+      recordIndex++;
+    }
+
+    // Only include resources in stats if they have records
+    if (sortedRecords.length > 0) {
+      result.stats.resources[resourceName] = {
+        records: sortedRecords.length,
+        mutations: mutations.length,
+      };
+    }
+
+    if (!(await pushMutations(mutations))) return result;
+  }
+
+  // Set the references held back to break cycles.
+  // Neither the record nor a record it points at may have been rejected.
+  const restorable = deferredReferences.filter(
+    ({ recordMutationId, targets }) =>
+      !rejectedMutationIds.has(recordMutationId) &&
+      !targets.some((target) => rejectedRecords.has(target)),
+  );
+  if (restorable.length > 0) {
+    const mutations = restorable.map(({ resourceName, version, id, patch, recordMutationId }) => {
+      // The record mutation that unset the reference is part of the identity:
+      // when that record changes and is pushed again (unsetting the reference
+      // again), the restore must be a new mutation too, or the server would
+      // skip it as already applied.
+      const hash = computeMutationHash({
+        kind: "ref",
+        resource: resourceName,
+        id,
+        record: patch,
+        after: recordMutationId,
+      });
+      const stats = result.stats.resources[resourceName];
+      if (stats) stats.mutations += 1;
+      return {
+        resource: resourceName,
+        version,
+        operation: "merge",
+        id,
+        record: patch,
+        clientId: deps.clientId,
+        mutationId: `${prefix}:ref:${resourceName}:${id}:${hash}`,
+      };
+    });
+    if (!(await pushMutations(mutations))) return result;
   }
 
   // --- Stage B: Many-many join rows ---
@@ -432,17 +639,10 @@ export async function cloneUp(
     await setCursorMonotonically(storage, highestCursor);
   }
 
-  // clearChangelogOnSuccess: drain changelog
-  if (options?.clearChangelogOnSuccess !== false) {
-    let draining = true;
-    while (draining) {
-      const pending = await storage.changelogList({ limit: 1000 });
-      if (pending.length === 0) {
-        draining = false;
-      } else {
-        await storage.changelogAck({ throughSeq: pending[pending.length - 1].seq });
-      }
-    }
+  // clearChangelogOnSuccess: acknowledge the changelog entries that existed
+  // before the records were read; later ones stay queued.
+  if (options?.clearChangelogOnSuccess !== false && changelogMark !== null) {
+    await storage.changelogAck({ throughSeq: changelogMark });
   }
 
   deps.eventBus.emit({
@@ -452,6 +652,19 @@ export async function cloneUp(
   });
 
   return result;
+}
+
+/** Largest changelog sequence number in storage, or null when it is empty. */
+async function lastChangelogSeq(storage: DatafnStorageAdapter): Promise<number | null> {
+  if (typeof storage.changelogLastSeq === "function") return storage.changelogLastSeq();
+  // An adapter without changelogLastSeq: changelogList has no offset, so read
+  // it whole (IndexedDB caps a getAll count at 2^32 - 1).
+  const entries = await storage.changelogList({ limit: 0xffffffff });
+  let last: number | null = null;
+  for (const entry of entries) {
+    if (typeof entry.seq === "number" && (last === null || entry.seq > last)) last = entry.seq;
+  }
+  return last;
 }
 
 async function setCursorMonotonically(

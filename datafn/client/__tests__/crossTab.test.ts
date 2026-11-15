@@ -5,6 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { CrossTabRelay } from "../src/crossTab.js";
 import { EventBus } from "../src/events/bus.js";
+import { IMPORT_CONTEXT } from "../src/events/importMarker.js";
 import type { DatafnEvent } from "@datafn/core";
 
 // Mock BroadcastChannel
@@ -21,7 +22,9 @@ class MockBroadcastChannel {
     MockBroadcastChannel.channels.get(name)!.push(this);
   }
 
-  postMessage(data: unknown): void {
+  postMessage(message: unknown): void {
+    // A real channel delivers a structured clone, never the sender's objects.
+    const data = structuredClone(message);
     const channels = MockBroadcastChannel.channels.get(this.name) || [];
     // Simulate async message delivery
     setTimeout(() => {
@@ -390,6 +393,70 @@ describe("CrossTabRelay", () => {
       });
 
       relayA.close();
+      relayB.close();
+    });
+
+    it("carries only the import marker as context", async () => {
+      const eventBusA = new EventBus();
+      const eventBusB = new EventBus();
+      const relayA = new CrossTabRelay("test-namespace", eventBusA);
+      const relayB = new CrossTabRelay("test-namespace", eventBusB);
+      const receivedEvents: DatafnEvent[] = [];
+      eventBusB.subscribe((event) => {
+        receivedEvents.push(event);
+      });
+
+      relayA.broadcast({
+        type: "mutation_applied",
+        resource: "task",
+        ids: ["task:1"],
+        timestampMs: Date.now(),
+        action: "replace",
+        context: IMPORT_CONTEXT,
+      });
+      // A caller's own context that merely looks like the marker is not relayed.
+      relayA.broadcast({
+        type: "mutation_applied",
+        resource: "task",
+        ids: ["task:2"],
+        timestampMs: Date.now(),
+        action: "merge",
+        context: { source: "import" },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(receivedEvents).toHaveLength(2);
+      expect(receivedEvents[0].context).toBe(IMPORT_CONTEXT);
+      expect(receivedEvents[1].context).toBeUndefined();
+
+      relayA.close();
+      relayB.close();
+    });
+
+    it("drops any other context a relayed message carries", async () => {
+      const eventBusB = new EventBus();
+      const relayB = new CrossTabRelay("test-namespace", eventBusB);
+      const receivedEvents: DatafnEvent[] = [];
+      eventBusB.subscribe((event) => {
+        receivedEvents.push(event);
+      });
+
+      const rogue = new MockBroadcastChannel("datafn:test-namespace");
+      rogue.postMessage({
+        sourceTabId: "rogue",
+        event: {
+          type: "mutation_applied",
+          resource: "task",
+          timestampMs: Date.now(),
+          context: { injected: true },
+        },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(receivedEvents).toHaveLength(1);
+      expect(receivedEvents[0].context).toBeUndefined();
+
+      rogue.close();
       relayB.close();
     });
   });
