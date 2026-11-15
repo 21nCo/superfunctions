@@ -296,6 +296,57 @@ describe("paginated clone join rows", () => {
     expect(second.joins?.join_tags_links_tags?.map((r) => r.id)).toEqual(["l_c_a"]);
   });
 
+  it("reads the join table once when a page's id lookups exceed the budget", async () => {
+    const selfSchema: DatafnSchema = {
+      resources: [schema.resources[1]],
+      relations: [{ from: "tags", to: "tags", type: "many-many", relation: "links" } as any],
+    };
+    const base = memoryAdapter();
+    const ids = Array.from({ length: 1000 }, (_, i) => `t${String(i).padStart(4, "0")}`);
+    for (const id of ids) {
+      await base.create({ model: "tags", data: { id, name: id }, namespace: NAMESPACE });
+    }
+    for (const [id, from, to] of [
+      ["l1", "t0001", "t0002"],
+      ["l2", "t0999", "x_outside"],
+    ]) {
+      await base.create({
+        model: "__datafn_join_tags_links",
+        data: { id, from, to },
+        namespace: NAMESPACE,
+      });
+    }
+    let joinQueries = 0;
+    const db = new Proxy(base, {
+      get(target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver);
+        if (prop === "findMany") {
+          return (args: { model: string }) => {
+            if (args.model === "__datafn_join_tags_links") joinQueries += 1;
+            return value.call(target, args);
+          };
+        }
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as Adapter;
+
+    const page = await executeClone(
+      {
+        clientId: "c1",
+        tables: ["tags"],
+        includeJoins: true,
+        page: { table: "tags", afterId: null, limit: 1000 },
+      },
+      selfSchema,
+      db,
+      NAMESPACE,
+    );
+
+    expect(page.data.tags).toHaveLength(1000);
+    expect(joinQueries).toBe(1);
+    expect(page.joins?.join_tags_links_tags?.map((r) => r.id)).toEqual(["l1", "l2"]);
+  });
+
   it("still returns the whole join table for an unpaginated clone", async () => {
     const db = await seed();
     const result = await executeClone(

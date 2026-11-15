@@ -914,7 +914,9 @@ export class SyncEngine {
             : [];
           await applyCloneResult(this.storage, result, {
             markReady: continuations.length === 0,
-            keepEarliestCursor: continuations.length > 0,
+            // A clone may restart a table an earlier pass left incomplete;
+            // keep that pass's older cursor so a pull replays its gap.
+            keepEarliestCursor: true,
           });
           if (shouldManageSearchIndices) {
             if (!skipCloneIndexing) {

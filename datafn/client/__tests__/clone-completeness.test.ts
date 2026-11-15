@@ -203,6 +203,17 @@ describe("paginated clone completeness", () => {
     expect(await storage.getCursor("notes")).toBe("3");
   });
 
+  it("keeps an older stored cursor when an uncapped clone restarts the table", async () => {
+    const storage = new MemoryStorageAdapter();
+    await storage.setCursor("notes", "3");
+    const { engine } = createEngine(storage, async () => pageResponse(null, 10, "12"));
+
+    await engine.cloneNow();
+
+    expect(await storage.getCursor("notes")).toBe("3");
+    expect(await storage.getHydrationState("notes")).toBe("ready");
+  });
+
   it("sets a fresh table's cursor to its first page's sequence", async () => {
     const storage = new MemoryStorageAdapter();
     let seq = 20;

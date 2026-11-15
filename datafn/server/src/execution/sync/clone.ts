@@ -49,6 +49,13 @@ export interface CloneResult {
 const JOIN_LOOKUP_CHUNK = 90;
 
 /**
+ * Most id lookup queries one page may spend on join rows. A page needing more
+ * (large pages, many relations) reads each join table once and filters it,
+ * so the queries per request stay bounded (D1 limits queries per invocation).
+ */
+const JOIN_LOOKUP_BUDGET = 16;
+
+/**
  * Execute clone operation - return full dataset with cursors
  */
 export async function executeClone(
@@ -326,6 +333,23 @@ export async function executeClone(
       }
     }
 
+    // A page looks its join rows up by id while that fits the lookup budget.
+    let useIdLookups = false;
+    if (scopedIds && request.page) {
+      let lookups = 0;
+      for (const relation of schema.relations) {
+        if (relation.type !== "many-many") continue;
+        const froms = Array.isArray(relation.from) ? relation.from : [relation.from];
+        const tos = Array.isArray(relation.to) ? relation.to : [relation.to];
+        for (const side of [froms, tos]) {
+          let ids = 0;
+          for (const resource of side) ids += scopedIds.get(resource)?.size ?? 0;
+          lookups += Math.ceil(ids / JOIN_LOOKUP_CHUNK);
+        }
+      }
+      useIdLookups = lookups <= JOIN_LOOKUP_BUDGET;
+    }
+
     for (const relation of schema.relations) {
       // Skip relations that aren't many-many (no join rows)
       if (relation.type !== "many-many") continue;
@@ -351,11 +375,11 @@ export async function executeClone(
 
       try {
         let joinRecords: Array<Record<string, unknown>>;
-        // A page (at most 1,000 records) looks its join rows up by id. A capped
-        // clone can return up to maxCloneRecords records, so it reads the join
-        // table once and filters below, keeping the query count bounded (D1
-        // limits queries per invocation).
-        if (scopedIds && request.page) {
+        // A page within the lookup budget looks its join rows up by id. A
+        // capped clone (up to maxCloneRecords records) or a page over budget
+        // reads the join table once and filters below, keeping the query
+        // count bounded (D1 limits queries per invocation).
+        if (scopedIds && useIdLookups) {
           const byId = new Map<unknown, Record<string, unknown>>();
           const lookups = new Map<string, Set<string>>();
           const addLookup = (column: string, resources: string[]) => {
