@@ -186,6 +186,8 @@ export async function cloneUp(
     id: string;
     patch: Record<string, unknown>;
     recordMutationId: string;
+    /** The not-yet-pushed records the patch points at. */
+    targets: string[];
   }> = [];
 
   // Non-nullable references sent while their target was not pushed yet, by
@@ -227,6 +229,8 @@ export async function cloneUp(
   // Record mutations the server rejected, so their deferred references are
   // not restored onto a record that is not there.
   const rejectedMutationIds = new Set<string>();
+  const rejectedRecords = new Set<string>();
+  const recordKey = (resource: unknown, id: unknown) => `${String(resource)}\u0000${String(id)}`;
   const pushMutations = async (mutations: Record<string, unknown>[]): Promise<boolean> => {
     const batches = batchMutations(mutations, batchSize);
     for (const batch of batches) {
@@ -251,8 +255,12 @@ export async function cloneUp(
       if (pushResult.errors.length > 0) {
         result.errors.push(...pushResult.errors, ...explainRejectedCycles(batch, pushResult.errors));
         const wholeBatch = pushResult.errors.some((error) => !error.mutationId);
-        for (const mutation of wholeBatch ? batch : []) rejectedMutationIds.add(mutation.mutationId as string);
-        for (const error of pushResult.errors) if (error.mutationId) rejectedMutationIds.add(error.mutationId);
+        const rejectedHere = new Set(pushResult.errors.map((error) => error.mutationId));
+        for (const mutation of batch) {
+          if (!wholeBatch && !rejectedHere.has(mutation.mutationId as string)) continue;
+          rejectedMutationIds.add(mutation.mutationId as string);
+          rejectedRecords.add(recordKey(mutation.resource, mutation.id));
+        }
         hasErrors = true;
         if (failFast) {
           result.ok = false;
@@ -311,17 +319,18 @@ export async function cloneUp(
       // that has not been pushed yet and set it once every record is up. A
       // record that references itself needs no break.
       const deferredPatch: Record<string, unknown> = {};
+      const deferredTargets: string[] = [];
       const unbroken: Array<{ resource: string; id: string; field: string; targetId: string }> = [];
       for (const reference of resourceReferences) {
         const targetId = filteredRecord[reference.field];
         if (typeof targetId !== "string" || targetId.length === 0) continue;
-        const pending = referenceTargetsFor(reference, record).some(
+        const pendingTargets = referenceTargetsFor(reference, record).filter(
           (target) =>
             !(target === resourceName && targetId === record.id) &&
             localIds.get(target)?.has(targetId) &&
             !pushedIds.get(target)?.has(targetId),
         );
-        if (!pending) continue;
+        if (pendingTargets.length === 0) continue;
         if (!nullableFields.has(reference.field)) {
           // Sent as it is; fine when the target already exists on the server.
           unbroken.push({ resource: resourceName, id: record.id, field: reference.field, targetId });
@@ -329,6 +338,7 @@ export async function cloneUp(
         }
         deferredPatch[reference.field] = targetId;
         filteredRecord[reference.field] = null;
+        for (const target of pendingTargets) deferredTargets.push(recordKey(target, targetId));
         const resourceField = reference.resourceField;
         // References that share a resource field keep the first saved value.
         if (
@@ -359,6 +369,7 @@ export async function cloneUp(
           id: record.id,
           patch: deferredPatch,
           recordMutationId: mutationId,
+          targets: deferredTargets,
         });
       }
 
@@ -388,8 +399,11 @@ export async function cloneUp(
   }
 
   // Set the references held back to break cycles.
+  // Neither the record nor a record it points at may have been rejected.
   const restorable = deferredReferences.filter(
-    ({ recordMutationId }) => !rejectedMutationIds.has(recordMutationId),
+    ({ recordMutationId, targets }) =>
+      !rejectedMutationIds.has(recordMutationId) &&
+      !targets.some((target) => rejectedRecords.has(target)),
   );
   if (restorable.length > 0) {
     const mutations = restorable.map(({ resourceName, version, id, patch, recordMutationId }) => {
