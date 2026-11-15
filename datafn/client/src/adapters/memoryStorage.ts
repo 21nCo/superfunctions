@@ -106,7 +106,10 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
     resource: string,
     id: string,
     partial: Record<string, unknown>,
-    options?: { ifMissing?: Record<string, unknown> },
+    options?: {
+      ifMissing?: Record<string, unknown>;
+      onResolved?: (outcome: { created: boolean }) => void;
+    },
   ): Promise<Record<string, unknown>> {
     this.validateTableName(resource);
     if (!id) throw new Error("Record missing id");
@@ -124,6 +127,7 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
     
     merged.id = id;
     table.set(id, merged);
+    options?.onResolved?.({ created: !existing });
     return merged;
   }
 

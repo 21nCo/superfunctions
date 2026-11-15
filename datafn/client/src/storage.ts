@@ -67,8 +67,16 @@ export interface DatafnStorageAdapter {
     resource: string, 
     id: string, 
     partial: Record<string, unknown>,
-    /** Complete creation payload used instead of `partial` when absent. */
-    options?: { ifMissing?: Record<string, unknown> },
+    options?: {
+      /** Complete creation payload used instead of `partial` when absent. */
+      ifMissing?: Record<string, unknown>;
+      /**
+       * Optional: called inside the atomic read-modify-write with whether
+       * the record was missing and has been created. Adapters that do not
+       * call it leave the outcome unknown, which callers treat conservatively.
+       */
+      onResolved?: (outcome: { created: boolean }) => void;
+    },
   ): Promise<Record<string, unknown>>;
 
   // Join rows (many-many)

@@ -78,6 +78,14 @@ describe("MemoryStorageAdapter", () => {
       });
     });
 
+    it("reports whether the merge created the record", async () => {
+      const outcomes: boolean[] = [];
+      const onResolved = ({ created }: { created: boolean }) => outcomes.push(created);
+      await storage.mergeRecord("task", "m1", { title: "a" }, { onResolved });
+      await storage.mergeRecord("task", "m1", { title: "b" }, { onResolved });
+      expect(outcomes).toEqual([true, false]);
+    });
+
     it("rejects an empty merge id before persisting a record", async () => {
       await expect(storage.mergeRecord("task", "", { title: "invalid" }))
         .rejects.toThrow("Record missing id");

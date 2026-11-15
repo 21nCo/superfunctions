@@ -807,10 +807,6 @@ export async function applyOptimisticMutationToStorage(
     });
     await applyInactivePropagation(storage, schema, [{ resource, id }]);
   } else if (operation === "merge") {
-    rememberMergeCreated(
-      mutation.mutationId,
-      (await storage.getRecord(resource, id)) === null,
-    );
     // Keep the existence decision and default application inside the adapter's
     // atomic read-modify-write. Concurrent creates must not receive defaults
     // computed from an earlier missing-record read.
@@ -833,8 +829,12 @@ export async function applyOptimisticMutationToStorage(
       },
     );
     if (storage.capabilities?.atomicMergeIfMissing === true) {
+      // Whether the merge created the record comes from inside the atomic
+      // write; a separate read could race a concurrent delete. When the
+      // adapter does not report it, it stays unknown.
       await storage.mergeRecord(resource, id, optimisticPatch, {
         ifMissing: optimisticCreate,
+        onResolved: ({ created }) => rememberMergeCreated(mutation.mutationId, created),
       });
     } else {
       // DatafnStorageAdapter implementations written before the optional

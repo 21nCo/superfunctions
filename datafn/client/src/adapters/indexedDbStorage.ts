@@ -563,7 +563,10 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
     resource: string,
     id: string,
     partial: Record<string, unknown>,
-    options?: { ifMissing?: Record<string, unknown> },
+    options?: {
+      ifMissing?: Record<string, unknown>;
+      onResolved?: (outcome: { created: boolean }) => void;
+    },
   ): Promise<Record<string, unknown>> {
     this.validateTableName(resource);
     const db = await this.dbPromise;
@@ -587,6 +590,7 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
         const putRequest = store.put(storageRecord);
         
         putRequest.onsuccess = () => {
+          options?.onResolved?.({ created: !existing });
           resolve(storageRecord);
         };
         putRequest.onerror = () => {

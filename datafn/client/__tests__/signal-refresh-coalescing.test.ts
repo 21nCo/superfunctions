@@ -344,3 +344,47 @@ describe("merge skipping with query plugins and relation selects", () => {
     );
   });
 });
+
+describe("merge creation reported by the storage write", () => {
+  it("marks a merge as created when a delete lands just before its write", async () => {
+    const { client, storage } = await setup(1);
+    const events: any[] = [];
+    client.subscribe((event: any) => {
+      if (event.type === "mutation_applied" && event.action === "merge") events.push(event);
+    });
+    // Delete the record between any earlier read and the merge's atomic write.
+    const merge = storage.mergeRecord.bind(storage);
+    storage.mergeRecord = (async (resource: string, id: string, partial: any, options: any) => {
+      await storage.deleteRecord(resource, id);
+      return merge(resource, id, partial, options);
+    }) as typeof storage.mergeRecord;
+
+    await client.table("notes").mutate({
+      operation: "merge",
+      id: "notes:00000",
+      record: { body: "edited" },
+    } as any);
+    expect(events.at(-1)?.created).toBe(true);
+  });
+
+  it("leaves created unknown when the adapter does not report it, and refreshes", async () => {
+    const { client, storage } = await setup(2);
+    const merge = storage.mergeRecord.bind(storage);
+    storage.mergeRecord = (async (resource: string, id: string, partial: any, options: any) =>
+      merge(resource, id, partial, { ifMissing: options?.ifMissing })) as typeof storage.mergeRecord;
+    const events: any[] = [];
+    client.subscribe((event: any) => {
+      if (event.type === "mutation_applied" && event.action === "merge") events.push(event);
+    });
+    const notes = client.table("notes");
+    const signal = notes.signal({ limit: 10 });
+    await waitForValue(signal as any);
+    executeSpy.mockClear();
+
+    await notes.mutate({ operation: "merge", id: "notes:new", record: { body: "x" } } as any);
+    expect(events.at(-1)?.created).toBeUndefined();
+    await vi.waitFor(() =>
+      expect(executeSpy.mock.calls.some(([, , query]) => !hasIdProbe(query))).toBe(true),
+    );
+  });
+});
