@@ -3,7 +3,7 @@ import { createBillFnError } from './errors.js';
 import { errorResponse, jsonResponse, successResponse } from './http.js';
 import { normalizeBasePath, resolveRequestSubject } from './helpers.js';
 import { createBillFnService } from './service.js';
-import type { BillFnConfig, BillableSubject } from './types.js';
+import type { BillFnConfig, BillFnReconciliationJobKind, BillableSubject } from './types.js';
 
 async function parseJsonBody<T>(request: Request): Promise<T> {
   let body: unknown;
@@ -316,7 +316,7 @@ export function createBillFnRouter(config: BillFnConfig) {
       handler: async (request) => {
         await ensureOperationsAuthorized(request);
         const body = await parseJsonBody<{
-          kind: 'webhook-event' | 'subscription-sync' | 'account-scan' | 'notification-history-backfill' | 'webhook-replay';
+          kind: BillFnReconciliationJobKind;
           provider?: string;
           billingAccountId?: string;
           subscriptionId?: string;

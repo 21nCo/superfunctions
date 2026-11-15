@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-BILLFN_SCHEMA_VERSION = 5
+BILLFN_SCHEMA_VERSION = 6
 
 
 def get_schema() -> Dict[str, Any]:
@@ -361,6 +361,40 @@ def get_schema() -> Dict[str, Any]:
                 "name": "entitlement_grants_billing_account_idx",
                 "fields": ["billingAccountId", "createdAt"],
             },
+            {
+                "name": "entitlement_grants_expires_idx",
+                "fields": ["expiresAt"],
+            },
+        ],
+    }
+
+    lifecycle_events = {
+        "modelName": "lifecycleEvents",
+        "fields": {
+            "id": {"type": "string", "required": True, "unique": True},
+            "type": {"type": "string", "required": True},
+            "billingAccountId": {"type": "string", "required": True},
+            "occurredAt": {"type": "string", "required": True},
+            "data": {"type": "json", "required": True},
+            "status": {"type": "string", "required": True},
+            "attempts": {"type": "number", "required": True},
+            "nextAttemptAt": {"type": "string", "required": True},
+            "claimId": {"type": "string", "required": False},
+            "lastError": {"type": "string", "required": False},
+            "deliveredAt": {"type": "string", "required": False},
+            "failedAt": {"type": "string", "required": False},
+            "createdAt": {"type": "string", "required": True},
+            "updatedAt": {"type": "string", "required": True},
+        },
+        "indexes": [
+            {
+                "name": "lifecycle_events_status_next_attempt_idx",
+                "fields": ["status", "nextAttemptAt"],
+            },
+            {
+                "name": "lifecycle_events_billing_account_idx",
+                "fields": ["billingAccountId", "createdAt"],
+            },
         ],
     }
 
@@ -380,6 +414,7 @@ def get_schema() -> Dict[str, Any]:
         unlinked_webhook_events,
         replaced_provider_references,
         entitlement_grants,
+        lifecycle_events,
     ]
 
     return {"version": BILLFN_SCHEMA_VERSION, "schemas": schemas}

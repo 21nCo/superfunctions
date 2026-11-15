@@ -22,6 +22,7 @@ These routes require `operations.authorize(request)` to succeed.
 - `subscription-sync`
 - `account-scan`
 - `notification-history-backfill`
+- `lifecycle-events`: records `grant.expiring` and grant-expiry `entitlement.changed` events, then delivers due lifecycle events (see [Lifecycle events](/docs/server/lifecycle-events))
 
 ## Events for subscriptions BillFn has not seen
 

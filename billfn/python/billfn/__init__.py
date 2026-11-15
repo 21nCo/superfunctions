@@ -1,6 +1,6 @@
 """Python SDK for the billfn billing and entitlements surface."""
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __author__ = "21n"
 __license__ = "MIT"
 

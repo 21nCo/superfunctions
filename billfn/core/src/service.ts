@@ -15,6 +15,13 @@ import {
   type GrantDeps
 } from './grants.js';
 import {
+  createLifecycleEvents,
+  grantLifecycleEvents,
+  lifecycleEventId,
+  type LifecycleEventInput,
+  type LifecycleEvents
+} from './lifecycle.js';
+import {
   createDefaultBillingAccountResolver,
   defaultIdFactory,
   resolvePlan,
@@ -177,6 +184,8 @@ type ServiceDeps = {
   metrics: MetricsEmitter;
   queue?: BillFnQueueAdapter<BillFnQueuedJob>;
   isPriceEligible?: NonNullable<BillFnConfig['checkout']>['isPriceEligible'];
+  /** The lifecycle event outbox; records nothing without an `onEvent` handler. */
+  lifecycle: LifecycleEvents;
   /**
    * Reconciles an event inside a committed mutation's window with an inline
    * provider read. A failed read without a queue throws a window-read error.
@@ -278,12 +287,26 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
     generateId,
     metrics,
     queue: config.queue,
-    isPriceEligible: config.checkout?.isPriceEligible
+    isPriceEligible: config.checkout?.isPriceEligible,
+    lifecycle: createLifecycleEvents({
+      db: config.db,
+      namespace,
+      now,
+      generateId,
+      metrics,
+      onEvent: config.onEvent,
+      isDuplicateRecordError
+    })
   };
   deps.reconcileProviderState = (subscription, event) => reconcileWindowEvent(subscription, event);
   const grantDeps: GrantDeps = {
     ...deps,
-    recordBillingEvent: (event, db) => recordBillingEvent(db ? { ...deps, db } : deps, event),
+    // A grant's lifecycle events are stored before its billing event, so a repair that finds the billing event
+    // missing records them too (once: their ids derive from the grant).
+    recordBillingEvent: async (event, db) => {
+      await deps.lifecycle.record(grantLifecycleEvents(event), db);
+      await recordBillingEvent(db ? { ...deps, db } : deps, event);
+    },
     isDuplicateRecordError
   };
   /**
@@ -1576,10 +1599,43 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
       const job = await runReconciliationJobInternal(input.jobId);
       return ok({ job });
     },
+    dispatchEvents: deps.lifecycle.dispatch,
+    listEvents: deps.lifecycle.list,
     subscriptionProvider,
     quotaProvider
   };
-  return { service, now, runReconciliationJob: runReconciliationJobInternal };
+  return {
+    service: flushingLifecycleEvents(deps.lifecycle, service),
+    now,
+    runReconciliationJob: async (jobId: string, onLeaseRenewed?: ReconciliationLeaseGuard) => {
+      try {
+        return await runReconciliationJobInternal(jobId, onLeaseRenewed);
+      } finally {
+        await deps.lifecycle.flush();
+      }
+    }
+  };
+}
+
+/**
+ * Wraps each of the service's methods so that, once it settles, the lifecycle events recorded meanwhile are
+ * delivered. A delivery failure never fails the call: the event stays in the outbox for a later dispatch.
+ */
+function flushingLifecycleEvents<T extends Record<string, unknown>>(lifecycle: LifecycleEvents, service: T): T {
+  return Object.fromEntries(
+    Object.entries(service).map(([key, value]) => [
+      key,
+      typeof value === 'function'
+        ? async (...args: unknown[]) => {
+            try {
+              return await (value as (...args: unknown[]) => unknown)(...args);
+            } finally {
+              await lifecycle.flush();
+            }
+          }
+        : value
+    ])
+  ) as T;
 }
 
 const RECONCILIATION_QUEUE = 'billfn-reconciliation';
@@ -1789,6 +1845,12 @@ async function processReconciliationJob(
       for (const subscription of subscriptions) {
         await syncSubscriptionByIdForJob(deps, subscription.id, assertLease);
       }
+      return;
+    }
+    case 'lifecycle-events': {
+      await deps.lifecycle.recordGrantExpiry();
+      await assertLease();
+      await deps.lifecycle.dispatch();
       return;
     }
     case 'notification-history-backfill': {
@@ -3215,6 +3277,11 @@ async function applyVerificationState(
     subscription,
     timestamp
   );
+  // `baseSubscription` is the row this write replaced (null for a new row). Only a write of this call's own state
+  // renews or cancels; a succeeded checkout session is recorded whatever the row carries.
+  await deps.lifecycle.record(
+    subscriptionLifecycleEvents(ownState ? baseSubscription : null, subscription, checkoutSession)
+  );
   if (!recordLifecycle) {
     return {
       checkoutSession: checkoutSession ?? input.checkoutSession,
@@ -3483,6 +3550,7 @@ async function upsertEntitlements(
         namespace: deps.namespace
       });
       if (updated === 1) {
+        await recordEntitlementChange(deps, existing, snapshot, subscription);
         return snapshot;
       }
       await Promise.resolve();
@@ -3490,11 +3558,13 @@ async function upsertEntitlements(
     }
 
     try {
-      return await deps.db.create<BillFnEntitlementSnapshot>({
+      const created = await deps.db.create<BillFnEntitlementSnapshot>({
         model: TABLES.entitlementSnapshots,
         data: snapshot,
         namespace: deps.namespace
       });
+      await recordEntitlementChange(deps, null, snapshot, subscription);
+      return created;
     } catch (error) {
       if (!isDuplicateRecordError(error)) {
         throw error;
@@ -3507,6 +3577,128 @@ async function upsertEntitlements(
     code: 'BILLFN_CONFLICT',
     message: 'Unable to update entitlements after multiple retries'
   });
+}
+
+/**
+ * Records `entitlement.changed` when a subscription write changes the paid snapshot's plan, status, features or
+ * limits. Keyed by the write's source event, so it is recorded once per write.
+ */
+async function recordEntitlementChange(
+  deps: ServiceDeps,
+  previous: BillFnEntitlementSnapshot | null,
+  next: BillFnEntitlementSnapshot,
+  subscription: BillFnSubscription
+) {
+  if (
+    previous &&
+    previous.planKey === next.planKey &&
+    previous.status === next.status &&
+    sameJson(previous.features, next.features) &&
+    sameJson(previous.limits, next.limits)
+  ) {
+    return;
+  }
+  await deps.lifecycle.record([
+    {
+      id: lifecycleEventId('entitlement.changed', `subscription\n${next.billingAccountId}\n${next.sourceEventId}`),
+      type: 'entitlement.changed',
+      billingAccountId: next.billingAccountId,
+      occurredAt: next.updatedAt,
+      data: {
+        cause: 'subscription',
+        subscriptionId: subscription.id,
+        planKey: next.planKey,
+        status: next.status,
+        previousPlanKey: previous?.planKey ?? null,
+        previousStatus: previous?.status ?? null
+      }
+    }
+  ]);
+}
+
+/**
+ * The lifecycle events of a subscription write that carries its own state: `checkout.completed` for a
+ * succeeded checkout session (once per session), `subscription.renewed` when an active subscription's period
+ * end moves later (once per period end), and `subscription.canceled` when a renewing subscription stops
+ * renewing without expiring or failing (once per write).
+ */
+function subscriptionLifecycleEvents(
+  previous: BillFnSubscription | null,
+  subscription: BillFnSubscription,
+  checkoutSession: BillFnCheckoutSession | undefined
+): LifecycleEventInput[] {
+  const events: LifecycleEventInput[] = [];
+  const base = { billingAccountId: subscription.billingAccountId, occurredAt: subscription.updatedAt };
+  const ref = {
+    subscriptionId: subscription.id,
+    provider: subscription.provider,
+    planKey: subscription.planKey,
+    priceId: subscription.priceId
+  };
+  if (checkoutSession?.status === 'succeeded') {
+    events.push({
+      ...base,
+      id: lifecycleEventId('checkout.completed', checkoutSession.checkoutSessionId),
+      type: 'checkout.completed',
+      data: { ...ref, checkoutSessionId: checkoutSession.checkoutSessionId }
+    });
+  }
+  if (!previous) {
+    return events;
+  }
+  const previousEnd = previous.currentPeriodEnd ? Date.parse(previous.currentPeriodEnd) : Number.NaN;
+  const nextEnd = subscription.currentPeriodEnd ? Date.parse(subscription.currentPeriodEnd) : Number.NaN;
+  if (subscription.status === 'active' && Number.isFinite(previousEnd) && Number.isFinite(nextEnd) && nextEnd > previousEnd) {
+    events.push({
+      ...base,
+      id: lifecycleEventId('subscription.renewed', `${subscription.id}\n${toIsoString(new Date(nextEnd))}`),
+      type: 'subscription.renewed',
+      data: {
+        ...ref,
+        currentPeriodStart: subscription.currentPeriodStart ?? null,
+        currentPeriodEnd: subscription.currentPeriodEnd!,
+        previousPeriodEnd: previous.currentPeriodEnd!
+      }
+    });
+  }
+  if (isRenewing(previous) && !isRenewing(subscription) && !ENDED_STATUSES.has(subscription.status)) {
+    events.push({
+      ...base,
+      id: lifecycleEventId('subscription.canceled', `${subscription.id}\n${subscription.updatedAt}`),
+      type: 'subscription.canceled',
+      data: {
+        ...ref,
+        status: subscription.status,
+        autoRenew: subscription.autoRenew,
+        currentPeriodEnd: subscription.currentPeriodEnd ?? null
+      }
+    });
+  }
+  return events;
+}
+
+/** Statuses a subscription ends in without being canceled. */
+const ENDED_STATUSES = new Set<SubscriptionStatus>(['expired', 'failed']);
+
+function isRenewing(subscription: BillFnSubscription) {
+  return subscription.autoRenew && subscription.status !== 'canceled' && !ENDED_STATUSES.has(subscription.status);
+}
+
+/** Compares JSON values regardless of key order (a jsonb column reorders keys). */
+function sameJson(left: unknown, right: unknown) {
+  return JSON.stringify(canonicalJson(left)) === JSON.stringify(canonicalJson(right));
+}
+
+function canonicalJson(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(canonicalJson);
+  }
+  if (value && typeof value === 'object') {
+    return Object.keys(value)
+      .sort()
+      .map((key) => [key, canonicalJson((value as Record<string, unknown>)[key])]);
+  }
+  return value ?? null;
 }
 
 async function recordBillingEvent(deps: ServiceDeps, event: BillFnBillingEvent) {
@@ -5004,6 +5196,8 @@ function jobToQueuePayload(job: BillFnReconciliationJob): BillFnQueuedJob {
         provider: job.provider as BillingProviderName,
         providerEventId: job.providerEventId as string
       };
+    case 'lifecycle-events':
+      return { type: 'lifecycle-events', jobId: job.id };
   }
 }
 

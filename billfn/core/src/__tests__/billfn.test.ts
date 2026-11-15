@@ -204,7 +204,7 @@ function createMockProvider(provider: 'dodo' | 'apple'): BillFnProviderAdapter {
 describe('@billfn/core', () => {
   it('keeps schema model names logical for custom namespaces and enforces provider reference uniqueness', () => {
     const schema = getSchema({ namespace: 'custom_billfn' });
-    expect(schema.version).toBe(5);
+    expect(schema.version).toBe(6);
     expect(schema.schemas.map((table) => table.modelName)).toContain('subscriptions');
     expect(schema.schemas.some((table) => table.modelName.startsWith('custom_billfn_'))).toBe(false);
     const subscriptions = schema.schemas.find((table) => table.modelName === 'subscriptions');

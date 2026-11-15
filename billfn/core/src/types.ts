@@ -45,7 +45,8 @@ export type BillFnReconciliationJobKind =
   | 'subscription-sync'
   | 'account-scan'
   | 'notification-history-backfill'
-  | 'webhook-replay';
+  | 'webhook-replay'
+  | 'lifecycle-events';
 
 export interface BillableSubject {
   actorId?: string;
@@ -605,12 +606,19 @@ export interface BillFnWebhookReplayQueuedJob {
   providerEventId: string;
 }
 
+/** Records `grant.expiring` (and `entitlement.changed` for grants that expired), then dispatches due lifecycle events. */
+export interface BillFnLifecycleEventsQueuedJob {
+  type: 'lifecycle-events';
+  jobId?: string;
+}
+
 export type BillFnQueuedJob =
   | BillFnWebhookQueuedJob
   | BillFnSubscriptionSyncQueuedJob
   | BillFnAccountScanQueuedJob
   | BillFnNotificationHistoryQueuedJob
-  | BillFnWebhookReplayQueuedJob;
+  | BillFnWebhookReplayQueuedJob
+  | BillFnLifecycleEventsQueuedJob;
 
 /**
  * The queue operations BillFn calls, declared structurally so the published
@@ -659,8 +667,151 @@ export interface BillFnConfig {
      */
     isPriceEligible?: (input: BillFnPriceEligibilityInput) => Promise<boolean> | boolean;
   };
+  /**
+   * Receives BillFn's lifecycle events. With a handler, every lifecycle event
+   * is first stored in the `lifecycleEvents` outbox, then delivered at least
+   * once: right after the call that recorded it, and otherwise by
+   * `services.events.dispatch` or the `lifecycle-events` reconciliation job. A
+   * handler that throws is retried with backoff for 24 hours after the event
+   * was recorded; then the event is `failed`. Deduplicate by `event.id`.
+   * Without a handler no event is recorded, so set it in every process that
+   * writes billing state.
+   */
+  onEvent?: BillFnLifecycleEventHandler;
   now?: () => Date;
   generateId?: (prefix: string) => string;
+}
+
+export type BillFnLifecycleEventType =
+  | 'entitlement.changed'
+  | 'checkout.completed'
+  | 'subscription.renewed'
+  | 'subscription.canceled'
+  | 'grant.started'
+  | 'grant.expiring';
+
+/** What changed an account's entitlements. */
+export type BillFnEntitlementChangeCause = 'subscription' | 'grant.started' | 'grant.revoked' | 'grant.expired';
+
+export interface BillFnLifecycleEventDataMap {
+  /**
+   * The paid entitlements of a subscription write, or a grant that started or
+   * ended, changed. `planKey` and `status` are those of the change's source; a
+   * paid subscription that is not `inactive` supersedes a grant, so read
+   * `getEntitlements` for the account's effective entitlements.
+   */
+  'entitlement.changed': {
+    cause: BillFnEntitlementChangeCause;
+    planKey: string;
+    status: EntitlementStatus;
+    subscriptionId?: string;
+    grantId?: string;
+    previousPlanKey?: string | null;
+    previousStatus?: EntitlementStatus | null;
+  };
+  /** A checkout session succeeded; recorded once per checkout session. */
+  'checkout.completed': {
+    checkoutSessionId: string;
+    subscriptionId: string;
+    provider: BillingProviderName;
+    planKey: string;
+    priceId: string;
+  };
+  /** An active subscription's billing period moved later; recorded once per period end. */
+  'subscription.renewed': {
+    subscriptionId: string;
+    provider: BillingProviderName;
+    planKey: string;
+    priceId: string;
+    currentPeriodStart: string | null;
+    currentPeriodEnd: string;
+    previousPeriodEnd: string;
+  };
+  /**
+   * A renewing subscription stopped renewing: it was canceled now (`status`
+   * `canceled`) or will end at `currentPeriodEnd` (auto-renew turned off).
+   */
+  'subscription.canceled': {
+    subscriptionId: string;
+    provider: BillingProviderName;
+    planKey: string;
+    priceId: string;
+    status: SubscriptionStatus;
+    autoRenew: boolean;
+    currentPeriodEnd: string | null;
+  };
+  'grant.started': {
+    grantId: string;
+    kind: BillFnEntitlementGrantKind;
+    planKey: string;
+    startsAt: string;
+    expiresAt: string;
+  };
+  /** A grant that is not revoked expires within 3 days. */
+  'grant.expiring': {
+    grantId: string;
+    kind: BillFnEntitlementGrantKind;
+    planKey: string;
+    expiresAt: string;
+  };
+}
+
+/** A lifecycle event as the `onEvent` handler receives it. */
+export type BillFnLifecycleEvent<T extends BillFnLifecycleEventType = BillFnLifecycleEventType> = {
+  [K in T]: {
+    /** Stable across every delivery of the event: deduplicate by it. */
+    id: string;
+    type: K;
+    billingAccountId: string;
+    occurredAt: string;
+    data: BillFnLifecycleEventDataMap[K];
+    /** The delivery attempt, from 1. */
+    attempt: number;
+  };
+}[T];
+
+export type BillFnLifecycleEventHandler = (event: BillFnLifecycleEvent) => Promise<void> | void;
+
+export type BillFnLifecycleEventStatus = 'pending' | 'delivered' | 'failed';
+
+/** A row of the `lifecycleEvents` outbox. */
+export interface BillFnLifecycleEventRecord {
+  id: string;
+  type: BillFnLifecycleEventType;
+  billingAccountId: string;
+  occurredAt: string;
+  data: Record<string, unknown>;
+  status: BillFnLifecycleEventStatus;
+  /** Delivery attempts started, including one an interrupted dispatcher never finished. */
+  attempts: number;
+  /** When the event is next due; while a dispatcher holds it, when that claim lapses. */
+  nextAttemptAt: string;
+  claimId?: string | null;
+  lastError?: string | null;
+  deliveredAt?: string | null;
+  failedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BillFnDispatchEventsRequest {
+  /** At most this many due events (default 100). */
+  limit?: number;
+}
+
+export interface BillFnDispatchEventsResult {
+  delivered: number;
+  /** Handler failures scheduled for another attempt. */
+  retrying: number;
+  /** Handler failures past the 24-hour delivery window, now `failed`. */
+  failed: number;
+}
+
+export interface BillFnListEventsRequest {
+  status?: BillFnLifecycleEventStatus;
+  billingAccountId?: string;
+  /** At most this many events, newest first (default 100). */
+  limit?: number;
 }
 
 /** What the host `checkout.isPriceEligible` hook receives for a tagged catalog price. */
@@ -1007,6 +1158,16 @@ export interface BillFnInstance {
        * returns it unchanged. Records a `billfn.grant.revoked` billing event.
        */
       revoke(input: BillFnRevokeGrantRequest): Promise<BillFnGrantResponse>;
+    };
+    events: {
+      /**
+       * Delivers the due lifecycle events to `onEvent`, oldest due first. Two
+       * dispatchers never deliver one event at the same time; an event a
+       * dispatcher claimed and never finished is due again after 5 minutes.
+       */
+      dispatch(input?: BillFnDispatchEventsRequest): Promise<BillFnDispatchEventsResult>;
+      /** The outbox's events, newest first; `status: 'failed'` lists the events that ran out of retries. */
+      list(input?: BillFnListEventsRequest): Promise<BillFnLifecycleEventRecord[]>;
     };
   };
   subscriptionProvider: {
