@@ -1,0 +1,23 @@
+datafn/server/src/execution/query/planner.ts
+  s_f058f999ab46b7::t_c9b729f0f76d0c 49-51,53
+datafn/server/src/routes/__tests__/query-owner-access.test.ts
+  s_f058f999ab46b7::t_fd96ae37f01652 143,149,152,154,176-193
+datafn/server/src/routes/query.ts
+  s_f058f999ab46b7::t_e3facd88f634e5 837-844,848
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b24c8db0198edeff2a9ac987fb82d94a1618a961",
+  "prompts": {},
+  "sessions": {
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
