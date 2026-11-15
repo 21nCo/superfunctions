@@ -213,6 +213,28 @@ describe("ClaudeCodeHarnessAdapter results", () => {
     expect(output.observed?.model).toBe("different-model");
   });
 
+  it("checks every usage model, not only the usage entries it retains", async () => {
+    // 32 matching dated entries, then one other model: retention keeps 32 entries, the check sees all 33.
+    const crowded = (text: string) => text.split("\n").filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>).map(event => event.type !== "result" ? event : {
+      ...event,
+      modelUsage: { ...Object.fromEntries(Array.from({ length: 32 }, (_, index) => [`${MODEL}-202601${String(index + 1).padStart(2, "0")}`, { inputTokens: 1 }])), "claude-sonnet-5-5": { inputTokens: 1 } },
+    }).map(event => JSON.stringify(event)).join("\n");
+    const first = adapter([crowded(fixture("completed-review"))]);
+    const output = await first.adapter.run(baseInput);
+    expect(output.terminal).toBe("failed");
+    expect(output.error).toMatch(/^model_mismatch: Claude Code served claude-sonnet-5-5/);
+    expect(output.observed?.model).toBe("claude-sonnet-5-5");
+    const usage = output.events.find(event => event.type === "usage")?.data as { models: Record<string, unknown> };
+    expect(Object.keys(usage.models)).toHaveLength(32);
+    // The same mismatch in the repair attempt voids the run too.
+    const repair = adapter([fixture("malformed-output"), crowded(fixture("completed-review"))]);
+    const repaired = await repair.adapter.run(baseInput);
+    expect(repair.calls).toHaveLength(2);
+    expect(repaired.terminal).toBe("failed");
+    expect(repaired.error).toMatch(/^model_mismatch: Claude Code served claude-sonnet-5-5/);
+    expect(repaired.findings).toEqual([]);
+  });
+
   it("gives the repair attempt only the output budget the first attempt left", async () => {
     const malformed = fixture("malformed-output");
     const limit = Buffer.byteLength(malformed) + 4_096;
@@ -226,6 +248,15 @@ describe("ClaudeCodeHarnessAdapter results", () => {
     expect(output.terminal).toBe("timed_out");
     expect(output.error).toMatch(/whole byte budget/);
     expect(spent.calls).toHaveLength(1);
+  });
+
+  it("measures the repair budget in the raw bytes the runner counted, whatever redaction removed", async () => {
+    const malformed = fixture("malformed-output");
+    const stderr = `warning: ${CREDENTIAL} was rejected\n`;
+    const limit = Buffer.byteLength(malformed) + 4_096;
+    const echoed = adapter([{ ...ok(malformed), stderr }, fixture("schema-invalid-output")]);
+    await echoed.adapter.run({ ...baseInput, policy: { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, maxOutputBytes: limit } } });
+    expect(echoed.calls.map(call => call.options.maxOutputBytes)).toEqual([limit, limit - Buffer.byteLength(`${malformed}\n${stderr}`) - 2]);
   });
 
   it("redacts a credential echoed in output from stored events, transcript and payload", async () => {

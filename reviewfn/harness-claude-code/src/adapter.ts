@@ -20,6 +20,9 @@ export const CLAUDE_CODE_DISALLOWED_TOOLS: readonly string[] = Object.freeze(["B
 const EMPTY_MCP_CONFIG = JSON.stringify({ mcpServers: {} });
 /** Normalized events retained per run, across both attempts; the last slot records the truncation. */
 const MAX_EVENTS = 10_000;
+/** Retention limits on a reported model identity and on the usage entries kept in one usage event; never check limits. */
+const MAX_MODEL_CHARS = 256;
+const MAX_USAGE_MODELS = 32;
 /** Bytes of the rejected answer echoed back in the repair prompt. */
 const REPAIR_ECHO_BYTES = 16_384;
 /** Environment names the harness environment owns; a credential may not reuse them. */
@@ -279,13 +282,20 @@ class RunState {
   private readonly events: NormalizedRunEvent[] = [];
   private truncated = false;
   private readonly transcript: string[] = [];
-  /** Every model the stream named: the session's model, each assistant message's model and each usage entry. */
-  private readonly models = new Set<string>();
   /**
-   * Models that served the current attempt: assistant messages, usage entries and the result's model, not the session's
-   * requested model. Scoped per attempt, so a repair attempt cannot complete on the first attempt's evidence.
+   * The model check runs on every model identity any attempt names (the session's model, each assistant message's
+   * model, the result's model and every usage key), in full and before any retention limit: those limits bound only
+   * what is stored. `sawModel` and the first mismatch accumulate across attempts, so a mismatch in either attempt voids.
    */
-  private readonly served = new Set<string>();
+  private sawModel = false;
+  private mismatch: string | undefined;
+  /**
+   * Whether a model served the current attempt: an assistant message, a usage entry or the result's model, not the
+   * session's requested model. Scoped per attempt, so a repair attempt cannot complete on the first attempt's evidence.
+   */
+  private served = false;
+  /** Raw stdout and stderr bytes of the attempts so far, as the runner counts them against its output cap. */
+  private rawBytes = 0;
   private readonly disallowed = new Set<string>();
   private harnessVersion: string | undefined;
   private inputTokens: number | undefined;
@@ -298,7 +308,8 @@ class RunState {
 
   /** Normalize one attempt's stream; the checks see every line, even after event retention is exhausted. */
   public record(result: CommandResult): ParsedStream {
-    this.served.clear();
+    this.served = false;
+    this.rawBytes += Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr);
     this.transcript.push(redactText(`${result.stdout}\n${result.stderr}`, this.secrets));
     const parsed: ParsedStream = {};
     for (const match of result.stdout.matchAll(/[^\r\n]+/g)) {
@@ -318,23 +329,25 @@ class RunState {
   /** Why the run must not count: a tool outside the allowlist, or a model other than the configured one. */
   public voidReason(): string | undefined {
     if (this.disallowed.size) return `disallowed_tool: Claude Code used tools outside the allowlist ${CLAUDE_CODE_ALLOWED_TOOLS.join(", ")}: ${[...this.disallowed].join(", ")}.`;
-    const mismatch = this.mismatchedModel();
-    if (mismatch !== undefined) return `model_mismatch: Claude Code served ${mismatch}, not the configured ${this.model}.`;
+    if (this.mismatch !== undefined) return `model_mismatch: Claude Code served ${this.mismatch}, not the configured ${this.model}.`;
     return undefined;
   }
 
   /** A completing attempt must itself have reported the model that served it. */
   public unconfirmedModel(): string | undefined {
-    return this.served.size ? undefined : `Claude Code reported no resolved model, so the configured ${this.model} was not confirmed.`;
+    return this.served ? undefined : `Claude Code reported no resolved model, so the configured ${this.model} was not confirmed.`;
   }
 
   /**
-   * Output bytes the next attempt may produce: the limit less the transcript so far and the two newlines (the attempt
-   * separator and the attempt's stdout/stderr separator) the next attempt adds to it.
+   * Output bytes the next attempt may produce: the limit less the output so far and the two newlines (the attempt
+   * separator and the attempt's stdout/stderr separator) the next attempt adds to the transcript. The output so far is
+   * the larger of the raw bytes the runner capped and the redacted transcript the panel bounds, so redaction, which
+   * shrinks a long credential and grows a short one, can widen neither budget.
    */
   public remainingOutputBytes(limit: number): number {
     if (!this.transcript.length) return limit;
-    return limit - Buffer.byteLength(this.transcript.join("\n")) - 2;
+    const separators = this.transcript.length * 2 - 1;
+    return limit - Math.max(this.rawBytes + separators, Buffer.byteLength(this.transcript.join("\n"))) - 2;
   }
 
   public complete(payload: Omit<HarnessOutput, "terminal" | "events" | "transcript">): SlotHarnessOutput {
@@ -354,9 +367,8 @@ class RunState {
     const observed: SlotObservation = {};
     if (this.harnessVersion) observed.harnessVersion = this.harnessVersion;
     // A model matching the closed rule is the configured model; any other is reported as served, which voids the run.
-    const mismatch = this.mismatchedModel();
-    if (mismatch !== undefined) observed.model = redactText(mismatch, this.secrets);
-    else if (this.models.size) observed.model = this.model;
+    if (this.mismatch !== undefined) observed.model = redactText(this.mismatch, this.secrets);
+    else if (this.sawModel) observed.model = this.model;
     if (this.disallowed.size) observed.disallowedTools = [...this.disallowed].map(tool => redactText(tool, this.secrets));
     const usage: NonNullable<SlotObservation["usage"]> = {};
     if (this.inputTokens !== undefined) usage.inputTokens = this.inputTokens;
@@ -366,16 +378,15 @@ class RunState {
     return observed;
   }
 
-  private mismatchedModel(): string | undefined {
-    return [...this.models].find(model => !resolvedModelMatches(this.model, model));
-  }
-
+  /** Check one reported model identity in full; return its stored form, truncated only for retention. */
   private noteModel(value: unknown, served: boolean): string | undefined {
     if (typeof value !== "string" || !value.trim()) return undefined;
-    const model = value.slice(0, 256);
-    this.models.add(model);
-    if (served) this.served.add(model);
-    return model;
+    this.sawModel = true;
+    if (served) this.served = true;
+    // A truncated identity is marked, so its stored form can never read as the configured model.
+    const stored = value.length > MAX_MODEL_CHARS ? `${value.slice(0, MAX_MODEL_CHARS)}…` : value;
+    if (this.mismatch === undefined && !resolvedModelMatches(this.model, value)) this.mismatch = stored;
+    return stored;
   }
 
   private system(raw: Record<string, unknown>): void {
@@ -398,8 +409,10 @@ class RunState {
     for (const item of body.content) {
       // Client and server tool use alike (`tool_use`, `server_tool_use`, `mcp_tool_use`).
       if (!isRecord(item) || typeof item.type !== "string" || !item.type.endsWith("tool_use")) continue;
-      const tool = typeof item.name === "string" && item.name ? item.name.slice(0, 128) : `(unnamed ${item.type.slice(0, 64)})`;
-      const allowed = item.type === "tool_use" && CLAUDE_CODE_ALLOWED_TOOLS.includes(tool);
+      // The allowlist check sees the full name; only the stored name is truncated.
+      const named = typeof item.name === "string" && item.name.length > 0;
+      const tool = named ? (item.name as string).slice(0, 128) : `(unnamed ${item.type.slice(0, 64)})`;
+      const allowed = item.type === "tool_use" && named && CLAUDE_CODE_ALLOWED_TOOLS.includes(item.name as string);
       if (!allowed) this.disallowed.add(tool);
       this.push("tool_started", { tool, allowed });
     }
@@ -429,9 +442,10 @@ class RunState {
     if (cost !== undefined) this.costUsd = (this.costUsd ?? 0) + cost;
     const models: Record<string, JsonValue> = {};
     if (isRecord(raw.modelUsage)) {
-      for (const [name, entry] of Object.entries(raw.modelUsage).slice(0, 32)) {
+      // Every usage key is checked; only the first 32 are kept in the usage event.
+      for (const [index, [name, entry]] of Object.entries(raw.modelUsage).entries()) {
         const model = this.noteModel(name, true);
-        if (!model) continue;
+        if (!model || index >= MAX_USAGE_MODELS) continue;
         const summary: Record<string, JsonValue> = {};
         if (isRecord(entry)) for (const key of ["inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens"]) { const value = count(entry[key]); if (value !== undefined) summary[key] = value; }
         if (isRecord(entry) && amount(entry.costUSD) !== undefined) summary.costUsd = amount(entry.costUSD)!;
