@@ -132,6 +132,13 @@ export async function applyCloneResult(
     }
   }
 
+  // A clone that keeps its earliest per-resource cursor must not advance the
+  // global cursor past it either: push and WebSocket paths compare against
+  // the global cursor to decide whether a pull is still needed.
+  if (keepEarliestCursor) {
+    return;
+  }
+
   // Calculate and set global cursor
   let maxSeq = 0;
   for (const cursor of Object.values(cursors)) {

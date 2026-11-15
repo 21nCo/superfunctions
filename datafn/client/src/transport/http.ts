@@ -47,6 +47,15 @@ function attachRetryAfter(result: unknown, header: string | null): void {
   target.details = { ...details, retryAfterMs };
 }
 
+function isErrorBody(result: unknown): boolean {
+  return (
+    !!result &&
+    typeof result === "object" &&
+    !!(result as { error?: unknown }).error &&
+    typeof (result as { error?: unknown }).error === "object"
+  );
+}
+
 /**
  * Default HTTP Transport for DataFn
  * Uses global fetch() to communicate with a remote DataFn server.
@@ -146,10 +155,18 @@ export class DefaultHttpTransport implements DatafnRemoteAdapter {
         if (route && error?.name !== "AbortError") throw new DatafnRegionalTransportError("DATAFN_REGIONAL_ENDPOINT_UNAVAILABLE");
         throw error;
       });
-      const result = await response.json().catch(() => null);
+      let result = await response.json().catch(() => null);
 
       if (!response.ok) {
         if (response.status === 429) {
+          // A 429 without a DataFn error body (e.g. from a gateway) is still
+          // a rate limit: report it as one so callers can wait and retry.
+          if (!isErrorBody(result)) {
+            result = {
+              ok: false,
+              error: { code: "RATE_LIMITED", message: "Too many requests", details: { path: "$" } },
+            };
+          }
           attachRetryAfter(result, response.headers.get("Retry-After"));
         }
         const event = { endpoint, url, status: response.status, result };

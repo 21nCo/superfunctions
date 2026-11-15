@@ -560,9 +560,20 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
     const store = await this.getStore(resource, "readwrite");
     const tx = store.transaction;
     return new Promise((resolve, reject) => {
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error ?? new Error("Transaction aborted"));
+      let settled = false;
+      const fail = (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        reject(error ?? new Error("Transaction aborted"));
+      };
+      tx.oncomplete = () => {
+        settled = true;
+        resolve();
+      };
+      // A failed put's error event reaches the transaction before the abort
+      // sets tx.error, so take the error from the failing request.
+      tx.onerror = (event) => fail((event.target as IDBRequest | null)?.error ?? tx.error);
+      tx.onabort = () => fail(tx.error);
       try {
         for (const record of storageRecords) {
           store.put(record);
@@ -577,7 +588,7 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
         } catch {
           // Already finished or aborting.
         }
-        reject(error);
+        fail(error);
       }
     });
   }

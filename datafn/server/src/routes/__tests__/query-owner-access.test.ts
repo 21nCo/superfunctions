@@ -220,6 +220,18 @@ describe("oversized $in lists", () => {
     expect(split.remaining).toEqual({ $and: [{ title: { $in: ids(half) } }] });
   });
 
+  it("classifies filters the pushdown converter cannot express as in-memory", () => {
+    const relSchema = {
+      resources: [
+        { name: "notes", version: 1, fields: [] },
+        { name: "tags", version: 1, fields: [] },
+      ],
+      relations: [{ from: "notes", to: "tags", type: "many-many", relation: "tags" }],
+    };
+    expect(classifyQuery({ resource: "notes", filters: { tags: "t1" } }, relSchema)).toBe("IN_MEMORY");
+    expect(classifyQuery({ resource: "notes", filters: { $and: "x" } }, relSchema)).toBe("IN_MEMORY");
+  });
+
   it("keeps a longer $in list in memory", () => {
     const long = ids(MAX_PUSHDOWN_IN_VALUES + 1);
     expect(convertDfqlFilters({ id: { $in: long } })).toBeNull();

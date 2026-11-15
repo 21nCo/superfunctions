@@ -43,7 +43,6 @@ export interface PushdownWhereClause {
 // Internal operator mapping
 // ---------------------------------------------------------------------------
 
-/** Maps DFQL operator strings (with and without $ prefix) to adapter operators. */
 /**
  * Largest `$in` list pushed to the adapter as one bound-parameter list. A
  * longer list stays an in-memory filter so the SQL statement cannot exceed
@@ -77,6 +76,7 @@ function countInValues(filters: unknown): number {
   return total;
 }
 
+/** Maps DFQL operator strings (with and without $ prefix) to adapter operators. */
 const DFQL_TO_ADAPTER_OP: Record<string, PushdownOperator | null> = {
   // $-prefixed DFQL operators
   $eq: "eq",
@@ -432,6 +432,17 @@ export function classifyQuery(
     }
     // $in lists that together exceed one statement's parameter budget
     if (countInValues(query.filters) > MAX_PUSHDOWN_IN_VALUES) {
+      return "IN_MEMORY";
+    }
+    // Any other filter the pushdown converter cannot express (e.g. a bare
+    // relation key) must be evaluated in memory, never dropped.
+    if (
+      convertDfqlFilters(
+        query.filters as Record<string, unknown>,
+        typeof query.resource === "string" ? query.resource : undefined,
+        schema,
+      ) === null
+    ) {
       return "IN_MEMORY";
     }
   }

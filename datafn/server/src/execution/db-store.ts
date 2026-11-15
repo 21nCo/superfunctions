@@ -32,6 +32,9 @@ function relationNameFor(relation: { relation?: string; inverse?: string; to: st
   return typeof relation.to === "string" ? relation.to : relation.to[0];
 }
 
+/** Ids per `in` lookup when loading rows for every record of a table. */
+const FIND_BY_IDS_CHUNK = 30_000;
+
 export class DbDataStore implements DataStore {
   private recordsCache: Map<string, Record<string, unknown>[]> = new Map();
   private joinCache: Map<string, JoinRow[]> = new Map();
@@ -54,6 +57,29 @@ export class DbDataStore implements DataStore {
         String(a.id || "").localeCompare(String(b.id || "")),
       ),
     );
+  }
+
+  /**
+   * `field IN ids` in chunks, so a lookup over every record of a large table
+   * stays under a driver's bound-parameter limit (Postgres: 65,535).
+   */
+  private static async findManyByIds(
+    db: Adapter,
+    model: string,
+    field: string,
+    ids: readonly unknown[],
+    namespace: string,
+  ): Promise<Record<string, unknown>[]> {
+    const rows: Record<string, unknown>[] = [];
+    for (let i = 0; i < ids.length; i += FIND_BY_IDS_CHUNK) {
+      const chunk = await db.findMany({
+        model,
+        where: [{ field, operator: "in", value: ids.slice(i, i + FIND_BY_IDS_CHUNK) }],
+        namespace,
+      });
+      rows.push(...(chunk as Record<string, unknown>[]));
+    }
+    return rows;
   }
 
   private static async applyActorVisibilityFilter(
@@ -806,14 +832,13 @@ export class DbDataStore implements DataStore {
       const secondaryEndpoint = primaryIsFrom ? (rel as any).to : (rel as any).from;
 
       try {
-        let joinRows: Record<string, unknown>[] = [];
-        if (primaryIds.length > 0) {
-          joinRows = await db.findMany({
-            model: tableName,
-            where: [{ field: filterField, operator: "in", value: primaryIds }],
-            namespace,
-          });
-        }
+        const joinRows = await DbDataStore.findManyByIds(
+          db,
+          tableName,
+          filterField,
+          primaryIds,
+          namespace,
+        );
 
         const normalizedRows = DbDataStore.normalizeJoinRows(joinRows, fromCol, toCol);
         const rowsForRelation = DbDataStore.filterJoinRowsForResource(
@@ -843,15 +868,13 @@ export class DbDataStore implements DataStore {
         }
 
         for (const [secondaryModel, ids] of idsByResource.entries()) {
-          const records = ids.length > 0
-            ? await db.findMany({
-                model: secondaryModel,
-                where: [
-                  { field: "id", operator: "in", value: ids },
-                ],
-                namespace,
-              })
-              : [];
+          const records = await DbDataStore.findManyByIds(
+            db,
+            secondaryModel,
+            "id",
+            ids,
+            namespace,
+          );
           store.mergeRecords(secondaryModel, records);
           manyManySecondaries.add(secondaryModel);
         }

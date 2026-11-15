@@ -59,6 +59,19 @@ function isNativeBackedSearchProvider(
  */
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+/** Largest delay setTimeout accepts; longer ones fire immediately. */
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
+/** Sleep that also honours delays longer than one timer allows. */
+async function sleepLong(ms: number): Promise<void> {
+  let remaining = ms;
+  do {
+    const chunk = Math.min(remaining, MAX_TIMER_DELAY_MS);
+    await sleep(chunk);
+    remaining -= chunk;
+  } while (remaining > 0);
+}
+
 /**
  * Helper: Compute exponential backoff delay with jitter (PHASE_08)
  */
@@ -1045,7 +1058,11 @@ export class SyncEngine {
    */
   private async cloneWithRateLimitRetry(payload: unknown): Promise<any> {
     const policy = this.config?.cloneRateLimitRetry;
-    const maxRetries = Math.max(0, policy?.maxRetries ?? 6);
+    const configuredRetries = policy?.maxRetries;
+    const maxRetries =
+      typeof configuredRetries === "number" && Number.isFinite(configuredRetries)
+        ? Math.max(0, Math.floor(configuredRetries))
+        : 6;
     const backoff = {
       baseDelayMs: policy?.baseDelayMs ?? 1000,
       multiplier: policy?.multiplier ?? 2,
@@ -1068,7 +1085,7 @@ export class SyncEngine {
         Number.isFinite(retryAfterMs) && retryAfterMs >= 0
           ? retryAfterMs
           : computeBackoffDelay(attempt, backoff);
-      await sleep(delayMs);
+      await sleepLong(delayMs);
     }
   }
 

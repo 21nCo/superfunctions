@@ -321,6 +321,31 @@ export async function executeClone(
   if (request.includeJoins && schema.relations) {
     joins = {};
 
+    // Visibility of a join row's endpoints for this actor. The namespace
+    // owner sees everything; records returned by this clone are visible;
+    // any other private record is resolved (and cached) individually.
+    const actorIsOwner = isNamespaceOwnerActor(actorId, namespace);
+    const returnedIds = new Map<string, Set<string>>();
+    for (const [table, rows] of Object.entries(data)) {
+      returnedIds.set(
+        table,
+        new Set(rows.map((row) => row.id).filter((id): id is string => typeof id === "string")),
+      );
+    }
+    const endpointAccess = new Map<string, boolean>();
+    const isEndpointVisible = async (resource: string, id: unknown): Promise<boolean> => {
+      if (actorIsOwner || !isPrivateShareableResource(schema, resource)) return true;
+      if (typeof id !== "string" || !actorId) return false;
+      if (returnedIds.get(resource)?.has(id)) return true;
+      const key = `${resource}\u0000${id}`;
+      let visible = endpointAccess.get(key);
+      if (visible === undefined) {
+        visible = !!(await resolveAccessLevel(db, schema, resource, id, actorId, namespace));
+        endpointAccess.set(key, visible);
+      }
+      return visible;
+    };
+
     // Paginated and capped clones scope join rows to the records they returned.
     let scopedIds: Map<string, Set<string>> | undefined;
     if (request.page || cappedClone) {
@@ -333,9 +358,10 @@ export async function executeClone(
       }
     }
 
-    // A page looks its join rows up by id while that fits the lookup budget.
+    // A page or capped batch looks its join rows up by id while that fits
+    // the lookup budget; otherwise it reads each join table once and filters.
     let useIdLookups = false;
-    if (scopedIds && request.page) {
+    if (scopedIds) {
       let lookups = 0;
       for (const relation of schema.relations) {
         if (relation.type !== "many-many") continue;
@@ -425,13 +451,24 @@ export async function executeClone(
         for (const from of froms) {
           for (const to of tos) {
             const joinStoreKey = getJoinStoreKey(from, relation.relation!, to);
-            const rowsForStore = normalizedRows.filter(
+            const candidateRows = normalizedRows.filter(
               (row) =>
                 shouldIncludeJoinRowForStore(row, relation, schema, from, to) &&
                 (!scopedIds ||
                   (typeof row.from === "string" && !!scopedIds.get(from)?.has(row.from)) ||
                   (typeof row.to === "string" && !!scopedIds.get(to)?.has(row.to))),
             );
+            // A join row names both records it links: emit it only when the
+            // actor may see each private endpoint.
+            const rowsForStore: Array<Record<string, unknown>> = [];
+            for (const row of candidateRows) {
+              if (
+                (await isEndpointVisible(from, row.from)) &&
+                (await isEndpointVisible(to, row.to))
+              ) {
+                rowsForStore.push(row);
+              }
+            }
             if (rowsForStore.length > 0) {
               joins[joinStoreKey] = rowsForStore;
             }

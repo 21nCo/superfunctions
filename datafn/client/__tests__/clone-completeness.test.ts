@@ -15,6 +15,7 @@ import { MemoryStorageAdapter } from "../src/adapters/memoryStorage.js";
 import { IndexedDbStorageAdapter } from "../src/adapters/indexedDbStorage.js";
 import { SyncEngine } from "../src/sync/engine.js";
 import { DefaultHttpTransport } from "../src/transport/http.js";
+import { GLOBAL_CURSOR_KEY } from "../src/sync/apply.js";
 import type { DatafnSyncConfig } from "../src/client.js";
 
 const schema: DatafnSchema = {
@@ -214,6 +215,22 @@ describe("paginated clone completeness", () => {
     expect(await storage.getHydrationState("notes")).toBe("ready");
   });
 
+  it("does not advance the global cursor past a kept earliest cursor", async () => {
+    const storage = new MemoryStorageAdapter();
+    let seq = 30;
+    const { engine } = createEngine(
+      storage,
+      async (payload) => {
+        seq += 1;
+        return pageResponse(payload.page!.afterId, payload.page!.limit, String(seq));
+      },
+      { hydration: { bootResources: ["notes"], clonePageSize: 2 } },
+    );
+    await engine.cloneNow();
+    const global = await storage.getCursor(GLOBAL_CURSOR_KEY);
+    expect(global === null || Number(global) <= 31).toBe(true);
+  });
+
   it("sets a fresh table's cursor to its first page's sequence", async () => {
     const storage = new MemoryStorageAdapter();
     let seq = 20;
@@ -406,6 +423,34 @@ describe("rate-limited clone requests", () => {
     await expect(engine.cloneNow()).rejects.toThrow("Too many requests");
     expect(remote.clone).toHaveBeenCalledTimes(3);
     expect(await storage.getHydrationState("notes")).not.toBe("ready");
+  });
+
+  it("treats a NaN maxRetries as the default instead of retrying forever", async () => {
+    const storage = new MemoryStorageAdapter();
+    const { engine, remote } = createEngine(storage, async () => rateLimited(), {
+      cloneRateLimitRetry: { maxRetries: Number.NaN, baseDelayMs: 0, jitterMs: 0 },
+    });
+
+    await expect(engine.cloneNow()).rejects.toThrow("Too many requests");
+    expect(remote.clone).toHaveBeenCalledTimes(7);
+  });
+
+  it("reports a 429 without a DataFn error body as rate limited", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response("<html>slow down</html>", {
+        status: 429,
+        headers: { "Content-Type": "text/html", "Retry-After": "2" },
+      }),
+    );
+    const transport = new DefaultHttpTransport("http://localhost/datafn", {
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    const result: any = await transport.clone({ clientId: "c1" });
+
+    expect(result.ok).toBe(false);
+    expect(result.error.code).toBe("RATE_LIMITED");
+    expect(result.error.details.retryAfterMs).toBe(2000);
   });
 
   it("surfaces the Retry-After header of a 429 response as retryAfterMs", async () => {
