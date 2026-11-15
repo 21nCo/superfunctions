@@ -25,7 +25,20 @@ interface RelayEvent {
     action?: string;
     fields?: string[];
     system?: boolean;
+    /** Only the import marker; no other context crosses tabs. */
+    context?: typeof IMPORT_CONTEXT;
   };
+}
+
+/** Context of the change events importData emits for the records it wrote. */
+const IMPORT_CONTEXT = { source: "import" } as const;
+
+function isImportContext(context: unknown): boolean {
+  return (
+    typeof context === "object" &&
+    context !== null &&
+    (context as { source?: unknown }).source === "import"
+  );
 }
 
 /**
@@ -72,6 +85,7 @@ function sanitizeForRelay(event: DatafnEvent): RelayEvent["event"] {
     action: event.action,
     fields: event.fields,
     system: event.system,
+    ...(isImportContext(event.context) ? { context: IMPORT_CONTEXT } : {}),
   };
 }
 
@@ -102,9 +116,14 @@ export class CrossTabRelay {
         // Echo prevention: ignore messages from this tab
         if (relayEvent.sourceTabId === this.tabId) return;
 
-        // Emit the event on local event bus with fromRemoteTab flag
+        // Emit the event on local event bus with fromRemoteTab flag. Only
+        // the import marker is accepted as context.
+        const { context, ...relayed } = relayEvent.event as RelayEvent["event"] & {
+          context?: unknown;
+        };
         this.eventBus.emit({
-          ...relayEvent.event,
+          ...relayed,
+          ...(isImportContext(context) ? { context: IMPORT_CONTEXT } : {}),
           fromRemoteTab: true,
         } as DatafnEvent & { fromRemoteTab: true });
       };

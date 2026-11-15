@@ -392,6 +392,60 @@ describe("CrossTabRelay", () => {
       relayA.close();
       relayB.close();
     });
+
+    it("carries only the import marker as context", async () => {
+      const eventBusA = new EventBus();
+      const eventBusB = new EventBus();
+      const relayA = new CrossTabRelay("test-namespace", eventBusA);
+      const relayB = new CrossTabRelay("test-namespace", eventBusB);
+      const receivedEvents: DatafnEvent[] = [];
+      eventBusB.subscribe((event) => {
+        receivedEvents.push(event);
+      });
+
+      relayA.broadcast({
+        type: "mutation_applied",
+        resource: "task",
+        ids: ["task:1"],
+        timestampMs: Date.now(),
+        action: "replace",
+        context: { source: "import", extra: "dropped" },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(receivedEvents).toHaveLength(1);
+      expect(receivedEvents[0].context).toEqual({ source: "import" });
+
+      relayA.close();
+      relayB.close();
+    });
+
+    it("drops any other context a relayed message carries", async () => {
+      const eventBusB = new EventBus();
+      const relayB = new CrossTabRelay("test-namespace", eventBusB);
+      const receivedEvents: DatafnEvent[] = [];
+      eventBusB.subscribe((event) => {
+        receivedEvents.push(event);
+      });
+
+      const rogue = new MockBroadcastChannel("datafn:test-namespace");
+      rogue.postMessage({
+        sourceTabId: "rogue",
+        event: {
+          type: "mutation_applied",
+          resource: "task",
+          timestampMs: Date.now(),
+          context: { injected: true },
+        },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(receivedEvents).toHaveLength(1);
+      expect(receivedEvents[0].context).toBeUndefined();
+
+      rogue.close();
+      relayB.close();
+    });
   });
 
   describe("Multiple Tabs", () => {
