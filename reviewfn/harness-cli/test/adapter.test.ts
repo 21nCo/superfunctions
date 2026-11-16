@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DEFAULT_CONFIG, DEFAULT_POLICY, lensOutputSchema, runProcessGroup, type CommandRunner, type HarnessProfile, type ReviewFnConfig, type SlotHarnessInput } from "@superfunctions/reviewfn-core";
+import { DEFAULT_CONFIG, DEFAULT_POLICY, lensOutputSchema, runProcessGroup, structuredOutputValidator, type CommandRunner, type HarnessProfile, type ReviewFnConfig, type SlotHarnessInput } from "@superfunctions/reviewfn-core";
 
 import { AGENT, LAUNCH } from "./launcher.js";
 import { CliHarnessAdapter, cliArguments, cliEnvironment, lastJsonObjectLine, matchReporter, parseCliVersion, valueAtPath, withModelReportField } from "../src/index.js";
@@ -369,7 +369,8 @@ describe("CliHarnessAdapter model reporting", () => {
     ["additionalProperties: true", { type: "object", additionalProperties: true, minProperties: 1 }],
   ])("keeps a nested report field the schema allows through %s, completing in one call", async (_name, meta) => {
     const outputSchema = { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, meta }, required: [...lensOutputSchema.required, "meta"] };
-    expect(withModelReportField(outputSchema, "json-path:meta.model").properties).toHaveProperty("meta", expect.objectContaining({ properties: expect.objectContaining({ model: { type: "string" } }), required: ["model"] }));
+    const valid = { findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] };
+    expect(structuredOutputValidator(withModelReportField(outputSchema, "json-path:meta.model"))({ ...valid, meta: { model: "m" } })).toEqual([]);
     const answer = (model: string) => profile({ modelReport: "json-path:meta.model", extra: ["--extra-json", JSON.stringify({ meta: { model } })] });
     const output = await run(answer("fake-model-1"), "fake-model-1", { outputSchema });
     expect(output.error).toBeUndefined();
@@ -410,6 +411,21 @@ describe("CliHarnessAdapter model reporting", () => {
     const mismatched = await run(answer("other-model"), "fake-model-1", { outputSchema });
     expect(mismatched.error).toMatch(/^model_mismatch/);
     expect(mismatched.observed).toMatchObject({ model: "other-model", modelMismatch: true });
+  }, 30_000);
+
+  it.each([
+    ["owned by a closed pattern schema", "meta", "meta.run.model", { type: "object", patternProperties: { "^run$": { type: "object", properties: { source: { type: "string" } }, additionalProperties: false } }, additionalProperties: false }, (model: string) => ({ run: { source: "s", model } })],
+    ["in the items of an allOf-wrapped array", "runs", "runs.0.model", { allOf: [{ type: "array", items: { type: "object", properties: { id: { type: "string" } }, additionalProperties: false } }] }, (model: string) => [{ id: "r1", model }]],
+  ] as const)("shows a contract that accepts a report %s, and removes it where the slot's schema forbids it", async (_name, field, dotted, schema, value) => {
+    const outputSchema = { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, [field]: schema } };
+    const valid = { findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] };
+    expect(structuredOutputValidator(withModelReportField(outputSchema, `json-path:${dotted}`))({ ...valid, [field]: value("m") })).toEqual([]);
+    const answer = (model: string) => profile({ modelReport: `json-path:${dotted}`, extra: ["--extra-json", JSON.stringify({ [field]: value(model) })] });
+    const output = await run(answer("fake-model-1"), "fake-model-1", { outputSchema });
+    expect(output.error).toBeUndefined();
+    expect(output.terminal).toBe("completed");
+    expect(await calls()).toHaveLength(1);
+    expect((await run(answer("other-model"), "fake-model-1", { outputSchema })).error).toMatch(/^model_mismatch/);
   }, 30_000);
 
   it("removes the report of a schema-invalid answer too deep to copy without walking it, then repairs and ends malformed", async () => {

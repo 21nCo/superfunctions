@@ -661,44 +661,70 @@ export function withModelReportField(schema: Readonly<Record<string, unknown>>, 
   return declarePath(schema, modelReport.slice("json-path:".length).split("."));
 }
 
-function declarePath(schema: Readonly<Record<string, unknown>>, keys: readonly string[]): Readonly<Record<string, unknown>> {
+/** The schema with the report declared along `keys`: required there, or, when `optional`, only allowed. */
+function declarePath(schema: Readonly<Record<string, unknown>>, keys: readonly string[], optional = false): Readonly<Record<string, unknown>> {
   const [key, ...rest] = keys;
   if (key === undefined) return schema;
   // A numeric step indexes an array schema, as valueAtPath reads an array; elsewhere it names a property. The items
   // schema is shared, so every item declares the report, and every item may have it removed.
   if (isArrayStep(schema, key)) {
     if (!isRecord(schema.items)) return schema;
-    const items = declarePath(schema.items, rest);
+    const items = declarePath(schema.items, rest, optional);
     return items === schema.items ? schema : { ...schema, items };
   }
   if (ownership(schema, key).kind === "unsettled") return schema;
-  const shown = declareOwn(schema, key, rest);
+  const shown = declareOwn(schema, key, rest, optional);
   if (!Array.isArray(schema.allOf)) return shown;
   const branches: unknown[] = schema.allOf;
-  const allOf = branches.map(branch => isRecord(branch) && !isTrivial(branch) ? declarePath(branch, keys) : branch);
+  const allOf = branches.map(branch => isRecord(branch) && !isTrivial(branch) ? declarePath(branch, keys, optional) : branch);
   return allOf.every((branch, index) => branch === branches[index]) ? shown : { ...shown, allOf };
 }
 
 /**
- * The node itself, its `allOf` aside: below the key's declared schema, or, on an object schema that does not declare
- * the key, the key declared as the schema that already owns it (its one pattern or additional-properties schema) or,
- * on a closed object or with no single owner, as a new report field.
+ * The node itself, its `allOf` aside: below the key's declared schema; for a key that patterns own, allowed (never
+ * required, since other keys share the pattern) below each matching pattern schema, with no property beside them; or,
+ * on an object schema that does not declare the key, the key declared as its additional-properties schema or, on a
+ * closed object, as a new report field.
  */
-function declareOwn(schema: Readonly<Record<string, unknown>>, key: string, rest: readonly string[]): Readonly<Record<string, unknown>> {
+function declareOwn(schema: Readonly<Record<string, unknown>>, key: string, rest: readonly string[], optional: boolean): Readonly<Record<string, unknown>> {
   const owned = ownOwnership(schema, key);
   let child: unknown;
   if (owned.kind === "open" && owned.via === "declared") {
     const [declared] = owned.children;
-    const next = isRecord(declared) ? declarePath(declared, rest) : declared;
+    const next = isRecord(declared) ? declarePath(declared, rest, optional) : declared;
     if (next !== declared) child = next;
-  } else if (isObjectSchema(schema)) {
+  } else if (isObjectSchema(schema) && !(owned.kind === "open" && owned.via === "pattern")) {
     const [owner] = owned.kind === "open" ? owned.children : [];
-    child = owned.kind === "open" && owned.children.length === 1 && isRecord(owner) && !isTrivial(owner) ? declarePath(owner, rest) : reportField(rest);
+    child = owned.kind === "open" && owned.children.length === 1 && isRecord(owner) && !isTrivial(owner) ? declarePath(owner, rest, optional) : reportField(rest);
   }
-  if (child === undefined) return schema;
-  const properties = isRecord(schema.properties) ? schema.properties : {};
+  const patterns = allowInPatterns(schema, key, rest);
+  if (child === undefined && patterns === schema.patternProperties) return schema;
+  const shown: Record<string, unknown> = patterns === schema.patternProperties ? { ...schema } : { ...schema, patternProperties: patterns };
+  if (child === undefined) return shown;
+  shown.properties = { ...(isRecord(schema.properties) ? schema.properties : {}), [key]: child };
   const required = Array.isArray(schema.required) ? schema.required : [];
-  return { ...schema, properties: { ...properties, [key]: child }, required: required.includes(key) ? required : [...required, key] };
+  if (!optional && !required.includes(key)) shown.required = [...required, key];
+  return shown;
+}
+
+/** The node's `patternProperties` with the rest of the report allowed, never required, below each one matching `key`. */
+function allowInPatterns(schema: Readonly<Record<string, unknown>>, key: string, rest: readonly string[]): unknown {
+  const patterns = schema.patternProperties;
+  if (!isRecord(patterns) || !rest.length) return patterns;
+  let changed = false;
+  const allowed = Object.fromEntries(Object.entries(patterns).map(([pattern, child]) => {
+    if (!isRecord(child) || !matches(pattern, key)) return [pattern, child];
+    const next = declarePath(child, rest, true);
+    changed ||= next !== child;
+    return [pattern, next];
+  }));
+  return changed ? allowed : patterns;
+}
+
+/** Whether a `patternProperties` pattern matches a key; undefined for a pattern that does not compile. */
+function matches(pattern: string, key: string): boolean | undefined {
+  try { return new RegExp(pattern, "u").test(key); }
+  catch { return undefined; }
 }
 
 /**
@@ -738,8 +764,9 @@ function ownOwnership(schema: Readonly<Record<string, unknown>>, key: string): O
   if (isRecord(schema.properties) && Object.hasOwn(schema.properties, key)) { children.push(schema.properties[key]); via = "declared"; }
   if (isRecord(schema.patternProperties)) {
     for (const [pattern, child] of Object.entries(schema.patternProperties)) {
-      try { if (new RegExp(pattern, "u").test(key)) children.push(child); }
-      catch { return { kind: "unsettled" }; }
+      const matched = matches(pattern, key);
+      if (matched === undefined) return { kind: "unsettled" };
+      if (matched) children.push(child);
     }
   }
   if (children.length) return { kind: "open", children, via };
@@ -756,6 +783,14 @@ function reportField(keys: readonly string[]): Record<string, unknown> {
   return field;
 }
 
+/** The item schemas that apply to an array: its own `items` and its `allOf` branches' (none below an unsettled node). */
+function itemSchemas(schema: unknown): unknown[] {
+  if (!isRecord(schema) || UNSETTLED.some(keyword => keyword in schema)) return [];
+  const branches: unknown[] = Array.isArray(schema.allOf) ? schema.allOf : [];
+  if (branches.some(branch => !isTrivial(branch) && (!isRecord(branch) || UNSETTLED.some(keyword => keyword in branch)))) return [];
+  return [...("items" in schema ? [schema.items] : []), ...branches.flatMap(itemSchemas)];
+}
+
 /**
  * The answer without its `json-path` model report where the output schema closes an object to it, following the same
  * ownership as `withModelReportField` through properties, patterns, additional properties, `allOf` branches and, through
@@ -766,9 +801,9 @@ function reportField(keys: readonly string[]): Record<string, unknown> {
 function withoutReportField(value: unknown, keys: readonly string[], schema: unknown): unknown {
   const [key, ...rest] = keys;
   if (key === undefined) return value;
-  if (Array.isArray(value) && isArrayStep(schema, key)) {
-    const items = (schema as Record<string, unknown>).items;
-    const next = value.map(item => withoutReportField(item, rest, items));
+  if (Array.isArray(value) && /^\d+$/.test(key)) {
+    const schemas = itemSchemas(schema);
+    const next = value.map(item => schemas.reduce((current, items) => withoutReportField(current, rest, items), item));
     return next.some((item, index) => item !== value[index]) ? next : value;
   }
   if (!isRecord(value) || !Object.hasOwn(value, key)) return value;
