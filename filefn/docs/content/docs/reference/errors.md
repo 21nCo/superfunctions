@@ -34,7 +34,7 @@ Wire-format envelope:
 | Code | HTTP | Cause | Fix |
 | --- | --- | --- | --- |
 | `FILEFN_AUTH_REQUIRED` | 401 | `auth.required: true` and no session resolved. | Sign in; ensure auth wiring forwards cookies / `Authorization`. |
-| `FILEFN_FORBIDDEN` | 403 | Authorizer denied. On upload, the `fileId` names a file the caller cannot write: at init when the file exists, or at completion when another principal created it first (the session is then aborted and its bytes deleted). | Check ownership / grants; check the principal is in the right tenant. |
+| `FILEFN_FORBIDDEN` | 403 | Authorizer denied. On upload, the `fileId` names a file the caller cannot write: at init when the file exists, or at completion when another principal created it first (the session is then aborted, so a retry returns `FILEFN_UPLOAD_ABORTED`, and its bytes are deleted, by the expired-session cleanup if a delete fails). | Check ownership / grants; check the principal is in the right tenant. |
 | `FILEFN_NOT_FOUND` | 404 | File / artifact / share / permission not found. | Confirm the id exists; remember anti-enumeration: 404 may mask a permission denial. |
 | `FILEFN_SESSION_TOKEN_REQUIRED` | 401 | Anonymous upload missing `x-upload-session-token`. | Pass the token returned from `POST /upload/init`. |
 | `FILEFN_SESSION_TOKEN_INVALID` | 403 | Wrong token for the session. | Re-init the upload, or check storage in the client. |

@@ -792,51 +792,80 @@ describe('client-chosen file IDs across processes (unique-enforcing adapter)', (
 });
 
 describe('refused completion cleanup', () => {
-  for (const stage of ['early', 'commit'] as const) {
-    it(`a refused completion whose object delete fails (${stage} refusal) stays open until a retry or the expiry sweep deletes it`, async () => {
-      const database = memoryAdapter();
-      const storageFixture = createStorage('multipart');
-      const app = createApp({ mode: 'multipart', database, storageFixture });
-      // Completions of one fileId in one process run one at a time, so a
-      // commit-time refusal needs the loser in another process.
-      const loserApp = stage === 'commit'
-        ? createApp({ mode: 'multipart', database, storageFixture, createFileFn: await loadProcess() })
-        : app;
-      const loser = await loserApp.stage('user_b', CLIENT_ID, 'loser bytes');
-      const winner = await app.stage('user_a', CLIENT_ID, 'winner bytes');
-      const loserKey = (await rawSession(database, loser.uploadSessionId))!.storageKey;
-      if (stage === 'early') {
-        // The loser's earlier attempt finalized its object, then failed.
-        await storageFixture.storage.completeMultipartUpload!({
-          key: loserKey,
-          uploadId: [...storageFixture.uploads.entries()].find(([, upload]) => upload.key === loserKey)![0],
-          parts: [{ partNumber: 1, etag: 'x' }],
-        });
-        expect((await winner.complete()).status).toBe(200);
-      }
-      storageFixture.deleteFailures.set(loserKey, 1);
-      let refused;
-      if (stage === 'early') {
-        refused = await loser.complete();
-      } else {
-        // The loser passes the early check, then the winner commits first.
-        const release = storageFixture.gate(loserKey);
-        const losing = loser.complete();
-        expect((await winner.complete()).status).toBe(200);
-        release();
-        refused = await losing;
-      }
-      expect(refused.status).toBe(403);
-      expect(storageFixture.objects.has(loserKey)).toBe(true);
-      expect((await rawSession(database, loser.uploadSessionId))!.status).not.toBe('aborted');
+  const expireSession = (database: Adapter, uploadSessionId: string) =>
+    database.update({
+      model: 'uploadSessions',
+      where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
+      data: { expiresAt: new Date(Date.now() - 1000).toISOString() },
+      namespace: 'filefn',
+    });
+  const partRows = (database: Adapter, uploadSessionId: string) =>
+    database.findMany({
+      model: 'uploadParts',
+      where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
+      namespace: 'filefn',
+    });
 
-      // The expiry sweep retries the delete before dropping the session.
-      await database.update({
-        model: 'uploadSessions',
-        where: [{ field: 'uploadSessionId', operator: 'eq', value: loser.uploadSessionId }],
-        data: { expiresAt: new Date(Date.now() - 1000).toISOString() },
-        namespace: 'filefn',
+  /**
+   * user_b's completion is refused after user_a created CLIENT_ID; the first
+   * `failures` deletes of the loser's own key fail. A commit-time refusal puts
+   * the loser in another process (one process serializes completions per ID).
+   */
+  async function refuseLoser(options: { stage: 'early' | 'commit'; mode?: Mode; dedup?: boolean; failures: number }) {
+    const mode = options.mode ?? 'multipart';
+    const database = memoryAdapter();
+    const storageFixture = createStorage(mode);
+    const app = createApp({ mode, database, storageFixture, dedup: options.dedup });
+    const loserApp = options.stage === 'commit'
+      ? createApp({ mode, database, storageFixture, dedup: options.dedup, createFileFn: await loadProcess() })
+      : app;
+    const text = options.dedup ? 'same bytes' : 'loser bytes';
+    const loser = await loserApp.stage('user_b', CLIENT_ID, text);
+    const winner = await app.stage('user_a', CLIENT_ID, options.dedup ? 'same bytes' : 'winner bytes');
+    const loserKey = (await rawSession(database, loser.uploadSessionId))!.storageKey;
+    const winnerKey = (await rawSession(database, winner.uploadSessionId))!.storageKey;
+    let refused;
+    if (options.stage === 'early') {
+      // The loser's earlier attempt finalized its object, then failed.
+      await storageFixture.storage.completeMultipartUpload!({
+        key: loserKey,
+        uploadId: [...storageFixture.uploads.entries()].find(([, upload]) => upload.key === loserKey)![0],
+        parts: [{ partNumber: 1, etag: 'x' }],
       });
+      expect((await winner.complete()).status).toBe(200);
+      storageFixture.deleteFailures.set(loserKey, options.failures);
+      refused = await loser.complete();
+    } else {
+      storageFixture.deleteFailures.set(loserKey, options.failures);
+      const release = storageFixture.gate(loserKey);
+      const losing = loser.complete();
+      expect((await winner.complete()).status).toBe(200);
+      release();
+      refused = await losing;
+    }
+    expect(refused.status).toBe(403);
+    expect(refused.json.error.code).toBe('FILEFN_FORBIDDEN');
+    return { database, storageFixture, app, loser, loserKey, winnerKey };
+  }
+
+  /** The session is fenced: aborted, and a retry is refused without publishing. */
+  async function expectFenced(app: ReturnType<typeof createApp>, database: Adapter, loser: { uploadSessionId: string; complete: () => Promise<{ status: number; json: any }> }) {
+    expect((await rawSession(database, loser.uploadSessionId))!.status).toBe('aborted');
+    const retried = await loser.complete();
+    expect(retried.status).toBe(410);
+    expect(retried.json.error.code).toBe('FILEFN_UPLOAD_ABORTED');
+    expect(await fileRows(database, CLIENT_ID)).toHaveLength(1);
+  }
+
+  for (const stage of ['early', 'commit'] as const) {
+    it(`a refused completion whose object delete fails (${stage} refusal) is fenced as aborted, and the expiry sweep deletes its object`, async () => {
+      const { database, storageFixture, app, loser, loserKey } = await refuseLoser({ stage, failures: 1 });
+      expect(storageFixture.objects.has(loserKey)).toBe(true);
+      await expectFenced(app, database, loser);
+      expect(storageFixture.objects.has(loserKey)).toBe(true);
+
+      // The sweep retries the delete before dropping the session.
+      await expireSession(database, loser.uploadSessionId);
       storageFixture.deleteFailures.set(loserKey, 1);
       await app.fileFn.services.uploads.cleanupExpiredSessions();
       expect(await rawSession(database, loser.uploadSessionId)).not.toBeNull();
@@ -848,59 +877,47 @@ describe('refused completion cleanup', () => {
     });
   }
 
-  it('a retried completion after a failed delete deletes the object and ends the session aborted', async () => {
-    const database = memoryAdapter();
-    const storageFixture = createStorage('proxy');
-    const app = createApp({ mode: 'proxy', database, storageFixture });
-    const loserApp = createApp({ mode: 'proxy', database, storageFixture, createFileFn: await loadProcess() });
-    const loser = await loserApp.stage('user_b', CLIENT_ID, 'loser');
-    const winner = await app.stage('user_a', CLIENT_ID, 'winner');
-    const loserKey = (await rawSession(database, loser.uploadSessionId))!.storageKey;
-    storageFixture.deleteFailures.set(loserKey, 1);
-    const release = storageFixture.gate(loserKey);
-    const losing = loser.complete();
-    expect((await winner.complete()).status).toBe(200);
-    release();
-    const first = await losing;
-    expect(first.status).toBe(403);
-    expect(storageFixture.objects.has(loserKey)).toBe(true);
-
-    const retried = await loser.complete();
-    expect(retried.status).toBe(403);
-    expect(storageFixture.objects.has(loserKey)).toBe(false);
-    expect((await rawSession(database, loser.uploadSessionId))!.status).toBe('aborted');
-  });
-
-  it('a dedup-reused refusal whose own-object delete fails stays open until a retry deletes it, keeping the shared object', async () => {
-    const database = memoryAdapter();
-    const storageFixture = createStorage('multipart');
-    const app = createApp({ mode: 'multipart', database, storageFixture, dedup: true });
-    const loserApp = createApp({ mode: 'multipart', database, storageFixture, dedup: true, createFileFn: await loadProcess() });
-    const loser = await loserApp.stage('user_b', CLIENT_ID, 'same bytes');
-    const winner = await app.stage('user_a', CLIENT_ID, 'same bytes');
-    const loserKey = (await rawSession(database, loser.uploadSessionId))!.storageKey;
-    const winnerKey = (await rawSession(database, winner.uploadSessionId))!.storageKey;
+  it('a dedup-reused refusal whose own-object delete fails is fenced, and the sweep deletes its object but keeps the shared one', async () => {
     // Dedup's delete of the loser's object and the refusal's delete both fail.
-    storageFixture.deleteFailures.set(loserKey, 2);
-    const release = storageFixture.gate(loserKey);
-    const losing = loser.complete();
-    expect((await winner.complete()).status).toBe(200);
-    release();
-    const refused = await losing;
-
-    expect(refused.status).toBe(403);
+    const { database, storageFixture, app, loser, loserKey, winnerKey } = await refuseLoser({ stage: 'commit', dedup: true, failures: 2 });
     expect(storageFixture.objects.has(loserKey)).toBe(true);
-    expect((await rawSession(database, loser.uploadSessionId))!.status).not.toBe('aborted');
+    await expectFenced(app, database, loser);
 
-    const retried = await loser.complete();
-    expect(retried.status).toBe(403);
+    await expireSession(database, loser.uploadSessionId);
+    await app.fileFn.services.uploads.cleanupExpiredSessions();
+    expect(await rawSession(database, loser.uploadSessionId)).toBeNull();
     expect(storageFixture.objects.has(loserKey)).toBe(false);
-    expect((await rawSession(database, loser.uploadSessionId))!.status).toBe('aborted');
     expect(storageFixture.objects.has(winnerKey)).toBe(true);
     expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('same bytes');
   });
 
-  it('a refusal whose proxy part delete fails keeps the session and its parts until a retry deletes them', async () => {
+  it('deleting the winner\'s file keeps a refused session with a failed delete until the sweep deletes its object', async () => {
+    const { database, storageFixture, app, loser, loserKey } = await refuseLoser({ stage: 'commit', mode: 'proxy', failures: 1 });
+    await app.fileFn.services.files.deleteFile(CLIENT_ID, { principalId: 'user_a' });
+    expect(await fileRows(database, CLIENT_ID)).toHaveLength(0);
+    expect((await rawSession(database, loser.uploadSessionId))!.status).toBe('aborted');
+    expect(await partRows(database, loser.uploadSessionId)).toHaveLength(1);
+    expect(storageFixture.objects.has(loserKey)).toBe(true);
+
+    await expireSession(database, loser.uploadSessionId);
+    await app.fileFn.services.uploads.cleanupExpiredSessions();
+    expect(await rawSession(database, loser.uploadSessionId)).toBeNull();
+    expect(storageFixture.objects.has(loserKey)).toBe(false);
+  });
+
+  it('an owner\'s abort of a refused session with a failed delete leaves its record for the sweep', async () => {
+    const { database, storageFixture, app, loser, loserKey } = await refuseLoser({ stage: 'commit', mode: 'proxy', failures: 1 });
+    const aborted = await app.call('POST', `/upload/${loser.uploadSessionId}/abort`, { user: 'user_b' });
+    expect(aborted.status).toBe(200);
+    expect(await partRows(database, loser.uploadSessionId)).toHaveLength(1);
+
+    await expireSession(database, loser.uploadSessionId);
+    await app.fileFn.services.uploads.cleanupExpiredSessions();
+    expect(await rawSession(database, loser.uploadSessionId)).toBeNull();
+    expect(storageFixture.objects.has(loserKey)).toBe(false);
+  });
+
+  it('a refusal whose proxy part delete fails is fenced with its parts until the sweep deletes them', async () => {
     const database = memoryAdapter();
     const storageFixture = createStorage('proxy');
     const app = createApp({ mode: 'proxy', database, storageFixture });
@@ -915,20 +932,16 @@ describe('refused completion cleanup', () => {
     const refused = await loser.complete();
     expect(refused.status).toBe(403);
     expect(storageFixture.objects.has(partKey)).toBe(true);
-    expect((await rawSession(database, loser.uploadSessionId))!.status).not.toBe('aborted');
-    expect(await database.findMany({
-      model: 'uploadParts',
-      where: [{ field: 'uploadSessionId', operator: 'eq', value: loser.uploadSessionId }],
-      namespace: 'filefn',
-    })).toHaveLength(1);
+    expect(await partRows(database, loser.uploadSessionId)).toHaveLength(1);
+    await expectFenced(app, database, loser);
 
-    const retried = await loser.complete();
-    expect(retried.status).toBe(403);
+    await expireSession(database, loser.uploadSessionId);
+    await app.fileFn.services.uploads.cleanupExpiredSessions();
     expect(storageFixture.objects.has(partKey)).toBe(false);
-    expect((await rawSession(database, loser.uploadSessionId))!.status).toBe('aborted');
+    expect(await rawSession(database, loser.uploadSessionId)).toBeNull();
   });
 
-  it('a commit-time refusal whose proxy part delete failed during stitching keeps the session until a retry deletes the part', async () => {
+  it('a commit-time refusal whose proxy part delete failed during stitching is fenced until the sweep deletes the part', async () => {
     const database = memoryAdapter();
     const storageFixture = createStorage('proxy');
     const app = createApp({ mode: 'proxy', database, storageFixture });
@@ -948,14 +961,9 @@ describe('refused completion cleanup', () => {
     expect(refused.status).toBe(403);
     expect(storageFixture.objects.has(partKey)).toBe(true);
     expect(storageFixture.objects.has(loserKey)).toBe(false);
-    expect((await rawSession(database, loser.uploadSessionId))!.status).not.toBe('aborted');
+    await expectFenced(app, database, loser);
 
-    await database.update({
-      model: 'uploadSessions',
-      where: [{ field: 'uploadSessionId', operator: 'eq', value: loser.uploadSessionId }],
-      data: { expiresAt: new Date(Date.now() - 1000).toISOString() },
-      namespace: 'filefn',
-    });
+    await expireSession(database, loser.uploadSessionId);
     await app.fileFn.services.uploads.cleanupExpiredSessions();
     expect(storageFixture.objects.has(partKey)).toBe(false);
     expect(await rawSession(database, loser.uploadSessionId)).toBeNull();
@@ -1291,34 +1299,112 @@ describe('expiry cleanup of a session whose object another file shares', () => {
     expect(await app.readBytes(b.fileId, 'user_b')).toBe('shared bytes');
   });
 
-  it('runs one reference lookup per sweep, deleting unreferenced own objects and keeping a shared one', async () => {
+  it('runs one reference lookup per sweep, deleting fenced refused objects and keeping shared and pending ones', async () => {
     const { database, storageFixture, app, a, b, keyA, expire, findManyModels } = await setupSharedObject();
     await expire(a.uploadSessionId);
 
-    // Three more expired sessions, each with its own unpublished final object
-    // (as a refused completion whose delete failed leaves behind).
-    const orphans = [];
-    for (const user of ['user_c', 'user_d', 'user_e']) {
-      const staged = await app.stage(user, undefined, `orphan of ${user}`);
+    // Three expired sessions a refusal fenced (aborted, part rows left) whose
+    // final object is still there, and one expired pending session whose
+    // completion finalized its object (it may still publish it).
+    const stageWithObject = async (user: string) => {
+      const staged = await app.stage(user, undefined, `own object of ${user}`);
       const key = (await rawSession(database, staged.uploadSessionId))!.storageKey;
-      storageFixture.objects.set(key, Buffer.from(`orphan of ${user}`));
+      storageFixture.objects.set(key, Buffer.from(`own object of ${user}`));
       await expire(staged.uploadSessionId);
-      orphans.push({ uploadSessionId: staged.uploadSessionId, key });
+      return { uploadSessionId: staged.uploadSessionId, key };
+    };
+    const fenced = [];
+    for (const user of ['user_c', 'user_d', 'user_e']) {
+      const staged = await stageWithObject(user);
+      await database.update({
+        model: 'uploadSessions',
+        where: [{ field: 'uploadSessionId', operator: 'eq', value: staged.uploadSessionId }],
+        data: { status: 'aborted' },
+        namespace: 'filefn',
+      });
+      fenced.push(staged);
     }
+    const pending = await stageWithObject('user_f');
 
     findManyModels.length = 0;
     const result = await app.fileFn.services.uploads.cleanupExpiredSessions();
-    expect(result.deletedSessions).toBe(4);
+    expect(result.deletedSessions).toBe(5);
     expect(findManyModels.filter((model) => model === 'fileVersions')).toHaveLength(1);
     expect(findManyModels.filter((model) => model === 'fileArtifacts')).toHaveLength(1);
     expect(findManyModels.filter((model) => model === 'files')).toHaveLength(1);
 
-    for (const orphan of orphans) {
-      expect(storageFixture.objects.has(orphan.key)).toBe(false);
-      expect(await rawSession(database, orphan.uploadSessionId)).toBeNull();
+    for (const session of fenced) {
+      expect(storageFixture.objects.has(session.key)).toBe(false);
+      expect(await rawSession(database, session.uploadSessionId)).toBeNull();
     }
+    expect(storageFixture.objects.has(pending.key)).toBe(true);
     expect(await rawSession(database, a.uploadSessionId)).toBeNull();
     expect(storageFixture.objects.has(keyA)).toBe(true);
     expect(await app.readBytes(b.fileId, 'user_b')).toBe('shared bytes');
+  });
+});
+
+describe('expiry cleanup while a completion of the expired session is running', () => {
+  /** A's completion finalized its object and is held before publishing; then A's session expires. */
+  async function startHeldCompletion() {
+    const database = memoryAdapter();
+    const storageFixture = createStorage('multipart');
+    const app = createApp({ mode: 'multipart', database, storageFixture, dedup: true });
+    const a = await app.stage('user_a', CLIENT_ID, 'shared bytes');
+    const keyA = (await rawSession(database, a.uploadSessionId))!.storageKey;
+    const resume = storageFixture.holdStat(keyA);
+    const completion = a.complete();
+    await flushPromises();
+    expect(storageFixture.objects.has(keyA)).toBe(true);
+    await database.update({
+      model: 'uploadSessions',
+      where: [{ field: 'uploadSessionId', operator: 'eq', value: a.uploadSessionId }],
+      data: { expiresAt: new Date(Date.now() - 1000).toISOString() },
+      namespace: 'filefn',
+    });
+    return { database, storageFixture, app, keyA, resume, completion };
+  }
+
+  it('keeps an object published and shared by dedup after the sweep read the session', async () => {
+    const { storageFixture, app, keyA, resume, completion } = await startHeldCompletion();
+    // Pause the sweep at its first storage call, after everything it reads up front.
+    let paused!: () => void;
+    const sweepPaused = new Promise<void>((resolve) => { paused = resolve; });
+    let resumeSweep!: () => void;
+    const sweepResumed = new Promise<void>((resolve) => { resumeSweep = resolve; });
+    const abort = storageFixture.storage.abortMultipartUpload!.bind(storageFixture.storage);
+    storageFixture.storage.abortMultipartUpload = async (input) => {
+      paused();
+      await sweepResumed;
+      return abort(input);
+    };
+    const sweep = app.fileFn.services.uploads.cleanupExpiredSessions();
+    await sweepPaused;
+
+    // A publishes, then B's identical bytes dedup onto A's object.
+    resume();
+    expect((await completion).status).toBe(200);
+    const b = await app.stage('user_b', undefined, 'shared bytes');
+    expect((await b.complete()).status).toBe(200);
+
+    resumeSweep();
+    await sweep;
+    expect(storageFixture.objects.has(keyA)).toBe(true);
+    expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('shared bytes');
+    expect(await app.readBytes(b.fileId, 'user_b')).toBe('shared bytes');
+  });
+
+  it('keeps the final object of an expired session whose completion is still running', async () => {
+    const { storageFixture, app, keyA, resume, completion } = await startHeldCompletion();
+    const result = await app.fileFn.services.uploads.cleanupExpiredSessions();
+    expect(result.deletedSessions).toBe(1);
+    expect(storageFixture.objects.has(keyA)).toBe(true);
+
+    // The completion resumes and publishes its bytes. Marking the session it
+    // outlived completed then fails (a session expiring during its completion
+    // is FILE-14), but nothing it published is lost.
+    resume();
+    await expect(completion).rejects.toThrow('Record not found');
+    expect(await app.readBytes(CLIENT_ID, 'user_a')).toBe('shared bytes');
   });
 });

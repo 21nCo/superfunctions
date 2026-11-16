@@ -229,6 +229,17 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
   // Deletes the session's proxy part objects. Returns false if any delete
   // failed; callers that must not lose track of the parts keep the session.
+  async function hasPartRows(uploadSessionId: string): Promise<boolean> {
+    const parts = await db.findMany<{ partNumber: number }>({
+      model: 'uploadParts',
+      where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
+      select: ['partNumber'],
+      limit: 1,
+      namespace,
+    });
+    return parts.length > 0;
+  }
+
   async function deleteProxyTempPartObjects(session: UploadSession): Promise<boolean> {
     if (session.uploadMode !== 'proxy' || !storage.deleteObject) {
       return true;
@@ -274,16 +285,6 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     });
   }
 
-  // Deletes the session's own final object unless something may still use it:
-  // any file version or artifact referencing the same storage target and key
-  // keeps it (the session's own published version, or another file's version
-  // that dedup pointed at it), and sessions from before per-session keys (no
-  // pre-allocated versionId) may share a key.
-  // Returns false when the delete failed, so the caller keeps the session as the
-  // record of the object and a retried completion or the expiry sweep tries again.
-  // `referenced` is a reference lookup the caller already ran over this
-  // session's own ref (the expiry sweep runs one for all its sessions);
-  // without it, this runs its own.
   function ownObjectRef(session: UploadSession): string | undefined {
     if (!storage.deleteObject || !session.completionVersionId) {
       return undefined;
@@ -291,6 +292,16 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     return storageRef(resolveStorageTarget(policies.get(session.policy) ?? {}), session.storageKey);
   }
 
+  // Deletes the session's own final object unless something may still use it:
+  // any file version or artifact referencing the same storage target and key
+  // keeps it (the session's own published version, or another file's version
+  // that dedup pointed at it), and sessions from before per-session keys (no
+  // pre-allocated versionId) may share a key. Callers only pass sessions that a
+  // refusal fenced as aborted, which no completion can publish any more, so
+  // nothing can newly reference the object while this runs.
+  // Returns false when the delete failed. `referenced` is a reference lookup the
+  // caller already ran over this session's own ref (the expiry sweep runs one
+  // for all its sessions); without it, this runs its own.
   async function deleteOwnUnpublishedObject(
     session: UploadSession,
     referenced?: ReadonlySet<string>,
@@ -314,10 +325,34 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     }
   }
 
-  // Aborts the session's storage upload, deletes its proxy part objects (and,
-  // when asked, its own unpublished final object) and ends it as aborted. When
-  // asked to delete the final object, a failed delete leaves the session open.
-  async function discardSessionUpload(session: UploadSession, options: { deleteOwnObject?: boolean } = {}): Promise<void> {
+  // Ends a refused completion and keeps nothing it uploaded. The session is
+  // fenced as aborted first, so no completion call can publish it (or let dedup
+  // share its object) any more; only then are its proxy part objects and its own
+  // final object deleted (never a key dedup pointed it at). Its part rows are
+  // dropped once every delete succeeded. Until then the aborted session with
+  // part rows left is the record of objects still to delete, which the expiry
+  // sweep finishes; an abort by its owner never leaves part rows behind.
+  async function refuseSession(session: UploadSession): Promise<void> {
+    await db.update({
+      model: 'uploadSessions',
+      where: [{ field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId }],
+      data: { status: 'aborted' },
+      namespace,
+    });
+    const partsDeleted = await deleteProxyTempPartObjects(session);
+    const objectDeleted = await deleteOwnUnpublishedObject(session);
+    if (partsDeleted && objectDeleted) {
+      await db.deleteMany({
+        model: 'uploadParts',
+        where: [{ field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId }],
+        namespace,
+      });
+    }
+  }
+
+  // Aborts the session's storage upload, deletes its proxy part objects and ends
+  // it as aborted; a refused session is ended by refuseSession instead.
+  async function discardSessionUpload(session: UploadSession, options: { refused?: boolean } = {}): Promise<void> {
     const policy = policies.get(session.policy);
     const storageTarget = policy ? resolveStorageTarget(policy) : undefined;
     if (
@@ -332,15 +367,11 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       }
     }
 
-    const partsDeleted = await deleteProxyTempPartObjects(session);
-    if (options.deleteOwnObject) {
-      // A refusal keeps nothing: if any delete failed, keep the session and its
-      // part rows so a retried completion or the expiry sweep tries again.
-      const objectDeleted = await deleteOwnUnpublishedObject(session);
-      if (!partsDeleted || !objectDeleted) {
-        return;
-      }
+    if (options.refused) {
+      await refuseSession(session);
+      return;
     }
+    await deleteProxyTempPartObjects(session);
     await endSessionAborted(session.uploadSessionId);
   }
 
@@ -914,7 +945,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             return { fileId, versionId };
           }
           if (!(await canWriteFileNow(fileId, ctx))) {
-            await discardSessionUpload(session, { deleteOwnObject: true });
+            await discardSessionUpload(session, { refused: true });
             throw errors.forbidden({ fileId, operation: 'replace' });
           }
         }
@@ -1117,19 +1148,10 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       }
 
       if (commitOutcome === 'refused') {
-        // Keep nothing this session uploaded. Only the session's own key is
-        // deleted: when dedup pointed it at another object's key, that shared
-        // object stays. Dedup's own delete of the session's object ignores
-        // failures, so delete it again here and check the result.
-        // If a delete fails the session and its part rows stay, so a retried
-        // completion or the expiry sweep deletes the objects again.
-        // Proxy part objects whose delete failed during stitching still have
-        // their uploadParts rows; delete them again before dropping the rows.
-        const partsDeleted = await deleteProxyTempPartObjects(session);
-        const objectDeleted = await deleteOwnUnpublishedObject(session);
-        if (partsDeleted && objectDeleted) {
-          await endSessionAborted(uploadSessionId);
-        }
+        // Dedup's own delete of the session's object ignores failures, and
+        // stitching's proxy part deletes too; refuseSession deletes them again
+        // and checks the result.
+        await refuseSession(session);
         throw errors.forbidden({ fileId, operation: 'replace' });
       }
 
@@ -1194,6 +1216,9 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       if (!session) throw errors.sessionNotFound();
       this.assertSessionAccess(session, ctx, uploadSessionToken);
       if (session.status === 'completed') throw errors.uploadAlreadyCompleted();
+      // Already ended. A refused session may still have objects to delete; its
+      // part rows record them for the expiry sweep, so leave them in place.
+      if (session.status === 'aborted') return;
 
       await discardSessionUpload(session);
     },
@@ -1212,12 +1237,17 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         let deletedSessions = 0;
         let abortedMultipart = 0;
 
-        // One reference lookup for the whole sweep: the own object of every
-        // expired session is kept while any version or artifact references it.
+        // The sweep deletes a session's final object only when a refusal fenced
+        // the session (aborted, with part rows left because a delete failed):
+        // no completion can publish that object or let dedup share it. Any other
+        // expired session keeps its final object, as a completion of it may
+        // still be running and publish it.
+        // One reference lookup for the whole sweep keeps any fenced object that
+        // a version or artifact references anyway.
         const candidateRefs = new Set<string>();
         for (const session of expiredSessions) {
             const ownRef = ownObjectRef(session);
-            if (ownRef !== undefined) candidateRefs.add(ownRef);
+            if (ownRef !== undefined && session.status === 'aborted') candidateRefs.add(ownRef);
         }
         const referencedRefs = await findReferencedStorageRefs({ db, namespace, policies }, candidateRefs);
 
@@ -1237,12 +1267,11 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
                 }
             }
 
-            // The session's part objects and unpublished final object (for
-            // example one left by a refused completion whose delete failed) go
-            // with the session. If any cannot be deleted, keep the session and
-            // its part rows for the next sweep.
+            // If a part object or a fenced final object cannot be deleted, keep
+            // the session and its part rows for the next sweep.
+            const fenced = session.status === 'aborted' && (await hasPartRows(session.uploadSessionId));
             const partsDeleted = await deleteProxyTempPartObjects(session);
-            const objectDeleted = await deleteOwnUnpublishedObject(session, referencedRefs);
+            const objectDeleted = fenced ? await deleteOwnUnpublishedObject(session, referencedRefs) : true;
             if (!partsDeleted || !objectDeleted) {
                 continue;
             }

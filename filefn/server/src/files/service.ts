@@ -1,4 +1,4 @@
-import type { Adapter } from '@superfunctions/db';
+import type { Adapter, WhereClause } from '@superfunctions/db';
 import { getStorageCapabilities, type StorageAdapter } from '@superfunctions/storage';
 import type { FileProviderContext } from '@superfunctions/files';
 import type { FileFnEventEmitter } from '../events.js';
@@ -660,12 +660,17 @@ export function createFileService(config: FileServiceConfig) {
         namespace,
       });
 
+      // Aborted sessions already discarded their upload. A refused one may still
+      // have objects to delete, recorded by its part rows, so aborted sessions
+      // are left to the expiry sweep, which finishes that cleanup.
+      const openSessionsWhere: WhereClause[] = [
+        { field: 'fileId', operator: 'eq', value: fileId },
+        { field: 'status', operator: 'ne', value: 'completed' },
+        { field: 'status', operator: 'ne', value: 'aborted' },
+      ];
       const pendingSessions = await db.findMany<UploadSessionRecord>({
         model: 'uploadSessions',
-        where: [
-          { field: 'fileId', operator: 'eq', value: fileId },
-          { field: 'status', operator: 'ne', value: 'completed' },
-        ],
+        where: openSessionsWhere,
         namespace,
       });
 
@@ -795,10 +800,7 @@ export function createFileService(config: FileServiceConfig) {
 
       await db.deleteMany({
         model: 'uploadSessions',
-        where: [
-          { field: 'fileId', operator: 'eq', value: fileId },
-          { field: 'status', operator: 'ne', value: 'completed' },
-        ],
+        where: openSessionsWhere,
         namespace,
       });
 
