@@ -11,6 +11,9 @@ import { FakeContextAdapter, FakeExecutionAdapter, FakeSourceControlAdapter, Mem
 import { CliHarnessAdapter } from "../src/index.js";
 
 const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "fake-cli.mjs");
+// The CLI runs through /usr/bin/env, a trusted installed executable, since the test's own Node may live in a
+// world-writable tool cache or a Git checkout, which the adapter refuses as an executable.
+const AGENT = "/usr/bin/env";
 const environment = { PATH: process.env.PATH, FIXTURE_KEY: "panel-fixture-credential" };
 const manifest = { version: 1 as const, sources: [], selection: { candidates: [], selected: [], rule: "none" }, limits: { maxSources: 10, maxBytes: 1000, maxDepth: 2 }, incompleteReasons: [] };
 const config = { ...DEFAULT_CONFIG, harness: { adapter: "codex", version: "1" }, context: [{ adapter: "fixture" }], execution: { ...DEFAULT_CONFIG.execution, adapter: "fake-execution" } };
@@ -38,11 +41,11 @@ afterAll(async () => { for (const directory of [repo, workspaceRoot, states]) aw
 async function profile(name: string, modelReport: string, extra: string[] = []): Promise<HarnessProfile> {
   const state = path.join(states, name);
   await mkdir(state, { recursive: true });
-  return { argv: [FIXTURE, "--state", state, ...extra], promptVia: "stdin", outputVia: "stdout-last-json", envAllowlist: [], modelReport, capabilities: { structuredOutput: false, sandbox: "tree-verified-only" }, versionArgv: [FIXTURE, "--version"] };
+  return { argv: [process.execPath, FIXTURE, "--state", state, ...extra], promptVia: "stdin", outputVia: "stdout-last-json", envAllowlist: [], modelReport, capabilities: { structuredOutput: false, sandbox: "tree-verified-only" }, versionArgv: [process.execPath, FIXTURE, "--version"] };
 }
 
 function slot(id: string, profileName: string, model: string, provider = "fixture"): PanelSlot {
-  return { id, stage: 1, harness: { adapter: "cli", version: "1.2.3", executable: process.execPath, profile: profileName }, inference: { provider, model, auth: "api-key", credentialEnv: "FIXTURE_KEY" }, lens: "general", budget: { timeoutMs: 60_000, maxOutputBytes: 1_000_000 } };
+  return { id, stage: 1, harness: { adapter: "cli", version: "1.2.3", executable: AGENT, profile: profileName }, inference: { provider, model, auth: "api-key", credentialEnv: "FIXTURE_KEY" }, lens: "general", budget: { timeoutMs: 60_000, maxOutputBytes: 1_000_000 } };
 }
 
 /** A CLI harness that ends with `terminal` and reports a raw model mismatch while its recorded model reads as configured. */
@@ -75,7 +78,7 @@ describe("generic CLI slots in the panel", () => {
     const result = await coordinator().run(request);
     expect(result.validation).toMatchObject({ valid: true });
     const runs = Object.fromEntries(result.report.slotRuns.map(run => [run.slotId, run]));
-    expect(runs["quiet-a"]).toMatchObject({ terminal: "completed", limitations: ["model_unverified", "sandbox_tree_verified_only"], identity: { harnessExecutable: process.execPath, harnessProfile: "quiet", modelVerified: false, model: "model-a", harnessVersion: "1.2.3" } });
+    expect(runs["quiet-a"]).toMatchObject({ terminal: "completed", limitations: ["model_unverified", "sandbox_tree_verified_only"], identity: { harnessExecutable: AGENT, harnessProfile: "quiet", modelVerified: false, model: "model-a", harnessVersion: "1.2.3" } });
     // Another model and provider, but the same executable and profile with no model report: never a distinct identity.
     expect(runs["quiet-b"]).toMatchObject({ terminal: "collapsed", limitations: ["model_unverified", "sandbox_tree_verified_only"], identity: { modelVerified: false, model: "model-b" } });
     expect(runs.reported).toMatchObject({ terminal: "completed", limitations: ["sandbox_tree_verified_only"], identity: { model: "model-r", harnessProfile: "reported" } });

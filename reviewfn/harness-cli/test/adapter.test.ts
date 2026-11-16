@@ -4,11 +4,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DEFAULT_CONFIG, DEFAULT_POLICY, lensOutputSchema, type CommandRunner, type HarnessProfile, type ReviewFnConfig, type SlotHarnessInput } from "@superfunctions/reviewfn-core";
+import { DEFAULT_CONFIG, DEFAULT_POLICY, lensOutputSchema, runProcessGroup, type CommandRunner, type HarnessProfile, type ReviewFnConfig, type SlotHarnessInput } from "@superfunctions/reviewfn-core";
 
 import { CliHarnessAdapter, cliArguments, cliEnvironment, lastJsonObjectLine, matchReporter, parseCliVersion, valueAtPath, withModelReportField } from "../src/index.js";
 
 const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "fake-cli.mjs");
+// The CLI runs through /usr/bin/env, a trusted installed executable, since the test's own Node may live in a
+// world-writable tool cache or a Git checkout, which the adapter refuses as an executable.
+const AGENT = "/usr/bin/env";
 const CREDENTIAL = "reviewfn-cli-fixture-credential-5521";
 const ALLOWED_SECRET = "allowlisted-secret-value-9034";
 const MODEL = "fake model; rm -rf ~";
@@ -33,15 +36,15 @@ function profile(overrides: Partial<HarnessProfile> & { extra?: string[] } = {})
   const promptVia = rest.promptVia ?? "stdin";
   const outputVia = rest.outputVia ?? "stdout-last-json";
   return {
-    argv: [FIXTURE, "--state", state, ...(promptVia === "file" ? ["--prompt", "{promptFile}"] : []), ...(outputVia === "file" ? ["--out", "{outputFile}"] : []), ...extra],
+    argv: [process.execPath, FIXTURE, "--state", state, ...(promptVia === "file" ? ["--prompt", "{promptFile}"] : []), ...(outputVia === "file" ? ["--out", "{outputFile}"] : []), ...extra],
     promptVia, outputVia, envAllowlist: ["ALLOWED_ONE"], modelReport: "none",
-    capabilities: { structuredOutput: false, sandbox: "tree-verified-only" }, versionArgv: [FIXTURE, "--version"],
+    capabilities: { structuredOutput: false, sandbox: "tree-verified-only" }, versionArgv: [process.execPath, FIXTURE, "--version"],
     ...rest,
   };
 }
 
 function configuration(definition: HarnessProfile, model = MODEL): ReviewFnConfig {
-  return { ...DEFAULT_CONFIG, harness: { adapter: "cli", version: "1", executable: process.execPath, profile: "fake", profileDefinition: definition }, inference: { provider: "fixture", model, auth: "api-key", credentialEnv: "REVIEW_AUTH" } };
+  return { ...DEFAULT_CONFIG, harness: { adapter: "cli", version: "1", executable: AGENT, profile: "fake", profileDefinition: definition }, inference: { provider: "fixture", model, auth: "api-key", credentialEnv: "REVIEW_AUTH" } };
 }
 
 function input(config: ReviewFnConfig, extra: Partial<SlotHarnessInput> = {}): SlotHarnessInput {
@@ -50,7 +53,7 @@ function input(config: ReviewFnConfig, extra: Partial<SlotHarnessInput> = {}): S
     change: { repositoryId: "repo", host: "local", targetBranch: "main", baseCommit: "a".repeat(40), headCommit: "b".repeat(40), mergeBaseCommit: "a".repeat(40), diffDigest: "c".repeat(64), changedPaths: ["src/index.ts"], capturedAt: "2026-01-01T00:00:00.000Z" },
     context: { version: 1, sources: [], selection: { candidates: [], selected: [], rule: "none" }, limits: { maxSources: 1, maxBytes: 1, maxDepth: 1 }, incompleteReasons: [], digest: "d".repeat(64) },
     policy: DEFAULT_POLICY, configuration: config, testReceipts: [], prompt: "Review the change.", outputSchema: lensOutputSchema,
-    slot: { id: "slot", stage: 1, harness: { adapter: "cli", version: "1.2.3", executable: process.execPath, profile: "fake" }, inference: config.inference, lens: "general", budget: { timeoutMs: 60_000, maxOutputBytes: 1_000_000 } },
+    slot: { id: "slot", stage: 1, harness: { adapter: "cli", version: "1.2.3", executable: AGENT, profile: "fake" }, inference: config.inference, lens: "general", budget: { timeoutMs: 60_000, maxOutputBytes: 1_000_000 } },
     ...extra,
   };
 }
@@ -111,7 +114,7 @@ describe("CliHarnessAdapter process boundary", () => {
     const definition = profile({ extra: ["--schema", "{schemaFile}", "--workspace", "{workspace}", "--model", "{model}", "--literal", "a b; c"] });
     expect((await run(definition)).terminal).toBe("completed");
     const [call] = await calls();
-    expect(call.argv).toHaveLength(definition.argv.length - 1);
+    expect(call.argv).toHaveLength(definition.argv.length - 2);
     expect(call.argv.slice(2)).toEqual(["--schema", expect.stringMatching(/schema\.json$/), "--workspace", workspace, "--model", MODEL, "--literal", "a b; c"]);
     expect(cliArguments(["{model}", "x{model}", "{workspace}", "{unknown}"], { promptFile: "p", schemaFile: "s", outputFile: "o", workspace: "/w s;x", model: "m; n" })).toEqual(["m; n", "x{model}", "/w s;x", "{unknown}"]);
   }, 20_000);
@@ -224,6 +227,31 @@ describe("CliHarnessAdapter model reporting", () => {
     expect(await matchReporter("served model: m1\nserved model: m2\n", String.raw`served model: (\S+)`, 60_000, AbortSignal.abort())).toEqual({ values: ["m1", "m2"] });
   }, 20_000);
 
+  it("keeps the models a reporter matched before it stalled, so an earlier mismatch still voids the run", async () => {
+    const reporter = String.raw`served model: (\S+)|(?:a+)+$`;
+    const partial = await matchReporter(`served model: other-model\n${"a".repeat(40)}!`, reporter, 500);
+    expect(partial).toMatchObject({ values: ["other-model"], terminal: "timed_out" });
+    const output = await run(profile({ modelReport: `stderr-regex:${reporter}`, extra: ["--model-stderr", "other-model", "--stderr", `${"a".repeat(40)}!`] }), "fake-model-1");
+    expect(output.terminal).toBe("timed_out");
+    expect(output.observed).toMatchObject({ model: "other-model", modelMismatch: true });
+  }, 30_000);
+
+  it("reads the reporter under its own bound after an abort for a timeout, as at the panel's slot deadline", async () => {
+    const controller = new AbortController();
+    // The panel's deadline aborts with a TimeoutError just as the CLI finishes.
+    const runner: CommandRunner = async (command, args, options) => {
+      const result = await runProcessGroup(command, args, { ...options, signal: undefined });
+      if (args.includes("--state")) controller.abort(new DOMException("The operation timed out.", "TimeoutError"));
+      return result;
+    };
+    const started = Date.now();
+    const config = configuration(profile({ modelReport: String.raw`stderr-regex:served model: (\S+)|(?:a+)+$`, extra: ["--model-stderr", "other-model", "--stderr", `${"a".repeat(40)}!`] }), "fake-model-1");
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(config, { signal: controller.signal }));
+    expect(output.terminal).toBe("timed_out");
+    expect(output.observed).toMatchObject({ model: "other-model", modelMismatch: true });
+    expect(Date.now() - started).toBeGreaterThan(1_500);
+  }, 30_000);
+
   it("repairs an invalid answer that lacks its model report, and confirms the model only on the answer it accepts", async () => {
     const repaired = await run(profile({ modelReport: "json-path:model", extra: ["--answer", "invalid-once", "--model-json", "fake-model-1"] }), "fake-model-1");
     expect(repaired.terminal).toBe("completed");
@@ -275,6 +303,21 @@ describe("CliHarnessAdapter model reporting", () => {
     expect(await calls()).toHaveLength(1);
   }, 30_000);
 
+  it("removes an array-item reporter from every item, and reads a numeric key of an object as a property", async () => {
+    const item = { type: "object", additionalProperties: false, properties: { id: { type: "string" } }, required: ["id"] };
+    const listed = { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, runs: { type: "array", items: item } } };
+    const runs = [{ id: "a", model: "fake-model-1" }, { id: "b", model: "fake-model-1" }];
+    const arrayReport = await run(profile({ modelReport: "json-path:runs.0.model", extra: ["--extra-json", JSON.stringify({ runs })] }), "fake-model-1", { outputSchema: listed });
+    expect(arrayReport.error).toBeUndefined();
+    expect(arrayReport.terminal).toBe("completed");
+    expect(withModelReportField(lensOutputSchema, "json-path:0").properties).toHaveProperty("0", { type: "string" });
+    await rm(path.join(state, "calls.jsonl"));
+    const keyed = await run(profile({ modelReport: "json-path:0", extra: ["--extra-json", JSON.stringify({ 0: "fake-model-1" })] }), "fake-model-1");
+    expect(keyed.error).toBeUndefined();
+    expect(keyed.observed).toMatchObject({ model: "fake-model-1" });
+    expect(await calls()).toHaveLength(1);
+  }, 30_000);
+
   it("reads dotted json paths of own properties only", () => {
     expect(valueAtPath({ meta: { models: ["m"] } }, "meta.models.0")).toBe("m");
     expect(valueAtPath({}, "constructor")).toBeUndefined();
@@ -293,6 +336,13 @@ describe("CliHarnessAdapter output validation", () => {
     const malformed = await run(profile({ outputVia, extra: ["--answer", "invalid"] }));
     expect(malformed.terminal).toBe("malformed");
     expect(malformed.error).toContain("after one repair attempt");
+    expect(await calls()).toHaveLength(2);
+  }, 30_000);
+
+  it("gives a schema-invalid answer too deep to normalize its repair attempt, then ends malformed", async () => {
+    const deep = JSON.parse(`${"[".repeat(4_000)}${"]".repeat(4_000)}`) as unknown;
+    const output = await run(profile({ extra: ["--extra-json", JSON.stringify({ findings: deep })] }));
+    expect(output.terminal).toBe("malformed");
     expect(await calls()).toHaveLength(2);
   }, 30_000);
 
@@ -323,10 +373,9 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     expect(parseCliVersion("version 7", "cli v4.5\n")).toBe("4.5");
     expect(parseCliVersion("1.2_3 x")).toBeUndefined();
     const started = Date.now();
-    // Adversarial input: the suffix is read up to its bound, so the scan stays linear.
-    const long = parseCliVersion(`${"1.1-".repeat(20_000)}_`, `${"9.".repeat(30_000)}_`);
-    expect(long).toMatch(/^1\.1-[0-9.-]*[0-9]$/);
-    expect(long!.length).toBeLessThanOrEqual(4 + 128);
+    // A long suffix is kept whole, never cut to a shorter version, and adversarial input still scans in linear time.
+    expect(parseCliVersion(`1.2.3-${"a".repeat(129)}`)).toBe(`1.2.3-${"a".repeat(129)}`);
+    expect(parseCliVersion(`${"1.1-".repeat(20_000)}_`, `${"9.".repeat(30_000)}_`)).toBe("1.1-".repeat(20_000).slice(0, -1));
     expect(Date.now() - started).toBeLessThan(1_000);
   });
 
@@ -339,6 +388,29 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     const preflight = await new CliHarnessAdapter({ environment: environment(), runner }).preflight(config);
     expect(preflight.ok).toBe(false);
   });
+
+  it.skipIf(process.platform === "win32")("refuses an absolute executable in a Git repository or under a world-writable directory before reading its version", async () => {
+    const repository = path.join(directory, "target");
+    await mkdir(path.join(repository, ".git"), { recursive: true });
+    await mkdir(path.join(repository, "tools"));
+    const open = path.join(directory, "open");
+    await mkdir(open);
+    await chmod(open, 0o777);
+    const spawned: string[] = [];
+    const runner: CommandRunner = async (command, args, options) => { spawned.push(command); return runProcessGroup(command, args, options); };
+    for (const executable of [path.join(repository, "tools", "agent"), path.join(open, "agent")]) {
+      await writeFile(executable, "#!/bin/sh\necho 1.2.3\n");
+      await chmod(executable, 0o755);
+      const config = configuration(profile());
+      const placed = { ...config, harness: { ...config.harness, executable } };
+      const preflight = await new CliHarnessAdapter({ environment: environment(), runner }).preflight(placed);
+      expect(preflight.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ code: "REVIEWFN_CLI_UNAVAILABLE", message: expect.stringMatching(/world-writable or Git-repository ancestor/) })]));
+      const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(placed));
+      expect(output.terminal).toBe("failed");
+      expect(output.error).toMatch(/world-writable or Git-repository ancestor/);
+    }
+    expect(spawned).toEqual([]);
+  }, 30_000);
 
   it.skipIf(process.platform === "win32")("refuses an absolute executable that resolves into the review workspace, directly or through a link", async () => {
     const inside = path.join(workspace, "agent");
@@ -354,8 +426,8 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     }
     expect(await calls()).toEqual([]);
     // An installed executable outside the workspace, even through a link, still runs.
-    const installed = path.join(directory, "node-link");
-    await symlink(process.execPath, installed);
+    const installed = path.join(directory, "agent-installed");
+    await symlink(AGENT, installed);
     const config = configuration(profile());
     expect((await new CliHarnessAdapter({ environment: environment() }).run(input({ ...config, harness: { ...config.harness, executable: installed } }))).terminal).toBe("completed");
   }, 30_000);
@@ -375,7 +447,7 @@ describe("CliHarnessAdapter preflight and configuration", () => {
 
   it.each([
     ["a relative executable", (config: ReviewFnConfig) => ({ ...config, harness: { ...config.harness, executable: "bin/agent" } }), "REVIEWFN_CLI_UNAVAILABLE"],
-    ["no profile", (config: ReviewFnConfig) => ({ ...config, harness: { adapter: "cli", version: "1", executable: process.execPath } }), "REVIEWFN_HARNESS_PROFILE_REQUIRED"],
+    ["no profile", (config: ReviewFnConfig) => ({ ...config, harness: { adapter: "cli", version: "1", executable: AGENT } }), "REVIEWFN_HARNESS_PROFILE_REQUIRED"],
     ["an invalid profile", (config: ReviewFnConfig) => ({ ...config, harness: { ...config.harness, profileDefinition: { ...config.harness.profileDefinition!, argv: ["--model={model}"] } } }), "REVIEWFN_HARNESS_PROFILE_INVALID"],
     ["an option-like model", (config: ReviewFnConfig) => ({ ...config, inference: { ...config.inference, model: "--yolo" } }), "REVIEWFN_MODEL_INVALID"],
     ["{model} with the configured model", (config: ReviewFnConfig) => ({ ...config, harness: { ...config.harness, profileDefinition: { ...config.harness.profileDefinition!, argv: ["{model}"] } }, inference: { ...config.inference, model: "configured" } }), "REVIEWFN_MODEL_REQUIRED"],

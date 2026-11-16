@@ -63,6 +63,10 @@ describe("panel policy tightening", () => {
     expect(attempt(policy => { policy.profiles!.agent.argv = ["--yolo", "--model", "{model}"]; })).toMatchObject({ code: "REVIEWFN_PANEL_POLICY_WEAKENED" });
     expect(attempt(policy => { policy.slots[3].harness.executable = "/tmp/agent"; })).toMatchObject({ code: "REVIEWFN_PANEL_POLICY_WEAKENED", message: expect.stringMatching(/changes slot generic harness/) });
     expect(attempt(policy => { delete policy.profiles!.unused; })).toBeUndefined();
+    // An entry set to undefined declares no profile in either copy: identical copies apply, and one never adds a profile.
+    const spare = { ...withProfiles, profiles: { ...withProfiles.profiles, spare: undefined } } as unknown as PanelPolicy;
+    expect(() => applyRepositoryPanelPolicy(spare, { ...spare })).not.toThrow();
+    expect(() => applyRepositoryPanelPolicy(spare, { ...spare, profiles: { ...spare.profiles, spare: profile } })).toThrow(/adds harness profile spare/);
     // A trusted policy with no profiles gains none from the repository.
     expect(attempt.call(undefined, () => undefined)).toBeUndefined();
     expect(() => applyRepositoryPanelPolicy(trusted, { ...structuredClone(trusted), profiles: { agent: profile } })).toThrow(/adds harness profile agent/);

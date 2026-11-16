@@ -5,7 +5,7 @@ import path from "node:path";
 import { Worker } from "node:worker_threads";
 
 import {
-  collectSecrets, harnessOutputSchema, omitOptionalNulls, redactJson, redactText, resolveTrustedExecutable, runProcessGroup, structuredOutputValidator,
+  collectSecrets, harnessOutputSchema, isTrustedLocation, omitOptionalNulls, redactJson, redactText, resolveTrustedExecutable, runProcessGroup, structuredOutputValidator,
   validateHarnessPayload, validateHarnessProfile,
   type CommandResult, type CommandRunner, type HarnessCapabilities, type HarnessOutput, type HarnessProfile, type JsonValue, type NormalizedRunEvent,
   type PanelHarnessAdapter, type PreflightDiagnostic, type PreflightResult, type ReviewFnConfig, type SlotHarnessInput, type SlotHarnessOutput,
@@ -33,8 +33,6 @@ const OUTPUT_FILE_POLL_MS = 100;
 const MODEL_REPORT_TIMEOUT_MS = 2_000;
 /** How long a reporter still runs after the run is aborted, so a timed-out CLI's report is read but cancellation stays prompt. */
 const MODEL_REPORT_ABORT_GRACE_MS = 100;
-/** The longest pre-release or build suffix a version token is read with, which keeps the version scan linear. */
-const MAX_VERSION_SUFFIX = 128;
 const ENV_NAME = /^[A-Z_a-z]\w*$/;
 const QUOTA = /quota|rate.?limit|usage.?limit|credit balance|too many requests/i;
 
@@ -50,35 +48,50 @@ function digitsEnd(text: string, index: number): number {
   return end;
 }
 
-/** The end of the longest pre-release or build suffix from `from` that ends in a letter or digit and adjoins no word character or dot. */
-function suffixEnd(text: string, from: number): number | undefined {
-  let runEnd = from;
-  while (runEnd < from + MAX_VERSION_SUFFIX && isSuffixCharacter(text[runEnd])) runEnd += 1;
-  for (let end = runEnd; end > from; end -= 1) {
-    const follows = end === runEnd ? !joinsToken(text[end]) : text[end] === "-";
-    if (follows && isAlphanumeric(text[end - 1])) return end;
+/**
+ * Where a pre-release or build suffix starting at each position can end, computed in one pass from the right so the
+ * whole scan stays linear: the end of the run of suffix characters, and the last `-` in that run that follows a letter
+ * or digit (a suffix may also end just before such a `-`).
+ */
+function suffixTable(text: string): { runEnd: Int32Array; lastDash: Int32Array } {
+  const runEnd = new Int32Array(text.length + 1).fill(text.length);
+  const lastDash = new Int32Array(text.length + 1).fill(-1);
+  for (let index = text.length - 1; index >= 0; index -= 1) {
+    if (!isSuffixCharacter(text[index])) { runEnd[index] = index; continue; }
+    runEnd[index] = runEnd[index + 1];
+    const dash = text[index] === "-" && isAlphanumeric(text[index - 1]) ? index : -1;
+    lastDash[index] = lastDash[index + 1] === -1 ? dash : lastDash[index + 1];
   }
-  return undefined;
+  return { runEnd, lastDash };
+}
+
+/** The end of the longest suffix from `from` that ends in a letter or digit and adjoins no word character or dot. */
+function suffixEnd(text: string, table: ReturnType<typeof suffixTable>, from: number): number | undefined {
+  if (!isSuffixCharacter(text[from])) return undefined;
+  const end = table.runEnd[from];
+  if (isAlphanumeric(text[end - 1]) && !joinsToken(text[end])) return end;
+  return table.lastDash[from] === -1 ? undefined : table.lastDash[from];
 }
 
 /** The version token starting at `start` (an optional `v`, two or more dotted numbers, an optional suffix), or undefined. */
-function versionAt(text: string, start: number): string | undefined {
+function versionAt(text: string, table: ReturnType<typeof suffixTable>, start: number): string | undefined {
   const first = text[start] === "v" ? start + 1 : start;
   let end = digitsEnd(text, first);
   if (end === first) return undefined;
   let parts = 1;
   while (text[end] === "." && isDigit(text[end + 1])) { end = digitsEnd(text, end + 1); parts += 1; }
   if (parts < 2) return undefined;
-  const suffix = text[end] === "-" || text[end] === "+" ? suffixEnd(text, end + 1) : undefined;
+  const suffix = text[end] === "-" || text[end] === "+" ? suffixEnd(text, table, end + 1) : undefined;
   if (suffix !== undefined) return text.slice(first, suffix);
   return joinsToken(text[end]) ? undefined : text.slice(first, end);
 }
 
-/** The first version token of `text`, read by a linear scan rather than a backtracking pattern. */
+/** The first version token of `text`, whole, read by a linear scan rather than a backtracking pattern. */
 function firstVersion(text: string): string | undefined {
+  const table = suffixTable(text);
   for (let index = 0; index < text.length; index += 1) {
     if (index > 0 && joinsToken(text[index - 1])) continue;
-    const version = versionAt(text, index);
+    const version = versionAt(text, table, index);
     if (version !== undefined) return version;
   }
   return undefined;
@@ -314,8 +327,9 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
   /**
    * The canonical executable: an absolute path as configured, or a bare name found on the adapter's PATH in a trusted
    * directory. A relative path is refused, because it would resolve inside the repository under review. Either form is
-   * resolved through every link and refused when it lands in the working directory or the review workspace, or is a
-   * world-writable file, so the repository under review can never supply the CLI that runs with the credentials.
+   * resolved through every link and refused when it lands in the working directory or the review workspace, in a
+   * directory with a world-writable or Git-repository ancestor (the rule bare names follow), or is a world-writable file,
+   * so no repository and no other user can supply the CLI that runs with the credentials.
    */
   private async resolveExecutable(config: ReviewFnConfig, workspace?: string): Promise<string> {
     const configured = config.harness.executable ?? this.executable ?? "";
@@ -325,6 +339,7 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
       const canonical = await realpath(root);
       if (executable === canonical || executable.startsWith(`${canonical}${path.sep}`)) throw new Error(`harness.executable resolves to ${executable}, inside the repository under review, which may not supply the CLI.`);
     }
+    if (!await isTrustedLocation(path.dirname(executable))) throw new Error(`harness.executable resolves to ${executable}, in a directory with a world-writable or Git-repository ancestor, which may not supply the CLI.`);
     const file = await stat(executable);
     const windows = process.platform === "win32";
     if (!file.isFile() || !windows && (file.mode & 0o002) !== 0) throw new Error(`harness.executable resolves to ${executable}, which is not a regular file that only trusted users can change.`);
@@ -393,39 +408,48 @@ function profileDiagnostics(config: ReviewFnConfig, error: (code: string, text: 
   if (model.startsWith("-") || /[\r\n\0]/.test(model)) error("REVIEWFN_MODEL_INVALID", "The model may not start with '-' or contain line breaks or NUL, so it can never read as a CLI option.");
 }
 
-/** Read a `stderr-regex` model report, bounded in time: a reporter that cannot finish ends the run timed_out (or canceled). */
+/**
+ * Read a `stderr-regex` model report, bounded in time. Every capture found before the reporter stopped is a reported
+ * model, so a mismatch it already matched still voids the run; a reporter that cannot finish ends the run timed_out
+ * (or canceled).
+ */
 async function reportStderrModel(run: AttemptContext, stderr: string): Promise<SlotHarnessOutput | undefined> {
   if (!run.profile.modelReport.startsWith("stderr-regex:")) return undefined;
   const matched = await matchReporter(stderr, run.profile.modelReport.slice("stderr-regex:".length), MODEL_REPORT_TIMEOUT_MS, run.input.signal);
-  if ("values" in matched) {
-    for (const value of matched.values) run.state.note(value);
-    return undefined;
-  }
-  return run.state.finish(matched.terminal, matched.reason);
+  for (const value of matched.values) run.state.note(value);
+  return "terminal" in matched ? run.state.finish(matched.terminal, matched.reason) : undefined;
 }
 
+type ReporterOutcome = { values: unknown[] } | { values: unknown[]; terminal: "timed_out" | "canceled" | "failed"; reason: string };
+
 /**
- * Every capture of a `stderr-regex` reporter in `text`, matched in a worker thread: a pattern that backtracks without
- * end is terminated after `timeoutMs`, or `MODEL_REPORT_ABORT_GRACE_MS` after `signal` aborts, instead of blocking the
- * event loop. The grace lets a CLI that the panel stopped at its deadline still have its report read.
+ * Every capture of a `stderr-regex` reporter in `text`, matched in a worker thread that posts each capture as it is
+ * found. A pattern that backtracks without end is terminated after `timeoutMs`, keeping the captures found so far,
+ * instead of blocking the event loop. A caller's cancellation stops it `MODEL_REPORT_ABORT_GRACE_MS` after the abort;
+ * an abort for a timeout (a `TimeoutError` reason, as the panel's slot deadline) leaves it its own bound, so a CLI that
+ * reported its model and then hung past its deadline still has that report read.
  */
-export function matchReporter(text: string, source: string, timeoutMs: number, signal?: AbortSignal): Promise<{ values: unknown[] } | { terminal: "timed_out" | "canceled" | "failed"; reason: string }> {
+export function matchReporter(text: string, source: string, timeoutMs: number, signal?: AbortSignal): Promise<ReporterOutcome> {
   return new Promise(resolve => {
+    const values: unknown[] = [];
     const worker = new Worker(REPORTER_WORKER, { eval: true, workerData: { text, source } });
     let settled = false;
     let grace: NodeJS.Timeout | undefined;
-    const end = (outcome: { values: unknown[] } | { terminal: "timed_out" | "canceled" | "failed"; reason: string }) => {
+    const end = (outcome?: { terminal: "timed_out" | "canceled" | "failed"; reason: string }) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       clearTimeout(grace);
       signal?.removeEventListener("abort", onAbort);
       void worker.terminate();
-      resolve(outcome);
+      resolve({ values, ...outcome });
     };
-    const onAbort = () => { grace = setTimeout(() => end({ terminal: "canceled", reason: "The CLI run was canceled while its model report was read." }), MODEL_REPORT_ABORT_GRACE_MS); };
-    const timer = setTimeout(() => end({ terminal: "timed_out", reason: `The model reporter did not finish within ${timeoutMs} ms, so the served model was not read.` }), timeoutMs);
-    worker.once("message", (values: unknown[]) => end({ values }));
+    const onAbort = () => {
+      if (signal?.reason instanceof Error && signal.reason.name === "TimeoutError") return;
+      grace = setTimeout(() => end({ terminal: "canceled", reason: "The CLI run was canceled while its model report was read." }), MODEL_REPORT_ABORT_GRACE_MS);
+    };
+    const timer = setTimeout(() => end({ terminal: "timed_out", reason: `The model reporter did not finish within ${timeoutMs} ms, so the served model was not fully read.` }), timeoutMs);
+    worker.on("message", (posted: { value?: unknown; done?: true }) => { if (posted.done) end(); else values.push(posted.value); });
     worker.once("error", error => end({ terminal: "failed", reason: `The model reporter failed: ${message(error)}` }));
     worker.once("exit", () => end({ terminal: "failed", reason: "The model reporter stopped without a result." }));
     if (signal?.aborted) onAbort();
@@ -434,9 +458,8 @@ export function matchReporter(text: string, source: string, timeoutMs: number, s
 }
 
 const REPORTER_WORKER = `const { parentPort, workerData } = require("node:worker_threads");
-const values = [];
-for (const match of workerData.text.matchAll(new RegExp(workerData.source, "gu"))) values.push(match[1]);
-parentPort.postMessage(values);`;
+for (const match of workerData.text.matchAll(new RegExp(workerData.source, "gu"))) parentPort.postMessage({ value: match[1] });
+parentPort.postMessage({ done: true });`;
 
 /** The attempt's answer, with its `json-path` model report read and, unless the slot's schema declares it, removed. */
 async function readAnswer(run: AttemptContext, outputFile: string, stdout: string): Promise<OutputRead> {
@@ -445,7 +468,7 @@ async function readAnswer(run: AttemptContext, outputFile: string, stdout: strin
   if ("value" in output && run.profile.modelReport.startsWith("json-path:")) {
     const dotted = run.profile.modelReport.slice("json-path:".length);
     run.state.note(valueAtPath(output.value, dotted));
-    stripReportField(output.value, dotted, run.schema);
+    stripReportField(output.value, dotted.split("."), run.schema);
   }
   return output;
 }
@@ -473,10 +496,13 @@ function terminalOutcome(run: AttemptContext, attempt: number, result: CommandRe
 /** The completed run for an answer that validates and confirms its model, or the rejection that earns a repair. */
 function accept(run: AttemptContext, attempt: number, output: OutputRead): SlotHarnessOutput | Rejection {
   if (!("value" in output)) return { errors: ["error" in output ? output.error : "The CLI produced no answer."], rejected: "text" in output ? output.text : undefined };
+  const rejection = (errors: string[]): Rejection => ({ errors, rejected: JSON.stringify(output.value) });
+  // An answer the slot's schema rejects goes to its repair attempt as it is, never through payload normalization.
   const errors = run.validate(output.value);
+  if (errors.length) return rejection(errors);
   const payload = normalizePayload(output.value);
-  if (!errors.length) errors.push(...validateHarnessPayload(payload));
-  if (errors.length) return { errors, rejected: JSON.stringify(output.value) };
+  const payloadErrors = validateHarnessPayload(payload);
+  if (payloadErrors.length) return rejection(payloadErrors);
   // Only an answer that would be accepted must confirm its model; an invalid one still gets its repair attempt.
   const unconfirmed = run.state.unconfirmedModel();
   if (unconfirmed) return run.state.finish("failed", unconfirmed);
@@ -555,7 +581,9 @@ export function withModelReportField(schema: Readonly<Record<string, unknown>>, 
 function declarePath(schema: Readonly<Record<string, unknown>>, keys: readonly string[]): Readonly<Record<string, unknown>> {
   const [key, ...rest] = keys;
   if (key === undefined) return schema;
-  if (/^\d+$/.test(key)) {
+  // A numeric step indexes an array schema, as valueAtPath reads an array; elsewhere it names a property. The items
+  // schema is shared, so every item declares the report, and every item has it removed.
+  if (/^\d+$/.test(key) && (schema.type === "array" || "items" in schema)) {
     if (!isRecord(schema.items)) return schema;
     const items = declarePath(schema.items, rest);
     return items === schema.items ? schema : { ...schema, items };
@@ -583,26 +611,21 @@ function reportField(keys: readonly string[]): Record<string, unknown> {
 /**
  * Remove the part of a `json-path` model report the output schema does not declare: the first key on the dotted path
  * that its object schema leaves undeclared, at whatever depth, so a CLI may report its model inside a closed answer
- * without failing the slot's schema. A report field the schema declares is kept and validated like any other.
+ * without failing the slot's schema. Through an array index the removal applies to every item, as the declaration does.
+ * A report field the schema declares is kept and validated like any other.
  */
-function stripReportField(value: Record<string, unknown>, dotted: string, schema: Readonly<Record<string, unknown>>): void {
-  let node: unknown = value;
-  let declared: unknown = schema;
-  for (const key of dotted.split(".")) {
-    if (Array.isArray(node) && /^\d+$/.test(key)) {
-      node = node[Number(key)];
-      declared = isRecord(declared) ? declared.items : undefined;
-      continue;
-    }
-    if (!isRecord(node) || !Object.hasOwn(node, key)) return;
-    const properties = isRecord(declared) ? declared.properties : undefined;
-    if (!isRecord(properties) || !Object.hasOwn(properties, key)) {
-      delete node[key];
-      return;
-    }
-    node = node[key];
-    declared = properties[key];
+function stripReportField(value: unknown, keys: readonly string[], schema: unknown): void {
+  const [key, ...rest] = keys;
+  if (key === undefined) return;
+  const declared = isRecord(schema) ? schema : {};
+  if (Array.isArray(value) && /^\d+$/.test(key)) {
+    for (const item of value) stripReportField(item, rest, declared.items);
+    return;
   }
+  if (!isRecord(value) || !Object.hasOwn(value, key)) return;
+  const properties = declared.properties;
+  if (isRecord(properties) && Object.hasOwn(properties, key)) stripReportField(value[key], rest, properties[key]);
+  else delete value[key];
 }
 
 function outputContract(schema: Readonly<Record<string, unknown>>, profile: HarnessProfile): string {

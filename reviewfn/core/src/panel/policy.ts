@@ -52,7 +52,9 @@ export function applyRepositoryPanelPolicy(trustedInput: PanelPolicy, repository
   // from trusted configuration: a repository copy may drop an unused one, but never add or change one.
   const trustedProfiles = trusted.profiles ?? {};
   for (const [name, profile] of Object.entries(repository.profiles ?? {})) {
-    if (!Object.hasOwn(trustedProfiles, name)) reasons.push(`adds harness profile ${name}`);
+    // An entry set to undefined declares no profile, in either copy, as the validator reads it.
+    if (profile === undefined) continue;
+    if (!Object.hasOwn(trustedProfiles, name) || trustedProfiles[name] === undefined) reasons.push(`adds harness profile ${name}`);
     else if (stableStringify(profile) !== stableStringify(trustedProfiles[name])) reasons.push(`changes harness profile ${name}`);
   }
   const repositoryIds = new Set(repository.slots.map(slot => slot.id));
