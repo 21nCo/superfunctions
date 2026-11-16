@@ -39,6 +39,24 @@ function resolveStoredFileId(
   return fileId;
 }
 
+/**
+ * Whether a record is an unrewritten legacy record whose file ID comes from the
+ * `file_<uploadSessionId>` mapping. Its stored retries were spent sending the
+ * old ID, so it reads with `retryCount: 0` and replays with a fresh budget. The
+ * first metadata write (a failed replay counts a retry) stamps the current
+ * version, so the reset happens once and a later reload does not replenish it.
+ */
+function isMigratedLegacyRecord(
+  stored: { fileId?: unknown; metadataVersion?: unknown },
+  uploadSessionId: string,
+): boolean {
+  if (stored.metadataVersion === PENDING_METADATA_VERSION) {
+    return false;
+  }
+  const fileId = stored.fileId;
+  return typeof fileId !== 'string' || fileId === '' || fileId === uploadSessionId;
+}
+
 export interface PendingUpload {
   uploadSessionId: string;
   fileId?: string;
@@ -351,9 +369,11 @@ export class OPFSStore {
       const metaFile = await metaFileHandle.getFile();
       const metaText = await metaFile.text();
       const { metadataVersion, ...metadata } = JSON.parse(metaText);
+      const stored = { fileId: metadata.fileId, metadataVersion };
       return {
         ...metadata,
-        fileId: resolveStoredFileId({ fileId: metadata.fileId, metadataVersion }, uploadSessionId),
+        fileId: resolveStoredFileId(stored, uploadSessionId),
+        retryCount: isMigratedLegacyRecord(stored, uploadSessionId) ? 0 : metadata.retryCount,
         localSource: metadata.localSource || deriveFallbackLocalSource(metadata),
       };
     } catch {
