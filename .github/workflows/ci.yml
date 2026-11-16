@@ -278,7 +278,8 @@ jobs:
         run: node scripts/verify-public-boundary.mjs
 
   # Release target resolution (release-packages.json plus a repository overlay) on the runtimes the publish
-  # workflows use, and the root workspace globs against the explicit list they replaced (SFNS-123).
+  # workflows use, and the root workspace globs against the explicit list they replaced (SFNS-123). The promotion
+  # script's temp-repository tests need git-filter-repo; PROMOTE_REQUIRE_FILTER_REPO turns their skip into a failure.
   release-scripts:
     name: Release scripts
     if: github.repository == '21nCo/superfunctions'
@@ -307,6 +308,12 @@ jobs:
         run: |
           python -m pip install --only-binary=:all: packaging==25.0
           python -m unittest discover -s scripts -p test_python_release.py -v
+
+      - name: Promotion script (SFNS-127)
+        run: |
+          python -m pip install --only-binary=:all: git-filter-repo==2.47.0
+          git filter-repo --version
+          PROMOTE_REQUIRE_FILTER_REPO=1 node --test scripts/promote.test.mjs
 
   python:
     name: Python package (${{ matrix.package.path }})
