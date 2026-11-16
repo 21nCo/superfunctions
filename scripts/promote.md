@@ -41,9 +41,11 @@ Record the pin the script prints. The script refuses, and changes nothing, when:
   directory instead), or names a file the script edits or a `next`-only file (manifests, release lists, lockfiles);
 - a release slug or npm name it would move is already listed in `release-packages.json` with other values, or two
   imported entries share a slug or npm name: fix `next`'s overlay first;
-- an imported Python project (from `python-release-packages.next.json` or from a `pyproject.toml` under the paths)
-  shares its canonical name with another imported project in a different directory, or with a project this branch
-  already has (a `pyproject.toml` or a `TARGETS` entry) in a different directory;
+- the imported Python projects do not form one consistent set (names are compared in canonical form): two imported
+  `pyproject.toml` files share a name; two `python-release-packages.next.json` entries under the paths share a name or
+  a directory; an overlay entry does not name the imported `pyproject.toml` project in its own directory; or this
+  branch (a `pyproject.toml` or a `TARGETS` entry) holds an imported name in another directory, or another name in an
+  imported project directory. Fix `next` first;
 - a file it reads (`release-packages.json`, the manifest, a `pyproject.toml` at the pin) is malformed;
 - `git-filter-repo` is missing (it prints the install command).
 
@@ -58,7 +60,9 @@ It creates `promote/<fn or first path>` from the current commit with:
    `scripts/python_release.py`. Paths and packages that were already public produce no commit.
 
 For a pin from before `next` had `release-packages.next.json`, release entries come from `next`'s
-`release-packages.json`; entries `dev` already lists identically are skipped.
+`release-packages.json`. Entries `dev` already lists identically (in `release-packages.json` or `TARGETS`) are not
+appended again, but they are still set to `public` in the manifest and listed under "On next" for removal, so a
+retry or a partial cutover leaves no duplicates on `next`.
 
 ## After the script
 

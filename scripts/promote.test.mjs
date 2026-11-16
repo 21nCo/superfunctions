@@ -306,6 +306,15 @@ historyTest("imported Python projects colliding with each other or with a projec
     commit(next, "duplicate widget project", { "python-release-packages.next.json": [], "widgetfn/py2/pyproject.toml": '[project]\nname = "WidgetFn"\n' }),
     // An imported project named like the public alphafn project this checkout holds in alphafn/python.
     commit(next, "widget copy of alphafn", { "widgetfn/py2/pyproject.toml": '[project]\nname = "AlphaFN"\n' }),
+    // An overlay entry naming another project than the pyproject.toml in its directory.
+    commit(next, "overlay names another project", {
+      "widgetfn/py2/pyproject.toml": '[project]\nname = "widget-two"\n',
+      "python-release-packages.next.json": [{ name: "other-widget", path: "widgetfn/python" }],
+    }),
+    // Two overlay entries for one imported project.
+    commit(next, "overlay lists widgetfn twice", {
+      "python-release-packages.next.json": [{ name: "widgetfn", path: "widgetfn/python" }, { name: "WidgetFN", path: "widgetfn/python/" }],
+    }),
   ];
   for (const pin of pins) {
     throwsCode(() => promote({ root: dev, fn: "widgetfn", pin, source: next }), "release-conflict");
@@ -314,10 +323,31 @@ historyTest("imported Python projects colliding with each other or with a projec
     assert.equal(git(dev, "status", "--porcelain"), "");
   }
   // The same project in the same directory is the same identity, so promotion goes ahead.
-  const pin = commit(next, "drop the copy", { "widgetfn/py2/pyproject.toml": '[project]\nname = "widget-two"\n' });
+  const pin = commit(next, "fix the overlay", { "python-release-packages.next.json": [{ name: "widgetfn", path: "widgetfn/python" }] });
   const result = promote({ root: dev, paths: ["alphafn/python", "widgetfn"], pin, source: next });
   assert.deepEqual(result.changed.python, ["widget-two", "widgetfn"]);
   assert.equal(git(dev, "rev-parse", "HEAD:alphafn/python"), git(next, "rev-parse", `${pin}:alphafn/python`));
+});
+
+historyTest("entries this checkout already lists are skipped but still listed for next's clean-up", () => {
+  const { dev } = fixture("already-listed");
+  const manifest = publicManifest();
+  manifest.releases["widgetfn-core"] = "public";
+  manifest.python.widgetfn = "public";
+  const head = commit(dev, "widgetfn releases already listed", {
+    "superfunctions.owners.json": manifest,
+    "release-packages.json": appendReleaseEntries(RELEASES_TEXT, [{ slug: "widgetfn-core", path: "widgetfn/core", name: "@widgetfn/core" }]),
+    "scripts/python_release.py": PYTHON_RELEASE.replace('}\n\nOTHER', '    "widgetfn": "widgetfn/python",\n}\n\nOTHER'),
+  });
+  git(dev, "update-ref", "refs/remotes/origin/dev", head);
+  const result = promote({ root: dev, fn: "widgetfn" });
+  assert.deepEqual([result.releases, result.python, result.changed.releases, result.changed.python], [[], [], [], []]);
+  assert.deepEqual(result.nextCleanup, {
+    manifest: ["paths.widgetfn", "releases.widgetfn-core", "python.widgetfn"],
+    overlay: ["widgetfn-core"],
+    pythonOverlay: ["widgetfn"],
+  });
+  for (const file of ["release-packages.json", "scripts/python_release.py"]) assert.equal(git(dev, "show", `HEAD:${file}`), git(dev, "show", `${head}:${file}`));
 });
 
 historyTest("a project under a non-ASCII path is found and made public", () => {
@@ -406,14 +436,18 @@ test("release moves: overlay first, identical entries skipped, conflicting slugs
     { slug: "widgetfn-core", path: "widgetfn/core", name: "@widgetfn/core" },
     { slug: "gadgetfn-core", path: "gadgetfn/core", name: "@gadgetfn/core" },
   ];
-  assert.deepEqual(releaseMoves({ pinOverlay: overlay, pinBase: [], current, paths: ["widgetfn"] }), [
+  assert.deepEqual(releaseMoves({ pinOverlay: overlay, pinBase: [], current, paths: ["widgetfn"] }).moves, [
     { ...overlay[0], source: "release-packages.next.json" },
   ]);
   // A pin from before the overlay: next's release-packages.json, minus what dev already lists.
   const base = [...current, overlay[0]];
-  assert.deepEqual(releaseMoves({ pinOverlay: null, pinBase: base, current, paths: ["alphafn", "widgetfn"] }), [
-    { ...overlay[0], source: "release-packages.json" },
-  ]);
+  assert.deepEqual(releaseMoves({ pinOverlay: null, pinBase: base, current, paths: ["alphafn", "widgetfn"] }), {
+    entries: [
+      { ...current[0], source: "release-packages.json" },
+      { ...overlay[0], source: "release-packages.json" },
+    ],
+    moves: [{ ...overlay[0], source: "release-packages.json" }],
+  });
   throwsCode(() => releaseMoves({ pinOverlay: [{ slug: "alphafn-core", path: "widgetfn/x", name: "@widgetfn/x" }], pinBase: [], current, paths: ["widgetfn"] }), "release-conflict");
   throwsCode(() => releaseMoves({ pinOverlay: [{ slug: "widgetfn-x", path: "widgetfn/x", name: "@alphafn/core" }], pinBase: [], current, paths: ["widgetfn"] }), "release-conflict");
   // Two imported entries colliding with each other (next's overlay is not validated before the first sync).
@@ -424,33 +458,45 @@ test("release moves: overlay first, identical entries skipped, conflicting slugs
   throwsCode(() => releaseMoves({ pinOverlay: pair({}, { slug: "widgetfn-a" }), pinBase: [], current, paths: ["widgetfn"] }), "release-conflict");
   throwsCode(() => releaseMoves({ pinOverlay: pair({}, { name: "@widgetfn/a" }), pinBase: [], current, paths: ["widgetfn"] }), "release-conflict");
   throwsCode(() => releaseMoves({ pinOverlay: null, pinBase: pair({}, { name: "@widgetfn/a" }), current, paths: ["widgetfn"] }), "release-conflict");
-  assert.equal(releaseMoves({ pinOverlay: pair({}, {}), pinBase: [], current, paths: ["widgetfn"] }).length, 2);
+  assert.equal(releaseMoves({ pinOverlay: pair({}, {}), pinBase: [], current, paths: ["widgetfn"] }).moves.length, 2);
 });
 
-test("Python identities: overlay entries and imported pyproject.toml files, unique by canonical name and matching this checkout", () => {
+test("Python identities: one order-independent check across overlay entries, imported pyproject.toml files and this checkout", () => {
   const targets = new Map([["Alpha_FN", "alphafn/python"]]);
   const paths = ["alphafn"];
-  assert.deepEqual(pythonMoves({ overlay: [{ name: "alpha-fn", path: "alphafn/python" }, { name: "beta", path: "alphafn/beta/" }], paths, targets }), {
-    names: ["alpha-fn", "beta"],
+  const pyproject = (name, directory) => ({ name, file: `${directory}/pyproject.toml` });
+  const discovered = [pyproject("alpha_fn", "alphafn/python"), pyproject("Beta", "alphafn/beta"), pyproject("gamma", "alphafn/gamma")];
+  // Each overlay entry names the imported project in its directory; TARGETS already lists alphafn, so only beta moves.
+  assert.deepEqual(pythonMoves({ overlay: [{ name: "alpha-fn", path: "alphafn/python" }, { name: "beta", path: "alphafn/beta/" }], paths, targets, discovered }), {
+    names: ["alpha_fn", "Beta", "gamma"],
+    entries: [{ name: "alpha-fn", path: "alphafn/python" }, { name: "beta", path: "alphafn/beta/" }],
     moves: [{ name: "beta", path: "alphafn/beta/" }],
   });
-  // An overlay entry and its own pyproject.toml are one project; this checkout may hold it in the same directory.
-  const discovered = [{ name: "Beta", file: "alphafn/beta/pyproject.toml" }, { name: "gamma", file: "alphafn/gamma/pyproject.toml" }];
-  const existing = [{ name: "beta", file: "alphafn/beta/pyproject.toml" }, { name: "delta", file: "deltafn/pyproject.toml" }];
-  assert.deepEqual(pythonMoves({ overlay: [{ name: "beta", path: "alphafn/beta" }], paths, targets, discovered, existing }), {
-    names: ["Beta", "gamma"],
-    moves: [{ name: "beta", path: "alphafn/beta" }],
+  // The same project in the same directory here (pyproject.toml and TARGETS) is the same identity.
+  const existing = [pyproject("beta", "alphafn/beta"), pyproject("delta", "deltafn")];
+  assert.deepEqual(pythonMoves({ overlay: [{ name: "beta", path: "alphafn/beta" }], paths, targets: new Map([...targets, ["BETA", "alphafn/beta/"]]), discovered, existing }), {
+    names: ["alpha_fn", "Beta", "gamma"],
+    entries: [{ name: "beta", path: "alphafn/beta" }],
+    moves: [],
   });
-  const refused = [
-    { overlay: [{ name: "alpha.fn", path: "alphafn/other" }] },
-    { overlay: [{ name: "beta", path: "alphafn/b1" }, { name: "Beta", path: "alphafn/b2" }] },
-    { overlay: [{ name: "beta", path: "alphafn/b1" }, { name: "Beta", path: "alphafn/b1" }] },
-    { discovered: [{ name: "new-pkg", file: "alphafn/a/pyproject.toml" }, { name: "New_Pkg", file: "alphafn/b/pyproject.toml" }] },
-    { discovered: [{ name: "beta", file: "alphafn/a/pyproject.toml" }], overlay: [{ name: "beta", path: "alphafn/b" }] },
-    { discovered: [{ name: "Delta", file: "alphafn/delta/pyproject.toml" }], existing },
-    { discovered: [{ name: "alpha_fn", file: "alphafn/py/pyproject.toml" }] },
-  ];
-  for (const input of refused) throwsCode(() => pythonMoves({ paths, targets, ...input }), "release-conflict");
+  const beta = discovered.slice(1, 2);
+  const twice = [{ name: "beta", path: "alphafn/beta" }, { name: "Beta", path: "alphafn/beta/" }];
+  const refused = {
+    "two imported projects with one canonical name": { discovered: [pyproject("new-pkg", "alphafn/a"), pyproject("New_Pkg", "alphafn/b")] },
+    "overlay name differs from the pyproject.toml in its directory": { discovered: beta, overlay: [{ name: "other-beta", path: "alphafn/beta" }] },
+    "overlay entry with no imported pyproject.toml": { discovered: beta, overlay: [{ name: "lonely", path: "alphafn/lonely" }] },
+    "overlay entry naming a project in another directory": { discovered: beta, overlay: [{ name: "beta", path: "alphafn/b2" }] },
+    "two identical overlay entries after the pyproject.toml": { discovered: beta, overlay: twice },
+    "two identical overlay entries, reversed": { discovered: beta, overlay: [...twice].reverse() },
+    "two overlay entries for one directory": { discovered: beta, overlay: [{ name: "beta", path: "alphafn/beta" }, { name: "beta-2", path: "alphafn/beta" }] },
+    "a pyproject.toml here with the name at another path": { discovered: [pyproject("Delta", "alphafn/delta")], existing },
+    "TARGETS with the name at another path": { discovered: [pyproject("alpha_fn", "alphafn/py")] },
+    "TARGETS with another name in the imported directory": { discovered: [pyproject("other", "alphafn/python")] },
+    "a pyproject.toml here with another name in the imported directory": { discovered: [pyproject("zeta", "deltafn")], existing, targets: new Map() },
+  };
+  for (const [label, input] of Object.entries(refused)) {
+    assert.throws(() => pythonMoves({ paths, targets, ...input }), (error) => error instanceof PromoteError && error.code === "release-conflict", label);
+  }
 });
 
 test("sources: local paths resolve against the caller's directory, URLs stay, a leading dash is refused", () => {

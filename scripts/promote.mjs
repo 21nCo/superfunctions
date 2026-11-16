@@ -249,19 +249,20 @@ function refuseBatchDuplicates(candidates, keys, describe) {
 }
 
 /**
- * npm release entries to move: next's overlay entries under the paths, or, for a pin from before the overlay
- * existed, next's release-packages.json entries under the paths. An entry this checkout already lists identically
- * is skipped; a slug or npm name listed here differently, or shared by two imported entries, is a conflict.
+ * npm release entries under the paths: next's overlay entries, or, for a pin from before the overlay existed, next's
+ * release-packages.json entries. Returns `entries` (every one, for the manifest and next's clean-up) and `moves` (the
+ * ones to append: an entry this checkout already lists identically is skipped). A slug or npm name listed here
+ * differently, or shared by two imported entries, is a conflict.
  */
 export function releaseMoves({ pinOverlay, pinBase, current, paths }) {
   const source = pinOverlay === null ? RELEASE_FILES.public : RELEASE_FILES.next;
   const candidates = releaseEntriesUnder(pinOverlay ?? pinBase, source, paths);
   refuseBatchDuplicates(candidates, { slug: (entry) => entry.slug, "npm name": (entry) => entry.name }, (entry) => `release ${JSON.stringify(entry.slug)} (${entry.name}, ${entry.path}) in next's ${source}`);
-  const moves = [];
-  for (const entry of candidates) {
+  const entries = candidates.map(({ slug, path: directory, name }) => ({ slug, path: directory, name, source }));
+  const moves = entries.filter((entry) => {
     const sameSlug = current.find((existing) => existing?.slug === entry.slug);
     const sameName = current.find((existing) => existing?.name === entry.name);
-    if (sameSlug && sameSlug.path === entry.path && sameSlug.name === entry.name) continue;
+    if (sameSlug && sameSlug.path === entry.path && sameSlug.name === entry.name) return false;
     if (sameSlug || sameName) {
       const other = sameSlug ?? sameName;
       throw new PromoteError(
@@ -269,20 +270,23 @@ export function releaseMoves({ pinOverlay, pinBase, current, paths }) {
         `release ${JSON.stringify(entry.slug)} (${entry.name}, ${entry.path}) from next's ${source} conflicts with ${RELEASE_FILES.public} entry ${JSON.stringify(other)}`,
       );
     }
-    moves.push({ slug: entry.slug, path: entry.path, name: entry.name, source });
-  }
-  return moves;
+    return true;
+  });
+  return { entries, moves };
 }
 
 const directoryKey = (target) => path.posix.normalize(target).replace(/\/+$/, "") || ".";
 
 /**
- * The imported Python projects and the overlay entries to move into TARGETS. Every imported Python identity, from
- * next's Python overlay entries under the paths and from the pyproject.toml files imported with them
- * (`discovered`, {name, file}), is matched by canonical name: within the batch one name has one project directory
- * and one entry of each kind, and this checkout's pyproject.toml files (`existing`) and TARGETS either lack the name
- * or hold it in the same directory. Anything else is a release-conflict, since verify-owners would reject the result.
- * Returns `names` (every imported project, for the manifest) and `moves` (overlay entries TARGETS does not list).
+ * The imported Python projects and the overlay entries to move into TARGETS, checked as one identity invariant,
+ * independent of order (verify-owners would reject anything else):
+ * - the pyproject.toml files imported with the paths (`discovered`, {name, file}) have unique canonical names;
+ * - next's Python overlay entries under the paths are unique by canonical name and by directory, and each names the
+ *   imported pyproject.toml project in its own directory;
+ * - this checkout's pyproject.toml files (`existing`) and TARGETS either lack each imported name or hold it in the
+ *   same directory, and hold no other name in an imported project directory.
+ * Anything else is a release-conflict. Returns `names` (every imported project, for the manifest), `entries` (every
+ * overlay entry under the paths, for next's clean-up) and `moves` (the overlay entries TARGETS does not list yet).
  */
 export function pythonMoves({ overlay = null, paths, targets = new Map(), discovered = [], existing = [] }) {
   if (overlay !== null && !Array.isArray(overlay)) throw new PromoteError("malformed-file", `${PYTHON_OVERLAY} at the pin must be an array`);
@@ -292,37 +296,57 @@ export function pythonMoves({ overlay = null, paths, targets = new Map(), discov
     }
     return paths.some((target) => isUnder(path.posix.normalize(entry.path), target));
   });
-  const identities = [
-    ...discovered.map(({ name, file }) => ({ name, directory: directoryKey(path.posix.dirname(file)), kind: "pyproject", where: `${file} at the pin` })),
-    ...candidates.map(({ name, path: directory }) => ({ name, directory: directoryKey(directory), kind: "overlay", where: `next's ${PYTHON_OVERLAY} (${directory})` })),
-  ];
+  const identity = (name, directory, where, extra = {}) => ({ name, id: canonicalPythonName(name), directory: directoryKey(directory), where, ...extra });
   const describe = ({ name, where }) => `Python project ${JSON.stringify(name)} in ${where}`;
-  const batch = new Map();
-  for (const identity of identities) {
-    const id = canonicalPythonName(identity.name);
-    const first = batch.get(id);
-    if (first && (first.kind === identity.kind || first.directory !== identity.directory)) {
-      throw new PromoteError("release-conflict", `${describe(identity)} and ${describe(first)} share the canonical name ${JSON.stringify(id)}; fix next first`);
-    }
-    if (!first) batch.set(id, identity);
+  const conflict = (message) => {
+    throw new PromoteError("release-conflict", message);
+  };
+
+  const byName = new Map();
+  const byDirectory = new Map();
+  for (const { name, file } of discovered) {
+    const project = identity(name, path.posix.dirname(file), `${file} at the pin`);
+    const twin = byName.get(project.id);
+    if (twin) conflict(`${describe(project)} and ${describe(twin)} share the canonical name ${JSON.stringify(project.id)}; fix next first`);
+    byName.set(project.id, project);
+    byDirectory.set(project.directory, project);
   }
+
+  const overlayNames = new Map();
+  const overlayDirectories = new Map();
+  for (const entry of candidates) {
+    const listed = identity(entry.name, entry.path, `next's ${PYTHON_OVERLAY} (${entry.path})`);
+    const twin = overlayNames.get(listed.id) ?? overlayDirectories.get(listed.directory);
+    if (twin) {
+      const shared = twin.id === listed.id ? `the canonical name ${JSON.stringify(listed.id)}` : `the directory ${listed.directory}`;
+      conflict(`${describe(listed)} and ${describe(twin)} share ${shared}; fix next first`);
+    }
+    overlayNames.set(listed.id, listed);
+    overlayDirectories.set(listed.directory, listed);
+    const project = byDirectory.get(listed.directory);
+    if (!project || project.id !== listed.id) {
+      const found = project ? `the imported project there is ${describe(project)}` : "no imported pyproject.toml declares a project there";
+      conflict(`${describe(listed)} does not match its directory: ${found}; fix next first`);
+    }
+  }
+
   const here = [
-    ...existing.map(({ name, file }) => ({ name, directory: directoryKey(path.posix.dirname(file)), where: `${file} here` })),
-    ...[...targets].map(([name, directory]) => ({ name, directory: directoryKey(directory), where: `TARGETS of ${PYTHON_RELEASE_SCRIPT} (${directory})`, inTargets: true })),
+    ...existing.map(({ name, file }) => identity(name, path.posix.dirname(file), `${file} here`)),
+    ...[...targets].map(([name, directory]) => identity(name, directory, `TARGETS of ${PYTHON_RELEASE_SCRIPT} (${directory})`, { inTargets: true })),
   ];
-  const listed = new Set();
+  const inTargets = new Set();
   for (const other of here) {
-    const id = canonicalPythonName(other.name);
-    const identity = batch.get(id);
-    if (!identity) continue;
-    if (identity.directory !== other.directory) {
-      throw new PromoteError("release-conflict", `${describe(identity)} conflicts with Python project ${JSON.stringify(other.name)} in ${other.where}`);
-    }
-    if (other.inTargets) listed.add(id);
+    const named = byName.get(other.id);
+    const located = byDirectory.get(other.directory);
+    if (named && named.directory !== other.directory) conflict(`${describe(named)} conflicts with ${describe(other)}`);
+    if (located && located.id !== other.id) conflict(`${describe(located)} conflicts with ${describe(other)}, which holds another name in that directory`);
+    if (named && other.inTargets) inTargets.add(other.id);
   }
+  const entries = candidates.map(({ name, path: directory }) => ({ name, path: directory }));
   return {
-    names: [...batch.values()].map(({ name }) => name),
-    moves: candidates.filter((entry) => !listed.has(canonicalPythonName(entry.name))).map(({ name, path: directory }) => ({ name, path: directory })),
+    names: [...byName.values()].map(({ name }) => name),
+    entries,
+    moves: entries.filter((entry) => !inTargets.has(canonicalPythonName(entry.name))),
   };
 }
 
@@ -544,10 +568,10 @@ export function promote({ root = REPO_ROOT, fn, paths: rawPaths = [], pin, sourc
       }
     }
 
-    const releases = releaseMoves({ pinOverlay: pinned.overlay, pinBase: pinned.base, current, paths });
+    const { entries: releaseEntries, moves: releases } = releaseMoves({ pinOverlay: pinned.overlay, pinBase: pinned.base, current, paths });
     const pythonSource = existsSync(pythonScript) ? readFileSync(pythonScript, "utf8") : null;
     const pythonTargets = pythonSource === null ? new Map() : readPythonTargets(pythonSource);
-    const { names: pythonNames, moves: python } = pythonMoves({
+    const { names: pythonNames, entries: pythonEntries, moves: python } = pythonMoves({
       overlay: pinned.pythonOverlay,
       paths,
       targets: pythonTargets,
@@ -555,7 +579,8 @@ export function promote({ root = REPO_ROOT, fn, paths: rawPaths = [], pin, sourc
       existing: pythonProjectsAt(root, "HEAD", filesAt(root, "HEAD")),
     });
     if (python.length > 0 && pythonSource === null) throw new PromoteError("malformed-file", `${PYTHON_RELEASE_SCRIPT} not found`);
-    const flip = { topLevel, rootFiles, slugs: releases.map((entry) => entry.slug), pythonNames };
+    // Every imported release becomes public, including one this checkout already lists (a retry or partial cutover).
+    const flip = { topLevel, rootFiles, slugs: releaseEntries.map((entry) => entry.slug), pythonNames };
     const changed = flipManifest(manifest, flip);
 
     const { head, commits } = filterHistory(work, paths);
@@ -611,11 +636,11 @@ export function promote({ root = REPO_ROOT, fn, paths: rawPaths = [], pin, sourc
         conflicts,
         nextCleanup: {
           manifest: nextManifestEntries(pinned.nextManifest, flip),
-          overlay: releases.filter((entry) => entry.source === RELEASE_FILES.next).map((entry) => entry.slug),
-          pythonOverlay: python.map((entry) => entry.name),
+          overlay: releaseEntries.filter((entry) => entry.source === RELEASE_FILES.next).map((entry) => entry.slug),
+          pythonOverlay: pythonEntries.map((entry) => entry.name),
         },
         issues: referencedIssues(commits),
-        searchTerms: [...new Set([...(fn ? [fn] : paths), ...releases.map((entry) => entry.name), ...python.map((entry) => entry.name)])],
+        searchTerms: [...new Set([...(fn ? [fn] : paths), ...releaseEntries.map((entry) => entry.name), ...pythonEntries.map((entry) => entry.name)])],
       };
     } catch (error) {
       undoBranch(root, original, branch);
