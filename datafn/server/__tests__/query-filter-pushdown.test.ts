@@ -468,8 +468,6 @@ describe("$any / $none relation filter push-down", () => {
       { resource: "node", filters: { collections: { $any: { label: "Home" } } } },
       { resource: "node", filters: { collections: { $any: { label: { $in: ["Home", "Work"] } } } } },
       { resource: "node", filters: { collections: { $none: { id: "collection:work" } } } },
-      // `$ne` keeps in-memory null semantics (the unnamed collection matches).
-      { resource: "node", filters: { collections: { $any: { label: { $ne: "Work" } } } } },
       { resource: "node", filters: { metaType: { $is_empty: true }, label: { $ne: "Alpha" } } },
       { resource: "node", filters: { metaType: { $is_empty: true }, label: { $ne: null } } },
       { resource: "objective", filters: { collections: { $any: { id: "collection:work" } } } },
@@ -481,7 +479,8 @@ describe("$any / $none relation filter push-down", () => {
       { resource: "objective", filters: { tasks: { $none: { objectiveId: { $in: ["objective:goal"] } } } } },
       // many-one forward (fk on the primary).
       { resource: "task", filters: { objective: { $any: { label: "Goal" } } } },
-      { resource: "task", filters: { objective: { $any: { label: { $ne: "nothing" } } } } },
+      // A number `$ne` keeps in-memory null semantics (null sortOrder matches).
+      { resource: "node", filters: { childNodes: { $any: { sortOrder: { $ne: 3 } } } } },
       // many-one inverse (fk on the related records).
       { resource: "objective", filters: { tasks: { $any: { label: "Two" } } } },
       { resource: "objective", filters: { tasks: { $none: { label: "Two" } } } },
@@ -499,6 +498,32 @@ describe("$any / $none relation filter push-down", () => {
     ];
     for (const body of cases) {
       await expectParity({ ...body, sort: ["id:asc"], count: true });
+    }
+  });
+
+  it("keeps strict string equality when the database compares strings case-insensitively", async () => {
+    // String inequality in a sub-filter stays in memory: such a database
+    // would leave out rows that differ only in case.
+    expect(classifyQuery({ resource: "task", filters: { objective: { $any: { label: { $ne: "goal" } } } } }, SCHEMA)).toBe("IN_MEMORY");
+    const { db, server } = await createServer();
+    const original = db.findMany.bind(db);
+    // The related read behaves like a case-insensitive collation.
+    vi.spyOn(db as Adapter, "findMany").mockImplementation(async (params: any) => {
+      const where = params.where as Json[] | undefined;
+      const label = where?.find((c) => c.field === "label" && c.operator === "eq");
+      if (params.model !== "task" || !label) return original(params);
+      const rest = where!.filter((c) => c !== label);
+      const rows = (await original({ ...params, where: rest, limit: undefined })) as Json[];
+      return rows.filter((row) => String(row.label).toLowerCase() === String(label.value).toLowerCase());
+    });
+    for (const [filters, expected] of [
+      [{ tasks: { $any: { label: "two" } } }, []],
+      [{ tasks: { $any: { label: "Two" } } }, ["objective:other"]],
+      [{ tasks: { $none: { label: "two" } } }, ["objective:goal", "objective:other"]],
+    ] as const) {
+      const res = await query(server, { resource: "objective", filters, select: ["id"], sort: ["id:asc"] });
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      expect(ids(res.body.result), JSON.stringify(filters)).toEqual(expected);
     }
   });
 

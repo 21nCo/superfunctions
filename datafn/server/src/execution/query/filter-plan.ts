@@ -25,6 +25,7 @@
 import type { Adapter, WhereClause } from "@superfunctions/db";
 import {
   endpointList,
+  evaluateFilter as coreEvaluateFilter,
   findRelationMatch,
   firstEndpoint,
   getCapabilityFields,
@@ -32,6 +33,7 @@ import {
   relationFkFieldForManyOne,
   relationTargetEndpoint,
   resolveCapabilities,
+  normalizeFilterOps,
   resolveEndpointResource,
   resourceNameFromId,
 } from "@datafn/core";
@@ -73,6 +75,8 @@ type Conjunct =
       match: RelationMatch;
       /** Compiled sub-filter per related resource. */
       targets: Map<string, Conjunct[]>;
+      /** The DFQL sub-filter, re-checked on the related rows read. */
+      subFilter: Record<string, unknown>;
     };
 
 export type FilterPlan =
@@ -266,6 +270,10 @@ function compileFieldFilter(
     }
     if (op === "$ne" || op === "ne") {
       if (unsafeOperand(operand)) return null;
+      // A database whose collation compares strings case-insensitively
+      // would drop rows that differ only in case; the re-check of the rows
+      // read can't bring them back, so string inequality stays in memory.
+      if (semantics === "memory" && typeof operand === "string") return null;
       // In memory, `$ne: v` also matches null and missing values.
       out.push(
         semantics === "adapter"
@@ -336,7 +344,7 @@ function compileRelationFilter(
     if (!compiled || !expandBranches(compiled)) return null;
     targets.set(target, compiled);
   }
-  return { kind: "relation", quantifier, match, targets };
+  return { kind: "relation", quantifier, match, targets, subFilter };
 }
 
 function compileConjuncts(
@@ -528,8 +536,24 @@ async function filterVisibleRows(
  * Related records matching a relation's sub-filter, per related resource,
  * readable by the actor. Null when there are more than MAX_RELATION_FILTER_IDS.
  */
+/**
+ * Whether a related row matches the relation sub-filter with the in-memory
+ * evaluator's semantics. The database read is a superset where its string
+ * comparison is looser than strict equality (e.g. a case-insensitive
+ * collation); this drops the extra rows.
+ */
+function matchesSubFilter(row: Record<string, unknown>, subFilter: Record<string, unknown>): boolean {
+  const normalized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(subFilter)) {
+    // Array shorthand is a value list, as the server evaluator reads it.
+    normalized[key] = Array.isArray(value) ? { $in: value } : value;
+  }
+  return coreEvaluateFilter(row, normalizeFilterOps(normalized));
+}
+
 async function findMatchingRelated(
   targets: Map<string, Conjunct[]>,
+  subFilter: Record<string, unknown>,
   schema: DatafnSchema,
   ctx: FilterPlanContext,
   extra: WhereClause[] = [],
@@ -548,7 +572,11 @@ async function findMatchingRelated(
         limit: MAX_RELATION_FILTER_IDS + 1,
         namespace: ctx.namespace,
       });
-      for (const row of found) rows.push(row);
+      // A capped read may have left matching rows out.
+      if (found.length > MAX_RELATION_FILTER_IDS) return null;
+      for (const row of found) {
+        if (matchesSubFilter(row, subFilter)) rows.push(row);
+      }
       if (total + rows.length > MAX_RELATION_FILTER_IDS) return null;
     }
     const visible = checkVisibility ? await filterVisibleRows(rows, resource, schema, ctx) : rows;
@@ -588,7 +616,7 @@ async function resolveRelationConjunct(
   schema: DatafnSchema,
   ctx: FilterPlanContext,
 ): Promise<WhereClause | null | "empty" | "unavailable"> {
-  const { match, quantifier, targets } = conjunct;
+  const { match, quantifier, targets, subFilter } = conjunct;
   const relation = match.relation as any;
   const targetEndpoint = relationTargetEndpoint(match.relation, match.direction);
 
@@ -604,7 +632,7 @@ async function resolveRelationConjunct(
     const fk = relationForeignKey(match);
     if (foreignKeyOnPrimary(match)) {
       // `$any` only (compile rejects `$none` here): fk IN matching related ids.
-      const matching = await findMatchingRelated(targets, schema, ctx);
+      const matching = await findMatchingRelated(targets, subFilter, schema, ctx);
       if (!matching) return "unavailable";
       const ids = new Set<unknown>();
       for (const [resource, rows] of matching) {
@@ -616,7 +644,7 @@ async function resolveRelationConjunct(
       return { field: fk, operator: "in", value: [...ids] };
     }
     // Foreign key on the related records: primary ids are their fk values.
-    const matching = await findMatchingRelated(targets, schema, ctx, [
+    const matching = await findMatchingRelated(targets, subFilter, schema, ctx, [
       { field: fk, operator: "ne", value: null },
     ]);
     if (!matching) return "unavailable";
@@ -631,7 +659,7 @@ async function resolveRelationConjunct(
 
   // many-many: read the join rows that point at matching related records,
   // then check visibility only for related records that are linked.
-  const matching = await findMatchingRelated(targets, schema, ctx, [], false);
+  const matching = await findMatchingRelated(targets, subFilter, schema, ctx, [], false);
   if (!matching) return "unavailable";
   const isForward = match.direction === "forward";
   const relatedIds = new Set<unknown>();

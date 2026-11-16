@@ -450,13 +450,13 @@ export function describeDrizzleSqliteConformance(
           filters: { tasks: { $any: { priority: 3 } } },
           sort: ["id:asc"],
         }))).toEqual(["tag:x", "tag:y"]);
-        // `$ne` matches NULL as the in-memory evaluator does (task:c has no project).
-        expect(ids(await expectParity({
+        // A number `$ne` sub-filter is pushed down with the evaluator's semantics.
+        await expectParity({
           resource: "tag",
           select: ["id", "label"],
-          filters: { tasks: { $any: { projectId: { $ne: "project:p1" } } } },
+          filters: { tasks: { $any: { priority: { $ne: 3 } } } },
           sort: ["id:asc"],
-        }))).toEqual(["tag:x", "tag:y"]);
+        });
         expect(ids(await expectParity({
           resource: "task",
           filters: { projectId: { $is_empty: false }, title: { $ne: "Alpha" } },
@@ -464,7 +464,11 @@ export function describeDrizzleSqliteConformance(
         }))).toEqual(["task:d"]);
         // `$in` with null in a relation sub-filter is evaluated in memory,
         // where it matches NULL.
+        // A string `$ne` sub-filter is evaluated in memory too (a database
+        // collation could compare strings case-insensitively); it matches
+        // NULL (task:c has no project).
         for (const [filters, expected] of [
+          [{ tasks: { $any: { projectId: { $ne: "project:p1" } } } }, ["tag:x", "tag:y"]],
           [{ tasks: { $any: { projectId: { $in: [null, "project:p2"] } } } }, ["tag:x", "tag:y"]],
           [{ tasks: { $none: { projectId: [null] } } }, ["tag:x"]],
         ] as const) {
