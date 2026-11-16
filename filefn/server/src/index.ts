@@ -127,6 +127,12 @@ export interface FileFn extends FileProvider {
    * (for example a Workers cron trigger); FileFn does not run it on its own.
    */
   cleanupExpiredSessions(): ReturnType<UploadSessionService['cleanupExpiredSessions']>;
+  /**
+   * Deletes artifact objects left recorded for versions that no longer exist,
+   * such as a client upload that finished after its file was deleted. Call it
+   * from a scheduled job; FileFn does not run it on its own.
+   */
+  cleanupOrphanedArtifacts(): ReturnType<ProcessingService['cleanupOrphanedArtifacts']>;
 }
 
 function hasConfiguredRouteRateLimits(limits?: FileFnRouteRateLimits): boolean {
@@ -428,6 +434,10 @@ export function createFileFn(config: FileFnConfig): FileFn {
 
     cleanupExpiredSessions() {
       return uploadService.cleanupExpiredSessions();
+    },
+
+    cleanupOrphanedArtifacts() {
+      return processingService.cleanupOrphanedArtifacts();
     },
 
     // FileProvider implementation

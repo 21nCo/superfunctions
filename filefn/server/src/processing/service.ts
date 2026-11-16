@@ -895,8 +895,17 @@ export function createProcessingService(config: ProcessingServiceConfig) {
    * rewritten, but only to that same object, which replacement never deletes
    * (see `discardDisplacedObject`), so the object a writer discards is still
    * the one it replaced.
+   *
+   * A count of zero is not taken as a lost race: some adapters report none
+   * for a committed update (the Kysely adapter of `@superfunctions/db` 0.2.0
+   * always reports 0, as does Drizzle on postgres-js), so the row read back
+   * decides. It was written when it names the new object; a row naming the
+   * same server key through another writer holds that same object.
    */
-  async function replaceIfUnchanged(row: FileArtifactRecord, fields: Record<string, unknown>): Promise<boolean> {
+  async function replaceIfUnchanged(
+    row: FileArtifactRecord,
+    fields: Record<string, unknown> & { storageKey: string },
+  ): Promise<boolean> {
     const updated = await db.updateMany({
       model: 'fileArtifacts',
       where: [
@@ -906,7 +915,8 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       data: fields,
       namespace,
     });
-    return updated > 0;
+    if (updated > 0) return true;
+    return (await findArtifactRow(row.artifactId))?.storageKey === fields.storageKey;
   }
 
   /**
@@ -1003,12 +1013,17 @@ export function createProcessingService(config: ProcessingServiceConfig) {
    * recorded until version or file cleanup, whose reference scan keeps it
    * while another row still names it. Never throws, so a caller's own error
    * is the one it reports; an object it could not record is not deleted.
+   *
+   * The record is written again first, even when the caller wrote it: a
+   * concurrent `deleteFile` removes every row of the file, this record too,
+   * so only a record written after that is still there when this delete
+   * fails, for `cleanupOrphanedArtifacts` to find.
    */
-  async function discardDisplacedObject(object: DisplacedObject, fallbackTarget: string, recordId?: string): Promise<void> {
+  async function discardDisplacedObject(object: DisplacedObject, fallbackTarget: string, purpose?: 'intent'): Promise<void> {
     if (artifactSourceOf(object) !== 'client') return;
     const target = recordedStorageTarget(object as FileArtifactRecord) ?? fallbackTarget;
     try {
-      const id = recordId ?? await journalDisplaced(object, fallbackTarget);
+      const id = await journalDisplaced(object, fallbackTarget, purpose);
       await storage.deleteObject({ key: object.storageKey, target });
       await removeDisplacedRecord(id);
     } catch (error) {
@@ -1030,20 +1045,16 @@ export function createProcessingService(config: ProcessingServiceConfig) {
    * the row turns out to name it (a write that committed and still failed).
    * When the row cannot be read the object stays recorded for cleanup.
    */
-  async function discardUnlessNamed(
-    object: DisplacedObject,
-    artifactId: string,
-    target: string,
-    recordId: string,
-  ): Promise<void> {
+  async function discardUnlessNamed(object: DisplacedObject, artifactId: string, target: string): Promise<void> {
     let row: FileArtifactRecord | null;
     try {
       row = await findArtifactRow(artifactId);
     } catch {
+      await journalDisplaced(object, target, 'intent').catch(() => undefined);
       return;
     }
     if (row?.storageKey === object.storageKey) return;
-    await discardDisplacedObject(object, target, recordId);
+    await discardDisplacedObject(object, target, 'intent');
   }
 
   /**
@@ -1120,11 +1131,13 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         }
       }
       const displaces = current.storageKey !== storageKey;
-      const recordId = displaces ? await journalDisplaced(current, target) : undefined;
+      if (displaces) {
+        await journalDisplaced(current, target);
+      }
       if (await replaceIfUnchanged(current, fields)) {
         writes.artifactsRecorded += 1;
         if (displaces) {
-          await discardDisplacedObject(current, target, recordId);
+          await discardDisplacedObject(current, target);
         }
         return;
       }
@@ -1281,10 +1294,16 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     }
     for (const ref of unjournaled) {
       if (!referenced.has(ref)) {
+        const object = parseStorageRef(ref);
         try {
-          await storage.deleteObject(parseStorageRef(ref));
+          await storage.deleteObject(object);
         } catch {
-          // Best effort: the upload may never have completed.
+          // Best effort: the upload may never have completed. Should it have,
+          // a record lets `cleanupOrphanedArtifacts` delete it later.
+          await journalDisplaced(
+            { ...input, storageKey: object.key, metadata: { processing: { storageTarget: object.target } } },
+            object.target,
+          ).catch(() => undefined);
         }
       }
     }
@@ -1725,7 +1744,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
           upload.contentLength,
         );
       } catch (error) {
-        await discardDisplacedObject(ownObject, target, intentId);
+        await discardDisplacedObject(ownObject, target, 'intent');
         throw error;
       }
 
@@ -1738,68 +1757,68 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       const artifactId = artifactIdFor(file.fileId, version.versionId, upload.kind);
       // A client artifact replaces whatever the row holds, but conditionally on
       // the row it read, so the object it discards is the one it replaced.
-      let replaced: { row: FileArtifactRecord; recordId: string } | null = null;
+      let replaced: FileArtifactRecord | null = null;
       let rowId = artifactId;
       try {
+        // A file deleted while the body was stored took this record with it;
+        // the object now exists, so it is recorded again before anything else.
+        await journalDisplaced(ownObject, target, 'intent');
         let current = await findKindRow(file.fileId, version.versionId, upload.kind);
-        for (let attempt = 1; ; attempt += 1) {
-          if (!current) {
-            try {
-              await db.create({
-                model: 'fileArtifacts',
-                data: {
-                  artifactId,
-                  fileId: file.fileId,
-                  versionId: version.versionId,
-                  kind: upload.kind,
-                  ...fields,
-                  createdAt: new Date().toISOString(),
-                },
-                namespace,
-              });
-              break;
-            } catch (error) {
-              // A concurrent upload or processing run created the row first,
-              // or this create committed and still failed. A failed re-read
-              // reports the create's own error.
-              current = await findArtifactRow(artifactId).catch(() => null);
-              if (!current) throw error;
-            }
+        if (!current) {
+          try {
+            await db.create({
+              model: 'fileArtifacts',
+              data: {
+                artifactId,
+                fileId: file.fileId,
+                versionId: version.versionId,
+                kind: upload.kind,
+                ...fields,
+                createdAt: new Date().toISOString(),
+              },
+              namespace,
+            });
+          } catch (error) {
+            // A concurrent upload or processing run created the row first,
+            // or this create committed and still failed. A failed re-read
+            // reports the create's own error.
+            current = await findArtifactRow(artifactId).catch(() => null);
+            if (!current) throw error;
           }
-          rowId = current.artifactId;
-          // The row already names this attempt's object: the write committed.
-          if (current.storageKey === storageKey) break;
+        }
+        rowId = current?.artifactId ?? artifactId;
+        // A row already naming this attempt's object means the write committed.
+        if (current && current.storageKey !== storageKey) {
           // The row's object stays findable by cleanup once the row moves off it.
-          const recordId = await journalDisplaced(current, target);
-          if (await replaceIfUnchanged(current, fields)) {
-            replaced = { row: current, recordId };
-            break;
-          }
-          if (attempt >= MAX_ARTIFACT_WRITE_ATTEMPTS) {
+          await journalDisplaced(current, target);
+          // A replace that is not confirmed is not tried again with this
+          // attempt's key: had it committed, a writer that replaced it since
+          // may have deleted this attempt's object already.
+          if (!(await replaceIfUnchanged(current, fields))) {
             throw errors.artifactWriteConflict(upload.kind);
           }
-          current = await findArtifactRow(rowId);
+          replaced = current;
         }
       } catch (error) {
-        await discardUnlessNamed(ownObject, rowId, target, intentId);
+        await discardUnlessNamed(ownObject, rowId, target);
         throw error;
       }
       if (replaced) {
-        await discardDisplacedObject(replaced.row, target, replaced.recordId);
+        await discardDisplacedObject(replaced, target);
       }
 
       // A delete of the version while the body was stored would leave this
       // row and object behind for a version that no longer exists.
       if (!(await findVersion(file.fileId, version.versionId))) {
         await db.delete({ model: 'fileArtifacts', where: [{ field: 'artifactId', operator: 'eq', value: rowId }], namespace });
-        await discardDisplacedObject(ownObject, target, intentId);
+        await discardDisplacedObject(ownObject, target, 'intent');
         throw errors.notFound('Version');
       }
 
       const recorded = await findArtifactRow(rowId);
       if (!recorded) {
         // Deleted since it was written; the object is no longer named by any row.
-        await discardDisplacedObject(ownObject, target, intentId);
+        await discardDisplacedObject(ownObject, target, 'intent');
         throw errors.notFound('Artifact');
       }
       // The row named this object once; whichever write replaces it records
@@ -1821,6 +1840,57 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         size,
       });
       return recorded;
+    },
+
+    /**
+     * Deletes the objects recorded as displaced (see `DISPLACED_OBJECT_KIND`)
+     * for versions that no longer exist, and then their records: an upload
+     * that finished, or a delete that failed, after its file was deleted. An
+     * object another row still names is kept and only its record goes. A
+     * failed delete keeps its record for the next sweep. Call it from a
+     * scheduled job; FileFn does not run it on its own.
+     */
+    async cleanupOrphanedArtifacts(): Promise<{ deletedObjects: number; keptRecords: number }> {
+      const pageSize = 100;
+      const result = { deletedObjects: 0, keptRecords: 0 };
+      // Records still in place (a live version's, or a failed delete's) are
+      // skipped by the offset; removed ones shift the next page up.
+      let offset = 0;
+      for (;;) {
+        const records = await db.findMany<FileArtifactRecord>({
+          model: 'fileArtifacts',
+          where: [{ field: 'kind', operator: 'eq', value: DISPLACED_OBJECT_KIND }],
+          orderBy: [{ field: 'artifactId', direction: 'asc' }],
+          limit: pageSize,
+          offset,
+          namespace,
+        });
+        for (const record of records) {
+          if (await findVersion(record.fileId, record.versionId)) {
+            offset += 1;
+            continue;
+          }
+          const target = recordedStorageTarget(record) ?? getArtifactStorageTarget({ policy: '' });
+          const ref = storageRef(target, record.storageKey);
+          try {
+            const referenced = await findReferencedStorageRefs({ db, namespace, policies }, new Set([ref]), record);
+            if (!referenced.has(ref)) {
+              await storage.deleteObject({ key: record.storageKey, target });
+              result.deletedObjects += 1;
+            }
+            await removeDisplacedRecord(record.artifactId);
+          } catch (error) {
+            offset += 1;
+            result.keptRecords += 1;
+            logger?.warn('orphaned artifact object not deleted', {
+              fileId: record.fileId,
+              versionId: record.versionId,
+              error: errorMessage(error),
+            });
+          }
+        }
+        if (records.length < pageSize) return result;
+      }
     },
 
     async requireWritableFile(fileId: string, ctx: FileProviderContext): Promise<void> {

@@ -166,10 +166,21 @@ type DatabaseFault = 'throw' | 'commit-then-throw';
 /**
  * Lets a test fail the next create of an artifact row, before or after it
  * commits, or make every artifact row operation fail while `down` is set.
+ * `zeroUpdateCounts` makes `updateMany` commit and report 0 rows, as the
+ * Kysely adapter of `@superfunctions/db` 0.2.0 that FileFn pins does (it
+ * reads the count off the result array); `beforeUpdate` runs once just
+ * before the next artifact `updateMany`.
  */
 function controlledDatabase(database: ReturnType<typeof memoryAdapter>) {
-  const control: { down: boolean; onCreate: ((data: Record<string, unknown>) => DatabaseFault | undefined) | null } = {
+  const control: {
+    down: boolean;
+    zeroUpdateCounts: boolean;
+    beforeUpdate: (() => Promise<void>) | null;
+    onCreate: ((data: Record<string, unknown>) => DatabaseFault | undefined) | null;
+  } = {
     down: false,
+    zeroUpdateCounts: false,
+    beforeUpdate: null,
     onCreate: null,
   };
   const proxy = new Proxy(database, {
@@ -184,6 +195,15 @@ function controlledDatabase(database: ReturnType<typeof memoryAdapter>) {
           if (fault === 'commit-then-throw') {
             await value.call(target, params);
             throw new Error('connection reset after commit');
+          }
+          if (property === 'updateMany') {
+            const before = control.beforeUpdate;
+            control.beforeUpdate = null;
+            await before?.();
+            if (control.zeroUpdateCounts) {
+              await value.call(target, params);
+              return 0;
+            }
           }
         }
         return value.call(target, params);
@@ -297,7 +317,7 @@ async function createApp(options: { processors?: Processor[]; artifactsOnR2?: bo
 
   return {
     fileFn, root, fileId, versionId, owner, uploadPhoto, clientFor, fetchAs, jobs, drainJobs, put, artifacts, artifactBytes,
-    storageControl, bucket, databaseControl, displacedRecords,
+    storageControl, bucket, database, databaseControl, displacedRecords,
   };
 }
 
@@ -960,5 +980,147 @@ describe('client-supplied processing artifacts', () => {
     }).catch((caught) => caught);
     expect(error).toBeInstanceOf(FileFnHttpError);
     expect(error).toMatchObject({ status: 404, code: 'FILEFN_NOT_FOUND' });
+  });
+
+  describe('on a database adapter that reports no updated rows', () => {
+    // The Kysely adapter of @superfunctions/db 0.2.0, which FileFn pins,
+    // commits an update and reports 0 rows (see `controlledDatabase`).
+    async function smallText(app: Awaited<ReturnType<typeof createApp>>) {
+      const client = app.clientFor('owner');
+      const small = (await client.listArtifacts(app.fileId)).find((a) => a.kind === 'thumbnail-small')!;
+      return new TextDecoder().decode(await app.artifactBytes('owner', await client.downloadArtifact(app.fileId, small.artifactId)));
+    }
+
+    it('a forced run rewrites its existing server artifacts', async () => {
+      const app = await createApp({ processors: [thumbnailProcessor([])] });
+      await app.drainJobs();
+      app.databaseControl.zeroUpdateCounts = true;
+      await forceNow(app);
+      await expectServerSmallReadable(app);
+      expect(await app.artifacts()).toHaveLength(2);
+    });
+
+    it('a client upload replaces a server thumbnail and a forced run replaces it back', async () => {
+      const app = await createApp({ processors: [thumbnailProcessor([])] });
+      await app.drainJobs();
+      app.databaseControl.zeroUpdateCounts = true;
+      const attached = await app.clientFor('owner').uploadArtifact({
+        fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', data: bytes('client-small'), mimeType: 'image/png',
+      });
+      expect(attached.source).toBe('client');
+      expect(await smallText(app)).toBe('client-small');
+
+      await forceNow(app);
+      await expectServerSmallReadable(app);
+      expect((await storedObjects(app.root)).some((path) => path.includes('.client-artifacts/'))).toBe(false);
+    });
+
+    it('a forced run whose row a client upload replaced meanwhile still replaces the newer row', async () => {
+      const app = await createApp({ processors: [thumbnailProcessor([])] });
+      await app.drainJobs();
+      app.databaseControl.zeroUpdateCounts = true;
+      await app.fileFn.services.processing.triggerProcessingForFile(app.fileId, app.owner, app.versionId, { force: true });
+      // The forced run read the server row; its upload is held while a client upload replaces that row.
+      const held = app.storageControl.hold((key) => key.endsWith('-thumb-small.jpg'));
+      const forced = app.drainJobs();
+      await held.reached;
+      await app.clientFor('owner').uploadArtifact({
+        fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', data: bytes('client-small'), mimeType: 'image/png',
+      });
+      held.release();
+      expect(await forced).toEqual([expect.objectContaining({ status: 'completed' })]);
+
+      await expectServerSmallReadable(app);
+      expect((await storedObjects(app.root)).some((path) => path.includes('.client-artifacts/'))).toBe(false);
+    });
+
+    it('an upload whose replace another upload overtakes reports a retryable conflict and leaves no object behind', async () => {
+      const app = await createApp({ processors: [thumbnailProcessor([])] });
+      await app.drainJobs();
+      const serverKey = (await app.artifacts()).find((a) => a.kind === 'thumbnail-small')!.storageKey;
+      app.databaseControl.zeroUpdateCounts = true;
+      const upload = { fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', mimeType: 'image/png' };
+      // A second upload replaces the server row between this upload's read and its replace.
+      let overtaking: { storageKey: string } | undefined;
+      app.databaseControl.beforeUpdate = async () => {
+        overtaking = await app.fileFn.services.processing.attachClientArtifact({ ...upload, body: bytes('client-b') }, app.owner);
+      };
+      await expect(app.fileFn.services.processing.attachClientArtifact({ ...upload, body: bytes('client-a') }, app.owner))
+        .rejects.toMatchObject({ code: 'FILEFN_ARTIFACT_WRITE_CONFLICT', details: { retryable: true } });
+
+      expect((await app.artifacts()).find((a) => a.kind === 'thumbnail-small')!.storageKey).toBe(overtaking!.storageKey);
+      expect(await smallText(app)).toBe('client-b');
+      const clientObjects = (await storedObjects(app.root)).filter((path) => path.includes('.client-artifacts/'));
+      expect(clientObjects).toEqual([expect.stringContaining(overtaking!.storageKey)]);
+      // Only the replaced server object stays recorded, for file cleanup.
+      expect((await app.displacedRecords()).map((record) => record.storageKey)).toEqual([serverKey]);
+    });
+  });
+
+  describe('cleanupOrphanedArtifacts', () => {
+    it('deletes an upload that finished after its file was deleted and could not delete its own object', async () => {
+      const app = await createApp();
+      const clientObjects = async () => (await storedObjects(app.root)).filter((path) => path.includes('.client-artifacts/'));
+      const failDeletes = () => app.storageControl.intercept((key) => key.includes('.client-artifacts/'), 'delete', async () => {
+        throw new Error('storage unavailable');
+      });
+      // The upload is held once its intent is recorded, before its body is stored.
+      const held = app.storageControl.hold((key) => key.includes('.client-artifacts/'));
+      const attach = app.fileFn.services.processing.attachClientArtifact({
+        fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', mimeType: 'image/png', body: bytes('client'),
+      }, app.owner);
+      await held.reached;
+      await app.clientFor('owner').deleteFile(app.fileId);
+      const failed = failDeletes();
+      held.release();
+      await expect(attach).rejects.toMatchObject({ code: 'FILEFN_NOT_FOUND' });
+      expect(failed.fired).toBe(true);
+
+      // The object is left, and recorded although deleteFile removed the first record.
+      const [leftover] = await clientObjects();
+      expect(await clientObjects()).toHaveLength(1);
+      const records = await app.displacedRecords();
+      expect(records).toHaveLength(1);
+      expect(leftover.endsWith(records[0].storageKey)).toBe(true);
+
+      // A sweep whose delete fails keeps the record; the next one deletes the object.
+      failDeletes();
+      expect(await app.fileFn.cleanupOrphanedArtifacts()).toEqual({ deletedObjects: 0, keptRecords: 1 });
+      expect(await clientObjects()).toHaveLength(1);
+      expect(await app.fileFn.cleanupOrphanedArtifacts()).toEqual({ deletedObjects: 1, keptRecords: 0 });
+      expect(await clientObjects()).toEqual([]);
+      expect(await app.displacedRecords()).toEqual([]);
+      expect(await app.fileFn.cleanupOrphanedArtifacts()).toEqual({ deletedObjects: 0, keptRecords: 0 });
+    });
+
+    it("leaves a live version's records and an object another row still names", async () => {
+      const app = await createApp({ processors: [thumbnailProcessor([])] });
+      await app.drainJobs();
+      // A client upload replaces the server thumbnail, whose object stays recorded while the version lives.
+      await app.clientFor('owner').uploadArtifact({
+        fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', data: bytes('client-small'), mimeType: 'image/png',
+      });
+      expect(await app.displacedRecords()).toHaveLength(1);
+      expect(await app.fileFn.cleanupOrphanedArtifacts()).toEqual({ deletedObjects: 0, keptRecords: 0 });
+      expect(await app.displacedRecords()).toHaveLength(1);
+
+      // A record of a version gone since, naming the object of a live row.
+      const medium = (await app.database.findOne<{ storageKey: string; metadata: Record<string, any> }>({
+        model: 'fileArtifacts',
+        where: [{ field: 'fileId', operator: 'eq', value: app.fileId }, { field: 'kind', operator: 'eq', value: 'thumbnail-medium' }],
+      }))!;
+      await app.database.create({
+        model: 'fileArtifacts',
+        data: {
+          artifactId: 'dsp_gone', fileId: 'file_gone', versionId: 'ver_gone', kind: 'filefn.displaced-object',
+          storageKey: medium.storageKey, mimeType: 'application/octet-stream', size: 0,
+          metadata: { processing: { source: 'server', storageTarget: medium.metadata.processing.storageTarget } },
+          createdAt: new Date().toISOString(),
+        },
+      });
+      expect(await app.fileFn.cleanupOrphanedArtifacts()).toEqual({ deletedObjects: 0, keptRecords: 0 });
+      expect((await app.displacedRecords()).map((record) => record.storageKey)).not.toContain(medium.storageKey);
+      expect((await storedObjects(app.root)).some((path) => path.endsWith(medium.storageKey))).toBe(true);
+    });
   });
 });
