@@ -1,0 +1,29 @@
+datafn/server/src/execution/query/temporal-pushdown.ts
+  s_f058f999ab46b7::t_a90bf16513231d 1-209
+datafn/server/__tests__/temporal-pushdown.test.ts
+  s_f058f999ab46b7::t_59edaadc78c587 1-403
+datafn/server/__tests__/drizzle-sqlite/suite.ts
+  s_f058f999ab46b7::t_817fe940cc0106 14-16,204-346
+datafn/server/src/execution/query/execute.ts
+  s_f058f999ab46b7::t_93ffa8f93ab0e8 24,28-32,38,40
+datafn/server/src/routes/query.ts
+  s_f058f999ab46b7::t_2d3d2baeae28c8 496-497
+datafn/server/src/routes/query/execute.ts
+  s_f058f999ab46b7::t_4a220696994ffd 21,238,254-258,382
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "905f8c37d1ed38ab3d99eeb3a5e4ce28f0011abe",
+  "prompts": {},
+  "sessions": {
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
