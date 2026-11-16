@@ -42,10 +42,10 @@ export function readReleaseEntries(root, repo) {
     }
     if (!Array.isArray(data)) throw new OwnersError("malformed-manifest", `${file}: expected an array`, { file });
     for (const [index, entry] of data.entries()) {
-      if (typeof entry?.slug !== "string" || entry.slug === "" || typeof entry.path !== "string" || entry.path === "") {
-        throw new OwnersError("malformed-manifest", `${file}: entry ${index} needs a non-empty slug and path`, { file, index });
+      if (!["slug", "path", "name"].every((field) => typeof entry?.[field] === "string" && entry[field] !== "")) {
+        throw new OwnersError("malformed-manifest", `${file}: entry ${index} needs a non-empty slug, path and name`, { file, index });
       }
-      entries.push({ slug: entry.slug, path: entry.path, source: file });
+      entries.push({ slug: entry.slug, path: entry.path, name: entry.name, source: file });
     }
   }
   return entries;
@@ -427,40 +427,59 @@ function duplicateSources(first, source) {
 }
 
 /**
- * Release entries: each slug has exactly one entry, in the release file of the repository that publishes it
- * (release-packages.json for public, release-packages.next.json for next), and is listed in the manifests with a
- * path its publisher owns. Listed slugs without an entry are stale.
+ * Records the entry's slug and npm name, or returns the error when another entry already has either: one
+ * published package has exactly one release entry (scripts/resolve-release-tag.mjs also requires unique names).
  */
-function findReleaseErrors({ owners, repo, releases, listed }, errors) {
-  const listedIn = repo === "next" && owners.nextManifest ? `${PUBLIC_MANIFEST} or ${NEXT_MANIFEST}` : PUBLIC_MANIFEST;
-  const sources = new Map();
-  for (const entry of releases) {
-    const slug = JSON.stringify(entry.slug);
-    const first = sources.get(entry.slug);
-    if (first === undefined) sources.set(entry.slug, entry.source);
-    else errors.push(`${entry.path}: release ${slug} is listed ${duplicateSources(first, entry.source)}; a release has exactly one entry`);
-    const owner = tryOwner(() => owners.ownerOfRelease(entry.slug, { repo }));
-    if (owner === null) {
-      errors.push(`${entry.path}: release ${slug} from ${entry.source} is not listed in the releases of ${listedIn}`);
-    } else if (entry.source !== RELEASE_FILES[owner]) {
-      errors.push(`${entry.path}: release ${slug} is ${owner}-published but listed in ${entry.source}; it belongs in ${RELEASE_FILES[owner]}`);
-    }
-    const label = `release ${slug} from ${entry.source}`;
-    const pathOwner = ownerOfEntryPath(owners, repo, entry.path, label, errors);
-    if (owner !== null && pathOwner !== null && pathOwner !== owner) {
-      errors.push(`${entry.path}: release ${slug} is ${owner}-published but its path is ${pathOwner}-owned`);
-    }
+function duplicateEntryError(entry, bySlug, byName) {
+  const slug = JSON.stringify(entry.slug);
+  const sameSlug = bySlug.get(entry.slug);
+  if (sameSlug) return `${entry.path}: release ${slug} is listed ${duplicateSources(sameSlug.source, entry.source)}; a release has exactly one entry`;
+  bySlug.set(entry.slug, entry);
+  const sameName = byName.get(entry.name);
+  if (!sameName) {
+    byName.set(entry.name, entry);
+    return null;
   }
-  if (listed) {
-    for (const slug of listed.releases.keys()) {
-      if (!sources.has(slug)) errors.push(`${listed.file}: release ${JSON.stringify(slug)} has no entry in the release files`);
-    }
+  const other = `release ${JSON.stringify(sameName.slug)} from ${sameName.source}`;
+  return `${entry.path}: release ${slug} from ${entry.source} has npm name ${JSON.stringify(entry.name)}, which ${other} also has; a package has exactly one release entry`;
+}
+
+/** Errors for one release entry's publisher: listed in the manifests, in its publisher's file, under a path it owns. */
+function releaseOwnerErrors({ owners, repo, listedIn }, entry, errors) {
+  const slug = JSON.stringify(entry.slug);
+  const owner = tryOwner(() => owners.ownerOfRelease(entry.slug, { repo }));
+  if (owner === null) {
+    errors.push(`${entry.path}: release ${slug} from ${entry.source} is not listed in the releases of ${listedIn}`);
+  } else if (entry.source !== RELEASE_FILES[owner]) {
+    errors.push(`${entry.path}: release ${slug} is ${owner}-published but listed in ${entry.source}; it belongs in ${RELEASE_FILES[owner]}`);
+  }
+  const pathOwner = ownerOfEntryPath(owners, repo, entry.path, `release ${slug} from ${entry.source}`, errors);
+  if (owner !== null && pathOwner !== null && pathOwner !== owner) {
+    errors.push(`${entry.path}: release ${slug} is ${owner}-published but its path is ${pathOwner}-owned`);
   }
 }
 
 /**
+ * Release entries: each slug and each npm name has exactly one entry, in the release file of the repository that
+ * publishes it (release-packages.json for public, release-packages.next.json for next), and is listed in the
+ * manifests with a path its publisher owns. Listed slugs without an entry are stale.
+ */
+function findReleaseErrors({ owners, repo, releases, listed }, errors) {
+  const listedIn = repo === "next" && owners.nextManifest ? `${PUBLIC_MANIFEST} or ${NEXT_MANIFEST}` : PUBLIC_MANIFEST;
+  const bySlug = new Map();
+  const byName = new Map();
+  for (const entry of releases) {
+    const duplicate = duplicateEntryError(entry, bySlug, byName);
+    if (duplicate) errors.push(duplicate);
+    releaseOwnerErrors({ owners, repo, listedIn }, entry, errors);
+  }
+  const stale = listed ? [...listed.releases.keys()].filter((slug) => !bySlug.has(slug)) : [];
+  for (const slug of stale) errors.push(`${listed.file}: release ${JSON.stringify(slug)} has no entry in the release files`);
+}
+
+/**
  * Compares the manifests with a tree. Returns one message per disagreement, each naming the path or entry.
- * @param {{ owners: ReturnType<typeof loadOwners>, repo: "public" | "next", files: string[], releases: {slug: string, path: string, source: string}[], python: {name: string, file: string}[] }} input
+ * @param {{ owners: ReturnType<typeof loadOwners>, repo: "public" | "next", files: string[], releases: {slug: string, path: string, name: string, source: string}[], python: {name: string, file: string}[] }} input
  */
 export function findOwnershipErrors({ owners, repo, files, releases, python }) {
   const errors = [];
