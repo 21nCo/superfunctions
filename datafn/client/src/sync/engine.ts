@@ -16,7 +16,7 @@ import type { DatafnStorageAdapter } from "../storage.js";
 import type { DatafnRemoteAdapter, DatafnSyncConfig } from "../client.js";
 import type { EventBus } from "../events/bus.js";
 import type { DatafnFieldSchema, DatafnSchema, DatafnPlugin, SearchProvider } from "@datafn/core";
-import { enumerateJoinStoreKeys, getJoinStoreKey } from "@datafn/core";
+import { enumerateJoinStoreKeys, getJoinStoreKey, getRelationKeyName } from "@datafn/core";
 import {
   applyCloneResult,
   applyPullResult,
@@ -412,6 +412,8 @@ export class SyncEngine {
   private cloningTables = new Map<string, number>();
   /** A pull skipped cloning tables; pull again once no clone is running. */
   private pullAfterClone = false;
+  /** Clone passes started per table, so a pull can tell one began and ended meanwhile. */
+  private cloneStarts = new Map<string, number>();
   private pullAfterReconnect = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private pushBatchSize = 100;
@@ -915,6 +917,7 @@ export class SyncEngine {
   private async cloneResources(tables: string[]) {
     for (const table of tables) {
       this.cloningTables.set(table, (this.cloningTables.get(table) ?? 0) + 1);
+      this.cloneStarts.set(table, (this.cloneStarts.get(table) ?? 0) + 1);
     }
     try {
       await this.runCloneResources(tables);
@@ -934,10 +937,12 @@ export class SyncEngine {
   }
 
   /**
-   * Sync keys (tables and join stores) that pulls leave to a running clone.
+   * Sync keys (tables and join stores) that pulls leave to a clone: the
+   * given tables (by default those a clone is writing now) and the join
+   * stores that touch them, keyed as buildPullCursors keys them.
    */
-  private cloningSyncKeys(): Set<string> {
-    const keys = new Set<string>(this.cloningTables.keys());
+  private cloningSyncKeys(tables: ReadonlySet<string> = new Set(this.cloningTables.keys())): Set<string> {
+    const keys = new Set<string>(tables);
     if (keys.size === 0) return keys;
     for (const relation of this.schema.relations ?? []) {
       if (relation.type !== "many-many") continue;
@@ -945,8 +950,8 @@ export class SyncEngine {
       const tos = Array.isArray(relation.to) ? relation.to : [relation.to];
       for (const from of froms as string[]) {
         for (const to of tos as string[]) {
-          if (this.cloningTables.has(from) || this.cloningTables.has(to)) {
-            keys.add(getJoinStoreKey(from, relation.relation!, to));
+          if (tables.has(from) || tables.has(to)) {
+            keys.add(getJoinStoreKey(from, getRelationKeyName(relation, to), to));
           }
         }
       }
@@ -1507,6 +1512,7 @@ export class SyncEngine {
         // Set before the request: the clone may end while it is out, and its
         // completion only schedules the catch-up pull if this is already set.
         if (leftToClone) this.pullAfterClone = true;
+        const clonesStartedBefore = new Map(this.cloneStarts);
         const iterPayload = { ...(transformedPayload as object), cursors: requestCursors };
         const response: any = await this.remote.pull(iterPayload);
 
@@ -1516,8 +1522,13 @@ export class SyncEngine {
             this.e2ee,
             response.result,
           );
-          // Recomputed: a clone may have started while the request was out.
-          const keysAtApply = this.cloningSyncKeys();
+          // Recomputed: a clone may have started (and even ended) while the
+          // request was out; its rows are newer than this response's.
+          const clonedMeanwhile = new Set(this.cloningTables.keys());
+          for (const [table, starts] of this.cloneStarts) {
+            if (starts !== (clonesStartedBefore.get(table) ?? 0)) clonedMeanwhile.add(table);
+          }
+          const keysAtApply = this.cloningSyncKeys(clonedMeanwhile);
           if (keysAtApply.size > 0) leftToClone = true;
           if (leftToClone) {
             // The actor feed cursor stays where it was: the server derives

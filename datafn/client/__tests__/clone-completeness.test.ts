@@ -422,6 +422,80 @@ describe("pulls racing the end of a clone", () => {
   });
 });
 
+describe("pulls and clones that overlap", () => {
+  it("drops a pull's rows for a table cloned while the pull was out", async () => {
+    const storage = new MemoryStorageAdapter();
+    const pullPayloads: Array<Record<string, string>> = [];
+    let engineRef: SyncEngine | undefined;
+    const { engine, remote } = createEngine(storage, async () => pageResponse(null, 10, "9"));
+    engineRef = engine;
+    remote.pull.mockImplementation(async (payload: any) => {
+      pullPayloads.push({ ...payload.cursors });
+      if (pullPayloads.length === 1) {
+        // A whole clone starts and ends while this response is in flight.
+        await engineRef!.cloneNow();
+        return {
+          ok: true,
+          result: {
+            ok: true,
+            records: { notes: [{ id: "n1", title: "stale" }] },
+            deleted: { notes: [] },
+            cursors: { notes: "3" },
+          },
+        };
+      }
+      return { ok: true, result: { ok: true, records: {}, deleted: {}, cursors: {} } };
+    });
+
+    await engine.pullNow();
+    await vi.waitFor(() => expect(pullPayloads).toHaveLength(2));
+
+    expect((await storage.getRecord("notes", "n1"))?.title).toBe("n1");
+    expect(pullPayloads[1].notes).toBe("9");
+  });
+
+  it("leaves join stores of a cloning table out, keyed as pull cursors are", async () => {
+    const joinSchema: DatafnSchema = {
+      resources: [
+        { name: "notes", version: 1, fields: [{ name: "title", type: "string", required: false }] },
+        { name: "tags", version: 1, fields: [{ name: "name", type: "string", required: false }] },
+      ],
+      // No `relation` name: the store key falls back to `inverse`.
+      relations: [{ from: "notes", to: "tags", type: "many-many", inverse: "notes" } as any],
+    };
+    const storage = new MemoryStorageAdapter();
+    const pullPayloads: Array<Record<string, string>> = [];
+    let engineRef: SyncEngine | undefined;
+    const remote = {
+      clone: vi.fn(async (payload: ClonePayload) => {
+        if (payload.page?.afterId === "n2") await engineRef!.pullNow();
+        const page = pageResponse(payload.page!.afterId, payload.page!.limit);
+        return { ...page, result: { ...page.result, cursors: { notes: "10" } } };
+      }),
+      pull: vi.fn(async (payload: any) => {
+        pullPayloads.push({ ...payload.cursors });
+        return { ok: true, result: { ok: true, records: {}, deleted: {}, cursors: {} } };
+      }),
+      query: vi.fn(), mutation: vi.fn(), transact: vi.fn(), seed: vi.fn(), push: vi.fn(), reconcile: vi.fn(),
+    };
+    const engine = new SyncEngine(
+      storage,
+      remote as any,
+      new EventBus(),
+      "client-1",
+      joinSchema,
+      { hydration: { bootResources: ["notes"], clonePageSize: 2 } },
+      [],
+    );
+    engineRef = engine;
+
+    await engine.cloneNow();
+
+    expect(pullPayloads[0]).not.toHaveProperty("join_notes_notes_tags");
+    expect(pullPayloads[0]).not.toHaveProperty("notes");
+  });
+});
+
 describe("start() superseded by stop()", () => {
   it("does not clear the state of a newer start() when its initial sync fails", async () => {
     const storage = new MemoryStorageAdapter();
