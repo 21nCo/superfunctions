@@ -41,6 +41,11 @@ export interface SlotObservation {
   harnessVersion?: string;
   /** The model the provider actually served. */
   model?: string;
+  /**
+   * The harness compared the raw reported model with the configured one and they differ. It voids the run even when
+   * `model`, as redacted and cut to length, reads the same as the configured model.
+   */
+  modelMismatch?: boolean;
   /** Provider account identity; only its fingerprint is recorded. */
   accountIdentity?: string;
   /** Tools the harness used that its tool policy forbids. */
@@ -501,7 +506,7 @@ export class PanelCoordinator {
       const limitations = [...new Set([...profileLimitations(slotProfile(slot, request.panelPolicy)), ...(extra.limitations ?? [])])];
       const voidReasons = [...(extra.voidReasons ?? [])];
       const allReasons = [...reasons];
-      if (slot.inference.model !== "configured" && identity.model !== slot.inference.model && !voidReasons.includes("model_mismatch")) {
+      if (slot.inference.model !== "configured" && (identity.model !== slot.inference.model || identity.modelMismatch === true) && !voidReasons.includes("model_mismatch")) {
         voidReasons.unshift("model_mismatch");
         allReasons.push(`Preflight resolved model ${identity.model}, not the configured ${slot.inference.model}.`);
       }
@@ -610,10 +615,16 @@ export class PanelCoordinator {
         ...baseIdentity,
         ...(nonblank(observed.harnessVersion) ? { harnessVersion: redactText(observed.harnessVersion, context.secrets) } : {}),
         ...(baseIdentity.modelVerified !== false && nonblank(observed.model) ? { model: redactText(observed.model, context.secrets) } : {}),
+        // The harness's raw comparison is kept with the identity: redaction or truncation can make the recorded model read
+        // as the configured one, and the mismatch must still void the run and survive in the report.
+        ...(baseIdentity.modelVerified !== false && slot.inference.model !== "configured" && observed.modelMismatch === true ? { modelMismatch: true as const } : {}),
       };
       if (!identity.credentialFingerprint && nonblank(observed.accountIdentity)) identity.credentialFingerprint = credentialFingerprint(observed.accountIdentity);
       const voidReasons: SlotVoidReason[] = [];
-      if (slot.inference.model !== "configured" && identity.model !== slot.inference.model) { voidReasons.push("model_mismatch"); reasons.push(`The harness served model ${identity.model}, not the configured ${slot.inference.model}.`); }
+      if (slot.inference.model !== "configured" && (identity.model !== slot.inference.model || identity.modelMismatch === true)) {
+        voidReasons.push("model_mismatch");
+        reasons.push(identity.model === slot.inference.model ? `The harness reported a model other than the configured ${slot.inference.model}.` : `The harness served model ${identity.model}, not the configured ${slot.inference.model}.`);
+      }
       if (!check.unchanged && !check.incomplete) { voidReasons.push("workspace_mutated"); reasons.push(check.reason ?? "The slot changed its checkout."); }
       const disallowed = Array.isArray(observed.disallowedTools) ? observed.disallowedTools.filter(nonblank).map(tool => redactText(tool, context.secrets)) : [];
       if (disallowed.length) { voidReasons.push("disallowed_tool_use"); reasons.push(`The harness used disallowed tools: ${disallowed.join(", ")}.`); }

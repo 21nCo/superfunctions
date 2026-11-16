@@ -93,6 +93,12 @@ export interface SlotIdentity {
    * profile never count as distinct.
    */
   modelVerified?: false;
+  /**
+   * `true` when the harness found, comparing raw values, that the served model differs from the configured one, even
+   * though `model` (redacted and cut to length) reads the same. The run is then void with `model_mismatch`. Never set on
+   * an unverified model or with the configured model `configured`.
+   */
+  modelMismatch?: true;
 }
 
 /**

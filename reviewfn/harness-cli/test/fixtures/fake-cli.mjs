@@ -1,9 +1,9 @@
 // A stand-in agent CLI. It echoes what it received, writes its answer to a file or stdout, and misbehaves on command.
 // Usage: fake-cli.mjs --state <dir> [--answer valid|invalid|invalid-once|not-json] [--prompt <file>] [--out <file>]
 //   [--model-json <model>] [--model-stderr <model>] [--exit <code>] [--stderr <text>] [--hang 1] [--flood 1]
-//   [--enforce-schema <file>] [--version] [any other --flag value]
+//   [--enforce-schema <file>] [--extra-json <object>] [--version] [any other --flag value]
 // --enforce-schema drops every top-level property the schema file does not declare, as a schema-enforcing CLI would.
-// --flood keeps appending to the output file, printing nothing on stdout.
+// --flood keeps appending to the output file, printing nothing on stdout. --extra-json merges an object into a valid answer.
 import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -35,7 +35,7 @@ if (options.flood !== undefined) {
   const valid = { findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] };
   const kind = options.answer ?? "valid";
   const invalid = kind === "invalid" || (kind === "invalid-once" && attempt === 1);
-  let object = invalid ? { findings: "none" } : { ...valid, ...(options["model-json"] ? { model: options["model-json"] } : {}) };
+  let object = invalid ? { findings: "none" } : { ...valid, ...(options["model-json"] ? { model: options["model-json"] } : {}), ...JSON.parse(options["extra-json"] ?? "{}") };
   if (options["enforce-schema"] !== undefined) {
     const declared = JSON.parse(readFileSync(options["enforce-schema"], "utf8")).properties ?? {};
     object = Object.fromEntries(Object.entries(object).filter(([key]) => Object.hasOwn(declared, key)));

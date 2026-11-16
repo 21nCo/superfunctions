@@ -162,7 +162,7 @@ const panelPolicy = object({
 }, defs.panelPolicy.required);
 const slotIdentity = object({
   harnessAdapter: nonblank, harnessVersion: nonblank, provider: nonblank, model: nonblank, auth: nonblank, credentialFingerprint: string(PANEL_CREDENTIAL_FINGERPRINT_PATTERN),
-  harnessExecutable: nonblank, harnessProfile: profileName, modelVerified: constant(false),
+  harnessExecutable: nonblank, harnessProfile: profileName, modelVerified: constant(false), modelMismatch: constant(true),
 }, defs.slotIdentity.required);
 const slotRun = object({
   slotId, identity: slotIdentity, terminal: oneOf(defs.slotRun.properties.terminal.enum),
@@ -297,10 +297,11 @@ export function validatePanelPolicy(value: unknown): PanelValidationResult<Panel
   for (const { index, key } of duplicates(policy.slots, slot => slot.id)) add(issues, "REVIEWFN_PANEL_SLOT_DUPLICATE", `/slots/${index}/id`, `Slot ${key} is declared more than once.`);
   if (policy.requirementsSlot !== null && !policy.slots.some(slot => slot.id === policy.requirementsSlot && slot.stage !== "verifier")) add(issues, "REVIEWFN_PANEL_SLOT_UNKNOWN", "/requirementsSlot", `requirementsSlot ${policy.requirementsSlot} names no stage-1 or stage-2 slot.`);
   const profiles = policy.profiles ?? {};
-  for (const [name, profile] of Object.entries(profiles)) issues.push(...harnessProfileIssues(profile, pointer("/profiles", name)));
+  // An entry set to undefined declares no profile: it is skipped like an absent one, never dereferenced.
+  for (const [name, profile] of Object.entries(profiles)) if (profile !== undefined) issues.push(...harnessProfileIssues(profile, pointer("/profiles", name)));
   policy.slots.forEach((slot, index) => {
     const { executable, profile } = slot.harness;
-    if (profile !== undefined && !Object.hasOwn(profiles, profile)) add(issues, "REVIEWFN_PANEL_SCHEMA", `/slots/${index}/harness/profile`, `Slot ${slot.id} names profile ${profile}, which the policy's profiles do not declare.`);
+    if (profile !== undefined && (!Object.hasOwn(profiles, profile) || profiles[profile] === undefined)) add(issues, "REVIEWFN_PANEL_SCHEMA", `/slots/${index}/harness/profile`, `Slot ${slot.id} names profile ${profile}, which the policy's profiles do not declare.`);
     if (profile !== undefined && executable === undefined) add(issues, "REVIEWFN_PANEL_SCHEMA", `/slots/${index}/harness`, `Slot ${slot.id} names a profile without an executable.`);
     if ((profile !== undefined || executable !== undefined) && slot.harness.adapter !== PROFILE_HARNESS_ADAPTER) add(issues, "REVIEWFN_PANEL_SCHEMA", `/slots/${index}/harness`, `Slot ${slot.id} uses harness ${slot.harness.adapter}, which takes no profile or executable; only the ${PROFILE_HARNESS_ADAPTER} harness is profile-driven.`);
     if (profile === undefined && executable !== undefined) add(issues, "REVIEWFN_PANEL_SCHEMA", `/slots/${index}/harness/executable`, `Slot ${slot.id} names an executable without a profile; only a profile-driven harness takes one from the slot.`);
@@ -463,11 +464,13 @@ function slotRunIssues(report: PanelReport, slots: Map<string, PanelSlot>, issue
     }
     // A harness reporting another version than the slot pins is recorded truthfully, but its run never counts or collapses.
     if (identity.harnessVersion !== slot.harness.version && COUNTING.has(run.terminal)) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/identity/harnessVersion`, `Harness version ${identity.harnessVersion} differs from slot ${slot.id}'s ${slot.harness.version}; such a run cannot be ${run.terminal}.`);
-    // One precedence: an observed model mismatch voids the run whatever else happened.
-    const mismatch = slot.inference.model !== "configured" && identity.model !== slot.inference.model;
+    // The harness's raw mismatch verdict needs a verified model and a configured model to differ from.
+    if (identity.modelMismatch === true && (identity.modelVerified === false || slot.inference.model === "configured")) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/identity/modelMismatch`, "A model mismatch needs a verified model and an explicitly configured model.");
+    // One precedence: an observed model mismatch, by a differing model or the harness's raw verdict, voids the run whatever else happened.
+    const mismatch = slot.inference.model !== "configured" && (identity.model !== slot.inference.model || identity.modelMismatch === true);
     if (mismatch && run.terminal !== "void") add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/terminal`, `Resolved model ${identity.model} differs from configured model ${slot.inference.model}; the run must be void with model_mismatch.`);
     else if (mismatch && !run.voidReasons.includes("model_mismatch")) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/voidReasons`, `Resolved model ${identity.model} differs from configured model ${slot.inference.model}; the void reasons must include model_mismatch.`);
-    if (!mismatch && run.voidReasons.includes("model_mismatch")) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/voidReasons`, "model_mismatch requires a resolved model that differs from the configured model.");
+    if (!mismatch && run.voidReasons.includes("model_mismatch")) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/voidReasons`, "model_mismatch requires a resolved model that differs from the configured model, or a harness-reported model mismatch.");
     const group = `${String(slot.stage)}\u0000${slotIdentityKey(identity)}`;
     groups.set(group, [...(groups.get(group) ?? []), { run, index }]);
   });

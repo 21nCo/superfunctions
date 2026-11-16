@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_CONFIG, DEFAULT_POLICY, lensOutputSchema, type CommandRunner, type HarnessProfile, type ReviewFnConfig, type SlotHarnessInput } from "@superfunctions/reviewfn-core";
 
-import { CliHarnessAdapter, cliArguments, cliEnvironment, lastJsonObjectLine, parseCliVersion, valueAtPath, withModelReportField } from "../src/index.js";
+import { CliHarnessAdapter, cliArguments, cliEnvironment, lastJsonObjectLine, matchReporter, parseCliVersion, valueAtPath, withModelReportField } from "../src/index.js";
 
 const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "fake-cli.mjs");
 const CREDENTIAL = "reviewfn-cli-fixture-credential-5521";
@@ -89,6 +89,12 @@ describe("CliHarnessAdapter prompt and output channels", () => {
   it("refuses an output file that is too large for the output budget as an overrun", async () => {
     const output = await run(profile({ outputVia: "file" }), undefined, { policy: { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, maxOutputBytes: 60 } } });
     expect(output.terminal).toBe("timed_out");
+  }, 20_000);
+
+  it.each([["without", []], ["with", ["--stderr", "rate limit exceeded"]]] as const)("ends an oversized output file timed_out even after a fast nonzero exit, %s quota stderr", async (_name, stderr) => {
+    const output = await run(profile({ outputVia: "file", extra: ["--exit", "3", "--extra-json", JSON.stringify({ pad: "x".repeat(8_000) }), ...stderr] }), undefined, { policy: { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, maxOutputBytes: 4_000 } } });
+    expect(output.terminal).toBe("timed_out");
+    expect(output.error).toMatch(/output file .*exceeded the remaining/);
   }, 20_000);
 
   it("kills a CLI that keeps appending to its output file as soon as the file outgrows the budget, as a timeout", async () => {
@@ -181,6 +187,43 @@ describe("CliHarnessAdapter model reporting", () => {
     expect(output.observed).toMatchObject({ model: "other-model" });
   }, 30_000);
 
+  it.each([
+    ["json-path:model", "--model-json", "truncation", `${"a".repeat(256)}…`, `${"a".repeat(256)}b`],
+    ["stderr-regex:served model: (\\S+)", "--model-stderr", "truncation", `${"a".repeat(256)}…`, `${"a".repeat(256)}b`],
+    ["json-path:model", "--model-json", "redaction", "[REDACTED]", CREDENTIAL],
+    ["stderr-regex:served model: (\\S+)", "--model-stderr", "redaction", "[REDACTED]", CREDENTIAL],
+  ] as const)("with %s, flags a mismatch whose stored model reads as the configured one after %s", async (modelReport, flag, _collision, configured, reported) => {
+    const output = await run(profile({ modelReport, extra: [flag, reported] }), configured);
+    expect(output.error).toMatch(/^model_mismatch/);
+    expect(output.observed).toMatchObject({ model: configured, modelMismatch: true });
+    expect(JSON.stringify(output)).not.toContain(CREDENTIAL);
+    const matching = await run(profile({ modelReport, extra: [flag, "fake-model-1"] }), "fake-model-1");
+    expect(matching.terminal).toBe("completed");
+    expect(matching.observed?.modelMismatch).toBeUndefined();
+  }, 30_000);
+
+  it("ends a run whose stderr-regex reporter backtracks without end timed_out, without blocking the event loop", async () => {
+    let ticks = 0;
+    const ticker = setInterval(() => { ticks += 1; }, 50);
+    const started = Date.now();
+    const output = await run(profile({ modelReport: String.raw`stderr-regex:^(?:a+)+(b)$`, extra: ["--stderr", `${"a".repeat(40)}!`] }), "fake-model-1");
+    clearInterval(ticker);
+    expect(output.terminal).toBe("timed_out");
+    expect(output.error).toContain("model reporter did not finish");
+    expect(Date.now() - started).toBeLessThan(15_000);
+    expect(ticks).toBeGreaterThan(10);
+  }, 30_000);
+
+  it("stops a stalled reporter as soon as the run is canceled, and reads a quick reporter after an abort", async () => {
+    const controller = new AbortController();
+    const started = Date.now();
+    const stalled = matchReporter(`${"a".repeat(40)}!`, "^(?:a+)+(b)$", 60_000, controller.signal);
+    setTimeout(() => controller.abort(), 200);
+    expect(await stalled).toMatchObject({ terminal: "canceled" });
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(await matchReporter("served model: m1\nserved model: m2\n", String.raw`served model: (\S+)`, 60_000, AbortSignal.abort())).toEqual({ values: ["m1", "m2"] });
+  }, 20_000);
+
   it("repairs an invalid answer that lacks its model report, and confirms the model only on the answer it accepts", async () => {
     const repaired = await run(profile({ modelReport: "json-path:model", extra: ["--answer", "invalid-once", "--model-json", "fake-model-1"] }), "fake-model-1");
     expect(repaired.terminal).toBe("completed");
@@ -213,6 +256,24 @@ describe("CliHarnessAdapter model reporting", () => {
     expect(withModelReportField(schema, "none")).toBe(schema);
     expect(schema.properties).not.toHaveProperty("meta");
   });
+
+  it("declares a reporter leaf inside a closed parent object or array items the schema already declares", () => {
+    const schema = { type: "object", properties: { meta: { type: "object", additionalProperties: false, properties: { source: { type: "string" } } }, runs: { type: "array", items: { type: "object", additionalProperties: false, properties: { id: { type: "string" } }, required: ["id"] } } }, required: [] };
+    const original = structuredClone(schema);
+    expect(withModelReportField(schema, "json-path:meta.model")).toEqual({ ...schema, properties: { ...schema.properties, meta: { ...schema.properties.meta, properties: { source: { type: "string" } , model: { type: "string" } }, required: ["model"] } }, required: ["meta"] });
+    expect(withModelReportField(schema, "json-path:runs.0.model")).toEqual({ ...schema, properties: { ...schema.properties, runs: { type: "array", items: { ...schema.properties.runs.items, properties: { id: { type: "string" }, model: { type: "string" } }, required: ["id", "model"] } } }, required: ["runs"] });
+    expect(withModelReportField(schema, "json-path:meta.source")).toBe(schema);
+    expect(schema).toEqual(original);
+  });
+
+  it("removes only the undeclared reporter leaf of a closed nested object, keeping its declared siblings", async () => {
+    const outputSchema = { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, meta: { type: "object", additionalProperties: false, properties: { source: { type: "string" } } } } };
+    const output = await run(profile({ modelReport: "json-path:meta.model", extra: ["--extra-json", JSON.stringify({ meta: { source: "fixture", model: "fake-model-1" } })] }), "fake-model-1", { outputSchema });
+    expect(output.error).toBeUndefined();
+    expect(output.terminal).toBe("completed");
+    expect(output.observed).toMatchObject({ model: "fake-model-1" });
+    expect(await calls()).toHaveLength(1);
+  }, 30_000);
 
   it("reads dotted json paths of own properties only", () => {
     expect(valueAtPath({ meta: { models: ["m"] } }, "meta.models.0")).toBe("m");
@@ -252,6 +313,52 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     expect(parseCliVersion("cursor-agent 2025.08.25-896bbe1\n")).toBe("2025.08.25-896bbe1");
     expect(parseCliVersion("v0.9.0")).toBe("0.9.0");
   }, 20_000);
+
+  it("parses version tokens with a linear scan, as the documented token rule reads them", () => {
+    expect(parseCliVersion("tool 1.2.3+build.7 (x)")).toBe("1.2.3+build.7");
+    expect(parseCliVersion("1.2.3-rc.1-")).toBe("1.2.3-rc.1");
+    expect(parseCliVersion("1.2.3-beta.")).toBe("1.2.3");
+    expect(parseCliVersion("1.2.3.")).toBeUndefined();
+    expect(parseCliVersion("a1.2.3 b.1.2 2.0")).toBe("2.0");
+    expect(parseCliVersion("version 7", "cli v4.5\n")).toBe("4.5");
+    expect(parseCliVersion("1.2_3 x")).toBeUndefined();
+    const started = Date.now();
+    // Adversarial input: the suffix is read up to its bound, so the scan stays linear.
+    const long = parseCliVersion(`${"1.1-".repeat(20_000)}_`, `${"9.".repeat(30_000)}_`);
+    expect(long).toMatch(/^1\.1-[0-9.-]*[0-9]$/);
+    expect(long!.length).toBeLessThanOrEqual(4 + 128);
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  it.each([["hangs", { timedOut: true, code: null, signal: "SIGKILL" as const }], ["overruns its output bound", { timedOut: true, code: null, signal: "SIGTERM" as const }]])("ends a cold-cache run timed_out when the version command %s", async (_name, outcome) => {
+    const runner: CommandRunner = async () => ({ stdout: "", stderr: "", canceled: false, ...outcome });
+    const config = configuration(profile());
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(config));
+    expect(output.terminal).toBe("timed_out");
+    expect(output.error).toMatch(/version command exceeded/);
+    const preflight = await new CliHarnessAdapter({ environment: environment(), runner }).preflight(config);
+    expect(preflight.ok).toBe(false);
+  });
+
+  it.skipIf(process.platform === "win32")("refuses an absolute executable that resolves into the review workspace, directly or through a link", async () => {
+    const inside = path.join(workspace, "agent");
+    await writeFile(inside, "#!/bin/sh\necho 1.2.3\n");
+    await chmod(inside, 0o755);
+    const link = path.join(directory, "agent-link");
+    await symlink(inside, link);
+    for (const executable of [inside, link]) {
+      const config = configuration(profile());
+      const output = await new CliHarnessAdapter({ environment: environment() }).run(input({ ...config, harness: { ...config.harness, executable } }));
+      expect(output.terminal).toBe("failed");
+      expect(output.error).toMatch(/inside the repository under review/);
+    }
+    expect(await calls()).toEqual([]);
+    // An installed executable outside the workspace, even through a link, still runs.
+    const installed = path.join(directory, "node-link");
+    await symlink(process.execPath, installed);
+    const config = configuration(profile());
+    expect((await new CliHarnessAdapter({ environment: environment() }).run(input({ ...config, harness: { ...config.harness, executable: installed } }))).terminal).toBe("completed");
+  }, 30_000);
 
   it.each([["the credential", CREDENTIAL], ["a secret-named allowlisted value", ALLOWED_SECRET]])("redacts %s from a failed version read before cutting its stderr", async (_name, secret) => {
     // The secret crosses the 500-character cut, so truncating before redaction would leave its prefix unmatched.

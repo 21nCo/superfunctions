@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { DEFAULT_CONFIG, DEFAULT_POLICY, PanelCoordinator, applyRepositoryPanelPolicy, type HarnessProfile, type PanelPolicy, type PanelRunRequest, type PanelSlot } from "@superfunctions/reviewfn-core";
+import { DEFAULT_CONFIG, DEFAULT_POLICY, PanelCoordinator, applyRepositoryPanelPolicy, type HarnessOutput, type HarnessProfile, type PanelPolicy, type PanelRunRequest, type PanelSlot, type SlotHarnessInput, type SlotHarnessOutput } from "@superfunctions/reviewfn-core";
 import { FakeContextAdapter, FakeExecutionAdapter, FakeSourceControlAdapter, MemoryArtifactStore } from "@superfunctions/reviewfn-testing";
 
 import { CliHarnessAdapter } from "../src/index.js";
@@ -45,10 +45,20 @@ function slot(id: string, profileName: string, model: string, provider = "fixtur
   return { id, stage: 1, harness: { adapter: "cli", version: "1.2.3", executable: process.execPath, profile: profileName }, inference: { provider, model, auth: "api-key", credentialEnv: "FIXTURE_KEY" }, lens: "general", budget: { timeoutMs: 60_000, maxOutputBytes: 1_000_000 } };
 }
 
-function coordinator(): PanelCoordinator {
+/** A CLI harness that ends with `terminal` and reports a raw model mismatch while its recorded model reads as configured. */
+class FlaggingHarness extends CliHarnessAdapter {
+  public constructor(private readonly terminal: HarnessOutput["terminal"]) { super({ environment }); }
+
+  public override async run(input: SlotHarnessInput): Promise<SlotHarnessOutput> {
+    const reason = this.terminal === "completed" ? {} : { error: `The CLI ended ${this.terminal}.` };
+    return { terminal: this.terminal, requirements: [], assessments: [], evidence: [], findings: [], inspectedPaths: ["src/index.ts"], uninspected: [], events: [], ...reason, observed: { harnessVersion: "1.2.3", model: input.configuration.inference.model, modelMismatch: true } };
+  }
+}
+
+function coordinator(harness: CliHarnessAdapter = new CliHarnessAdapter({ environment })): PanelCoordinator {
   return new PanelCoordinator({
     sourceControl: new FakeSourceControlAdapter({ baseCommit: base, headCommit: head, changedPaths: ["src/index.ts"] }), contexts: [new FakeContextAdapter("fixture", manifest)],
-    execution: new FakeExecutionAdapter(), artifacts: new MemoryArtifactStore(), harnesses: [new CliHarnessAdapter({ environment })], harnessContractVersions: { cli: "1" }, workspaceRoot, abortGraceMs: 100, environment,
+    execution: new FakeExecutionAdapter(), artifacts: new MemoryArtifactStore(), harnesses: [harness], harnessContractVersions: { cli: "1" }, workspaceRoot, abortGraceMs: 100, environment,
   });
 }
 
@@ -89,6 +99,30 @@ describe("generic CLI slots in the panel", () => {
     expect(result.validation).toMatchObject({ valid: true });
     for (const run of result.report.slotRuns) expect(run).toMatchObject({ terminal: "void", voidReasons: ["model_mismatch"], identity: { model: "model-x" } });
   }, 120_000);
+
+  it.each(["completed", "failed", "timed_out", "canceled"] as const)("voids a %s slot whose harness reported a mismatch that its recorded model hides", async terminal => {
+    const panelPolicy: PanelPolicy = { version: 1, slots: [slot("flagged", "flagged", "model-r")], quorum: { stage1: 1, stage2: 0 }, requirementsSlot: null, incremental: "full", profiles: { flagged: await profile("flagged", "json-path:model") } };
+    const result = await coordinator(new FlaggingHarness(terminal)).run({ root: repo, base, head, config, policy: DEFAULT_POLICY, panelPolicy });
+    expect(result.validation).toMatchObject({ valid: true });
+    expect(result.report.slotRuns[0]).toMatchObject({ terminal: "void", voidReasons: ["model_mismatch"], identity: { model: "model-r", modelMismatch: true } });
+  }, 60_000);
+
+  it("voids a slot whose CLI reported a model that differs from the configured one only past the stored length", async () => {
+    const configured = `${"a".repeat(256)}…`;
+    const panelPolicy: PanelPolicy = { version: 1, slots: [slot("long", "long", configured)], quorum: { stage1: 1, stage2: 0 }, requirementsSlot: null, incremental: "full", profiles: { long: await profile("long", "json-path:model", ["--model-json", `${"a".repeat(256)}b`]) } };
+    const result = await coordinator().run({ root: repo, base, head, config, policy: DEFAULT_POLICY, panelPolicy });
+    expect(result.validation).toMatchObject({ valid: true });
+    expect(result.report.slotRuns[0]).toMatchObject({ terminal: "void", voidReasons: ["model_mismatch"], identity: { model: configured, modelMismatch: true } });
+  }, 60_000);
+
+  it("ends a slot whose CLI hangs after printing input that stalls its model reporter timed_out, within the stage deadline", async () => {
+    const panelPolicy: PanelPolicy = { version: 1, slots: [slot("stalled", "stalled", "model-r")], quorum: { stage1: 1, stage2: 0 }, requirementsSlot: null, incremental: "full", profiles: { stalled: await profile("stalled", String.raw`stderr-regex:^(?:a+)+(b)$`, ["--stderr", `${"a".repeat(40)}!`, "--hang", "1"]) } };
+    const started = Date.now();
+    const result = await coordinator().run({ root: repo, base, head, config, policy: { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, harnessTimeoutMs: 2_000 } }, panelPolicy });
+    expect(result.validation).toMatchObject({ valid: true });
+    expect(result.report.slotRuns[0]).toMatchObject({ terminal: "timed_out" });
+    expect(Date.now() - started).toBeLessThan(30_000);
+  }, 60_000);
 
   it("refuses a pull-request review in preflight", async () => {
     const panelPolicy: PanelPolicy = { version: 1, slots: [slot("quiet-a", "quiet", "model-a")], quorum: { stage1: 1, stage2: 0 }, requirementsSlot: null, incremental: "full", profiles: { quiet: await profile("quiet", "none") } };

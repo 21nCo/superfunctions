@@ -12,7 +12,7 @@ export const PANEL_PROFILE_NAME_PATTERN = "^[a-z0-9][a-z0-9-]{0,62}$";
 /** Environment variable names a harness profile may allow. */
 export const PANEL_ENV_NAME_PATTERN = "^[A-Za-z_][A-Za-z0-9_]*$";
 /** `none`, `json-path:<dotted path>` or `stderr-regex:<regex>`; the regex's single capture group is checked by the validator. */
-export const PANEL_MODEL_REPORT_PATTERN = "^(?:none|json-path:[A-Za-z0-9_$-]+(?:\\.[A-Za-z0-9_$-]+)*|stderr-regex:.+)$";
+export const PANEL_MODEL_REPORT_PATTERN = String.raw`^(?:none|json-path:[A-Za-z0-9_$-]+(?:\.[A-Za-z0-9_$-]+)*|stderr-regex:.+)$`;
 /**
  * RFC 3339 UTC timestamps as produced by `Date.prototype.toISOString`, with optional fractional seconds and in-range
  * fields. The validator also rejects calendar dates that do not exist, such as February 30.
@@ -110,7 +110,7 @@ export const panelSchemaDefs = {
     type: "object", additionalProperties: false, required: ["harnessAdapter", "harnessVersion", "provider", "model", "auth"],
     properties: {
       harnessAdapter: nonblank, harnessVersion: nonblank, provider: nonblank, model: nonblank, auth: nonblank, credentialFingerprint: { type: "string", pattern: PANEL_CREDENTIAL_FINGERPRINT_PATTERN },
-      harnessExecutable: nonblank, harnessProfile: profileName, modelVerified: { const: false },
+      harnessExecutable: nonblank, harnessProfile: profileName, modelVerified: { const: false }, modelMismatch: { const: true },
     },
   },
   slotRun: {

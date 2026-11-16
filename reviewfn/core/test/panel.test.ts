@@ -319,6 +319,20 @@ describe("slot run collapse and model mismatch", () => {
     expect(await slotIssues(spurious)).toEqual(["REVIEWFN_PANEL_SCHEMA /slotRuns/0/voidReasons"]);
   });
 
+  it("voids a run on the harness's raw model mismatch even when its recorded model reads as the configured one", async () => {
+    // The harness compared raw values; the recorded model, redacted or cut to length, equals the configured claude-opus-5-5.
+    const flagged = mutate(panelReport(), report => { run(report, "lens-c").identity = { ...run(report, "lens-c").identity, model: "claude-opus-5-5", modelMismatch: true }; });
+    expect(await slotIssues(flagged)).toEqual([]);
+    const counted = mutate(flagged, report => { Object.assign(run(report, "lens-c"), { terminal: "failed", voidReasons: [] }); });
+    expect(await slotIssues(counted)).toEqual(expect.arrayContaining(["REVIEWFN_PANEL_SCHEMA /slotRuns/2/terminal"]));
+    const otherReason = mutate(flagged, report => { run(report, "lens-c").voidReasons = ["workspace_mutated"]; });
+    expect(await slotIssues(otherReason)).toEqual(["REVIEWFN_PANEL_SCHEMA /slotRuns/2/voidReasons"]);
+    // Neither a differing model nor the harness's verdict: model_mismatch is still refused.
+    const neither = mutate(flagged, report => { delete run(report, "lens-c").identity.modelMismatch; });
+    expect(await slotIssues(neither)).toEqual(["REVIEWFN_PANEL_SCHEMA /slotRuns/2/voidReasons"]);
+    expect(validateSlotIdentity({ ...run(flagged, "lens-c").identity, modelMismatch: false }).valid).toBe(false);
+  });
+
   it("keeps the provenance of a collapsed lens: collapse affects quorum only", async () => {
     const collapsedOnly = mutate(panelReport(), report => { report.findings[0].origins = [{ slotId: "lens-b", lens: "security" }]; });
     expect(await slotIssues(collapsedOnly)).toEqual([]);
@@ -651,6 +665,11 @@ describe("panel policy and slot identity", () => {
     expect(slotIssues(generic, { agent: { ...profile, argv: ["--model={model}"] } })).toEqual([expect.stringMatching(/not a whole-argument placeholder/)]);
     expect(slotIssues({ ...panelPolicy.slots[0], id: "profiled-codex", harness: { ...panelPolicy.slots[0].harness, executable: "agent", profile: "agent" } })).toEqual([expect.stringMatching(/harness codex, which takes no profile or executable/)]);
     expect(validatePanelPolicy({ ...withProfile, profiles: { Agent: profile } }).valid).toBe(false);
+    // A programmatic entry set to undefined declares no profile: a result, never a TypeError.
+    expect(() => validatePanelPolicy({ ...withProfile, profiles: { ...withProfile.profiles, spare: undefined } })).not.toThrow();
+    expect(validatePanelPolicy({ ...withProfile, profiles: { ...withProfile.profiles, spare: undefined } })).toEqual({ valid: true, issues: [] });
+    expect(slotIssues(generic, { agent: undefined } as unknown as typeof withProfile.profiles)).toEqual([expect.stringMatching(/names profile agent, which the policy's profiles do not declare/)]);
+    expect(slotIssues({ ...generic, harness: { ...generic.harness, profile: "constructor" } })).toEqual([expect.stringMatching(/names profile constructor, which the policy's profiles do not declare/)]);
   });
 
   it("counts runs without a verified model as one identity per executable and profile", () => {
@@ -684,6 +703,9 @@ describe("panel policy and slot identity", () => {
     expect((await issues(missing)).map(issue => issue.message)).toEqual(expect.arrayContaining([expect.stringMatching(/must record the model_unverified limitation/)]));
     const otherModel = structuredClone(report); otherModel.slotRuns[2].identity.model = "claude-other";
     expect((await issues(otherModel)).map(issue => issue.message)).toEqual(expect.arrayContaining([expect.stringMatching(/records the configured model/)]));
+    // A model the harness never reported cannot have been reported as another.
+    const unverifiedMismatch = structuredClone(report); Object.assign(unverifiedMismatch.slotRuns[2], { terminal: "void", voidReasons: ["model_mismatch"], identity: { ...unverifiedMismatch.slotRuns[2].identity, modelMismatch: true } });
+    expect((await issues(unverifiedMismatch)).map(issue => issue.message)).toEqual(expect.arrayContaining([expect.stringMatching(/needs a verified model/)]));
     const otherProfile = structuredClone(report); otherProfile.slotRuns[2].identity.harnessProfile = "other";
     expect((await issues(otherProfile)).map(issue => issue.message)).toEqual([expect.stringMatching(/harness executable or profile/)]);
   });
