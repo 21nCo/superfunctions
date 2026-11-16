@@ -91,6 +91,35 @@ describe("idle live queries", () => {
     nested?.();
   });
 
+  it("don't retry a failed first read on writes while no one subscribes", async () => {
+    const queried = mockRemote();
+    let fail = true;
+    (DefaultHttpTransport.prototype.query as any).mockImplementation(async (q: any) => {
+      queried.push(q?.resource);
+      if (fail) throw Object.assign(new Error("offline"), { code: "NETWORK" });
+      return { ok: true, result: { data: [], nextCursor: null } };
+    });
+    const client = createClient();
+    const list = client.table("note").signal({ sort: ["label"] } as any);
+    const unsubscribe = list.subscribe(() => {});
+    unsubscribe();
+    await settle();
+    expect(list.error).not.toBeNull();
+    queried.length = 0;
+
+    await client.table("note").mutate({ operation: "insert", id: "note:a", record: { label: "a" } } as any);
+    await settle();
+    expect(queried.filter((resource) => resource === "note")).toEqual([]);
+
+    fail = false;
+    const values: unknown[] = [];
+    const again = list.subscribe((value) => values.push(value));
+    await settle();
+    expect(queried.filter((resource) => resource === "note")).toHaveLength(1);
+    expect(values.at(-1)).toEqual([]);
+    again();
+  });
+
   it("still re-run on writes while subscribed", async () => {
     const queried = mockRemote();
     const client = createClient();

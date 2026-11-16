@@ -753,6 +753,13 @@ function createQuerySignal<T>(
       staleWhileIdle = true;
       return;
     }
+    if (subscribers.size === 0 && currentError !== null && !inFlight) {
+      // The first read failed and nobody is reading: the next subscribe
+      // retries it.
+      pendingFullRefresh = false;
+      pendingRecordIds.clear();
+      return;
+    }
     if (pendingFullRefresh || inFlight) {
       pendingFullRefresh = false;
       pendingRecordIds.clear();
