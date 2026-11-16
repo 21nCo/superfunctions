@@ -1,0 +1,19 @@
+datafn/server/__tests__/drizzle-sqlite/suite.ts
+  s_69b47c58e5654b::t_6959a803deac44 472-497
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5ccda615c436cf08e687f94f3717baf61563e1c6",
+  "prompts": {},
+  "sessions": {
+    "s_69b47c58e5654b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1e2cc-eeeb-70f1-8cfc-7ad1471ed1dd",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
