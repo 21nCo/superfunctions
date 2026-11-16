@@ -200,8 +200,8 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
   /**
    * `record` for a grant's expiry events (`grant.expiring`, `entitlement.changed` with cause `grant.expired`):
    * the stored grant is read again through `db` right before each row is written (then `beforeWrite` runs), and a
-   * grant revoked by then gets no more rows, so a revoke that committed while this write was pending is not
-   * followed by one.
+   * grant revoked by then gets no more rows. A revoke that commits between that read and the write is caught at
+   * delivery, which drops such an event without calling the handler.
    */
   async function recordForUnrevokedGrant(
     events: LifecycleEventInput[],
@@ -474,8 +474,35 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
     if (claimed !== 1) {
       return null;
     }
+    if (await isRevokedGrantExpiry(row)) {
+      // Its grant was revoked after the event was recorded (a write racing the revoke): dropped, never delivered.
+      await deps.db.deleteMany({
+        model: EVENTS_TABLE,
+        where: [
+          { field: 'id', operator: 'eq', value: row.id },
+          { field: 'claimId', operator: 'eq', value: claimId }
+        ],
+        namespace: deps.namespace
+      });
+      deps.metrics.track('event.dropped', { type: row.type });
+      return null;
+    }
     const failure = await callHandler(handler, row, attempt);
     return settleAttempt(row, claimId, attempt, deadline, failure);
+  }
+
+  /** Whether the event is a grant's `grant.expiring` or its `entitlement.changed` (cause `grant.expired`) and that grant is revoked now. */
+  async function isRevokedGrantExpiry(row: BillFnLifecycleEventRecord) {
+    const data = row.data as { grantId?: string; cause?: string };
+    if (!data.grantId || !(row.type === 'grant.expiring' || (row.type === 'entitlement.changed' && data.cause === 'grant.expired'))) {
+      return false;
+    }
+    const grant = await deps.db.findOne<{ revokedAt?: string | null }>({
+      model: GRANTS_TABLE,
+      where: [{ field: 'id', operator: 'eq', value: data.grantId }],
+      namespace: deps.namespace
+    });
+    return Boolean(grant?.revokedAt);
   }
 
   /**

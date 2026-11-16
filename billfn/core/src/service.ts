@@ -315,7 +315,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
     // events existed) records none.
     // A repair passes the job's lease check, which runs before each lifecycle row and before the billing event.
     // A creation's `grant.expiring` is written only while the stored grant, read again right before that row, is
-    // not revoked, so a revoke that committed while this write was pending is never followed by one.
+    // not revoked; one whose grant a racing revoke ends after that read is dropped at delivery.
     recordBillingEvent: async (event, { db, revoked, beforeWrite } = {}) => {
       const eventDb = db ?? deps.db;
       if (deps.lifecycle.enabled && !(await findBillingEvent(eventDb, deps.namespace, event.id))) {

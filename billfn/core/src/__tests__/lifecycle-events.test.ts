@@ -2226,9 +2226,23 @@ describe('a grant write landing after an expiry sweep passed it, or racing a rev
      */
     function pausingDb() {
       const { db: base, faults } = faultyLifecycleDb(memoryAdapter({ debug: false }), { transactions: false });
-      const hooks = { afterGrantStarted: null as ((grantId: string) => Promise<void>) | null, failSweep: false };
+      const hooks = {
+        afterGrantStarted: null as ((grantId: string) => Promise<void>) | null,
+        failSweep: false,
+        /** Runs once after the next grant read returns, before the caller sees its (then stale) result. */
+        afterGrantRead: null as (() => Promise<void>) | null
+      };
       const db: Adapter = {
         ...base,
+        async findOne<T>(params: Parameters<Adapter['findOne']>[0]) {
+          const row = await base.findOne<T>(params);
+          if (params.model === 'entitlementGrants' && hooks.afterGrantRead) {
+            const hook = hooks.afterGrantRead;
+            hooks.afterGrantRead = null;
+            await hook();
+          }
+          return row;
+        },
         async findMany<T>(params: Parameters<Adapter['findMany']>[0]) {
           const sweep = params.model === 'entitlementGrants' && params.where?.some((clause) => clause.field === 'expiresAt');
           if (hooks.failSweep && sweep) throw new Error('sweep read failed');
@@ -2313,6 +2327,27 @@ describe('a grant write landing after an expiry sweep passed it, or racing a rev
       ]);
       const [stored] = await db.findMany<{ eventsPending?: boolean }>({ model: 'entitlementGrants', namespace: 'billfn' });
       expect(stored?.eventsPending).toBe(false);
+    });
+
+    it('a revoke that commits between the re-read and the write of grant.expiring: the event is dropped at delivery', async () => {
+      const { db, faults, hooks } = pausingDb();
+      const env = setup({ db });
+      hooks.afterGrantStarted = async (grantId) => {
+        hooks.afterGrantRead = async () => {
+          env.advance(MINUTE);
+          faults.failCreate = (model, data) => model === 'lifecycleEvents' && data.type === 'grant.expiring';
+          const revoked = await env.billfn.services.grants.revoke({ billingAccountId: ACCOUNT, grantId });
+          faults.failCreate = null;
+          if (!revoked.ok) throw new Error('expected the revoke');
+        };
+      };
+      expect((await createComp(env)).ok).toBe(true);
+      expect(hooks.afterGrantRead).toBeNull();
+      env.advance(HOUR_MS);
+      await env.runLifecycleJob();
+      expect(env.ofType('grant.expiring')).toEqual([]);
+      expect((await env.rows()).filter((event) => event.type === 'grant.expiring')).toEqual([]);
+      expect(env.ofType('entitlement.changed').map((event) => event.data.cause).sort()).toEqual(['grant.revoked', 'grant.started']);
     });
   });
 });
