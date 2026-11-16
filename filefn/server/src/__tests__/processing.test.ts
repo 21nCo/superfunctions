@@ -223,7 +223,8 @@ describe('ProcessingService', () => {
     };
     const ctx = { requestId: 'req1' };
 
-    db.findOne.mockResolvedValue({ artifactId: 'art_existing', kind: 'thumbnail-small', storageKey: 'k1-thumb' }); // Found
+    // Found, naming the object this processor writes again.
+    db.findOne.mockResolvedValue({ artifactId: 'art_existing', kind: 'thumbnail-small', storageKey: 'thumb/key' });
 
     await service.runProcessing(input, ctx);
 
@@ -232,7 +233,7 @@ describe('ProcessingService', () => {
     expect(db.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: [
         { field: 'artifactId', operator: 'eq', value: 'art_existing' },
-        { field: 'storageKey', operator: 'eq', value: 'k1-thumb' },
+        { field: 'storageKey', operator: 'eq', value: 'thumb/key' },
       ],
     }));
   });

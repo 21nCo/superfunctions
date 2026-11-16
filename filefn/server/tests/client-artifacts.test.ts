@@ -129,10 +129,34 @@ function fakeR2Bucket() {
 
 type AuthorizerFactory = (database: ReturnType<typeof memoryAdapter>) => Parameters<typeof createFileFn>[0]['authorizer'];
 
+/**
+ * The memory adapter enforces only its own `id`; FileFn's schema makes
+ * `artifactId` unique, which Postgres enforces, so a concurrent create of the
+ * same artifact row fails here too.
+ */
+function withUniqueArtifactIds(database: ReturnType<typeof memoryAdapter>): ReturnType<typeof memoryAdapter> {
+  return new Proxy(database, {
+    get(target, property, receiver) {
+      if (property !== 'create') return Reflect.get(target, property, receiver);
+      return async (params: Parameters<typeof target.create>[0]) => {
+        if (params.model === 'fileArtifacts') {
+          const existing = await target.findOne({
+            model: 'fileArtifacts',
+            where: [{ field: 'artifactId', operator: 'eq', value: params.data.artifactId }],
+            namespace: params.namespace,
+          });
+          if (existing) throw new Error('UNIQUE constraint failed: fileArtifacts.artifactId');
+        }
+        return target.create(params);
+      };
+    },
+  });
+}
+
 async function createApp(options: { processors?: Processor[]; artifactsOnR2?: boolean; authorizer?: AuthorizerFactory } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'filefn-client-artifacts-'));
   roots.push(root);
-  const database = memoryAdapter();
+  const database = withUniqueArtifactIds(memoryAdapter());
   const local = createLocalStorageAdapter({ rootDir: root });
   const bucket = fakeR2Bucket();
   let backing: StorageAdapter = local;
@@ -752,6 +776,71 @@ describe('client-supplied processing artifacts', () => {
 
     await expectServerSmallReadable(app, other.fileId);
     expect(during.fired).toBe(false);
+
+    // Deleting the first file keeps the key the other file's row still names,
+    // and deleting that file then removes it.
+    app.storageControl.intercept(() => false, 'delete', async () => undefined);
+    await app.clientFor('owner').deleteFile(app.fileId);
+    await expectServerSmallReadable(app, other.fileId);
+    await app.clientFor('owner').deleteFile(other.fileId);
+    expect((await storedObjects(app.root)).filter((path) => path.includes('thumb-small'))).toEqual([]);
+  });
+
+  describe('objects an artifact row stops naming', () => {
+    /** Stored artifact objects of the photo's versions: server thumbnails and client uploads. */
+    const artifactObjects = async (root: string) =>
+      (await storedObjects(root)).filter((path) => path.includes('-thumb-') || path.includes('.client-artifacts/'));
+
+    it('are deleted with the file once a client upload replaced the server thumbnail', async () => {
+      const app = await createApp({ processors: [thumbnailProcessor([])] });
+      await app.drainJobs();
+      const client = app.clientFor('owner');
+      await client.uploadArtifact({
+        fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', data: bytes('client-small'), mimeType: 'image/png',
+      });
+      // The replaced server object stays until the file goes, and is not listed.
+      expect((await artifactObjects(app.root)).filter((path) => path.endsWith('-thumb-small.jpg'))).toHaveLength(1);
+      expect((await client.listArtifacts(app.fileId)).map((a) => a.kind).sort()).toEqual(['thumbnail-medium', 'thumbnail-small']);
+
+      await client.deleteFile(app.fileId);
+      expect(await artifactObjects(app.root)).toEqual([]);
+    });
+
+    it('are deleted with the file when deleting a replaced client object failed', async () => {
+      const app = await createApp();
+      const client = app.clientFor('owner');
+      const input = { fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small' as const, mimeType: 'image/png' };
+      await client.uploadArtifact({ ...input, data: bytes('client-a') });
+      const failed = app.storageControl.intercept((key) => key.includes('.client-artifacts/'), 'delete', async () => {
+        throw new Error('storage unavailable');
+      });
+      await client.uploadArtifact({ ...input, data: bytes('client-b') });
+      expect(failed.fired).toBe(true);
+      expect(await artifactObjects(app.root)).toHaveLength(2);
+
+      await client.deleteFile(app.fileId);
+      expect(await artifactObjects(app.root)).toEqual([]);
+    });
+
+    it('are deleted with the file when an unforced run stored its object and lost the row to a client upload', async () => {
+      const app = await createApp({ processors: [thumbnailProcessor([])] });
+      // The first run's small thumbnail upload is held; a client upload
+      // creates the row it was about to create.
+      const held = app.storageControl.hold((key) => key.endsWith('-thumb-small.jpg'));
+      const run = app.drainJobs();
+      await held.reached;
+      const client = app.clientFor('owner');
+      const clientSmall = await client.uploadArtifact({
+        fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', data: bytes('client-small'), mimeType: 'image/png',
+      });
+      held.release();
+      expect(await run).toEqual([expect.objectContaining({ status: 'completed' })]);
+      expect((await client.listArtifacts(app.fileId)).find((a) => a.kind === 'thumbnail-small')).toEqual(clientSmall);
+      expect((await artifactObjects(app.root)).filter((path) => path.endsWith('-thumb-small.jpg'))).toHaveLength(1);
+
+      await client.deleteFile(app.fileId);
+      expect(await artifactObjects(app.root)).toEqual([]);
+    });
   });
 
   it('refuses a version of another file and reports client errors as FileFnHttpError', async () => {

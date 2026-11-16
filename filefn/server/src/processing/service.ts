@@ -141,6 +141,22 @@ export interface ArtifactProcessingMetadata {
  */
 export const PROCESSING_RUN_KIND = 'filefn.processing-run';
 
+/**
+ * Kind of the `fileArtifacts` rows that keep an object an artifact row stopped
+ * naming (a replaced artifact, or a server upload that lost to a client
+ * artifact) owned by its file version, so version and file cleanup still
+ * delete it and the shared-key reference scan still counts it. A row is
+ * written before the artifact row switches away from the object, and a
+ * client object's row is removed once the object is deleted. The artifact
+ * list, lookup and download operations never return them.
+ */
+const DISPLACED_OBJECT_KIND = 'filefn.displaced-object';
+
+/** True for a row kind FileFn keeps for itself rather than an artifact. */
+function isInternalKind(kind: string): boolean {
+  return kind === PROCESSING_RUN_KIND || kind === DISPLACED_OBJECT_KIND;
+}
+
 export interface FlowFnQueue {
   name: string;
   add(job: unknown): Promise<{ jobId: string }>;
@@ -196,6 +212,9 @@ export interface FileArtifactRecord {
   metadata?: Record<string, unknown>;
   createdAt: string;
 }
+
+/** An object an artifact row named, or was about to name. */
+type DisplacedObject = Pick<FileArtifactRecord, 'fileId' | 'versionId' | 'storageKey' | 'metadata'>;
 
 interface FileRecord {
   fileId: string;
@@ -300,7 +319,7 @@ function invalidProcessorResult(result: unknown): string | undefined {
   if (!Array.isArray(artifacts)) return 'processor returned an invalid result';
   for (const artifact of artifacts as unknown[]) {
     const { kind, storageKey, mimeType, data } = (artifact ?? {}) as Partial<ProcessorOutputArtifact>;
-    if (kind === PROCESSING_RUN_KIND) return `processor emitted the reserved artifact kind ${PROCESSING_RUN_KIND}`;
+    if (typeof kind === 'string' && isInternalKind(kind)) return `processor emitted the reserved artifact kind ${kind}`;
     if (!isNonEmptyString(kind) || !isNonEmptyString(storageKey) || typeof mimeType !== 'string' || !(data instanceof Uint8Array)) {
       return 'processor returned an invalid artifact';
     }
@@ -682,7 +701,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       namespace,
     });
 
-    if (!artifact || artifact.kind === PROCESSING_RUN_KIND) {
+    if (!artifact || isInternalKind(artifact.kind)) {
       throw errors.notFound('Artifact');
     }
 
@@ -874,7 +893,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
    * unique to one upload attempt, so a row naming the same client key was
    * not written in between; a row naming the same server key may have been
    * rewritten, but only to that same object, which replacement never deletes
-   * (see `discardReplacedObject`), so the object a writer discards is still
+   * (see `discardDisplacedObject`), so the object a writer discards is still
    * the one it replaced.
    */
   async function replaceIfUnchanged(row: FileArtifactRecord, fields: Record<string, unknown>): Promise<boolean> {
@@ -937,28 +956,59 @@ export function createProcessingService(config: ProcessingServiceConfig) {
   }
 
   /**
-   * Deletes the object of a replaced client-supplied artifact, best effort: a
-   * failure is logged and leaves the object behind. A client object's key is
-   * unique to one upload attempt, so no row can name it again once its row
-   * moved away. A server object is never deleted here: its key is the
-   * processor's own, which another row (a deduplicated file sharing the
-   * version's storage key, say) may claim at any moment, so a reference scan
-   * followed by a delete could remove an object a concurrent first write has
-   * just committed. Such an object is left for version and file cleanup, as
-   * before client artifacts existed.
+   * Records that `object` belongs to its file version without an artifact row
+   * naming it (see `DISPLACED_OBJECT_KIND`), and returns that record's ID. It
+   * is written before an artifact row stops naming the object, so an
+   * interruption at any point leaves the object findable by cleanup. Writing
+   * the same object twice keeps one record.
    */
-  async function discardReplacedObject(
-    replaced: Pick<FileArtifactRecord, 'fileId' | 'versionId' | 'storageKey' | 'metadata'>,
-    fallbackTarget: string,
-  ): Promise<void> {
-    if (artifactSourceOf(replaced) !== 'client') return;
-    const target = recordedStorageTarget(replaced as FileArtifactRecord) ?? fallbackTarget;
+  async function journalDisplaced(object: DisplacedObject, fallbackTarget: string): Promise<string> {
+    const target = recordedStorageTarget(object as FileArtifactRecord) ?? fallbackTarget;
+    const artifactId = derivedId('dsp', [DISPLACED_OBJECT_KIND, object.fileId, object.versionId, target, object.storageKey]);
     try {
-      await storage.deleteObject({ key: replaced.storageKey, target });
+      await db.create({
+        model: 'fileArtifacts',
+        data: {
+          artifactId,
+          fileId: object.fileId,
+          versionId: object.versionId,
+          kind: DISPLACED_OBJECT_KIND,
+          storageKey: object.storageKey,
+          mimeType: 'application/octet-stream',
+          size: 0,
+          metadata: { processing: { source: artifactSourceOf(object), storageTarget: target } },
+          createdAt: new Date().toISOString(),
+        },
+        namespace,
+      });
     } catch (error) {
-      logger?.warn('replaced artifact object not deleted', {
-        fileId: replaced.fileId,
-        versionId: replaced.versionId,
+      if (!(await findArtifactRow(artifactId))) throw error;
+    }
+    return artifactId;
+  }
+
+  /**
+   * Deletes a client-supplied object no artifact row names any more, best
+   * effort, and then its displaced-object record. A client object's key is
+   * unique to one upload attempt, so no row can name it again. A failed
+   * delete is logged and keeps the record, so version or file cleanup
+   * deletes the object later. A server object is never deleted here: its key
+   * is the processor's own, which another row (a deduplicated file sharing
+   * the version's storage key, say) may claim at any moment, so it stays
+   * recorded until version or file cleanup, whose reference scan keeps it
+   * while another row still names it.
+   */
+  async function discardDisplacedObject(object: DisplacedObject, fallbackTarget: string, recordId?: string): Promise<void> {
+    if (artifactSourceOf(object) !== 'client') return;
+    const target = recordedStorageTarget(object as FileArtifactRecord) ?? fallbackTarget;
+    const id = recordId ?? await journalDisplaced(object, fallbackTarget);
+    try {
+      await storage.deleteObject({ key: object.storageKey, target });
+      await db.delete({ model: 'fileArtifacts', where: [{ field: 'artifactId', operator: 'eq', value: id }], namespace });
+    } catch (error) {
+      logger?.warn('displaced artifact object not deleted', {
+        fileId: object.fileId,
+        versionId: object.versionId,
         error: errorMessage(error),
       });
     }
@@ -973,8 +1023,11 @@ export function createProcessingService(config: ProcessingServiceConfig) {
    * The object goes to the processor's own key, as it always has. Each row
    * write is conditional on the row it read (see `replaceIfUnchanged`); when
    * the row changed in between, it is read again and the decision is made
-   * afresh. A server object this run stored but did not record stays, since
-   * its key may be shared (see `discardReplacedObject`).
+   * afresh. An object the row stops naming, and a server object this run
+   * stored but lost to a client artifact, are recorded as displaced (see
+   * `journalDisplaced`) so cleanup still finds them; only a client object is
+   * deleted at once, since a server key may be shared (see
+   * `discardDisplacedObject`).
    */
   async function recordArtifact(
     input: Pick<ProcessorInput, 'fileId' | 'versionId'>,
@@ -997,7 +1050,11 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     let current = await findKindRow(input.fileId, input.versionId, artifact.kind);
     for (let attempt = 1; ; attempt += 1) {
       if (current && keepsClientArtifact(current)) {
-        // The client's artifact stays; nothing of this run is recorded for it.
+        // The client's artifact stays; nothing of this run is recorded for
+        // it, but an object it already stored stays findable by cleanup.
+        if (uploaded) {
+          await journalDisplaced({ ...input, storageKey, metadata: fields.metadata }, target);
+        }
         return;
       }
       if (!uploaded) {
@@ -1030,10 +1087,12 @@ export function createProcessingService(config: ProcessingServiceConfig) {
           continue;
         }
       }
+      const displaces = current.storageKey !== storageKey;
+      const recordId = displaces ? await journalDisplaced(current, target) : undefined;
       if (await replaceIfUnchanged(current, fields)) {
         writes.artifactsRecorded += 1;
-        if (current.storageKey !== storageKey) {
-          await discardReplacedObject(current, target);
+        if (displaces) {
+          await discardDisplacedObject(current, target, recordId);
         }
         return;
       }
@@ -1220,7 +1279,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     });
     return new Set(
       rows
-        .filter((row) => row.kind !== PROCESSING_RUN_KIND && artifactSourceOf(row) === 'client')
+        .filter((row) => !isInternalKind(row.kind) && artifactSourceOf(row) === 'client')
         .map((row) => row.kind),
     );
   }
@@ -1585,8 +1644,8 @@ export function createProcessingService(config: ProcessingServiceConfig) {
      * file's policy allows. The body goes to a key of its own for each
      * attempt and the row is switched to it only once fully stored, so a
      * retried or interrupted upload never leaves the row naming a partial
-     * object; a client object the row named before is then deleted (a server
-     * one is kept, see `discardReplacedObject`). On storage that only signs
+     * object; a client object the row named before is then deleted, and a
+     * server one stays recorded for cleanup (see `discardDisplacedObject`). On storage that only signs
      * upload URLs a streamed body needs its Content-Length.
      */
     async attachClientArtifact(upload: ClientArtifactUpload, ctx: FileProviderContext): Promise<FileArtifactRecord> {
@@ -1637,7 +1696,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       const artifactId = artifactIdFor(file.fileId, version.versionId, upload.kind);
       // A client artifact replaces whatever the row holds, but conditionally on
       // the row it read, so the object it discards is the one it replaced.
-      let replaced: FileArtifactRecord | null = null;
+      let replaced: { row: FileArtifactRecord; recordId: string } | null = null;
       let rowId = artifactId;
       try {
         let current = await findKindRow(file.fileId, version.versionId, upload.kind);
@@ -1664,8 +1723,10 @@ export function createProcessingService(config: ProcessingServiceConfig) {
               if (!current) throw error;
             }
           }
+          // The row's object stays findable by cleanup once the row moves off it.
+          const recordId = await journalDisplaced(current, target);
           if (await replaceIfUnchanged(current, fields)) {
-            replaced = current;
+            replaced = { row: current, recordId };
             rowId = current.artifactId;
             break;
           }
@@ -1675,25 +1736,25 @@ export function createProcessingService(config: ProcessingServiceConfig) {
           current = await findArtifactRow(current.artifactId);
         }
       } catch (error) {
-        await discardReplacedObject(ownObject, target);
+        await discardDisplacedObject(ownObject, target);
         throw error;
+      }
+      if (replaced) {
+        await discardDisplacedObject(replaced.row, target, replaced.recordId);
       }
 
       // A delete of the version while the body was stored would leave this
       // row and object behind for a version that no longer exists.
       if (!(await findVersion(file.fileId, version.versionId))) {
         await db.delete({ model: 'fileArtifacts', where: [{ field: 'artifactId', operator: 'eq', value: rowId }], namespace });
-        await discardReplacedObject(ownObject, target);
+        await discardDisplacedObject(ownObject, target);
         throw errors.notFound('Version');
-      }
-      if (replaced && replaced.storageKey !== storageKey) {
-        await discardReplacedObject(replaced, target);
       }
 
       const recorded = await findArtifactRow(rowId);
       if (!recorded) {
         // Deleted since it was written; the object is no longer named by any row.
-        await discardReplacedObject(ownObject, target);
+        await discardDisplacedObject(ownObject, target);
         throw errors.notFound('Artifact');
       }
       // A concurrent write may have replaced this one since; whichever write
@@ -1735,6 +1796,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         where: [
           { field: 'fileId', operator: 'eq', value: fileId },
           { field: 'kind', operator: 'ne', value: PROCESSING_RUN_KIND },
+          { field: 'kind', operator: 'ne', value: DISPLACED_OBJECT_KIND },
         ],
         orderBy: [
           { field: 'createdAt', direction: 'desc' },
@@ -1767,7 +1829,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         namespace,
       });
 
-      if (!artifact || artifact.kind === PROCESSING_RUN_KIND) {
+      if (!artifact || isInternalKind(artifact.kind)) {
         throw errors.notFound('Artifact');
       }
 
