@@ -22,7 +22,8 @@ afterEach(async () => {
 function mockRemote(schemaResource = "kv") {
   const queried: string[] = [];
   vi.spyOn(DefaultHttpTransport.prototype, "query").mockImplementation(async (q: any) => {
-    const id = q?.filters?.id?.eq ?? q?.filters?.id ?? q?.filters?.$and?.[0]?.id?.eq;
+    const idFilter = q?.filters?.id ?? q?.filters?.$and?.[0]?.id;
+    const id = idFilter?.eq ?? idFilter?.$in?.join(",") ?? idFilter;
     if (q?.resource === schemaResource) queried.push(String(id));
     return { ok: true, result: { data: [], nextCursor: null } } as any;
   });
@@ -109,6 +110,45 @@ describe("signals pinned to ids (direct mode)", () => {
 
     unsub();
   });
+
+  it("is not pinned when it filters through a relation or searches", async () => {
+    const queried = mockRemote("folders");
+    const schema: DatafnSchema = {
+      resources: [
+        {
+          name: "folders",
+          version: 1,
+          fields: [
+            { name: "name", type: "string", required: false },
+            { name: "parentId", type: "string", required: false },
+          ],
+        },
+      ],
+      relations: [
+        { from: "folders", to: "folders", type: "htree", relation: "children", inverse: "parent", fkField: "parentId" } as any,
+      ],
+    };
+    const client = createDatafnClient({ schema, sync: { remote: "http://example.com" }, clientId: "tree" });
+    clients.push(client as any);
+    const folders = client.table("folders");
+    const unsubPath = folders.signal({ filters: { id: "folders:a", "parent.name": "x" } }).subscribe(() => {});
+    const unsubSorted = folders.signal({ filters: { id: { $in: ["folders:a", "folders:c"] } }, sort: ["parent.name"] }).subscribe(() => {});
+    const unsubSearch = folders.signal({ filters: { id: "folders:d" }, search: { query: "x", topK: 1 } } as any).subscribe(() => {});
+    await settle();
+
+    // Renaming the parent changes whether a matches and how a and c sort;
+    // another folder can outrank d in the search.
+    queried.length = 0;
+    await folders.mutate({ operation: "merge", id: "folders:root", record: { name: "x" } } as any);
+    await settle();
+    expect(queried).toContain("folders:a");
+    expect(queried).toContain("folders:d");
+    expect(queried).toContain("folders:a,folders:c");
+
+    unsubPath();
+    unsubSorted();
+    unsubSearch();
+  });
 });
 
 describe("signals pinned to ids (local)", () => {
@@ -179,6 +219,8 @@ describe("resolvePinnedQueryIds", () => {
     expect(resolvePinnedQueryIds({ filters: { $or: [{ id: { eq: "a" } }, { id: { eq: "b" } }] } })).toBeUndefined();
     expect(resolvePinnedQueryIds({ filters: { id: { $in: ["a", 1] } } })).toBeUndefined();
     expect(resolvePinnedQueryIds({ filters: { id: { $ne: "a" } } })).toBeUndefined();
+    expect(resolvePinnedQueryIds({ filters: { id: { eq: "a", $eq: "b" } } })).toBeUndefined();
+    expect(resolvePinnedQueryIds({ filters: { id: { in: ["a"], $in: ["b"] } } })).toBeUndefined();
     expect(resolvePinnedQueryIds({})).toBeUndefined();
   });
 });

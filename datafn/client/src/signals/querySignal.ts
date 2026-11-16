@@ -303,12 +303,19 @@ export function resolvePinnedQueryIds(query: any): Set<string> | undefined {
     if (!isPlainObject(clause)) return undefined;
     const idFilter = clause.id;
     if (typeof idFilter === "string") return new Set([idFilter]);
-    if (isPlainObject(idFilter)) {
-      const eq = idFilter.eq ?? idFilter.$eq;
-      if (typeof eq === "string") return new Set([eq]);
-      const list = idFilter.in ?? idFilter.$in;
-      if (Array.isArray(list) && list.every((value: unknown) => typeof value === "string")) {
-        return new Set(list as string[]);
+    // Exactly one operator: aliases given together (`eq` and `$eq`) are
+    // resolved by the executor, not here.
+    if (isPlainObject(idFilter) && Object.keys(idFilter).length === 1) {
+      const [operator, operand] = Object.entries(idFilter)[0];
+      if ((operator === "eq" || operator === "$eq") && typeof operand === "string") {
+        return new Set([operand]);
+      }
+      if (
+        (operator === "in" || operator === "$in") &&
+        Array.isArray(operand) &&
+        operand.every((value: unknown) => typeof value === "string")
+      ) {
+        return new Set(operand as string[]);
       }
     }
     if (Array.isArray(clause.$and)) {
@@ -323,20 +330,27 @@ export function resolvePinnedQueryIds(query: any): Set<string> | undefined {
 }
 
 /**
- * Whether a query reads only its own records' fields: no relation (even one
- * to the same resource) and no dotted path, which can change with other
- * records.
+ * Whether a query reads only its records' own fields: deriveMembershipFields
+ * rejects relations and dotted paths in select and filters and every
+ * field-independent shape (search, temporal, aggregates); sort terms must
+ * also name own fields.
  */
-function selectsOwnFieldsOnly(schema: DatafnSchema, query: any): boolean {
-  const select = query?.select;
-  if (select === undefined) return true;
-  if (!Array.isArray(select)) return false;
-  return select.every(
-    (token: unknown) =>
-      typeof token === "string" &&
-      (token === "*" ||
-        (!token.includes(".") && !findRelationMatch(schema, query.resource, token))),
-  );
+function readsOwnFieldsOnly(schema: DatafnSchema, query: any): boolean {
+  if (!deriveMembershipFields(query, schema)) return false;
+  for (const term of Array.isArray(query.sort) ? query.sort : []) {
+    const field =
+      typeof term === "string"
+        ? term.startsWith("-") ? term.slice(1) : term.split(":")[0]
+        : term?.field;
+    if (
+      typeof field !== "string" ||
+      field.includes(".") ||
+      findRelationMatch(schema, query.resource, field)
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function resourceHasRelations(schema: DatafnSchema, resource: string): boolean {
@@ -648,12 +662,15 @@ function createQuerySignal<T>(
     queryHooks.length > 0 ? null : baseMembershipFields;
 
   // A query pinned to record ids (e.g. a KV key's signal) can only change
-  // when one of those records does. Plugins can rewrite the query or its
-  // result, so a signal they run on is never treated as pinned.
+  // when one of those records does, as long as it reads only those records'
+  // own fields: no relation in its select, filters or sort, and no search,
+  // whose candidate limit depends on how every record ranks
+  // (deriveMembershipFields is null otherwise). Plugins can rewrite the
+  // query or its result, so a signal they run on is never treated as pinned.
   const pinnedIds =
     !clientPlugins.some(
       (plugin) => typeof plugin.beforeQuery === "function" || typeof plugin.afterQuery === "function",
-    ) && selectsOwnFieldsOnly(schema, fullQuery)
+    ) && readsOwnFieldsOnly(schema, fullQuery)
       ? resolvePinnedQueryIds(fullQuery)
       : undefined;
   // Without relations a write changes only the records it names.
