@@ -52,6 +52,8 @@ function controlledStorage(local: StorageAdapter) {
   };
   const control = {
     proxyUploads: true,
+    /** Fails every delete of a matching key while set. */
+    failDeletes: null as ((key: string) => boolean) | null,
     /** Holds the next server-side upload (or delete) whose key matches until `release` is called. */
     hold(match: (key: string) => boolean, op: Gate['op'] = 'upload') {
       let reached!: () => void;
@@ -86,6 +88,7 @@ function controlledStorage(local: StorageAdapter) {
       if (property === 'deleteObject') {
         return async (input: { key: string; target?: string }) => {
           await pass('delete', input.key);
+          if (control.failDeletes?.(input.key)) throw new Error('storage unavailable');
           return target.deleteObject(input);
         };
       }
@@ -234,14 +237,16 @@ async function createApp(options: { processors?: Processor[]; artifactsOnR2?: bo
   }
   const { storage, control: storageControl } = controlledStorage(backing);
   const jobs: any[] = [];
+  // Kept by reference, so a test can change the policy of existing files.
+  const photoPolicy: { artifactStorageTarget?: string } & Record<string, unknown> = {
+    name: 'photo', contentTypes: ['image/png'], maxSizeBytes: 64, visibility: 'private',
+    ...(options.artifactsOnR2 ? { artifactStorageTarget: 'r2' } : {}),
+  };
   const fileFn: FileFn = createFileFn({
     database,
     storage,
     authorizer: options.authorizer?.(database) ?? createDefaultAuthorizer({ db: database }),
-    policies: [{
-      name: 'photo', contentTypes: ['image/png'], maxSizeBytes: 64, visibility: 'private',
-      ...(options.artifactsOnR2 ? { artifactStorageTarget: 'r2' } : {}),
-    }],
+    policies: [photoPolicy as any],
     processing: {
       enabled: true,
       processors: options.processors ?? [],
@@ -317,7 +322,7 @@ async function createApp(options: { processors?: Processor[]; artifactsOnR2?: bo
 
   return {
     fileFn, root, fileId, versionId, owner, uploadPhoto, clientFor, fetchAs, jobs, drainJobs, put, artifacts, artifactBytes,
-    storageControl, bucket, database, databaseControl, displacedRecords,
+    storageControl, bucket, database, databaseControl, displacedRecords, photoPolicy,
   };
 }
 
@@ -437,6 +442,22 @@ describe('client-supplied processing artifacts', () => {
 
     expect(await app.artifacts()).toEqual([]);
     expect(await storedObjects(app.root)).toEqual(before);
+  });
+
+  it('refuses an oversized Blob by its size and streams an accepted one, never copying it whole', async () => {
+    const app = await createApp();
+    const upload = { fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', mimeType: 'image/png' };
+    const oversized = new Blob([new Uint8Array(2 * 1024 * 1024 + 1)]);
+    const accepted = new Blob([bytes('client')]);
+    const copies = [vi.spyOn(oversized, 'arrayBuffer'), vi.spyOn(accepted, 'arrayBuffer')];
+    const oversizedStream = vi.spyOn(oversized, 'stream');
+
+    await expect(app.fileFn.services.processing.attachClientArtifact({ ...upload, body: oversized }, app.owner))
+      .rejects.toMatchObject({ code: 'FILEFN_ARTIFACT_TOO_LARGE' });
+    expect(oversizedStream).not.toHaveBeenCalled();
+    const recorded = await app.fileFn.services.processing.attachClientArtifact({ ...upload, body: accepted }, app.owner);
+    expect(recorded.size).toBe(6);
+    for (const copy of copies) expect(copy).not.toHaveBeenCalled();
   });
 
   it('treats a retried upload as the same artifact and keeps only the latest object', async () => {
@@ -1058,7 +1079,7 @@ describe('client-supplied processing artifacts', () => {
   });
 
   describe('cleanupOrphanedArtifacts', () => {
-    /** Moves the clock hours ahead: however long an upload takes, its record must hold. */
+    /** Moves the clock past an upload's deadline and the grace a sweep allows it. */
     const muchLater = () => {
       vi.useFakeTimers({ toFake: ['Date'] });
       vi.setSystemTime(Date.now() + 2 * 60 * 60 * 1000);
@@ -1066,10 +1087,10 @@ describe('client-supplied processing artifacts', () => {
     afterEach(() => {
       vi.useRealTimers();
     });
+    const clientObjectsOf = async (root: string) => (await storedObjects(root)).filter((path) => path.includes('.client-artifacts/'));
 
-    it('deletes the object of an upload interrupted once stored, after its file was deleted meanwhile', async () => {
+    it('deletes the object of an upload interrupted once stored after its file was deleted, and retires its record', async () => {
       const app = await createApp({ processors: [thumbnailProcessor([])] });
-      const clientObjects = async () => (await storedObjects(app.root)).filter((path) => path.includes('.client-artifacts/'));
       const held = app.storageControl.hold((key) => key.includes('.client-artifacts/'));
       const attach = app.fileFn.services.processing.attachClientArtifact({
         fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', mimeType: 'image/png', body: bytes('client'),
@@ -1084,44 +1105,42 @@ describe('client-supplied processing artifacts', () => {
       held.release();
       await expect(attach).rejects.toThrow('database unavailable');
       app.databaseControl.down = false;
-      expect(await clientObjects()).toHaveLength(1);
+      expect(await clientObjectsOf(app.root)).toHaveLength(1);
       expect((await app.displacedRecords()).map((record) => record.kind)).toEqual(['filefn.upload-intent']);
 
+      // Within the upload's lifetime its record stays and its object is kept.
+      expect(await app.fileFn.cleanupOrphanedArtifacts()).toEqual({ deletedObjects: 0, keptRecords: 0 });
+      expect(await clientObjectsOf(app.root)).toHaveLength(1);
+      // Past it, one sweep deletes the object and retires the record; the next does nothing.
+      muchLater();
       expect(await app.fileFn.cleanupOrphanedArtifacts()).toEqual({ deletedObjects: 1, keptRecords: 0 });
-      expect(await clientObjects()).toEqual([]);
-      // Only the upload may remove its own record.
-      expect((await app.displacedRecords()).map((record) => record.kind)).toEqual(['filefn.upload-intent']);
+      expect(await clientObjectsOf(app.root)).toEqual([]);
+      expect(await app.displacedRecords()).toEqual([]);
+      expect(await app.fileFn.cleanupOrphanedArtifacts()).toEqual({ deletedObjects: 0, keptRecords: 0 });
     });
 
-    it('deletes the object of an upload that a sweep overtook and that was then interrupted once stored', async () => {
+    it('an upload past its deadline stores nothing, even after a sweep retired its record', async () => {
       const app = await createApp();
-      const clientObjects = async () => (await storedObjects(app.root)).filter((path) => path.includes('.client-artifacts/'));
       const held = app.storageControl.hold((key) => key.includes('.client-artifacts/'));
       const attach = app.fileFn.services.processing.attachClientArtifact({
         fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', mimeType: 'image/png', body: bytes('client'),
       }, app.owner);
       await held.reached;
       await app.clientFor('owner').deleteFile(app.fileId);
-      // Hours later, with the upload still writing, a sweep runs.
+      // Hours later, with the upload still writing, a sweep retires its record.
       muchLater();
-      expect(await app.fileFn.cleanupOrphanedArtifacts()).toEqual({ deletedObjects: 1, keptRecords: 0 });
-      // The upload then stores its object and nothing it writes after that lands.
+      await app.fileFn.cleanupOrphanedArtifacts();
+      expect(await app.displacedRecords()).toEqual([]);
+      // The upload then goes on, and nothing it writes after that lands.
       app.databaseControl.down = true;
       held.release();
-      await expect(attach).rejects.toThrow('database unavailable');
+      await expect(attach).rejects.toMatchObject({ code: 'FILEFN_UPLOAD_EXPIRED' });
       app.databaseControl.down = false;
-      expect(await clientObjects()).toHaveLength(1);
-
-      expect(await app.fileFn.cleanupOrphanedArtifacts()).toEqual({ deletedObjects: 1, keptRecords: 0 });
-      expect(await clientObjects()).toEqual([]);
+      expect(await clientObjectsOf(app.root)).toEqual([]);
     });
 
     it('deletes an upload that finished after its file was deleted and could not delete its own object', async () => {
       const app = await createApp();
-      const clientObjects = async () => (await storedObjects(app.root)).filter((path) => path.includes('.client-artifacts/'));
-      const failDeletes = () => app.storageControl.intercept((key) => key.includes('.client-artifacts/'), 'delete', async () => {
-        throw new Error('storage unavailable');
-      });
       // The upload is held once its intent is recorded, before its body is stored.
       const held = app.storageControl.hold((key) => key.includes('.client-artifacts/'));
       const attach = app.fileFn.services.processing.attachClientArtifact({
@@ -1129,24 +1148,122 @@ describe('client-supplied processing artifacts', () => {
       }, app.owner);
       await held.reached;
       await app.clientFor('owner').deleteFile(app.fileId);
-      const failed = failDeletes();
+      app.storageControl.failDeletes = (key) => key.includes('.client-artifacts/');
       held.release();
       await expect(attach).rejects.toMatchObject({ code: 'FILEFN_NOT_FOUND' });
-      expect(failed.fired).toBe(true);
 
       // The object is left, and still recorded by the upload's own record.
-      const [leftover] = await clientObjects();
-      expect(await clientObjects()).toHaveLength(1);
+      const [leftover] = await clientObjectsOf(app.root);
+      expect(await clientObjectsOf(app.root)).toHaveLength(1);
       const records = await app.displacedRecords();
       expect(records).toEqual([expect.objectContaining({ kind: 'filefn.upload-intent' })]);
       expect(leftover.endsWith(records[0].storageKey)).toBe(true);
 
       // A sweep whose delete fails keeps the record; the next one deletes the object.
-      failDeletes();
+      muchLater();
       expect(await app.fileFn.cleanupOrphanedArtifacts()).toEqual({ deletedObjects: 0, keptRecords: 1 });
-      expect(await clientObjects()).toHaveLength(1);
+      expect(await clientObjectsOf(app.root)).toHaveLength(1);
+      app.storageControl.failDeletes = null;
       expect(await app.fileFn.cleanupOrphanedArtifacts()).toEqual({ deletedObjects: 1, keptRecords: 0 });
-      expect(await clientObjects()).toEqual([]);
+      expect(await clientObjectsOf(app.root)).toEqual([]);
+      expect(await app.displacedRecords()).toEqual([]);
+    });
+
+    it('deletes the object of an upload that died on a live version once its lifetime is over', async () => {
+      const app = await createApp();
+      app.databaseControl.onCreate = (data) => {
+        if (data.kind !== 'thumbnail-small') return undefined;
+        app.databaseControl.down = true;
+        return 'throw';
+      };
+      await expect(app.fileFn.services.processing.attachClientArtifact({
+        fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', mimeType: 'image/png', body: bytes('client'),
+      }, app.owner)).rejects.toThrow('artifact row write failed');
+      app.databaseControl.down = false;
+      app.databaseControl.onCreate = null;
+      // A later upload of the same kind is named by the row and kept.
+      const kept = await app.fileFn.services.processing.attachClientArtifact({
+        fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', mimeType: 'image/png', body: bytes('kept'),
+      }, app.owner);
+      expect(await clientObjectsOf(app.root)).toHaveLength(2);
+
+      muchLater();
+      expect(await app.fileFn.cleanupOrphanedArtifacts()).toEqual({ deletedObjects: 1, keptRecords: 0 });
+      expect(await clientObjectsOf(app.root)).toEqual([expect.stringContaining(kept.storageKey)]);
+      expect(await app.displacedRecords()).toEqual([]);
+    });
+
+    it('keeps the record of a replaced client object whose deletes failed while its file was deleted', async () => {
+      const app = await createApp();
+      const input = { fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', mimeType: 'image/png' };
+      const first = await app.fileFn.services.processing.attachClientArtifact({ ...input, body: bytes('client-a') }, app.owner);
+      // The second upload's delete of the object it replaced starts; the file
+      // is deleted meanwhile, and every delete of that object fails.
+      const during = app.storageControl.intercept((key) => key === first.storageKey, 'delete', async () => {
+        app.storageControl.failDeletes = (key) => key === first.storageKey;
+        await app.clientFor('owner').deleteFile(app.fileId);
+      });
+      await expect(app.fileFn.services.processing.attachClientArtifact({ ...input, body: bytes('client-b') }, app.owner))
+        .rejects.toMatchObject({ code: 'FILEFN_NOT_FOUND' });
+      expect(during.fired).toBe(true);
+      app.storageControl.failDeletes = null;
+      expect(await clientObjectsOf(app.root)).toEqual([expect.stringContaining(first.storageKey)]);
+      expect((await app.displacedRecords()).map((record) => record.storageKey)).toContain(first.storageKey);
+
+      expect((await app.fileFn.cleanupOrphanedArtifacts()).keptRecords).toBe(0);
+      expect(await clientObjectsOf(app.root)).toEqual([]);
+    });
+
+    it('deletes a client object from the target it was stored in after the policy changed', async () => {
+      const app = await createApp({ artifactsOnR2: true });
+      await app.fileFn.services.processing.attachClientArtifact({
+        fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', mimeType: 'image/png', body: bytes('client'),
+      }, app.owner);
+      expect([...app.bucket.objects.keys()]).toHaveLength(1);
+      // Artifacts of the policy now go to the default target.
+      delete app.photoPolicy.artifactStorageTarget;
+
+      await app.clientFor('owner').deleteFile(app.fileId);
+      await app.fileFn.cleanupOrphanedArtifacts();
+      expect([...app.bucket.objects.keys()]).toEqual([]);
+    });
+
+    it('never deletes a server key, which a live processor may publish while the sweep runs', async () => {
+      const sharedKey = 'shared/thumb-small.jpg';
+      const shared: Processor = {
+        name: 'shared-thumbnail',
+        supportedMimeTypes: ['image/png'],
+        async process() {
+          return {
+            success: true,
+            artifacts: [{ kind: 'thumbnail-small', data: bytes('server-small'), mimeType: 'image/jpeg', storageKey: sharedKey }],
+          };
+        },
+      };
+      const app = await createApp({ processors: [shared] });
+      app.jobs.length = 0;
+      // A server key recorded for a version that is gone, as a failed delete leaves it.
+      await app.database.create({
+        model: 'fileArtifacts',
+        data: {
+          artifactId: 'dsp_gone', fileId: 'file_gone', versionId: 'ver_gone', kind: 'filefn.displaced-object',
+          storageKey: sharedKey, mimeType: 'application/octet-stream', size: 0,
+          metadata: { processing: { source: 'server' } }, createdAt: new Date(0).toISOString(),
+        },
+      });
+      const other = await app.uploadPhoto();
+      // Another file's processing stores that key and commits its row while
+      // the sweep is about to delete it.
+      const during = app.storageControl.intercept((key) => key === sharedKey, 'delete', async () => {
+        expect(await app.drainJobs()).toEqual([expect.objectContaining({ status: 'completed' })]);
+      });
+      expect(await app.fileFn.cleanupOrphanedArtifacts()).toEqual({ deletedObjects: 0, keptRecords: 0 });
+      if (!during.fired) {
+        expect(await app.drainJobs()).toEqual([expect.objectContaining({ status: 'completed' })]);
+      }
+      expect(during.fired).toBe(false);
+      await expectServerSmallReadable(app, other.fileId);
+      expect(await app.displacedRecords()).toEqual([]);
     });
 
     it("leaves a live version's records and an object another row still names", async () => {

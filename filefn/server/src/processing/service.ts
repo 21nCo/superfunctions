@@ -146,20 +146,21 @@ export const PROCESSING_RUN_KIND = 'filefn.processing-run';
  * naming (a replaced artifact, or a server upload that lost to a client
  * artifact) owned by its file version, so version and file cleanup still
  * delete it and the shared-key reference scan still counts it. A row is
- * written before the artifact row switches away from the object, and a
- * client object's row is removed once the object is deleted. The artifact
- * list, lookup and download operations never return them.
+ * written before the artifact row switches away from the object. A client
+ * object's record goes only once its delete is confirmed: file deletion
+ * leaves it (and turns each client artifact row into one) for
+ * `cleanupOrphanedArtifacts`. The artifact list, lookup and download
+ * operations never return them.
  */
-const DISPLACED_OBJECT_KIND = 'filefn.displaced-object';
+export const DISPLACED_OBJECT_KIND = 'filefn.displaced-object';
 
 /**
  * Kind of the `fileArtifacts` rows that record a client upload's own object
- * from before it is written until a row names it or it is deleted. Only the
- * upload removes one, since only it knows it will write no more: file and
- * version cleanup leave them in place, and `cleanupOrphanedArtifacts`
- * deletes the object of a version that is gone on every run but keeps the
- * row, so an object an upload stores later, or an upload that died, is
- * still found.
+ * from before it is written until a row names it or it is deleted. An upload
+ * lives at most `CLIENT_ARTIFACT_UPLOAD_MS` from before its record and
+ * writes or commits nothing after that, so besides the upload itself only
+ * `cleanupOrphanedArtifacts` removes one, once that lifetime and a grace
+ * period are over; file and version cleanup leave them in place.
  */
 export const UPLOAD_INTENT_KIND = 'filefn.upload-intent';
 
@@ -303,7 +304,7 @@ function recordedArtifactCount(run: FileArtifactRecord | undefined): number {
 }
 
 /** Storage target a processing-written artifact row recorded for its object. */
-function recordedStorageTarget(row: FileArtifactRecord): string | undefined {
+export function recordedStorageTarget(row: { metadata?: Record<string, unknown> }): string | undefined {
   const target = (row.metadata?.processing as { storageTarget?: unknown } | undefined)?.storageTarget;
   return typeof target === 'string' && target.length > 0 ? target : undefined;
 }
@@ -392,6 +393,10 @@ const MAX_JOB_FIELD_LENGTH = 512;
 const MAX_ARTIFACT_WRITE_ATTEMPTS = 5;
 /** Lifetime of a URL the server signs for its own upload, used at once. */
 const SIGNED_SERVER_UPLOAD_TTL_SECONDS = 300;
+/** How long a client artifact upload may take; past it, it stores and commits nothing. */
+const CLIENT_ARTIFACT_UPLOAD_MS = 30 * 60 * 1000;
+/** How long after an upload's lifetime a sweep still leaves its record alone, for writes already in flight. */
+const CLIENT_ARTIFACT_RECORD_GRACE_MS = 30 * 60 * 1000;
 
 interface StoredObject {
   key: string;
@@ -533,17 +538,17 @@ function isGrantExpired(expiresAt: string | null | undefined): boolean {
   return expiresAtMs <= Date.now();
 }
 
-/** The chunks of a client artifact body; a stream left early is cancelled. */
+/**
+ * The chunks of a client artifact body, a Blob read as a stream so it is never
+ * copied whole; a stream left early is cancelled.
+ */
 async function* bodyChunks(body: ReadableStream<Uint8Array> | Uint8Array | Blob): AsyncGenerator<Uint8Array> {
   if (body instanceof Uint8Array) {
     yield body;
     return;
   }
-  if (typeof Blob !== 'undefined' && body instanceof Blob) {
-    yield new Uint8Array(await body.arrayBuffer());
-    return;
-  }
-  const reader = (body as ReadableStream<Uint8Array>).getReader();
+  const stream = typeof Blob !== 'undefined' && body instanceof Blob ? body.stream() : body as ReadableStream<Uint8Array>;
+  const reader = stream.getReader();
   let finished = false;
   try {
     while (true) {
@@ -780,9 +785,15 @@ export function createProcessingService(config: ProcessingServiceConfig) {
   /**
    * Writes `body` of exactly `length` bytes through a signed upload URL; a
    * refused PUT throws. A stream is sent as it arrives, with the length it
-   * was signed for, so it is never held in memory whole.
+   * was signed for, so it is never held in memory whole. A PUT still running
+   * at `deadline` is aborted.
    */
-  async function putSigned(object: StoredObject, body: Uint8Array | Blob | ReadableStream<Uint8Array>, length: number): Promise<void> {
+  async function putSigned(
+    object: StoredObject,
+    body: Uint8Array | Blob | ReadableStream<Uint8Array>,
+    length: number,
+    deadline?: number,
+  ): Promise<void> {
     const signed = await storage.signUploadUrl!({
       key: object.key,
       target: object.target,
@@ -793,6 +804,10 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     if (!headers.has('content-type')) headers.set('content-type', object.contentType);
     let requestBody = body;
     const init: RequestInit & { duplex?: 'half' } = { method: 'PUT', headers };
+    if (deadline !== undefined) {
+      if (Date.now() > deadline) throw errors.uploadExpired();
+      init.signal = AbortSignal.timeout(deadline - Date.now());
+    }
     if (body instanceof ReadableStream) {
       // Workers sends a stream with a Content-Length only through a
       // FixedLengthStream; Node's fetch takes the header itself.
@@ -826,12 +841,13 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     kind: string,
     maxBytes: number,
     declaredLength: number | undefined,
+    deadline: number,
   ): Promise<number> {
     if (!(body instanceof ReadableStream)) {
       const size = body instanceof Uint8Array ? body.byteLength : body.size;
       if (size > maxBytes) throw errors.artifactTooLarge(kind, maxBytes);
       if (size === 0) throw errors.invalidRequest('Artifact body is empty');
-      await putSigned(object, body, size);
+      await putSigned(object, body, size, deadline);
       return size;
     }
     if (declaredLength === undefined) {
@@ -858,7 +874,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       }),
     );
     try {
-      await putSigned(object, counted, declaredLength);
+      await putSigned(object, counted, declaredLength, deadline);
     } catch (error) {
       throw refusal ?? error;
     }
@@ -932,9 +948,10 @@ export function createProcessingService(config: ProcessingServiceConfig) {
 
   /**
    * Stores a client body in a new object, refusing it once it passes
-   * `maxBytes` or when it is empty, without holding it in memory whole. The
-   * caller has recorded the object before (see `attachClientArtifact`) and
-   * deletes whatever a refused or failed upload wrote.
+   * `maxBytes` or when it is empty, without holding it in memory whole, and
+   * writing nothing past `deadline`. The caller has recorded the object
+   * before (see `attachClientArtifact`) and deletes whatever a refused or
+   * failed upload wrote.
    */
   async function storeBounded(
     body: NonNullable<ClientArtifactUpload['body']>,
@@ -942,14 +959,18 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     kind: string,
     maxBytes: number,
     declaredLength: number | undefined,
+    deadline: number,
   ): Promise<number> {
+    const beforeDeadline = () => {
+      if (Date.now() > deadline) throw errors.uploadExpired();
+    };
     const mode = serverUploadMode(object.target);
     // The stream is opened only for a first chunk within the limit, so a body
     // refused at once leaves no object half-created behind.
     let writer: WritableStreamDefaultWriter | null = null;
     try {
       if (mode === 'signed') {
-        return await putSignedBounded(body, object, kind, maxBytes, declaredLength);
+        return await putSignedBounded(body, object, kind, maxBytes, declaredLength, deadline);
       }
       let size = 0;
       for await (const chunk of bodyChunks(body)) {
@@ -958,11 +979,13 @@ export function createProcessingService(config: ProcessingServiceConfig) {
           throw errors.artifactTooLarge(kind, maxBytes);
         }
         writer ??= (await storage.openUploadStream!(object)).getWriter();
+        beforeDeadline();
         await writer.write(chunk);
       }
       if (size === 0) {
         throw errors.invalidRequest('Artifact body is empty');
       }
+      beforeDeadline();
       await writer!.close();
       return size;
     } catch (error) {
@@ -1023,22 +1046,22 @@ export function createProcessingService(config: ProcessingServiceConfig) {
    * the version's storage key, say) may claim at any moment, so it stays
    * recorded until version or file cleanup, whose reference scan keeps it
    * while another row still names it. Never throws, so a caller's own error
-   * is the one it reports; an object it could not record is not deleted.
+   * is the one it reports; an object it could not record is still deleted,
+   * since no row names it.
    *
-   * The record is written again first, even when the caller wrote it: a
-   * concurrent `deleteFile` removes every row of the file, this record too,
-   * so only a record written after that is still there when this delete
-   * fails, for `cleanupOrphanedArtifacts` to find.
+   * The record is written again first, even when the caller wrote it, so
+   * the object is recorded whenever its delete fails; only a confirmed
+   * delete (here, in version cleanup or in `cleanupOrphanedArtifacts`)
+   * removes a client object's record.
    */
   async function discardDisplacedObject(object: DisplacedObject, fallbackTarget: string, purpose?: 'intent'): Promise<void> {
     if (artifactSourceOf(object) !== 'client') return;
     const target = recordedStorageTarget(object as FileArtifactRecord) ?? fallbackTarget;
+    const id = await journalDisplaced(object, fallbackTarget, purpose).catch(() => undefined);
     try {
-      const id = await journalDisplaced(object, fallbackTarget, purpose);
       await storage.deleteObject({ key: object.storageKey, target });
-      await removeDisplacedRecord(id);
+      if (id) await removeDisplacedRecord(id);
     } catch (error) {
-      // An upload's own record stays as it is: file deletion leaves it alone.
       logger?.warn('displaced artifact object not deleted', {
         fileId: object.fileId,
         versionId: object.versionId,
@@ -1308,16 +1331,10 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     }
     for (const ref of unjournaled) {
       if (!referenced.has(ref)) {
-        const object = parseStorageRef(ref);
         try {
-          await storage.deleteObject(object);
+          await storage.deleteObject(parseStorageRef(ref));
         } catch {
-          // Best effort: the upload may never have completed. Should it have,
-          // a record lets `cleanupOrphanedArtifacts` delete it later.
-          await journalDisplaced(
-            { ...input, storageKey: object.key, metadata: { processing: { storageTarget: object.target } } },
-            object.target,
-          ).catch(() => undefined);
+          // Best effort: the upload may never have completed.
         }
       }
     }
@@ -1347,6 +1364,40 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         .filter((row) => !isInternalKind(row.kind) && artifactSourceOf(row) === 'client')
         .map((row) => row.kind),
     );
+  }
+
+  /** The IDs of the versions of `records` whose version and file still exist. */
+  async function findLiveVersionIds(records: FileArtifactRecord[]): Promise<Set<string>> {
+    if (records.length === 0) return new Set();
+    const versions = await db.findMany<FileVersionRecord>({
+      model: 'fileVersions',
+      where: [{ field: 'versionId', operator: 'in', value: [...new Set(records.map((record) => record.versionId))] }],
+      namespace,
+    });
+    const files = versions.length === 0 ? [] : await db.findMany<FileRecord>({
+      model: 'files',
+      where: [{ field: 'fileId', operator: 'in', value: [...new Set(versions.map((version) => version.fileId))] }],
+      namespace,
+    });
+    const fileIds = new Set(files.map((file) => file.fileId));
+    const fileOfRecord = new Map(records.map((record) => [record.versionId, record.fileId]));
+    return new Set(versions
+      .filter((version) => fileIds.has(version.fileId) && fileOfRecord.get(version.versionId) === version.fileId)
+      .map((version) => version.versionId));
+  }
+
+  /** The keys of `records` an artifact row of their own version names. */
+  async function findNamedKeys(records: FileArtifactRecord[]): Promise<Set<string>> {
+    if (records.length === 0) return new Set();
+    const rows = await db.findMany<FileArtifactRecord>({
+      model: 'fileArtifacts',
+      where: [{ field: 'storageKey', operator: 'in', value: records.map((record) => record.storageKey) }],
+      namespace,
+    });
+    const versionOfKey = new Map(records.map((record) => [record.storageKey, record.versionId]));
+    return new Set(rows
+      .filter((row) => !isInternalKind(row.kind) && versionOfKey.get(row.storageKey) === row.versionId)
+      .map((row) => row.storageKey));
   }
 
   async function findVersion(fileId: string, versionId: string): Promise<{ file: FileRecord; version: FileVersionRecord } | null> {
@@ -1734,7 +1785,9 @@ export function createProcessingService(config: ProcessingServiceConfig) {
           { durationMs },
         );
       }
-      if (upload.contentLength !== undefined && upload.contentLength > rule.maxSizeBytes) {
+      // A Blob is refused by its size before any of it is read.
+      const declaredSize = upload.contentLength ?? (typeof Blob !== 'undefined' && upload.body instanceof Blob ? upload.body.size : undefined);
+      if (declaredSize !== undefined && declaredSize > rule.maxSizeBytes) {
         throw errors.artifactTooLarge(upload.kind, rule.maxSizeBytes);
       }
       if (upload.contentLength === 0 || !upload.body) {
@@ -1745,6 +1798,9 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       serverUploadMode(target);
       const storageKey = `${version.storageKey}.client-artifacts/${upload.kind}/${randomUUID()}`;
       const ownObject = { fileId: file.fileId, versionId: version.versionId, storageKey, metadata: { processing: { source: 'client' } } };
+      // Taken before the record is written, so the record's age bounds the
+      // upload's own (see `UPLOAD_INTENT_KIND`).
+      const deadline = Date.now() + CLIENT_ARTIFACT_UPLOAD_MS;
       // Recorded before anything is written, so an object a failed or
       // interrupted attempt leaves behind stays findable by cleanup.
       const intentId = await journalDisplaced(ownObject, target, 'intent');
@@ -1756,6 +1812,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
           upload.kind,
           rule.maxSizeBytes,
           upload.contentLength,
+          deadline,
         );
       } catch (error) {
         await discardDisplacedObject(ownObject, target, 'intent');
@@ -1774,8 +1831,8 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       let replaced: FileArtifactRecord | null = null;
       let rowId = artifactId;
       try {
-        // Recorded again now the object exists, should the record be gone.
-        await journalDisplaced(ownObject, target, 'intent');
+        // Past its lifetime a sweep may have retired this attempt's record.
+        if (Date.now() > deadline) throw errors.uploadExpired();
         let current = await findKindRow(file.fileId, version.versionId, upload.kind);
         if (!current) {
           try {
@@ -1856,22 +1913,24 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     },
 
     /**
-     * Deletes the objects recorded as displaced or as an upload's own (see
-     * `DISPLACED_OBJECT_KIND`, `UPLOAD_INTENT_KIND`) for versions that no
-     * longer exist, and then their displaced records: an upload that
-     * finished, failed or was interrupted after its file was deleted, or a
-     * delete that failed. An upload's own record stays, since the upload may
-     * still store its object (see `UPLOAD_INTENT_KIND`), so its object is
-     * deleted again on each run. An object another row still names is kept
-     * and only its displaced record goes. A failed delete keeps its record
-     * for the next run. Call it from a scheduled job; FileFn does not run it
-     * on its own.
+     * Deletes client objects no artifact row will name again, and retires the
+     * records that kept them (see `DISPLACED_OBJECT_KIND`,
+     * `UPLOAD_INTENT_KIND`), each only after its delete is confirmed: the
+     * displaced objects of versions that are gone, and the objects of uploads
+     * whose lifetime and grace period are over, unless a live row names
+     * them. A client object's key is unique to its upload, so nothing else
+     * can name or write it. A server key is never deleted here, since a
+     * processor of another file may publish the same key at any moment; its
+     * record is retired once its version is gone, after file or version
+     * cleanup tried its delete. A failed delete keeps its record for the
+     * next run. `deletedObjects` counts confirmed deletes. Call it from a
+     * scheduled job; FileFn does not run it on its own.
      */
     async cleanupOrphanedArtifacts(): Promise<{ deletedObjects: number; keptRecords: number }> {
       const pageSize = 100;
       const result = { deletedObjects: 0, keptRecords: 0 };
-      // Records still in place (a live version's, an upload's, or a failed
-      // delete's) are skipped by the offset; removed ones shift the next page up.
+      const expiredBefore = Date.now() - CLIENT_ARTIFACT_UPLOAD_MS - CLIENT_ARTIFACT_RECORD_GRACE_MS;
+      // Records left in place are skipped by the offset; retired ones shift the next page up.
       let offset = 0;
       for (;;) {
         const records = await db.findMany<FileArtifactRecord>({
@@ -1882,24 +1941,25 @@ export function createProcessingService(config: ProcessingServiceConfig) {
           offset,
           namespace,
         });
+        const live = await findLiveVersionIds(records);
+        const expired = (record: FileArtifactRecord) =>
+          record.kind === UPLOAD_INTENT_KIND && new Date(record.createdAt).getTime() < expiredBefore;
+        const named = await findNamedKeys(records.filter((record) => live.has(record.versionId) && expired(record)));
         for (const record of records) {
-          if (await findVersion(record.fileId, record.versionId)) {
+          const intent = record.kind === UPLOAD_INTENT_KIND;
+          const deleteObject = artifactSourceOf(record) === 'client' && !(intent && named.has(record.storageKey));
+          const retire = intent ? expired(record) : !live.has(record.versionId);
+          if (!retire) {
             offset += 1;
             continue;
           }
-          const target = recordedStorageTarget(record) ?? getArtifactStorageTarget({ policy: '' });
-          const ref = storageRef(target, record.storageKey);
           try {
-            const referenced = await findReferencedStorageRefs({ db, namespace, policies }, new Set([ref]), record);
-            if (!referenced.has(ref)) {
+            if (deleteObject) {
+              const target = recordedStorageTarget(record) ?? getArtifactStorageTarget({ policy: '' });
               await storage.deleteObject({ key: record.storageKey, target });
               result.deletedObjects += 1;
             }
-            if (record.kind === UPLOAD_INTENT_KIND) {
-              offset += 1;
-            } else {
-              await removeDisplacedRecord(record.artifactId);
-            }
+            await removeDisplacedRecord(record.artifactId);
           } catch (error) {
             offset += 1;
             result.keptRecords += 1;
