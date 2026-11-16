@@ -414,6 +414,12 @@ export class SyncEngine {
   private pullAfterClone = false;
   /** Clone passes started per table, so a pull can tell one began and ended meanwhile. */
   private cloneStarts = new Map<string, number>();
+  /**
+   * The storage writes of the pull result being applied now, if any. A clone
+   * waits for them before it starts, so a pull that did not leave a table to
+   * it cannot write its older rows over the cloned ones.
+   */
+  private pullApplying: Promise<void> | null = null;
   private pullAfterReconnect = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private pushBatchSize = 100;
@@ -920,6 +926,7 @@ export class SyncEngine {
       this.cloneStarts.set(table, (this.cloneStarts.get(table) ?? 0) + 1);
     }
     try {
+      while (this.pullApplying) await this.pullApplying;
       await this.runCloneResources(tables);
     } finally {
       for (const table of tables) {
@@ -1541,7 +1548,17 @@ export class SyncEngine {
             );
             this.pullAfterClone = true;
           }
-          await applyPullResult(this.storage, lastResult);
+          const applying = applyPullResult(this.storage, lastResult);
+          const applied = applying.then(
+            () => undefined,
+            () => undefined,
+          );
+          this.pullApplying = applied;
+          try {
+            await applying;
+          } finally {
+            if (this.pullApplying === applied) this.pullApplying = null;
+          }
           if (this.searchProvider && !isNativeBackedSearchProvider(this.searchProvider) && lastResult) {
             if (lastResult.records) {
               for (const [resource, records] of Object.entries(lastResult.records as Record<string, unknown[]>)) {

@@ -454,6 +454,38 @@ describe("pulls and clones that overlap", () => {
     expect(pullPayloads[1].notes).toBe("9");
   });
 
+  it("starts a clone that begins while a pull writes its rows only after those writes", async () => {
+    const storage = new MemoryStorageAdapter();
+    const { engine, remote } = createEngine(storage, async (payload) =>
+      pageResponse(payload.page?.afterId ?? null, payload.page?.limit ?? 10),
+    );
+    remote.pull.mockImplementation(async () => ({
+      ok: true,
+      result: {
+        ok: true,
+        records: { notes: [{ id: "n1", title: "stale" }] },
+        deleted: { notes: [] },
+        cursors: { notes: "3" },
+      },
+    }));
+    const upsertRecord = storage.upsertRecord.bind(storage);
+    let clone: Promise<void> | undefined;
+    vi.spyOn(storage, "upsertRecord").mockImplementation(async (resource: string, record: any) => {
+      if (record.title === "stale" && !clone) {
+        // The clone starts after the pull chose what to write; given the
+        // chance, it would finish before the pull's write lands.
+        clone = engine.cloneNow();
+        await Promise.race([clone, new Promise((resolve) => setTimeout(resolve, 50))]);
+      }
+      return upsertRecord(resource, record);
+    });
+
+    await engine.pullNow();
+    await clone;
+
+    expect((await storage.getRecord("notes", "n1"))?.title).toBe("n1");
+  });
+
   it("leaves join stores of a cloning table out, keyed as pull cursors are", async () => {
     const joinSchema: DatafnSchema = {
       resources: [
