@@ -49,10 +49,22 @@ export interface SerializedRunOptions {
    * completion and holds its key only for database steps).
    */
   keepWaiting?: boolean;
+  /** Identifies this call to later calls of its key that probe with `sharesKeyWith`. */
+  member?: string;
+  /**
+   * Set where calls of one key may belong to independent groups (FileFn: the
+   * fileId key on adapters without unique constraints, where a group is one
+   * store). When the key is busy, this call is shown the members of each group
+   * holding or waiting for it and joins the first group this resolves true
+   * for; if none, it starts its own group and runs without waiting.
+   * Omitted: one group per key.
+   */
+  sharesKeyWith?: (members: readonly string[]) => Promise<boolean>;
 }
 
 interface Turn {
   evictableAt?: number;
+  member?: string;
 }
 
 interface KeyState {
@@ -61,33 +73,34 @@ interface KeyState {
 }
 
 /**
- * Runs callbacks one at a time per key within this process. FileFn uses it to
- * serialize upload completion per session and per `fileId`. It is not a
- * cross-process lock: across processes the unique `files.fileId` constraint
- * decides which completion creates a file.
+ * Runs callbacks one at a time per key (and per group, see `sharesKeyWith`)
+ * within this process. FileFn uses it to serialize upload completion per
+ * session and per `fileId`. It is not a cross-process lock: across processes
+ * the unique `files.fileId` constraint decides which completion creates a file.
  *
- * A call runs only while it holds its key, and holds it until it settles. A
- * call that cannot get the key within `waitTimeoutMs` fails with the retryable
+ * A call runs only while it holds its key, and holds it until it settles or a
+ * waiter takes the key past its `evictableAt`. A call that cannot get the key
+ * within `waitTimeoutMs` fails with the retryable
  * `FILEFN_UPLOAD_COMPLETION_IN_PROGRESS` without running, leaving no trace on
  * the key, unless the holder's `evictableAt` has passed: then it takes the key
  * and runs. A `keepWaiting` call keeps waiting instead of failing. Memory per
- * key is one holder entry plus the calls still waiting; a key's entry is
- * dropped when its last call settles. A holder that never settles and is never
- * evictable keeps its key's entry, and later calls of that key fail with the
- * retryable error after waiting (`keepWaiting` calls wait), until the process
- * restarts.
+ * key is one holder entry per group plus the calls still waiting; a group's
+ * entry is dropped when its last call settles. A holder that never settles and
+ * is never evictable keeps its group's entry, and later calls of that group
+ * fail with the retryable error after waiting (`keepWaiting` calls wait),
+ * until the process restarts.
  */
 export function createKeyedSerializer(options: { waitTimeoutMs?: number } = {}) {
   const waitTimeoutMs = options.waitTimeoutMs ?? SERIALIZED_WAIT_TIMEOUT_MS;
-  const keys = new Map<string, KeyState>();
+  const keys = new Map<string, KeyState[]>();
 
-  function acquire(key: string, turn: Turn, keepWaiting = false): Promise<KeyState> | KeyState {
-    const state = keys.get(key);
-    if (!state) {
-      const created: KeyState = { holder: turn, waiters: [] };
-      keys.set(key, created);
-      return created;
-    }
+  function start(key: string, turn: Turn): KeyState {
+    const created: KeyState = { holder: turn, waiters: [] };
+    keys.set(key, [...(keys.get(key) ?? []), created]);
+    return created;
+  }
+
+  function wait(state: KeyState, turn: Turn, keepWaiting: boolean): Promise<KeyState> {
     return new Promise<KeyState>((resolve, reject) => {
       const waiter = {
         turn,
@@ -119,20 +132,59 @@ export function createKeyedSerializer(options: { waitTimeoutMs?: number } = {}) 
     });
   }
 
+  function membersOf(state: KeyState): string[] {
+    return [state.holder, ...state.waiters.map((waiter) => waiter.turn)]
+      .map((turn) => turn.member)
+      .filter((member): member is string => member !== undefined);
+  }
+
+  // Probes every group not yet probed, then decides synchronously against the
+  // live groups: it joins a matching group still present, probes groups
+  // started meanwhile, or starts its own group once none is left unprobed. So
+  // two calls of one group never both start a group while either is live.
+  async function acquireAmong(
+    key: string,
+    turn: Turn,
+    keepWaiting: boolean,
+    sharesKeyWith: (members: readonly string[]) => Promise<boolean>,
+  ): Promise<KeyState> {
+    const probed = new Set<KeyState>();
+    for (;;) {
+      const unprobed = (keys.get(key) ?? []).filter((state) => !probed.has(state));
+      if (unprobed.length === 0) return start(key, turn);
+      unprobed.forEach((state) => probed.add(state));
+      const shared = await Promise.all(unprobed.map((state) => sharesKeyWith(membersOf(state))));
+      const live = keys.get(key) ?? [];
+      const match = unprobed.find((state, index) => shared[index] && live.includes(state));
+      if (match) return wait(match, turn, keepWaiting);
+    }
+  }
+
+  function acquire(key: string, turn: Turn, runOptions: SerializedRunOptions): Promise<KeyState> | KeyState {
+    const groups = keys.get(key);
+    if (!groups) return start(key, turn);
+    const keepWaiting = runOptions.keepWaiting ?? false;
+    if (runOptions.sharesKeyWith) return acquireAmong(key, turn, keepWaiting, runOptions.sharesKeyWith);
+    return wait(groups[0], turn, keepWaiting);
+  }
+
   function release(key: string, state: KeyState, turn: Turn): void {
     if (state.holder !== turn) return;
     const next = state.waiters.shift();
     if (next) {
       state.holder = next.turn;
       next.grant();
-    } else if (keys.get(key) === state) {
-      keys.delete(key);
+      return;
     }
+    const groups = keys.get(key)?.filter((group) => group !== state);
+    if (groups === undefined) return;
+    if (groups.length > 0) keys.set(key, groups);
+    else keys.delete(key);
   }
 
   async function runSerialized<T>(key: string, fn: () => Promise<T>, runOptions: SerializedRunOptions = {}): Promise<T> {
-    const turn: Turn = { evictableAt: runOptions.evictableAt };
-    const state = await acquire(key, turn, runOptions.keepWaiting);
+    const turn: Turn = { evictableAt: runOptions.evictableAt, member: runOptions.member };
+    const state = await acquire(key, turn, runOptions);
     try {
       return await fn();
     } finally {

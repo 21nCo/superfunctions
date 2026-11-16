@@ -106,11 +106,11 @@ export interface UploadSession {
 // per request), the calls completing one upload session and, per namespace and
 // fileId, the commit decisions (database steps only, never storage I/O). On
 // adapters without unique constraints, which are single-process, the fileId key
-// is the only guard and covers every adapter object in the process: no adapter
-// property reliably tells whether two adapter objects (for example two
-// wrappers) share one store. With unique constraints it is scoped to the
-// adapter object (see databaseToken). Keys: `session\0...` then `file\0...`,
-// always acquired in that order. A call that waits longer than
+// is the only guard and is scoped to one store, by that store's own rows (see
+// sessionsInThisStore): no adapter property reliably tells whether two adapter
+// objects (for example two wrappers) share one store. With unique constraints
+// it is scoped to the adapter object (see databaseToken). Keys: `session\0...`
+// then `file\0...`, always acquired in that order. A call that waits longer than
 // SERIALIZED_WAIT_TIMEOUT_MS for its session key fails with the retryable 409
 // FILEFN_UPLOAD_COMPLETION_IN_PROGRESS before changing anything; so does one
 // that waits that long, before its storage step, for a commit of its fileId
@@ -262,6 +262,24 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     if (uniqueConstraints) return 0;
     const expiresAtMs = Date.parse(expiresAt);
     return Number.isNaN(expiresAtMs) ? undefined : expiresAtMs;
+  }
+  // Without unique constraints, completions wait only behind those of their
+  // own store: a busy key's group is this store's when one of its sessions is
+  // visible here. Adapter objects cannot tell (wrappers share a store).
+  async function sessionsInThisStore(uploadSessionIds: readonly string[]): Promise<boolean> {
+    const found = await Promise.all(uploadSessionIds.map((uploadSessionId) => db.findOne<UploadSession>({
+      model: 'uploadSessions',
+      where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
+      namespace,
+    })));
+    return found.some(Boolean);
+  }
+  function fileKeyOptions(session: UploadSession) {
+    return {
+      evictableAt: fileKeyEvictableAt(session.expiresAt),
+      member: session.uploadSessionId,
+      sharesKeyWith: uniqueConstraints ? undefined : sessionsInThisStore,
+    };
   }
 
   function selectUploadMode(storageTarget: string): string {
@@ -1026,7 +1044,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // 409 while it has changed nothing; only a commit that starts during this
       // call's own storage step can keep it waiting below.
       if (!publishedVersion) {
-        await runSerialized(fileKey, async () => {});
+        await runSerialized(fileKey, async () => {}, { ...fileKeyOptions(session), evictableAt: undefined });
       }
 
       // Complete multipart upload
@@ -1223,7 +1241,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
               throw err;
             }
             return 'published';
-          }, { evictableAt: fileKeyEvictableAt(session.expiresAt), keepWaiting: true });
+          }, { ...fileKeyOptions(session), keepWaiting: true });
 
       if (commitOutcome === 'recorded') {
         // The recorded result belongs to the call that published it; this call
