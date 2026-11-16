@@ -394,12 +394,15 @@ export function createFileFn(config: FileFnConfig): FileFn {
         getReadableVersionForFile: processingService.getReadableVersionForFile.bind(processingService),
         attachClientArtifact: processingService.attachClientArtifact.bind(processingService),
         async triggerProcessingForFile(fileId, ctx, versionId, options) {
-          const file = await fileService.getFile(fileId, ctx);
-          const version = await fileService.getVersion(fileId, versionId ?? file.currentVersionId, ctx);
           const force = options?.force === true;
-          if (force) {
-            await processingService.requireWritableFile(fileId, ctx);
-          }
+          // Forcing replaces client-supplied artifacts: it needs write access,
+          // which the configured write check alone decides.
+          const { file, version } = force
+            ? await processingService.getWritableVersionForFile(fileId, ctx, versionId)
+            : await (async () => {
+              const readable = await fileService.getFile(fileId, ctx);
+              return { file: readable, version: await fileService.getVersion(fileId, versionId ?? readable.currentVersionId, ctx) };
+            })();
           return processingService.triggerProcessing({
             fileId: file.fileId,
             versionId: version.versionId,

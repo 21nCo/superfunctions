@@ -249,11 +249,11 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
           throw errors.invalidRequest('force must be a boolean');
         }
         const force = body?.force === true;
-        const target = await service.getReadableVersionForFile(fileId, ctx, body?.versionId);
-        if (force) {
-          // Forcing replaces client-supplied artifacts, so it needs write access.
-          await service.requireWritableFile(fileId, ctx);
-        }
+        // Forcing replaces client-supplied artifacts, so it needs write access,
+        // decided by the configured write check alone.
+        const target = force
+          ? await service.getWritableVersionForFile(fileId, ctx, body?.versionId)
+          : await service.getReadableVersionForFile(fileId, ctx, body?.versionId);
 
         const result = await service.triggerProcessing(
           {

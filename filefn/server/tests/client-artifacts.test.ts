@@ -2,9 +2,11 @@ import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { memoryAdapter } from '@superfunctions/db/adapters/memory';
-import type { StorageAdapter } from '@superfunctions/storage';
+import { createRoutedStorageAdapter, type StorageAdapter } from '@superfunctions/storage';
 import { createLocalStorageAdapter } from '@superfunctions/storage-local';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+// The real R2 adapter, so the test covers the owner-decided storage.
+import { createR2StorageAdapter } from '../../../packages/storage-r2/src/index.js';
 import {
   createDefaultAuthorizer,
   createFileFn,
@@ -22,6 +24,7 @@ const bytes = (text: string) => new TextEncoder().encode(text);
 
 const roots: string[] = [];
 afterEach(async () => {
+  vi.unstubAllGlobals();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -31,20 +34,31 @@ async function storedObjects(root: string): Promise<string[]> {
   return entries.filter((entry) => entry.isFile()).map((entry) => join(entry.parentPath, entry.name).slice(root.length + 1));
 }
 
+type Gate = { op: 'upload' | 'delete'; match: (key: string) => boolean; reached: () => void; released: Promise<void> };
+
 /**
- * Local storage whose server-side uploads can be switched off, as on the R2
- * adapter, or held at a gate so a test can interleave other writes.
+ * Storage whose server-side uploads can be switched off, or whose next upload
+ * or delete of a matching key can be held at a gate so a test can interleave
+ * other writes.
  */
 function controlledStorage(local: StorageAdapter) {
-  let gate: { match: (key: string) => boolean; reached: () => void; released: Promise<void> } | null = null;
+  let gate: Gate | null = null;
+  const pass = async (op: Gate['op'], key: string) => {
+    const held = gate;
+    if (held?.op === op && held.match(key)) {
+      gate = null;
+      held.reached();
+      await held.released;
+    }
+  };
   const control = {
     proxyUploads: true,
-    /** Holds the next server-side upload whose key matches until `release` is called. */
-    hold(match: (key: string) => boolean) {
+    /** Holds the next server-side upload (or delete) whose key matches until `release` is called. */
+    hold(match: (key: string) => boolean, op: Gate['op'] = 'upload') {
       let reached!: () => void;
       let release!: () => void;
       const reachedPromise = new Promise<void>((resolve) => { reached = resolve; });
-      gate = { match, reached, released: new Promise<void>((resolve) => { release = resolve; }) };
+      gate = { op, match, reached, released: new Promise<void>((resolve) => { release = resolve; }) };
       return { reached: reachedPromise, release };
     },
   };
@@ -56,13 +70,14 @@ function controlledStorage(local: StorageAdapter) {
       if (property === 'openUploadStream') {
         if (!control.proxyUploads) return undefined;
         return async (input: { key: string; target?: string; contentType?: string }) => {
-          const held = gate;
-          if (held?.match(input.key)) {
-            gate = null;
-            held.reached();
-            await held.released;
-          }
+          await pass('upload', input.key);
           return target.openUploadStream!(input);
+        };
+      }
+      if (property === 'deleteObject') {
+        return async (input: { key: string; target?: string }) => {
+          await pass('delete', input.key);
+          return target.deleteObject(input);
         };
       }
       return Reflect.get(target, property, receiver);
@@ -71,17 +86,69 @@ function controlledStorage(local: StorageAdapter) {
   return { storage, control };
 }
 
-async function createApp(options: { processors?: Processor[] } = {}) {
+/**
+ * An in-memory bucket behind the S3 API the R2 adapter speaks, reached
+ * through `fetch`. It accepts only presigned or SigV4-signed requests.
+ */
+function fakeR2Bucket() {
+  const objects = new Map<string, { data: Uint8Array; contentType?: string }>();
+  const fetch = async (input: string | URL | Request, init: RequestInit = {}): Promise<Response> => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    const headers = new Headers(init.headers);
+    if (url.host !== 'r2.test' || !url.pathname.startsWith('/files/')) return new Response('unknown host', { status: 400 });
+    if (!url.searchParams.has('X-Amz-Signature') && !headers.get('authorization')?.startsWith('AWS4-HMAC-SHA256')) {
+      return new Response('<Error><Code>AccessDenied</Code></Error>', { status: 403 });
+    }
+    const key = decodeURIComponent(url.pathname.slice('/files/'.length));
+    const method = init.method ?? 'GET';
+    const object = objects.get(key);
+    if (method === 'PUT') {
+      const data = new Uint8Array(await new Response(init.body).arrayBuffer());
+      objects.set(key, { data, contentType: headers.get('content-type') ?? undefined });
+      return new Response(null, { status: 200, headers: { etag: '"e"' } });
+    }
+    if (method === 'DELETE') {
+      objects.delete(key);
+      return new Response(null, { status: 204 });
+    }
+    if (!object) return new Response('<Error><Code>NoSuchKey</Code></Error>', { status: 404 });
+    const objectHeaders = { 'content-length': String(object.data.length), 'content-type': object.contentType ?? '' };
+    return new Response(method === 'HEAD' ? null : (object.data as Uint8Array<ArrayBuffer>), { status: 200, headers: objectHeaders });
+  };
+  return { objects, fetch };
+}
+
+type AuthorizerFactory = (database: ReturnType<typeof memoryAdapter>) => Parameters<typeof createFileFn>[0]['authorizer'];
+
+async function createApp(options: { processors?: Processor[]; artifactsOnR2?: boolean; authorizer?: AuthorizerFactory } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'filefn-client-artifacts-'));
   roots.push(root);
   const database = memoryAdapter();
-  const { storage, control: storageControl } = controlledStorage(createLocalStorageAdapter({ rootDir: root }));
+  const local = createLocalStorageAdapter({ rootDir: root });
+  const bucket = fakeR2Bucket();
+  let backing: StorageAdapter = local;
+  if (options.artifactsOnR2) {
+    // Files stay on local storage; the policy sends artifacts to R2, whose
+    // adapter has no server-side upload stream and signs URLs instead.
+    const r2 = createR2StorageAdapter({
+      accountId: 'account', endpoint: 'https://r2.test', bucket: 'files', accessKeyId: 'AKID', secretAccessKey: 'secret',
+      fetch: bucket.fetch, retry: { maxAttempts: 1 },
+    });
+    expect(r2.openUploadStream).toBeUndefined();
+    backing = createRoutedStorageAdapter({ adapters: { durable: local, r2 }, defaultTarget: 'durable' });
+    // The server's own PUT to a signed URL goes through the global fetch.
+    vi.stubGlobal('fetch', bucket.fetch);
+  }
+  const { storage, control: storageControl } = controlledStorage(backing);
   const jobs: any[] = [];
   const fileFn: FileFn = createFileFn({
     database,
     storage,
-    authorizer: createDefaultAuthorizer({ db: database }),
-    policies: [{ name: 'photo', contentTypes: ['image/png'], maxSizeBytes: 64, visibility: 'private' }],
+    authorizer: options.authorizer?.(database) ?? createDefaultAuthorizer({ db: database }),
+    policies: [{
+      name: 'photo', contentTypes: ['image/png'], maxSizeBytes: 64, visibility: 'private',
+      ...(options.artifactsOnR2 ? { artifactStorageTarget: 'r2' } : {}),
+    }],
     processing: {
       enabled: true,
       processors: options.processors ?? [],
@@ -139,7 +206,7 @@ async function createApp(options: { processors?: Processor[] } = {}) {
     return new Uint8Array(await response.arrayBuffer());
   }
 
-  return { fileFn, root, fileId, versionId, clientFor, fetchAs, jobs, drainJobs, put, artifacts, artifactBytes, storageControl };
+  return { fileFn, root, fileId, versionId, clientFor, fetchAs, jobs, drainJobs, put, artifacts, artifactBytes, storageControl, bucket };
 }
 
 function thumbnailProcessor(calls: string[], options: { declareKinds?: boolean } = {}): Processor {
@@ -364,10 +431,10 @@ describe('client-supplied processing artifacts', () => {
     expect(new TextDecoder().decode(await app.artifactBytes('owner', source.url!))).toBe('client-thumb');
   });
 
-  it('refuses with a typed error, storing nothing, when storage cannot take a server-side upload', async () => {
+  it('refuses with a typed error, storing nothing, when storage can neither stream nor sign an upload', async () => {
     const app = await createApp();
     const before = await storedObjects(app.root);
-    // As on the R2 adapter: no openUploadStream and proxyStreamingUpload false.
+    // Local storage signs no URLs; without its upload stream it cannot take the body.
     app.storageControl.proxyUploads = false;
 
     const refused = await app.put('owner', 'thumbnail-small', bytes('client-small'), 'image/png');
@@ -375,13 +442,56 @@ describe('client-supplied processing artifacts', () => {
     expect(refused.json.error.code).toBe('FILEFN_STORAGE_UPLOAD_UNSUPPORTED');
     // Authorization still comes first.
     expect((await app.put('reader', 'thumbnail-small', bytes('x'), 'image/png')).status).toBe(403);
-
-    const error = await app.clientFor('writer').uploadArtifact({
-      fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', data: bytes('x'), mimeType: 'image/png',
-    }).catch((caught) => caught);
-    expect(error).toMatchObject({ status: 501, code: 'FILEFN_STORAGE_UPLOAD_UNSUPPORTED' });
     expect(await app.artifacts()).toEqual([]);
     expect(await storedObjects(app.root)).toEqual(before);
+  });
+
+  describe('on R2 artifact storage', () => {
+    const r2Keys = (app: { bucket: { objects: Map<string, unknown> } }) => [...app.bucket.objects.keys()];
+
+    it('stores an owner or writer upload through a signed PUT under the same row a retry replaces', async () => {
+      const app = await createApp({ artifactsOnR2: true });
+      const input = { fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small' as const };
+
+      const first = await app.clientFor('owner').uploadArtifact({ ...input, data: new Blob([bytes('client-small')], { type: 'image/webp' }), durationMs: 7 });
+      expect(first).toMatchObject({ kind: 'thumbnail-small', mimeType: 'image/webp', size: 12, source: 'client', processingDurationMs: 7 });
+      expect(r2Keys(app)).toEqual([expect.stringContaining('.client-artifacts/thumbnail-small/')]);
+      const stored = app.bucket.objects.get(r2Keys(app)[0])!;
+      expect(new TextDecoder().decode(stored.data)).toBe('client-small');
+      expect(stored.contentType).toBe('image/webp');
+
+      // A writer's retry keeps the artifact ID and leaves only its own object.
+      const second = await app.clientFor('writer').uploadArtifact({ ...input, data: bytes('client-small-2'), mimeType: 'image/png' });
+      expect(second).toMatchObject({ artifactId: first.artifactId, size: 14, source: 'client' });
+      expect(r2Keys(app)).toHaveLength(1);
+      expect(new TextDecoder().decode(app.bucket.objects.get(r2Keys(app)[0])!.data)).toBe('client-small-2');
+      expect(await app.artifacts()).toHaveLength(1);
+    });
+
+    it('refuses an oversized, wrong-type or unauthorized upload and writes nothing to R2', async () => {
+      const app = await createApp({ artifactsOnR2: true });
+      const oversized = await app.put('owner', 'thumbnail-small', new Uint8Array(2 * 1024 * 1024 + 1), 'image/png');
+      expect(oversized.status).toBe(413);
+      expect(oversized.json.error.code).toBe('FILEFN_ARTIFACT_TOO_LARGE');
+      expect((await app.put('owner', 'converted', new Uint8Array(65), 'image/png')).status).toBe(413);
+      expect((await app.put('owner', 'thumbnail-small', bytes('x'), 'image/gif')).status).toBe(415);
+      expect((await app.put('reader', 'thumbnail-small', bytes('x'), 'image/png')).status).toBe(403);
+      expect(r2Keys(app)).toEqual([]);
+      expect(await app.artifacts()).toEqual([]);
+    });
+
+    it('server processing writes its artifacts to R2 and keeps a client-supplied kind', async () => {
+      const app = await createApp({ artifactsOnR2: true, processors: [thumbnailProcessor([])] });
+      await app.clientFor('owner').uploadArtifact({
+        fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', data: bytes('client-small'), mimeType: 'image/png',
+      });
+      expect(await app.drainJobs()).toEqual([expect.objectContaining({ status: 'completed', artifactsCreated: 1 })]);
+      const byKind = new Map((await app.artifacts()).map((a) => [a.kind, a]));
+      expect((byKind.get('thumbnail-small')!.metadata!.processing as any).source).toBe('client');
+      const medium = byKind.get('thumbnail-medium')!;
+      expect(new TextDecoder().decode(app.bucket.objects.get(medium.storageKey)!.data)).toBe('server-medium');
+      expect(r2Keys(app)).toHaveLength(2);
+    });
   });
 
   it('keeps a client artifact that lands while an unforced run stores the same kind over a server row', async () => {
@@ -421,7 +531,8 @@ describe('client-supplied processing artifacts', () => {
     await app.drainJobs();
 
     await app.fileFn.services.processing.triggerProcessingForFile(app.fileId, { principalId: 'owner' }, app.versionId, { force: true });
-    const held = app.storageControl.hold((key) => key.endsWith('-thumb-small.jpg'));
+    // A forced write goes to a key derived from the row it replaces.
+    const held = app.storageControl.hold((key) => key.includes('-thumb-small.jpg.'));
     const forced = app.drainJobs();
     await held.reached;
     // A second client upload replaces the row the forced run read.
@@ -433,8 +544,96 @@ describe('client-supplied processing artifacts', () => {
     expect(small.source).toBe('server');
     const url = await client.downloadArtifact(app.fileId, small.artifactId);
     expect(new TextDecoder().decode(await app.artifactBytes('owner', url))).toBe('server-small');
-    // Neither client object is left behind.
-    expect((await storedObjects(app.root)).some((path) => path.includes('.client-artifacts/'))).toBe(false);
+    // Neither client object is left behind, nor the object derived from the row it first read.
+    const objects = await storedObjects(app.root);
+    expect(objects.some((path) => path.includes('.client-artifacts/'))).toBe(false);
+    const row = (await app.artifacts()).find((a) => a.kind === 'thumbnail-small')!;
+    expect(objects.filter((path) => path.includes('-thumb-small.jpg'))).toEqual([expect.stringContaining(row.storageKey)]);
+  });
+
+  it('honors the configured authorizer alone for attaching and forcing', async () => {
+    // A delegate the custom authorizer lets write, with no grant and no
+    // visibility on the private file; an outsider it refuses.
+    const app = await createApp({
+      processors: [thumbnailProcessor([])],
+      authorizer: () => ({
+        canRead: async (file, ctx) => ctx.principalId === file.ownerId || ctx.principalId === 'delegate',
+        canWrite: async (file, ctx) => ctx.principalId === file.ownerId || ctx.principalId === 'delegate',
+        canDelete: async (file, ctx) => ctx.principalId === file.ownerId,
+      }),
+    });
+    const input = { fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small' as const, data: bytes('d'), mimeType: 'image/png' };
+    await expect(app.clientFor('delegate').uploadArtifact(input)).resolves.toMatchObject({ source: 'client' });
+    await expect(app.clientFor('outsider').uploadArtifact(input)).rejects.toMatchObject({ status: 403 });
+
+    const force = (user: string) => app.fetchAs(user)(`${BASE}/${app.fileId}/process`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ versionId: app.versionId, force: true }),
+    });
+    expect((await force('delegate')).status).toBe(200);
+    expect((await force('outsider')).status).toBe(403);
+    await expect(app.fileFn.services.processing.triggerProcessingForFile(app.fileId, { principalId: 'delegate' }, app.versionId, { force: true }))
+      .resolves.toMatchObject({ enqueued: true });
+    await expect(app.fileFn.services.processing.triggerProcessingForFile(app.fileId, { principalId: 'outsider' }, app.versionId, { force: true }))
+      .rejects.toMatchObject({ code: 'FILEFN_FORBIDDEN' });
+    // A missing file is still not found.
+    const missing = await app.fetchAs('delegate')(`${BASE}/file_missing/versions/${app.versionId}/artifacts/thumbnail-small`, {
+      method: 'PUT', headers: { 'content-type': 'image/png' }, body: bytes('x'),
+    });
+    expect(missing.status).toBe(404);
+  });
+
+  /** Forces a run and drains it while `paused` holds a delete of a replaced server object. */
+  async function forceDuring(app: Awaited<ReturnType<typeof createApp>>, paused: { reached: Promise<void>; release: () => void }) {
+    await paused.reached;
+    await app.fileFn.services.processing.triggerProcessingForFile(app.fileId, { principalId: 'owner' }, app.versionId, { force: true });
+    expect(await app.drainJobs()).toEqual([expect.objectContaining({ status: 'completed' })]);
+    paused.release();
+  }
+
+  async function expectServerSmallReadable(app: Awaited<ReturnType<typeof createApp>>) {
+    const client = app.clientFor('owner');
+    const small = (await client.listArtifacts(app.fileId)).find((a) => a.kind === 'thumbnail-small')!;
+    expect(small.source).toBe('server');
+    const url = await client.downloadArtifact(app.fileId, small.artifactId);
+    expect(new TextDecoder().decode(await app.artifactBytes('owner', url))).toBe('server-small');
+  }
+
+  it('keeps the object of a forced run that commits while an upload deletes the server object it replaced', async () => {
+    const app = await createApp({ processors: [thumbnailProcessor([])] });
+    await app.drainJobs();
+    const serverKey = (await app.artifacts()).find((a) => a.kind === 'thumbnail-small')!.storageKey;
+
+    // The upload has replaced the server row and scanned its object as unreferenced.
+    const paused = app.storageControl.hold((key) => key === serverKey, 'delete');
+    const uploading = app.clientFor('owner').uploadArtifact({
+      fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', data: bytes('client-small'), mimeType: 'image/png',
+    });
+    await forceDuring(app, paused);
+    await uploading;
+
+    await expectServerSmallReadable(app);
+  });
+
+  it('keeps the object of a forced run that commits while an unforced run discards the object it lost', async () => {
+    const app = await createApp({ processors: [thumbnailProcessor([])] });
+    const [job] = app.jobs;
+    await app.drainJobs();
+    const serverKey = (await app.artifacts()).find((a) => a.kind === 'thumbnail-small')!.storageKey;
+
+    // A redelivery rewrites the server object in place; a client upload lands meanwhile.
+    const heldUpload = app.storageControl.hold((key) => key === serverKey);
+    const rerun = createProcessingJobHandler(app.fileFn).handle({ ...job, idempotencyKey: `${job.idempotencyKey}:again` });
+    await heldUpload.reached;
+    await app.clientFor('owner').uploadArtifact({
+      fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', data: bytes('client-small'), mimeType: 'image/png',
+    });
+    // The redelivery keeps the client row and is about to delete the object it stored.
+    const paused = app.storageControl.hold((key) => key === serverKey, 'delete');
+    heldUpload.release();
+    await forceDuring(app, paused);
+    expect(await rerun).toMatchObject({ status: 'completed' });
+
+    await expectServerSmallReadable(app);
   });
 
   it('refuses a version of another file and reports client errors as FileFnHttpError', async () => {

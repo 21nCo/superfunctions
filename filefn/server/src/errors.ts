@@ -298,8 +298,9 @@ export function artifactWriteConflict(kind: string): FileFnError {
 }
 
 /**
- * The storage target cannot take a server-side (proxied) upload, so FileFn
- * cannot store a body it receives itself, such as a client-supplied artifact.
+ * The storage target can take neither a streamed server-side upload nor a
+ * PUT to a URL it signs, so FileFn cannot store a body it receives itself,
+ * such as a client-supplied artifact.
  */
 export function storageUploadUnsupported(target: string): FileFnError {
   return new FileFnError(
