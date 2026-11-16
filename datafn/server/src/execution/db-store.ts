@@ -412,6 +412,15 @@ export class DbDataStore implements DataStore {
     }
   }
 
+  /** Whether loadNestedSelectRelations loads this second-level relation. */
+  private static nestedPassLoads(match: { relation: any; direction: string }): boolean {
+    const type = match.relation.type;
+    return (
+      type === "many-many" ||
+      (match.direction === "forward" && (type === "one-many" || type === "many-one"))
+    );
+  }
+
   /**
    * Second-level relations of nested select tokens (e.g. "tasks.tags.*"):
    * after the first-level records are in the store, load each nested
@@ -681,16 +690,12 @@ export class DbDataStore implements DataStore {
             if (relationMatch?.relation === rel) {
               const targetResource = addRelationLoad(rel, query.resource, baseName);
 
-              // A nested token with a projection (e.g. "tasks.tags.*") is
-              // loaded from the first-level records after they are in the
-              // store (see loadNestedSelectRelations below); other nested
-              // tokens discover their second level here.
+              // For nested tokens (e.g., "tasks.tags.*"), discover second level
               if (
                 directive &&
                 directive !== "*" &&
                 directive !== "#" &&
-                directive !== "*#" &&
-                parts.length < 3
+                directive !== "*#"
               ) {
                 // This is a nested traversal like "tasks.tags.*"
                 const nestedParts = directive.split(".");
@@ -698,9 +703,12 @@ export class DbDataStore implements DataStore {
 
                 for (const nestedRel of schema.relations) {
                   const nestedMatch = findRelationMatch(schema, targetResource, nestedRelation);
-                  if (nestedMatch?.relation === nestedRel) {
-                    addRelationLoad(nestedRel, targetResource, nestedRelation);
-                  }
+                  if (!nestedMatch || nestedMatch.relation !== nestedRel) continue;
+                  // A nested projection the nested pass loads from the
+                  // first-level records (see loadNestedSelectRelations below)
+                  // is left to it; any other is discovered here.
+                  if (parts.length >= 3 && DbDataStore.nestedPassLoads(nestedMatch)) continue;
+                  addRelationLoad(nestedRel, targetResource, nestedRelation);
                 }
               }
             }
