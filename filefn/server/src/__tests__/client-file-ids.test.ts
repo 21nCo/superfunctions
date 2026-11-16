@@ -518,6 +518,27 @@ describe('client-chosen file IDs: first completion wins', () => {
     expect(storageFixture.objects.has(aWon ? keyB : keyA)).toBe(false);
   });
 
+  it('serializes FileFn instances built over different wrappers of one memory adapter', async () => {
+    // Each wrapper is a separate adapter object that forwards to one store.
+    const database = memoryAdapter();
+    const storageFixture = createStorage('proxy');
+    const first = createApp({ mode: 'proxy', database: { ...database } as Adapter, storageFixture });
+    const second = createApp({ mode: 'proxy', database: { ...database } as Adapter, storageFixture });
+    const a = await first.stage('user_a', CLIENT_ID, 'wrapper one');
+    const b = await second.stage('user_b', CLIENT_ID, 'wrapper two');
+    const keyA = (await rawSession(database, a.uploadSessionId))!.storageKey;
+    const keyB = (await rawSession(database, b.uploadSessionId))!.storageKey;
+
+    const [resA, resB] = await Promise.all([a.complete(), b.complete()]);
+    expect([resA.status, resB.status].sort()).toEqual([200, 403]);
+    const aWon = resA.status === 200;
+    const rows = await fileRows(database, CLIENT_ID);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].ownerId).toBe(aWon ? 'user_a' : 'user_b');
+    expect(await first.readBytes(CLIENT_ID, aWon ? 'user_a' : 'user_b')).toBe(aWon ? 'wrapper one' : 'wrapper two');
+    expect(storageFixture.objects.has(aWon ? keyB : keyA)).toBe(false);
+  });
+
   for (const mode of ['multipart', 'proxy'] as const) {
     it(`${mode}: two concurrent completion calls of one session return the same result and keep the bytes`, async () => {
       const database = memoryAdapter();

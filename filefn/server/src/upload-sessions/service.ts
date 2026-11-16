@@ -53,8 +53,9 @@ export interface UploadSessionServiceConfig {
   signedUrlTtlSeconds?: number;
   generateId?: () => string;
   /**
-   * The database object the host passed (before FileFn wraps it). In-process
-   * completion serialization of a fileId is scoped to it. Defaults to `db`.
+   * The database adapter the host passed (before FileFn wraps it). In-process
+   * completion serialization of a fileId is scoped to its database (see
+   * databaseToken). Defaults to `db`.
    */
   databaseIdentity?: object;
 }
@@ -110,11 +111,16 @@ export interface UploadSession {
 // FILEFN_UPLOAD_COMPLETION_IN_PROGRESS before changing anything.
 const runSerialized = createKeyedSerializer();
 
-// One token per database object, so completions against different databases in
-// one process never wait on each other.
+// One token per database, so completions against different databases in one
+// process never wait on each other. A database is identified by its adapter's
+// `internal` CRUD object, which belongs to the backing store and which wrappers
+// forward (FileFn's own, the db package's, spread copies), so adapter objects
+// over one store share a token; an adapter without it is its own database.
 const databaseTokens = new WeakMap<object, string>();
 let nextDatabaseToken = 0;
-function databaseToken(database: object): string {
+function databaseToken(adapter: object): string {
+  const backing = (adapter as { internal?: unknown }).internal;
+  const database = typeof backing === 'object' && backing !== null ? backing : adapter;
   let token = databaseTokens.get(database);
   if (token === undefined) {
     token = String(nextDatabaseToken++);
