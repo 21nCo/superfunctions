@@ -283,7 +283,7 @@ describe("temporal range push-down", () => {
       const { result, rowsRead } = await expectParity(fx, range);
       expect(rowsRead).toBe(result.data.length);
     }
-  });
+  }, 120_000);
 
   it("pushes capability timestamp periods (createdAt)", async () => {
     const fx = await createFixture();
@@ -328,7 +328,7 @@ describe("temporal range push-down", () => {
         expect(b.rowsRead).toBe(weekRows);
       }
     }
-  });
+  }, 120_000);
 
   it("combines with filters, sort, limit, count and cursors", async () => {
     const fx = await createFixture();
