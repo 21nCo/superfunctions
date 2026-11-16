@@ -1408,10 +1408,10 @@ describe('lifecycle events: delivery', () => {
     for (const row of failed) {
       expect(row.lastError).toBe('delivery did not complete');
       expect(Date.parse(row.failedAt!)).toBeGreaterThanOrEqual(deadline);
-      // The last retry is due at the deadline; its claim lapses a lease later and the next dispatch marks it failed.
+      // The last retry slot is the deadline, where the dispatch marks it failed instead of calling the handler.
       expect(Date.parse(row.failedAt!)).toBeLessThanOrEqual(deadline + 3 * LIFECYCLE_CLAIM_LEASE_MS);
       const own = calls.filter((call) => call.id === row.id);
-      expect(own.filter((call) => call.at > deadline).length).toBeLessThanOrEqual(1);
+      expect(own.filter((call) => call.at >= deadline)).toEqual([]);
       // A lapsed claim is a failed attempt, so retries back off instead of running every lease.
       expect(own.length).toBeLessThan(40);
     }
@@ -1457,7 +1457,7 @@ describe('lifecycle events: delivery', () => {
         expect(row.lastError).toBe('handler did not settle within the claim lease');
         expect(Date.parse(row.failedAt!) - deadline).toBeLessThanOrEqual(LIFECYCLE_CLAIM_LEASE_MS);
       }
-      expect(calls.filter((at) => at > deadline).length).toBeLessThanOrEqual(2);
+      expect(calls.filter((at) => at >= deadline)).toEqual([]);
     } finally {
       vi.useRealTimers();
     }
@@ -1483,6 +1483,66 @@ describe('lifecycle events: delivery', () => {
     expect(rows.map((row) => [row.status, row.lastError, row.attempts, row.claimId])).toEqual([
       ['failed', 'delivery did not complete', 1, null],
       ['failed', 'delivery did not complete', 1, null]
+    ]);
+  });
+
+  it.each([
+    ['just before', -1, { delivered: 2, retrying: 0, failed: 0 }],
+    ['at', 0, { delivered: 0, retrying: 0, failed: 2 }],
+    ['after', MINUTE, { delivered: 0, retrying: 0, failed: 2 }]
+  ])('settles a pending unclaimed event due %s its delivery deadline without calling the handler after it', async (_when, offset, outcome) => {
+    const db = memoryAdapter({ debug: false });
+    const clock = { current: new Date('2026-11-10T00:00:00.000Z') };
+    const writer = setup({
+      db,
+      clock,
+      onEvent: () => {
+        throw new Error('not yet');
+      }
+    });
+    await writer.trial(14 * DAY);
+    const recorded = await writer.rows();
+    expect(recorded.map((row) => [row.status, row.attempts, row.claimId])).toEqual([
+      ['pending', 1, null],
+      ['pending', 1, null]
+    ]);
+    clock.current = new Date(Date.parse(recorded[0]!.createdAt) + DAY + offset);
+    const env = setup({ db, clock });
+    await expect(env.billfn.services.events.dispatch()).resolves.toEqual(outcome);
+    if (outcome.delivered > 0) {
+      expect(env.delivered).toHaveLength(2);
+      return;
+    }
+    expect(env.delivered).toEqual([]);
+    const failed = await env.billfn.services.events.list({ status: 'failed' });
+    expect(failed.map((row) => [row.lastError, row.attempts, row.claimId, row.failedAt])).toEqual([
+      ['not yet', 1, null, clock.current.toISOString()],
+      ['not yet', 1, null, clock.current.toISOString()]
+    ]);
+    await expect(env.billfn.services.events.dispatch()).resolves.toEqual({ delivered: 0, retrying: 0, failed: 0 });
+  });
+
+  it('marks an unclaimed event past its delivery deadline failed once when two dispatchers race on it', async () => {
+    const db = memoryAdapter({ debug: false });
+    const clock = { current: new Date('2026-11-10T00:00:00.000Z') };
+    const writer = setup({
+      db,
+      clock,
+      onEvent: () => {
+        throw new Error('not yet');
+      }
+    });
+    await writer.trial(14 * DAY);
+    clock.current = new Date(clock.current.getTime() + DAY + MINUTE);
+    const first = setup({ db, clock });
+    const second = setup({ db, clock });
+    const [left, right] = await Promise.all([first.billfn.services.events.dispatch(), second.billfn.services.events.dispatch()]);
+    expect(left.failed + right.failed).toBe(2);
+    expect(left.delivered + right.delivered + left.retrying + right.retrying).toBe(0);
+    expect([...first.delivered, ...second.delivered]).toEqual([]);
+    expect((await first.rows()).map((row) => [row.status, row.lastError, row.attempts])).toEqual([
+      ['failed', 'not yet', 1],
+      ['failed', 'not yet', 1]
     ]);
   });
 

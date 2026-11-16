@@ -126,8 +126,8 @@ function grantEntitlementChange(
  * lease ahead, so an event whose dispatcher crashed is due again once the lease
  * lapses. A handler failure, or a delivery that did not complete, schedules the
  * next attempt with exponential backoff until 24 hours after the event was
- * recorded; one after that marks it `failed`, where `list({ status: 'failed' })`
- * shows it.
+ * recorded; a dispatch at or after that marks it `failed` without calling the
+ * handler, and `list({ status: 'failed' })` shows it.
  */
 export function createLifecycleEvents(deps: LifecycleDeps) {
   const handler = deps.onEvent;
@@ -355,10 +355,10 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
    * or another dispatcher claimed it. A pending event that still holds a claim
    * is due only once that claim lapsed, so its delivery did not complete (the
    * handler hung or the dispatcher stopped); that counts as a failed attempt. It
-   * is retried after the backoff of that attempt, counted from the lapsed claim,
-   * and once the 24-hour window passed it is marked `failed` without calling the
-   * handler again. The handler call is bounded by the claim lease, and a handler
-   * that does not settle within it is a failed attempt too.
+   * is retried after the backoff of that attempt, counted from the lapsed claim.
+   * Once the 24-hour window passed, a due event (its last retry slot is that
+   * deadline) is marked `failed` without calling the handler. The handler call is
+   * bounded by the claim lease; one that does not settle within it failed too.
    */
   async function deliver(row: BillFnLifecycleEventRecord): Promise<DeliveryOutcome | null> {
     const claimedAt = deps.now();
@@ -372,8 +372,9 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
       { field: 'attempts', operator: 'eq', value: row.attempts }
     ] satisfies WhereClause[];
     const deadline = Date.parse(row.createdAt) + LIFECYCLE_DELIVERY_WINDOW_MS;
-    if (row.claimId) {
-      const ended = await endLapsedClaim(row, due, deadline, claimedAt);
+    const expired = !Number.isFinite(deadline) || claimedAt.getTime() >= deadline;
+    if (row.claimId || expired) {
+      const ended = await endUndelivered(row, due, deadline, expired, claimedAt);
       if (ended !== undefined) {
         return ended;
       }
@@ -399,18 +400,19 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
   }
 
   /**
-   * A due event that still holds a claim, whose delivery did not complete: marks it `failed` once its 24-hour
-   * window passed, or schedules its retry after the backoff of that attempt, counted from the lapsed claim.
-   * Returns that outcome, null when another dispatcher ended it first, or undefined when the retry is due now,
+   * A due event whose 24-hour window passed, or that still holds a claim (its delivery did not complete):
+   * marks it `failed` once the window passed, keeping the last error of an unclaimed one, or schedules the
+   * retry of a lapsed claim after the backoff of that attempt, counted from the lapsed claim. Returns that
+   * outcome, null when another dispatcher ended or claimed it first, or undefined when the retry is due now,
    * so the caller claims it.
    */
-  async function endLapsedClaim(
+  async function endUndelivered(
     row: BillFnLifecycleEventRecord,
     due: WhereClause[],
     deadline: number,
+    expired: boolean,
     claimedAt: Date
   ): Promise<DeliveryOutcome | null | undefined> {
-    const expired = !Number.isFinite(deadline) || claimedAt.getTime() >= deadline;
     const retryAt = Math.min(Date.parse(row.nextAttemptAt) - LIFECYCLE_CLAIM_LEASE_MS + retryDelay(row.attempts), deadline);
     if (!expired && retryAt <= claimedAt.getTime()) {
       return undefined;
@@ -420,7 +422,7 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
     const ended = await deps.db.updateMany({
       model: EVENTS_TABLE,
       where: due,
-      data: { ...data, lastError: 'delivery did not complete', claimId: null, updatedAt: timestamp },
+      data: { ...data, lastError: row.claimId ? 'delivery did not complete' : (row.lastError ?? 'delivery window passed'), claimId: null, updatedAt: timestamp },
       namespace: deps.namespace
     });
     if (ended !== 1) {
