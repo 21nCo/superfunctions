@@ -387,7 +387,7 @@ historyTest("another repository as --source needs an explicit --pin", () => {
 });
 
 historyTest("an untracked or ignored file where next tracks a path is refused before the branch and keeps its content", () => {
-  const { dev } = fixture("ignored");
+  const { dev, pin } = fixture("ignored");
   const head = git(dev, "rev-parse", "HEAD");
   write(dev, { ".git/info/exclude": "widgetfn/core/src/index.js\nwidgetfn/python\nnode_modules/\n" });
   write(dev, { "widgetfn/core/src/index.js": "local only\n", "widgetfn/core/node_modules/dep.js": "dep\n" });
@@ -411,8 +411,15 @@ historyTest("an untracked or ignored file where next tracks a path is refused be
   assert.equal(readFileSync(path.join(dev, "widgetfn/python"), "utf8"), "local only\n");
   unchanged();
 
-  // Ignored files no imported path needs stay as they are through a successful promotion.
+  // An ignored file above a selected sub-path, where next has a directory.
   rmSync(path.join(dev, "widgetfn/python"));
+  write(dev, { ".git/info/exclude": "widgetfn/core/src/index.js\nnode_modules/\nuifn/foo\n", "uifn/foo": "local only\n" });
+  throwsCode(() => promote({ root: dev, paths: ["uifn/foo/bar.js"], pin }), "path-conflict");
+  assert.equal(readFileSync(path.join(dev, "uifn/foo"), "utf8"), "local only\n");
+  unchanged();
+  rmSync(path.join(dev, "uifn/foo"));
+
+  // Ignored files no imported path needs stay as they are through a successful promotion.
   promote({ root: dev, fn: "widgetfn" });
   assert.equal(git(dev, "branch", "--show-current"), "promote/widgetfn");
   assert.equal(readFileSync(path.join(dev, "widgetfn/core/node_modules/dep.js"), "utf8"), "dep\n");

@@ -19,7 +19,7 @@
 // Exit status: 0 promoted, 1 refused or failed (nothing changed), 2 promoted with merge conflicts left (--reconcile).
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -616,10 +616,19 @@ const ancestorsOf = (file) => {
 
 /**
  * Refuses an untracked or ignored file here at a path an imported file takes, inside an imported file's path or where
- * an imported directory goes. git merge overwrites ignored files, and undoing a failed attempt would then delete them,
- * so the check runs before the branch is created. Other ignored files (node_modules, build output) stay as they are.
+ * an imported directory goes, including a file or symlink above a selected sub-path. git merge overwrites ignored
+ * files, and undoing a failed attempt would then delete them, so the check runs before the branch is created. Other
+ * ignored files (node_modules, build output) stay as they are.
  */
 function refuseLocalFiles(root, paths, files) {
+  for (const target of paths) {
+    for (const directory of ancestorsOf(target)) {
+      const stat = lstatSync(path.join(root, directory), { throwIfNoEntry: false });
+      if (stat && !stat.isDirectory() && objectAt(root, "HEAD", directory) === null) {
+        throw new PromoteError("path-conflict", `${directory} exists here as an untracked or ignored file and next's directory holding ${target} would replace it; move it out of the way first`);
+      }
+    }
+  }
   const local = git(root, ["--literal-pathspecs", "ls-files", "-z", "--others", "--", ...paths]).split("\0").filter(Boolean);
   if (local.length === 0) return;
   const importedFiles = new Set(files);
