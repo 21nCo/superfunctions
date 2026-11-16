@@ -516,6 +516,11 @@ describe("$any / $none relation filter push-down", () => {
       const rows = (await original({ ...params, where: rest, limit: undefined })) as Json[];
       return rows.filter((row) => String(row.label).toLowerCase() === String(label.value).toLowerCase());
     });
+    // So does a string `$is_not_empty`: `<> ''` would leave out values a
+    // padding collation compares equal to ''.
+    expect(classifyQuery({ resource: "task", filters: { objective: { $any: { label: { $is_not_empty: true } } } } }, SCHEMA)).toBe("IN_MEMORY");
+    expect(classifyQuery({ resource: "task", filters: { objective: { $any: { label: { $is_empty: false } } } } }, SCHEMA)).toBe("IN_MEMORY");
+    expect(classifyQuery({ resource: "task", filters: { objective: { $any: { label: { $is_empty: true } } } } }, SCHEMA)).toBe("FULL_PUSHDOWN");
     for (const [filters, expected] of [
       [{ tasks: { $any: { label: "two" } } }, []],
       [{ tasks: { $any: { label: "Two" } } }, ["objective:other"]],
@@ -525,6 +530,21 @@ describe("$any / $none relation filter push-down", () => {
       expect(res.status, JSON.stringify(res.body)).toBe(200);
       expect(ids(res.body.result), JSON.stringify(filters)).toEqual(expected);
     }
+  });
+
+  it("re-checks related rows against sub-filters with $and and array shorthand", async () => {
+    for (const filters of [
+      { objective: { $any: { $and: [{ label: "Goal" }, { label: ["Goal", "Other"] }] } } },
+      { objective: { $any: { $and: [{ label: ["Other"] }] } } },
+      { objective: { $any: { label: ["Goal", "Other"] } } },
+    ]) {
+      await expectParity({ resource: "task", filters, sort: ["id:asc"], count: true });
+    }
+    expect(ids(await expectParity({
+      resource: "task",
+      filters: { objective: { $any: { $and: [{ label: "Goal" }, { label: ["Goal", "Other"] }] } } },
+      sort: ["id:asc"],
+    }))).toEqual(["task:1"]);
   });
 
   it("a relation filter that matches nothing returns an empty page and count", async () => {

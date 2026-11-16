@@ -304,6 +304,10 @@ function compileFieldFilter(
       // Like the in-memory matcher, a non-boolean operand constrains nothing.
       if (typeof operand !== "boolean") continue;
       const isEmptyOp = op === "$is_empty" || op === "is_empty";
+      // `<> ''` would leave out values a padding or case-insensitive
+      // collation compares equal to '' (e.g. " "); the re-check of the rows
+      // read can't bring them back, so this stays in memory.
+      if (semantics === "memory" && type === "string" && isEmptyOp !== operand) return null;
       const compiled = compileEmptiness(field, isEmptyOp === operand, type);
       if (!compiled) return null;
       out.push(...compiled);
@@ -543,12 +547,22 @@ async function filterVisibleRows(
  * collation); this drops the extra rows.
  */
 function matchesSubFilter(row: Record<string, unknown>, subFilter: Record<string, unknown>): boolean {
-  const normalized: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(subFilter)) {
-    // Array shorthand is a value list, as the server evaluator reads it.
-    normalized[key] = Array.isArray(value) ? { $in: value } : value;
+  return coreEvaluateFilter(row, normalizeFilterOps(normalizeShorthandLists(subFilter)));
+}
+
+/** Field array shorthand → `$in` (as the server evaluator reads it), through `$and` / `$or`. */
+function normalizeShorthandLists(filter: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(filter)) {
+    if (key === "$and" || key === "$or" || key === "and" || key === "or") {
+      out[key] = Array.isArray(value)
+        ? value.map((sub) => (isPlainObject(sub) ? normalizeShorthandLists(sub) : sub))
+        : value;
+    } else {
+      out[key] = Array.isArray(value) ? { $in: value } : value;
+    }
   }
-  return coreEvaluateFilter(row, normalizeFilterOps(normalized));
+  return out;
 }
 
 async function findMatchingRelated(
