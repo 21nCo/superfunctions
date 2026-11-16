@@ -160,6 +160,34 @@ describe("signals pinned to ids (direct mode)", () => {
   });
 });
 
+describe("pinned signals on a resource without relations (direct mode)", () => {
+  it("skips writes to other records unless the query searches", async () => {
+    const queried = mockRemote("notes");
+    const client = createDatafnClient({
+      schema: {
+        resources: [{ name: "notes", version: 1, fields: [{ name: "body", type: "string", required: false }] }],
+      },
+      sync: { remote: "http://example.com" },
+      clientId: "notes",
+    });
+    clients.push(client as any);
+    const notes = client.table("notes");
+    const unsubPlain = notes.signal({ filters: { id: "notes:a" }, sort: ["body"] }).subscribe(() => {});
+    const unsubSearch = notes.signal({ filters: { id: "notes:b" }, search: { query: "x", topK: 1 } } as any).subscribe(() => {});
+    await settle();
+
+    // A new note can outrank b in the search; it cannot change a.
+    queried.length = 0;
+    await notes.mutate({ operation: "insert", id: "notes:c", record: { body: "x" } } as any);
+    await settle();
+    expect(queried).toContain("notes:b");
+    expect(queried).not.toContain("notes:a");
+
+    unsubPlain();
+    unsubSearch();
+  });
+});
+
 describe("signals pinned to ids (local)", () => {
   it("drops a pinned child when its ancestor is archived", async () => {
     const schema: DatafnSchema = {

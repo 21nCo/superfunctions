@@ -360,20 +360,6 @@ function resourceHasRelations(schema: DatafnSchema, resource: string): boolean {
   );
 }
 
-/**
- * Fields whose change on one record can change other records of the same
- * resource through a relation: capability state (trash/archive propagation),
- * foreign keys and tree paths.
- */
-function propagatingFields(schema: DatafnSchema, resource: string): Set<string> {
-  const fields = new Set<string>([...CAPABILITY_STATE_FIELDS, ...relationFkFields(schema, resource)]);
-  for (const relation of schema.relations ?? []) {
-    const pathField = (relation as any).pathField;
-    if (typeof pathField === "string") fields.add(pathField);
-  }
-  return fields;
-}
-
 /** Fields a local merge stamps without the caller naming them. */
 const IMPLICIT_MERGE_FIELDS = ["updatedAt", "updatedBy"];
 
@@ -665,43 +651,29 @@ function createQuerySignal<T>(
   // when one of those records does, as long as it reads only those records'
   // own fields: no relation in its select, filters or sort, and no search,
   // whose candidate limit depends on how every record ranks
-  // (deriveMembershipFields is null otherwise). Plugins can rewrite the
-  // query or its result, so a signal they run on is never treated as pinned.
+  // (deriveMembershipFields is null otherwise). Only a resource that takes
+  // part in no relation qualifies: there a write changes only the records it
+  // names, with no cascade, inactive propagation or tree move. Plugins can
+  // rewrite the query or its result, so a signal they run on is never
+  // treated as pinned.
   const pinnedIds =
+    !resourceHasRelations(schema, resource) &&
     !clientPlugins.some(
       (plugin) => typeof plugin.beforeQuery === "function" || typeof plugin.afterQuery === "function",
-    ) && readsOwnFieldsOnly(schema, fullQuery)
+    ) &&
+    readsOwnFieldsOnly(schema, fullQuery)
       ? resolvePinnedQueryIds(fullQuery)
       : undefined;
-  // Without relations a write changes only the records it names.
-  const pinnedResourceIsolated = pinnedIds ? !resourceHasRelations(schema, resource) : false;
-  const pinnedPropagatingFields = pinnedIds && !pinnedResourceIsolated
-    ? propagatingFields(schema, resource)
-    : null;
-  /**
-   * Whether a write to this signal's resource leaves its pinned records
-   * untouched: it names only other records, and cannot reach the pinned ones
-   * through a cascade, inactive propagation or tree move.
-   */
-  const writeCannotReachPinnedRecords = (event: any): boolean => {
+  /** Whether a write to this signal's resource names none of its pinned records. */
+  const writeSkipsPinnedRecords = (event: any): boolean => {
     if (!pinnedIds) return false;
     const ids = event.ids;
-    if (
-      !Array.isArray(ids) ||
-      ids.length === 0 ||
-      !ids.every((id: unknown) => typeof id === "string") ||
-      ids.some((id: string) => pinnedIds.has(id))
-    ) {
-      return false;
-    }
-    if (pinnedResourceIsolated) return true;
-    // Only a merge known to have edited an existing record: creating one
-    // (an insert, or a merge that may create) can give records that already
-    // point at its id a new ancestor, with schema defaults the event does
-    // not list.
-    if (event.action !== "merge" || event.created !== false) return false;
-    if (!isPlainObject(event.record)) return false;
-    return Object.keys(event.record).every((key) => !pinnedPropagatingFields!.has(key));
+    return (
+      Array.isArray(ids) &&
+      ids.length > 0 &&
+      ids.every((id: unknown) => typeof id === "string") &&
+      !ids.some((id: string) => pinnedIds.has(id))
+    );
   };
   let membershipRun = 0;
   /**
@@ -864,7 +836,7 @@ function createQuerySignal<T>(
         return;
       }
       
-      if (writeCannotReachPinnedRecords(event)) {
+      if (writeSkipsPinnedRecords(event)) {
         return;
       }
 
