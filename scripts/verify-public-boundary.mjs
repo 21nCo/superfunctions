@@ -9,17 +9,21 @@
 //   fn-dependency      no source file imports, and no package.json depends on, a `*fn` package (`@<name>fn/<pkg>` or
 //                      bare `<name>fn`) that is neither a public workspace package nor pinned in
 //                      scripts/public-boundary.allow.json.
-// Imports are read from module code only (TypeScript's import scanner on JS/TS modules, `<script>` blocks of
-// .svelte and .html files, ESM blocks of .mdx files); comments, strings and prose are not checked. Python imports
-// are not checked: Python projects are covered by public-release.
+// Every tracked path counts, including symlinks and submodules (gitlinks); a symlinked file is read through its link
+// when it resolves to a regular file inside the repository, and is otherwise a finding, as is a source file that does
+// not parse. Imports are read from each file's syntax tree (TypeScript for JS/TS modules, svelte/compiler for
+// .svelte, parse5 for .html, micromark's MDX extension for .mdx), so comments, strings, Markdown prose and fenced
+// code are not checked. Python files are read with Python's ast module: an absolute `import <name>fn` or
+// `from <name>fn import` must name a public Python project or an allowed package.
 // Usage: node scripts/verify-public-boundary.mjs [--root <checkout>]
 
-import { lstatSync, readFileSync } from "node:fs";
-import { createRequire } from "node:module";
+import { execFileSync } from "node:child_process";
+import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { OwnersError, PUBLIC_MANIFEST, REPO_ROOT, createOwners, readManifest } from "./owners.mjs";
-import { RELEASE_FILES, readPythonProjects, readReleaseEntries, trackedFiles } from "./verify-owners.mjs";
+import { gitBinary } from "./verify-package-lockfiles.mjs";
+import { RELEASE_FILES, readPythonProjects, readReleaseEntries } from "./verify-owners.mjs";
 
 export const ALLOW_FILE = "scripts/public-boundary.allow.json";
 export const RULES = Object.freeze({
@@ -57,15 +61,23 @@ const BARE_FN = /^[a-z0-9][a-z0-9._~-]*fn$/i;
 
 /**
  * Package name of a module specifier (`@scope/name/sub` -> `@scope/name`, `name/sub` -> `name`), or null for a
- * relative, absolute, protocol (`node:`, `npm:`, URL) or package-internal (`#x`) specifier.
+ * relative, absolute, URL, other protocol (`node:`, `https:`) or package-internal (`#x`) specifier. `npm:` and `jsr:`
+ * specifiers name a package: the prefix and any `@<version>` are dropped (`npm:@scope/name@1/sub` -> `@scope/name`).
  * @param {string} specifier
  */
 export function packageNameOf(specifier) {
-  if (typeof specifier !== "string" || specifier === "") return null;
-  if (/^[./#]/.test(specifier) || specifier.includes(":") || specifier.includes("\\")) return null;
-  const segments = specifier.split("/");
-  if (specifier.startsWith("@")) return segments.length >= 2 && segments[1] !== "" ? `${segments[0]}/${segments[1]}` : null;
-  return segments[0];
+  if (typeof specifier !== "string") return null;
+  const registry = /^(?:npm|jsr):\/?/i.exec(specifier);
+  const spec = registry ? specifier.slice(registry[0].length) : specifier;
+  if (spec === "" || /^[./#]/.test(spec) || spec.includes(":") || spec.includes("\\")) return null;
+  const segments = spec.split("/");
+  const withoutVersion = (segment) => segment.split("@")[0];
+  if (spec.startsWith("@")) {
+    const name = segments.length >= 2 ? withoutVersion(segments[1]) : "";
+    return name === "" || segments[0] === "@" ? null : `${segments[0]}/${name}`;
+  }
+  const name = withoutVersion(segments[0]);
+  return name === "" ? null : name;
 }
 
 /** True for a scoped `@<name>fn/<pkg>` or bare `<name>fn` package name (matched case-insensitively). */
@@ -183,71 +195,52 @@ export function workspaceDirectories(patterns, files) {
 // ---------------------------------------------------------------------------------------------------------------
 // Imports
 
-let typescript;
-function loadTypescript(root) {
-  if (typescript) return typescript;
-  for (const base of [root, REPO_ROOT]) {
+let parsers;
+/**
+ * The syntax parsers imports are read with, from the repository's installed packages: TypeScript (JS/TS modules),
+ * svelte/compiler (.svelte), parse5 (.html) and micromark's MDX extension (.mdx).
+ */
+export async function loadParsers() {
+  if (parsers) return parsers;
+  const load = async (specifier) => {
     try {
-      typescript = createRequire(path.join(base, "package.json"))("typescript");
-      return typescript;
-    } catch {
-      // try the next base
+      return await import(specifier);
+    } catch (error) {
+      throw new BoundaryError(`${specifier} is not installed (${error.code ?? error.message}); run npm ci before this check`);
     }
-  }
-  throw new BoundaryError("typescript is not installed; run npm ci before this check");
+  };
+  const [ts, svelte, parse5, markdown, mdxjs, mdxMarkdown] = await Promise.all([
+    load("typescript"),
+    load("svelte/compiler"),
+    load("parse5"),
+    load("mdast-util-from-markdown"),
+    load("micromark-extension-mdxjs"),
+    load("mdast-util-mdx"),
+  ]);
+  parsers = {
+    ts: ts.default ?? ts,
+    svelte,
+    parse5,
+    mdx: (source) => markdown.fromMarkdown(source, { extensions: [mdxjs.mdxjs()], mdastExtensions: [mdxMarkdown.mdxFromMarkdown()] }),
+  };
+  return parsers;
 }
 
 const MODULE_EXTENSIONS = new Set([".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"]);
-const SCRIPT_BLOCK_EXTENSIONS = new Set([".svelte", ".html"]);
+const SOURCE_EXTENSIONS = new Set([...MODULE_EXTENSIONS, ".svelte", ".html", ".mdx"]);
 
 /** True for a file whose imports this check reads. */
 export function isSourceFile(file) {
-  const extension = path.posix.extname(file).toLowerCase();
-  return MODULE_EXTENSIONS.has(extension) || SCRIPT_BLOCK_EXTENSIONS.has(extension) || extension === ".mdx";
+  return SOURCE_EXTENSIONS.has(path.posix.extname(file).toLowerCase());
 }
 
-/** `<script>` element bodies of an .svelte or .html file, with their offsets. JSON and other data scripts are skipped. */
-function scriptBlocks(source) {
-  const blocks = [];
-  const pattern = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
-  for (const match of source.matchAll(pattern)) {
-    const type = /\btype\s*=\s*["']?([^"'\s>]+)/i.exec(match[1])?.[1]?.toLowerCase();
-    if (type && !["module", "text/javascript", "application/javascript", "text/typescript", "ts"].includes(type)) continue;
-    blocks.push({ code: match[2], offset: match.index + match[0].indexOf(">") + 1 });
+/** A file this check cannot parse; reported as a finding, never skipped. */
+export class SourceParseError extends Error {
+  constructor(message, line) {
+    super(message);
+    this.name = "SourceParseError";
+    this.line = line;
   }
-  return blocks;
-}
-
-/**
- * ESM blocks of an .mdx file: paragraphs outside fenced code that start with `import` or `export`, each running to
- * the next blank line, as MDX reads them.
- */
-function mdxEsmBlocks(source) {
-  const blocks = [];
-  const lines = source.split("\n");
-  let offset = 0;
-  let fence = null;
-  let current = null;
-  let previousBlank = true;
-  for (const line of lines) {
-    const fenceMatch = /^ {0,3}(`{3,}|~{3,})/.exec(line);
-    if (fence) {
-      if (fenceMatch && fenceMatch[1][0] === fence[0] && fenceMatch[1].length >= fence.length && line.trim() === fenceMatch[1]) fence = null;
-    } else if (current) {
-      if (line.trim() === "") {
-        blocks.push(current);
-        current = null;
-      } else current.code += `${line}\n`;
-    } else if (fenceMatch) {
-      fence = fenceMatch[1];
-    } else if (previousBlank && /^(?:import|export)\b/.test(line)) {
-      current = { code: `${line}\n`, offset };
-    }
-    previousBlank = line.trim() === "";
-    offset += line.length + 1;
-  }
-  if (current) blocks.push(current);
-  return blocks;
 }
 
 function lineAt(source, offset) {
@@ -256,28 +249,226 @@ function lineAt(source, offset) {
   return line;
 }
 
+function scriptKind(ts, extension) {
+  switch (extension) {
+    case ".ts":
+    case ".mts":
+    case ".cts":
+      return ts.ScriptKind.TS;
+    case ".tsx":
+      return ts.ScriptKind.TSX;
+    case ".jsx":
+      return ts.ScriptKind.JSX;
+    default:
+      return ts.ScriptKind.JS;
+  }
+}
+
+function isRequireCallee(ts, node) {
+  if (ts.isIdentifier(node)) return node.text === "require";
+  return ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "require" && node.name.text === "resolve";
+}
+
 /**
- * Module specifiers a source file imports (static and dynamic `import`, `export ... from`, `require`,
- * `import x = require()` and `/// <reference types>`), each with its 1-based line.
+ * Module specifiers of JS/TS code, from TypeScript's syntax tree: `import`/`export ... from`, `import()` (as an
+ * expression and as a type), `require()`, `require.resolve()`, `import x = require()` and `/// <reference types>`.
+ * Offsets are into `code`.
+ */
+function tsSpecifiers(ts, file, code, kind) {
+  const sourceFile = ts.createSourceFile(file, code, ts.ScriptTarget.Latest, true, kind);
+  const [diagnostic] = sourceFile.parseDiagnostics ?? [];
+  if (diagnostic) {
+    throw new SourceParseError(ts.flattenDiagnosticMessageText(diagnostic.messageText, " "), lineAt(code, diagnostic.start ?? 0));
+  }
+  const found = [];
+  const add = (literal) => {
+    if (literal && ts.isStringLiteralLike(literal)) found.push({ specifier: literal.text, offset: literal.getStart(sourceFile) });
+  };
+  const visit = (node) => {
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) add(node.moduleSpecifier);
+    else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) add(node.moduleReference.expression);
+    else if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword || isRequireCallee(ts, node.expression))) add(node.arguments[0]);
+    else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) add(node.argument.literal);
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  for (const reference of sourceFile.typeReferenceDirectives) found.push({ specifier: reference.fileName, offset: reference.pos });
+  return found;
+}
+
+function stringLiteral(node) {
+  if (node?.type === "Literal" && typeof node.value === "string") return node;
+  if (node?.type === "TemplateLiteral" && node.expressions.length === 0) return { value: node.quasis[0].value.cooked, start: node.start, loc: node.loc };
+  if (node?.type === "TSLiteralType") return stringLiteral(node.literal);
+  return null;
+}
+
+/** Module specifiers of every ESTree node in a tree (Svelte and MDX syntax trees carry their code as ESTree). */
+function estreeSpecifiers(tree) {
+  const found = [];
+  const seen = new WeakSet();
+  const add = (node) => {
+    const literal = stringLiteral(node);
+    if (literal) found.push({ specifier: literal.value, offset: literal.start, line: literal.loc?.start?.line });
+  };
+  const visit = (node) => {
+    if (node === null || typeof node !== "object" || seen.has(node)) return;
+    seen.add(node);
+    if (Array.isArray(node)) {
+      for (const child of node) visit(child);
+      return;
+    }
+    switch (node.type) {
+      case "ImportDeclaration":
+      case "ExportAllDeclaration":
+      case "ExportNamedDeclaration":
+      case "ImportExpression":
+        add(node.source);
+        break;
+      case "CallExpression": {
+        const { callee } = node;
+        const isRequire =
+          (callee?.type === "Identifier" && callee.name === "require") ||
+          (callee?.type === "MemberExpression" && callee.object?.type === "Identifier" && callee.object.name === "require" && callee.property?.name === "resolve");
+        if (isRequire) add(node.arguments[0]);
+        break;
+      }
+      case "TSImportType":
+        add(node.argument ?? node.parameter);
+        break;
+      case "TSExternalModuleReference":
+        add(node.expression);
+        break;
+      default:
+    }
+    for (const [key, child] of Object.entries(node)) if (key !== "parent") visit(child);
+  };
+  visit(tree);
+  return found;
+}
+
+const SCRIPT_TYPES = new Set(["", "module", "text/javascript", "application/javascript", "text/typescript", "ts"]);
+
+/** `<script>` bodies and inline `on*` handlers of an HTML document, from parse5's tree (comments are not code). */
+function htmlSpecifiers({ ts, parse5 }, file, source) {
+  const found = [];
+  const fromCode = (code, offset, kind) => {
+    for (const item of tsSpecifiers(ts, file, code, kind)) found.push({ specifier: item.specifier, offset: offset + item.offset });
+  };
+  const errors = [];
+  const document = parse5.parse(source, { sourceCodeLocationInfo: true, onParseError: (error) => errors.push(error) });
+  const visit = (node) => {
+    for (const attribute of node.attrs ?? []) {
+      if (/^on/i.test(attribute.name)) fromCode(attribute.value, node.sourceCodeLocation?.attrs?.[attribute.name]?.startOffset ?? 0, ts.ScriptKind.JS);
+    }
+    if (node.nodeName === "script") {
+      const type = (node.attrs.find((attribute) => attribute.name === "type")?.value ?? "").trim().toLowerCase();
+      const text = node.childNodes?.[0];
+      if (SCRIPT_TYPES.has(type) && text?.nodeName === "#text") {
+        fromCode(text.value, text.sourceCodeLocation.startOffset, type.includes("typescript") || type === "ts" ? ts.ScriptKind.TS : ts.ScriptKind.JS);
+      }
+    }
+    for (const child of node.childNodes ?? []) visit(child);
+    if (node.content) visit(node.content);
+  };
+  visit(document);
+  return found;
+}
+
+function svelteSpecifiers({ svelte }, source) {
+  let tree;
+  try {
+    tree = svelte.parse(source, { modern: true });
+  } catch (error) {
+    throw new SourceParseError(String(error.message).split("\n")[0], error.start?.line ?? error.position?.[0]?.line);
+  }
+  return estreeSpecifiers(tree);
+}
+
+/** Blanks a leading YAML frontmatter block (keeping offsets and lines), which MDX itself would read as Markdown. */
+function blankFrontmatter(source) {
+  const match = /^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/.exec(source);
+  return match ? match[0].replaceAll(/[^\n]/g, " ") + source.slice(match[0].length) : source;
+}
+
+function mdxSpecifiers({ mdx }, source) {
+  let tree;
+  try {
+    tree = mdx(blankFrontmatter(source));
+  } catch (error) {
+    throw new SourceParseError(String(error.reason ?? error.message).split("\n")[0], error.line ?? error.place?.line ?? error.place?.start?.line);
+  }
+  return estreeSpecifiers(tree);
+}
+
+/**
+ * Module specifiers a source file imports, each with its 1-based line, read from the file's syntax tree: module code
+ * of JS/TS files, script and template expressions of .svelte files, `<script>` elements and inline handlers of .html
+ * files, and ESM blocks and expressions of .mdx files. Comments, strings, Markdown prose and fenced code are not code.
+ * Throws a SourceParseError when the file cannot be parsed.
  * @param {string} file repository-relative path, used to pick how the file is read
  * @param {string} source
- * @param {{ ts?: typeof import("typescript") }} [options]
+ * @param {Awaited<ReturnType<typeof loadParsers>>} parsed parsers from loadParsers()
  */
-export function importSpecifiers(file, source, { ts = loadTypescript(REPO_ROOT) } = {}) {
+export function importSpecifiers(file, source, parsed) {
   const extension = path.posix.extname(file).toLowerCase();
-  let blocks;
-  if (MODULE_EXTENSIONS.has(extension)) blocks = [{ code: source, offset: 0 }];
-  else if (SCRIPT_BLOCK_EXTENSIONS.has(extension)) blocks = scriptBlocks(source);
-  else if (extension === ".mdx") blocks = mdxEsmBlocks(source);
+  let found;
+  if (MODULE_EXTENSIONS.has(extension)) found = tsSpecifiers(parsed.ts, file, source, scriptKind(parsed.ts, extension));
+  else if (extension === ".svelte") found = svelteSpecifiers(parsed, source);
+  else if (extension === ".html") found = htmlSpecifiers(parsed, file, source);
+  else if (extension === ".mdx") found = mdxSpecifiers(parsed, source);
   else return [];
-  const found = [];
-  for (const { code, offset } of blocks) {
-    const info = ts.preProcessFile(code, true, true);
-    for (const reference of [...info.importedFiles, ...info.typeReferenceDirectives]) {
-      found.push({ specifier: reference.fileName, line: lineAt(source, offset + reference.pos) });
-    }
+  return found.map(({ specifier, offset, line }) => ({ specifier, line: line ?? lineAt(source, offset) }));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Python imports
+
+// Reads absolute paths (NUL-separated) on stdin and prints, per file, its absolute `import x` / `from x import`
+// modules with their lines, or the syntax error that stopped it. Relative imports name no package.
+const PYTHON_IMPORTS = String.raw`
+import ast, json, sys
+results = []
+for path in sys.stdin.read().split("\0"):
+    if not path:
+        continue
+    try:
+        with open(path, "rb") as handle:
+            tree = ast.parse(handle.read(), filename=path)
+    except (SyntaxError, ValueError) as error:
+        results.append({"error": getattr(error, "msg", None) or str(error), "line": getattr(error, "lineno", None)})
+        continue
+    found = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            found.extend({"module": alias.name, "line": node.lineno} for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            found.append({"module": node.module, "line": node.lineno})
+    results.append({"imports": found})
+json.dump(results, sys.stdout)
+`;
+
+/**
+ * Absolute imports of Python files, read with Python's own `ast` module (so docstrings, comments and strings are not
+ * code). Returns one result per path: `{ imports: [{ module, line }] }` or `{ error, line }`.
+ * @param {string[]} paths absolute paths
+ */
+export function pythonImports(paths, { python = process.env.PYTHON || "python3" } = {}) {
+  if (paths.length === 0) return [];
+  let output;
+  try {
+    output = execFileSync(python, ["-I", "-c", PYTHON_IMPORTS], {
+      input: paths.join("\0"),
+      encoding: "utf8",
+      maxBuffer: 512 * 1024 * 1024,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+  } catch (error) {
+    throw new BoundaryError(`${python} could not read Python imports (${error.code ?? String(error.stderr ?? error.message).trim().split("\n").pop()}); Python 3 is needed for this check`);
   }
-  return found;
+  const results = JSON.parse(output);
+  if (!Array.isArray(results) || results.length !== paths.length) throw new BoundaryError(`${python} returned an unexpected result for Python imports`);
+  return results;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -326,13 +517,25 @@ function tryOwner(lookup) {
   }
 }
 
-function topLevelPathFindings(publicManifest, files) {
+/** True for a top-level entry that is a directory: a submodule (gitlink) or a symlink to a directory. */
+function isDirectoryEntry(root, file, mode) {
+  if (mode === GITLINK) return true;
+  if (mode !== SYMLINK) return false;
+  try {
+    return statSync(path.join(root, file)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function topLevelPathFindings(publicManifest, files, modes, root) {
   const dirs = new Set();
   const rootFiles = new Set();
   for (const file of files) {
     const slash = file.indexOf("/");
-    if (slash === -1) rootFiles.add(file);
-    else dirs.add(file.slice(0, slash));
+    if (slash !== -1) dirs.add(file.slice(0, slash));
+    else if (isDirectoryEntry(root, file, modes.get(file))) dirs.add(file);
+    else rootFiles.add(file);
   }
   const findings = [];
   for (const dir of [...dirs].sort(compareStrings)) {
@@ -387,11 +590,26 @@ function publicReleaseFindings(owners, releases, python) {
  * Workspace packages and their findings. Returns the names of public workspace packages: named, unique and under a
  * listed top-level directory.
  */
-function workspaceFindings(publicManifest, directories, readJson) {
+function workspaceFindings(publicManifest, { directories, linked, patterns, root, resolve, readJson }) {
   const findings = [];
+  // npm reads a workspace through a symlinked or submodule directory, but its package.json is not tracked here.
+  for (const entry of linked) {
+    if (!patterns.some((pattern) => matchesWorkspace(pattern, entry))) continue;
+    const content = resolve(entry);
+    if (content?.problem?.startsWith("is a submodule") || existsSync(path.join(root, entry, "package.json"))) {
+      const kind = content?.problem?.startsWith("is a submodule") ? "a submodule (gitlink)" : "a symlinked directory";
+      findings.push(finding(entry, RULES.workspacePackage, `workspace directory is ${kind}; its package is not tracked in this tree`));
+    }
+  }
   const byName = new Map();
   for (const directory of directories) {
     const file = `${directory}/package.json`;
+    const content = resolve(file);
+    if (content === null) continue;
+    if (content.problem) {
+      findings.push(finding(file, RULES.workspacePackage, `${content.problem}; its package name cannot be read`));
+      continue;
+    }
     const manifest = readJson(file);
     const name = manifest?.name;
     if (typeof name !== "string" || name === "") {
@@ -423,24 +641,60 @@ function notAllowed(name) {
   return `${JSON.stringify(name)}, which is neither a public workspace package nor allowed here by ${ALLOW_FILE}`;
 }
 
-function fnDependencyFindings({ files, publicPackages, allowed, readText, readJson, ts }) {
+function fnDependencyFindings({ files, publicPackages, publicPython, allowed, resolve, readJson, parsed }) {
   const isAllowed = (name, file) =>
     !isFnPackage(name) || publicPackages.has(name) || (allowed.has(name) && allowEntryApplies(allowed.get(name), file));
   const findings = [];
+  const python = [];
   for (const file of files) {
-    if (path.posix.basename(file) === "package.json") {
+    const isManifest = path.posix.basename(file) === "package.json";
+    const isPython = path.posix.extname(file).toLowerCase() === ".py";
+    if (!isManifest && !isPython && !isSourceFile(file)) continue;
+    const content = resolve(file);
+    if (content === null) continue;
+    if (content.problem) {
+      findings.push(finding(file, RULES.fnDependency, `${content.problem}; its ${isManifest ? "dependencies" : "imports"} cannot be checked`));
+      continue;
+    }
+    if (isPython) {
+      python.push({ file, absolute: content.absolute });
+      continue;
+    }
+    if (isManifest) {
       for (const { name, field } of dependencyNames(readJson(file))) {
         if (!isAllowed(name, file)) findings.push(finding(file, RULES.fnDependency, `${field} depends on ${notAllowed(name)}`));
       }
       continue;
     }
-    if (!isSourceFile(file)) continue;
-    const source = readText(file);
-    if (source === null) continue;
-    for (const { specifier, line } of importSpecifiers(file, source, { ts })) {
+    let imports;
+    try {
+      imports = importSpecifiers(file, readFileSync(content.absolute, "utf8"), parsed);
+    } catch (error) {
+      if (!(error instanceof SourceParseError)) throw error;
+      const at = Number.isInteger(error.line) ? `${file}:${error.line}` : file;
+      findings.push(finding(at, RULES.fnDependency, `cannot be parsed (${error.message}); its imports cannot be checked`));
+      continue;
+    }
+    for (const { specifier, line } of imports) {
       const name = packageNameOf(specifier);
       if (name !== null && !isAllowed(name, file)) {
         findings.push(finding(`${file}:${line}`, RULES.fnDependency, `imports ${JSON.stringify(specifier)}: package ${notAllowed(name)}`));
+      }
+    }
+  }
+  // A Python module is allowed when a public Python project provides it or the allow file pins it.
+  const results = pythonImports(python.map(({ absolute }) => absolute));
+  for (const [index, { file }] of python.entries()) {
+    const result = results[index];
+    if (result.error !== undefined) {
+      const at = Number.isInteger(result.line) ? `${file}:${result.line}` : file;
+      findings.push(finding(at, RULES.fnDependency, `cannot be parsed (${result.error}); its imports cannot be checked`));
+      continue;
+    }
+    for (const { module, line } of result.imports) {
+      const name = module.split(".")[0];
+      if (isFnPackage(name) && !publicPython.has(name.toLowerCase()) && !(allowed.has(name) && allowEntryApplies(allowed.get(name), file))) {
+        findings.push(finding(`${file}:${line}`, RULES.fnDependency, `imports Python module ${JSON.stringify(module)}: ${JSON.stringify(name)} is neither a public Python project nor allowed here by ${ALLOW_FILE}`));
       }
     }
   }
@@ -454,43 +708,123 @@ function allowFileFindings(allowed, publicPackages) {
     .map((name) => finding(ALLOW_FILE, RULES.fnDependency, `${JSON.stringify(name)} is a public workspace package; remove it from the allow file`));
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Tracked inventory
+
+const GITLINK = "160000";
+const SYMLINK = "120000";
+
+/**
+ * Every tracked path with its index mode (`git ls-files -s`): regular files, symlinks (120000) and gitlinks (160000)
+ * alike, so no tracked entry escapes the path rules.
+ * @returns {Map<string, string>} path -> mode
+ */
+export function trackedEntries(root) {
+  const output = execFileSync(gitBinary(), ["ls-files", "-s", "-z"], {
+    cwd: root,
+    encoding: "utf8",
+    maxBuffer: 512 * 1024 * 1024,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const entries = new Map();
+  for (const record of output.split("\0")) {
+    const tab = record.indexOf("\t");
+    if (tab === -1) continue;
+    entries.set(record.slice(tab + 1), record.slice(0, record.indexOf(" ")));
+  }
+  return entries;
+}
+
+/**
+ * Where a tracked path's content is read from: `{ absolute }` for a regular file or for a symlink to a regular file
+ * inside the repository (read under the link's own path), `{ problem }` for an entry whose content cannot be read as
+ * a file of this tree (a gitlink, a directory, or a symlink that dangles, leaves the repository or names a
+ * directory), and null for a tracked file deleted from the working tree.
+ */
+function contentResolver(root, modes) {
+  const realRoot = realpathSync(root);
+  const cache = new Map();
+  const resolveContent = (file) => {
+    if (modes.get(file) === GITLINK) return { problem: "is a submodule (gitlink) whose content is not in this tree" };
+    const absolute = path.join(root, file);
+    let stat;
+    try {
+      stat = lstatSync(absolute);
+    } catch (error) {
+      if (error.code === "ENOENT" || error.code === "ENOTDIR") return null;
+      throw error;
+    }
+    if (stat.isFile()) return { absolute };
+    if (!stat.isSymbolicLink()) return { problem: "is not a regular file" };
+    const link = `is a symlink to ${JSON.stringify(readlinkSync(absolute))}`;
+    let target;
+    try {
+      target = realpathSync(absolute);
+    } catch (error) {
+      if (["ENOENT", "ENOTDIR", "ELOOP"].includes(error.code)) return { problem: `${link}, which does not exist` };
+      throw error;
+    }
+    const relative = path.relative(realRoot, target);
+    if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      return { problem: `${link}, outside the repository` };
+    }
+    if (!statSync(target).isFile()) return { problem: `${link}, which is not a regular file` };
+    return { absolute: target };
+  };
+  return (file) => {
+    if (!cache.has(file)) cache.set(file, resolveContent(file));
+    return cache.get(file);
+  };
+}
+
 /**
  * Checks a checkout against the public boundary and returns its findings (empty when it passes).
  * @param {{ root?: string }} [options]
  */
-export function verifyPublicBoundary({ root = REPO_ROOT } = {}) {
-  const ts = loadTypescript(root);
+export async function verifyPublicBoundary({ root = REPO_ROOT } = {}) {
+  const parsed = await loadParsers();
   // Public semantics only: superfunctions.owners.next.json is never read here (tracked, it is an unlisted root file).
   const owners = createOwners(readManifest(path.join(root, PUBLIC_MANIFEST), { kind: "public" }));
-  const files = trackedFiles(root).filter((file) => {
-    try {
-      return lstatSync(path.join(root, file)).isFile();
-    } catch (error) {
-      if (error.code === "ENOENT") return false;
-      throw error;
-    }
-  });
-  const readText = (file) => readFileSync(path.join(root, file), "utf8");
+  const modes = trackedEntries(root);
+  const files = [...modes.keys()].sort(compareStrings);
+  const resolve = contentResolver(root, modes);
   const readJson = (file) => {
+    const content = resolve(file);
+    if (content === null || content.problem) throw new BoundaryError(`${file} ${content?.problem ?? "is not in the working tree"}`);
     try {
-      return JSON.parse(readText(file));
+      return JSON.parse(readFileSync(content.absolute, "utf8"));
     } catch (error) {
       throw new BoundaryError(`${file}: invalid JSON: ${error.message}`);
     }
   };
   const allowed = readAllowFile(root);
-  const rootPackage = readJson("package.json");
-  const { findings: workspace, publicPackages } = workspaceFindings(
-    owners.publicManifest,
-    workspaceDirectories(workspacePatterns(rootPackage), files),
+  const patterns = workspacePatterns(readJson("package.json"));
+  const { findings: workspace, publicPackages } = workspaceFindings(owners.publicManifest, {
+    directories: workspaceDirectories(patterns, files),
+    linked: files.filter((file) => modes.get(file) === GITLINK || modes.get(file) === SYMLINK),
+    patterns,
+    root,
+    resolve,
     readJson,
+  });
+  const pyprojects = files.filter((file) => path.posix.basename(file) === "pyproject.toml");
+  const unreadablePython = pyprojects
+    .filter((file) => resolve(file)?.problem)
+    .map((file) => finding(file, RULES.publicRelease, `${resolve(file).problem}; its Python project cannot be checked`));
+  const python = readPythonProjects(root, pyprojects.filter((file) => resolve(file)?.absolute));
+  // Import names of public Python projects (PEP 503 normalized, as a module: `datafn-agent` -> `datafn_agent`).
+  const publicPython = new Set(
+    python
+      .filter((project) => tryOwner(() => owners.ownerOfPython(project.name, { repo: "public" })) === "public" && directoryOwner(owners.publicManifest, project.file) === "public")
+      .map((project) => project.name.toLowerCase().replaceAll(/[-_.]+/g, "_")),
   );
   return [
-    ...topLevelPathFindings(owners.publicManifest, files),
-    ...publicReleaseFindings(owners, readReleaseEntries(root, "public"), readPythonProjects(root, files)),
+    ...topLevelPathFindings(owners.publicManifest, files, modes, root),
+    ...publicReleaseFindings(owners, readReleaseEntries(root, "public"), python),
+    ...unreadablePython,
     ...workspace,
     ...allowFileFindings(allowed, publicPackages),
-    ...fnDependencyFindings({ files, publicPackages, allowed, readText, readJson, ts }),
+    ...fnDependencyFindings({ files, publicPackages, publicPython, allowed, resolve, readJson, parsed }),
   ];
 }
 
@@ -509,7 +843,7 @@ function parseArgs(argv) {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   let findings;
   try {
-    findings = verifyPublicBoundary(parseArgs(process.argv.slice(2)));
+    findings = await verifyPublicBoundary(parseArgs(process.argv.slice(2)));
   } catch (error) {
     const code = error instanceof OwnersError ? ` (${error.code})` : "";
     console.error(`error${code}: ${error.message}`);

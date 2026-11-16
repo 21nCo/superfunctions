@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -14,6 +14,7 @@ import {
   dependencyNames,
   importSpecifiers,
   isFnPackage,
+  loadParsers,
   packageNameOf,
   parseAllowFile,
   verifyPublicBoundary,
@@ -32,7 +33,7 @@ const manifest = () => ({
 
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
 
-function fixture(t, { owners = manifest(), releases, allow = {}, workspaces = ["datafn/*"], files = {} } = {}) {
+function fixture(t, { owners = manifest(), releases, allow = {}, workspaces = ["datafn/*"], files = {}, links = {}, gitlinks = [] } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "verify-public-boundary-"));
   t.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   const all = {
@@ -53,13 +54,22 @@ function fixture(t, { owners = manifest(), releases, allow = {}, workspaces = ["
     mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
     writeFileSync(path.join(root, file), content);
   }
+  for (const [link, target] of Object.entries(links)) {
+    mkdirSync(path.dirname(path.join(root, link)), { recursive: true });
+    symlinkSync(target, path.join(root, link));
+  }
   execFileSync(gitBinary(), ["init", "-q"], { cwd: root });
   execFileSync(gitBinary(), ["add", "-A"], { cwd: root });
+  for (const gitlink of gitlinks) {
+    execFileSync(gitBinary(), ["update-index", "--add", "--cacheinfo", `160000,${"1".repeat(40)},${gitlink}`], { cwd: root });
+  }
   return root;
 }
 
 const run = (root) => spawnSync(process.execPath, [script, "--root", root], { encoding: "utf8" });
-const findings = (root) => verifyPublicBoundary({ root }).map(({ file, rule }) => `${file} ${rule}`);
+const findings = async (root) => (await verifyPublicBoundary({ root })).map(({ file, rule }) => `${file} ${rule}`);
+const parsers = await loadParsers();
+const specifiers = (file, source) => importSpecifiers(file, source, parsers).map(({ specifier, line }) => `${line} ${specifier}`);
 
 test("a tree inside the public boundary passes", (t) => {
   const result = run(fixture(t));
@@ -73,9 +83,9 @@ test("an unlisted top-level directory fails, naming the directory and the rule",
   assert.match(result.stderr, /flowfn\/: \[top-level-path\] top-level directory is not listed in superfunctions\.owners\.json paths/);
 });
 
-test("an unlisted root file fails, naming the file and the rule", (t) => {
+test("an unlisted root file fails, naming the file and the rule", async (t) => {
   const root = fixture(t, { files: { "superfunctions.owners.next.json": "{}\n" } });
-  assert.deepEqual(findings(root), [`superfunctions.owners.next.json ${RULES.topLevelPath}`]);
+  assert.deepEqual(await findings(root), [`superfunctions.owners.next.json ${RULES.topLevelPath}`]);
 });
 
 test("a release entry for an unlisted directory fails, naming the release file, entry and rule", (t) => {
@@ -99,27 +109,27 @@ test("a release entry the manifest does not list as public fails", (t) => {
   assert.match(result.stderr, /release-packages\.json: \[public-release\] release "datafn-client" \(datafn\/client\) is not listed as public/);
 });
 
-test("a Python project the manifest does not list fails, naming its pyproject.toml", (t) => {
+test("a Python project the manifest does not list fails, naming its pyproject.toml", async (t) => {
   const root = fixture(t, { files: { "datafn/agent/pyproject.toml": '[project]\nname = "datafn-agent"\n' } });
-  assert.deepEqual(findings(root), [`datafn/agent/pyproject.toml ${RULES.publicRelease}`]);
+  assert.deepEqual(await findings(root), [`datafn/agent/pyproject.toml ${RULES.publicRelease}`]);
 });
 
-test("a workspace package in an unlisted directory fails as a workspace package and as a top-level path", (t) => {
+test("a workspace package in an unlisted directory fails as a workspace package and as a top-level path", async (t) => {
   const root = fixture(t, {
     workspaces: ["datafn/*", "flowfn/*"],
     files: { "flowfn/core/package.json": json({ name: "@flowfn/core" }) },
   });
-  assert.deepEqual(findings(root).sort(), [`flowfn/ ${RULES.topLevelPath}`, `flowfn/core/package.json ${RULES.workspacePackage}`]);
+  assert.deepEqual((await findings(root)).sort(), [`flowfn/ ${RULES.topLevelPath}`, `flowfn/core/package.json ${RULES.workspacePackage}`]);
 });
 
-test("workspace package names must resolve to exactly one directory", (t) => {
+test("workspace package names must resolve to exactly one directory", async (t) => {
   const root = fixture(t, {
     files: {
       "datafn/server/package.json": json({ name: "@datafn/client" }),
       "datafn/cli/package.json": json({ private: true }),
     },
   });
-  assert.deepEqual(findings(root).sort(), [
+  assert.deepEqual((await findings(root)).sort(), [
     `datafn/cli/package.json ${RULES.workspacePackage}`,
     `datafn/client/package.json ${RULES.workspacePackage}`,
     `datafn/server/package.json ${RULES.workspacePackage}`,
@@ -140,7 +150,7 @@ test("a package.json dependency on an unlisted *fn package fails, naming the fil
   assert.match(result.stderr, /datafn\/server\/package\.json: \[fn-dependency\] devDependencies depends on "flowfn"/);
 });
 
-test("allow-listed *fn packages pass as imports and dependencies", (t) => {
+test("allow-listed *fn packages pass as imports and dependencies", async (t) => {
   const root = fixture(t, {
     allow: { "@flowfn/core": { reason: "published flow engine" }, flowfn: { reason: "published CLI" } },
     files: {
@@ -148,10 +158,10 @@ test("allow-listed *fn packages pass as imports and dependencies", (t) => {
       "datafn/server/src/index.ts": 'import { flow } from "@flowfn/core";\nconst cli = require("flowfn/bin");\n',
     },
   });
-  assert.deepEqual(findings(root), []);
+  assert.deepEqual(await findings(root), []);
 });
 
-test("an allow entry with paths applies only under those directories", (t) => {
+test("an allow entry with paths applies only under those directories", async (t) => {
   const root = fixture(t, {
     allow: { "@flowfn/core": { reason: "alias in the server", paths: ["datafn/server"] } },
     files: {
@@ -159,26 +169,26 @@ test("an allow entry with paths applies only under those directories", (t) => {
       "datafn/serverless/src/index.ts": 'import "@flowfn/core";\n',
     },
   });
-  assert.deepEqual(findings(root), [`datafn/serverless/src/index.ts:1 ${RULES.fnDependency}`]);
+  assert.deepEqual(await findings(root), [`datafn/serverless/src/index.ts:1 ${RULES.fnDependency}`]);
 });
 
-test("an allow entry naming a public workspace package is refused", (t) => {
+test("an allow entry naming a public workspace package is refused", async (t) => {
   const root = fixture(t, { allow: { "@datafn/core": { reason: "redundant" } } });
-  assert.deepEqual(findings(root), [`${ALLOW_FILE} ${RULES.fnDependency}`]);
+  assert.deepEqual(await findings(root), [`${ALLOW_FILE} ${RULES.fnDependency}`]);
 });
 
-test("prose, comments and strings that mention *fn packages are not checked", (t) => {
+test("prose, comments and strings that mention *fn packages are not checked", async (t) => {
   const root = fixture(t, {
     files: {
       "datafn/README.md": 'import { flow } from "@flowfn/core";\n',
       "datafn/core/src/notes.ts": '// import { flow } from "@flowfn/core";\nconst doc = `import { flow } from "@flowfn/core"`;\nexport const name = "flowfn";\n',
-      "datafn/docs/guide.mdx": '# Guide\n\nimport flowfn from the registry when it ships.\n\n```ts\nimport { flow } from "@flowfn/core";\n```\n',
+      "datafn/docs/guide.mdx": '# Guide\n\nYou can import flowfn from the registry when it ships.\n\n```ts\nimport { flow } from "@flowfn/core";\n```\n',
     },
   });
-  assert.deepEqual(findings(root), []);
+  assert.deepEqual(await findings(root), []);
 });
 
-test("imports in svelte, html and mdx module code are checked", (t) => {
+test("imports in svelte, html and mdx module code are checked", async (t) => {
   const root = fixture(t, {
     files: {
       "datafn/svelte/src/View.svelte": '<script lang="ts">\n  import { flow } from "@flowfn/svelte";\n</script>\n<p>import "@flowfn/text"</p>\n',
@@ -186,10 +196,141 @@ test("imports in svelte, html and mdx module code are checked", (t) => {
       "datafn/docs/page.mdx": '# Page\n\nimport { Demo } from "@flowfn/docs";\n\nText.\n',
     },
   });
-  assert.deepEqual(findings(root), [
+  assert.deepEqual(await findings(root), [
     `datafn/docs/page.mdx:3 ${RULES.fnDependency}`,
     `datafn/site/index.html:2 ${RULES.fnDependency}`,
     `datafn/svelte/src/View.svelte:2 ${RULES.fnDependency}`,
+  ]);
+});
+
+test("imports in svelte templates, mdx expressions and html handlers are checked", async (t) => {
+  const root = fixture(t, {
+    files: {
+      "datafn/svelte/src/Await.svelte": '<script>\n  let x = 1;\n</script>\n{#await import("@flowfn/await") then m}{/await}\n<button onclick={() => import("@flowfn/click")}>go</button>\n',
+      "datafn/docs/jsx.mdx": '# Page\n\n<button onClick={() => import("@flowfn/jsx")}>go</button>\n\n{await import("@flowfn/expr")}\n',
+      "datafn/docs/frontmatter.mdx": '---\ntitle: Page\n---\nimport { Demo } from "@flowfn/esm";\n',
+      "datafn/docs/heading.mdx": '# Page\nimport { Demo } from "@flowfn/heading";\n',
+      "datafn/site/handler.html": '<button\n  onclick="import(\'@flowfn/handler\')">go</button>\n',
+      "datafn/core/src/registry.ts": 'import "npm:@flowfn/npm@^1";\nimport "jsr:@flowfn/jsr";\n',
+    },
+  });
+  assert.deepEqual(await findings(root), [
+    `datafn/core/src/registry.ts:1 ${RULES.fnDependency}`,
+    `datafn/core/src/registry.ts:2 ${RULES.fnDependency}`,
+    `datafn/docs/frontmatter.mdx:4 ${RULES.fnDependency}`,
+    `datafn/docs/heading.mdx:2 ${RULES.fnDependency}`,
+    `datafn/docs/jsx.mdx:3 ${RULES.fnDependency}`,
+    `datafn/docs/jsx.mdx:5 ${RULES.fnDependency}`,
+    `datafn/site/handler.html:2 ${RULES.fnDependency}`,
+    `datafn/svelte/src/Await.svelte:4 ${RULES.fnDependency}`,
+    `datafn/svelte/src/Await.svelte:5 ${RULES.fnDependency}`,
+  ]);
+});
+
+test("html comments, jsx text and regex literals that look like imports are not code", async (t) => {
+  const root = fixture(t, {
+    files: {
+      "datafn/site/comment.html": '<!-- <script type="module">import "@flowfn/comment";</script> -->\n<p>x</p>\n',
+      "datafn/svelte/src/Comment.svelte": '<!-- <script>import "@flowfn/comment";</script> -->\n<p>import "@flowfn/text"</p>\n',
+      "datafn/core/src/View.tsx": 'export const View = () => <p>import "@flowfn/core"</p>;\n',
+      "datafn/core/src/pattern.ts": 'export const pattern = /import("@flowfn\\/core")/;\n',
+    },
+  });
+  assert.deepEqual(await findings(root), []);
+});
+
+test("a source file that does not parse fails, naming the file, line and rule", async (t) => {
+  const root = fixture(t, {
+    files: {
+      "datafn/core/src/broken.ts": 'export const a = 1;\nimport { from "@flowfn/core";\n',
+      "datafn/svelte/src/Broken.svelte": "<script>\n</script>\n{#if x}\n",
+      "datafn/docs/broken.mdx": "# Page\n\n{import(\n",
+    },
+  });
+  const result = run(root);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /datafn\/core\/src\/broken\.ts:2: \[fn-dependency\] cannot be parsed \(.+\); its imports cannot be checked/);
+  assert.match(result.stderr, /datafn\/svelte\/src\/Broken\.svelte(:\d+)?: \[fn-dependency\] cannot be parsed/);
+  assert.match(result.stderr, /datafn\/docs\/broken\.mdx(:\d+)?: \[fn-dependency\] cannot be parsed/);
+});
+
+test("tracked symlinks and submodules at the top level are checked as top-level paths", async (t) => {
+  const root = fixture(t, {
+    files: { "notes.txt": "x\n" },
+    links: { "LINKED.md": "notes.txt", privatefn: "datafn" },
+    gitlinks: ["vendorfn"],
+    owners: { ...manifest(), rootFiles: { ...manifest().rootFiles, public: [...manifest().rootFiles.public, "notes.txt"] } },
+  });
+  assert.deepEqual(await findings(root), [`privatefn/ ${RULES.topLevelPath}`, `vendorfn/ ${RULES.topLevelPath}`, `LINKED.md ${RULES.topLevelPath}`]);
+  const result = run(root);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /privatefn\/: \[top-level-path\] top-level directory is not listed/);
+  assert.match(result.stderr, /vendorfn\/: \[top-level-path\] top-level directory is not listed/);
+  assert.match(result.stderr, /LINKED\.md: \[top-level-path\] root file is not listed/);
+});
+
+test("a symlinked source file or package.json is read through its link", async (t) => {
+  const root = fixture(t, {
+    files: {
+      "datafn/core/src/source.txt": 'import { flow } from "@flowfn/core";\n',
+      "datafn/server/manifest.txt": json({ name: "@datafn/server", dependencies: { flowfn: "^1.0.0" } }),
+    },
+    links: { "datafn/core/src/flow.ts": "source.txt", "datafn/server/package.json": "manifest.txt" },
+  });
+  const result = run(root);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /datafn\/core\/src\/flow\.ts:1: \[fn-dependency\] imports "@flowfn\/core"/);
+  assert.match(result.stderr, /datafn\/server\/package\.json: \[fn-dependency\] dependencies depends on "flowfn"/);
+});
+
+test("a symlinked source file or package.json that cannot be read in the tree fails", async (t) => {
+  const outside = mkdtempSync(path.join(tmpdir(), "verify-public-boundary-outside-"));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  writeFileSync(path.join(outside, "secret.ts"), 'import "@flowfn/core";\n');
+  const root = fixture(t, {
+    links: {
+      "datafn/core/src/outside.ts": path.join(outside, "secret.ts"),
+      "datafn/core/src/dangling.ts": "missing.ts",
+      "datafn/core/src/folder.ts": "../src",
+      "datafn/linked/package.json": "../../gone/package.json",
+    },
+  });
+  assert.deepEqual((await findings(root)).sort(), [
+    `datafn/core/src/dangling.ts ${RULES.fnDependency}`,
+    `datafn/core/src/folder.ts ${RULES.fnDependency}`,
+    `datafn/core/src/outside.ts ${RULES.fnDependency}`,
+    `datafn/linked/package.json ${RULES.fnDependency}`,
+    `datafn/linked/package.json ${RULES.workspacePackage}`,
+  ]);
+});
+
+test("a symlinked or submodule workspace directory fails; a symlinked directory without a package passes", async (t) => {
+  const root = fixture(t, {
+    files: { "datafn/swift/Package.swift": "// swift\n", "scripts/private/package.json": json({ name: "@private/x" }) },
+    links: { "datafn/swift-package": "swift", "datafn/private": "../scripts/private" },
+    gitlinks: ["datafn/vendored"],
+  });
+  assert.deepEqual((await findings(root)).sort(), [`datafn/private ${RULES.workspacePackage}`, `datafn/vendored ${RULES.workspacePackage}`]);
+});
+
+test("python imports of *fn modules must name a public Python project or an allowed package", async (t) => {
+  const root = fixture(t, {
+    allow: { pinnedfn: { reason: "published on PyPI" } },
+    files: {
+      "datafn/python/datafn/__init__.py": '"""import flowfn is not code here."""\n# import flowfn\nimport datafn.client\nfrom . import flowfn\nimport pinnedfn\n',
+      "datafn/python/datafn/flow.py": "import os\nimport flowfn\nfrom flowfn.core import run\n",
+      "datafn/python/datafn/broken.py": "def broken(:\n",
+    },
+  });
+  const result = run(root);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /datafn\/python\/datafn\/flow\.py:2: \[fn-dependency\] imports Python module "flowfn": "flowfn" is neither a public Python project nor allowed/);
+  assert.match(result.stderr, /datafn\/python\/datafn\/flow\.py:3: \[fn-dependency\] imports Python module "flowfn\.core"/);
+  assert.match(result.stderr, /datafn\/python\/datafn\/broken\.py:1: \[fn-dependency\] cannot be parsed/);
+  assert.deepEqual((await findings(root)).sort(), [
+    `datafn/python/datafn/broken.py:1 ${RULES.fnDependency}`,
+    `datafn/python/datafn/flow.py:2 ${RULES.fnDependency}`,
+    `datafn/python/datafn/flow.py:3 ${RULES.fnDependency}`,
   ]);
 });
 
@@ -203,17 +344,23 @@ test("every import form is read", () => {
     'import e = require("efn");',
     'import "./local";',
     'import "node:fs";',
+    'type G = import("gfn").G;',
+    'const h = require.resolve("hfn/package.json");',
+    'export { i } from "ifn";',
   ].join("\n");
   assert.deepEqual(
-    importSpecifiers("x.ts", source).map(({ specifier, line }) => `${line} ${specifier}`).sort(),
-    ["1 ffn", "2 @a-fn/x", "3 bfn", "4 cfn/sub", "5 @dfn/y", "6 efn", "7 ./local", "8 node:fs"].sort(),
+    specifiers("x.ts", source).sort(),
+    ["1 ffn", "2 @a-fn/x", "3 bfn", "4 cfn/sub", "5 @dfn/y", "6 efn", "7 ./local", "8 node:fs", "9 gfn", "10 hfn/package.json", "11 ifn"].sort(),
   );
 });
 
 test("*fn package names and specifiers", () => {
   assert.equal(packageNameOf("@flowfn/core/runtime"), "@flowfn/core");
   assert.equal(packageNameOf("flowfn/bin"), "flowfn");
-  for (const specifier of ["./x", "../x", "/abs", "#internal", "node:fs", "npm:flowfn", "https://x/flowfn"]) {
+  assert.equal(packageNameOf("npm:@flowfn/core@^1.2/runtime"), "@flowfn/core");
+  assert.equal(packageNameOf("npm:flowfn@1"), "flowfn");
+  assert.equal(packageNameOf("jsr:@flowfn/core"), "@flowfn/core");
+  for (const specifier of ["./x", "../x", "/abs", "#internal", "node:fs", "https://x/flowfn", "npm:", "npm:./x", "@flowfn"]) {
     assert.equal(packageNameOf(specifier), null, specifier);
   }
   for (const name of ["@flowfn/core", "flowfn", "@a.fn/x", "FlowFn"]) assert.equal(isFnPackage(name), true, name);
