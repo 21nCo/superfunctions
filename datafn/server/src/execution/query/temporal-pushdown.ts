@@ -177,10 +177,13 @@ function queryPaths(query: Record<string, unknown>): string[][] {
 }
 
 /**
- * Whether any relation path in the query leads back to the queried resource
- * (a self relation, or a chain such as `project.tasks` from `task`). The
- * in-memory store resolves those against the primary rows it loaded, so
- * narrowing that load to a time range would drop related records outside it.
+ * Whether any relation path in the query reaches a resource it already passed
+ * through: back to the queried resource (a self relation, or a chain such as
+ * `project.tasks` from `task`), or a repeat further along (e.g.
+ * `project.previous` with a self relation on `project`). The in-memory store
+ * loads each resource once, from the ids the rows before it reference, and
+ * resolves a repeat against those rows; narrowing the primary load to a time
+ * range would drop related records the full load contained.
  */
 function readsPrimaryThroughRelation(
   query: Record<string, unknown>,
@@ -190,6 +193,7 @@ function readsPrimaryThroughRelation(
   if (!schema.relations || schema.relations.length === 0) return false;
   for (const path of queryPaths(query)) {
     let current = [resource];
+    const visited = new Set<string>(current);
     for (const segment of path) {
       const next = new Set<string>();
       for (const name of current) {
@@ -200,7 +204,10 @@ function readsPrimaryThroughRelation(
         }
       }
       if (next.size === 0) break;
-      if (next.has(resource)) return true;
+      for (const target of next) {
+        if (visited.has(target)) return true;
+      }
+      for (const target of next) visited.add(target);
       current = [...next];
     }
   }
@@ -238,12 +245,12 @@ export function lowerTemporalRanges(
   if (typeof resource !== "string" || readsPrimaryThroughRelation(query, resource, schema)) {
     return { query, lowered: [] };
   }
-  // Resolve an omitted `at` once, so lowered clauses (resolved now) and
+  // Resolve an omitted (or null) `at` once, so lowered clauses (resolved now) and
   // clauses evaluated in memory later (after the database read) use the same
   // instant. An ISO string reads as the same instant for every storage.
   const now = new Date(Date.now()).toISOString();
   const clauses = getTemporalClauses(query).map((clause) =>
-    clause.period && clause.period.at === undefined && !clause.range
+    clause.period && clause.period.at == null && !clause.range
       ? { ...clause, period: { ...clause.period, at: now } }
       : clause,
   );

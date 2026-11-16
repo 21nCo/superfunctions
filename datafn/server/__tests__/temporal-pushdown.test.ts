@@ -469,7 +469,7 @@ describe("lowerTemporalRanges", () => {
     const spy = vi.spyOn(Date, "now").mockReturnValue(now);
     try {
       const { query: lowered } = lowerTemporalRanges(
-        q([time.day("startUnix"), time.day("startIso", undefined, { storage: "iso" })]),
+        q([time.day("startUnix"), { field: "startIso", storage: "iso", period: { scale: "day", at: null as any } }]),
         SCHEMA,
         config,
       );
@@ -486,6 +486,38 @@ describe("lowerTemporalRanges", () => {
   it("does not lower when a relation path leads back to the queried resource", () => {
     const query = { ...q(time.day("startUnix", "2026-05-18T12:00:00.000Z")), select: ["id", "previous.*"] };
     expect(lowerTemporalRanges(query, SCHEMA, config).query).toBe(query);
+  });
+
+  it("does not lower when a relation path repeats a secondary resource", () => {
+    const schema = {
+      resources: [
+        ...SCHEMA.resources,
+        {
+          name: "project",
+          version: 1,
+          fields: [
+            { name: "label", type: "string", required: true },
+            { name: "previousId", type: "string", required: false, nullable: true },
+          ],
+        },
+      ],
+      relations: [
+        { from: "session", to: "project", type: "many-one", relation: "project", inverse: "sessions", fkField: "projectId" },
+        { from: "project", to: "project", type: "many-one", relation: "previous", inverse: "next", fkField: "previousId" },
+      ],
+    } as unknown as DatafnSchema;
+    const temporal = time.day("startUnix", "2026-05-18T12:00:00.000Z");
+    for (const query of [
+      { ...q(temporal), filters: { project: { $any: { previous: { $any: { label: "x" } } } } } },
+      { ...q(temporal), filters: { "project.previous.label": "x" } },
+      { resource: "session", version: 1, temporal, groupBy: ["project.previous.label"], aggregations: { n: { op: "count", field: "id" } } },
+      { ...q(temporal), select: ["id", "project.previous.*"] },
+    ]) {
+      expect(lowerTemporalRanges(query, schema, config).query).toBe(query);
+    }
+    // A path that never repeats a resource is still lowered.
+    const lowered = lowerTemporalRanges({ ...q(temporal), select: ["id", "project.*"] }, schema, config);
+    expect(lowered.lowered).toEqual(["startUnix"]);
   });
 
   it("keeps only the grouping of a clause whose period was lowered", () => {
