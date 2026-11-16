@@ -310,9 +310,14 @@ export async function cloneUp(
 
       const filteredRecord: Record<string, unknown> = {};
       for (const key of Object.keys(record)) {
-        if (key !== "id" && fieldNames.has(key)) {
-          filteredRecord[key] = record[key];
-        }
+        if (key === "id" || !fieldNames.has(key)) continue;
+        const value = record[key];
+        // A pull from a SQL-backed server returns an unset column as null,
+        // also for a field the schema does not allow to be null. That null
+        // means "not set", so it is left out like on a record created
+        // without the field; the server rejects null for such a field.
+        if (value === null && !nullableFields.has(key)) continue;
+        filteredRecord[key] = value;
       }
 
       // Break reference cycles: unset a nullable reference to a local record
