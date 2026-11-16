@@ -1085,7 +1085,7 @@ describe('client-supplied processing artifacts', () => {
     /** Moves the clock past an upload's deadline and the grace a sweep allows it. */
     const muchLater = () => {
       vi.useFakeTimers({ toFake: ['Date'] });
-      vi.setSystemTime(Date.now() + 2 * 60 * 60 * 1000);
+      vi.setSystemTime(Date.now() + 48 * 60 * 60 * 1000);
     };
     afterEach(() => {
       vi.useRealTimers();
@@ -1172,26 +1172,24 @@ describe('client-supplied processing artifacts', () => {
       expect(await app.displacedRecords()).toEqual([]);
     });
 
-    it('withdraws the row of an upload whose commit a sweep overtook past its lifetime', async () => {
+    it('never deletes the object of an upload still committing on a live version, however late', async () => {
       const app = await createApp();
-      // The row create starts before the deadline and lands only after a
-      // sweep, hours later, retired the upload's record and deleted its object.
+      // The row create starts before the deadline and lands only after a sweep, days later.
       let swept: Awaited<ReturnType<FileFn['cleanupOrphanedArtifacts']>> | undefined;
       app.databaseControl.beforeCreate = async (data) => {
         if (data.kind !== 'thumbnail-small' || swept) return;
         muchLater();
         swept = await app.fileFn.cleanupOrphanedArtifacts();
       };
-      await expect(app.fileFn.services.processing.attachClientArtifact({
+      const recorded = await app.fileFn.services.processing.attachClientArtifact({
         fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', mimeType: 'image/png', body: bytes('client'),
-      }, app.owner)).rejects.toMatchObject({ code: 'FILEFN_UPLOAD_EXPIRED' });
-      expect(swept).toEqual({ deletedObjects: 1, keptRecords: 0 });
-      expect(await app.artifacts()).toEqual([]);
-      expect(await clientObjectsOf(app.root)).toEqual([]);
-      expect(await app.displacedRecords()).toEqual([]);
+      }, app.owner);
+      expect(swept).toEqual({ deletedObjects: 0, keptRecords: 0 });
+      const url = await app.clientFor('owner').downloadArtifact(app.fileId, recorded.artifactId);
+      expect(new TextDecoder().decode(await app.artifactBytes('owner', url))).toBe('client');
     });
 
-    it('deletes the object of an upload that died on a live version once its lifetime is over', async () => {
+    it('keeps the object of an upload that died on a live version until the version goes', async () => {
       const app = await createApp();
       app.databaseControl.onCreate = (data) => {
         if (data.kind !== 'thumbnail-small') return undefined;
@@ -1203,15 +1201,13 @@ describe('client-supplied processing artifacts', () => {
       }, app.owner)).rejects.toThrow('artifact row write failed');
       app.databaseControl.down = false;
       app.databaseControl.onCreate = null;
-      // A later upload of the same kind is named by the row and kept.
-      const kept = await app.fileFn.services.processing.attachClientArtifact({
-        fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', mimeType: 'image/png', body: bytes('kept'),
-      }, app.owner);
-      expect(await clientObjectsOf(app.root)).toHaveLength(2);
-
       muchLater();
+      expect(await app.fileFn.cleanupOrphanedArtifacts()).toEqual({ deletedObjects: 0, keptRecords: 0 });
+      expect(await clientObjectsOf(app.root)).toHaveLength(1);
+
+      await app.clientFor('owner').deleteFile(app.fileId);
+      expect(await clientObjectsOf(app.root)).toEqual([]);
       expect(await app.fileFn.cleanupOrphanedArtifacts()).toEqual({ deletedObjects: 1, keptRecords: 0 });
-      expect(await clientObjectsOf(app.root)).toEqual([expect.stringContaining(kept.storageKey)]);
       expect(await app.displacedRecords()).toEqual([]);
     });
 
@@ -1248,6 +1244,29 @@ describe('client-supplied processing artifacts', () => {
       await app.clientFor('owner').deleteFile(app.fileId);
       await app.fileFn.cleanupOrphanedArtifacts();
       expect([...app.bucket.objects.keys()]).toEqual([]);
+    });
+
+    it('keeps a server key another file still names when the policy target changed since it was stored', async () => {
+      const sharedKey = 'shared/thumb-small.jpg';
+      const shared: Processor = {
+        name: 'shared-thumbnail',
+        supportedMimeTypes: ['image/png'],
+        async process() {
+          return {
+            success: true,
+            artifacts: [{ kind: 'thumbnail-small', data: bytes('server-small'), mimeType: 'image/jpeg', storageKey: sharedKey }],
+          };
+        },
+      };
+      const app = await createApp({ processors: [shared], artifactsOnR2: true });
+      await app.uploadPhoto();
+      await app.drainJobs();
+      expect([...app.bucket.objects.keys()]).toEqual([sharedKey]);
+      // Artifacts of the policy now go to the default target.
+      delete app.photoPolicy.artifactStorageTarget;
+
+      await app.clientFor('owner').deleteFile(app.fileId);
+      expect([...app.bucket.objects.keys()]).toEqual([sharedKey]);
     });
 
     it('never deletes a server key, which a live processor may publish while the sweep runs', async () => {

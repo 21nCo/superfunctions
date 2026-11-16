@@ -792,7 +792,10 @@ export function createFileService(config: FileServiceConfig) {
       const artifactStorageRefs = new Set<string>();
       for (const artifact of artifacts) {
         if (artifact.kind !== PROCESSING_RUN_KIND) {
-          artifactStorageRefs.add(storageRef(recordedStorageTarget(artifact) ?? artifactStorageTarget, artifact.storageKey));
+          // A client object is deleted where it was stored. A server key may be
+          // shared, and the reference check below resolves other rows by policy.
+          const target = artifactSourceOf(artifact) === 'client' ? recordedStorageTarget(artifact) : undefined;
+          artifactStorageRefs.add(storageRef(target ?? artifactStorageTarget, artifact.storageKey));
         }
       }
 

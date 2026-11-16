@@ -159,9 +159,9 @@ export const DISPLACED_OBJECT_KIND = 'filefn.displaced-object';
  * from before it is written until a row names it or it is deleted. An upload
  * lives at most `CLIENT_ARTIFACT_UPLOAD_MS` from before its record and
  * writes or commits nothing after that, so besides the upload itself only
- * `cleanupOrphanedArtifacts` removes one, once that lifetime and a grace
- * period are over and after claiming it, which an upload still committing
- * sees; file and version cleanup leave them in place.
+ * `cleanupOrphanedArtifacts` removes one, once its version is gone and that
+ * lifetime and a grace period are over; file and version cleanup leave them
+ * in place.
  */
 export const UPLOAD_INTENT_KIND = 'filefn.upload-intent';
 
@@ -396,8 +396,8 @@ const MAX_ARTIFACT_WRITE_ATTEMPTS = 5;
 const SIGNED_SERVER_UPLOAD_TTL_SECONDS = 300;
 /** How long a client artifact upload may take; past it, it stores and commits nothing. */
 const CLIENT_ARTIFACT_UPLOAD_MS = 30 * 60 * 1000;
-/** How long after an upload's lifetime a sweep still leaves its record alone, for writes already in flight. */
-const CLIENT_ARTIFACT_RECORD_GRACE_MS = 30 * 60 * 1000;
+/** How long after an upload's lifetime a sweep still leaves its record alone, for storage writes already in flight. */
+const CLIENT_ARTIFACT_RECORD_GRACE_MS = 24 * 60 * 60 * 1000;
 
 interface StoredObject {
   key: string;
@@ -1387,19 +1387,6 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       .map((version) => version.versionId));
   }
 
-  /** True when an artifact row of the record's own version names its object. */
-  async function isNamed(record: FileArtifactRecord): Promise<boolean> {
-    const rows = await db.findMany<FileArtifactRecord>({
-      model: 'fileArtifacts',
-      where: [
-        { field: 'versionId', operator: 'eq', value: record.versionId },
-        { field: 'storageKey', operator: 'eq', value: record.storageKey },
-      ],
-      namespace,
-    });
-    return rows.some((row) => !isInternalKind(row.kind));
-  }
-
   async function findVersion(fileId: string, versionId: string): Promise<{ file: FileRecord; version: FileVersionRecord } | null> {
     const version = await db.findOne<FileVersionRecord>({
       model: 'fileVersions',
@@ -1884,21 +1871,6 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         await discardDisplacedObject(ownObject, target, 'intent');
         throw errors.notFound('Version');
       }
-      // A sweep claims the record of an upload past its lifetime before it
-      // looks for a row naming the object (see `cleanupOrphanedArtifacts`);
-      // a claimed record means the object may be deleted, so the row goes.
-      if ((await findArtifactRow(intentId))?.kind !== UPLOAD_INTENT_KIND) {
-        await db.deleteMany({
-          model: 'fileArtifacts',
-          where: [
-            { field: 'artifactId', operator: 'eq', value: rowId },
-            { field: 'storageKey', operator: 'eq', value: storageKey },
-          ],
-          namespace,
-        });
-        await discardDisplacedObject(ownObject, target, 'intent');
-        throw errors.uploadExpired();
-      }
 
       const recorded = await findArtifactRow(rowId);
       if (!recorded) {
@@ -1928,13 +1900,13 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     },
 
     /**
-     * Deletes client objects no artifact row will name again, and retires the
+     * Deletes the client objects of versions that are gone, and retires the
      * records that kept them (see `DISPLACED_OBJECT_KIND`,
-     * `UPLOAD_INTENT_KIND`), each only after its delete is confirmed: the
-     * displaced objects of versions that are gone, and the objects of uploads
-     * whose lifetime and grace period are over, unless a live row names
-     * them. A client object's key is unique to its upload, so nothing else
-     * can name or write it. A server key's record is left to file and
+     * `UPLOAD_INTENT_KIND`), each only after its delete is confirmed: every
+     * displaced object, and the object of an upload once its lifetime and a
+     * grace period are over. A client object's key is unique to its upload,
+     * so nothing else can name or write it, and a row of a version that is
+     * gone is never served. A server key's record is left to file and
      * version cleanup, which check references before deleting and retry: a
      * processor of another file may publish the same key at any moment. A
      * failed delete keeps its record for the next run. `deletedObjects`
@@ -1961,29 +1933,15 @@ export function createProcessingService(config: ProcessingServiceConfig) {
           record.kind === UPLOAD_INTENT_KIND && new Date(record.createdAt).getTime() < expiredBefore;
         for (const record of records) {
           const intent = record.kind === UPLOAD_INTENT_KIND;
-          const due = artifactSourceOf(record) === 'client' && (intent ? expired(record) : !live.has(record.versionId));
+          const due = artifactSourceOf(record) === 'client' && !live.has(record.versionId) && (!intent || expired(record));
           if (!due) {
             offset += 1;
             continue;
           }
           try {
-            if (intent) {
-              // Claimed before looking for a row: an upload checks its record
-              // after committing its row and withdraws the row once the record
-              // is claimed, so a row committed after the look is withdrawn. A
-              // claimed record whose delete fails stays as a displaced one.
-              await db.updateMany({
-                model: 'fileArtifacts',
-                where: [{ field: 'artifactId', operator: 'eq', value: record.artifactId }],
-                data: { kind: DISPLACED_OBJECT_KIND },
-                namespace,
-              });
-            }
-            if (!(intent && live.has(record.versionId) && (await isNamed(record)))) {
-              const target = recordedStorageTarget(record) ?? getArtifactStorageTarget({ policy: '' });
-              await storage.deleteObject({ key: record.storageKey, target });
-              result.deletedObjects += 1;
-            }
+            const target = recordedStorageTarget(record) ?? getArtifactStorageTarget({ policy: '' });
+            await storage.deleteObject({ key: record.storageKey, target });
+            result.deletedObjects += 1;
             await removeDisplacedRecord(record.artifactId);
           } catch (error) {
             offset += 1;
