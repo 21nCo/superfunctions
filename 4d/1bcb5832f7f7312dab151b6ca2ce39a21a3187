@@ -1,0 +1,27 @@
+filefn/docs/content/docs/reference/errors.md
+  s_0df9ebfb299b93::t_a60e882ab5aa97 66
+filefn/docs/content/docs/reference/routes.md
+  s_0df9ebfb299b93::t_49b23b0f8b63b3 36
+filefn/docs/static/llms-full.txt
+  s_0df9ebfb299b93::t_4198a44e663d3f 7952,8107
+filefn/server/src/__tests__/client-file-ids.test.ts
+  s_0df9ebfb299b93::t_7f345ace5ff20e 1240-1267,1269,1271-1311,1318,1322-1323,1327-1332,1337
+filefn/server/src/upload-sessions/service.ts
+  s_0df9ebfb299b93::t_4d7c510f993767 115-120,1002,1024-1031,1149
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4d1bcb5832f7f7312dab151b6ca2ce39a21a3187",
+  "prompts": {},
+  "sessions": {
+    "s_0df9ebfb299b93": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "13a563b3-b0d8-4c80-ac82-f9d99e3aa54b",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

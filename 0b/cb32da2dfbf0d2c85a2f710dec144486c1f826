@@ -1,0 +1,21 @@
+datafn/client/__tests__/kv-signal-pinned.test.ts
+  s_f058f999ab46b7::t_5cb7adcf8d8cde 186-191
+datafn/client/src/signals/querySignal.ts
+  s_f058f999ab46b7::t_60e5952580d742 667-670,674-686
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0bcb32da2dfbf0d2c85a2f710dec144486c1f826",
+  "prompts": {},
+  "sessions": {
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
