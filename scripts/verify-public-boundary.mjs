@@ -63,13 +63,18 @@ const BARE_FN = /^[a-z0-9][a-z0-9._~-]*fn$/i;
  * Package name of a module specifier (`@scope/name/sub` -> `@scope/name`, `name/sub` -> `name`), or null for a
  * relative, absolute, URL, other protocol (`node:`, `https:`) or package-internal (`#x`) specifier. `npm:` and `jsr:`
  * specifiers name a package: the prefix and any `@<version>` are dropped (`npm:@scope/name@1/sub` -> `@scope/name`).
+ * A bundler query or fragment (`name?raw`, `name#hash`) is dropped, and a loader request (`loader!name`) names the
+ * module after its last `!` (see packageNamesOf for the loaders themselves).
  * @param {string} specifier
  */
 export function packageNameOf(specifier) {
   if (typeof specifier !== "string") return null;
-  const registry = /^(?:npm|jsr):\/?/i.exec(specifier);
-  const spec = registry ? specifier.slice(registry[0].length) : specifier;
-  if (spec === "" || /^[./#]/.test(spec) || spec.includes(":") || spec.includes("\\")) return null;
+  const request = specifier.slice(specifier.lastIndexOf("!") + 1);
+  const registry = /^(?:npm|jsr):\/?/i.exec(request);
+  const unprefixed = registry ? request.slice(registry[0].length) : request;
+  if (/^[./#]/.test(unprefixed)) return null;
+  const spec = unprefixed.replace(/[?#][\s\S]*$/, "");
+  if (spec === "" || spec.includes(":") || spec.includes("\\")) return null;
   const segments = spec.split("/");
   const withoutVersion = (segment) => segment.split("@")[0];
   if (spec.startsWith("@")) {
@@ -78,6 +83,18 @@ export function packageNameOf(specifier) {
   }
   const name = withoutVersion(segments[0]);
   return name === "" ? null : name;
+}
+
+/**
+ * Every package a specifier loads: the module and, for a loader request (`a-loader?x!b-loader!name`), each loader.
+ * @param {string} specifier
+ */
+export function packageNamesOf(specifier) {
+  if (typeof specifier !== "string") return [];
+  // `-!`, `!!` and `!` prefixes only choose which configured loaders run.
+  const request = specifier.replace(/^(?:-!|!!?)/, "");
+  const names = request.split("!").map((part) => packageNameOf(part)).filter((name) => name !== null);
+  return [...new Set(names)];
 }
 
 /** True for a scoped `@<name>fn/<pkg>` or bare `<name>fn` package name (matched case-insensitively). */
@@ -163,7 +180,7 @@ export function workspacePatterns(rootPackage) {
   for (const pattern of patterns) {
     // Only literal segments and `*` within a segment are used; anything else is refused rather than misread.
     const segments = pattern.split("/");
-    if (/[!?{}[\]\\]|\*\*/.test(pattern) || segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
+    if (/[!?{}[\]()|+@\\]|\*\*/.test(pattern) || segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
       throw new BoundaryError(`package.json: workspace pattern ${JSON.stringify(pattern)} uses syntax this check does not read`);
     }
   }
@@ -197,8 +214,8 @@ export function workspaceDirectories(patterns, files) {
 
 let parsers;
 /**
- * The syntax parsers imports are read with, from the repository's installed packages: TypeScript (JS/TS modules),
- * svelte/compiler (.svelte), parse5 (.html) and micromark's MDX extension (.mdx).
+ * The syntax parsers imports are read with, each a pinned root devDependency: TypeScript (JS/TS modules),
+ * svelte/compiler (.svelte), parse5 (.html) and micromark's MDX extension with its mdast utilities (.mdx).
  */
 export async function loadParsers() {
   if (parsers) return parsers;
@@ -281,7 +298,19 @@ function tsSpecifiers(ts, file, code, kind) {
     throw new SourceParseError(ts.flattenDiagnosticMessageText(diagnostic.messageText, " "), lineAt(code, diagnostic.start ?? 0));
   }
   const found = [];
-  const add = (literal) => {
+  const add = (node) => {
+    // Parentheses, `as`, `satisfies`, `<T>` assertions and `!` do not change the module a literal names.
+    let literal = node;
+    while (
+      literal &&
+      (ts.isParenthesizedExpression(literal) ||
+        ts.isAsExpression(literal) ||
+        ts.isSatisfiesExpression(literal) ||
+        ts.isTypeAssertionExpression(literal) ||
+        ts.isNonNullExpression(literal))
+    ) {
+      literal = literal.expression;
+    }
     if (literal && ts.isStringLiteralLike(literal)) found.push({ specifier: literal.text, offset: literal.getStart(sourceFile) });
   };
   const visit = (node) => {
@@ -296,7 +325,10 @@ function tsSpecifiers(ts, file, code, kind) {
   return found;
 }
 
+const ESTREE_WRAPPERS = new Set(["ParenthesizedExpression", "TSAsExpression", "TSSatisfiesExpression", "TSTypeAssertion", "TSNonNullExpression"]);
+
 function stringLiteral(node) {
+  if (ESTREE_WRAPPERS.has(node?.type)) return stringLiteral(node.expression);
   if (node?.type === "Literal" && typeof node.value === "string") return node;
   if (node?.type === "TemplateLiteral" && node.expressions.length === 0) return { value: node.quasis[0].value.cooked, start: node.start, loc: node.loc };
   if (node?.type === "TSLiteralType") return stringLiteral(node.literal);
@@ -347,26 +379,71 @@ function estreeSpecifiers(tree) {
   return found;
 }
 
-const SCRIPT_TYPES = new Set(["", "module", "text/javascript", "application/javascript", "text/typescript", "ts"]);
+/** Specifiers of code embedded in a larger file at `offset`, with offsets and parse error lines into the file. */
+function embeddedSpecifiers(ts, file, source, code, offset, kind) {
+  try {
+    return tsSpecifiers(ts, file, code, kind).map((item) => ({ specifier: item.specifier, offset: offset + item.offset }));
+  } catch (error) {
+    if (error instanceof SourceParseError) throw new SourceParseError(error.message, lineAt(source, offset) + (error.line ?? 1) - 1);
+    throw error;
+  }
+}
+
+// The JavaScript MIME type essences of the WHATWG HTML standard, plus the TypeScript types tooling compiles.
+const JAVASCRIPT_TYPES = new Set([
+  "application/ecmascript",
+  "application/javascript",
+  "application/x-ecmascript",
+  "application/x-javascript",
+  "text/ecmascript",
+  "text/javascript",
+  "text/javascript1.0",
+  "text/javascript1.1",
+  "text/javascript1.2",
+  "text/javascript1.3",
+  "text/javascript1.4",
+  "text/javascript1.5",
+  "text/jscript",
+  "text/livescript",
+  "text/x-ecmascript",
+  "text/x-javascript",
+]);
+const TYPESCRIPT_TYPES = new Set(["text/typescript", "application/typescript", "ts"]);
+
+/**
+ * How a `<script>` element's body is read, from its `type` and legacy `language` attributes as the HTML standard
+ * defines its type string (case-insensitive, parameters ignored): a TypeScript ScriptKind for script, or null for a
+ * data block (JSON, templates and other non-script types).
+ * @param {{ name: string, value: string }[]} attributes
+ */
+function scriptElementKind(ts, attributes) {
+  const value = (name) => attributes.find((attribute) => attribute.name.toLowerCase() === name)?.value;
+  const type = value("type");
+  const language = value("language");
+  let typeString;
+  if (type === "" || (type === undefined && (language === undefined || language === ""))) typeString = "text/javascript";
+  else if (type !== undefined) typeString = type;
+  else typeString = `text/${language}`;
+  const essence = typeString.split(";")[0].trim().toLowerCase();
+  if (essence === "module" || JAVASCRIPT_TYPES.has(essence)) return ts.ScriptKind.JS;
+  if (TYPESCRIPT_TYPES.has(essence)) return ts.ScriptKind.TS;
+  return null;
+}
 
 /** `<script>` bodies and inline `on*` handlers of an HTML document, from parse5's tree (comments are not code). */
 function htmlSpecifiers({ ts, parse5 }, file, source) {
   const found = [];
-  const fromCode = (code, offset, kind) => {
-    for (const item of tsSpecifiers(ts, file, code, kind)) found.push({ specifier: item.specifier, offset: offset + item.offset });
-  };
-  const errors = [];
-  const document = parse5.parse(source, { sourceCodeLocationInfo: true, onParseError: (error) => errors.push(error) });
+  const fromCode = (code, offset, kind) => found.push(...embeddedSpecifiers(ts, file, source, code, offset, kind));
+  // HTML has no parse failure: parse5 recovers from malformed markup the way a browser does.
+  const document = parse5.parse(source, { sourceCodeLocationInfo: true });
   const visit = (node) => {
     for (const attribute of node.attrs ?? []) {
       if (/^on/i.test(attribute.name)) fromCode(attribute.value, node.sourceCodeLocation?.attrs?.[attribute.name]?.startOffset ?? 0, ts.ScriptKind.JS);
     }
     if (node.nodeName === "script") {
-      const type = (node.attrs.find((attribute) => attribute.name === "type")?.value ?? "").trim().toLowerCase();
+      const kind = scriptElementKind(ts, node.attrs);
       const text = node.childNodes?.[0];
-      if (SCRIPT_TYPES.has(type) && text?.nodeName === "#text") {
-        fromCode(text.value, text.sourceCodeLocation.startOffset, type.includes("typescript") || type === "ts" ? ts.ScriptKind.TS : ts.ScriptKind.JS);
-      }
+      if (kind !== null && text?.nodeName === "#text") fromCode(text.value, text.sourceCodeLocation.startOffset, kind);
     }
     for (const child of node.childNodes ?? []) visit(child);
     if (node.content) visit(node.content);
@@ -375,14 +452,43 @@ function htmlSpecifiers({ ts, parse5 }, file, source) {
   return found;
 }
 
-function svelteSpecifiers({ svelte }, source) {
+/**
+ * Module specifiers of a Svelte component: its instance and module scripts and template expressions (ESTree), and
+ * the bodies of `<script>` elements inside the markup (such as in `<svelte:head>`), which Svelte keeps as raw text.
+ */
+function svelteSpecifiers({ ts, svelte }, file, source) {
   let tree;
   try {
     tree = svelte.parse(source, { modern: true });
   } catch (error) {
     throw new SourceParseError(String(error.message).split("\n")[0], error.start?.line ?? error.position?.[0]?.line);
   }
-  return estreeSpecifiers(tree);
+  const found = estreeSpecifiers(tree);
+  const seen = new WeakSet();
+  const visit = (node) => {
+    if (node === null || typeof node !== "object" || seen.has(node)) return;
+    seen.add(node);
+    if (Array.isArray(node)) {
+      for (const child of node) visit(child);
+      return;
+    }
+    if (node.type === "RegularElement" && node.name === "script") {
+      const attributes = node.attributes
+        .filter((attribute) => attribute.type === "Attribute")
+        .map((attribute) => ({
+          name: attribute.name,
+          value: attribute.value === true ? "" : [attribute.value].flat().map((part) => (part.type === "Text" ? part.data : "")).join(""),
+        }));
+      const kind = scriptElementKind(ts, attributes);
+      const text = node.fragment?.nodes?.[0];
+      if (kind !== null && text?.type === "Text") {
+        found.push(...embeddedSpecifiers(ts, file, source, text.data, text.start, kind));
+      }
+    }
+    for (const [key, child] of Object.entries(node)) if (key !== "parent") visit(child);
+  };
+  visit(tree.fragment);
+  return found;
 }
 
 /** Blanks a leading YAML frontmatter block (keeping offsets and lines), which MDX itself would read as Markdown. */
@@ -414,11 +520,13 @@ export function importSpecifiers(file, source, parsed) {
   const extension = path.posix.extname(file).toLowerCase();
   let found;
   if (MODULE_EXTENSIONS.has(extension)) found = tsSpecifiers(parsed.ts, file, source, scriptKind(parsed.ts, extension));
-  else if (extension === ".svelte") found = svelteSpecifiers(parsed, source);
+  else if (extension === ".svelte") found = svelteSpecifiers(parsed, file, source);
   else if (extension === ".html") found = htmlSpecifiers(parsed, file, source);
   else if (extension === ".mdx") found = mdxSpecifiers(parsed, source);
   else return [];
-  return found.map(({ specifier, offset, line }) => ({ specifier, line: line ?? lineAt(source, offset) }));
+  return found
+    .map(({ specifier, offset, line }) => ({ specifier, line: line ?? lineAt(source, offset) }))
+    .sort((left, right) => left.line - right.line);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -676,9 +784,10 @@ function fnDependencyFindings({ files, publicPackages, publicPython, allowed, re
       continue;
     }
     for (const { specifier, line } of imports) {
-      const name = packageNameOf(specifier);
-      if (name !== null && !isAllowed(name, file)) {
-        findings.push(finding(`${file}:${line}`, RULES.fnDependency, `imports ${JSON.stringify(specifier)}: package ${notAllowed(name)}`));
+      for (const name of packageNamesOf(specifier)) {
+        if (!isAllowed(name, file)) {
+          findings.push(finding(`${file}:${line}`, RULES.fnDependency, `imports ${JSON.stringify(specifier)}: package ${notAllowed(name)}`));
+        }
       }
     }
   }

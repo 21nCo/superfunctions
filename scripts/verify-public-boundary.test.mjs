@@ -16,6 +16,7 @@ import {
   isFnPackage,
   loadParsers,
   packageNameOf,
+  packageNamesOf,
   parseAllowFile,
   verifyPublicBoundary,
   workspacePatterns,
@@ -239,6 +240,105 @@ test("html comments, jsx text and regex literals that look like imports are not 
   assert.deepEqual(await findings(root), []);
 });
 
+test("parentheses, as, satisfies, type assertions and ! around a specifier do not hide it", async (t) => {
+  const root = fixture(t, {
+    files: {
+      "datafn/core/src/wrapped.ts": [
+        'await import(("@flowfn/paren"));',
+        'require(("@flowfn/require"));',
+        'await import("@flowfn/as" as string);',
+        'await import("@flowfn/satisfies" satisfies string);',
+        'await import("@flowfn/bang"!);',
+        'await import(<string>"@flowfn/assertion");',
+        'require.resolve((("@flowfn/resolve") as string)!);',
+      ].join("\n"),
+      "datafn/svelte/src/Wrapped.svelte": [
+        '<script lang="ts">',
+        '  await import(("@flowfn/paren"));',
+        '  await import("@flowfn/as" as string);',
+        '  await import("@flowfn/satisfies" satisfies string);',
+        '  await import("@flowfn/bang"!);',
+        '  require(("@flowfn/require") as string);',
+        "</script>",
+        '<button onclick={() => import("@flowfn/template" as string)}>go</button>',
+      ].join("\n"),
+    },
+  });
+  assert.deepEqual(await findings(root), [
+    ...[1, 2, 3, 4, 5, 6, 7].map((line) => `datafn/core/src/wrapped.ts:${line} ${RULES.fnDependency}`),
+    ...[2, 3, 4, 5, 6, 8].map((line) => `datafn/svelte/src/Wrapped.svelte:${line} ${RULES.fnDependency}`),
+  ]);
+});
+
+test("html scripts of every JavaScript MIME type and legacy language are read; data blocks are not", async (t) => {
+  const types = ["application/ecmascript", "text/jscript", "TEXT/JavaScript; charset=utf-8", "application/x-javascript", "text/livescript", "module", ""];
+  const scripts = types.map((type) => `<script type="${type}">import("@flowfn/core")</script>`);
+  const root = fixture(t, {
+    files: {
+      "datafn/site/types.html": [
+        ...scripts,
+        '<script language="JavaScript1.5">import("@flowfn/core")</script>',
+        '<script language="">import("@flowfn/core")</script>',
+        '<script type="application/json">{"a": "import(\'@flowfn/json\')"}</script>',
+        '<script type="text/template">import("@flowfn/template")</script>',
+        '<script language="vbscript">import("@flowfn/vbscript")</script>',
+        '<script type="text/plain" language="javascript">import("@flowfn/plain")</script>',
+      ].join("\n"),
+    },
+  });
+  assert.deepEqual(
+    await findings(root),
+    Array.from({ length: types.length + 2 }, (_, index) => `datafn/site/types.html:${index + 1} ${RULES.fnDependency}`),
+  );
+});
+
+test("svelte <script> elements inside the markup, such as in <svelte:head>, are read", async (t) => {
+  const root = fixture(t, {
+    files: {
+      "datafn/svelte/src/Head.svelte": [
+        "<svelte:head>",
+        '  <script type="module">import "@flowfn/head";</script>',
+        '  <script type="application/ld+json">{"x": "import(\'@flowfn/json\')"}</script>',
+        "</svelte:head>",
+        "<div>",
+        "  <script>",
+        '    import("@flowfn/inline");',
+        "  </script>",
+        "</div>",
+      ].join("\n"),
+      "datafn/svelte/src/BrokenHead.svelte": "<svelte:head>\n  <script>\n    let = ;\n  </script>\n</svelte:head>\n",
+    },
+  });
+  const result = run(root);
+  assert.equal(result.status, 1);
+  assert.deepEqual(await findings(root), [
+    `datafn/svelte/src/BrokenHead.svelte:3 ${RULES.fnDependency}`,
+    `datafn/svelte/src/Head.svelte:2 ${RULES.fnDependency}`,
+    `datafn/svelte/src/Head.svelte:7 ${RULES.fnDependency}`,
+  ]);
+  assert.match(result.stderr, /datafn\/svelte\/src\/BrokenHead\.svelte:3: \[fn-dependency\] cannot be parsed/);
+});
+
+test("bundler queries, fragments and loader requests name their packages", async (t) => {
+  const root = fixture(t, {
+    files: {
+      "datafn/core/src/bundler.ts": [
+        'import a from "@flowfn/core?inline";',
+        'import b from "flowfn?raw";',
+        'import c from "raw-loader!@flowfn/x";',
+        'import d from "@flowfn/core#fragment";',
+        'import e from "@flowfn/loader?mode=1!./local.txt";',
+        'import f from "raw-loader!./local.txt?raw";',
+        'import g from "#internal?raw";',
+      ].join("\n"),
+    },
+  });
+  assert.deepEqual(
+    await findings(root),
+    [1, 2, 3, 4, 5].map((line) => `datafn/core/src/bundler.ts:${line} ${RULES.fnDependency}`),
+  );
+});
+
 test("a source file that does not parse fails, naming the file, line and rule", async (t) => {
   const root = fixture(t, {
     files: {
@@ -360,6 +460,12 @@ test("*fn package names and specifiers", () => {
   assert.equal(packageNameOf("npm:@flowfn/core@^1.2/runtime"), "@flowfn/core");
   assert.equal(packageNameOf("npm:flowfn@1"), "flowfn");
   assert.equal(packageNameOf("jsr:@flowfn/core"), "@flowfn/core");
+  assert.equal(packageNameOf("@flowfn/core/sub?inline"), "@flowfn/core");
+  assert.equal(packageNameOf("flowfn#hash"), "flowfn");
+  assert.equal(packageNameOf("raw-loader!@flowfn/x?raw"), "@flowfn/x");
+  assert.equal(packageNameOf("!!style-loader!./x.css"), null);
+  assert.deepEqual(packageNamesOf("-!@flowfn/loader?x=1!css-loader!@flowfn/x"), ["@flowfn/loader", "css-loader", "@flowfn/x"]);
+  assert.deepEqual(packageNamesOf("./x?raw"), []);
   for (const specifier of ["./x", "../x", "/abs", "#internal", "node:fs", "https://x/flowfn", "npm:", "npm:./x", "@flowfn"]) {
     assert.equal(packageNameOf(specifier), null, specifier);
   }
@@ -388,7 +494,7 @@ test("a malformed allow file or workspace pattern fails closed", () => {
     { version: 1, packages: { flowfn: { reason: "x", paths: ["datafn/"] } } },
   ];
   for (const data of bad) assert.throws(() => parseAllowFile(data), BoundaryError, JSON.stringify(data));
-  for (const pattern of ["datafn/**", "!datafn/x", "datafn/{a,b}", "./datafn", "/datafn", "datafn/", "datafn/../x"]) {
+  for (const pattern of ["datafn/**", "!datafn/x", "datafn/{a,b}", "datafn/@(core|client)", "datafn/+(a)", "datafn/(a)", "./datafn", "/datafn", "datafn/", "datafn/../x"]) {
     assert.throws(() => workspacePatterns({ workspaces: [pattern] }), BoundaryError, pattern);
   }
   assert.deepEqual(workspacePatterns({ workspaces: { packages: [".github/actions/*", "datafn/*"] } }), [".github/actions/*", "datafn/*"]);
