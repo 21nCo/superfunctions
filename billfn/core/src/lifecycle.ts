@@ -200,8 +200,8 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
   /**
    * `record` for a grant's expiry events (`grant.expiring`, `entitlement.changed` with cause `grant.expired`):
    * the stored grant is read again through `db` right before each row is written (then `beforeWrite` runs), and a
-   * grant revoked by then gets no more rows. A revoke that commits between that read and the write is caught at
-   * delivery, which drops such an event without calling the handler.
+   * grant revoked before it expired gets no more rows (one revoked after it expired keeps its expiry). A revoke
+   * that commits between that read and the write is caught at delivery, which drops such an event.
    */
   async function recordForUnrevokedGrant(
     events: LifecycleEventInput[],
@@ -214,12 +214,12 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
     }
     for (const event of events) {
       if (!(await findEvent(event.id, db))) {
-        const grant = await db.findOne<{ revokedAt?: string | null }>({
+        const grant = await db.findOne<Pick<BillFnEntitlementGrant, 'revokedAt' | 'expiresAt'>>({
           model: GRANTS_TABLE,
           where: [{ field: 'id', operator: 'eq', value: grantId }],
           namespace: deps.namespace
         });
-        if (!grant || grant.revokedAt) {
+        if (!grant || revokedBeforeExpiry(grant)) {
           return;
         }
         await beforeWrite?.();
@@ -492,22 +492,22 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
   }
 
   /**
-   * Whether the event is a grant's `grant.expiring` or its `entitlement.changed` (cause `grant.expired`), never
-   * attempted, and that grant was revoked before it expired, so the event no longer holds (one recorded before a
-   * revoke of an expired grant, or already attempted, is delivered as usual).
+   * Whether the event is a grant's `grant.expiring` or its `entitlement.changed` (cause `grant.expired`) and that
+   * grant was revoked before it expired, so the event no longer holds, also when an earlier attempt failed or
+   * stopped (the grant never expires). One recorded for a grant revoked after it expired is delivered as usual.
    */
   async function isRevokedGrantExpiry(row: BillFnLifecycleEventRecord) {
     const data = row.data as { grantId?: string; cause?: string };
     const expiry = row.type === 'grant.expiring' || (row.type === 'entitlement.changed' && data.cause === 'grant.expired');
-    if (!expiry || !data.grantId || row.attempts > 0) {
+    if (!expiry || !data.grantId) {
       return false;
     }
-    const grant = await deps.db.findOne<{ revokedAt?: string | null; expiresAt: string }>({
+    const grant = await deps.db.findOne<Pick<BillFnEntitlementGrant, 'revokedAt' | 'expiresAt'>>({
       model: GRANTS_TABLE,
       where: [{ field: 'id', operator: 'eq', value: data.grantId }],
       namespace: deps.namespace
     });
-    return Boolean(grant?.revokedAt) && Date.parse(grant!.revokedAt!) < Date.parse(grant!.expiresAt);
+    return grant !== null && revokedBeforeExpiry(grant);
   }
 
   /**
@@ -768,7 +768,7 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
       budget.recheck -= grants.length;
       // A recheck resumed by a later run keeps to that run's windows (the 7-day lookback, or not expired yet).
       const inWindow = (expiresAt: number) => (sweep === 'expired' ? expiresAt > now - GRANT_EXPIRED_LOOKBACK_MS : expiresAt > now);
-      const late = grants.filter((grant) => !read.has(grant.id) && !grant.revokedAt && inWindow(Date.parse(grant.expiresAt)));
+      const late = grants.filter((grant) => !read.has(grant.id) && !revokedBeforeExpiry(grant) && inWindow(Date.parse(grant.expiresAt)));
       await recordMissing(late.map((grant) => grantExpiryEvent(sweep, grant, now)));
       const last = grants.at(-1);
       if (!last || grants.length < limit || last.id === to.id) {
@@ -995,6 +995,11 @@ function parseSweepPosition(cursor: string | null | undefined): StoredSweepPosit
   } catch {
     return null;
   }
+}
+
+/** Whether the grant was revoked before it expired: it gets no expiry events (one revoked after keeps them). */
+function revokedBeforeExpiry(grant: Pick<BillFnEntitlementGrant, 'revokedAt' | 'expiresAt'>) {
+  return Boolean(grant.revokedAt) && Date.parse(grant.revokedAt!) < Date.parse(grant.expiresAt);
 }
 
 /** Whether the grant comes after the position in (`expiresAt`, `id`) order, so a sweep at it has not read it. */

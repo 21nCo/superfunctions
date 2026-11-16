@@ -180,17 +180,16 @@ async function recordMissingGrantEvents(deps: GrantDeps, grantList: GrantRecord[
   }
   for (const grant of grantList) {
     if (grant.eventsPending && !unrecorded.has(grant.id)) {
-      // A flagged creation may not have checked the sweeps' positions yet (see `commitWithEvent`).
-      if (!grant.revokedAt) {
-        try {
-          await deps.recordPassedGrantExpiry(grant, guard);
-        } catch (error) {
-          if (leaseError) {
-            throw error;
-          }
-          deps.metrics.track('grant.event_deferred', { type: 'expiry' });
-          continue;
+      // A flagged creation may not have checked the sweeps' positions yet (see `commitWithEvent`); a grant revoked
+      // since still gets the expiry it reached before its revoke.
+      try {
+        await deps.recordPassedGrantExpiry(grant, guard);
+      } catch (error) {
+        if (leaseError) {
+          throw error;
         }
+        deps.metrics.track('grant.event_deferred', { type: 'expiry' });
+        continue;
       }
       await guard?.();
       await clearEventsPending(deps, grant);
