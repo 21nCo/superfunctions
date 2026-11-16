@@ -5,8 +5,11 @@
 //   public-release     every release-packages.json entry and every Python project is public-owned: its slug or
 //                      project is listed as public and its path lies under a listed top-level directory.
 //   workspace-package  every root workspace package has a name, the name belongs to exactly one workspace, and its
-//                      directory lies under a listed top-level directory; no tracked symlink or submodule at a
-//                      workspace match or an ancestor of one lets npm read a package this check does not inventory.
+//                      directory lies under a listed top-level directory. A tracked submodule at a workspace match
+//                      or an ancestor of one fails; a tracked symlink there passes only when it points to a file, or
+//                      to an in-repository directory whose tracked subtree has no package.json that is a workspace
+//                      match through the link and no tracked symlink or submodule at all (nothing is followed
+//                      recursively), so npm cannot read a package this check does not inventory.
 //   fn-dependency      no source file imports, and no package.json depends on (including npm aliases in
 //                      dependency fields and overrides), a `*fn` package (`@<name>fn/<pkg>` or bare `<name>fn`) that
 //                      is neither a public workspace package nor pinned in scripts/public-boundary.allow.json.
@@ -15,8 +18,8 @@
 // not parse. Imports are read from each file's syntax tree (TypeScript for JS/TS modules, svelte/compiler for
 // .svelte, parse5 for .html, micromark's MDX extension for .mdx), so comments, strings, Markdown prose and fenced
 // code are not checked; the module loader calls read are listed under "Module loaders" below. Python files are read
-// with Python's ast module: an absolute `import <name>fn`, `from <name>fn import`, or a literal
-// `importlib.import_module("<name>fn")` / `import_module(...)` / `__import__(...)` must name a public Python
+// with Python's ast module: an absolute `import <name>fn`, `from <name>fn import`, or a literal dynamic import
+// (`__import__`, or importlib's import_module through the names a file binds it to) must name a public Python
 // project or an allowed package.
 // Usage: node scripts/verify-public-boundary.mjs [--root <checkout>]
 
@@ -301,12 +304,20 @@ function scriptKind(ts, extension) {
 //   createRequire(...)("x"), createRequire(...).resolve("x"), and the same through module.createRequire(...) or any
 //                                     `<expr>.createRequire(...)`, or a name imported as createRequire from "module" or
 //                                     "node:module"
-//   r("x"), r.resolve("x"), res("x") where an identifier r (or res) is bound anywhere in the same file, by a
-//                                     const/let/var declarator or a plain `=` assignment, to one of the loaders above
-//                                     (require, a createRequire(...) result, or such a loader's .resolve)
+//   module.require("x"), require.main.require("x") (Module#require), and their .resolve
+//   r("x"), r.resolve("x"), res("x") where an identifier r (or res) is bound anywhere in the same file to one of the
+//                                     loaders above (require, Module#require, a createRequire(...) result, or such a
+//                                     loader's .resolve), by a const/let/var declarator or a plain `=` assignment, or
+//                                     by object destructuring: { require: r } from module or require.main,
+//                                     { main: m } from require, { resolve: res } from a require loader, { createRequire: c } from the "module" /
+//                                     "node:module" namespace (a namespace or default import, require("module"),
+//                                     import("module") with or without await, or a name bound to one of those)
 // A callee is read through parentheses, `as`, `satisfies`, `<T>` assertions and `!`, and `x["resolve"]` reads as
-// `x.resolve`. Not read: computed specifiers, and loaders passed across functions, objects or files (package.json
-// dependencies stay the backstop for those). Bindings are file-wide, not scoped, so a shadowed name still counts.
+// `x.resolve`. Bindings are file-wide, not scoped, so a shadowed name still counts. Not read: computed specifiers;
+// loaders passed across functions, objects or files, or reached through other names (`globalThis.require`,
+// `process.mainModule`, `Module._load`); test-runner module helpers (vi.importActual, vi.importMock, vi.mock,
+// jest.requireActual, jest.requireMock, jest.mock), which load modules the test's package already depends on.
+// package.json dependencies stay the backstop for everything not read.
 const LOADER_MODULES = new Set(["module", "node:module"]);
 
 /**
@@ -317,18 +328,43 @@ function loaderRecognizer(adapter) {
   const requireNames = new Set(["require"]);
   const resolveNames = new Set();
   const createRequireNames = new Set(["createRequire"]);
+  const moduleObjectNames = new Set(["module"]);
+  const namespaceNames = new Set();
   const isCreateRequire = (node) => {
     const expression = adapter.unwrap(node);
     const name = adapter.identifier(expression);
     if (name !== null) return createRequireNames.has(name);
     return adapter.member(expression)?.name === "createRequire";
   };
+  // A CommonJS module object: `module`, `require.main`, or a name bound to one.
+  const isModuleObject = (node) => {
+    const expression = adapter.unwrap(node);
+    const name = adapter.identifier(expression);
+    if (name !== null) return moduleObjectNames.has(name);
+    const member = adapter.member(expression);
+    return member?.name === "main" && isRequire(member.object);
+  };
   const isRequire = (node) => {
     const expression = adapter.unwrap(node);
     const name = adapter.identifier(expression);
     if (name !== null) return requireNames.has(name);
+    const member = adapter.member(expression);
+    if (member) return member.name === "require" && isModuleObject(member.object);
     const call = adapter.call(expression);
     return call !== null && isCreateRequire(call.callee);
+  };
+  // The "module" / "node:module" namespace: require("module"), import("module") (awaited or not), `.default` of one,
+  // or a name bound to one (including namespace and default imports).
+  const isModuleNamespace = (node) => {
+    const expression = adapter.unwrap(adapter.awaited(adapter.unwrap(node)));
+    const name = adapter.identifier(expression);
+    if (name !== null) return namespaceNames.has(name);
+    const member = adapter.member(expression);
+    if (member) return member.name === "default" && isModuleNamespace(member.object);
+    const imported = adapter.dynamicImport(expression);
+    if (imported !== null) return LOADER_MODULES.has(imported);
+    const call = adapter.call(expression);
+    return call !== null && isRequire(call.callee) && LOADER_MODULES.has(call.specifier);
   };
   const isResolve = (node) => {
     const expression = adapter.unwrap(node);
@@ -338,19 +374,36 @@ function loaderRecognizer(adapter) {
     return member?.name === "resolve" && (isRequire(member.object) || adapter.isImportMeta(adapter.unwrap(member.object)));
   };
   return {
-    /** Learns the file's loader bindings (`{ name, init }`) and createRequire import aliases (`{ alias }`). */
+    /**
+     * Learns the file's loader bindings: `{ name, init }` for `name = init`, `{ name, init, key }` for
+     * `{ key: name } = init`, `{ alias }` for a createRequire import alias and `{ namespace }` for a namespace or
+     * default import of "module" / "node:module".
+     */
     learn(bindings) {
-      for (const binding of bindings) if (binding.alias !== undefined) createRequireNames.add(binding.alias);
-      const values = bindings.filter((binding) => binding.alias === undefined);
+      for (const binding of bindings) {
+        if (binding.alias !== undefined) createRequireNames.add(binding.alias);
+        if (binding.namespace !== undefined) namespaceNames.add(binding.namespace);
+      }
+      const values = bindings.filter((binding) => binding.init !== undefined);
+      // What a destructured key binds, given the value it is read from.
+      const keyed = {
+        require: [[requireNames, isModuleObject]],
+        resolve: [[resolveNames, isRequire]],
+        createRequire: [[createRequireNames, isModuleNamespace]],
+        main: [[moduleObjectNames, isRequire]],
+      };
+      const plain = [
+        [requireNames, isRequire],
+        [resolveNames, isResolve],
+        [createRequireNames, isCreateRequire],
+        [moduleObjectNames, isModuleObject],
+        [namespaceNames, isModuleNamespace],
+      ];
       // Repeat until stable, so a binding to an earlier binding (`const a = createRequire(u); const b = a;`) counts.
       for (let changed = true; changed; ) {
         changed = false;
-        for (const { name, init } of values) {
-          const sets = [
-            [requireNames, isRequire],
-            [resolveNames, isResolve],
-            [createRequireNames, isCreateRequire],
-          ];
+        for (const { name, init, key } of values) {
+          const sets = key === undefined ? plain : Object.hasOwn(keyed, key) ? keyed[key] : [];
           for (const [names, test] of sets) {
             if (!names.has(name) && test(init)) {
               names.add(name);
@@ -393,25 +446,73 @@ function tsLoaderAdapter(ts) {
       }
       return null;
     },
-    call: (node) => (node && ts.isCallExpression(node) ? { callee: node.expression } : null),
+    call(node) {
+      if (!node || !ts.isCallExpression(node)) return null;
+      const argument = unwrap(node.arguments[0]);
+      return { callee: node.expression, specifier: argument && ts.isStringLiteralLike(argument) ? argument.text : null };
+    },
+    awaited: (node) => (node && ts.isAwaitExpression(node) ? node.expression : node),
+    dynamicImport(node) {
+      if (!node || !ts.isCallExpression(node) || node.expression.kind !== ts.SyntaxKind.ImportKeyword) return null;
+      const argument = unwrap(node.arguments[0]);
+      return argument && ts.isStringLiteralLike(argument) ? argument.text : null;
+    },
     isImportMeta: (node) => Boolean(node) && ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.ImportKeyword && node.name.text === "meta",
     isImportKeyword: (node) => node?.kind === ts.SyntaxKind.ImportKeyword,
   };
 }
 
-/** Loader bindings and createRequire import aliases of a TypeScript syntax tree. */
+/** Static text of a TypeScript property name (identifier, string literal or computed string literal), or null. */
+function tsPropertyKey(ts, name) {
+  if (!name) return null;
+  if (ts.isIdentifier(name) || ts.isStringLiteralLike(name)) return name.text;
+  if (ts.isComputedPropertyName(name)) {
+    const key = tsUnwrap(ts, name.expression);
+    return key && ts.isStringLiteralLike(key) ? key.text : null;
+  }
+  return null;
+}
+
+/** Loader bindings (plain and destructured) and "module" import aliases of a TypeScript syntax tree. */
 function tsLoaderBindings(ts, sourceFile) {
   const bindings = [];
+  const keyed = (key, local, init) => {
+    const target = local && ts.isBinaryExpression(local) && local.operatorToken.kind === ts.SyntaxKind.EqualsToken ? local.left : local;
+    const name = tsUnwrap(ts, target);
+    if (key !== null && name && ts.isIdentifier(name)) bindings.push({ name: name.text, init, key });
+  };
   const visit = (node) => {
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) bindings.push({ name: node.name.text, init: node.initializer });
-    else if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+    if (ts.isVariableDeclaration(node) && node.initializer) {
+      if (ts.isIdentifier(node.name)) bindings.push({ name: node.name.text, init: node.initializer });
+      else if (ts.isObjectBindingPattern(node.name)) {
+        for (const element of node.name.elements) {
+          if (!element.dotDotDotToken) keyed(tsPropertyKey(ts, element.propertyName ?? element.name), element.name, node.initializer);
+        }
+      }
+    } else if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
       const left = tsUnwrap(ts, node.left);
       if (ts.isIdentifier(left)) bindings.push({ name: left.text, init: node.right });
+      else if (ts.isObjectLiteralExpression(left)) {
+        for (const property of left.properties) {
+          if (ts.isShorthandPropertyAssignment(property)) keyed(property.name.text, property.name, node.right);
+          else if (ts.isPropertyAssignment(property)) keyed(tsPropertyKey(ts, property.name), property.initializer, node.right);
+        }
+      }
     } else if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier) && LOADER_MODULES.has(node.moduleSpecifier.text)) {
-      const named = node.importClause?.namedBindings;
-      if (named && ts.isNamedImports(named)) {
+      const clause = node.importClause;
+      if (clause?.name) bindings.push({ namespace: clause.name.text });
+      const named = clause?.namedBindings;
+      if (named && ts.isNamespaceImport(named)) bindings.push({ namespace: named.name.text });
+      else if (named && ts.isNamedImports(named)) {
         for (const element of named.elements) if ((element.propertyName ?? element.name).text === "createRequire") bindings.push({ alias: element.name.text });
       }
+    } else if (
+      ts.isImportEqualsDeclaration(node) &&
+      ts.isExternalModuleReference(node.moduleReference) &&
+      ts.isStringLiteralLike(node.moduleReference.expression) &&
+      LOADER_MODULES.has(node.moduleReference.expression.text)
+    ) {
+      bindings.push({ namespace: node.name.text });
     }
     ts.forEachChild(node, visit);
   };
@@ -475,7 +576,9 @@ const ESTREE_LOADER_ADAPTER = {
     const key = stringLiteral(node.property);
     return key ? { object: node.object, name: key.value } : null;
   },
-  call: (node) => (node?.type === "CallExpression" ? { callee: node.callee } : null),
+  call: (node) => (node?.type === "CallExpression" ? { callee: node.callee, specifier: stringLiteral(node.arguments[0])?.value ?? null } : null),
+  awaited: (node) => (node?.type === "AwaitExpression" ? node.argument : node),
+  dynamicImport: (node) => (node?.type === "ImportExpression" ? (stringLiteral(node.source)?.value ?? null) : null),
   isImportMeta: (node) => node?.type === "MetaProperty" && node.meta?.name === "import" && node.property?.name === "meta",
   isImportKeyword: () => false,
 };
@@ -496,18 +599,29 @@ function walkEstree(tree, callback) {
   visit(tree);
 }
 
-/** Loader bindings and createRequire import aliases of an ESTree tree. */
+/** Loader bindings (plain and destructured) and "module" import aliases of an ESTree tree. */
 function estreeLoaderBindings(tree) {
   const bindings = [];
+  const bind = (target, init) => {
+    const pattern = estreeUnwrap(target);
+    if (pattern?.type === "Identifier") bindings.push({ name: pattern.name, init });
+    else if (pattern?.type === "ObjectPattern") {
+      for (const property of pattern.properties ?? []) {
+        if (property.type !== "Property") continue;
+        const key = property.computed ? stringLiteral(property.key)?.value : (property.key?.name ?? stringLiteral(property.key)?.value);
+        const value = property.value?.type === "AssignmentPattern" ? property.value.left : property.value;
+        if (typeof key === "string" && value?.type === "Identifier") bindings.push({ name: value.name, init, key });
+      }
+    }
+  };
   walkEstree(tree, (node) => {
-    if (node.type === "VariableDeclarator" && node.id?.type === "Identifier" && node.init) bindings.push({ name: node.id.name, init: node.init });
-    else if (node.type === "AssignmentExpression" && node.operator === "=") {
-      const left = estreeUnwrap(node.left);
-      if (left?.type === "Identifier") bindings.push({ name: left.name, init: node.right });
-    } else if (node.type === "ImportDeclaration" && LOADER_MODULES.has(stringLiteral(node.source)?.value)) {
+    if (node.type === "VariableDeclarator" && node.init) bind(node.id, node.init);
+    else if (node.type === "AssignmentExpression" && node.operator === "=") bind(node.left, node.right);
+    else if (node.type === "ImportDeclaration" && LOADER_MODULES.has(stringLiteral(node.source)?.value)) {
       for (const specifier of node.specifiers ?? []) {
         const imported = specifier.imported?.name ?? specifier.imported?.value;
         if (specifier.type === "ImportSpecifier" && imported === "createRequire") bindings.push({ alias: specifier.local.name });
+        else if (specifier.type === "ImportNamespaceSpecifier" || specifier.type === "ImportDefaultSpecifier") bindings.push({ namespace: specifier.local.name });
       }
     }
   });
@@ -717,8 +831,10 @@ export function importSpecifiers(file, source, parsed) {
 // Python imports
 
 // Reads absolute paths (NUL-separated) on stdin and prints, per file, its absolute `import x` / `from x import`
-// modules and literal `importlib.import_module("x")`, `import_module("x")` and `__import__("x")` calls with their
-// lines, or the syntax error that stopped it. Relative imports name no package.
+// modules and literal dynamic imports with their lines, or the syntax error that stopped it. Relative imports name no
+// package. A dynamic import is `__import__("x")`, `<m>.import_module("x")` where m is bound by `import importlib`
+// (or `import importlib.<sub>`, or `import importlib as m`), or `f("x")` where f is bound by
+// `from importlib import import_module [as f]`; the name may also be passed as `name="x"`. Bindings are file-wide.
 const PYTHON_IMPORTS = String.raw`
 import ast, json, sys
 results = []
@@ -732,17 +848,30 @@ for path in sys.stdin.read().split("\0"):
         results.append({"error": getattr(error, "msg", None) or str(error), "line": getattr(error, "lineno", None)})
         continue
     found = []
+    modules, loaders = set(), {"__import__"}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             found.extend({"module": alias.name, "line": node.lineno} for alias in node.names)
+            for alias in node.names:
+                if alias.name == "importlib":
+                    modules.add(alias.asname or "importlib")
+                elif alias.name.startswith("importlib.") and not alias.asname:
+                    modules.add("importlib")
         elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
             found.append({"module": node.module, "line": node.lineno})
-        elif isinstance(node, ast.Call) and node.args:
-            func, arg = node.func, node.args[0]
-            loader = (isinstance(func, ast.Name) and func.id in ("__import__", "import_module")) or (
-                isinstance(func, ast.Attribute) and func.attr == "import_module" and isinstance(func.value, ast.Name) and func.value.id == "importlib")
-            if loader and isinstance(arg, ast.Constant) and isinstance(arg.value, str) and arg.value and not arg.value.startswith("."):
-                found.append({"module": arg.value, "line": node.lineno})
+            if node.module == "importlib":
+                loaders.update(alias.asname or alias.name for alias in node.names if alias.name == "import_module")
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        loader = (isinstance(func, ast.Name) and func.id in loaders) or (
+            isinstance(func, ast.Attribute) and func.attr == "import_module" and isinstance(func.value, ast.Name) and func.value.id in modules)
+        if not loader:
+            continue
+        arg = node.args[0] if node.args else next((keyword.value for keyword in node.keywords if keyword.arg == "name"), None)
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str) and arg.value and not arg.value.startswith("."):
+            found.append({"module": arg.value, "line": node.lineno})
     results.append({"imports": found})
 json.dump(results, sys.stdout)
 `;
@@ -943,10 +1072,13 @@ function workspaceFindings(publicManifest, { directories, linked, patterns, file
 
 /**
  * Why npm would read a workspace package through a tracked symlink or submodule (gitlink), or null. A linked entry
- * matters when it is a workspace match or an ancestor of one, since npm expands patterns through links. A submodule
- * there always fails: its packages are not tracked in this tree. A symlink there fails when it dangles or leaves the
- * repository, or when a tracked package.json under its target is a workspace match through the link's path (that
- * package is then read under a path this check does not inventory). A symlink to a file is not expanded.
+ * matters when it is a workspace match or an ancestor of one, since npm expands patterns through links. Closed rule,
+ * with nothing followed recursively: a submodule there always fails (its packages are not tracked in this tree). A
+ * symlink there passes only when it points to a file, or to a directory inside the repository whose tracked subtree
+ * holds no package.json that is a workspace match through the link's path (that package would be read under a path
+ * this check does not inventory) and no tracked symlink or submodule at all (npm could follow it further). Anything
+ * else (a dangling link, a link leaving the repository, a matching package.json, any nested link) fails, naming the
+ * nested link when there is one.
  */
 function linkedWorkspaceProblem({ entry, patterns, files, root, modes }) {
   const reached = patterns.filter((pattern) => reachesWorkspace(pattern, entry));
@@ -969,7 +1101,13 @@ function linkedWorkspaceProblem({ entry, patterns, files, root, modes }) {
   if (!statSync(target).isDirectory()) return null;
   const prefix = relative === "" ? "" : `${relative.split(path.sep).join("/")}/`;
   for (const file of files) {
-    if (!file.startsWith(prefix) || path.posix.basename(file) !== "package.json") continue;
+    if (!file.startsWith(prefix)) continue;
+    const mode = modes.get(file);
+    if (mode === SYMLINK || mode === GITLINK) {
+      const kind = mode === GITLINK ? "submodule (gitlink)" : "symlink";
+      return `${link}, whose target holds the tracked ${kind} ${file}, which npm could follow where it expands ${via}; a linked workspace directory may not hold links`;
+    }
+    if (path.posix.basename(file) !== "package.json") continue;
     const directory = path.posix.dirname(`${entry}/${file.slice(prefix.length)}`);
     if (directory.split("/").includes("node_modules")) continue;
     if (reached.some((pattern) => matchesWorkspace(pattern, directory))) {

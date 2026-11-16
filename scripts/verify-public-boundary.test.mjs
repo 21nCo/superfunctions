@@ -326,6 +326,60 @@ test("every module loader form is read; unrelated calls and plain strings are no
   ]);
 });
 
+test("Module#require and destructured loaders are read; the same names on unrelated objects are not", async (t) => {
+  const root = fixture(t, {
+    files: {
+      "datafn/core/src/commonjs.cts": [
+        'module.require("@flowfn/a");',
+        'module["require"]("@flowfn/b");',
+        'require.main.require("@flowfn/c");',
+        '(module as NodeModule)!.require("@flowfn/d");',
+        "const { resolve } = require;",
+        'resolve("@flowfn/e");',
+        "const { require: load, main } = module;",
+        'load("@flowfn/f");',
+        "const { main: entry } = require;",
+        'entry.require("@flowfn/g");',
+        "let later; ({ resolve: later } = require);",
+        'later("@flowfn/h");',
+        'obj.require("@flowfn/x"); const { resolve: other } = obj; other("@flowfn/y"); const s = "@flowfn/z";',
+      ].join("\n"),
+      "datafn/core/src/esm.mts": [
+        'const { createRequire: cr } = await import("node:module");',
+        'cr(import.meta.url)("@flowfn/a");',
+        'import nodeModule from "module";',
+        "const { createRequire } = nodeModule;",
+        'createRequire(import.meta.url).resolve("@flowfn/b");',
+        'const { createRequire: viaRequire } = require("node:module");',
+        'viaRequire(__filename)("@flowfn/c");',
+        'import * as ns from "node:module";',
+        'const { createRequire: viaNamespace } = ns.default;',
+        'viaNamespace(import.meta.url)("@flowfn/d");',
+        'const { createRequire: notModule } = await import("./local.js");',
+        'notModule(import.meta.url)("@flowfn/x");',
+      ].join("\n"),
+      "datafn/svelte/src/Commonjs.svelte": [
+        '<script lang="ts">',
+        '  const { createRequire: cr } = await import("node:module");',
+        '  cr(import.meta.url)("@flowfn/a");',
+        '  const { resolve } = require;',
+        '  resolve("@flowfn/b");',
+        '  obj.require("@flowfn/x");',
+        "</script>",
+        '<button onclick={() => module.require("@flowfn/c")}>go</button>',
+      ].join("\n"),
+    },
+  });
+  const result = run(root);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /datafn\/core\/src\/commonjs\.cts:1: \[fn-dependency\] imports "@flowfn\/a"/);
+  assert.deepEqual(await findings(root), [
+    ...[1, 2, 3, 4, 6, 8, 10, 12].map((line) => `datafn/core/src/commonjs.cts:${line} ${RULES.fnDependency}`),
+    ...[2, 5, 7, 10].map((line) => `datafn/core/src/esm.mts:${line} ${RULES.fnDependency}`),
+    ...[3, 5, 8].map((line) => `datafn/svelte/src/Commonjs.svelte:${line} ${RULES.fnDependency}`),
+  ]);
+});
+
 test("svelte static on* attributes are read as inline handlers; other static attributes are not", async (t) => {
   const root = fixture(t, {
     files: {
@@ -518,6 +572,38 @@ test("symlinks and submodules at an ancestor of a workspace match fail, naming t
   ]);
 });
 
+test("a symlinked workspace directory whose target holds any tracked link fails; nothing is followed", async (t) => {
+  const chain = (t, inner) =>
+    fixture(t, {
+      workspaces: ["datafn/core", "datafn/linked/*"],
+      files: { "scripts/hidden/package.json": json({ name: "@privatefn/secret" }), "scripts/bridge/notes.md": "# bridge\n" },
+      links: { "datafn/linked": "../scripts/bridge", "scripts/bridge/leaf": inner },
+    });
+  // A chain npm follows to an untracked workspace package.
+  const viaDirectory = chain(t, "../hidden");
+  const result = run(viaDirectory);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /datafn\/linked: \[workspace-package\] is a symlink to "\.\.\/scripts\/bridge", whose target holds the tracked symlink scripts\/bridge\/leaf/);
+  assert.deepEqual(await findings(viaDirectory), [`datafn/linked ${RULES.workspacePackage}`]);
+  // Any nested link fails, even one to a file.
+  assert.deepEqual(await findings(chain(t, "notes.md")), [`datafn/linked ${RULES.workspacePackage}`]);
+  // A nested submodule fails too.
+  const gitlinked = fixture(t, {
+    workspaces: ["datafn/core", "datafn/linked/*"],
+    files: { "scripts/bridge/notes.md": "# bridge\n" },
+    links: { "datafn/linked": "../scripts/bridge" },
+    gitlinks: ["scripts/bridge/vendored"],
+  });
+  assert.deepEqual(await findings(gitlinked), [`datafn/linked ${RULES.workspacePackage}`]);
+  // A single link to a directory with neither a matching package.json nor nested links passes.
+  const plain = fixture(t, {
+    workspaces: ["datafn/core", "datafn/linked/*"],
+    files: { "scripts/bridge/notes.md": "# bridge\n" },
+    links: { "datafn/linked": "../scripts/bridge" },
+  });
+  assert.deepEqual(await findings(plain), []);
+});
+
 test("python importlib.import_module and __import__ calls with a literal *fn name are checked", async (t) => {
   const root = fixture(t, {
     files: {
@@ -533,9 +619,28 @@ test("python importlib.import_module and __import__ calls with a literal *fn nam
         'name = "flowfn"',
         "",
       ].join("\n"),
+      "datafn/python/datafn/aliased.py": [
+        "import importlib as il",
+        "from importlib import import_module as load",
+        'il.import_module("flowfn")',
+        'load("flowfn")',
+        'il.import_module(name="flowfn")',
+        '__import__(name="flowfn")',
+        "",
+      ].join("\n"),
+      "datafn/python/datafn/local.py": [
+        "def import_module(name):",
+        "    return name",
+        'import_module("flowfn")',
+        'other.import_module("flowfn")',
+        "",
+      ].join("\n"),
     },
   });
-  assert.deepEqual((await findings(root)).sort(), [3, 4, 5].map((line) => `datafn/python/datafn/dynamic.py:${line} ${RULES.fnDependency}`));
+  assert.deepEqual((await findings(root)).sort(), [
+    ...[3, 4, 5, 6].map((line) => `datafn/python/datafn/aliased.py:${line} ${RULES.fnDependency}`),
+    ...[3, 4, 5].map((line) => `datafn/python/datafn/dynamic.py:${line} ${RULES.fnDependency}`),
+  ]);
 });
 
 test("python imports of *fn modules must name a public Python project or an allowed package", async (t) => {
