@@ -1,0 +1,21 @@
+filefn/docs/content/docs/reference/routes.md
+  s_97a686fb0b62ed::t_65e1c0ae87ed59 38-39
+filefn/docs/static/llms-full.txt
+  s_97a686fb0b62ed::t_454b560d56fc22 8108-8109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d5b020616e62b67dca5681859cf008ebc748b3be",
+  "prompts": {},
+  "sessions": {
+    "s_97a686fb0b62ed": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_97a686fb0b62ed",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
