@@ -236,11 +236,7 @@ export class DbDataStore implements DataStore {
       }
       for (const [resource, resourceIds] of idsByResource.entries()) {
         const rows = resourceIds.length > 0
-          ? await db.findMany({
-              model: resource,
-              where: [{ field: "id", operator: "in", value: resourceIds }],
-              namespace,
-            })
+          ? await DbDataStore.findManyByIds(db, resource, "id", resourceIds, namespace)
           : [];
         store.mergeRecords(resource, rows);
       }
@@ -295,11 +291,7 @@ export class DbDataStore implements DataStore {
           try {
             for (const fromResource of endpointList(rel.from)) {
               const rows = primaryIds.length > 0
-                ? await db.findMany({
-                    model: fromResource,
-                    where: [{ field: fkField, operator: "in", value: primaryIds }],
-                    namespace,
-                  })
+                ? await DbDataStore.findManyByIds(db, fromResource, fkField, primaryIds, namespace)
                 : [];
               store.recordsCache.set(fromResource, rows);
             }
@@ -313,11 +305,7 @@ export class DbDataStore implements DataStore {
           try {
             for (const toResource of endpointList(rel.to)) {
               const rows = primaryIds.length > 0
-                ? await db.findMany({
-                    model: toResource,
-                    where: [{ field: fkField, operator: "in", value: primaryIds }],
-                    namespace,
-                  })
+                ? await DbDataStore.findManyByIds(db, toResource, fkField, primaryIds, namespace)
                 : [];
               store.recordsCache.set(toResource, rows);
             }
@@ -352,11 +340,7 @@ export class DbDataStore implements DataStore {
             try {
               const filterField = isForward ? fromCol : toCol;
               joinRows = primaryIds.length > 0
-                ? await db.findMany({
-                    model: tableName,
-                    where: [{ field: filterField, operator: "in", value: primaryIds }],
-                    namespace,
-                  })
+                ? await DbDataStore.findManyByIds(db, tableName, filterField, primaryIds, namespace)
                 : [];
             } catch (error) {
               logger?.warn("forPushdownResult: many-many join load failed", { error: String(error), operation: "db-store-pushdown" });
@@ -441,11 +425,7 @@ export class DbDataStore implements DataStore {
             let joinRows2: Record<string, unknown>[] = [];
             try {
               joinRows2 = intermediateIds.length > 0
-                ? await db.findMany({
-                    model: tableName2,
-                    where: [{ field: isF2 ? fromCol2 : toCol2, operator: "in", value: intermediateIds }],
-                    namespace,
-                  })
+                ? await DbDataStore.findManyByIds(db, tableName2, isF2 ? fromCol2 : toCol2, intermediateIds, namespace)
                 : [];
             } catch (error) {
               logger?.warn("forPushdownResult: nested many-many join load failed", { error: String(error), operation: "db-store-pushdown" });
@@ -480,11 +460,7 @@ export class DbDataStore implements DataStore {
           try {
             for (const targetResource of endpointList(rel2.to)) {
               const rows2 = intermediateIds.length > 0
-                ? await db.findMany({
-                    model: targetResource,
-                    where: [{ field: fkField2, operator: "in", value: intermediateIds }],
-                    namespace,
-                  })
+                ? await DbDataStore.findManyByIds(db, targetResource, fkField2, intermediateIds, namespace)
                 : [];
               store.mergeRecords(targetResource, rows2);
             }
@@ -944,22 +920,14 @@ export class DbDataStore implements DataStore {
             ),
           ];
           if (fkValues.length > 0) {
-            records = await db.findMany({
-              model: secondaryResource,
-              where: [{ field: "id", operator: "in", value: fkValues }],
-              namespace,
-            });
+            records = await DbDataStore.findManyByIds(db, secondaryResource, "id", fkValues, namespace);
           }
         } else if ((rel as any).type === "many-one" && !isForward) {
           // Inverse many-one: secondary records have FK pointing to primary
           const fkField =
             (rel as any).fkField || (rel as any).foreignKey || `${(rel as any).relation}Id`;
           if (primaryIds.length > 0) {
-            records = await db.findMany({
-              model: secondaryResource,
-              where: [{ field: fkField, operator: "in", value: primaryIds }],
-              namespace,
-            });
+            records = await DbDataStore.findManyByIds(db, secondaryResource, fkField, primaryIds, namespace);
           }
         } else if ((rel as any).type === "one-many" && isForward) {
           // FK on secondary records pointing to primary
@@ -969,11 +937,7 @@ export class DbDataStore implements DataStore {
             (rel as any).inverse ||
             `${query.resource}Id`;
           if (primaryIds.length > 0) {
-            records = await db.findMany({
-              model: secondaryResource,
-              where: [{ field: fkField, operator: "in", value: primaryIds }],
-              namespace,
-            });
+            records = await DbDataStore.findManyByIds(db, secondaryResource, fkField, primaryIds, namespace);
           }
         } else if ((rel as any).type === "one-many" && !isForward) {
           // Inverse one-many: primary has FK pointing to secondary (one side)
@@ -990,11 +954,7 @@ export class DbDataStore implements DataStore {
             ),
           ];
           if (fkValues.length > 0) {
-            records = await db.findMany({
-              model: secondaryResource,
-              where: [{ field: "id", operator: "in", value: fkValues }],
-              namespace,
-            });
+            records = await DbDataStore.findManyByIds(db, secondaryResource, "id", fkValues, namespace);
           }
         } else {
           // EXE-022: unhandled relation type → empty result with warning (no full-table scan)

@@ -486,6 +486,44 @@ describe("paginated clone join rows", () => {
     expect(owner.joinCounts?.[joinKey]).toBe(5);
   });
 
+  it("a deferred table whose count failed still gets a continuation", async () => {
+    const base = await seed();
+    const withExtras: DatafnSchema = {
+      ...schema,
+      resources: [
+        ...schema.resources,
+        { name: "extras", version: 1, fields: [{ name: "name", type: "string" }] } as any,
+      ],
+    };
+    for (let i = 1; i <= 5; i++) {
+      await base.create({ model: "extras", data: { id: `e${i}`, name: `e${i}` }, namespace: NAMESPACE });
+    }
+    const db = new Proxy(base, {
+      get(target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver);
+        if (prop === "count") {
+          return async (args: { model: string }) => {
+            if (args.model === "extras") throw new Error("count failed");
+            return value.call(target, args);
+          };
+        }
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as Adapter;
+    // Tags (3) and notes (6) exceed the cap of 4; extras are deferred.
+    const capped = await executeClone(
+      { clientId: "c1", tables: ["tags", "notes", "extras"], actorId: "alice" },
+      withExtras,
+      db,
+      NAMESPACE,
+      undefined,
+      4,
+    );
+    expect(capped.paginated).toBe(true);
+    expect(capped.data.extras).toEqual([]);
+    expect(capped.next?.extras).toBe("");
+  });
+
   it("a table that exactly fills the cap doesn't re-check hidden join endpoints", async () => {
     const base = await seed();
     await base.update({
