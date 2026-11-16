@@ -222,28 +222,8 @@ export class DbDataStore implements DataStore {
 
     // Track which relations we've already loaded to avoid duplicates
     const loaded = new Set<string>();
-    const loadRecordsByIds = async (
-      endpoint: string | readonly string[],
-      ids: string[],
-    ): Promise<void> => {
-      const idsByResource = new Map<string, string[]>();
-      for (const id of ids) {
-        const resource = DbDataStore.resolveEndpointResourceForId(schema, endpoint, id);
-        if (!resource) continue;
-        const current = idsByResource.get(resource) ?? [];
-        current.push(id);
-        idsByResource.set(resource, current);
-      }
-      for (const [resource, resourceIds] of idsByResource.entries()) {
-        const rows = resourceIds.length > 0
-          ? await DbDataStore.findManyByIds(db, resource, "id", resourceIds, namespace)
-          : [];
-        store.mergeRecords(resource, rows);
-      }
-      for (const resource of endpointList(endpoint)) {
-        if (!store.recordsCache.has(resource)) store.recordsCache.set(resource, []);
-      }
-    };
+    const loadRecordsByIds = (endpoint: string | readonly string[], ids: string[]) =>
+      DbDataStore.loadEndpointRecordsByIds(store, db, schema, namespace, endpoint, ids);
 
     // 2. Process each select token (first pass: load first-level related resources)
     for (const token of query.select) {
@@ -380,10 +360,74 @@ export class DbDataStore implements DataStore {
     }
 
     // 3. Second pass: handle nested tokens (e.g. "tasks.tags.*")
-    //    After loading first-level records, load second-level relations for each
-    //    intermediate resource that was populated above.
+    await DbDataStore.loadNestedSelectRelations(
+      store,
+      db,
+      primaryResource,
+      query.select,
+      schema,
+      namespace,
+      logger,
+    );
+
+    await DbDataStore.applyActorVisibilityFilter(
+      store,
+      db,
+      schema,
+      namespace,
+      actorId,
+      logger,
+    );
+    return store;
+  }
+
+  /**
+   * Load the endpoint records with the given ids into the store, grouped by
+   * the resource each id belongs to.
+   */
+  private static async loadEndpointRecordsByIds(
+    store: DbDataStore,
+    db: Adapter,
+    schema: any,
+    namespace: string,
+    endpoint: string | readonly string[],
+    ids: string[],
+  ): Promise<void> {
+    const idsByResource = new Map<string, string[]>();
+    for (const id of ids) {
+      const resource = DbDataStore.resolveEndpointResourceForId(schema, endpoint, id);
+      if (!resource) continue;
+      const current = idsByResource.get(resource) ?? [];
+      current.push(id);
+      idsByResource.set(resource, current);
+    }
+    for (const [resource, resourceIds] of idsByResource.entries()) {
+      const rows = resourceIds.length > 0
+        ? await DbDataStore.findManyByIds(db, resource, "id", resourceIds, namespace)
+        : [];
+      store.mergeRecords(resource, rows);
+    }
+    for (const resource of endpointList(endpoint)) {
+      if (!store.recordsCache.has(resource)) store.recordsCache.set(resource, []);
+    }
+  }
+
+  /**
+   * Second-level relations of nested select tokens (e.g. "tasks.tags.*"):
+   * after the first-level records are in the store, load each nested
+   * relation from those intermediate records with targeted lookups.
+   */
+  private static async loadNestedSelectRelations(
+    store: DbDataStore,
+    db: Adapter,
+    primaryResource: string,
+    select: readonly unknown[],
+    schema: any,
+    namespace: string,
+    logger?: DatafnLogger,
+  ): Promise<void> {
     const loadedNested = new Set<string>();
-    for (const token of query.select) {
+    for (const token of select) {
       if (typeof token !== "string") continue;
       const parts = token.split(".");
       if (parts.length < 3) continue; // only nested tokens
@@ -446,7 +490,7 @@ export class DbDataStore implements DataStore {
               ),
             ];
             try {
-              await loadRecordsByIds(
+              await DbDataStore.loadEndpointRecordsByIds(store, db, schema, namespace, 
                 relationTargetEndpoint(rel2, secondMatch.direction),
                 relatedIds2,
               );
@@ -474,7 +518,7 @@ export class DbDataStore implements DataStore {
             intermediateRecords.map((r) => r[fkField2] as string).filter((v) => v != null && v !== ""),
           )];
           try {
-            await loadRecordsByIds(rel2.to, fkIds2);
+            await DbDataStore.loadEndpointRecordsByIds(store, db, schema, namespace, rel2.to, fkIds2);
           } catch (error) {
             logger?.warn("forPushdownResult: nested many-one forward load failed", { error: String(error), operation: "db-store-pushdown" });
             endpointList(rel2.to).forEach((resource) => store.recordsCache.set(resource, []));
@@ -482,16 +526,6 @@ export class DbDataStore implements DataStore {
         }
       }
     }
-
-    await DbDataStore.applyActorVisibilityFilter(
-      store,
-      db,
-      schema,
-      namespace,
-      actorId,
-      logger,
-    );
-    return store;
   }
 
   /**
@@ -647,12 +681,16 @@ export class DbDataStore implements DataStore {
             if (relationMatch?.relation === rel) {
               const targetResource = addRelationLoad(rel, query.resource, baseName);
 
-              // For nested tokens (e.g., "tasks.tags.*"), discover second level
+              // A nested token with a projection (e.g. "tasks.tags.*") is
+              // loaded from the first-level records after they are in the
+              // store (see loadNestedSelectRelations below); other nested
+              // tokens discover their second level here.
               if (
                 directive &&
                 directive !== "*" &&
                 directive !== "#" &&
-                directive !== "*#"
+                directive !== "*#" &&
+                parts.length < 3
               ) {
                 // This is a nested traversal like "tasks.tags.*"
                 const nestedParts = directive.split(".");
@@ -971,6 +1009,20 @@ export class DbDataStore implements DataStore {
         logger?.warn("forQuery: secondary resource load failed", { error: String(error), resource: secondaryResource, operation: "db-store-forQuery" });
         store.recordsCache.set(secondaryResource, []);
       }
+    }
+
+    // Step 5: second-level relations of nested select tokens, loaded from the
+    // first-level records (as for a pushdown result).
+    if (Array.isArray(query.select) && schema?.relations) {
+      await DbDataStore.loadNestedSelectRelations(
+        store,
+        db,
+        query.resource,
+        query.select,
+        schema,
+        namespace,
+        logger,
+      );
     }
 
     await DbDataStore.applyActorVisibilityFilter(

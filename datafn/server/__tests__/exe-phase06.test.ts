@@ -302,28 +302,21 @@ describe("FIX-EXE-017: Search candidate chunking", () => {
 // ---------------------------------------------------------------------------
 
 describe("FIX-EXE-022: No full-scan fallback", () => {
-  it("TV-EXE-022-P1: unknown relation path returns empty, not full scan", async () => {
+  it("TV-EXE-022-P1: a nested relation loads from the first-level records, not by full scan", async () => {
     const db = memoryAdapter();
     await db.initialize();
 
-    // Seed records — the "category" records should NOT be loaded via full scan
     await db.create({ model: "project", data: { id: "p1" }, namespace: "datafn" });
+    await db.create({ model: "project", data: { id: "p2" }, namespace: "datafn" });
     await db.create({ model: "task", data: { id: "t1", projectId: "p1", catId: "c1" }, namespace: "datafn" });
+    await db.create({ model: "task", data: { id: "t2", projectId: "p2", catId: "c2" }, namespace: "datafn" });
     await db.create({ model: "category", data: { id: "c1", name: "Bug" }, namespace: "datafn" });
     await db.create({ model: "category", data: { id: "c2", name: "Feature" }, namespace: "datafn" });
+    const findManySpy = vi.spyOn(db, "findMany");
 
-    const warnLogs: any[] = [];
-    const logger = {
-      info: () => {},
-      warn: (...args: any[]) => warnLogs.push(args),
-      error: () => {},
-      debug: () => {},
-    } as any;
-
-    // Schema: project -> task (one-many), task -> category (many-one)
-    // But NO direct relation between project and category
-    // The nested select "tasks.cat.*" will discover "category" via nested token parsing
-    // but the secondary loading loop won't find a direct relation project<->category
+    // Schema: project -> task (one-many), task -> category (many-one).
+    // There is no direct relation between project and category: the nested
+    // select "tasks.cat.*" reaches category through the loaded tasks.
     const schema = {
       resources: [
         { name: "project", version: 1, fields: [] },
@@ -340,6 +333,7 @@ describe("FIX-EXE-022: No full-scan fallback", () => {
           relation: "tasks",
           inverse: "project",
           type: "one-many",
+          fkField: "projectId",
         },
         {
           from: "task",
@@ -354,28 +348,19 @@ describe("FIX-EXE-022: No full-scan fallback", () => {
 
     const store = await DbDataStore.forQuery(
       db,
-      {
-        resource: "project",
-        select: ["tasks.cat.*"],
-      },
+      { resource: "project", select: ["tasks.cat.*"] },
       schema,
       "datafn",
-      undefined,
-      logger,
+      [{ field: "id", operator: "eq", value: "p1" }],
     );
 
-    // The category resource should NOT have been loaded via full scan
-    // It should be empty (no direct relation from project to category)
-    // OR loaded via the nested token loading logic (forPushdownResult-like second pass)
-    // The key assertion: no findMany with where:[] for category
-    const catRecords = store.getRecords("category");
-
-    // Warning should have been emitted about no direct relation
-    const hasWarning = warnLogs.some((args) =>
-      typeof args[0] === "string" && args[0].includes("secondary resource"),
-    );
-    expect(hasWarning).toBe(true);
-    expect(catRecords).toEqual([]);
+    // Only the category of p1's task is loaded, by id; no broad category read.
+    expect(store.getRecords("category").map((r) => r.id)).toEqual(["c1"]);
+    const categoryReads = findManySpy.mock.calls
+      .map(([args]) => args as { model: string; where?: unknown[] })
+      .filter((args) => args.model === "category");
+    expect(categoryReads.length).toBeGreaterThan(0);
+    expect(categoryReads.every((args) => (args.where ?? []).length > 0)).toBe(true);
   });
 
   it("TV-EXE-022-N1: unhandled relation type also avoids where:[] broad fetch", async () => {

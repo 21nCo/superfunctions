@@ -386,4 +386,68 @@ describe("relation loading for an in-memory query", () => {
       await (server as any)?.close?.();
     }
   }, 120_000);
+
+  it("loads a nested relation for a query an oversized $in keeps in memory", async () => {
+    const relSchema: DatafnSchema = {
+      resources: [
+        { name: "users", version: 1, fields: [{ name: "name", type: "string", required: false }] },
+        {
+          name: "projects",
+          version: 1,
+          fields: [
+            { name: "name", type: "string", required: false },
+            { name: "ownerId", type: "string", required: false },
+          ],
+        },
+        {
+          name: "tasks",
+          version: 1,
+          fields: [
+            { name: "title", type: "string", required: false },
+            { name: "projectId", type: "string", required: false },
+          ],
+        },
+      ],
+      relations: [
+        { from: "tasks", to: "projects", type: "many-one", relation: "project", fkField: "projectId" } as any,
+        { from: "projects", to: "users", type: "many-one", relation: "owner", fkField: "ownerId" } as any,
+      ],
+    };
+    const db = memoryAdapter();
+    await db.initialize?.();
+    await db.create({ model: "users", data: { __ns: NAMESPACE, id: "u1", name: "Uma" }, namespace: NAMESPACE });
+    await db.create({
+      model: "projects",
+      data: { __ns: NAMESPACE, id: "p1", name: "P1", ownerId: "u1" },
+      namespace: NAMESPACE,
+    });
+    await db.create({
+      model: "tasks",
+      data: { __ns: NAMESPACE, id: "t1", title: "T1", projectId: "p1" },
+      namespace: NAMESPACE,
+    });
+    const server = await createDatafnServer({
+      allowUnknownResources: true,
+      schema: relSchema,
+      database: db,
+      namespaceProvider: { getNamespace: () => NAMESPACE, getActorId: () => "alice" as any },
+    });
+    try {
+      const ids = ["t1", ...Array.from({ length: MAX_PUSHDOWN_IN_VALUES }, (_, i) => `missing${i}`)];
+      const filters = { id: { $in: ids } };
+      expect(classifyQuery({ resource: "tasks", filters }, relSchema)).toBe("IN_MEMORY");
+      const { status, body } = await query(server, {
+        resource: "tasks",
+        version: 1,
+        filters,
+        select: ["id", "project.*", "project.owner.*"],
+      });
+      expect(status).toBe(200);
+      expect(body.result.data).toHaveLength(1);
+      expect(body.result.data[0].project?.id).toBe("p1");
+      expect(body.result.data[0].project?.owner?.id).toBe("u1");
+    } finally {
+      await (server as any)?.close?.();
+    }
+  });
 });
