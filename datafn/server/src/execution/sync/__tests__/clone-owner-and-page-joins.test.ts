@@ -442,17 +442,15 @@ describe("paginated clone join rows", () => {
       namespace: NAMESPACE,
     });
     const { db, counts } = countingAdapter(base);
-    const clone = await executeClone(
-      { clientId: "c1", tables: ["notes", "tags"], actorId: "bob", includeJoins: true },
-      schema,
-      db,
-      NAMESPACE,
-    );
+    const request = { clientId: "c1", tables: ["notes", "tags"], actorId: "bob" };
+    await executeClone(request, schema, db, NAMESPACE);
+    const withoutJoins = counts.findOne;
+    counts.findOne = 0;
+    const clone = await executeClone({ ...request, includeJoins: true }, schema, db, NAMESPACE);
     expect(clone.data.notes.map((r) => r.id)).toEqual(["n3"]);
     expect(clone.joins?.[joinKey]?.map((r) => r.id)).toEqual(["j_n3_t1"]);
-    // One access lookup per note row while filtering, none again for the
-    // join rows' hidden endpoints.
-    expect(counts.findOne).toBe(6);
+    // Loading the join rows adds no lookups for their hidden endpoints.
+    expect(counts.findOne).toBe(withoutJoins);
   });
 
   it("reconcile counts the join rows a clone returns to the actor", async () => {
@@ -488,6 +486,44 @@ describe("paginated clone join rows", () => {
     expect(owner.joinCounts?.[joinKey]).toBe(5);
   });
 
+  it("a table that exactly fills the cap doesn't re-check hidden join endpoints", async () => {
+    const base = await seed();
+    await base.update({
+      model: "notes",
+      where: [{ field: "id", operator: "eq", value: "n3" }],
+      data: { createdBy: "bob" },
+      namespace: NAMESPACE,
+    });
+    const withExtras: DatafnSchema = {
+      ...schema,
+      resources: [
+        ...schema.resources,
+        { name: "extras", version: 1, fields: [{ name: "name", type: "string" }] } as any,
+      ],
+    };
+    for (let i = 1; i <= 5; i++) {
+      await base.create({ model: "extras", data: { id: `e${i}`, name: `e${i}` }, namespace: NAMESPACE });
+    }
+    const { db, counts } = countingAdapter(base);
+    // Cap 9: tags (3) then notes (6) fill it exactly; extras are deferred.
+    const request = { clientId: "c1", tables: ["tags", "notes", "extras"], actorId: "bob" };
+    await executeClone(request, withExtras, db, NAMESPACE, undefined, 9);
+    const withoutJoins = counts.findOne;
+    counts.findOne = 0;
+    const capped = await executeClone(
+      { ...request, includeJoins: true },
+      withExtras,
+      db,
+      NAMESPACE,
+      undefined,
+      9,
+    );
+    expect(capped.paginated).toBe(true);
+    expect(capped.data.notes.map((r) => r.id)).toEqual(["n3"]);
+    expect(capped.joins?.[joinKey]?.map((r) => r.id)).toEqual(["j_n3_t1"]);
+    expect(counts.findOne).toBe(withoutJoins);
+  });
+
   it("reconcile reuses the access checks it made while counting", async () => {
     const base = await seed();
     await base.update({
@@ -497,16 +533,20 @@ describe("paginated clone join rows", () => {
       namespace: NAMESPACE,
     });
     const { db, counts } = countingAdapter(base);
+    const request = { clientId: "c1", resources: ["notes", "tags"], actorId: "bob" };
+    await executeReconcile(request as any, schema, db, NAMESPACE);
+    const withoutJoins = counts.findOne;
+    counts.findOne = 0;
     const reconcile = await executeReconcile(
-      { clientId: "c1", resources: ["notes", "tags"], actorId: "bob", includeJoins: true } as any,
+      { ...request, includeJoins: true } as any,
       schema,
       db,
       NAMESPACE,
     );
     expect(reconcile.counts?.notes).toBe(1);
     expect(reconcile.joinCounts?.[joinKey]).toBe(1);
-    // One lookup per note while counting; the join pass reuses them.
-    expect(counts.findOne).toBe(6);
+    // The join pass reuses the checks made while counting.
+    expect(counts.findOne).toBe(withoutJoins);
   });
 
   it("reconcile counts nothing for a join store whose access check fails", async () => {
@@ -577,6 +617,8 @@ describe("paginated clone join rows", () => {
     expect(capped.data.tags.map((r) => r.id)).toEqual(["t1", "t2", "t3"]);
     // n3 (bob's) wasn't read, but its join to t1 is still checked and kept.
     expect(capped.joins?.[joinKey]?.map((r) => r.id)).toContain("j_n3_t1");
+    // The cut-short notes read reports where to continue.
+    expect(capped.next?.notes).toBe("n1");
   });
 
   it("fails the clone when a join endpoint's access check fails", async () => {
