@@ -615,28 +615,34 @@ const ancestorsOf = (file) => {
 };
 
 /**
- * Refuses an untracked or ignored file here at a path an imported file takes, inside an imported file's path or where
- * an imported directory goes, including a file or symlink above a selected sub-path. git merge overwrites ignored
- * files, and undoing a failed attempt would then delete them, so the check runs before the branch is created. Other
- * ignored files (node_modules, build output) stay as they are.
+ * Untracked or ignored entries here that git may treat as one opaque path: every file or symlink git lists under the
+ * paths (a nested repository is listed once as `dir/`; the slash is dropped), plus each untracked file, symlink or
+ * nested repository above a selected sub-path, which a pathspec below it does not list.
+ */
+function localEntries(root, paths) {
+  const listed = git(root, ["--literal-pathspecs", "ls-files", "-z", "--others", "--", ...paths]).split("\0").filter(Boolean);
+  const entries = listed.map((entry) => (entry.endsWith("/") ? entry.slice(0, -1) : entry));
+  for (const directory of new Set(paths.flatMap(ancestorsOf))) {
+    if (objectAt(root, "HEAD", directory) !== null) continue;
+    const stat = lstatSync(path.join(root, directory), { throwIfNoEntry: false });
+    if (stat && (!stat.isDirectory() || lstatSync(path.join(root, directory, ".git"), { throwIfNoEntry: false }))) entries.push(directory);
+  }
+  return entries;
+}
+
+/**
+ * Refuses an untracked or ignored entry (file, symlink or nested repository) here that the merge would write over: one
+ * at an imported file's path, one with an imported file inside it, or one inside an imported file's path. git merge
+ * overwrites ignored content, and undoing a failed attempt would then delete it, so the check runs before the branch is
+ * created. Other ignored content (node_modules, build output, a nested repository next writes nothing into) stays.
  */
 function refuseLocalFiles(root, paths, files) {
-  for (const target of paths) {
-    for (const directory of ancestorsOf(target)) {
-      const stat = lstatSync(path.join(root, directory), { throwIfNoEntry: false });
-      if (stat && !stat.isDirectory() && objectAt(root, "HEAD", directory) === null) {
-        throw new PromoteError("path-conflict", `${directory} exists here as an untracked or ignored file and next's directory holding ${target} would replace it; move it out of the way first`);
-      }
-    }
-  }
-  const local = git(root, ["--literal-pathspecs", "ls-files", "-z", "--others", "--", ...paths]).split("\0").filter(Boolean);
-  if (local.length === 0) return;
   const importedFiles = new Set(files);
   const importedDirectories = new Set(files.flatMap(ancestorsOf));
-  for (const file of local) {
-    const clash = importedFiles.has(file) || importedDirectories.has(file) ? file : ancestorsOf(file).find((directory) => importedFiles.has(directory));
+  for (const entry of localEntries(root, paths)) {
+    const clash = importedFiles.has(entry) || importedDirectories.has(entry) ? entry : ancestorsOf(entry).find((directory) => importedFiles.has(directory));
     if (clash !== undefined) {
-      throw new PromoteError("path-conflict", `${file} exists here as an untracked or ignored file and next's ${clash} would replace it; move it out of the way first`);
+      throw new PromoteError("path-conflict", `${entry} exists here as an untracked or ignored file or repository and next's ${clash} would replace it; move it out of the way first`);
     }
   }
 }

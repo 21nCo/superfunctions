@@ -425,6 +425,61 @@ historyTest("an untracked or ignored file where next tracks a path is refused be
   assert.equal(readFileSync(path.join(dev, "widgetfn/core/node_modules/dep.js"), "utf8"), "dep\n");
 });
 
+/** An ignored nested repository at `dir` (git lists it as one opaque `dir/` entry) holding `file`. */
+function nestedRepository(root, dir, file) {
+  write(root, { [path.join(dir, file)]: "nested only\n" });
+  git(path.join(root, dir), "init", "-q");
+}
+
+/** A fixture with a rejecting pre-commit hook available, and a check that nothing in it changed. */
+function nestedFixture(name) {
+  const { dev, pin } = fixture(name);
+  const head = git(dev, "rev-parse", "HEAD");
+  const hooks = path.join(dev, ".git", "failing-hooks");
+  write(hooks, { "pre-commit": "#!/bin/sh\nexit 1\n" });
+  chmodSync(path.join(hooks, "pre-commit"), 0o755);
+  write(dev, { ".git/info/exclude": "widgetfn/core/src/\nwidgetfn/cache/\nuifn/foo/\n" });
+  const unchanged = () => {
+    assert.equal(git(dev, "rev-parse", "HEAD"), head);
+    assert.equal(git(dev, "branch", "--show-current"), "dev");
+    assert.equal(git(dev, "branch", "--list", "promote/*"), "");
+    assert.equal(git(dev, "status", "--porcelain"), "");
+  };
+  return { dev, pin, hooks, unchanged };
+}
+
+historyTest("an ignored nested repository holding a file next tracks is refused before the branch, with or without a failing hook", () => {
+  const { dev, hooks, unchanged } = nestedFixture("nested-file");
+  nestedRepository(dev, "widgetfn/core/src", "index.js");
+  throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "path-conflict");
+  unchanged();
+  git(dev, "config", "core.hooksPath", hooks);
+  throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "path-conflict");
+  unchanged();
+  assert.equal(readFileSync(path.join(dev, "widgetfn/core/src/index.js"), "utf8"), "nested only\n");
+});
+
+historyTest("an ignored nested repository above a selected sub-path is refused before the branch", () => {
+  const { dev, pin, unchanged } = nestedFixture("nested-above");
+  nestedRepository(dev, "uifn/foo", "bar.js");
+  throwsCode(() => promote({ root: dev, paths: ["uifn/foo/bar.js"], pin }), "path-conflict");
+  assert.equal(readFileSync(path.join(dev, "uifn/foo/bar.js"), "utf8"), "nested only\n");
+  unchanged();
+});
+
+historyTest("an ignored nested repository next writes nothing into survives a rolled-back and a successful promotion", () => {
+  const { dev, hooks, unchanged } = nestedFixture("nested-untouched");
+  nestedRepository(dev, "widgetfn/cache", "file.txt");
+  git(dev, "config", "core.hooksPath", hooks);
+  throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
+  unchanged();
+  assert.equal(readFileSync(path.join(dev, "widgetfn/cache/file.txt"), "utf8"), "nested only\n", "survives the undo");
+  git(dev, "config", "--unset", "core.hooksPath");
+  promote({ root: dev, fn: "widgetfn" });
+  assert.equal(git(dev, "branch", "--show-current"), "promote/widgetfn");
+  assert.equal(readFileSync(path.join(dev, "widgetfn/cache/file.txt"), "utf8"), "nested only\n");
+});
+
 historyTest("a failure after the merge restores the original branch and removes the new one", () => {
   const { dev } = fixture("rollback");
   const head = git(dev, "rev-parse", "HEAD");
