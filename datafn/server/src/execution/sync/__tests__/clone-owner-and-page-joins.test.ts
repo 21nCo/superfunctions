@@ -488,6 +488,97 @@ describe("paginated clone join rows", () => {
     expect(owner.joinCounts?.[joinKey]).toBe(5);
   });
 
+  it("reconcile reuses the access checks it made while counting", async () => {
+    const base = await seed();
+    await base.update({
+      model: "notes",
+      where: [{ field: "id", operator: "eq", value: "n3" }],
+      data: { createdBy: "bob" },
+      namespace: NAMESPACE,
+    });
+    const { db, counts } = countingAdapter(base);
+    const reconcile = await executeReconcile(
+      { clientId: "c1", resources: ["notes", "tags"], actorId: "bob", includeJoins: true } as any,
+      schema,
+      db,
+      NAMESPACE,
+    );
+    expect(reconcile.counts?.notes).toBe(1);
+    expect(reconcile.joinCounts?.[joinKey]).toBe(1);
+    // One lookup per note while counting; the join pass reuses them.
+    expect(counts.findOne).toBe(6);
+  });
+
+  it("reconcile counts nothing for a join store whose access check fails", async () => {
+    const base = await seed();
+    const db = new Proxy(base, {
+      get(target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver);
+        if (prop === "findOne") {
+          return async () => {
+            throw new Error("lookup failed");
+          };
+        }
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as Adapter;
+    // Only tags are reconciled, so the private note endpoints are looked up.
+    const reconcile = await executeReconcile(
+      { clientId: "c1", resources: ["tags"], actorId: "bob", includeJoins: true } as any,
+      schema,
+      db,
+      NAMESPACE,
+    );
+    expect(reconcile.ok).toBe(true);
+    expect(reconcile.joinCounts?.[joinKey]).toBe(0);
+  });
+
+  it("a capped read cut short isn't treated as fully loaded when its count failed", async () => {
+    const base = await seed();
+    await base.update({
+      model: "notes",
+      where: [{ field: "id", operator: "eq", value: "n3" }],
+      data: { createdBy: "bob" },
+      namespace: NAMESPACE,
+    });
+    const db = new Proxy(base, {
+      get(target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver);
+        if (prop === "count") {
+          return async (args: { model: string }) => {
+            if (args.model === "notes") throw new Error("count failed");
+            return value.call(target, args);
+          };
+        }
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as Adapter;
+    // An extra table makes the clone exceed the cap even though the notes
+    // count failed; tags fill 3 of the 4-record cap and the notes read stops
+    // after n1.
+    const withExtras: DatafnSchema = {
+      ...schema,
+      resources: [
+        ...schema.resources,
+        { name: "extras", version: 1, fields: [{ name: "name", type: "string" }] } as any,
+      ],
+    };
+    for (let i = 1; i <= 5; i++) {
+      await base.create({ model: "extras", data: { id: `e${i}`, name: `e${i}` }, namespace: NAMESPACE });
+    }
+    const capped = await executeClone(
+      { clientId: "c1", tables: ["tags", "notes", "extras"], actorId: "bob", includeJoins: true },
+      withExtras,
+      db,
+      NAMESPACE,
+      undefined,
+      4,
+    );
+    expect(capped.data.tags.map((r) => r.id)).toEqual(["t1", "t2", "t3"]);
+    // n3 (bob's) wasn't read, but its join to t1 is still checked and kept.
+    expect(capped.joins?.[joinKey]?.map((r) => r.id)).toContain("j_n3_t1");
+  });
+
   it("fails the clone when a join endpoint's access check fails", async () => {
     const base = await seed();
     const db = new Proxy(base, {

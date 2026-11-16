@@ -103,6 +103,8 @@ export async function executeReconcile(
   const counts: Record<string, number> = {};
   let joinCounts: Record<string, number> | undefined;
   const actorId = request.actorId;
+  // Visible ids of private resources whose every row was checked while counting.
+  const checkedVisibleIds = new Map<string, Set<string>>();
 
   // Validate and count each requested resource
   for (const resourceName of request.resources) {
@@ -148,6 +150,7 @@ export async function executeReconcile(
           namespace,
         });
         let visibleCount = 0;
+        const visibleIds = new Set<string>();
         for (const row of rows) {
           const recordId = typeof row.id === "string" ? row.id : null;
           if (!recordId) {
@@ -163,9 +166,11 @@ export async function executeReconcile(
           );
           if (level) {
             visibleCount++;
+            visibleIds.add(recordId);
           }
         }
         counts[resourceName] = visibleCount;
+        checkedVisibleIds.set(resourceName, visibleIds);
         continue;
       }
 
@@ -204,6 +209,9 @@ export async function executeReconcile(
     const isJoinEndpointVisible = async (resource: string, id: unknown): Promise<boolean> => {
       if (!isPrivateShareableResource(schema, resource)) return true;
       if (typeof id !== "string" || !actorId) return false;
+      // Every row of this resource was checked while counting it above.
+      const checked = checkedVisibleIds.get(resource);
+      if (checked) return checked.has(id);
       const key = `${resource}\u0000${id}`;
       let visible = endpointAccess.get(key);
       if (visible === undefined) {
@@ -303,13 +311,23 @@ export async function executeReconcile(
           // endpoints visible. Otherwise the client sees a drift it can never
           // resolve and re-clones on every reconcile.
           let visibleRows = 0;
-          for (const row of storeRows) {
-            if (
-              (await isJoinEndpointVisible(fromResource, row.from)) &&
-              (await isJoinEndpointVisible(toResource, row.to))
-            ) {
-              visibleRows += 1;
+          try {
+            for (const row of storeRows) {
+              if (
+                (await isJoinEndpointVisible(fromResource, row.from)) &&
+                (await isJoinEndpointVisible(toResource, row.to))
+              ) {
+                visibleRows += 1;
+              }
             }
+          } catch (error) {
+            // Like a failed join read above: log and count nothing for this store.
+            logger?.warn("Reconcile: join visibility check failed", {
+              error: String(error),
+              joinTable: joinTableName,
+              operation: "reconcile-join-count",
+            });
+            visibleRows = 0;
           }
           joinCounts[joinStoreKey] = visibleRows;
         }

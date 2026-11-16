@@ -272,11 +272,12 @@ export async function executeClone(
             data[tableName] = [];
             next[tableName] = tableCounts[tableName] > 0 ? "" : null;
           } else {
+            const readLimit = remaining;
             const records = await db.findMany({
               model: tableName,
               where: [],
               orderBy: [{ field: "id", direction: "asc" }],
-              limit: remaining,
+              limit: readLimit,
               namespace,
             });
             data[tableName] = await filterActorVisibleRows(tableName, records);
@@ -288,7 +289,9 @@ export async function executeClone(
               next[tableName] = lastRecord?.id as string ?? null;
             } else {
               next[tableName] = null;
-              fullyLoadedTables.add(tableName);
+              // Only when the read wasn't cut short by the cap (the count may
+              // have failed and read as 0).
+              if (records.length < readLimit) fullyLoadedTables.add(tableName);
             }
           }
 
