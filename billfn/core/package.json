@@ -1,6 +1,6 @@
 {
   "name": "@billfn/core",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Core billfn contracts, persistence, router, and entitlements",
   "type": "module",
   "main": "./dist/index.js",

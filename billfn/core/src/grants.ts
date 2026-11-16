@@ -29,16 +29,32 @@ export interface GrantDeps {
   catalog: BillFnCatalog;
   now: () => Date;
   metrics: MetricsEmitter;
-  /** Records the event through `db` when given (a transaction), otherwise through the service's adapter. */
-  recordBillingEvent(event: BillFnBillingEvent, db?: Adapter): Promise<void>;
+  /**
+   * Records the event, and the lifecycle events it stands for, through `db` when given (a transaction), otherwise
+   * through the service's adapter. `revoked`: the stored grant is revoked (its creation then records no
+   * `grant.expiring`). `beforeWrite` runs before each row it writes (a job's lease check); when it throws, no
+   * further row is written.
+   */
+  recordBillingEvent(event: BillFnBillingEvent, options?: RecordGrantEventOptions): Promise<void>;
+  /**
+   * Records the expiry events of a created grant that an expiry sweep's stored position already passed (a write
+   * that became visible late); run only once the grant is visible. `beforeWrite` runs before each row it writes.
+   */
+  recordPassedGrantExpiry(grant: Omit<BillFnEntitlementGrant, 'status'>, beforeWrite?: () => Promise<void>): Promise<void>;
   isDuplicateRecordError(error: unknown): boolean;
-  /** Whether grant writes set `eventsPending` for the `lifecycle-events` job: with lifecycle events, without transactions. */
+  /**
+   * Whether grant writes set `eventsPending` for the `lifecycle-events` job: with lifecycle events. Without
+   * transactions every create and revoke sets it; with transactions a create, until it checked the sweeps' positions.
+   */
   flagsPendingEvents: boolean;
 }
 
+export type RecordGrantEventOptions = { db?: Adapter; revoked?: boolean; beforeWrite?: () => Promise<void> };
+
 /**
  * A grant as stored: its status is derived on every read. Without transactions `eventsPending` is set by the
- * write of a create or revoke and cleared once that change's billing event is recorded (see `repairGrantEvents`).
+ * write of a create or revoke and cleared once that change's billing event is recorded (see `repairGrantEvents`);
+ * a create's (also with transactions) only once it checked the expiry sweeps' positions (see `commitWithEvent`).
  */
 type GrantRecord = Omit<BillFnEntitlementGrant, 'status'> & { eventsPending?: boolean | null };
 
@@ -100,10 +116,25 @@ export async function repairGrantEvents(deps: GrantDeps, billingAccountId: strin
   if (deps.db.capabilities.transactions.supported) {
     return;
   }
-  let missing: BillFnBillingEvent[];
   let grantList: GrantRecord[];
   try {
     grantList = grants ?? (await listGrantRecords(deps, billingAccountId));
+  } catch {
+    deps.metrics.track('grant.event_deferred', { type: 'repair' });
+    return;
+  }
+  await recordMissingGrantEvents(deps, grantList);
+}
+
+/**
+ * Records the missing billing events (and through them the lifecycle events) that these stored grants derive, then
+ * clears the `eventsPending` of each whose events are all recorded. `beforeWrite` runs before each of those writes
+ * (the job's lease check): when it throws, the repair stops there and writes nothing more.
+ */
+async function recordMissingGrantEvents(deps: GrantDeps, grantList: GrantRecord[], beforeWrite?: () => Promise<void>) {
+  let missing: BillFnBillingEvent[];
+  const revokedGrantIds = new Set(grantList.filter((grant) => grant.revokedAt).map((grant) => grant.id));
+  try {
     const events = grantList.flatMap((grant) =>
       grant.revokedAt ? [grantCreatedEvent(grant), grantRevokedEvent(grant)] : [grantCreatedEvent(grant)]
     );
@@ -125,31 +156,57 @@ export async function repairGrantEvents(deps: GrantDeps, billingAccountId: strin
     deps.metrics.track('grant.event_deferred', { type: 'repair' });
     return;
   }
+  // A failed write is left to a later repair, but a failed lease check ends the repair: no row is written after it.
+  let leaseError: { error: unknown } | undefined;
+  const guard =
+    beforeWrite &&
+    (() =>
+      beforeWrite().catch((error: unknown) => {
+        leaseError = { error };
+        throw error;
+      }));
   const unrecorded = new Set<string>();
   for (const event of missing) {
+    const grantId = event.payload.grantId as string;
     try {
-      await deps.recordBillingEvent(event);
-    } catch {
-      unrecorded.add(event.payload.grantId as string);
+      await deps.recordBillingEvent(event, { revoked: revokedGrantIds.has(grantId), beforeWrite: guard });
+    } catch (error) {
+      if (leaseError) {
+        throw error;
+      }
+      unrecorded.add(grantId);
       deps.metrics.track('grant.event_deferred', { type: event.type });
     }
   }
   for (const grant of grantList) {
-    if (!unrecorded.has(grant.id)) {
+    if (grant.eventsPending && !unrecorded.has(grant.id)) {
+      // A flagged creation may not have checked the sweeps' positions yet (see `commitWithEvent`); a grant revoked
+      // since still gets the expiry it reached before its revoke.
+      try {
+        await deps.recordPassedGrantExpiry(grant, guard);
+      } catch (error) {
+        if (leaseError) {
+          throw error;
+        }
+        deps.metrics.track('grant.event_deferred', { type: 'expiry' });
+        continue;
+      }
+      await guard?.();
       await clearEventsPending(deps, grant);
     }
   }
 }
 
 /**
- * Runs `repairGrantEvents` for the accounts of the oldest `GRANT_REPAIR_BATCH_SIZE` grants whose `eventsPending`
- * is set, so a committed grant change whose event write failed or was interrupted has its events recorded without
- * later traffic of that account, however long ago it was made. A change's flag is cleared once its events are
- * recorded, so the work of a run follows the changes that lack events, not all grants. It records only what
- * stored grants derive, under the same ids, so a change that never applied records nothing and a second run adds
- * nothing. `beforeEach` runs before each account (the job's lease check).
+ * Records the missing events of the oldest `GRANT_REPAIR_BATCH_SIZE` grants whose `eventsPending` is set, so a
+ * committed grant change whose event write failed or was interrupted has its events recorded without later
+ * traffic of that account, however long ago it was made. It reads only those flagged grants, never an account's
+ * other grants, and a change's flag is cleared once its events are recorded, so the next run takes the next
+ * flagged grants. It records only what stored grants derive, under the same ids, so a change that never applied
+ * records nothing and a second run adds nothing. `beforeWrite` runs before each write (the job's lease check):
+ * a run that lost its lease stops before its next write and leaves the rest to a later run.
  */
-export async function repairPendingGrantEvents(deps: GrantDeps, beforeEach?: () => Promise<void>) {
+export async function repairPendingGrantEvents(deps: GrantDeps, beforeWrite?: () => Promise<void>) {
   if (!deps.flagsPendingEvents) {
     return;
   }
@@ -160,10 +217,7 @@ export async function repairPendingGrantEvents(deps: GrantDeps, beforeEach?: () 
     limit: GRANT_REPAIR_BATCH_SIZE,
     namespace: deps.namespace
   });
-  for (const billingAccountId of new Set(grants.map((grant) => grant.billingAccountId))) {
-    await beforeEach?.();
-    await repairGrantEvents(deps, billingAccountId);
-  }
+  await recordMissingGrantEvents(deps, grants, beforeWrite);
 }
 
 /**
@@ -229,7 +283,7 @@ export async function insertGrant(deps: GrantDeps, billingAccountId: string, inp
       revokeReason: null,
       createdAt: timestamp,
       updatedAt: timestamp,
-      ...pendingFlag(deps)
+      ...pendingFlag(deps, true)
     };
     try {
       await commitWithEvent(deps, record, grantCreatedEvent(record), undefined, async (db) => {
@@ -242,7 +296,7 @@ export async function insertGrant(deps: GrantDeps, billingAccountId: string, inp
       }
       const existing = await findGrant(deps, billingAccountId, record.id);
       if (existing) {
-        await recordCommittedEvent(deps, grantCreatedEvent(existing));
+        await recordCommittedEvent(deps, grantCreatedEvent(existing), Boolean(existing.revokedAt));
       }
       if (input.kind === 'trial') {
         throw conflict('A trial was already granted to this billing account', 'trial_already_granted', record.id);
@@ -308,13 +362,13 @@ export async function revokeGrant(deps: GrantDeps, input: BillFnRevokeGrantReque
       });
     }
     if (existing.revokedAt) {
-      await recordCommittedEvent(deps, grantRevokedEvent(existing));
+      await recordCommittedEvent(deps, grantRevokedEvent(existing), true);
       return withStatus(existing, deps.now());
     }
     const now = deps.now();
     const revoked: GrantRecord = {
       ...existing,
-      ...pendingFlag(deps),
+      ...pendingFlag(deps, false),
       revokedAt: toIsoString(now),
       revokedBy: operator,
       revokeReason: reason,
@@ -333,7 +387,7 @@ export async function revokeGrant(deps: GrantDeps, input: BillFnRevokeGrantReque
           revokedBy: revoked.revokedBy,
           revokeReason: revoked.revokeReason,
           updatedAt: revoked.updatedAt,
-          ...pendingFlag(deps)
+          ...pendingFlag(deps, false)
         },
         namespace: deps.namespace
       });
@@ -366,41 +420,61 @@ async function commitWithEvent(
   prior: BillFnBillingEvent | undefined,
   write: (db: Adapter) => Promise<boolean>
 ) {
+  const created = event.type === 'billfn.grant.created';
   if (deps.db.capabilities.transactions.supported) {
-    return deps.db.transaction(async (transaction) => {
+    const applied = await deps.db.transaction(async (transaction) => {
       const db = transaction as unknown as Adapter;
       if (!(await write(db))) {
         return false;
       }
-      await deps.recordBillingEvent(event, db);
+      await deps.recordBillingEvent(event, { db });
       return true;
     });
+    // Only once committed is the grant visible to the sweeps, so only then can their positions be checked; the
+    // creation's flag stays until that succeeds, so a stop or failure before it leaves it to the job's repair.
+    if (applied && created && (await recordPassedExpiry(deps, grant))) {
+      await clearEventsPending(deps, grant);
+    }
+    return applied;
   }
   if (!(await write(deps.db))) {
     return false;
   }
   // The flag stays until every event the stored grant derives is recorded: a revoke records its creation event
-  // too (a no-op once recorded), which an earlier failed write may have left out.
-  const priorRecorded = !prior || !grant.eventsPending || (await recordCommittedEvent(deps, prior));
-  if ((await recordCommittedEvent(deps, event)) && priorRecorded) {
+  // too (a no-op once recorded), which an earlier failed write may have left out. The flag also stays until the
+  // grant checked the sweeps' positions (a revoke too: its creation's check may have failed), so a later repair does it.
+  const revoked = Boolean(grant.revokedAt);
+  const priorRecorded = !prior || !grant.eventsPending || (await recordCommittedEvent(deps, prior, revoked));
+  if ((await recordCommittedEvent(deps, event, revoked)) && priorRecorded && (await recordPassedExpiry(deps, grant))) {
     await clearEventsPending(deps, grant);
   }
   return true;
 }
 
+/** `recordPassedGrantExpiry` for a written grant; never fails the request: false (and deferred) when it fails. */
+async function recordPassedExpiry(deps: GrantDeps, grant: GrantRecord) {
+  try {
+    await deps.recordPassedGrantExpiry(grant);
+    return true;
+  } catch {
+    deps.metrics.track('grant.event_deferred', { type: 'expiry' });
+    return false;
+  }
+}
+
 /** The `eventsPending` a grant write sets (see `GrantDeps.flagsPendingEvents`). */
-function pendingFlag(deps: GrantDeps): Pick<GrantRecord, 'eventsPending'> {
-  return deps.flagsPendingEvents ? { eventsPending: true } : {};
+function pendingFlag(deps: GrantDeps, created: boolean): Pick<GrantRecord, 'eventsPending'> {
+  return deps.flagsPendingEvents && (created || !deps.db.capabilities.transactions.supported) ? { eventsPending: true } : {};
 }
 
 /**
  * Records the event of a committed grant change: retried once, then left to `repairGrantEvents`. Never fails
  * the request, whose outcome is the committed change.
  */
-async function recordCommittedEvent(deps: GrantDeps, event: BillFnBillingEvent) {
+async function recordCommittedEvent(deps: GrantDeps, event: BillFnBillingEvent, revoked: boolean) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      await deps.recordBillingEvent(event);
+      await deps.recordBillingEvent(event, { revoked });
       return true;
     } catch {
       // Retried once, then deferred.
