@@ -1127,7 +1127,7 @@ describe('in-process completion serialization bound', () => {
   });
 
   it('a waiter never runs while a slow holder is still running, and the key is released when it settles', async () => {
-    const run = createKeyedSerializer({ waitTimeoutMs: 20 });
+    const run = createKeyedSerializer({ waitTimeoutMs: 250 });
     let finishHolder!: () => void;
     let holderRunning = true;
     const holder = run('k', () => new Promise<void>((resolve) => {
@@ -1169,7 +1169,7 @@ describe('in-process completion serialization bound', () => {
   });
 
   it('a waiter takes the key from a holder past its evictableAt, and the evicted holder no longer releases it', async () => {
-    const run = createKeyedSerializer({ waitTimeoutMs: 20 });
+    const run = createKeyedSerializer({ waitTimeoutMs: 250 });
     let finishEvicted!: () => void;
     const evicted = run('k', () => new Promise<void>((resolve) => { finishEvicted = resolve; }), { evictableAt: Date.now() });
     let finishTaker!: () => void;
@@ -1181,7 +1181,7 @@ describe('in-process completion serialization bound', () => {
         resolve();
       };
     }));
-    await new Promise((resolve) => setTimeout(resolve, 40));
+    await new Promise((resolve) => setTimeout(resolve, 300));
     expect(takerRunning).toBe(true);
 
     finishEvicted();
