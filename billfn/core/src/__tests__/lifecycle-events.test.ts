@@ -41,7 +41,7 @@ const MINUTE = 60 * 1000;
 const HOUR_MS = 60 * MINUTE;
 const DAY = 24 * HOUR_MS;
 
-type ProviderState = { status: SubscriptionStatus; periodEnd: string; autoRenew: boolean };
+type ProviderState = { status: SubscriptionStatus; periodEnd: string; autoRenew: boolean; periodStart?: string };
 
 function createProvider(state: ProviderState): BillFnProviderAdapter {
   const billingState = (providerSubscriptionId: string) => ({
@@ -49,7 +49,7 @@ function createProvider(state: ProviderState): BillFnProviderAdapter {
     checkoutStatus: 'succeeded' as const,
     providerSubscriptionId,
     providerChargeId: `charge_${providerSubscriptionId}`,
-    currentPeriodStart: '2026-11-10T00:00:00.000Z',
+    currentPeriodStart: state.periodStart ?? '2026-11-10T00:00:00.000Z',
     currentPeriodEnd: state.periodEnd,
     autoRenew: state.autoRenew
   });
@@ -467,6 +467,59 @@ describe('lifecycle events: one per event type', () => {
       expect.objectContaining({ cause: 'grant.started' }),
       { cause: 'grant.expired', grantId, planKey: 'nucleus', status: 'inactive' }
     ]);
+  });
+});
+
+describe('lifecycle events report changes, not stored state', () => {
+  /** Billing state written before `onEvent` was configured (before the deploy), then BillFn with a handler. */
+  async function beforeDeploy(before: (env: ReturnType<typeof setup>) => Promise<void>) {
+    const db = memoryAdapter({ debug: false });
+    const clock = { current: new Date('2026-11-10T00:00:00.000Z') };
+    await before(setup({ db, clock, onEvent: null }));
+    clock.current = new Date(clock.current.getTime() + MINUTE);
+    const env = setup({ db, clock });
+    expect(await env.rows()).toEqual([]);
+    return env;
+  }
+
+  it('records no checkout.completed for a session that succeeded before, when a verification or sync rewrites it', async () => {
+    let session = { checkoutSessionId: '', subscriptionId: '' };
+    const env = await beforeDeploy(async (before) => {
+      session = await before.subscribe();
+    });
+    await env.billfn.verifyCheckout({ subject: env.subject, checkoutSessionId: session.checkoutSessionId });
+    env.providerState.periodEnd = '2027-01-10T00:00:00.000Z';
+    expect(await env.syncJob(session.subscriptionId)).toBe('succeeded');
+    await env.billfn.verifyCheckout({ subject: env.subject, checkoutSessionId: session.checkoutSessionId });
+
+    expect(env.ofType('checkout.completed')).toEqual([]);
+    expect(env.ofType('subscription.renewed')).toHaveLength(1);
+  });
+
+  it('records no grant event for a grant made before, when a second trial is refused or a revoke is repeated', async () => {
+    let compId = '';
+    const env = await beforeDeploy(async (before) => {
+      expect((await before.trial(14 * DAY)).ok).toBe(true);
+      const comp = await before.billfn.services.grants.create({
+        billingAccountId: ACCOUNT,
+        subject: before.subject,
+        planKey: 'nucleus',
+        kind: 'comp',
+        expiresAt: new Date(before.clock.current.getTime() + 30 * DAY).toISOString()
+      });
+      if (!comp.ok) throw new Error('expected grant');
+      compId = comp.data.grant.id;
+      expect((await before.billfn.services.grants.revoke({ billingAccountId: ACCOUNT, grantId: compId })).ok).toBe(true);
+    });
+
+    await expect(env.trial(14 * DAY)).rejects.toThrow('A trial was already granted');
+    const revoked = await env.billfn.services.grants.revoke({ billingAccountId: ACCOUNT, grantId: compId });
+    expect(revoked.ok).toBe(true);
+    await env.billfn.getEntitlements(env.subject);
+    await env.runLifecycleJob();
+
+    expect(env.delivered).toEqual([]);
+    expect(await env.rows()).toEqual([]);
   });
 });
 
@@ -939,6 +992,41 @@ describe('lifecycle events of a write without transactions', () => {
       await afterLease(env);
       expect(env.ofType('subscription.canceled')).toHaveLength(1);
     });
+  });
+
+  it('delivers the payload of the write that applied when a racing write of the same change with another payload loses', async () => {
+    const { db, faults } = staging();
+    const env = setup({ db });
+    const { subscriptionId } = await env.subscribe();
+    env.providerState.periodEnd = '2027-01-10T00:00:00.000Z';
+    env.providerState.periodStart = '2026-12-10T00:00:00.000Z';
+    let finishWinner = () => {};
+    const winnerDone = new Promise<void>((resolve) => (finishWinner = resolve));
+    let loser: Promise<string> | undefined;
+    // After the winner staged its renewal and before it writes, the loser (whose provider read saw another period
+    // start) reads the same row and stages the same renewal; its write waits until the winner's call is done.
+    faults.raceSubscription = async () => {
+      env.providerState.periodStart = '2026-12-09T00:00:00.000Z';
+      let reachedWrite = () => {};
+      const atWrite = new Promise<void>((resolve) => (reachedWrite = resolve));
+      faults.raceSubscription = async () => {
+        reachedWrite();
+        await winnerDone;
+      };
+      loser = env.syncJob(subscriptionId);
+      await atWrite;
+    };
+    const winner = await env.syncJob(subscriptionId);
+    finishWinner();
+    await loser;
+    expect(winner).toBe('succeeded');
+
+    expect(env.ofType('subscription.renewed').map((event) => event.data)).toEqual([
+      expect.objectContaining({ currentPeriodStart: '2026-12-10T00:00:00.000Z', currentPeriodEnd: '2027-01-10T00:00:00.000Z' })
+    ]);
+    env.advance(DAY + HOUR_MS);
+    await env.runLifecycleJob();
+    expect(env.ofType('subscription.renewed')).toHaveLength(1);
   });
 });
 

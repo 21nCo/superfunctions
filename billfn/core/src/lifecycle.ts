@@ -152,8 +152,11 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
    * Without transactions, records the events of a write before it runs, as
    * `staged`: no dispatcher delivers them until `confirm` or `promote` makes
    * them `pending` once a write that names them applied. Staging an event that
-   * is already staged renews its stage, which ends a recovery claim on it; one
-   * already pending, delivered or failed is left as it is. A staged event
+   * is already staged renews its stage, which ends a recovery claim on it, and
+   * keeps its stored payload: an id names one payload (the caller derives it
+   * from the payload), so a racing write that loses never replaces what the
+   * applied one delivers. One already pending, delivered or failed is left as
+   * it is. A staged event
    * whose write was interrupted, or failed or lost its race, is settled by
    * `dispatch` after the claim lease against the marker on its row; it is
    * kept staged, and checked again, until `LIFECYCLE_STAGE_WINDOW_MS` after
@@ -177,8 +180,6 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
         ],
         data: {
           claimId: stageId,
-          data: event.data,
-          occurredAt: event.occurredAt,
           attempts: 0,
           nextAttemptAt: leaseEnd(),
           createdAt: toIsoString(deps.now()),

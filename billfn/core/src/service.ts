@@ -40,6 +40,7 @@ import type {
   BillFnChangeSubscriptionResponse,
   BillFnCheckoutCreateRequest,
   BillFnCheckoutSession,
+  BillFnLifecycleEventType,
   BillFnDispatchEventsRequest,
   BillFnConfig,
   BillFnCreateCheckoutResponse,
@@ -150,6 +151,7 @@ export const BILLFN_IMPORT_PENDING_METADATA_KEY = 'billfnImportPending';
 export const BILLFN_IMPORT_REPLAY_UNFINISHED_REASON = 'import_replay_unfinished';
 /** Deliveries of one queue message refused by lease conflicts before it is dead-lettered. */
 const RECONCILIATION_QUEUE_MAX_LEASE_CONFLICT_ATTEMPTS = 5;
+const CHECKOUT_WRITE_ATTEMPTS = 3;
 
 /**
  * `BILLFN_CONFLICT` errors raised because another runner holds, or took over,
@@ -308,9 +310,14 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
   const grantDeps: GrantDeps = {
     ...deps,
     // A grant's lifecycle events are stored before its billing event, so a repair that finds the billing event
-    // missing records them too (once: their ids derive from the grant).
+    // missing records them too (once: their ids derive from the grant). A grant change whose billing event is
+    // stored already (a refused duplicate create or a repeated revoke finding it, also one made before lifecycle
+    // events existed) records none.
     recordBillingEvent: async (event, db) => {
-      await deps.lifecycle.record(grantLifecycleEvents(event), db);
+      const eventDb = db ?? deps.db;
+      if (deps.lifecycle.enabled && !(await findBillingEvent(eventDb, deps.namespace, event.id))) {
+        await deps.lifecycle.record(grantLifecycleEvents(event), db);
+      }
       await recordBillingEvent(db ? { ...deps, db } : deps, event);
     },
     isDuplicateRecordError
@@ -2724,6 +2731,54 @@ async function updateCheckoutSession(
   });
 }
 
+/**
+ * Writes provider state to a checkout session. `checkout.completed` commits with the write that moves the session
+ * to `succeeded` from a stored status other than `succeeded`, applied only over the status it read, so of racing
+ * writes one completes it. A rewrite of a succeeded session (a renewal webhook, a restore, a repeated
+ * verification), also of one that succeeded before lifecycle events existed, records nothing.
+ */
+async function writeCheckoutSessionState(
+  deps: ServiceDeps,
+  read: BillFnCheckoutSession,
+  state: VerifiedBillingState,
+  subscription: BillFnSubscription,
+  timestamp: string
+): Promise<BillFnCheckoutSession> {
+  let stored: BillFnCheckoutSession | null = read;
+  for (let attempt = 0; stored && attempt < CHECKOUT_WRITE_ATTEMPTS; attempt += 1) {
+    const current: BillFnCheckoutSession = stored;
+    const patch: Partial<BillFnCheckoutSession> = {
+      status: state.checkoutStatus,
+      providerSubscriptionId: state.providerSubscriptionId ?? current.providerSubscriptionId,
+      providerChargeId: state.providerChargeId ?? current.providerChargeId,
+      updatedAt: timestamp,
+      metadata: mergeJson(current.metadata, state.raw)
+    };
+    if (patch.status !== 'succeeded' || current.status === 'succeeded') {
+      return updateCheckoutSession(deps, current.checkoutSessionId, patch);
+    }
+    const events = [checkoutCompletedEvent(current, subscription)];
+    const applied = await writeWithLifecycleEvents(deps, events, current, async (db, marker) => {
+      const updated = await db.updateMany({
+        model: TABLES.checkoutSessions,
+        where: [
+          { field: 'checkoutSessionId', operator: 'eq', value: current.checkoutSessionId },
+          { field: 'status', operator: 'eq', value: current.status },
+          ...marker.where
+        ],
+        data: { ...patch, ...marker.data },
+        namespace: deps.namespace
+      });
+      return updated === 1;
+    });
+    stored = await getCheckoutSession(deps, current.checkoutSessionId);
+    if (applied) {
+      return stored ?? { ...current, ...patch };
+    }
+  }
+  throw createBillFnError({ code: 'BILLFN_CONFLICT', message: 'Unable to write the checkout session after multiple retries' });
+}
+
 async function getCheckoutSession(deps: ServiceDeps, checkoutSessionId: string) {
   return deps.db.findOne<BillFnCheckoutSession>({
     model: TABLES.checkoutSessions,
@@ -3333,25 +3388,7 @@ async function applyVerificationState(
 
   let checkoutSession = input.checkoutSession;
   if (input.checkoutSession) {
-    const { checkoutSessionId } = input.checkoutSession;
-    const patch: Partial<BillFnCheckoutSession> = {
-      status: input.state.checkoutStatus,
-      providerSubscriptionId: input.state.providerSubscriptionId ?? input.checkoutSession.providerSubscriptionId,
-      providerChargeId: input.state.providerChargeId ?? input.checkoutSession.providerChargeId,
-      updatedAt: timestamp,
-      metadata: mergeJson(input.checkoutSession.metadata, input.state.raw)
-    };
-    // A succeeded session's `checkout.completed` commits with it, once per session.
-    await writeWithLifecycleEvents(
-      deps,
-      patch.status === 'succeeded' ? [checkoutCompletedEvent(checkoutSessionId, subscription)] : [],
-      input.checkoutSession,
-      // Unordered: the only marker a session carries names its own `checkout.completed`, so replacing it loses nothing.
-      async (db, marker) => {
-        checkoutSession = await updateCheckoutSession({ ...deps, db }, checkoutSessionId, { ...patch, ...marker.data });
-        return true;
-      }
-    );
+    checkoutSession = await writeCheckoutSessionState(deps, input.checkoutSession, input.state, subscription, timestamp);
   }
 
   // A superseded read leaves the subscription's state, so its entitlements stand and no lifecycle event is recorded;
@@ -3693,27 +3730,35 @@ function entitlementChangeEvents(
     return [];
   }
   const replaced = previous ? entitlementsFingerprint(previous) : 'none';
+  const data = {
+    cause: 'subscription' as const,
+    subscriptionId: subscription.id,
+    planKey: next.planKey,
+    status: next.status,
+    features: next.features,
+    limits: next.limits,
+    previousPlanKey: previous?.planKey ?? null,
+    previousStatus: previous?.status ?? null
+  };
   return [
     {
-      id: lifecycleEventId(
-        'entitlement.changed',
-        `subscription\n${next.billingAccountId}\n${next.sourceEventId ?? ''}\n${replaced}\n${entitlementsFingerprint(next)}`
-      ),
+      id: payloadEventId('entitlement.changed', `subscription\n${next.billingAccountId}\n${next.sourceEventId ?? ''}\n${replaced}`, data),
       type: 'entitlement.changed',
       billingAccountId: next.billingAccountId,
       occurredAt: next.updatedAt,
-      data: {
-        cause: 'subscription',
-        subscriptionId: subscription.id,
-        planKey: next.planKey,
-        status: next.status,
-        features: next.features,
-        limits: next.limits,
-        previousPlanKey: previous?.planKey ?? null,
-        previousStatus: previous?.status ?? null
-      }
+      data
     }
   ];
+}
+
+/**
+ * The id of a lifecycle event a state write records: derived from `key`, the change it reports, and from its
+ * payload, so one id names one payload. A write that loses its race to another reporting the same change with
+ * another payload stages another id, which no applied write names, and never replaces the payload the applied
+ * write's event delivers (see `lifecycle.stage`).
+ */
+function payloadEventId(type: BillFnLifecycleEventType, key: string, data: unknown) {
+  return lifecycleEventId(type, `${key}\n${JSON.stringify(canonicalJson(data))}`);
 }
 
 function entitlementsFingerprint(snapshot: Pick<BillFnEntitlementSnapshot, 'planKey' | 'status' | 'features' | 'limits'>) {
@@ -3735,14 +3780,24 @@ async function isStagedEventApplied(deps: ServiceDeps, event: BillFnLifecycleEve
   return Boolean(row?.lifecycleEventIds?.split(' ').includes(event.id));
 }
 
-/** The `checkout.completed` of a checkout session that succeeded with `subscription`; one per session. */
-function checkoutCompletedEvent(checkoutSessionId: string, subscription: BillFnSubscription): LifecycleEventInput {
+/**
+ * The `checkout.completed` of a checkout session that succeeded with `subscription`: one per session, keyed by
+ * it, with a payload from the session's own purchase (and its subscription's id), so every write that completes
+ * the session reports the same one.
+ */
+function checkoutCompletedEvent(session: BillFnCheckoutSession, subscription: BillFnSubscription): LifecycleEventInput {
   return {
-    billingAccountId: subscription.billingAccountId,
+    billingAccountId: session.billingAccountId,
     occurredAt: subscription.updatedAt,
-    id: lifecycleEventId('checkout.completed', checkoutSessionId),
+    id: lifecycleEventId('checkout.completed', session.checkoutSessionId),
     type: 'checkout.completed',
-    data: { ...subscriptionRef(subscription), checkoutSessionId }
+    data: {
+      subscriptionId: subscription.id,
+      provider: session.provider,
+      planKey: session.planKey,
+      priceId: session.priceId,
+      checkoutSessionId: session.checkoutSessionId
+    }
   };
 }
 
@@ -3759,7 +3814,8 @@ function subscriptionRef(subscription: BillFnSubscription) {
  * The lifecycle events of a write of provider state over `previous`: `subscription.renewed` when an active
  * subscription's period end moves later (once per period end), and `subscription.canceled` when a renewing
  * subscription is canceled (`isCanceledFrom`), keyed by the provider change the call applies
- * (`providerChangeKey`), so every retry of its write, also over a newer row after a lost race, shares its id.
+ * (`providerChangeKey`), so every retry of its write, also over a newer row after a lost race, shares its id,
+ * and by the payload (`payloadEventId`).
  */
 function subscriptionLifecycleEvents(
   previous: BillFnSubscription,
@@ -3772,30 +3828,24 @@ function subscriptionLifecycleEvents(
   const previousEnd = previous.currentPeriodEnd ? Date.parse(previous.currentPeriodEnd) : Number.NaN;
   const nextEnd = subscription.currentPeriodEnd ? Date.parse(subscription.currentPeriodEnd) : Number.NaN;
   if (subscription.status === 'active' && Number.isFinite(previousEnd) && Number.isFinite(nextEnd) && nextEnd > previousEnd) {
-    events.push({
-      ...base,
-      id: lifecycleEventId('subscription.renewed', `${subscription.id}\n${toIsoString(new Date(nextEnd))}`),
-      type: 'subscription.renewed',
-      data: {
-        ...ref,
-        currentPeriodStart: subscription.currentPeriodStart ?? null,
-        currentPeriodEnd: subscription.currentPeriodEnd!,
-        previousPeriodEnd: previous.currentPeriodEnd!
-      }
-    });
+    const data = {
+      ...ref,
+      currentPeriodStart: subscription.currentPeriodStart ?? null,
+      currentPeriodEnd: subscription.currentPeriodEnd!,
+      previousPeriodEnd: previous.currentPeriodEnd!
+    };
+    const id = payloadEventId('subscription.renewed', `${subscription.id}\n${toIsoString(new Date(nextEnd))}`, data);
+    events.push({ ...base, id, type: 'subscription.renewed', data });
   }
   if (isCanceledFrom(previous, subscription)) {
-    events.push({
-      ...base,
-      id: lifecycleEventId('subscription.canceled', `${subscription.id}\n${providerChangeKey}`),
-      type: 'subscription.canceled',
-      data: {
-        ...ref,
-        status: subscription.status,
-        autoRenew: subscription.autoRenew,
-        currentPeriodEnd: subscription.currentPeriodEnd ?? null
-      }
-    });
+    const data = {
+      ...ref,
+      status: subscription.status,
+      autoRenew: subscription.autoRenew,
+      currentPeriodEnd: subscription.currentPeriodEnd ?? null
+    };
+    const id = payloadEventId('subscription.canceled', `${subscription.id}\n${providerChangeKey}`, data);
+    events.push({ ...base, id, type: 'subscription.canceled', data });
   }
   return events;
 }
@@ -3835,6 +3885,14 @@ function canonicalJson(value: unknown): unknown {
       .map((key) => [key, canonicalJson((value as Record<string, unknown>)[key])]);
   }
   return value ?? null;
+}
+
+function findBillingEvent(db: Adapter, namespace: string, id: string) {
+  return db.findOne<BillFnBillingEvent>({
+    model: TABLES.billingEvents,
+    where: [{ field: 'id', operator: 'eq', value: id }],
+    namespace
+  });
 }
 
 async function recordBillingEvent(deps: ServiceDeps, event: BillFnBillingEvent) {
