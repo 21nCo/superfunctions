@@ -1,0 +1,21 @@
+filefn/server/src/__tests__/client-file-ids.test.ts
+  s_000565618f97bb::t_a0883e8895eb39 521-541
+filefn/server/src/upload-sessions/service.ts
+  s_000565618f97bb::t_004b8d52fa14b4 56-58,114-118,121-123
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "47a61e31c3b239db981673a24f8e7465e2d766fe",
+  "prompts": {},
+  "sessions": {
+    "s_000565618f97bb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_000565618f97bb",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
