@@ -293,6 +293,73 @@ const CAPABILITY_STATE_FIELDS = [
   "isAncestorInactive",
 ];
 
+/**
+ * The ids a query's filters restrict it to: `id` as a value, `eq`/`$eq` or
+ * `in`/`$in` of strings, at the top level or in a top-level `$and` clause.
+ * Only records with these ids can ever be in the result.
+ */
+export function resolvePinnedQueryIds(query: any): Set<string> | undefined {
+  const fromClause = (clause: unknown): Set<string> | undefined => {
+    if (!isPlainObject(clause)) return undefined;
+    const idFilter = clause.id;
+    if (typeof idFilter === "string") return new Set([idFilter]);
+    if (isPlainObject(idFilter)) {
+      const eq = idFilter.eq ?? idFilter.$eq;
+      if (typeof eq === "string") return new Set([eq]);
+      const list = idFilter.in ?? idFilter.$in;
+      if (Array.isArray(list) && list.every((value: unknown) => typeof value === "string")) {
+        return new Set(list as string[]);
+      }
+    }
+    if (Array.isArray(clause.$and)) {
+      for (const sub of clause.$and) {
+        const pinned = fromClause(sub);
+        if (pinned) return pinned;
+      }
+    }
+    return undefined;
+  };
+  return fromClause(query?.filters);
+}
+
+/**
+ * Whether a query reads only its own records' fields: no relation (even one
+ * to the same resource) and no dotted path, which can change with other
+ * records.
+ */
+function selectsOwnFieldsOnly(schema: DatafnSchema, query: any): boolean {
+  const select = query?.select;
+  if (select === undefined) return true;
+  if (!Array.isArray(select)) return false;
+  return select.every(
+    (token: unknown) =>
+      typeof token === "string" &&
+      (token === "*" ||
+        (!token.includes(".") && !findRelationMatch(schema, query.resource, token))),
+  );
+}
+
+function resourceHasRelations(schema: DatafnSchema, resource: string): boolean {
+  return (schema.relations ?? []).some(
+    (relation) =>
+      endpointList(relation.from).includes(resource) || endpointList(relation.to).includes(resource),
+  );
+}
+
+/**
+ * Fields whose change on one record can change other records of the same
+ * resource through a relation: capability state (trash/archive propagation),
+ * foreign keys and tree paths.
+ */
+function propagatingFields(schema: DatafnSchema, resource: string): Set<string> {
+  const fields = new Set<string>([...CAPABILITY_STATE_FIELDS, ...relationFkFields(schema, resource)]);
+  for (const relation of schema.relations ?? []) {
+    const pathField = (relation as any).pathField;
+    if (typeof pathField === "string") fields.add(pathField);
+  }
+  return fields;
+}
+
 /** Fields a local merge stamps without the caller naming them. */
 const IMPLICIT_MERGE_FIELDS = ["updatedAt", "updatedBy"];
 
@@ -579,6 +646,42 @@ function createQuerySignal<T>(
     : deriveMembershipFields(fullQuery, schema);
   let membershipFields: Set<string> | null =
     queryHooks.length > 0 ? null : baseMembershipFields;
+
+  // A query pinned to record ids (e.g. a KV key's signal) can only change
+  // when one of those records does. Plugins can rewrite the query or its
+  // result, so a signal they run on is never treated as pinned.
+  const pinnedIds =
+    !clientPlugins.some(
+      (plugin) => typeof plugin.beforeQuery === "function" || typeof plugin.afterQuery === "function",
+    ) && selectsOwnFieldsOnly(schema, fullQuery)
+      ? resolvePinnedQueryIds(fullQuery)
+      : undefined;
+  // Without relations a write changes only the records it names.
+  const pinnedResourceIsolated = pinnedIds ? !resourceHasRelations(schema, resource) : false;
+  const pinnedPropagatingFields = pinnedIds && !pinnedResourceIsolated
+    ? propagatingFields(schema, resource)
+    : null;
+  /**
+   * Whether a write to this signal's resource leaves its pinned records
+   * untouched: it names only other records, and cannot reach the pinned ones
+   * through a cascade, inactive propagation or tree move.
+   */
+  const writeCannotReachPinnedRecords = (event: any): boolean => {
+    if (!pinnedIds) return false;
+    const ids = event.ids;
+    if (
+      !Array.isArray(ids) ||
+      ids.length === 0 ||
+      !ids.every((id: unknown) => typeof id === "string") ||
+      ids.some((id: string) => pinnedIds.has(id))
+    ) {
+      return false;
+    }
+    if (pinnedResourceIsolated) return true;
+    if (event.action !== "merge" && event.action !== "insert") return false;
+    if (!isPlainObject(event.record)) return false;
+    return Object.keys(event.record).every((key) => !pinnedPropagatingFields!.has(key));
+  };
   let membershipRun = 0;
   /**
    * Runs the signal's query. When plugins can rewrite it, the membership set
@@ -740,6 +843,10 @@ function createQuerySignal<T>(
         return;
       }
       
+      if (writeCannotReachPinnedRecords(event)) {
+        return;
+      }
+
       // Fine-grained invalidation logic (SIG-002) for primary resource mutations
       const action = event.action;
       
