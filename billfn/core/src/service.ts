@@ -313,11 +313,13 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
     // missing records them too (once: their ids derive from the grant). A grant change whose billing event is
     // stored already (a refused duplicate create or a repeated revoke finding it, also one made before lifecycle
     // events existed) records none.
-    recordBillingEvent: async (event, db) => {
+    // A repair passes the job's lease check, which runs before each lifecycle row and before the billing event.
+    recordBillingEvent: async (event, { db, revoked, beforeWrite } = {}) => {
       const eventDb = db ?? deps.db;
       if (deps.lifecycle.enabled && !(await findBillingEvent(eventDb, deps.namespace, event.id))) {
-        await deps.lifecycle.record(grantLifecycleEvents(event, deps.now()), db);
+        await deps.lifecycle.record(grantLifecycleEvents(event, deps.now(), revoked), db, beforeWrite);
       }
+      await beforeWrite?.();
       await recordBillingEvent(db ? { ...deps, db } : deps, event);
     },
     isDuplicateRecordError,

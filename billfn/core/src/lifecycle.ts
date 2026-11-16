@@ -43,8 +43,10 @@ const SWEEP_PAGE_SIZE = 50;
 export const GRANT_SWEEP_RUN_LIMIT = 200;
 /**
  * How far behind now each sweep's window ends: a grant write that becomes visible up to this long after its
- * timestamp (a slow request or commit, or a small clock skew between instances) is still ahead of the stored
- * position when it lands.
+ * timestamp (a slow request or commit, or a clock skew between instances up to this long) is still ahead of the
+ * stored position when it lands. The limit: a grant write visible more than this long after its timestamp, or a
+ * clock skew between instances above it, whose expiry the stored position has already passed, gets no
+ * `grant.expired` / `grant.expiring` from the sweep.
  */
 export const GRANT_SWEEP_SETTLE_MS = 60 * 1000;
 const CURSORS_TABLE = 'reconciliationCursors';
@@ -86,8 +88,10 @@ export function lifecycleEventId(type: BillFnLifecycleEventType, key: string) {
 }
 
 /**
- * The lifecycle events a grant billing event stands for, derived from it alone so a repair records the same ones;
- * a `grant.expiring` only while the grant has not expired at `now` (a repair after its expiry records none).
+ * The lifecycle events a grant billing event stands for, derived from it and the stored grant's revocation so a
+ * repair records the same ones; a creation-time `grant.expiring` only while the grant is not revoked (`revoked`:
+ * the stored grant has a `revokedAt` when the event is recorded) and has not expired at `now` (a repair after its
+ * expiry or revocation records none).
  */
 export function grantLifecycleEvents(
   event: {
@@ -96,7 +100,8 @@ export function grantLifecycleEvents(
     payload: Record<string, unknown>;
     createdAt: string;
   },
-  now: Date
+  now: Date,
+  revoked = false
 ): LifecycleEventInput[] {
   const { grantId, kind, planKey, startsAt, expiresAt } = event.payload as Record<string, string>;
   const base = { billingAccountId: event.billingAccountId, occurredAt: event.createdAt };
@@ -111,7 +116,10 @@ export function grantLifecycleEvents(
       grantEntitlementChange(base, 'grant.started', grantId!, planKey!, kind === 'trial' ? 'trialing' : 'active'),
       // A grant that already expires within the lead time gets its `grant.expiring` with its creation: the
       // expiry sweep resumes after the grants it read, so it never returns to an expiry that is already behind it.
-      ...(Date.parse(expiresAt!) - Date.parse(event.createdAt) <= GRANT_EXPIRING_LEAD_MS && Date.parse(expiresAt!) > now.getTime()
+      // A revoked grant never expires, so it gets none.
+      ...(!revoked &&
+      Date.parse(expiresAt!) - Date.parse(event.createdAt) <= GRANT_EXPIRING_LEAD_MS &&
+      Date.parse(expiresAt!) > now.getTime()
         ? [grantExpiringEvent({ ...base, grantId: grantId!, kind: kind as 'trial' | 'comp', planKey: planKey!, expiresAt: expiresAt! })]
         : [])
     ];
@@ -173,15 +181,18 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
 
   /**
    * Stores the events through `db` (a transaction, when given) unless already
-   * stored. Without an `onEvent` handler nothing is recorded.
+   * stored. Without an `onEvent` handler nothing is recorded. `beforeWrite`
+   * runs before each row write (a job's lease check); when it throws, no
+   * further row is written.
    */
-  async function record(events: LifecycleEventInput[], db: Adapter = deps.db) {
+  async function record(events: LifecycleEventInput[], db: Adapter = deps.db, beforeWrite?: () => Promise<void>) {
     if (!handler) {
       return;
     }
     for (const event of events) {
       // Checked first: inside a Postgres transaction a duplicate-key error would abort it.
       if (!(await findEvent(event.id, db))) {
+        await beforeWrite?.();
         await createEvent(event, 'pending', null, db);
       }
       callEvents.getStore()?.add(event.id);

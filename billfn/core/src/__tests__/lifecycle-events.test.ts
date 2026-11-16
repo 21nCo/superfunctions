@@ -1850,9 +1850,13 @@ describe('the lifecycle-events job does bounded work that resumes where the prev
       expect(env.ofType('entitlement.changed').map((event) => event.data.cause)).toEqual(['grant.expired', 'grant.started']);
     });
 
-    it('of two concurrent repair runs, the one that lost its lease writes nothing after the loss', async () => {
+    it.each([
+      ['its first billing event', 'billingEvents'],
+      // Mid-event: the grant.started row is written, its entitlement.changed and billing event are not yet.
+      ['the first lifecycle row of its first event', 'lifecycleEvents']
+    ])('of two concurrent repair runs, the one that lost its lease after %s writes nothing after the loss', async (_, stallModel) => {
       const { db } = faultyLifecycleDb(memoryAdapter({ debug: false }), { transactions: false });
-      const hooks = { afterFirstBillingEvent: null as (() => Promise<void>) | null, lost: false };
+      const hooks = { afterFirstWrite: null as (() => Promise<void>) | null, lost: false };
       const writesAfterLoss: string[] = [];
       const note = (kind: string, model: string) => {
         if (hooks.lost && model !== 'reconciliationJobs') writesAfterLoss.push(`${kind} ${model}`);
@@ -1862,9 +1866,9 @@ describe('the lifecycle-events job does bounded work that resumes where the prev
         async create<T>(params: Parameters<Adapter['create']>[0]): Promise<T> {
           note('create', params.model);
           const created = await db.create<T>(params);
-          if (params.model === 'billingEvents') {
-            const hook = hooks.afterFirstBillingEvent;
-            hooks.afterFirstBillingEvent = null;
+          if (params.model === stallModel) {
+            const hook = hooks.afterFirstWrite;
+            hooks.afterFirstWrite = null;
             await hook?.();
           }
           return created;
@@ -1886,7 +1890,7 @@ describe('the lifecycle-events job does bounded work that resumes where the prev
       const jobId = enqueued.data.job.id;
       // Run A stalls after its first repair write until its lease lapsed; run B takes the job over and completes it.
       let runB: Awaited<ReturnType<typeof env.billfn.runReconciliationJob>> | undefined;
-      hooks.afterFirstBillingEvent = async () => {
+      hooks.afterFirstWrite = async () => {
         env.advance(16 * MINUTE);
         runB = await env.billfn.runReconciliationJob({ jobId });
         hooks.lost = true;
@@ -1900,6 +1904,80 @@ describe('the lifecycle-events job does bounded work that resumes where the prev
       expect(started).toEqual(rows.map((row) => row.id));
       const billing = await db.findMany<{ type: string }>({ model: 'billingEvents', namespace: 'billfn' });
       expect(billing.filter((event) => event.type === 'billfn.grant.created')).toHaveLength(3);
+      const lifecycle = await env.rows();
+      expect(lifecycle.filter((event) => event.type === 'grant.started')).toHaveLength(3);
+      expect(lifecycle.filter((event) => event.type === 'entitlement.changed')).toHaveLength(3);
+    });
+
+    const isCreationWrite = (model: string, data: Record<string, any>) =>
+      (model === 'billingEvents' && data.type === 'billfn.grant.created') ||
+      (model === 'lifecycleEvents' &&
+        (data.type === 'grant.started' || data.type === 'grant.expiring' || data.data?.cause === 'grant.started'));
+
+    it.each([
+      [
+        'the revoke itself, once its repair failed',
+        (faults: ReturnType<typeof faultyLifecycleDb>['faults']) => {
+          // Only the repair the revoke runs first fails; the creation event the revoke records after it commits applies.
+          let failures = 1;
+          faults.failCreate = (model, data) => isCreationWrite(model, data) && failures-- > 0;
+        },
+        async () => undefined
+      ],
+      [
+        'the job',
+        (faults: ReturnType<typeof faultyLifecycleDb>['faults']) => {
+          faults.failCreate = isCreationWrite;
+        },
+        async (env: ReturnType<typeof setup>) => {
+          await env.runLifecycleJob();
+        }
+      ],
+      [
+        'an entitlements read',
+        (faults: ReturnType<typeof faultyLifecycleDb>['faults']) => {
+          faults.failCreate = isCreationWrite;
+        },
+        async (env: ReturnType<typeof setup>) => {
+          await env.billfn.getEntitlements(env.subject);
+        }
+      ]
+    ])('a short comp revoked before its creation event was recorded gets no grant.expiring when %s records it', async (_, failDuringRevoke, repair) => {
+      const { db, faults } = faultyLifecycleDb(memoryAdapter({ debug: false }), { transactions: false });
+      const env = setup({ db });
+      faults.create = true;
+      faults.billingEvent = true;
+      const comp = await env.billfn.services.grants.create({
+        billingAccountId: ACCOUNT,
+        subject: env.subject,
+        planKey: 'nucleus',
+        kind: 'comp',
+        expiresAt: new Date(env.clock.current.getTime() + 2 * DAY).toISOString()
+      });
+      faults.create = false;
+      faults.billingEvent = false;
+      if (!comp.ok) throw new Error('expected the grant to commit');
+      const grantId = comp.data.grant.id;
+      env.advance(MINUTE);
+      failDuringRevoke(faults);
+      expect((await env.billfn.services.grants.revoke({ billingAccountId: ACCOUNT, grantId })).ok).toBe(true);
+      faults.failCreate = null;
+      await repair(env);
+      env.advance(HOUR_MS);
+      await env.runLifecycleJob();
+
+      const rows = await env.rows();
+      const summary = rows
+        .filter((event) => event.billingAccountId === ACCOUNT)
+        .map((event) => [event.type, (event.data as { cause?: string }).cause ?? null])
+        .sort();
+      expect(summary).toEqual([
+        ['entitlement.changed', 'grant.revoked'],
+        ['entitlement.changed', 'grant.started'],
+        ['grant.started', null]
+      ]);
+      const [stored] = await db.findMany<{ eventsPending?: boolean }>({ model: 'entitlementGrants', namespace: 'billfn' });
+      expect(stored?.eventsPending).toBe(false);
     });
   });
 });
