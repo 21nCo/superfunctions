@@ -6,6 +6,8 @@
 import type { DatafnSchema } from "../../core-types.js";
 import type { SchemaIndex, QueryValidationLimits } from "../../validation/index.js";
 import { validateQueryBody as validateQueryBodyCore } from "../../validation/index.js";
+import { isForeignKeyNamedRelation, isRelationFilterEntry } from "../../execution/query/filter-plan.js";
+import { isHtreeSelectBase } from "../../execution/query/planner.js";
 import {
   endpointList,
   findRelationMatch,
@@ -162,8 +164,8 @@ export function validateQuery(
       const baseName = parts[0];
       const directive = parts.slice(1).join(".") || undefined;
 
-      // Phase 13: HTREE support
-      const isHtreeToken = baseName === "parent" || baseName === "children";
+      // Phase 13: HTREE support (a many-one relation named `parent` is not HTREE)
+      const isHtreeToken = isHtreeSelectBase(baseName, q.resource, schema);
 
       if (isHtreeToken) {
         // Check if resource has parentPath field
@@ -545,10 +547,12 @@ export function validateFilters(
       continue;
     }
 
-    // Check if it's a relation (for quantifiers)
+    // Check if it's a relation (for quantifiers). A relation whose foreign
+    // key has the same name is filtered as that field unless the value is a
+    // quantifier object.
     const rel = findRelationMatch(schema, resourceName, key);
 
-    if (rel) {
+    if (rel && isRelationFilterEntry(schema, resourceName, key, filters[key])) {
       const val = filters[key];
       if (typeof val !== "object" || val === null) {
         return {
@@ -587,8 +591,10 @@ export function validateFilters(
       continue;
     }
 
-    // Regular field filter
-    if (!fieldNames.has(key)) {
+    // Regular field filter. A relation storing its id under its own name
+    // (e.g. node.parent) has that field even when the resource doesn't
+    // declare it.
+    if (!fieldNames.has(key) && !(rel && isForeignKeyNamedRelation(schema, resourceName, key))) {
       return {
         ok: false,
         code: "DFQL_UNKNOWN_FIELD",

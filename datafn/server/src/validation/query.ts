@@ -21,6 +21,10 @@ import {
   getCapabilityFields,
 } from "@datafn/core";
 import { validateFilterDepth, validateRelationDepth } from "./depth.js";
+import {
+  isForeignKeyNamedRelation,
+  isQuantifierFilterValue,
+} from "../execution/query/filter-plan.js";
 
 /**
  * Limits for query validation caps (SEC-015, SEC-016, VAL-002 through VAL-005)
@@ -948,9 +952,17 @@ export function validateFilters(
     }
 
 
-    // Check if it's a relation
+    // Check if it's a relation. A relation whose foreign key has the same
+    // name (e.g. many-one `parent` with fkField "parent") is filtered as that
+    // field unless the value is a quantifier object.
     const relations = index.relationsByResource.get(resourceName);
-    if (relations?.has(key)) {
+    if (
+      relations?.has(key) &&
+      !(
+        isForeignKeyNamedRelation(index.schema, resourceName, key) &&
+        !isQuantifierFilterValue(filters[key])
+      )
+    ) {
       const val = filters[key];
       if (typeof val !== "object" || val === null) {
         return vErr("DFQL_INVALID", `Relation filter must be object`, `filters.${key}`);

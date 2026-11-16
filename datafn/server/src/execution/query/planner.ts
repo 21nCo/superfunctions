@@ -10,9 +10,11 @@
  */
 
 import type { WhereClause, OrderBy } from "@superfunctions/db";
-import { endpointIncludes } from "@datafn/core";
+import { endpointIncludes, endpointList, findRelationMatch, relationTargetEndpoint } from "@datafn/core";
 import { parseSortTerms } from "./sort.js";
 import type { SortInputTerm } from "@datafn/core";
+import type { DatafnSchema } from "../../core-types.js";
+import { canPushDownFilters, isRelationFilterEntry } from "./filter-plan.js";
 
 // ---------------------------------------------------------------------------
 // Extended types
@@ -170,7 +172,7 @@ export function convertDfqlFilters(
     }
 
     // Schema-based relation key detection
-    if (schema != null && isRelationKey(key, resource, schema)) {
+    if (schema != null && isRelationKey(key, value, resource, schema)) {
       return null;
     }
 
@@ -226,6 +228,59 @@ export function convertDfqlFilters(
   }
 
   return result;
+}
+
+/**
+ * Relation levels whose records a select path needs loaded (`depth`): its
+ * leading segments that name relations, minus a terminal ids-only segment
+ * whose id is a foreign key on the previous level's records (e.g. `d` in
+ * `b.c.d` with a many-one `d`). `reachesPrimary`: a route that follows the
+ * whole path passes through the primary resource (polymorphic routes that
+ * cannot continue don't count).
+ */
+function relationPath(
+  parts: string[],
+  resource: unknown,
+  schema: unknown,
+): { depth: number; reachesPrimary: boolean } {
+  if (!schema || typeof schema !== "object" || typeof resource !== "string") {
+    return { depth: 0, reachesPrimary: false };
+  }
+  // Resources the path can be at, each with whether its own route there
+  // passed through the primary resource (routes that stop are dropped).
+  let current = new Map<string, boolean>([[resource, false]]);
+  let depth = 0;
+  let lastFkOnSource = false;
+  // Whether a route that took the last step had passed through the primary
+  // before it (the last target itself not counted).
+  let lastSourceViaPrimary = false;
+  for (const segment of parts) {
+    const next = new Map<string, boolean>();
+    let fkOnSource = true;
+    let sourceViaPrimary = false;
+    for (const [name, viaPrimary] of current) {
+      const match = findRelationMatch(schema as any, name, segment);
+      if (!match) continue;
+      if (viaPrimary) sourceViaPrimary = true;
+      const type = (match.relation as any).type;
+      if (!((type === "many-one" && match.direction === "forward") || (type === "one-many" && match.direction === "inverse"))) {
+        fkOnSource = false;
+      }
+      for (const target of endpointList(relationTargetEndpoint(match.relation, match.direction))) {
+        next.set(target, (next.get(target) ?? false) || viaPrimary || target === resource);
+      }
+    }
+    if (next.size === 0) break;
+    depth += 1;
+    lastFkOnSource = fkOnSource;
+    lastSourceViaPrimary = sourceViaPrimary;
+    current = next;
+  }
+  // A terminal ids-only segment read from the previous level's foreign key
+  // loads nothing, so its target does not count.
+  const terminalFkOnly = depth === parts.length && lastFkOnSource;
+  const reachesPrimary = terminalFkOnly ? lastSourceViaPrimary : [...current.values()].some(Boolean);
+  return { depth: terminalFkOnly ? depth - 1 : depth, reachesPrimary };
 }
 
 /**
@@ -310,7 +365,7 @@ export function extractPushableFilters(
     }
 
     // Schema-based relation key detection
-    if (schema != null && isRelationKey(key, resource, schema)) {
+    if (schema != null && isRelationKey(key, value, resource, schema)) {
       remaining[key] = value;
       hasRemaining = true;
       continue;
@@ -427,7 +482,14 @@ export function classifyQuery(
 
   // --- Rule 3: IN_MEMORY filter patterns ---
   if (query.filters != null && typeof query.filters === "object") {
-    if (hasInMemoryFilterPatterns(query.filters as Record<string, unknown>)) {
+    if (
+      hasInMemoryFilterPatterns(query.filters as Record<string, unknown>) &&
+      !canPushDownFilters(
+        query.filters,
+        typeof query.resource === "string" ? query.resource : undefined,
+        schema as DatafnSchema | undefined,
+      )
+    ) {
       return "IN_MEMORY";
     }
     // $in lists that together exceed one statement's parameter budget
@@ -454,6 +516,7 @@ export function classifyQuery(
       schema,
     );
 
+    let partial = false;
     for (const token of query.select as unknown[]) {
       if (typeof token !== "string") continue;
 
@@ -464,16 +527,25 @@ export function classifyQuery(
       const baseName = parts[0];
 
       // Rule 4: HTREE tokens → IN_MEMORY
-      if (baseName === "parent" || baseName === "children") return "IN_MEMORY";
+      if (isHtreeSelectBase(baseName, query.resource, schema)) return "IN_MEMORY";
+
+      // The partial push-down loader follows two relation levels
+      // (`tasks.tags.*`). A deeper path that leads back to the primary
+      // resource (e.g. `parent.parent.childNodes.*`,
+      // `parent.objective.nodes.*`) is expanded in memory, where the whole
+      // primary resource is loaded; other deep paths keep the loader.
+      const path = relationPath(parts, query.resource, schema);
+      if (path.depth > 2 && path.reachesPrimary) return "IN_MEMORY";
 
       // Rule 5: dot-notation token (rel.*, rel.#, tasks.tags.*, …) → PARTIAL_PUSHDOWN
       // In validated DFQL, any token with a dot whose base is not a system keyword
       // is a relation expansion token.
-      if (parts.length > 1) return "PARTIAL_PUSHDOWN";
+      if (parts.length > 1) partial = true;
 
       // Rule 6: bare relation name (ids-only, e.g. `tags`) → PARTIAL_PUSHDOWN
-      if (relationNames.has(baseName)) return "PARTIAL_PUSHDOWN";
+      if (relationNames.has(baseName)) partial = true;
     }
+    if (partial) return "PARTIAL_PUSHDOWN";
   }
 
   // --- Default ---
@@ -489,7 +561,7 @@ export function classifyQuery(
  * execution: relation quantifiers ($any/$all/$none) or dot-path keys.
  * Recursively checks $and/$or sub-arrays.
  */
-function hasInMemoryFilterPatterns(
+export function hasInMemoryFilterPatterns(
   filters: Record<string, unknown>,
 ): boolean {
   for (const [key, value] of Object.entries(filters)) {
@@ -603,18 +675,49 @@ function convertSingleFilter(
 }
 
 /**
- * Checks whether `key` refers to a relation name in the schema for `resource`.
+ * Checks whether a filter entry is a relation filter for `resource`. A key
+ * naming a relation whose foreign key has the same name (e.g. many-one
+ * `parent` with `fkField: "parent"`) filters that field unless its value is a
+ * quantifier object.
  */
 function isRelationKey(
   key: string,
+  value: unknown,
   resource: string | undefined,
   schema: unknown,
 ): boolean {
   const s = schema as { relations?: Array<{ from: string | readonly string[]; to: string | readonly string[]; relation: string; inverse?: string }> };
   if (!s?.relations || !resource) return false;
-  return s.relations.some(
+  const named = s.relations.some(
     (r) =>
       (endpointIncludes(r.from, resource) && r.relation === key) ||
       (endpointIncludes(r.to, resource) && r.inverse === key),
   );
+  if (!named) return false;
+  return Array.isArray((s as { resources?: unknown }).resources)
+    ? isRelationFilterEntry(s as DatafnSchema, resource, key, value)
+    : true;
+}
+
+/**
+ * Whether a select token base (`parent` / `children`) is an HTREE expansion.
+ * With a schema that defines the resource, only a relation of type "htree"
+ * is; a many-one relation or a field that happens to be named `parent` is not.
+ * Without one, the names alone decide (legacy behavior).
+ */
+export function isHtreeSelectBase(
+  baseName: string,
+  resource: unknown,
+  schema: unknown,
+): boolean {
+  if (baseName !== "parent" && baseName !== "children") return false;
+  const s = schema as DatafnSchema | undefined;
+  if (
+    typeof resource !== "string" ||
+    !Array.isArray(s?.resources) ||
+    !s!.resources.some((r) => r.name === resource)
+  ) {
+    return true;
+  }
+  return findRelationMatch(s as any, resource, baseName)?.relation.type === "htree";
 }
