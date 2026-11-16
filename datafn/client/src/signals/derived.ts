@@ -126,14 +126,10 @@ export function combineSignals<TValue>(
       const unsubs = sources.map((source) => source.subscribe(scheduleEmit));
       subscribing = false;
       allUnsubs.push(...unsubs);
-      if (sources.every((source) => source.get() !== undefined)) {
-        // Every source has a value: emit now, during subscribe, like other
-        // signals replay theirs (a LiveSignal re-attaching to this one folds
-        // that into the value its returning reader gets once).
-        flush();
-      } else {
-        scheduleEmit();
-      }
+      // Emit now, during subscribe, like other signals replay theirs (a
+      // LiveSignal re-attaching to this one folds that into the value its
+      // returning reader gets once). compute() errors are caught in flush.
+      flush();
       return () => {
         subscriptionActive = false;
         for (const unsub of unsubs) unsub();
