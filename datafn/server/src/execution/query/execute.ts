@@ -21,17 +21,23 @@ import {
   createTimezoneResolver,
   hasTemporalGrouping,
   normalizeTemporalQuery,
+  type DatafnTemporalConfig,
 } from "@datafn/core";
 
 /**
- * Execute a DFQL query against a data store
+ * Execute a DFQL query against a data store.
+ *
+ * `temporal` resolves the query's temporal clauses (e.g. the timezone-change
+ * history behind timezone "user"); without it, the history is read from the
+ * store.
  */
 export function executeQuery(
   query: DFQLQuery,
   schema: DatafnSchema,
   store: DataStore,
+  temporal?: DatafnTemporalConfig,
 ): QueryResult | AggregateResult {
-  const temporalConfig = {
+  const temporalConfig = temporal ?? {
     timezoneResolver: createTimezoneResolver(
       store.getRecords(TIMEZONE_CHANGE_RESOURCE_NAME),
     ),

@@ -493,6 +493,8 @@ export function createQueryHandler(
         logger,
         timer,
         multiRegionRuntime,
+        // Timezone "user" means the viewer's timezone history, not the owner's.
+        namespace,
       );
       if (
         result &&
