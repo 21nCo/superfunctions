@@ -86,10 +86,14 @@ export interface BillFnWebhookIngress {
 const DEFAULT_LOOKUP_TIMEOUT_MS = 3_000;
 const DEFAULT_FORWARD_TIMEOUT_MS = 30_000;
 const MAX_REFERENCE_LENGTH = 512;
-/** Hop-by-hop and framing headers a proxy must not copy; the runtime sets them for the new request. */
+/**
+ * Hop-by-hop and framing headers a proxy must not copy; the runtime sets them
+ * for the new request. `expect` is dropped too: undici `fetch` rejects it.
+ */
 const UNFORWARDED_HEADERS = new Set([
   'connection',
   'content-length',
+  'expect',
   'host',
   'keep-alive',
   'proxy-connection',

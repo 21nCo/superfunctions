@@ -7,6 +7,7 @@ import type {
   BillFnIngressRouteDecision,
   BillFnInstance,
   BillFnProviderAdapter,
+  BillFnSubscription,
   BillFnUnlinkedWebhookEvent,
   BillFnWebhookIngressConfig
 } from '../index.js';
@@ -262,6 +263,20 @@ async function unlinkedEvents(region: Region) {
   return region.db.findMany<BillFnUnlinkedWebhookEvent>({ model: 'unlinkedWebhookEvents', namespace: 'billfn' });
 }
 
+/** Leaves `reference` saved pending on the region's subscription, as an interrupted replacement write does. */
+async function markReplacedReferencePending(region: Region, reference: string) {
+  const [subscription] = await region.db.findMany<BillFnSubscription>({ model: 'subscriptions', where: [], namespace: 'billfn' });
+  await region.db.update({
+    model: 'subscriptions',
+    where: [{ field: 'id', operator: 'eq', value: subscription.id }],
+    data: {
+      replacedReferencesPending: true,
+      metadata: { ...(subscription.metadata ?? {}), billfnPendingReplacedReferences: [reference] }
+    },
+    namespace: 'billfn'
+  });
+}
+
 describe('checkout region metadata', () => {
   it('writes the configured region as billfn_region, replacing a caller value', async () => {
     const { regions } = createHarness();
@@ -361,6 +376,37 @@ describe('createWebhookIngress', () => {
       expect.objectContaining({ provider: 'dodo', providerReference: 'sub_nobody', status: 'unlinked' })
     ]);
     expect(await unlinkedEvents(harness.regions.euwest)).toEqual([]);
+  });
+
+  it('routes an event for a reference a write saved pending as replaced to the region that holds it', async () => {
+    const harness = createHarness();
+    const session = await checkout(harness.regions.euwest, 'dodo', 'user_pending');
+    await harness.ingress.handle('dodo', dodoDelivery(dodoEvent(session.providerSubscriptionId as string)));
+    await markReplacedReferencePending(harness.regions.euwest, 'sub_dropped_pending');
+    harness.decisions.length = 0;
+
+    const response = await harness.ingress.handle('dodo', dodoDelivery(dodoEvent('sub_dropped_pending')));
+
+    expect(response.status).toBe(200);
+    expect(harness.decisions[0]).toMatchObject({ region: 'euwest', route: 'owner-lookup', unreachableRegions: [] });
+    expect(harness.regions.useast.forwarded).toHaveLength(0);
+    expect(await unlinkedEvents(harness.regions.useast)).toEqual([]);
+  });
+
+  it('drops an Expect header so the forwarded request can be sent, keeping body and signature', async () => {
+    const harness = createHarness();
+    const session = await checkout(harness.regions.euwest, 'dodo', 'user_expect');
+    const body = dodoEvent(session.providerSubscriptionId as string, { billfn_region: 'euwest' });
+    const delivery = dodoDelivery(body);
+    delivery.headers.set('expect', '100-continue');
+
+    const response = await harness.ingress.handle('dodo', delivery.clone());
+
+    expect(response.status).toBe(200);
+    const [forwarded] = harness.regions.euwest.forwarded;
+    expect(forwarded.headers.has('expect')).toBe(false);
+    expect(forwarded.headers.get('webhook-signature')).toBe(delivery.headers.get('webhook-signature'));
+    expect(await forwarded.text()).toBe(body);
   });
 
   it('sends an unreadable delivery to the default region without asking the regions', async () => {
@@ -479,6 +525,25 @@ describe('owner lookup route', () => {
     expect(owner.body.data).toEqual({ owned: true });
     const other = await lookup(regions.euwest.billfn, query, `Bearer ${TOKEN}`);
     expect(other.status).toBe(200);
+    expect(other.body.data).toEqual({ owned: false });
+  });
+
+  it('answers owned for a reference a write saved pending as replaced but has not recorded', async () => {
+    const { regions } = createHarness();
+    const session = await checkout(regions.useast, 'dodo', 'user_lookup_pending');
+    await regions.useast.billfn.router.handle(
+      new Request('https://useast.billfn.test/billfn/webhooks/dodo', {
+        method: 'POST',
+        headers: dodoDelivery(dodoEvent(session.providerSubscriptionId as string)).headers,
+        body: dodoEvent(session.providerSubscriptionId as string)
+      })
+    );
+    await markReplacedReferencePending(regions.useast, 'pay_dropped_pending');
+    expect(await regions.useast.db.findMany({ model: 'replacedProviderReferences', where: [], namespace: 'billfn' })).toEqual([]);
+
+    const owner = await lookup(regions.useast.billfn, 'provider=dodo&ref=pay_dropped_pending', `Bearer ${TOKEN}`);
+    expect(owner.body.data).toEqual({ owned: true });
+    const other = await lookup(regions.euwest.billfn, 'provider=dodo&ref=pay_dropped_pending', `Bearer ${TOKEN}`);
     expect(other.body.data).toEqual({ owned: false });
   });
 

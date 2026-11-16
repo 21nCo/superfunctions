@@ -2947,8 +2947,7 @@ async function ownsProviderReference(deps: ServiceDeps, provider: BillingProvide
     { model: TABLES.subscriptions, field: 'providerChargeId' },
     { model: TABLES.checkoutSessions, field: 'providerSubscriptionId' },
     { model: TABLES.checkoutSessions, field: 'providerChargeId' },
-    { model: TABLES.checkoutSessions, field: 'providerCheckoutId' },
-    { model: TABLES.replacedProviderReferences, field: 'providerReference' }
+    { model: TABLES.checkoutSessions, field: 'providerCheckoutId' }
   ];
   for (const lookup of lookups) {
     const found = await deps.db.findOne<Record<string, unknown>>({
@@ -2963,7 +2962,9 @@ async function ownsProviderReference(deps: ServiceDeps, provider: BillingProvide
       return true;
     }
   }
-  return false;
+  // A reference a write dropped stays owned here whether the write saved it
+  // pending or recorded it; read in the order that sees one of them.
+  return isReplacedProviderReference(deps, provider, reference);
 }
 
 async function findCheckoutSessionByProviderRef(
