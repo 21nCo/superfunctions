@@ -76,6 +76,11 @@ export function hasFilterRepo() {
 }
 
 const isUnder = (target, prefix) => target === prefix || target.startsWith(`${prefix}/`);
+/** Code-unit order, the order of a plain sort(), spelled out. */
+const compareText = (a, b) => {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+};
 
 /** Runs `fn`, turning an OwnersError (a malformed manifest or pyproject.toml) into a PromoteError. */
 function ownersCheck(fn) {
@@ -140,7 +145,7 @@ export function normalizePaths(paths) {
     }
     normalized.push(target);
   }
-  return [...new Set(normalized)].sort().filter((target, _, all) => !all.some((other) => other !== target && isUnder(target, other)));
+  return [...new Set(normalized)].sort(compareText).filter((target, _, all) => !all.some((other) => other !== target && isUnder(target, other)));
 }
 
 export function parseArgs(argv) {
@@ -177,6 +182,11 @@ export function parseArgs(argv) {
         options.fn = arg;
     }
   }
+  return checkArgs(options);
+}
+
+/** Checks that need every argument: a function or --path entries, and --path needs a pin. */
+function checkArgs(options) {
   if (options.fn !== undefined && options.paths.length > 0) throw new PromoteError("usage", "name a function or --path entries, not both");
   if (options.fn !== undefined && (options.fn.includes("/") || options.fn.includes("\\"))) {
     throw new PromoteError("usage", `a function is a top-level directory; use --path for ${JSON.stringify(options.fn)}`);
@@ -215,7 +225,7 @@ function filesAt(repo, rev, paths = []) {
 function pythonProjectsAt(repo, rev, files) {
   return files
     .filter((file) => path.posix.basename(file) === "pyproject.toml")
-    .sort()
+    .sort(compareText)
     .flatMap((file) => {
       const name = ownersCheck(() => pyprojectName(git(repo, ["show", `${rev}:${file}`]), file));
       return name === null ? [] : [{ name, file }];
@@ -275,7 +285,11 @@ export function releaseMoves({ pinOverlay, pinBase, current, paths }) {
   return { entries, moves };
 }
 
-const directoryKey = (target) => path.posix.normalize(target).replace(/\/+$/, "") || ".";
+/** A normalised directory without its trailing slash (normalize leaves at most one); the root is ".". */
+const directoryKey = (target) => {
+  const normalized = path.posix.normalize(target);
+  return (normalized.endsWith("/") ? normalized.slice(0, -1) : normalized) || ".";
+};
 
 /**
  * The imported Python projects and the overlay entries to move into TARGETS, checked as one identity invariant,
@@ -289,65 +303,89 @@ const directoryKey = (target) => path.posix.normalize(target).replace(/\/+$/, ""
  * overlay entry under the paths, for next's clean-up) and `moves` (the overlay entries TARGETS does not list yet).
  */
 export function pythonMoves({ overlay = null, paths, targets = new Map(), discovered = [], existing = [] }) {
-  if (overlay !== null && !Array.isArray(overlay)) throw new PromoteError("malformed-file", `${PYTHON_OVERLAY} at the pin must be an array`);
-  const candidates = (overlay ?? []).filter((entry) => {
+  const candidates = pythonOverlayUnder(overlay, paths);
+  const imported = indexImportedProjects(discovered);
+  checkOverlayEntries(candidates, imported);
+  const here = [
+    ...existing.map(({ name, file }) => pythonIdentity(name, path.posix.dirname(file), `${file} here`)),
+    ...[...targets].map(([name, directory]) => pythonIdentity(name, directory, `TARGETS of ${PYTHON_RELEASE_SCRIPT} (${directory})`, { inTargets: true })),
+  ];
+  const inTargets = checkProjectsHere(here, imported);
+  const entries = candidates.map(({ name, path: directory }) => ({ name, path: directory }));
+  return {
+    names: [...imported.byName.values()].map(({ name }) => name),
+    entries,
+    moves: entries.filter((entry) => !inTargets.has(canonicalPythonName(entry.name))),
+  };
+}
+
+const pythonIdentity = (name, directory, where, extra = {}) => ({ name, id: canonicalPythonName(name), directory: directoryKey(directory), where, ...extra });
+const describePython = ({ name, where }) => `Python project ${JSON.stringify(name)} in ${where}`;
+const pythonConflict = (message) => {
+  throw new PromoteError("release-conflict", message);
+};
+
+/** next's Python overlay entries under the paths; a malformed overlay or entry is refused. */
+function pythonOverlayUnder(overlay, paths) {
+  if (overlay === null) return [];
+  if (!Array.isArray(overlay)) throw new PromoteError("malformed-file", `${PYTHON_OVERLAY} at the pin must be an array`);
+  return overlay.filter((entry) => {
     if (typeof entry?.name !== "string" || entry.name === "" || typeof entry?.path !== "string" || entry.path === "") {
       throw new PromoteError("malformed-file", `${PYTHON_OVERLAY} at the pin: entry ${JSON.stringify(entry)} needs a name and a path`);
     }
     return paths.some((target) => isUnder(path.posix.normalize(entry.path), target));
   });
-  const identity = (name, directory, where, extra = {}) => ({ name, id: canonicalPythonName(name), directory: directoryKey(directory), where, ...extra });
-  const describe = ({ name, where }) => `Python project ${JSON.stringify(name)} in ${where}`;
-  const conflict = (message) => {
-    throw new PromoteError("release-conflict", message);
-  };
+}
 
+/** Name and directory indexes of the imported pyproject.toml projects, whose canonical names must be unique. */
+function indexImportedProjects(discovered) {
   const byName = new Map();
   const byDirectory = new Map();
   for (const { name, file } of discovered) {
-    const project = identity(name, path.posix.dirname(file), `${file} at the pin`);
+    const project = pythonIdentity(name, path.posix.dirname(file), `${file} at the pin`);
     const twin = byName.get(project.id);
-    if (twin) conflict(`${describe(project)} and ${describe(twin)} share the canonical name ${JSON.stringify(project.id)}; fix next first`);
+    if (twin) pythonConflict(`${describePython(project)} and ${describePython(twin)} share the canonical name ${JSON.stringify(project.id)}; fix next first`);
     byName.set(project.id, project);
     byDirectory.set(project.directory, project);
   }
+  return { byName, byDirectory };
+}
 
+/** Overlay entries are unique by canonical name and directory, and each names the imported project in its directory. */
+function checkOverlayEntries(candidates, { byDirectory }) {
   const overlayNames = new Map();
   const overlayDirectories = new Map();
   for (const entry of candidates) {
-    const listed = identity(entry.name, entry.path, `next's ${PYTHON_OVERLAY} (${entry.path})`);
+    const listed = pythonIdentity(entry.name, entry.path, `next's ${PYTHON_OVERLAY} (${entry.path})`);
     const twin = overlayNames.get(listed.id) ?? overlayDirectories.get(listed.directory);
     if (twin) {
       const shared = twin.id === listed.id ? `the canonical name ${JSON.stringify(listed.id)}` : `the directory ${listed.directory}`;
-      conflict(`${describe(listed)} and ${describe(twin)} share ${shared}; fix next first`);
+      pythonConflict(`${describePython(listed)} and ${describePython(twin)} share ${shared}; fix next first`);
     }
     overlayNames.set(listed.id, listed);
     overlayDirectories.set(listed.directory, listed);
     const project = byDirectory.get(listed.directory);
-    if (!project || project.id !== listed.id) {
-      const found = project ? `the imported project there is ${describe(project)}` : "no imported pyproject.toml declares a project there";
-      conflict(`${describe(listed)} does not match its directory: ${found}; fix next first`);
+    if (project?.id !== listed.id) {
+      const found = project ? `the imported project there is ${describePython(project)}` : "no imported pyproject.toml declares a project there";
+      pythonConflict(`${describePython(listed)} does not match its directory: ${found}; fix next first`);
     }
   }
+}
 
-  const here = [
-    ...existing.map(({ name, file }) => identity(name, path.posix.dirname(file), `${file} here`)),
-    ...[...targets].map(([name, directory]) => identity(name, directory, `TARGETS of ${PYTHON_RELEASE_SCRIPT} (${directory})`, { inTargets: true })),
-  ];
+/**
+ * This checkout's projects and TARGETS lack each imported name or hold it in the same directory, and hold no other
+ * name in an imported project directory. Returns the imported canonical names TARGETS already lists.
+ */
+function checkProjectsHere(here, { byName, byDirectory }) {
   const inTargets = new Set();
   for (const other of here) {
     const named = byName.get(other.id);
     const located = byDirectory.get(other.directory);
-    if (named && named.directory !== other.directory) conflict(`${describe(named)} conflicts with ${describe(other)}`);
-    if (located && located.id !== other.id) conflict(`${describe(located)} conflicts with ${describe(other)}, which holds another name in that directory`);
+    if (named && named.directory !== other.directory) pythonConflict(`${describePython(named)} conflicts with ${describePython(other)}`);
+    if (located && located.id !== other.id) pythonConflict(`${describePython(located)} conflicts with ${describePython(other)}, which holds another name in that directory`);
     if (named && other.inTargets) inTargets.add(other.id);
   }
-  const entries = candidates.map(({ name, path: directory }) => ({ name, path: directory }));
-  return {
-    names: [...byName.values()].map(({ name }) => name),
-    entries,
-    moves: entries.filter((entry) => !inTargets.has(canonicalPythonName(entry.name))),
-  };
+  return inTargets;
 }
 
 const TARGETS_BLOCK = /^TARGETS = \{\n([\s\S]*?)^\}\n/m;
@@ -388,15 +426,20 @@ export function appendReleaseEntries(text, moves) {
 
 const isSorted = (keys) => keys.every((key, index) => index === 0 || keys[index - 1] < key);
 
+/**
+ * Sets `section[key]` to "public", keeping a sorted section sorted. Every key is written as an own data property, so a
+ * key such as "__proto__" (a valid directory name) is kept rather than swallowed by the inherited accessor.
+ */
 function setOwner(section, key) {
-  if (section[key] === "public") return false;
+  if (Object.hasOwn(section, key) && section[key] === "public") return false;
   const sorted = isSorted(Object.keys(section));
-  section[key] = "public";
-  if (sorted) {
-    const entries = Object.entries(section).sort(([a], [b]) => (a < b ? -1 : 1));
-    for (const name of Object.keys(section)) delete section[name];
-    Object.assign(section, Object.fromEntries(entries));
-  }
+  const entries = Object.entries(section);
+  const index = entries.findIndex(([name]) => name === key);
+  if (index === -1) entries.push([key, "public"]);
+  else entries[index] = [key, "public"];
+  if (sorted) entries.sort(([a], [b]) => compareText(a, b));
+  for (const name of Object.keys(section)) delete section[name];
+  for (const [name, value] of entries) Object.defineProperty(section, name, { value, enumerable: true, writable: true, configurable: true });
   return true;
 }
 
@@ -412,7 +455,7 @@ export function flipManifest(manifest, { topLevel, rootFiles, slugs, pythonNames
     manifest.rootFiles ??= {};
     manifest.rootFiles.public ??= [];
     manifest.rootFiles.public.push(name);
-    if (isSorted(manifest.rootFiles.public.slice(0, -1))) manifest.rootFiles.public.sort();
+    if (isSorted(manifest.rootFiles.public.slice(0, -1))) manifest.rootFiles.public.sort(compareText);
     changed.rootFiles.push(name);
   }
   for (const slug of slugs) {
@@ -435,9 +478,10 @@ export function flipManifest(manifest, { topLevel, rootFiles, slugs, pythonNames
 function nextManifestEntries(nextManifest, { topLevel, rootFiles, slugs, pythonNames }) {
   if (nextManifest === null) return [];
   const listed = [];
-  for (const name of topLevel) if (nextManifest.paths?.[name] !== undefined) listed.push(`paths.${name}`);
+  const has = (section, key) => section !== undefined && section !== null && Object.hasOwn(section, key);
+  for (const name of topLevel) if (has(nextManifest.paths, name)) listed.push(`paths.${name}`);
   for (const name of rootFiles) if (nextManifest.rootFiles?.next?.includes(name)) listed.push(`rootFiles.next ${name}`);
-  for (const slug of slugs) if (nextManifest.releases?.[slug] !== undefined) listed.push(`releases.${slug}`);
+  for (const slug of slugs) if (has(nextManifest.releases, slug)) listed.push(`releases.${slug}`);
   const python = new Set(pythonNames.map(canonicalPythonName));
   for (const name of Object.keys(nextManifest.python ?? {})) if (python.has(canonicalPythonName(name))) listed.push(`python.${name}`);
   return listed;
@@ -477,7 +521,8 @@ function readPin(work, { source, pin, paths }) {
   const files = filesAt(work, sha, paths);
   const conduct = files.filter((file) => CONDUCT_SEGMENT.test(file));
   if (conduct.length > 0) {
-    throw new PromoteError("conduct-path", `next at ${sha} still holds .conduct planning files (${conduct[0]}${conduct.length > 1 ? `, +${conduct.length - 1} more` : ""}); archive them on next first (D1)`);
+    const more = conduct.length > 1 ? `, +${conduct.length - 1} more` : "";
+    throw new PromoteError("conduct-path", `next at ${sha} still holds .conduct planning files (${conduct[0]}${more}); archive them on next first (D1)`);
   }
   return {
     sha,
@@ -511,10 +556,144 @@ export function referencedIssues(commits) {
   return [...found].sort((a, b) => Number(a.slice(4)) - Number(b.slice(4)));
 }
 
+/** The commit and branch (null when detached) checked out now, to return to after a failed attempt. */
+function currentCheckout(root) {
+  const symbolic = git(root, ["symbolic-ref", "-q", "--short", "HEAD"], { allowFailure: true }).stdout.trim();
+  return { sha: git(root, ["rev-parse", "HEAD"]).trim(), branch: symbolic || null };
+}
+
 function undoBranch(root, original, branch) {
   git(root, ["merge", "--abort"], { allowFailure: true });
   git(root, ["checkout", "-q", "-f", original.branch ?? original.sha], { allowFailure: true });
   git(root, ["branch", "-D", branch], { allowFailure: true });
+}
+
+/** Where the pin is fetched from: another repository needs an explicit pin; this checkout's is resolved later. */
+function pinSource(root, { source, pin }) {
+  if (pin?.startsWith("-")) throw new PromoteError("usage", `--pin ${JSON.stringify(pin)} must not start with "-"`);
+  const resolved = source === undefined ? root : resolveSource(source);
+  if (resolved === root || (path.isAbsolute(resolved) && realPath(resolved) === realPath(root))) return { source: root, pin, local: true };
+  if (pin === undefined) throw new PromoteError("usage", `--source ${resolved} needs --pin <next-sha>: the next/next default exists only in this checkout`);
+  return { source: resolved, pin, local: false };
+}
+
+/** The commit a pin names in this checkout (default: the next/next remote-tracking ref). */
+function localPin(root, pin = "refs/remotes/next/next") {
+  if (!gitOk(root, ["rev-parse", "--verify", "--quiet", `${pin}^{commit}`])) {
+    throw new PromoteError("pin-missing", `pin ${pin} is not in this checkout; run git fetch next (or pass --source)`);
+  }
+  return git(root, ["rev-parse", `${pin}^{commit}`]).trim();
+}
+
+/**
+ * Splits the paths into top-level directories and root files the promotion makes public. Refuses a sub-path of a
+ * directory the public manifest does not list, and a path that exists here with other content (unless --reconcile).
+ */
+function classifyPaths(root, { paths, pinned, manifest, reconcile }) {
+  const topLevel = [];
+  const rootFiles = [];
+  for (const target of paths) {
+    const top = target.split("/")[0];
+    const object = pinned.objects.get(target);
+    if (target === top) {
+      (object.type === "tree" ? topLevel : rootFiles).push(target);
+    } else if (manifest.paths?.[top] !== "public") {
+      throw new PromoteError("unownable-path", `${target} lies in ${top}, which ${PUBLIC_MANIFEST} does not list; promote the whole directory ${top}`);
+    }
+    const here = objectAt(root, "HEAD", target);
+    if (here && !sameObject(here, object) && !reconcile) {
+      throw new PromoteError("path-conflict", `${target} already exists on this branch with different content; pass --reconcile to merge it and resolve the conflicts`);
+    }
+  }
+  return { topLevel, rootFiles };
+}
+
+/** The directories above a slash-separated path, outermost first. */
+const ancestorsOf = (file) => {
+  const parts = file.split("/");
+  return parts.slice(1).map((_, index) => parts.slice(0, index + 1).join("/"));
+};
+
+/**
+ * Refuses an untracked or ignored file here at a path an imported file takes, inside an imported file's path or where
+ * an imported directory goes. git merge overwrites ignored files, and undoing a failed attempt would then delete them,
+ * so the check runs before the branch is created. Other ignored files (node_modules, build output) stay as they are.
+ */
+function refuseLocalFiles(root, paths, files) {
+  const local = git(root, ["--literal-pathspecs", "ls-files", "-z", "--others", "--", ...paths]).split("\0").filter(Boolean);
+  if (local.length === 0) return;
+  const importedFiles = new Set(files);
+  const importedDirectories = new Set(files.flatMap(ancestorsOf));
+  for (const file of local) {
+    const clash = importedFiles.has(file) || importedDirectories.has(file) ? file : ancestorsOf(file).find((directory) => importedFiles.has(directory));
+    if (clash !== undefined) {
+      throw new PromoteError("path-conflict", `${file} exists here as an untracked or ignored file and next's ${clash} would replace it; move it out of the way first`);
+    }
+  }
+}
+
+/** The npm and Python release moves, checked before anything changes. */
+function planReleases(root, { pinned, paths, current }) {
+  const release = releaseMoves({ pinOverlay: pinned.overlay, pinBase: pinned.base, current, paths });
+  const pythonScript = path.join(root, PYTHON_RELEASE_SCRIPT);
+  const pythonSource = existsSync(pythonScript) ? readFileSync(pythonScript, "utf8") : null;
+  const python = pythonMoves({
+    overlay: pinned.pythonOverlay,
+    paths,
+    targets: pythonSource === null ? new Map() : readPythonTargets(pythonSource),
+    discovered: pinned.pythonProjects,
+    existing: pythonProjectsAt(root, "HEAD", filesAt(root, "HEAD")),
+  });
+  if (python.moves.length > 0 && pythonSource === null) throw new PromoteError("malformed-file", `${PYTHON_RELEASE_SCRIPT} not found`);
+  return { release, python, pythonSource };
+}
+
+/** Writes the manifest, release-packages.json and TARGETS edits; returns the files it changed. */
+function writeEdits(root, { manifest, changed, plan }) {
+  const edited = [];
+  if (Object.values(changed).some((list) => list.length > 0)) {
+    writeFileSync(path.join(root, PUBLIC_MANIFEST), `${JSON.stringify(manifest, null, 2)}\n`);
+    edited.push(PUBLIC_MANIFEST);
+  }
+  if (plan.release.moves.length > 0) {
+    const file = path.join(root, RELEASE_FILES.public);
+    writeFileSync(file, appendReleaseEntries(readFileSync(file, "utf8"), plan.release.moves));
+    edited.push(RELEASE_FILES.public);
+  }
+  if (plan.python.moves.length > 0) {
+    writeFileSync(path.join(root, PYTHON_RELEASE_SCRIPT), addPythonTargets(plan.pythonSource, plan.python.moves));
+    edited.push(PYTHON_RELEASE_SCRIPT);
+  }
+  return edited;
+}
+
+/**
+ * Merges the imported history into the new branch, then stages the edits and commits them (with merge conflicts left
+ * by --reconcile they stay staged for the operator's merge commit). Returns the conflicting paths.
+ */
+function mergeAndCommit(root, { imported, label, paths, pin, reconcile, edits }) {
+  let conflicts = [];
+  const message = `Promote ${label} from next at ${pin.slice(0, 12)}\n\nImported with history by scripts/promote.mjs (SFNS-121 D9): ${paths.join(" ")} from next ${pin}.`;
+  const merged = git(root, ["merge", "-q", "--no-ff", "--allow-unrelated-histories", "-m", message, imported], { allowFailure: true });
+  if (merged.status !== 0) {
+    conflicts = lines(git(root, ["diff", "--name-only", "--diff-filter=U"]));
+    if (!reconcile || conflicts.length === 0) throw new PromoteError("git-failed", `merge failed: ${(merged.stderr || merged.stdout).trim()}`);
+  }
+  const edited = writeEdits(root, edits);
+  if (edited.length > 0) git(root, ["add", "--", ...edited]);
+  if (edited.length > 0 && conflicts.length === 0) {
+    git(root, ["commit", "-q", "-m", `Promote ${label}: public owner and release entries from next\n\nscripts/promote.mjs (SFNS-121 D8, D9): ${edited.join(", ")}.`]);
+  }
+  return conflicts;
+}
+
+/** Without --reconcile every imported path must equal next at the pin, mode included. */
+function verifyImported(root, { paths, pinned, branch }) {
+  for (const target of paths) {
+    if (!sameObject(objectAt(root, "HEAD", target), pinned.objects.get(target))) {
+      throw new PromoteError("git-failed", `${target} on ${branch} does not equal next at ${pinned.sha}`);
+    }
+  }
 }
 
 /**
@@ -526,61 +705,25 @@ export function promote({ root = REPO_ROOT, fn, paths: rawPaths = [], pin, sourc
   const paths = normalizePaths(fn === undefined ? rawPaths : [fn]);
   if (!hasFilterRepo()) throw new PromoteError("missing-filter-repo", FILTER_REPO_HINT);
   branch ??= `promote/${fn ?? paths[0]}`;
-  if (pin?.startsWith("-")) throw new PromoteError("usage", `--pin ${JSON.stringify(pin)} must not start with "-"`);
-  source = source === undefined ? root : resolveSource(source);
-  const sameRepository = source === root || (path.isAbsolute(source) && realPath(source) === realPath(root));
-  if (!sameRepository && pin === undefined) {
-    throw new PromoteError("usage", `--source ${source} needs --pin <next-sha>: the next/next default exists only in this checkout`);
-  }
+  const from = pinSource(root, { source, pin });
   checkWorkingRepo(root, { base, branch });
-  pin ??= "refs/remotes/next/next";
-  if (sameRepository) {
-    source = root;
-    if (!gitOk(root, ["rev-parse", "--verify", "--quiet", `${pin}^{commit}`])) {
-      throw new PromoteError("pin-missing", `pin ${pin} is not in this checkout; run git fetch next (or pass --source)`);
-    }
-    pin = git(root, ["rev-parse", `${pin}^{commit}`]).trim();
-  }
+  const fetchPin = from.local ? localPin(root, from.pin) : from.pin;
 
   const current = readJsonFile(root, RELEASE_FILES.public).data;
   if (!Array.isArray(current)) throw new PromoteError("malformed-file", `${RELEASE_FILES.public} must be an array`);
-  const pythonScript = path.join(root, PYTHON_RELEASE_SCRIPT);
   const work = mkdtempSync(path.join(tmpdir(), "promote-"));
   try {
-    const pinned = readPin(work, { source, pin, paths });
+    const pinned = readPin(work, { source: from.source, pin: fetchPin, paths });
     if (fn !== undefined && pinned.objects.get(paths[0]).type !== "tree") {
       throw new PromoteError("path-missing", `${fn} is not a directory in next at ${pinned.sha}; use --path for a file`);
     }
-    const topLevel = [];
-    const rootFiles = [];
     const manifest = readJsonFile(root, PUBLIC_MANIFEST).data;
     ownersCheck(() => parseManifest(structuredClone(manifest), { kind: "public" }));
-    for (const target of paths) {
-      const top = target.split("/")[0];
-      if (target === top) {
-        (pinned.objects.get(target).type === "tree" ? topLevel : rootFiles).push(target);
-      } else if (manifest.paths?.[top] !== "public") {
-        throw new PromoteError("unownable-path", `${target} lies in ${top}, which ${PUBLIC_MANIFEST} does not list; promote the whole directory ${top}`);
-      }
-      const here = objectAt(root, "HEAD", target);
-      if (here && !sameObject(here, pinned.objects.get(target)) && !reconcile) {
-        throw new PromoteError("path-conflict", `${target} already exists on this branch with different content; pass --reconcile to merge it and resolve the conflicts`);
-      }
-    }
-
-    const { entries: releaseEntries, moves: releases } = releaseMoves({ pinOverlay: pinned.overlay, pinBase: pinned.base, current, paths });
-    const pythonSource = existsSync(pythonScript) ? readFileSync(pythonScript, "utf8") : null;
-    const pythonTargets = pythonSource === null ? new Map() : readPythonTargets(pythonSource);
-    const { names: pythonNames, entries: pythonEntries, moves: python } = pythonMoves({
-      overlay: pinned.pythonOverlay,
-      paths,
-      targets: pythonTargets,
-      discovered: pinned.pythonProjects,
-      existing: pythonProjectsAt(root, "HEAD", filesAt(root, "HEAD")),
-    });
-    if (python.length > 0 && pythonSource === null) throw new PromoteError("malformed-file", `${PYTHON_RELEASE_SCRIPT} not found`);
+    const { topLevel, rootFiles } = classifyPaths(root, { paths, pinned, manifest, reconcile });
+    refuseLocalFiles(root, paths, pinned.files);
+    const plan = planReleases(root, { pinned, paths, current });
     // Every imported release becomes public, including one this checkout already lists (a retry or partial cutover).
-    const flip = { topLevel, rootFiles, slugs: releaseEntries.map((entry) => entry.slug), pythonNames };
+    const flip = { topLevel, rootFiles, slugs: plan.release.entries.map((entry) => entry.slug), pythonNames: plan.python.names };
     const changed = flipManifest(manifest, flip);
 
     const { head, commits } = filterHistory(work, paths);
@@ -588,60 +731,13 @@ export function promote({ root = REPO_ROOT, fn, paths: rawPaths = [], pin, sourc
     const imported = git(root, ["rev-parse", "FETCH_HEAD^{commit}"]).trim();
     if (imported !== head) throw new PromoteError("git-failed", `fetched ${imported}, expected ${head}`);
 
-    const original = { sha: git(root, ["rev-parse", "HEAD"]).trim(), branch: git(root, ["symbolic-ref", "-q", "--short", "HEAD"], { allowFailure: true }).stdout.trim() || null };
+    const original = currentCheckout(root);
     git(root, ["checkout", "-q", "-b", branch]);
-    let conflicts = [];
     try {
       const label = fn ?? paths.join(", ");
-      const message = `Promote ${label} from next at ${pinned.sha.slice(0, 12)}\n\nImported with history by scripts/promote.mjs (SFNS-121 D9): ${paths.join(" ")} from next ${pinned.sha}.`;
-      const merged = git(root, ["merge", "-q", "--no-ff", "--allow-unrelated-histories", "-m", message, imported], { allowFailure: true });
-      if (merged.status !== 0) {
-        conflicts = lines(git(root, ["diff", "--name-only", "--diff-filter=U"]));
-        if (!reconcile || conflicts.length === 0) throw new PromoteError("git-failed", `merge failed: ${(merged.stderr || merged.stdout).trim()}`);
-      }
-      const edited = [];
-      if (Object.values(changed).some((list) => list.length > 0)) {
-        writeFileSync(path.join(root, PUBLIC_MANIFEST), `${JSON.stringify(manifest, null, 2)}\n`);
-        edited.push(PUBLIC_MANIFEST);
-      }
-      if (releases.length > 0) {
-        const file = path.join(root, RELEASE_FILES.public);
-        writeFileSync(file, appendReleaseEntries(readFileSync(file, "utf8"), releases));
-        edited.push(RELEASE_FILES.public);
-      }
-      if (python.length > 0) {
-        writeFileSync(pythonScript, addPythonTargets(pythonSource, python));
-        edited.push(PYTHON_RELEASE_SCRIPT);
-      }
-      if (edited.length > 0) git(root, ["add", "--", ...edited]);
-      if (edited.length > 0 && conflicts.length === 0) {
-        git(root, ["commit", "-q", "-m", `Promote ${label}: public owner and release entries from next\n\nscripts/promote.mjs (SFNS-121 D8, D9): ${edited.join(", ")}.`]);
-      }
-      if (conflicts.length === 0) {
-        for (const target of paths) {
-          if (!reconcile && !sameObject(objectAt(root, "HEAD", target), pinned.objects.get(target))) {
-            throw new PromoteError("git-failed", `${target} on ${branch} does not equal next at ${pinned.sha}`);
-          }
-        }
-      }
-      return {
-        branch,
-        pin: pinned.sha,
-        paths,
-        commits,
-        files: pinned.files,
-        releases,
-        python,
-        changed,
-        conflicts,
-        nextCleanup: {
-          manifest: nextManifestEntries(pinned.nextManifest, flip),
-          overlay: releaseEntries.filter((entry) => entry.source === RELEASE_FILES.next).map((entry) => entry.slug),
-          pythonOverlay: pythonEntries.map((entry) => entry.name),
-        },
-        issues: referencedIssues(commits),
-        searchTerms: [...new Set([...(fn ? [fn] : paths), ...releaseEntries.map((entry) => entry.name), ...pythonEntries.map((entry) => entry.name)])],
-      };
+      const conflicts = mergeAndCommit(root, { imported, label, paths, pin: pinned.sha, reconcile, edits: { manifest, changed, plan } });
+      if (!reconcile) verifyImported(root, { paths, pinned, branch });
+      return promotionResult({ fn, branch, paths, pinned, commits, plan, changed, conflicts, flip });
     } catch (error) {
       undoBranch(root, original, branch);
       throw error;
@@ -649,6 +745,29 @@ export function promote({ root = REPO_ROOT, fn, paths: rawPaths = [], pin, sourc
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
+}
+
+function promotionResult({ fn, branch, paths, pinned, commits, plan, changed, conflicts, flip }) {
+  const releaseEntries = plan.release.entries;
+  const pythonEntries = plan.python.entries;
+  return {
+    branch,
+    pin: pinned.sha,
+    paths,
+    commits,
+    files: pinned.files,
+    releases: plan.release.moves,
+    python: plan.python.moves,
+    changed,
+    conflicts,
+    nextCleanup: {
+      manifest: nextManifestEntries(pinned.nextManifest, flip),
+      overlay: releaseEntries.filter((entry) => entry.source === RELEASE_FILES.next).map((entry) => entry.slug),
+      pythonOverlay: pythonEntries.map((entry) => entry.name),
+    },
+    issues: referencedIssues(commits),
+    searchTerms: [...new Set([...(fn ? [fn] : paths), ...releaseEntries.map((entry) => entry.name), ...pythonEntries.map((entry) => entry.name)])],
+  };
 }
 
 export function formatReport(result) {
@@ -673,12 +792,15 @@ export function formatReport(result) {
     ...result.nextCleanup.pythonOverlay.map((name) => `${PYTHON_OVERLAY}: remove ${name}`),
   ];
   list("On next, before the next sync merges this (else the owner and release checks fail)", cleanup);
-  out.push("Linear move list (D11, operator step; this script moves no issues):");
-  out.push("  Move every open SF Next issue of the promoted code to its public team (or SFNS when none exists); closed issues stay.");
-  out.push(`  SF Next issues named in the imported history: ${result.issues.length > 0 ? result.issues.join(", ") : "none"}`);
-  for (const term of result.searchTerms) out.push(`  Search SF Next open issues for: ${term}`);
-  out.push("Next: npm install (refresh package-lock.json), node scripts/verify-owners.mjs, node scripts/verify-public-boundary.mjs,");
-  out.push("      then open a PR to dev and merge it with a merge commit (squash or rebase drops the imported history).");
+  const issues = result.issues.length > 0 ? result.issues.join(", ") : "none";
+  out.push(
+    "Linear move list (D11, operator step; this script moves no issues):",
+    "  Move every open SF Next issue of the promoted code to its public team (or SFNS when none exists); closed issues stay.",
+    `  SF Next issues named in the imported history: ${issues}`,
+    ...result.searchTerms.map((term) => `  Search SF Next open issues for: ${term}`),
+    "Next: npm install (refresh package-lock.json), node scripts/verify-owners.mjs, node scripts/verify-public-boundary.mjs,",
+    "      then open a PR to dev and merge it with a merge commit (squash or rebase drops the imported history).",
+  );
   return out.join("\n");
 }
 

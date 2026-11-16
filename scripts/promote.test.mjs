@@ -20,7 +20,9 @@ import {
   releaseMoves,
   resolveSource,
 } from "./promote.mjs";
+import { createOwners, parseManifest } from "./owners.mjs";
 import { gitBinary } from "./verify-package-lockfiles.mjs";
+import { findOwnershipErrors } from "./verify-owners.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "promote.mjs");
 const scratch = mkdtempSync(path.join(tmpdir(), "promote-test-"));
@@ -384,9 +386,42 @@ historyTest("another repository as --source needs an explicit --pin", () => {
   assert.equal(promote({ root: dev, fn: "widgetfn", source: dev }).branch, "promote/widgetfn");
 });
 
+historyTest("an untracked or ignored file where next tracks a path is refused before the branch and keeps its content", () => {
+  const { dev } = fixture("ignored");
+  const head = git(dev, "rev-parse", "HEAD");
+  write(dev, { ".git/info/exclude": "widgetfn/core/src/index.js\nwidgetfn/python\nnode_modules/\n" });
+  write(dev, { "widgetfn/core/src/index.js": "local only\n", "widgetfn/core/node_modules/dep.js": "dep\n" });
+  const unchanged = () => {
+    assert.equal(git(dev, "rev-parse", "HEAD"), head);
+    assert.equal(git(dev, "branch", "--show-current"), "dev");
+    assert.equal(git(dev, "branch", "--list", "promote/*"), "");
+  };
+
+  // An ignored file at the path of an imported file.
+  throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "path-conflict");
+  assert.equal(readFileSync(path.join(dev, "widgetfn/core/src/index.js"), "utf8"), "local only\n");
+  unchanged();
+
+  // An ignored file where next has a directory (widgetfn/python/pyproject.toml).
+  rmSync(path.join(dev, "widgetfn/core/src/index.js"));
+  write(dev, { "widgetfn/python": "local only\n" });
+  const run = promoteCli(dev, ["widgetfn"]);
+  assert.equal(run.status, 1);
+  assert.match(run.stderr, /^promote: path-conflict: widgetfn\/python exists here as an untracked or ignored file/);
+  assert.equal(readFileSync(path.join(dev, "widgetfn/python"), "utf8"), "local only\n");
+  unchanged();
+
+  // Ignored files no imported path needs stay as they are through a successful promotion.
+  rmSync(path.join(dev, "widgetfn/python"));
+  promote({ root: dev, fn: "widgetfn" });
+  assert.equal(git(dev, "branch", "--show-current"), "promote/widgetfn");
+  assert.equal(readFileSync(path.join(dev, "widgetfn/core/node_modules/dep.js"), "utf8"), "dep\n");
+});
+
 historyTest("a failure after the merge restores the original branch and removes the new one", () => {
   const { dev } = fixture("rollback");
   const head = git(dev, "rev-parse", "HEAD");
+  write(dev, { ".git/info/exclude": "node_modules/\n", "widgetfn/core/node_modules/dep.js": "dep\n" });
   const hooks = path.join(dev, ".git", "failing-hooks");
   write(hooks, { "pre-commit": "#!/bin/sh\nexit 1\n" });
   chmodSync(path.join(hooks, "pre-commit"), 0o755);
@@ -396,6 +431,7 @@ historyTest("a failure after the merge restores the original branch and removes 
   assert.equal(git(dev, "rev-parse", "HEAD"), head);
   assert.equal(git(dev, "branch", "--list", "promote/*"), "");
   assert.equal(git(dev, "status", "--porcelain", "--untracked-files=all"), "");
+  assert.equal(readFileSync(path.join(dev, "widgetfn/core/node_modules/dep.js"), "utf8"), "dep\n", "ignored files survive the undo");
 });
 
 test("a missing git-filter-repo fails with an install hint", () => {
@@ -519,4 +555,36 @@ test("release file and manifest edits keep existing formatting and order", () =>
   // A project already listed under another spelling of the same canonical name is not added twice.
   const again = flipManifest(manifest, { topLevel: [], rootFiles: [], slugs: [], pythonNames: ["alpha-fn", "BETA"] });
   assert.deepEqual(again.python, []);
+});
+
+test("ownership keys such as __proto__ are written and kept as own entries", () => {
+  const manifest = publicManifest();
+  manifest.rootFiles.public.push("index.js");
+  const changed = flipManifest(manifest, { topLevel: ["__proto__"], rootFiles: [], slugs: ["__proto__"], pythonNames: [] });
+  assert.deepEqual(changed, { paths: ["__proto__"], rootFiles: [], releases: ["__proto__"], python: [] });
+  const written = JSON.parse(JSON.stringify(manifest));
+  assert.deepEqual(Object.keys(written.paths), ["__proto__", "alphafn", "scripts", "uifn"]);
+  assert.ok(Object.hasOwn(written.releases, "__proto__"));
+
+  // An existing own __proto__ key (as JSON.parse creates it) survives a flip that re-sorts the section.
+  flipManifest(written, { topLevel: ["betafn"], rootFiles: [], slugs: ["betafn-core"], pythonNames: [] });
+  const rewritten = JSON.parse(JSON.stringify(written));
+  assert.deepEqual(Object.keys(rewritten.paths), ["__proto__", "alphafn", "betafn", "scripts", "uifn"]);
+  assert.deepEqual(Object.keys(rewritten.releases), ["__proto__", "alphafn-cli", "alphafn-core", "betafn-core"]);
+
+  // verify-owners accepts the promoted tree.
+  const owners = createOwners(parseManifest(rewritten, { kind: "public" }));
+  const errors = findOwnershipErrors({
+    owners,
+    repo: "public",
+    files: ["__proto__/index.js", "alphafn/core/index.js", "alphafn/python/pyproject.toml", "betafn/core/index.js", "index.js", "release-packages.json", "scripts/x.mjs", "superfunctions.owners.json", "uifn/keep.js"],
+    releases: [
+      { slug: "__proto__", path: "__proto__", name: "@proto/core", source: "release-packages.json" },
+      { slug: "alphafn-cli", path: "alphafn/cli", name: "@alphafn/cli", source: "release-packages.json" },
+      { slug: "alphafn-core", path: "alphafn/core", name: "@alphafn/core", source: "release-packages.json" },
+      { slug: "betafn-core", path: "betafn/core", name: "@betafn/core", source: "release-packages.json" },
+    ],
+    python: [{ name: "alphafn", file: "alphafn/python/pyproject.toml" }],
+  });
+  assert.deepEqual(errors, []);
 });
