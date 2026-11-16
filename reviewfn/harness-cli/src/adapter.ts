@@ -31,8 +31,11 @@ const REPAIR_ECHO_BYTES = 16_384;
 const OUTPUT_FILE_POLL_MS = 100;
 /** How long a `stderr-regex` model reporter may match, in a worker that is terminated when it runs over or the run is canceled. */
 const MODEL_REPORT_TIMEOUT_MS = 2_000;
-/** How long a reporter still runs after the run is aborted, so a timed-out CLI's report is read but cancellation stays prompt. */
-const MODEL_REPORT_ABORT_GRACE_MS = 100;
+/**
+ * How long a reporter still runs once the run is aborted (canceled, or stopped at the panel's deadline), so a report it
+ * has already matched is returned well within the panel's abort grace.
+ */
+const MODEL_REPORT_ABORT_GRACE_MS = 50;
 const ENV_NAME = /^[A-Z_a-z]\w*$/;
 const QUOTA = /quota|rate.?limit|usage.?limit|credit balance|too many requests/i;
 
@@ -297,17 +300,28 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     // An output file is measured while the CLI runs: one that outgrows the remaining budget aborts the run, which
     // kills the whole process group, and the run ends timed_out like any other overrun, never canceled.
     const watch = profile.outputVia === "file" ? watchOutputFile(outputFile, outputBytes, input.signal) : undefined;
-    let result: CommandResult;
-    try { result = await this.runner(run.executable, args, { cwd: input.workspace, env: run.environment, timeoutMs: remaining, maxOutputBytes: outputBytes, signal: watch?.signal ?? input.signal, stdin: profile.promptVia === "stdin" ? prompt : "" }); }
-    catch (error) { return state.finish(input.signal?.aborted ? "canceled" : "failed", `The CLI could not be started: ${message(error)}`); }
-    finally { watch?.stop(); }
-    state.record(result);
-    // Every model report is read from what this attempt left, within the output budget, before any terminal return:
-    // a run that served another model is void whether it then completed, failed, hung or overran its bounds.
-    const unreported = await reportStderrModel(run, result.stderr);
-    if (unreported) return unreported;
+    // A stderr reporter's worker starts with the CLI, so a report is matched as soon as the CLI stops.
+    const reporter = profile.modelReport.startsWith("stderr-regex:") ? startReporter(profile.modelReport.slice("stderr-regex:".length), input.configuration.inference.model) : undefined;
+    try {
+      let result: CommandResult;
+      try { result = await this.runner(run.executable, args, { cwd: input.workspace, env: run.environment, timeoutMs: remaining, maxOutputBytes: outputBytes, signal: watch?.signal ?? input.signal, stdin: profile.promptVia === "stdin" ? prompt : "" }); }
+      catch (error) { return state.finish(input.signal?.aborted ? "canceled" : "failed", `The CLI could not be started: ${message(error)}`); }
+      finally { watch?.stop(); }
+      state.record(result);
+      // Every model report is read from what this attempt left, within the output budget, before any terminal return:
+      // a run that served another model is void whether it then completed, failed, hung or overran its bounds.
+      const unreported = reporter ? await reportStderrModel(run, reporter, result.stderr) : undefined;
+      if (unreported) return unreported;
+      return await this.judge(run, attempt, outputFile, result, watch?.overrun());
+    } finally {
+      reporter?.dispose();
+    }
+  }
+
+  /** The attempt's outcome once its process ended: its answer read, then its terminal outcome or the answer judged. */
+  private async judge(run: AttemptContext, attempt: number, outputFile: string, result: CommandResult, fileOverrun: string | undefined): Promise<SlotHarnessOutput | Rejection> {
     const output = await readAnswer(run, outputFile, result.stdout);
-    return terminalOutcome(run, attempt, result, output, watch?.overrun()) ?? accept(run, attempt, output);
+    return terminalOutcome(run, attempt, result, output, fileOverrun) ?? accept(run, attempt, output);
   }
 
   /** Configuration errors that refuse both preflight and run before any process starts. */
@@ -409,57 +423,85 @@ function profileDiagnostics(config: ReviewFnConfig, error: (code: string, text: 
 }
 
 /**
- * Read a `stderr-regex` model report, bounded in time. Every capture found before the reporter stopped is a reported
- * model, so a mismatch it already matched still voids the run; a reporter that cannot finish ends the run timed_out
- * (or canceled).
+ * Read a `stderr-regex` model report, bounded in time. The models it matched before it stopped are reported models, so a
+ * mismatch it already found still voids the run; a reporter that cannot finish ends the run timed_out (or canceled).
  */
-async function reportStderrModel(run: AttemptContext, stderr: string): Promise<SlotHarnessOutput | undefined> {
-  if (!run.profile.modelReport.startsWith("stderr-regex:")) return undefined;
-  const matched = await matchReporter(stderr, run.profile.modelReport.slice("stderr-regex:".length), MODEL_REPORT_TIMEOUT_MS, run.input.signal);
-  for (const value of matched.values) run.state.note(value);
-  return "terminal" in matched ? run.state.finish(matched.terminal, matched.reason) : undefined;
+async function reportStderrModel(run: AttemptContext, reporter: Reporter, stderr: string): Promise<SlotHarnessOutput | undefined> {
+  const matched = await reporter.match(stderr, MODEL_REPORT_TIMEOUT_MS, run.input.signal);
+  for (const value of [matched.first, matched.mismatch, matched.last]) run.state.note(value);
+  return matched.terminal ? run.state.finish(matched.terminal, matched.reason ?? "The model reporter stopped.") : undefined;
 }
-
-type ReporterOutcome = { values: unknown[] } | { values: unknown[]; terminal: "timed_out" | "canceled" | "failed"; reason: string };
 
 /**
- * Every capture of a `stderr-regex` reporter in `text`, matched in a worker thread that posts each capture as it is
- * found. A pattern that backtracks without end is terminated after `timeoutMs`, keeping the captures found so far,
- * instead of blocking the event loop. A caller's cancellation stops it `MODEL_REPORT_ABORT_GRACE_MS` after the abort;
- * an abort for a timeout (a `TimeoutError` reason, as the panel's slot deadline) leaves it its own bound, so a CLI that
- * reported its model and then hung past its deadline still has that report read.
+ * What a `stderr-regex` reporter matched: the first nonblank capture, the first that is not the configured model, and
+ * (when it finished) the last. Nothing else is kept, so its memory stays linear in stderr whatever the pattern captures.
  */
-export function matchReporter(text: string, source: string, timeoutMs: number, signal?: AbortSignal): Promise<ReporterOutcome> {
-  return new Promise(resolve => {
-    const values: unknown[] = [];
-    const worker = new Worker(REPORTER_WORKER, { eval: true, workerData: { text, source } });
-    let settled = false;
-    let grace: NodeJS.Timeout | undefined;
-    const end = (outcome?: { terminal: "timed_out" | "canceled" | "failed"; reason: string }) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      clearTimeout(grace);
-      signal?.removeEventListener("abort", onAbort);
-      void worker.terminate();
-      resolve({ values, ...outcome });
-    };
-    const onAbort = () => {
-      if (signal?.reason instanceof Error && signal.reason.name === "TimeoutError") return;
-      grace = setTimeout(() => end({ terminal: "canceled", reason: "The CLI run was canceled while its model report was read." }), MODEL_REPORT_ABORT_GRACE_MS);
-    };
-    const timer = setTimeout(() => end({ terminal: "timed_out", reason: `The model reporter did not finish within ${timeoutMs} ms, so the served model was not fully read.` }), timeoutMs);
-    worker.on("message", (posted: { value?: unknown; done?: true }) => { if (posted.done) end(); else values.push(posted.value); });
-    worker.once("error", error => end({ terminal: "failed", reason: `The model reporter failed: ${message(error)}` }));
-    worker.once("exit", () => end({ terminal: "failed", reason: "The model reporter stopped without a result." }));
-    if (signal?.aborted) onAbort();
-    else signal?.addEventListener("abort", onAbort, { once: true });
+export interface ReporterOutcome { first?: string; mismatch?: string; last?: string; terminal?: "timed_out" | "canceled" | "failed"; reason?: string }
+
+interface Reporter { match: (text: string, timeoutMs: number, signal?: AbortSignal) => Promise<ReporterOutcome>; dispose: () => void }
+
+/**
+ * A `stderr-regex` reporter in a worker thread (an ES module from a `data:` URL, whatever the parent's module flags),
+ * started ahead of its text. It posts the first and the first mismatching capture as soon as it finds them. A pattern
+ * that backtracks without end is terminated after `timeoutMs`; once `signal` aborts it gets `MODEL_REPORT_ABORT_GRACE_MS`.
+ * Either way the captures found so far are kept.
+ */
+function startReporter(source: string, model: string): Reporter {
+  const worker = new Worker(REPORTER_MODULE, { workerData: { source, model } });
+  const outcome: ReporterOutcome = {};
+  let failure: string | undefined;
+  let finished: ((done: boolean) => void) | undefined;
+  worker.on("message", (posted: ReporterOutcome & { done?: true }) => {
+    if (posted.first !== undefined) outcome.first = posted.first;
+    if (posted.mismatch !== undefined) outcome.mismatch = posted.mismatch;
+    if (posted.done) { outcome.last = posted.last; finished?.(true); }
   });
+  worker.once("error", error => { failure = `The model reporter failed: ${message(error)}`; finished?.(false); });
+  worker.once("exit", () => { failure ??= "The model reporter stopped without a result."; finished?.(false); });
+  return {
+    match: (text, timeoutMs, signal) => new Promise(resolve => {
+      const timers: NodeJS.Timeout[] = [];
+      const end = (stop?: { terminal: NonNullable<ReporterOutcome["terminal"]>; reason: string }) => {
+        finished = undefined;
+        for (const timer of timers) clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        resolve({ ...outcome, ...stop });
+      };
+      finished = done => end(done ? undefined : { terminal: "failed", reason: failure ?? "The model reporter failed." });
+      const onAbort = () => {
+        const timedOut = signal?.reason instanceof Error && signal.reason.name === "TimeoutError";
+        timers.push(setTimeout(() => end(timedOut ? { terminal: "timed_out", reason: "The CLI run reached its deadline while its model report was read." } : { terminal: "canceled", reason: "The CLI run was canceled while its model report was read." }), MODEL_REPORT_ABORT_GRACE_MS));
+      };
+      timers.push(setTimeout(() => end({ terminal: "timed_out", reason: `The model reporter did not finish within ${timeoutMs} ms, so the served model was not fully read.` }), timeoutMs));
+      if (failure !== undefined) return end({ terminal: "failed", reason: failure });
+      if (signal?.aborted) onAbort();
+      else signal?.addEventListener("abort", onAbort, { once: true });
+      worker.postMessage(text);
+    }),
+    dispose: () => { void worker.terminate(); },
+  };
 }
 
-const REPORTER_WORKER = `const { parentPort, workerData } = require("node:worker_threads");
-for (const match of workerData.text.matchAll(new RegExp(workerData.source, "gu"))) parentPort.postMessage({ value: match[1] });
-parentPort.postMessage({ done: true });`;
+/** Every reported model a `stderr-regex` reporter finds in `text`, in a worker that is always terminated. */
+export async function matchReporter(text: string, source: string, model: string, timeoutMs: number, signal?: AbortSignal): Promise<ReporterOutcome> {
+  const reporter = startReporter(source, model);
+  try { return await reporter.match(text, timeoutMs, signal); }
+  finally { reporter.dispose(); }
+}
+
+const REPORTER_MODULE = new URL(`data:text/javascript,${encodeURIComponent(`import { parentPort, workerData } from "node:worker_threads";
+parentPort.once("message", text => {
+  const { source, model } = workerData;
+  let first, mismatch, last;
+  for (const match of text.matchAll(new RegExp(source, "gu"))) {
+    const value = match[1];
+    if (typeof value !== "string" || !value.trim()) continue;
+    if (first === undefined) { first = value; parentPort.postMessage({ first }); }
+    if (mismatch === undefined && model !== "configured" && value !== model) { mismatch = value; parentPort.postMessage({ mismatch }); }
+    last = value;
+  }
+  parentPort.postMessage({ done: true, last });
+});`)}`);
 
 /** The attempt's answer, with its `json-path` model report read and, unless the slot's schema declares it, removed. */
 async function readAnswer(run: AttemptContext, outputFile: string, stdout: string): Promise<OutputRead> {
@@ -588,8 +630,8 @@ function declarePath(schema: Readonly<Record<string, unknown>>, keys: readonly s
     const items = declarePath(schema.items, rest);
     return items === schema.items ? schema : { ...schema, items };
   }
-  const properties = schema.properties;
-  if (!isRecord(properties)) return schema;
+  const properties = declaredProperties(schema);
+  if (!properties) return schema;
   const required = Array.isArray(schema.required) ? schema.required : [];
   const withKey = required.includes(key) ? required : [...required, key];
   if (!Object.hasOwn(properties, key)) return { ...schema, properties: { ...properties, [key]: reportField(rest) }, required: withKey };
@@ -597,6 +639,19 @@ function declarePath(schema: Readonly<Record<string, unknown>>, keys: readonly s
   if (!isRecord(declared)) return schema;
   const child = declarePath(declared, rest);
   return child === declared ? schema : { ...schema, properties: { ...properties, [key]: child }, required: withKey };
+}
+
+/** Keywords that make a schema node's properties depend on other schemas; such a node is never changed or stripped. */
+const COMPOSED = ["$ref", "$dynamicRef", "allOf", "anyOf", "oneOf", "not", "if", "then", "else", "dependentSchemas"];
+
+/**
+ * The properties an object schema node declares (none for a closed object without `properties`), or undefined when the
+ * node does not settle it: a composed node, or one that is not an object schema.
+ */
+function declaredProperties(schema: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> | undefined {
+  if (COMPOSED.some(keyword => keyword in schema)) return undefined;
+  if (isRecord(schema.properties)) return schema.properties;
+  return schema.type === "object" || "additionalProperties" in schema ? {} : undefined;
 }
 
 /** A required string at the remaining dotted path, through new objects and arrays. */
@@ -612,7 +667,8 @@ function reportField(keys: readonly string[]): Record<string, unknown> {
  * Remove the part of a `json-path` model report the output schema does not declare: the first key on the dotted path
  * that its object schema leaves undeclared, at whatever depth, so a CLI may report its model inside a closed answer
  * without failing the slot's schema. Through an array index the removal applies to every item, as the declaration does.
- * A report field the schema declares is kept and validated like any other.
+ * A report field the schema declares is kept and validated like any other, and nothing is removed below a node whose
+ * properties the schema does not settle (a `$ref`, a union or another composition), since it may declare the field.
  */
 function stripReportField(value: unknown, keys: readonly string[], schema: unknown): void {
   const [key, ...rest] = keys;
@@ -623,8 +679,9 @@ function stripReportField(value: unknown, keys: readonly string[], schema: unkno
     return;
   }
   if (!isRecord(value) || !Object.hasOwn(value, key)) return;
-  const properties = declared.properties;
-  if (isRecord(properties) && Object.hasOwn(properties, key)) stripReportField(value[key], rest, properties[key]);
+  const properties = declaredProperties(declared);
+  if (!properties) return;
+  if (Object.hasOwn(properties, key)) stripReportField(value[key], rest, properties[key]);
   else delete value[key];
 }
 
@@ -647,8 +704,10 @@ type Payload = Omit<HarnessOutput, "terminal" | "events" | "transcript">;
 
 /** A caller-schema-valid output as a 0.1 harness payload, as the other adapters convert it. */
 function normalizePayload(value: Record<string, unknown>): Payload {
-  const { requirements = [], assessments = [], evidence, findings, inspectedPaths, uninspected } = value as Partial<HarnessOutput>;
-  return omitOptionalNulls({ requirements, assessments, evidence, findings, inspectedPaths, uninspected }) as Payload;
+  const fields = value as Partial<HarnessOutput>;
+  const { evidence, findings, inspectedPaths, uninspected } = fields;
+  // A null requirements or assessments section the caller schema allowed is an empty one.
+  return omitOptionalNulls({ requirements: fields.requirements ?? [], assessments: fields.assessments ?? [], evidence, findings, inspectedPaths, uninspected }) as Payload;
 }
 
 /** A run that produced no answer: every payload section empty and the whole review uninspected for `error`. */

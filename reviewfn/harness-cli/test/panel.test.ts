@@ -127,6 +127,13 @@ describe("generic CLI slots in the panel", () => {
     expect(Date.now() - started).toBeLessThan(30_000);
   }, 60_000);
 
+  it("voids a slot whose CLI reported another model, printed text that stalls its reporter, and hung past its deadline", async () => {
+    const panelPolicy: PanelPolicy = { version: 1, slots: [slot("stalling", "stalling", "model-r")], quorum: { stage1: 1, stage2: 0 }, requirementsSlot: null, incremental: "full", profiles: { stalling: await profile("stalling", String.raw`stderr-regex:served model: (\S+)|(?:a+)+$`, ["--model-stderr", "model-x", "--stderr", `${"a".repeat(40)}!`, "--hang", "1"]) } };
+    const result = await coordinator().run({ root: repo, base, head, config, policy: { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, harnessTimeoutMs: 3_000 } }, panelPolicy });
+    expect(result.validation).toMatchObject({ valid: true });
+    expect(result.report.slotRuns[0]).toMatchObject({ terminal: "void", voidReasons: ["model_mismatch"], identity: { model: "model-x" } });
+  }, 120_000);
+
   it("refuses a pull-request review in preflight", async () => {
     const panelPolicy: PanelPolicy = { version: 1, slots: [slot("quiet-a", "quiet", "model-a")], quorum: { stage1: 1, stage2: 0 }, requirementsSlot: null, incremental: "full", profiles: { quiet: await profile("quiet", "none") } };
     const diagnostics = await coordinator().preflight({ root: repo, base, head, config, policy: DEFAULT_POLICY, panelPolicy, pullRequest: 9 });

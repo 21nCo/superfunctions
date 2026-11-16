@@ -217,26 +217,32 @@ describe("CliHarnessAdapter model reporting", () => {
     expect(ticks).toBeGreaterThan(10);
   }, 30_000);
 
-  it("stops a stalled reporter as soon as the run is canceled, and reads a quick reporter after an abort", async () => {
+  it("stops a stalled reporter as soon as the run is canceled", async () => {
     const controller = new AbortController();
     const started = Date.now();
-    const stalled = matchReporter(`${"a".repeat(40)}!`, "^(?:a+)+(b)$", 60_000, controller.signal);
+    const stalled = matchReporter(`${"a".repeat(40)}!`, "^(?:a+)+(b)$", "fake-model-1", 60_000, controller.signal);
     setTimeout(() => controller.abort(), 200);
     expect(await stalled).toMatchObject({ terminal: "canceled" });
     expect(Date.now() - started).toBeLessThan(5_000);
-    expect(await matchReporter("served model: m1\nserved model: m2\n", String.raw`served model: (\S+)`, 60_000, AbortSignal.abort())).toEqual({ values: ["m1", "m2"] });
+  }, 20_000);
+
+  it("keeps only the first, first mismatching and last captures, so overlapping captures cannot grow quadratically", async () => {
+    expect(await matchReporter("served model: m1\nserved model: m2\nserved model: m1\n", String.raw`served model: (\S+)`, "m1", 60_000)).toEqual({ first: "m1", mismatch: "m2", last: "m1" });
+    const overlapping = await matchReporter("a".repeat(4_000), "(?=(a+))", "m1", 60_000);
+    expect(overlapping).toMatchObject({ first: "a".repeat(4_000), last: "a" });
+    expect(JSON.stringify(overlapping).length).toBeLessThan(3 * 4_000 + 200);
   }, 20_000);
 
   it("keeps the models a reporter matched before it stalled, so an earlier mismatch still voids the run", async () => {
     const reporter = String.raw`served model: (\S+)|(?:a+)+$`;
-    const partial = await matchReporter(`served model: other-model\n${"a".repeat(40)}!`, reporter, 500);
-    expect(partial).toMatchObject({ values: ["other-model"], terminal: "timed_out" });
+    const partial = await matchReporter(`served model: other-model\n${"a".repeat(40)}!`, reporter, "fake-model-1", 500);
+    expect(partial).toMatchObject({ first: "other-model", mismatch: "other-model", terminal: "timed_out" });
     const output = await run(profile({ modelReport: `stderr-regex:${reporter}`, extra: ["--model-stderr", "other-model", "--stderr", `${"a".repeat(40)}!`] }), "fake-model-1");
     expect(output.terminal).toBe("timed_out");
     expect(output.observed).toMatchObject({ model: "other-model", modelMismatch: true });
   }, 30_000);
 
-  it("reads the reporter under its own bound after an abort for a timeout, as at the panel's slot deadline", async () => {
+  it("returns the reporter's captures promptly after an abort at the panel's slot deadline", async () => {
     const controller = new AbortController();
     // The panel's deadline aborts with a TimeoutError just as the CLI finishes.
     const runner: CommandRunner = async (command, args, options) => {
@@ -249,7 +255,8 @@ describe("CliHarnessAdapter model reporting", () => {
     const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(config, { signal: controller.signal }));
     expect(output.terminal).toBe("timed_out");
     expect(output.observed).toMatchObject({ model: "other-model", modelMismatch: true });
-    expect(Date.now() - started).toBeGreaterThan(1_500);
+    expect(output.error).toContain("deadline");
+    expect(Date.now() - started).toBeLessThan(1_900);
   }, 30_000);
 
   it("repairs an invalid answer that lacks its model report, and confirms the model only on the answer it accepts", async () => {
@@ -318,6 +325,20 @@ describe("CliHarnessAdapter model reporting", () => {
     expect(await calls()).toHaveLength(1);
   }, 30_000);
 
+  it("declares and removes a reporter inside a closed object without properties, and keeps one a $ref declares", async () => {
+    const closed = { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, meta: { type: "object", additionalProperties: false } } };
+    expect(withModelReportField(closed, "json-path:meta.model").properties).toHaveProperty("meta", { type: "object", additionalProperties: false, properties: { model: { type: "string" } }, required: ["model"] });
+    const answer = ["--extra-json", JSON.stringify({ meta: { model: "fake-model-1" } })];
+    const closedRun = await run(profile({ modelReport: "json-path:meta.model", extra: answer }), "fake-model-1", { outputSchema: closed });
+    expect(closedRun.error).toBeUndefined();
+    expect(closedRun.terminal).toBe("completed");
+    const referenced = { ...lensOutputSchema, $defs: { ...(lensOutputSchema as { $defs?: Record<string, unknown> }).$defs, meta: { type: "object", additionalProperties: false, properties: { model: { type: "string" } }, required: ["model"] } }, properties: { ...lensOutputSchema.properties, meta: { $ref: "#/$defs/meta" } } };
+    expect(withModelReportField(referenced, "json-path:meta.model")).toBe(referenced);
+    const referencedRun = await run(profile({ modelReport: "json-path:meta.model", extra: answer }), "fake-model-1", { outputSchema: referenced });
+    expect(referencedRun.error).toBeUndefined();
+    expect(referencedRun.terminal).toBe("completed");
+  }, 30_000);
+
   it("reads dotted json paths of own properties only", () => {
     expect(valueAtPath({ meta: { models: ["m"] } }, "meta.models.0")).toBe("m");
     expect(valueAtPath({}, "constructor")).toBeUndefined();
@@ -344,6 +365,13 @@ describe("CliHarnessAdapter output validation", () => {
     const output = await run(profile({ extra: ["--extra-json", JSON.stringify({ findings: deep })] }));
     expect(output.terminal).toBe("malformed");
     expect(await calls()).toHaveLength(2);
+  }, 30_000);
+
+  it("treats a null requirements or assessments section the caller schema allows as empty", async () => {
+    const nullable = { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, requirements: { type: "null" }, assessments: { type: "null" } } };
+    const output = await run(profile({ extra: ["--extra-json", JSON.stringify({ requirements: null, assessments: null })] }), undefined, { outputSchema: nullable });
+    expect(output.error).toBeUndefined();
+    expect(output).toMatchObject({ terminal: "completed", requirements: [], assessments: [] });
   }, 30_000);
 
   it("treats a missing output file as a malformed answer", async () => {
