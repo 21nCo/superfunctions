@@ -144,12 +144,13 @@ export const PROCESSING_RUN_KIND = 'filefn.processing-run';
 /**
  * Kind of the `fileArtifacts` rows that keep an object an artifact row stopped
  * naming (a replaced artifact, or a server upload that lost to a client
- * artifact) owned by its file version, so version and file cleanup still
- * delete it and the shared-key reference scan still counts it. A row is
+ * artifact) owned by its file version, so cleanup still finds it. A row is
  * written before the artifact row switches away from the object. A client
  * object's record goes only once its delete is confirmed: file deletion
  * leaves it (and turns each client artifact row into one) for
- * `cleanupOrphanedArtifacts`. The artifact list, lookup and download
+ * `cleanupOrphanedArtifacts`. A server object's record stays, and nothing
+ * deletes its object, since its key may be published again at any moment
+ * (see `discardDisplacedObject`). The artifact list, lookup and download
  * operations never return them.
  */
 export const DISPLACED_OBJECT_KIND = 'filefn.displaced-object';
@@ -548,34 +549,45 @@ function isGrantExpired(expiresAt: string | null | undefined): boolean {
 }
 
 /**
- * The chunks of a client artifact body, a Blob read as a stream so it is never
- * copied whole; a stream left early is cancelled.
+ * Reads a client artifact body chunk by chunk, a Blob as a stream so it is
+ * never copied whole. Cancelling one left early is never waited for, so a
+ * body that hangs on cancel cannot hold up its upload.
  */
-async function* bodyChunks(body: ReadableStream<Uint8Array> | Uint8Array | Blob): AsyncGenerator<Uint8Array> {
+function bodyReader(body: ReadableStream<Uint8Array> | Uint8Array | Blob): {
+  read(): Promise<Uint8Array | null>;
+  cancel(reason: unknown): void;
+} {
   if (body instanceof Uint8Array) {
-    yield body;
-    return;
+    let chunk: Uint8Array | null = body;
+    return {
+      read: async () => {
+        const next = chunk;
+        chunk = null;
+        return next;
+      },
+      cancel: () => undefined,
+    };
   }
   const stream = typeof Blob !== 'undefined' && body instanceof Blob ? body.stream() : body as ReadableStream<Uint8Array>;
   const reader = stream.getReader();
   let finished = false;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        finished = true;
-        return;
+  return {
+    async read() {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) {
+          finished = true;
+          return null;
+        }
+        if (value && value.byteLength > 0) return value instanceof Uint8Array ? value : new Uint8Array(value);
       }
-      if (value && value.byteLength > 0) {
-        yield value instanceof Uint8Array ? value : new Uint8Array(value);
-      }
-    }
-  } finally {
-    if (!finished) {
-      await reader.cancel().catch(() => undefined);
-    }
-    reader.releaseLock();
-  }
+    },
+    cancel(reason) {
+      if (finished) return;
+      finished = true;
+      reader.cancel(reason).catch(() => undefined);
+    },
+  };
 }
 
 export function createProcessingService(config: ProcessingServiceConfig) {
@@ -958,14 +970,15 @@ export function createProcessingService(config: ProcessingServiceConfig) {
   /**
    * Stores a client body in a new object, refusing it once it passes
    * `maxBytes`, when it is empty, or when it is longer or shorter than a
-   * declared length, without holding it in memory whole. No write or close
-   * is started past `deadline`, and none is waited for past it: the writer
-   * is aborted and the store refused as expired. A close that was already
-   * under way, or a stream opened late (aborted once it is returned), may
-   * still publish the object after that, so `onAbandon` gets a promise that
-   * settles once the stream has. The caller has recorded the
-   * object before (see `attachClientArtifact`) and deletes whatever a refused
-   * or failed upload wrote.
+   * declared length, without holding it in memory whole. No read, write or
+   * close is started past `deadline`, and none is waited for past it: at the
+   * deadline the body is cancelled, the writer aborted and the store refused
+   * as expired, none of it waited for. A close that was already under way, or
+   * a stream opened late (aborted once it is returned), may still publish the
+   * object after that, so `onAbandon` gets, at the deadline itself and before
+   * anything else is awaited, a promise that settles once the stream has.
+   * The caller has recorded the object before (see `attachClientArtifact`)
+   * and deletes whatever a refused or failed upload wrote.
    */
   async function storeBounded(
     body: NonNullable<ClientArtifactUpload['body']>,
@@ -976,10 +989,13 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     deadline: number,
     onAbandon: (settled: Promise<unknown>) => void,
   ): Promise<number> {
+    if (serverUploadMode(object.target) === 'signed') {
+      return putSignedBounded(body, object, kind, maxBytes, declaredLength, deadline);
+    }
     const beforeDeadline = () => {
       if (Date.now() > deadline) throw errors.uploadExpired();
     };
-    const mode = serverUploadMode(object.target);
+    const input = bodyReader(body);
     // The stream is opened only for a first chunk within the limit, so a body
     // refused at once leaves no object half-created behind.
     let writer: WritableStreamDefaultWriter | null = null;
@@ -995,18 +1011,23 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       ]).finally(() => clearTimeout(timer));
       if (outcome !== expired) return outcome as T;
       abandoned = true;
-      const settled = (writer ? writer.closed : operation.then(releaseLate)).then(() => undefined, () => undefined);
-      onAbandon(settled);
-      throw errors.uploadExpired();
+      const error = errors.uploadExpired();
+      input.cancel(error);
+      if (writer) {
+        // An abort waits for a write or close under way, so it is not waited for.
+        writer.abort(error).catch(() => undefined);
+        onAbandon(writer.closed.then(() => undefined, () => undefined));
+      } else if (releaseLate) {
+        onAbandon(operation.then(releaseLate).then(() => undefined, () => undefined));
+      }
+      throw error;
     };
     const lengthMismatch = (relation: 'longer' | 'shorter') =>
       errors.invalidRequest(`Artifact body is ${relation} than its Content-Length`, { contentLength: declaredLength });
     try {
-      if (mode === 'signed') {
-        return await putSignedBounded(body, object, kind, maxBytes, declaredLength, deadline);
-      }
       let size = 0;
-      for await (const chunk of bodyChunks(body)) {
+      beforeDeadline();
+      for (let chunk = await untilDeadline(input.read()); chunk; chunk = await untilDeadline(input.read())) {
         size += chunk.byteLength;
         if (declaredLength !== undefined && size > declaredLength) throw lengthMismatch('longer');
         if (size > maxBytes) {
@@ -1019,6 +1040,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         )).getWriter();
         beforeDeadline();
         await untilDeadline(writer.write(chunk));
+        beforeDeadline();
       }
       if (size === 0) {
         throw errors.invalidRequest('Artifact body is empty');
@@ -1028,7 +1050,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       await untilDeadline(writer!.close());
       return size;
     } catch (error) {
-      // An abort waits for a write or close under way, so an abandoned one is not waited for.
+      input.cancel(error);
       const aborted = writer?.abort(error).catch(() => undefined);
       if (!abandoned) await aborted;
       throw error;
@@ -1082,11 +1104,12 @@ export function createProcessingService(config: ProcessingServiceConfig) {
    * effort, and then its displaced-object record. A client object's key is
    * unique to one upload attempt, so no row can name it again. A failed
    * delete is logged and keeps the record, so version or file cleanup
-   * deletes the object later. A server object is never deleted here: its key
-   * is the processor's own, which another row (a deduplicated file sharing
-   * the version's storage key, say) may claim at any moment, so it stays
-   * recorded until version or file cleanup, whose reference scan keeps it
-   * while another row still names it. Never throws, so a caller's own error
+   * deletes the object later. A server object is never deleted: its key is
+   * the processor's own, which another file's processor (a deduplicated file
+   * sharing the version's storage key, say) may publish again between any
+   * reference check and a delete, so it stays recorded, and file and version
+   * cleanup keep the record, until a reclamation coordinated with those
+   * publishers exists. Never throws, so a caller's own error
    * is the one it reports; an object it could not record is still deleted,
    * since no row names it.
    *
@@ -1387,14 +1410,19 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       })
       : null;
     const fallbackTarget = runTarget ?? getArtifactStorageTarget(file ?? { policy: '' });
+    // A server object no row names any more is neither deleted nor unrecorded
+    // here (see `discardDisplacedObject`): a processor of any file may publish
+    // its key again between the reference scan below and a delete.
+    const displacedServer = (row: FileArtifactRecord) => row.kind === DISPLACED_OBJECT_KIND && artifactSourceOf(row) !== 'client';
     const journaled = new Set<string>();
+    const keptRefs = new Set<string>();
     for (const row of rows) {
       if (row.kind !== PROCESSING_RUN_KIND) {
-        journaled.add(storageRef(recordedStorageTarget(row) ?? fallbackTarget, row.storageKey));
+        (displacedServer(row) ? keptRefs : journaled).add(storageRef(recordedStorageTarget(row) ?? fallbackTarget, row.storageKey));
       }
     }
     const unjournaled = new Set(
-      [...writes.uploadedKeys].map((key) => storageRef(fallbackTarget, key)).filter((ref) => !journaled.has(ref)),
+      [...writes.uploadedKeys].map((key) => storageRef(fallbackTarget, key)).filter((ref) => !journaled.has(ref) && !keptRefs.has(ref)),
     );
     // Only this version's rows are excluded: another version may share a key.
     const referenced = await findReferencedStorageRefs(
@@ -1418,7 +1446,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     }
     // Only the rows listed above: a row written since then names an object
     // this cleanup has not considered, so it stays for the next cleanup.
-    for (const row of rows) {
+    for (const row of rows.filter((candidate) => !displacedServer(candidate))) {
       await db.delete({
         model: 'fileArtifacts',
         where: [{ field: 'artifactId', operator: 'eq', value: row.artifactId }],
@@ -1869,7 +1897,9 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       // interrupted attempt leaves behind stays findable by cleanup.
       const intentId = await journalDisplaced(ownObject, target, 'intent');
       let size: number;
-      let abandonedStore: Promise<unknown> | undefined;
+      // A store given up on at the deadline is held from that moment on,
+      // whatever unwinding the upload still has to do.
+      let held: Promise<void> | undefined;
       try {
         size = await storeBounded(
           upload.body,
@@ -1878,11 +1908,11 @@ export function createProcessingService(config: ProcessingServiceConfig) {
           rule.maxSizeBytes,
           upload.contentLength,
           deadline,
-          (settled) => { abandonedStore = settled; },
+          (settled) => { held = holdUntilSettled(ownObject, target, settled); },
         );
       } catch (error) {
-        if (abandonedStore) {
-          await holdUntilSettled(ownObject, target, abandonedStore);
+        if (held) {
+          await held;
         } else {
           await discardDisplacedObject(ownObject, target, 'intent');
         }
@@ -1990,10 +2020,9 @@ export function createProcessingService(config: ProcessingServiceConfig) {
      * grace period after the record's last renewal are over. A client
      * object's key is unique to its upload, so nothing else can name or
      * write it, and a row of a version that is gone is never served. A server
-     * key's record is left alone: file and version cleanup delete its object
-     * after a reference check and keep the record of one they could not
-     * delete, while a processor of another file may publish the same key at
-     * any moment, so this sweep, which runs on its own, never deletes it. A
+     * key's record is left alone, as everywhere else (see
+     * `discardDisplacedObject`): a processor of another file may publish the
+     * same key at any moment, so this sweep never deletes it. A
      * failed delete keeps its record for the next run. `deletedObjects`
      * counts confirmed deletes. Call it from a scheduled job; FileFn does
      * not run it on its own.
