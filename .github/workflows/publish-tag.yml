@@ -44,7 +44,7 @@ jobs:
           ref: refs/tags/${{ env.RELEASE_TAG }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
@@ -67,6 +67,15 @@ jobs:
       - name: Resolve publish target
         id: resolve
         run: node ./scripts/resolve-release-tag.mjs "${RELEASE_TAG}"
+
+      - name: Only @datafn/server releases from this maintenance branch
+        env:
+          PACKAGE_NAME: ${{ steps.resolve.outputs.pkg_name }}
+        run: |
+          if [ "${PACKAGE_NAME}" != "@datafn/server" ]; then
+            echo "The 0.1 maintenance branch only publishes @datafn/server, not ${PACKAGE_NAME}." >&2
+            exit 1
+          fi
 
       - name: Require prerelease for channel-only dispatch
         if: inputs.channel_only && steps.resolve.outputs.dist_tag == 'latest'
@@ -146,31 +155,6 @@ jobs:
         env:
           DIST_TAG: ${{ needs.build.outputs.dist_tag }}
 
-  verify-registry:
-    needs: [build, publish]
-    if: needs.build.outputs.pkg_name == '@mcpfn/testing' || needs.build.outputs.pkg_name == '@mcpfn/cli'
-    runs-on: ubuntu-latest
-    env:
-      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
-
-    steps:
-      - name: Checkout immutable release tag
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-          ref: refs/tags/${{ env.RELEASE_TAG }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          registry-url: https://registry.npmjs.org
-
-      - name: Verify published McpFn consumer from configured registry
-        run: node ./scripts/test-mcpfn-registry-install.mjs "${{ needs.build.outputs.pkg_name }}" "${{ needs.build.outputs.pkg_version }}" "${NPM_CONFIG_REGISTRY}"
-        env:
-          NPM_CONFIG_REGISTRY: https://registry.npmjs.org
-
   reconcile-channel:
     needs: [build, publish]
     if: >-
@@ -219,10 +203,22 @@ jobs:
           node --input-type=module <<'NODE'
           import { execFileSync } from 'node:child_process';
           const { PACKAGE_NAME: name, PACKAGE_VERSION: version, DIST_TAG: distTag } = process.env;
-          async function registryJson(path) {
-            const response = await fetch(`https://registry.npmjs.org/${path}`);
-            if (!response.ok) throw new Error(`Registry returned ${response.status} for ${path}`);
-            return response.json();
+          // The registry can lag a publish by minutes; retry before failing.
+          async function registryJson(path, isReady = () => true) {
+            let lastError;
+            for (let attempt = 0; attempt < 10; attempt += 1) {
+              try {
+                const response = await fetch(`https://registry.npmjs.org/${path}`);
+                if (!response.ok) throw new Error(`Registry returned ${response.status} for ${path}`);
+                const body = await response.json();
+                if (isReady(body)) return body;
+                lastError = new Error(`Registry not updated yet for ${path}`);
+              } catch (error) {
+                lastError = error;
+              }
+              await new Promise((resolve) => setTimeout(resolve, 30_000));
+            }
+            throw lastError;
           }
           const encodedName = encodeURIComponent(name);
           const metadata = await registryJson(`${encodedName}/${version}`);
@@ -230,7 +226,10 @@ jobs:
           if (metadata.name !== name || metadata.version !== version || metadata.gitHead !== commit) {
             throw new Error('Published package does not match the immutable release tag.');
           }
-          const tags = await registryJson(`-/package/${encodedName}/dist-tags`);
+          const tags = await registryJson(
+            `-/package/${encodedName}/dist-tags`,
+            (body) => body[distTag] === version,
+          );
           if (tags[distTag] !== version) throw new Error('Published prerelease channel does not match.');
           if (tags.latest === version) {
             execFileSync('npm', ['dist-tag', 'rm', name, 'latest'], { stdio: 'inherit' });
