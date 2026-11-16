@@ -173,6 +173,38 @@ describe("idle LiveSignal", () => {
     expect(raw.refresh).toHaveBeenCalledTimes(1);
   });
 
+  it("delivers once to a returning reader when the raw signal builds a new value on subscribe", async () => {
+    // Derived signals (sync status, mapSignal, combineSignals) deliver a new,
+    // equal object to every subscriber.
+    let built = 0;
+    const subs = new Set<(v: any) => void>();
+    const raw = {
+      subs,
+      loading: false,
+      error: null,
+      refreshing: false,
+      get: () => ({ n: built }),
+      subscribe(handler: (v: any) => void) {
+        subs.add(handler);
+        handler({ n: ++built });
+        return () => subs.delete(handler);
+      },
+      refresh: vi.fn(async () => {}),
+      dispose: vi.fn(),
+    };
+    const signal = new LiveSignal(() => raw as any, () => {});
+    const first: unknown[] = [];
+    signal.subscribe((v) => first.push(v))();
+    expect(first).toEqual([{ n: 1 }]);
+    expect(subs.size).toBe(0);
+
+    const returning: unknown[] = [];
+    signal.subscribe((v) => returning.push(v));
+    expect(subs.size).toBe(1);
+    expect(returning).toEqual([{ n: 2 }]);
+    expect(signal.get()).toEqual({ n: 2 });
+  });
+
   it("loads a raw signal rebound while idle, then stops following it", () => {
     const raws: Array<ReturnType<typeof pendingRawSignal>> = [];
     const signal = new LiveSignal(

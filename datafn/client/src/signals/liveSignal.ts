@@ -63,15 +63,22 @@ export class LiveSignal<T> implements DatafnSignal<T> {
    * Follows the raw signal. Once every reader has left, it is followed only
    * until it settles on a value, so writes don't re-run its query while no
    * one reads it (the raw signal re-reads when it is followed again).
+   *
+   * With `absorbReplay`, a value the raw signal delivers while being
+   * subscribed only updates the last value: the caller hands it to the
+   * reader that is returning (derived signals build a new, equal object on
+   * every subscribe, so an identity check would deliver it twice).
    */
-  private attachRaw(): void {
+  private attachRaw(absorbReplay = false): void {
     if (!this.raw || this.rawUnsub) return;
     let attaching = true;
     let detachOnceAttached = false;
     const unsub = this.raw.subscribe((value) => {
-      // The raw signal delivers its cached value on subscribe; subscribers
-      // already have it when it is the value they last saw.
-      if (!(attaching && value === this.lastValue)) {
+      if (attaching && absorbReplay) {
+        this.lastValue = value;
+      } else if (!(attaching && value === this.lastValue)) {
+        // The raw signal delivers its cached value on subscribe; subscribers
+        // already have it when it is the value they last saw.
         this.lastValue = value;
         this.subscribers.forEach((fn) => fn(value));
       }
@@ -149,12 +156,16 @@ export class LiveSignal<T> implements DatafnSignal<T> {
     const wasIdle = this.subscribers.size === 0;
     this.touch();
     this.readersLeft = false;
+    const hadValue = this.lastValue !== undefined;
     this.subscribers.add(handler);
     this.onSubscriberChange?.(this);
+    // Follow the raw signal again before delivering, so its replay on
+    // subscribe and the cached value reach this reader once.
+    if (wasIdle) this.attachRaw(true);
     if (this.lastValue !== undefined) {
       handler(this.lastValue);
     }
-    if (wasIdle && this.lastValue !== undefined) {
+    if (wasIdle && hadValue) {
       queueMicrotask(() => {
         // Skip when returning already started a re-read (a write arrived
         // while idle).
@@ -164,7 +175,6 @@ export class LiveSignal<T> implements DatafnSignal<T> {
         }
       });
     }
-    if (wasIdle) this.attachRaw();
     return () => {
       if (this.subscribers.delete(handler)) {
         this.touch();
