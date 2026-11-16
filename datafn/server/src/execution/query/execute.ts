@@ -14,7 +14,8 @@ import { materializeSelect } from "./select.js";
 import { executeAggregateQuery } from "./aggregate.js";
 import { DatafnExecutionError } from "../errors.js";
 import { classifyQuery } from "./planner.js";
-import { executePushdownQuery } from "./pushdown.js";
+import { executePushdownQuery, injectCapabilityAutoFilters } from "./pushdown.js";
+import { FilterPushdownUnavailableError } from "./filter-plan.js";
 import {
   TIMEZONE_CHANGE_RESOURCE_NAME,
   createTimezoneResolver,
@@ -274,7 +275,9 @@ export function executeQuery(
 /**
  * Execute a DFQL query using the optimal strategy determined by classifyQuery().
  *
- * - FULL_PUSHDOWN  → executePushdownQuery  (skips DataStore entirely)
+ * - FULL_PUSHDOWN  → executePushdownQuery; when the filters cannot be pushed
+ *   down (FilterPushdownUnavailableError) it falls back to executeQuery on
+ *   `store`, with the capability auto-filters push-down would have applied
  * - PARTIAL_PUSHDOWN / IN_MEMORY → executeQuery  (requires DataStore)
  *
  * The `store` parameter is required for non-FULL_PUSHDOWN strategies.
@@ -286,11 +289,22 @@ export async function executeQueryWithStrategy(
   db: Adapter,
   namespace: string,
   store?: DataStore,
+  actorId?: string,
 ): Promise<QueryResult | AggregateResult> {
   const strategy = classifyQuery(query as unknown as Record<string, unknown>, schema);
 
   if (strategy === "FULL_PUSHDOWN") {
-    return executePushdownQuery(query, schema, db, namespace);
+    try {
+      return await executePushdownQuery(query, schema, db, namespace, actorId);
+    } catch (error) {
+      // Fall back to in-memory evaluation when a DataStore is available.
+      if (!(error instanceof FilterPushdownUnavailableError) || !store) throw error;
+      return executeQuery(
+        injectCapabilityAutoFilters(query as any, schema) as unknown as DFQLQuery,
+        schema,
+        store,
+      );
+    }
   }
 
   if (!store) {

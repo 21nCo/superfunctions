@@ -336,6 +336,220 @@ export function describeDrizzleSqliteConformance(
       });
     });
 
+    describe("filter push-down", () => {
+      /** An always-true filter the adapter cannot express: forces in-memory evaluation. */
+      const forceInMemory = (body: Json): Json => ({
+        ...body,
+        filters: { $and: [body.filters, { id: { not_like: "__never__" } }] },
+      });
+
+      async function seedFilterFixture(app: Started) {
+        const seeded = await app.call("POST", "/datafn/push", {
+          clientId: "seed",
+          mutations: [
+            { resource: "project", version: 1, operation: "insert", id: "project:p1", clientId: "seed", mutationId: "f-p1", record: { name: "Launch" } },
+            { resource: "project", version: 1, operation: "insert", id: "project:p2", clientId: "seed", mutationId: "f-p2", record: { name: "Later" } },
+            { resource: "tag", version: 1, operation: "insert", id: "tag:x", clientId: "seed", mutationId: "f-x", record: { label: "urgent" } },
+            { resource: "tag", version: 1, operation: "insert", id: "tag:y", clientId: "seed", mutationId: "f-y", record: { label: "later" } },
+            insertTask("task:a", "Alpha", 3, { projectId: "project:p1" }),
+            insertTask("task:b", "", 1, { projectId: "" }),
+            insertTask("task:c", "Charlie", 3),
+            insertTask("task:d", "Delta", 2, { projectId: "project:p2" }),
+            insertTask("task:e", "", 5, { projectId: null }),
+          ],
+        });
+        expect(seeded.status).toBe(200);
+        expect(seeded.body.result.ok).toBe(true);
+        for (const [id, tags] of [["task:a", ["tag:x", "tag:y"]], ["task:c", ["tag:y"]], ["task:d", ["tag:x"]]] as const) {
+          const related = await app.call("POST", "/datafn/mutation", {
+            resource: "task",
+            version: 1,
+            operation: "relate",
+            id,
+            clientId: "c1",
+            mutationId: `f-relate-${id}`,
+            relations: { tags: tags.map(($ref) => ({ $ref })) },
+          });
+          expect(related.body.result.ok).toBe(true);
+        }
+      }
+
+      /** Runs a query through push-down (asserted) and in memory, and returns the shared result. */
+      async function expectParity(body: Json): Promise<Json> {
+        const reads: Json[] = [];
+        const app = await serve((adapter) => new Proxy(adapter, {
+          get(target, property, receiver) {
+            const original = Reflect.get(target, property, receiver);
+            if (property !== "findMany") return original;
+            return (params: Json) => {
+              reads.push(params);
+              return (original as (p: Json) => Promise<unknown>).call(target, params);
+            };
+          },
+        }));
+        const request = { version: 1, select: ["id", "title", "priority", "projectId"], ...body };
+        const pushed = await app.call("POST", "/datafn/query", request);
+        expect(pushed.status, JSON.stringify(pushed.body)).toBe(200);
+        // Push-down reads the primary resource with its sort; in-memory loads do not sort.
+        expect(reads.some((read) => read.model === body.resource && Array.isArray(read.orderBy))).toBe(true);
+        const inMemory = await app.call("POST", "/datafn/query", forceInMemory(request));
+        expect(inMemory.status, JSON.stringify(inMemory.body)).toBe(200);
+        expect(pushed.body.result).toEqual(inMemory.body.result);
+        return pushed.body.result;
+      }
+
+      const ids = (result: Json) => result.data.map((row: Json) => row.id);
+
+      it("pushes $is_empty and $is_not_empty down with in-memory semantics", async () => {
+        const app = await start();
+        await seedFilterFixture(app);
+
+        expect(ids(await expectParity({ resource: "task", filters: { projectId: { $is_empty: true } }, sort: ["id:asc"] })))
+          .toEqual(["task:b", "task:c", "task:e"]);
+        expect(ids(await expectParity({ resource: "task", filters: { projectId: { $is_not_empty: true } }, sort: ["id:asc"] })))
+          .toEqual(["task:a", "task:d"]);
+        // Two OR groups: disjoint branches merged with limit, offset and count.
+        for (const [limit, offset] of [[1, 0], [2, 1], [5, 0]]) {
+          const result = await expectParity({
+            resource: "task",
+            filters: { projectId: { $is_empty: true }, title: { $is_empty: true } },
+            sort: ["-priority", "id:asc"],
+            limit,
+            offset,
+            count: true,
+          });
+          expect(result.count).toBe(2);
+        }
+        expect(ids(await expectParity({ resource: "task", filters: { priority: { $is_empty: false } }, sort: ["id:asc"] })))
+          .toHaveLength(5);
+        // Boolean fields: empty means null or missing.
+        expect(ids(await expectParity({ resource: "task", filters: { done: { $is_empty: true } }, sort: ["id:asc"] }))).toEqual([]);
+        expect(ids(await expectParity({ resource: "task", filters: { done: { $is_not_empty: true } }, sort: ["id:asc"] })))
+          .toHaveLength(5);
+      });
+
+      it("pushes $any and $none relation filters down with in-memory semantics", async () => {
+        const app = await start();
+        await seedFilterFixture(app);
+
+        expect(ids(await expectParity({ resource: "task", filters: { tags: { $any: { label: "urgent" } } }, sort: ["id:asc"], count: true })))
+          .toEqual(["task:a", "task:d"]);
+        expect(ids(await expectParity({ resource: "task", filters: { tags: { $none: { label: "urgent" } } }, sort: ["id:asc"] })))
+          .toEqual(["task:b", "task:c", "task:e"]);
+        expect(ids(await expectParity({ resource: "task", filters: { project: { $any: { name: "Launch" } } }, sort: ["id:asc"] })))
+          .toEqual(["task:a"]);
+        expect(ids(await expectParity({
+          resource: "project",
+          select: ["id", "name"],
+          filters: { tasks: { $any: { title: "Delta" } } },
+          sort: ["id:asc"],
+        }))).toEqual(["project:p2"]);
+        expect(ids(await expectParity({
+          resource: "tag",
+          select: ["id", "label"],
+          filters: { tasks: { $any: { priority: 3 } } },
+          sort: ["id:asc"],
+        }))).toEqual(["tag:x", "tag:y"]);
+        // A number `$ne` sub-filter is pushed down with the evaluator's semantics.
+        await expectParity({
+          resource: "tag",
+          select: ["id", "label"],
+          filters: { tasks: { $any: { priority: { $ne: 3 } } } },
+          sort: ["id:asc"],
+        });
+        expect(ids(await expectParity({
+          resource: "task",
+          filters: { projectId: { $is_empty: false }, title: { $ne: "Alpha" } },
+          sort: ["id:asc"],
+        }))).toEqual(["task:d"]);
+        // `$in` with null in a relation sub-filter is evaluated in memory,
+        // where it matches NULL.
+        // A string `$ne` sub-filter is evaluated in memory too (a database
+        // collation could compare strings case-insensitively); it matches
+        // NULL (task:c has no project).
+        for (const [filters, expected] of [
+          [{ tasks: { $any: { projectId: { $ne: "project:p1" } } } }, ["tag:x", "tag:y"]],
+          [{ tasks: { $any: { projectId: { $in: [null, "project:p2"] } } } }, ["tag:x", "tag:y"]],
+          [{ tasks: { $none: { projectId: [null] } } }, ["tag:x"]],
+        ] as const) {
+          const res = await app.call("POST", "/datafn/query", { resource: "tag", version: 1, select: ["id"], filters, sort: ["id:asc"] });
+          expect(res.status, JSON.stringify(res.body)).toBe(200);
+          expect(ids(res.body.result)).toEqual(expected);
+        }
+        // A string operand against the number field `priority` is evaluated
+        // with strict equality in memory (SQL would coerce "3" to 3).
+        const coerced = await app.call("POST", "/datafn/query", {
+          resource: "tag", version: 1, select: ["id"], filters: { tasks: { $any: { priority: { $eq: "3" } } } }, sort: ["id:asc"],
+        });
+        expect(coerced.status, JSON.stringify(coerced.body)).toBe(200);
+        expect(ids(coerced.body.result)).toEqual([]);
+        // A top-level `$ne` never matches NULL (SQL `<>`), with or without an
+        // emptiness filter beside it.
+        expect(ids(await expectParity({
+          resource: "task",
+          filters: { projectId: { $ne: "project:p1" } },
+          sort: ["id:asc"],
+        }))).toEqual(["task:d"]);
+        expect(ids(await expectParity({
+          resource: "task",
+          filters: { projectId: { $ne: "project:p1" }, title: { $is_empty: true } },
+          sort: ["id:asc"],
+        }))).toEqual([]);
+        // LIKE has no adapter operator: it is evaluated in memory.
+        const liked = await app.call("POST", "/datafn/query", {
+          resource: "task",
+          version: 1,
+          select: ["id"],
+          filters: { tags: { $any: { label: { $like: "urg%" } } } },
+          sort: ["id:asc"],
+        });
+        expect(liked.status, JSON.stringify(liked.body)).toBe(200);
+        expect(ids(liked.body.result)).toEqual(["task:a", "task:d"]);
+      });
+
+      it("evaluates a relation filter in memory when its id list exceeds the database's parameter limit", async () => {
+        const app = await start();
+        // D1 binds at most 100 parameters per statement.
+        const mutations = Array.from({ length: 120 }, (_, i) => ({
+          resource: "project", version: 1, operation: "insert", id: `project:many${i}`, clientId: "seed", mutationId: `many-${i}`, record: { name: "Launch" },
+        }));
+        mutations.push(insertTask("task:many", "Many", 1, { projectId: "project:many7" }) as any);
+        const seeded = await app.call("POST", "/datafn/push", { clientId: "seed", mutations });
+        expect(seeded.body.result.ok).toBe(true);
+        const res = await app.call("POST", "/datafn/query", {
+          resource: "task", version: 1, select: ["id"], filters: { project: { $any: { name: "Launch" } } }, sort: ["id:asc"], count: true,
+        });
+        expect(res.status, JSON.stringify(res.body)).toBe(200);
+        expect(ids(res.body.result)).toEqual(["task:many"]);
+        expect(res.body.result.count).toBe(1);
+      });
+
+      it("pages merged OR branches in the in-memory sort order, not the database's", async () => {
+        const app = await start();
+        // SQLite compares strings by binary collation ("B" < "a"); the
+        // in-memory comparator uses localeCompare ("a" < "B").
+        const seeded = await app.call("POST", "/datafn/push", {
+          clientId: "seed",
+          mutations: [
+            insertTask("task:upper", "", 1, { projectId: "", status: "B" }),
+            insertTask("task:upper2", "", 1, { projectId: "", status: "C" }),
+            insertTask("task:lower", "", 1, { projectId: "", status: "a" }),
+            insertTask("task:null", "", 1, { projectId: null, status: "Z" }),
+          ],
+        });
+        expect(seeded.body.result.ok).toBe(true);
+        // Two OR groups: projectId splits into a NULL branch and an "" branch.
+        const filters = { title: { $is_empty: true }, projectId: { $is_empty: true } };
+        const pages: string[] = [];
+        for (const offset of [0, 1, 2, 3]) {
+          const result = await expectParity({ resource: "task", filters, sort: ["status:asc", "id:asc"], limit: 1, offset, count: true });
+          expect(result.count).toBe(4);
+          pages.push(...ids(result));
+        }
+        expect(pages).toEqual(["task:lower", "task:upper", "task:upper2", "task:null"]);
+      });
+    });
+
     describe("sync", () => {
       it("clones, pulls from a cursor and deduplicates a replayed push", async () => {
         const app = await start();

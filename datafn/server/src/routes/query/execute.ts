@@ -10,6 +10,13 @@ import type { DatafnLogger } from "../../logger.js";
 import { executeQuery } from "../../execution/query/execute.js";
 import { DbDataStore } from "../../execution/db-store.js";
 import { classifyQuery, extractPushableFilters } from "../../execution/query/planner.js";
+import {
+  buildPrefilterWhere,
+  filterReadsPrimaryThroughRelation,
+  FilterPushdownUnavailableError,
+  queryPathsReadPrimaryThroughRelation,
+  selectReadsPrimaryThroughRelation,
+} from "../../execution/query/filter-plan.js";
 import { executePushdownQuery, executePartialPushdownQuery } from "../../execution/query/pushdown.js";
 import { materializeSelect } from "../../execution/query/select.js";
 import { parseSortTerms, sortRecords } from "../../execution/query/sort.js";
@@ -246,18 +253,20 @@ export async function executeSingleQuery(
 
   timer?.startPhase("fetch");
 
-  if (strategy === "FULL_PUSHDOWN") {
-    return executePushdownQuery(query as any, schema, db, namespace);
-  }
-
-  if (strategy === "PARTIAL_PUSHDOWN") {
-    return executePartialPushdownQuery(
-      query as any,
-      schema,
-      db,
-      namespace,
-      actorId,
-    );
+  if (strategy === "FULL_PUSHDOWN" || strategy === "PARTIAL_PUSHDOWN") {
+    try {
+      return strategy === "FULL_PUSHDOWN"
+        ? await executePushdownQuery(query as any, schema, db, namespace, actorId)
+        : await executePartialPushdownQuery(query as any, schema, db, namespace, actorId);
+    } catch (error) {
+      // A relation filter matched too many records to push down; evaluate
+      // the query in memory below.
+      if (!(error instanceof FilterPushdownUnavailableError)) throw error;
+      logger?.debug("Query push-down unavailable; evaluating in memory", {
+        resource: query.resource,
+        operation: "query-pushdown-fallback",
+      });
+    }
   }
 
   // IN_MEMORY: load records via DbDataStore.
@@ -265,19 +274,37 @@ export async function executeSingleQuery(
   // resource at the adapter level before in-memory evaluation (SCALE-004).
   // Skip pre-filtering for HTREE queries — HTREE expansion needs all
   // ancestor/descendant records, not just the one matching the filter.
+  // `parent.*` / `children.*` also cover self relations (e.g. a many-one
+  // `parent`), whose related records are only found in the full table.
   const selectHasHtree = Array.isArray(query.select) &&
     (query.select as string[]).some(
       (t: string) => typeof t === "string" && (t.startsWith("parent.") || t.startsWith("children."))
     );
+  // A relation filter that reads other records of the primary resource (a
+  // self relation) needs them in the store as well.
+  // A selected self relation (e.g. `childNodes.*`), or a groupBy, sort or
+  // aggregation path through one (e.g. `manager.name`), does too.
+  const filtersReadPrimary =
+    (query.filters && typeof query.filters === "object"
+      ? filterReadsPrimaryThroughRelation(query.filters, query.resource as string, schema)
+      : false) ||
+    selectReadsPrimaryThroughRelation(query.select, query.resource as string, schema) ||
+    queryPathsReadPrimaryThroughRelation(query, query.resource as string, schema);
   let preFilterWhere: WhereClause[] | undefined;
-  if (!selectHasHtree && query.filters && typeof query.filters === "object") {
-    const { pushable } = extractPushableFilters(
-      query.filters as Record<string, unknown>,
-      query.resource as string,
-      schema,
-    );
+  if (!selectHasHtree && !filtersReadPrimary && query.filters && typeof query.filters === "object") {
+    const pushable = schema.resources.some((r) => r.name === query.resource)
+      ? buildPrefilterWhere(
+          query.filters as Record<string, unknown>,
+          query.resource as string,
+          schema,
+        )
+      : (extractPushableFilters(
+          query.filters as Record<string, unknown>,
+          query.resource as string,
+          schema,
+        ).pushable as WhereClause[]);
     if (pushable.length > 0) {
-      preFilterWhere = pushable as WhereClause[];
+      preFilterWhere = pushable;
     }
   }
 

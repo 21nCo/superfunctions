@@ -379,10 +379,49 @@ describe("FIX-EXE-022: No full-scan fallback", () => {
       debug: () => {},
     } as any;
 
-    // project -> task (one-many); comment -> task (many-one). The nested
-    // select "tasks.comments.*" reaches comment through an inverse relation,
-    // which the nested pass does not load, and comment has no relation to
-    // project.
+    // project -> task (one-many); comment -> task (many-one). The ids-only
+    // nested select "tasks.comments" is not a nested projection the nested
+    // pass loads, and comment has no relation to project.
+    const schema = {
+      resources: [
+        { name: "project", version: 1, fields: [] },
+        { name: "task", version: 1, fields: [{ name: "projectId", type: "string", required: false }] },
+        { name: "comment", version: 1, fields: [{ name: "taskId", type: "string", required: false }] },
+      ],
+      relations: [
+        { from: "project", to: "task", relation: "tasks", inverse: "project", type: "one-many", fkField: "projectId" },
+        { from: "comment", to: "task", relation: "task", inverse: "comments", type: "many-one", fkField: "taskId" },
+      ],
+    };
+
+    const store = await DbDataStore.forQuery(
+      db,
+      { resource: "project", select: ["tasks.comments"] },
+      schema,
+      "datafn",
+      [{ field: "id", operator: "eq", value: "p1" }],
+      logger,
+    );
+
+    const hasWarning = warnLogs.some(
+      (args) =>
+        typeof args[0] === "string" &&
+        args[0].includes("skipping load") &&
+        args[1]?.resource === "comment",
+    );
+    expect(hasWarning).toBe(true);
+    expect(store.getRecords("comment")).toEqual([]);
+    expect(findManySpy.mock.calls.filter(([args]) => (args as any).model === "comment")).toEqual([]);
+  });
+
+  it("TV-EXE-022-P3: a nested projection through an inverse relation is loaded from the first-level records", async () => {
+    const db = memoryAdapter();
+    await db.initialize();
+    await db.create({ model: "project", data: { id: "p1" }, namespace: "datafn" });
+    await db.create({ model: "task", data: { id: "t1", projectId: "p1" }, namespace: "datafn" });
+    await db.create({ model: "comment", data: { id: "m1", taskId: "t1" }, namespace: "datafn" });
+    await db.create({ model: "comment", data: { id: "m2", taskId: "t9" }, namespace: "datafn" });
+    const findManySpy = vi.spyOn(db, "findMany");
     const schema = {
       resources: [
         { name: "project", version: 1, fields: [] },
@@ -401,18 +440,14 @@ describe("FIX-EXE-022: No full-scan fallback", () => {
       schema,
       "datafn",
       [{ field: "id", operator: "eq", value: "p1" }],
-      logger,
     );
 
-    const hasWarning = warnLogs.some(
-      (args) =>
-        typeof args[0] === "string" &&
-        args[0].includes("skipping load") &&
-        args[1]?.resource === "comment",
-    );
-    expect(hasWarning).toBe(true);
-    expect(store.getRecords("comment")).toEqual([]);
-    expect(findManySpy.mock.calls.filter(([args]) => (args as any).model === "comment")).toEqual([]);
+    expect(store.getRecords("comment").map((r) => r.id)).toEqual(["m1"]);
+    const commentReads = findManySpy.mock.calls
+      .map(([args]) => args as { model: string; where?: unknown[] })
+      .filter((args) => args.model === "comment");
+    expect(commentReads.length).toBeGreaterThan(0);
+    expect(commentReads.every((args) => (args.where ?? []).length > 0)).toBe(true);
   });
 
   it("TV-EXE-022-N1: unhandled relation type also avoids where:[] broad fetch", async () => {
