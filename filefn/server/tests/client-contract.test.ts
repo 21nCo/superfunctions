@@ -30,6 +30,7 @@ describe('filefn client contract artifact', () => {
       '/upload/{uploadSessionId}/abort',
       '/{fileId}/artifacts',
       '/{fileId}/artifacts/{artifactId}/download',
+      '/{fileId}/versions/{versionId}/artifacts/{kind}',
       '/policies',
       '/quota/storage',
       '/{fileId}/permissions',

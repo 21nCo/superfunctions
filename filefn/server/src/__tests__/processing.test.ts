@@ -365,6 +365,7 @@ describe('ProcessingService', () => {
     expect(artifacts[0].kind).toBe('thumbnail-small');
     expect(artifacts[0].metadata).toEqual({
       processing: {
+        source: 'server',
         processor: 'thumbnail',
         durationMs: expect.any(Number),
         idempotencyKey: `processing:${uploadResult.fileId}:${uploadResult.versionId}:thumbnail`,

@@ -2,6 +2,7 @@ import { createHttpClient, FileFnHttpError } from './client.js';
 import { UploadManager, assertValidExplicitFileId, generateFileId, prepareUploadInput } from './upload-manager.js';
 import type {
   ArtifactDescriptor,
+  ClientArtifactKind,
   FileFnClientConfig,
   PendingLocalDescriptor,
   RenderDescriptor,
@@ -11,6 +12,7 @@ import type {
   UploadHandle,
   UploadHandleWithFileId,
   UploadResult,
+  UploadArtifactInput,
 } from './types.js';
 import type { UploadPreprocessor } from './preprocessing/types.js';
 import { createHeicPreprocessor } from './preprocessing/heic.js';
@@ -28,6 +30,9 @@ import {
 
 export type {
   ArtifactDescriptor,
+  ArtifactSource,
+  ClientArtifactKind,
+  UploadArtifactInput,
   FileFnClientConfig,
   PendingLocalDescriptor,
   RenderDescriptor,
@@ -98,6 +103,13 @@ export interface FileFnClient {
   listArtifacts(fileId: string): Promise<ArtifactDescriptor[]>;
   downloadUrl(fileId: string, options?: { versionId?: string }): Promise<string>;
   downloadArtifact(fileId: string, artifactId: string): Promise<string>;
+  /**
+   * Uploads a thumbnail or converted image made on the device as an artifact
+   * of the file version, so the viewer resolves it as it resolves the ones
+   * server processing makes, and server processing skips that kind. Only the
+   * file's owner or a writer may; a retry replaces the same artifact.
+   */
+  uploadArtifact(input: UploadArtifactInput): Promise<ArtifactDescriptor>;
   resolveRenderable(input: {
     fileId: string;
     intent: RenderIntent;
@@ -106,6 +118,35 @@ export interface FileFnClient {
   }): Promise<RenderDescriptor>;
   deleteFile(fileId: string): Promise<void>;
   getPendingLocalDescriptor(fileId: string): Promise<PendingLocalDescriptor | null>;
+}
+
+const CLIENT_ARTIFACT_KINDS: readonly ClientArtifactKind[] = [
+  'thumbnail-small',
+  'thumbnail-medium',
+  'thumbnail-large',
+  'converted',
+];
+
+/** Refuses an artifact upload the server would refuse for its shape, before any request. */
+function assertUploadArtifactInput(input: UploadArtifactInput, mimeType: string): void {
+  if (typeof input.fileId !== 'string' || input.fileId.length === 0) {
+    throw new TypeError('uploadArtifact requires a fileId');
+  }
+  if (typeof input.versionId !== 'string' || input.versionId.length === 0) {
+    throw new TypeError('uploadArtifact requires a versionId');
+  }
+  if (!CLIENT_ARTIFACT_KINDS.includes(input.kind)) {
+    throw new TypeError(`uploadArtifact kind must be one of ${CLIENT_ARTIFACT_KINDS.join(', ')}`);
+  }
+  if (!mimeType) {
+    throw new TypeError('uploadArtifact requires a mimeType when the data has no type');
+  }
+  if (
+    input.durationMs !== undefined &&
+    !(Number.isInteger(input.durationMs) && input.durationMs >= 0)
+  ) {
+    throw new TypeError('uploadArtifact durationMs must be a non-negative integer');
+  }
 }
 
 function createAbortError(): DOMException {
@@ -391,6 +432,22 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
     async downloadArtifact(fileId: string, artifactId: string): Promise<string> {
       const response = await httpClient.downloadArtifact(fileId, artifactId);
       return response.url;
+    },
+
+    async uploadArtifact(input: UploadArtifactInput): Promise<ArtifactDescriptor> {
+      const mimeType = input.mimeType ?? (typeof Blob !== 'undefined' && input.data instanceof Blob ? input.data.type : '');
+      assertUploadArtifactInput(input, mimeType);
+      return httpClient.uploadArtifact(
+        {
+          fileId: input.fileId,
+          versionId: input.versionId,
+          kind: input.kind,
+          data: input.data,
+          mimeType,
+          durationMs: input.durationMs,
+        },
+        input.signal,
+      );
     },
 
     async resolveRenderable(input): Promise<RenderDescriptor> {

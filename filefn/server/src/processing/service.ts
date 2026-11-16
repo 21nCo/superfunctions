@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Adapter } from '@superfunctions/db';
 import { getStorageCapabilities, type StorageAdapter } from '@superfunctions/storage';
 import type { FileProviderContext } from '@superfunctions/files';
@@ -8,10 +8,25 @@ import type { Logger } from '../observability/logger.js';
 import * as errors from '../errors.js';
 import { createBackgroundScheduler, type BackgroundScheduler } from '../runtime.js';
 import { findReferencedStorageRefs, parseStorageRef, storageRef } from '../storage-references.js';
+import {
+  CLIENT_ARTIFACT_KINDS,
+  MAX_CLIENT_PROCESSING_DURATION_MS,
+  artifactSourceOf,
+  clientArtifactRule,
+  normalizeMimeType,
+  type ClientArtifactProcessingMetadata,
+} from './client-artifacts.js';
 
 export interface Processor {
   name: string;
   supportedMimeTypes: string[];
+  /**
+   * Artifact kinds the processor may emit. When every one of them has a
+   * client-supplied artifact for the version, an unforced run skips the
+   * processor. Without it the processor runs, and its artifacts of a kind the
+   * client supplied are dropped unless the run is forced.
+   */
+  artifactKinds?: string[];
   process(
     input: ProcessorInput,
     getData: () => Promise<Uint8Array>
@@ -62,6 +77,8 @@ export interface ProcessingJob {
   tenantId?: string;
   requestId?: string;
   jobId?: string;
+  /** Replace client-supplied artifacts too, instead of skipping their kinds. */
+  force?: boolean;
 }
 
 /** Result of running one queued processing job. */
@@ -103,6 +120,7 @@ export interface ProcessingJobDelivery {
 
 /** FileFn's record of how an artifact was produced, stored under `metadata.processing`. */
 export interface ArtifactProcessingMetadata {
+  source: 'server';
   processor: string;
   /** Wall-clock time the processor's `process` call took, in milliseconds. */
   durationMs: number;
@@ -145,6 +163,26 @@ export interface ProcessingServiceConfig {
   maxFileBytes?: number;
   /** Runs queue-less processing after the response; defaults to a detached `setImmediate`. */
   background?: BackgroundScheduler;
+  /**
+   * Decides who may write a file (attach artifacts, force processing);
+   * FileFn passes its file service so the configured authorizer applies.
+   * Without it only the file's owner may.
+   */
+  writeChecker?: { canWriteFile(fileId: string, ctx: FileProviderContext): Promise<boolean> };
+}
+
+/** A client-supplied artifact for one file version. */
+export interface ClientArtifactUpload {
+  fileId: string;
+  versionId: string;
+  kind: string;
+  /** Content-Type of the body. */
+  mimeType: string;
+  body: ReadableStream<Uint8Array> | Uint8Array | Blob | null | undefined;
+  /** Declared body length, checked before any byte is stored. */
+  contentLength?: number;
+  /** Time the client spent producing the artifact, in milliseconds. */
+  durationMs?: number;
 }
 
 export interface FileArtifactRecord {
@@ -339,6 +377,7 @@ function parseProcessingJob(body: unknown): Omit<ProcessingJob, 'idempotencyKey'
     idempotencyKey: optionalJobField(job.idempotencyKey),
     jobId: optionalJobField(job.jobId),
     requestId: optionalJobField(job.requestId),
+    force: job.force === true ? true : undefined,
   };
 }
 
@@ -400,17 +439,42 @@ function supportsProcessor(processor: Processor, mimeType: string): boolean {
 
 /**
  * The job's idempotency key: the file version and its sorted processor names.
- * A processor list too long for the job field bound is replaced by its hash,
- * so the consumer never rejects a key FileFn enqueued.
+ * A forced run adds a fresh nonce, so it never counts as a duplicate of an
+ * earlier run and every processor runs again. A key too long for the job
+ * field bound replaces that part with its hash, so the consumer never rejects
+ * a key FileFn enqueued.
  */
-function buildProcessingIdempotencyKey(fileId: string, versionId: string, processors: Processor[]): string {
+function buildProcessingIdempotencyKey(
+  fileId: string,
+  versionId: string,
+  processors: Processor[],
+  force = false,
+): string {
   const processorKey = processors.map((processor) => processor.name).sort().join(',');
-  const key = `processing:${fileId}:${versionId}:${processorKey}`;
+  const runKey = force ? `${processorKey}:force:${randomUUID()}` : processorKey;
+  const key = `processing:${fileId}:${versionId}:${runKey}`;
   if (key.length <= MAX_JOB_FIELD_LENGTH) {
     return key;
   }
-  const digest = createHash('sha256').update(processorKey).digest('hex');
+  const digest = createHash('sha256').update(runKey).digest('hex');
   return `processing:${fileId}:${versionId}:sha256:${digest}`;
+}
+
+/**
+ * The processors a run executes: an unforced run leaves out a processor
+ * whose declared kinds the client supplied every one of.
+ */
+function excludeClientCovered<T>(
+  entries: T[],
+  processorOf: (entry: T) => Processor,
+  clientKinds: ReadonlySet<string>,
+  force: boolean,
+): T[] {
+  if (force || clientKinds.size === 0) return entries;
+  return entries.filter((entry) => {
+    const kinds = processorOf(entry).artifactKinds;
+    return !(Array.isArray(kinds) && kinds.length > 0 && kinds.every((kind) => clientKinds.has(kind)));
+  });
 }
 
 function isGrantExpired(expiresAt: string | null | undefined): boolean {
@@ -422,6 +486,37 @@ function isGrantExpired(expiresAt: string | null | undefined): boolean {
     return false;
   }
   return expiresAtMs <= Date.now();
+}
+
+/** The chunks of a client artifact body; a stream left early is cancelled. */
+async function* bodyChunks(body: ReadableStream<Uint8Array> | Uint8Array | Blob): AsyncGenerator<Uint8Array> {
+  if (body instanceof Uint8Array) {
+    yield body;
+    return;
+  }
+  if (typeof Blob !== 'undefined' && body instanceof Blob) {
+    yield new Uint8Array(await body.arrayBuffer());
+    return;
+  }
+  const reader = (body as ReadableStream<Uint8Array>).getReader();
+  let finished = false;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        finished = true;
+        return;
+      }
+      if (value && value.byteLength > 0) {
+        yield value instanceof Uint8Array ? value : new Uint8Array(value);
+      }
+    }
+  } finally {
+    if (!finished) {
+      await reader.cancel().catch(() => undefined);
+    }
+    reader.releaseLock();
+  }
 }
 
 export function createProcessingService(config: ProcessingServiceConfig) {
@@ -436,6 +531,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     namespace = 'filefn',
     enabled = true,
     maxFileBytes = 50 * 1024 * 1024,
+    writeChecker,
   } = config;
   const background = config.background ?? createBackgroundScheduler(undefined, logger);
 
@@ -522,6 +618,18 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     return version;
   }
 
+  /** The file, when the principal may read and write it: its owner or a writer. */
+  async function requireWritableFile(fileId: string, ctx: FileProviderContext): Promise<FileRecord> {
+    const file = await requireReadableFile(fileId, ctx);
+    const canWrite = writeChecker
+      ? await writeChecker.canWriteFile(fileId, ctx)
+      : Boolean(ctx.principalId) && file.ownerId === ctx.principalId;
+    if (!canWrite) {
+      throw errors.forbidden();
+    }
+    return file;
+  }
+
   async function getReadableVersionForFile(
     fileId: string,
     ctx: FileProviderContext,
@@ -599,8 +707,77 @@ export function createProcessingService(config: ProcessingServiceConfig) {
   }
 
   /**
+   * Streams a client body into a new object, refusing it once it passes
+   * `maxBytes` or when it is empty. A refused or failed upload deletes what
+   * it wrote, best effort, and nothing records the object.
+   */
+  async function storeBounded(
+    body: NonNullable<ClientArtifactUpload['body']>,
+    object: { key: string; target: string; contentType: string },
+    kind: string,
+    maxBytes: number,
+  ): Promise<number> {
+    if (!storage.openUploadStream) {
+      throw new Error('Storage adapter does not support streaming uploads');
+    }
+    const stream = await storage.openUploadStream(object);
+    const writer = stream.getWriter();
+    let size = 0;
+    try {
+      for await (const chunk of bodyChunks(body)) {
+        size += chunk.byteLength;
+        if (size > maxBytes) {
+          throw errors.artifactTooLarge(kind, maxBytes);
+        }
+        await writer.write(chunk);
+      }
+      if (size === 0) {
+        throw errors.invalidRequest('Artifact body is empty');
+      }
+      await writer.close();
+      return size;
+    } catch (error) {
+      await writer.abort(error).catch(() => undefined);
+      try {
+        await storage.deleteObject({ key: object.key, target: object.target });
+      } catch {
+        // Best effort: the object may never have been created.
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Deletes an artifact object no row needs any more, best effort: a failure
+   * is logged and leaves the object behind. A client-supplied object's key is
+   * unique to its row, so only a server object needs the reference scan
+   * (deduplicated files can share storage keys).
+   */
+  async function discardReplacedObject(
+    replaced: Pick<FileArtifactRecord, 'fileId' | 'versionId' | 'storageKey' | 'metadata'>,
+    fallbackTarget: string,
+  ): Promise<void> {
+    const ref = storageRef(recordedStorageTarget(replaced as FileArtifactRecord) ?? fallbackTarget, replaced.storageKey);
+    try {
+      if (artifactSourceOf(replaced) !== 'client') {
+        const referenced = await findReferencedStorageRefs({ db, namespace, policies }, new Set([ref]));
+        if (referenced.has(ref)) return;
+      }
+      await storage.deleteObject(parseStorageRef(ref));
+    } catch (error) {
+      logger?.warn('replaced artifact object not deleted', {
+        fileId: replaced.fileId,
+        versionId: replaced.versionId,
+        error: errorMessage(error),
+      });
+    }
+  }
+
+  /**
    * Uploads one artifact and creates or updates its row for (file, version,
-   * kind), noting each write in `writes` as it lands.
+   * kind), noting each write in `writes` as it lands. Unless `force` is set,
+   * a kind the client supplied keeps the client's artifact and nothing is
+   * uploaded for it.
    */
   async function recordArtifact(
     input: Pick<ProcessorInput, 'fileId' | 'versionId'>,
@@ -608,10 +785,25 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     target: string,
     processing: ArtifactProcessingMetadata,
     writes: ProcessingWrites,
+    force: boolean,
   ): Promise<void> {
     if (!storage.openUploadStream) {
       throw new Error('Storage adapter does not support streaming uploads');
     }
+    const existingArtifact = await db.findOne<FileArtifactRecord>({
+      model: 'fileArtifacts',
+      where: [
+        { field: 'fileId', operator: 'eq', value: input.fileId },
+        { field: 'versionId', operator: 'eq', value: input.versionId },
+        { field: 'kind', operator: 'eq', value: artifact.kind },
+      ],
+      namespace,
+    });
+    const keepsClientArtifact = (row: FileArtifactRecord) => !force && artifactSourceOf(row) === 'client';
+    if (existingArtifact && keepsClientArtifact(existingArtifact)) {
+      return;
+    }
+
     writes.uploadedKeys.add(artifact.storageKey);
     const stream = await storage.openUploadStream({
       key: artifact.storageKey,
@@ -628,23 +820,21 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       size: artifact.data.length,
       metadata: { ...(artifact.metadata ?? {}), processing },
     };
-    const existingArtifact = await db.findOne<FileArtifactRecord>({
-      model: 'fileArtifacts',
-      where: [
-        { field: 'fileId', operator: 'eq', value: input.fileId },
-        { field: 'versionId', operator: 'eq', value: input.versionId },
-        { field: 'kind', operator: 'eq', value: artifact.kind },
-      ],
-      namespace,
-    });
-    if (existingArtifact) {
+    const replace = async (row: FileArtifactRecord): Promise<void> => {
       await db.update({
         model: 'fileArtifacts',
-        where: [{ field: 'artifactId', operator: 'eq', value: existingArtifact.artifactId }],
+        where: [{ field: 'artifactId', operator: 'eq', value: row.artifactId }],
         data: fields,
         namespace,
       });
       writes.artifactsRecorded += 1;
+      // A forced run replacing a client artifact leaves its object unreferenced.
+      if (artifactSourceOf(row) === 'client' && row.storageKey !== artifact.storageKey) {
+        await discardReplacedObject(row, target);
+      }
+    };
+    if (existingArtifact) {
+      await replace(existingArtifact);
       return;
     }
 
@@ -663,7 +853,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         namespace,
       });
     } catch (error) {
-      // A concurrent delivery created the same row first; record over it.
+      // A concurrent delivery or client upload created the same row first.
       const raced = await db.findOne<FileArtifactRecord>({
         model: 'fileArtifacts',
         where: [{ field: 'artifactId', operator: 'eq', value: artifactId }],
@@ -672,12 +862,14 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       if (!raced) {
         throw error;
       }
-      await db.update({
-        model: 'fileArtifacts',
-        where: [{ field: 'artifactId', operator: 'eq', value: artifactId }],
-        data: fields,
-        namespace,
-      });
+      if (keepsClientArtifact(raced)) {
+        // The client's artifact stays; the object uploaded above is not recorded.
+        writes.uploadedKeys.delete(artifact.storageKey);
+        await discardReplacedObject({ ...raced, storageKey: artifact.storageKey, metadata: { processing } }, target);
+        return;
+      }
+      await replace(raced);
+      return;
     }
     writes.artifactsRecorded += 1;
   }
@@ -693,15 +885,17 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     target: string,
     idempotencyKey: string,
     writes: ProcessingWrites,
+    force: boolean,
   ): Promise<void> {
     const processing: ArtifactProcessingMetadata = {
+      source: 'server',
       processor: processor.name,
       durationMs: run.durationMs,
       idempotencyKey,
       storageTarget: target,
     };
     for (const artifact of run.result?.artifacts ?? []) {
-      await recordArtifact(input, artifact, target, processing, writes);
+      await recordArtifact(input, artifact, target, processing, writes, force);
     }
   }
 
@@ -844,6 +1038,23 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     }
   }
 
+  /** Kinds the client supplied for one file version. */
+  async function findClientSuppliedKinds(fileId: string, versionId: string): Promise<Set<string>> {
+    const rows = await db.findMany<FileArtifactRecord>({
+      model: 'fileArtifacts',
+      where: [
+        { field: 'fileId', operator: 'eq', value: fileId },
+        { field: 'versionId', operator: 'eq', value: versionId },
+      ],
+      namespace,
+    });
+    return new Set(
+      rows
+        .filter((row) => row.kind !== PROCESSING_RUN_KIND && artifactSourceOf(row) === 'client')
+        .map((row) => row.kind),
+    );
+  }
+
   async function findVersion(fileId: string, versionId: string): Promise<{ file: FileRecord; version: FileVersionRecord } | null> {
     const version = await db.findOne<FileVersionRecord>({
       model: 'fileVersions',
@@ -882,14 +1093,18 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       fileName: file.name,
       tenantId: file.tenantId ?? undefined,
     };
-    const idempotencyKey = job.idempotencyKey ?? buildProcessingIdempotencyKey(input.fileId, input.versionId, processors);
+    const force = job.force === true;
+    const idempotencyKey = job.idempotencyKey
+      ?? buildProcessingIdempotencyKey(input.fileId, input.versionId, processors, force);
     // Read the configured list per job, as the producer and runProcessing do:
     // processors may be added to it after the FileFn instance is created.
-    const applicable = processorEntriesFor(processors).filter((entry) => supportsProcessor(entry.processor, input.mimeType));
-    if (applicable.length === 0) {
+    const supported = processorEntriesFor(processors).filter((entry) => supportsProcessor(entry.processor, input.mimeType));
+    if (supported.length === 0) {
       // As runProcessing does, a version no processor applies to completes without an event.
       return { status: 'completed', artifactsCreated: 0, skippedProcessors: [] };
     }
+    const clientKinds = force ? new Set<string>() : await findClientSuppliedKinds(input.fileId, input.versionId);
+    const applicable = excludeClientCovered(supported, (entry) => entry.processor, clientKinds, force);
 
     const recordedRuns = await findProcessingRuns(input.fileId, input.versionId);
     const runIdFor = (entry: ProcessorEntry) =>
@@ -923,7 +1138,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       }
       const recordedBefore = writes.artifactsRecorded;
       try {
-        await recordArtifacts(input, entry.processor, run, artifactStorageTarget, idempotencyKey, writes);
+        await recordArtifacts(input, entry.processor, run, artifactStorageTarget, idempotencyKey, writes, force);
         await recordRunRow(input, runIdFor(entry), {
           processingRun: {
             ...entry.instance,
@@ -1009,6 +1224,8 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         size: number;
         fileName: string;
         tenantId?: string;
+        /** Replace client-supplied artifacts too; the caller checks the principal may write the file. */
+        force?: boolean;
       },
       ctx: FileProviderContext
     ): Promise<{ enqueued: boolean; jobId?: string }> {
@@ -1034,8 +1251,9 @@ export function createProcessingService(config: ProcessingServiceConfig) {
               size: input.size,
               fileName: input.fileName,
               tenantId: input.tenantId,
-              idempotencyKey: buildProcessingIdempotencyKey(input.fileId, input.versionId, processors),
+              idempotencyKey: buildProcessingIdempotencyKey(input.fileId, input.versionId, processors, input.force === true),
               requestId: optionalJobField(ctx.requestId),
+              ...(input.force === true ? { force: true } : {}),
             } satisfies ProcessingJob);
             return { enqueued: true, jobId: result.jobId };
           } catch {
@@ -1046,7 +1264,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
 
       background.schedule(async () => {
         try {
-          await this.runProcessing(input, ctx);
+          await this.runProcessing(input, ctx, { force: input.force === true });
         } catch (error) {
           logger?.error('processing failed', {
             requestId: ctx.requestId,
@@ -1068,15 +1286,19 @@ export function createProcessingService(config: ProcessingServiceConfig) {
 
     async runProcessing(
       input: ProcessorInput,
-      ctx: FileProviderContext
+      ctx: FileProviderContext,
+      options: { force?: boolean } = {},
     ): Promise<{ artifactsCreated: number; errors: string[] }> {
-      const applicableProcessors = processors.filter((p) =>
+      const force = options.force === true;
+      const supportedProcessors = processors.filter((p) =>
         supportsProcessor(p, input.mimeType)
       );
 
-      if (applicableProcessors.length === 0) {
+      if (supportedProcessors.length === 0) {
         return { artifactsCreated: 0, errors: [] };
       }
+      const clientKinds = force ? new Set<string>() : await findClientSuppliedKinds(input.fileId, input.versionId);
+      const applicableProcessors = excludeClientCovered(supportedProcessors, (p) => p, clientKinds, force);
 
       const file = await db.findOne<FileRecord>({
         model: 'files',
@@ -1086,7 +1308,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       const policyRef = file ?? { policy: '' };
       const getData = createSourceReader(input.storageKey, getFileStorageTarget(policyRef));
       const artifactStorageTarget = getArtifactStorageTarget(policyRef);
-      const idempotencyKey = buildProcessingIdempotencyKey(input.fileId, input.versionId, processors);
+      const idempotencyKey = buildProcessingIdempotencyKey(input.fileId, input.versionId, processors, force);
 
       const processingErrors: string[] = [];
       let artifactsCreated = 0;
@@ -1101,7 +1323,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         }
         const writes = emptyWrites();
         try {
-          await recordArtifacts(input, processor, run, artifactStorageTarget, idempotencyKey, writes);
+          await recordArtifacts(input, processor, run, artifactStorageTarget, idempotencyKey, writes, force);
         } catch (error) {
           processingErrors.push(`${processor.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
@@ -1183,6 +1405,140 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         error: outcome.errors.join('; '),
       });
       return { status: 'failed', errors: outcome.errors };
+    },
+
+    /**
+     * Records an artifact the client produced on the device for one file
+     * version, under the same (file, version, kind) row a server processor
+     * would write, so both resolve the same way. Only the file's owner or a
+     * writer may attach one, and only a kind, content type and size the
+     * file's policy allows. The body goes to a key of its own for each
+     * attempt and the row is switched to it only once fully stored, so a
+     * retried or interrupted upload never leaves the row naming a partial
+     * object; the object the row named before is then deleted.
+     */
+    async attachClientArtifact(upload: ClientArtifactUpload, ctx: FileProviderContext): Promise<FileArtifactRecord> {
+      const file = await requireWritableFile(upload.fileId, ctx);
+      const version = await getVersionChecked(upload.fileId, upload.versionId);
+      const rule = clientArtifactRule(upload.kind, policies?.get(file.policy), maxFileBytes);
+      if (!rule) {
+        throw errors.artifactKindNotAllowed(upload.kind, [...CLIENT_ARTIFACT_KINDS]);
+      }
+      const mimeType = normalizeMimeType(upload.mimeType);
+      if (!rule.mimeTypes.includes(mimeType)) {
+        throw errors.artifactTypeNotAllowed(upload.kind, mimeType, rule.mimeTypes);
+      }
+      const { durationMs } = upload;
+      if (
+        durationMs !== undefined &&
+        !(Number.isInteger(durationMs) && durationMs >= 0 && durationMs <= MAX_CLIENT_PROCESSING_DURATION_MS)
+      ) {
+        throw errors.invalidRequest(
+          `durationMs must be an integer from 0 to ${MAX_CLIENT_PROCESSING_DURATION_MS}`,
+          { durationMs },
+        );
+      }
+      if (upload.contentLength !== undefined && upload.contentLength > rule.maxSizeBytes) {
+        throw errors.artifactTooLarge(upload.kind, rule.maxSizeBytes);
+      }
+      if (upload.contentLength === 0 || !upload.body) {
+        throw errors.invalidRequest('Artifact body is empty');
+      }
+
+      const target = getArtifactStorageTarget(file);
+      const storageKey = `${version.storageKey}.client-artifacts/${upload.kind}/${randomUUID()}`;
+      const size = await storeBounded(upload.body, { key: storageKey, target, contentType: mimeType }, upload.kind, rule.maxSizeBytes);
+      const ownObject = { fileId: file.fileId, versionId: version.versionId, storageKey, metadata: { processing: { source: 'client' } } };
+
+      const processing: ClientArtifactProcessingMetadata = {
+        source: 'client',
+        ...(durationMs !== undefined ? { durationMs } : {}),
+        storageTarget: target,
+      };
+      const fields = { storageKey, mimeType, size, metadata: { processing } };
+      const artifactId = artifactIdFor(file.fileId, version.versionId, upload.kind);
+      const update = (id: string) =>
+        db.update({ model: 'fileArtifacts', where: [{ field: 'artifactId', operator: 'eq', value: id }], data: fields, namespace });
+      let replaced: FileArtifactRecord | null = null;
+      try {
+        replaced = await db.findOne<FileArtifactRecord>({
+          model: 'fileArtifacts',
+          where: [
+            { field: 'fileId', operator: 'eq', value: file.fileId },
+            { field: 'versionId', operator: 'eq', value: version.versionId },
+            { field: 'kind', operator: 'eq', value: upload.kind },
+          ],
+          namespace,
+        });
+        if (replaced) {
+          await update(replaced.artifactId);
+        } else {
+          try {
+            await db.create({
+              model: 'fileArtifacts',
+              data: {
+                artifactId,
+                fileId: file.fileId,
+                versionId: version.versionId,
+                kind: upload.kind,
+                ...fields,
+                createdAt: new Date().toISOString(),
+              },
+              namespace,
+            });
+          } catch (error) {
+            // A concurrent upload or processing run created the row first.
+            replaced = await db.findOne<FileArtifactRecord>({
+              model: 'fileArtifacts',
+              where: [{ field: 'artifactId', operator: 'eq', value: artifactId }],
+              namespace,
+            });
+            if (!replaced) throw error;
+            await update(artifactId);
+          }
+        }
+      } catch (error) {
+        await discardReplacedObject(ownObject, target);
+        throw error;
+      }
+
+      // A delete of the version while the body was stored would leave this
+      // row and object behind for a version that no longer exists.
+      if (!(await findVersion(file.fileId, version.versionId))) {
+        await db.delete({ model: 'fileArtifacts', where: [{ field: 'artifactId', operator: 'eq', value: replaced?.artifactId ?? artifactId }], namespace });
+        await discardReplacedObject(ownObject, target);
+        throw errors.notFound('Version');
+      }
+      if (replaced && replaced.storageKey !== storageKey) {
+        await discardReplacedObject(replaced, target);
+      }
+
+      const recorded = await db.findOne<FileArtifactRecord>({
+        model: 'fileArtifacts',
+        where: [{ field: 'artifactId', operator: 'eq', value: replaced?.artifactId ?? artifactId }],
+        namespace,
+      });
+      if (!recorded) {
+        // Deleted since it was written; the object is no longer named by any row.
+        await discardReplacedObject(ownObject, target);
+        throw errors.notFound('Artifact');
+      }
+      if (recorded.storageKey !== storageKey) {
+        // A concurrent upload of the same kind replaced this one.
+        await discardReplacedObject(ownObject, target);
+      }
+      logger?.info('client artifact attached', {
+        requestId: ctx.requestId,
+        fileId: file.fileId,
+        versionId: version.versionId,
+        kind: upload.kind,
+        size,
+      });
+      return recorded;
+    },
+
+    async requireWritableFile(fileId: string, ctx: FileProviderContext): Promise<void> {
+      await requireWritableFile(fileId, ctx);
     },
 
     async listArtifacts(
