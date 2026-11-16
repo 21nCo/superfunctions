@@ -1229,6 +1229,19 @@ describe('in-process completion serialization bound', () => {
     expect(run.activeKeys()).toBe(0);
   });
 
+  it('a call whose group probe stalls fails with the retryable error by its wait bound, without running', async () => {
+    const run = createKeyedSerializer({ waitTimeoutMs: 20 });
+    let releaseX!: () => void;
+    const x = run('k', () => new Promise<void>((resolve) => { releaseX = resolve; }), { member: 'x1' });
+    let ran = false;
+    const stalled = run('k', async () => { ran = true; }, { member: 'y1', sharesKeyWith: () => new Promise<boolean>(() => {}) });
+    await expect(stalled).rejects.toMatchObject({ code: 'FILEFN_UPLOAD_COMPLETION_IN_PROGRESS' });
+    expect(ran).toBe(false);
+    releaseX();
+    await x;
+    expect(run.activeKeys()).toBe(0);
+  });
+
   for (const mode of ['multipart', 'proxy'] as const) {
     it(`${mode}: a retried completion while the first call is still running past the wait bound gets 409 and storage is finalized once`, async () => {
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });

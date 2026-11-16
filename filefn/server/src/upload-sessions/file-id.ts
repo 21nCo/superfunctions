@@ -142,21 +142,34 @@ export function createKeyedSerializer(options: { waitTimeoutMs?: number } = {}) 
   // live groups: it joins a matching group still present, probes groups
   // started meanwhile, or starts its own group once none is left unprobed. So
   // two calls of one group never both start a group while either is live.
+  // Probing counts as waiting: a call that is not `keepWaiting` fails with the
+  // retryable error, without running, when its probes outlast `waitTimeoutMs`.
   async function acquireAmong(
     key: string,
     turn: Turn,
     keepWaiting: boolean,
     sharesKeyWith: (members: readonly string[]) => Promise<boolean>,
   ): Promise<KeyState> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = keepWaiting
+      ? undefined
+      : new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(errors.uploadCompletionInProgress()), waitTimeoutMs);
+        });
     const probed = new Set<KeyState>();
-    for (;;) {
-      const unprobed = (keys.get(key) ?? []).filter((state) => !probed.has(state));
-      if (unprobed.length === 0) return start(key, turn);
-      unprobed.forEach((state) => probed.add(state));
-      const shared = await Promise.all(unprobed.map((state) => sharesKeyWith(membersOf(state))));
-      const live = keys.get(key) ?? [];
-      const match = unprobed.find((state, index) => shared[index] && live.includes(state));
-      if (match) return wait(match, turn, keepWaiting);
+    try {
+      for (;;) {
+        const unprobed = (keys.get(key) ?? []).filter((state) => !probed.has(state));
+        if (unprobed.length === 0) return start(key, turn);
+        unprobed.forEach((state) => probed.add(state));
+        const probes = Promise.all(unprobed.map((state) => sharesKeyWith(membersOf(state))));
+        const shared = await (timedOut ? Promise.race([probes, timedOut]) : probes);
+        const live = keys.get(key) ?? [];
+        const match = unprobed.find((state, index) => shared[index] && live.includes(state));
+        if (match) return wait(match, turn, keepWaiting);
+      }
+    } finally {
+      clearTimeout(timer);
     }
   }
 
