@@ -96,6 +96,12 @@ export async function executeClone(
   // Tables whose every row was read and filtered for this actor, so a record
   // missing from the result is hidden from (or absent for) the actor.
   const fullyLoadedTables = new Set<string>();
+  // Access decisions made while filtering rows (visible and hidden), reused
+  // when checking join endpoints so no record is resolved twice.
+  const accessDecisions = new Map<string, boolean>();
+  const accessKey = (resource: string, id: string) => `${resource}\u0000${id}`;
+  // Tables whose count failed (read as 0), so a full read may still be cut.
+  const countFailedTables = new Set<string>();
 
   // Determine which tables to clone
   const tablesToClone = request.tables || schema.resources.map((r) => r.name);
@@ -132,6 +138,7 @@ export async function executeClone(
       if (level) {
         visible.push(row);
       }
+      accessDecisions.set(accessKey(resource, recordId), !!level);
     }
     return visible;
   };
@@ -256,6 +263,7 @@ export async function executeClone(
       } catch (error) {
         logger?.warn("Clone: table count failed", { error: String(error), resource: tableName, operation: "clone-count" });
         tableCounts[tableName] = 0;
+        countFailedTables.add(tableName);
       }
     }
 
@@ -283,8 +291,12 @@ export async function executeClone(
             data[tableName] = await filterActorVisibleRows(tableName, records);
             remaining -= records.length;
 
-            // Set next cursor if more records exist
-            if (records.length < tableCounts[tableName]) {
+            // Set next cursor if more records exist (or may exist: a table
+            // whose count failed and whose read hit the cap)
+            if (
+              records.length < tableCounts[tableName] ||
+              (countFailedTables.has(tableName) && records.length >= readLimit)
+            ) {
               const lastRecord = records[records.length - 1];
               next[tableName] = lastRecord?.id as string ?? null;
             } else {
@@ -352,6 +364,8 @@ export async function executeClone(
       if (actorIsOwner || !isPrivateShareableResource(schema, resource)) return true;
       if (typeof id !== "string" || !actorId) return false;
       if (returnedIds.get(resource)?.has(id)) return true;
+      const decided = accessDecisions.get(accessKey(resource, id));
+      if (decided !== undefined) return decided;
       // Every row of this table was already checked; a missing id isn't visible.
       if (fullyLoadedTables.has(resource)) return false;
       const key = `${resource}\u0000${id}`;
