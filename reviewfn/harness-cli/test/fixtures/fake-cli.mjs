@@ -27,8 +27,9 @@ if (options.flood !== undefined) {
   const chunk = `${"x".repeat(4_096)}\n`;
   setInterval(() => appendFileSync(options.out, chunk), 5);
 } else if (options.hang !== undefined) {
-  // A descendant that ignores SIGTERM proves the whole process group is killed, not only the direct child.
-  const child = spawn("/bin/sh", ["-c", "trap '' TERM; exec sleep 60"], { stdio: "ignore" });
+  // A descendant that ignores SIGTERM proves the whole process group is killed, not only the direct child. It is Node
+  // itself, so the hang works on every platform; it stops on its own after a minute.
+  const child = spawn(process.execPath, ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1_000); setTimeout(() => process.exit(0), 60_000);"], { stdio: "ignore" });
   writeFileSync(path.join(state, "descendant.pid"), String(child.pid));
   setInterval(() => {}, 1_000);
 } else {

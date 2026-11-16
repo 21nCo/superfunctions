@@ -359,7 +359,8 @@ describe("CliHarnessAdapter model reporting", () => {
     expect((await run(enforcing("other-model"), "fake-model-1", { outputSchema: wrapped })).error).toMatch(/^model_mismatch/);
     const branch = { type: "object", additionalProperties: false, properties: { source: { type: "string" } } };
     const composed = { type: "object", properties: { meta: { type: "object", allOf: [branch] } } };
-    expect(withModelReportField(composed, "json-path:meta.model")).toEqual({ ...composed, properties: { meta: { type: "object", allOf: [{ ...branch, properties: { source: { type: "string" }, model: { type: "string" } }, required: ["model"] }] } }, required: ["meta"] });
+    const declaredBranch = { ...branch, properties: { source: { type: "string" }, model: { type: "string" } }, required: ["model"] };
+    expect(withModelReportField(composed, "json-path:meta.model")).toEqual({ ...composed, properties: { meta: { type: "object", allOf: [declaredBranch], properties: { model: { type: "string" } }, required: ["model"] } }, required: ["meta"] });
   }, 30_000);
 
   it.each([
@@ -368,7 +369,7 @@ describe("CliHarnessAdapter model reporting", () => {
     ["additionalProperties: true", { type: "object", additionalProperties: true, minProperties: 1 }],
   ])("keeps a nested report field the schema allows through %s, completing in one call", async (_name, meta) => {
     const outputSchema = { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, meta }, required: [...lensOutputSchema.required, "meta"] };
-    expect(withModelReportField(outputSchema, "json-path:meta.model")).toBe(outputSchema);
+    expect(withModelReportField(outputSchema, "json-path:meta.model").properties).toHaveProperty("meta", expect.objectContaining({ properties: expect.objectContaining({ model: { type: "string" } }), required: ["model"] }));
     const answer = (model: string) => profile({ modelReport: "json-path:meta.model", extra: ["--extra-json", JSON.stringify({ meta: { model } })] });
     const output = await run(answer("fake-model-1"), "fake-model-1", { outputSchema });
     expect(output.error).toBeUndefined();
@@ -378,6 +379,27 @@ describe("CliHarnessAdapter model reporting", () => {
     const mismatched = await run(answer("other-model"), "fake-model-1", { outputSchema });
     expect(mismatched.error).toMatch(/^model_mismatch/);
     expect(mismatched.observed).toMatchObject({ model: "other-model", modelMismatch: true });
+  }, 30_000);
+
+  it.each([
+    ["open to any property", { ...lensOutputSchema, additionalProperties: true }],
+    ["open to string properties", { ...lensOutputSchema, additionalProperties: { type: "string" } }],
+    ["without additionalProperties", (({ additionalProperties: _open, ...rest }) => rest)(lensOutputSchema)],
+  ])("declares the report to a CLI that emits only declared properties when the schema is %s", async (_name, outputSchema) => {
+    const enforcing = (model: string) => profile({ modelReport: "json-path:model", capabilities: { structuredOutput: true, sandbox: "tree-verified-only" }, extra: ["--enforce-schema", "{schemaFile}", "--model-json", model] });
+    expect(withModelReportField(outputSchema, "json-path:model")).toMatchObject({ properties: { model: { type: "string" } }, required: expect.arrayContaining(["model"]) });
+    const matching = await run(enforcing("fake-model-1"), "fake-model-1", { outputSchema });
+    expect(matching.error).toBeUndefined();
+    expect(matching.terminal).toBe("completed");
+    expect(await calls()).toHaveLength(1);
+    expect((await run(enforcing("other-model"), "fake-model-1", { outputSchema })).error).toMatch(/^model_mismatch/);
+  }, 30_000);
+
+  it("removes the report of a schema-invalid answer too deep to copy without walking it, then repairs and ends malformed", async () => {
+    const deep = JSON.parse(`${"[".repeat(3_000)}${"]".repeat(3_000)}`) as unknown;
+    const output = await run(profile({ modelReport: "json-path:model", extra: ["--model-json", "fake-model-1", "--extra-json", JSON.stringify({ findings: deep })] }), "fake-model-1");
+    expect(output.terminal).toBe("malformed");
+    expect(await calls()).toHaveLength(2);
   }, 30_000);
 
   it("shows a node whose ownership is not settled unchanged, and removes nothing from it", async () => {

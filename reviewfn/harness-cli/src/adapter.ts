@@ -523,8 +523,8 @@ async function readAnswer(run: AttemptContext, outputFile: string, stdout: strin
 function validated(run: AttemptContext, value: Record<string, unknown>): { value: Record<string, unknown>; errors: string[] } {
   const errors = run.validate(value);
   if (!errors.length || !run.profile.modelReport.startsWith("json-path:")) return { value, errors };
-  const stripped = structuredClone(value);
-  if (!stripReportField(stripped, run.profile.modelReport.slice("json-path:".length).split("."), run.schema)) return { value, errors };
+  const stripped = withoutReportField(value, run.profile.modelReport.slice("json-path:".length).split("."), run.schema);
+  if (stripped === value || !isRecord(stripped)) return { value, errors };
   return { value: stripped, errors: run.validate(stripped) };
 }
 
@@ -622,13 +622,14 @@ function watchOutputFile(file: string, maxBytes: number, parent: AbortSignal | u
 }
 
 /**
- * The schema shown to the CLI for a `json-path` model report: the slot's schema with the report declared, as a required
- * string at the rest of the path, on every object node that closes itself to the path's key (`additionalProperties:
- * false`, or `unevaluatedProperties: false`, with no `properties` or `patternProperties` entry for it), including a
- * closing `allOf` branch, so a CLI that enforces the schema can still report its model. It descends through the
- * property, additional-property and array `items` schemas on the path, making each changed step required. A key the
- * schema already allows is left as it is, and so is a key that only `patternProperties` owns. An `allOf` entry that is
- * `{}` or `true` is ignored. A node whose ownership of the key cannot be settled statically (`$ref`, `anyOf`, `oneOf`,
+ * The schema shown to the CLI for a `json-path` model report: the slot's schema with the report declared, and required,
+ * on every object schema on the path that does not declare the key yet, including each object `allOf` branch, so a CLI
+ * that enforces the schema, even one that emits only declared properties, can still report its model. Where the object
+ * is closed to the key (`additionalProperties: false`, or `unevaluatedProperties: false`, with no `properties` or
+ * `patternProperties` entry for it) the key is declared as a string at the rest of the path; where one
+ * `patternProperties` or `additionalProperties` schema already owns it, it is declared as that schema. It descends
+ * through the property, owning and array `items` schemas on the path. An `allOf` entry that is `{}` or `true` is
+ * ignored. A node whose ownership of the key cannot be settled statically (`$ref`, `anyOf`, `oneOf`,
  * `not`, a conditional or `dependentSchemas`) is shown unchanged, so the slot's schema must declare the report there
  * itself. The caller's schema is never changed.
  */
@@ -655,16 +656,21 @@ function declarePath(schema: Readonly<Record<string, unknown>>, keys: readonly s
   return allOf.every((branch, index) => branch === branches[index]) ? shown : { ...shown, allOf };
 }
 
-/** The node itself, its `allOf` aside: the report declared where it closes the key, or below the key's own schema. */
+/**
+ * The node itself, its `allOf` aside: below the key's declared schema, or, on an object schema that does not declare
+ * the key, the key declared as the schema that already owns it (its one pattern or additional-properties schema) or,
+ * on a closed object or with no single owner, as a new report field.
+ */
 function declareOwn(schema: Readonly<Record<string, unknown>>, key: string, rest: readonly string[]): Readonly<Record<string, unknown>> {
   const owned = ownOwnership(schema, key);
   let child: unknown;
-  if (owned.kind === "closed") child = reportField(rest);
-  else if (owned.kind === "open" && owned.via !== "pattern") {
-    // A key that additionalProperties owns becomes a declared property with that schema, which validates it the same.
-    const source = isRecord(owned.children[0]) ? owned.children[0] : {};
-    const next = declarePath(source, rest);
-    if (next !== source) child = next;
+  if (owned.kind === "open" && owned.via === "declared") {
+    const [declared] = owned.children;
+    const next = isRecord(declared) ? declarePath(declared, rest) : declared;
+    if (next !== declared) child = next;
+  } else if (isObjectSchema(schema)) {
+    const [owner] = owned.kind === "open" ? owned.children : [];
+    child = owned.kind === "open" && owned.children.length === 1 && isRecord(owner) && !isTrivial(owner) ? declarePath(owner, rest) : reportField(rest);
   }
   if (child === undefined) return schema;
   const properties = isRecord(schema.properties) ? schema.properties : {};
@@ -681,6 +687,7 @@ type Ownership = { kind: "open"; children: unknown[]; via?: "declared" | "patter
 /** Keywords that make which schema owns a property depend on the value or another document. */
 const UNSETTLED = ["$ref", "$dynamicRef", "anyOf", "oneOf", "not", "if", "then", "else", "dependentSchemas"];
 
+const isObjectSchema = (schema: Readonly<Record<string, unknown>>): boolean => schema.type === "object" || ["properties", "patternProperties", "additionalProperties", "unevaluatedProperties"].some(keyword => keyword in schema);
 const isTrivial = (schema: unknown): boolean => schema === true || (isRecord(schema) && Object.keys(schema).length === 0);
 const isArrayStep = (schema: unknown, key: string): boolean => /^\d+$/.test(key) && isRecord(schema) && (schema.type === "array" || "items" in schema);
 
@@ -727,23 +734,31 @@ function reportField(keys: readonly string[]): Record<string, unknown> {
 }
 
 /**
- * Remove a `json-path` model report from an answer only where the output schema closes an object to it, the nodes
- * `withModelReportField` declares it on, following the same ownership through properties, patterns, additional
- * properties, `allOf` branches and, through a numeric step, every array item. Nothing is removed at or below a node whose
- * ownership is not settled. Whether anything was removed.
+ * The answer without its `json-path` model report where the output schema closes an object to it, following the same
+ * ownership as `withModelReportField` through properties, patterns, additional properties, `allOf` branches and, through
+ * a numeric step, every array item. Only the objects and arrays on the path are copied, so the rest of the answer, however
+ * deep, is never walked. Nothing is removed at or below a node whose ownership is not settled. The same value when
+ * nothing was removed.
  */
-function stripReportField(value: unknown, keys: readonly string[], schema: unknown): boolean {
+function withoutReportField(value: unknown, keys: readonly string[], schema: unknown): unknown {
   const [key, ...rest] = keys;
-  if (key === undefined) return false;
+  if (key === undefined) return value;
   if (Array.isArray(value) && isArrayStep(schema, key)) {
     const items = (schema as Record<string, unknown>).items;
-    return value.map(item => stripReportField(item, rest, items)).includes(true);
+    const next = value.map(item => withoutReportField(item, rest, items));
+    return next.some((item, index) => item !== value[index]) ? next : value;
   }
-  if (!isRecord(value) || !Object.hasOwn(value, key)) return false;
+  if (!isRecord(value) || !Object.hasOwn(value, key)) return value;
   const owned = ownership(schema, key);
-  if (owned.kind === "closed") return delete value[key];
-  if (owned.kind === "unsettled") return false;
-  return owned.children.map(child => stripReportField(value[key], rest, child)).includes(true);
+  if (owned.kind === "closed") {
+    const kept = { ...value };
+    delete kept[key];
+    return kept;
+  }
+  if (owned.kind === "unsettled") return value;
+  let child = value[key];
+  for (const owner of owned.children) child = withoutReportField(child, rest, owner);
+  return child === value[key] ? value : { ...value, [key]: child };
 }
 
 function outputContract(schema: Readonly<Record<string, unknown>>, profile: HarnessProfile): string {
