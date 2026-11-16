@@ -1,0 +1,35 @@
+scripts/verify-owners.test.mjs
+  s_fa3fa74f00db7c::t_2f78dbd9a3d409 10-20,512-599
+.github/workflows/apifn-api-check.yml
+  s_62ed0a52b33a39::t_b2d81e72e757ba 104-106
+.github/workflows/ci.yml
+  s_62ed0a52b33a39::t_91a9506bfd7964 77-80,83
+scripts/sfns4/packed-consumers.mjs
+  s_62ed0a52b33a39::t_d8aff604b3f994 18
+scripts/verify-owners.mjs
+  s_62ed0a52b33a39::t_a768428caa9a94 8-10,83-90,96,103-132,134-144,149-152,155-156,158-184,186-187,196,199-201,205-249,255,257
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b4d7da9f139fb054ab66d1fbc8e06cf1429f4666",
+  "prompts": {},
+  "sessions": {
+    "s_62ed0a52b33a39": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "49168099-a985-40b6-93f1-d25c7793ec29",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_fa3fa74f00db7c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a30e6149-0382-4d62-8ca4-d70db50d8ad3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
