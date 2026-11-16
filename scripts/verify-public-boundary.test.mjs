@@ -654,6 +654,12 @@ test("python __import__ levels, importlib wildcard imports and assignment aliase
         '__import__("flowfn", None, None, [], depth)',
         '__import__("flowfn", **options)',
         '__import__("flowfn", globals(), locals())',
+        '__import__("flowfn", level=False)',
+        '__import__("flowfn", None, None, [], -0)',
+        '__import__("flowfn", level=+0)',
+        '__import__("flowfn", level=True)',
+        '__import__("flowfn", None, None, [], +2)',
+        '__import__("flowfn", *rest, 1)',
         "",
       ].join("\n"),
       "datafn/python/datafn/wildcard.py": ["from importlib import *", 'import_module("flowfn")', 'import_module(".flowfn", "datafn")', ""].join("\n"),
@@ -690,7 +696,7 @@ test("python __import__ levels, importlib wildcard imports and assignment aliase
   });
   assert.deepEqual((await findings(root)).sort(), [
     ...[3, 5, 8, 10, 12, 13].map((line) => `datafn/python/datafn/aliases.py:${line} ${RULES.fnDependency}`),
-    ...[3, 4, 7].map((line) => `datafn/python/datafn/levels.py:${line} ${RULES.fnDependency}`),
+    ...[3, 4, 5, 6, 7, 8, 9, 10, 13].map((line) => `datafn/python/datafn/levels.py:${line} ${RULES.fnDependency}`),
     `datafn/python/datafn/wildcard.py:2 ${RULES.fnDependency}`,
   ].sort());
 });

@@ -838,9 +838,10 @@ export function importSpecifiers(file, source, parsed) {
 //             assignment (`f = <loader>`, also annotated or `:=`) to any loader, `<m>.import_module` included.
 //   namespace `import importlib`, `import importlib.<sub>`, `import importlib as m`, or `m = <namespace>`.
 //   name      the first positional argument or `name=`, a non-empty string literal; one starting with "." is relative.
-//   level     `__import__` only (5th positional or `level=`): absent or literal 0 is absolute, a literal int > 0 is
-//             relative and not checked; any other level (non-literal, negative, or possibly given by *args/**kwargs) is
-//             not read.
+//   level     `__import__` only (5th positional or `level=`): the call is relative, and not checked, only when its
+//             level is a literal (`ast.literal_eval`: `1`, `True`, `+2`) whose value is an int > 0. Every other call
+//             is checked as absolute: no level, a zero level (`0`, `False`, `-0`), and a level that is not a literal
+//             or may come from *args/**kwargs.
 // Not read: computed names, loaders passed across functions, objects or modules, `getattr(importlib, ...)`,
 // `builtins.__import__`, `importlib.__import__`, tuple-unpacking assignments and a loader rebound to something else
 // (a name once bound to a loader stays one for the whole file).
@@ -853,12 +854,15 @@ def literal_name(node):
 def keyword(call, name):
     return next((item.value for item in call.keywords if item.arg == name), None)
 
-def dunder_level_absolute(call):
-    level = call.args[4] if len(call.args) > 4 else keyword(call, "level")
+def dunder_level_relative(call):
+    level = call.args[4] if len(call.args) > 4 and not any(isinstance(arg, ast.Starred) for arg in call.args[:5]) else keyword(call, "level")
     if level is None:
-        unknown = any(isinstance(arg, ast.Starred) for arg in call.args) or any(item.arg is None for item in call.keywords)
-        return not unknown
-    return isinstance(level, ast.Constant) and type(level.value) is int and level.value == 0
+        return False
+    try:
+        value = ast.literal_eval(level)
+    except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+        return False
+    return isinstance(value, int) and value > 0
 
 def assignments(tree):
     for node in ast.walk(tree):
@@ -925,7 +929,7 @@ for path in sys.stdin.read().split("\0"):
         arg = node.args[0] if node.args else keyword(node, "name")
         if not literal_name(arg):
             continue
-        if "import_module" in kinds or dunder_level_absolute(node):
+        if "import_module" in kinds or not dunder_level_relative(node):
             found.append({"module": arg.value, "line": node.lineno})
     results.append({"imports": found})
 json.dump(results, sys.stdout)
