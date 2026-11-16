@@ -53,9 +53,9 @@ export interface UploadSessionServiceConfig {
   signedUrlTtlSeconds?: number;
   generateId?: () => string;
   /**
-   * The database adapter the host passed (before FileFn wraps it). In-process
-   * completion serialization of a fileId is scoped to its database (see
-   * databaseToken). Defaults to `db`.
+   * The database adapter the host passed (before FileFn wraps it). On adapters
+   * with unique constraints, in-process completion serialization of a fileId is
+   * scoped to it. Defaults to `db`.
    */
   databaseIdentity?: object;
 }
@@ -104,23 +104,24 @@ export interface UploadSession {
 
 // Serializes, across every FileFn instance in this process (hosts may build one
 // per request), the calls completing one upload session and the completions per
-// database, namespace and fileId. It is the only guard on adapters without unique
-// constraints, which are single-process. Keys: `session\0...` then `file\0...`,
+// namespace and fileId. On adapters without unique constraints, which are
+// single-process, it is the only guard and covers every adapter object in the
+// process: no adapter property reliably tells whether two adapter objects (for
+// example two wrappers) share one store. With unique constraints it is scoped
+// to the adapter object (see databaseToken). Keys: `session\0...` then `file\0...`,
 // always acquired in that order. A call that waits longer than
 // SERIALIZED_WAIT_TIMEOUT_MS fails with the retryable 409
 // FILEFN_UPLOAD_COMPLETION_IN_PROGRESS before changing anything.
 const runSerialized = createKeyedSerializer();
 
-// One token per database, so completions against different databases in one
-// process never wait on each other. A database is identified by its adapter's
-// `internal` CRUD object, which belongs to the backing store and which wrappers
-// forward (FileFn's own, the db package's, spread copies), so adapter objects
-// over one store share a token; an adapter without it is its own database.
+// One token per database adapter object the host passed. Used only on adapters
+// with unique constraints, where completions against different databases then
+// never wait on each other, and adapter objects that share one store but get
+// different tokens are arbitrated by the unique `files.fileId` constraint, as
+// across processes.
 const databaseTokens = new WeakMap<object, string>();
 let nextDatabaseToken = 0;
-function databaseToken(adapter: object): string {
-  const backing = (adapter as { internal?: unknown }).internal;
-  const database = typeof backing === 'object' && backing !== null ? backing : adapter;
+function databaseToken(database: object): string {
   let token = databaseTokens.get(database);
   if (token === undefined) {
     token = String(nextDatabaseToken++);
@@ -1351,7 +1352,9 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
   //   expiring during its completion, which FileFn does not guard (FILE-14).
   const completeSessionNow = service.completeSession;
   const uniqueConstraints = db.capabilities?.schema?.constraints === true;
-  const fileLockScope = `${databaseToken(databaseIdentity)}\u0000${namespace}`;
+  const fileLockScope = uniqueConstraints
+    ? `${databaseToken(databaseIdentity)}\u0000${namespace}`
+    : namespace;
   service.completeSession = async (uploadSessionId, ctx, uploadSessionToken) => {
     const complete = () => completeSessionNow.call(service, uploadSessionId, ctx, uploadSessionToken);
     // expiresAt and fileId never change after init; status is read again inside.

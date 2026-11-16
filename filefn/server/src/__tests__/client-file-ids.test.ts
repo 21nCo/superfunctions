@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Adapter } from '@superfunctions/db';
+import { instrumentAdapter, type Adapter } from '@superfunctions/db';
+import { normalizeObservability } from '@superfunctions/observability';
 import { memoryAdapter } from '@superfunctions/db/adapters/memory';
 import type { StorageAdapter } from '@superfunctions/storage';
 import type { Authorizer } from '@superfunctions/files';
@@ -536,6 +537,30 @@ describe('client-chosen file IDs: first completion wins', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].ownerId).toBe(aWon ? 'user_a' : 'user_b');
     expect(await first.readBytes(CLIENT_ID, aWon ? 'user_a' : 'user_b')).toBe(aWon ? 'wrapper one' : 'wrapper two');
+    expect(storageFixture.objects.has(aWon ? keyB : keyA)).toBe(false);
+  });
+
+  it('serializes FileFn instances built over one instrumented memory adapter', async () => {
+    const silent = { debug() {}, info() {}, warn() {}, error() {} };
+    const store = memoryAdapter();
+    const database = instrumentAdapter(store, { observability: normalizeObservability({ logger: silent }) });
+    // Every read of `internal` returns a new proxy, so it cannot identify the store.
+    expect(database.internal).not.toBe(database.internal);
+    const storageFixture = createStorage('proxy');
+    const first = createApp({ mode: 'proxy', database, storageFixture });
+    const second = createApp({ mode: 'proxy', database, storageFixture });
+    const a = await first.stage('user_a', CLIENT_ID, 'instrumented one');
+    const b = await second.stage('user_b', CLIENT_ID, 'instrumented two');
+    const keyA = (await rawSession(store, a.uploadSessionId))!.storageKey;
+    const keyB = (await rawSession(store, b.uploadSessionId))!.storageKey;
+
+    const [resA, resB] = await Promise.all([a.complete(), b.complete()]);
+    expect([resA.status, resB.status].sort()).toEqual([200, 403]);
+    const aWon = resA.status === 200;
+    const rows = await fileRows(store, CLIENT_ID);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].ownerId).toBe(aWon ? 'user_a' : 'user_b');
+    expect(await first.readBytes(CLIENT_ID, aWon ? 'user_a' : 'user_b')).toBe(aWon ? 'instrumented one' : 'instrumented two');
     expect(storageFixture.objects.has(aWon ? keyB : keyA)).toBe(false);
   });
 
@@ -1300,11 +1325,18 @@ describe('in-process completion serialization bound', () => {
     expect(await app.readBytes(CLIENT_ID, 'user_b')).toBe('prompt bytes');
   });
 
-  it('completions of one new ID against two databases in one process do not wait on each other', async () => {
+  it('unique-enforcing adapters: completions of one new ID against two databases in one process do not wait on each other', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    const databaseOne = memoryAdapter();
+    const uniqueDatabase = () => {
+      const uniqueDb = createUniqueEnforcingDb({});
+      return {
+        ...uniqueDb,
+        capabilities: { ...uniqueDb.capabilities, schema: { ...uniqueDb.capabilities.schema, constraints: true } },
+      } as Adapter;
+    };
+    const databaseOne = uniqueDatabase();
     const one = createApp({ mode: 'multipart', database: databaseOne });
-    const two = createApp({ mode: 'multipart', database: memoryAdapter() });
+    const two = createApp({ mode: 'multipart', database: uniqueDatabase() });
     const a = await one.stage('user_a', CLIENT_ID, 'bytes in one');
     const b = await two.stage('user_b', CLIENT_ID, 'bytes in two');
     const keyA = (await rawSession(databaseOne, a.uploadSessionId))!.storageKey;
@@ -1313,9 +1345,11 @@ describe('in-process completion serialization bound', () => {
     await flushPromises();
 
     try {
-      const other = b.complete();
-      await flushPromises();
-      await vi.advanceTimersByTimeAsync(SERIALIZED_WAIT_TIMEOUT_MS);
+      let settled = false;
+      const other = b.complete().finally(() => { settled = true; });
+      // Short of the wait bound, after which a waiter would take the key.
+      await vi.advanceTimersByTimeAsync(SERIALIZED_WAIT_TIMEOUT_MS - 1);
+      expect(settled).toBe(true);
       const done = await other;
       expect(done.status).toBe(200);
       expect(await two.readBytes(CLIENT_ID, 'user_b')).toBe('bytes in two');
