@@ -1,5 +1,10 @@
 import type { DatafnSchema, DatafnResourceSchema, DatafnRelationSchema } from "@datafn/core";
-import { ANCESTOR_INACTIVE_FIELD, getJoinStoreKey, resourceRequiresAncestorInactive } from "@datafn/core";
+import {
+  ANCESTOR_INACTIVE_FIELD,
+  getJoinStoreKey,
+  resourceRequiresAncestorInactive,
+  stripNullsForNonNullableFields,
+} from "@datafn/core";
 import type { DatafnStorageAdapter } from "../storage.js";
 import type { DatafnRemoteAdapter } from "../client.js";
 import type { EventBus } from "../events/bus.js";
@@ -158,11 +163,20 @@ export async function cloneUp(
   const recordsByResource = new Map<string, Record<string, unknown>[]>();
   const localIds = new Map<string, Set<string>>();
   for (const resourceName of resolvedResources) {
-    const rawRecords = await storage.listRecords(resourceName);
-    recordsByResource.set(resourceName, rawRecords);
+    // A pull from a SQL-backed server stores an unset column as null, also
+    // for a field the schema does not allow to be null. That null means "not
+    // set", so it is dropped here, once, for ordering and upload alike: the
+    // record goes up like one created without the field (the server applies
+    // its default), and a defaulted reference orders its resource after the
+    // default's target. Nullable fields keep their null.
+    const resourceSchema = resourceSchemaMap.get(resourceName);
+    const records = (await storage.listRecords(resourceName)).map((record) =>
+      stripNullsForNonNullableFields(record, resourceSchema),
+    );
+    recordsByResource.set(resourceName, records);
     localIds.set(
       resourceName,
-      new Set(rawRecords.map((record) => record.id).filter((id): id is string => typeof id === "string")),
+      new Set(records.map((record) => record.id).filter((id): id is string => typeof id === "string")),
     );
   }
   // Order by the references the records actually hold, so a polymorphic
