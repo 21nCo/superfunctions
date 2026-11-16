@@ -35,7 +35,7 @@ const manifest = () => ({
 
 function fixture(t, { owners = manifest(), next, releases = [{ slug: "datafn-core", path: "datafn/core", name: "@datafn/core" }], files = {} } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "verify-owners-"));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  t.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   const all = {
     "package.json": "{}\n",
     "package-lock.json": "{}\n",
@@ -678,7 +678,7 @@ test("quoted, unmodelled or repeated job property keys and embedded ${{ }} never
   assert.match(workflowGuardErrors("w.yml", workflow(`  a:\n    "if": always()\n`))[0] ?? "", /job "a" has if: "always\(\)"/);
   const shared = ".github/workflows/publish-tag.yml";
   for (const key of ["'uses'", '"uses"', "uses"]) {
-    assert.match(workflowGuardErrors(shared, workflow(`  call:\n    ${key}: ./.github/workflows/apifn-api-check.yml\n`))[0] ?? "", /calls \.github\/workflows\/apifn-api-check\.yml and has no if:/, key);
+    assert.match(workflowGuardErrors(shared, workflow(`  call:\n    ${key}: ./.github/workflows/apifn-api-check.yml\n`))[0] ?? "", /job "call" has uses: "\.\/\.github\/workflows\/apifn-api-check\.yml" and has no if:/, key);
   }
   // Keys the reader does not model, or a property indented less than the first, fail closed.
   for (const [jobs, message] of [
@@ -707,7 +707,7 @@ test("quoted, unmodelled or repeated job property keys and embedded ${{ }} never
   assert.match(workflowGuardErrors("w.yml", `${reusableOn}jobs:\n  a:\n    if: ${templated}\n`)[0] ?? "", /always-true string/);
 });
 
-test("every in-repo caller of a guarded workflow carries the guard, including callers on the shared list", (t) => {
+test("every caller of a guarded workflow carries the guard; a shared workflow's unguarded job may call only a shared workflow by its local path", (t) => {
   const guard = REPOSITORY_GUARD;
   const caller = (condition, uses = "./.github/workflows/apifn-api-check.yml") =>
     `name: Caller\non: push\njobs:\n  call:\n${condition ? `    if: ${condition}\n` : ""}    uses: ${uses}\n`;
@@ -724,21 +724,33 @@ test("every in-repo caller of a guarded workflow carries the guard, including ca
     verifyOwners({ root, repo: "public" }).filter((message) => message.includes(".github/workflows")),
     [
       `.github/workflows/apifn-api-check-smoke.yml: job "call" has no if:; jobs outside the shared list must start their if: with ${guard}`,
-      `.github/workflows/publish-tag.yml: job "call" calls .github/workflows/apifn-api-check.yml and has no if:; a shared workflow's caller of a guarded workflow must start its if: with ${guard}`,
+      `.github/workflows/publish-tag.yml: job "call" has uses: "./.github/workflows/apifn-api-check.yml" and has no if:; a shared workflow's job with uses: must start its if: with ${guard} unless it calls a shared workflow by its ./.github/workflows/<file> path`,
     ],
   );
   const shared = ".github/workflows/publish-tag.yml";
   assert.deepEqual(workflowGuardErrors(shared, caller(guard)), []);
   assert.deepEqual(workflowGuardErrors(shared, caller(`${guard} && (always())`)), []);
-  // A shared caller of this repository's workflow by its remote name runs it on next just as a local call does.
-  assert.match(workflowGuardErrors(shared, caller(null, "21nco/SuperFunctions/.github/workflows/apifn-api-check.yml@dev"))[0] ?? "", /calls \.github\/workflows\/apifn-api-check\.yml and has no if:/);
-  assert.deepEqual(workflowGuardErrors(shared, caller(null, "21nCo/superfunctions/.github/workflows/publish-python.yml@dev")), []);
-  for (const uses of ["./.github/workflows/../workflows/apifn-api-check.yml", "./ci/check.yml", "21nCo/superfunctions/x/.github/workflows/a.yml@v1", "${{ inputs.workflow }}"]) {
-    assert.match(workflowGuardErrors(shared, caller(null, uses))[0] ?? "", /which the reader cannot classify/, uses);
+  assert.deepEqual(workflowGuardErrors(shared, caller(null, "./.github/workflows/publish-python.yml")), []);
+  assert.deepEqual(workflowGuardErrors(".github/workflows/publish-python.yml", caller(null, "./.github/workflows/publish-tag.yml")), []);
+  // Any other job-level uses: is not exempt: this repository under its current name, its redirect alias, its next fork
+  // (whose copy runs through the call-only input), any letter case, an arbitrary owner/repo, a non-canonical or
+  // non-shared local path, a remote shared workflow and an expression all need the guard.
+  for (const uses of [
+    "21nCo/super-functions.next/.github/workflows/apifn-api-check.yml@dev",
+    "21nCo/super-functions/.github/workflows/apifn-api-check.yml@dev",
+    "21NCO/SuperFunctions/.github/workflows/apifn-api-check.yml@dev",
+    "21nCo/superfunctions/.github/workflows/publish-python.yml@dev",
+    "octo/repo/.github/workflows/x.yml@v1",
+    "21nCo/superfunctions-tools/.github/workflows/x.yml@v1",
+    "./.github/workflows/../workflows/publish-python.yml",
+    "./.github/workflows/ci.yml",
+    "./ci/check.yml",
+    "${{ inputs.workflow }}",
+  ]) {
+    assert.match(workflowGuardErrors(shared, caller(null, uses))[0] ?? "", /a shared workflow's job with uses: must start its if:/, uses);
+    assert.deepEqual(workflowGuardErrors(shared, caller(guard, uses)), [], uses);
+    assert.deepEqual(workflowGuardErrors(shared, caller(`${guard} && (always())`, uses)), [], uses);
   }
-  // External reusable workflows (owner/repo/...@ref) are not this repository's guarded workflows.
-  assert.deepEqual(workflowGuardErrors(shared, caller(null, "octo/repo/.github/workflows/x.yml@v1")), []);
-  assert.deepEqual(workflowGuardErrors(shared, caller(null, "21nCo/superfunctions-tools/.github/workflows/x.yml@v1")), []);
 });
 
 test("the checked-out repository matches its manifest", () => {

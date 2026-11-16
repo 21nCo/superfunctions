@@ -6,8 +6,8 @@
 // must be ownable and owned by the repository that publishes it, and every entry of the repository's own manifest
 // (superfunctions.owners.json on public, superfunctions.owners.next.json on next) must exist. In both, every job of
 // every workflow in .github/workflows outside SHARED_WORKFLOWS must carry the repository guard (D14); a reusable
-// workflow's jobs may carry REUSABLE_WORKFLOW_GUARD instead, and a shared workflow's callers of a guarded workflow must
-// carry the guard.
+// workflow's jobs may carry REUSABLE_WORKFLOW_GUARD instead, and a shared workflow's job with a job-level uses: must
+// carry the guard unless it calls another shared workflow by its local path.
 // Usage: node scripts/verify-owners.mjs [--repo public|next] [--root <checkout>]
 // Without --repo, OWNERS_REPO selects the semantics; without either, the checkout decides (next when
 // superfunctions.owners.next.json exists, public otherwise).
@@ -322,24 +322,23 @@ function describeCondition(condition) {
   return `has if: ${JSON.stringify(condition)}${template}`;
 }
 
-/** The workflow file of this repository a job's `uses:` calls, or null; undefined when it calls none of them. */
-function calledWorkflow(uses) {
-  if (uses === undefined) return undefined;
+/**
+ * Whether a job-level `uses:` calls a shared workflow by its local `./.github/workflows/<shared>.yml` path, the only
+ * reusable-workflow call a shared workflow's job may make without the repository guard. Any other call (another local
+ * workflow, this repository under any of its names or aliases, its next fork, any owner/repo/...@ref or an expression)
+ * may run a guarded workflow's jobs on next or a fork through the call-only input, so it is not exempt.
+ */
+function callsSharedWorkflowLocally(uses) {
   const local = uses.match(/^\.\/\.github\/workflows\/([A-Za-z0-9_.-]+\.ya?ml)$/);
-  if (local && !local[1].startsWith(".")) return local[1];
-  const remote = uses.match(/^21nCo\/superfunctions\/\.github\/workflows\/([A-Za-z0-9_.-]+\.ya?ml)@[^\s/]+$/i);
-  if (remote && !remote[1].startsWith(".")) return remote[1];
-  // Any other local path, or anything naming this repository or an expression, cannot be classified.
-  if (uses.startsWith("./") || /21nCo\/superfunctions(?![\w.-])/i.test(uses) || uses.includes("${{")) return null;
-  return undefined;
+  return local !== null && SHARED_WORKFLOWS.includes(local[1]);
 }
 
 /**
  * Errors for one workflow file. Outside the shared list every job must carry the repository guard in its `if:`; a job
  * of a reusable workflow may carry REUSABLE_WORKFLOW_GUARD instead when reusableGuardError accepts the workflow. On the
- * shared list only jobs that call a non-shared workflow of this repository (by `./.github/workflows/...` or
- * `21nCo/superfunctions/.github/workflows/...@ref`) must carry the guard, so a reusable workflow never runs on next
- * through a shared caller. An `if:` with a `${{ }}` that does not wrap its whole value never counts as guarded.
+ * shared list every job with a job-level `uses:` must carry the guard unless it calls another shared workflow by its
+ * local `./.github/workflows/<shared>.yml` path (an allow-list), so no reusable workflow runs on next through a shared
+ * caller. An `if:` with a `${{ }}` that does not wrap its whole value never counts as guarded.
  * Workflows are read line by line (block style, as every workflow here is written); a layout or key the reader does
  * not model fails closed.
  */
@@ -360,11 +359,8 @@ export function workflowGuardErrors(file, source) {
       errors.push(`${file}: job "${name}" ${describeCondition(condition)}; ${guardHint}`);
       continue;
     }
-    const called = calledWorkflow(uses);
-    if (called === null) {
-      errors.push(`${file}: job "${name}" has uses: ${JSON.stringify(uses)}, which the reader cannot classify, and ${describeCondition(condition)}; a shared workflow's job that may call a guarded workflow must start its if: with ${REPOSITORY_GUARD}`);
-    } else if (called !== undefined && !SHARED_WORKFLOWS.includes(called)) {
-      errors.push(`${file}: job "${name}" calls ${WORKFLOW_DIR}/${called} and ${describeCondition(condition)}; a shared workflow's caller of a guarded workflow must start its if: with ${REPOSITORY_GUARD}`);
+    if (uses !== undefined && !callsSharedWorkflowLocally(uses)) {
+      errors.push(`${file}: job "${name}" has uses: ${JSON.stringify(uses)} and ${describeCondition(condition)}; a shared workflow's job with uses: must start its if: with ${REPOSITORY_GUARD} unless it calls a shared workflow by its ./${WORKFLOW_DIR}/<file> path`);
     }
   }
   return errors;
