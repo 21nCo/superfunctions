@@ -4,7 +4,10 @@
 // semantics: an unlisted path is public-owned, so only superfunctions.owners.next.json entries are checked for
 // existence. In both, every release slug and Python project must be listed (in either manifest on next), its path
 // must be ownable and owned by the repository that publishes it, and every entry of the repository's own manifest
-// (superfunctions.owners.json on public, superfunctions.owners.next.json on next) must exist.
+// (superfunctions.owners.json on public, superfunctions.owners.next.json on next) must exist. In both, every job of
+// every workflow in .github/workflows outside SHARED_WORKFLOWS must carry the repository guard (D14); a reusable
+// workflow's jobs may carry REUSABLE_WORKFLOW_GUARD instead, and a shared workflow's job with a job-level uses: must
+// carry the guard unless it calls another shared workflow by its local path.
 // Usage: node scripts/verify-owners.mjs [--repo public|next] [--root <checkout>]
 // Without --repo, OWNERS_REPO selects the semantics; without either, the checkout decides (next when
 // superfunctions.owners.next.json exists, public otherwise).
@@ -49,6 +52,341 @@ export function readReleaseEntries(root, repo) {
     }
   }
   return entries;
+}
+
+// Workflows under .github/workflows are public-owned and synced to next (SFNS-121 D14). Every job of a workflow that
+// is not on the shared list must skip outside the public repository, so `next` (whose CI runs on Depot) never runs it.
+export const WORKFLOW_DIR = ".github/workflows";
+export const REPOSITORY_GUARD = "github.repository == '21nCo/superfunctions'";
+/** Workflows that run in both repositories (each repository publishes its own packages, D8). */
+export const SHARED_WORKFLOWS = Object.freeze(["publish-tag.yml", "publish-python.yml"]);
+
+const indentOf = (line) => line.length - line.trimStart().length;
+const isContent = (line) => line.trim() !== "" && !line.trimStart().startsWith("#");
+
+/** Index of the parenthesis that closes the one at `open`, skipping single-quoted expression strings; -1 if none. */
+function closingParen(expression, open) {
+  let depth = 0;
+  for (let index = open; index < expression.length; index += 1) {
+    const char = expression[index];
+    if (char === "'") {
+      index += 1;
+      while (index < expression.length && !(expression[index] === "'" && expression[index + 1] !== "'")) {
+        index += expression[index] === "'" ? 2 : 1;
+      }
+    } else if (char === "(") depth += 1;
+    else if (char === ")" && --depth === 0) return index;
+  }
+  return -1;
+}
+
+/**
+ * A job `if:` expression without its `${{ }}` wrapper and with runs of whitespace collapsed to one space, or null when
+ * `${{` or `}}` appears anywhere but a single wrapper around the whole value: GitHub then evaluates the value as a
+ * string template, which is truthy, so no guard inside it holds.
+ */
+function normalizeCondition(condition) {
+  let expression = condition.trim();
+  const wrapped = expression.match(/^\$\{\{([\s\S]*)\}\}$/);
+  if (wrapped) expression = wrapped[1].trim();
+  if (expression.includes("${{") || expression.includes("}}")) return null;
+  return expression.replaceAll(/\s+/g, " ");
+}
+
+const isTemplate = (condition) => normalizeCondition(condition) === null;
+
+/**
+ * Whether a job `if:` expression can only be true in the public repository: exactly the guard, or the guard joined
+ * by `&&` to one parenthesised condition (so no top-level `||` can bypass it).
+ */
+export function hasRepositoryGuard(condition) {
+  const expression = normalizeCondition(condition);
+  if (expression === null) return false;
+  if (expression === REPOSITORY_GUARD) return true;
+  const prefix = `${REPOSITORY_GUARD} && (`;
+  if (!expression.startsWith(prefix)) return false;
+  return closingParen(expression, prefix.length - 1) === expression.length - 1;
+}
+
+/** Triggers a reusable workflow may have for the reusable guard to keep it from running on its own outside public. */
+const REUSABLE_TRIGGERS = Object.freeze(["workflow_call", "workflow_dispatch"]);
+/** Boolean input a reusable workflow declares under workflow_call only (default true), so its jobs can tell a call. */
+export const REUSABLE_CALL_INPUT = "called_as_reusable_workflow";
+
+/**
+ * The guard for a job of a reusable workflow. A called workflow sees its caller's github context (repository,
+ * event_name, workflow_ref), so the plain guard would skip it for every caller outside the public repository, including
+ * the external repositories apifn documents, and no github field tells a call from a direct run. Its own inputs do:
+ * REUSABLE_CALL_INPUT defaults to true under workflow_call and is not declared under workflow_dispatch, so every call
+ * runs the job and a direct dispatch runs it only in the public repository. Callers are guarded on their own (every
+ * in-repo caller carries the plain guard).
+ */
+export const REUSABLE_WORKFLOW_GUARD = `${REPOSITORY_GUARD} || inputs.${REUSABLE_CALL_INPUT} == true`;
+
+/** Index of the first YAML comment (`#` at the start or after whitespace, outside an expression string) or -1. */
+function commentAt(text) {
+  let quoted = false;
+  for (let char = 0; char < text.length; char += 1) {
+    if (text[char] === "'") quoted = !quoted;
+    else if (!quoted && text[char] === "#" && /\s/.test(text[char - 1] ?? " ")) return char;
+  }
+  return -1;
+}
+
+/**
+ * Scalar value of a `key:` mapping entry at `lines[index]`, or null when it cannot be read reliably. A plain scalar
+ * folds its deeper-indented continuation lines (as YAML does); quoted scalars spanning lines, comments inside a
+ * multi-line plain scalar and flow, anchor, alias or tag forms fail closed.
+ */
+function readScalar(lines, index) {
+  const indent = indentOf(lines[index]);
+  const raw = lines[index].trimStart().replace(/^(['"]?)[^'":]+\1\s*:/, "").trim();
+  let end = index + 1;
+  while (end < lines.length && (lines[end].trim() === "" || indentOf(lines[end]) > indent)) end += 1;
+  const continuation = lines.slice(index + 1, end).map((line) => line.trim()).filter((line) => line !== "");
+  if (/^[>|](?:[+-]\d?|\d[+-]?)?\s*(?:#.*)?$/.test(raw)) return continuation.join(" ");
+  if (/^[&*![{]/.test(raw)) return null;
+  if (raw.startsWith("'") || raw.startsWith('"')) {
+    if (continuation.length > 0) return null;
+    if (raw.startsWith("'")) {
+      const match = raw.match(/^'((?:[^']|'')*)'\s*(?:#.*)?$/);
+      return match ? match[1].replaceAll("''", "'") : null;
+    }
+    const match = raw.match(/^"((?:[^"\\]|\\.)*)"\s*(?:#.*)?$/);
+    return match ? JSON.parse(`"${match[1]}"`) : null;
+  }
+  const comment = commentAt(raw);
+  if (comment !== -1 && continuation.length > 0) return null;
+  if (continuation.some((line) => commentAt(line) !== -1)) return null;
+  return [comment === -1 ? raw : raw.slice(0, comment).trim(), ...continuation].filter((part) => part !== "").join(" ");
+}
+
+/** A block mapping key: an identifier, plain or quoted (no escapes), followed by `:` and a space or the line end. */
+const MAPPING_KEY = /^(?:([A-Za-z_][A-Za-z0-9_-]*)|'([A-Za-z_][A-Za-z0-9_-]*)'|"([A-Za-z_][A-Za-z0-9_-]*)")[ \t]*:(?=\s|$)/;
+
+/** The key of the mapping entry at `line`, or null when it is not a key MAPPING_KEY models. */
+function mappingKey(line) {
+  const match = line.trim().match(MAPPING_KEY);
+  return match ? (match[1] ?? match[2] ?? match[3]) : null;
+}
+
+/**
+ * Entries ({ key, index }) of the block mapping that is the value of the `key:` line at `lines[at]`, or null when it
+ * cannot be read reliably: an inline value other than `{}`, a key MAPPING_KEY does not model, a duplicate key or an
+ * entry indented less than the first one.
+ */
+function blockEntries(lines, at) {
+  const inline = lines[at].trim().replace(MAPPING_KEY, "");
+  const comment = commentAt(inline);
+  const value = (comment === -1 ? inline : inline.slice(0, comment)).trim();
+  if (value === "{}") return [];
+  if (value !== "") return null;
+  const parent = indentOf(lines[at]);
+  const entries = [];
+  let childIndent = null;
+  for (let index = at + 1; index < lines.length; index += 1) {
+    if (!isContent(lines[index])) continue;
+    const indent = indentOf(lines[index]);
+    if (indent <= parent) break;
+    childIndent ??= indent;
+    if (indent > childIndent) continue;
+    if (indent < childIndent) return null;
+    const key = mappingKey(lines[index]);
+    if (key === null || entries.some((entry) => entry.key === key)) return null;
+    entries.push({ key, index });
+  }
+  return entries;
+}
+
+/**
+ * Inputs a trigger of the workflow declares under its block-style top-level `on:` key, as a Map from input name to
+ * its scalar fields (type, default, required); an empty Map when the trigger declares none, or null when the trigger
+ * is missing or its inputs cannot be read reliably.
+ */
+export function workflowInputs(source, trigger) {
+  const lines = source.split(/\r?\n/);
+  const at = lines.findIndex((line) => /^(['"]?)on\1\s*:/.test(line));
+  if (at === -1) return null;
+  const entry = blockEntries(lines, at)?.find(({ key }) => key === trigger);
+  if (!entry) return null;
+  const properties = blockEntries(lines, entry.index);
+  if (properties === null) return null;
+  const inputs = new Map();
+  const declared = properties.find(({ key }) => key === "inputs");
+  if (!declared) return inputs;
+  const declaredInputs = blockEntries(lines, declared.index);
+  if (declaredInputs === null) return null;
+  for (const input of declaredInputs) {
+    const fields = blockEntries(lines, input.index);
+    if (fields === null) return null;
+    const values = {};
+    for (const field of fields.filter(({ key }) => ["type", "default", "required"].includes(key))) {
+      values[field.key] = readScalar(lines, field.index);
+      if (values[field.key] === null) return null;
+    }
+    inputs.set(input.key, values);
+  }
+  return inputs;
+}
+
+/** Entries of an inputs Map whose name is REUSABLE_CALL_INPUT in any letter case (GitHub resolves inputs that way). */
+function markerInputs(inputs) {
+  return [...(inputs ?? [])].filter(([name]) => name.toLowerCase() === REUSABLE_CALL_INPUT);
+}
+
+/**
+ * Why the workflow may not carry REUSABLE_WORKFLOW_GUARD, or null when it may: it must be triggered only by
+ * workflow_call (and optionally workflow_dispatch), declare REUSABLE_CALL_INPUT under workflow_call as an optional
+ * boolean defaulting to true, and not declare it under workflow_dispatch. Input names are matched case-insensitively,
+ * as GitHub's inputs context is, so a case alias of the marker counts as the marker.
+ */
+function reusableGuardError(source) {
+  const triggers = workflowTriggers(source);
+  if (triggers === null || !triggers.includes("workflow_call") || !triggers.every((name) => REUSABLE_TRIGGERS.includes(name))) {
+    return `the workflow is not triggered only by ${REUSABLE_TRIGGERS.join(" and ")} (triggers: ${triggers === null ? "unreadable" : triggers.join(", ")})`;
+  }
+  const markers = markerInputs(workflowInputs(source, "workflow_call"));
+  const marker = markers.length === 1 ? markers[0][1] : undefined;
+  if (marker?.type !== "boolean" || marker.default !== "true" || (marker.required ?? "false") !== "false") {
+    return `workflow_call does not declare the input ${REUSABLE_CALL_INPUT} with type: boolean, default: true and required: false`;
+  }
+  if (!triggers.includes("workflow_dispatch")) return null;
+  const dispatch = workflowInputs(source, "workflow_dispatch");
+  if (dispatch === null) return "its workflow_dispatch inputs cannot be read";
+  const aliases = markerInputs(dispatch).map(([name]) => name);
+  if (aliases.length > 0) {
+    return `workflow_dispatch also declares ${aliases.join(", ")} (inputs are case-insensitive, so it is ${REUSABLE_CALL_INPUT}), so a direct dispatch would run outside public`;
+  }
+  return null;
+}
+
+/** Names of the workflow's triggers from its top-level `on:` key, or null when they cannot be read reliably. */
+export function workflowTriggers(source) {
+  const lines = source.split(/\r?\n/);
+  const at = lines.findIndex((line) => /^(['"]?)on\1\s*:/.test(line));
+  if (at === -1) return null;
+  const inline = lines[at].replace(/^(['"]?)on\1\s*:/, "");
+  const value = (commentAt(inline) === -1 ? inline : inline.slice(0, commentAt(inline))).trim();
+  if (/^[A-Za-z_]+$/.test(value)) return [value];
+  const flow = value.match(/^\[([A-Za-z_,\s]*)\]$/);
+  if (flow) return flow[1].split(",").map((name) => name.trim()).filter((name) => name !== "");
+  if (value !== "") return null;
+  const triggers = [];
+  let childIndent = null;
+  for (let index = at + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!isContent(line)) continue;
+    const indent = indentOf(line);
+    if (indent === 0) break;
+    childIndent ??= indent;
+    if (indent > childIndent) continue;
+    if (indent < childIndent) return null;
+    const name = line.trim().match(/^(?:-\s+)?(['"]?)([A-Za-z_]+)\1\s*(?::\s*(?:[^\s#].*)?|(?:#.*)?)$/);
+    if (!name) return null;
+    triggers.push(name[2]);
+  }
+  return triggers.length > 0 ? triggers : null;
+}
+
+/** Jobs of a workflow from its block-style top-level `jobs:` key: { jobs: [{ name, condition, uses }] } or { error }. */
+function readJobs(file, lines) {
+  const jobsAt = lines.findIndex((line) => /^jobs:\s*(?:#.*)?$/.test(line));
+  if (jobsAt === -1) return { error: `${file}: has no block-style top-level jobs: key, so its repository guard cannot be checked` };
+  const jobs = [];
+  let jobIndent = null;
+  let job = null;
+  for (let index = jobsAt + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!isContent(line)) continue;
+    const indent = indentOf(line);
+    if (indent === 0) break;
+    jobIndent ??= indent;
+    if (indent < jobIndent) return { error: `${file}: line ${index + 1} is indented less than the jobs it follows` };
+    if (indent === jobIndent) {
+      const header = line.trim().match(/^(['"]?)([A-Za-z_][A-Za-z0-9_-]*)\1:\s*(?:#.*)?$/);
+      if (!header) return { error: `${file}: line ${index + 1} is not a block-style job key, so its repository guard cannot be checked` };
+      job = { name: header[2], propertyIndent: null, condition: undefined, uses: undefined };
+      jobs.push(job);
+      continue;
+    }
+    job.propertyIndent ??= indent;
+    if (indent > job.propertyIndent) continue;
+    if (indent < job.propertyIndent) return { error: `${file}: line ${index + 1} is indented less than the job properties it follows` };
+    const key = mappingKey(line);
+    if (key === null) return { error: `${file}: line ${index + 1} is not a job property key the reader can follow, so its repository guard cannot be checked` };
+    if (key !== "if" && key !== "uses") continue;
+    const property = key === "if" ? "condition" : "uses";
+    if (job[property] !== undefined) return { error: `${file}: job "${job.name}" has more than one ${key}: key` };
+    const value = readScalar(lines, index);
+    if (value === null) return { error: `${file}: line ${index + 1} has a${key === "if" ? "n" : ""} ${key}: value that cannot be read` };
+    job[property] = value;
+  }
+  if (jobs.length === 0) return { error: `${file}: jobs: has no jobs, so its repository guard cannot be checked` };
+  return { jobs };
+}
+
+const guardHint = `jobs outside the shared list must start their if: with ${REPOSITORY_GUARD}`;
+function describeCondition(condition) {
+  if (condition === undefined) return "has no if:";
+  const template = isTemplate(condition) ? " (a ${{ }} that does not wrap the whole value makes GitHub read it as an always-true string)" : "";
+  return `has if: ${JSON.stringify(condition)}${template}`;
+}
+
+/**
+ * Whether a job-level `uses:` calls a shared workflow by its local `./.github/workflows/<shared>.yml` path, the only
+ * reusable-workflow call a shared workflow's job may make without the repository guard. Any other call (another local
+ * workflow, this repository under any of its names or aliases, its next fork, any owner/repo/...@ref or an expression)
+ * may run a guarded workflow's jobs on next or a fork through the call-only input, so it is not exempt.
+ */
+function callsSharedWorkflowLocally(uses) {
+  const local = uses.match(/^\.\/\.github\/workflows\/([A-Za-z0-9_.-]+\.ya?ml)$/);
+  return local !== null && SHARED_WORKFLOWS.includes(local[1]);
+}
+
+/**
+ * Errors for one workflow file. Outside the shared list every job must carry the repository guard in its `if:`; a job
+ * of a reusable workflow may carry REUSABLE_WORKFLOW_GUARD instead when reusableGuardError accepts the workflow. On the
+ * shared list every job with a job-level `uses:` must carry the guard unless it calls another shared workflow by its
+ * local `./.github/workflows/<shared>.yml` path (an allow-list), so no reusable workflow runs on next through a shared
+ * caller. An `if:` with a `${{ }}` that does not wrap its whole value never counts as guarded.
+ * Workflows are read line by line (block style, as every workflow here is written); a layout or key the reader does
+ * not model fails closed.
+ */
+export function workflowGuardErrors(file, source) {
+  const lines = source.split(/\r?\n/);
+  const read = readJobs(file, lines);
+  if (read.error) return [read.error];
+  const shared = SHARED_WORKFLOWS.includes(path.posix.basename(file));
+  const errors = [];
+  for (const { name, condition, uses } of read.jobs) {
+    if (condition !== undefined && hasRepositoryGuard(condition)) continue;
+    if (condition !== undefined && normalizeCondition(condition) === REUSABLE_WORKFLOW_GUARD) {
+      const reason = reusableGuardError(source);
+      if (reason !== null) errors.push(`${file}: job "${name}" carries the reusable-workflow guard, but ${reason}`);
+      continue;
+    }
+    if (!shared) {
+      errors.push(`${file}: job "${name}" ${describeCondition(condition)}; ${guardHint}`);
+      continue;
+    }
+    if (uses !== undefined && !callsSharedWorkflowLocally(uses)) {
+      errors.push(`${file}: job "${name}" has uses: ${JSON.stringify(uses)} and ${describeCondition(condition)}; a shared workflow's job with uses: must start its if: with ${REPOSITORY_GUARD} unless it calls a shared workflow by its ./${WORKFLOW_DIR}/<file> path`);
+    }
+  }
+  return errors;
+}
+
+/** Repository-guard errors for every tracked workflow (shared workflows are checked only for their callers). */
+export function findWorkflowGuardErrors(workflows) {
+  return workflows.flatMap(({ file, source }) => workflowGuardErrors(file, source));
+}
+
+/** Tracked workflow files directly under .github/workflows, with their contents. */
+export function readWorkflows(root, files) {
+  return files
+    .filter((file) => path.posix.dirname(file) === WORKFLOW_DIR && /\.ya?ml$/.test(file))
+    .sort(compareStrings)
+    .map((file) => ({ file, source: readFileSync(path.join(root, file), "utf8") }));
 }
 
 /** Throws the typed error for a pyproject.toml whose project metadata cannot be read reliably. */
@@ -568,13 +906,16 @@ export function verifyOwners({ root = REPO_ROOT, repo } = {}) {
   repo ??= owners.defaultRepo;
   if (!REPOS.includes(repo)) throw new OwnersError("invalid-repo", `--repo must be "public" or "next", not ${JSON.stringify(repo)}`, { repo });
   const files = trackedFiles(root);
-  return findOwnershipErrors({
-    owners,
-    repo,
-    files,
-    releases: readReleaseEntries(root, repo),
-    python: readPythonProjects(root, files),
-  });
+  return [
+    ...findOwnershipErrors({
+      owners,
+      repo,
+      files,
+      releases: readReleaseEntries(root, repo),
+      python: readPythonProjects(root, files),
+    }),
+    ...findWorkflowGuardErrors(readWorkflows(root, files)),
+  ];
 }
 
 function parseArgs(argv) {

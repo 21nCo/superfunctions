@@ -24,6 +24,7 @@ permissions:
 jobs:
   test:
     name: Queue tests with a Postgres server
+    if: github.repository == '21nCo/superfunctions'
     runs-on: ubuntu-24.04
     services:
       postgres:

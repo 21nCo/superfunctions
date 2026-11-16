@@ -52,8 +52,12 @@ export class WorkspaceManager {
     const glob = await import('fast-glob');
     
     for (const pattern of workspaces) {
-      const matches = await glob.default(join(this.workspaceRoot, pattern, 'package.json'), {
+      // Match relative to the root and skip installed packages: a shape glob such as */typescript
+      // also matches node_modules/typescript, which is a registry package, not a workspace.
+      const matches = await glob.default(join(pattern, 'package.json'), {
+        cwd: this.workspaceRoot,
         absolute: true,
+        ignore: ['**/node_modules/**'],
       });
 
       for (const pkgPath of matches) {

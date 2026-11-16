@@ -1,15 +1,29 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { NEXT_MANIFEST, OwnersError, PUBLIC_MANIFEST } from "./owners.mjs";
 import { gitBinary } from "./verify-package-lockfiles.mjs";
-import { pyprojectName, repoFromEnv, verifyOwners } from "./verify-owners.mjs";
+import {
+  REPOSITORY_GUARD,
+  REUSABLE_CALL_INPUT,
+  REUSABLE_WORKFLOW_GUARD,
+  SHARED_WORKFLOWS,
+  hasRepositoryGuard,
+  pyprojectName,
+  repoFromEnv,
+  verifyOwners,
+  workflowGuardErrors,
+  workflowInputs,
+  workflowTriggers,
+} from "./verify-owners.mjs";
 
 const script = fileURLToPath(new URL("./verify-owners.mjs", import.meta.url));
+
+const guardedWorkflow = `name: CI\non: push\njobs:\n  test:\n    if: ${REPOSITORY_GUARD}\n    runs-on: ubuntu-latest\n    steps:\n      - run: "true"\n`;
 
 const manifest = () => ({
   version: 1,
@@ -21,13 +35,13 @@ const manifest = () => ({
 
 function fixture(t, { owners = manifest(), next, releases = [{ slug: "datafn-core", path: "datafn/core", name: "@datafn/core" }], files = {} } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "verify-owners-"));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  t.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   const all = {
     "package.json": "{}\n",
     "package-lock.json": "{}\n",
     "release-packages.json": JSON.stringify(releases),
     [PUBLIC_MANIFEST]: JSON.stringify(owners),
-    ".github/workflows/ci.yml": "name: CI\n",
+    ".github/workflows/ci.yml": guardedWorkflow,
     "datafn/core/package.json": "{}\n",
     "datafn/python/pyproject.toml": '[build-system]\nrequires = ["hatchling"]\n\n[project]\nname = "datafn"\nversion = "0.1.0"\n',
     ...(next ? { [NEXT_MANIFEST]: JSON.stringify(next) } : {}),
@@ -421,6 +435,343 @@ test("the self-check uses the checkout's semantics, so a next-shaped tree passes
   assert.equal(forcedPublic.status, 1);
   assert.match(forcedPublic.stderr, /docsfn\/: top-level directory is not listed/);
   assert.equal(runWith({ OWNERS_REPO: "public" }, root, "--repo", "next").status, 0);
+});
+
+test("a workflow job without the repository guard fails unless the workflow is on the shared list", (t) => {
+  assert.deepEqual(SHARED_WORKFLOWS, ["publish-tag.yml", "publish-python.yml"]);
+  const unguarded = "name: X\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - if: github.repository == '21nCo/superfunctions'\n        run: echo hi\n";
+  const root = fixture(t, {
+    files: {
+      ".github/workflows/deploy.yml": unguarded,
+      ".github/workflows/publish-tag.yml": unguarded,
+      ".github/workflows/publish-python.yml": unguarded,
+      ".github/workflows/README.md": "not a workflow\n",
+    },
+  });
+  const result = run(root, "--repo", "public");
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /\.github\/workflows\/deploy\.yml: job "build" has no if:/);
+  assert.doesNotMatch(result.stderr, /publish-tag|publish-python|README|ci\.yml/);
+  // Both repositories run the check: .github is public-owned and synced to next.
+  assert.deepEqual(
+    verifyOwners({ root, repo: "next" }).filter((message) => message.includes(".github/workflows")),
+    ['.github/workflows/deploy.yml: job "build" has no if:; jobs outside the shared list must start their if: with ' + REPOSITORY_GUARD],
+  );
+});
+
+test("hasRepositoryGuard accepts only the guard or the guard joined by && to one parenthesised condition", () => {
+  const guard = REPOSITORY_GUARD;
+  for (const condition of [
+    guard,
+    `\${{ ${guard} }}`,
+    `${guard} && (always())`,
+    `${guard}   &&   (github.event_name == 'pull_request' && github.base_ref == 'dev')`,
+    `${guard} && (contains(github.ref, ')') || github.ref == 'refs/heads/dev')`,
+    `${guard} && (github.actor == 'it''s')`,
+  ]) {
+    assert.equal(hasRepositoryGuard(condition), true, condition);
+  }
+  for (const condition of [
+    "always()",
+    `${guard} || always()`,
+    `always() && ${guard}`,
+    `${guard} && (a) || (b)`,
+    `${guard} && a == 'b'`,
+    `${guard} && (a`,
+    "github.repository == '21nCo/super-functions.next'",
+    "github.repository != '21nCo/superfunctions'",
+  ]) {
+    assert.equal(hasRepositoryGuard(condition), false, condition);
+  }
+});
+
+test("workflowGuardErrors reads every if: spelling, names each unguarded job and fails closed on layouts it cannot read", () => {
+  const workflow = (jobs) => `name: X\non: push\njobs:\n${jobs}`;
+  const guard = REPOSITORY_GUARD;
+  const ok = [
+    `  a:\n    name: A\n    if: ${guard}\n    runs-on: x\n`,
+    `  a:\n    if: '${guard.replaceAll("'", "''")} && (always())'\n`,
+    `  a:\n    if: "${guard} && (always())" # quoted\n`,
+    `  a:\n    if: \${{ ${guard} }} # comment\n`,
+    `  a:\n    if: >-\n      ${guard} &&\n      (needs.plan.outputs.run == 'true')\n    runs-on: x\n`,
+    `  # a comment\n  a:\n\n    if: ${guard}\n    steps:\n      - run: |\n          if: not a key\n  'b':\n    needs: a\n    if: ${guard} && (always())\n`,
+  ];
+  for (const jobs of ok) assert.deepEqual(workflowGuardErrors("w.yml", workflow(jobs)), [], jobs);
+
+  assert.deepEqual(workflowGuardErrors("w.yml", workflow(`  a:\n    runs-on: x\n  b:\n    if: always()\n  c:\n    if: ${guard}\n`)), [
+    `w.yml: job "a" has no if:; jobs outside the shared list must start their if: with ${guard}`,
+    `w.yml: job "b" has if: "always()"; jobs outside the shared list must start their if: with ${guard}`,
+  ]);
+  // An if: nested under steps or with: is not the job's condition.
+  assert.equal(workflowGuardErrors("w.yml", workflow(`  a:\n    steps:\n      - if: ${guard}\n    with:\n      if: ${guard}\n`)).length, 1);
+  assert.match(workflowGuardErrors("w.yml", "name: X\non: push\n")[0], /has no block-style top-level jobs/);
+  assert.match(workflowGuardErrors("w.yml", "name: X\njobs: { a: { runs-on: x } }\n")[0], /has no block-style top-level jobs/);
+  assert.match(workflowGuardErrors("w.yml", "name: X\njobs:\nenv: {}\n")[0], /has no jobs/);
+  assert.match(workflowGuardErrors("w.yml", workflow("  a: { runs-on: x }\n"))[0], /not a block-style job key/);
+  assert.match(workflowGuardErrors("w.yml", workflow(`  a:\n    if: '${guard}\n`))[0], /cannot be read/);
+});
+
+test("a plain if: scalar is folded with its continuation lines, so a continued || cannot bypass the guard", () => {
+  const workflow = (jobs) => `name: X\non: push\njobs:\n${jobs}`;
+  const guard = REPOSITORY_GUARD;
+  // YAML folds a plain scalar's deeper-indented lines into it: this if: is `guard || always()`.
+  assert.deepEqual(workflowGuardErrors("w.yml", workflow(`  a:\n    if: ${guard}\n      || always()\n    runs-on: x\n`)), [
+    `w.yml: job "a" has if: "${guard} || always()"; jobs outside the shared list must start their if: with ${guard}`,
+  ]);
+  assert.equal(workflowGuardErrors("w.yml", workflow(`  a:\n    if:\n      ${guard}\n      || always()\n`)).length, 1);
+  // A guarded continuation is still accepted.
+  assert.deepEqual(workflowGuardErrors("w.yml", workflow(`  a:\n    if: ${guard}\n      && (always())\n    runs-on: x\n`)), []);
+  assert.deepEqual(workflowGuardErrors("w.yml", workflow(`  a:\n    if:\n      ${guard}\n`)), []);
+  // Forms the line reader cannot follow fail closed instead of reading the first line only.
+  for (const value of [
+    `${guard} # comment\n      || always()`,
+    `${guard}\n      # comment\n      || always()`,
+    `'${guard.replaceAll("'", "''")}\n      || always()'`,
+    `&anchor ${guard}`,
+    "*anchor",
+    `!!str ${guard}`,
+    `[${guard}]`,
+    `{ a: b }`,
+  ]) {
+    assert.match(workflowGuardErrors("w.yml", workflow(`  a:\n    if: ${value}\n    runs-on: x\n`))[0] ?? "", /cannot be read/, value);
+  }
+});
+
+test("workflowTriggers reads the top-level on: key in each spelling and fails closed otherwise", () => {
+  assert.deepEqual(workflowTriggers("on: push\njobs: {}\n"), ["push"]);
+  assert.deepEqual(workflowTriggers("on: [push, workflow_call] # c\n"), ["push", "workflow_call"]);
+  assert.deepEqual(workflowTriggers("'on':\n  workflow_call:\n    inputs:\n      a:\n        type: string\n  # comment\n  workflow_dispatch:\njobs:\n"), [
+    "workflow_call",
+    "workflow_dispatch",
+  ]);
+  assert.deepEqual(workflowTriggers("on:\n  - push\n  - workflow_call\n"), ["push", "workflow_call"]);
+  assert.equal(workflowTriggers("name: X\njobs:\n"), null);
+  assert.equal(workflowTriggers("on: { push: {} }\n"), null);
+  assert.equal(workflowTriggers("on:\n    push:\n  workflow_call:\n"), null);
+});
+
+/**
+ * Evaluates the subset of the GitHub Actions expression language the guards use (||, &&, !, ==, !=, parentheses,
+ * context property paths and literals) with its loose equality: strings compare case-insensitively, a boolean compares
+ * as a number against a string, and a missing property is null.
+ */
+function evaluateExpression(expression, contexts) {
+  const tokens = expression.match(/'(?:[^']|'')*'|\|\||&&|==|!=|!|\(|\)|[A-Za-z_][A-Za-z0-9_.-]*/g);
+  assert.equal(tokens.join(""), expression.replaceAll(/\s+/g, ""), `unsupported expression ${expression}`);
+  let at = 0;
+  const value = (token) => {
+    if (token.startsWith("'")) return token.slice(1, -1).replaceAll("''", "'");
+    if (token === "true" || token === "false") return token === "true";
+    if (token === "null") return null;
+    return token.split(".").reduce((object, key) => (object == null ? null : (object[key] ?? null)), contexts);
+  };
+  const toNumber = (operand) => (typeof operand === "boolean" ? Number(operand) : operand === null ? 0 : Number(operand));
+  const equal = (left, right) => {
+    if (typeof left === "string" && typeof right === "string") return left.toLowerCase() === right.toLowerCase();
+    if (typeof left === typeof right) return left === right;
+    return toNumber(left) === toNumber(right);
+  };
+  const primary = () => {
+    const token = tokens[at++];
+    if (token === "!") return !primary();
+    if (token !== "(") return value(token);
+    const inner = or();
+    assert.equal(tokens[at++], ")");
+    return inner;
+  };
+  const comparison = () => {
+    const left = primary();
+    if (tokens[at] !== "==" && tokens[at] !== "!=") return left;
+    const negate = tokens[at++] === "!=";
+    return equal(left, primary()) !== negate;
+  };
+  const and = () => {
+    let result = comparison();
+    while (tokens[at] === "&&") (at += 1), (result = comparison() && result);
+    return result;
+  };
+  const or = () => {
+    let result = and();
+    while (tokens[at] === "||") (at += 1), (result = and() || result);
+    return result;
+  };
+  const result = or();
+  assert.equal(at, tokens.length, `unparsed tail of ${expression}`);
+  return Boolean(result);
+}
+
+test("the reusable api-check runs for every caller and for a direct dispatch only in the public repository", () => {
+  const file = ".github/workflows/apifn-api-check.yml";
+  const source = readFileSync(fileURLToPath(new URL(`../${file}`, import.meta.url)), "utf8");
+  assert.deepEqual(workflowGuardErrors(file, source), []);
+  const condition = source.match(/^ {2}api-check:\n(?: {4}#.*\n)* {4}if: (.*)$/m)?.[1];
+  assert.equal(condition, REUSABLE_WORKFLOW_GUARD);
+  // GitHub builds a called workflow's inputs from its workflow_call declarations (defaults plus the caller's with:)
+  // and a direct run's inputs from its workflow_dispatch declarations; github is always the caller's or the run's.
+  const inputsOf = (trigger, given = {}) => {
+    const inputs = {};
+    for (const [name, { type, default: fallback }] of workflowInputs(source, trigger)) {
+      if (fallback !== undefined) inputs[name] = type === "boolean" ? fallback === "true" : fallback;
+    }
+    return { ...inputs, ...given };
+  };
+  const runs = (github, trigger) => evaluateExpression(condition, { github, inputs: inputsOf(trigger) });
+  const external = { repository: "octo/service", workflow_ref: "octo/service/.github/workflows/apifn-api-check.yml@refs/heads/main" };
+  assert.equal(runs({ ...external, event_name: "pull_request" }, "workflow_call"), true, "external pull_request caller");
+  // An external caller whose own file has this name, started by workflow_dispatch, still runs (the old github-based guard skipped it).
+  assert.equal(runs({ ...external, event_name: "workflow_dispatch" }, "workflow_call"), true, "external same-name dispatch caller");
+  assert.equal(runs({ repository: "21nCo/super-functions.next", event_name: "push" }, "workflow_call"), true, "a caller on next is guarded on its own");
+  assert.equal(runs({ repository: "21nCo/superfunctions", event_name: "workflow_dispatch" }, "workflow_dispatch"), true, "direct dispatch on public");
+  assert.equal(runs({ repository: "21nCo/super-functions.next", event_name: "workflow_dispatch" }, "workflow_dispatch"), false, "direct dispatch on next");
+  assert.equal(evaluateExpression(REPOSITORY_GUARD, { github: { repository: "21NCO/SuperFunctions" } }), true);
+});
+
+test("the reusable-workflow guard is accepted only with a call-only marker input on a call or dispatch workflow", () => {
+  assert.equal(REUSABLE_WORKFLOW_GUARD, `${REPOSITORY_GUARD} || inputs.${REUSABLE_CALL_INPUT} == true`);
+  const marker = `      ${REUSABLE_CALL_INPUT}:\n        type: boolean\n        default: true\n`;
+  const callOn = (inputs = marker) => `  workflow_call:\n    inputs:\n      spec:\n        type: string\n${inputs}`;
+  const reusable = (condition, on = `on:\n${callOn()}  workflow_dispatch:\n    inputs:\n      spec:\n        type: string\n`) =>
+    `name: X\n${on}jobs:\n  api-check:\n    if: ${condition}\n    runs-on: ubuntu-latest\n`;
+  const file = ".github/workflows/any.yml";
+  for (const condition of [REUSABLE_WORKFLOW_GUARD, `\${{ ${REUSABLE_WORKFLOW_GUARD} }}`, REPOSITORY_GUARD]) {
+    assert.deepEqual(workflowGuardErrors(file, reusable(condition)), [], condition);
+  }
+  assert.deepEqual(workflowGuardErrors(file, reusable(REUSABLE_WORKFLOW_GUARD, `on:\n${callOn()}`)), []);
+  assert.deepEqual(workflowGuardErrors(file, reusable(REUSABLE_WORKFLOW_GUARD, `on:\n${callOn(`      '${REUSABLE_CALL_INPUT}':\n        required: false\n        default: true # call\n        type: boolean\n`)}`)), []);
+  const rejected = [
+    [`on:\n${callOn("")}`, /does not declare the input called_as_reusable_workflow/],
+    [`on:\n${callOn(`      ${REUSABLE_CALL_INPUT}:\n        type: boolean\n        default: false\n`)}`, /does not declare the input/],
+    [`on:\n${callOn(`      ${REUSABLE_CALL_INPUT}:\n        type: string\n        default: true\n`)}`, /does not declare the input/],
+    [`on:\n${callOn(`      ${REUSABLE_CALL_INPUT}:\n        type: boolean\n        default: true\n        required: true\n`)}`, /does not declare the input/],
+    [`on:\n${callOn()}  workflow_dispatch:\n    inputs:\n${marker}`, /workflow_dispatch also declares called_as_reusable_workflow/],
+    [`on:\n${callOn()}  workflow_dispatch:\n    inputs: [a]\n`, /workflow_dispatch inputs cannot be read/],
+    [`on:\n${callOn()}  push:\n`, /not triggered only by workflow_call and workflow_dispatch \(triggers: workflow_call, push\)/],
+    ["on: workflow_call\n", /does not declare the input/],
+    ["on: [workflow_call, pull_request]\n", /not triggered only by/],
+    [`on:\n  workflow_dispatch:\n    inputs:\n${marker}`, /not triggered only by/],
+  ];
+  for (const [on, message] of rejected) {
+    assert.match(workflowGuardErrors(file, reusable(REUSABLE_WORKFLOW_GUARD, on))[0] ?? "", message, on);
+  }
+  // GitHub's inputs context is case-insensitive, so inputs.called_as_reusable_workflow reads a case alias too.
+  const aliasMarker = (name) => `      ${name}:\n        type: boolean\n        default: true\n`;
+  for (const alias of ["CALLED_AS_REUSABLE_WORKFLOW", "Called_As_Reusable_Workflow", "called_AS_reusable_workflow", "'CALLED_AS_REUSABLE_WORKFLOW'"]) {
+    const name = alias.replaceAll("'", "");
+    const dispatchOn = `on:\n${callOn()}  workflow_dispatch:\n    inputs:\n${aliasMarker(alias)}`;
+    const errors = workflowGuardErrors(file, reusable(REUSABLE_WORKFLOW_GUARD, dispatchOn));
+    assert.equal(errors.length, 1, alias);
+    assert.match(errors[0], new RegExp(`workflow_dispatch also declares ${name} \\(inputs are case-insensitive`), alias);
+    assert.match(
+      workflowGuardErrors(file, reusable(REUSABLE_WORKFLOW_GUARD, `on:\n${callOn()}  workflow_dispatch:\n    inputs:\n      spec:\n        type: string\n${aliasMarker(alias)}`))[0] ?? "",
+      /workflow_dispatch also declares/,
+      `${alias} after another dispatch input`,
+    );
+    // A case alias under workflow_call is the marker itself, so it serves a call like the lowercase name.
+    assert.deepEqual(workflowGuardErrors(file, reusable(REUSABLE_WORKFLOW_GUARD, `on:\n${callOn(aliasMarker(alias))}`)), [], `${alias} under workflow_call`);
+  }
+  // Two case variants under workflow_call are ambiguous, and fail closed.
+  assert.match(
+    workflowGuardErrors(file, reusable(REUSABLE_WORKFLOW_GUARD, `on:\n${callOn(`${marker}${aliasMarker("CALLED_AS_REUSABLE_WORKFLOW").replace("default: true", "default: false")}`)}`))[0] ?? "",
+    /does not declare the input called_as_reusable_workflow/,
+  );
+  assert.match(workflowGuardErrors(file, reusable(`${REUSABLE_WORKFLOW_GUARD} || always()`))[0] ?? "", /job "api-check" has if:/);
+  assert.match(workflowGuardErrors(file, reusable(`${REPOSITORY_GUARD} || inputs.${REUSABLE_CALL_INPUT}`))[0] ?? "", /job "api-check" has if:/);
+});
+
+test("workflowInputs reads a trigger's declared inputs and fails closed on layouts it cannot read", () => {
+  const source = `on:\n  workflow_call:\n    inputs:\n      a:\n        description: >-\n          long\n        type: boolean\n        default: true\n      "b":\n        type: string\n  workflow_dispatch:\n  push: {}\njobs:\n`;
+  assert.deepEqual([...workflowInputs(source, "workflow_call")], [["a", { type: "boolean", default: "true" }], ["b", { type: "string" }]]);
+  assert.deepEqual([...workflowInputs(source, "workflow_dispatch")], []);
+  assert.deepEqual([...workflowInputs(source, "push")], []);
+  assert.equal(workflowInputs(source, "pull_request"), null);
+  assert.equal(workflowInputs("on: workflow_call\n", "workflow_call"), null);
+  assert.equal(workflowInputs("on:\n  workflow_call:\n    inputs:\n      a:\n        type: boolean\n      a:\n        type: string\n", "workflow_call"), null);
+  assert.equal(workflowInputs("on:\n  workflow_call:\n    inputs:\n      <<: *x\n", "workflow_call"), null);
+  assert.equal(workflowInputs("on:\n  workflow_call:\n    inputs:\n      a: { type: boolean }\n", "workflow_call"), null);
+  assert.equal(workflowInputs("on:\n  workflow_call:\n    inputs:\n      a:\n        default: 'x\n          y'\n", "workflow_call"), null);
+});
+
+test("quoted, unmodelled or repeated job property keys and embedded ${{ }} never count as a guard", () => {
+  const workflow = (jobs) => `name: X\non: push\njobs:\n${jobs}`;
+  const guard = REPOSITORY_GUARD;
+  // Quoted keys are the same keys to YAML, so they are read.
+  assert.deepEqual(workflowGuardErrors("w.yml", workflow(`  a:\n    'if': ${guard}\n    runs-on: x\n  b:\n    "if": ${guard}\n`)), []);
+  assert.match(workflowGuardErrors("w.yml", workflow(`  a:\n    "if": always()\n`))[0] ?? "", /job "a" has if: "always\(\)"/);
+  const shared = ".github/workflows/publish-tag.yml";
+  for (const key of ["'uses'", '"uses"', "uses"]) {
+    assert.match(workflowGuardErrors(shared, workflow(`  call:\n    ${key}: ./.github/workflows/apifn-api-check.yml\n`))[0] ?? "", /job "call" has uses: "\.\/\.github\/workflows\/apifn-api-check\.yml" and has no if:/, key);
+  }
+  // Keys the reader does not model, or a property indented less than the first, fail closed.
+  for (const [jobs, message] of [
+    [`  a:\n    <<: *defaults\n    if: ${guard}\n`, /line 5 is not a job property key the reader can follow/],
+    [`  a:\n    "i\\x66": always()\n    if: ${guard}\n`, /line 5 is not a job property key/],
+    [`  a:\n    ? if\n    : always()\n`, /line 5 is not a job property key/],
+    [`  a:\n      runs-on: x\n    if: always()\n`, /line 6 is indented less than the job properties/],
+    [`  a:\n    if: ${guard}\n    if: always()\n`, /job "a" has more than one if: key/],
+    [`  a:\n    if: ${guard}\n    'if': always()\n`, /job "a" has more than one if: key/],
+  ]) {
+    assert.match(workflowGuardErrors("w.yml", workflow(jobs))[0] ?? "", message, jobs);
+  }
+  // GitHub reads an if: with a ${{ }} that does not wrap the whole value as an always-true string template.
+  for (const condition of [
+    `${guard} && (\${{ always() }})`,
+    `${guard} && (github.ref == '\${{ github.ref }}')`,
+    `\${{ ${guard} }} && (\${{ always() }})`,
+    `${guard} && (contains(github.ref, '}}'))`,
+  ]) {
+    assert.equal(hasRepositoryGuard(condition), false, condition);
+    assert.match(workflowGuardErrors("w.yml", workflow(`  a:\n    if: ${condition}\n`))[0] ?? "", /always-true string/, condition);
+    assert.match(workflowGuardErrors(shared, workflow(`  a:\n    if: ${condition}\n    uses: ./.github/workflows/ci.yml\n`))[0] ?? "", /always-true string/, condition);
+  }
+  const reusableOn = `on:\n  workflow_call:\n    inputs:\n      ${REUSABLE_CALL_INPUT}:\n        type: boolean\n        default: true\n`;
+  const templated = `${REPOSITORY_GUARD} || inputs.${REUSABLE_CALL_INPUT} == \${{ true }}`;
+  assert.match(workflowGuardErrors("w.yml", `${reusableOn}jobs:\n  a:\n    if: ${templated}\n`)[0] ?? "", /always-true string/);
+});
+
+test("every caller of a guarded workflow carries the guard; a shared workflow's unguarded job may call only a shared workflow by its local path", (t) => {
+  const guard = REPOSITORY_GUARD;
+  const caller = (condition, uses = "./.github/workflows/apifn-api-check.yml") =>
+    `name: Caller\non: push\njobs:\n  call:\n${condition ? `    if: ${condition}\n` : ""}    uses: ${uses}\n`;
+  const called = `name: Called\non:\n  workflow_call:\n    inputs:\n      ${REUSABLE_CALL_INPUT}:\n        type: boolean\n        default: true\njobs:\n  api-check:\n    if: ${REUSABLE_WORKFLOW_GUARD}\n    runs-on: x\n`;
+  const root = fixture(t, {
+    files: {
+      ".github/workflows/apifn-api-check.yml": called,
+      ".github/workflows/apifn-api-check-smoke.yml": caller(null),
+      ".github/workflows/publish-tag.yml": caller(null),
+      ".github/workflows/publish-python.yml": `${caller(null, "./.github/workflows/publish-tag.yml")}  build:\n    runs-on: x\n`,
+    },
+  });
+  assert.deepEqual(
+    verifyOwners({ root, repo: "public" }).filter((message) => message.includes(".github/workflows")),
+    [
+      `.github/workflows/apifn-api-check-smoke.yml: job "call" has no if:; jobs outside the shared list must start their if: with ${guard}`,
+      `.github/workflows/publish-tag.yml: job "call" has uses: "./.github/workflows/apifn-api-check.yml" and has no if:; a shared workflow's job with uses: must start its if: with ${guard} unless it calls a shared workflow by its ./.github/workflows/<file> path`,
+    ],
+  );
+  const shared = ".github/workflows/publish-tag.yml";
+  assert.deepEqual(workflowGuardErrors(shared, caller(guard)), []);
+  assert.deepEqual(workflowGuardErrors(shared, caller(`${guard} && (always())`)), []);
+  assert.deepEqual(workflowGuardErrors(shared, caller(null, "./.github/workflows/publish-python.yml")), []);
+  assert.deepEqual(workflowGuardErrors(".github/workflows/publish-python.yml", caller(null, "./.github/workflows/publish-tag.yml")), []);
+  // Any other job-level uses: is not exempt: this repository under its current name, its redirect alias, its next fork
+  // (whose copy runs through the call-only input), any letter case, an arbitrary owner/repo, a non-canonical or
+  // non-shared local path, a remote shared workflow and an expression all need the guard.
+  for (const uses of [
+    "21nCo/super-functions.next/.github/workflows/apifn-api-check.yml@dev",
+    "21nCo/super-functions/.github/workflows/apifn-api-check.yml@dev",
+    "21NCO/SuperFunctions/.github/workflows/apifn-api-check.yml@dev",
+    "21nCo/superfunctions/.github/workflows/publish-python.yml@dev",
+    "octo/repo/.github/workflows/x.yml@v1",
+    "21nCo/superfunctions-tools/.github/workflows/x.yml@v1",
+    "./.github/workflows/../workflows/publish-python.yml",
+    "./.github/workflows/ci.yml",
+    "./ci/check.yml",
+    "${{ inputs.workflow }}",
+  ]) {
+    assert.match(workflowGuardErrors(shared, caller(null, uses))[0] ?? "", /a shared workflow's job with uses: must start its if:/, uses);
+    assert.deepEqual(workflowGuardErrors(shared, caller(guard, uses)), [], uses);
+    assert.deepEqual(workflowGuardErrors(shared, caller(`${guard} && (always())`, uses)), [], uses);
+  }
 });
 
 test("the checked-out repository matches its manifest", () => {

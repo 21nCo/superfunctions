@@ -15,7 +15,7 @@ const svelteVersion = compilerRequire("svelte/package.json").version;
 const manifest = JSON.parse(readFileSync("package.json", "utf8"));
 const packages = new Map(
   (
-    await glob(manifest.workspaces.map((pattern) => `${pattern}/package.json`))
+    await glob(manifest.workspaces.map((pattern) => `${pattern}/package.json`), { ignore: ["**/node_modules/**"] })
   ).map((path) => {
     const pkg = JSON.parse(readFileSync(path, "utf8"));
     return [pkg.name, { path: resolve(path, ".."), pkg }];

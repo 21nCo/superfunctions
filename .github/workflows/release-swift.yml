@@ -20,6 +20,7 @@ concurrency:
 
 jobs:
   release:
+    if: github.repository == '21nCo/superfunctions'
     runs-on: macos-latest
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
