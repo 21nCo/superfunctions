@@ -24,9 +24,12 @@ import type { Adapter } from "@superfunctions/db";
 import {
   TIMEZONE_CHANGE_RESOURCE_NAME,
   createTimezoneResolver,
+  endpointList,
+  findRelationMatch,
   getCapabilityFields,
   getTemporalClauses,
   normalizeTemporalQuery,
+  relationTargetEndpoint,
   resolveCapabilities,
   type DatafnTemporalClause,
   type DatafnTemporalConfig,
@@ -131,6 +134,79 @@ function lowerRangeClause(
   return filters;
 }
 
+/** Relation paths a query reads: select, sort, groupBy, aggregation, filter and having paths. */
+function queryPaths(query: Record<string, unknown>): string[][] {
+  const paths: string[][] = [];
+  const addPath = (value: unknown) => {
+    if (typeof value === "string" && value.length > 0) paths.push(value.split("."));
+  };
+  if (Array.isArray(query.select)) query.select.forEach(addPath);
+  if (Array.isArray(query.groupBy)) query.groupBy.forEach(addPath);
+  if (Array.isArray(query.sort)) {
+    for (const term of query.sort) {
+      if (typeof term === "string") addPath(term.replace(/^-/, "").replace(/:(asc|desc)$/i, ""));
+    }
+  }
+  if (query.aggregations && typeof query.aggregations === "object") {
+    for (const def of Object.values(query.aggregations as Record<string, unknown>)) {
+      if (def && typeof def === "object") addPath((def as { field?: unknown }).field);
+    }
+  }
+  const walkFilter = (filter: unknown, prefix: string[]) => {
+    if (!filter || typeof filter !== "object" || Array.isArray(filter)) return;
+    for (const [key, value] of Object.entries(filter as Record<string, unknown>)) {
+      if (key === "$and" || key === "$or" || key === "$not") {
+        const subs = Array.isArray(value) ? value : [value];
+        for (const sub of subs) walkFilter(sub, prefix);
+        continue;
+      }
+      if (key.startsWith("$")) continue;
+      const path = [...prefix, ...key.split(".")];
+      paths.push(path);
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        for (const quantifier of ["$any", "$all", "$none"]) {
+          const sub = (value as Record<string, unknown>)[quantifier];
+          if (sub && typeof sub === "object") walkFilter(sub, path);
+        }
+      }
+    }
+  };
+  walkFilter(query.filters, []);
+  walkFilter(query.having, []);
+  return paths;
+}
+
+/**
+ * Whether any relation path in the query leads back to the queried resource
+ * (a self relation, or a chain such as `project.tasks` from `task`). The
+ * in-memory store resolves those against the primary rows it loaded, so
+ * narrowing that load to a time range would drop related records outside it.
+ */
+function readsPrimaryThroughRelation(
+  query: Record<string, unknown>,
+  resource: string,
+  schema: DatafnSchema,
+): boolean {
+  if (!schema.relations || schema.relations.length === 0) return false;
+  for (const path of queryPaths(query)) {
+    let current = [resource];
+    for (const segment of path) {
+      const next = new Set<string>();
+      for (const name of current) {
+        const match = findRelationMatch(schema as any, name, segment);
+        if (!match) continue;
+        for (const target of endpointList(relationTargetEndpoint(match.relation, match.direction))) {
+          next.add(target);
+        }
+      }
+      if (next.size === 0) break;
+      if (next.has(resource)) return true;
+      current = [...next];
+    }
+  }
+  return false;
+}
+
 function mergeFilters(
   filters: unknown,
   generated: Record<string, unknown>[],
@@ -158,9 +234,20 @@ export function lowerTemporalRanges(
   schema: DatafnSchema,
   config: DatafnTemporalConfig,
 ): { query: Record<string, unknown>; lowered: string[] } {
-  const clauses = getTemporalClauses(query);
   const resource = query.resource;
-  if (clauses.length === 0 || typeof resource !== "string") {
+  if (typeof resource !== "string" || readsPrimaryThroughRelation(query, resource, schema)) {
+    return { query, lowered: [] };
+  }
+  // Resolve an omitted `at` once, so lowered clauses (resolved now) and
+  // clauses evaluated in memory later (after the database read) use the same
+  // instant. An ISO string reads as the same instant for every storage.
+  const now = new Date(Date.now()).toISOString();
+  const clauses = getTemporalClauses(query).map((clause) =>
+    clause.period && clause.period.at === undefined && !clause.range
+      ? { ...clause, period: { ...clause.period, at: now } }
+      : clause,
+  );
+  if (clauses.length === 0) {
     return { query, lowered: [] };
   }
 

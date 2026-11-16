@@ -39,9 +39,13 @@ const SCHEMA: DatafnSchema = {
         { name: "kind", type: "string", required: true },
         { name: "startIso", type: "string", required: false, nullable: true },
         { name: "dueAt", type: "date", required: false, nullable: true },
+        { name: "previousId", type: "string", required: false, nullable: true },
       ],
     },
   ],
+  relations: [
+    { from: "session", to: "session", type: "many-one", relation: "previous", inverse: "following", fkField: "previousId" },
+  ] as any,
 };
 
 const TIMEZONES = ["UTC", "America/New_York", "Asia/Kolkata", "Australia/Lord_Howe"];
@@ -104,6 +108,7 @@ async function createFixture(options: { searchIds?: () => string[] } = {}) {
       kind: i % 3 === 0 ? "focus" : "break",
       startIso: new Date(t).toISOString(),
       dueAt: i % 2 === 0 ? t : new Date(t).toISOString(),
+      previousId: i > 0 ? `session:${String(i - 1).padStart(5, "0")}` : null,
       createdAt: t + 7,
       updatedAt: t + 7,
     });
@@ -374,6 +379,27 @@ describe("temporal range push-down", () => {
   });
 });
 
+describe("temporal queries through self relations", () => {
+  it("keeps loading every row when a relation path leads back to the queried resource", async () => {
+    const fx = await createFixture();
+    const at = "2026-05-18T12:00:00.000Z";
+    for (const query of [
+      { ...q(time.day("startUnix", at)), select: ["id", "previous.*"] },
+      { ...q(time.day("startUnix", at)), select: ["id", "following.*"] },
+      { ...q(time.day("startUnix", at)), select: ["id"], filters: { "previous.kind": "focus" } },
+      { ...q(time.day("startUnix", at)), select: ["id"], filters: { previous: { $any: { kind: "focus" } } } },
+    ]) {
+      const { result, rowsRead } = await expectParity(fx, query);
+      expect(result.data.length).toBeGreaterThan(0);
+      expect(rowsRead).toBe(fx.rowCount);
+    }
+    // The first in-range row's previous row is outside the range and still resolves.
+    const { result } = await served(fx, { ...q(time.day("startUnix", at)), select: ["id", "startUnix", "previous.*"] });
+    const { start } = resolveTemporalPeriodRange({ scale: "day", at });
+    expect(result.data[0].previous.startUnix).toBeLessThan(start);
+  });
+});
+
 describe("temporal search queries", () => {
   it("resolves timezone \"user\" the same way for lowered bounds and in-memory clauses", async () => {
     let fx!: Fixture;
@@ -436,6 +462,30 @@ describe("lowerTemporalRanges", () => {
         { field: "startUnix", operator: "lte", value: end },
       ]),
     );
+  });
+
+  it("resolves an omitted `at` once for lowered and retained clauses", () => {
+    const now = Date.parse("2026-05-18T23:59:59.999Z");
+    const spy = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      const { query: lowered } = lowerTemporalRanges(
+        q([time.day("startUnix"), time.day("startIso", undefined, { storage: "iso" })]),
+        SCHEMA,
+        config,
+      );
+      const { start, end } = resolveTemporalPeriodRange({ scale: "day", at: now });
+      expect(lowered.filters).toEqual({ startUnix: { $gte: start, $lte: end } });
+      expect(lowered.temporal).toEqual(
+        expect.objectContaining({ field: "startIso", period: { scale: "day", at: new Date(now).toISOString() } }),
+      );
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("does not lower when a relation path leads back to the queried resource", () => {
+    const query = { ...q(time.day("startUnix", "2026-05-18T12:00:00.000Z")), select: ["id", "previous.*"] };
+    expect(lowerTemporalRanges(query, SCHEMA, config).query).toBe(query);
   });
 
   it("keeps only the grouping of a clause whose period was lowered", () => {
