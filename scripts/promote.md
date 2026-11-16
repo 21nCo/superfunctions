@@ -35,18 +35,20 @@ Record the pin the script prints. The script refuses, and changes nothing, when:
 
 - the working tree has uncommitted or untracked changes;
 - the current branch does not contain `origin/dev` (`--base` names another ref);
-- a path already exists on the branch with content that differs from `next` at the pin. `--reconcile` merges it
+- a path already exists on the branch with content or a file mode that differs from `next` at the pin. `--reconcile` merges it
   anyway and leaves the conflicts for you (exit status 2): resolve them, `git add` them and `git commit`;
 - a `--path` lies inside a top-level directory `superfunctions.owners.json` does not list (promote the whole
   directory instead), or names a file the script edits or a `next`-only file (manifests, release lists, lockfiles);
 - a release slug or npm name it would move is already listed in `release-packages.json` with other values, or two
-  imported entries share a slug or npm name (or two imported Python projects share a canonical name): fix `next`'s
-  overlay first;
+  imported entries share a slug or npm name: fix `next`'s overlay first;
+- an imported Python project (from `python-release-packages.next.json` or from a `pyproject.toml` under the paths)
+  shares its canonical name with another imported project in a different directory, or with a project this branch
+  already has (a `pyproject.toml` or a `TARGETS` entry) in a different directory;
 - a file it reads (`release-packages.json`, the manifest, a `pyproject.toml` at the pin) is malformed;
 - `git-filter-repo` is missing (it prints the install command).
 
 `--source <repo>` fetches the pin from another repository: a URL, or a local path resolved against your current
-directory.
+directory. It needs `--pin`, since the `next/next` default exists only in this checkout.
 
 It creates `promote/<fn or first path>` from the current commit with:
 

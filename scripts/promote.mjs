@@ -11,7 +11,7 @@
 //   node scripts/promote.mjs --path <path> [--path <path>...] --pin <next-sha> [options]
 // Options:
 //   --pin <rev>       next commit to import from (resolved in --source; <fn> defaults to the next/next ref)
-//   --source <repo>   repository holding the pin (default: this checkout, so `git fetch next` first)
+//   --source <repo>   repository holding the pin (default: this checkout, so `git fetch next` first; another one needs --pin)
 //   --base <ref>      ref the current branch must contain (default origin/dev)
 //   --branch <name>   branch to create (default promote/<fn or first path>)
 //   --reconcile       allow paths that already exist here with other content; merge conflicts are left for the operator
@@ -196,11 +196,30 @@ function readJsonAt(repo, rev, file) {
 }
 
 function objectAt(repo, rev, target) {
-  const result = git(repo, ["ls-tree", "--format=%(objecttype) %(objectname)", rev, "--", target], { allowFailure: true });
+  const result = git(repo, ["ls-tree", "--format=%(objectmode) %(objecttype) %(objectname)", rev, "--", target], { allowFailure: true });
   const [line] = lines(result.stdout ?? "");
   if (result.status !== 0 || !line) return null;
-  const [type, oid] = line.split(" ");
-  return { type, oid };
+  const [mode, type, oid] = line.split(" ");
+  return { mode, type, oid };
+}
+
+/** Same blob or tree with the same file mode (an executable bit is content too). */
+const sameObject = (a, b) => a !== null && b !== null && a.mode === b.mode && a.oid === b.oid;
+
+/** Files under `paths` (every file when none is given) at `rev`, NUL-separated so non-ASCII names stay unquoted. */
+function filesAt(repo, rev, paths = []) {
+  return git(repo, ["ls-tree", "-r", "-z", "--name-only", rev, "--", ...paths]).split("\0").filter(Boolean);
+}
+
+/** Python projects ({name, file}) declared by the pyproject.toml files among `files` at `rev`, as verify-owners reads them. */
+function pythonProjectsAt(repo, rev, files) {
+  return files
+    .filter((file) => path.posix.basename(file) === "pyproject.toml")
+    .sort()
+    .flatMap((file) => {
+      const name = ownersCheck(() => pyprojectName(git(repo, ["show", `${rev}:${file}`]), file));
+      return name === null ? [] : [{ name, file }];
+    });
 }
 
 /** Release entries of `file` at the pin whose path lies under an imported path. */
@@ -255,31 +274,56 @@ export function releaseMoves({ pinOverlay, pinBase, current, paths }) {
   return moves;
 }
 
+const directoryKey = (target) => path.posix.normalize(target).replace(/\/+$/, "") || ".";
+
 /**
- * Python overlay entries ({name, path}) under the paths that TARGETS does not list yet, matched by canonical name.
- * A project TARGETS lists with another path, or two imported entries with one canonical name, is a conflict.
+ * The imported Python projects and the overlay entries to move into TARGETS. Every imported Python identity, from
+ * next's Python overlay entries under the paths and from the pyproject.toml files imported with them
+ * (`discovered`, {name, file}), is matched by canonical name: within the batch one name has one project directory
+ * and one entry of each kind, and this checkout's pyproject.toml files (`existing`) and TARGETS either lack the name
+ * or hold it in the same directory. Anything else is a release-conflict, since verify-owners would reject the result.
+ * Returns `names` (every imported project, for the manifest) and `moves` (overlay entries TARGETS does not list).
  */
-export function pythonMoves(overlay, paths, targetsSource) {
-  if (overlay === null) return [];
-  if (!Array.isArray(overlay)) throw new PromoteError("malformed-file", `${PYTHON_OVERLAY} at the pin must be an array`);
-  const candidates = overlay.filter((entry) => {
+export function pythonMoves({ overlay = null, paths, targets = new Map(), discovered = [], existing = [] }) {
+  if (overlay !== null && !Array.isArray(overlay)) throw new PromoteError("malformed-file", `${PYTHON_OVERLAY} at the pin must be an array`);
+  const candidates = (overlay ?? []).filter((entry) => {
     if (typeof entry?.name !== "string" || entry.name === "" || typeof entry?.path !== "string" || entry.path === "") {
       throw new PromoteError("malformed-file", `${PYTHON_OVERLAY} at the pin: entry ${JSON.stringify(entry)} needs a name and a path`);
     }
     return paths.some((target) => isUnder(path.posix.normalize(entry.path), target));
   });
-  refuseBatchDuplicates(candidates, { "canonical name": (entry) => canonicalPythonName(entry.name) }, (entry) => `Python project ${JSON.stringify(entry.name)} (${entry.path}) in next's ${PYTHON_OVERLAY}`);
-  const targets = new Map([...targetsSource].map(([name, directory]) => [canonicalPythonName(name), { name, directory }]));
-  const moves = [];
-  for (const entry of candidates) {
-    const listed = targets.get(canonicalPythonName(entry.name));
-    if (listed) {
-      if (listed.directory === entry.path) continue;
-      throw new PromoteError("release-conflict", `Python project ${JSON.stringify(entry.name)} is already in TARGETS as ${JSON.stringify(listed.name)} with path ${listed.directory}`);
+  const identities = [
+    ...discovered.map(({ name, file }) => ({ name, directory: directoryKey(path.posix.dirname(file)), kind: "pyproject", where: `${file} at the pin` })),
+    ...candidates.map(({ name, path: directory }) => ({ name, directory: directoryKey(directory), kind: "overlay", where: `next's ${PYTHON_OVERLAY} (${directory})` })),
+  ];
+  const describe = ({ name, where }) => `Python project ${JSON.stringify(name)} in ${where}`;
+  const batch = new Map();
+  for (const identity of identities) {
+    const id = canonicalPythonName(identity.name);
+    const first = batch.get(id);
+    if (first && (first.kind === identity.kind || first.directory !== identity.directory)) {
+      throw new PromoteError("release-conflict", `${describe(identity)} and ${describe(first)} share the canonical name ${JSON.stringify(id)}; fix next first`);
     }
-    moves.push({ name: entry.name, path: entry.path });
+    if (!first) batch.set(id, identity);
   }
-  return moves;
+  const here = [
+    ...existing.map(({ name, file }) => ({ name, directory: directoryKey(path.posix.dirname(file)), where: `${file} here` })),
+    ...[...targets].map(([name, directory]) => ({ name, directory: directoryKey(directory), where: `TARGETS of ${PYTHON_RELEASE_SCRIPT} (${directory})`, inTargets: true })),
+  ];
+  const listed = new Set();
+  for (const other of here) {
+    const id = canonicalPythonName(other.name);
+    const identity = batch.get(id);
+    if (!identity) continue;
+    if (identity.directory !== other.directory) {
+      throw new PromoteError("release-conflict", `${describe(identity)} conflicts with Python project ${JSON.stringify(other.name)} in ${other.where}`);
+    }
+    if (other.inTargets) listed.add(id);
+  }
+  return {
+    names: [...batch.values()].map(({ name }) => name),
+    moves: candidates.filter((entry) => !listed.has(canonicalPythonName(entry.name))).map(({ name, path: directory }) => ({ name, path: directory })),
+  };
 }
 
 const TARGETS_BLOCK = /^TARGETS = \{\n([\s\S]*?)^\}\n/m;
@@ -406,20 +450,16 @@ function readPin(work, { source, pin, paths }) {
     if (!object) throw new PromoteError("path-missing", `${target} does not exist in next at ${sha}`);
     objects.set(target, object);
   }
-  const files = lines(git(work, ["ls-tree", "-r", "--name-only", sha, "--", ...paths]));
+  const files = filesAt(work, sha, paths);
   const conduct = files.filter((file) => CONDUCT_SEGMENT.test(file));
   if (conduct.length > 0) {
     throw new PromoteError("conduct-path", `next at ${sha} still holds .conduct planning files (${conduct[0]}${conduct.length > 1 ? `, +${conduct.length - 1} more` : ""}); archive them on next first (D1)`);
   }
-  const pythonNames = files
-    .filter((file) => path.posix.basename(file) === "pyproject.toml")
-    .map((file) => ownersCheck(() => pyprojectName(git(work, ["show", `${sha}:${file}`]), file)))
-    .filter((name) => name !== null);
   return {
     sha,
     objects,
     files,
-    pythonNames,
+    pythonProjects: pythonProjectsAt(work, sha, files),
     overlay: readJsonAt(work, sha, RELEASE_FILES.next),
     base: readJsonAt(work, sha, RELEASE_FILES.public),
     pythonOverlay: readJsonAt(work, sha, PYTHON_OVERLAY),
@@ -464,9 +504,13 @@ export function promote({ root = REPO_ROOT, fn, paths: rawPaths = [], pin, sourc
   branch ??= `promote/${fn ?? paths[0]}`;
   if (pin?.startsWith("-")) throw new PromoteError("usage", `--pin ${JSON.stringify(pin)} must not start with "-"`);
   source = source === undefined ? root : resolveSource(source);
+  const sameRepository = source === root || (path.isAbsolute(source) && realPath(source) === realPath(root));
+  if (!sameRepository && pin === undefined) {
+    throw new PromoteError("usage", `--source ${source} needs --pin <next-sha>: the next/next default exists only in this checkout`);
+  }
   checkWorkingRepo(root, { base, branch });
   pin ??= "refs/remotes/next/next";
-  if (source === root || (path.isAbsolute(source) && realPath(source) === realPath(root))) {
+  if (sameRepository) {
     source = root;
     if (!gitOk(root, ["rev-parse", "--verify", "--quiet", `${pin}^{commit}`])) {
       throw new PromoteError("pin-missing", `pin ${pin} is not in this checkout; run git fetch next (or pass --source)`);
@@ -495,7 +539,7 @@ export function promote({ root = REPO_ROOT, fn, paths: rawPaths = [], pin, sourc
         throw new PromoteError("unownable-path", `${target} lies in ${top}, which ${PUBLIC_MANIFEST} does not list; promote the whole directory ${top}`);
       }
       const here = objectAt(root, "HEAD", target);
-      if (here && here.oid !== pinned.objects.get(target).oid && !reconcile) {
+      if (here && !sameObject(here, pinned.objects.get(target)) && !reconcile) {
         throw new PromoteError("path-conflict", `${target} already exists on this branch with different content; pass --reconcile to merge it and resolve the conflicts`);
       }
     }
@@ -503,14 +547,15 @@ export function promote({ root = REPO_ROOT, fn, paths: rawPaths = [], pin, sourc
     const releases = releaseMoves({ pinOverlay: pinned.overlay, pinBase: pinned.base, current, paths });
     const pythonSource = existsSync(pythonScript) ? readFileSync(pythonScript, "utf8") : null;
     const pythonTargets = pythonSource === null ? new Map() : readPythonTargets(pythonSource);
-    const python = pythonMoves(pinned.pythonOverlay, paths, pythonTargets);
+    const { names: pythonNames, moves: python } = pythonMoves({
+      overlay: pinned.pythonOverlay,
+      paths,
+      targets: pythonTargets,
+      discovered: pinned.pythonProjects,
+      existing: pythonProjectsAt(root, "HEAD", filesAt(root, "HEAD")),
+    });
     if (python.length > 0 && pythonSource === null) throw new PromoteError("malformed-file", `${PYTHON_RELEASE_SCRIPT} not found`);
-    const flip = {
-      topLevel,
-      rootFiles,
-      slugs: releases.map((entry) => entry.slug),
-      pythonNames: [...new Set([...pinned.pythonNames, ...python.map((entry) => entry.name)])],
-    };
+    const flip = { topLevel, rootFiles, slugs: releases.map((entry) => entry.slug), pythonNames };
     const changed = flipManifest(manifest, flip);
 
     const { head, commits } = filterHistory(work, paths);
@@ -549,8 +594,7 @@ export function promote({ root = REPO_ROOT, fn, paths: rawPaths = [], pin, sourc
       }
       if (conflicts.length === 0) {
         for (const target of paths) {
-          const result = objectAt(root, "HEAD", target);
-          if (!reconcile && result?.oid !== pinned.objects.get(target).oid) {
+          if (!reconcile && !sameObject(objectAt(root, "HEAD", target), pinned.objects.get(target))) {
             throw new PromoteError("git-failed", `${target} on ${branch} does not equal next at ${pinned.sha}`);
           }
         }

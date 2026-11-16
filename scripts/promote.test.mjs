@@ -2,7 +2,7 @@
 // skip without it unless PROMOTE_REQUIRE_FILTER_REPO=1 (set in CI, where the job installs it), which makes them fail.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
@@ -295,6 +295,79 @@ historyTest("malformed files here or at the pin fail with one promote: line, not
   assert.equal(git(dev, "branch", "--list", "promote/*"), "");
 });
 
+historyTest("imported Python projects colliding with each other or with a project here at another path are refused before the branch", () => {
+  const { dev, next } = fixture("python-identity");
+  const project = '[project]\nname = "alphafn"\nversion = "0.0.1"\n';
+  commit(next, "alphafn python on next", { "alphafn/python/pyproject.toml": project });
+  const head = commit(dev, "alphafn python on dev", { "alphafn/python/pyproject.toml": project });
+  git(dev, "update-ref", "refs/remotes/origin/dev", head);
+  const pins = [
+    // Two spellings of one name among the imported pyproject.toml files, with no overlay entry for either.
+    commit(next, "duplicate widget project", { "python-release-packages.next.json": [], "widgetfn/py2/pyproject.toml": '[project]\nname = "WidgetFn"\n' }),
+    // An imported project named like the public alphafn project this checkout holds in alphafn/python.
+    commit(next, "widget copy of alphafn", { "widgetfn/py2/pyproject.toml": '[project]\nname = "AlphaFN"\n' }),
+  ];
+  for (const pin of pins) {
+    throwsCode(() => promote({ root: dev, fn: "widgetfn", pin, source: next }), "release-conflict");
+    assert.equal(git(dev, "rev-parse", "HEAD"), head);
+    assert.equal(git(dev, "branch", "--list", "promote/*"), "");
+    assert.equal(git(dev, "status", "--porcelain"), "");
+  }
+  // The same project in the same directory is the same identity, so promotion goes ahead.
+  const pin = commit(next, "drop the copy", { "widgetfn/py2/pyproject.toml": '[project]\nname = "widget-two"\n' });
+  const result = promote({ root: dev, paths: ["alphafn/python", "widgetfn"], pin, source: next });
+  assert.deepEqual(result.changed.python, ["widget-two", "widgetfn"]);
+  assert.equal(git(dev, "rev-parse", "HEAD:alphafn/python"), git(next, "rev-parse", `${pin}:alphafn/python`));
+});
+
+historyTest("a project under a non-ASCII path is found and made public", () => {
+  const { dev, next } = fixture("unicode");
+  const pin = commit(next, "naive widget", { "widgetfn/naïve/pyproject.toml": '[project]\nname = "naive-widget"\n' });
+  const result = promote({ root: dev, fn: "widgetfn", pin, source: next });
+  assert.ok(result.files.includes("widgetfn/naïve/pyproject.toml"), result.files.join(", "));
+  assert.equal(JSON.parse(git(dev, "show", "HEAD:superfunctions.owners.json")).python["naive-widget"], "public");
+});
+
+historyTest("a single file with the same bytes but another mode is a conflicting path", () => {
+  const { dev, next } = fixture("mode");
+  const script = "#!/bin/sh\necho run\n";
+  const head = commit(dev, "run.sh on dev", { "uifn/run.sh": script });
+  git(dev, "update-ref", "refs/remotes/origin/dev", head);
+  write(next, { "uifn/run.sh": script });
+  git(next, "add", "uifn/run.sh");
+  git(next, "update-index", "--chmod=+x", "uifn/run.sh");
+  git(next, "commit", "-q", "-m", "executable run.sh");
+  const pin = git(next, "rev-parse", "HEAD");
+  assert.equal(git(dev, "rev-parse", "HEAD:uifn/run.sh"), git(next, "rev-parse", `${pin}:uifn/run.sh`), "same blob");
+  throwsCode(() => promote({ root: dev, paths: ["uifn/run.sh"], pin, source: next }), "path-conflict");
+  assert.equal(git(dev, "rev-parse", "HEAD"), head);
+  assert.equal(git(dev, "branch", "--list", "promote/*"), "");
+});
+
+historyTest("another repository as --source needs an explicit --pin", () => {
+  const { dev, next } = fixture("source-pin");
+  throwsCode(() => promote({ root: dev, fn: "widgetfn", source: next }), "usage");
+  const run = promoteCli(dev, ["widgetfn", "--source", next]);
+  assert.equal(run.status, 1);
+  assert.match(run.stderr, /^promote: usage: --source .* needs --pin <next-sha>/);
+  // This checkout as --source keeps the next/next default.
+  assert.equal(promote({ root: dev, fn: "widgetfn", source: dev }).branch, "promote/widgetfn");
+});
+
+historyTest("a failure after the merge restores the original branch and removes the new one", () => {
+  const { dev } = fixture("rollback");
+  const head = git(dev, "rev-parse", "HEAD");
+  const hooks = path.join(dev, ".git", "failing-hooks");
+  write(hooks, { "pre-commit": "#!/bin/sh\nexit 1\n" });
+  chmodSync(path.join(hooks, "pre-commit"), 0o755);
+  git(dev, "config", "core.hooksPath", hooks);
+  throwsCode(() => promote({ root: dev, fn: "widgetfn" }), "git-failed");
+  assert.equal(git(dev, "branch", "--show-current"), "dev");
+  assert.equal(git(dev, "rev-parse", "HEAD"), head);
+  assert.equal(git(dev, "branch", "--list", "promote/*"), "");
+  assert.equal(git(dev, "status", "--porcelain", "--untracked-files=all"), "");
+});
+
 test("a missing git-filter-repo fails with an install hint", () => {
   const empty = mkdtempSync(path.join(scratch, "path-"));
   const run = spawnSync(process.execPath, [SCRIPT, "widgetfn", "--root", scratch], {
@@ -354,13 +427,30 @@ test("release moves: overlay first, identical entries skipped, conflicting slugs
   assert.equal(releaseMoves({ pinOverlay: pair({}, {}), pinBase: [], current, paths: ["widgetfn"] }).length, 2);
 });
 
-test("Python moves: matched by canonical name against TARGETS and against each other", () => {
+test("Python identities: overlay entries and imported pyproject.toml files, unique by canonical name and matching this checkout", () => {
   const targets = new Map([["Alpha_FN", "alphafn/python"]]);
-  assert.deepEqual(pythonMoves([{ name: "alpha-fn", path: "alphafn/python" }, { name: "beta", path: "alphafn/beta" }], ["alphafn"], targets), [
-    { name: "beta", path: "alphafn/beta" },
-  ]);
-  throwsCode(() => pythonMoves([{ name: "alpha.fn", path: "alphafn/other" }], ["alphafn"], targets), "release-conflict");
-  throwsCode(() => pythonMoves([{ name: "beta", path: "alphafn/b1" }, { name: "Beta", path: "alphafn/b2" }], ["alphafn"], targets), "release-conflict");
+  const paths = ["alphafn"];
+  assert.deepEqual(pythonMoves({ overlay: [{ name: "alpha-fn", path: "alphafn/python" }, { name: "beta", path: "alphafn/beta/" }], paths, targets }), {
+    names: ["alpha-fn", "beta"],
+    moves: [{ name: "beta", path: "alphafn/beta/" }],
+  });
+  // An overlay entry and its own pyproject.toml are one project; this checkout may hold it in the same directory.
+  const discovered = [{ name: "Beta", file: "alphafn/beta/pyproject.toml" }, { name: "gamma", file: "alphafn/gamma/pyproject.toml" }];
+  const existing = [{ name: "beta", file: "alphafn/beta/pyproject.toml" }, { name: "delta", file: "deltafn/pyproject.toml" }];
+  assert.deepEqual(pythonMoves({ overlay: [{ name: "beta", path: "alphafn/beta" }], paths, targets, discovered, existing }), {
+    names: ["Beta", "gamma"],
+    moves: [{ name: "beta", path: "alphafn/beta" }],
+  });
+  const refused = [
+    { overlay: [{ name: "alpha.fn", path: "alphafn/other" }] },
+    { overlay: [{ name: "beta", path: "alphafn/b1" }, { name: "Beta", path: "alphafn/b2" }] },
+    { overlay: [{ name: "beta", path: "alphafn/b1" }, { name: "Beta", path: "alphafn/b1" }] },
+    { discovered: [{ name: "new-pkg", file: "alphafn/a/pyproject.toml" }, { name: "New_Pkg", file: "alphafn/b/pyproject.toml" }] },
+    { discovered: [{ name: "beta", file: "alphafn/a/pyproject.toml" }], overlay: [{ name: "beta", path: "alphafn/b" }] },
+    { discovered: [{ name: "Delta", file: "alphafn/delta/pyproject.toml" }], existing },
+    { discovered: [{ name: "alpha_fn", file: "alphafn/py/pyproject.toml" }] },
+  ];
+  for (const input of refused) throwsCode(() => pythonMoves({ paths, targets, ...input }), "release-conflict");
 });
 
 test("sources: local paths resolve against the caller's directory, URLs stay, a leading dash is refused", () => {
