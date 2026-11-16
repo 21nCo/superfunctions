@@ -2,6 +2,7 @@ import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { memoryAdapter } from '@superfunctions/db/adapters/memory';
+import type { StorageAdapter } from '@superfunctions/storage';
 import { createLocalStorageAdapter } from '@superfunctions/storage-local';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
@@ -30,14 +31,55 @@ async function storedObjects(root: string): Promise<string[]> {
   return entries.filter((entry) => entry.isFile()).map((entry) => join(entry.parentPath, entry.name).slice(root.length + 1));
 }
 
+/**
+ * Local storage whose server-side uploads can be switched off, as on the R2
+ * adapter, or held at a gate so a test can interleave other writes.
+ */
+function controlledStorage(local: StorageAdapter) {
+  let gate: { match: (key: string) => boolean; reached: () => void; released: Promise<void> } | null = null;
+  const control = {
+    proxyUploads: true,
+    /** Holds the next server-side upload whose key matches until `release` is called. */
+    hold(match: (key: string) => boolean) {
+      let reached!: () => void;
+      let release!: () => void;
+      const reachedPromise = new Promise<void>((resolve) => { reached = resolve; });
+      gate = { match, reached, released: new Promise<void>((resolve) => { release = resolve; }) };
+      return { reached: reachedPromise, release };
+    },
+  };
+  const storage = new Proxy(local, {
+    get(target, property, receiver) {
+      if (property === 'capabilities') {
+        return control.proxyUploads ? target.capabilities : { ...target.capabilities, proxyStreamingUpload: false };
+      }
+      if (property === 'openUploadStream') {
+        if (!control.proxyUploads) return undefined;
+        return async (input: { key: string; target?: string; contentType?: string }) => {
+          const held = gate;
+          if (held?.match(input.key)) {
+            gate = null;
+            held.reached();
+            await held.released;
+          }
+          return target.openUploadStream!(input);
+        };
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  return { storage, control };
+}
+
 async function createApp(options: { processors?: Processor[] } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'filefn-client-artifacts-'));
   roots.push(root);
   const database = memoryAdapter();
-  const jobs: unknown[] = [];
+  const { storage, control: storageControl } = controlledStorage(createLocalStorageAdapter({ rootDir: root }));
+  const jobs: any[] = [];
   const fileFn: FileFn = createFileFn({
     database,
-    storage: createLocalStorageAdapter({ rootDir: root }),
+    storage,
     authorizer: createDefaultAuthorizer({ db: database }),
     policies: [{ name: 'photo', contentTypes: ['image/png'], maxSizeBytes: 64, visibility: 'private' }],
     processing: {
@@ -97,7 +139,7 @@ async function createApp(options: { processors?: Processor[] } = {}) {
     return new Uint8Array(await response.arrayBuffer());
   }
 
-  return { fileFn, root, fileId, versionId, clientFor, fetchAs, drainJobs, put, artifacts, artifactBytes };
+  return { fileFn, root, fileId, versionId, clientFor, fetchAs, jobs, drainJobs, put, artifacts, artifactBytes, storageControl };
 }
 
 function thumbnailProcessor(calls: string[], options: { declareKinds?: boolean } = {}): Processor {
@@ -320,6 +362,79 @@ describe('client-supplied processing artifacts', () => {
     const source = await resolveViewerSource({ client, fileId: app.fileId, intent: 'thumbnail' });
     expect(source).toMatchObject({ state: 'ready', mimeType: 'image/jpeg', size: 12 });
     expect(new TextDecoder().decode(await app.artifactBytes('owner', source.url!))).toBe('client-thumb');
+  });
+
+  it('refuses with a typed error, storing nothing, when storage cannot take a server-side upload', async () => {
+    const app = await createApp();
+    const before = await storedObjects(app.root);
+    // As on the R2 adapter: no openUploadStream and proxyStreamingUpload false.
+    app.storageControl.proxyUploads = false;
+
+    const refused = await app.put('owner', 'thumbnail-small', bytes('client-small'), 'image/png');
+    expect(refused.status).toBe(501);
+    expect(refused.json.error.code).toBe('FILEFN_STORAGE_UPLOAD_UNSUPPORTED');
+    // Authorization still comes first.
+    expect((await app.put('reader', 'thumbnail-small', bytes('x'), 'image/png')).status).toBe(403);
+
+    const error = await app.clientFor('writer').uploadArtifact({
+      fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', data: bytes('x'), mimeType: 'image/png',
+    }).catch((caught) => caught);
+    expect(error).toMatchObject({ status: 501, code: 'FILEFN_STORAGE_UPLOAD_UNSUPPORTED' });
+    expect(await app.artifacts()).toEqual([]);
+    expect(await storedObjects(app.root)).toEqual(before);
+  });
+
+  it('keeps a client artifact that lands while an unforced run stores the same kind over a server row', async () => {
+    const app = await createApp({ processors: [thumbnailProcessor([])] });
+    const [job] = app.jobs;
+    expect(await app.drainJobs()).toEqual([expect.objectContaining({ status: 'completed', artifactsCreated: 2 })]);
+    const serverSmall = (await app.artifacts()).find((a) => a.kind === 'thumbnail-small')!;
+
+    // A redelivery with another key runs the processor again; its row read
+    // (a server row) goes stale while its object upload is held.
+    const held = app.storageControl.hold((key) => key.endsWith('-thumb-small.jpg'));
+    const rerun = createProcessingJobHandler(app.fileFn).handle({ ...job, idempotencyKey: `${job.idempotencyKey}:again` });
+    await held.reached;
+    const client = app.clientFor('owner');
+    const clientSmall = await client.uploadArtifact({
+      fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small', data: bytes('client-small'), mimeType: 'image/png',
+    });
+    held.release();
+    expect(await rerun).toMatchObject({ status: 'completed' });
+
+    const small = (await client.listArtifacts(app.fileId)).find((a) => a.kind === 'thumbnail-small');
+    expect(small).toEqual(clientSmall);
+    expect(small).toMatchObject({ artifactId: serverSmall.artifactId, source: 'client' });
+    const url = await client.downloadArtifact(app.fileId, clientSmall.artifactId);
+    expect(new TextDecoder().decode(await app.artifactBytes('owner', url))).toBe('client-small');
+    // The run's own object was discarded and the replaced server object is gone.
+    const objects = await storedObjects(app.root);
+    expect(objects.some((path) => path.endsWith('-thumb-small.jpg'))).toBe(false);
+    expect(objects.filter((path) => path.includes('.client-artifacts/'))).toHaveLength(1);
+  });
+
+  it('a forced run that a second client upload overtakes replaces the newer row and discards its object', async () => {
+    const app = await createApp({ processors: [thumbnailProcessor([])] });
+    const client = app.clientFor('owner');
+    const input = { fileId: app.fileId, versionId: app.versionId, kind: 'thumbnail-small' as const, mimeType: 'image/png' };
+    await client.uploadArtifact({ ...input, data: bytes('client-a') });
+    await app.drainJobs();
+
+    await app.fileFn.services.processing.triggerProcessingForFile(app.fileId, { principalId: 'owner' }, app.versionId, { force: true });
+    const held = app.storageControl.hold((key) => key.endsWith('-thumb-small.jpg'));
+    const forced = app.drainJobs();
+    await held.reached;
+    // A second client upload replaces the row the forced run read.
+    await client.uploadArtifact({ ...input, data: bytes('client-b') });
+    held.release();
+    expect(await forced).toEqual([expect.objectContaining({ status: 'completed' })]);
+
+    const small = (await client.listArtifacts(app.fileId)).find((a) => a.kind === 'thumbnail-small')!;
+    expect(small.source).toBe('server');
+    const url = await client.downloadArtifact(app.fileId, small.artifactId);
+    expect(new TextDecoder().decode(await app.artifactBytes('owner', url))).toBe('server-small');
+    // Neither client object is left behind.
+    expect((await storedObjects(app.root)).some((path) => path.includes('.client-artifacts/'))).toBe(false);
   });
 
   it('refuses a version of another file and reports client errors as FileFnHttpError', async () => {

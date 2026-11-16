@@ -64,17 +64,25 @@ describe('uploadArtifact', () => {
     expect(bodies).toEqual(['\u0001\u0002\u0003', '\u0001\u0002\u0003']);
   });
 
-  it('does not retry a refusal and surfaces its code', async () => {
+  it.each([
+    [403, 'FILEFN_FORBIDDEN'],
+    // Storage that cannot take a server-side upload: retrying cannot help.
+    [501, 'FILEFN_STORAGE_UPLOAD_UNSUPPORTED'],
+  ])('does not retry a %i refusal and surfaces its code', async (status, code) => {
     const fetch = vi.fn(async () => new Response(
-      JSON.stringify({ ok: false, error: { code: 'FILEFN_FORBIDDEN', message: 'Access denied' } }),
-      { status: 403, headers: { 'content-type': 'application/json' } },
+      JSON.stringify({ ok: false, error: { code, message: 'refused' } }),
+      { status, headers: { 'content-type': 'application/json' } },
     ));
-    const client = createFileFnClient({ baseUrl: 'https://api.test', fetch: fetch as unknown as typeof globalThis.fetch });
+    const client = createFileFnClient({
+      baseUrl: 'https://api.test',
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      retryOptions: { maxRetries: 2, baseDelayMs: 0, maxDelayMs: 0 },
+    });
     const error = await client.uploadArtifact({
       fileId: 'file_1', versionId: 'ver_1', kind: 'thumbnail-large', data: new Uint8Array([1]), mimeType: 'image/png',
     }).catch((caught) => caught);
     expect(error).toBeInstanceOf(FileFnHttpError);
-    expect(error).toMatchObject({ status: 403, code: 'FILEFN_FORBIDDEN' });
+    expect(error).toMatchObject({ status, code });
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 

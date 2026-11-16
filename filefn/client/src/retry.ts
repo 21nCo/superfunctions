@@ -24,12 +24,17 @@ export function computeDelay(attempt: number, options: ResolvedRetryOptions): nu
   return Math.min(exponentialDelay + jitter, options.maxDelayMs);
 }
 
+/** 501 Not Implemented is a lasting refusal, such as storage that cannot take an upload. */
+function isRetryableStatus(status: number): boolean {
+  return (status >= 500 && status !== 501) || status === 429 || status === 408;
+}
+
 export function isRetryableError(error: unknown): boolean {
   if (error instanceof Error) {
     if (error.name === 'AbortError') return false;
     if ('status' in error) {
       const status = (error as { status: number }).status;
-      return status >= 500 || status === 429 || status === 408;
+      return isRetryableStatus(status);
     }
     const message = error.message.toLowerCase();
     return message.includes('network') || message.includes('fetch');
@@ -38,7 +43,7 @@ export function isRetryableError(error: unknown): boolean {
   if (error && typeof error === 'object' && 'status' in error) {
     const status = (error as { status?: unknown }).status;
     if (typeof status === 'number') {
-      return status >= 500 || status === 429 || status === 408;
+      return isRetryableStatus(status);
     }
   }
 

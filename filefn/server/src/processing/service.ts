@@ -354,6 +354,13 @@ function emitIsolated(
 
 const MAX_JOB_FIELD_LENGTH = 512;
 
+/**
+ * Times one artifact write re-reads its row after another writer changed it
+ * first. Each retry follows a write that landed, so a writer only runs out
+ * under sustained concurrent writes of the same kind.
+ */
+const MAX_ARTIFACT_WRITE_ATTEMPTS = 5;
+
 function isJobField(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= MAX_JOB_FIELD_LENGTH;
 }
@@ -707,6 +714,59 @@ export function createProcessingService(config: ProcessingServiceConfig) {
   }
 
   /**
+   * Opens a server-side upload to `object.target`, or refuses with a typed
+   * error when that target cannot take one (the R2 adapter, for example, only
+   * signs URLs for the client to upload to directly).
+   */
+  async function openServerUpload(object: { key: string; target: string; contentType: string }): Promise<WritableStream> {
+    if (!storage.openUploadStream || !getStorageCapabilities(storage, object.target).proxyStreamingUpload) {
+      throw errors.storageUploadUnsupported(object.target);
+    }
+    return storage.openUploadStream(object);
+  }
+
+  /** The artifact row for one (file, version, kind), if any. */
+  async function findKindRow(fileId: string, versionId: string, kind: string): Promise<FileArtifactRecord | null> {
+    return db.findOne<FileArtifactRecord>({
+      model: 'fileArtifacts',
+      where: [
+        { field: 'fileId', operator: 'eq', value: fileId },
+        { field: 'versionId', operator: 'eq', value: versionId },
+        { field: 'kind', operator: 'eq', value: kind },
+      ],
+      namespace,
+    });
+  }
+
+  async function findArtifactRow(artifactId: string): Promise<FileArtifactRecord | null> {
+    return db.findOne<FileArtifactRecord>({
+      model: 'fileArtifacts',
+      where: [{ field: 'artifactId', operator: 'eq', value: artifactId }],
+      namespace,
+    });
+  }
+
+  /**
+   * Writes `fields` over `row` only while the row still names the object it
+   * named when read, and reports whether it did. Every write gives the row a
+   * new storage key or the same server key, and a client object's key is
+   * unique to one upload attempt, so an unchanged key means no client
+   * artifact landed in between.
+   */
+  async function replaceIfUnchanged(row: FileArtifactRecord, fields: Record<string, unknown>): Promise<boolean> {
+    const updated = await db.updateMany({
+      model: 'fileArtifacts',
+      where: [
+        { field: 'artifactId', operator: 'eq', value: row.artifactId },
+        { field: 'storageKey', operator: 'eq', value: row.storageKey },
+      ],
+      data: fields,
+      namespace,
+    });
+    return updated > 0;
+  }
+
+  /**
    * Streams a client body into a new object, refusing it once it passes
    * `maxBytes` or when it is empty. A refused or failed upload deletes what
    * it wrote, best effort, and nothing records the object.
@@ -717,10 +777,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     kind: string,
     maxBytes: number,
   ): Promise<number> {
-    if (!storage.openUploadStream) {
-      throw new Error('Storage adapter does not support streaming uploads');
-    }
-    const stream = await storage.openUploadStream(object);
+    const stream = await openServerUpload(object);
     const writer = stream.getWriter();
     let size = 0;
     try {
@@ -790,15 +847,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     if (!storage.openUploadStream) {
       throw new Error('Storage adapter does not support streaming uploads');
     }
-    const existingArtifact = await db.findOne<FileArtifactRecord>({
-      model: 'fileArtifacts',
-      where: [
-        { field: 'fileId', operator: 'eq', value: input.fileId },
-        { field: 'versionId', operator: 'eq', value: input.versionId },
-        { field: 'kind', operator: 'eq', value: artifact.kind },
-      ],
-      namespace,
-    });
+    const existingArtifact = await findKindRow(input.fileId, input.versionId, artifact.kind);
     const keepsClientArtifact = (row: FileArtifactRecord) => !force && artifactSourceOf(row) === 'client';
     if (existingArtifact && keepsClientArtifact(existingArtifact)) {
       return;
@@ -820,58 +869,56 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       size: artifact.data.length,
       metadata: { ...(artifact.metadata ?? {}), processing },
     };
-    const replace = async (row: FileArtifactRecord): Promise<void> => {
-      await db.update({
-        model: 'fileArtifacts',
-        where: [{ field: 'artifactId', operator: 'eq', value: row.artifactId }],
-        data: fields,
-        namespace,
-      });
-      writes.artifactsRecorded += 1;
-      // A forced run replacing a client artifact leaves its object unreferenced.
-      if (artifactSourceOf(row) === 'client' && row.storageKey !== artifact.storageKey) {
-        await discardReplacedObject(row, target);
-      }
-    };
-    if (existingArtifact) {
-      await replace(existingArtifact);
-      return;
-    }
-
+    // The row read above may be stale by now: a client upload can land while
+    // the object was stored. Each write is conditional on the row it read, so
+    // an unforced run never replaces a client artifact it did not see, and
+    // the object discarded is the one of the row actually replaced.
     const artifactId = artifactIdFor(input.fileId, input.versionId, artifact.kind);
-    try {
-      await db.create({
-        model: 'fileArtifacts',
-        data: {
-          artifactId,
-          fileId: input.fileId,
-          versionId: input.versionId,
-          kind: artifact.kind,
-          ...fields,
-          createdAt: new Date().toISOString(),
-        },
-        namespace,
-      });
-    } catch (error) {
-      // A concurrent delivery or client upload created the same row first.
-      const raced = await db.findOne<FileArtifactRecord>({
-        model: 'fileArtifacts',
-        where: [{ field: 'artifactId', operator: 'eq', value: artifactId }],
-        namespace,
-      });
-      if (!raced) {
-        throw error;
+    let current = existingArtifact;
+    for (let attempt = 1; ; attempt += 1) {
+      if (!current) {
+        try {
+          await db.create({
+            model: 'fileArtifacts',
+            data: {
+              artifactId,
+              fileId: input.fileId,
+              versionId: input.versionId,
+              kind: artifact.kind,
+              ...fields,
+              createdAt: new Date().toISOString(),
+            },
+            namespace,
+          });
+          writes.artifactsRecorded += 1;
+          return;
+        } catch (error) {
+          // A concurrent delivery or client upload created the same row first.
+          current = await findArtifactRow(artifactId);
+          if (!current) {
+            throw error;
+          }
+        }
       }
-      if (keepsClientArtifact(raced)) {
+      if (keepsClientArtifact(current)) {
         // The client's artifact stays; the object uploaded above is not recorded.
         writes.uploadedKeys.delete(artifact.storageKey);
-        await discardReplacedObject({ ...raced, storageKey: artifact.storageKey, metadata: { processing } }, target);
+        await discardReplacedObject({ ...current, storageKey: artifact.storageKey, metadata: { processing } }, target);
         return;
       }
-      await replace(raced);
-      return;
+      if (await replaceIfUnchanged(current, fields)) {
+        writes.artifactsRecorded += 1;
+        // A forced run replacing a client artifact leaves its object unreferenced.
+        if (artifactSourceOf(current) === 'client' && current.storageKey !== artifact.storageKey) {
+          await discardReplacedObject(current, target);
+        }
+        return;
+      }
+      if (attempt >= MAX_ARTIFACT_WRITE_ATTEMPTS) {
+        throw errors.artifactWriteConflict(artifact.kind);
+      }
+      current = await findArtifactRow(current.artifactId);
     }
-    writes.artifactsRecorded += 1;
   }
 
   /**
@@ -1457,45 +1504,44 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       };
       const fields = { storageKey, mimeType, size, metadata: { processing } };
       const artifactId = artifactIdFor(file.fileId, version.versionId, upload.kind);
-      const update = (id: string) =>
-        db.update({ model: 'fileArtifacts', where: [{ field: 'artifactId', operator: 'eq', value: id }], data: fields, namespace });
+      // A client artifact replaces whatever the row holds, but conditionally on
+      // the row it read, so the object it discards is the one it replaced.
       let replaced: FileArtifactRecord | null = null;
+      let rowId = artifactId;
       try {
-        replaced = await db.findOne<FileArtifactRecord>({
-          model: 'fileArtifacts',
-          where: [
-            { field: 'fileId', operator: 'eq', value: file.fileId },
-            { field: 'versionId', operator: 'eq', value: version.versionId },
-            { field: 'kind', operator: 'eq', value: upload.kind },
-          ],
-          namespace,
-        });
-        if (replaced) {
-          await update(replaced.artifactId);
-        } else {
-          try {
-            await db.create({
-              model: 'fileArtifacts',
-              data: {
-                artifactId,
-                fileId: file.fileId,
-                versionId: version.versionId,
-                kind: upload.kind,
-                ...fields,
-                createdAt: new Date().toISOString(),
-              },
-              namespace,
-            });
-          } catch (error) {
-            // A concurrent upload or processing run created the row first.
-            replaced = await db.findOne<FileArtifactRecord>({
-              model: 'fileArtifacts',
-              where: [{ field: 'artifactId', operator: 'eq', value: artifactId }],
-              namespace,
-            });
-            if (!replaced) throw error;
-            await update(artifactId);
+        let current = await findKindRow(file.fileId, version.versionId, upload.kind);
+        for (let attempt = 1; ; attempt += 1) {
+          if (!current) {
+            try {
+              await db.create({
+                model: 'fileArtifacts',
+                data: {
+                  artifactId,
+                  fileId: file.fileId,
+                  versionId: version.versionId,
+                  kind: upload.kind,
+                  ...fields,
+                  createdAt: new Date().toISOString(),
+                },
+                namespace,
+              });
+              rowId = artifactId;
+              break;
+            } catch (error) {
+              // A concurrent upload or processing run created the row first.
+              current = await findArtifactRow(artifactId);
+              if (!current) throw error;
+            }
           }
+          if (await replaceIfUnchanged(current, fields)) {
+            replaced = current;
+            rowId = current.artifactId;
+            break;
+          }
+          if (attempt >= MAX_ARTIFACT_WRITE_ATTEMPTS) {
+            throw errors.artifactWriteConflict(upload.kind);
+          }
+          current = await findArtifactRow(current.artifactId);
         }
       } catch (error) {
         await discardReplacedObject(ownObject, target);
@@ -1505,7 +1551,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       // A delete of the version while the body was stored would leave this
       // row and object behind for a version that no longer exists.
       if (!(await findVersion(file.fileId, version.versionId))) {
-        await db.delete({ model: 'fileArtifacts', where: [{ field: 'artifactId', operator: 'eq', value: replaced?.artifactId ?? artifactId }], namespace });
+        await db.delete({ model: 'fileArtifacts', where: [{ field: 'artifactId', operator: 'eq', value: rowId }], namespace });
         await discardReplacedObject(ownObject, target);
         throw errors.notFound('Version');
       }
@@ -1513,20 +1559,14 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         await discardReplacedObject(replaced, target);
       }
 
-      const recorded = await db.findOne<FileArtifactRecord>({
-        model: 'fileArtifacts',
-        where: [{ field: 'artifactId', operator: 'eq', value: replaced?.artifactId ?? artifactId }],
-        namespace,
-      });
+      const recorded = await findArtifactRow(rowId);
       if (!recorded) {
         // Deleted since it was written; the object is no longer named by any row.
         await discardReplacedObject(ownObject, target);
         throw errors.notFound('Artifact');
       }
-      if (recorded.storageKey !== storageKey) {
-        // A concurrent upload of the same kind replaced this one.
-        await discardReplacedObject(ownObject, target);
-      }
+      // A concurrent write may have replaced this one since; whichever write
+      // replaced it discards this object, so nothing more is done here.
       logger?.info('client artifact attached', {
         requestId: ctx.requestId,
         fileId: file.fileId,

@@ -59,6 +59,8 @@ export const ErrorCodes = {
   ARTIFACT_KIND_NOT_ALLOWED: 'FILEFN_ARTIFACT_KIND_NOT_ALLOWED',
   ARTIFACT_TYPE_NOT_ALLOWED: 'FILEFN_ARTIFACT_TYPE_NOT_ALLOWED',
   ARTIFACT_TOO_LARGE: 'FILEFN_ARTIFACT_TOO_LARGE',
+  ARTIFACT_WRITE_CONFLICT: 'FILEFN_ARTIFACT_WRITE_CONFLICT',
+  STORAGE_UPLOAD_UNSUPPORTED: 'FILEFN_STORAGE_UPLOAD_UNSUPPORTED',
 } as const;
 
 export type ErrorCode = typeof ErrorCodes[keyof typeof ErrorCodes];
@@ -283,5 +285,27 @@ export function artifactTooLarge(kind: string, maxSizeBytes: number): FileFnErro
     'Artifact exceeds the size limit for its kind',
     413,
     { kind, maxSizeBytes },
+  );
+}
+
+export function artifactWriteConflict(kind: string): FileFnError {
+  return new FileFnError(
+    ErrorCodes.ARTIFACT_WRITE_CONFLICT,
+    'Concurrent writes of this artifact kind kept replacing each other; retry the upload',
+    409,
+    { kind, retryable: true },
+  );
+}
+
+/**
+ * The storage target cannot take a server-side (proxied) upload, so FileFn
+ * cannot store a body it receives itself, such as a client-supplied artifact.
+ */
+export function storageUploadUnsupported(target: string): FileFnError {
+  return new FileFnError(
+    ErrorCodes.STORAGE_UPLOAD_UNSUPPORTED,
+    'The storage target does not support server-side uploads',
+    501,
+    { target },
   );
 }
