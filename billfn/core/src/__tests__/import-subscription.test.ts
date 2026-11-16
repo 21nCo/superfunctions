@@ -12,6 +12,8 @@ import type {
   BillFnCatalog,
   BillFnImportSubscriptionInput,
   BillFnImportSubscriptionRequest,
+  BillFnLifecycleEvent,
+  BillFnLifecycleEventHandler,
   BillFnParsedWebhookEvent,
   BillFnProviderAdapter,
   BillFnSubscription,
@@ -185,7 +187,9 @@ function withSubscriptionReferenceUniqueness(db: Db): Db {
   } as Db;
 }
 
-function setup(options: ProviderOptions & { wrapDb?: (db: Db) => Db; catalog?: BillFnCatalog } = {}) {
+function setup(
+  options: ProviderOptions & { wrapDb?: (db: Db) => Db; catalog?: BillFnCatalog; onEvent?: BillFnLifecycleEventHandler } = {}
+) {
   const base = memoryAdapter({ debug: false });
   const unique = withSubscriptionReferenceUniqueness(base);
   const db = options.wrapDb ? options.wrapDb(unique) : unique;
@@ -195,7 +199,8 @@ function setup(options: ProviderOptions & { wrapDb?: (db: Db) => Db; catalog?: B
     db,
     catalog: options.catalog ?? catalog,
     providers: { [options.provider ?? 'dodo']: provider.adapter },
-    now: () => clock.current
+    now: () => clock.current,
+    onEvent: options.onEvent
   });
   return {
     db,
@@ -1615,5 +1620,143 @@ describe('billfn.services.subscriptions.import', () => {
     }
     expect(env.importSubscription).not.toHaveBeenCalled();
     expect(await env.subscriptions()).toEqual([]);
+  });
+});
+
+/** Turns transactions off, as Drizzle SQLite has none. */
+function withoutTransactions(db: Db): Db {
+  return {
+    ...db,
+    capabilities: { ...db.capabilities, transactions: { ...db.capabilities.transactions, supported: false } },
+    async transaction(): Promise<never> {
+      throw new Error('transaction should not be called');
+    }
+  } as Db;
+}
+
+/**
+ * An import setup with an onEvent handler, whose provider record's period end and renewal intent can change
+ * between runs, and whose import audit write fails while `failAudit.armed`, so acceptance fails.
+ */
+function lifecycleImportSetup(transactions: boolean, options: Pick<ProviderOptions, 'duringRead'> = {}) {
+  const delivered: BillFnLifecycleEvent[] = [];
+  const failAudit = { armed: false };
+  const record = { nextBillingDate: '2027-01-01T00:00:00.000Z', autoRenew: true };
+  const env = setup({
+    ...options,
+    record: (reference) => ({ ...legacyRecord(reference), next_billing_date: record.nextBillingDate, auto_renew: record.autoRenew }),
+    onEvent: (event) => {
+      delivered.push(event);
+    },
+    wrapDb: (db) => {
+      const failing = {
+        ...db,
+        async create<T>(params: Parameters<Db['create']>[0]): Promise<T> {
+          if (failAudit.armed && (params.data as { type?: string }).type === 'billfn.subscription.imported') {
+            throw new Error('process interrupted');
+          }
+          return db.create<T>(params);
+        }
+      } as Db;
+      return transactions ? failing : withoutTransactions(failing);
+    }
+  });
+  return {
+    ...env,
+    failAudit,
+    /** The next provider read reports a later period end that no longer renews: a renewal and a cancellation. */
+    renewAndCancel() {
+      env.clock.current = new Date('2026-11-12T00:00:00.000Z');
+      Object.assign(record, { nextBillingDate: '2027-02-01T00:00:00.000Z', autoRenew: false });
+    },
+    async transitions() {
+      const stored = await env.db.findMany<{ type: string }>({ model: 'lifecycleEvents', where: [], namespace: 'billfn' });
+      const isTransition = (type: string) => type === 'subscription.renewed' || type === 'subscription.canceled';
+      return {
+        delivered: delivered.map((event) => event.type).filter(isTransition).sort(),
+        stored: stored.map((event) => event.type).filter(isTransition).sort()
+      };
+    }
+  };
+}
+
+describe.each([
+  ['with transactions', true],
+  ['without transactions', false]
+])('lifecycle events of an import (%s)', (_mode, transactions) => {
+  it('publishes no renewal or cancellation for a write to a pending import row whose acceptance then fails', async () => {
+    const env = lifecycleImportSetup(transactions);
+    const billingAccountId = await env.account('alice');
+    env.failAudit.armed = true;
+    await expect(env.import({ billingAccountId })).rejects.toThrow('process interrupted');
+
+    // A rerun writes a renewed period that no longer renews to the pending row, and its acceptance fails again.
+    env.renewAndCancel();
+    await expect(env.import({ billingAccountId })).rejects.toThrow('process interrupted');
+
+    expect(await env.subscriptions()).toEqual([
+      expect.objectContaining({
+        currentPeriodEnd: '2027-02-01T00:00:00.000Z',
+        autoRenew: false,
+        metadata: expect.objectContaining({ [BILLFN_IMPORT_PENDING_METADATA_KEY]: true })
+      })
+    ]);
+    expect(await env.billfn.subscriptionProvider.getActiveSubscription({ principalId: 'alice' })).toBeNull();
+    expect(await env.transitions()).toEqual({ delivered: [], stored: [] });
+  });
+
+  it('publishes no renewal or cancellation for a pending import row a retired reference refuses and deletes', async () => {
+    let duringRead: (() => Promise<void>) | undefined;
+    const env = lifecycleImportSetup(transactions, {
+      async duringRead() {
+        const run = duringRead;
+        duringRead = undefined;
+        await run?.();
+      }
+    });
+    const billingAccountId = await env.account('alice');
+    env.failAudit.armed = true;
+    await expect(env.import({ billingAccountId })).rejects.toThrow('process interrupted');
+    env.failAudit.armed = false;
+
+    // While the rerun reads the provider, a write of another subscription retires the reference.
+    env.renewAndCancel();
+    duringRead = async () => {
+      const at = '2026-11-11T00:00:00.000Z';
+      await env.db.create({
+        model: 'replacedProviderReferences',
+        data: {
+          id: 'rpr_dodo_legacy',
+          provider: 'dodo',
+          providerReference: 'sub_legacy',
+          subscriptionId: 'sub_other',
+          billingAccountId,
+          replacedAt: at,
+          createdAt: at,
+          updatedAt: at
+        },
+        namespace: 'billfn'
+      });
+    };
+    await expect(env.import({ billingAccountId })).rejects.toMatchObject({
+      code: 'BILLFN_CONFLICT',
+      retryable: false,
+      message: expect.stringContaining('replaced')
+    });
+
+    expect(await env.subscriptions()).toEqual([]);
+    expect(await env.transitions()).toEqual({ delivered: [], stored: [] });
+  });
+
+  it('publishes the renewal and cancellation a re-import writes to an accepted subscription', async () => {
+    const env = lifecycleImportSetup(transactions);
+    const billingAccountId = await env.account('alice');
+    unwrap(await env.import({ billingAccountId }));
+
+    env.renewAndCancel();
+    unwrap(await env.import({ billingAccountId }));
+
+    const both = ['subscription.canceled', 'subscription.renewed'];
+    expect(await env.transitions()).toEqual({ delivered: both, stored: both });
   });
 });

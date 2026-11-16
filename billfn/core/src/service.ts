@@ -1633,16 +1633,18 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
  * the event stays in the outbox for a later dispatch.
  */
 function deliveringLifecycleEvents<T extends object>(lifecycle: LifecycleEvents, target: T): T {
-  return Object.fromEntries(
-    Object.entries(target).map(([key, value]) => [
-      key,
-      typeof value === 'function'
-        ? (...args: unknown[]) => lifecycle.deliverAfter(async () => (value as (...args: unknown[]) => unknown)(...args))
-        : value && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype
-          ? deliveringLifecycleEvents(lifecycle, value)
-          : value
-    ])
-  ) as T;
+  return Object.fromEntries(Object.entries(target).map(([key, value]) => [key, deliveringMember(lifecycle, value)])) as T;
+}
+
+/** A method delivers once its call settles, a plain object of methods is wrapped in turn, and any other value is kept. */
+function deliveringMember(lifecycle: LifecycleEvents, value: unknown): unknown {
+  if (typeof value === 'function') {
+    return (...args: unknown[]) => lifecycle.deliverAfter(async () => (value as (...args: unknown[]) => unknown)(...args));
+  }
+  if (value && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype) {
+    return deliveringLifecycleEvents(lifecycle, value);
+  }
+  return value;
 }
 
 /** Thrown inside a transaction to roll back a write that lost its ordering race. */
@@ -3741,8 +3743,7 @@ function entitlementChangeEvents(
   subscription: BillFnSubscription
 ): LifecycleEventInput[] {
   if (
-    previous &&
-    previous.planKey === next.planKey &&
+    previous?.planKey === next.planKey &&
     previous.status === next.status &&
     sameJson(previous.features, next.features) &&
     sameJson(previous.limits, next.limits)
@@ -3790,14 +3791,20 @@ function entitlementsFingerprint(snapshot: Pick<BillFnEntitlementSnapshot, 'plan
  * names the event in its `lifecycleEventIds` marker, which only a write that caused it sets.
  */
 async function isStagedEventApplied(deps: ServiceDeps, event: BillFnLifecycleEventRecord): Promise<boolean> {
-  const data = event.data as { subscriptionId?: string; checkoutSessionId?: string };
-  const row =
-    event.type === 'checkout.completed'
-      ? await getCheckoutSession(deps, data.checkoutSessionId!)
-      : event.type === 'entitlement.changed'
-        ? await findEntitlementSnapshot(deps, event.billingAccountId)
-        : await getSubscriptionById(deps, data.subscriptionId!);
+  const row = await stagedEventRow(deps, event);
   return Boolean(row?.lifecycleEventIds?.split(' ').includes(event.id));
+}
+
+/** The row a staged lifecycle event's write targets: its checkout session, entitlement snapshot or subscription. */
+function stagedEventRow(deps: ServiceDeps, event: BillFnLifecycleEventRecord) {
+  const data = event.data as { subscriptionId?: string; checkoutSessionId?: string };
+  if (event.type === 'checkout.completed') {
+    return getCheckoutSession(deps, data.checkoutSessionId!);
+  }
+  if (event.type === 'entitlement.changed') {
+    return findEntitlementSnapshot(deps, event.billingAccountId);
+  }
+  return getSubscriptionById(deps, data.subscriptionId!);
 }
 
 /**
@@ -3842,6 +3849,11 @@ function subscriptionLifecycleEvents(
   subscription: BillFnSubscription,
   providerChangeKey: string
 ): LifecycleEventInput[] {
+  // A pending import row is no one's subscription until `settleImportBinding` accepts it, which can still refuse
+  // and delete it, so a write to it reports no transition; its acceptance publishes its state.
+  if (isImportPending(previous)) {
+    return [];
+  }
   const events: LifecycleEventInput[] = [];
   const base = { billingAccountId: subscription.billingAccountId, occurredAt: subscription.updatedAt };
   const ref = subscriptionRef(subscription);
@@ -3901,10 +3913,18 @@ function canonicalJson(value: unknown): unknown {
   }
   if (value && typeof value === 'object') {
     return Object.keys(value)
-      .sort()
+      .sort(compareCodeUnits)
       .map((key) => [key, canonicalJson((value as Record<string, unknown>)[key])]);
   }
   return value ?? null;
+}
+
+/** Orders strings by UTF-16 code units, as a comparator-free sort does, never by locale, so canonical bytes stay stable. */
+function compareCodeUnits(left: string, right: string) {
+  if (left < right) {
+    return -1;
+  }
+  return left > right ? 1 : 0;
 }
 
 function findBillingEvent(db: Adapter, namespace: string, id: string) {

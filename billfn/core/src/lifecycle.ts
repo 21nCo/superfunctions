@@ -72,7 +72,8 @@ export type LifecycleEvents = ReturnType<typeof createLifecycleEvents>;
 
 /** The stable id of the event of `type` that `key` identifies. */
 export function lifecycleEventId(type: BillFnLifecycleEventType, key: string) {
-  return `lce_${createHash('sha256').update(`${type}\n${key}`).digest('base64url').slice(0, 32)}`;
+  const digest = createHash('sha256').update(`${type}\n${key}`).digest('base64url');
+  return `lce_${digest.slice(0, 32)}`;
 }
 
 /** The lifecycle events a grant billing event stands for, derived from it alone so a repair records the same ones. */
@@ -359,7 +360,7 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
    * handler again. The handler call is bounded by the claim lease, and a handler
    * that does not settle within it is a failed attempt too.
    */
-  async function deliver(row: BillFnLifecycleEventRecord): Promise<keyof BillFnDispatchEventsResult | null> {
+  async function deliver(row: BillFnLifecycleEventRecord): Promise<DeliveryOutcome | null> {
     const claimedAt = deps.now();
     if (!handler || row.status !== 'pending' || Date.parse(row.nextAttemptAt) > claimedAt.getTime()) {
       return null;
@@ -371,23 +372,10 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
       { field: 'attempts', operator: 'eq', value: row.attempts }
     ] satisfies WhereClause[];
     const deadline = Date.parse(row.createdAt) + LIFECYCLE_DELIVERY_WINDOW_MS;
-    const timestamp = toIsoString(claimedAt);
     if (row.claimId) {
-      const expired = !Number.isFinite(deadline) || claimedAt.getTime() >= deadline;
-      const retryAt = Math.min(Date.parse(row.nextAttemptAt) - LIFECYCLE_CLAIM_LEASE_MS + retryDelay(row.attempts), deadline);
-      if (expired || retryAt > claimedAt.getTime()) {
-        const data = expired ? { status: 'failed' as const, failedAt: timestamp } : { nextAttemptAt: toIsoString(new Date(retryAt)) };
-        const ended = await deps.db.updateMany({
-          model: EVENTS_TABLE,
-          where: due,
-          data: { ...data, lastError: 'delivery did not complete', claimId: null, updatedAt: timestamp },
-          namespace: deps.namespace
-        });
-        if (ended !== 1) {
-          return null;
-        }
-        deps.metrics.track(expired ? 'event.failed' : 'event.retry_scheduled', { type: row.type });
-        return expired ? 'failed' : 'retrying';
+      const ended = await endLapsedClaim(row, due, deadline, claimedAt);
+      if (ended !== undefined) {
+        return ended;
       }
     }
     const claimId = deps.generateId('lcc');
@@ -399,36 +387,57 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
         claimId,
         attempts: attempt,
         nextAttemptAt: toIsoString(new Date(claimedAt.getTime() + LIFECYCLE_CLAIM_LEASE_MS)),
-        updatedAt: timestamp
+        updatedAt: toIsoString(claimedAt)
       },
       namespace: deps.namespace
     });
     if (claimed !== 1) {
       return null;
     }
+    const failure = await callHandler(handler, row, attempt);
+    return settleAttempt(row, claimId, attempt, deadline, failure);
+  }
 
-    let failure: { error: unknown } | null = null;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      await Promise.race([
-        handler({
-          id: row.id,
-          type: row.type,
-          billingAccountId: row.billingAccountId,
-          occurredAt: row.occurredAt,
-          data: row.data,
-          attempt
-        } as BillFnLifecycleEvent),
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error('handler did not settle within the claim lease')), LIFECYCLE_CLAIM_LEASE_MS);
-        })
-      ]);
-    } catch (error) {
-      failure = { error };
-    } finally {
-      clearTimeout(timer);
+  /**
+   * A due event that still holds a claim, whose delivery did not complete: marks it `failed` once its 24-hour
+   * window passed, or schedules its retry after the backoff of that attempt, counted from the lapsed claim.
+   * Returns that outcome, null when another dispatcher ended it first, or undefined when the retry is due now,
+   * so the caller claims it.
+   */
+  async function endLapsedClaim(
+    row: BillFnLifecycleEventRecord,
+    due: WhereClause[],
+    deadline: number,
+    claimedAt: Date
+  ): Promise<DeliveryOutcome | null | undefined> {
+    const expired = !Number.isFinite(deadline) || claimedAt.getTime() >= deadline;
+    const retryAt = Math.min(Date.parse(row.nextAttemptAt) - LIFECYCLE_CLAIM_LEASE_MS + retryDelay(row.attempts), deadline);
+    if (!expired && retryAt <= claimedAt.getTime()) {
+      return undefined;
     }
+    const timestamp = toIsoString(claimedAt);
+    const data = expired ? { status: 'failed' as const, failedAt: timestamp } : { nextAttemptAt: toIsoString(new Date(retryAt)) };
+    const ended = await deps.db.updateMany({
+      model: EVENTS_TABLE,
+      where: due,
+      data: { ...data, lastError: 'delivery did not complete', claimId: null, updatedAt: timestamp },
+      namespace: deps.namespace
+    });
+    if (ended !== 1) {
+      return null;
+    }
+    deps.metrics.track(expired ? 'event.failed' : 'event.retry_scheduled', { type: row.type });
+    return expired ? 'failed' : 'retrying';
+  }
 
+  /** Settles a claimed attempt: delivered, or retried with backoff until the 24-hour window passed, then failed. */
+  async function settleAttempt(
+    row: BillFnLifecycleEventRecord,
+    claimId: string,
+    attempt: number,
+    deadline: number,
+    failure: { error: unknown } | null
+  ): Promise<DeliveryOutcome> {
     const finishedAt = deps.now();
     const settledAt = toIsoString(finishedAt);
     if (!failure) {
@@ -581,7 +590,7 @@ export function createLifecycleEvents(deps: LifecycleDeps) {
     }
   }
 
-  async function list(input: BillFnListEventsRequest = {}) {
+  function list(input: BillFnListEventsRequest = {}) {
     const where: WhereClause[] = [];
     if (input.status) {
       where.push({ field: 'status', operator: 'eq', value: input.status });
@@ -641,6 +650,36 @@ function retryDelay(attempt: number) {
 
 function readLimit(limit: number | undefined) {
   return typeof limit === 'number' && Number.isInteger(limit) && limit > 0 ? Math.min(limit, 1000) : DEFAULT_LIMIT;
+}
+
+type DeliveryOutcome = keyof BillFnDispatchEventsResult;
+
+/**
+ * Calls the handler once with the event, bounded by the claim lease: a handler that throws, rejects or does not
+ * settle within the lease is a failed attempt. Returns its failure, or null when it succeeded.
+ */
+async function callHandler(handler: BillFnLifecycleEventHandler, row: BillFnLifecycleEventRecord, attempt: number) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      handler({
+        id: row.id,
+        type: row.type,
+        billingAccountId: row.billingAccountId,
+        occurredAt: row.occurredAt,
+        data: row.data,
+        attempt
+      } as BillFnLifecycleEvent),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('handler did not settle within the claim lease')), LIFECYCLE_CLAIM_LEASE_MS);
+      })
+    ]);
+    return null;
+  } catch (error) {
+    return { error };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function errorMessage(error: unknown) {
