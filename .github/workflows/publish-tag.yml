@@ -165,7 +165,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
 
@@ -181,9 +180,6 @@ jobs:
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
-
-      - name: Setup OIDC dist-tag client
-        run: npm install --global npm@11.21.0 --ignore-scripts --registry=https://registry.npmjs.org
 
       - name: Require immutable release tag
         run: node ./scripts/assert-release-ref.mjs "${RELEASE_TAG}"
