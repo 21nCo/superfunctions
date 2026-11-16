@@ -4,60 +4,240 @@ on:
   push:
     tags:
       - '*-v*.*.*'
+      - '!python-*-v*'
+      - '!v[0-9]*'
   workflow_dispatch:
     inputs:
       release_tag:
         description: 'Release tag in the form <package-slug>-v<version>'
         required: true
         type: string
+      channel_only:
+        description: 'Reconcile an already-published prerelease channel without republishing'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: publish-${{ github.ref }}
+  group: publish-npm-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+    outputs:
+      dist_tag: ${{ steps.resolve.outputs.dist_tag }}
+      pkg_name: ${{ steps.resolve.outputs.pkg_name }}
+      pkg_version: ${{ steps.resolve.outputs.pkg_version }}
+      release_commit: ${{ steps.ref.outputs.release_commit }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+
+      - name: Require the run to belong to the release tag commit
+        if: '!inputs.channel_only'
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_commit="$(git rev-parse --verify "${GITHUB_SHA}^{commit}")"
+          if [[ "${GITHUB_REF}" != "refs/tags/${RELEASE_TAG}" || "${run_commit}" != "$(git rev-parse HEAD)" ]]; then
+            echo "This run's ref/commit (${GITHUB_REF} at ${run_commit}) is not the checked-out release tag ${RELEASE_TAG}. Dispatch on the tag (gh workflow run publish-tag.yml --ref ${RELEASE_TAG} -f release_tag=${RELEASE_TAG}) or push the tag again, so npm provenance records the commit that is published." >&2
+            exit 1
+          fi
+
+      - name: Require immutable release tag
+        id: ref
+        run: node ./scripts/assert-release-ref.mjs "${RELEASE_TAG}"
+      - name: Resolve publish target
+        id: resolve
+        run: node ./scripts/resolve-release-tag.mjs "${RELEASE_TAG}"
+
+      - name: Require prerelease for channel-only dispatch
+        if: inputs.channel_only && steps.resolve.outputs.dist_tag == 'latest'
+        run: |
+          echo "Channel-only dispatch requires a prerelease tag." >&2
+          exit 1
+
+      - name: Install package dependencies
+        if: '!inputs.channel_only'
+        working-directory: ${{ steps.resolve.outputs.pkg_path }}
+        run: npm install --workspaces=false --package-lock=false
+
+      - name: Generate, build, typecheck, test and pack exact artifact
+        if: '!inputs.channel_only'
+        id: pack
+        run: node ./scripts/pack-release-package.mjs "${RELEASE_TAG}"
+
+      - name: Recheck immutable release tag
+        run: node ./scripts/assert-release-ref.mjs "${RELEASE_TAG}" "${{ steps.ref.outputs.release_commit }}"
+
+      - name: Hand the packed artifact to the publish job
+        if: '!inputs.channel_only'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: npm-package
+          path: ${{ steps.pack.outputs.tarball }}
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+
   publish:
+    needs: build
+    if: '!inputs.channel_only'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+
+    steps:
+      - name: Checkout the commit the build job verified
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ needs.build.outputs.release_commit }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Setup npm with trusted publishing
+        run: npm install --global npm@11.21.0 --ignore-scripts --registry=https://registry.npmjs.org
+
+      - name: Recheck immutable release tag
+        run: node ./scripts/assert-release-ref.mjs "${RELEASE_TAG}" "${{ needs.build.outputs.release_commit }}"
+
+      - name: Download the packed artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: npm-package
+          path: ${{ runner.temp }}/npm-package
+
+      - name: Publish package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t tarballs < <(find "${RUNNER_TEMP}/npm-package" -maxdepth 1 -type f -name '*.tgz')
+          if [[ ${#tarballs[@]} -ne 1 ]]; then
+            echo "Expected exactly one packed artifact, found ${#tarballs[@]}" >&2
+            exit 1
+          fi
+          npm publish "${tarballs[0]}" --access public --tag "${DIST_TAG}" --ignore-scripts
+        env:
+          DIST_TAG: ${{ needs.build.outputs.dist_tag }}
+
+  verify-registry:
+    needs: [build, publish]
+    if: needs.build.outputs.pkg_name == '@mcpfn/testing' || needs.build.outputs.pkg_name == '@mcpfn/cli'
     runs-on: ubuntu-latest
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout immutable release tag
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          fetch-depth: 0
+          persist-credentials: false
+          ref: refs/tags/${{ env.RELEASE_TAG }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           registry-url: https://registry.npmjs.org
+
+      - name: Verify published McpFn consumer from configured registry
+        run: node ./scripts/test-mcpfn-registry-install.mjs "${{ needs.build.outputs.pkg_name }}" "${{ needs.build.outputs.pkg_version }}" "${NPM_CONFIG_REGISTRY}"
+        env:
+          NPM_CONFIG_REGISTRY: https://registry.npmjs.org
+
+  reconcile-channel:
+    needs: [build, publish]
+    if: >-
+      always() &&
+      needs.build.result == 'success' &&
+      (needs.publish.result == 'success' || (inputs.channel_only && needs.publish.result == 'skipped')) &&
+      needs.build.outputs.dist_tag != 'latest'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+
+    steps:
+      - name: Checkout immutable artifact source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Setup OIDC dist-tag client
+        run: npm install --global npm@11.21.0 --ignore-scripts --registry=https://registry.npmjs.org
+
+      - name: Require immutable release tag
+        run: node ./scripts/assert-release-ref.mjs "${RELEASE_TAG}"
 
       - name: Resolve publish target
         id: resolve
         run: node ./scripts/resolve-release-tag.mjs "${RELEASE_TAG}"
 
-      - name: Install package dependencies
-        working-directory: ${{ steps.resolve.outputs.pkg_path }}
-        run: npm install --workspaces=false --package-lock=false
-
-      - name: Build package
-        working-directory: ${{ steps.resolve.outputs.pkg_path }}
-        run: npm run build
-
-      - name: Test package
-        working-directory: ${{ steps.resolve.outputs.pkg_path }}
-        run: npm test
-
-      - name: Pack package
-        working-directory: ${{ steps.resolve.outputs.pkg_path }}
-        run: npm pack --json
-
-      - name: Publish package
-        working-directory: ${{ steps.resolve.outputs.pkg_path }}
-        run: npm publish --access public --tag "$(node -p "require('./package.json').publishConfig?.tag || 'latest'")"
+      - name: Keep prereleases off latest
+        if: steps.resolve.outputs.dist_tag != 'latest'
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ''
+          PACKAGE_NAME: ${{ steps.resolve.outputs.pkg_name }}
+          PACKAGE_VERSION: ${{ steps.resolve.outputs.pkg_version }}
+          DIST_TAG: ${{ steps.resolve.outputs.dist_tag }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          const { PACKAGE_NAME: name, PACKAGE_VERSION: version, DIST_TAG: distTag } = process.env;
+          async function registryJson(path) {
+            const response = await fetch(`https://registry.npmjs.org/${path}`);
+            if (!response.ok) throw new Error(`Registry returned ${response.status} for ${path}`);
+            return response.json();
+          }
+          const encodedName = encodeURIComponent(name);
+          const metadata = await registryJson(`${encodedName}/${version}`);
+          const commit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+          if (metadata.name !== name || metadata.version !== version || metadata.gitHead !== commit) {
+            throw new Error('Published package does not match the immutable release tag.');
+          }
+          const tags = await registryJson(`-/package/${encodedName}/dist-tags`);
+          if (tags[distTag] !== version) throw new Error('Published prerelease channel does not match.');
+          if (tags.latest === version) {
+            execFileSync('npm', ['dist-tag', 'rm', name, 'latest'], { stdio: 'inherit' });
+          }
+          const reconciled = await registryJson(`-/package/${encodedName}/dist-tags`);
+          if (reconciled[distTag] !== version || reconciled.latest === version) {
+            throw new Error('Prerelease channel reconciliation failed.');
+          }
+          console.log(`${name}@${version} remains on ${distTag}, not latest.`);
+          NODE
