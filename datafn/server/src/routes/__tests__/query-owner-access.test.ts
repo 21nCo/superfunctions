@@ -309,3 +309,81 @@ describe("temporal storage hints", () => {
     }
   });
 });
+
+describe("relation loading for an in-memory query", () => {
+  it("chunks related-record lookups so an oversized $in still loads every relation", async () => {
+    const relSchema: DatafnSchema = {
+      resources: [
+        { name: "projects", version: 1, fields: [{ name: "name", type: "string", required: false }] },
+        {
+          name: "tasks",
+          version: 1,
+          fields: [
+            { name: "title", type: "string", required: false },
+            { name: "projectId", type: "string", required: false },
+          ],
+        },
+      ],
+      relations: [
+        {
+          from: "tasks",
+          to: "projects",
+          type: "many-one",
+          relation: "project",
+          fkField: "projectId",
+        } as any,
+      ],
+    };
+    const base = memoryAdapter();
+    await base.initialize?.();
+    // More tasks (each with its own project) than one bound-parameter chunk.
+    const total = 30_005;
+    for (let i = 0; i < total; i++) {
+      await base.create({ model: "projects", data: { __ns: NAMESPACE, id: `p${i}`, name: `p${i}` }, namespace: NAMESPACE });
+      await base.create({
+        model: "tasks",
+        data: { __ns: NAMESPACE, id: `t${i}`, title: `t${i}`, projectId: `p${i}` },
+        namespace: NAMESPACE,
+      });
+    }
+    let largestInList = 0;
+    const db = new Proxy(base, {
+      get(target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver);
+        if (prop === "findMany") {
+          return (args: FindManyCall) => {
+            for (const clause of args.where ?? []) {
+              if (clause.operator === "in" && Array.isArray(clause.value)) {
+                largestInList = Math.max(largestInList, clause.value.length);
+              }
+            }
+            return (value as Function).call(target, args);
+          };
+        }
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as Adapter;
+    const server = await createDatafnServer({
+      allowUnknownResources: true,
+      schema: relSchema,
+      database: db,
+      namespaceProvider: { getNamespace: () => NAMESPACE, getActorId: () => "alice" as any },
+    });
+    try {
+      const ids = Array.from({ length: total }, (_, i) => `t${i}`);
+      const { status, body } = await query(server, {
+        resource: "tasks",
+        version: 1,
+        filters: { id: { $in: ids } },
+        select: ["id", "project.*"],
+        sort: ["id"],
+        limit: 1,
+      });
+      expect(status).toBe(200);
+      expect(body.result.data[0].project?.id).toBe("p0");
+      expect(largestInList).toBeLessThanOrEqual(30_000);
+    } finally {
+      await (server as any)?.close?.();
+    }
+  }, 120_000);
+});

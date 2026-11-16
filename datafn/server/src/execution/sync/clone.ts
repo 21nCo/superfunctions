@@ -278,7 +278,9 @@ export async function executeClone(
         try {
           if (remaining <= 0) {
             data[tableName] = [];
-            next[tableName] = tableCounts[tableName] > 0 ? "" : null;
+            // Deferred: continue later if it has rows, or may have (count failed).
+            next[tableName] =
+              tableCounts[tableName] > 0 || countFailedTables.has(tableName) ? "" : null;
           } else {
             const readLimit = remaining;
             const records = await db.findMany({
@@ -303,7 +305,9 @@ export async function executeClone(
               next[tableName] = null;
               // Only when the read wasn't cut short by the cap (the count may
               // have failed and read as 0).
-              if (records.length < readLimit) fullyLoadedTables.add(tableName);
+              if (!countFailedTables.has(tableName) || records.length < readLimit) {
+                fullyLoadedTables.add(tableName);
+              }
             }
           }
 
