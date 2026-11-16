@@ -103,12 +103,58 @@ test("a release whose path belongs to another owner fails", (t) => {
   const owners = manifest();
   owners.releases["docs-site"] = "public";
   const next = { version: 1, paths: { docsfn: "next" } };
+  const releases = [
+    { slug: "datafn-core", path: "datafn/core" },
+    { slug: "docs-site", path: "docsfn/site" },
+  ];
+  const errors = verifyOwners({ root: fixture(t, { owners, next, releases, files: { "docsfn/site/a.md": "a\n" } }), repo: "next" });
+  assert.deepEqual(errors, ['docsfn/site: release "docs-site" is public-published but its path is next-owned']);
+});
+
+// A next tree with a public release in the public file and a next release in the next file.
+function nextReleaseFixture(t, { publicReleases = [], nextReleases = [] } = {}) {
+  const next = { version: 1, paths: { docsfn: "next" }, releases: { "docs-site": "next" } };
   const files = {
     "docsfn/site/a.md": "a\n",
-    "release-packages.next.json": JSON.stringify([{ slug: "docs-site", path: "docsfn/site" }]),
+    "release-packages.next.json": JSON.stringify([{ slug: "docs-site", path: "docsfn/site" }, ...nextReleases]),
   };
-  const errors = verifyOwners({ root: fixture(t, { owners, next, files }), repo: "next" });
-  assert.deepEqual(errors, ['docsfn/site: release "docs-site" is public-published but its path is next-owned']);
+  const releases = [{ slug: "datafn-core", path: "datafn/core" }, ...publicReleases];
+  return fixture(t, { next, releases, files });
+}
+
+test("a release slug with more than one entry fails and names the slug and both sources", (t) => {
+  const twice = [
+    { slug: "datafn-core", path: "datafn/core" },
+    { slug: "datafn-core", path: "datafn/core" },
+  ];
+  const result = run(fixture(t, { releases: twice }), "--repo", "public");
+  assert.equal(result.status, 1);
+  assert.ok(result.stderr.includes('datafn/core: release "datafn-core" is listed more than once in release-packages.json'), result.stderr);
+
+  const both = verifyOwners({ root: nextReleaseFixture(t, { nextReleases: [{ slug: "datafn-core", path: "datafn/core" }] }), repo: "next" });
+  assert.ok(
+    both.includes('datafn/core: release "datafn-core" is listed in both release-packages.json and release-packages.next.json; a release has exactly one entry'),
+    both.join("\n"),
+  );
+});
+
+test("a release listed in the other repository's release file fails and names the expected file", (t) => {
+  const nextInPublic = verifyOwners({ root: nextReleaseFixture(t, { publicReleases: [{ slug: "docs-site", path: "docsfn/site" }] }), repo: "next" });
+  assert.ok(
+    nextInPublic.includes('docsfn/site: release "docs-site" is next-published but listed in release-packages.json; it belongs in release-packages.next.json'),
+    nextInPublic.join("\n"),
+  );
+
+  const next = { version: 1, paths: { docsfn: "next" } };
+  const files = { "docsfn/a.md": "a\n", "release-packages.next.json": JSON.stringify([{ slug: "datafn-core", path: "datafn/core" }]) };
+  const publicInNext = verifyOwners({ root: fixture(t, { next, releases: [], files }), repo: "next" });
+  assert.deepEqual(publicInNext, [
+    'datafn/core: release "datafn-core" is public-published but listed in release-packages.next.json; it belongs in release-packages.json',
+  ]);
+});
+
+test("on next each release in its publisher's release file passes", (t) => {
+  assert.deepEqual(verifyOwners({ root: nextReleaseFixture(t), repo: "next" }), []);
 });
 
 test("a release path that cannot be owned fails on public and names its path and slug", (t) => {

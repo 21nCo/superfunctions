@@ -421,6 +421,43 @@ function ownerOfEntryPath(owners, repo, target, label, errors) {
   }
 }
 
+/** Names where a release slug that already has an entry in `first` is listed again. */
+function duplicateSources(first, source) {
+  return first === source ? `more than once in ${source}` : `in both ${first} and ${source}`;
+}
+
+/**
+ * Release entries: each slug has exactly one entry, in the release file of the repository that publishes it
+ * (release-packages.json for public, release-packages.next.json for next), and is listed in the manifests with a
+ * path its publisher owns. Listed slugs without an entry are stale.
+ */
+function findReleaseErrors({ owners, repo, releases, listed }, errors) {
+  const listedIn = repo === "next" && owners.nextManifest ? `${PUBLIC_MANIFEST} or ${NEXT_MANIFEST}` : PUBLIC_MANIFEST;
+  const sources = new Map();
+  for (const entry of releases) {
+    const slug = JSON.stringify(entry.slug);
+    const first = sources.get(entry.slug);
+    if (first === undefined) sources.set(entry.slug, entry.source);
+    else errors.push(`${entry.path}: release ${slug} is listed ${duplicateSources(first, entry.source)}; a release has exactly one entry`);
+    const owner = tryOwner(() => owners.ownerOfRelease(entry.slug, { repo }));
+    if (owner === null) {
+      errors.push(`${entry.path}: release ${slug} from ${entry.source} is not listed in the releases of ${listedIn}`);
+    } else if (entry.source !== RELEASE_FILES[owner]) {
+      errors.push(`${entry.path}: release ${slug} is ${owner}-published but listed in ${entry.source}; it belongs in ${RELEASE_FILES[owner]}`);
+    }
+    const label = `release ${slug} from ${entry.source}`;
+    const pathOwner = ownerOfEntryPath(owners, repo, entry.path, label, errors);
+    if (owner !== null && pathOwner !== null && pathOwner !== owner) {
+      errors.push(`${entry.path}: release ${slug} is ${owner}-published but its path is ${pathOwner}-owned`);
+    }
+  }
+  if (listed) {
+    for (const slug of listed.releases.keys()) {
+      if (!sources.has(slug)) errors.push(`${listed.file}: release ${JSON.stringify(slug)} has no entry in the release files`);
+    }
+  }
+}
+
 /**
  * Compares the manifests with a tree. Returns one message per disagreement, each naming the path or entry.
  * @param {{ owners: ReturnType<typeof loadOwners>, repo: "public" | "next", files: string[], releases: {slug: string, path: string, source: string}[], python: {name: string, file: string}[] }} input
@@ -465,24 +502,7 @@ export function findOwnershipErrors({ owners, repo, files, releases, python }) {
     }
   }
 
-  const releaseSlugs = new Set();
-  for (const entry of releases) {
-    releaseSlugs.add(entry.slug);
-    const owner = tryOwner(() => owners.ownerOfRelease(entry.slug, { repo }));
-    if (owner === null) {
-      errors.push(`${entry.path}: release ${JSON.stringify(entry.slug)} from ${entry.source} is not listed in the releases of ${repo === "next" && nextManifest ? `${PUBLIC_MANIFEST} or ${NEXT_MANIFEST}` : PUBLIC_MANIFEST}`);
-    }
-    const label = `release ${JSON.stringify(entry.slug)} from ${entry.source}`;
-    const pathOwner = ownerOfEntryPath(owners, repo, entry.path, label, errors);
-    if (owner !== null && pathOwner !== null && pathOwner !== owner) {
-      errors.push(`${entry.path}: release ${JSON.stringify(entry.slug)} is ${owner}-published but its path is ${pathOwner}-owned`);
-    }
-  }
-  if (listed) {
-    for (const slug of listed.releases.keys()) {
-      if (!releaseSlugs.has(slug)) errors.push(`${listed.file}: release ${JSON.stringify(slug)} has no entry in the release files`);
-    }
-  }
+  findReleaseErrors({ owners, repo, releases, listed }, errors);
 
   // Python projects are matched by their PEP 503 canonical name, so two spellings of one distribution collide.
   const projects = new Map();
